@@ -55,9 +55,6 @@ before(async () => {
 });
 
 after(async () => {
-  // node-pty on Windows can keep a handle open after every session has
-  // ended. Exit once results are reported rather than hanging the run.
-  setTimeout(() => process.exit(), 8000).unref();
   await ctx.shutdown('tests done');
   npmRegistry.close();
   assert.equal(ctx.manager.exiting.size, 0, 'shutdown waits for removed sessions to exit');
@@ -67,6 +64,9 @@ after(async () => {
   } catch (err) {
     console.warn(`could not remove ${home}: ${err.message}`);
   }
+  // node-pty on Windows can keep a handle open after every session has
+  // ended. Exit once results are reported rather than hanging the run.
+  setTimeout(() => process.exit(), 3000).unref();
 });
 
 async function call(method, route, body, headers = {}) {
