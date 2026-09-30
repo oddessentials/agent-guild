@@ -1,0 +1,59 @@
+{
+  "providers": [
+    {
+      "id": "anthropic",
+      "vendor": "Anthropic",
+      "tool": "Claude Code",
+      "command": "claude",
+      "args": [],
+      "color": "#D97757",
+      "monogram": "A",
+      "install": "npm install -g @anthropic-ai/claude-code",
+      "docs": "https://docs.anthropic.com/en/docs/claude-code"
+    },
+    {
+      "id": "openai",
+      "vendor": "OpenAI",
+      "tool": "Codex CLI",
+      "command": "codex",
+      "args": [],
+      "color": "#10A37F",
+      "monogram": "O",
+      "install": "npm install -g @openai/codex",
+      "docs": "https://github.com/openai/codex"
+    },
+    {
+      "id": "google",
+      "vendor": "Google",
+      "tool": "Gemini CLI",
+      "command": "gemini",
+      "args": [],
+      "color": "#4285F4",
+      "monogram": "G",
+      "install": "npm install -g @google/gemini-cli",
+      "docs": "https://github.com/google-gemini/gemini-cli"
+    },
+    {
+      "id": "xai",
+      "vendor": "xAI",
+      "tool": "Grok CLI",
+      "command": "grok",
+      "args": [],
+      "color": "#6B7280",
+      "monogram": "X",
+      "install": "Install a Grok coding CLI that provides a \"grok\" command, or point this provider at your tool in providers.json.",
+      "docs": ""
+    },
+    {
+      "id": "shell",
+      "vendor": "Local",
+      "tool": "Shell",
+      "command": "@shell",
+      "args": [],
+      "color": "#8B5CF6",
+      "monogram": ">",
+      "install": "",
+      "docs": ""
+    }
+  ]
+}

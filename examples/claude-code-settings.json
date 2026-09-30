@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Task|Agent",
+        "hooks": [{ "type": "command", "command": "agent-guild-report --claude-hook" }]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Task|Agent",
+        "hooks": [{ "type": "command", "command": "agent-guild-report --claude-hook" }]
+      }
+    ]
+  }
+}

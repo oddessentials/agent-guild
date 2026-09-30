@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent Guild</title>
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%235B5BD6'/%3E%3Cpath d='M9 22l7-12 7 12' stroke='white' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/vendor/xterm/xterm.css">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="currentColor"/><path d="M9 22l7-12 7 12" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <h1>Agent Guild</h1>
+    </div>
+    <div id="connection" class="connection" role="status" aria-live="polite">
+      <span class="dot"></span><span class="label">Connecting…</span>
+    </div>
+  </header>
+
+  <main id="app" hidden>
+    <section class="launcher" aria-labelledby="launch-heading">
+      <div class="section-head">
+        <h2 id="launch-heading">Start a session</h2>
+        <label class="cwd">
+          <span>Working folder</span>
+          <input id="cwd" type="text" spellcheck="false" autocomplete="off" placeholder="Home folder">
+        </label>
+      </div>
+      <div id="providers" class="providers" role="list"></div>
+    </section>
+
+    <section class="sessions" aria-labelledby="sessions-heading">
+      <div class="section-head">
+        <h2 id="sessions-heading">Sessions <span id="session-count" class="count"></span></h2>
+      </div>
+      <div id="sessions" class="session-grid" role="list"></div>
+      <p id="empty" class="empty">No sessions yet. Pick a provider above to start one. Sessions keep running when you close this page.</p>
+    </section>
+  </main>
+
+  <section id="auth" class="auth" hidden>
+    <h2>Open Agent Guild from the launcher</h2>
+    <p>This page needs the access token of your local session manager. Run this command and it will open the page for you:</p>
+    <pre>agent-guild open</pre>
+    <p>Or paste the token printed by <code>agent-guild url</code>:</p>
+    <form id="auth-form">
+      <input id="auth-token" type="password" autocomplete="off" placeholder="Access token" aria-label="Access token">
+      <button type="submit" class="btn primary">Connect</button>
+    </form>
+    <p id="auth-error" class="error" role="alert"></p>
+  </section>
+
+  <div id="terminal-panel" class="terminal-panel" hidden role="dialog" aria-modal="false" aria-labelledby="panel-title">
+    <div class="panel-bar">
+      <div class="panel-title">
+        <span id="panel-icon" class="provider-icon small"></span>
+        <div>
+          <div id="panel-title" class="title"></div>
+          <div id="panel-sub" class="sub"></div>
+        </div>
+        <div id="panel-agents" class="agents"></div>
+      </div>
+      <div class="panel-actions">
+        <button id="panel-stop" class="btn danger" type="button">Stop</button>
+        <button id="panel-close" class="btn" type="button" title="Hide the terminal. The session keeps running.">Hide</button>
+      </div>
+    </div>
+    <div id="terminal-host" class="terminal-host"></div>
+  </div>
+
+  <div id="toast" class="toast" role="alert" hidden></div>
+
+  <template id="provider-template">
+    <button class="provider" type="button" role="listitem">
+      <span class="provider-icon"></span>
+      <span class="provider-text">
+        <span class="vendor"></span>
+        <span class="tool"></span>
+        <span class="state"></span>
+      </span>
+    </button>
+  </template>
+
+  <template id="session-template">
+    <article class="session-card" role="listitem" tabindex="0">
+      <div class="card-top">
+        <span class="provider-icon"></span>
+        <div class="card-title">
+          <div class="name"></div>
+          <div class="meta"></div>
+        </div>
+        <span class="status-pill"></span>
+      </div>
+      <div class="cwd-line"></div>
+      <div class="agents-row">
+        <span class="agents-label">Agents</span>
+        <div class="agents"></div>
+      </div>
+      <div class="card-actions">
+        <button class="btn primary open" type="button">Open</button>
+        <button class="btn rename" type="button">Rename</button>
+        <button class="btn danger stop" type="button">Stop</button>
+        <button class="btn remove" type="button">Remove</button>
+      </div>
+    </article>
+  </template>
+
+  <script src="/vendor/xterm/xterm.js"></script>
+  <script src="/vendor/xterm/addon-fit.js"></script>
+  <script src="/vendor/xterm/addon-web-links.js"></script>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

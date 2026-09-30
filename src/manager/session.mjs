@@ -1,0 +1,337 @@
+// One terminal session: a node-pty process, a headless terminal that mirrors
+// its screen (so a reconnecting client gets the current screen, not a raw
+// byte replay), and the sub-agents the coding tool has reported.
+
+import { EventEmitter } from 'node:events';
+import crypto from 'node:crypto';
+import pty from 'node-pty';
+import headless from '@xterm/headless';
+import serializeAddon from '@xterm/addon-serialize';
+
+const { Terminal } = headless;
+const { SerializeAddon } = serializeAddon;
+
+export const OSC_AGENT_CODE = 7777;
+export const OSC_AGENT_PREFIX = 'agent-guild;';
+const AGENT_STATUSES = new Set(['working', 'waiting', 'idle', 'done']);
+const MAX_AGENTS = 64;
+
+export function clampDimension(value, fallback, min, max) {
+  const n = Math.floor(Number(value));
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
+
+export class Session extends EventEmitter {
+  /**
+   * @param {object} opts
+   * @param {string} opts.id
+   * @param {object} opts.provider   provider description (id, vendor, tool, color, ...)
+   * @param {{file: string, args: string[]|string}} opts.spawnSpec
+   * @param {string} opts.cwd
+   * @param {object} opts.env
+   * @param {number} opts.cols
+   * @param {number} opts.rows
+   * @param {string} [opts.name]
+   * @param {string} opts.reportToken
+   * @param {number} [opts.scrollback]
+   * @param {number} [opts.activityIdleMs]
+   * @param {number} [opts.doneAgentLingerMs]
+   * @param {number} [opts.killGraceMs]  time between hang-up and force kill
+   */
+  constructor(opts) {
+    super();
+    this.id = opts.id;
+    this.provider = opts.provider;
+    this.name = opts.name || opts.provider.tool;
+    this.cwd = opts.cwd;
+    this.cols = opts.cols;
+    this.rows = opts.rows;
+    this.reportToken = opts.reportToken;
+    this.scrollback = opts.scrollback ?? 5000;
+    this.activityIdleMs = opts.activityIdleMs ?? 2500;
+    this.doneAgentLingerMs = opts.doneAgentLingerMs ?? 15000;
+    this.killGraceMs = opts.killGraceMs ?? 4000;
+    this.createdAt = new Date().toISOString();
+    this.status = 'running';
+    this.exitCode = null;
+    this.signal = null;
+    this.activity = 'quiet';
+    this.lastOutputAt = null;
+    this.agents = new Map();
+    this.subscribers = new Set();
+    this._activityTimer = null;
+    this._agentTimers = new Map();
+    this._killTimer = null;
+
+    this.term = new Terminal({
+      cols: this.cols,
+      rows: this.rows,
+      scrollback: this.scrollback,
+      allowProposedApi: true,
+    });
+    this.serializer = new SerializeAddon();
+    this.term.loadAddon(this.serializer);
+    this.term.parser.registerOscHandler(OSC_AGENT_CODE, (payload) => {
+      this._handleOscReport(payload);
+      return true;
+    });
+
+    this.disposed = false;
+    try {
+      this.pty = pty.spawn(opts.spawnSpec.file, opts.spawnSpec.args, {
+        name: 'xterm-256color',
+        cols: this.cols,
+        rows: this.rows,
+        cwd: this.cwd,
+        env: opts.env,
+        useConpty: true,
+      });
+    } catch (err) {
+      this.term.dispose();
+      throw err;
+    }
+    this.pid = this.pty.pid;
+    this.pty.onData((data) => this._onData(data));
+    this.pty.onExit(({ exitCode, signal }) => this._onExit(exitCode, signal));
+  }
+
+  // ---- terminal I/O ------------------------------------------------------
+
+  _onData(data) {
+    if (this.disposed) return;
+    this.term.write(data);
+    this._broadcast({ type: 'data', data });
+    this.lastOutputAt = Date.now();
+    if (this.activity !== 'active') {
+      this.activity = 'active';
+      this._changed();
+    }
+    clearTimeout(this._activityTimer);
+    this._activityTimer = setTimeout(() => {
+      this.activity = 'quiet';
+      this._changed();
+    }, this.activityIdleMs);
+    this._activityTimer.unref?.();
+  }
+
+  _onExit(exitCode, signal) {
+    clearTimeout(this._killTimer);
+    if (this.disposed) return;
+    this.status = 'exited';
+    this.exitCode = exitCode ?? null;
+    this.signal = signal || null;
+    this.activity = 'quiet';
+    this.pid = null;
+    clearTimeout(this._activityTimer);
+    clearTimeout(this._killTimer);
+    this._clearAgents();
+    // Let the headless terminal finish parsing before announcing the exit so
+    // any client attaching afterwards still sees the final screen.
+    this.term.write('', () => {
+      this._broadcast({ type: 'exit', exitCode: this.exitCode, signal: this.signal });
+      this._changed();
+      this.emit('exit', this);
+    });
+  }
+
+  _broadcast(message) {
+    for (const sub of this.subscribers) {
+      if (sub.pending) sub.pending.push(message);
+      else sub.send(message);
+    }
+  }
+
+  /**
+   * Attach a client. `send` receives protocol messages. The first message is
+   * always a `snapshot` of the current screen; output produced while the
+   * snapshot is being built is queued and delivered right after it.
+   * Returns a detach function.
+   */
+  attach(send) {
+    const sub = { send, pending: [] };
+    this.subscribers.add(sub);
+    // Everything written to the mirror before this marker is in the snapshot;
+    // everything after it is queued in sub.pending.
+    this.term.write('', () => {
+      if (!this.subscribers.has(sub)) return;
+      send({
+        type: 'snapshot',
+        data: this.serializer.serialize({ scrollback: this.scrollback }),
+        cols: this.term.cols,
+        rows: this.term.rows,
+        session: this.toJSON(),
+      });
+      const queued = sub.pending;
+      sub.pending = null;
+      for (const message of queued) send(message);
+      if (this.status === 'exited' && !queued.some((m) => m.type === 'exit')) {
+        send({ type: 'exit', exitCode: this.exitCode, signal: this.signal });
+      }
+    });
+    this._changed();
+    return () => {
+      if (this.subscribers.delete(sub)) this._changed();
+    };
+  }
+
+  write(data) {
+    if (this.status !== 'running' || typeof data !== 'string' || data.length === 0) return;
+    this.pty.write(data);
+  }
+
+  resize(cols, rows) {
+    const c = clampDimension(cols, this.cols, 2, 1000);
+    const r = clampDimension(rows, this.rows, 1, 500);
+    if (c === this.cols && r === this.rows) return;
+    this.cols = c;
+    this.rows = r;
+    this.term.resize(c, r);
+    if (this.status === 'running') {
+      try { this.pty.resize(c, r); } catch { /* process may be exiting */ }
+    }
+    this._broadcast({ type: 'resize', cols: c, rows: r });
+  }
+
+  /** Ask the process to end (hang-up), then force it after a grace period. */
+  kill({ graceMs = this.killGraceMs } = {}) {
+    if (this.status !== 'running') return;
+    const force = () => { try { this.pty.kill(process.platform === 'win32' ? undefined : 'SIGKILL'); } catch { /* gone */ } };
+    try {
+      if (process.platform === 'win32') this.pty.kill();
+      else this.pty.kill('SIGHUP');
+    } catch { force(); }
+    clearTimeout(this._killTimer);
+    this._killTimer = setTimeout(force, graceMs);
+    this._killTimer.unref?.();
+  }
+
+  /**
+   * Detach everything. A still-running process gets the normal hang-up and
+   * is force-killed after the grace period if it ignores it.
+   */
+  dispose() {
+    if (this.disposed) return;
+    this.kill();
+    this.disposed = true;
+    clearTimeout(this._activityTimer);
+    for (const t of this._agentTimers.values()) clearTimeout(t);
+    this.subscribers.clear();
+    this.term.dispose();
+  }
+
+  rename(name) {
+    const clean = String(name || '').trim().slice(0, 80);
+    if (!clean) return;
+    this.name = clean;
+    this._changed();
+  }
+
+  // ---- sub-agents --------------------------------------------------------
+
+  /**
+   * Record a report about an agent working inside this session. `status`
+   * "done" (or `remove: true`) removes it after a short linger so the UI can
+   * show it finishing. Returns the stored agent or null when removed.
+   */
+  reportAgent(report, source = 'api') {
+    if (!report || typeof report !== 'object') throw badRequest('agent report must be an object');
+    const id = String(report.agentId ?? report.agent ?? report.id ?? '').trim().slice(0, 128);
+    if (!id) throw badRequest('agentId is required');
+    if (this.status !== 'running') throw Object.assign(new Error('session has exited'), { status: 409 });
+
+    if (report.remove === true) {
+      this._removeAgent(id);
+      return null;
+    }
+    const status = report.status === undefined ? 'working' : String(report.status);
+    if (!AGENT_STATUSES.has(status)) {
+      throw badRequest(`status must be one of ${[...AGENT_STATUSES].join(', ')}`);
+    }
+    const now = new Date().toISOString();
+    const existing = this.agents.get(id);
+    if (!existing && this.agents.size >= MAX_AGENTS) throw badRequest(`too many agents (max ${MAX_AGENTS})`);
+    const agent = {
+      id,
+      name: String(report.name ?? existing?.name ?? id).slice(0, 80),
+      kind: String(report.kind ?? existing?.kind ?? 'agent').slice(0, 40),
+      status,
+      detail: report.detail === undefined ? existing?.detail ?? '' : String(report.detail).slice(0, 200),
+      startedAt: existing?.startedAt ?? now,
+      updatedAt: now,
+      source,
+    };
+    this.agents.set(id, agent);
+    clearTimeout(this._agentTimers.get(id));
+    this._agentTimers.delete(id);
+    if (status === 'done') {
+      const timer = setTimeout(() => this._removeAgent(id), this.doneAgentLingerMs);
+      timer.unref?.();
+      this._agentTimers.set(id, timer);
+    }
+    this._changed();
+    return agent;
+  }
+
+  _removeAgent(id) {
+    clearTimeout(this._agentTimers.get(id));
+    this._agentTimers.delete(id);
+    if (this.agents.delete(id)) this._changed();
+  }
+
+  _clearAgents() {
+    for (const t of this._agentTimers.values()) clearTimeout(t);
+    this._agentTimers.clear();
+    this.agents.clear();
+  }
+
+  _handleOscReport(payload) {
+    if (!payload.startsWith(OSC_AGENT_PREFIX)) return;
+    try {
+      this.reportAgent(JSON.parse(payload.slice(OSC_AGENT_PREFIX.length)), 'terminal');
+    } catch (err) {
+      this.emit('warning', `ignored in-band agent report: ${err.message}`);
+    }
+  }
+
+  // ---- state -------------------------------------------------------------
+
+  _changed() {
+    this.emit('changed', this);
+  }
+
+  toJSON() {
+    return {
+      id: this.id,
+      name: this.name,
+      provider: {
+        id: this.provider.id,
+        vendor: this.provider.vendor,
+        tool: this.provider.tool,
+        color: this.provider.color,
+        monogram: this.provider.monogram,
+        iconUrl: this.provider.iconUrl,
+      },
+      cwd: this.cwd,
+      pid: this.pid,
+      status: this.status,
+      exitCode: this.exitCode,
+      signal: this.signal,
+      activity: this.activity,
+      lastOutputAt: this.lastOutputAt ? new Date(this.lastOutputAt).toISOString() : null,
+      createdAt: this.createdAt,
+      cols: this.cols,
+      rows: this.rows,
+      attachedClients: this.subscribers.size,
+      agents: [...this.agents.values()],
+    };
+  }
+}
+
+function badRequest(message) {
+  return Object.assign(new Error(message), { status: 400 });
+}
+
+export function newId(bytes = 6) {
+  return crypto.randomBytes(bytes).toString('hex');
+}
