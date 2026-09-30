@@ -16,8 +16,11 @@
       <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="currentColor"/><path d="M9 22l7-12 7 12" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
       <h1>Agent Guild</h1>
     </div>
-    <div id="connection" class="connection" role="status" aria-live="polite">
-      <span class="dot"></span><span class="label">Connecting…</span>
+    <div class="topbar-end">
+      <div id="connection" class="connection" role="status" aria-live="polite">
+        <span class="dot"></span><span class="label">Connecting…</span>
+      </div>
+      <button id="stop-manager" class="btn danger stop-manager" type="button" hidden title="Stop the session manager. This ends every session.">Stop manager</button>
     </div>
   </header>
 
@@ -52,6 +55,14 @@
       <button type="submit" class="btn primary">Connect</button>
     </form>
     <p id="auth-error" class="error" role="alert"></p>
+  </section>
+
+  <section id="stopped" class="auth notice" hidden aria-live="polite">
+    <h2 id="stopped-title">Stopping the session manager…</h2>
+    <p id="stopped-text">Ending every session. This can take a few seconds.</p>
+    <p>To start again, run this command or double-click the launcher:</p>
+    <pre>agent-guild open</pre>
+    <p>This page reconnects by itself when the manager is back.</p>
   </section>
 
   <div id="terminal-panel" class="terminal-panel" hidden role="dialog" aria-modal="false" aria-labelledby="panel-title">

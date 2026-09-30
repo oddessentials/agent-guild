@@ -631,6 +631,52 @@ test('stop ends a running session', async () => {
   await call('DELETE', `/sessions/${session.id}`);
 });
 
+test('shutdown is refused while sessions are running unless forced', async () => {
+  const session = await createFake();
+  const refused = await call('POST', '/shutdown');
+  assert.equal(refused.status, 409);
+  assert.equal(refused.body.error.code, 'sessions_running');
+  assert.equal(refused.body.error.running, ctx.manager.runningCount());
+  assert.ok(refused.body.error.running >= 1);
+  assert.equal((await fetch(`${base}/api/v1/health`)).status, 200, 'the manager keeps running');
+  assert.equal((await call('GET', `/sessions/${session.id}`)).body.session.status, 'running');
+  await call('DELETE', `/sessions/${session.id}`);
+});
+
+test('no session can start once a shutdown has been accepted', async () => {
+  // A second API server over the same manager, whose shutdown callback does
+  // nothing, so the accepted request can be observed without exiting.
+  const { createManagerServer } = await import('../src/manager/server.mjs');
+  const spare = createManagerServer({
+    manager: ctx.manager,
+    registry: ctx.registry,
+    usage: { all: async () => [] },
+    token,
+    webDir: path.join(here, '..', 'web'),
+    onShutdownRequest: () => {},
+  });
+  await spare.listen();
+  const spareCall = (method, route, body) => fetch(`${spare.url}/api/v1${route}`, {
+    method,
+    headers: { Authorization: `Bearer ${token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  }).then(async (res) => ({ status: res.status, body: await res.json() }));
+  try {
+    const accepted = await spareCall('POST', '/shutdown', { force: true });
+    assert.equal(accepted.status, 202);
+    assert.equal(ctx.manager.closing, true, 'the guard is set as soon as the shutdown is accepted');
+    // Through either server: the guard lives in the manager.
+    const { status, body } = await call('POST', '/sessions', { providerId: 'fake', cwd: home });
+    assert.equal(status, 503);
+    assert.equal(body.error.code, 'manager_stopping');
+    assert.equal((await call('POST', '/providers/missing/install')).status, 503);
+    assert.equal((await spareCall('POST', '/sessions', { providerId: 'fake', cwd: home })).status, 503);
+  } finally {
+    ctx.manager.closing = false;
+    await spare.close();
+  }
+});
+
 test('a tool that ignores the hang-up is force-killed', { skip: process.platform === 'win32' }, async () => {
   const session = await createFake();
   const client = terminal(session.id);

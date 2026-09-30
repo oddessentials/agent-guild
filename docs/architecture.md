@@ -53,7 +53,7 @@
 | --- | --- |
 | Close or reload the page | None. Reopening reconnects and redraws. |
 | An unexpected error inside the manager | Logged to `manager.log`; sessions keep running. |
-| `agent-guild stop`, or quitting the manager | All sessions end. |
+| `agent-guild stop`, the page's **Stop manager** button, or quitting the manager | All sessions end. The button asks first while any session is running; the manager enforces that for every client. |
 | Computer restart or logout | All sessions end. Nothing is restored. |
 
 ## Toward a game interface

@@ -142,11 +142,16 @@ async function cmdStop() {
     console.log('Session manager is not running.');
     return;
   }
+  // `stop` is documented as ending every session, so it does not ask; the
+  // web page's Stop manager button is the one that confirms first.
   const res = await fetch(`${url}/api/v1/shutdown`, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${loadOrCreateToken()}` },
+    headers: { Authorization: `Bearer ${loadOrCreateToken()}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ force: true }),
   });
   if (!res.ok) throw new Error(`stop failed: HTTP ${res.status}`);
+  const { running = 0 } = await res.json().catch(() => ({}));
+  if (running > 0) console.log(`Ending ${running} running session(s).`);
   for (let i = 0; i < 40; i++) {
     await new Promise((r) => setTimeout(r, 150));
     if (!(await health(url, 300))) {
