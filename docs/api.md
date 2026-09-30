@@ -68,6 +68,8 @@ Errors use one shape:
   "iconUrl": null,
   "install": "npm install -g @anthropic-ai/claude-code",
   "docs": "https://docs.anthropic.com/en/docs/claude-code",
+  "usageUrl": "https://claude.ai/settings/usage",
+  "billingUrl": "https://claude.ai/settings/billing",
   "available": true,
   "resolvedPath": "/usr/local/bin/claude"
 }
@@ -90,6 +92,9 @@ skips the lookup). Both are null until the first check finishes; a
 
 `usageSource` is `claude`, `codex`, `gemini`, `command` or null, and says
 whether `GET /usage` reports the provider.
+`usageUrl` and `billingUrl` are `https://` links to the vendor's usage and
+billing pages, or null when none is configured. A usage snapshot's `plan` is
+the subscription tier.
 
 ### Usage
 

@@ -51,7 +51,17 @@ function normalizeUsage(usage) {
   return null;
 }
 
-function normalize(raw, platform) {
+function httpsUrl(value, field, id, warnings) {
+  if (value === undefined || value === null || value === '') return null;
+  try {
+    const url = new URL(String(value));
+    if (url.protocol === 'https:') return url.href;
+  } catch { /* reported below */ }
+  warnings.push(`provider "${id}": ignored ${field} ${JSON.stringify(value)}; it must be an https:// URL`);
+  return null;
+}
+
+function normalize(raw, platform, warnings) {
   const merged = { ...raw, ...(raw[platform] || {}) };
   for (const key of PLATFORM_KEYS) delete merged[key];
   return {
@@ -71,6 +81,8 @@ function normalize(raw, platform) {
     icon: merged.icon ? String(merged.icon) : null,
     install: String(merged.install || ''),
     docs: String(merged.docs || ''),
+    usageUrl: httpsUrl(merged.usageUrl, 'usageUrl', merged.id, warnings),
+    billingUrl: httpsUrl(merged.billingUrl, 'billingUrl', merged.id, warnings),
     enabled: merged.enabled !== false,
   };
 }
@@ -109,7 +121,7 @@ export function loadProviders({ userFile, platform = process.platform } = {}) {
     }
   }
 
-  const providers = order.map((id) => normalize(byId.get(id), platform)).filter((p) => p.enabled);
+  const providers = order.map((id) => normalize(byId.get(id), platform, warnings)).filter((p) => p.enabled);
   return { providers, warnings };
 }
 
@@ -272,6 +284,8 @@ export class ProviderRegistry extends EventEmitter {
       iconUrl: this.iconUrl(provider),
       install: provider.install,
       docs: provider.docs,
+      usageUrl: provider.usageUrl,
+      billingUrl: provider.billingUrl,
       available: Boolean(resolvedPath),
       resolvedPath,
     };
