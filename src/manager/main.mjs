@@ -87,6 +87,11 @@ function isEntryPoint() {
   }
 }
 if (isEntryPoint()) {
+  // The manager exists to keep sessions alive. An unexpected error in one
+  // request or session must not take every other session down with it, so
+  // log it and keep serving.
+  process.on('uncaughtException', (err) => console.error('[manager] unexpected error:', err));
+  process.on('unhandledRejection', (err) => console.error('[manager] unhandled rejection:', err));
   startManager().then(({ shutdown }) => {
     for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
       process.on(sig, () => shutdown(sig).then(() => process.exit(0)));

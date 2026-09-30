@@ -131,7 +131,7 @@ All paths are under `/api/v1`.
 | GET | `/sessions` | | `{ sessions: Session[] }` |
 | POST | `/sessions` | `{ providerId, cwd?, cols?, rows?, name?, args? }` | `201 { session }` |
 | GET | `/sessions/:id` | | `{ session }` |
-| PATCH | `/sessions/:id` | `{ name }` | `{ session }` |
+| PATCH | `/sessions/:id` | `{ name }` | `{ session }`. `name` must be a non-empty string; it is trimmed to 80 characters. |
 | POST | `/sessions/:id/stop` | | Ends the process. The session stays listed as exited. |
 | DELETE | `/sessions/:id` | | Ends the process if needed and removes the session. |
 | POST | `/sessions/:id/agents` | Agent report | `{ agent }`, or `{ agent: null }` after a removal. |
@@ -143,7 +143,11 @@ arguments.
 
 `POST /sessions/:id/agents` also accepts the per-session report token instead
 of the API token, in an `X-Agent-Guild-Report-Token` header. The manager gives
-that token only to the processes inside that session.
+that token only to the processes inside that session. Without the API token,
+an unknown session id and a wrong report token both return 401.
+
+Request bodies are limited to 64 KB (413 above that). WebSocket messages are
+limited to 1 MB.
 
 ## WebSockets
 
@@ -183,6 +187,21 @@ Client to server:
 | --- | --- |
 | `{ type: "input", data }` | Keystrokes or pasted text, exactly as a terminal would send them. |
 | `{ type: "resize", cols, rows }` | Resize the terminal. The last client to resize wins. |
+
+### Terminal queries: clients must not answer
+
+Programs ask the terminal questions by writing escape sequences, for
+example "where is the cursor?" (`CSI 6 n`). The manager answers these once
+per session from its own copy of the screen, whether zero or many clients
+are attached. A client that renders the terminal must therefore not answer
+them itself, or the program receives duplicate replies as keyboard input.
+
+The manager answers cursor position and status reports (`CSI n`), device
+attributes (`CSI c`, `CSI > c`, `CSI = c`), mode reports (`CSI $ p`,
+`CSI ? $ p`), setting reports (`DCS $ q`) and colour queries for OSC 10, 11
+and 12. It reports the web page's theme colours: foreground `#e6e9ef`,
+background `#0f1115`. A client built on xterm.js can copy
+`suppressQueryReplies` from `web/app.js`.
 
 Close codes: `4404` means the session does not exist, `4410` means it was
 removed, and `4008` means the client fell too far behind. After a `4008` or a

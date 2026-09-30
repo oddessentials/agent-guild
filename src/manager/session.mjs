@@ -16,6 +16,22 @@ const { SerializeAddon } = serializeAddon;
 export const OSC_AGENT_CODE = 7777;
 export const OSC_AGENT_PREFIX = 'agent-guild;';
 const AGENT_STATUSES = new Set(['working', 'waiting', 'idle', 'done']);
+
+/**
+ * Colours reported to programs that query them (OSC 10/11/12), matching the
+ * web page's terminal theme. Tools use these to choose light or dark output.
+ */
+export const REPORTED_COLORS = { 10: '#e6e9ef', 11: '#0f1115', 12: '#e6e9ef' };
+
+function oscColor(hex) {
+  const [r, g, b] = [1, 3, 5].map((i) => hex.slice(i, i + 2));
+  return `rgb:${r}${r}/${g}${g}/${b}${b}`;
+}
+
+/** Clean a user-supplied session name: a trimmed string of at most 80 chars. */
+export function cleanName(name) {
+  return typeof name === 'string' ? name.trim().slice(0, 80) : '';
+}
 const MAX_AGENTS = 64;
 
 export function clampDimension(value, fallback, min, max) {
@@ -45,7 +61,7 @@ export class Session extends EventEmitter {
     super();
     this.id = opts.id;
     this.provider = opts.provider;
-    this.name = opts.name || opts.provider.tool;
+    this.name = cleanName(opts.name) || opts.provider.tool;
     this.cwd = opts.cwd;
     this.cols = opts.cols;
     this.rows = opts.rows;
@@ -80,6 +96,17 @@ export class Session extends EventEmitter {
       this._handleOscReport(payload);
       return true;
     });
+    // The mirror is the terminal of record: it answers the program's queries
+    // (cursor position, device attributes, modes, colours) exactly once,
+    // whether zero or several clients are attached. Clients must not answer.
+    this.term.onData((reply) => this._reply(reply));
+    for (const code of Object.keys(REPORTED_COLORS)) {
+      this.term.parser.registerOscHandler(Number(code), (payload) => {
+        if (payload !== '?') return false;
+        this._reply(`\x1b]${code};${oscColor(REPORTED_COLORS[code])}\x1b\\`);
+        return true;
+      });
+    }
 
     this.disposed = false;
     ensurePtyReady();
@@ -163,7 +190,7 @@ export class Session extends EventEmitter {
       if (!this.subscribers.has(sub)) return;
       send({
         type: 'snapshot',
-        data: this.serializer.serialize({ scrollback: this.scrollback }),
+        data: this._serializeScreen(),
         cols: this.term.cols,
         rows: this.term.rows,
         session: this.toJSON(),
@@ -181,9 +208,28 @@ export class Session extends EventEmitter {
     };
   }
 
+  /**
+   * The current screen as a VT stream. The serialize addon restores the
+   * buffers and most modes; cursor visibility and the mouse encoding are
+   * added here because it omits them.
+   */
+  _serializeScreen() {
+    let data = this.serializer.serialize({ scrollback: this.scrollback });
+    const core = this.term._core;
+    if (core?.coreService?.isCursorHidden) data += '\x1b[?25l';
+    const encoding = core?.coreMouseService?.activeEncoding;
+    if (encoding === 'SGR') data += '\x1b[?1006h';
+    else if (encoding === 'SGR_PIXELS') data += '\x1b[?1016h';
+    return data;
+  }
+
   write(data) {
-    if (this.status !== 'running' || typeof data !== 'string' || data.length === 0) return;
-    this.pty.write(data);
+    if (this.disposed || this.status !== 'running' || typeof data !== 'string' || data.length === 0) return;
+    try { this.pty.write(data); } catch { /* process is exiting */ }
+  }
+
+  _reply(data) {
+    this.write(data);
   }
 
   resize(cols, rows) {
@@ -244,7 +290,7 @@ export class Session extends EventEmitter {
   }
 
   rename(name) {
-    const clean = String(name || '').trim().slice(0, 80);
+    const clean = cleanName(name);
     if (!clean) return;
     this.name = clean;
     this._changed();

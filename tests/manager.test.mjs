@@ -332,6 +332,91 @@ test('a tool that ignores the hang-up is force-killed', { skip: process.platform
   await waitFor(() => !alive(), { timeout: 5000, label: 'force kill' });
 });
 
+test('the manager answers terminal queries exactly once, with or without clients', async () => {
+  const session = await createFake();
+  // Two attached clients: neither replies, and the program still gets one answer.
+  const a = terminal(session.id);
+  const b = terminal(session.id);
+  await Promise.all([a.opened, b.opened]);
+  a.input('query cpr');
+  await waitForText(a, session.id, 'REPLIES:', 'cpr replies with clients');
+  assert.match(stripAnsi(a.output), /REPLIES:1:/);
+  await Promise.all([a.close(), b.close()]);
+
+  // No client at all: the manager still answers.
+  const managed = ctx.manager.get(session.id);
+  managed.write('query cpr\r');
+  await waitFor(() => (screenText(session.id).match(/REPLIES:/g) || []).length >= 2, { label: 'cpr replies without clients' });
+  assert.match(screenText(session.id), /REPLIES:1:[^\n]*\n[^]*REPLIES:1:/);
+  await call('DELETE', `/sessions/${session.id}`);
+});
+
+test('background colour queries get the page theme colour', async () => {
+  const session = await createFake();
+  const client = terminal(session.id);
+  await client.opened;
+  client.input('query bg');
+  await waitForText(client, session.id, 'REPLIES:', 'bg replies');
+  const text = stripAnsi(client.output);
+  assert.match(text, /REPLIES:1:/);
+  if (process.platform !== 'win32') assert.ok(text.includes('rgb:0f0f/1111/1515'), text.slice(-200));
+  await client.close();
+  await call('DELETE', `/sessions/${session.id}`);
+});
+
+test('snapshots restore a hidden cursor and SGR mouse reporting', async () => {
+  const session = await createFake();
+  const first = terminal(session.id);
+  await first.opened;
+  first.input('modes');
+  await waitForText(first, session.id, 'MODES-SET', 'modes set');
+  await first.close();
+  const second = terminal(session.id);
+  await second.opened;
+  const snapshot = await waitFor(() => second.messages.find((m) => m.type === 'snapshot'), { label: 'snapshot' });
+  assert.ok(snapshot.data.includes('\x1b[?25l'), 'cursor stays hidden');
+  assert.ok(snapshot.data.includes('\x1b[?1006h'), 'SGR mouse encoding is restored');
+  await second.close();
+  await call('DELETE', `/sessions/${session.id}`);
+});
+
+test('input that arrives after removal is ignored safely', async () => {
+  const session = await createFake();
+  const managed = ctx.manager.get(session.id);
+  await call('DELETE', `/sessions/${session.id}`);
+  managed.write('echo too late\r');
+  managed.resize(50, 10);
+  const health = await fetch(`${base}/api/v1/health`);
+  assert.equal(health.status, 200);
+});
+
+test('request validation: names, body size and report authentication', async () => {
+  const session = await createFake({ name: { not: 'a string' } });
+  assert.equal(session.name, 'Fake Tool', 'a non-string name falls back to the tool name');
+  const long = await createFake({ name: 'x'.repeat(200) });
+  assert.equal(long.name.length, 80);
+
+  assert.equal((await call('PATCH', `/sessions/${session.id}`, { name: 42 })).status, 400);
+  assert.equal((await call('PATCH', `/sessions/${session.id}`, { name: '   ' })).status, 400);
+
+  const big = await fetch(`${base}/api/v1/sessions`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ providerId: 'fake', pad: 'x'.repeat(100 * 1024) }),
+  });
+  assert.equal(big.status, 413);
+
+  // Without the API token, a real and a made-up session id are indistinguishable.
+  const noAuth = { Authorization: '', 'X-Agent-Guild-Report-Token': 'wrong' };
+  assert.equal((await call('POST', `/sessions/${session.id}/agents`, { agentId: 'a' }, noAuth)).status, 401);
+  assert.equal((await call('POST', '/sessions/000000000000/agents', { agentId: 'a' }, noAuth)).status, 401);
+  assert.equal((await call('POST', '/sessions/000000000000/agents', { agentId: 'a' })).status, 404);
+
+  assert.equal((await fetch(`${base}/%00`)).status, 404);
+  await call('DELETE', `/sessions/${session.id}`);
+  await call('DELETE', `/sessions/${long.id}`);
+});
+
 test('several sessions run concurrently', async () => {
   const sessions = await Promise.all([createFake(), createFake(), createFake()]);
   const clients = sessions.map((s) => terminal(s.id));

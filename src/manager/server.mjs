@@ -68,16 +68,20 @@ function readJsonBody(req) {
   return new Promise((resolve, reject) => {
     let size = 0;
     const chunks = [];
+    let tooLarge = false;
     req.on('data', (chunk) => {
+      if (tooLarge) return; // drain the rest so the 413 response can be read
       size += chunk.length;
       if (size > MAX_BODY) {
+        tooLarge = true;
+        chunks.length = 0;
         reject(new HttpError(413, 'request body too large', 'too_large'));
-        req.destroy();
         return;
       }
       chunks.push(chunk);
     });
     req.on('end', () => {
+      if (tooLarge) return;
       if (chunks.length === 0) return resolve({});
       try {
         const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'));
@@ -159,6 +163,7 @@ export function createManagerServer({
     } catch {
       throw new HttpError(400, 'malformed path', 'bad_path');
     }
+    if (rel.includes('\0')) throw new HttpError(404, 'not found', 'not_found');
     const file = path.resolve(webDir, rel);
     if (file !== webDir && !file.startsWith(webDir + path.sep)) {
       throw new HttpError(404, 'not found', 'not_found');
@@ -227,7 +232,10 @@ export function createManagerServer({
       if (!action && method === 'PATCH') {
         const body = await readJsonBody(req);
         const session = manager.get(id);
-        if (body.name !== undefined) session.rename(body.name);
+        if (typeof body.name !== 'string' || !body.name.trim()) {
+          throw new HttpError(400, 'name must be a non-empty string', 'bad_name');
+        }
+        session.rename(body.name);
         return sendJson(res, 200, { session: session.toJSON() });
       }
       if (!action && method === 'DELETE') {

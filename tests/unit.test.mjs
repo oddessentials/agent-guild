@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { resolveCommand, buildSpawnSpec, quoteForCmd } from '../src/manager/command-resolver.mjs';
-import { mergePathLists } from '../src/manager/shell-env.mjs';
+import { mergePathLists, parsePathFromEnvOutput } from '../src/manager/shell-env.mjs';
+import { mergeEnv } from '../src/manager/session-manager.mjs';
 import { loadProviders, defaultShell } from '../src/manager/providers.mjs';
 import { claudeHookToReport } from '../src/report/claude-hook.mjs';
 import { ensurePtyReady, spawnHelperCandidates } from '../src/manager/pty-setup.mjs';
@@ -153,4 +154,30 @@ test('ensurePtyReady restores the macOS spawn-helper executable bit', { skip: pr
     Object.defineProperty(process, 'arch', { value: original });
   }
   assert.equal(fs.statSync(helper).mode & 0o777, 0o755);
+});
+
+test('parsePathFromEnvOutput reads PATH from env output of any shell', () => {
+  const START = '__AGENT_GUILD_PATH_START__';
+  const END = '__AGENT_GUILD_PATH_END__';
+  // Interactive shells may print banners before the markers.
+  const out = `Welcome to fish\n${START}HOME=/Users/a\nPATH=/opt/homebrew/bin:/usr/bin\nSHELL=/opt/homebrew/bin/fish\n${END}`;
+  assert.equal(parsePathFromEnvOutput(out), '/opt/homebrew/bin:/usr/bin');
+  assert.equal(parsePathFromEnvOutput(`${START}PATH=/a:/b${END}`), '/a:/b');
+  assert.equal(parsePathFromEnvOutput('no markers'), null);
+  assert.equal(parsePathFromEnvOutput(`${START}HOME=/x\n${END}`), null);
+});
+
+test('mergeEnv replaces variables case-insensitively on Windows', () => {
+  const win = mergeEnv([{ Path: 'C:\\a', HOME: 'x' }, { PATH: 'C:\\b', N: 1, B: true, U: undefined }], 'win32');
+  assert.deepEqual(win, { HOME: 'x', PATH: 'C:\\b', N: '1', B: 'true' });
+  const posix = mergeEnv([{ Path: '/a' }, { PATH: '/b' }], 'linux');
+  assert.deepEqual(posix, { Path: '/a', PATH: '/b' });
+});
+
+test('provider env values are normalised to strings', () => {
+  const dir = tempDir();
+  const userFile = path.join(dir, 'providers.json');
+  fs.writeFileSync(userFile, JSON.stringify({ providers: [{ id: 'anthropic', env: { A: 1, B: true, C: { x: 1 }, D: 'd' } }] }));
+  const { providers } = loadProviders({ userFile, platform: 'linux' });
+  assert.deepEqual(providers[0].env, { A: '1', B: 'true', D: 'd' });
 });

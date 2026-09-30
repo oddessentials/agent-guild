@@ -21,7 +21,14 @@
   terminal that mirrors its screen. When a client attaches, the manager
   serializes that mirror into a snapshot, so the client sees the current
   screen even for full-screen TUIs. It does not replay a raw byte log, which
-  would break on truncation.
+  would break on truncation. The mirror is also the terminal of record: it
+  answers the program's terminal queries exactly once, so tools that ask for
+  the cursor position work with no page open and get no duplicate replies
+  with several pages open.
+* **Stopping a session.** On macOS and Linux the process gets a hang-up
+  signal, then a forced kill after a grace period. On Windows the process
+  tree is ended at once, as node-pty's own Windows kill does; there is no
+  gentler signal for console programs there.
 * **Provider registry** (`providers.mjs`). Built-in providers plus the user's
   `providers.json`. Finds each tool on PATH. On macOS and Linux it first reads
   the login shell's PATH, because apps started from Finder or the Dock do not
@@ -38,6 +45,7 @@
 | Event | Effect on sessions |
 | --- | --- |
 | Close or reload the page | None. Reopening reconnects and redraws. |
+| An unexpected error inside the manager | Logged to `manager.log`; sessions keep running. |
 | `agent-guild stop`, or quitting the manager | All sessions end. |
 | Computer restart or logout | All sessions end. Nothing is restored. |
 

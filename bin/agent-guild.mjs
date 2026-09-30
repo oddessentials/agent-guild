@@ -79,11 +79,21 @@ function tailLog(lines = 15) {
   }
 }
 
+const MAX_LOG_BYTES = 5 * 1024 * 1024;
+
+/** Keep one previous log so the file cannot grow without bound. */
+function rotateLog() {
+  try {
+    if (fs.statSync(paths.log).size > MAX_LOG_BYTES) fs.renameSync(paths.log, `${paths.log}.1`);
+  } catch { /* no log yet */ }
+}
+
 async function ensureManager() {
   const running = await health(baseUrl());
   if (running) return { url: baseUrl(), started: false };
 
   ensureDataDir();
+  rotateLog();
   const log = fs.openSync(paths.log, 'a');
   fs.writeSync(log, `\n--- starting manager ${new Date().toISOString()} ---\n`);
   const child = spawn(process.execPath, [managerEntry], {
@@ -104,6 +114,9 @@ async function ensureManager() {
     const url = readRuntimeFile()?.pid === child.pid ? readRuntimeFile().url : expectedUrl;
     if (await health(url, 500)) return { url, started: true };
   }
+  // Two launchers started together both try to start a manager; the one
+  // that lost the race should use the winner rather than report a failure.
+  if (await health(expectedUrl, 1000)) return { url: expectedUrl, started: false };
   const details = tailLog();
   throw new Error(`the session manager did not start.${details ? `\n\nRecent log (${paths.log}):\n${details}` : ''}`);
 }
@@ -177,6 +190,8 @@ async function main() {
     case 'open': return cmdOpen({ browser: !flags.has('--no-browser') });
     case 'start': {
       await import('../src/manager/main.mjs').then(async (m) => {
+        process.on('uncaughtException', (err) => console.error('[manager] unexpected error:', err));
+        process.on('unhandledRejection', (err) => console.error('[manager] unhandled rejection:', err));
         const { shutdown } = await m.startManager();
         console.log(`Open: ${pageUrl(readRuntimeFile()?.url ?? baseUrl(), loadOrCreateToken())}`);
         for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {

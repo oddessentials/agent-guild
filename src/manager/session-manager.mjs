@@ -14,6 +14,28 @@ function httpError(status, message, code) {
   return Object.assign(new Error(message), { status, code });
 }
 
+/**
+ * Layer environment objects. On Windows, variable names are
+ * case-insensitive, so a later "PATH" must replace an inherited "Path"
+ * rather than sit beside it.
+ */
+export function mergeEnv(layers, platform = process.platform) {
+  const out = {};
+  const keyFor = new Map();
+  for (const layer of layers) {
+    for (const [key, value] of Object.entries(layer || {})) {
+      if (value === undefined || value === null) continue;
+      if (platform === 'win32') {
+        const existing = keyFor.get(key.toUpperCase());
+        if (existing !== undefined && existing !== key) delete out[existing];
+        keyFor.set(key.toUpperCase(), key);
+      }
+      out[key] = String(value);
+    }
+  }
+  return out;
+}
+
 export class SessionManager extends EventEmitter {
   /**
    * @param {object} opts
@@ -69,16 +91,14 @@ export class SessionManager extends EventEmitter {
     const id = newId();
     const reportToken = crypto.randomBytes(16).toString('hex');
 
-    const env = {
-      ...this.baseEnv,
-      ...provider.env,
+    const env = mergeEnv([this.baseEnv, provider.env, {
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
       AGENT_GUILD_SESSION_ID: id,
       AGENT_GUILD_PROVIDER: provider.id,
       AGENT_GUILD_URL: this.getApiUrl(),
       AGENT_GUILD_REPORT_TOKEN: reportToken,
-    };
+    }]);
 
     let session;
     try {
@@ -128,10 +148,13 @@ export class SessionManager extends EventEmitter {
 
   /** Accepts either the session's own report token or the API token. */
   reportAgent(id, report, { reportToken, trusted = false } = {}) {
-    const session = this.get(id);
-    if (!trusted && !timingSafeEqualString(reportToken, session.reportToken)) {
+    const session = this.sessions.get(id);
+    // Without the API token, an unknown session and a wrong token look the
+    // same, so the endpoint does not reveal which session ids exist.
+    if (!trusted && !(session && timingSafeEqualString(reportToken, session.reportToken))) {
       throw httpError(401, 'invalid report token', 'unauthorized');
     }
+    if (!session) throw httpError(404, `no session with id "${id}"`, 'not_found');
     return session.reportAgent(report, 'api');
   }
 

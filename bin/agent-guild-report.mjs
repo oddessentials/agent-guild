@@ -22,7 +22,10 @@ function parseArgs(argv) {
     if (a === '--remove') out.remove = true;
     else if (a === '--claude-hook') out.claudeHook = true;
     else if (a === '-h' || a === '--help') out.help = true;
-    else if (a.startsWith('--')) out[a.slice(2)] = argv[++i];
+    else if (a.startsWith('--') && a.includes('=')) {
+      const eq = a.indexOf('=');
+      out[a.slice(2, eq)] = a.slice(eq + 1);
+    } else if (a.startsWith('--')) out[a.slice(2)] = argv[++i];
     else out.positional.push(a);
   }
   return out;

@@ -59,7 +59,7 @@ function paintProviderIcon(el, provider) {
   el.style.setProperty('--c', provider.color || '#64748b');
   if (provider.iconUrl) {
     el.classList.add('has-image');
-    el.style.backgroundImage = `url("${encodeURI(provider.iconUrl)}")`;
+    el.style.backgroundImage = `url(${JSON.stringify(provider.iconUrl)})`;
     el.textContent = '';
   } else {
     el.classList.remove('has-image');
@@ -200,12 +200,14 @@ function renderSessions() {
   for (const [id, node] of cards) {
     if (!state.sessions.has(id)) { node.remove(); cards.delete(id); }
   }
-  for (const s of sessions) {
+  sessions.forEach((s, index) => {
     let node = cards.get(s.id);
     if (!node) { node = buildCard(s); cards.set(s.id, node); }
     updateCard(node, s);
-    grid.appendChild(node); // keeps sort order; moving an existing node is cheap
-  }
+    // Move a card only when it is out of place: re-inserting a node drops
+    // keyboard focus and can swallow a click that is in progress.
+    if (grid.children[index] !== node) grid.insertBefore(node, grid.children[index] || null);
+  });
   const running = sessions.filter((s) => s.status === 'running').length;
   $('session-count').textContent = sessions.length ? `· ${running} running` : '';
   $('empty').hidden = sessions.length > 0;
@@ -256,6 +258,31 @@ const TERMINAL_THEME = {
   selectionBackground: '#3a4050',
 };
 
+/**
+ * The session manager answers terminal queries (cursor position, device
+ * attributes, mode and colour reports) once for every session. If each
+ * attached page answered too, replies would be duplicated into the
+ * program's input. Swallow the queries here before xterm.js replies.
+ */
+function suppressQueryReplies(term) {
+  const swallow = () => true;
+  const csi = [
+    { final: 'n' }, // DSR, including cursor position
+    { prefix: '?', final: 'n' },
+    { final: 'c' }, // primary device attributes
+    { prefix: '>', final: 'c' }, // secondary device attributes
+    { prefix: '=', final: 'c' }, // tertiary device attributes
+    { intermediates: '$', final: 'p' }, // DECRQM (ANSI modes)
+    { prefix: '?', intermediates: '$', final: 'p' }, // DECRQM (private modes)
+    { prefix: '>', final: 'q' }, // XTVERSION
+  ];
+  for (const id of csi) term.parser.registerCsiHandler(id, swallow);
+  term.parser.registerDcsHandler({ intermediates: '$', final: 'q' }, swallow); // DECRQSS
+  for (const code of [4, 10, 11, 12]) {
+    term.parser.registerOscHandler(code, (data) => data.includes('?'));
+  }
+}
+
 class TerminalView {
   constructor(sessionId) {
     this.id = sessionId;
@@ -272,6 +299,7 @@ class TerminalView {
     this.term.loadAddon(this.fit);
     this.term.loadAddon(new window.WebLinksAddon.WebLinksAddon((_e, uri) => window.open(uri, '_blank', 'noopener,noreferrer')));
     this.term.attachCustomKeyEventHandler((e) => this.handleKey(e));
+    suppressQueryReplies(this.term);
     this.term.onData((data) => this.send({ type: 'input', data }));
     this.opened = false;
     this.disposed = false;

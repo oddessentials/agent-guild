@@ -24,6 +24,16 @@ function readJson(file) {
   return JSON.parse(fs.readFileSync(file, 'utf8'));
 }
 
+/** Keep string, number and boolean values as strings; drop anything else. */
+function normalizeEnv(env) {
+  if (!env || typeof env !== 'object' || Array.isArray(env)) return {};
+  const out = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (['string', 'number', 'boolean'].includes(typeof value)) out[key] = String(value);
+  }
+  return out;
+}
+
 function normalize(raw, platform) {
   const merged = { ...raw, ...(raw[platform] || {}) };
   for (const key of PLATFORM_KEYS) delete merged[key];
@@ -33,7 +43,7 @@ function normalize(raw, platform) {
     tool: String(merged.tool || merged.command || ''),
     command: String(merged.command || ''),
     args: Array.isArray(merged.args) ? merged.args.map(String) : [],
-    env: merged.env && typeof merged.env === 'object' ? { ...merged.env } : {},
+    env: normalizeEnv(merged.env),
     color: String(merged.color || '#64748B'),
     monogram: String(merged.monogram || String(merged.vendor || merged.id).charAt(0)).slice(0, 2),
     icon: merged.icon ? String(merged.icon) : null,
