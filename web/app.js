@@ -332,7 +332,9 @@ function buildCard(session) {
 }
 
 function sessionLevel(s) {
-  const end = s.status === 'exited' ? Date.parse(s.lastOutputAt ?? s.createdAt) : Date.now();
+  const end = s.status === 'exited'
+    ? Date.parse(s.exitedAt ?? s.lastOutputAt ?? s.createdAt)
+    : Date.now();
   const hours = (end - Date.parse(s.createdAt)) / 3_600_000;
   return Number.isFinite(hours) ? Math.max(0, Math.floor(hours)) + 1 : 1;
 }

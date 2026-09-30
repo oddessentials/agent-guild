@@ -77,6 +77,7 @@ export class Session extends EventEmitter {
     this.doneAgentLingerMs = opts.doneAgentLingerMs ?? 15000;
     this.killGraceMs = opts.killGraceMs ?? 4000;
     this.createdAt = new Date().toISOString();
+    this.exitedAt = null;
     this.status = 'running';
     this.exitCode = null;
     this.signal = null;
@@ -175,6 +176,7 @@ export class Session extends EventEmitter {
     clearTimeout(this._killTimer);
     this._resolveExited();
     if (this.disposed) return;
+    this.exitedAt ??= new Date().toISOString();
     this.status = 'exited';
     this.exitCode = exitCode ?? null;
     this.signal = signal || null;
@@ -510,6 +512,7 @@ export class Session extends EventEmitter {
       activity: this.activity,
       lastOutputAt: this.lastOutputAt ? new Date(this.lastOutputAt).toISOString() : null,
       createdAt: this.createdAt,
+      exitedAt: this.exitedAt,
       cols: this.cols,
       rows: this.rows,
       attachedClients: this.subscribers.size,

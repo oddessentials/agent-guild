@@ -137,6 +137,7 @@ Snapshots are cached for a minute.
   "activity": "active",
   "lastOutputAt": "2026-09-30T03:12:01.120Z",
   "createdAt": "2026-09-30T03:10:44.001Z",
+  "exitedAt": null,
   "cols": 120,
   "rows": 32,
   "attachedClients": 1,
@@ -147,6 +148,10 @@ Snapshots are cached for a minute.
 
 * `status` is `running` or `exited`. Exited sessions stay listed, with their
   final screen, until a client removes them.
+* `exitedAt` is null while running, then an ISO 8601 timestamp recorded when
+  the manager observes the process exit. It stays fixed and is included in
+  session responses, updates, and reconnect snapshots. Use it with `createdAt`
+  for completed session duration; `lastOutputAt` only records terminal output.
 * `pid` is null while the process is still starting (Windows connects the
   console asynchronously) and after it exits. A `session.updated` event
   carries it with the first output.
