@@ -98,6 +98,26 @@ class Client {
   close() { this.ws.close(); return this.closed; }
 }
 
+// ConPTY on Windows repaints with its own escape sequences, so compare text only.
+const stripAnsi = (text) => text.replace(/\x1b\[[0-?]*[ -\/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][0-9A-B]|\x1b[=>78]/g, '');
+
+/** Visible text of a session's screen, read from the manager's mirror. */
+function screenText(id) {
+  const buffer = ctx.manager.get(id).term.buffer.active;
+  const lines = [];
+  for (let i = 0; i < buffer.length; i++) lines.push(buffer.getLine(i)?.translateToString(true) ?? '');
+  return lines.join('\n');
+}
+
+async function waitForText(client, sessionId, text, label) {
+  try {
+    await waitFor(() => stripAnsi(client.output).includes(text) || screenText(sessionId).includes(text), { label });
+  } catch (err) {
+    err.message += `\n--- stream tail ---\n${JSON.stringify(client.output.slice(-600))}\n--- screen ---\n${screenText(sessionId).trimEnd().slice(-600)}`;
+    throw err;
+  }
+}
+
 const terminal = (id) => new Client(`${base.replace('http', 'ws')}/api/v1/sessions/${id}/terminal?token=${token}`);
 
 async function createFake(extra = {}) {
@@ -176,7 +196,7 @@ test('a session runs, streams output, accepts input and resizes', async () => {
   client.send({ type: 'resize', cols: 101, rows: 33 });
   await waitFor(async () => (await call('GET', `/sessions/${session.id}`)).body.session.cols === 101, { label: 'resize' });
   client.input('size');
-  await waitFor(() => client.output.includes('SIZE:101x33'), { label: 'pty size' });
+  await waitForText(client, session.id, 'SIZE:101x33', 'pty size');
 
   await client.close();
   await call('DELETE', `/sessions/${session.id}`);
