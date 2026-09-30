@@ -8,11 +8,11 @@ import { resolveCommand, buildSpawnSpec, quoteForCmd } from '../src/manager/comm
 import { mergePathLists, parsePathFromEnvOutput } from '../src/manager/shell-env.mjs';
 import { mergeEnv, cleanResumeId, modelFromArgs, SessionManager } from '../src/manager/session-manager.mjs';
 import { loadProviders, defaultShell, ProviderRegistry } from '../src/manager/providers.mjs';
-import { classifyInstall, expandHome, helpDescribes } from '../src/manager/install-channels.mjs';
+import { classifyInstall, expandHome, helpDescribes, platformDependency } from '../src/manager/install-channels.mjs';
 import { hookToReports, claudeStatuslineToReport, formatStatusLine } from '../src/report/hooks.mjs';
 import { shimContents, writeReportShims, prependPath, fileUrl, SHIM_NAME, LOADER_NAME } from '../src/manager/report-shims.mjs';
 import { execFileSync } from 'node:child_process';
-import { parseVersion, compareVersions, installedVersion, latestVersion } from '../src/manager/versions.mjs';
+import { parseVersion, compareVersions, probeVersion, diagnosticLine, latestVersion } from '../src/manager/versions.mjs';
 import {
   UsageMonitor, readClaudeCredentials, readCodexCredentials, readGeminiCredentials, geminiOAuthClientFromInstall, geminiKeychainLookup,
   claudeKeychainService, claudeCredentialsFile, fetchClaudeUsage, fetchCodexUsage, fetchGeminiUsage, commandUsage, toIso, windowLabel,
@@ -124,22 +124,25 @@ test('resume and install specs come from the provider configuration', async () =
   assert.deepEqual(registry.spawnSpec(anthropic, [], null).args, []);
   assert.throws(() => registry.spawnSpec(registry.get('shell'), [], 'x'), (err) => err.code === 'resume_unsupported');
 
-  assert.throws(() => registry.installSpec(registry.get('shell')), (err) => err.code === 'not_installable');
+  await assert.rejects(registry.installSpec(registry.get('shell')), (err) => err.code === 'not_installable');
   const npmDir = tempDir();
   if (process.platform === 'win32') fs.writeFileSync(path.join(npmDir, 'npm.cmd'), '@echo https://mirror.example/npm/\r\n');
   else fs.writeFileSync(path.join(npmDir, 'npm'), '#!/bin/sh\necho https://mirror.example/npm/\n', { mode: 0o755 });
   const npmEnv = { PATH: npmDir, PATHEXT: '.EXE;.CMD', ComSpec: process.env.ComSpec, SystemRoot: process.env.SystemRoot };
-  const withNpm = new ProviderRegistry({ userFile, env: npmEnv, platform: process.platform });
+  const fetchImpl = async () => ({ ok: true, json: async () => ({ version: '3.2.1' }) });
+  const withNpm = new ProviderRegistry({ userFile, env: npmEnv, platform: process.platform, fetchImpl });
   const argsOf = (spec) => (typeof spec.args === 'string' ? spec.args : spec.args.join(' '));
-  assert.ok(argsOf(withNpm.installSpec(withNpm.get('anthropic'))).includes('install -g @anthropic-ai/claude-code@latest'));
+  assert.ok(argsOf(await withNpm.installSpec(withNpm.get('anthropic'))).includes('install -g @anthropic-ai/claude-code@3.2.1'));
   assert.equal(await withNpm.npmRegistryUrl(), 'https://mirror.example/npm/', "installs and lookups share npm's own registry");
-  const mirrored = new ProviderRegistry({ userFile, env: npmEnv, platform: process.platform, registryUrl: 'https://mirror.example/other' });
-  assert.ok(argsOf(mirrored.installSpec(mirrored.get('anthropic'))).includes('@latest --registry https://mirror.example/other'));
+  const mirrored = new ProviderRegistry({ userFile, env: npmEnv, platform: process.platform, registryUrl: 'https://mirror.example/other', fetchImpl });
+  assert.ok(argsOf(await mirrored.installSpec(mirrored.get('anthropic'))).includes('@3.2.1 --registry https://mirror.example/other'));
+  const unchecked = new ProviderRegistry({ userFile, env: npmEnv, platform: process.platform, checkUpdates: false });
+  assert.ok(argsOf(await unchecked.installSpec(unchecked.get('anthropic'))).includes('install -g @anthropic-ai/claude-code@latest'));
   assert.equal(await mirrored.npmRegistryUrl(), 'https://mirror.example/other');
   const onWindows = buildSpawnSpec('C:\\npm\\npm.cmd', ['install', '-g', 'x@latest', '--registry', 'http://127.0.0.1:1'], {}, 'win32');
   assert.ok(onWindows.args.endsWith(' --registry http://127.0.0.1:1"'), 'the registry URL needs no cmd.exe quoting');
   const withoutNpm = new ProviderRegistry({ userFile, env: { PATH: tempDir() }, platform: process.platform });
-  assert.throws(() => withoutNpm.installSpec(withoutNpm.get('anthropic')), (err) => err.code === 'npm_unavailable');
+  await assert.rejects(withoutNpm.installSpec(withoutNpm.get('anthropic')), (err) => err.code === 'npm_unavailable');
   assert.equal(await withoutNpm.npmRegistryUrl(), 'https://registry.npmjs.org');
 
   assert.equal(cleanResumeId(undefined), null);
@@ -166,7 +169,7 @@ test('an installed tool is classified by the installation that owns it', () => {
   });
   const mac = { provider, platform: 'darwin', env: { HOME: '/Users/a' }, npmOnPath: '/opt/other/bin/npm' };
   const windows = { provider, platform: 'win32', env: { USERPROFILE: 'C:\\Users\\a' }, npmOnPath: 'C:\\other\\npm.cmd', wingetOnPath: 'C:\\WindowsApps\\winget.exe' };
-  const npmArgs = (prefix) => ['install', '-g', '--prefix', prefix, '@anthropic-ai/claude-code@latest'];
+  const npmUpdate = (file, prefix) => ({ file, args: ['install', '-g', '--prefix', prefix], package: '@anthropic-ai/claude-code' });
 
   assert.equal(expandHome('~/.local/bin/claude', mac.env, 'darwin'), '/Users/a/.local/bin/claude');
   assert.equal(expandHome('~/.local/bin/claude', windows.env, 'win32'), 'C:\\Users\\a\\.local\\bin\\claude');
@@ -178,7 +181,7 @@ test('an installed tool is classified by the installation that owns it', () => {
     links: { [`${nvm}/bin/claude`]: `${nvmPkg}/bin/claude.exe` },
   }) });
   assert.equal(viaNvm.channel, 'npm');
-  assert.deepEqual(viaNvm.update, { file: `${nvm}/bin/npm`, args: npmArgs(nvm) }, 'the npm beside the launcher, not the first npm on PATH');
+  assert.deepEqual(viaNvm.update, npmUpdate(`${nvm}/bin/npm`, nvm), 'the npm beside the launcher, not the first npm on PATH');
 
   const custom = '/Users/a/.npm-global';
   const customPkg = `${custom}/lib/node_modules/@anthropic-ai/claude-code`;
@@ -186,7 +189,7 @@ test('an installed tool is classified by the installation that owns it', () => {
     files: [`${customPkg}/package.json`],
     links: { [`${custom}/bin/claude`]: `${customPkg}/bin/claude.exe` },
   }) });
-  assert.deepEqual(viaPrefix.update, { file: '/opt/other/bin/npm', args: npmArgs(custom) }, 'a prefix without its own npm is still the target');
+  assert.deepEqual(viaPrefix.update, npmUpdate('/opt/other/bin/npm', custom), 'a prefix without its own npm is still the target');
 
   const stray = classifyInstall({ ...mac, resolvedPath: `${custom}/bin/claude`, fsx: fsx({
     files: [`${customPkg}/package.json`],
@@ -201,7 +204,7 @@ test('an installed tool is classified by the installation that owns it', () => {
   const pkgJson = `${prefix}\\node_modules\\@anthropic-ai\\claude-code\\package.json`;
   const viaShim = classifyInstall({ ...windows, resolvedPath: shim, fsx: fsx({ files: [pkgJson], texts: { [shim]: shimText } }) });
   assert.equal(viaShim.channel, 'npm');
-  assert.deepEqual(viaShim.update, { file: 'C:\\other\\npm.cmd', args: npmArgs(prefix) });
+  assert.deepEqual(viaShim.update, npmUpdate('C:\\other\\npm.cmd', prefix));
   const ownNpm = classifyInstall({ ...windows, resolvedPath: shim, fsx: fsx({ files: [pkgJson, `${prefix}\\npm.cmd`], texts: { [shim]: shimText } }) });
   assert.equal(ownNpm.update.file, `${prefix}\\npm.cmd`);
   const noNpm = classifyInstall({ ...windows, npmOnPath: null, resolvedPath: shim, fsx: fsx({ files: [pkgJson], texts: { [shim]: shimText } }) });
@@ -305,9 +308,9 @@ test('updates are bound to the installation that owns the resolved tool', async 
   const tool = nativeFirst.get('mytool');
   assert.equal(nativeFirst.describe(tool).installChannel, 'native');
   assert.equal(nativeFirst.describe(tool).updateCommand, null, 'no command before the launcher has shown it accepts it');
-  assert.throws(() => nativeFirst.updateSpec(tool), (err) => err.code === 'not_updatable');
+  await assert.rejects(nativeFirst.updateSpec(tool), (err) => err.code === 'not_updatable');
   await nativeFirst.refreshVersions();
-  const viaLauncher = nativeFirst.updateSpec(tool);
+  const viaLauncher = await nativeFirst.updateSpec(tool);
   assert.equal(viaLauncher.channel, 'native');
   assert.ok(lineOf(viaLauncher.spec).includes(launcher), 'the detected launcher, by its absolute path');
   assert.ok(lineOf(viaLauncher.spec).includes(' update'));
@@ -315,18 +318,18 @@ test('updates are bound to the installation that owns the resolved tool', async 
   assert.ok(nativeFirst.describe(tool).updateCommand.includes(launcher));
 
   const npmFirst = new ProviderRegistry({ userFile, env: { ...base, PATH: [otherNpmDir, prefixBin, nativeDir].join(path.delimiter) }, checkUpdates: false });
-  const viaNpm = npmFirst.updateSpec(npmFirst.get('mytool'));
+  const viaNpm = await npmFirst.updateSpec(npmFirst.get('mytool'));
   assert.equal(viaNpm.channel, 'npm');
   assert.ok(lineOf(viaNpm.spec).includes(ownNpm), 'the npm of the owning prefix, not the first npm on PATH');
   assert.ok(lineOf(viaNpm.spec).includes(`--prefix ${prefix} mytool-pkg@latest`));
   const mirrored = new ProviderRegistry({ userFile, env: { ...base, PATH: [prefixBin].join(path.delimiter) }, checkUpdates: false, registryUrl: 'https://mirror.example/npm' });
-  assert.ok(lineOf(mirrored.updateSpec(mirrored.get('mytool')).spec).includes('mytool-pkg@latest --registry https://mirror.example/npm'));
+  assert.ok(lineOf((await mirrored.updateSpec(mirrored.get('mytool'))).spec).includes('mytool-pkg@latest --registry https://mirror.example/npm'));
 
   script(nativeDir, 'mytool', { win: 'echo Usage: mytool [OPTIONS] [PROMPT]', sh: 'echo "Usage: mytool [OPTIONS] [PROMPT]"' });
   await nativeFirst.refreshVersions({ force: true });
   assert.equal(nativeFirst.describe(tool).updateCommand, null, 'general help is not proof that the update command exists');
   assert.match(nativeFirst.describe(tool).updateGuidance, /does not accept/);
-  assert.throws(() => nativeFirst.updateSpec(tool), (err) => err.code === 'not_updatable' && /does not accept/.test(err.message));
+  await assert.rejects(nativeFirst.updateSpec(tool), (err) => err.code === 'not_updatable' && /does not accept/.test(err.message));
 
   script(nativeDir, 'mytool', { win: 'exit /b 1', sh: 'exit 1' });
   await nativeFirst.refreshVersions({ force: true });
@@ -384,6 +387,150 @@ test('an install or update ends with a fresh version check and a recorded outcom
   assert.equal(registry.describe(registry.get('absent')).lastInstall.outcome, 'failed');
 });
 
+test('a failed version command never yields a version', async () => {
+  const fixture = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-tool.mjs');
+  const dir = tempDir();
+  const flag = path.join(dir, 'broken.flag');
+  fs.writeFileSync(flag, '');
+  const spec = buildSpawnSpec(process.execPath, [fixture, '--version']);
+
+  const broken = await probeVersion(spec, { env: { ...process.env, FAKE_TOOL_BREAK_FILE: flag } });
+  assert.equal(broken.ok, false);
+  assert.equal(broken.exitCode, 1);
+  assert.equal(broken.version, null, 'the Node.js version in the error path is not the tool version');
+  assert.match(broken.error, /^Error: Missing optional dependency fake-tool-win32-x64/);
+  assert.equal(parseVersion('file:///C:/nodejs/v-24.20.0/nodejs-24.20.0/fake.js:107'), '24.20.0', 'the error text alone does parse as a version');
+
+  const odd = await probeVersion(spec, { env: { ...process.env, FAKE_TOOL_VERSION_TEXT: 'fake-tool nightly build' } });
+  assert.deepEqual(odd, { ok: true, version: null, exitCode: 0, error: null });
+
+  assert.equal(diagnosticLine('error: unrecognized subcommand\n\nUsage: tool'), 'error: unrecognized subcommand');
+  assert.equal(diagnosticLine('  throw new Error(\n        ^\n\nTypeError: x is not a function\n    at main'), 'TypeError: x is not a function');
+  assert.equal(diagnosticLine("'tool' is not recognized as an internal or external command,\r\noperable program or batch file."), 'operable program or batch file.');
+  assert.equal(diagnosticLine(''), '');
+
+  const userFile = path.join(dir, 'providers.json');
+  fs.writeFileSync(userFile, JSON.stringify({ providers: [
+    { id: 'tool', tool: 'Tool', command: process.execPath, package: 'tool-pkg', versionArgs: [fixture, '--version'], env: { FAKE_TOOL_BREAK_FILE: flag } },
+    { id: 'odd', tool: 'Odd', command: process.execPath, package: 'tool-pkg', versionArgs: [fixture, '--version'], env: { FAKE_TOOL_VERSION_TEXT: 'nightly' } },
+  ] }));
+  const fetchImpl = async () => ({ ok: true, json: async () => ({ version: '9.9.9' }) });
+  const registry = new ProviderRegistry({ userFile, env: { ...process.env, PATH: path.dirname(process.execPath) }, registryUrl: 'https://registry.example', fetchImpl });
+  await registry.refreshVersions({ ids: ['tool', 'odd'] });
+  const failed = registry.describe(registry.get('tool'));
+  assert.equal(failed.available, true);
+  assert.equal(failed.installedVersion, null);
+  assert.equal(failed.versionStatus, 'failed');
+  assert.match(failed.versionError, /Missing optional dependency/);
+  assert.equal(failed.updateAvailable, false);
+  assert.equal(failed.installChannel, 'unknown', 'ownership is decided apart from whether the tool runs');
+  const unreadable = registry.describe(registry.get('odd'));
+  assert.equal(unreadable.versionStatus, 'unavailable', 'a tool that answers without a version is not declared broken');
+  assert.equal(unreadable.versionError, null);
+
+  fs.rmSync(flag);
+  await registry.refreshVersions({ force: true, ids: ['tool'] });
+  assert.equal(registry.describe(registry.get('tool')).versionStatus, 'ok');
+  assert.equal(registry.describe(registry.get('tool')).installedVersion, '1.2.3');
+});
+
+test('an npm install checks the platform build of the release it then installs', async () => {
+  const win = process.platform === 'win32';
+  const script = (dir, name, body) => {
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, win ? `${name}.cmd` : name);
+    fs.writeFileSync(file, win ? `@echo off\r\n${body.win}\r\n` : `#!/bin/sh\n${body.sh}\n`, { mode: 0o755 });
+    return file;
+  };
+  const root = tempDir();
+  const prefix = path.join(root, 'prefix');
+  const prefixBin = win ? prefix : path.join(prefix, 'bin');
+  const pkgDir = path.join(prefix, ...(win ? [] : ['lib']), 'node_modules', 'mytool-pkg');
+  fs.mkdirSync(pkgDir, { recursive: true });
+  fs.writeFileSync(path.join(pkgDir, 'package.json'), '{}');
+  script(prefixBin, 'mytool', { win: 'REM node_modules\\mytool-pkg\\bin\\cli.js', sh: '# node_modules/mytool-pkg/bin/cli.js' });
+  script(prefixBin, 'npm', { win: 'exit /b 0', sh: 'exit 0' });
+  const userFile = path.join(root, 'providers.json');
+  fs.writeFileSync(userFile, JSON.stringify({ providers: [
+    { id: 'mytool', tool: 'My Tool', command: 'mytool', package: 'mytool-pkg' },
+    { id: 'absent', tool: 'Absent Tool', command: 'definitely-not-installed-agent-guild', package: 'mytool-pkg' },
+  ] }));
+  const env = { PATHEXT: '.EXE;.CMD', ComSpec: process.env.ComSpec, SystemRoot: process.env.SystemRoot, PATH: prefixBin };
+  const lineOf = (spec) => (typeof spec.args === 'string' ? spec.args : [spec.file, ...spec.args].join(' '));
+  const target = `${process.platform}-${process.arch}`;
+
+  const requests = [];
+  let latest = '1.9.0';
+  let published = true;
+  const fetchImpl = async (url) => {
+    const route = url.replace('https://registry.example', '');
+    requests.push(route);
+    if (route === '/mytool-pkg/latest') {
+      return { ok: true, status: 200, json: async () => ({ version: latest, optionalDependencies: { [`mytool-pkg-${target}`]: `npm:mytool-pkg@${latest}-${target}` } }) };
+    }
+    if (published && route === `/mytool-pkg/${latest}-${target}`) return { ok: true, status: 200, json: async () => ({ version: `${latest}-${target}` }) };
+    return { ok: false, status: 404, json: async () => ({}) };
+  };
+  const registry = new ProviderRegistry({ userFile, env, registryUrl: 'https://registry.example', fetchImpl });
+  const tool = registry.get('mytool');
+  await registry.refreshVersions({ ids: ['mytool'] });
+  assert.ok(registry.describe(tool).updateCommand.includes('mytool-pkg@1.9.0'));
+
+  latest = '2.0.0';
+  requests.length = 0;
+  const { spec } = await registry.updateSpec(tool);
+  assert.ok(lineOf(spec).includes('mytool-pkg@2.0.0 --registry https://registry.example'), 'the release resolved when the update starts, as an exact version');
+  assert.ok(!lineOf(spec).includes('@latest'));
+  assert.deepEqual(requests, ['/mytool-pkg/latest', `/mytool-pkg/2.0.0-${target}`], 'the build checked belongs to the release installed');
+  assert.ok(lineOf(await registry.installSpec(registry.get('absent'))).includes('install -g mytool-pkg@2.0.0'));
+
+  published = false;
+  const incomplete = (err) => err.code === 'release_incomplete' && err.status === 409
+    && err.message.includes(`mytool-pkg@2.0.0-${target}`) && /Nothing was changed/.test(err.message);
+  await assert.rejects(registry.updateSpec(tool), incomplete);
+  await assert.rejects(registry.installSpec(registry.get('absent')), incomplete);
+
+  const offline = new ProviderRegistry({ userFile, env, registryUrl: 'https://registry.example', fetchImpl: async () => { throw new Error('offline'); } });
+  await assert.rejects(offline.updateSpec(offline.get('mytool')), (err) => err.code === 'release_unresolved' && /offline/.test(err.message) && /Nothing was changed/.test(err.message));
+
+  const codex = { optionalDependencies: { '@openai/codex-win32-x64': 'npm:@openai/codex@0.159.3-win32-x64' } };
+  assert.deepEqual(platformDependency(codex, '@openai/codex', 'win32', 'x64'), { name: '@openai/codex', version: '0.159.3-win32-x64' });
+  assert.equal(platformDependency(codex, '@openai/codex', 'linux', 'x64'), null);
+  assert.equal(platformDependency({ optionalDependencies: { 'pkg-win32-x64': '^1.2.0' } }, 'pkg', 'win32', 'x64'), null, 'only the exact aliased form is checked');
+  assert.equal(platformDependency({}, 'pkg', 'win32', 'x64'), null);
+});
+
+test('a clean updater exit is reported apart from the verification that follows', async () => {
+  const fixture = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-tool.mjs');
+  const dir = tempDir();
+  const flag = path.join(dir, 'broken.flag');
+  const userFile = path.join(dir, 'providers.json');
+  fs.writeFileSync(userFile, JSON.stringify({ providers: [
+    { id: 'tool', tool: 'Tool', command: process.execPath, package: 'tool-pkg', versionArgs: [fixture, '--version'], env: { FAKE_TOOL_BREAK_FILE: flag } },
+  ] }));
+  const fetchImpl = async () => ({ ok: true, json: async () => ({ version: '1.2.3' }) });
+  const registry = new ProviderRegistry({ userFile, env: { ...process.env, PATH: path.dirname(process.execPath) }, registryUrl: 'https://registry.example', fetchImpl });
+  const tool = registry.get('tool');
+  await registry.refreshVersions({ ids: ['tool'] });
+  assert.equal(registry.describe(tool).versionStatus, 'ok');
+
+  fs.writeFileSync(flag, '');
+  await registry.finishInstall('tool', { exitCode: 0, kind: 'update' });
+  const unverified = registry.describe(tool);
+  assert.equal(unverified.lastInstall.exitCode, 0, "the updater's own exit code is kept");
+  assert.equal(unverified.lastInstall.verification, 'failed');
+  assert.equal(unverified.versionStatus, 'failed');
+  assert.equal(unverified.installedVersion, null);
+  assert.match(unverified.versionError, /Missing optional dependency/);
+
+  fs.rmSync(flag);
+  await registry.finishInstall('tool', { exitCode: 0, kind: 'update' });
+  const repaired = registry.describe(tool);
+  assert.equal(repaired.lastInstall.verification, 'ok');
+  assert.equal(repaired.lastInstall.outcome, 'updated');
+  assert.equal(repaired.installedVersion, '1.2.3');
+});
+
 test('versions are parsed, compared and looked up', async () => {
   assert.equal(parseVersion('2.1.285 (Claude Code)'), '2.1.285');
   assert.equal(parseVersion('codex-cli 0.45.0\n'), '0.45.0');
@@ -395,8 +542,10 @@ test('versions are parsed, compared and looked up', async () => {
   assert.ok(compareVersions('1.2.3-beta', '1.2.3') < 0);
 
   const fake = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-tool.mjs');
-  assert.equal(await installedVersion(buildSpawnSpec(process.execPath, [fake, '--version'])), '1.2.3');
-  assert.equal(await installedVersion({ file: path.join(tempDir(), 'missing'), args: [] }), null);
+  assert.deepEqual(await probeVersion(buildSpawnSpec(process.execPath, [fake, '--version'])), { ok: true, version: '1.2.3', exitCode: 0, error: null });
+  const absent = await probeVersion({ file: path.join(tempDir(), 'missing'), args: [] });
+  assert.equal(absent.ok, false);
+  assert.equal(absent.version, null);
 
   const calls = [];
   const fetchImpl = async (url) => {

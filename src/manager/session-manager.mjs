@@ -59,6 +59,7 @@ export class SessionManager extends EventEmitter {
     this.exiting = new Set();
     /** True once shutdown has begun; no new session may start after that. */
     this.closing = false;
+    this.installing = new Set();
   }
 
   list() {
@@ -101,22 +102,42 @@ export class SessionManager extends EventEmitter {
    * Refuses while sessions of that provider are running unless `force` is
    * set, because replacing a tool under a running process can break it.
    */
-  install(providerId, { force = false } = {}) {
+  async install(providerId, { force = false } = {}) {
     const provider = this.registry.get(String(providerId || ''));
     if (!provider) throw httpError(404, `unknown provider "${providerId}"`, 'unknown_provider');
-    const running = this.runningFor(provider.id);
-    if (running > 0 && !force) {
-      const err = httpError(409, `${running} ${provider.tool} session(s) are running; updating the tool now may break them`, 'provider_in_use');
-      err.running = running;
-      throw err;
+    if (this.closing) throw httpError(503, 'the session manager is stopping', 'manager_stopping');
+    const guard = () => {
+      const running = this.runningFor(provider.id);
+      if (running > 0 && !force) {
+        const err = httpError(409, `${running} ${provider.tool} session(s) are running; updating the tool now may break them`, 'provider_in_use');
+        err.running = running;
+        throw err;
+      }
+    };
+    guard();
+    if (this.installing.has(provider.id) || this.installsRunningFor(provider.id) > 0) {
+      throw httpError(409, `${provider.tool} is already being installed or updated`, 'install_in_progress');
     }
-    if (this.registry.resolve(provider)) {
-      const { spec, channel } = this.registry.updateSpec(provider);
-      const name = `Update ${provider.tool} (${CHANNEL_LABELS[channel]})`;
-      return this._spawn({ provider, spawnSpec: spec, cwd: os.homedir(), name, task: 'install', installKind: 'update' });
+    this.installing.add(provider.id);
+    try {
+      if (this.registry.resolve(provider)) {
+        const { spec, channel } = await this.registry.updateSpec(provider);
+        guard();
+        const name = `Update ${provider.tool} (${CHANNEL_LABELS[channel]})`;
+        return this._spawn({ provider, spawnSpec: spec, cwd: os.homedir(), name, task: 'install', installKind: 'update' });
+      }
+      const spawnSpec = await this.registry.installSpec(provider);
+      guard();
+      return this._spawn({ provider, spawnSpec, cwd: os.homedir(), name: `Install ${provider.tool}`, task: 'install', installKind: 'install' });
+    } finally {
+      this.installing.delete(provider.id);
     }
-    const spawnSpec = this.registry.installSpec(provider);
-    return this._spawn({ provider, spawnSpec, cwd: os.homedir(), name: `Install ${provider.tool}`, task: 'install', installKind: 'install' });
+  }
+
+  installsRunningFor(providerId) {
+    let n = 0;
+    for (const s of this.sessions.values()) if (s.status === 'running' && s.task === 'install' && s.provider.id === providerId) n++;
+    return n;
   }
 
   runningFor(providerId) {

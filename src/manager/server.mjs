@@ -221,7 +221,7 @@ export function createManagerServer({
     const installMatch = route.match(/^\/providers\/([a-z0-9][a-z0-9_-]{0,31})\/install$/);
     if (installMatch && method === 'POST') {
       const body = await readJsonBody(req);
-      const session = manager.install(installMatch[1], { force: body.force === true });
+      const session = await manager.install(installMatch[1], { force: body.force === true });
       return sendJson(res, 201, { session: session.toJSON() });
     }
     if (route === '/sessions' && method === 'GET') {

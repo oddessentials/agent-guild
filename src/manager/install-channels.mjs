@@ -112,6 +112,15 @@ export function helpDescribes(text, args) {
     || (/^\s*usage:?\s*$/i.test(line) && named.test(lines[i + 1] || '')));
 }
 
+const EXACT_VERSION = String.raw`\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?`;
+const ALIASED_BUILD = new RegExp(`^npm:((?:@[^/@\\s]+/)?[^/@\\s]+)@(${EXACT_VERSION})$`);
+
+export function platformDependency(manifest, pkg, platform, arch) {
+  const spec = manifest?.optionalDependencies?.[`${pkg}-${platform}-${arch}`];
+  const alias = typeof spec === 'string' ? spec.match(ALIASED_BUILD) : null;
+  return alias ? { name: alias[1], version: alias[2] } : null;
+}
+
 export function formatCommand(file, args) {
   return [file, ...args].map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(' ');
 }
@@ -128,7 +137,7 @@ export function classifyInstall({
     if (owner) {
       const npm = owner.npm || npmOnPath;
       if (!npm) return result('npm', { guidance: `Installed by npm under ${owner.prefix}, but npm was not found.` });
-      return result('npm', { update: { file: npm, args: ['install', '-g', '--prefix', owner.prefix, `${provider.package}@latest`] } });
+      return result('npm', { update: { file: npm, args: ['install', '-g', '--prefix', owner.prefix], package: provider.package } });
     }
   }
 

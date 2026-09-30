@@ -35,6 +35,21 @@ if (process.argv.includes('update')) {
 }
 
 if (process.argv.includes('--version')) {
+  if (process.env.FAKE_TOOL_BREAK_FILE && fs.existsSync(process.env.FAKE_TOOL_BREAK_FILE)) {
+    console.error([
+      'file:///C:/nodejs/v-24.20.0/nodejs-24.20.0/node_modules/fake-tool/bin/fake.js:107',
+      '  throw new Error(',
+      '        ^',
+      '',
+      'Error: Missing optional dependency fake-tool-win32-x64. Reinstall: npm install -g fake-tool-pkg@latest',
+      '    at findExecutable (file:///C:/nodejs/v-24.20.0/nodejs-24.20.0/node_modules/fake-tool/bin/fake.js:107:9)',
+    ].join('\n'));
+    process.exit(1);
+  }
+  if (process.env.FAKE_TOOL_VERSION_TEXT) {
+    console.log(process.env.FAKE_TOOL_VERSION_TEXT);
+    process.exit(0);
+  }
   let version = '1.2.3';
   try { if (versionFile) version = fs.readFileSync(versionFile, 'utf8').trim() || version; } catch { /* not updated yet */ }
   console.log(`fake-tool ${version}`);

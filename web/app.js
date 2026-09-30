@@ -156,11 +156,12 @@ function renderProviders() {
     node.querySelector('.tool').textContent = provider.tool;
     const stateLine = node.querySelector('.state');
     stateLine.textContent = providerState(provider);
-    stateLine.classList.toggle('update-available', provider.updateAvailable || Boolean(installNote(provider)));
+    const checkFailed = provider.available && provider.versionStatus === 'failed';
+    stateLine.classList.toggle('update-available', provider.updateAvailable || checkFailed || Boolean(installNote(provider)));
     stateLine.title = [provider.resolvedPath, provider.updateCommand && `Update: ${provider.updateCommand}`].filter(Boolean).join('\n');
     node.dataset.id = provider.id;
     node.classList.toggle('unavailable', !provider.available);
-    node.setAttribute('aria-label', `${provider.vendor} ${provider.tool}, ${provider.available ? 'ready' : 'not installed'}`);
+    node.setAttribute('aria-label', `${provider.vendor} ${provider.tool}, ${!provider.available ? 'not installed' : checkFailed ? 'version check failed' : 'ready'}`);
     const start = node.querySelector('.new');
     const existing = node.querySelector('.existing');
     const hint = node.querySelector('.hint');
@@ -175,8 +176,9 @@ function renderProviders() {
     install.title = `Install ${provider.tool} using npm.${provider.npmNote ? ` ${provider.npmNote}` : ''}`;
     install.addEventListener('click', () => installProvider(provider, node));
     const update = node.querySelector('.update');
-    update.hidden = !(provider.available && provider.updateAvailable && provider.updateCommand);
-    update.textContent = provider.installChannel === 'npm' ? `Update to ${provider.latestVersion}` : 'Update';
+    update.hidden = !(provider.available && provider.updateCommand && (provider.updateAvailable || checkFailed));
+    if (provider.installChannel !== 'npm') update.textContent = 'Update';
+    else update.textContent = checkFailed ? 'Reinstall' : `Update to ${provider.latestVersion}`;
     update.title = provider.updateCommand ? `Run "${provider.updateCommand}" in a session` : '';
     update.addEventListener('click', () => installProvider(provider, node));
     renderHint(hint, provider);
@@ -189,6 +191,7 @@ function renderProviders() {
 function renderHint(hint, provider) {
   let text = '';
   if (!provider.available) text = provider.installable ? '' : provider.install || `${provider.command} was not found on PATH.`;
+  else if (provider.versionStatus === 'failed') text = [provider.versionError, !provider.updateCommand && provider.updateGuidance].filter(Boolean).join(' ');
   else if (provider.updateAvailable && !provider.updateCommand) text = provider.updateGuidance || '';
   hint.hidden = !text;
   hint.replaceChildren(text);
@@ -271,19 +274,30 @@ const CHANNEL_LABELS = {
 function installNote(provider) {
   const last = provider.lastInstall;
   if (!last) return '';
-  if (last.outcome === 'unchanged') return 'No version change after update';
+  if (last.outcome === 'failed') {
+    const what = last.kind === 'install' ? 'Install' : 'Update';
+    return last.exitCode === null ? `${what} failed` : `${what} failed (exit ${last.exitCode})`;
+  }
+  if (last.verification === 'failed') return `Installation completed, but ${provider.tool} verification failed`;
   if (last.outcome === 'missing') return 'Installed, but not found on PATH';
-  if (last.outcome !== 'failed') return '';
-  const what = last.kind === 'install' ? 'Install' : 'Update';
-  return last.exitCode === null ? `${what} failed` : `${what} failed (exit ${last.exitCode})`;
+  if (last.outcome === 'unchanged') return 'No version change after update';
+  return '';
 }
 
 function providerState(provider) {
   const note = installNote(provider);
   if (!provider.available) return note ? `Not installed · ${note}` : 'Not installed';
+  const checkFailed = provider.versionStatus === 'failed';
+  const named = provider.installChannel && (provider.installChannel !== 'unknown' || provider.updateAvailable || checkFailed);
+  const channel = named ? CHANNEL_LABELS[provider.installChannel] || provider.installChannel : '';
+  if (checkFailed) {
+    const unverified = note && provider.lastInstall.outcome !== 'failed' && provider.lastInstall.verification === 'failed';
+    return (unverified ? [note, channel] : ['Version check failed', channel, note]).filter(Boolean).join(' · ');
+  }
   const parts = ['Ready'];
   if (provider.installedVersion) parts.push(`v${provider.installedVersion}`);
-  if (provider.installChannel) parts.push(CHANNEL_LABELS[provider.installChannel] || provider.installChannel);
+  else if (provider.versionStatus === 'unavailable') parts.push('Version unavailable');
+  if (channel) parts.push(channel);
   if (provider.updateAvailable) parts.push(`${provider.latestVersion} ${provider.installChannel === 'npm' ? 'available' : 'released'}`);
   if (note) parts.push(note);
   return parts.join(' · ');

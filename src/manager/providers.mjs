@@ -10,8 +10,8 @@ import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { resolveCommand, buildSpawnSpec, runSpec } from './command-resolver.mjs';
-import { compareVersions, installedVersion, latestVersion, DEFAULT_NPM_REGISTRY } from './versions.mjs';
-import { classifyInstall, formatCommand, helpDescribes } from './install-channels.mjs';
+import { compareVersions, probeVersion, fetchManifest, latestVersion, DEFAULT_NPM_REGISTRY } from './versions.mjs';
+import { classifyInstall, formatCommand, helpDescribes, platformDependency } from './install-channels.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULTS_FILE = path.resolve(here, '../../config/providers.default.json');
@@ -22,6 +22,10 @@ const FAILED_PROBE_TTL_MS = 5 * 60 * 1000;
 
 function fileMtime(file) {
   try { return fs.statSync(file).mtimeMs; } catch { return null; }
+}
+
+function refusal(status, code, message) {
+  return Object.assign(new Error(message), { status, code });
 }
 
 export function defaultShell(env = process.env, platform = process.platform) {
@@ -223,8 +227,8 @@ export class ProviderRegistry extends EventEmitter {
     const registryUrl = lookups ? await this.npmRegistryUrl() : null;
     await Promise.all(providers.map(async (provider) => {
       const entry = this.versions.get(provider.id) || {
-        installed: null, installedPath: null, installedMtime: null, installedAt: 0, latest: null, latestAt: 0,
-        probePath: null, probeMtime: null, probeAt: 0, probeOk: null, lastInstall: null,
+        installed: null, versionStatus: null, versionError: null, installedPath: null, installedMtime: null, installedAt: 0,
+        latest: null, latestAt: 0, probePath: null, probeMtime: null, probeAt: 0, probeOk: null, lastInstall: null,
       };
       const found = this.resolve(provider);
       const channel = found ? this.channelFor(provider, found) : null;
@@ -249,12 +253,15 @@ export class ProviderRegistry extends EventEmitter {
         const stale = entry.installedPath !== resolved || entry.installedMtime !== mtime || now - entry.installedAt > ttl;
         if (force || stale) {
           const spec = buildSpawnSpec(resolved, provider.versionArgs, this.env, this.platform);
-          const installed = await installedVersion(spec, { env: { ...this.env, ...provider.env } });
-          changed ||= installed !== entry.installed;
-          Object.assign(entry, { installed, installedPath: resolved, installedMtime: mtime, installedAt: now });
+          const probe = await probeVersion(spec, { env: { ...this.env, ...provider.env } });
+          const versionStatus = !probe.ok ? 'failed' : probe.version ? 'ok' : 'unavailable';
+          changed ||= probe.version !== entry.installed || versionStatus !== entry.versionStatus || probe.error !== entry.versionError;
+          Object.assign(entry, {
+            installed: probe.version, versionStatus, versionError: probe.error, installedPath: resolved, installedMtime: mtime, installedAt: now,
+          });
         }
       } else if (entry.installedPath !== null) {
-        Object.assign(entry, { installed: null, installedPath: null, installedMtime: null, installedAt: 0 });
+        Object.assign(entry, { installed: null, versionStatus: null, versionError: null, installedPath: null, installedMtime: null, installedAt: 0 });
         changed = true;
       }
       if (provider.package && lookups && (force || now - entry.latestAt > VERSION_TTL_MS)) {
@@ -263,7 +270,7 @@ export class ProviderRegistry extends EventEmitter {
         Object.assign(entry, { latest, latestAt: now });
       }
       const last = entry.lastInstall;
-      if (last && (entry.installed !== last.after || entry.latest !== last.latest)) {
+      if (last && (entry.installed !== last.after || entry.latest !== last.latest || entry.versionStatus !== last.verification)) {
         entry.lastInstall = null;
         changed = true;
       }
@@ -285,8 +292,50 @@ export class ProviderRegistry extends EventEmitter {
     else if (kind === 'install') outcome = this.resolve(provider) ? 'installed' : 'missing';
     else if (entry.installed === null) outcome = 'done';
     else outcome = entry.installed !== before ? 'updated' : 'unchanged';
-    entry.lastInstall = { kind, outcome, exitCode, before, after: entry.installed, latest: entry.latest, at: Date.now() };
+    entry.lastInstall = {
+      kind, outcome, exitCode, verification: entry.versionStatus, before, after: entry.installed, latest: entry.latest, at: Date.now(),
+    };
     this.emit('updated');
+  }
+
+  async archFor(npm) {
+    const p = this.platform === 'win32' ? path.win32 : path.posix;
+    const node = p.join(p.dirname(npm), this.platform === 'win32' ? 'node.exe' : 'node');
+    if (!fs.existsSync(node)) return process.arch;
+    try {
+      const { stdout } = await runSpec({ file: node, args: ['-p', 'process.arch'] }, { env: this.env, timeoutMs: 5000 });
+      return stdout.trim() || process.arch;
+    } catch {
+      return process.arch;
+    }
+  }
+
+  async resolveRelease(provider, npm) {
+    if (!this.checkUpdates) return 'latest';
+    const registryUrl = await this.npmRegistryUrl();
+    const lookup = { registryUrl, fetchImpl: this.fetchImpl };
+    const { manifest, error } = await fetchManifest(provider.package, 'latest', lookup);
+    if (!manifest) {
+      throw refusal(503, 'release_unresolved', `Could not read the latest ${provider.tool} release from ${registryUrl}: ${error}. Nothing was changed.`);
+    }
+    const arch = await this.archFor(npm);
+    const build = platformDependency(manifest, provider.package, this.platform, arch);
+    if (build) {
+      const found = await fetchManifest(build.name, build.version, lookup);
+      if (!found.manifest) {
+        throw refusal(409, 'release_incomplete',
+          `${provider.tool} ${manifest.version} is published, but its ${this.platform}-${arch} build (${build.name}@${build.version}) is not available yet: ${found.error}. Nothing was changed. Try again shortly.`);
+      }
+    }
+    return manifest.version;
+  }
+
+  npmArgs(update, version) {
+    const args = [...update.args];
+    if (!update.package) return args;
+    args.push(`${update.package}@${version}`);
+    if (this.registryUrl) args.push('--registry', this.registryUrl);
+    return args;
   }
 
   channelFor(provider, resolvedPath = this.resolve(provider)) {
@@ -304,8 +353,7 @@ export class ProviderRegistry extends EventEmitter {
   updateFor(provider, channel = this.channelFor(provider)) {
     if (!channel) return { file: null, args: [], command: null, guidance: null };
     if (!channel.update) return { file: null, args: [], command: null, guidance: channel.guidance };
-    const args = [...channel.update.args];
-    if (channel.channel === 'npm' && this.registryUrl) args.push('--registry', this.registryUrl);
+    const args = this.npmArgs(channel.update, this.versions.get(provider.id)?.latest ?? 'latest');
     const command = formatCommand(channel.update.file, args);
     if (channel.probe) {
       const probeOk = this.versions.get(provider.id)?.probeOk ?? null;
@@ -359,6 +407,8 @@ export class ProviderRegistry extends EventEmitter {
       resumable: provider.resumeArgs.length > 0,
       installable: Boolean(provider.package && this.resolveNpm()),
       installedVersion: installed,
+      versionStatus: resolvedPath ? versions?.versionStatus ?? null : null,
+      versionError: resolvedPath ? versions?.versionError ?? null : null,
       latestVersion: latest,
       updateAvailable: Boolean(installed && latest && compareVersions(latest, installed) > 0),
       installChannel: channel?.channel ?? null,
@@ -407,19 +457,19 @@ export class ProviderRegistry extends EventEmitter {
     return buildSpawnSpec(resolved, [...provider.args, ...resumeArgs, ...extraArgs], this.env, this.platform);
   }
 
-  updateSpec(provider) {
+  async updateSpec(provider) {
     const channel = this.channelFor(provider);
     const update = this.updateFor(provider, channel);
     if (!update.command) {
-      const err = new Error(update.guidance || `Still checking how ${provider.tool} was installed. Try again in a moment.`);
-      err.status = 400;
-      err.code = 'not_updatable';
-      throw err;
+      throw refusal(400, 'not_updatable', update.guidance || `Still checking how ${provider.tool} was installed. Try again in a moment.`);
     }
-    return { spec: buildSpawnSpec(update.file, update.args, this.env, this.platform), channel: channel.channel };
+    const args = channel.update.package
+      ? this.npmArgs(channel.update, await this.resolveRelease(provider, update.file))
+      : update.args;
+    return { spec: buildSpawnSpec(update.file, args, this.env, this.platform), channel: channel.channel };
   }
 
-  installSpec(provider) {
+  async installSpec(provider) {
     if (!provider.package) {
       const err = new Error(`${provider.tool} has no npm package configured; install it by hand: ${provider.install || provider.docs || 'see its documentation'}`);
       err.status = 400;
@@ -433,8 +483,7 @@ export class ProviderRegistry extends EventEmitter {
       err.code = 'npm_unavailable';
       throw err;
     }
-    const args = ['install', '-g', `${provider.package}@latest`];
-    if (this.registryUrl) args.push('--registry', this.registryUrl);
-    return buildSpawnSpec(npm, args, this.env, this.platform);
+    const version = await this.resolveRelease(provider, npm);
+    return buildSpawnSpec(npm, this.npmArgs({ args: ['install', '-g'], package: provider.package }, version), this.env, this.platform);
   }
 }
