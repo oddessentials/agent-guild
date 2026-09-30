@@ -236,6 +236,12 @@ test('usage credentials are read from the tools\' own sign-in files', async () =
   await assert.rejects(readClaudeCredentials({ file: claudeFile, keychain: false }), /not signed in/);
   fs.writeFileSync(claudeFile, JSON.stringify({ claudeAiOauth: { accessToken: 'tok', expiresAt: Date.now() + 60000, subscriptionType: 'max' } }));
   assert.deepEqual(await readClaudeCredentials({ file: claudeFile, keychain: false }), { accessToken: 'tok', plan: 'max' });
+  fs.writeFileSync(claudeFile, JSON.stringify({ claudeAiOauth: { accessToken: 'tok', subscriptionType: 'max', rateLimitTier: 'default_claude_max_20x' } }));
+  assert.equal((await readClaudeCredentials({ file: claudeFile, keychain: false })).plan, 'max 20x');
+  fs.writeFileSync(claudeFile, JSON.stringify({ claudeAiOauth: { accessToken: 'tok', subscriptionType: 'pro', rateLimitTier: 'default_claude_ai' } }));
+  assert.equal((await readClaudeCredentials({ file: claudeFile, keychain: false })).plan, 'pro');
+  fs.writeFileSync(claudeFile, JSON.stringify({ claudeAiOauth: { accessToken: 'tok', rateLimitTier: 'default_claude_max_5x' } }));
+  assert.equal((await readClaudeCredentials({ file: claudeFile, keychain: false })).plan, null);
   fs.writeFileSync(claudeFile, JSON.stringify({ claudeAiOauth: { accessToken: 'tok', expiresAt: Date.now() - 1 } }));
   await assert.rejects(readClaudeCredentials({ file: claudeFile, keychain: false }), /expired/);
   fs.writeFileSync(claudeFile, JSON.stringify({}));
@@ -501,6 +507,40 @@ test('Gemini usage keeps its refreshed token and project only while the sign-in 
   assert.deepEqual(calls.map((c) => [c.method, c.auth]), [['loadCodeAssist', 'Bearer b-live'], ['retrieveUserQuota', 'Bearer b-live']], 'another sign-in drops the old token and project');
   assert.deepEqual(JSON.parse(calls[1].body), { project: 'proj-b' });
   assert.equal(other.error, null);
+});
+
+test('console links are https URLs that users can override per platform or turn off', () => {
+  const defaults = loadProviders({ platform: 'linux' });
+  assert.deepEqual(defaults.warnings, []);
+  for (const provider of defaults.providers.filter((p) => p.id !== 'shell')) {
+    assert.match(provider.usageUrl, /^https:\/\//, `${provider.id} usageUrl`);
+    assert.match(provider.billingUrl, /^https:\/\//, `${provider.id} billingUrl`);
+  }
+  const shell = defaults.providers.find((p) => p.id === 'shell');
+  assert.equal(shell.usageUrl, null);
+  assert.equal(shell.billingUrl, null);
+
+  const dir = tempDir();
+  const userFile = path.join(dir, 'providers.json');
+  fs.writeFileSync(userFile, JSON.stringify({
+    providers: [
+      { id: 'anthropic', usageUrl: 'https://platform.claude.com/usage', billingUrl: null, darwin: { usageUrl: 'https://example.com/mac' } },
+      { id: 'openai', usageUrl: 'javascript:alert(1)', billingUrl: 'http://example.com/billing' },
+      { id: 'google', usageUrl: 'not a url', billingUrl: '' },
+    ],
+  }));
+  const linux = loadProviders({ userFile, platform: 'linux' });
+  const byId = Object.fromEntries(linux.providers.map((p) => [p.id, p]));
+  assert.equal(byId.anthropic.usageUrl, 'https://platform.claude.com/usage');
+  assert.equal(byId.anthropic.billingUrl, null);
+  assert.equal(byId.openai.usageUrl, null);
+  assert.equal(byId.openai.billingUrl, null);
+  assert.equal(byId.google.usageUrl, null);
+  assert.equal(byId.google.billingUrl, null);
+  assert.equal(byId.xai.usageUrl, loadProviders({ platform: 'linux' }).providers.find((p) => p.id === 'xai').usageUrl);
+  assert.equal(linux.warnings.length, 3);
+  assert.ok(linux.warnings.every((w) => /must be an https:\/\/ URL/.test(w)));
+  assert.equal(loadProviders({ userFile, platform: 'darwin' }).providers[0].usageUrl, 'https://example.com/mac');
 });
 
 test('loadProviders survives a broken user file', () => {

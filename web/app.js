@@ -67,6 +67,21 @@ function hueFor(text) {
   return h;
 }
 
+function httpsHref(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+function planLabel(plan) {
+  const text = String(plan ?? '').trim();
+  if (/[A-Z]/.test(text)) return text;
+  return text.replace(/[_-]+/g, ' ').replace(/\b[a-z]/g, (c) => c.toUpperCase());
+}
+
 function paintProviderIcon(el, provider) {
   el.style.setProperty('--c', provider.color || '#64748b');
   if (provider.iconUrl) {
@@ -154,14 +169,39 @@ function renderProviders() {
     update.addEventListener('click', () => installProvider(provider, node));
     hint.hidden = provider.available || provider.installable;
     hint.textContent = provider.install || `${provider.command} was not found on PATH.`;
+    renderConsoleLinks(node, provider);
     renderUsage(node, provider);
     return node;
   }));
 }
 
+function renderConsoleLinks(card, provider) {
+  let any = false;
+  for (const [selector, url, what] of [['.usage-link', provider.usageUrl, 'usage'], ['.billing-link', provider.billingUrl, 'billing']]) {
+    const link = card.querySelector(selector);
+    const href = httpsHref(url);
+    link.hidden = !href;
+    if (!href) { link.removeAttribute('href'); continue; }
+    any = true;
+    link.href = href;
+    link.title = `${provider.vendor} ${what} console: ${href}`;
+    link.setAttribute('aria-label', `${provider.vendor} ${what} console (opens in a new tab)`);
+  }
+  card.querySelector('.provider-links').hidden = !any;
+}
+
+function renderTier(card, provider, usage) {
+  const tier = card.querySelector('.tier');
+  const label = provider.available && usage?.plan ? planLabel(usage.plan) : '';
+  tier.hidden = !label;
+  tier.textContent = label;
+  tier.title = label ? `${provider.vendor} subscription: ${label}` : '';
+}
+
 function renderUsage(card, provider) {
   const host = card.querySelector('.usage');
   const usage = state.usage.get(provider.id);
+  renderTier(card, provider, provider.usageSource ? usage : null);
   if (!provider.available || !provider.usageSource || !usage) return host.replaceChildren();
   if (usage.error || usage.windows.length === 0) {
     const note = document.createElement('div');

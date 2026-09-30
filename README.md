@@ -92,6 +92,7 @@ one platform under a `win32` or `darwin` key. See
 | `env` | Extra environment variables for the tool. |
 | `color`, `monogram`, `icon` | Icon appearance. `icon` is a URL path; you can also drop `<id>.svg` into `web/icons/`. |
 | `install`, `docs` | Help shown when the tool is not installed. |
+| `usageUrl`, `billingUrl` | `https://` links to the vendor's usage and billing pages, shown on the card. The defaults point at the subscription pages; set your API console instead, or `null` to hide a link. Google's usage link opens AI Studio, which counts API-key usage only, not the Gemini CLI sign-in quota the card's meters show. |
 
 The page's "Working folder" field sets where new sessions start. It defaults
 to your home folder.

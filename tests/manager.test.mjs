@@ -201,6 +201,11 @@ test('providers report availability', async () => {
   assert.equal(missing.available, false);
   assert.equal(missing.installable, true);
   assert.ok(body.providers.some((p) => p.id === 'anthropic'), 'built-in providers are still listed');
+  const anthropic = body.providers.find((p) => p.id === 'anthropic');
+  assert.match(anthropic.usageUrl, /^https:\/\//);
+  assert.match(anthropic.billingUrl, /^https:\/\//);
+  assert.equal(fake.usageUrl, null);
+  assert.equal(fake.billingUrl, null);
 });
 
 test('usage meters come from the provider usage source', async () => {

@@ -104,7 +104,9 @@ export async function readClaudeCredentials({
   if (Number.isFinite(oauth.expiresAt) && oauth.expiresAt < Date.now()) {
     throw new UsageError('Claude Code sign-in has expired; run claude once to refresh it');
   }
-  return { accessToken: oauth.accessToken, plan: oauth.subscriptionType || null };
+  const multiplier = typeof oauth.rateLimitTier === 'string' ? oauth.rateLimitTier.match(/_(\d+)x$/)?.[1] : null;
+  const plan = oauth.subscriptionType ? `${oauth.subscriptionType}${multiplier ? ` ${multiplier}x` : ''}` : null;
+  return { accessToken: oauth.accessToken, plan };
 }
 
 export async function fetchClaudeUsage({ accessToken, plan = null, version = null, fetchImpl = fetch } = {}) {

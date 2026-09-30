@@ -14,7 +14,9 @@
       "color": "#D97757",
       "monogram": "A",
       "install": "npm install -g @anthropic-ai/claude-code",
-      "docs": "https://docs.anthropic.com/en/docs/claude-code"
+      "docs": "https://docs.anthropic.com/en/docs/claude-code",
+      "usageUrl": "https://claude.ai/settings/usage",
+      "billingUrl": "https://claude.ai/settings/billing"
     },
     {
       "id": "openai",
@@ -30,7 +32,9 @@
       "color": "#10A37F",
       "monogram": "O",
       "install": "npm install -g @openai/codex",
-      "docs": "https://github.com/openai/codex"
+      "docs": "https://github.com/openai/codex",
+      "usageUrl": "https://chatgpt.com/codex/settings/usage",
+      "billingUrl": "https://chatgpt.com/#settings/Billing"
     },
     {
       "id": "google",
@@ -46,7 +50,9 @@
       "color": "#4285F4",
       "monogram": "G",
       "install": "npm install -g @google/gemini-cli",
-      "docs": "https://github.com/google-gemini/gemini-cli"
+      "docs": "https://github.com/google-gemini/gemini-cli",
+      "usageUrl": "https://aistudio.google.com/usage",
+      "billingUrl": "https://one.google.com/settings"
     },
     {
       "id": "xai",
@@ -61,7 +67,9 @@
       "color": "#6B7280",
       "monogram": "X",
       "install": "npm install -g @xai-official/grok",
-      "docs": "https://docs.x.ai/build/overview"
+      "docs": "https://docs.x.ai/build/overview",
+      "usageUrl": "https://grok.com/?_s=usage",
+      "billingUrl": "https://grok.com/?_s=billing"
     },
     {
       "id": "shell",
