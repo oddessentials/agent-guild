@@ -203,6 +203,10 @@ and 12. It reports the web page's theme colours: foreground `#e6e9ef`,
 background `#0f1115`. A client built on xterm.js can copy
 `suppressQueryReplies` from `web/app.js`.
 
+On Windows, the ConPTY console host sits between the program and the
+manager. It handles some queries itself and does not pass every mode
+through (SGR mouse encoding, for one), so those never reach the manager.
+
 Close codes: `4404` means the session does not exist, `4410` means it was
 removed, and `4008` means the client fell too far behind. After a `4008` or a
 network drop, reconnect and the snapshot brings the client up to date.
