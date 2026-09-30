@@ -26,5 +26,9 @@
     "prompt": "A heraldic guild crest emblem: an ornate dark iron and gold shield with an upward-pointing glowing indigo-violet chevron in the center, small wings and filigree around the shield, viewed straight-on, symmetrical."},
 
   "page-background": {"seed": 801, "w": 1920, "h": 1088, "style": false,
-    "prompt": "Extremely dark, low-contrast background texture for a website: an ancient dark stone guild hall wall in deep shadow, faint barely visible golden rune etchings, subtle warm ember glow at the bottom edge, a few tiny drifting embers, almost black overall (#0f1115), even and calm, no focal object, no text, no people."}
+    "prompt": "Extremely dark, low-contrast background texture for a website: an ancient dark stone guild hall wall in deep shadow, faint barely visible golden rune etchings, subtle warm ember glow at the bottom edge, a few tiny drifting embers, almost black overall (#0f1115), even and calm, no focal object, no text, no people."},
+
+  "frame-corner": {"seed": 901, "w": 1024, "h": 1024,
+    "style": "Premium dark fantasy game asset illustration, painterly high detail, polished antique gold metal with warm rim light, isolated on a flat pure pitch-black background, no text, no letters, no gems.",
+    "prompt": "An ornate antique gold filigree corner ornament for the top-left corner of a trading card frame: two thin straight gold rails meeting at a right angle in the top-left, decorated at the corner with a small elegant scrollwork flourish and a tiny leaf motif, the rails fading out along the top edge and the left edge, the rest of the image empty black."}
 }

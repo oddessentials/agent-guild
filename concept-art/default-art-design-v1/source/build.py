@@ -42,6 +42,20 @@ def cutout(src, mask):
     return Image.fromarray((np.dstack([rgb, a]) * 255 + 0.5).astype(np.uint8), "RGBA")
 
 
+def frame(src, out, origin=(40, 44), size=860, corner=168):
+    tl = Image.open(src).convert("RGBA").crop((*origin, origin[0] + size, origin[1] + size)).resize((corner, corner), Image.LANCZOS)
+    im = Image.new("RGBA", (corner * 2 + 1, corner * 2 + 1))
+    im.paste(tl, (0, 0))
+    im.paste(tl.transpose(Image.FLIP_LEFT_RIGHT), (corner + 1, 0))
+    im.paste(tl.transpose(Image.FLIP_TOP_BOTTOM), (0, corner + 1))
+    im.paste(tl.transpose(Image.ROTATE_180), (corner + 1, corner + 1))
+    im.paste(tl.crop((corner - 1, 0, corner, corner)), (corner, 0))
+    im.paste(tl.crop((corner - 1, 0, corner, corner)).transpose(Image.FLIP_TOP_BOTTOM), (corner, corner + 1))
+    im.paste(tl.crop((0, corner - 1, corner, corner)), (0, corner))
+    im.paste(tl.crop((0, corner - 1, corner, corner)).transpose(Image.FLIP_LEFT_RIGHT), (corner + 1, corner))
+    quantize(im, out)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--masks", action="store_true", help="recompute the BiRefNet masks with the local image studio")
@@ -61,6 +75,7 @@ def main():
         im = Image.open(PACK / rel).convert("RGBA")
         quantize(im.resize((round(im.width * height / im.height), height), Image.LANCZOS), WEB / rel)
 
+    frame(PACK / "ui" / "frame-corner.png", WEB / "ui" / "frame.png")
     Image.open(PACK / "backgrounds" / "page.png").convert("RGB").save(WEB / "page.png", optimize=True)
 
     if shutil.which("oxipng"):

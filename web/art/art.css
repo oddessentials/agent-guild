@@ -59,11 +59,16 @@
     background: url("/art/ui/guild-crest.png") center / contain no-repeat;
   }
   h1, h2 { font-family: "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif; letter-spacing: 0.01em; }
-  h1 { color: var(--gold); font-size: 1.3rem; font-weight: 600; }
+  h1 {
+    font-size: 1.3rem; font-weight: 600; color: var(--gold);
+    background: linear-gradient(180deg, #fbe9bd 0%, #e2b867 55%, #a97b35 100%);
+    -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+  }
   h2 { color: #f1e2c2; font-size: 1.15rem; font-weight: 600; }
 
   .provider, .session-card {
     position: relative; isolation: isolate; overflow: hidden;
+    border-radius: 6px; padding: 18px;
     background: var(--card-bg);
     border: 1px solid color-mix(in srgb, var(--pc) 35%, #2a303b);
     box-shadow: inset 0 0 0 1px rgba(232, 196, 124, 0.06), 0 8px 24px rgba(0, 0, 0, 0.35);
@@ -77,6 +82,10 @@
     content: ""; position: absolute; z-index: -1; pointer-events: none;
     background-repeat: no-repeat; background-size: cover; background-position: center top;
   }
+  .provider::after, .session-card::after {
+    content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+    border: 44px solid transparent; border-image: url("/art/ui/frame.png") 168;
+  }
 
   .provider { padding-top: 188px; align-content: start; }
   .provider::before {
@@ -88,9 +97,7 @@
   .provider.unavailable::before { background-image: var(--locked); }
   .provider.unavailable { border-color: #2a2d33; }
   .provider.unavailable::after {
-    content: ""; position: absolute; top: 10px; right: 10px; width: 30px; height: 40px; pointer-events: none;
-    background: url("/art/ui/padlock.png") center / contain no-repeat;
-    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.8));
+    background: url("/art/ui/padlock.png") right 16px top 14px / 30px 40px no-repeat border-box;
   }
   .provider .vendor { color: #f3ead8; }
 
@@ -120,7 +127,7 @@
   .session-card .card-title { flex-basis: 100%; }
 
   .level-badge {
-    display: grid; place-items: center; position: absolute; left: 10px; bottom: 10px; z-index: 1;
+    display: grid; place-items: center; position: absolute; left: 12px; bottom: 12px; z-index: 1;
     width: 46px; height: 46px; padding-top: 1px;
     background: url("/art/ui/level-medallion.png") center / contain no-repeat;
     font: 700 1.05rem "Palatino Linotype", Palatino, Georgia, serif; color: #f6dea6;
@@ -140,7 +147,23 @@
   .session-card .agent[data-familiar="night"] { --fc: #a66cf0; background-image: url("/art/familiars/night.png"); }
   .session-card .agent[data-familiar="aether"] { --fc: #7cc8ff; background-image: url("/art/familiars/aether.png"); }
 
-  .status-pill { background: rgba(0, 0, 0, 0.45); border: 1px solid #2f3440; }
+  .status-pill { background: rgba(0, 0, 0, 0.45); border: 1px solid #4a3d25; }
+  .model-pill { border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); }
+  .provider .tier { background: rgba(0, 0, 0, 0.45); border-color: #4a3d25; color: var(--gold); }
+
+  .btn {
+    border-radius: 6px; border-color: #4a3d25;
+    background: linear-gradient(#242834, #171a22);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 1px 2px rgba(0, 0, 0, 0.5);
+  }
+  .btn:hover { border-color: var(--gold-dim); }
+  .btn.primary {
+    border-color: #b8955a; color: #fff; text-shadow: 0 1px 1px rgba(0, 0, 0, 0.35);
+    background: linear-gradient(#8e8ef6, #6262d6);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 2px 8px rgba(124, 124, 240, 0.25);
+  }
+  .btn.primary:hover { border-color: var(--gold); filter: brightness(1.08); }
+  .cwd input, .auth input { border-color: #4a3d25; background: rgba(12, 13, 17, 0.8); }
   .status-pill.active { border-color: color-mix(in srgb, var(--ok) 55%, transparent); box-shadow: 0 0 10px rgba(76, 195, 138, 0.25); }
 
   @media (max-width: 640px) {
