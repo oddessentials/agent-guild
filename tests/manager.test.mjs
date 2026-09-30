@@ -34,12 +34,17 @@ before(async () => {
 });
 
 after(async () => {
-  await ctx.shutdown('tests done');
-  // Windows may hold the folder briefly after a process exits.
-  fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   // node-pty on Windows can keep a handle open after every session has
   // ended. Exit once results are reported rather than hanging the run.
-  setTimeout(() => process.exit(), 3000).unref();
+  setTimeout(() => process.exit(), 8000).unref();
+  await ctx.shutdown('tests done');
+  assert.equal(ctx.manager.exiting.size, 0, 'shutdown waits for removed sessions to exit');
+  try {
+    // Windows may hold the folder briefly after a process exits.
+    fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  } catch (err) {
+    console.warn(`could not remove ${home}: ${err.message}`);
+  }
 });
 
 async function call(method, route, body, headers = {}) {

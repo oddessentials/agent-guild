@@ -29,6 +29,8 @@ export class SessionManager extends EventEmitter {
     this.getApiUrl = getApiUrl;
     this.sessionDefaults = sessionDefaults;
     this.sessions = new Map();
+    /** Removed sessions whose process has not exited yet. */
+    this.exiting = new Set();
   }
 
   list() {
@@ -116,6 +118,10 @@ export class SessionManager extends EventEmitter {
     const session = this.get(id);
     this.sessions.delete(id);
     session._broadcast({ type: 'removed' });
+    if (session.status === 'running') {
+      this.exiting.add(session);
+      session.exited.then(() => this.exiting.delete(session));
+    }
     session.dispose();
     this.emit('event', { type: 'session.removed', sessionId: id });
   }
@@ -136,8 +142,8 @@ export class SessionManager extends EventEmitter {
   async shutdown({ graceMs = 1500, timeoutMs = 5000 } = {}) {
     const sessions = [...this.sessions.values()];
     this.sessions.clear();
+    const running = [...sessions.filter((s) => s.status === 'running'), ...this.exiting].map((s) => s.exited);
     for (const session of sessions) session.dispose({ graceMs });
-    const running = sessions.filter((s) => s.status === 'running').map((s) => s.exited);
     if (running.length === 0) return;
     let timer;
     await Promise.race([

@@ -3,6 +3,7 @@
 // byte replay), and the sub-agents the coding tool has reported.
 
 import { EventEmitter } from 'node:events';
+import { execFile } from 'node:child_process';
 import crypto from 'node:crypto';
 import pty from 'node-pty';
 import headless from '@xterm/headless';
@@ -198,17 +199,34 @@ export class Session extends EventEmitter {
     this._broadcast({ type: 'resize', cols: c, rows: r });
   }
 
-  /** Ask the process to end (hang-up), then force it after a grace period. */
+  /**
+   * End the process. On macOS and Linux: hang-up first, force after a grace
+   * period. On Windows: end the whole process tree at once. node-pty's own
+   * Windows kill first asks a helper process for the console's process list,
+   * and when that helper fails it waits a fixed five seconds.
+   */
   kill({ graceMs = this.killGraceMs } = {}) {
     if (this.status !== 'running') return;
-    const force = () => { try { this.pty.kill(process.platform === 'win32' ? undefined : 'SIGKILL'); } catch { /* gone */ } };
-    try {
-      if (process.platform === 'win32') this.pty.kill();
-      else this.pty.kill('SIGHUP');
-    } catch { force(); }
+    if (process.platform === 'win32') {
+      this._killWindowsTree();
+      return;
+    }
+    const force = () => { try { this.pty.kill('SIGKILL'); } catch { /* gone */ } };
+    try { this.pty.kill('SIGHUP'); } catch { force(); }
     clearTimeout(this._killTimer);
     this._killTimer = setTimeout(force, graceMs);
     this._killTimer.unref?.();
+  }
+
+  _killWindowsTree() {
+    const fallback = () => {
+      if (this.status === 'running') { try { this.pty.kill(); } catch { /* gone */ } }
+    };
+    const pid = this.pty.pid;
+    if (!pid) return fallback();
+    execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, timeout: 5000 }, (err) => {
+      if (err) fallback();
+    });
   }
 
   /**
