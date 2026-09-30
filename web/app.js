@@ -17,6 +17,8 @@ const state = {
   eventsRetry: 0,
   /** True from a shutdown request until the manager is reachable again. */
   stopping: false,
+  /** After a stop: how many session processes did not confirm exiting, or null if the manager never said. */
+  stopRemaining: null,
 };
 
 // ---- storage (may be unavailable, e.g. blocked site data) -----------------
@@ -646,6 +648,7 @@ async function stopManager({ force = false } = {}) {
 function enterStopping(running = 0) {
   if (state.stopping) return;
   state.stopping = true;
+  state.stopRemaining = null;
   closePanel();
   for (const view of state.views.values()) view.dispose();
   state.views.clear();
@@ -664,6 +667,22 @@ function showStopped(phase, title, text) {
   $('stopped-title').textContent = title;
   $('stopped-text').textContent = text;
   el.hidden = false;
+}
+
+/**
+ * The manager has stopped. Only a manager.stopped event with nothing
+ * remaining confirms that every process exited; a timeout, or a socket that
+ * dropped without the event, must not be announced as a clean stop.
+ */
+function showManagerStopped() {
+  setConnection('down', 'Session manager stopped');
+  const n = state.stopRemaining;
+  if (n === 0) return showStopped('stopped', 'Session manager stopped', 'Every session has ended.');
+  if (n > 0) {
+    return showStopped('stopped', 'Session manager stopped',
+      `${n} session process${n === 1 ? '' : 'es'} did not confirm exiting in time and may still be running. Check your system's process list.`);
+  }
+  showStopped('stopped', 'Session manager stopped', 'The manager went away before confirming that every session had ended.');
 }
 
 // ---- events ---------------------------------------------------------------
@@ -689,6 +708,10 @@ function connectEvents() {
       renderSessions();
     } else if (msg.type === 'manager.stopping') {
       enterStopping(msg.running);
+    } else if (msg.type === 'manager.stopped') {
+      enterStopping();
+      state.stopRemaining = Number(msg.remaining) || 0;
+      showManagerStopped();
     } else if (msg.type === 'session.created' || msg.type === 'session.updated') {
       upsertSession(msg.session);
     } else if (msg.type === 'session.removed') {
@@ -700,8 +723,7 @@ function connectEvents() {
   };
   ws.onclose = () => {
     if (state.stopping) {
-      setConnection('down', 'Session manager stopped');
-      showStopped('stopped', 'Session manager stopped', 'Every session has ended.');
+      showManagerStopped();
     } else {
       setConnection('down', 'Session manager not reachable. Run "agent-guild open" to start it.');
     }

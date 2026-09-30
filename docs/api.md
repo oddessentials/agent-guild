@@ -214,7 +214,7 @@ All paths are under `/api/v1`.
 | DELETE | `/sessions/:id` | | Ends the process if needed and removes the session. |
 | POST | `/sessions/:id/agents` | Agent report | `{ agent }`, or `{ agent: null }` after a removal, for a `done` report about an agent that was never reported, or for `{ finishForeground: true }`, which marks every foreground agent still working as done. |
 | POST | `/sessions/:id/model` | `{ model, displayName? }` | `{ model }`. Sets the session's model with source `report`, unless a foreground agent is working; then the current model is returned unchanged. |
-| POST | `/shutdown` | `{ force? }` | `202 { ok, running }`: stops the manager and every session. 409 `sessions_running` (with `running`, the session count) while any session is running, unless `force` is true. A `manager.stopping` event goes to every events client first. The sessions end before the API closes, and `POST /sessions` and `POST /providers/:id/install` answer 503 `manager_stopping` meanwhile. |
+| POST | `/shutdown` | `{ force? }` | `202 { ok, running }`: stops the manager and every session. 409 `sessions_running` (with `running`, the session count) while any session is running, unless `force` is true. From the 202 on, `POST /sessions` and `POST /providers/:id/install` answer 503 `manager_stopping`. Events clients get `manager.stopping` first and `manager.stopped` last, after the sessions have ended and before the API closes. |
 
 `cwd` defaults to the user's home folder and must be an existing folder. A
 leading `~` is expanded. `args` are appended to the provider's configured
@@ -246,7 +246,8 @@ This socket pushes changes to every session. It is server-to-client only.
 | `{ type: "session.updated", session }` | Status, activity, agents, name or size changed. |
 | `{ type: "session.removed", sessionId }` | A session was removed. |
 | `{ type: "providers.updated", providers }` | The provider list changed: a version check finished, `providers.json` was reloaded, or an install session ended. |
-| `{ type: "manager.stopping", running }` | A client asked the manager to stop. Every session ends, and only then does the socket close, so a closed socket after this event means every session has ended. A client should show that the manager was stopped on purpose, not that it is unreachable. |
+| `{ type: "manager.stopping", running }` | A client asked the manager to stop. `running` sessions are being ended. A client should show that the manager was stopped on purpose, not that it is unreachable. |
+| `{ type: "manager.stopped", remaining }` | The last event before the socket closes. `remaining` is how many session processes had not confirmed their exit when the manager gave up waiting (about five seconds); 0 means every session has ended. A socket that closes after `manager.stopping` without this event means the manager went away before it could confirm. |
 
 After a reconnect, treat `hello` as the new source of truth.
 

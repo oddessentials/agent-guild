@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveCommand, buildSpawnSpec, quoteForCmd } from '../src/manager/command-resolver.mjs';
 import { mergePathLists, parsePathFromEnvOutput } from '../src/manager/shell-env.mjs';
-import { mergeEnv, cleanResumeId, modelFromArgs } from '../src/manager/session-manager.mjs';
+import { mergeEnv, cleanResumeId, modelFromArgs, SessionManager } from '../src/manager/session-manager.mjs';
 import { loadProviders, defaultShell, ProviderRegistry } from '../src/manager/providers.mjs';
 import { hookToReports, claudeStatuslineToReport, formatStatusLine } from '../src/report/hooks.mjs';
 import { shimContents, writeReportShims, prependPath, fileUrl, SHIM_NAME, LOADER_NAME } from '../src/manager/report-shims.mjs';
@@ -746,4 +746,19 @@ test('provider env values are normalised to strings', () => {
   fs.writeFileSync(userFile, JSON.stringify({ providers: [{ id: 'anthropic', env: { A: 1, B: true, C: { x: 1 }, D: 'd' } }] }));
   const { providers } = loadProviders({ userFile, platform: 'linux' });
   assert.deepEqual(providers[0].env, { A: '1', B: 'true', D: 'd' });
+});
+
+test('shutdown reports the processes that did not confirm exiting in time', async () => {
+  const fakeSession = (exited) => ({ status: 'running', exited, dispose() {} });
+  const manager = new SessionManager({ registry: null, baseEnv: {}, getApiUrl: () => '' });
+
+  manager.sessions.set('a', fakeSession(Promise.resolve()));
+  manager.sessions.set('b', fakeSession(new Promise((resolve) => setTimeout(resolve, 10))));
+  assert.deepEqual(await manager.shutdown({ timeoutMs: 2000 }), { remaining: 0 });
+  assert.equal(manager.closing, true);
+
+  const stuck = new SessionManager({ registry: null, baseEnv: {}, getApiUrl: () => '' });
+  stuck.sessions.set('a', fakeSession(Promise.resolve()));
+  stuck.sessions.set('b', fakeSession(new Promise(() => {}))); // never exits
+  assert.deepEqual(await stuck.shutdown({ timeoutMs: 50 }), { remaining: 1 });
 });

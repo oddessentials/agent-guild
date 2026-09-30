@@ -227,20 +227,25 @@ export class SessionManager extends EventEmitter {
   /**
    * End every session and wait, up to `timeoutMs`, for the processes to
    * exit. Waiting matters on Windows, where ending a ConPTY process is slow.
+   * Resolves to `{ remaining }`: how many processes had not confirmed their
+   * exit when the wait ended, so a caller can tell a timeout from a clean
+   * teardown.
    */
   async shutdown({ graceMs = 1500, timeoutMs = 5000 } = {}) {
     this.closing = true;
     const sessions = [...this.sessions.values()];
     this.sessions.clear();
-    const running = [...sessions.filter((s) => s.status === 'running'), ...this.exiting].map((s) => s.exited);
+    const pending = new Set([...sessions.filter((s) => s.status === 'running'), ...this.exiting]);
+    for (const session of pending) session.exited.then(() => pending.delete(session));
     for (const session of sessions) session.dispose({ graceMs });
-    if (running.length === 0) return;
+    if (pending.size === 0) return { remaining: 0 };
     let timer;
     await Promise.race([
-      Promise.all(running),
+      Promise.all([...pending].map((s) => s.exited)),
       new Promise((resolve) => { timer = setTimeout(resolve, timeoutMs); }),
     ]);
     clearTimeout(timer);
+    return { remaining: pending.size };
   }
 }
 

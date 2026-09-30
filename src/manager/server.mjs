@@ -242,6 +242,9 @@ export function createManagerServer({
         err.running = running;
         throw err;
       }
+      // Refuse new sessions from this moment, before the shutdown itself
+      // runs: a session accepted in between would be ended without warning.
+      manager.closing = true;
       sendJson(res, 202, { ok: true, running });
       // Tell every client first, so a second page shows "stopped" rather
       // than "not reachable" when its socket drops.
@@ -310,6 +313,20 @@ export function createManagerServer({
   const broadcast = (event) => {
     for (const ws of eventClients) safeSend(ws, event);
   };
+
+  /** Send a last event to every events client and wait, briefly, for it to leave. */
+  function farewell(event, { timeoutMs = 1000 } = {}) {
+    const payload = JSON.stringify(event);
+    const sends = [...eventClients]
+      .filter((ws) => ws.readyState === ws.OPEN)
+      .map((ws) => new Promise((resolve) => ws.send(payload, () => resolve())));
+    if (sends.length === 0) return Promise.resolve();
+    let timer;
+    return Promise.race([
+      Promise.all(sends),
+      new Promise((resolve) => { timer = setTimeout(resolve, timeoutMs); }),
+    ]).then(() => clearTimeout(timer));
+  }
   manager.on('event', broadcast);
   registry.on('updated', () => broadcast({ type: 'providers.updated', providers: registry.list() }));
 
@@ -390,7 +407,9 @@ export function createManagerServer({
         });
       });
     },
-    close() {
+    /** @param {{ notice?: object }} [opts] a final event for the events clients */
+    async close({ notice } = {}) {
+      if (notice) await farewell(notice);
       clearInterval(heartbeat);
       for (const ws of wss.clients) ws.terminate();
       return new Promise((resolve) => {

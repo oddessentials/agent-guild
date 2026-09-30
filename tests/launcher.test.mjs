@@ -114,9 +114,15 @@ test('open starts a background manager, status reports it, stop ends it', async 
   // report "every session has ended" when its socket drops.
   const alive = () => { try { process.kill(pid, 0); return true; } catch { return false; } };
   assert.equal(alive(), false, 'the session process has exited by the time the events socket closes');
+  const types = messages.map((m) => m.type);
   const stopping = messages.find((m) => m.type === 'manager.stopping');
-  assert.ok(stopping, `no manager.stopping event in ${JSON.stringify(messages.map((m) => m.type))}`);
+  assert.ok(stopping, `no manager.stopping event in ${JSON.stringify(types)}`);
   assert.equal(stopping.running, 1);
+  // The last event confirms that every process exited before the API closed.
+  const done = messages.find((m) => m.type === 'manager.stopped');
+  assert.ok(done, `no manager.stopped event in ${JSON.stringify(types)}`);
+  assert.equal(done.remaining, 0);
+  assert.equal(types.at(-1), 'manager.stopped');
 
   const after = await run('status');
   assert.equal(after.code, 3);
