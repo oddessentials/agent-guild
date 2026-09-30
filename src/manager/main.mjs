@@ -61,7 +61,10 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
     console.log(`[manager] stopping (${reason}); ending ${manager.sessions.size} session(s)`);
     clearInterval(versionTimer);
     removeRuntimeFile();
-    closing = Promise.all([manager.shutdown(), api.close()]).then(() => undefined);
+    // Sessions end before the API closes, so a client whose events socket
+    // drops knows that every session has ended, not just that the manager
+    // stopped answering. The manager refuses new sessions meanwhile.
+    closing = manager.shutdown().then(() => api.close());
     return closing;
   };
 

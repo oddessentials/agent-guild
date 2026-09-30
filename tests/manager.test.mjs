@@ -643,6 +643,18 @@ test('shutdown is refused while sessions are running unless forced', async () =>
   await call('DELETE', `/sessions/${session.id}`);
 });
 
+test('no session can start while the manager is shutting down', async () => {
+  ctx.manager.closing = true;
+  try {
+    const { status, body } = await call('POST', '/sessions', { providerId: 'fake', cwd: home });
+    assert.equal(status, 503);
+    assert.equal(body.error.code, 'manager_stopping');
+    assert.equal((await call('POST', '/providers/missing/install')).status, 503);
+  } finally {
+    ctx.manager.closing = false;
+  }
+});
+
 test('a tool that ignores the hang-up is force-killed', { skip: process.platform === 'win32' }, async () => {
   const session = await createFake();
   const client = terminal(session.id);

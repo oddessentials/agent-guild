@@ -85,6 +85,13 @@ test('open starts a background manager, status reports it, stop ends it', async 
   // page uses that refusal to ask before ending sessions.
   const created = await call('POST', '/sessions', { providerId: 'fake', cwd: home });
   assert.equal(created.status, 201, JSON.stringify(created.body));
+  // Windows reports the pid a moment after the console connects.
+  let pid = created.body.session.pid;
+  for (let i = 0; pid === null && i < 200; i++) {
+    await new Promise((r) => setTimeout(r, 25));
+    pid = (await call('GET', `/sessions/${created.body.session.id}`)).body.session.pid;
+  }
+  assert.ok(pid, 'the session has a pid');
   const refused = await call('POST', '/shutdown');
   assert.equal(refused.status, 409);
   assert.equal(refused.body.error.code, 'sessions_running');
@@ -103,6 +110,10 @@ test('open starts a background manager, status reports it, stop ends it', async 
   assert.match(stopped.stdout, /Ending 1 running session/);
   assert.match(stopped.stdout, /stopped/);
   await closed;
+  // The socket closes only after the sessions have ended, so a page can
+  // report "every session has ended" when its socket drops.
+  const alive = () => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  assert.equal(alive(), false, 'the session process has exited by the time the events socket closes');
   const stopping = messages.find((m) => m.type === 'manager.stopping');
   assert.ok(stopping, `no manager.stopping event in ${JSON.stringify(messages.map((m) => m.type))}`);
   assert.equal(stopping.running, 1);

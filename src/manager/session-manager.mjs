@@ -56,6 +56,8 @@ export class SessionManager extends EventEmitter {
     this.sessions = new Map();
     /** Removed sessions whose process has not exited yet. */
     this.exiting = new Set();
+    /** True once shutdown has begun; no new session may start after that. */
+    this.closing = false;
   }
 
   list() {
@@ -128,6 +130,7 @@ export class SessionManager extends EventEmitter {
   }
 
   _spawn({ provider, spawnSpec, cwd, cols, rows, name, resume = null, task = null }) {
+    if (this.closing) throw httpError(503, 'the session manager is stopping', 'manager_stopping');
     if (this.sessions.size >= MAX_SESSIONS) {
       throw httpError(429, `session limit reached (${MAX_SESSIONS}); remove finished sessions first`, 'too_many_sessions');
     }
@@ -226,6 +229,7 @@ export class SessionManager extends EventEmitter {
    * exit. Waiting matters on Windows, where ending a ConPTY process is slow.
    */
   async shutdown({ graceMs = 1500, timeoutMs = 5000 } = {}) {
+    this.closing = true;
     const sessions = [...this.sessions.values()];
     this.sessions.clear();
     const running = [...sessions.filter((s) => s.status === 'running'), ...this.exiting].map((s) => s.exited);

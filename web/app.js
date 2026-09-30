@@ -784,5 +784,12 @@ $('panel-stop').addEventListener('click', () => {
 $('cwd').value = load(CWD_KEY) || '';
 setInterval(renderSessions, 30000);
 
+// The terminal panel sits below the top bar, which wraps onto two rows on
+// narrow screens; publish its height so the panel never covers its controls.
+const topbar = document.querySelector('.topbar');
+const publishTopbarHeight = () => document.documentElement.style.setProperty('--topbar-h', `${topbar.offsetHeight}px`);
+new ResizeObserver(publishTopbarHeight).observe(topbar);
+publishTopbarHeight();
+
 state.token = readTokenFromHash() || load(TOKEN_KEY);
 boot();
