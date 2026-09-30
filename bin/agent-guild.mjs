@@ -161,7 +161,13 @@ async function cmdStatus() {
   }
 }
 
+const MIN_NODE_MAJOR = 22;
+
 async function main() {
+  const major = Number(process.versions.node.split('.')[0]);
+  if (major < MIN_NODE_MAJOR) {
+    throw new Error(`Node.js ${MIN_NODE_MAJOR} or newer is required; this is ${process.versions.node}. Install a current LTS from https://nodejs.org.`);
+  }
   const args = process.argv.slice(2);
   const flags = new Set(args.filter((a) => a.startsWith('-')));
   const command = args.find((a) => !a.startsWith('-')) || 'open';

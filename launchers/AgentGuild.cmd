@@ -1,10 +1,10 @@
 @echo off
-rem Double-click to open Agent Guild on Windows. Requires Node.js 20 or newer.
+rem Double-click to open Agent Guild on Windows. Requires Node.js 22 or newer.
 setlocal
 cd /d "%~dp0.."
 where node >nul 2>nul
 if errorlevel 1 (
-  echo Node.js 20 or newer is required. Install it from https://nodejs.org and try again.
+  echo Node.js 22 or newer is required. Install it from https://nodejs.org and try again.
   pause
   exit /b 1
 )

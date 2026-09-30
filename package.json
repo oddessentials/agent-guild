@@ -5,7 +5,7 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "bin": {
     "agent-guild": "bin/agent-guild.mjs",
@@ -25,6 +25,6 @@
     "@xterm/headless": "^6.0.0",
     "@xterm/xterm": "^6.0.0",
     "node-pty": "^1.1.0",
-    "ws": "^8.18.0"
+    "ws": "^8.22.0"
   }
 }

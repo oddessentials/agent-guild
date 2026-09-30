@@ -23,7 +23,7 @@ coding tool, and see at a glance which sessions and agents are working.
 ## Requirements
 
 * Windows 10 1809 or later, or macOS 11 or later. Linux works for development.
-* Node.js 20 or newer.
+* Node.js 22 or newer.
 * Each coding tool you want to use, installed and signed in on its own. Agent
   Guild launches these tools; it does not install or authenticate them.
 

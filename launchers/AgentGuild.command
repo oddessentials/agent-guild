@@ -1,12 +1,12 @@
 #!/bin/bash
-# Double-click to open Agent Guild on macOS. Requires Node.js 20 or newer.
+# Double-click to open Agent Guild on macOS. Requires Node.js 22 or newer.
 cd "$(dirname "$0")/.." || exit 1
 # Finder starts this without the login shell's PATH (Homebrew, nvm, ...).
 if ! command -v node >/dev/null 2>&1; then
   export PATH="$(${SHELL:-/bin/zsh} -l -c 'printf %s "$PATH"' 2>/dev/null):$PATH"
 fi
 if ! command -v node >/dev/null 2>&1; then
-  echo "Node.js 20 or newer is required. Install it from https://nodejs.org and try again."
+  echo "Node.js 22 or newer is required. Install it from https://nodejs.org and try again."
   read -r -p "Press Return to close."
   exit 1
 fi
