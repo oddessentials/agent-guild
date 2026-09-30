@@ -148,14 +148,18 @@ export class ProviderRegistry extends EventEmitter {
     this.emit('updated');
   }
 
-  /** The registry that installs use: the configured one, else npm's own. */
+  /**
+   * The registry that installs use: the configured one, else npm's global
+   * configuration, which is what `npm install -g` reads (a project .npmrc
+   * in the launch directory does not apply to it).
+   */
   npmRegistryUrl() {
     if (this.registryUrl) return Promise.resolve(this.registryUrl);
     this._npmRegistry ??= (async () => {
       const npm = this.resolveNpm();
       if (!npm) return DEFAULT_NPM_REGISTRY;
       try {
-        const spec = buildSpawnSpec(npm, ['config', 'get', 'registry'], this.env, this.platform);
+        const spec = buildSpawnSpec(npm, ['config', 'get', 'registry', '--global'], this.env, this.platform);
         const url = (await runSpec(spec, { env: this.env, timeoutMs: 10000 })).stdout.trim();
         return /^https?:\/\/\S+$/.test(url) ? url : DEFAULT_NPM_REGISTRY;
       } catch {

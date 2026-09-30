@@ -12,8 +12,9 @@ import { claudeHookToReport, claudeStatuslineToReport, formatStatusLine } from '
 import { ensurePtyReady, spawnHelperCandidates } from '../src/manager/pty-setup.mjs';
 import { parseVersion, compareVersions, installedVersion, latestVersion } from '../src/manager/versions.mjs';
 import {
-  UsageMonitor, readClaudeCredentials, readCodexCredentials, fetchClaudeUsage, fetchCodexUsage, commandUsage, toIso, windowLabel,
+  UsageMonitor, readClaudeCredentials, readCodexCredentials, claudeKeychainService, fetchClaudeUsage, fetchCodexUsage, commandUsage, toIso, windowLabel,
 } from '../src/manager/usage.mjs';
+import crypto from 'node:crypto';
 
 function tempDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-unit-'));
@@ -171,6 +172,25 @@ test('versions are parsed, compared and looked up', async () => {
   assert.equal(await latestVersion('boom', { fetchImpl: async () => { throw new Error('offline'); } }), null);
 });
 
+test('the registry lookup matches npm install -g, not a project .npmrc', { skip: !resolveCommand('npm') && 'npm is not installed' }, async () => {
+  const dir = tempDir();
+  const project = path.join(dir, 'project');
+  fs.mkdirSync(project);
+  fs.writeFileSync(path.join(project, '.npmrc'), 'registry=https://project.example/\n');
+  const userConfig = path.join(dir, 'user.npmrc');
+  fs.writeFileSync(userConfig, 'registry=https://user.example/\n');
+  const userFile = path.join(dir, 'providers.json');
+  fs.writeFileSync(userFile, JSON.stringify({ providers: [] }));
+  const registry = new ProviderRegistry({ userFile, env: { ...process.env, NPM_CONFIG_USERCONFIG: userConfig }, checkUpdates: false });
+  const cwd = process.cwd();
+  process.chdir(project);
+  try {
+    assert.equal(await registry.npmRegistryUrl(), 'https://user.example/');
+  } finally {
+    process.chdir(cwd);
+  }
+});
+
 test('installed versions are re-read when the tool changes, hourly, and after a failed probe', async () => {
   const fake = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-tool.mjs');
   const dir = tempDir();
@@ -222,6 +242,25 @@ test('usage credentials are read from the tools\' own sign-in files', async () =
   await assert.rejects(readCodexCredentials({ file: codexFile }), /not signed in/);
   fs.writeFileSync(codexFile, JSON.stringify({ tokens: { access_token: 'ctok', account_id: 'acc-1' } }));
   assert.deepEqual(await readCodexCredentials({ file: codexFile }), { accessToken: 'ctok', accountId: 'acc-1' });
+});
+
+test('the macOS keychain item follows CLAUDE_CONFIG_DIR, so accounts stay apart', async () => {
+  const workDir = '/Users/me/.claude-work';
+  const workHash = crypto.createHash('sha256').update(workDir).digest('hex').slice(0, 8);
+  assert.equal(claudeKeychainService({}), 'Claude Code-credentials');
+  assert.equal(claudeKeychainService({ CLAUDE_CONFIG_DIR: workDir }), `Claude Code-credentials-${workHash}`);
+
+  const items = {
+    'Claude Code-credentials': JSON.stringify({ claudeAiOauth: { accessToken: 'personal', subscriptionType: 'pro' } }),
+    [`Claude Code-credentials-${workHash}`]: JSON.stringify({ claudeAiOauth: { accessToken: 'work', subscriptionType: 'max' } }),
+  };
+  const readKeychain = async (service) => items[service] ?? null;
+  const missing = path.join(tempDir(), '.credentials.json');
+  const personal = await readClaudeCredentials({ file: missing, keychain: true, readKeychain });
+  assert.deepEqual(personal, { accessToken: 'personal', plan: 'pro' });
+  const work = await readClaudeCredentials({ file: missing, keychain: true, service: claudeKeychainService({ CLAUDE_CONFIG_DIR: workDir }), readKeychain });
+  assert.deepEqual(work, { accessToken: 'work', plan: 'max' });
+  await assert.rejects(readClaudeCredentials({ file: missing, keychain: true, service: 'Claude Code-credentials-00000000', readKeychain }), /not signed in/);
 });
 
 test('usage endpoints are called with the right headers and parsed into windows', async () => {
@@ -287,7 +326,7 @@ test('a usage command prints JSON, and the monitor caches snapshots', async () =
     env: { ...env, CODEX_HOME: path.join(dir, 'codex-home') },
     fetchImpl: async () => { fetches++; return { ok: true, json: async () => ({ five_hour: { utilization: 5 } }) }; },
     readers: {
-      claude: async ({ file }) => { files.claude = file; return { accessToken: 'tok', plan: 'pro' }; },
+      claude: async ({ file, service }) => { files.claude = file; files.claudeService = service; return { accessToken: 'tok', plan: 'pro' }; },
       codex: async ({ file }) => { files.codex = file; throw new Error('boom'); },
     },
   });
@@ -298,6 +337,7 @@ test('a usage command prints JSON, and the monitor caches snapshots', async () =
   assert.match(byId.openai.error, /usage check failed: boom/);
   assert.equal(byId.google.plan, 'test');
   assert.equal(files.claude, path.join(dir, 'claude-work', '.credentials.json'), "the provider's own env picks its credentials");
+  assert.equal(files.claudeService, claudeKeychainService({ CLAUDE_CONFIG_DIR: path.join(dir, 'claude-work') }), 'and its keychain item');
   assert.equal(files.codex, path.join(dir, 'codex-home', 'auth.json'), 'the manager env applies otherwise');
   await monitor.all();
   assert.equal(fetches, 1, 'a fresh snapshot is served from the cache');

@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { resolveCommand, buildSpawnSpec, runSpec } from './command-resolver.mjs';
 
 export const USAGE_TTL_MS = 60 * 1000;
@@ -46,16 +47,30 @@ export function claudeCredentialsFile(env = process.env) {
   return path.join(env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), '.credentials.json');
 }
 
+/** The keychain item Claude Code uses: keyed to CLAUDE_CONFIG_DIR when set. */
+export function claudeKeychainService(env = process.env) {
+  const dir = env.CLAUDE_CONFIG_DIR;
+  if (!dir) return CLAUDE_KEYCHAIN_SERVICE;
+  return `${CLAUDE_KEYCHAIN_SERVICE}-${crypto.createHash('sha256').update(dir).digest('hex').slice(0, 8)}`;
+}
+
+function readKeychainItem(service) {
+  const spec = { file: 'security', args: ['find-generic-password', '-s', service, '-w'] };
+  return runSpec(spec, { timeoutMs: 30000 }).then((r) => r.stdout, () => null);
+}
+
 /**
  * Claude Code keeps its OAuth token in the macOS keychain, and in
  * .credentials.json elsewhere or when the keychain is unavailable.
  */
-export async function readClaudeCredentials({ file = claudeCredentialsFile(), keychain = process.platform === 'darwin' } = {}) {
+export async function readClaudeCredentials({
+  file = claudeCredentialsFile(),
+  keychain = process.platform === 'darwin',
+  service = CLAUDE_KEYCHAIN_SERVICE,
+  readKeychain = readKeychainItem,
+} = {}) {
   let raw = null;
-  if (keychain) {
-    const spec = { file: 'security', args: ['find-generic-password', '-s', CLAUDE_KEYCHAIN_SERVICE, '-w'] };
-    raw = await runSpec(spec, { timeoutMs: 30000 }).then((r) => r.stdout, () => null);
-  }
+  if (keychain) raw = await readKeychain(service);
   if (raw === null) {
     try {
       raw = await fs.promises.readFile(file, 'utf8');
@@ -215,7 +230,11 @@ export class UsageMonitor {
     try {
       let result;
       if (provider.usage === 'claude') {
-        const creds = await this.readers.claude({ file: claudeCredentialsFile(env), keychain: this.platform === 'darwin' });
+        const creds = await this.readers.claude({
+          file: claudeCredentialsFile(env),
+          keychain: this.platform === 'darwin',
+          service: claudeKeychainService(env),
+        });
         result = await fetchClaudeUsage({ ...creds, version: this.registry.versions.get(provider.id)?.installed, fetchImpl: this.fetchImpl });
       } else if (provider.usage === 'codex') {
         const creds = await this.readers.codex({ file: codexAuthFile(env) });
