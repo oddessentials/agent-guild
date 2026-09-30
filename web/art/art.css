@@ -1,0 +1,144 @@
+/* Default art: a visual layer over styles.css. Dark scheme only; no layout
+   or behavior changes. Remove the <link> to art.css to turn it all off. */
+
+.level-badge { display: none; }
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --gold: #e8c47c;
+    --gold-dim: #8a6d3b;
+    --card-bg: rgba(18, 20, 26, 0.9);
+  }
+
+  .provider[data-id="anthropic"], .session-card[data-provider="anthropic"] { --pc: #d97757; }
+  .provider[data-id="openai"], .session-card[data-provider="openai"] { --pc: #1fd08f; }
+  .provider[data-id="google"], .session-card[data-provider="google"] { --pc: #5b9cff; }
+  .provider[data-id="xai"], .session-card[data-provider="xai"] { --pc: #38d6e8; }
+  .provider[data-id="shell"], .session-card[data-provider="shell"] { --pc: #a67cf6; }
+
+  /* ---- page ---------------------------------------------------------- */
+  body { background: #0b0c10 url("/art/page.png") center bottom / cover fixed; }
+  .topbar { background: rgba(12, 13, 17, 0.88); backdrop-filter: blur(6px); border-bottom-color: #2a2418; }
+  .brand-mark { display: none; }
+  .brand::before {
+    content: ""; width: 34px; height: 34px; flex: none;
+    background: url("/art/ui/guild-crest.png") center / contain no-repeat;
+  }
+  h1, h2 { font-family: "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif; letter-spacing: 0.01em; }
+  h1 { color: var(--gold); font-size: 1.3rem; font-weight: 600; }
+  h2 { color: #f1e2c2; font-size: 1.15rem; font-weight: 600; }
+
+  /* ---- shared card treatment ------------------------------------------ */
+  .provider, .session-card {
+    --pc: #9aa4b2;
+    position: relative; isolation: isolate; overflow: hidden;
+    background: var(--card-bg);
+    border: 1px solid color-mix(in srgb, var(--pc) 35%, #2a303b);
+    box-shadow: inset 0 0 0 1px rgba(232, 196, 124, 0.06), 0 8px 24px rgba(0, 0, 0, 0.35);
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .provider:hover, .session-card:hover {
+    border-color: color-mix(in srgb, var(--pc) 70%, #2a303b);
+    box-shadow: inset 0 0 0 1px rgba(232, 196, 124, 0.1), 0 0 22px color-mix(in srgb, var(--pc) 22%, transparent);
+  }
+  .provider::before, .session-card::before {
+    content: ""; position: absolute; z-index: -1; pointer-events: none;
+    background-repeat: no-repeat; background-size: cover; background-position: center top;
+  }
+
+  /* ---- provider cards: character banner above the card content -------- */
+  .provider { padding-top: 188px; align-content: start; }
+  .provider::before {
+    inset: 0 0 auto 0; height: 250px;
+    -webkit-mask-image: linear-gradient(to bottom, #000 55%, transparent 100%);
+            mask-image: linear-gradient(to bottom, #000 55%, transparent 100%);
+  }
+  .provider[data-id="anthropic"]::before { background-image: url("/art/characters/anthropic/idle.png"); }
+  .provider[data-id="openai"]::before { background-image: url("/art/characters/openai/idle.png"); }
+  .provider[data-id="google"]::before { background-image: url("/art/characters/google/idle.png"); }
+  .provider[data-id="xai"]::before { background-image: url("/art/characters/xai/idle.png"); }
+  .provider[data-id="shell"]::before { background-image: url("/art/characters/shell/idle.png"); }
+  /* not installed = locked */
+  .provider.unavailable[data-id="anthropic"]::before { background-image: url("/art/characters/anthropic/locked.png"); }
+  .provider.unavailable[data-id="openai"]::before { background-image: url("/art/characters/openai/locked.png"); }
+  .provider.unavailable[data-id="google"]::before { background-image: url("/art/characters/google/locked.png"); }
+  .provider.unavailable[data-id="xai"]::before { background-image: url("/art/characters/xai/locked.png"); }
+  .provider.unavailable[data-id="shell"]::before { background-image: url("/art/characters/shell/locked.png"); }
+  .provider.unavailable { border-color: #2a2d33; }
+  .provider.unavailable::after {
+    content: ""; position: absolute; top: 10px; right: 10px; width: 30px; height: 40px; pointer-events: none;
+    background: url("/art/ui/padlock.png") center / contain no-repeat;
+    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.8));
+  }
+  .provider .vendor { color: #f3ead8; }
+
+  /* ---- usage meters as power bars ------------------------------------- */
+  .meter-label { padding-left: 18px; background: url("/art/ui/gem-vitality.png") left center / 14px auto no-repeat; }
+  .meter + .meter .meter-label { background-image: url("/art/ui/gem-mana.png"); }
+  .meter-bar { height: 7px; background: #0c0e12; box-shadow: inset 0 0 0 1px rgba(232, 196, 124, 0.18); }
+  .meter-fill { background: linear-gradient(90deg, #1f9d5c, #52e08f); box-shadow: 0 0 8px rgba(82, 224, 143, 0.55); }
+  .meter + .meter .meter-fill { background: linear-gradient(90deg, #2a62c9, #5ba6ff); box-shadow: 0 0 8px rgba(91, 166, 255, 0.55); }
+  .meter.low .meter-fill { background: var(--warn); box-shadow: 0 0 8px rgba(224, 168, 74, 0.5); }
+  .meter.empty .meter-fill { background: var(--danger); box-shadow: 0 0 8px rgba(239, 107, 102, 0.5); }
+
+  /* ---- session cards: character portrait on the left ------------------ */
+  .session-card { padding-left: 152px; min-height: 196px; }
+  .session-card::before {
+    inset: 0 auto 0 0; width: 168px; background-size: 168px auto;
+    -webkit-mask-image: linear-gradient(to right, #000 62%, transparent 100%);
+            mask-image: linear-gradient(to right, #000 62%, transparent 100%);
+  }
+  /* running = idle character, working = active character */
+  .session-card[data-provider="anthropic"]::before { background-image: url("/art/characters/anthropic/idle.png"); }
+  .session-card[data-provider="openai"]::before { background-image: url("/art/characters/openai/idle.png"); }
+  .session-card[data-provider="google"]::before { background-image: url("/art/characters/google/idle.png"); }
+  .session-card[data-provider="xai"]::before { background-image: url("/art/characters/xai/idle.png"); }
+  .session-card[data-provider="shell"]::before { background-image: url("/art/characters/shell/idle.png"); }
+  .session-card[data-provider="anthropic"]:has(.status-pill.active)::before { background-image: url("/art/characters/anthropic/working.png"); }
+  .session-card[data-provider="openai"]:has(.status-pill.active)::before { background-image: url("/art/characters/openai/working.png"); }
+  .session-card[data-provider="google"]:has(.status-pill.active)::before { background-image: url("/art/characters/google/working.png"); }
+  .session-card[data-provider="xai"]:has(.status-pill.active)::before { background-image: url("/art/characters/xai/working.png"); }
+  .session-card[data-provider="shell"]:has(.status-pill.active)::before { background-image: url("/art/characters/shell/working.png"); }
+  .session-card:has(.status-pill.active) {
+    border-color: color-mix(in srgb, var(--pc) 75%, #2a303b);
+    box-shadow: inset 0 0 0 1px rgba(232, 196, 124, 0.1), 0 0 26px color-mix(in srgb, var(--pc) 28%, transparent);
+  }
+  .session-card.exited::before { filter: grayscale(1) brightness(0.7); }
+  /* The provider icon is redundant next to the portrait; the pills wrap under the title. */
+  .session-card .card-top > .provider-icon { display: none; }
+  .session-card .card-top { flex-wrap: wrap; gap: 6px 8px; }
+  .session-card .card-title { flex-basis: 100%; }
+
+  /* session length = level (medallion over the portrait) */
+  .level-badge {
+    display: grid; place-items: center; position: absolute; left: 10px; bottom: 10px; z-index: 1;
+    width: 46px; height: 46px; padding-top: 1px;
+    background: url("/art/ui/level-medallion.png") center / contain no-repeat;
+    font: 700 1.05rem "Palatino Linotype", Palatino, Georgia, serif; color: #f6dea6;
+    text-shadow: 0 1px 2px #000, 0 0 6px rgba(0, 0, 0, 0.8);
+  }
+
+  /* agents = helper familiars */
+  .agent {
+    width: 34px; height: 34px; color: transparent; border-width: 1px;
+    background: #0e1016 center / 118% auto no-repeat;
+    box-shadow: 0 0 10px color-mix(in srgb, var(--c) 45%, transparent);
+  }
+  .agent[data-familiar="flame"] { background-image: url("/art/familiars/flame.png"); }
+  .agent[data-familiar="leaf"] { background-image: url("/art/familiars/leaf.png"); }
+  .agent[data-familiar="night"] { background-image: url("/art/familiars/night.png"); }
+  .agent[data-familiar="aether"] { background-image: url("/art/familiars/aether.png"); }
+
+  /* status pills pick up the provider color */
+  .status-pill { background: rgba(0, 0, 0, 0.45); border: 1px solid #2f3440; }
+  .status-pill.active { border-color: color-mix(in srgb, var(--ok) 55%, transparent); box-shadow: 0 0 10px rgba(76, 195, 138, 0.25); }
+
+  @media (max-width: 640px) {
+    .session-card { padding-left: 118px; }
+    .session-card::before { width: 132px; background-size: 132px auto; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .provider, .session-card { transition: none; }
+  }
+}

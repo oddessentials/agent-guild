@@ -96,11 +96,15 @@ function paintProviderIcon(el, provider) {
   el.setAttribute('aria-hidden', 'true');
 }
 
+// Helper-agent art (web/art/familiars); picked by name so an agent keeps its familiar.
+const FAMILIARS = ['flame', 'leaf', 'night', 'aether'];
+
 function renderAgents(container, agents) {
   container.replaceChildren(...agents.map((agent) => {
     const el = document.createElement('span');
     el.className = `agent ${agent.status}`;
     el.style.setProperty('--c', `hsl(${hueFor(agent.name)} 65% 50%)`);
+    el.dataset.familiar = FAMILIARS[hueFor(agent.name) % FAMILIARS.length];
     el.textContent = (agent.name || '?').charAt(0).toUpperCase();
     const detail = agent.detail ? ` — ${agent.detail}` : '';
     el.title = `${agent.name} (${agent.status})${detail}`;
@@ -327,8 +331,19 @@ function buildCard(session) {
   return node;
 }
 
+// Session length as a character level: one level per hour running, starting at 1.
+function sessionLevel(s) {
+  const hours = (Date.now() - Date.parse(s.createdAt)) / 3_600_000;
+  return Number.isFinite(hours) ? Math.max(1, Math.floor(hours)) : 1;
+}
+
 function updateCard(node, s) {
+  node.dataset.provider = s.provider.id;
   paintProviderIcon(node.querySelector('.provider-icon'), s.provider);
+  const level = sessionLevel(s);
+  const badge = node.querySelector('.level-badge');
+  badge.textContent = level;
+  badge.title = `Level ${level}`;
   node.querySelector('.name').textContent = s.name;
   const resumed = s.resume ? ` · resumed ${s.resume}` : '';
   node.querySelector('.meta').textContent = `${s.provider.vendor} · ${s.provider.tool} · started ${relativeTime(s.createdAt)}${resumed}`;

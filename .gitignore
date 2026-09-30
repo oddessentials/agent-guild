@@ -2,3 +2,7 @@ node_modules/
 *.log
 .DS_Store
 Thumbs.db
+
+# Working concept art (large source images; shipped assets live under web/art/)
+concept-art/beta-screens-poc/
+concept-art/default-art-design-v1/
