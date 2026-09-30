@@ -12,6 +12,10 @@ const RATE_LIMITED_TTL_MS = 5 * 60 * 1000;
 const CLAUDE_USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
 const CODEX_USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
 const CLAUDE_KEYCHAIN_SERVICE = 'Claude Code-credentials';
+const GEMINI_KEYCHAIN_SERVICE = 'gemini-cli-oauth';
+const GEMINI_KEYCHAIN_ACCOUNT = 'main-account';
+const GEMINI_CODE_ASSIST_URL = 'https://cloudcode-pa.googleapis.com/v1internal';
+const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 
 export class UsageError extends Error {}
 
@@ -167,6 +171,170 @@ export async function fetchCodexUsage({ accessToken, accountId = null, fetchImpl
   return { plan: body?.plan_type ?? body?.planType ?? null, windows };
 }
 
+// ---- Gemini CLI -----------------------------------------------------------
+
+export function geminiCredentialsFile(env = process.env) {
+  return path.join(env.GEMINI_CLI_HOME || os.homedir(), '.gemini', 'oauth_creds.json');
+}
+
+/**
+ * Gemini CLI keeps its OAuth token in the OS keychain (service
+ * "gemini-cli-oauth", account "main-account") and, before it did, in
+ * oauth_creds.json. Its encrypted-file fallback cannot be read from here.
+ */
+export function geminiKeychainLookup(platform) {
+  if (platform === 'darwin') return { file: 'security', args: ['find-generic-password', '-s', GEMINI_KEYCHAIN_SERVICE, '-a', GEMINI_KEYCHAIN_ACCOUNT, '-w'] };
+  // keytar stores libsecret items with the attributes "service" and "account".
+  if (platform === 'linux') return { file: 'secret-tool', args: ['lookup', 'service', GEMINI_KEYCHAIN_SERVICE, 'account', GEMINI_KEYCHAIN_ACCOUNT] };
+  return null;
+}
+
+function readGeminiKeychainItem(platform) {
+  const spec = geminiKeychainLookup(platform);
+  if (!spec) return Promise.resolve(null);
+  return runSpec(spec, { timeoutMs: 30000 }).then((r) => r.stdout, () => null);
+}
+
+export async function readGeminiCredentials({
+  file = geminiCredentialsFile(),
+  platform = process.platform,
+  readKeychain = readGeminiKeychainItem,
+} = {}) {
+  const raw = await readKeychain(platform);
+  if (raw && raw.trim()) {
+    let item;
+    try { item = JSON.parse(raw); } catch { throw new UsageError('Gemini CLI credentials could not be parsed'); }
+    const token = item?.token ?? item;
+    if (typeof token?.accessToken !== 'string' || !token.accessToken) throw new UsageError('Gemini CLI credentials could not be parsed');
+    return { accessToken: token.accessToken, refreshToken: token.refreshToken || null, expiresAt: Number(token.expiresAt) || null, client: null };
+  }
+  let legacy;
+  try {
+    legacy = JSON.parse(await fs.promises.readFile(file, 'utf8'));
+  } catch {
+    throw new UsageError(`Gemini CLI is not signed in on this machine (no "${GEMINI_KEYCHAIN_SERVICE}" keychain item or ${shortPath(file)})`);
+  }
+  if (typeof legacy?.access_token !== 'string' || !legacy.access_token) throw new UsageError('Gemini CLI credentials could not be parsed');
+  const client = typeof legacy.client_id === 'string' && typeof legacy.client_secret === 'string'
+    ? { id: legacy.client_id, secret: legacy.client_secret }
+    : null;
+  return { accessToken: legacy.access_token, refreshToken: legacy.refresh_token || null, expiresAt: Number(legacy.expiry_date) || null, client };
+}
+
+const geminiClients = new Map();
+
+/**
+ * The OAuth client Gemini CLI signed the user in with, read from the
+ * installed copy that `commandPath` starts. A refresh token can only be
+ * refreshed with the client that issued it, and the client belongs to
+ * Gemini CLI, so it is not kept here.
+ */
+export function geminiOAuthClientFromInstall(commandPath) {
+  if (!commandPath) return null;
+  if (geminiClients.has(commandPath)) return geminiClients.get(commandPath);
+  let client = null;
+  try {
+    let start = fs.realpathSync(commandPath);
+    if (/\.(cmd|bat|ps1)$/i.test(start)) {
+      // npm's shims start node_modules/... relative to their own folder.
+      const refersToGemini = /node_modules[\\/]@google[\\/]gemini-cli/.test(fs.readFileSync(start, 'utf8'));
+      start = refersToGemini ? path.join(path.dirname(start), 'node_modules', '@google', 'gemini-cli') : null;
+    }
+    let dir = start && (fs.statSync(start).isDirectory() ? start : path.dirname(start));
+    for (let depth = 0; dir && depth < 8; depth++) {
+      let name = null;
+      try { name = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).name; } catch { /* keep climbing */ }
+      if (name === '@google/gemini-cli') break;
+      const parent = path.dirname(dir);
+      dir = parent === dir ? null : parent;
+    }
+    for (const sub of dir ? ['bundle', 'dist'] : []) {
+      let files = [];
+      try { files = fs.readdirSync(path.join(dir, sub)).filter((f) => f.endsWith('.js')); } catch { continue; }
+      for (const file of files) {
+        const text = fs.readFileSync(path.join(dir, sub, file), 'latin1');
+        const id = text.match(/OAUTH_CLIENT_ID\s*=\s*"([^"]+)"/)?.[1];
+        const secret = text.match(/OAUTH_CLIENT_SECRET\s*=\s*"([^"]+)"/)?.[1];
+        if (id && secret) { client = { id, secret }; break; }
+      }
+      if (client) break;
+    }
+  } catch {
+    client = null;
+  }
+  geminiClients.set(commandPath, client);
+  return client;
+}
+
+async function refreshGoogleToken(refreshToken, client, fetchImpl) {
+  const body = new URLSearchParams({
+    client_id: client.id,
+    client_secret: client.secret,
+    refresh_token: refreshToken,
+    grant_type: 'refresh_token',
+  });
+  const res = await fetchImpl(GOOGLE_TOKEN_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+    body: body.toString(),
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!res.ok) throw new UsageError('Gemini CLI sign-in could not be refreshed; run gemini once to sign in again');
+  const json = await res.json();
+  if (typeof json?.access_token !== 'string') throw new UsageError('Gemini CLI sign-in could not be refreshed; run gemini once to sign in again');
+  return { accessToken: json.access_token, expiresAt: Date.now() + (Number(json.expires_in) || 3600) * 1000 };
+}
+
+/**
+ * Asks the Code Assist API the way Gemini CLI does: loadCodeAssist for the
+ * account's project and tier (skipped when `project` is known), then
+ * retrieveUserQuota for one bucket per model. Returns the refreshed token
+ * and project too, so a caller can reuse them.
+ */
+export async function fetchGeminiUsage({
+  accessToken, refreshToken = null, expiresAt = null, client = null, project = null, version = null, fetchImpl = fetch,
+} = {}) {
+  let token = { accessToken, expiresAt };
+  if (expiresAt && expiresAt < Date.now() + 60000) {
+    if (!refreshToken || !client) throw new UsageError('Gemini CLI sign-in has expired; run gemini once to refresh it');
+    token = await refreshGoogleToken(refreshToken, client, fetchImpl);
+  }
+  const headers = {
+    Authorization: `Bearer ${token.accessToken}`,
+    'Content-Type': 'application/json',
+    Accept: 'application/json',
+    'User-Agent': `GeminiCLI/${version || '0.62.0'} (agent-guild)`,
+  };
+  const post = async (method, body) => {
+    const res = await fetchImpl(`${GEMINI_CODE_ASSIST_URL}:${method}`, {
+      method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) throw httpUsageError(res.status, 'sign in again in Gemini CLI');
+    return res.json();
+  };
+  let plan = null;
+  let projectId = project;
+  if (!projectId) {
+    const loaded = await post('loadCodeAssist', {
+      metadata: { ideType: 'IDE_UNSPECIFIED', platform: 'PLATFORM_UNSPECIFIED', pluginType: 'GEMINI' },
+    });
+    const found = loaded?.cloudaicompanionProject;
+    projectId = typeof found === 'string' ? found : typeof found?.id === 'string' ? found.id : null;
+    // A paid tier is the effective subscription, as Gemini CLI reads it.
+    const tier = loaded?.paidTier?.id || loaded?.paidTier?.name ? loaded.paidTier : loaded?.currentTier;
+    plan = tier?.name ?? tier?.id ?? null;
+    if (!projectId) throw new UsageError('Gemini CLI has no Code Assist project yet; finish signing in with gemini first');
+  }
+  const quota = await post('retrieveUserQuota', { project: projectId });
+  const windows = [];
+  for (const bucket of Array.isArray(quota?.buckets) ? quota.buckets : []) {
+    if (!bucket?.modelId || typeof bucket.remainingFraction !== 'number') continue;
+    const used = clampPercent((1 - bucket.remainingFraction) * 100);
+    if (used !== null) windows.push({ label: String(bucket.modelId).slice(0, 40), usedPercent: used, resetsAt: toIso(bucket.resetTime) });
+  }
+  return { plan, windows, project: projectId, token };
+}
+
 // ---- any command that prints JSON ------------------------------------------
 
 export async function commandUsage({ command, args = [] }, env, platform = process.platform) {
@@ -214,8 +382,9 @@ export class UsageMonitor {
     this.platform = platform;
     this.fetchImpl = fetchImpl;
     this.ttlMs = ttlMs;
-    this.readers = { claude: readClaudeCredentials, codex: readCodexCredentials, ...readers };
+    this.readers = { claude: readClaudeCredentials, codex: readCodexCredentials, gemini: readGeminiCredentials, ...readers };
     this.cache = new Map();
+    this.gemini = new Map();
   }
 
   /** Snapshots for every provider that has a usage source. */
@@ -252,6 +421,24 @@ export class UsageMonitor {
       } else if (provider.usage === 'codex') {
         const creds = await this.readers.codex({ file: codexAuthFile(env) });
         result = await fetchCodexUsage({ ...creds, fetchImpl: this.fetchImpl });
+      } else if (provider.usage === 'gemini') {
+        const creds = await this.readers.gemini({ file: geminiCredentialsFile(env), platform: this.platform });
+        // The refreshed token, project and plan belong to one sign-in; a new
+        // sign-in (another account, or the same one again) starts over.
+        const signIn = creds.refreshToken || creds.accessToken;
+        const cached = this.gemini.get(provider.id);
+        const known = cached?.signIn === signIn ? cached : {};
+        const fresh = known.token && known.token.expiresAt > Date.now() + 60000 ? known.token : null;
+        const { plan, windows, project, token } = await fetchGeminiUsage({
+          ...creds,
+          client: creds.client || geminiOAuthClientFromInstall(this.registry.resolve(provider)),
+          ...(fresh || {}),
+          project: env.GOOGLE_CLOUD_PROJECT || env.GOOGLE_CLOUD_PROJECT_ID || known.project || null,
+          version: this.registry.versions.get(provider.id)?.installed,
+          fetchImpl: this.fetchImpl,
+        });
+        this.gemini.set(provider.id, { signIn, project, token, plan: plan ?? known.plan ?? null });
+        result = { plan: plan ?? known.plan ?? null, windows };
       } else {
         result = await commandUsage(provider.usage, env, this.platform);
       }

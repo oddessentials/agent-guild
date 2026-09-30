@@ -39,6 +39,7 @@
       "command": "gemini",
       "package": "@google/gemini-cli",
       "versionArgs": ["--version"],
+      "usage": "gemini",
       "modelPattern": "\\bgemini-\\d[a-z0-9.-]*",
       "args": [],
       "resumeArgs": ["--resume", "{id}"],
@@ -50,14 +51,17 @@
     {
       "id": "xai",
       "vendor": "xAI",
-      "tool": "Grok CLI",
+      "tool": "Grok Build",
       "command": "grok",
-      "modelPattern": "\\bgrok-\\d[a-z0-9.-]*",
+      "package": "@xai-official/grok",
+      "versionArgs": ["--version"],
+      "modelPattern": "\\bgrok-(?:build|\\d)[a-z0-9.-]*",
       "args": [],
+      "resumeArgs": ["--resume", "{id}"],
       "color": "#6B7280",
       "monogram": "X",
-      "install": "Install a Grok coding CLI that provides a \"grok\" command, or point this provider at your tool in providers.json.",
-      "docs": ""
+      "install": "npm install -g @xai-official/grok",
+      "docs": "https://docs.x.ai/build/overview"
     },
     {
       "id": "shell",

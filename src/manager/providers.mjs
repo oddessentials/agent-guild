@@ -42,9 +42,9 @@ function normalizeEnv(env) {
   return out;
 }
 
-/** "claude", "codex", a { command, args } that prints usage JSON, or null. */
+/** "claude", "codex", "gemini", a { command, args } that prints usage JSON, or null. */
 function normalizeUsage(usage) {
-  if (usage === 'claude' || usage === 'codex') return usage;
+  if (usage === 'claude' || usage === 'codex' || usage === 'gemini') return usage;
   if (usage && typeof usage === 'object' && typeof usage.command === 'string' && usage.command) {
     return { command: usage.command, args: Array.isArray(usage.args) ? usage.args.map(String) : [] };
   }

@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "BeforeModel": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "name": "Agent Guild model",
+            "command": "agent-guild-report --hook"
+          }
+        ]
+      }
+    ]
+  }
+}

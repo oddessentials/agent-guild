@@ -8,7 +8,6 @@ import crypto from 'node:crypto';
 import pty from 'node-pty';
 import headless from '@xterm/headless';
 import serializeAddon from '@xterm/addon-serialize';
-import { ensurePtyReady } from './pty-setup.mjs';
 
 const { Terminal } = headless;
 const { SerializeAddon } = serializeAddon;
@@ -127,7 +126,6 @@ export class Session extends EventEmitter {
     }
 
     this.disposed = false;
-    ensurePtyReady();
     try {
       this.pty = pty.spawn(opts.spawnSpec.file, opts.spawnSpec.args, {
         name: 'xterm-256color',
@@ -141,9 +139,16 @@ export class Session extends EventEmitter {
       this.term.dispose();
       throw err;
     }
-    this.pid = this.pty.pid;
     this.pty.onData((data) => this._onData(data));
     this.pty.onExit(({ exitCode, signal }) => this._onExit(exitCode, signal));
+  }
+
+  /**
+   * Read live: on Windows node-pty connects the console asynchronously and
+   * reports pid 0 until then. The first output announces the session again.
+   */
+  get pid() {
+    return this.status === 'running' && !this.disposed ? this.pty.pid || null : null;
   }
 
   // ---- terminal I/O ------------------------------------------------------
@@ -174,7 +179,6 @@ export class Session extends EventEmitter {
     this.exitCode = exitCode ?? null;
     this.signal = signal || null;
     this.activity = 'quiet';
-    this.pid = null;
     clearTimeout(this._activityTimer);
     clearTimeout(this._killTimer);
     clearTimeout(this._scanTimer);
