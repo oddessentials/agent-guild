@@ -1,6 +1,6 @@
-// Translate Claude Code hook input into Agent Guild agent reports.
+// Translate Claude Code hook and status-line input into Agent Guild reports.
 //
-// Two hook styles are supported:
+// Sub-agents come from two hook styles:
 //   * SubagentStart / SubagentStop (recommended). These fire when a
 //     sub-agent really starts and stops, including background sub-agents,
 //     and carry agent_id and agent_type.
@@ -9,12 +9,20 @@
 //     background launch returns immediately, so its PostToolUse says
 //     nothing about when the agent finishes; those launches are skipped.
 // Configure one style, not both, or each sub-agent appears twice.
+//
+// The model comes from SessionStart (when Claude Code includes it),
+// PostModelSwitch, and the status line, which carries the model id and
+// display name on every update.
 
+import path from 'node:path';
 import crypto from 'node:crypto';
 
 const SUBAGENT_TOOLS = new Set(['Task', 'Agent']);
 
-/** Map one Claude Code hook event to an agent report, or null to ignore it. */
+/**
+ * Map one Claude Code hook event to a report, or null to ignore it. An
+ * agent report has agentId; a model report has model.
+ */
 export function claudeHookToReport(input) {
   if (!input || typeof input !== 'object') return null;
   const event = input.hook_event_name;
@@ -42,6 +50,27 @@ export function claudeHookToReport(input) {
       status: event === 'PreToolUse' ? 'working' : 'done',
     };
   }
+  const model = event === 'SessionStart' ? input.model : event === 'PostModelSwitch' ? input.to_model : undefined;
+  if (typeof model === 'string' && model.trim()) return { model: model.trim() };
   return null;
 }
 
+/** Model report from the JSON Claude Code feeds to a status line command. */
+export function claudeStatuslineToReport(input) {
+  const id = input?.model?.id;
+  if (typeof id !== 'string' || !id.trim()) return null;
+  const displayName = typeof input.model.display_name === 'string' ? input.model.display_name.trim() : '';
+  return { model: id.trim(), displayName: displayName || null };
+}
+
+/** A short status line: model, folder and context use, like Claude Code's own examples. */
+export function formatStatusLine(input) {
+  const parts = [];
+  const model = input?.model?.display_name || input?.model?.id;
+  if (model) parts.push(`[${model}]`);
+  const dir = input?.workspace?.current_dir || input?.cwd;
+  if (dir) parts.push(path.basename(dir) || dir);
+  const used = input?.context_window?.used_percentage;
+  if (typeof used === 'number') parts.push(`${Math.round(used)}% context`);
+  return parts.join(' | ');
+}

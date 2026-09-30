@@ -254,6 +254,18 @@ function resumeSession(provider, card) {
 
 const cards = new Map();
 
+const MODEL_SOURCES = { report: 'reported by the tool', screen: 'seen on the tool\'s screen', args: 'from the --model argument' };
+
+function modelText(s) {
+  return s.model ? s.model.displayName || s.model.name : '';
+}
+
+function modelTitle(s) {
+  if (!s.model) return '';
+  const id = s.model.displayName && s.model.displayName !== s.model.name ? ` (${s.model.name})` : '';
+  return `Model ${modelText(s)}${id}, ${MODEL_SOURCES[s.model.source] || s.model.source}`;
+}
+
 function statusText(s) {
   if (s.status === 'exited') {
     if (s.signal) return `Exited (${s.signal})`;
@@ -283,6 +295,11 @@ function updateCard(node, s) {
   const pill = node.querySelector('.status-pill');
   pill.textContent = statusText(s);
   pill.className = `status-pill ${s.status === 'exited' ? 'exited' : s.activity}`;
+  const model = node.querySelector('.model-pill');
+  model.hidden = !s.model;
+  model.textContent = modelText(s);
+  model.title = modelTitle(s);
+  model.className = `model-pill ${s.model?.source || ''}`;
   const cwd = node.querySelector('.cwd-line');
   // The LRM keeps a leading "/" in place under the right-to-left truncation style.
   cwd.textContent = `\u200E${s.cwd}`;
@@ -291,7 +308,8 @@ function updateCard(node, s) {
   node.classList.toggle('exited', s.status === 'exited');
   node.querySelector('.stop').hidden = s.status !== 'running';
   node.querySelector('.remove').hidden = s.status === 'running';
-  node.setAttribute('aria-label', `${s.name}, ${s.provider.vendor}, ${statusText(s)}, ${s.agents.length} agents`);
+  const modelLabel = s.model ? `, model ${modelText(s)}` : '';
+  node.setAttribute('aria-label', `${s.name}, ${s.provider.vendor}${modelLabel}, ${statusText(s)}, ${s.agents.length} agents`);
 }
 
 function renderSessions() {
@@ -526,7 +544,8 @@ function updatePanel() {
   if (!s) return;
   paintProviderIcon($('panel-icon'), s.provider);
   $('panel-title').textContent = s.name;
-  $('panel-sub').textContent = `${s.provider.tool} · ${statusText(s)} · ${s.cwd}`;
+  $('panel-sub').textContent = [s.provider.tool, modelText(s), statusText(s), s.cwd].filter(Boolean).join(' · ');
+  $('panel-sub').title = modelTitle(s);
   renderAgents($('panel-agents'), s.agents);
   const stop = $('panel-stop');
   stop.textContent = s.status === 'running' ? 'Stop' : 'Remove';

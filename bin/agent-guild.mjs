@@ -171,8 +171,9 @@ async function cmdStatus() {
   console.log(`Session manager ${h.version} running at ${url} (pid ${h.pid}).`);
   console.log(`${sessions.length} session(s), ${running} running.`);
   for (const s of sessions) {
+    const model = s.model ? ` [${s.model.displayName || s.model.name}]` : '';
     const agents = s.agents.length ? `, ${s.agents.length} agent(s)` : '';
-    console.log(`  ${s.id}  ${s.provider.vendor.padEnd(10)} ${s.status.padEnd(8)} ${s.name}${agents}`);
+    console.log(`  ${s.id}  ${s.provider.vendor.padEnd(10)} ${s.status.padEnd(8)} ${s.name}${model}${agents}`);
   }
 }
 

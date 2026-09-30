@@ -1,6 +1,7 @@
 // A stand-in coding tool for tests. Works the same on every platform.
 //   echo <text>        prints "ECHO:<text>"
 //   agent <id> <name>  emits an in-band agent report (OSC 7777)
+//   model <name>       emits an in-band model report (OSC 7777)
 //   args               prints the arguments that followed the script path
 //   env                prints the Agent Guild variables
 //   size               prints the terminal size
@@ -29,6 +30,8 @@ function handle(line) {
   else if (cmd === 'agent') {
     const report = JSON.stringify({ agentId: rest[0], name: rest[1] || rest[0], status: rest[2] || 'working' });
     process.stdout.write(`\x1b]7777;agent-guild;${report}\x07`);
+  } else if (cmd === 'model') {
+    process.stdout.write(`\x1b]7777;agent-guild;${JSON.stringify({ model: rest[0], displayName: rest[1] })}\x07`);
   } else if (cmd === 'args') out(`ARGS:${JSON.stringify(process.argv.slice(2))}`);
   else if (cmd === 'env') {
     out(`ENV:${process.env.AGENT_GUILD_SESSION_ID}|${process.env.AGENT_GUILD_PROVIDER}|${process.env.AGENT_GUILD_URL}`);

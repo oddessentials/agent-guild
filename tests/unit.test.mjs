@@ -6,9 +6,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveCommand, buildSpawnSpec, quoteForCmd } from '../src/manager/command-resolver.mjs';
 import { mergePathLists, parsePathFromEnvOutput } from '../src/manager/shell-env.mjs';
-import { mergeEnv, cleanResumeId } from '../src/manager/session-manager.mjs';
+import { mergeEnv, cleanResumeId, modelFromArgs } from '../src/manager/session-manager.mjs';
 import { loadProviders, defaultShell, ProviderRegistry } from '../src/manager/providers.mjs';
-import { claudeHookToReport } from '../src/report/claude-hook.mjs';
+import { claudeHookToReport, claudeStatuslineToReport, formatStatusLine } from '../src/report/claude-hook.mjs';
 import { ensurePtyReady, spawnHelperCandidates } from '../src/manager/pty-setup.mjs';
 import { parseVersion, compareVersions, installedVersion, latestVersion } from '../src/manager/versions.mjs';
 import {
@@ -288,6 +288,26 @@ test('claudeHookToReport maps sub-agent tool calls and subagent events', () => {
   // Background launches return at once, so the tool-call style cannot tell when they end.
   assert.equal(claudeHookToReport({ hook_event_name: 'PostToolUse', tool_name: 'Agent', tool_input: { run_in_background: true } }), null);
   assert.equal(claudeHookToReport({ hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_input: { run_in_background: true } }), null);
+});
+
+test('Claude Code hooks and the status line report the model', () => {
+  assert.deepEqual(claudeHookToReport({ hook_event_name: 'SessionStart', source: 'startup', model: 'claude-opus-5' }), { model: 'claude-opus-5' });
+  assert.equal(claudeHookToReport({ hook_event_name: 'SessionStart', source: 'startup' }), null);
+  assert.deepEqual(claudeHookToReport({ hook_event_name: 'PostModelSwitch', from_model: 'a', to_model: 'claude-sonnet-5' }), { model: 'claude-sonnet-5' });
+  assert.equal(claudeHookToReport({ hook_event_name: 'UserPromptSubmit', prompt: 'hi' }), null);
+
+  const input = { model: { id: 'claude-opus-4-5', display_name: 'Opus 4.5' }, workspace: { current_dir: '/home/me/app' }, context_window: { used_percentage: 41.7 } };
+  assert.deepEqual(claudeStatuslineToReport(input), { model: 'claude-opus-4-5', displayName: 'Opus 4.5' });
+  assert.equal(claudeStatuslineToReport({ model: {} }), null);
+  assert.equal(formatStatusLine(input), '[Opus 4.5] | app | 42% context');
+  assert.equal(formatStatusLine({ model: { id: 'x' } }), '[x]');
+  assert.equal(formatStatusLine(null), '');
+
+  assert.equal(modelFromArgs(['--model', 'opus']), 'opus');
+  assert.equal(modelFromArgs(['-p', '--model=gpt-5-codex']), 'gpt-5-codex');
+  assert.equal(modelFromArgs(['-m', 'gemini-2.5-pro', 'x']), 'gemini-2.5-pro');
+  assert.equal(modelFromArgs(['--model']), null);
+  assert.equal(modelFromArgs([]), null);
 });
 
 test('ensurePtyReady restores the macOS spawn-helper executable bit', { skip: process.platform === 'win32' }, () => {

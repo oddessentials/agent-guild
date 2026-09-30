@@ -1,6 +1,6 @@
 // One terminal session: a node-pty process, a headless terminal that mirrors
 // its screen (so a reconnecting client gets the current screen, not a raw
-// byte replay), and the sub-agents the coding tool has reported.
+// byte replay), and the sub-agents and model the coding tool has reported.
 
 import { EventEmitter } from 'node:events';
 import { execFile } from 'node:child_process';
@@ -16,6 +16,8 @@ const { SerializeAddon } = serializeAddon;
 export const OSC_AGENT_CODE = 7777;
 export const OSC_AGENT_PREFIX = 'agent-guild;';
 const AGENT_STATUSES = new Set(['working', 'waiting', 'idle', 'done']);
+const MODEL_SOURCE_RANK = { args: 0, screen: 1, report: 2 };
+const SCREEN_SCAN_DELAY_MS = 400;
 
 /**
  * Colours reported to programs that query them (OSC 10/11/12), matching the
@@ -81,10 +83,20 @@ export class Session extends EventEmitter {
     this.activity = 'quiet';
     this.lastOutputAt = null;
     this.agents = new Map();
+    this.model = null;
+    this.modelRegex = null;
+    if (opts.provider.modelPattern && this.task === null) {
+      try {
+        this.modelRegex = new RegExp(opts.provider.modelPattern, 'gi');
+      } catch (err) {
+        queueMicrotask(() => this.emit('warning', `ignoring modelPattern: ${err.message}`));
+      }
+    }
     this.subscribers = new Set();
     this._activityTimer = null;
     this._agentTimers = new Map();
     this._killTimer = null;
+    this._scanTimer = null;
     /** Resolves when the process has exited, even after dispose(). */
     this.exited = new Promise((resolve) => { this._resolveExited = resolve; });
 
@@ -139,6 +151,11 @@ export class Session extends EventEmitter {
     this.term.write(data);
     this._broadcast({ type: 'data', data });
     this.lastOutputAt = Date.now();
+    if (this.modelRegex && this.model?.source !== 'report') {
+      clearTimeout(this._scanTimer);
+      this._scanTimer = setTimeout(() => this._scanScreenForModel(), SCREEN_SCAN_DELAY_MS);
+      this._scanTimer.unref?.();
+    }
     if (this.activity !== 'active') {
       this.activity = 'active';
       this._changed();
@@ -162,6 +179,7 @@ export class Session extends EventEmitter {
     this.pid = null;
     clearTimeout(this._activityTimer);
     clearTimeout(this._killTimer);
+    clearTimeout(this._scanTimer);
     this._clearAgents();
     // Let the headless terminal finish parsing before announcing the exit so
     // any client attaching afterwards still sees the final screen.
@@ -288,6 +306,7 @@ export class Session extends EventEmitter {
     this.kill(graceMs === undefined ? {} : { graceMs });
     this.disposed = true;
     clearTimeout(this._activityTimer);
+    clearTimeout(this._scanTimer);
     for (const t of this._agentTimers.values()) clearTimeout(t);
     this.subscribers.clear();
     this.term.dispose();
@@ -361,10 +380,47 @@ export class Session extends EventEmitter {
   _handleOscReport(payload) {
     if (!payload.startsWith(OSC_AGENT_PREFIX)) return;
     try {
-      this.reportAgent(JSON.parse(payload.slice(OSC_AGENT_PREFIX.length)), 'terminal');
+      const report = JSON.parse(payload.slice(OSC_AGENT_PREFIX.length));
+      const isAgent = report && typeof report === 'object' && (report.agentId ?? report.agent ?? report.id) !== undefined;
+      if (isAgent) this.reportAgent(report, 'terminal');
+      else this.reportModel(report);
     } catch (err) {
-      this.emit('warning', `ignored in-band agent report: ${err.message}`);
+      this.emit('warning', `ignored in-band report: ${err.message}`);
     }
+  }
+
+  // ---- model -------------------------------------------------------------
+
+  /**
+   * The main model the tool says it is using. Explicit reports win over
+   * text seen on screen, which wins over a --model argument.
+   */
+  setModel({ name, displayName = null }, source) {
+    if (this.model && MODEL_SOURCE_RANK[this.model.source] > MODEL_SOURCE_RANK[source]) return;
+    const current = this.model;
+    if (current && current.name === name && current.displayName === displayName && current.source === source) return;
+    this.model = { name, displayName, source };
+    this._changed();
+  }
+
+  reportModel(report) {
+    if (!report || typeof report !== 'object') throw badRequest('model report must be an object');
+    if (this.status !== 'running') throw Object.assign(new Error('session has exited'), { status: 409 });
+    const name = String(report.model ?? '').trim().slice(0, 120);
+    if (!name) throw badRequest('model is required');
+    const displayName = report.displayName === undefined || report.displayName === null ? null : String(report.displayName).trim().slice(0, 80) || null;
+    this.setModel({ name, displayName }, 'report');
+    return this.model;
+  }
+
+  _scanScreenForModel() {
+    if (this.disposed || !this.modelRegex || this.model?.source === 'report') return;
+    const buffer = this.term.buffer.active;
+    const lines = [];
+    for (let y = 0; y < this.term.rows; y++) lines.push(buffer.getLine(buffer.baseY + y)?.translateToString(true) ?? '');
+    let last = null;
+    for (const match of lines.join('\n').matchAll(this.modelRegex)) last = match[0];
+    if (last) this.setModel({ name: last.replace(/[.,;:)]+$/, '') }, 'screen');
   }
 
   // ---- state -------------------------------------------------------------
@@ -398,6 +454,7 @@ export class Session extends EventEmitter {
       cols: this.cols,
       rows: this.rows,
       attachedClients: this.subscribers.size,
+      model: this.model,
       agents: [...this.agents.values()],
     };
   }

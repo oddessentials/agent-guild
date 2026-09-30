@@ -180,17 +180,18 @@ export function createManagerServer({
       return sendJson(res, 200, { ok: true, name: 'agent-guild', version, pid: process.pid });
     }
 
-    // Agent reports may authenticate with the per-session report token that
-    // the manager injects into each tool's environment.
-    const agentMatch = route.match(/^\/sessions\/([a-f0-9]+)\/agents$/);
-    if (agentMatch && method === 'POST') {
+    // Agent and model reports may authenticate with the per-session report
+    // token that the manager injects into each tool's environment.
+    const reportMatch = route.match(/^\/sessions\/([a-f0-9]+)\/(agents|model)$/);
+    if (reportMatch && method === 'POST') {
+      const [, id, kind] = reportMatch;
       const body = await readJsonBody(req);
-      const trusted = timingSafeEqualString(requestToken(req, url), token);
-      const agent = manager.reportAgent(agentMatch[1], body, {
-        trusted,
+      const auth = {
+        trusted: timingSafeEqualString(requestToken(req, url), token),
         reportToken: req.headers['x-agent-guild-report-token'],
-      });
-      return sendJson(res, 200, { agent });
+      };
+      if (kind === 'agents') return sendJson(res, 200, { agent: manager.reportAgent(id, body, auth) });
+      return sendJson(res, 200, { model: manager.reportModel(id, body, auth) });
     }
 
     requireAuth(req, url);

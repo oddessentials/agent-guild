@@ -6,9 +6,11 @@
  └──────────────┘                                          │                          │
  ┌──────────────┐                                          │  SessionManager          │
  │ Future: UE5  │ ◀─────────────── same API ─────────────▶ │   └ Session × N          │
- │ or desktop UI│                                          │      ├ node-pty process  │──▶ claude / codex / gemini / grok / shell
+ │ or desktop UI│                                          │      ├ node-pty process  │──▶ claude / codex / gemini / grok / shell / npm install
  └──────────────┘                                          │      ├ headless xterm    │
-                                                           │      └ agents            │◀── agent-guild-report, OSC 7777
+                                                           │      └ agents, model     │◀── agent-guild-report, OSC 7777
+                                                           │  ProviderRegistry        │──▶ tool --version, npm registry
+                                                           │  UsageMonitor            │──▶ vendor usage endpoints
                                                            └──────────────────────────┘
 ```
 
@@ -33,7 +35,12 @@
   `providers.json`. Finds each tool on PATH. On macOS and Linux it first reads
   the login shell's PATH, because apps started from Finder or the Dock do not
   get it. On Windows it runs `.cmd` and `.ps1` shims through `cmd.exe` or
-  PowerShell, because ConPTY can only start real executables.
+  PowerShell, because ConPTY can only start real executables. It also checks
+  each tool's installed and latest versions, and builds the `npm install -g`
+  session that installs or updates a tool.
+* **Usage monitor** (`usage.mjs`). Reads each tool's own sign-in and asks the
+  vendor's usage endpoint for the remaining rate-limit windows. Tokens stay
+  in the manager.
 * **API server** (`server.mjs`). REST for control, one WebSocket for
   lifecycle events, one WebSocket per attached terminal. See [api.md](api.md).
 * **Web page** (`web/`). Plain HTML, CSS and JavaScript with xterm.js, served

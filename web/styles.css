@@ -118,6 +118,12 @@ main { max-width: 1200px; margin: 0 auto; padding: 20px 16px 48px; display: grid
   font-size: 0.72rem; font-weight: 600; padding: 3px 8px; border-radius: 999px; white-space: nowrap;
   background: var(--surface-2); color: var(--muted);
 }
+.model-pill {
+  font-size: 0.72rem; font-weight: 600; padding: 3px 8px; border-radius: 999px; white-space: nowrap;
+  max-width: 11em; overflow: hidden; text-overflow: ellipsis;
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface)); color: var(--accent);
+}
+.model-pill.screen { font-weight: 500; }
 .status-pill.active { color: var(--ok); }
 .status-pill.active::before { content: "● "; animation: pulse 1.2s ease-in-out infinite; }
 .status-pill.exited { color: var(--danger); }

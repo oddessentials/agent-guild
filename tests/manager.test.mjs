@@ -36,7 +36,7 @@ process.env.AGENT_GUILD_NPM_REGISTRY = `http://127.0.0.1:${npmRegistry.address()
 
 fs.writeFileSync(path.join(home, 'providers.json'), JSON.stringify({
   providers: [
-    { id: 'fake', vendor: 'Test', tool: 'Fake Tool', command: process.execPath, args: [path.join(here, 'fixtures', 'fake-tool.mjs')], resumeArgs: ['--resume', '{id}'], package: 'fake-tool-pkg', versionArgs: [path.join(here, 'fixtures', 'fake-tool.mjs'), '--version'] },
+    { id: 'fake', vendor: 'Test', tool: 'Fake Tool', command: process.execPath, args: [path.join(here, 'fixtures', 'fake-tool.mjs')], resumeArgs: ['--resume', '{id}'], package: 'fake-tool-pkg', versionArgs: [path.join(here, 'fixtures', 'fake-tool.mjs'), '--version'], modelPattern: 'fake-model-[a-z0-9.]+' },
     { id: 'plain', vendor: 'Test', tool: 'Plain Tool', command: process.execPath, args: [path.join(here, 'fixtures', 'fake-tool.mjs')], usage: { command: process.execPath, args: [path.join(here, 'fixtures', 'fake-usage.mjs')] } },
     { id: 'missing', vendor: 'Nobody', tool: 'Missing Tool', command: 'definitely-not-installed-agent-guild', install: 'npm i -g nothing', package: 'nothing' },
   ],
@@ -407,6 +407,52 @@ test('Claude Code sub-agent hooks reach the session through agent-guild-report',
   await runHook({ ...common, hook_event_name: 'SubagentStop', agent_id: 'agent-7', agent_type: 'Explore', stop_hook_active: false });
   ({ body } = await call('GET', `/sessions/${session.id}`));
   assert.equal(body.session.agents[0].status, 'done');
+  await call('DELETE', `/sessions/${session.id}`);
+});
+
+test('the model comes from arguments, the screen, or an explicit report', async () => {
+  const session = await createFake({ args: ['--model', 'fake-model-1'] });
+  assert.deepEqual(session.model, { name: 'fake-model-1', displayName: null, source: 'args' });
+  const client = terminal(session.id);
+  await client.opened;
+  const modelIs = (name, source) => async () => {
+    const { body } = await call('GET', `/sessions/${session.id}`);
+    return body.session.model?.name === name && body.session.model.source === source ? body.session.model : null;
+  };
+
+  // Text on screen that matches the provider's modelPattern wins over the argument.
+  client.input('echo now on fake-model-2.5, really');
+  assert.equal((await waitFor(modelIs('fake-model-2.5', 'screen'), { label: 'screen model' })).source, 'screen');
+
+  // An explicit report wins over the screen and is not replaced by later screen text.
+  client.input('model fake-model-3 Three');
+  const reported = await waitFor(modelIs('fake-model-3', 'report'), { label: 'reported model' });
+  assert.equal(reported.displayName, 'Three');
+  client.input('echo mention fake-model-4');
+  await waitForText(client, session.id, 'ECHO:mention fake-model-4', 'later screen text');
+  await new Promise((r) => setTimeout(r, 600));
+  assert.equal((await call('GET', `/sessions/${session.id}`)).body.session.model.name, 'fake-model-3');
+
+  // Reports also arrive over HTTP with the session report token.
+  const managed = ctx.manager.get(session.id);
+  const ok = await call('POST', `/sessions/${session.id}/model`, { model: 'fake-model-5' }, { Authorization: '', 'X-Agent-Guild-Report-Token': managed.reportToken });
+  assert.equal(ok.status, 200, JSON.stringify(ok.body));
+  assert.deepEqual(ok.body.model, { name: 'fake-model-5', displayName: null, source: 'report' });
+  assert.equal((await call('POST', `/sessions/${session.id}/model`, { model: '' })).status, 400);
+  assert.equal((await call('POST', `/sessions/${session.id}/model`, { model: 'x' }, { Authorization: '', 'X-Agent-Guild-Report-Token': 'wrong' })).status, 401);
+
+  // Claude Code's status line feeds the model id and display name.
+  const reporter = path.resolve(here, '../bin/agent-guild-report.mjs');
+  const env = { ...process.env, AGENT_GUILD_URL: base, AGENT_GUILD_SESSION_ID: session.id, AGENT_GUILD_REPORT_TOKEN: managed.reportToken };
+  const statusline = { model: { id: 'claude-opus-4-5', display_name: 'Opus 4.5' }, workspace: { current_dir: home }, context_window: { used_percentage: 12.4 } };
+  const stdout = await new Promise((resolve, reject) => {
+    const child = execFile(process.execPath, [reporter, '--claude-statusline'], { env, timeout: 10000 }, (err, out, stderr) => (err ? reject(new Error(stderr)) : resolve(out)));
+    child.stdin.end(JSON.stringify(statusline));
+  });
+  assert.equal(stdout, `[Opus 4.5] | ${path.basename(home)} | 12% context\n`);
+  assert.deepEqual((await call('GET', `/sessions/${session.id}`)).body.session.model, { name: 'claude-opus-4-5', displayName: 'Opus 4.5', source: 'report' });
+
+  await client.close();
   await call('DELETE', `/sessions/${session.id}`);
 });
 

@@ -133,6 +133,7 @@ Snapshots are cached for a minute.
   "cols": 120,
   "rows": 32,
   "attachedClients": 1,
+  "model": { "name": "claude-opus-4-5", "displayName": "Opus 4.5", "source": "report" },
   "agents": [ /* Agent */ ]
 }
 ```
@@ -144,6 +145,12 @@ Snapshots are cached for a minute.
 * `resume` is the id of the tool's own session that was resumed, or null.
 * `task` is `install` for a session that runs npm to install or update the
   provider's tool, and null for a session that runs the tool itself.
+* `model` is the main model the tool is using, or null while unknown.
+  `source` is `report` when the tool said so (see
+  [agent-reporting.md](agent-reporting.md)), `screen` when the name was
+  matched on the terminal screen by the provider's `modelPattern`, or `args`
+  when it came from a `--model` argument. Reports win over the screen, which
+  wins over arguments.
 
 ### Agent
 
@@ -186,6 +193,7 @@ All paths are under `/api/v1`.
 | POST | `/sessions/:id/stop` | | Ends the process. The session stays listed as exited. |
 | DELETE | `/sessions/:id` | | Ends the process if needed and removes the session. |
 | POST | `/sessions/:id/agents` | Agent report | `{ agent }`, or `{ agent: null }` after a removal. |
+| POST | `/sessions/:id/model` | `{ model, displayName? }` | `{ model }`. Sets the session's model with source `report`. |
 | POST | `/shutdown` | | Stops the manager and every session. |
 
 `cwd` defaults to the user's home folder and must be an existing folder. A
@@ -194,10 +202,11 @@ arguments. `resume` is an id or name of one of the tool's own sessions; it is
 substituted for `{id}` in the provider's `resumeArgs` (400 `resume_unsupported`
 when the provider has none).
 
-`POST /sessions/:id/agents` also accepts the per-session report token instead
-of the API token, in an `X-Agent-Guild-Report-Token` header. The manager gives
-that token only to the processes inside that session. Without the API token,
-an unknown session id and a wrong report token both return 401.
+`POST /sessions/:id/agents` and `POST /sessions/:id/model` also accept the
+per-session report token instead of the API token, in an
+`X-Agent-Guild-Report-Token` header. The manager gives that token only to the
+processes inside that session. Without the API token, an unknown session id
+and a wrong report token both return 401.
 
 Request bodies are limited to 64 KB (413 above that). WebSocket messages are
 limited to 1 MB.

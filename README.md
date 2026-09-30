@@ -22,8 +22,10 @@ coding tool, and see at a glance which sessions and agents are working.
 * **Work in real terminals.** Each session is a card. Open it for a full
   interactive terminal: type instructions, answer prompts, watch output. Run
   as many sessions at once as you like.
-* **See agents at work.** When a coding tool reports helper agents, they
-  appear as small icons on that session's card.
+* **See agents and models at work.** When a coding tool reports helper
+  agents, they appear as small icons on that session's card. The card also
+  names the main model in use, reported by the tool or, failing that,
+  spotted on its screen.
 * **Close the page any time.** A separate local session manager owns the
   terminals. Reopen the page and it reconnects to the same sessions with
   their screens intact, as long as the manager is still running. Sessions do
@@ -85,6 +87,7 @@ one platform under a `win32` or `darwin` key. See
 | `package` | The tool's npm package, e.g. `@openai/codex`. Enables the **Install** and **Update** buttons and the version check. |
 | `versionArgs` | Arguments that make the command print its version, used instead of `args`, e.g. `["--version"]`. |
 | `usage` | Where the usage meters come from: `"claude"`, `"codex"`, `{ "command", "args" }` for a program that prints `{ "windows": [{ "label", "usedPercent", "resetsAt" }] }`, or `null` for none. |
+| `modelPattern` | Regular expression that finds the model name on the tool's screen when the tool does not report it. |
 | `resumeArgs` | Arguments that resume the tool's own session, with `{id}` standing for the id, e.g. `["--resume", "{id}"]`. Without it the card has no **Existing** button. |
 | `env` | Extra environment variables for the tool. |
 | `color`, `monogram`, `icon` | Icon appearance. `icon` is a URL path; you can also drop `<id>.svg` into `web/icons/`. |
@@ -97,14 +100,15 @@ Version checks ask the npm registry about once an hour. Set
 `AGENT_GUILD_NPM_REGISTRY` to use a mirror, or `AGENT_GUILD_NO_UPDATE_CHECK=1`
 to skip them.
 
-## Show agents
+## Show agents and models
 
 Agents are reported by the coding tool, not guessed from its output. For
-Claude Code, add the hooks in
-[examples/claude-code-settings.json](examples/claude-code-settings.json) and
-each sub-agent appears on the card while it runs. Any tool or script can also
-report agents with the `agent-guild-report` command or an escape sequence.
-See [docs/agent-reporting.md](docs/agent-reporting.md).
+Claude Code, add the hooks and status line in
+[examples/claude-code-settings.json](examples/claude-code-settings.json):
+each sub-agent appears on the card while it runs, and the card shows the
+model in use. Any tool or script can also report agents and the model with
+the `agent-guild-report` command or an escape sequence. See
+[docs/agent-reporting.md](docs/agent-reporting.md).
 
 ## Security
 

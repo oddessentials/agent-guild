@@ -85,7 +85,10 @@ export class SessionManager extends EventEmitter {
     const resumeId = cleanResumeId(resume);
     const workDir = this.resolveCwd(cwd);
     const spawnSpec = this.registry.spawnSpec(provider, args || [], resumeId);
-    return this._spawn({ provider, spawnSpec, cwd: workDir, cols, rows, name, resume: resumeId });
+    const session = this._spawn({ provider, spawnSpec, cwd: workDir, cols, rows, name, resume: resumeId });
+    const model = modelFromArgs([...provider.args, ...(args || [])]);
+    if (model) session.setModel({ name: model }, 'args');
+    return session;
   }
 
   /**
@@ -181,7 +184,15 @@ export class SessionManager extends EventEmitter {
   }
 
   /** Accepts either the session's own report token or the API token. */
-  reportAgent(id, report, { reportToken, trusted = false } = {}) {
+  reportAgent(id, report, auth) {
+    return this._reportingSession(id, auth).reportAgent(report, 'api');
+  }
+
+  reportModel(id, report, auth) {
+    return this._reportingSession(id, auth).reportModel(report);
+  }
+
+  _reportingSession(id, { reportToken, trusted = false } = {}) {
     const session = this.sessions.get(id);
     // Without the API token, an unknown session and a wrong token look the
     // same, so the endpoint does not reveal which session ids exist.
@@ -189,7 +200,7 @@ export class SessionManager extends EventEmitter {
       throw httpError(401, 'invalid report token', 'unauthorized');
     }
     if (!session) throw httpError(404, `no session with id "${id}"`, 'not_found');
-    return session.reportAgent(report, 'api');
+    return session;
   }
 
   /**
@@ -209,6 +220,15 @@ export class SessionManager extends EventEmitter {
     ]);
     clearTimeout(timer);
   }
+}
+
+/** The model named by a --model, --model=, or -m argument, or null. */
+export function modelFromArgs(args) {
+  for (let i = 0; i < args.length; i++) {
+    if ((args[i] === '--model' || args[i] === '-m') && args[i + 1]) return args[i + 1];
+    if (args[i].startsWith('--model=') && args[i].length > 8) return args[i].slice(8);
+  }
+  return null;
 }
 
 const MAX_RESUME_ID = 200;
