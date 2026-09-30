@@ -29,7 +29,9 @@ coding tool, and see at a glance which sessions and agents are working.
 * **Close the page any time.** A separate local session manager owns the
   terminals. Reopen the page and it reconnects to the same sessions with
   their screens intact, as long as the manager is still running. Sessions do
-  not survive a computer restart.
+  not survive a computer restart. **Stop manager** in the top bar stops the
+  manager and ends every session; it asks first while any session is still
+  running.
 
 ## Requirements
 
@@ -61,7 +63,7 @@ page stores it and then removes it from the address bar.
 | --- | --- |
 | `agent-guild` or `agent-guild open` | Start the manager if needed and open the page. `--no-browser` prints the URL instead. |
 | `agent-guild status` | Show whether the manager is running and list its sessions. |
-| `agent-guild stop` | Stop the manager. This ends every session. |
+| `agent-guild stop` | Stop the manager. This ends every session, without asking. The page's **Stop manager** button does the same and asks first while sessions are running. |
 | `agent-guild start` | Run the manager in the foreground, for debugging. |
 | `agent-guild url` | Print the page URL with its token. |
 

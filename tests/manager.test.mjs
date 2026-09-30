@@ -631,6 +631,18 @@ test('stop ends a running session', async () => {
   await call('DELETE', `/sessions/${session.id}`);
 });
 
+test('shutdown is refused while sessions are running unless forced', async () => {
+  const session = await createFake();
+  const refused = await call('POST', '/shutdown');
+  assert.equal(refused.status, 409);
+  assert.equal(refused.body.error.code, 'sessions_running');
+  assert.equal(refused.body.error.running, ctx.manager.runningCount());
+  assert.ok(refused.body.error.running >= 1);
+  assert.equal((await fetch(`${base}/api/v1/health`)).status, 200, 'the manager keeps running');
+  assert.equal((await call('GET', `/sessions/${session.id}`)).body.session.status, 'running');
+  await call('DELETE', `/sessions/${session.id}`);
+});
+
 test('a tool that ignores the hang-up is force-killed', { skip: process.platform === 'win32' }, async () => {
   const session = await createFake();
   const client = terminal(session.id);

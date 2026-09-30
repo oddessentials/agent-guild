@@ -15,6 +15,8 @@ const state = {
   activeId: null,
   eventsSocket: null,
   eventsRetry: 0,
+  /** True from a shutdown request until the manager is reachable again. */
+  stopping: false,
 };
 
 // ---- storage (may be unavailable, e.g. blocked site data) -----------------
@@ -37,6 +39,8 @@ function setConnection(kind, label) {
   const el = $('connection');
   el.className = `connection ${kind}`;
   el.querySelector('.label').textContent = label;
+  // The manager can only be stopped while the page can reach it.
+  $('stop-manager').hidden = kind !== 'ok';
 }
 
 function relativeTime(iso) {
@@ -608,6 +612,60 @@ function updatePanel() {
   stop.textContent = s.status === 'running' ? 'Stop' : 'Remove';
 }
 
+// ---- stopping the manager -------------------------------------------------
+
+/**
+ * Stop the session manager. The manager refuses while sessions are running
+ * unless told to force, so the warning is enforced for every client and the
+ * count in the dialog is the manager's, not this page's possibly stale list.
+ */
+async function stopManager({ force = false } = {}) {
+  const button = $('stop-manager');
+  button.disabled = true;
+  try {
+    const { running } = await api('POST', '/shutdown', force ? { force: true } : undefined);
+    enterStopping(running);
+  } catch (err) {
+    if (err instanceof AuthError) return showAuth(err.message);
+    if (err.code === 'sessions_running') {
+      const n = err.running;
+      const what = `${n} session${n === 1 ? ' is' : 's are'} still running`;
+      const them = n === 1 ? 'it' : 'all of them';
+      if (confirm(`${what}. Stopping the session manager ends ${them}. Stop anyway?`)) {
+        return stopManager({ force: true });
+      }
+      return;
+    }
+    toast(err.message, 8000);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+/** The manager is going down, by this page's request or another client's. */
+function enterStopping(running = 0) {
+  if (state.stopping) return;
+  state.stopping = true;
+  closePanel();
+  for (const view of state.views.values()) view.dispose();
+  state.views.clear();
+  state.sessions.clear();
+  renderSessions();
+  $('app').hidden = true;
+  const n = Number(running) || 0;
+  showStopped('stopping', 'Stopping the session manager…',
+    n ? `Ending ${n} running session${n === 1 ? '' : 's'}. This can take a few seconds.` : 'This can take a few seconds.');
+  setConnection('down', 'Stopping the session manager…');
+}
+
+function showStopped(phase, title, text) {
+  const el = $('stopped');
+  el.classList.toggle('stopping', phase === 'stopping');
+  $('stopped-title').textContent = title;
+  $('stopped-text').textContent = text;
+  el.hidden = false;
+}
+
 // ---- events ---------------------------------------------------------------
 
 function connectEvents() {
@@ -620,9 +678,17 @@ function connectEvents() {
   ws.onmessage = (event) => {
     const msg = JSON.parse(event.data);
     if (msg.type === 'hello') {
+      if (state.stopping) {
+        // The manager is back after a stop; the page picks up where it was.
+        state.stopping = false;
+        $('stopped').hidden = true;
+        $('app').hidden = false;
+      }
       state.sessions = new Map(msg.sessions.map((s) => [s.id, s]));
       for (const id of [...state.views.keys()]) if (!state.sessions.has(id)) dropSession(id);
       renderSessions();
+    } else if (msg.type === 'manager.stopping') {
+      enterStopping(msg.running);
     } else if (msg.type === 'session.created' || msg.type === 'session.updated') {
       upsertSession(msg.session);
     } else if (msg.type === 'session.removed') {
@@ -633,7 +699,13 @@ function connectEvents() {
     }
   };
   ws.onclose = () => {
-    setConnection('down', 'Session manager not reachable. Run "agent-guild open" to start it.');
+    if (state.stopping) {
+      setConnection('down', 'Session manager stopped');
+      showStopped('stopped', 'Session manager stopped', 'Every session has ended.');
+    } else {
+      setConnection('down', 'Session manager not reachable. Run "agent-guild open" to start it.');
+    }
+    // Keep trying: after a stop, a relaunched manager brings the page back by itself.
     const delay = Math.min(5000, 500 * 2 ** state.eventsRetry++);
     setTimeout(async () => {
       try { await loadProviders(); } catch (err) { if (err instanceof AuthError) return showAuth(err.message); }
@@ -665,6 +737,8 @@ let usageTimer;
 function showAuth(message = '') {
   $('app').hidden = true;
   $('terminal-panel').hidden = true;
+  $('stopped').hidden = true;
+  state.stopping = false;
   $('auth').hidden = false;
   $('auth-error').textContent = message;
   setConnection('down', 'Not connected');
@@ -673,6 +747,7 @@ function showAuth(message = '') {
 async function boot() {
   $('app').hidden = true;
   $('auth').hidden = true;
+  $('stopped').hidden = true;
   if (!state.token) return showAuth();
   try {
     await loadProviders();
@@ -699,6 +774,7 @@ $('auth-form').addEventListener('submit', (e) => {
   boot();
 });
 $('panel-close').addEventListener('click', closePanel);
+$('stop-manager').addEventListener('click', () => stopManager());
 $('panel-stop').addEventListener('click', () => {
   const s = state.sessions.get(state.activeId);
   if (!s) return;

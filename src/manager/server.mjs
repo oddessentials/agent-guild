@@ -233,7 +233,19 @@ export function createManagerServer({
       return sendJson(res, 201, { session: session.toJSON() });
     }
     if (route === '/shutdown' && method === 'POST') {
-      sendJson(res, 202, { ok: true });
+      // Stopping the manager ends every session, so a client must say
+      // `force` while any is running. The same guard serves every front end.
+      const body = await readJsonBody(req);
+      const running = manager.runningCount();
+      if (running > 0 && body.force !== true) {
+        const err = new HttpError(409, `${running} session(s) are running; stopping the manager ends them`, 'sessions_running');
+        err.running = running;
+        throw err;
+      }
+      sendJson(res, 202, { ok: true, running });
+      // Tell every client first, so a second page shows "stopped" rather
+      // than "not reachable" when its socket drops.
+      broadcast({ type: 'manager.stopping', running });
       setImmediate(onShutdownRequest);
       return undefined;
     }

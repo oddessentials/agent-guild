@@ -120,6 +120,13 @@ export class SessionManager extends EventEmitter {
     return n;
   }
 
+  /** Sessions whose process is still running, install sessions included. */
+  runningCount() {
+    let n = 0;
+    for (const s of this.sessions.values()) if (s.status === 'running') n++;
+    return n;
+  }
+
   _spawn({ provider, spawnSpec, cwd, cols, rows, name, resume = null, task = null }) {
     if (this.sessions.size >= MAX_SESSIONS) {
       throw httpError(429, `session limit reached (${MAX_SESSIONS}); remove finished sessions first`, 'too_many_sessions');
