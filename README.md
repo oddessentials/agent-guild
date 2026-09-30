@@ -38,8 +38,8 @@ coding tool, and see at a glance which sessions and agents are working.
 * Each coding tool you want to use, signed in on its own. Agent Guild can
   install the npm-packaged tools for you; it does not authenticate them.
 
-node-pty ships prebuilt binaries for Windows and macOS on x64 and arm64, so no
-compiler is needed there. WSL is not required.
+node-pty ships prebuilt binaries for Windows, macOS and Linux on x64 and
+arm64, so no compiler is needed. WSL is not required.
 
 ## Install and run
 

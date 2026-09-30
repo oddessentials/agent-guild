@@ -9,7 +9,6 @@ import { mergePathLists, parsePathFromEnvOutput } from '../src/manager/shell-env
 import { mergeEnv, cleanResumeId, modelFromArgs } from '../src/manager/session-manager.mjs';
 import { loadProviders, defaultShell, ProviderRegistry } from '../src/manager/providers.mjs';
 import { hookToReports, claudeStatuslineToReport, formatStatusLine } from '../src/report/hooks.mjs';
-import { ensurePtyReady, spawnHelperCandidates } from '../src/manager/pty-setup.mjs';
 import { parseVersion, compareVersions, installedVersion, latestVersion } from '../src/manager/versions.mjs';
 import {
   UsageMonitor, readClaudeCredentials, readCodexCredentials, readGeminiCredentials, geminiOAuthClientFromInstall, geminiKeychainLookup,
@@ -583,21 +582,6 @@ test('hook events and the Claude Code status line report the model', () => {
   assert.equal(modelFromArgs(['-m', 'gemini-2.5-pro', 'x']), 'gemini-2.5-pro');
   assert.equal(modelFromArgs(['--model']), null);
   assert.equal(modelFromArgs([]), null);
-});
-
-test('ensurePtyReady restores the macOS spawn-helper executable bit', { skip: process.platform === 'win32' }, () => {
-  const dir = tempDir();
-  const helper = spawnHelperCandidates(dir, 'arm64')[0];
-  fs.mkdirSync(path.dirname(helper), { recursive: true });
-  fs.writeFileSync(helper, '', { mode: 0o644 });
-  const original = process.arch;
-  Object.defineProperty(process, 'arch', { value: 'arm64' });
-  try {
-    ensurePtyReady({ platform: 'darwin', ptyDir: dir });
-  } finally {
-    Object.defineProperty(process, 'arch', { value: original });
-  }
-  assert.equal(fs.statSync(helper).mode & 0o777, 0o755);
 });
 
 test('parsePathFromEnvOutput reads PATH from env output of any shell', () => {

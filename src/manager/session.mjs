@@ -8,7 +8,6 @@ import crypto from 'node:crypto';
 import pty from 'node-pty';
 import headless from '@xterm/headless';
 import serializeAddon from '@xterm/addon-serialize';
-import { ensurePtyReady } from './pty-setup.mjs';
 
 const { Terminal } = headless;
 const { SerializeAddon } = serializeAddon;
@@ -127,7 +126,6 @@ export class Session extends EventEmitter {
     }
 
     this.disposed = false;
-    ensurePtyReady();
     try {
       this.pty = pty.spawn(opts.spawnSpec.file, opts.spawnSpec.args, {
         name: 'xterm-256color',
