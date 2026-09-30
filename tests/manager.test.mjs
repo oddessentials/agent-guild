@@ -314,6 +314,8 @@ test('a session runs, streams output, accepts input and resizes', async () => {
   await waitFor(() => client.messages.some((m) => m.type === 'snapshot' && m.data.includes('FAKE-TOOL READY')) || client.output.includes('FAKE-TOOL READY'), { label: 'banner' });
   client.input('echo hello world');
   await waitFor(() => client.output.includes('ECHO:hello world'), { label: 'echo' });
+  const { pid } = (await call('GET', `/sessions/${session.id}`)).body.session;
+  assert.ok(Number.isInteger(pid) && pid > 0, `a started session reports its pid, got ${pid}`);
 
   client.input('env');
   await waitFor(() => client.output.includes('ENV:'), { label: 'env' });
@@ -535,6 +537,7 @@ test('stop ends a running session', async () => {
   const { status } = await call('POST', `/sessions/${session.id}/stop`);
   assert.equal(status, 200);
   await waitFor(async () => (await call('GET', `/sessions/${session.id}`)).body.session.status === 'exited', { label: 'stopped' });
+  assert.equal((await call('GET', `/sessions/${session.id}`)).body.session.pid, null, 'an exited session has no pid');
   await call('DELETE', `/sessions/${session.id}`);
 });
 

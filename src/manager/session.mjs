@@ -139,9 +139,16 @@ export class Session extends EventEmitter {
       this.term.dispose();
       throw err;
     }
-    this.pid = this.pty.pid;
     this.pty.onData((data) => this._onData(data));
     this.pty.onExit(({ exitCode, signal }) => this._onExit(exitCode, signal));
+  }
+
+  /**
+   * Read live: on Windows node-pty connects the console asynchronously and
+   * reports pid 0 until then. The first output announces the session again.
+   */
+  get pid() {
+    return this.status === 'running' && !this.disposed ? this.pty.pid || null : null;
   }
 
   // ---- terminal I/O ------------------------------------------------------
@@ -172,7 +179,6 @@ export class Session extends EventEmitter {
     this.exitCode = exitCode ?? null;
     this.signal = signal || null;
     this.activity = 'quiet';
-    this.pid = null;
     clearTimeout(this._activityTimer);
     clearTimeout(this._killTimer);
     clearTimeout(this._scanTimer);

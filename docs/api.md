@@ -142,6 +142,9 @@ Snapshots are cached for a minute.
 
 * `status` is `running` or `exited`. Exited sessions stay listed, with their
   final screen, until a client removes them.
+* `pid` is null while the process is still starting (Windows connects the
+  console asynchronously) and after it exits. A `session.updated` event
+  carries it with the first output.
 * `activity` is `active` while the terminal is producing output and `quiet`
   after a short pause.
 * `resume` is the id of the tool's own session that was resumed, or null.
