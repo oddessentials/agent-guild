@@ -74,15 +74,18 @@ export function quoteForCmd(arg) {
 export function buildSpawnSpec(resolvedPath, args = [], env = process.env, platform = process.platform) {
   if (platform !== 'win32') return { file: resolvedPath, args: [...args] };
   const ext = path.win32.extname(resolvedPath).toLowerCase();
+  // Absolute paths: a bare name is looked up on the child's PATH, which a
+  // provider's own env may not carry.
+  const system32 = path.win32.join(env.SystemRoot || env.SYSTEMROOT || 'C:\\Windows', 'System32');
   if (ext === '.cmd' || ext === '.bat') {
-    const comspec = env.ComSpec || env.COMSPEC || 'cmd.exe';
+    const comspec = env.ComSpec || env.COMSPEC || path.win32.join(system32, 'cmd.exe');
     const inner = [resolvedPath, ...args].map(quoteForCmd).join(' ');
     // A raw command-line string: /s strips the outer quotes and keeps the rest.
     return { file: comspec, args: `/d /s /c "${inner}"` };
   }
   if (ext === '.ps1') {
     return {
-      file: 'powershell.exe',
+      file: path.win32.join(system32, 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
       args: ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', resolvedPath, ...args],
     };
   }

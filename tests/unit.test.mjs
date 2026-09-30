@@ -61,9 +61,10 @@ test('buildSpawnSpec wraps Windows batch shims in cmd.exe', () => {
   const spec = buildSpawnSpec('C:\\Users\\a b\\npm\\codex.cmd', ['--model', 'x y'], { ComSpec: 'C:\\Windows\\system32\\cmd.exe' }, 'win32');
   assert.equal(spec.file, 'C:\\Windows\\system32\\cmd.exe');
   assert.equal(spec.args, '/d /s /c ""C:\\Users\\a b\\npm\\codex.cmd" --model "x y""');
-  const ps = buildSpawnSpec('C:\\npm\\gemini.ps1', [], {}, 'win32');
-  assert.equal(ps.file, 'powershell.exe');
+  const ps = buildSpawnSpec('C:\\npm\\gemini.ps1', [], { SystemRoot: 'D:\\Win' }, 'win32');
+  assert.equal(ps.file, 'D:\\Win\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
   assert.ok(ps.args.includes('-File'));
+  assert.equal(buildSpawnSpec('C:\\npm\\codex.cmd', [], {}, 'win32').file, 'C:\\Windows\\System32\\cmd.exe');
   const exe = buildSpawnSpec('C:\\bin\\grok.exe', ['a'], {}, 'win32');
   assert.deepEqual(exe, { file: 'C:\\bin\\grok.exe', args: ['a'] });
   assert.deepEqual(buildSpawnSpec('/usr/bin/claude', ['x'], {}, 'darwin'), { file: '/usr/bin/claude', args: ['x'] });
@@ -123,7 +124,7 @@ test('resume and install specs come from the provider configuration', async () =
   const npmDir = tempDir();
   if (process.platform === 'win32') fs.writeFileSync(path.join(npmDir, 'npm.cmd'), '@echo https://mirror.example/npm/\r\n');
   else fs.writeFileSync(path.join(npmDir, 'npm'), '#!/bin/sh\necho https://mirror.example/npm/\n', { mode: 0o755 });
-  const npmEnv = { PATH: npmDir, PATHEXT: '.EXE;.CMD' };
+  const npmEnv = { PATH: npmDir, PATHEXT: '.EXE;.CMD', ComSpec: process.env.ComSpec, SystemRoot: process.env.SystemRoot };
   const withNpm = new ProviderRegistry({ userFile, env: npmEnv, platform: process.platform });
   const argsOf = (spec) => (typeof spec.args === 'string' ? spec.args : spec.args.join(' '));
   assert.ok(argsOf(withNpm.installSpec(withNpm.get('anthropic'))).includes('install -g @anthropic-ai/claude-code@latest'));
