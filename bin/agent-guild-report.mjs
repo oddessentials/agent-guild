@@ -19,6 +19,11 @@ import { hookToReports, claudeStatuslineToReport, formatStatusLine } from '../sr
 
 const env = process.env;
 const inSession = env.AGENT_GUILD_URL && env.AGENT_GUILD_SESSION_ID && env.AGENT_GUILD_REPORT_TOKEN;
+// Gemini CLI's optional environment redaction removes every variable whose
+// name contains TOKEN before it runs a hook. Say so instead of staying silent.
+if (!inSession && env.AGENT_GUILD_SESSION_ID && !env.AGENT_GUILD_REPORT_TOKEN) {
+  console.error('agent-guild-report: AGENT_GUILD_REPORT_TOKEN is missing from the environment; the tool may be redacting variables named *TOKEN*');
+}
 
 const USAGE = `Usage: agent-guild-report <agent-id> [--name N] [--status working|waiting|idle|done] [--detail TEXT] [--kind KIND] [--remove]
        agent-guild-report --model NAME [--display-name TEXT]
@@ -55,7 +60,7 @@ function readStdin() {
 }
 
 async function send(report) {
-  const kind = report.agentId !== undefined ? 'agents' : 'model';
+  const kind = report.agentId !== undefined || report.finishForeground === true ? 'agents' : 'model';
   const url = `${env.AGENT_GUILD_URL}/api/v1/sessions/${env.AGENT_GUILD_SESSION_ID}/${kind}`;
   const res = await fetch(url, {
     method: 'POST',

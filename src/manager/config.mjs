@@ -37,6 +37,8 @@ export const paths = {
   get runtime() { return path.join(dataDir(), 'manager.json'); },
   get providers() { return path.join(dataDir(), 'providers.json'); },
   get log() { return path.join(dataDir(), 'manager.log'); },
+  /** Launchers for agent-guild-report, put first on every session's PATH. */
+  get shims() { return path.join(dataDir(), 'bin'); },
 };
 
 function writePrivate(file, contents) {

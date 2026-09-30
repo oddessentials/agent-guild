@@ -169,11 +169,12 @@ Claude Code sub-agent. See [agent-reporting.md](agent-reporting.md).
 
 ```json
 {
-  "id": "hook-task-toolu_01",
-  "name": "Explore",
+  "id": "hook-task-c9df2e9f7dd4e090",
+  "name": "codebase_investigator",
   "kind": "subagent",
   "status": "working",
-  "detail": "Search the codebase for auth code",
+  "detail": "Map the auth flow",
+  "foreground": true,
   "startedAt": "2026-09-30T03:11:02.000Z",
   "updatedAt": "2026-09-30T03:11:02.000Z",
   "source": "api"
@@ -181,8 +182,12 @@ Claude Code sub-agent. See [agent-reporting.md](agent-reporting.md).
 ```
 
 `status` is one of `working`, `waiting`, `idle` or `done`. An agent reported
-as `done` stays visible for about 15 seconds and is then removed. All agents
-are cleared when their session exits.
+as `done` stays visible for about 15 seconds and is then removed. A session
+holds at most 64 agents; a new one displaces the done agent that has
+lingered longest. All agents are cleared when their session exits.
+`foreground` is true when the tool
+waits for the agent; while such an agent is `working`, model reports are
+taken to be the agent's and leave the session's `model` unchanged.
 
 ## HTTP endpoints
 
@@ -202,8 +207,8 @@ All paths are under `/api/v1`.
 | PATCH | `/sessions/:id` | `{ name }` | `{ session }`. `name` must be a non-empty string; it is trimmed to 80 characters. |
 | POST | `/sessions/:id/stop` | | Ends the process. The session stays listed as exited. |
 | DELETE | `/sessions/:id` | | Ends the process if needed and removes the session. |
-| POST | `/sessions/:id/agents` | Agent report | `{ agent }`, or `{ agent: null }` after a removal. |
-| POST | `/sessions/:id/model` | `{ model, displayName? }` | `{ model }`. Sets the session's model with source `report`. |
+| POST | `/sessions/:id/agents` | Agent report | `{ agent }`, or `{ agent: null }` after a removal, for a `done` report about an agent that was never reported, or for `{ finishForeground: true }`, which marks every foreground agent still working as done. |
+| POST | `/sessions/:id/model` | `{ model, displayName? }` | `{ model }`. Sets the session's model with source `report`, unless a foreground agent is working; then the current model is returned unchanged. |
 | POST | `/shutdown` | | Stops the manager and every session. |
 
 `cwd` defaults to the user's home folder and must be an existing folder. A

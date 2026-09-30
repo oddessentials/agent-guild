@@ -107,9 +107,14 @@ registry. Set `AGENT_GUILD_NPM_REGISTRY` to override it for both, or
 Agents are reported by the coding tool, not guessed from its output. Add
 the hooks from the matching file in [examples/](examples/) to Claude Code,
 Codex CLI, Gemini CLI or Grok Build: each sub-agent appears on the card
-while it runs, and the card shows the model in use. Any tool or script can
-also report agents and the model with the `agent-guild-report` command or an
-escape sequence. See [docs/agent-reporting.md](docs/agent-reporting.md).
+while it runs, and the card shows the model in use. The hooks call
+`agent-guild-report`, which the manager puts on the PATH of every session it
+starts, so no global install is needed. Codex CLI runs no hook until you
+trust it (choose "Trust all and continue" when it starts, or run `/hooks`),
+and Claude Code runs none until you accept its workspace-trust prompt. Any
+tool or script can also report agents and the model with the
+`agent-guild-report` command or an escape sequence. See
+[docs/agent-reporting.md](docs/agent-reporting.md).
 
 ## Security
 

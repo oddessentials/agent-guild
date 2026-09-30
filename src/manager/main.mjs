@@ -9,6 +9,7 @@ import { SessionManager } from './session-manager.mjs';
 import { UsageMonitor } from './usage.mjs';
 import { createManagerServer } from './server.mjs';
 import { resolveBaseEnv } from './shell-env.mjs';
+import { writeReportShims } from './report-shims.mjs';
 import {
   DEFAULT_HOST,
   ensureDataDir,
@@ -30,6 +31,15 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
   const token = loadOrCreateToken();
   const baseEnv = resolveBaseEnv();
   const webDir = path.join(rootDir, 'web');
+  // The hooks in examples/ call `agent-guild-report` by name; these shims
+  // make that name resolve inside every session. Regenerated at each start
+  // because the Node.js path can change between runs.
+  let shimDir = null;
+  try {
+    shimDir = writeReportShims({ dir: paths.shims, script: path.join(rootDir, 'bin', 'agent-guild-report.mjs') });
+  } catch (err) {
+    console.warn(`[manager] could not write the agent-guild-report launchers to ${paths.shims}: ${err.message}; hooks need the command on PATH`);
+  }
   const registry = new ProviderRegistry({
     userFile: paths.providers,
     env: baseEnv,
@@ -39,7 +49,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
   });
 
   let api;
-  const manager = new SessionManager({ registry, baseEnv, getApiUrl: () => api.url, sessionDefaults });
+  const manager = new SessionManager({ registry, baseEnv, getApiUrl: () => api.url, sessionDefaults, shimDir });
   const usage = new UsageMonitor({ registry, env: baseEnv });
   let closing = null;
 

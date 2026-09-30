@@ -3,7 +3,11 @@
 //   agent <id> <name>  emits an in-band agent report (OSC 7777)
 //   model <name>       emits an in-band model report (OSC 7777)
 //   args               prints the arguments that followed the script path
-//   env                prints the Agent Guild variables
+//   env                prints the Agent Guild variables, the first PATH entry and TMUX
+//   hook <shell> <json> runs `agent-guild-report --hook` through sh, cmd or
+//                      powershell, as the coding tools run their hooks, with
+//                      this environment and <json> on stdin; prints
+//                      HOOK-EXIT:<code> and the hook's stderr
 //   size               prints the terminal size
 //   query [cpr|bg]     asks the terminal for the cursor position or the
 //                      background colour, then prints every reply received
@@ -14,9 +18,24 @@
 //   exit <code>        exits with that code
 // Started with --version it prints "fake-tool 1.2.3" and exits.
 
+import { spawn } from 'node:child_process';
+import path from 'node:path';
+
 if (process.argv.includes('--version')) {
   console.log('fake-tool 1.2.3');
   process.exit(0);
+}
+
+/** The hook command lines the real tools build, by shell. */
+function hookSpawn(shell) {
+  const command = 'agent-guild-report --hook';
+  if (shell === 'cmd') return ['cmd.exe', ['/d', '/s', '/c', `"${command}"`]];
+  if (shell === 'powershell') {
+    // Gemini CLI and Grok Build pass no execution policy; Restricted (the
+    // Windows client default) must still find and run the .cmd launcher.
+    return ['powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Restricted', '-Command', command]];
+  }
+  return ['/bin/sh', ['-c', command]];
 }
 
 const out = (text) => process.stdout.write(`${text}\r\n`);
@@ -35,7 +54,22 @@ function handle(line) {
     process.stdout.write(`\x1b]7777;agent-guild;${JSON.stringify({ model: rest[0], displayName: rest[1] })}\x07`);
   } else if (cmd === 'args') out(`ARGS:${JSON.stringify(process.argv.slice(2))}`);
   else if (cmd === 'env') {
-    out(`ENV:${process.env.AGENT_GUILD_SESSION_ID}|${process.env.AGENT_GUILD_PROVIDER}|${process.env.AGENT_GUILD_URL}`);
+    const pathKey = Object.keys(process.env).find((k) => k.toUpperCase() === 'PATH');
+    const first = (process.env[pathKey] || '').split(path.delimiter)[0];
+    out(`ENV:${process.env.AGENT_GUILD_SESSION_ID}|${process.env.AGENT_GUILD_PROVIDER}|${process.env.AGENT_GUILD_URL}|${first}|tmux=${process.env.TMUX ?? ''}|term_program=${process.env.TERM_PROGRAM ?? ''}`);
+  } else if (cmd === 'hook') {
+    const [file, args] = hookSpawn(rest[0]);
+    const child = spawn(file, args, {
+      env: process.env,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+      windowsVerbatimArguments: rest[0] === 'cmd',
+    });
+    let stderr = '';
+    child.stderr.on('data', (d) => { stderr += d; });
+    child.on('error', (err) => out(`HOOK-EXIT:spawn-error STDERR:${JSON.stringify(err.message)}`));
+    child.on('close', (code) => out(`HOOK-EXIT:${code} STDERR:${JSON.stringify(stderr.trim())}`));
+    child.stdin.end(rest.slice(1).join(' '));
   } else if (cmd === 'size') {
     // getWindowSize() asks the console directly; .columns can be stale on Windows.
     const [cols, rows] = process.stdout.getWindowSize ? process.stdout.getWindowSize() : [process.stdout.columns, process.stdout.rows];
