@@ -195,8 +195,15 @@ test('a session runs, streams output, accepts input and resizes', async () => {
 
   client.send({ type: 'resize', cols: 101, rows: 33 });
   await waitFor(async () => (await call('GET', `/sessions/${session.id}`)).body.session.cols === 101, { label: 'resize' });
-  client.input('size');
-  await waitForText(client, session.id, 'SIZE:101x33', 'pty size');
+  if (process.platform === 'win32') {
+    // ConPTY confirms a resize by emitting CSI 8 ; rows ; cols t. (A Node
+    // child inside ConPTY can keep reporting its old size, so the tool's own
+    // report is not a reliable signal there.)
+    await waitFor(() => client.output.includes('\x1b[8;33;101t'), { label: 'ConPTY resize' });
+  } else {
+    client.input('size');
+    await waitForText(client, session.id, 'SIZE:101x33', 'pty size');
+  }
 
   await client.close();
   await call('DELETE', `/sessions/${session.id}`);
