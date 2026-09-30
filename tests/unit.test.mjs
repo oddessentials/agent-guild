@@ -139,6 +139,9 @@ test('claudeHookToReport maps sub-agent tool calls and subagent events', () => {
   assert.equal(claudeHookToReport({ hook_event_name: 'SubagentStop', agent_id: 'a1' }).status, 'done');
   assert.equal(claudeHookToReport({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: {} }), null);
   assert.equal(claudeHookToReport({ hook_event_name: 'SubagentStop' }), null);
+  // Background launches return at once, so the tool-call style cannot tell when they end.
+  assert.equal(claudeHookToReport({ hook_event_name: 'PostToolUse', tool_name: 'Agent', tool_input: { run_in_background: true } }), null);
+  assert.equal(claudeHookToReport({ hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_input: { run_in_background: true } }), null);
 });
 
 test('ensurePtyReady restores the macOS spawn-helper executable bit', { skip: process.platform === 'win32' }, () => {

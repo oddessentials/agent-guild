@@ -33,27 +33,35 @@ folder. Otherwise call it as `node <agent-guild>/bin/agent-guild-report.mjs`.
 ## 2. Claude Code hooks
 
 `agent-guild-report --claude-hook` reads Claude Code's hook input from stdin.
-It reports a sub-agent when Claude Code calls its sub-agent tool and marks it
-done when that call returns.
+Claude Code's `SubagentStart` and `SubagentStop` hook events fire when a
+sub-agent starts and finishes, including sub-agents running in the
+background. Each one then appears on the card for as long as it runs,
+labelled with its agent type, for example `Explore` or `Plan`.
 
 Add the hooks from [examples/claude-code-settings.json](../examples/claude-code-settings.json)
-to `~/.claude/settings.json`, or to `.claude/settings.json` in one project.
+to `~/.claude/settings.json`, or to `.claude/settings.json` in one project:
 
 ```json
 {
   "hooks": {
-    "PreToolUse":  [{ "matcher": "Task|Agent", "hooks": [{ "type": "command", "command": "agent-guild-report --claude-hook" }] }],
-    "PostToolUse": [{ "matcher": "Task|Agent", "hooks": [{ "type": "command", "command": "agent-guild-report --claude-hook" }] }]
+    "SubagentStart": [{ "hooks": [{ "type": "command", "command": "agent-guild-report --claude-hook" }] }],
+    "SubagentStop":  [{ "hooks": [{ "type": "command", "command": "agent-guild-report --claude-hook" }] }]
   }
 }
 ```
 
-Claude Code versions that emit `SubagentStart` and `SubagentStop` hook events
-can use those events with the same command instead. Configure one style, not
+A `matcher` on these events filters by agent type. Leave it out to show
+every sub-agent.
+
+Older Claude Code versions without these events can use `PreToolUse` and
+`PostToolUse` with `"matcher": "Agent|Task"` and the same command. That style
+shows the task description, but skips sub-agents launched in the background,
+because their tool call returns before they finish. Configure one style, not
 both, or each sub-agent appears twice.
 
-Hook names and payloads belong to Claude Code and can change. Check the
-current hooks documentation if agents stop appearing.
+Hook names and payloads belong to Claude Code and can change. See the
+[hooks reference](https://code.claude.com/docs/en/hooks) if agents stop
+appearing.
 
 ## 3. In-band escape sequence
 

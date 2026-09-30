@@ -7,6 +7,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
+import { execFile } from 'node:child_process';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-test-'));
@@ -261,6 +262,45 @@ test('agents can be reported over HTTP with the session report token', async () 
   assert.equal(body.session.agents[0].status, 'done', 'done agents linger briefly');
   await waitFor(async () => (await call('GET', `/sessions/${session.id}`)).body.session.agents.length === 0, { label: 'agent removal' });
   await call('DELETE', `/sessions/${session.id}`);
+});
+
+test('Claude Code sub-agent hooks reach the session through agent-guild-report', async () => {
+  const session = await createFake();
+  const managed = ctx.manager.get(session.id);
+  const reporter = path.resolve(here, '../bin/agent-guild-report.mjs');
+  const env = {
+    ...process.env,
+    AGENT_GUILD_URL: base,
+    AGENT_GUILD_SESSION_ID: session.id,
+    AGENT_GUILD_REPORT_TOKEN: managed.reportToken,
+  };
+  const runHook = (payload) => new Promise((resolve, reject) => {
+    const child = execFile(process.execPath, [reporter, '--claude-hook'], { env, timeout: 10000 }, (err, stdout, stderr) => {
+      if (err) reject(new Error(`${err.message}\n${stderr}`)); else resolve(stderr);
+    });
+    child.stdin.end(JSON.stringify(payload));
+  });
+  const common = { session_id: 'claude-session', cwd: home, transcript_path: '/tmp/t.jsonl' };
+
+  assert.equal(await runHook({ ...common, hook_event_name: 'SubagentStart', agent_id: 'agent-7', agent_type: 'Explore' }), '');
+  let { body } = await call('GET', `/sessions/${session.id}`);
+  assert.deepEqual(body.session.agents.map((a) => [a.id, a.name, a.status]), [['claude-agent-7', 'Explore', 'working']]);
+
+  await runHook({ ...common, hook_event_name: 'SubagentStop', agent_id: 'agent-7', agent_type: 'Explore', stop_hook_active: false });
+  ({ body } = await call('GET', `/sessions/${session.id}`));
+  assert.equal(body.session.agents[0].status, 'done');
+  await call('DELETE', `/sessions/${session.id}`);
+});
+
+test('agent-guild-report does nothing outside an Agent Guild terminal', async () => {
+  const reporter = path.resolve(here, '../bin/agent-guild-report.mjs');
+  const env = { ...process.env };
+  delete env.AGENT_GUILD_URL; delete env.AGENT_GUILD_SESSION_ID; delete env.AGENT_GUILD_REPORT_TOKEN;
+  const code = await new Promise((resolve) => {
+    const child = execFile(process.execPath, [reporter, '--claude-hook'], { env }, (err) => resolve(err ? err.code : 0));
+    child.stdin.end(JSON.stringify({ hook_event_name: 'SubagentStart', agent_id: 'x', agent_type: 'Plan' }));
+  });
+  assert.equal(code, 0);
 });
 
 test('agents can be reported in-band with an OSC escape sequence', async () => {

@@ -1,15 +1,23 @@
 {
   "hooks": {
-    "PreToolUse": [
+    "SubagentStart": [
       {
-        "matcher": "Task|Agent",
-        "hooks": [{ "type": "command", "command": "agent-guild-report --claude-hook" }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agent-guild-report --claude-hook"
+          }
+        ]
       }
     ],
-    "PostToolUse": [
+    "SubagentStop": [
       {
-        "matcher": "Task|Agent",
-        "hooks": [{ "type": "command", "command": "agent-guild-report --claude-hook" }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agent-guild-report --claude-hook"
+          }
+        ]
       }
     ]
   }
