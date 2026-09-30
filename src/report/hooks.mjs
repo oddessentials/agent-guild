@@ -12,7 +12,9 @@
 //   without the sub-agent events. A background launch returns immediately,
 //   so its PostToolUse says nothing about when the agent finishes; those
 //   launches are skipped. Configure one style, not both, or each sub-agent
-//   appears twice.
+//   appears twice. Such a foreground agent whose end event never came (a
+//   cancelled or denied call) is closed at the next turn boundary of the
+//   main session.
 // - Codex CLI ends every turn of a sub-agent with SubagentStop, and a
 //   follow-up turn of the same agent starts with a UserPromptSubmit inside
 //   it, which reports the agent as working again.
@@ -25,6 +27,7 @@ import crypto from 'node:crypto';
 const SUBAGENT_TOOLS = new Set(['Task', 'Agent', 'invoke_agent']);
 const TOOL_START_EVENTS = new Set(['PreToolUse', 'BeforeTool']);
 const TOOL_END_EVENTS = new Set(['PostToolUse', 'AfterTool']);
+const TURN_BOUNDARY_EVENTS = new Set(['BeforeAgent', 'AfterAgent', 'UserPromptSubmit', 'Stop']);
 const MAX_DETAIL = 200;
 
 const text = (...values) => values.find((v) => typeof v === 'string' && v.trim())?.trim() ?? null;
@@ -105,6 +108,14 @@ export function hookToReports(input) {
   // A hook that runs inside a sub-agent names it (Claude Code and Codex by
   // agent_id, Grok Build by subagentType); its model is not the session's.
   const insideSubagent = Boolean(subagentId || text(input.subagent_type, input.subagentType));
+
+  // Gemini CLI skips AfterTool for an invoke_agent call that was cancelled
+  // or denied. A turn boundary of the main session (BeforeAgent and
+  // AfterAgent in Gemini CLI; a main-thread prompt or Stop elsewhere) cannot
+  // happen while the parent waits for a foreground agent, so one still
+  // working then has been orphaned.
+  if (!insideSubagent && TURN_BOUNDARY_EVENTS.has(event)) reports.push({ finishForeground: true });
+
   const model = insideSubagent ? null : event === 'PostModelSwitch'
     ? text(input.to_model)
     : text(input.model, input.modelId, input.llm_request?.model);

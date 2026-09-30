@@ -24,6 +24,28 @@
         ]
       }
     ],
+    "BeforeAgent": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "name": "Agent Guild turn start",
+            "command": "agent-guild-report --hook"
+          }
+        ]
+      }
+    ],
+    "AfterAgent": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "name": "Agent Guild turn end",
+            "command": "agent-guild-report --hook"
+          }
+        ]
+      }
+    ],
     "BeforeModel": [
       {
         "hooks": [

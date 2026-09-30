@@ -330,9 +330,17 @@ export class Session extends EventEmitter {
    */
   reportAgent(report, source = 'api') {
     if (!report || typeof report !== 'object') throw badRequest('agent report must be an object');
+    if (this.status !== 'running') throw Object.assign(new Error('session has exited'), { status: 409 });
+    if (report.finishForeground === true && report.agentId === undefined) {
+      // The tool is between turns, so no foreground agent can still be
+      // running; one that is never got its end event.
+      for (const agent of [...this.agents.values()]) {
+        if (agent.foreground && agent.status === 'working') this.reportAgent({ agentId: agent.id, status: 'done' }, source);
+      }
+      return null;
+    }
     const id = String(report.agentId ?? report.agent ?? report.id ?? '').trim().slice(0, 128);
     if (!id) throw badRequest('agentId is required');
-    if (this.status !== 'running') throw Object.assign(new Error('session has exited'), { status: 409 });
 
     if (report.remove === true) {
       this._removeAgent(id);
@@ -403,7 +411,8 @@ export class Session extends EventEmitter {
     if (!payload.startsWith(OSC_AGENT_PREFIX)) return;
     try {
       const report = JSON.parse(payload.slice(OSC_AGENT_PREFIX.length));
-      const isAgent = report && typeof report === 'object' && (report.agentId ?? report.agent ?? report.id) !== undefined;
+      const isAgent = report && typeof report === 'object' &&
+        ((report.agentId ?? report.agent ?? report.id) !== undefined || report.finishForeground === true);
       if (isAgent) this.reportAgent(report, 'terminal');
       else this.reportModel(report);
     } catch (err) {

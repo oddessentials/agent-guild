@@ -207,7 +207,7 @@ All paths are under `/api/v1`.
 | PATCH | `/sessions/:id` | `{ name }` | `{ session }`. `name` must be a non-empty string; it is trimmed to 80 characters. |
 | POST | `/sessions/:id/stop` | | Ends the process. The session stays listed as exited. |
 | DELETE | `/sessions/:id` | | Ends the process if needed and removes the session. |
-| POST | `/sessions/:id/agents` | Agent report | `{ agent }`, or `{ agent: null }` after a removal or for a `done` report about an agent that was never reported. |
+| POST | `/sessions/:id/agents` | Agent report | `{ agent }`, or `{ agent: null }` after a removal, for a `done` report about an agent that was never reported, or for `{ finishForeground: true }`, which marks every foreground agent still working as done. |
 | POST | `/sessions/:id/model` | `{ model, displayName? }` | `{ model }`. Sets the session's model with source `report`, unless a foreground agent is working; then the current model is returned unchanged. |
 | POST | `/shutdown` | | Stops the manager and every session. |
 

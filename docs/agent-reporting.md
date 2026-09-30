@@ -53,7 +53,7 @@ labelled with its agent type, for example `Explore` or `Plan`.
 | --- | --- | --- |
 | Claude Code | `~/.claude/settings.json`, or `.claude/settings.json` in one project. Hooks and the status line run only after the workspace-trust prompt for the working folder is accepted | [claude-code-settings.json](../examples/claude-code-settings.json) |
 | Codex CLI | `~/.codex/hooks.json`. Codex skips hooks until you trust them: choose "Trust all and continue" when it starts, or run `/hooks`; an edited command needs trusting again. `UserPromptSubmit` follows `/model` changes and shows a re-tasked sub-agent as working again. Codex starts sub-agents only when asked; `/review` and compaction use internal helpers it never reports | [codex-hooks.json](../examples/codex-hooks.json) |
-| Gemini CLI | `~/.gemini/settings.json`. It has no sub-agent events; a sub-agent is the `invoke_agent` tool, so `BeforeTool` and `AfterTool` with `"matcher": "invoke_agent"` report it, labelled with its `agent_name`. `BeforeModel` reports the model | [gemini-settings.json](../examples/gemini-settings.json) |
+| Gemini CLI | `~/.gemini/settings.json`. It has no sub-agent events; a sub-agent is the `invoke_agent` tool, so `BeforeTool` and `AfterTool` with `"matcher": "invoke_agent"` report it, labelled with its `agent_name`. A cancelled or denied call gets no `AfterTool`, so `BeforeAgent` and `AfterAgent` close what is left at the turn boundary. `BeforeModel` reports the model | [gemini-settings.json](../examples/gemini-settings.json) |
 | Grok Build | `~/.grok/hooks/agent-guild.json`; it also reads `~/.claude/settings.json` hooks. `SessionEnd` and `StopCancelled` close a sub-agent that was cancelled, which never gets `SubagentStop`. Its events do not name the model, so the card uses the model seen on screen | [grok-hooks.json](../examples/grok-hooks.json) |
 
 A `matcher` on the sub-agent events filters by agent type. Leave it out to
@@ -82,7 +82,13 @@ Gemini CLI also fires `BeforeModel` for a sub-agent's own requests, with the
 sub-agent's model and nothing to tell them apart. A sub-agent reported from a
 tool call is a *foreground* agent: its parent waits for it, so a model
 reported while it works is taken to be the sub-agent's and the session's
-model is left alone.
+model is left alone. A foreground agent whose end event never arrives, for
+example after Esc during a Gemini sub-agent, is closed at the next turn
+boundary of the main session (`BeforeAgent` or `AfterAgent` in Gemini CLI;
+a main-thread `UserPromptSubmit` or `Stop` elsewhere), because the parent
+cannot be there while it still waits. Two simultaneous `invoke_agent` calls
+with the same agent and prompt share one icon, since Gemini's payload
+carries no call id.
 
 Some ends are not reported. A Codex CLI sub-agent that is interrupted or
 closed fires no hook, so its icon stays until the session ends. Claude Code
@@ -155,6 +161,7 @@ This works without network access or extra tools, which suits wrapper scripts.
 | `kind` | no | Free-form category, for example `subagent`. |
 | `foreground` | no | `true` when the reporting tool waits for this agent. A model reported while a foreground agent works is not applied to the session. |
 | `remove` | no | `true` removes the agent immediately. |
+| `finishForeground` | no | `true`, sent without an `agentId`, marks every foreground agent still working as done. Send it when the tool is between turns. |
 
 ## Model without a report
 

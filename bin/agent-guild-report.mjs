@@ -60,7 +60,7 @@ function readStdin() {
 }
 
 async function send(report) {
-  const kind = report.agentId !== undefined ? 'agents' : 'model';
+  const kind = report.agentId !== undefined || report.finishForeground === true ? 'agents' : 'model';
   const url = `${env.AGENT_GUILD_URL}/api/v1/sessions/${env.AGENT_GUILD_SESSION_ID}/${kind}`;
   const res = await fetch(url, {
     method: 'POST',

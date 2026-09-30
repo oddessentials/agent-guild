@@ -526,6 +526,12 @@ test('a model reported while a foreground agent works is the agent\'s, not the s
   assert.equal((await call('POST', `${route}/model`, { model: 'fake-model-sub' })).body.model.name, 'fake-model-main', 'ignored while the agent works');
   await call('POST', `${route}/agents`, { agentId: 'hook-task-1', status: 'done' });
   assert.equal((await call('POST', `${route}/model`, { model: 'fake-model-next' })).body.model.name, 'fake-model-next', 'accepted once the agent is done');
+  // A cancelled call never reports done; the next turn boundary closes it.
+  await call('POST', `${route}/agents`, { agentId: 'hook-task-2', name: 'generalist', kind: 'subagent', foreground: true });
+  assert.equal((await call('POST', `${route}/model`, { model: 'fake-model-sub' })).body.model.name, 'fake-model-next');
+  assert.equal((await call('POST', `${route}/agents`, { finishForeground: true })).body.agent, null);
+  assert.equal((await call('GET', route)).body.session.agents.find((a) => a.id === 'hook-task-2').status, 'done');
+  assert.equal((await call('POST', `${route}/model`, { model: 'fake-model-after' })).body.model.name, 'fake-model-after', 'model reports resume after the boundary');
   // A background agent (Claude Code, Codex CLI) does not block its parent.
   await call('POST', `${route}/agents`, { agentId: 'hook-bg', name: 'Explore', kind: 'subagent' });
   assert.equal((await call('POST', `${route}/model`, { model: 'fake-model-switched' })).body.model.name, 'fake-model-switched');
