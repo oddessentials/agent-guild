@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Report an agent working inside an Agent Guild session.
+// Report an agent, or the model in use, inside an Agent Guild session.
 //
 // The session manager injects AGENT_GUILD_URL, AGENT_GUILD_SESSION_ID and
 // AGENT_GUILD_REPORT_TOKEN into every terminal it starts. Outside such a
@@ -8,12 +8,21 @@
 //
 //   agent-guild-report <agent-id> [--name N] [--status working|waiting|idle|done]
 //                      [--detail TEXT] [--kind KIND] [--remove]
-//   agent-guild-report --claude-hook      (reads Claude Code hook JSON on stdin)
+//   agent-guild-report --model NAME [--display-name TEXT]
+//   agent-guild-report --claude-hook         (reads Claude Code hook JSON on stdin)
+//   agent-guild-report --claude-statusline [--passthrough]
+//                      (reads Claude Code status line JSON on stdin; prints a
+//                       status line, or the JSON itself with --passthrough)
 
-import { claudeHookToReport } from '../src/report/claude-hook.mjs';
+import { claudeHookToReport, claudeStatuslineToReport, formatStatusLine } from '../src/report/claude-hook.mjs';
 
 const env = process.env;
 const inSession = env.AGENT_GUILD_URL && env.AGENT_GUILD_SESSION_ID && env.AGENT_GUILD_REPORT_TOKEN;
+
+const USAGE = `Usage: agent-guild-report <agent-id> [--name N] [--status working|waiting|idle|done] [--detail TEXT] [--kind KIND] [--remove]
+       agent-guild-report --model NAME [--display-name TEXT]
+       agent-guild-report --claude-hook                    (reads Claude Code hook JSON from stdin)
+       agent-guild-report --claude-statusline [--passthrough]  (reads Claude Code status line JSON from stdin)`;
 
 function parseArgs(argv) {
   const out = { positional: [] };
@@ -21,6 +30,8 @@ function parseArgs(argv) {
     const a = argv[i];
     if (a === '--remove') out.remove = true;
     else if (a === '--claude-hook') out.claudeHook = true;
+    else if (a === '--claude-statusline') out.claudeStatusline = true;
+    else if (a === '--passthrough') out.passthrough = true;
     else if (a === '-h' || a === '--help') out.help = true;
     else if (a.startsWith('--') && a.includes('=')) {
       const eq = a.indexOf('=');
@@ -43,7 +54,8 @@ function readStdin() {
 }
 
 async function send(report) {
-  const url = `${env.AGENT_GUILD_URL}/api/v1/sessions/${env.AGENT_GUILD_SESSION_ID}/agents`;
+  const kind = report.agentId !== undefined ? 'agents' : 'model';
+  const url = `${env.AGENT_GUILD_URL}/api/v1/sessions/${env.AGENT_GUILD_SESSION_ID}/${kind}`;
   const res = await fetch(url, {
     method: 'POST',
     headers: {
@@ -59,21 +71,43 @@ async function send(report) {
   }
 }
 
+/** A hook must never break the coding tool, so report failures quietly. */
+const sendQuietly = (report) => send(report).catch((err) => console.error(`agent-guild-report: ${err.message}`));
+
+function parseJson(raw) {
+  try { return JSON.parse(raw); } catch { return null; }
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help) {
-    console.log('Usage: agent-guild-report <agent-id> [--name N] [--status working|waiting|idle|done] [--detail TEXT] [--kind KIND] [--remove]\n' +
-      '       agent-guild-report --claude-hook   (reads Claude Code hook JSON from stdin)');
+    console.log(USAGE);
     return;
   }
   if (args.claudeHook) {
-    const raw = await readStdin();
-    if (!inSession) return;
-    let input;
-    try { input = JSON.parse(raw); } catch { return; }
+    const input = parseJson(await readStdin());
+    if (!inSession || !input) return;
     const report = claudeHookToReport(input);
-    // A hook must never break the coding tool, so report failures quietly.
-    if (report) await send(report).catch((err) => console.error(`agent-guild-report: ${err.message}`));
+    if (report) await sendQuietly(report);
+    return;
+  }
+  if (args.claudeStatusline) {
+    const raw = await readStdin();
+    const input = parseJson(raw);
+    process.stdout.write(args.passthrough ? raw : `${formatStatusLine(input)}\n`);
+    if (!inSession || !input) return;
+    const report = claudeStatuslineToReport(input);
+    if (report) await sendQuietly(report);
+    return;
+  }
+  if (args.model !== undefined && args.positional.length === 0) {
+    if (!args.model) {
+      console.error('agent-guild-report: --model needs a name');
+      process.exitCode = 2;
+      return;
+    }
+    if (!inSession) return;
+    await send({ model: args.model, displayName: args['display-name'] });
     return;
   }
   const agentId = args.positional[0];

@@ -99,6 +99,7 @@ function readJsonBody(req) {
 export function createManagerServer({
   manager,
   registry,
+  usage,
   token,
   host = '127.0.0.1',
   port = 0,
@@ -179,17 +180,18 @@ export function createManagerServer({
       return sendJson(res, 200, { ok: true, name: 'agent-guild', version, pid: process.pid });
     }
 
-    // Agent reports may authenticate with the per-session report token that
-    // the manager injects into each tool's environment.
-    const agentMatch = route.match(/^\/sessions\/([a-f0-9]+)\/agents$/);
-    if (agentMatch && method === 'POST') {
+    // Agent and model reports may authenticate with the per-session report
+    // token that the manager injects into each tool's environment.
+    const reportMatch = route.match(/^\/sessions\/([a-f0-9]+)\/(agents|model)$/);
+    if (reportMatch && method === 'POST') {
+      const [, id, kind] = reportMatch;
       const body = await readJsonBody(req);
-      const trusted = timingSafeEqualString(requestToken(req, url), token);
-      const agent = manager.reportAgent(agentMatch[1], body, {
-        trusted,
+      const auth = {
+        trusted: timingSafeEqualString(requestToken(req, url), token),
         reportToken: req.headers['x-agent-guild-report-token'],
-      });
-      return sendJson(res, 200, { agent });
+      };
+      if (kind === 'agents') return sendJson(res, 200, { agent: manager.reportAgent(id, body, auth) });
+      return sendJson(res, 200, { model: manager.reportModel(id, body, auth) });
     }
 
     requireAuth(req, url);
@@ -205,11 +207,22 @@ export function createManagerServer({
       });
     }
     if (route === '/providers' && method === 'GET') {
+      registry.refreshVersions().catch(() => {});
       return sendJson(res, 200, { providers: registry.list() });
     }
     if (route === '/providers/reload' && method === 'POST') {
       registry.reload();
+      registry.refreshVersions({ force: true }).catch(() => {});
       return sendJson(res, 200, { providers: registry.list(), warnings: registry.warnings });
+    }
+    if (route === '/usage' && method === 'GET') {
+      return sendJson(res, 200, { usage: await usage.all() });
+    }
+    const installMatch = route.match(/^\/providers\/([a-z0-9][a-z0-9_-]{0,31})\/install$/);
+    if (installMatch && method === 'POST') {
+      const body = await readJsonBody(req);
+      const session = manager.install(installMatch[1], { force: body.force === true });
+      return sendJson(res, 201, { session: session.toJSON() });
     }
     if (route === '/sessions' && method === 'GET') {
       return sendJson(res, 200, { sessions: manager.list() });
@@ -260,7 +273,9 @@ export function createManagerServer({
       const status = err.status || 500;
       if (status >= 500) console.error('[server]', err);
       if (!res.headersSent) {
-        sendJson(res, status, { error: { code: err.code || 'error', message: err.message } });
+        const error = { code: err.code || 'error', message: err.message };
+        if (err.running !== undefined) error.running = err.running;
+        sendJson(res, status, { error });
       }
     }
   });
@@ -280,9 +295,11 @@ export function createManagerServer({
     ws.send(JSON.stringify(message));
   };
 
-  manager.on('event', (event) => {
+  const broadcast = (event) => {
     for (const ws of eventClients) safeSend(ws, event);
-  });
+  };
+  manager.on('event', broadcast);
+  registry.on('updated', () => broadcast({ type: 'providers.updated', providers: registry.list() }));
 
   function handleEvents(ws) {
     eventClients.add(ws);

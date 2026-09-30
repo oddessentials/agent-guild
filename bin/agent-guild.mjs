@@ -34,8 +34,10 @@ Commands:
   url       Print the web page URL, including the access token
 
 Environment:
-  AGENT_GUILD_PORT   Port for the local API (default 47821)
-  AGENT_GUILD_HOME   Data directory (default: per-user app data folder)`);
+  AGENT_GUILD_PORT             Port for the local API (default 47821)
+  AGENT_GUILD_HOME             Data directory (default: per-user app data folder)
+  AGENT_GUILD_NPM_REGISTRY     npm registry for version checks and installs
+  AGENT_GUILD_NO_UPDATE_CHECK  Set to 1 to skip version checks`);
 }
 
 function baseUrl() {
@@ -169,8 +171,9 @@ async function cmdStatus() {
   console.log(`Session manager ${h.version} running at ${url} (pid ${h.pid}).`);
   console.log(`${sessions.length} session(s), ${running} running.`);
   for (const s of sessions) {
+    const model = s.model ? ` [${s.model.displayName || s.model.name}]` : '';
     const agents = s.agents.length ? `, ${s.agents.length} agent(s)` : '';
-    console.log(`  ${s.id}  ${s.provider.vendor.padEnd(10)} ${s.status.padEnd(8)} ${s.name}${agents}`);
+    console.log(`  ${s.id}  ${s.provider.vendor.padEnd(10)} ${s.status.padEnd(8)} ${s.name}${model}${agents}`);
   }
 }
 

@@ -15,10 +15,33 @@ process.env.AGENT_GUILD_HOME = home;
 process.env.AGENT_GUILD_PORT = '0';
 process.env.AGENT_GUILD_SKIP_SHELL_ENV = '1';
 
+// A stand-in npm so install sessions never touch the real global prefix.
+const bin = path.join(home, 'bin');
+fs.mkdirSync(bin);
+if (process.platform === 'win32') {
+  fs.writeFileSync(path.join(bin, 'npm.cmd'), '@echo off\r\necho FAKE-NPM %*\r\n');
+} else {
+  fs.writeFileSync(path.join(bin, 'npm'), '#!/bin/sh\necho "FAKE-NPM $*"\n', { mode: 0o755 });
+}
+process.env.PATH = `${bin}${path.delimiter}${process.env.PATH}`;
+
+// A stand-in npm registry that knows one package.
+const npmRegistry = http.createServer((req, res) => {
+  const known = req.url === '/fake-tool-pkg/latest';
+  res.writeHead(known ? 200 : 404, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(known ? { name: 'fake-tool-pkg', version: '9.9.9' } : { error: 'Not found' }));
+});
+await new Promise((resolve) => npmRegistry.listen(0, '127.0.0.1', resolve));
+process.env.AGENT_GUILD_NPM_REGISTRY = `http://127.0.0.1:${npmRegistry.address().port}`;
+
 fs.writeFileSync(path.join(home, 'providers.json'), JSON.stringify({
   providers: [
-    { id: 'fake', vendor: 'Test', tool: 'Fake Tool', command: process.execPath, args: [path.join(here, 'fixtures', 'fake-tool.mjs')] },
-    { id: 'missing', vendor: 'Nobody', tool: 'Missing Tool', command: 'definitely-not-installed-agent-guild', install: 'npm i -g nothing' },
+    { id: 'fake', vendor: 'Test', tool: 'Fake Tool', command: process.execPath, args: [path.join(here, 'fixtures', 'fake-tool.mjs')], resumeArgs: ['--resume', '{id}'], package: 'fake-tool-pkg', versionArgs: [path.join(here, 'fixtures', 'fake-tool.mjs'), '--version'], modelPattern: 'fake-model-[a-z0-9.]+' },
+    { id: 'plain', vendor: 'Test', tool: 'Plain Tool', command: process.execPath, args: [path.join(here, 'fixtures', 'fake-tool.mjs')], usage: { command: process.execPath, args: [path.join(here, 'fixtures', 'fake-usage.mjs')] } },
+    { id: 'missing', vendor: 'Nobody', tool: 'Missing Tool', command: 'definitely-not-installed-agent-guild', install: 'npm i -g nothing', package: 'nothing' },
+    // Never read the developer's real Claude Code or Codex sign-in during tests.
+    { id: 'anthropic', usage: null },
+    { id: 'openai', usage: null },
   ],
 }));
 
@@ -35,10 +58,8 @@ before(async () => {
 });
 
 after(async () => {
-  // node-pty on Windows can keep a handle open after every session has
-  // ended. Exit once results are reported rather than hanging the run.
-  setTimeout(() => process.exit(), 8000).unref();
   await ctx.shutdown('tests done');
+  npmRegistry.close();
   assert.equal(ctx.manager.exiting.size, 0, 'shutdown waits for removed sessions to exit');
   try {
     // Windows may hold the folder briefly after a process exits.
@@ -46,6 +67,9 @@ after(async () => {
   } catch (err) {
     console.warn(`could not remove ${home}: ${err.message}`);
   }
+  // node-pty on Windows can keep a handle open after every session has
+  // ended. Exit once results are reported rather than hanging the run.
+  setTimeout(() => process.exit(), 3000).unref();
 });
 
 async function call(method, route, body, headers = {}) {
@@ -168,8 +192,103 @@ test('providers report availability', async () => {
   const fake = body.providers.find((p) => p.id === 'fake');
   const missing = body.providers.find((p) => p.id === 'missing');
   assert.equal(fake.available, true);
+  assert.equal(fake.resumable, true);
+  assert.equal(fake.installable, true);
+  const plain = body.providers.find((p) => p.id === 'plain');
+  assert.equal(plain.resumable, false);
+  assert.equal(plain.installable, false, 'no npm package configured');
   assert.equal(missing.available, false);
+  assert.equal(missing.installable, true);
   assert.ok(body.providers.some((p) => p.id === 'anthropic'), 'built-in providers are still listed');
+});
+
+test('usage meters come from the provider usage source', async () => {
+  const { body } = await call('GET', '/providers');
+  assert.equal(body.providers.find((p) => p.id === 'plain').usageSource, 'command');
+  assert.equal(body.providers.find((p) => p.id === 'fake').usageSource, null);
+  assert.equal(body.providers.find((p) => p.id === 'anthropic').usageSource, null, 'built-in sources are disabled for tests');
+
+  const { status, body: usage } = await call('GET', '/usage');
+  assert.equal(status, 200);
+  assert.deepEqual(usage.usage.map((u) => u.providerId), ['plain'], 'only providers with a source are listed');
+  const [plain] = usage.usage;
+  assert.equal(plain.error, null);
+  assert.equal(plain.plan, 'test');
+  assert.deepEqual(plain.windows, [
+    { label: '5-hour', usedPercent: 42.3, resetsAt: '2030-01-01T00:00:00.000Z' },
+    { label: '7-day', usedPercent: 90, resetsAt: null },
+  ]);
+});
+
+test('installed and latest versions are reported and updates flagged', async () => {
+  const fake = await waitFor(async () => {
+    const p = (await call('GET', '/providers')).body.providers.find((x) => x.id === 'fake');
+    return p.installedVersion && p.latestVersion ? p : null;
+  }, { label: 'version check' });
+  assert.equal(fake.installedVersion, '1.2.3');
+  assert.equal(fake.latestVersion, '9.9.9');
+  assert.equal(fake.updateAvailable, true);
+  const missing = (await call('GET', '/providers')).body.providers.find((x) => x.id === 'missing');
+  assert.equal(missing.installedVersion, null);
+  assert.equal(missing.latestVersion, null, 'unknown packages have no latest version');
+  assert.equal(missing.updateAvailable, false);
+});
+
+test('a provider can be installed or updated from a visible npm session', async () => {
+  const events = new Client(`${base.replace('http', 'ws')}/api/v1/events?token=${token}`);
+  await events.opened;
+
+  const { status, body } = await call('POST', '/providers/missing/install');
+  assert.equal(status, 201, JSON.stringify(body));
+  assert.equal(body.session.task, 'install');
+  assert.equal(body.session.name, 'Install Missing Tool');
+  assert.equal(body.session.provider.id, 'missing');
+  const client = terminal(body.session.id);
+  await client.opened;
+  await waitForText(client, body.session.id, `FAKE-NPM install -g nothing@latest --registry ${process.env.AGENT_GUILD_NPM_REGISTRY}`, 'npm output');
+  await waitFor(() => client.messages.find((m) => m.type === 'exit'), { label: 'npm exit' });
+  const updated = await waitFor(() => events.messages.find((m) => m.type === 'providers.updated'), { label: 'providers.updated' });
+  assert.ok(updated.providers.some((p) => p.id === 'missing'));
+  await client.close();
+  await call('DELETE', `/sessions/${body.session.id}`);
+
+  assert.equal((await call('POST', '/providers/plain/install')).body.error.code, 'not_installable');
+  assert.equal((await call('POST', '/providers/nope/install')).status, 404);
+
+  // Updating a tool that has running sessions needs an explicit go-ahead.
+  const running = await createFake();
+  const refused = await call('POST', '/providers/fake/install');
+  assert.equal(refused.status, 409);
+  assert.equal(refused.body.error.code, 'provider_in_use');
+  assert.equal(refused.body.error.running, 1);
+  const forced = await call('POST', '/providers/fake/install', { force: true });
+  assert.equal(forced.status, 201);
+  assert.equal(forced.body.session.name, 'Update Fake Tool');
+  await waitFor(async () => (await call('GET', `/sessions/${forced.body.session.id}`)).body.session.status === 'exited', { label: 'update exit' });
+  await call('DELETE', `/sessions/${forced.body.session.id}`);
+  await call('DELETE', `/sessions/${running.id}`);
+  await events.close();
+});
+
+test('an existing tool session can be resumed by id', async () => {
+  const session = await createFake({ resume: ' abc-123 ' });
+  assert.equal(session.resume, 'abc-123');
+  const client = terminal(session.id);
+  await client.opened;
+  client.input('args');
+  await waitForText(client, session.id, 'ARGS:["--resume","abc-123"]', 'resume args');
+  await client.close();
+  await call('DELETE', `/sessions/${session.id}`);
+
+  const fresh = await createFake();
+  assert.equal(fresh.resume, null);
+  await call('DELETE', `/sessions/${fresh.id}`);
+
+  assert.equal((await call('POST', '/sessions', { providerId: 'fake', resume: '' })).status, 400);
+  assert.equal((await call('POST', '/sessions', { providerId: 'fake', resume: 'a\nb' })).status, 400);
+  const unsupported = await call('POST', '/sessions', { providerId: 'plain', resume: 'abc' });
+  assert.equal(unsupported.status, 400);
+  assert.equal(unsupported.body.error.code, 'resume_unsupported');
 });
 
 test('session creation validates its input', async () => {
@@ -289,6 +408,57 @@ test('Claude Code sub-agent hooks reach the session through agent-guild-report',
   await runHook({ ...common, hook_event_name: 'SubagentStop', agent_id: 'agent-7', agent_type: 'Explore', stop_hook_active: false });
   ({ body } = await call('GET', `/sessions/${session.id}`));
   assert.equal(body.session.agents[0].status, 'done');
+  await call('DELETE', `/sessions/${session.id}`);
+});
+
+test('the model comes from arguments, the screen, or an explicit report', async () => {
+  const session = await createFake({ args: ['--model', 'fake-model-1'] });
+  assert.deepEqual(session.model, { name: 'fake-model-1', displayName: null, source: 'args' });
+  const client = terminal(session.id);
+  await client.opened;
+  const modelIs = (name, source) => async () => {
+    const { body } = await call('GET', `/sessions/${session.id}`);
+    return body.session.model?.name === name && body.session.model.source === source ? body.session.model : null;
+  };
+
+  // Text on screen that matches the provider's modelPattern wins over the argument.
+  client.input('echo now on fake-model-2.5, really');
+  assert.equal((await waitFor(modelIs('fake-model-2.5', 'screen'), { label: 'screen model' })).source, 'screen');
+
+  // A tool that keeps printing is still scanned while it prints.
+  client.input('stream 3500 switching to fake-model-7');
+  await waitFor(modelIs('fake-model-7', 'screen'), { timeout: 3000, label: 'model during continuous output' });
+  await waitForText(client, session.id, 'STREAM-DONE', 'stream end');
+
+  // An explicit report wins over the screen and is not replaced by later screen text.
+  client.input('model fake-model-3 Three');
+  const reported = await waitFor(modelIs('fake-model-3', 'report'), { label: 'reported model' });
+  assert.equal(reported.displayName, 'Three');
+  client.input('echo mention fake-model-4');
+  await waitForText(client, session.id, 'ECHO:mention fake-model-4', 'later screen text');
+  await new Promise((r) => setTimeout(r, 600));
+  assert.equal((await call('GET', `/sessions/${session.id}`)).body.session.model.name, 'fake-model-3');
+
+  // Reports also arrive over HTTP with the session report token.
+  const managed = ctx.manager.get(session.id);
+  const ok = await call('POST', `/sessions/${session.id}/model`, { model: 'fake-model-5' }, { Authorization: '', 'X-Agent-Guild-Report-Token': managed.reportToken });
+  assert.equal(ok.status, 200, JSON.stringify(ok.body));
+  assert.deepEqual(ok.body.model, { name: 'fake-model-5', displayName: null, source: 'report' });
+  assert.equal((await call('POST', `/sessions/${session.id}/model`, { model: '' })).status, 400);
+  assert.equal((await call('POST', `/sessions/${session.id}/model`, { model: 'x' }, { Authorization: '', 'X-Agent-Guild-Report-Token': 'wrong' })).status, 401);
+
+  // Claude Code's status line feeds the model id and display name.
+  const reporter = path.resolve(here, '../bin/agent-guild-report.mjs');
+  const env = { ...process.env, AGENT_GUILD_URL: base, AGENT_GUILD_SESSION_ID: session.id, AGENT_GUILD_REPORT_TOKEN: managed.reportToken };
+  const statusline = { model: { id: 'claude-opus-4-5', display_name: 'Opus 4.5' }, workspace: { current_dir: home }, context_window: { used_percentage: 12.4 } };
+  const stdout = await new Promise((resolve, reject) => {
+    const child = execFile(process.execPath, [reporter, '--claude-statusline'], { env, timeout: 10000 }, (err, out, stderr) => (err ? reject(new Error(stderr)) : resolve(out)));
+    child.stdin.end(JSON.stringify(statusline));
+  });
+  assert.equal(stdout, `[Opus 4.5] | ${path.basename(home)} | 12% context\n`);
+  assert.deepEqual((await call('GET', `/sessions/${session.id}`)).body.session.model, { name: 'claude-opus-4-5', displayName: 'Opus 4.5', source: 'report' });
+
+  await client.close();
   await call('DELETE', `/sessions/${session.id}`);
 });
 

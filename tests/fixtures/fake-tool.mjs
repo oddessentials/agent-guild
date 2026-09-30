@@ -1,14 +1,23 @@
 // A stand-in coding tool for tests. Works the same on every platform.
 //   echo <text>        prints "ECHO:<text>"
 //   agent <id> <name>  emits an in-band agent report (OSC 7777)
+//   model <name>       emits an in-band model report (OSC 7777)
+//   args               prints the arguments that followed the script path
 //   env                prints the Agent Guild variables
 //   size               prints the terminal size
 //   query [cpr|bg]     asks the terminal for the cursor position or the
 //                      background colour, then prints every reply received
 //                      within 1.5 s
+//   stream <ms> <text> prints <text> then a line every 250 ms for <ms>
 //   modes              hides the cursor and enables SGR mouse reporting
 //   stubborn           ignores hang-up signals
 //   exit <code>        exits with that code
+// Started with --version it prints "fake-tool 1.2.3" and exits.
+
+if (process.argv.includes('--version')) {
+  console.log('fake-tool 1.2.3');
+  process.exit(0);
+}
 
 const out = (text) => process.stdout.write(`${text}\r\n`);
 out(`FAKE-TOOL READY cwd=${process.cwd()}`);
@@ -22,7 +31,10 @@ function handle(line) {
   else if (cmd === 'agent') {
     const report = JSON.stringify({ agentId: rest[0], name: rest[1] || rest[0], status: rest[2] || 'working' });
     process.stdout.write(`\x1b]7777;agent-guild;${report}\x07`);
-  } else if (cmd === 'env') {
+  } else if (cmd === 'model') {
+    process.stdout.write(`\x1b]7777;agent-guild;${JSON.stringify({ model: rest[0], displayName: rest[1] })}\x07`);
+  } else if (cmd === 'args') out(`ARGS:${JSON.stringify(process.argv.slice(2))}`);
+  else if (cmd === 'env') {
     out(`ENV:${process.env.AGENT_GUILD_SESSION_ID}|${process.env.AGENT_GUILD_PROVIDER}|${process.env.AGENT_GUILD_URL}`);
   } else if (cmd === 'size') {
     // getWindowSize() asks the console directly; .columns can be stale on Windows.
@@ -42,6 +54,12 @@ function handle(line) {
       process.stdin.setRawMode?.(false);
       out(`REPLIES:${replies.length}:${JSON.stringify(replies)}`);
     }, 1500);
+  } else if (cmd === 'stream') {
+    out(rest.slice(1).join(' '));
+    const until = Date.now() + Number(rest[0] || 1000);
+    const timer = setInterval(() => {
+      if (Date.now() >= until) { clearInterval(timer); out('STREAM-DONE'); } else out('tick');
+    }, 250);
   } else if (cmd === 'modes') {
     process.stdout.write('\x1b[?25l\x1b[?1000h\x1b[?1006h');
     out('MODES-SET');

@@ -9,6 +9,7 @@ const $ = (id) => document.getElementById(id);
 const state = {
   token: null,
   providers: [],
+  usage: new Map(),
   sessions: new Map(),
   views: new Map(),
   activeId: null,
@@ -47,6 +48,17 @@ function relativeTime(iso) {
   const h = Math.round(m / 60);
   if (h < 24) return `${h} h ago`;
   return `${Math.round(h / 24)} d ago`;
+}
+
+function untilTime(iso) {
+  if (!iso) return '';
+  const s = Math.round((Date.parse(iso) - Date.now()) / 1000);
+  if (!Number.isFinite(s) || s <= 0) return 'resets now';
+  const h = Math.floor(s / 3600);
+  const m = Math.round((s % 3600) / 60);
+  if (h >= 48) return `resets in ${Math.round(h / 24)} d`;
+  if (h > 0) return `resets in ${h} h${m ? ` ${m} min` : ''}`;
+  return `resets in ${Math.max(1, m)} min`;
 }
 
 function hueFor(text) {
@@ -98,7 +110,7 @@ async function api(method, path, body) {
   });
   if (res.status === 401) throw new AuthError('The access token was rejected.');
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data?.error?.message || `Request failed (HTTP ${res.status})`);
+  if (!res.ok) throw Object.assign(new Error(data?.error?.message || `Request failed (HTTP ${res.status})`), data?.error);
   return data;
 }
 
@@ -117,43 +129,142 @@ function renderProviders() {
     paintProviderIcon(node.querySelector('.provider-icon'), provider);
     node.querySelector('.vendor').textContent = provider.vendor;
     node.querySelector('.tool').textContent = provider.tool;
-    node.querySelector('.state').textContent = provider.available ? 'Ready' : 'Not installed';
+    node.querySelector('.state').textContent = providerState(provider);
+    node.querySelector('.state').classList.toggle('update-available', provider.updateAvailable);
     node.dataset.id = provider.id;
-    if (!provider.available) {
-      node.setAttribute('aria-disabled', 'true');
-      node.title = provider.install || `${provider.command} was not found on PATH.`;
-    } else {
-      node.title = `Start ${provider.tool}`;
-    }
-    node.addEventListener('click', () => startSession(provider, node));
+    node.classList.toggle('unavailable', !provider.available);
+    node.setAttribute('aria-label', `${provider.vendor} ${provider.tool}, ${provider.available ? 'ready' : 'not installed'}`);
+    const start = node.querySelector('.new');
+    const existing = node.querySelector('.existing');
+    const hint = node.querySelector('.hint');
+    start.hidden = !provider.available;
+    start.title = `Start a new ${provider.tool} session`;
+    start.addEventListener('click', () => startSession(provider, node));
+    existing.hidden = !provider.available || !provider.resumable;
+    existing.title = `Resume one of ${provider.tool}'s own sessions by its id`;
+    existing.addEventListener('click', () => resumeSession(provider, node));
+    const install = node.querySelector('.install');
+    install.hidden = provider.available || !provider.installable;
+    install.title = `Run "npm install -g ${provider.package}@latest" in a session`;
+    install.addEventListener('click', () => installProvider(provider, node));
+    const update = node.querySelector('.update');
+    update.hidden = !(provider.available && provider.installable && provider.updateAvailable);
+    update.textContent = `Update to ${provider.latestVersion}`;
+    update.title = install.title;
+    update.addEventListener('click', () => installProvider(provider, node));
+    hint.hidden = provider.available || provider.installable;
+    hint.textContent = provider.install || `${provider.command} was not found on PATH.`;
+    renderUsage(node, provider);
     return node;
   }));
 }
 
-async function startSession(provider, button) {
-  if (!provider.available) {
-    const hint = provider.install ? `\n${provider.install}` : '';
-    toast(`${provider.tool} is not installed (command "${provider.command}" not found).${hint}`, 9000);
-    return;
+function renderUsage(card, provider) {
+  const host = card.querySelector('.usage');
+  const usage = state.usage.get(provider.id);
+  if (!provider.available || !provider.usageSource || !usage) return host.replaceChildren();
+  if (usage.error || usage.windows.length === 0) {
+    const note = document.createElement('div');
+    note.className = 'usage-note';
+    note.textContent = `Usage: ${usage.error || 'no limits reported'}`;
+    note.title = note.textContent;
+    return host.replaceChildren(note);
   }
+  host.replaceChildren(...usage.windows.map((w) => {
+    const node = $('meter-template').content.firstElementChild.cloneNode(true);
+    const left = Math.max(0, Math.round(100 - w.usedPercent));
+    node.classList.toggle('low', left <= 25 && left > 10);
+    node.classList.toggle('empty', left <= 10);
+    node.querySelector('.meter-label').textContent = w.label;
+    node.querySelector('.meter-fill').style.width = `${left}%`;
+    node.querySelector('.meter-value').textContent = `${left}% left`;
+    const when = untilTime(w.resetsAt);
+    node.title = `${w.label}: ${Math.round(w.usedPercent)}% used${when ? `, ${when}` : ''}${usage.plan ? ` (${usage.plan} plan)` : ''}`;
+    node.setAttribute('role', 'img');
+    node.setAttribute('aria-label', node.title);
+    return node;
+  }));
+}
+
+async function loadUsage() {
+  let usage;
+  try { ({ usage } = await api('GET', '/usage')); } catch { return; }
+  state.usage = new Map(usage.map((u) => [u.providerId, u]));
+  for (const card of $('providers').children) {
+    const provider = state.providers.find((p) => p.id === card.dataset.id);
+    if (provider) renderUsage(card, provider);
+  }
+}
+
+function providerState(provider) {
+  if (!provider.available) return 'Not installed';
+  const parts = ['Ready'];
+  if (provider.installedVersion) parts.push(`v${provider.installedVersion}`);
+  if (provider.updateAvailable) parts.push(`${provider.latestVersion} available`);
+  return parts.join(' · ');
+}
+
+async function installProvider(provider, card, { force = false } = {}) {
+  card.classList.add('busy');
+  try {
+    const { session } = await api('POST', `/providers/${provider.id}/install`, { force });
+    upsertSession(session);
+    openPanel(session.id);
+  } catch (err) {
+    if (err instanceof AuthError) return showAuth(err.message);
+    if (err.code === 'provider_in_use') {
+      card.classList.remove('busy');
+      const n = err.running;
+      const what = `${n} ${provider.tool} session${n === 1 ? ' is' : 's are'} running`;
+      if (confirm(`${what}. Updating ${provider.tool} while it runs can break ${n === 1 ? 'that session' : 'those sessions'}. Update anyway?`)) {
+        return installProvider(provider, card, { force: true });
+      }
+      return;
+    }
+    toast(err.message, 8000);
+  } finally {
+    card.classList.remove('busy');
+  }
+}
+
+async function startSession(provider, card, { resume } = {}) {
   const cwd = $('cwd').value.trim();
   save(CWD_KEY, cwd);
-  button.classList.add('busy');
+  card.classList.add('busy');
   try {
-    const { session } = await api('POST', '/sessions', { providerId: provider.id, cwd: cwd || undefined, cols: 120, rows: 32 });
+    const body = { providerId: provider.id, cwd: cwd || undefined, cols: 120, rows: 32, resume };
+    const { session } = await api('POST', '/sessions', body);
     upsertSession(session);
     openPanel(session.id);
   } catch (err) {
     if (err instanceof AuthError) return showAuth(err.message);
     toast(err.message, 8000);
   } finally {
-    button.classList.remove('busy');
+    card.classList.remove('busy');
   }
+}
+
+function resumeSession(provider, card) {
+  const id = prompt(`${provider.tool} session id or name to resume`);
+  if (id === null || !id.trim()) return;
+  startSession(provider, card, { resume: id.trim() });
 }
 
 // ---- session cards --------------------------------------------------------
 
 const cards = new Map();
+
+const MODEL_SOURCES = { report: 'reported by the tool', screen: 'seen on the tool\'s screen', args: 'from the --model argument' };
+
+function modelText(s) {
+  return s.model ? s.model.displayName || s.model.name : '';
+}
+
+function modelTitle(s) {
+  if (!s.model) return '';
+  const id = s.model.displayName && s.model.displayName !== s.model.name ? ` (${s.model.name})` : '';
+  return `Model ${modelText(s)}${id}, ${MODEL_SOURCES[s.model.source] || s.model.source}`;
+}
 
 function statusText(s) {
   if (s.status === 'exited') {
@@ -179,10 +290,16 @@ function buildCard(session) {
 function updateCard(node, s) {
   paintProviderIcon(node.querySelector('.provider-icon'), s.provider);
   node.querySelector('.name').textContent = s.name;
-  node.querySelector('.meta').textContent = `${s.provider.vendor} · ${s.provider.tool} · started ${relativeTime(s.createdAt)}`;
+  const resumed = s.resume ? ` · resumed ${s.resume}` : '';
+  node.querySelector('.meta').textContent = `${s.provider.vendor} · ${s.provider.tool} · started ${relativeTime(s.createdAt)}${resumed}`;
   const pill = node.querySelector('.status-pill');
   pill.textContent = statusText(s);
   pill.className = `status-pill ${s.status === 'exited' ? 'exited' : s.activity}`;
+  const model = node.querySelector('.model-pill');
+  model.hidden = !s.model;
+  model.textContent = modelText(s);
+  model.title = modelTitle(s);
+  model.className = `model-pill ${s.model?.source || ''}`;
   const cwd = node.querySelector('.cwd-line');
   // The LRM keeps a leading "/" in place under the right-to-left truncation style.
   cwd.textContent = `\u200E${s.cwd}`;
@@ -191,7 +308,8 @@ function updateCard(node, s) {
   node.classList.toggle('exited', s.status === 'exited');
   node.querySelector('.stop').hidden = s.status !== 'running';
   node.querySelector('.remove').hidden = s.status === 'running';
-  node.setAttribute('aria-label', `${s.name}, ${s.provider.vendor}, ${statusText(s)}, ${s.agents.length} agents`);
+  const modelLabel = s.model ? `, model ${modelText(s)}` : '';
+  node.setAttribute('aria-label', `${s.name}, ${s.provider.vendor}${modelLabel}, ${statusText(s)}, ${s.agents.length} agents`);
 }
 
 function renderSessions() {
@@ -426,7 +544,8 @@ function updatePanel() {
   if (!s) return;
   paintProviderIcon($('panel-icon'), s.provider);
   $('panel-title').textContent = s.name;
-  $('panel-sub').textContent = `${s.provider.tool} · ${statusText(s)} · ${s.cwd}`;
+  $('panel-sub').textContent = [s.provider.tool, modelText(s), statusText(s), s.cwd].filter(Boolean).join(' · ');
+  $('panel-sub').title = modelTitle(s);
   renderAgents($('panel-agents'), s.agents);
   const stop = $('panel-stop');
   stop.textContent = s.status === 'running' ? 'Stop' : 'Remove';
@@ -451,6 +570,9 @@ function connectEvents() {
       upsertSession(msg.session);
     } else if (msg.type === 'session.removed') {
       dropSession(msg.sessionId);
+    } else if (msg.type === 'providers.updated') {
+      state.providers = msg.providers;
+      renderProviders();
     }
   };
   ws.onclose = () => {
@@ -481,6 +603,8 @@ function readTokenFromHash() {
   return token;
 }
 
+let usageTimer;
+
 function showAuth(message = '') {
   $('app').hidden = true;
   $('terminal-panel').hidden = true;
@@ -505,6 +629,9 @@ async function boot() {
   save(TOKEN_KEY, state.token);
   $('app').hidden = false;
   connectEvents();
+  loadUsage();
+  clearInterval(usageTimer);
+  usageTimer = setInterval(loadUsage, 60000);
 }
 
 $('auth-form').addEventListener('submit', (e) => {

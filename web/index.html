@@ -74,14 +74,30 @@
   <div id="toast" class="toast" role="alert" hidden></div>
 
   <template id="provider-template">
-    <button class="provider" type="button" role="listitem">
+    <article class="provider" role="listitem">
       <span class="provider-icon"></span>
       <span class="provider-text">
         <span class="vendor"></span>
         <span class="tool"></span>
         <span class="state"></span>
       </span>
-    </button>
+      <div class="usage"></div>
+      <div class="provider-actions">
+        <button class="btn primary new" type="button">New</button>
+        <button class="btn existing" type="button">Existing…</button>
+        <button class="btn primary install" type="button">Install</button>
+        <button class="btn update" type="button"></button>
+        <span class="hint"></span>
+      </div>
+    </article>
+  </template>
+
+  <template id="meter-template">
+    <div class="meter">
+      <span class="meter-label"></span>
+      <span class="meter-bar"><span class="meter-fill"></span></span>
+      <span class="meter-value"></span>
+    </div>
   </template>
 
   <template id="session-template">
@@ -92,6 +108,7 @@
           <div class="name"></div>
           <div class="meta"></div>
         </div>
+        <span class="model-pill"></span>
         <span class="status-pill"></span>
       </div>
       <div class="cwd-line"></div>

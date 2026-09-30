@@ -22,7 +22,7 @@ function freePort() {
 }
 
 const port = await freePort();
-const env = { ...process.env, AGENT_GUILD_HOME: home, AGENT_GUILD_PORT: String(port), AGENT_GUILD_SKIP_SHELL_ENV: '1' };
+const env = { ...process.env, AGENT_GUILD_HOME: home, AGENT_GUILD_PORT: String(port), AGENT_GUILD_SKIP_SHELL_ENV: '1', AGENT_GUILD_NO_UPDATE_CHECK: '1' };
 
 function run(...args) {
   return new Promise((resolve) => {

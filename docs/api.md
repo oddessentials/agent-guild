@@ -55,7 +55,14 @@ Errors use one shape:
   "vendor": "Anthropic",
   "tool": "Claude Code",
   "command": "claude",
+  "package": "@anthropic-ai/claude-code",
   "args": [],
+  "resumable": true,
+  "installable": true,
+  "installedVersion": "2.1.285",
+  "latestVersion": "2.1.290",
+  "updateAvailable": true,
+  "usageSource": "claude",
   "color": "#D97757",
   "monogram": "A",
   "iconUrl": null,
@@ -67,7 +74,45 @@ Errors use one shape:
 ```
 
 `available` is false when the command is not installed. A client should show
-the provider as disabled and offer the `install` hint.
+the provider as disabled and offer `POST /providers/:id/install` when
+`installable` is true (the provider names an npm `package` and npm is on
+PATH), or the `install` hint otherwise. `resumable` is true when the provider
+has `resumeArgs`, so one of the tool's own earlier sessions can be resumed by
+id.
+
+`installedVersion` comes from running the tool with its `versionArgs`, and
+`latestVersion` from npm's configured registry, which installs use too
+(`AGENT_GUILD_NPM_REGISTRY` overrides it for both, `AGENT_GUILD_NO_UPDATE_CHECK=1`
+skips the lookup). Both are null until the first check finishes; a
+`providers.updated` event follows.
+`updateAvailable` is true when the latest version is newer, and
+`POST /providers/:id/install` performs the update.
+
+`usageSource` is `claude`, `codex`, `command` or null, and says whether
+`GET /usage` reports the provider.
+
+### Usage
+
+```json
+{
+  "providerId": "anthropic",
+  "plan": "max",
+  "windows": [
+    { "label": "5-hour", "usedPercent": 42.5, "resetsAt": "2026-09-30T08:00:00.000Z" },
+    { "label": "7-day", "usedPercent": 12, "resetsAt": "2026-10-03T05:00:00.000Z" }
+  ],
+  "fetchedAt": "2026-09-30T03:12:01.120Z",
+  "error": null
+}
+```
+
+Each window is one rate limit of the provider's subscription. When the
+provider is not signed in or the lookup failed, `windows` is empty and
+`error` says why. The manager reads the tool's own sign-in (Claude Code's
+credentials file or macOS keychain item, Codex CLI's `auth.json`) and asks
+the vendor's usage endpoint; a `command` source runs a program that prints
+`{ plan?, windows: [{ label, usedPercent | remainingPercent, resetsAt? }] }`.
+Snapshots are cached for a minute.
 
 ### Session
 
@@ -77,6 +122,8 @@ the provider as disabled and offer the `install` hint.
   "name": "Claude Code",
   "provider": { "id": "anthropic", "vendor": "Anthropic", "tool": "Claude Code", "color": "#D97757", "monogram": "A", "iconUrl": null },
   "cwd": "/Users/me/src/app",
+  "resume": null,
+  "task": null,
   "pid": 3518,
   "status": "running",
   "exitCode": null,
@@ -87,6 +134,7 @@ the provider as disabled and offer the `install` hint.
   "cols": 120,
   "rows": 32,
   "attachedClients": 1,
+  "model": { "name": "claude-opus-4-5", "displayName": "Opus 4.5", "source": "report" },
   "agents": [ /* Agent */ ]
 }
 ```
@@ -95,6 +143,15 @@ the provider as disabled and offer the `install` hint.
   final screen, until a client removes them.
 * `activity` is `active` while the terminal is producing output and `quiet`
   after a short pause.
+* `resume` is the id of the tool's own session that was resumed, or null.
+* `task` is `install` for a session that runs npm to install or update the
+  provider's tool, and null for a session that runs the tool itself.
+* `model` is the main model the tool is using, or null while unknown.
+  `source` is `report` when the tool said so (see
+  [agent-reporting.md](agent-reporting.md)), `screen` when the name was
+  matched on the terminal screen by the provider's `modelPattern`, or `args`
+  when it came from a `--model` argument. Reports win over the screen, which
+  wins over arguments.
 
 ### Agent
 
@@ -128,23 +185,29 @@ All paths are under `/api/v1`.
 | GET | `/info` | | Manager version, platform, start time, provider config warnings. |
 | GET | `/providers` | | `{ providers: Provider[] }` |
 | POST | `/providers/reload` | | Re-reads `providers.json`. |
+| POST | `/providers/:id/install` | `{ force? }` | `201 { session }`: a session running `npm install -g <package>@latest`. 409 `provider_in_use` (with `running`, the session count) while the provider's sessions are running, unless `force` is true. |
+| GET | `/usage` | | `{ usage: Usage[] }` for every provider with a `usageSource`. |
 | GET | `/sessions` | | `{ sessions: Session[] }` |
-| POST | `/sessions` | `{ providerId, cwd?, cols?, rows?, name?, args? }` | `201 { session }` |
+| POST | `/sessions` | `{ providerId, cwd?, cols?, rows?, name?, args?, resume? }` | `201 { session }` |
 | GET | `/sessions/:id` | | `{ session }` |
 | PATCH | `/sessions/:id` | `{ name }` | `{ session }`. `name` must be a non-empty string; it is trimmed to 80 characters. |
 | POST | `/sessions/:id/stop` | | Ends the process. The session stays listed as exited. |
 | DELETE | `/sessions/:id` | | Ends the process if needed and removes the session. |
 | POST | `/sessions/:id/agents` | Agent report | `{ agent }`, or `{ agent: null }` after a removal. |
+| POST | `/sessions/:id/model` | `{ model, displayName? }` | `{ model }`. Sets the session's model with source `report`. |
 | POST | `/shutdown` | | Stops the manager and every session. |
 
 `cwd` defaults to the user's home folder and must be an existing folder. A
 leading `~` is expanded. `args` are appended to the provider's configured
-arguments.
+arguments. `resume` is an id or name of one of the tool's own sessions; it is
+substituted for `{id}` in the provider's `resumeArgs` (400 `resume_unsupported`
+when the provider has none).
 
-`POST /sessions/:id/agents` also accepts the per-session report token instead
-of the API token, in an `X-Agent-Guild-Report-Token` header. The manager gives
-that token only to the processes inside that session. Without the API token,
-an unknown session id and a wrong report token both return 401.
+`POST /sessions/:id/agents` and `POST /sessions/:id/model` also accept the
+per-session report token instead of the API token, in an
+`X-Agent-Guild-Report-Token` header. The manager gives that token only to the
+processes inside that session. Without the API token, an unknown session id
+and a wrong report token both return 401.
 
 Request bodies are limited to 64 KB (413 above that). WebSocket messages are
 limited to 1 MB.
@@ -163,6 +226,7 @@ This socket pushes changes to every session. It is server-to-client only.
 | `{ type: "session.created", session }` | A session was started by any client. |
 | `{ type: "session.updated", session }` | Status, activity, agents, name or size changed. |
 | `{ type: "session.removed", sessionId }` | A session was removed. |
+| `{ type: "providers.updated", providers }` | The provider list changed: a version check finished, `providers.json` was reloaded, or an install session ended. |
 
 After a reconnect, treat `hello` as the new source of truth.
 

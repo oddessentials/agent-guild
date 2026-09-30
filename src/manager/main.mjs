@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ProviderRegistry } from './providers.mjs';
 import { SessionManager } from './session-manager.mjs';
+import { UsageMonitor } from './usage.mjs';
 import { createManagerServer } from './server.mjs';
 import { resolveBaseEnv } from './shell-env.mjs';
 import {
@@ -22,20 +23,33 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(here, '../..');
 export const VERSION = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8')).version;
 
+const VERSION_REFRESH_MS = 60 * 60 * 1000;
+
 export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, sessionDefaults } = {}) {
   ensureDataDir();
   const token = loadOrCreateToken();
   const baseEnv = resolveBaseEnv();
   const webDir = path.join(rootDir, 'web');
-  const registry = new ProviderRegistry({ userFile: paths.providers, env: baseEnv, iconDir: path.join(webDir, 'icons') });
+  const registry = new ProviderRegistry({
+    userFile: paths.providers,
+    env: baseEnv,
+    iconDir: path.join(webDir, 'icons'),
+    registryUrl: process.env.AGENT_GUILD_NPM_REGISTRY || undefined,
+    checkUpdates: process.env.AGENT_GUILD_NO_UPDATE_CHECK !== '1',
+  });
 
   let api;
   const manager = new SessionManager({ registry, baseEnv, getApiUrl: () => api.url, sessionDefaults });
+  const usage = new UsageMonitor({ registry, env: baseEnv });
   let closing = null;
+
+  const versionTimer = setInterval(() => registry.refreshVersions().catch(() => {}), VERSION_REFRESH_MS);
+  versionTimer.unref();
 
   const shutdown = (reason = 'shutdown') => {
     if (closing) return closing;
     console.log(`[manager] stopping (${reason}); ending ${manager.sessions.size} session(s)`);
+    clearInterval(versionTimer);
     removeRuntimeFile();
     closing = Promise.all([manager.shutdown(), api.close()]).then(() => undefined);
     return closing;
@@ -47,6 +61,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
   api = createManagerServer({
     manager,
     registry,
+    usage,
     token,
     host,
     port,
@@ -75,6 +90,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
     startedAt: new Date().toISOString(),
   });
   console.log(`[manager] Agent Guild ${VERSION} listening on ${api.url} (pid ${process.pid})`);
+  registry.refreshVersions().catch(() => {});
   return { api, manager, registry, token, shutdown };
 }
 

@@ -3,6 +3,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFile } from 'node:child_process';
 
 function isExecutableFile(file, platform) {
   try {
@@ -73,17 +74,43 @@ export function quoteForCmd(arg) {
 export function buildSpawnSpec(resolvedPath, args = [], env = process.env, platform = process.platform) {
   if (platform !== 'win32') return { file: resolvedPath, args: [...args] };
   const ext = path.win32.extname(resolvedPath).toLowerCase();
+  // Absolute paths: a bare name is looked up on the child's PATH, which a
+  // provider's own env may not carry.
+  const system32 = path.win32.join(env.SystemRoot || env.SYSTEMROOT || 'C:\\Windows', 'System32');
   if (ext === '.cmd' || ext === '.bat') {
-    const comspec = env.ComSpec || env.COMSPEC || 'cmd.exe';
+    const comspec = env.ComSpec || env.COMSPEC || path.win32.join(system32, 'cmd.exe');
     const inner = [resolvedPath, ...args].map(quoteForCmd).join(' ');
     // A raw command-line string: /s strips the outer quotes and keeps the rest.
     return { file: comspec, args: `/d /s /c "${inner}"` };
   }
   if (ext === '.ps1') {
     return {
-      file: 'powershell.exe',
+      file: path.win32.join(system32, 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
       args: ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', resolvedPath, ...args],
     };
   }
   return { file: resolvedPath, args: [...args] };
+}
+
+/**
+ * Run a spawn spec to completion without a terminal. Resolves with its
+ * output; rejects with the error carrying stdout and stderr.
+ */
+export function runSpec(spec, { env, timeoutMs = 15000 } = {}) {
+  return new Promise((resolve, reject) => {
+    const opts = { env, timeout: timeoutMs, windowsHide: true, maxBuffer: 1024 * 1024 };
+    let args = spec.args;
+    if (typeof args === 'string') {
+      opts.windowsVerbatimArguments = true;
+      args = [args];
+    }
+    try {
+      execFile(spec.file, args, opts, (err, stdout, stderr) => {
+        if (err) reject(Object.assign(err, { stdout, stderr }));
+        else resolve({ stdout, stderr });
+      });
+    } catch (err) {
+      reject(err);
+    }
+  });
 }
