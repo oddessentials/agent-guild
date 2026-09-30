@@ -1,6 +1,6 @@
 // Installed and latest versions of provider tools.
 
-import { execFile } from 'node:child_process';
+import { runSpec } from './command-resolver.mjs';
 
 export const DEFAULT_NPM_REGISTRY = 'https://registry.npmjs.org';
 
@@ -24,20 +24,13 @@ export function compareVersions(a, b) {
 }
 
 /** Run a spawn spec (as built by buildSpawnSpec) and parse its version output. */
-export function installedVersion(spec, { env, timeoutMs = 15000 } = {}) {
-  return new Promise((resolve) => {
-    const opts = { env, timeout: timeoutMs, windowsHide: true, maxBuffer: 1024 * 1024 };
-    let args = spec.args;
-    if (typeof args === 'string') {
-      opts.windowsVerbatimArguments = true;
-      args = [args];
-    }
-    try {
-      execFile(spec.file, args, opts, (_err, stdout, stderr) => resolve(parseVersion(`${stdout}\n${stderr}`)));
-    } catch {
-      resolve(null);
-    }
-  });
+export async function installedVersion(spec, { env, timeoutMs = 15000 } = {}) {
+  try {
+    const { stdout, stderr } = await runSpec(spec, { env, timeoutMs });
+    return parseVersion(`${stdout}\n${stderr}`);
+  } catch (err) {
+    return parseVersion(`${err.stdout || ''}\n${err.stderr || ''}`);
+  }
 }
 
 export async function latestVersion(pkg, { registryUrl = DEFAULT_NPM_REGISTRY, fetchImpl = fetch, timeoutMs = 10000 } = {}) {

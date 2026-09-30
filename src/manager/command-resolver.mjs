@@ -3,6 +3,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFile } from 'node:child_process';
 
 function isExecutableFile(file, platform) {
   try {
@@ -86,4 +87,27 @@ export function buildSpawnSpec(resolvedPath, args = [], env = process.env, platf
     };
   }
   return { file: resolvedPath, args: [...args] };
+}
+
+/**
+ * Run a spawn spec to completion without a terminal. Resolves with its
+ * output; rejects with the error carrying stdout and stderr.
+ */
+export function runSpec(spec, { env, timeoutMs = 15000 } = {}) {
+  return new Promise((resolve, reject) => {
+    const opts = { env, timeout: timeoutMs, windowsHide: true, maxBuffer: 1024 * 1024 };
+    let args = spec.args;
+    if (typeof args === 'string') {
+      opts.windowsVerbatimArguments = true;
+      args = [args];
+    }
+    try {
+      execFile(spec.file, args, opts, (err, stdout, stderr) => {
+        if (err) reject(Object.assign(err, { stdout, stderr }));
+        else resolve({ stdout, stderr });
+      });
+    } catch (err) {
+      reject(err);
+    }
+  });
 }

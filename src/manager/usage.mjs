@@ -4,8 +4,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
-import { resolveCommand, buildSpawnSpec } from './command-resolver.mjs';
+import { resolveCommand, buildSpawnSpec, runSpec } from './command-resolver.mjs';
 
 export const USAGE_TTL_MS = 60 * 1000;
 const RATE_LIMITED_TTL_MS = 5 * 60 * 1000;
@@ -14,18 +13,6 @@ const CODEX_USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
 const CLAUDE_KEYCHAIN_SERVICE = 'Claude Code-credentials';
 
 export class UsageError extends Error {}
-
-function run(file, args, { env, timeoutMs = 15000 } = {}) {
-  return new Promise((resolve, reject) => {
-    const opts = { env, timeout: timeoutMs, windowsHide: true, maxBuffer: 1024 * 1024 };
-    let argv = args;
-    if (typeof argv === 'string') {
-      opts.windowsVerbatimArguments = true;
-      argv = [argv];
-    }
-    execFile(file, argv, opts, (err, stdout, stderr) => (err ? reject(Object.assign(err, { stderr })) : resolve(stdout)));
-  });
-}
 
 function shortPath(file) {
   const home = os.homedir();
@@ -66,7 +53,8 @@ export function claudeCredentialsFile(env = process.env) {
 export async function readClaudeCredentials({ file = claudeCredentialsFile(), keychain = process.platform === 'darwin' } = {}) {
   let raw = null;
   if (keychain) {
-    raw = await run('security', ['find-generic-password', '-s', CLAUDE_KEYCHAIN_SERVICE, '-w'], { timeoutMs: 30000 }).catch(() => null);
+    const spec = { file: 'security', args: ['find-generic-password', '-s', CLAUDE_KEYCHAIN_SERVICE, '-w'] };
+    raw = await runSpec(spec, { timeoutMs: 30000 }).then((r) => r.stdout, () => null);
   }
   if (raw === null) {
     try {
@@ -159,7 +147,7 @@ export async function commandUsage({ command, args = [] }, env, platform = proce
   const spec = buildSpawnSpec(resolved, args, env, platform);
   let stdout;
   try {
-    stdout = await run(spec.file, spec.args, { env });
+    ({ stdout } = await runSpec(spec, { env }));
   } catch (err) {
     throw new UsageError(`usage command failed: ${String(err.stderr || err.message).trim().slice(0, 200)}`);
   }
@@ -223,16 +211,17 @@ export class UsageMonitor {
 
   async _fetch(provider) {
     const base = { providerId: provider.id, plan: null, windows: [], fetchedAt: new Date().toISOString(), error: null };
+    const env = { ...this.env, ...provider.env };
     try {
       let result;
       if (provider.usage === 'claude') {
-        const creds = await this.readers.claude({ file: claudeCredentialsFile(this.env), keychain: this.platform === 'darwin' });
+        const creds = await this.readers.claude({ file: claudeCredentialsFile(env), keychain: this.platform === 'darwin' });
         result = await fetchClaudeUsage({ ...creds, version: this.registry.versions.get(provider.id)?.installed, fetchImpl: this.fetchImpl });
       } else if (provider.usage === 'codex') {
-        const creds = await this.readers.codex({ file: codexAuthFile(this.env) });
+        const creds = await this.readers.codex({ file: codexAuthFile(env) });
         result = await fetchCodexUsage({ ...creds, fetchImpl: this.fetchImpl });
       } else {
-        result = await commandUsage(provider.usage, { ...this.env, ...provider.env }, this.platform);
+        result = await commandUsage(provider.usage, env, this.platform);
       }
       return { ...base, ...result };
     } catch (err) {

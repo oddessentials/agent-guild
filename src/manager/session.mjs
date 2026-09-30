@@ -18,6 +18,7 @@ export const OSC_AGENT_PREFIX = 'agent-guild;';
 const AGENT_STATUSES = new Set(['working', 'waiting', 'idle', 'done']);
 const MODEL_SOURCE_RANK = { args: 0, screen: 1, report: 2 };
 const SCREEN_SCAN_DELAY_MS = 400;
+const SCREEN_SCAN_MAX_DELAY_MS = 2000;
 
 /**
  * Colours reported to programs that query them (OSC 10/11/12), matching the
@@ -97,6 +98,7 @@ export class Session extends EventEmitter {
     this._agentTimers = new Map();
     this._killTimer = null;
     this._scanTimer = null;
+    this._scanDeadline = null;
     /** Resolves when the process has exited, even after dispose(). */
     this.exited = new Promise((resolve) => { this._resolveExited = resolve; });
 
@@ -151,11 +153,7 @@ export class Session extends EventEmitter {
     this.term.write(data);
     this._broadcast({ type: 'data', data });
     this.lastOutputAt = Date.now();
-    if (this.modelRegex && this.model?.source !== 'report') {
-      clearTimeout(this._scanTimer);
-      this._scanTimer = setTimeout(() => this._scanScreenForModel(), SCREEN_SCAN_DELAY_MS);
-      this._scanTimer.unref?.();
-    }
+    if (this.modelRegex && this.model?.source !== 'report') this._scheduleModelScan();
     if (this.activity !== 'active') {
       this.activity = 'active';
       this._changed();
@@ -413,7 +411,21 @@ export class Session extends EventEmitter {
     return this.model;
   }
 
+  /**
+   * Scan shortly after output pauses, and at least every couple of seconds
+   * while output keeps coming, so a busy tool still gets scanned.
+   */
+  _scheduleModelScan() {
+    const now = Date.now();
+    this._scanDeadline ??= now + SCREEN_SCAN_MAX_DELAY_MS;
+    clearTimeout(this._scanTimer);
+    const delay = Math.max(0, Math.min(SCREEN_SCAN_DELAY_MS, this._scanDeadline - now));
+    this._scanTimer = setTimeout(() => this._scanScreenForModel(), delay);
+    this._scanTimer.unref?.();
+  }
+
   _scanScreenForModel() {
+    this._scanDeadline = null;
     if (this.disposed || !this.modelRegex || this.model?.source === 'report') return;
     const buffer = this.term.buffer.active;
     const lines = [];

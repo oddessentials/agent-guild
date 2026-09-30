@@ -9,14 +9,19 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
-import { resolveCommand, buildSpawnSpec } from './command-resolver.mjs';
+import { resolveCommand, buildSpawnSpec, runSpec } from './command-resolver.mjs';
 import { compareVersions, installedVersion, latestVersion, DEFAULT_NPM_REGISTRY } from './versions.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULTS_FILE = path.resolve(here, '../../config/providers.default.json');
 const ID_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 const PLATFORM_KEYS = ['win32', 'darwin', 'linux'];
-const LATEST_VERSION_TTL_MS = 60 * 60 * 1000;
+const VERSION_TTL_MS = 60 * 60 * 1000;
+const FAILED_PROBE_TTL_MS = 5 * 60 * 1000;
+
+function fileMtime(file) {
+  try { return fs.statSync(file).mtimeMs; } catch { return null; }
+}
 
 export function defaultShell(env = process.env, platform = process.platform) {
   if (platform === 'win32') return 'powershell.exe';
@@ -115,21 +120,22 @@ export class ProviderRegistry extends EventEmitter {
    * @param {object} [opts.env]
    * @param {string} [opts.platform]
    * @param {string} [opts.iconDir]
-   * @param {string} [opts.registryUrl]   npm registry for latest-version lookups
+   * @param {string} [opts.registryUrl]   npm registry for lookups and installs; default: npm's own configuration
    * @param {boolean} [opts.checkUpdates] false skips registry lookups entirely
    * @param {Function} [opts.fetchImpl]
    */
-  constructor({ userFile, env, platform = process.platform, iconDir, registryUrl = DEFAULT_NPM_REGISTRY, checkUpdates = true, fetchImpl } = {}) {
+  constructor({ userFile, env, platform = process.platform, iconDir, registryUrl = null, checkUpdates = true, fetchImpl } = {}) {
     super();
     this.userFile = userFile;
     this.env = env || process.env;
     this.platform = platform;
     this.iconDir = iconDir;
-    this.registryUrl = registryUrl;
+    this.registryUrl = registryUrl || null;
     this.checkUpdates = checkUpdates;
     this.fetchImpl = fetchImpl;
     this.versions = new Map();
     this._refreshing = null;
+    this._npmRegistry = null;
     this.reload();
   }
 
@@ -137,15 +143,33 @@ export class ProviderRegistry extends EventEmitter {
     const { providers, warnings } = loadProviders({ userFile: this.userFile, platform: this.platform });
     this.providers = providers;
     this.warnings = warnings;
+    this._npmRegistry = null;
     for (const w of warnings) console.warn(`[providers] ${w}`);
     this.emit('updated');
   }
 
+  /** The registry that installs use: the configured one, else npm's own. */
+  npmRegistryUrl() {
+    if (this.registryUrl) return Promise.resolve(this.registryUrl);
+    this._npmRegistry ??= (async () => {
+      const npm = this.resolveNpm();
+      if (!npm) return DEFAULT_NPM_REGISTRY;
+      try {
+        const spec = buildSpawnSpec(npm, ['config', 'get', 'registry'], this.env, this.platform);
+        const url = (await runSpec(spec, { env: this.env, timeoutMs: 10000 })).stdout.trim();
+        return /^https?:\/\/\S+$/.test(url) ? url : DEFAULT_NPM_REGISTRY;
+      } catch {
+        return DEFAULT_NPM_REGISTRY;
+      }
+    })();
+    return this._npmRegistry;
+  }
+
   /**
-   * Check installed and latest versions. Cheap when nothing changed: the
-   * installed version is re-read only when the tool's path changed, and the
-   * registry is asked at most hourly, unless `force`. Emits "updated" when a
-   * version changed.
+   * Check installed and latest versions. Cheap when nothing changed: a
+   * tool is re-run only when its file changed, hourly, or a few minutes
+   * after a failed probe, and the registry is asked hourly, unless `force`.
+   * Emits "updated" when a version changed.
    */
   refreshVersions({ force = false, ids = null } = {}) {
     const run = () => this._refreshVersions({ force, ids });
@@ -159,20 +183,28 @@ export class ProviderRegistry extends EventEmitter {
     const now = Date.now();
     let changed = false;
     const providers = this.providers.filter((p) => !ids || ids.includes(p.id));
+    const lookups = this.checkUpdates && providers.some((p) => p.package);
+    const registryUrl = lookups ? await this.npmRegistryUrl() : null;
     await Promise.all(providers.map(async (provider) => {
-      const entry = this.versions.get(provider.id) || { installed: null, installedPath: null, latest: null, latestAt: 0 };
+      const entry = this.versions.get(provider.id) ||
+        { installed: null, installedPath: null, installedMtime: null, installedAt: 0, latest: null, latestAt: 0 };
       const resolved = provider.versionArgs ? this.resolve(provider) : null;
-      if (resolved && (force || entry.installedPath !== resolved)) {
-        const spec = buildSpawnSpec(resolved, provider.versionArgs, this.env, this.platform);
-        const installed = await installedVersion(spec, { env: { ...this.env, ...provider.env } });
-        changed ||= installed !== entry.installed;
-        Object.assign(entry, { installed, installedPath: resolved });
-      } else if (!resolved && entry.installed !== null) {
-        Object.assign(entry, { installed: null, installedPath: null });
+      if (resolved) {
+        const mtime = fileMtime(resolved);
+        const ttl = entry.installed === null ? FAILED_PROBE_TTL_MS : VERSION_TTL_MS;
+        const stale = entry.installedPath !== resolved || entry.installedMtime !== mtime || now - entry.installedAt > ttl;
+        if (force || stale) {
+          const spec = buildSpawnSpec(resolved, provider.versionArgs, this.env, this.platform);
+          const installed = await installedVersion(spec, { env: { ...this.env, ...provider.env } });
+          changed ||= installed !== entry.installed;
+          Object.assign(entry, { installed, installedPath: resolved, installedMtime: mtime, installedAt: now });
+        }
+      } else if (entry.installedPath !== null) {
+        Object.assign(entry, { installed: null, installedPath: null, installedMtime: null, installedAt: 0 });
         changed = true;
       }
-      if (provider.package && this.checkUpdates && (force || now - entry.latestAt > LATEST_VERSION_TTL_MS)) {
-        const latest = await latestVersion(provider.package, { registryUrl: this.registryUrl, fetchImpl: this.fetchImpl });
+      if (provider.package && lookups && (force || now - entry.latestAt > VERSION_TTL_MS)) {
+        const latest = await latestVersion(provider.package, { registryUrl, fetchImpl: this.fetchImpl });
         changed ||= latest !== entry.latest;
         Object.assign(entry, { latest, latestAt: now });
       }
@@ -283,6 +315,8 @@ export class ProviderRegistry extends EventEmitter {
       err.code = 'npm_unavailable';
       throw err;
     }
-    return buildSpawnSpec(npm, ['install', '-g', `${provider.package}@latest`], this.env, this.platform);
+    const args = ['install', '-g', `${provider.package}@latest`];
+    if (this.registryUrl) args.push(`--registry=${this.registryUrl}`);
+    return buildSpawnSpec(npm, args, this.env, this.platform);
   }
 }

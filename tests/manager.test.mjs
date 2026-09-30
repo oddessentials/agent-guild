@@ -39,6 +39,9 @@ fs.writeFileSync(path.join(home, 'providers.json'), JSON.stringify({
     { id: 'fake', vendor: 'Test', tool: 'Fake Tool', command: process.execPath, args: [path.join(here, 'fixtures', 'fake-tool.mjs')], resumeArgs: ['--resume', '{id}'], package: 'fake-tool-pkg', versionArgs: [path.join(here, 'fixtures', 'fake-tool.mjs'), '--version'], modelPattern: 'fake-model-[a-z0-9.]+' },
     { id: 'plain', vendor: 'Test', tool: 'Plain Tool', command: process.execPath, args: [path.join(here, 'fixtures', 'fake-tool.mjs')], usage: { command: process.execPath, args: [path.join(here, 'fixtures', 'fake-usage.mjs')] } },
     { id: 'missing', vendor: 'Nobody', tool: 'Missing Tool', command: 'definitely-not-installed-agent-guild', install: 'npm i -g nothing', package: 'nothing' },
+    // Never read the developer's real Claude Code or Codex sign-in during tests.
+    { id: 'anthropic', usage: null },
+    { id: 'openai', usage: null },
   ],
 }));
 
@@ -203,20 +206,18 @@ test('usage meters come from the provider usage source', async () => {
   const { body } = await call('GET', '/providers');
   assert.equal(body.providers.find((p) => p.id === 'plain').usageSource, 'command');
   assert.equal(body.providers.find((p) => p.id === 'fake').usageSource, null);
-  assert.equal(body.providers.find((p) => p.id === 'anthropic').usageSource, 'claude');
+  assert.equal(body.providers.find((p) => p.id === 'anthropic').usageSource, null, 'built-in sources are disabled for tests');
 
   const { status, body: usage } = await call('GET', '/usage');
   assert.equal(status, 200);
-  const plain = usage.usage.find((u) => u.providerId === 'plain');
+  assert.deepEqual(usage.usage.map((u) => u.providerId), ['plain'], 'only providers with a source are listed');
+  const [plain] = usage.usage;
   assert.equal(plain.error, null);
   assert.equal(plain.plan, 'test');
   assert.deepEqual(plain.windows, [
     { label: '5-hour', usedPercent: 42.3, resetsAt: '2030-01-01T00:00:00.000Z' },
     { label: '7-day', usedPercent: 90, resetsAt: null },
   ]);
-  const anthropic = usage.usage.find((u) => u.providerId === 'anthropic');
-  assert.ok(anthropic === undefined || typeof anthropic.error === 'string' || Array.isArray(anthropic.windows));
-  assert.ok(!usage.usage.some((u) => u.providerId === 'fake'), 'providers without a source are not listed');
 });
 
 test('installed and latest versions are reported and updates flagged', async () => {
@@ -244,7 +245,7 @@ test('a provider can be installed or updated from a visible npm session', async 
   assert.equal(body.session.provider.id, 'missing');
   const client = terminal(body.session.id);
   await client.opened;
-  await waitForText(client, body.session.id, 'FAKE-NPM install -g nothing@latest', 'npm output');
+  await waitForText(client, body.session.id, `FAKE-NPM install -g nothing@latest --registry=${process.env.AGENT_GUILD_NPM_REGISTRY}`, 'npm output');
   await waitFor(() => client.messages.find((m) => m.type === 'exit'), { label: 'npm exit' });
   const updated = await waitFor(() => events.messages.find((m) => m.type === 'providers.updated'), { label: 'providers.updated' });
   assert.ok(updated.providers.some((p) => p.id === 'missing'));
@@ -423,6 +424,11 @@ test('the model comes from arguments, the screen, or an explicit report', async 
   // Text on screen that matches the provider's modelPattern wins over the argument.
   client.input('echo now on fake-model-2.5, really');
   assert.equal((await waitFor(modelIs('fake-model-2.5', 'screen'), { label: 'screen model' })).source, 'screen');
+
+  // A tool that keeps printing is still scanned while it prints.
+  client.input('stream 3500 switching to fake-model-7');
+  await waitFor(modelIs('fake-model-7', 'screen'), { timeout: 3000, label: 'model during continuous output' });
+  await waitForText(client, session.id, 'STREAM-DONE', 'stream end');
 
   // An explicit report wins over the screen and is not replaced by later screen text.
   client.input('model fake-model-3 Three');

@@ -106,7 +106,7 @@ test('loadProviders merges user overrides, platform keys and disabled entries', 
   assert.equal(win.providers[0].win32, undefined);
 });
 
-test('resume and install specs come from the provider configuration', () => {
+test('resume and install specs come from the provider configuration', async () => {
   const dir = tempDir();
   const userFile = path.join(dir, 'providers.json');
   fs.writeFileSync(userFile, JSON.stringify({ providers: [
@@ -121,12 +121,19 @@ test('resume and install specs come from the provider configuration', () => {
 
   assert.throws(() => registry.installSpec(registry.get('shell')), (err) => err.code === 'not_installable');
   const npmDir = tempDir();
-  fs.writeFileSync(path.join(npmDir, process.platform === 'win32' ? 'npm.cmd' : 'npm'), '', { mode: 0o755 });
-  const withNpm = new ProviderRegistry({ userFile, env: { PATH: npmDir, PATHEXT: '.EXE;.CMD' }, platform: process.platform });
-  const spec = withNpm.installSpec(withNpm.get('anthropic'));
-  assert.ok(String(spec.args).includes('install -g @anthropic-ai/claude-code@latest') || spec.args.join(' ') === 'install -g @anthropic-ai/claude-code@latest', JSON.stringify(spec));
+  if (process.platform === 'win32') fs.writeFileSync(path.join(npmDir, 'npm.cmd'), '@echo https://mirror.example/npm/\r\n');
+  else fs.writeFileSync(path.join(npmDir, 'npm'), '#!/bin/sh\necho https://mirror.example/npm/\n', { mode: 0o755 });
+  const npmEnv = { PATH: npmDir, PATHEXT: '.EXE;.CMD' };
+  const withNpm = new ProviderRegistry({ userFile, env: npmEnv, platform: process.platform });
+  const argsOf = (spec) => (typeof spec.args === 'string' ? spec.args : spec.args.join(' '));
+  assert.ok(argsOf(withNpm.installSpec(withNpm.get('anthropic'))).endsWith('install -g @anthropic-ai/claude-code@latest'));
+  assert.equal(await withNpm.npmRegistryUrl(), 'https://mirror.example/npm/', "installs and lookups share npm's own registry");
+  const mirrored = new ProviderRegistry({ userFile, env: npmEnv, platform: process.platform, registryUrl: 'https://mirror.example/other' });
+  assert.ok(argsOf(mirrored.installSpec(mirrored.get('anthropic'))).endsWith('@latest --registry=https://mirror.example/other'));
+  assert.equal(await mirrored.npmRegistryUrl(), 'https://mirror.example/other');
   const withoutNpm = new ProviderRegistry({ userFile, env: { PATH: tempDir() }, platform: process.platform });
   assert.throws(() => withoutNpm.installSpec(withoutNpm.get('anthropic')), (err) => err.code === 'npm_unavailable');
+  assert.equal(await withoutNpm.npmRegistryUrl(), 'https://registry.npmjs.org');
 
   assert.equal(cleanResumeId(undefined), null);
   assert.equal(cleanResumeId('  550e8400-e29b  '), '550e8400-e29b');
@@ -159,6 +166,42 @@ test('versions are parsed, compared and looked up', async () => {
   assert.equal(calls[0], 'https://registry.example/@openai%2fcodex/latest');
   assert.equal(await latestVersion('nothing', { fetchImpl }), null);
   assert.equal(await latestVersion('boom', { fetchImpl: async () => { throw new Error('offline'); } }), null);
+});
+
+test('installed versions are re-read when the tool changes, hourly, and after a failed probe', async () => {
+  const fake = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-tool.mjs');
+  const dir = tempDir();
+  const tool = path.join(dir, 'tool.mjs');
+  fs.copyFileSync(fake, tool);
+  const userFile = path.join(dir, 'providers.json');
+  fs.writeFileSync(userFile, JSON.stringify({ providers: [
+    { id: 'anthropic', command: process.execPath, versionArgs: [tool, '--version'], package: null },
+    { id: 'openai', command: process.execPath, versionArgs: ['-e', 'process.exit(1)'], package: null },
+  ] }));
+  const registry = new ProviderRegistry({ userFile, env: { PATH: path.dirname(process.execPath) }, checkUpdates: false });
+  await registry.refreshVersions();
+  const entry = registry.versions.get('anthropic');
+  assert.equal(entry.installed, '1.2.3');
+  const probedAt = entry.installedAt;
+
+  await registry.refreshVersions();
+  assert.equal(registry.versions.get('anthropic').installedAt, probedAt, 'a fresh probe is not repeated');
+
+  entry.installedAt -= 2 * 60 * 60 * 1000;
+  await registry.refreshVersions();
+  assert.ok(registry.versions.get('anthropic').installedAt > probedAt, 'an hour-old probe is repeated');
+
+  const later = registry.versions.get('anthropic').installedAt;
+  registry.versions.get('anthropic').installedMtime = 0;
+  await registry.refreshVersions();
+  assert.ok(registry.versions.get('anthropic').installedAt > later, 'a changed file is probed again');
+
+  const failed = registry.versions.get('openai');
+  assert.equal(failed.installed, null);
+  failed.installedAt -= 6 * 60 * 1000;
+  const failedAt = failed.installedAt;
+  await registry.refreshVersions();
+  assert.ok(registry.versions.get('openai').installedAt > failedAt, 'a failed probe is retried after a few minutes');
 });
 
 test('usage credentials are read from the tools\' own sign-in files', async () => {
@@ -225,16 +268,24 @@ test('a usage command prints JSON, and the monitor caches snapshots', async () =
 
   const dir = tempDir();
   const userFile = path.join(dir, 'providers.json');
-  fs.writeFileSync(userFile, JSON.stringify({ providers: [{ id: 'anthropic' }, { id: 'openai' }, { id: 'google', usage: { command: process.execPath, args: [fixture] } }] }));
+  fs.writeFileSync(userFile, JSON.stringify({ providers: [
+    { id: 'anthropic', env: { CLAUDE_CONFIG_DIR: path.join(dir, 'claude-work') } },
+    { id: 'openai' },
+    { id: 'google', usage: { command: process.execPath, args: [fixture] } },
+  ] }));
+  const defaults = loadProviders({ platform: 'linux' }).providers;
+  assert.equal(defaults.find((p) => p.id === 'anthropic').usage, 'claude');
+  assert.equal(defaults.find((p) => p.id === 'openai').usage, 'codex');
   const registry = new ProviderRegistry({ userFile, env, checkUpdates: false });
   let fetches = 0;
+  const files = {};
   const monitor = new UsageMonitor({
     registry,
-    env,
+    env: { ...env, CODEX_HOME: path.join(dir, 'codex-home') },
     fetchImpl: async () => { fetches++; return { ok: true, json: async () => ({ five_hour: { utilization: 5 } }) }; },
     readers: {
-      claude: async () => ({ accessToken: 'tok', plan: 'pro' }),
-      codex: async () => { throw new Error('boom'); },
+      claude: async ({ file }) => { files.claude = file; return { accessToken: 'tok', plan: 'pro' }; },
+      codex: async ({ file }) => { files.codex = file; throw new Error('boom'); },
     },
   });
   const first = await monitor.all();
@@ -243,6 +294,8 @@ test('a usage command prints JSON, and the monitor caches snapshots', async () =
   assert.equal(byId.anthropic.plan, 'pro');
   assert.match(byId.openai.error, /usage check failed: boom/);
   assert.equal(byId.google.plan, 'test');
+  assert.equal(files.claude, path.join(dir, 'claude-work', '.credentials.json'), "the provider's own env picks its credentials");
+  assert.equal(files.codex, path.join(dir, 'codex-home', 'auth.json'), 'the manager env applies otherwise');
   await monitor.all();
   assert.equal(fetches, 1, 'a fresh snapshot is served from the cache');
 });

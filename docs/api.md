@@ -81,9 +81,10 @@ has `resumeArgs`, so one of the tool's own earlier sessions can be resumed by
 id.
 
 `installedVersion` comes from running the tool with its `versionArgs`, and
-`latestVersion` from the npm registry (`AGENT_GUILD_NPM_REGISTRY` overrides
-the registry, `AGENT_GUILD_NO_UPDATE_CHECK=1` skips the lookup). Both are
-null until the first check finishes; a `providers.updated` event follows.
+`latestVersion` from npm's configured registry, which installs use too
+(`AGENT_GUILD_NPM_REGISTRY` overrides it for both, `AGENT_GUILD_NO_UPDATE_CHECK=1`
+skips the lookup). Both are null until the first check finishes; a
+`providers.updated` event follows.
 `updateAvailable` is true when the latest version is newer, and
 `POST /providers/:id/install` performs the update.
 

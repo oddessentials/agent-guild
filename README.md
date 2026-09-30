@@ -96,9 +96,9 @@ one platform under a `win32` or `darwin` key. See
 The page's "Working folder" field sets where new sessions start. It defaults
 to your home folder.
 
-Version checks ask the npm registry about once an hour. Set
-`AGENT_GUILD_NPM_REGISTRY` to use a mirror, or `AGENT_GUILD_NO_UPDATE_CHECK=1`
-to skip them.
+Version checks ask npm's configured registry about once an hour, and installs
+use the same registry. Set `AGENT_GUILD_NPM_REGISTRY` to override it for
+both, or `AGENT_GUILD_NO_UPDATE_CHECK=1` to skip the checks.
 
 ## Show agents and models
 

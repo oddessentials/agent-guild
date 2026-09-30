@@ -8,6 +8,7 @@
 //   query [cpr|bg]     asks the terminal for the cursor position or the
 //                      background colour, then prints every reply received
 //                      within 1.5 s
+//   stream <ms> <text> prints <text> then a line every 250 ms for <ms>
 //   modes              hides the cursor and enables SGR mouse reporting
 //   stubborn           ignores hang-up signals
 //   exit <code>        exits with that code
@@ -53,6 +54,12 @@ function handle(line) {
       process.stdin.setRawMode?.(false);
       out(`REPLIES:${replies.length}:${JSON.stringify(replies)}`);
     }, 1500);
+  } else if (cmd === 'stream') {
+    out(rest.slice(1).join(' '));
+    const until = Date.now() + Number(rest[0] || 1000);
+    const timer = setInterval(() => {
+      if (Date.now() >= until) { clearInterval(timer); out('STREAM-DONE'); } else out('tick');
+    }, 250);
   } else if (cmd === 'modes') {
     process.stdout.write('\x1b[?25l\x1b[?1000h\x1b[?1006h');
     out('MODES-SET');
