@@ -76,7 +76,9 @@ main { max-width: 1200px; margin: 0 auto; padding: 20px 16px 48px; display: grid
 .provider .vendor { font-weight: 600; }
 .provider .tool { color: var(--muted); font-size: 0.85rem; }
 .provider .state { font-size: 0.75rem; color: var(--ok); }
+.provider .state.update-available { color: var(--warn); }
 .provider.unavailable .state { color: var(--muted); }
+.provider .update { color: var(--warn); border-color: var(--warn); }
 .provider-actions { grid-column: 1 / -1; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .provider .hint { font-size: 0.78rem; color: var(--muted); overflow-wrap: anywhere; }
 .provider.busy { opacity: 0.6; pointer-events: none; }

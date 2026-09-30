@@ -155,9 +155,7 @@ export class SessionManager extends EventEmitter {
       if (this.sessions.has(id)) this.emit('event', { type: 'session.updated', session: session.toJSON() });
     });
     session.on('warning', (msg) => console.warn(`[session ${id}] ${msg}`));
-    if (task === 'install') {
-      session.on('exit', () => this.emit('event', { type: 'providers.updated', providers: this.registry.list() }));
-    }
+    if (task === 'install') session.on('exit', () => this.registry.notifyChanged([provider.id]));
     this.sessions.set(id, session);
     this.emit('event', { type: 'session.created', session: session.toJSON() });
     return session;

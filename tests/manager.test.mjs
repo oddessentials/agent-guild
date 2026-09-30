@@ -25,9 +25,18 @@ if (process.platform === 'win32') {
 }
 process.env.PATH = `${bin}${path.delimiter}${process.env.PATH}`;
 
+// A stand-in npm registry that knows one package.
+const npmRegistry = http.createServer((req, res) => {
+  const known = req.url === '/fake-tool-pkg/latest';
+  res.writeHead(known ? 200 : 404, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(known ? { name: 'fake-tool-pkg', version: '9.9.9' } : { error: 'Not found' }));
+});
+await new Promise((resolve) => npmRegistry.listen(0, '127.0.0.1', resolve));
+process.env.AGENT_GUILD_NPM_REGISTRY = `http://127.0.0.1:${npmRegistry.address().port}`;
+
 fs.writeFileSync(path.join(home, 'providers.json'), JSON.stringify({
   providers: [
-    { id: 'fake', vendor: 'Test', tool: 'Fake Tool', command: process.execPath, args: [path.join(here, 'fixtures', 'fake-tool.mjs')], resumeArgs: ['--resume', '{id}'], package: 'fake-tool-pkg' },
+    { id: 'fake', vendor: 'Test', tool: 'Fake Tool', command: process.execPath, args: [path.join(here, 'fixtures', 'fake-tool.mjs')], resumeArgs: ['--resume', '{id}'], package: 'fake-tool-pkg', versionArgs: [path.join(here, 'fixtures', 'fake-tool.mjs'), '--version'] },
     { id: 'plain', vendor: 'Test', tool: 'Plain Tool', command: process.execPath, args: [path.join(here, 'fixtures', 'fake-tool.mjs')] },
     { id: 'missing', vendor: 'Nobody', tool: 'Missing Tool', command: 'definitely-not-installed-agent-guild', install: 'npm i -g nothing', package: 'nothing' },
   ],
@@ -50,6 +59,7 @@ after(async () => {
   // ended. Exit once results are reported rather than hanging the run.
   setTimeout(() => process.exit(), 8000).unref();
   await ctx.shutdown('tests done');
+  npmRegistry.close();
   assert.equal(ctx.manager.exiting.size, 0, 'shutdown waits for removed sessions to exit');
   try {
     // Windows may hold the folder briefly after a process exits.
@@ -189,6 +199,20 @@ test('providers report availability', async () => {
   assert.ok(body.providers.some((p) => p.id === 'anthropic'), 'built-in providers are still listed');
 });
 
+test('installed and latest versions are reported and updates flagged', async () => {
+  const fake = await waitFor(async () => {
+    const p = (await call('GET', '/providers')).body.providers.find((x) => x.id === 'fake');
+    return p.installedVersion && p.latestVersion ? p : null;
+  }, { label: 'version check' });
+  assert.equal(fake.installedVersion, '1.2.3');
+  assert.equal(fake.latestVersion, '9.9.9');
+  assert.equal(fake.updateAvailable, true);
+  const missing = (await call('GET', '/providers')).body.providers.find((x) => x.id === 'missing');
+  assert.equal(missing.installedVersion, null);
+  assert.equal(missing.latestVersion, null, 'unknown packages have no latest version');
+  assert.equal(missing.updateAvailable, false);
+});
+
 test('a provider can be installed or updated from a visible npm session', async () => {
   const events = new Client(`${base.replace('http', 'ws')}/api/v1/events?token=${token}`);
   await events.opened;
@@ -202,7 +226,8 @@ test('a provider can be installed or updated from a visible npm session', async 
   await client.opened;
   await waitForText(client, body.session.id, 'FAKE-NPM install -g nothing@latest', 'npm output');
   await waitFor(() => client.messages.find((m) => m.type === 'exit'), { label: 'npm exit' });
-  await waitFor(() => events.messages.find((m) => m.type === 'providers.updated'), { label: 'providers.updated' });
+  const updated = await waitFor(() => events.messages.find((m) => m.type === 'providers.updated'), { label: 'providers.updated' });
+  assert.ok(updated.providers.some((p) => p.id === 'missing'));
   await client.close();
   await call('DELETE', `/sessions/${body.session.id}`);
 

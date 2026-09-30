@@ -59,6 +59,9 @@ Errors use one shape:
   "args": [],
   "resumable": true,
   "installable": true,
+  "installedVersion": "2.1.285",
+  "latestVersion": "2.1.290",
+  "updateAvailable": true,
   "color": "#D97757",
   "monogram": "A",
   "iconUrl": null,
@@ -75,6 +78,13 @@ the provider as disabled and offer `POST /providers/:id/install` when
 PATH), or the `install` hint otherwise. `resumable` is true when the provider
 has `resumeArgs`, so one of the tool's own earlier sessions can be resumed by
 id.
+
+`installedVersion` comes from running the tool with its `versionArgs`, and
+`latestVersion` from the npm registry (`AGENT_GUILD_NPM_REGISTRY` overrides
+the registry, `AGENT_GUILD_NO_UPDATE_CHECK=1` skips the lookup). Both are
+null until the first check finishes; a `providers.updated` event follows.
+`updateAvailable` is true when the latest version is newer, and
+`POST /providers/:id/install` performs the update.
 
 ### Session
 
@@ -178,7 +188,7 @@ This socket pushes changes to every session. It is server-to-client only.
 | `{ type: "session.created", session }` | A session was started by any client. |
 | `{ type: "session.updated", session }` | Status, activity, agents, name or size changed. |
 | `{ type: "session.removed", sessionId }` | A session was removed. |
-| `{ type: "providers.updated", providers }` | The provider list changed, for example after an install session ended. |
+| `{ type: "providers.updated", providers }` | The provider list changed: a version check finished, `providers.json` was reloaded, or an install session ended. |
 
 After a reconnect, treat `hello` as the new source of truth.
 

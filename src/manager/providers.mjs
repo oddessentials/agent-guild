@@ -7,13 +7,16 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { resolveCommand, buildSpawnSpec } from './command-resolver.mjs';
+import { compareVersions, installedVersion, latestVersion, DEFAULT_NPM_REGISTRY } from './versions.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULTS_FILE = path.resolve(here, '../../config/providers.default.json');
 const ID_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 const PLATFORM_KEYS = ['win32', 'darwin', 'linux'];
+const LATEST_VERSION_TTL_MS = 60 * 60 * 1000;
 
 export function defaultShell(env = process.env, platform = process.platform) {
   if (platform === 'win32') return 'powershell.exe';
@@ -43,6 +46,7 @@ function normalize(raw, platform) {
     tool: String(merged.tool || merged.command || ''),
     command: String(merged.command || ''),
     package: merged.package ? String(merged.package) : null,
+    versionArgs: Array.isArray(merged.versionArgs) && merged.versionArgs.length ? merged.versionArgs.map(String) : null,
     args: Array.isArray(merged.args) ? merged.args.map(String) : [],
     resumeArgs: Array.isArray(merged.resumeArgs) ? merged.resumeArgs.map(String) : [],
     env: normalizeEnv(merged.env),
@@ -93,12 +97,28 @@ export function loadProviders({ userFile, platform = process.platform } = {}) {
   return { providers, warnings };
 }
 
-export class ProviderRegistry {
-  constructor({ userFile, env, platform = process.platform, iconDir } = {}) {
+export class ProviderRegistry extends EventEmitter {
+  /**
+   * @param {object} opts
+   * @param {string} [opts.userFile]
+   * @param {object} [opts.env]
+   * @param {string} [opts.platform]
+   * @param {string} [opts.iconDir]
+   * @param {string} [opts.registryUrl]   npm registry for latest-version lookups
+   * @param {boolean} [opts.checkUpdates] false skips registry lookups entirely
+   * @param {Function} [opts.fetchImpl]
+   */
+  constructor({ userFile, env, platform = process.platform, iconDir, registryUrl = DEFAULT_NPM_REGISTRY, checkUpdates = true, fetchImpl } = {}) {
+    super();
     this.userFile = userFile;
     this.env = env || process.env;
     this.platform = platform;
     this.iconDir = iconDir;
+    this.registryUrl = registryUrl;
+    this.checkUpdates = checkUpdates;
+    this.fetchImpl = fetchImpl;
+    this.versions = new Map();
+    this._refreshing = null;
     this.reload();
   }
 
@@ -107,6 +127,53 @@ export class ProviderRegistry {
     this.providers = providers;
     this.warnings = warnings;
     for (const w of warnings) console.warn(`[providers] ${w}`);
+    this.emit('updated');
+  }
+
+  /**
+   * Check installed and latest versions. Cheap when nothing changed: the
+   * installed version is re-read only when the tool's path changed, and the
+   * registry is asked at most hourly, unless `force`. Emits "updated" when a
+   * version changed.
+   */
+  refreshVersions({ force = false, ids = null } = {}) {
+    const run = () => this._refreshVersions({ force, ids });
+    const pending = this._refreshing ? this._refreshing.then(run, run) : run();
+    this._refreshing = pending;
+    pending.finally(() => { if (this._refreshing === pending) this._refreshing = null; }).catch(() => {});
+    return pending;
+  }
+
+  async _refreshVersions({ force, ids }) {
+    const now = Date.now();
+    let changed = false;
+    const providers = this.providers.filter((p) => !ids || ids.includes(p.id));
+    await Promise.all(providers.map(async (provider) => {
+      const entry = this.versions.get(provider.id) || { installed: null, installedPath: null, latest: null, latestAt: 0 };
+      const resolved = provider.versionArgs ? this.resolve(provider) : null;
+      if (resolved && (force || entry.installedPath !== resolved)) {
+        const spec = buildSpawnSpec(resolved, provider.versionArgs, this.env, this.platform);
+        const installed = await installedVersion(spec, { env: { ...this.env, ...provider.env } });
+        changed ||= installed !== entry.installed;
+        Object.assign(entry, { installed, installedPath: resolved });
+      } else if (!resolved && entry.installed !== null) {
+        Object.assign(entry, { installed: null, installedPath: null });
+        changed = true;
+      }
+      if (provider.package && this.checkUpdates && (force || now - entry.latestAt > LATEST_VERSION_TTL_MS)) {
+        const latest = await latestVersion(provider.package, { registryUrl: this.registryUrl, fetchImpl: this.fetchImpl });
+        changed ||= latest !== entry.latest;
+        Object.assign(entry, { latest, latestAt: now });
+      }
+      this.versions.set(provider.id, entry);
+    }));
+    if (changed) this.emit('updated');
+  }
+
+  /** Tell clients the list changed (a tool was installed) and re-check versions. */
+  notifyChanged(ids = null) {
+    this.emit('updated');
+    this.refreshVersions({ force: true, ids }).catch(() => {});
   }
 
   get(id) {
@@ -136,6 +203,9 @@ export class ProviderRegistry {
   /** Public description, including whether the tool is installed. */
   describe(provider) {
     const resolvedPath = this.resolve(provider);
+    const versions = this.versions.get(provider.id);
+    const installed = resolvedPath ? versions?.installed ?? null : null;
+    const latest = versions?.latest ?? null;
     return {
       id: provider.id,
       vendor: provider.vendor,
@@ -145,6 +215,9 @@ export class ProviderRegistry {
       args: provider.args,
       resumable: provider.resumeArgs.length > 0,
       installable: Boolean(provider.package && this.resolveNpm()),
+      installedVersion: installed,
+      latestVersion: latest,
+      updateAvailable: Boolean(installed && latest && compareVersions(latest, installed) > 0),
       color: provider.color,
       monogram: provider.monogram,
       iconUrl: this.iconUrl(provider),

@@ -34,8 +34,10 @@ Commands:
   url       Print the web page URL, including the access token
 
 Environment:
-  AGENT_GUILD_PORT   Port for the local API (default 47821)
-  AGENT_GUILD_HOME   Data directory (default: per-user app data folder)`);
+  AGENT_GUILD_PORT             Port for the local API (default 47821)
+  AGENT_GUILD_HOME             Data directory (default: per-user app data folder)
+  AGENT_GUILD_NPM_REGISTRY     npm registry for version checks and installs
+  AGENT_GUILD_NO_UPDATE_CHECK  Set to 1 to skip version checks`);
 }
 
 function baseUrl() {

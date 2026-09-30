@@ -205,10 +205,12 @@ export function createManagerServer({
       });
     }
     if (route === '/providers' && method === 'GET') {
+      registry.refreshVersions().catch(() => {});
       return sendJson(res, 200, { providers: registry.list() });
     }
     if (route === '/providers/reload' && method === 'POST') {
       registry.reload();
+      registry.refreshVersions({ force: true }).catch(() => {});
       return sendJson(res, 200, { providers: registry.list(), warnings: registry.warnings });
     }
     const installMatch = route.match(/^\/providers\/([a-z0-9][a-z0-9_-]{0,31})\/install$/);
@@ -288,9 +290,11 @@ export function createManagerServer({
     ws.send(JSON.stringify(message));
   };
 
-  manager.on('event', (event) => {
+  const broadcast = (event) => {
     for (const ws of eventClients) safeSend(ws, event);
-  });
+  };
+  manager.on('event', broadcast);
+  registry.on('updated', () => broadcast({ type: 'providers.updated', providers: registry.list() }));
 
   function handleEvents(ws) {
     eventClients.add(ws);

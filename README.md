@@ -12,7 +12,9 @@ coding tool, and see at a glance which sessions and agents are working.
   the tool's own earlier sessions from its id. Providers whose tool is not
   installed are shown greyed out with an **Install** button that runs
   `npm install -g` in a session you can watch, or with install instructions
-  when the tool is not an npm package.
+  when the tool is not an npm package. Installed tools show their version
+  and an **Update** button when npm has a newer one; updating while that
+  tool's sessions are running asks first, because it can break them.
 * **Work in real terminals.** Each session is a card. Open it for a full
   interactive terminal: type instructions, answer prompts, watch output. Run
   as many sessions at once as you like.
@@ -76,7 +78,8 @@ one platform under a `win32` or `darwin` key. See
 | `id` | Lowercase identifier. |
 | `vendor`, `tool` | Names shown on the icon. |
 | `command`, `args` | What to run. `command` is looked up on PATH. `@shell` means the user's default shell. |
-| `package` | The tool's npm package, e.g. `@openai/codex`. Enables the **Install** button. |
+| `package` | The tool's npm package, e.g. `@openai/codex`. Enables the **Install** and **Update** buttons and the version check. |
+| `versionArgs` | Arguments that make the command print its version, used instead of `args`, e.g. `["--version"]`. |
 | `resumeArgs` | Arguments that resume the tool's own session, with `{id}` standing for the id, e.g. `["--resume", "{id}"]`. Without it the card has no **Existing** button. |
 | `env` | Extra environment variables for the tool. |
 | `color`, `monogram`, `icon` | Icon appearance. `icon` is a URL path; you can also drop `<id>.svg` into `web/icons/`. |
@@ -84,6 +87,10 @@ one platform under a `win32` or `darwin` key. See
 
 The page's "Working folder" field sets where new sessions start. It defaults
 to your home folder.
+
+Version checks ask the npm registry about once an hour. Set
+`AGENT_GUILD_NPM_REGISTRY` to use a mirror, or `AGENT_GUILD_NO_UPDATE_CHECK=1`
+to skip them.
 
 ## Show agents
 

@@ -10,6 +10,12 @@
 //   modes              hides the cursor and enables SGR mouse reporting
 //   stubborn           ignores hang-up signals
 //   exit <code>        exits with that code
+// Started with --version it prints "fake-tool 1.2.3" and exits.
+
+if (process.argv.includes('--version')) {
+  console.log('fake-tool 1.2.3');
+  process.exit(0);
+}
 
 const out = (text) => process.stdout.write(`${text}\r\n`);
 out(`FAKE-TOOL READY cwd=${process.cwd()}`);

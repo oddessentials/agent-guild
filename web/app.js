@@ -117,7 +117,8 @@ function renderProviders() {
     paintProviderIcon(node.querySelector('.provider-icon'), provider);
     node.querySelector('.vendor').textContent = provider.vendor;
     node.querySelector('.tool').textContent = provider.tool;
-    node.querySelector('.state').textContent = provider.available ? 'Ready' : 'Not installed';
+    node.querySelector('.state').textContent = providerState(provider);
+    node.querySelector('.state').classList.toggle('update-available', provider.updateAvailable);
     node.dataset.id = provider.id;
     node.classList.toggle('unavailable', !provider.available);
     node.setAttribute('aria-label', `${provider.vendor} ${provider.tool}, ${provider.available ? 'ready' : 'not installed'}`);
@@ -134,10 +135,23 @@ function renderProviders() {
     install.hidden = provider.available || !provider.installable;
     install.title = `Run "npm install -g ${provider.package}@latest" in a session`;
     install.addEventListener('click', () => installProvider(provider, node));
+    const update = node.querySelector('.update');
+    update.hidden = !(provider.available && provider.installable && provider.updateAvailable);
+    update.textContent = `Update to ${provider.latestVersion}`;
+    update.title = install.title;
+    update.addEventListener('click', () => installProvider(provider, node));
     hint.hidden = provider.available || provider.installable;
     hint.textContent = provider.install || `${provider.command} was not found on PATH.`;
     return node;
   }));
+}
+
+function providerState(provider) {
+  if (!provider.available) return 'Not installed';
+  const parts = ['Ready'];
+  if (provider.installedVersion) parts.push(`v${provider.installedVersion}`);
+  if (provider.updateAvailable) parts.push(`${provider.latestVersion} available`);
+  return parts.join(' · ');
 }
 
 async function installProvider(provider, card, { force = false } = {}) {

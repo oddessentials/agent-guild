@@ -3,12 +3,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { resolveCommand, buildSpawnSpec, quoteForCmd } from '../src/manager/command-resolver.mjs';
 import { mergePathLists, parsePathFromEnvOutput } from '../src/manager/shell-env.mjs';
 import { mergeEnv, cleanResumeId } from '../src/manager/session-manager.mjs';
 import { loadProviders, defaultShell, ProviderRegistry } from '../src/manager/providers.mjs';
 import { claudeHookToReport } from '../src/report/claude-hook.mjs';
 import { ensurePtyReady, spawnHelperCandidates } from '../src/manager/pty-setup.mjs';
+import { parseVersion, compareVersions, installedVersion, latestVersion } from '../src/manager/versions.mjs';
 
 function tempDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-unit-'));
@@ -128,6 +130,32 @@ test('resume and install specs come from the provider configuration', () => {
   assert.throws(() => cleanResumeId(''), (err) => err.status === 400);
   assert.throws(() => cleanResumeId('a\x1bb'), (err) => err.status === 400);
   assert.throws(() => cleanResumeId('x'.repeat(201)), (err) => err.status === 400);
+});
+
+test('versions are parsed, compared and looked up', async () => {
+  assert.equal(parseVersion('2.1.285 (Claude Code)'), '2.1.285');
+  assert.equal(parseVersion('codex-cli 0.45.0\n'), '0.45.0');
+  assert.equal(parseVersion('v1.2.3-beta.1'), '1.2.3-beta.1');
+  assert.equal(parseVersion('no version here'), null);
+  assert.ok(compareVersions('1.2.10', '1.2.9') > 0);
+  assert.ok(compareVersions('1.2.3', '1.10.0') < 0);
+  assert.equal(compareVersions('1.2.3', '1.2.3'), 0);
+  assert.ok(compareVersions('1.2.3-beta', '1.2.3') < 0);
+
+  const fake = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-tool.mjs');
+  assert.equal(await installedVersion(buildSpawnSpec(process.execPath, [fake, '--version'])), '1.2.3');
+  assert.equal(await installedVersion({ file: path.join(tempDir(), 'missing'), args: [] }), null);
+
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(url);
+    if (url.endsWith('/@openai%2fcodex/latest')) return { ok: true, json: async () => ({ version: '0.50.1' }) };
+    return { ok: false, status: 404, json: async () => ({}) };
+  };
+  assert.equal(await latestVersion('@openai/codex', { registryUrl: 'https://registry.example/', fetchImpl }), '0.50.1');
+  assert.equal(calls[0], 'https://registry.example/@openai%2fcodex/latest');
+  assert.equal(await latestVersion('nothing', { fetchImpl }), null);
+  assert.equal(await latestVersion('boom', { fetchImpl: async () => { throw new Error('offline'); } }), null);
 });
 
 test('loadProviders survives a broken user file', () => {
