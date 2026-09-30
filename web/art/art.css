@@ -1,6 +1,3 @@
-/* Default art: a visual layer over styles.css. Dark scheme only; no layout
-   or behavior changes. Remove the <link> to art.css to turn it all off. */
-
 .level-badge { display: none; }
 
 @media (prefers-color-scheme: dark) {
@@ -10,13 +7,50 @@
     --card-bg: rgba(18, 20, 26, 0.9);
   }
 
-  .provider[data-id="anthropic"], .session-card[data-provider="anthropic"] { --pc: #d97757; }
-  .provider[data-id="openai"], .session-card[data-provider="openai"] { --pc: #1fd08f; }
-  .provider[data-id="google"], .session-card[data-provider="google"] { --pc: #5b9cff; }
-  .provider[data-id="xai"], .session-card[data-provider="xai"] { --pc: #38d6e8; }
-  .provider[data-id="shell"], .session-card[data-provider="shell"] { --pc: #a67cf6; }
+  .provider, .session-card {
+    --pc: #a67cf6;
+    --idle: url("/art/characters/shell/idle.png");
+    --working: url("/art/characters/shell/working.png");
+    --locked: url("/art/characters/shell/locked.png");
+  }
+  .provider[data-id="anthropic"], .session-card[data-provider="anthropic"] {
+    --pc: #d97757;
+    --idle: url("/art/characters/anthropic/idle.png");
+    --working: url("/art/characters/anthropic/working.png");
+    --locked: url("/art/characters/anthropic/locked.png");
+  }
+  .provider[data-id="openai"], .session-card[data-provider="openai"] {
+    --pc: #1fd08f;
+    --idle: url("/art/characters/openai/idle.png");
+    --working: url("/art/characters/openai/working.png");
+    --locked: url("/art/characters/openai/locked.png");
+  }
+  .provider[data-id="google"], .session-card[data-provider="google"] {
+    --pc: #5b9cff;
+    --idle: url("/art/characters/google/idle.png");
+    --working: url("/art/characters/google/working.png");
+    --locked: url("/art/characters/google/locked.png");
+  }
+  .provider[data-id="xai"], .session-card[data-provider="xai"] {
+    --pc: #38d6e8;
+    --idle: url("/art/characters/xai/idle.png");
+    --working: url("/art/characters/xai/working.png");
+    --locked: url("/art/characters/xai/locked.png");
+  }
 
-  /* ---- page ---------------------------------------------------------- */
+  .provider-icon[data-provider="anthropic"] { --icon: url("/art/icons/anthropic.png"); }
+  .provider-icon[data-provider="openai"] { --icon: url("/art/icons/openai.png"); }
+  .provider-icon[data-provider="google"] { --icon: url("/art/icons/google.png"); }
+  .provider-icon[data-provider="xai"] { --icon: url("/art/icons/xai.png"); }
+  .provider-icon[data-provider="shell"] { --icon: url("/art/icons/shell.png"); }
+  .provider-icon:not(.has-image)[data-provider="anthropic"],
+  .provider-icon:not(.has-image)[data-provider="openai"],
+  .provider-icon:not(.has-image)[data-provider="google"],
+  .provider-icon:not(.has-image)[data-provider="xai"],
+  .provider-icon:not(.has-image)[data-provider="shell"] {
+    background: var(--icon) center / cover no-repeat; color: transparent;
+  }
+
   body { background: #0b0c10 url("/art/page.png") center bottom / cover fixed; }
   .topbar { background: rgba(12, 13, 17, 0.88); backdrop-filter: blur(6px); border-bottom-color: #2a2418; }
   .brand-mark { display: none; }
@@ -28,9 +62,7 @@
   h1 { color: var(--gold); font-size: 1.3rem; font-weight: 600; }
   h2 { color: #f1e2c2; font-size: 1.15rem; font-weight: 600; }
 
-  /* ---- shared card treatment ------------------------------------------ */
   .provider, .session-card {
-    --pc: #9aa4b2;
     position: relative; isolation: isolate; overflow: hidden;
     background: var(--card-bg);
     border: 1px solid color-mix(in srgb, var(--pc) 35%, #2a303b);
@@ -46,24 +78,14 @@
     background-repeat: no-repeat; background-size: cover; background-position: center top;
   }
 
-  /* ---- provider cards: character banner above the card content -------- */
   .provider { padding-top: 188px; align-content: start; }
   .provider::before {
     inset: 0 0 auto 0; height: 250px;
+    background-image: var(--idle);
     -webkit-mask-image: linear-gradient(to bottom, #000 55%, transparent 100%);
             mask-image: linear-gradient(to bottom, #000 55%, transparent 100%);
   }
-  .provider[data-id="anthropic"]::before { background-image: url("/art/characters/anthropic/idle.png"); }
-  .provider[data-id="openai"]::before { background-image: url("/art/characters/openai/idle.png"); }
-  .provider[data-id="google"]::before { background-image: url("/art/characters/google/idle.png"); }
-  .provider[data-id="xai"]::before { background-image: url("/art/characters/xai/idle.png"); }
-  .provider[data-id="shell"]::before { background-image: url("/art/characters/shell/idle.png"); }
-  /* not installed = locked */
-  .provider.unavailable[data-id="anthropic"]::before { background-image: url("/art/characters/anthropic/locked.png"); }
-  .provider.unavailable[data-id="openai"]::before { background-image: url("/art/characters/openai/locked.png"); }
-  .provider.unavailable[data-id="google"]::before { background-image: url("/art/characters/google/locked.png"); }
-  .provider.unavailable[data-id="xai"]::before { background-image: url("/art/characters/xai/locked.png"); }
-  .provider.unavailable[data-id="shell"]::before { background-image: url("/art/characters/shell/locked.png"); }
+  .provider.unavailable::before { background-image: var(--locked); }
   .provider.unavailable { border-color: #2a2d33; }
   .provider.unavailable::after {
     content: ""; position: absolute; top: 10px; right: 10px; width: 30px; height: 40px; pointer-events: none;
@@ -72,7 +94,6 @@
   }
   .provider .vendor { color: #f3ead8; }
 
-  /* ---- usage meters as power bars ------------------------------------- */
   .meter-label { padding-left: 18px; background: url("/art/ui/gem-vitality.png") left center / 14px auto no-repeat; }
   .meter + .meter .meter-label { background-image: url("/art/ui/gem-mana.png"); }
   .meter-bar { height: 7px; background: #0c0e12; box-shadow: inset 0 0 0 1px rgba(232, 196, 124, 0.18); }
@@ -81,35 +102,23 @@
   .meter.low .meter-fill { background: var(--warn); box-shadow: 0 0 8px rgba(224, 168, 74, 0.5); }
   .meter.empty .meter-fill { background: var(--danger); box-shadow: 0 0 8px rgba(239, 107, 102, 0.5); }
 
-  /* ---- session cards: character portrait on the left ------------------ */
   .session-card { padding-left: 152px; min-height: 196px; }
   .session-card::before {
     inset: 0 auto 0 0; width: 168px; background-size: 168px auto;
+    background-image: var(--idle);
     -webkit-mask-image: linear-gradient(to right, #000 62%, transparent 100%);
             mask-image: linear-gradient(to right, #000 62%, transparent 100%);
   }
-  /* running = idle character, working = active character */
-  .session-card[data-provider="anthropic"]::before { background-image: url("/art/characters/anthropic/idle.png"); }
-  .session-card[data-provider="openai"]::before { background-image: url("/art/characters/openai/idle.png"); }
-  .session-card[data-provider="google"]::before { background-image: url("/art/characters/google/idle.png"); }
-  .session-card[data-provider="xai"]::before { background-image: url("/art/characters/xai/idle.png"); }
-  .session-card[data-provider="shell"]::before { background-image: url("/art/characters/shell/idle.png"); }
-  .session-card[data-provider="anthropic"]:has(.status-pill.active)::before { background-image: url("/art/characters/anthropic/working.png"); }
-  .session-card[data-provider="openai"]:has(.status-pill.active)::before { background-image: url("/art/characters/openai/working.png"); }
-  .session-card[data-provider="google"]:has(.status-pill.active)::before { background-image: url("/art/characters/google/working.png"); }
-  .session-card[data-provider="xai"]:has(.status-pill.active)::before { background-image: url("/art/characters/xai/working.png"); }
-  .session-card[data-provider="shell"]:has(.status-pill.active)::before { background-image: url("/art/characters/shell/working.png"); }
+  .session-card:has(.status-pill.active)::before { background-image: var(--working); }
   .session-card:has(.status-pill.active) {
     border-color: color-mix(in srgb, var(--pc) 75%, #2a303b);
     box-shadow: inset 0 0 0 1px rgba(232, 196, 124, 0.1), 0 0 26px color-mix(in srgb, var(--pc) 28%, transparent);
   }
   .session-card.exited::before { filter: grayscale(1) brightness(0.7); }
-  /* The provider icon is redundant next to the portrait; the pills wrap under the title. */
   .session-card .card-top > .provider-icon { display: none; }
   .session-card .card-top { flex-wrap: wrap; gap: 6px 8px; }
   .session-card .card-title { flex-basis: 100%; }
 
-  /* session length = level (medallion over the portrait) */
   .level-badge {
     display: grid; place-items: center; position: absolute; left: 10px; bottom: 10px; z-index: 1;
     width: 46px; height: 46px; padding-top: 1px;
@@ -118,18 +127,19 @@
     text-shadow: 0 1px 2px #000, 0 0 6px rgba(0, 0, 0, 0.8);
   }
 
-  /* agents = helper familiars */
-  .agent {
-    width: 34px; height: 34px; color: transparent; border-width: 1px;
+  .session-card .agent {
+    width: 34px; height: 34px; border-width: 1px; border-color: var(--fc);
+    place-items: end end; padding: 0 3px 1px 0;
     background: #0e1016 center / 118% auto no-repeat;
-    box-shadow: 0 0 10px color-mix(in srgb, var(--c) 45%, transparent);
+    color: #fff; font-size: 0.62rem; text-shadow: 0 0 3px #000, 0 1px 2px #000;
+    box-shadow: 0 0 10px color-mix(in srgb, var(--fc) 45%, transparent);
   }
-  .agent[data-familiar="flame"] { background-image: url("/art/familiars/flame.png"); }
-  .agent[data-familiar="leaf"] { background-image: url("/art/familiars/leaf.png"); }
-  .agent[data-familiar="night"] { background-image: url("/art/familiars/night.png"); }
-  .agent[data-familiar="aether"] { background-image: url("/art/familiars/aether.png"); }
+  .session-card .agent.working::after { border-color: var(--fc); }
+  .session-card .agent[data-familiar="flame"] { --fc: #f08a3c; background-image: url("/art/familiars/flame.png"); }
+  .session-card .agent[data-familiar="leaf"] { --fc: #5fd068; background-image: url("/art/familiars/leaf.png"); }
+  .session-card .agent[data-familiar="night"] { --fc: #a66cf0; background-image: url("/art/familiars/night.png"); }
+  .session-card .agent[data-familiar="aether"] { --fc: #7cc8ff; background-image: url("/art/familiars/aether.png"); }
 
-  /* status pills pick up the provider color */
   .status-pill { background: rgba(0, 0, 0, 0.45); border: 1px solid #2f3440; }
   .status-pill.active { border-color: color-mix(in srgb, var(--ok) 55%, transparent); box-shadow: 0 0 10px rgba(76, 195, 138, 0.25); }
 

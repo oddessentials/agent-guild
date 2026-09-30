@@ -84,6 +84,7 @@ function planLabel(plan) {
 
 function paintProviderIcon(el, provider) {
   el.style.setProperty('--c', provider.color || '#64748b');
+  el.dataset.provider = provider.id;
   if (provider.iconUrl) {
     el.classList.add('has-image');
     el.style.backgroundImage = `url(${JSON.stringify(provider.iconUrl)})`;
@@ -96,7 +97,6 @@ function paintProviderIcon(el, provider) {
   el.setAttribute('aria-hidden', 'true');
 }
 
-// Helper-agent art (web/art/familiars); picked by name so an agent keeps its familiar.
 const FAMILIARS = ['flame', 'leaf', 'night', 'aether'];
 
 function renderAgents(container, agents) {
@@ -331,10 +331,10 @@ function buildCard(session) {
   return node;
 }
 
-// Session length as a character level: one level per hour running, starting at 1.
 function sessionLevel(s) {
-  const hours = (Date.now() - Date.parse(s.createdAt)) / 3_600_000;
-  return Number.isFinite(hours) ? Math.max(1, Math.floor(hours)) : 1;
+  const end = s.status === 'exited' ? Date.parse(s.lastOutputAt ?? s.createdAt) : Date.now();
+  const hours = (end - Date.parse(s.createdAt)) / 3_600_000;
+  return Number.isFinite(hours) ? Math.max(0, Math.floor(hours)) + 1 : 1;
 }
 
 function updateCard(node, s) {

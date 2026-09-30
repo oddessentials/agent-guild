@@ -3,6 +3,15 @@ node_modules/
 .DS_Store
 Thumbs.db
 
-# Working concept art (large source images; shipped assets live under web/art/)
 concept-art/beta-screens-poc/
-concept-art/default-art-design-v1/
+concept-art/default-art-design-v1/*
+!concept-art/default-art-design-v1/source/
+!concept-art/default-art-design-v1/characters/
+!concept-art/default-art-design-v1/familiars/
+!concept-art/default-art-design-v1/ui/
+!concept-art/default-art-design-v1/icons/
+!concept-art/default-art-design-v1/backgrounds/
+concept-art/default-art-design-v1/characters/*/*-sm.png
+concept-art/default-art-design-v1/icons/*.svg
+concept-art/default-art-design-v1/ui/chain.png
+concept-art/default-art-design-v1/ui/cage-bars.png
