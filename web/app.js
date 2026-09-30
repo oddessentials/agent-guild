@@ -9,6 +9,7 @@ const $ = (id) => document.getElementById(id);
 const state = {
   token: null,
   providers: [],
+  usage: new Map(),
   sessions: new Map(),
   views: new Map(),
   activeId: null,
@@ -47,6 +48,17 @@ function relativeTime(iso) {
   const h = Math.round(m / 60);
   if (h < 24) return `${h} h ago`;
   return `${Math.round(h / 24)} d ago`;
+}
+
+function untilTime(iso) {
+  if (!iso) return '';
+  const s = Math.round((Date.parse(iso) - Date.now()) / 1000);
+  if (!Number.isFinite(s) || s <= 0) return 'resets now';
+  const h = Math.floor(s / 3600);
+  const m = Math.round((s % 3600) / 60);
+  if (h >= 48) return `resets in ${Math.round(h / 24)} d`;
+  if (h > 0) return `resets in ${h} h${m ? ` ${m} min` : ''}`;
+  return `resets in ${Math.max(1, m)} min`;
 }
 
 function hueFor(text) {
@@ -142,8 +154,46 @@ function renderProviders() {
     update.addEventListener('click', () => installProvider(provider, node));
     hint.hidden = provider.available || provider.installable;
     hint.textContent = provider.install || `${provider.command} was not found on PATH.`;
+    renderUsage(node, provider);
     return node;
   }));
+}
+
+function renderUsage(card, provider) {
+  const host = card.querySelector('.usage');
+  const usage = state.usage.get(provider.id);
+  if (!provider.available || !provider.usageSource || !usage) return host.replaceChildren();
+  if (usage.error || usage.windows.length === 0) {
+    const note = document.createElement('div');
+    note.className = 'usage-note';
+    note.textContent = `Usage: ${usage.error || 'no limits reported'}`;
+    note.title = note.textContent;
+    return host.replaceChildren(note);
+  }
+  host.replaceChildren(...usage.windows.map((w) => {
+    const node = $('meter-template').content.firstElementChild.cloneNode(true);
+    const left = Math.max(0, Math.round(100 - w.usedPercent));
+    node.classList.toggle('low', left <= 25 && left > 10);
+    node.classList.toggle('empty', left <= 10);
+    node.querySelector('.meter-label').textContent = w.label;
+    node.querySelector('.meter-fill').style.width = `${left}%`;
+    node.querySelector('.meter-value').textContent = `${left}% left`;
+    const when = untilTime(w.resetsAt);
+    node.title = `${w.label}: ${Math.round(w.usedPercent)}% used${when ? `, ${when}` : ''}${usage.plan ? ` (${usage.plan} plan)` : ''}`;
+    node.setAttribute('role', 'img');
+    node.setAttribute('aria-label', node.title);
+    return node;
+  }));
+}
+
+async function loadUsage() {
+  let usage;
+  try { ({ usage } = await api('GET', '/usage')); } catch { return; }
+  state.usage = new Map(usage.map((u) => [u.providerId, u]));
+  for (const card of $('providers').children) {
+    const provider = state.providers.find((p) => p.id === card.dataset.id);
+    if (provider) renderUsage(card, provider);
+  }
 }
 
 function providerState(provider) {
@@ -534,6 +584,8 @@ function readTokenFromHash() {
   return token;
 }
 
+let usageTimer;
+
 function showAuth(message = '') {
   $('app').hidden = true;
   $('terminal-panel').hidden = true;
@@ -558,6 +610,9 @@ async function boot() {
   save(TOKEN_KEY, state.token);
   $('app').hidden = false;
   connectEvents();
+  loadUsage();
+  clearInterval(usageTimer);
+  usageTimer = setInterval(loadUsage, 60000);
 }
 
 $('auth-form').addEventListener('submit', (e) => {

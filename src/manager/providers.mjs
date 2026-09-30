@@ -37,6 +37,15 @@ function normalizeEnv(env) {
   return out;
 }
 
+/** "claude", "codex", a { command, args } that prints usage JSON, or null. */
+function normalizeUsage(usage) {
+  if (usage === 'claude' || usage === 'codex') return usage;
+  if (usage && typeof usage === 'object' && typeof usage.command === 'string' && usage.command) {
+    return { command: usage.command, args: Array.isArray(usage.args) ? usage.args.map(String) : [] };
+  }
+  return null;
+}
+
 function normalize(raw, platform) {
   const merged = { ...raw, ...(raw[platform] || {}) };
   for (const key of PLATFORM_KEYS) delete merged[key];
@@ -47,6 +56,7 @@ function normalize(raw, platform) {
     command: String(merged.command || ''),
     package: merged.package ? String(merged.package) : null,
     versionArgs: Array.isArray(merged.versionArgs) && merged.versionArgs.length ? merged.versionArgs.map(String) : null,
+    usage: normalizeUsage(merged.usage),
     args: Array.isArray(merged.args) ? merged.args.map(String) : [],
     resumeArgs: Array.isArray(merged.resumeArgs) ? merged.resumeArgs.map(String) : [],
     env: normalizeEnv(merged.env),
@@ -218,6 +228,7 @@ export class ProviderRegistry extends EventEmitter {
       installedVersion: installed,
       latestVersion: latest,
       updateAvailable: Boolean(installed && latest && compareVersions(latest, installed) > 0),
+      usageSource: provider.usage === null ? null : typeof provider.usage === 'string' ? provider.usage : 'command',
       color: provider.color,
       monogram: provider.monogram,
       iconUrl: this.iconUrl(provider),

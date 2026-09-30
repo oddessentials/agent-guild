@@ -79,6 +79,16 @@ main { max-width: 1200px; margin: 0 auto; padding: 20px 16px 48px; display: grid
 .provider .state.update-available { color: var(--warn); }
 .provider.unavailable .state { color: var(--muted); }
 .provider .update { color: var(--warn); border-color: var(--warn); }
+.provider .usage { grid-column: 1 / -1; display: grid; gap: 4px; }
+.provider .usage:empty { display: none; }
+.meter { display: grid; grid-template-columns: 5.5em 1fr auto; align-items: center; gap: 8px; font-size: 0.75rem; color: var(--muted); }
+.meter-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.meter-bar { height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+.meter-fill { display: block; height: 100%; border-radius: 3px; background: var(--ok); }
+.meter.low .meter-fill { background: var(--warn); }
+.meter.empty .meter-fill { background: var(--danger); }
+.meter-value { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.usage-note { font-size: 0.75rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .provider-actions { grid-column: 1 / -1; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .provider .hint { font-size: 0.78rem; color: var(--muted); overflow-wrap: anywhere; }
 .provider.busy { opacity: 0.6; pointer-events: none; }

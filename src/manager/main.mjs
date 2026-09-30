@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ProviderRegistry } from './providers.mjs';
 import { SessionManager } from './session-manager.mjs';
+import { UsageMonitor } from './usage.mjs';
 import { createManagerServer } from './server.mjs';
 import { resolveBaseEnv } from './shell-env.mjs';
 import {
@@ -39,6 +40,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
 
   let api;
   const manager = new SessionManager({ registry, baseEnv, getApiUrl: () => api.url, sessionDefaults });
+  const usage = new UsageMonitor({ registry, env: baseEnv });
   let closing = null;
 
   const versionTimer = setInterval(() => registry.refreshVersions().catch(() => {}), VERSION_REFRESH_MS);
@@ -59,6 +61,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
   api = createManagerServer({
     manager,
     registry,
+    usage,
     token,
     host,
     port,

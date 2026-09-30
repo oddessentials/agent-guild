@@ -11,6 +11,9 @@ import { loadProviders, defaultShell, ProviderRegistry } from '../src/manager/pr
 import { claudeHookToReport } from '../src/report/claude-hook.mjs';
 import { ensurePtyReady, spawnHelperCandidates } from '../src/manager/pty-setup.mjs';
 import { parseVersion, compareVersions, installedVersion, latestVersion } from '../src/manager/versions.mjs';
+import {
+  UsageMonitor, readClaudeCredentials, readCodexCredentials, fetchClaudeUsage, fetchCodexUsage, commandUsage, toIso, windowLabel,
+} from '../src/manager/usage.mjs';
 
 function tempDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-unit-'));
@@ -156,6 +159,92 @@ test('versions are parsed, compared and looked up', async () => {
   assert.equal(calls[0], 'https://registry.example/@openai%2fcodex/latest');
   assert.equal(await latestVersion('nothing', { fetchImpl }), null);
   assert.equal(await latestVersion('boom', { fetchImpl: async () => { throw new Error('offline'); } }), null);
+});
+
+test('usage credentials are read from the tools\' own sign-in files', async () => {
+  const dir = tempDir();
+  const claudeFile = path.join(dir, '.credentials.json');
+  await assert.rejects(readClaudeCredentials({ file: claudeFile, keychain: false }), /not signed in/);
+  fs.writeFileSync(claudeFile, JSON.stringify({ claudeAiOauth: { accessToken: 'tok', expiresAt: Date.now() + 60000, subscriptionType: 'max' } }));
+  assert.deepEqual(await readClaudeCredentials({ file: claudeFile, keychain: false }), { accessToken: 'tok', plan: 'max' });
+  fs.writeFileSync(claudeFile, JSON.stringify({ claudeAiOauth: { accessToken: 'tok', expiresAt: Date.now() - 1 } }));
+  await assert.rejects(readClaudeCredentials({ file: claudeFile, keychain: false }), /expired/);
+  fs.writeFileSync(claudeFile, JSON.stringify({}));
+  await assert.rejects(readClaudeCredentials({ file: claudeFile, keychain: false }), /API key/);
+
+  const codexFile = path.join(dir, 'auth.json');
+  await assert.rejects(readCodexCredentials({ file: codexFile }), /not signed in/);
+  fs.writeFileSync(codexFile, JSON.stringify({ tokens: { access_token: 'ctok', account_id: 'acc-1' } }));
+  assert.deepEqual(await readCodexCredentials({ file: codexFile }), { accessToken: 'ctok', accountId: 'acc-1' });
+});
+
+test('usage endpoints are called with the right headers and parsed into windows', async () => {
+  const seen = [];
+  const fetchImpl = async (url, init) => {
+    seen.push({ url, headers: init.headers });
+    if (url.includes('anthropic')) {
+      return { ok: true, json: async () => ({ five_hour: { utilization: 42.55, resets_at: '2030-01-01T05:00:00Z' }, seven_day: { utilization: 12, resets_at: 1893456000 }, seven_day_opus: null }) };
+    }
+    return { ok: true, json: async () => ({ plan_type: 'plus', rate_limit: { primary_window: { used_percent: 30, limit_window_seconds: 18000, reset_at: 1893456000 }, secondaryWindow: { usedPercent: 80, limitWindowSeconds: 604800, resetAfterSeconds: 60 } } }) };
+  };
+  const claude = await fetchClaudeUsage({ accessToken: 'tok', plan: 'max', version: '2.1.0', fetchImpl });
+  assert.equal(seen[0].headers.Authorization, 'Bearer tok');
+  assert.equal(seen[0].headers['anthropic-beta'], 'oauth-2025-04-20');
+  assert.equal(seen[0].headers['User-Agent'], 'claude-code/2.1.0');
+  assert.deepEqual(claude, { plan: 'max', windows: [
+    { label: '5-hour', usedPercent: 42.6, resetsAt: '2030-01-01T05:00:00.000Z' },
+    { label: '7-day', usedPercent: 12, resetsAt: '2030-01-01T00:00:00.000Z' },
+  ] });
+
+  const codex = await fetchCodexUsage({ accessToken: 'ctok', accountId: 'acc-1', fetchImpl });
+  assert.equal(seen[1].headers['ChatGPT-Account-Id'], 'acc-1');
+  assert.equal(codex.plan, 'plus');
+  assert.equal(codex.windows.length, 2);
+  assert.deepEqual(codex.windows[0], { label: '5-hour', usedPercent: 30, resetsAt: '2030-01-01T00:00:00.000Z' });
+  assert.equal(codex.windows[1].label, '7-day');
+  assert.equal(codex.windows[1].usedPercent, 80);
+  assert.ok(Date.parse(codex.windows[1].resetsAt) - Date.now() > 50000);
+
+  await assert.rejects(fetchClaudeUsage({ accessToken: 'x', fetchImpl: async () => ({ ok: false, status: 401 }) }), /sign in again/);
+  await assert.rejects(fetchCodexUsage({ accessToken: 'x', fetchImpl: async () => ({ ok: false, status: 429 }) }), (err) => err.rateLimited === true);
+
+  assert.equal(toIso(1893456000), '2030-01-01T00:00:00.000Z');
+  assert.equal(toIso('1893456000000'), '2030-01-01T00:00:00.000Z');
+  assert.equal(toIso('nonsense'), null);
+  assert.equal(windowLabel(18000), '5-hour');
+  assert.equal(windowLabel(604800), '7-day');
+});
+
+test('a usage command prints JSON, and the monitor caches snapshots', async () => {
+  const fixture = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-usage.mjs');
+  const env = { PATH: path.dirname(process.execPath) };
+  const report = await commandUsage({ command: process.execPath, args: [fixture] }, env);
+  assert.equal(report.plan, 'test');
+  assert.equal(report.windows.length, 2);
+  await assert.rejects(commandUsage({ command: 'no-such-usage-tool', args: [] }, env), /not found/);
+
+  const dir = tempDir();
+  const userFile = path.join(dir, 'providers.json');
+  fs.writeFileSync(userFile, JSON.stringify({ providers: [{ id: 'anthropic' }, { id: 'openai' }, { id: 'google', usage: { command: process.execPath, args: [fixture] } }] }));
+  const registry = new ProviderRegistry({ userFile, env, checkUpdates: false });
+  let fetches = 0;
+  const monitor = new UsageMonitor({
+    registry,
+    env,
+    fetchImpl: async () => { fetches++; return { ok: true, json: async () => ({ five_hour: { utilization: 5 } }) }; },
+    readers: {
+      claude: async () => ({ accessToken: 'tok', plan: 'pro' }),
+      codex: async () => { throw new Error('boom'); },
+    },
+  });
+  const first = await monitor.all();
+  const byId = Object.fromEntries(first.map((u) => [u.providerId, u]));
+  assert.deepEqual(byId.anthropic.windows, [{ label: '5-hour', usedPercent: 5, resetsAt: null }]);
+  assert.equal(byId.anthropic.plan, 'pro');
+  assert.match(byId.openai.error, /usage check failed: boom/);
+  assert.equal(byId.google.plan, 'test');
+  await monitor.all();
+  assert.equal(fetches, 1, 'a fresh snapshot is served from the cache');
 });
 
 test('loadProviders survives a broken user file', () => {

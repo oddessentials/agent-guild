@@ -37,7 +37,7 @@ process.env.AGENT_GUILD_NPM_REGISTRY = `http://127.0.0.1:${npmRegistry.address()
 fs.writeFileSync(path.join(home, 'providers.json'), JSON.stringify({
   providers: [
     { id: 'fake', vendor: 'Test', tool: 'Fake Tool', command: process.execPath, args: [path.join(here, 'fixtures', 'fake-tool.mjs')], resumeArgs: ['--resume', '{id}'], package: 'fake-tool-pkg', versionArgs: [path.join(here, 'fixtures', 'fake-tool.mjs'), '--version'] },
-    { id: 'plain', vendor: 'Test', tool: 'Plain Tool', command: process.execPath, args: [path.join(here, 'fixtures', 'fake-tool.mjs')] },
+    { id: 'plain', vendor: 'Test', tool: 'Plain Tool', command: process.execPath, args: [path.join(here, 'fixtures', 'fake-tool.mjs')], usage: { command: process.execPath, args: [path.join(here, 'fixtures', 'fake-usage.mjs')] } },
     { id: 'missing', vendor: 'Nobody', tool: 'Missing Tool', command: 'definitely-not-installed-agent-guild', install: 'npm i -g nothing', package: 'nothing' },
   ],
 }));
@@ -197,6 +197,26 @@ test('providers report availability', async () => {
   assert.equal(missing.available, false);
   assert.equal(missing.installable, true);
   assert.ok(body.providers.some((p) => p.id === 'anthropic'), 'built-in providers are still listed');
+});
+
+test('usage meters come from the provider usage source', async () => {
+  const { body } = await call('GET', '/providers');
+  assert.equal(body.providers.find((p) => p.id === 'plain').usageSource, 'command');
+  assert.equal(body.providers.find((p) => p.id === 'fake').usageSource, null);
+  assert.equal(body.providers.find((p) => p.id === 'anthropic').usageSource, 'claude');
+
+  const { status, body: usage } = await call('GET', '/usage');
+  assert.equal(status, 200);
+  const plain = usage.usage.find((u) => u.providerId === 'plain');
+  assert.equal(plain.error, null);
+  assert.equal(plain.plan, 'test');
+  assert.deepEqual(plain.windows, [
+    { label: '5-hour', usedPercent: 42.3, resetsAt: '2030-01-01T00:00:00.000Z' },
+    { label: '7-day', usedPercent: 90, resetsAt: null },
+  ]);
+  const anthropic = usage.usage.find((u) => u.providerId === 'anthropic');
+  assert.ok(anthropic === undefined || typeof anthropic.error === 'string' || Array.isArray(anthropic.windows));
+  assert.ok(!usage.usage.some((u) => u.providerId === 'fake'), 'providers without a source are not listed');
 });
 
 test('installed and latest versions are reported and updates flagged', async () => {

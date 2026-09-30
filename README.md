@@ -15,6 +15,10 @@ coding tool, and see at a glance which sessions and agents are working.
   when the tool is not an npm package. Installed tools show their version
   and an **Update** button when npm has a newer one; updating while that
   tool's sessions are running asks first, because it can break them.
+* **See what is left of your limits.** Claude Code and Codex CLI cards show
+  a meter per rate-limit window (5-hour, 7-day) with the time until it
+  resets, read from the tool's own sign-in. Other providers can supply a
+  command that prints usage.
 * **Work in real terminals.** Each session is a card. Open it for a full
   interactive terminal: type instructions, answer prompts, watch output. Run
   as many sessions at once as you like.
@@ -80,6 +84,7 @@ one platform under a `win32` or `darwin` key. See
 | `command`, `args` | What to run. `command` is looked up on PATH. `@shell` means the user's default shell. |
 | `package` | The tool's npm package, e.g. `@openai/codex`. Enables the **Install** and **Update** buttons and the version check. |
 | `versionArgs` | Arguments that make the command print its version, used instead of `args`, e.g. `["--version"]`. |
+| `usage` | Where the usage meters come from: `"claude"`, `"codex"`, `{ "command", "args" }` for a program that prints `{ "windows": [{ "label", "usedPercent", "resetsAt" }] }`, or `null` for none. |
 | `resumeArgs` | Arguments that resume the tool's own session, with `{id}` standing for the id, e.g. `["--resume", "{id}"]`. Without it the card has no **Existing** button. |
 | `env` | Extra environment variables for the tool. |
 | `color`, `monogram`, `icon` | Icon appearance. `icon` is a URL path; you can also drop `<id>.svg` into `web/icons/`. |
@@ -110,6 +115,10 @@ See [docs/agent-reporting.md](docs/agent-reporting.md).
   other websites from reaching the terminals through your browser.
 * Tools inside a session get a separate token that can only report agents
   for that session.
+* Usage meters are fetched by the manager with the coding tool's own
+  sign-in (Claude Code's credentials, Codex CLI's `auth.json`). The page only
+  ever receives percentages. On macOS the first lookup may ask for keychain
+  access to the "Claude Code-credentials" item; choose Always Allow.
 
 Anyone who can run programs as your user can already read the token, as with
 any local developer tool.

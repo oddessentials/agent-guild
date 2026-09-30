@@ -62,6 +62,7 @@ Errors use one shape:
   "installedVersion": "2.1.285",
   "latestVersion": "2.1.290",
   "updateAvailable": true,
+  "usageSource": "claude",
   "color": "#D97757",
   "monogram": "A",
   "iconUrl": null,
@@ -85,6 +86,32 @@ the registry, `AGENT_GUILD_NO_UPDATE_CHECK=1` skips the lookup). Both are
 null until the first check finishes; a `providers.updated` event follows.
 `updateAvailable` is true when the latest version is newer, and
 `POST /providers/:id/install` performs the update.
+
+`usageSource` is `claude`, `codex`, `command` or null, and says whether
+`GET /usage` reports the provider.
+
+### Usage
+
+```json
+{
+  "providerId": "anthropic",
+  "plan": "max",
+  "windows": [
+    { "label": "5-hour", "usedPercent": 42.5, "resetsAt": "2026-09-30T08:00:00.000Z" },
+    { "label": "7-day", "usedPercent": 12, "resetsAt": "2026-10-03T05:00:00.000Z" }
+  ],
+  "fetchedAt": "2026-09-30T03:12:01.120Z",
+  "error": null
+}
+```
+
+Each window is one rate limit of the provider's subscription. When the
+provider is not signed in or the lookup failed, `windows` is empty and
+`error` says why. The manager reads the tool's own sign-in (Claude Code's
+credentials file or macOS keychain item, Codex CLI's `auth.json`) and asks
+the vendor's usage endpoint; a `command` source runs a program that prints
+`{ plan?, windows: [{ label, usedPercent | remainingPercent, resetsAt? }] }`.
+Snapshots are cached for a minute.
 
 ### Session
 
@@ -151,6 +178,7 @@ All paths are under `/api/v1`.
 | GET | `/providers` | | `{ providers: Provider[] }` |
 | POST | `/providers/reload` | | Re-reads `providers.json`. |
 | POST | `/providers/:id/install` | `{ force? }` | `201 { session }`: a session running `npm install -g <package>@latest`. 409 `provider_in_use` (with `running`, the session count) while the provider's sessions are running, unless `force` is true. |
+| GET | `/usage` | | `{ usage: Usage[] }` for every provider with a `usageSource`. |
 | GET | `/sessions` | | `{ sessions: Session[] }` |
 | POST | `/sessions` | `{ providerId, cwd?, cols?, rows?, name?, args?, resume? }` | `201 { session }` |
 | GET | `/sessions/:id` | | `{ session }` |
