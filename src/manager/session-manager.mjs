@@ -8,6 +8,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { Session, newId, clampDimension } from './session.mjs';
 import { prependPath } from './report-shims.mjs';
+import { CHANNEL_LABELS } from './install-channels.mjs';
 
 export const MAX_SESSIONS = 32;
 
@@ -97,10 +98,8 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
-   * Install or update a provider's npm package in a visible session, so the
-   * user can watch npm and answer any prompt. Refuses while sessions of that
-   * provider are running unless `force` is set, because replacing a tool
-   * under a running process can break it.
+   * Refuses while sessions of that provider are running unless `force` is
+   * set, because replacing a tool under a running process can break it.
    */
   install(providerId, { force = false } = {}) {
     const provider = this.registry.get(String(providerId || ''));
@@ -111,9 +110,13 @@ export class SessionManager extends EventEmitter {
       err.running = running;
       throw err;
     }
+    if (this.registry.resolve(provider)) {
+      const { spec, channel } = this.registry.updateSpec(provider);
+      const name = `Update ${provider.tool} (${CHANNEL_LABELS[channel]})`;
+      return this._spawn({ provider, spawnSpec: spec, cwd: os.homedir(), name, task: 'install', installKind: 'update' });
+    }
     const spawnSpec = this.registry.installSpec(provider);
-    const verb = this.registry.resolve(provider) ? 'Update' : 'Install';
-    return this._spawn({ provider, spawnSpec, cwd: os.homedir(), name: `${verb} ${provider.tool}`, task: 'install' });
+    return this._spawn({ provider, spawnSpec, cwd: os.homedir(), name: `Install ${provider.tool}`, task: 'install', installKind: 'install' });
   }
 
   runningFor(providerId) {
@@ -129,7 +132,7 @@ export class SessionManager extends EventEmitter {
     return n;
   }
 
-  _spawn({ provider, spawnSpec, cwd, cols, rows, name, resume = null, task = null }) {
+  _spawn({ provider, spawnSpec, cwd, cols, rows, name, resume = null, task = null, installKind = null }) {
     if (this.closing) throw httpError(503, 'the session manager is stopping', 'manager_stopping');
     if (this.sessions.size >= MAX_SESSIONS) {
       throw httpError(429, `session limit reached (${MAX_SESSIONS}); remove finished sessions first`, 'too_many_sessions');
@@ -179,7 +182,11 @@ export class SessionManager extends EventEmitter {
       if (this.sessions.has(id)) this.emit('event', { type: 'session.updated', session: session.toJSON() });
     });
     session.on('warning', (msg) => console.warn(`[session ${id}] ${msg}`));
-    if (task === 'install') session.on('exit', () => this.registry.notifyChanged([provider.id]));
+    if (task === 'install') {
+      session.on('exit', () => {
+        this.registry.finishInstall(provider.id, { exitCode: session.exitCode, kind: installKind }).catch(() => {});
+      });
+    }
     this.sessions.set(id, session);
     this.emit('event', { type: 'session.created', session: session.toJSON() });
     return session;

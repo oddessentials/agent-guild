@@ -11,6 +11,7 @@ import { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { resolveCommand, buildSpawnSpec, runSpec } from './command-resolver.mjs';
 import { compareVersions, installedVersion, latestVersion, DEFAULT_NPM_REGISTRY } from './versions.mjs';
+import { classifyInstall, formatCommand, helpDescribes } from './install-channels.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULTS_FILE = path.resolve(here, '../../config/providers.default.json');
@@ -51,6 +52,23 @@ function normalizeUsage(usage) {
   return null;
 }
 
+function stringList(value) {
+  return Array.isArray(value) ? value.map(String).filter(Boolean) : [];
+}
+
+function normalizeChannels(raw) {
+  const out = {};
+  if (!raw || typeof raw !== 'object') return out;
+  if (raw.native && typeof raw.native === 'object') {
+    out.native = { paths: stringList(raw.native.paths), update: stringList(raw.native.update) };
+  }
+  if (raw.winget && typeof raw.winget === 'object' && raw.winget.id) out.winget = { id: String(raw.winget.id) };
+  if (raw.legacy && typeof raw.legacy === 'object') {
+    out.legacy = { paths: stringList(raw.legacy.paths), guidance: raw.legacy.guidance ? String(raw.legacy.guidance) : null };
+  }
+  return out;
+}
+
 function httpsUrl(value, field, id, warnings) {
   if (value === undefined || value === null || value === '') return null;
   try {
@@ -80,6 +98,8 @@ function normalize(raw, platform, warnings) {
     monogram: String(merged.monogram || String(merged.vendor || merged.id).charAt(0)).slice(0, 2),
     icon: merged.icon ? String(merged.icon) : null,
     install: String(merged.install || ''),
+    npmNote: merged.npmNote ? String(merged.npmNote) : null,
+    channels: normalizeChannels(merged.channels),
     docs: String(merged.docs || ''),
     usageUrl: httpsUrl(merged.usageUrl, 'usageUrl', merged.id, warnings),
     billingUrl: httpsUrl(merged.billingUrl, 'billingUrl', merged.id, warnings),
@@ -202,9 +222,27 @@ export class ProviderRegistry extends EventEmitter {
     const lookups = this.checkUpdates && providers.some((p) => p.package);
     const registryUrl = lookups ? await this.npmRegistryUrl() : null;
     await Promise.all(providers.map(async (provider) => {
-      const entry = this.versions.get(provider.id) ||
-        { installed: null, installedPath: null, installedMtime: null, installedAt: 0, latest: null, latestAt: 0 };
-      const resolved = provider.versionArgs ? this.resolve(provider) : null;
+      const entry = this.versions.get(provider.id) || {
+        installed: null, installedPath: null, installedMtime: null, installedAt: 0, latest: null, latestAt: 0,
+        probePath: null, probeMtime: null, probeAt: 0, probeOk: null, lastInstall: null,
+      };
+      const found = this.resolve(provider);
+      const channel = found ? this.channelFor(provider, found) : null;
+      if (channel?.probe) {
+        const mtime = fileMtime(found);
+        const ttl = entry.probeOk === true ? VERSION_TTL_MS : FAILED_PROBE_TTL_MS;
+        if (force || entry.probePath !== found || entry.probeMtime !== mtime || now - entry.probeAt > ttl) {
+          const spec = buildSpawnSpec(channel.update.file, [...channel.update.args, '--help'], this.env, this.platform);
+          const ok = await runSpec(spec, { env: { ...this.env, ...provider.env } })
+            .then(({ stdout, stderr }) => helpDescribes(`${stdout}\n${stderr}`, channel.update.args), () => false);
+          changed ||= ok !== entry.probeOk;
+          Object.assign(entry, { probePath: found, probeMtime: mtime, probeAt: now, probeOk: ok });
+        }
+      } else if (entry.probePath !== null) {
+        Object.assign(entry, { probePath: null, probeMtime: null, probeAt: 0, probeOk: null });
+        changed = true;
+      }
+      const resolved = provider.versionArgs ? found : null;
       if (resolved) {
         const mtime = fileMtime(resolved);
         const ttl = entry.installed === null ? FAILED_PROBE_TTL_MS : VERSION_TTL_MS;
@@ -224,15 +262,59 @@ export class ProviderRegistry extends EventEmitter {
         changed ||= latest !== entry.latest;
         Object.assign(entry, { latest, latestAt: now });
       }
+      const last = entry.lastInstall;
+      if (last && (entry.installed !== last.after || entry.latest !== last.latest)) {
+        entry.lastInstall = null;
+        changed = true;
+      }
       this.versions.set(provider.id, entry);
     }));
     if (changed) this.emit('updated');
   }
 
-  /** Tell clients the list changed (a tool was installed) and re-check versions. */
-  notifyChanged(ids = null) {
+  async finishInstall(id, { exitCode = null, kind = 'update' } = {}) {
+    const provider = this.get(id);
+    if (!provider) return;
+    const before = this.versions.get(id)?.installed ?? null;
     this.emit('updated');
-    this.refreshVersions({ force: true, ids }).catch(() => {});
+    await this.refreshVersions({ force: true, ids: [id] });
+    const entry = this.versions.get(id);
+    if (!entry) return;
+    let outcome;
+    if (exitCode !== 0) outcome = 'failed';
+    else if (kind === 'install') outcome = this.resolve(provider) ? 'installed' : 'missing';
+    else if (entry.installed === null) outcome = 'done';
+    else outcome = entry.installed !== before ? 'updated' : 'unchanged';
+    entry.lastInstall = { kind, outcome, exitCode, before, after: entry.installed, latest: entry.latest, at: Date.now() };
+    this.emit('updated');
+  }
+
+  channelFor(provider, resolvedPath = this.resolve(provider)) {
+    if (!resolvedPath) return null;
+    return classifyInstall({
+      resolvedPath,
+      provider,
+      env: { ...this.env, ...provider.env },
+      platform: this.platform,
+      npmOnPath: this.resolveNpm(),
+      wingetOnPath: this.platform === 'win32' ? resolveCommand('winget', this.env, this.platform) : null,
+    });
+  }
+
+  updateFor(provider, channel = this.channelFor(provider)) {
+    if (!channel) return { file: null, args: [], command: null, guidance: null };
+    if (!channel.update) return { file: null, args: [], command: null, guidance: channel.guidance };
+    const args = [...channel.update.args];
+    if (channel.channel === 'npm' && this.registryUrl) args.push('--registry', this.registryUrl);
+    const command = formatCommand(channel.update.file, args);
+    if (channel.probe) {
+      const probeOk = this.versions.get(provider.id)?.probeOk ?? null;
+      if (probeOk === null) return { file: null, args: [], command: null, guidance: null };
+      if (probeOk === false) {
+        return { file: null, args: [], command: null, guidance: `This copy of ${provider.tool} does not accept "${command}". Update it the way you installed it.` };
+      }
+    }
+    return { file: channel.update.file, args, command, guidance: null };
   }
 
   get(id) {
@@ -265,6 +347,8 @@ export class ProviderRegistry extends EventEmitter {
     const versions = this.versions.get(provider.id);
     const installed = resolvedPath ? versions?.installed ?? null : null;
     const latest = versions?.latest ?? null;
+    const channel = this.channelFor(provider, resolvedPath);
+    const update = this.updateFor(provider, channel);
     return {
       id: provider.id,
       vendor: provider.vendor,
@@ -277,6 +361,11 @@ export class ProviderRegistry extends EventEmitter {
       installedVersion: installed,
       latestVersion: latest,
       updateAvailable: Boolean(installed && latest && compareVersions(latest, installed) > 0),
+      installChannel: channel?.channel ?? null,
+      updateCommand: update.command,
+      updateGuidance: update.guidance,
+      lastInstall: versions?.lastInstall ?? null,
+      npmNote: provider.npmNote,
       usageSource: provider.usage === null ? null : typeof provider.usage === 'string' ? provider.usage : 'command',
       modelPattern: provider.modelPattern,
       color: provider.color,
@@ -318,7 +407,18 @@ export class ProviderRegistry extends EventEmitter {
     return buildSpawnSpec(resolved, [...provider.args, ...resumeArgs, ...extraArgs], this.env, this.platform);
   }
 
-  /** Spawn spec that installs or updates the provider's npm package. */
+  updateSpec(provider) {
+    const channel = this.channelFor(provider);
+    const update = this.updateFor(provider, channel);
+    if (!update.command) {
+      const err = new Error(update.guidance || `Still checking how ${provider.tool} was installed. Try again in a moment.`);
+      err.status = 400;
+      err.code = 'not_updatable';
+      throw err;
+    }
+    return { spec: buildSpawnSpec(update.file, update.args, this.env, this.platform), channel: channel.channel };
+  }
+
   installSpec(provider) {
     if (!provider.package) {
       const err = new Error(`${provider.tool} has no npm package configured; install it by hand: ${provider.install || provider.docs || 'see its documentation'}`);

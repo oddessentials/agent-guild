@@ -8,6 +8,7 @@ import { resolveCommand, buildSpawnSpec, quoteForCmd } from '../src/manager/comm
 import { mergePathLists, parsePathFromEnvOutput } from '../src/manager/shell-env.mjs';
 import { mergeEnv, cleanResumeId, modelFromArgs, SessionManager } from '../src/manager/session-manager.mjs';
 import { loadProviders, defaultShell, ProviderRegistry } from '../src/manager/providers.mjs';
+import { classifyInstall, expandHome, helpDescribes } from '../src/manager/install-channels.mjs';
 import { hookToReports, claudeStatuslineToReport, formatStatusLine } from '../src/report/hooks.mjs';
 import { shimContents, writeReportShims, prependPath, fileUrl, SHIM_NAME, LOADER_NAME } from '../src/manager/report-shims.mjs';
 import { execFileSync } from 'node:child_process';
@@ -146,6 +147,241 @@ test('resume and install specs come from the provider configuration', async () =
   assert.throws(() => cleanResumeId(''), (err) => err.status === 400);
   assert.throws(() => cleanResumeId('a\x1bb'), (err) => err.status === 400);
   assert.throws(() => cleanResumeId('x'.repeat(201)), (err) => err.status === 400);
+});
+
+test('an installed tool is classified by the installation that owns it', () => {
+  const provider = {
+    tool: 'Claude Code',
+    package: '@anthropic-ai/claude-code',
+    channels: {
+      native: { paths: ['~/.local/bin/claude', '~/.local/share/claude'], update: ['update'] },
+      winget: { id: 'Anthropic.ClaudeCode' },
+      legacy: { paths: ['~/.claude/local'], guidance: 'old installer' },
+    },
+  };
+  const fsx = ({ files = [], links = {}, texts = {} } = {}) => ({
+    exists: (f) => files.includes(f),
+    realpath: (f) => links[f] || f,
+    readText: (f) => texts[f] || '',
+  });
+  const mac = { provider, platform: 'darwin', env: { HOME: '/Users/a' }, npmOnPath: '/opt/other/bin/npm' };
+  const windows = { provider, platform: 'win32', env: { USERPROFILE: 'C:\\Users\\a' }, npmOnPath: 'C:\\other\\npm.cmd', wingetOnPath: 'C:\\WindowsApps\\winget.exe' };
+  const npmArgs = (prefix) => ['install', '-g', '--prefix', prefix, '@anthropic-ai/claude-code@latest'];
+
+  assert.equal(expandHome('~/.local/bin/claude', mac.env, 'darwin'), '/Users/a/.local/bin/claude');
+  assert.equal(expandHome('~/.local/bin/claude', windows.env, 'win32'), 'C:\\Users\\a\\.local\\bin\\claude');
+
+  const nvm = '/Users/a/.nvm/versions/node/v22';
+  const nvmPkg = `${nvm}/lib/node_modules/@anthropic-ai/claude-code`;
+  const viaNvm = classifyInstall({ ...mac, resolvedPath: `${nvm}/bin/claude`, fsx: fsx({
+    files: [`${nvmPkg}/package.json`, `${nvm}/bin/npm`],
+    links: { [`${nvm}/bin/claude`]: `${nvmPkg}/bin/claude.exe` },
+  }) });
+  assert.equal(viaNvm.channel, 'npm');
+  assert.deepEqual(viaNvm.update, { file: `${nvm}/bin/npm`, args: npmArgs(nvm) }, 'the npm beside the launcher, not the first npm on PATH');
+
+  const custom = '/Users/a/.npm-global';
+  const customPkg = `${custom}/lib/node_modules/@anthropic-ai/claude-code`;
+  const viaPrefix = classifyInstall({ ...mac, resolvedPath: `${custom}/bin/claude`, fsx: fsx({
+    files: [`${customPkg}/package.json`],
+    links: { [`${custom}/bin/claude`]: `${customPkg}/bin/claude.exe` },
+  }) });
+  assert.deepEqual(viaPrefix.update, { file: '/opt/other/bin/npm', args: npmArgs(custom) }, 'a prefix without its own npm is still the target');
+
+  const stray = classifyInstall({ ...mac, resolvedPath: `${custom}/bin/claude`, fsx: fsx({
+    files: [`${customPkg}/package.json`],
+    texts: { [`${custom}/bin/claude`]: '#!/bin/sh\nexec /opt/tools/claude "$@"\n' },
+  }) });
+  assert.equal(stray.channel, 'unknown', 'a launcher that is not part of the npm package is not claimed by npm');
+  assert.equal(stray.update, null);
+
+  const prefix = 'C:\\Users\\a\\AppData\\Roaming\\npm';
+  const shim = `${prefix}\\claude.cmd`;
+  const shimText = '"%dp0%\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe" %*';
+  const pkgJson = `${prefix}\\node_modules\\@anthropic-ai\\claude-code\\package.json`;
+  const viaShim = classifyInstall({ ...windows, resolvedPath: shim, fsx: fsx({ files: [pkgJson], texts: { [shim]: shimText } }) });
+  assert.equal(viaShim.channel, 'npm');
+  assert.deepEqual(viaShim.update, { file: 'C:\\other\\npm.cmd', args: npmArgs(prefix) });
+  const ownNpm = classifyInstall({ ...windows, resolvedPath: shim, fsx: fsx({ files: [pkgJson, `${prefix}\\npm.cmd`], texts: { [shim]: shimText } }) });
+  assert.equal(ownNpm.update.file, `${prefix}\\npm.cmd`);
+  const noNpm = classifyInstall({ ...windows, npmOnPath: null, resolvedPath: shim, fsx: fsx({ files: [pkgJson], texts: { [shim]: shimText } }) });
+  assert.equal(noNpm.channel, 'npm');
+  assert.equal(noNpm.update, null);
+  assert.match(noNpm.guidance, /npm was not found/);
+
+  const nativeMac = classifyInstall({ ...mac, resolvedPath: '/Users/a/.local/bin/claude', fsx: fsx({
+    links: { '/Users/a/.local/bin/claude': '/Users/a/.local/share/claude/versions/2.1.286' },
+  }) });
+  assert.equal(nativeMac.channel, 'native');
+  assert.deepEqual(nativeMac.update, { file: '/Users/a/.local/bin/claude', args: ['update'] }, 'the detected launcher by its absolute path');
+  assert.equal(nativeMac.probe, true);
+  const nativeLinux = classifyInstall({ provider, platform: 'linux', env: { HOME: '/home/a' }, resolvedPath: '/home/a/.local/bin/claude', fsx: fsx() });
+  assert.equal(nativeLinux.channel, 'native');
+  const nativeWin = classifyInstall({ ...windows, resolvedPath: 'c:\\users\\A\\.local\\bin\\claude.exe', fsx: fsx() });
+  assert.equal(nativeWin.channel, 'native');
+  assert.equal(nativeWin.update.file, 'c:\\users\\A\\.local\\bin\\claude.exe');
+  const noUpdater = classifyInstall({ ...mac, provider: { ...provider, channels: { native: { paths: ['~/.local/bin/claude'], update: [] } } }, resolvedPath: '/Users/a/.local/bin/claude', fsx: fsx() });
+  assert.equal(noUpdater.update, null);
+  assert.match(noUpdater.guidance, /no update command/);
+
+  const arm = classifyInstall({ ...mac, resolvedPath: '/opt/homebrew/bin/claude', fsx: fsx({
+    files: ['/opt/homebrew/bin/brew'],
+    links: { '/opt/homebrew/bin/claude': '/opt/homebrew/Caskroom/claude-code@latest/2.1.286/claude' },
+  }) });
+  assert.equal(arm.channel, 'brew');
+  assert.deepEqual(arm.update, { file: '/opt/homebrew/bin/brew', args: ['upgrade', '--cask', 'claude-code@latest'] });
+  const gemini = { tool: 'Gemini CLI', package: '@google/gemini-cli', channels: {} };
+  const intel = classifyInstall({ ...mac, provider: gemini, resolvedPath: '/usr/local/bin/gemini', fsx: fsx({
+    files: ['/usr/local/bin/brew', '/opt/homebrew/bin/brew'],
+    links: { '/usr/local/bin/gemini': '/usr/local/Cellar/gemini-cli/0.46.0/bin/gemini' },
+  }) });
+  assert.deepEqual(intel.update, { file: '/usr/local/bin/brew', args: ['upgrade', 'gemini-cli'] }, 'the Homebrew that owns the file');
+  const linuxbrew = classifyInstall({ provider: gemini, platform: 'linux', env: { HOME: '/home/a' }, resolvedPath: '/home/linuxbrew/.linuxbrew/bin/gemini', fsx: fsx({
+    files: ['/home/linuxbrew/.linuxbrew/bin/brew'],
+    links: { '/home/linuxbrew/.linuxbrew/bin/gemini': '/home/linuxbrew/.linuxbrew/Cellar/gemini-cli/0.46.0/bin/gemini' },
+  }) });
+  assert.equal(linuxbrew.update.file, '/home/linuxbrew/.linuxbrew/bin/brew');
+  const orphan = classifyInstall({ ...mac, resolvedPath: '/opt/homebrew/bin/claude', fsx: fsx({
+    files: ['/usr/local/bin/brew'],
+    links: { '/opt/homebrew/bin/claude': '/opt/homebrew/Caskroom/claude-code/2.1.285/claude' },
+  }) });
+  assert.equal(orphan.channel, 'brew');
+  assert.equal(orphan.update, null, 'another Homebrew is not used in its place');
+  assert.match(orphan.guidance, /brew was not found/);
+
+  const packages = 'C:\\Users\\a\\AppData\\Local\\Microsoft\\WinGet\\Packages';
+  const wingetExe = `${packages}\\Anthropic.ClaudeCode_Microsoft.Winget.Source_8wekyb3d8bbwe\\claude.exe`;
+  const viaWinget = classifyInstall({ ...windows, resolvedPath: wingetExe, fsx: fsx() });
+  assert.equal(viaWinget.channel, 'winget');
+  assert.deepEqual(viaWinget.update, { file: 'C:\\WindowsApps\\winget.exe', args: ['upgrade', '--id', 'Anthropic.ClaudeCode', '--exact'] });
+  const link = 'C:\\Users\\a\\AppData\\Local\\Microsoft\\WinGet\\Links\\claude.exe';
+  assert.equal(classifyInstall({ ...windows, resolvedPath: link, fsx: fsx({ links: { [link]: wingetExe } }) }).channel, 'winget');
+  const noWinget = classifyInstall({ ...windows, wingetOnPath: null, resolvedPath: wingetExe, fsx: fsx() });
+  assert.equal(noWinget.update, null);
+  assert.match(noWinget.guidance, /winget was not found/);
+  const otherPackage = classifyInstall({ ...windows, resolvedPath: `${packages}\\Some.Tool_Microsoft.Winget.Source_8wekyb3d8bbwe\\claude.exe`, fsx: fsx() });
+  assert.equal(otherPackage.channel, 'unknown', 'a WinGet folder of another package is not claimed');
+
+  const legacy = classifyInstall({ ...mac, resolvedPath: '/Users/a/.claude/local/claude', fsx: fsx() });
+  assert.equal(legacy.channel, 'legacy');
+  assert.equal(legacy.update, null);
+  assert.equal(legacy.guidance, 'old installer');
+
+  const copied = classifyInstall({ ...mac, resolvedPath: '/usr/local/bin/claude', fsx: fsx() });
+  assert.equal(copied.channel, 'unknown');
+  assert.equal(copied.update, null, 'an unrecognised installation gets no guessed command');
+  assert.match(copied.guidance, /does not recognise/);
+});
+
+test('updates are bound to the installation that owns the resolved tool', async () => {
+  const win = process.platform === 'win32';
+  const script = (dir, name, body) => {
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, win ? `${name}.cmd` : name);
+    fs.writeFileSync(file, win ? `@echo off\r\n${body.win}\r\n` : `#!/bin/sh\n${body.sh}\n`, { mode: 0o755 });
+    return file;
+  };
+  const succeed = { win: 'exit /b 0', sh: 'exit 0' };
+  const root = tempDir();
+  const nativeDir = path.join(root, 'native');
+  const prefix = path.join(root, 'prefix');
+  const prefixBin = win ? prefix : path.join(prefix, 'bin');
+  const pkgDir = path.join(prefix, ...(win ? [] : ['lib']), 'node_modules', 'mytool-pkg');
+  const otherNpmDir = path.join(root, 'other-npm');
+  const launcher = script(nativeDir, 'mytool', { win: 'echo Usage: mytool update [options]', sh: 'echo "Usage: mytool update [options]"' });
+  fs.mkdirSync(pkgDir, { recursive: true });
+  fs.writeFileSync(path.join(pkgDir, 'package.json'), '{}');
+  script(prefixBin, 'mytool', { win: 'REM node_modules\\mytool-pkg\\bin\\cli.js', sh: '# node_modules/mytool-pkg/bin/cli.js' });
+  const ownNpm = script(prefixBin, 'npm', succeed);
+  script(otherNpmDir, 'npm', succeed);
+  const userFile = path.join(root, 'providers.json');
+  fs.writeFileSync(userFile, JSON.stringify({ providers: [
+    { id: 'mytool', tool: 'My Tool', command: 'mytool', package: 'mytool-pkg', channels: { native: { paths: [path.join(nativeDir, 'mytool')], update: ['update'] } } },
+  ] }));
+  const base = { PATHEXT: '.EXE;.CMD', ComSpec: process.env.ComSpec, SystemRoot: process.env.SystemRoot };
+  const lineOf = (spec) => (typeof spec.args === 'string' ? spec.args : [spec.file, ...spec.args].join(' '));
+
+  const nativeFirst = new ProviderRegistry({ userFile, env: { ...base, PATH: [otherNpmDir, nativeDir, prefixBin].join(path.delimiter) }, checkUpdates: false });
+  const tool = nativeFirst.get('mytool');
+  assert.equal(nativeFirst.describe(tool).installChannel, 'native');
+  assert.equal(nativeFirst.describe(tool).updateCommand, null, 'no command before the launcher has shown it accepts it');
+  assert.throws(() => nativeFirst.updateSpec(tool), (err) => err.code === 'not_updatable');
+  await nativeFirst.refreshVersions();
+  const viaLauncher = nativeFirst.updateSpec(tool);
+  assert.equal(viaLauncher.channel, 'native');
+  assert.ok(lineOf(viaLauncher.spec).includes(launcher), 'the detected launcher, by its absolute path');
+  assert.ok(lineOf(viaLauncher.spec).includes(' update'));
+  assert.ok(!lineOf(viaLauncher.spec).includes('npm'));
+  assert.ok(nativeFirst.describe(tool).updateCommand.includes(launcher));
+
+  const npmFirst = new ProviderRegistry({ userFile, env: { ...base, PATH: [otherNpmDir, prefixBin, nativeDir].join(path.delimiter) }, checkUpdates: false });
+  const viaNpm = npmFirst.updateSpec(npmFirst.get('mytool'));
+  assert.equal(viaNpm.channel, 'npm');
+  assert.ok(lineOf(viaNpm.spec).includes(ownNpm), 'the npm of the owning prefix, not the first npm on PATH');
+  assert.ok(lineOf(viaNpm.spec).includes(`--prefix ${prefix} mytool-pkg@latest`));
+  const mirrored = new ProviderRegistry({ userFile, env: { ...base, PATH: [prefixBin].join(path.delimiter) }, checkUpdates: false, registryUrl: 'https://mirror.example/npm' });
+  assert.ok(lineOf(mirrored.updateSpec(mirrored.get('mytool')).spec).includes('mytool-pkg@latest --registry https://mirror.example/npm'));
+
+  script(nativeDir, 'mytool', { win: 'echo Usage: mytool [OPTIONS] [PROMPT]', sh: 'echo "Usage: mytool [OPTIONS] [PROMPT]"' });
+  await nativeFirst.refreshVersions({ force: true });
+  assert.equal(nativeFirst.describe(tool).updateCommand, null, 'general help is not proof that the update command exists');
+  assert.match(nativeFirst.describe(tool).updateGuidance, /does not accept/);
+  assert.throws(() => nativeFirst.updateSpec(tool), (err) => err.code === 'not_updatable' && /does not accept/.test(err.message));
+
+  script(nativeDir, 'mytool', { win: 'exit /b 1', sh: 'exit 1' });
+  await nativeFirst.refreshVersions({ force: true });
+  assert.equal(nativeFirst.describe(tool).updateCommand, null);
+
+  assert.equal(helpDescribes('Usage: claude update|upgrade [options]\n\nCheck for updates and install if available', ['update']), true);
+  assert.equal(helpDescribes('Check for updates or install a specific version\n\nUsage: grok update [OPTIONS]', ['update']), true);
+  assert.equal(helpDescribes('USAGE:\n    tool update [FLAGS]', ['update']), true);
+  assert.equal(helpDescribes('Codex CLI\n\nUsage: codex [OPTIONS] [PROMPT]\n       codex [OPTIONS] <COMMAND> [ARGS]\n\nCommands:\n  exec  Run non-interactively', ['update']), false);
+  assert.equal(helpDescribes('Usage: tool auto-update [options]', ['update']), false);
+  assert.equal(helpDescribes('', ['update']), false);
+});
+
+test('an install or update ends with a fresh version check and a recorded outcome', async () => {
+  const dir = tempDir();
+  const versionFile = path.join(dir, 'version.txt');
+  const fixture = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-tool.mjs');
+  const userFile = path.join(dir, 'providers.json');
+  fs.writeFileSync(userFile, JSON.stringify({ providers: [
+    { id: 'tool', tool: 'Tool', command: process.execPath, package: 'tool-pkg', versionArgs: [fixture, '--version'], env: { FAKE_TOOL_VERSION_FILE: versionFile } },
+    { id: 'absent', tool: 'Absent', command: 'definitely-not-installed-agent-guild', package: 'absent-pkg' },
+  ] }));
+  const fetchImpl = async () => ({ ok: true, json: async () => ({ version: '9.9.9' }) });
+  const registry = new ProviderRegistry({ userFile, env: { ...process.env, PATH: path.dirname(process.execPath) }, registryUrl: 'https://registry.example', fetchImpl });
+  const tool = registry.get('tool');
+  await registry.refreshVersions({ ids: ['tool', 'absent'] });
+  assert.equal(registry.describe(tool).installedVersion, '1.2.3');
+  assert.equal(registry.describe(tool).lastInstall, null);
+
+  await registry.finishInstall('tool', { exitCode: 0, kind: 'update' });
+  const unchanged = registry.describe(tool);
+  assert.equal(unchanged.lastInstall.outcome, 'unchanged');
+  assert.equal(unchanged.updateAvailable, true, 'the release stays on offer');
+  assert.equal(unchanged.latestVersion, '9.9.9');
+
+  await registry.finishInstall('tool', { exitCode: 3, kind: 'update' });
+  assert.equal(registry.describe(tool).lastInstall.outcome, 'failed');
+  assert.equal(registry.describe(tool).lastInstall.exitCode, 3);
+
+  fs.writeFileSync(versionFile, '2.0.0');
+  assert.equal(registry.describe(tool).installedVersion, '1.2.3', 'the hourly cache still holds the old version');
+  await registry.finishInstall('tool', { exitCode: 0, kind: 'update' });
+  const updated = registry.describe(tool);
+  assert.equal(updated.installedVersion, '2.0.0', 'the version is read again, not taken from the cache');
+  assert.equal(updated.lastInstall.outcome, 'updated');
+  assert.equal(updated.lastInstall.before, '1.2.3');
+
+  fs.writeFileSync(versionFile, '3.0.0');
+  await registry.refreshVersions({ force: true, ids: ['tool'] });
+  assert.equal(registry.describe(tool).lastInstall, null, 'the outcome is dropped once the version moves on');
+
+  await registry.finishInstall('absent', { exitCode: 0, kind: 'install' });
+  assert.equal(registry.describe(registry.get('absent')).lastInstall.outcome, 'missing');
+  await registry.finishInstall('absent', { exitCode: 1, kind: 'install' });
+  assert.equal(registry.describe(registry.get('absent')).lastInstall.outcome, 'failed');
 });
 
 test('versions are parsed, compared and looked up', async () => {

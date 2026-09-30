@@ -13,10 +13,19 @@
       "resumeArgs": ["--resume", "{id}"],
       "color": "#D97757",
       "monogram": "A",
-      "install": "npm install -g @anthropic-ai/claude-code",
-      "docs": "https://docs.anthropic.com/en/docs/claude-code",
+      "install": "curl -fsSL https://claude.ai/install.sh | bash",
+      "npmNote": "npm installs the same native build as Anthropic's installer.",
+      "channels": {
+        "native": { "paths": ["~/.local/bin/claude", "~/.local/share/claude"], "update": ["update"] },
+        "winget": { "id": "Anthropic.ClaudeCode" },
+        "legacy": { "paths": ["~/.claude/local"], "guidance": "This copy comes from an older Claude Code installer. Remove ~/.claude/local and reinstall with the current installer." }
+      },
+      "docs": "https://code.claude.com/docs/en/setup",
       "usageUrl": "https://claude.ai/settings/usage",
-      "billingUrl": "https://claude.ai/settings/billing"
+      "billingUrl": "https://claude.ai/settings/billing",
+      "win32": {
+        "install": "irm https://claude.ai/install.ps1 | iex"
+      }
     },
     {
       "id": "openai",
@@ -31,10 +40,22 @@
       "resumeArgs": ["resume", "{id}"],
       "color": "#10A37F",
       "monogram": "O",
-      "install": "npm install -g @openai/codex",
+      "install": "curl -fsSL https://chatgpt.com/codex/install.sh | sh",
+      "npmNote": "npm installs the native Codex binary.",
+      "channels": {
+        "native": { "paths": ["~/.local/bin/codex"], "update": ["update"] },
+        "winget": { "id": "OpenAI.Codex" }
+      },
       "docs": "https://github.com/openai/codex",
       "usageUrl": "https://chatgpt.com/codex/settings/usage",
-      "billingUrl": "https://chatgpt.com/#settings/Billing"
+      "billingUrl": "https://chatgpt.com/#settings/Billing",
+      "win32": {
+        "install": "powershell -ExecutionPolicy ByPass -c \"irm https://chatgpt.com/codex/install.ps1 | iex\"",
+        "channels": {
+          "native": { "paths": ["~/AppData/Local/Programs/OpenAI/Codex/bin"], "update": ["update"] },
+          "winget": { "id": "OpenAI.Codex" }
+        }
+      }
     },
     {
       "id": "google",
@@ -66,10 +87,17 @@
       "resumeArgs": ["--resume", "{id}"],
       "color": "#6B7280",
       "monogram": "X",
-      "install": "npm install -g @xai-official/grok",
+      "install": "curl -fsSL https://x.ai/cli/install.sh | bash",
+      "npmNote": "npm installs the native grok binary into ~/.grok/bin.",
+      "channels": {
+        "native": { "paths": ["~/.grok/bin"], "update": ["update"] }
+      },
       "docs": "https://docs.x.ai/build/overview",
       "usageUrl": "https://grok.com/?_s=usage",
-      "billingUrl": "https://grok.com/?_s=billing"
+      "billingUrl": "https://grok.com/?_s=billing",
+      "win32": {
+        "install": "irm https://x.ai/cli/install.ps1 | iex"
+      }
     },
     {
       "id": "shell",
