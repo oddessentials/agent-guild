@@ -39,15 +39,16 @@ reports what it carries: a sub-agent starting or stopping (`SubagentStart`
 and `SubagentStop`), and the main model when the event names it (`model`,
 `modelId`, Gemini CLI's `llm_request.model`, or `to_model` on Claude Code's
 `PostModelSwitch`). The four tools spell these fields differently; all
-spellings are accepted. Each sub-agent appears on the card for as long as it
-runs, labelled with its agent type, for example `Explore` or `Plan`.
+spellings are accepted. An event that fires inside a sub-agent never sets
+the main model. Each sub-agent appears on the card for as long as it runs,
+labelled with its agent type, for example `Explore` or `Plan`.
 
 | Tool | Put the hooks in | Example |
 | --- | --- | --- |
 | Claude Code | `~/.claude/settings.json`, or `.claude/settings.json` in one project | [claude-code-settings.json](../examples/claude-code-settings.json) |
-| Codex CLI | `~/.codex/hooks.json`, then trust them with `/hooks` inside Codex | [codex-hooks.json](../examples/codex-hooks.json) |
+| Codex CLI | `~/.codex/hooks.json`, then trust them with `/hooks` inside Codex; `UserPromptSubmit` follows `/model` changes | [codex-hooks.json](../examples/codex-hooks.json) |
 | Gemini CLI | `~/.gemini/settings.json`; it has no sub-agent events, so `BeforeModel` reports the model | [gemini-settings.json](../examples/gemini-settings.json) |
-| Grok Build | `~/.grok/hooks/agent-guild.json`; it also reads `~/.claude/settings.json` hooks | [grok-hooks.json](../examples/grok-hooks.json) |
+| Grok Build | `~/.grok/hooks/agent-guild.json`; it also reads `~/.claude/settings.json` hooks. Only `SessionStart` names the model | [grok-hooks.json](../examples/grok-hooks.json) |
 
 A `matcher` on these events filters by agent type. Leave it out to show
 every sub-agent.

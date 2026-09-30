@@ -61,7 +61,10 @@ export function hookToReports(input) {
       });
     }
   }
-  const model = event === 'PostModelSwitch'
+  // A hook that runs inside a sub-agent names it (Claude Code and Codex by
+  // agent_id, Grok Build by subagentType); its model is not the session's.
+  const insideSubagent = Boolean(text(input.agent_id, input.agentId, input.subagent_id, input.subagentId, input.subagent_type, input.subagentType));
+  const model = insideSubagent ? null : event === 'PostModelSwitch'
     ? text(input.to_model)
     : text(input.model, input.modelId, input.llm_request?.model);
   if (model) reports.push({ model });

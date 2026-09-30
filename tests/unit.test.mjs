@@ -12,8 +12,8 @@ import { hookToReports, claudeStatuslineToReport, formatStatusLine } from '../sr
 import { ensurePtyReady, spawnHelperCandidates } from '../src/manager/pty-setup.mjs';
 import { parseVersion, compareVersions, installedVersion, latestVersion } from '../src/manager/versions.mjs';
 import {
-  UsageMonitor, readClaudeCredentials, readCodexCredentials, readGeminiCredentials, geminiOAuthClientFromInstall, claudeKeychainService,
-  claudeCredentialsFile, fetchClaudeUsage, fetchCodexUsage, fetchGeminiUsage, commandUsage, toIso, windowLabel,
+  UsageMonitor, readClaudeCredentials, readCodexCredentials, readGeminiCredentials, geminiOAuthClientFromInstall, geminiKeychainLookup,
+  claudeKeychainService, claudeCredentialsFile, fetchClaudeUsage, fetchCodexUsage, fetchGeminiUsage, commandUsage, toIso, windowLabel,
 } from '../src/manager/usage.mjs';
 import crypto from 'node:crypto';
 
@@ -261,6 +261,10 @@ test('Gemini CLI credentials come from the keychain item or the legacy file, and
   assert.deepEqual(await readGeminiCredentials({ file: legacyFile, platform: 'darwin', readKeychain: async () => item }),
     { accessToken: 'kc', refreshToken: 'r2', expiresAt: 1893456000000, client: null }, 'the keychain item wins over the legacy file');
   await assert.rejects(readGeminiCredentials({ file: legacyFile, platform: 'darwin', readKeychain: async () => 'not json' }), /parsed/);
+  // keytar, which Gemini CLI stores through, labels libsecret items with "service" and "account".
+  assert.deepEqual(geminiKeychainLookup('linux'), { file: 'secret-tool', args: ['lookup', 'service', 'gemini-cli-oauth', 'account', 'main-account'] });
+  assert.deepEqual(geminiKeychainLookup('darwin').args, ['find-generic-password', '-s', 'gemini-cli-oauth', '-a', 'main-account', '-w']);
+  assert.equal(geminiKeychainLookup('win32'), null);
 
   // The OAuth client that refreshes the token is read from the installed Gemini CLI.
   const install = path.join(dir, 'node_modules', '@google', 'gemini-cli');
@@ -312,6 +316,14 @@ test('Gemini CLI credentials come from the keychain item or the legacy file, and
   const known = await fetchGeminiUsage({ accessToken: 'kc', expiresAt: Date.now() + 3600000, project: 'proj-1', fetchImpl });
   assert.deepEqual(calls.map((c) => c.url.split(':').pop()), ['retrieveUserQuota'], 'a known project skips the refresh and the project lookup');
   assert.equal(known.plan, null);
+
+  // A paid tier is the subscription in force, as Gemini CLI reads it; an empty one is not.
+  const tiered = (paidTier) => async (url) => (url.endsWith(':loadCodeAssist')
+    ? { ok: true, json: async () => ({ cloudaicompanionProject: 'proj-1', currentTier: { id: 'free-tier', name: 'Free' }, paidTier }) }
+    : { ok: true, json: async () => ({ buckets: [] }) });
+  assert.equal((await fetchGeminiUsage({ accessToken: 'kc', fetchImpl: tiered({ id: 'standard-tier', name: 'Google AI Pro' }) })).plan, 'Google AI Pro');
+  assert.equal((await fetchGeminiUsage({ accessToken: 'kc', fetchImpl: tiered({ id: 'standard-tier' }) })).plan, 'standard-tier');
+  assert.equal((await fetchGeminiUsage({ accessToken: 'kc', fetchImpl: tiered({}) })).plan, 'Free');
 
   await assert.rejects(fetchGeminiUsage({ accessToken: 'old', expiresAt: Date.now() - 1000, fetchImpl }), /expired/);
   await assert.rejects(fetchGeminiUsage({ accessToken: 'old', refreshToken: 'r1', expiresAt: Date.now() - 1000, fetchImpl }), /expired/, 'no client, no refresh');
@@ -409,7 +421,7 @@ test('a usage command prints JSON, and the monitor caches snapshots', async () =
     { id: 'anthropic', env: { CLAUDE_CONFIG_DIR: path.join(dir, 'claude-work') } },
     { id: 'openai' },
     { id: 'google', usage: { command: process.execPath, args: [fixture] } },
-    { id: 'xai', usage: 'gemini', env: { GOOGLE_CLOUD_PROJECT: 'proj-env' } },
+    { id: 'xai', usage: 'gemini', env: { GOOGLE_CLOUD_PROJECT_ID: 'proj-env' } },
   ] }));
   const defaults = loadProviders({ platform: 'linux' }).providers;
   assert.equal(defaults.find((p) => p.id === 'anthropic').usage, 'claude');
@@ -447,12 +459,49 @@ test('a usage command prints JSON, and the monitor caches snapshots', async () =
   assert.match(byId.openai.error, /usage check failed: boom/);
   assert.equal(byId.google.plan, 'test');
   assert.deepEqual(byId.xai.windows, [{ label: 'gemini-2.5-pro', usedPercent: 10, resetsAt: null }]);
-  assert.ok(!urls.some((u) => u.endsWith(':loadCodeAssist')), "a project from the provider's env skips the project lookup");
+  assert.ok(!urls.some((u) => u.endsWith(':loadCodeAssist')), "a project from the provider's env (either variable Gemini CLI reads) skips the project lookup");
   assert.equal(files.claude, path.join(dir, 'claude-work', '.credentials.json'), "the provider's own env picks its credentials");
   assert.equal(files.claudeService, claudeKeychainService({ CLAUDE_CONFIG_DIR: path.join(dir, 'claude-work') }), 'and its keychain item');
   assert.equal(files.codex, path.join(dir, 'codex-home', 'auth.json'), 'the manager env applies otherwise');
   await monitor.all();
   assert.equal(fetches, 2, 'fresh snapshots are served from the cache');
+});
+
+test('Gemini usage keeps its refreshed token and project only while the sign-in is the same', async () => {
+  const dir = tempDir();
+  const userFile = path.join(dir, 'providers.json');
+  fs.writeFileSync(userFile, JSON.stringify({ providers: [{ id: 'anthropic', usage: null }, { id: 'openai', usage: null }] }));
+  const registry = new ProviderRegistry({ userFile, env: { PATH: '' }, checkUpdates: false });
+  const google = registry.providers.find((p) => p.id === 'google');
+  const client = { id: '12345-abc.apps.googleusercontent.com', secret: 'GOCSPX-fake' };
+  let creds = { accessToken: 'a-old', refreshToken: 'r-a', expiresAt: Date.now() - 1000, client };
+  let refreshes = 0;
+  const calls = [];
+  const monitor = new UsageMonitor({
+    registry,
+    env: { PATH: '' },
+    ttlMs: 0,
+    readers: { gemini: async () => creds },
+    fetchImpl: async (url, init) => {
+      calls.push({ method: url.split(/[:/]/).pop(), auth: init.headers.Authorization, body: init.body });
+      if (url.endsWith('/token')) return { ok: true, json: async () => ({ access_token: `a-fresh-${++refreshes}`, expires_in: 3600 }) };
+      if (url.endsWith(':loadCodeAssist')) return { ok: true, json: async () => ({ cloudaicompanionProject: init.headers.Authorization.includes('b-') ? 'proj-b' : 'proj-a', currentTier: { name: 'Free' } }) };
+      return { ok: true, json: async () => ({ buckets: [{ modelId: 'gemini-2.5-pro', remainingFraction: 0.5 }] }) };
+    },
+  });
+
+  assert.equal((await monitor.snapshot(google)).plan, 'Free');
+  assert.deepEqual(calls.map((c) => c.method), ['token', 'loadCodeAssist', 'retrieveUserQuota']);
+  calls.length = 0;
+  assert.equal((await monitor.snapshot(google)).plan, 'Free');
+  assert.deepEqual(calls.map((c) => [c.method, c.auth]), [['retrieveUserQuota', 'Bearer a-fresh-1']], 'the same sign-in reuses the refreshed token and project');
+
+  calls.length = 0;
+  creds = { accessToken: 'b-live', refreshToken: 'r-b', expiresAt: Date.now() + 3600000, client };
+  const other = await monitor.snapshot(google);
+  assert.deepEqual(calls.map((c) => [c.method, c.auth]), [['loadCodeAssist', 'Bearer b-live'], ['retrieveUserQuota', 'Bearer b-live']], 'another sign-in drops the old token and project');
+  assert.deepEqual(JSON.parse(calls[1].body), { project: 'proj-b' });
+  assert.equal(other.error, null);
 });
 
 test('loadProviders survives a broken user file', () => {
@@ -516,6 +565,11 @@ test('hook events and the Claude Code status line report the model', () => {
   assert.deepEqual(hookToReports({ hook_event_name: 'UserPromptSubmit', model: 'gpt-5-codex', prompt: 'hi' }), [{ model: 'gpt-5-codex' }]);
   assert.deepEqual(hookToReports({ hook_event_name: 'BeforeModel', llm_request: { model: 'gemini-2.5-pro', messages: [] } }), [{ model: 'gemini-2.5-pro' }]);
   assert.deepEqual(hookToReports({ hookEventName: 'session_start', hook_event_name: 'SessionStart', modelId: 'grok-build' }), [{ model: 'grok-build' }]);
+  // Turn events that fire inside a sub-agent name it, and its model is not the session's.
+  assert.deepEqual(hookToReports({ hook_event_name: 'UserPromptSubmit', agent_id: 'c1', agent_type: 'explorer', model: 'gpt-5-codex-mini', prompt: 'x' }), []);
+  assert.deepEqual(hookToReports({ hook_event_name: 'Stop', agent_id: 'a1', agent_type: 'Explore', model: 'claude-haiku-4-5' }), []);
+  assert.deepEqual(hookToReports({ hookEventName: 'user_prompt_submit', hook_event_name: 'UserPromptSubmit', subagentType: 'reviewer', modelId: 'grok-build' }), []);
+  assert.deepEqual(hookToReports({ hook_event_name: 'UserPromptSubmit', agent_type: 'security-reviewer', model: 'claude-opus-5' }), [{ model: 'claude-opus-5' }], 'a session started with --agent is still the main session');
 
   const input = { model: { id: 'claude-opus-4-5', display_name: 'Opus 4.5' }, workspace: { current_dir: '/home/me/app' }, context_window: { used_percentage: 41.7 } };
   assert.deepEqual(claudeStatuslineToReport(input), { model: 'claude-opus-4-5', displayName: 'Opus 4.5' });

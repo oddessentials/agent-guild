@@ -182,12 +182,15 @@ export function geminiCredentialsFile(env = process.env) {
  * "gemini-cli-oauth", account "main-account") and, before it did, in
  * oauth_creds.json. Its encrypted-file fallback cannot be read from here.
  */
+export function geminiKeychainLookup(platform) {
+  if (platform === 'darwin') return { file: 'security', args: ['find-generic-password', '-s', GEMINI_KEYCHAIN_SERVICE, '-a', GEMINI_KEYCHAIN_ACCOUNT, '-w'] };
+  // keytar stores libsecret items with the attributes "service" and "account".
+  if (platform === 'linux') return { file: 'secret-tool', args: ['lookup', 'service', GEMINI_KEYCHAIN_SERVICE, 'account', GEMINI_KEYCHAIN_ACCOUNT] };
+  return null;
+}
+
 function readGeminiKeychainItem(platform) {
-  const spec = platform === 'darwin'
-    ? { file: 'security', args: ['find-generic-password', '-s', GEMINI_KEYCHAIN_SERVICE, '-a', GEMINI_KEYCHAIN_ACCOUNT, '-w'] }
-    : platform === 'linux'
-      ? { file: 'secret-tool', args: ['lookup', 'service', GEMINI_KEYCHAIN_SERVICE, 'username', GEMINI_KEYCHAIN_ACCOUNT] }
-      : null;
+  const spec = geminiKeychainLookup(platform);
   if (!spec) return Promise.resolve(null);
   return runSpec(spec, { timeoutMs: 30000 }).then((r) => r.stdout, () => null);
 }
@@ -317,7 +320,9 @@ export async function fetchGeminiUsage({
     });
     const found = loaded?.cloudaicompanionProject;
     projectId = typeof found === 'string' ? found : typeof found?.id === 'string' ? found.id : null;
-    plan = loaded?.currentTier?.name ?? loaded?.currentTier?.id ?? null;
+    // A paid tier is the effective subscription, as Gemini CLI reads it.
+    const tier = loaded?.paidTier?.id || loaded?.paidTier?.name ? loaded.paidTier : loaded?.currentTier;
+    plan = tier?.name ?? tier?.id ?? null;
     if (!projectId) throw new UsageError('Gemini CLI has no Code Assist project yet; finish signing in with gemini first');
   }
   const quota = await post('retrieveUserQuota', { project: projectId });
@@ -418,17 +423,21 @@ export class UsageMonitor {
         result = await fetchCodexUsage({ ...creds, fetchImpl: this.fetchImpl });
       } else if (provider.usage === 'gemini') {
         const creds = await this.readers.gemini({ file: geminiCredentialsFile(env), platform: this.platform });
-        const known = this.gemini.get(provider.id) || {};
+        // The refreshed token, project and plan belong to one sign-in; a new
+        // sign-in (another account, or the same one again) starts over.
+        const signIn = creds.refreshToken || creds.accessToken;
+        const cached = this.gemini.get(provider.id);
+        const known = cached?.signIn === signIn ? cached : {};
         const fresh = known.token && known.token.expiresAt > Date.now() + 60000 ? known.token : null;
         const { plan, windows, project, token } = await fetchGeminiUsage({
           ...creds,
           client: creds.client || geminiOAuthClientFromInstall(this.registry.resolve(provider)),
           ...(fresh || {}),
-          project: env.GOOGLE_CLOUD_PROJECT || known.project || null,
+          project: env.GOOGLE_CLOUD_PROJECT || env.GOOGLE_CLOUD_PROJECT_ID || known.project || null,
           version: this.registry.versions.get(provider.id)?.installed,
           fetchImpl: this.fetchImpl,
         });
-        this.gemini.set(provider.id, { project, token, plan: plan ?? known.plan ?? null });
+        this.gemini.set(provider.id, { signIn, project, token, plan: plan ?? known.plan ?? null });
         result = { plan: plan ?? known.plan ?? null, windows };
       } else {
         result = await commandUsage(provider.usage, env, this.platform);
