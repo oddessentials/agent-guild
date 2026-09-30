@@ -34,7 +34,7 @@ function run(...args) {
 
 after(async () => {
   await run('stop');
-  fs.rmSync(home, { recursive: true, force: true });
+  fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 });
 
 test('open starts a background manager, status reports it, stop ends it', async () => {

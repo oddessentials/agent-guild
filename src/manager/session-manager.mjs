@@ -129,9 +129,22 @@ export class SessionManager extends EventEmitter {
     return session.reportAgent(report, 'api');
   }
 
-  shutdown() {
-    for (const session of this.sessions.values()) session.dispose();
+  /**
+   * End every session and wait, up to `timeoutMs`, for the processes to
+   * exit. Waiting matters on Windows, where ending a ConPTY process is slow.
+   */
+  async shutdown({ graceMs = 1500, timeoutMs = 5000 } = {}) {
+    const sessions = [...this.sessions.values()];
     this.sessions.clear();
+    for (const session of sessions) session.dispose({ graceMs });
+    const running = sessions.filter((s) => s.status === 'running').map((s) => s.exited);
+    if (running.length === 0) return;
+    let timer;
+    await Promise.race([
+      Promise.all(running),
+      new Promise((resolve) => { timer = setTimeout(resolve, timeoutMs); }),
+    ]);
+    clearTimeout(timer);
   }
 }
 

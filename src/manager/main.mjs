@@ -36,9 +36,8 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
   const shutdown = (reason = 'shutdown') => {
     if (closing) return closing;
     console.log(`[manager] stopping (${reason}); ending ${manager.sessions.size} session(s)`);
-    manager.shutdown();
     removeRuntimeFile();
-    closing = api.close();
+    closing = Promise.all([manager.shutdown(), api.close()]).then(() => undefined);
     return closing;
   };
 

@@ -35,7 +35,11 @@ before(async () => {
 
 after(async () => {
   await ctx.shutdown('tests done');
-  fs.rmSync(home, { recursive: true, force: true });
+  // Windows may hold the folder briefly after a process exits.
+  fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  // node-pty on Windows can keep a handle open after every session has
+  // ended. Exit once results are reported rather than hanging the run.
+  setTimeout(() => process.exit(), 3000).unref();
 });
 
 async function call(method, route, body, headers = {}) {

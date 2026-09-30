@@ -17,7 +17,9 @@ rl.on('line', (line) => {
   } else if (cmd === 'env') {
     process.stdout.write(`ENV:${process.env.AGENT_GUILD_SESSION_ID}|${process.env.AGENT_GUILD_PROVIDER}|${process.env.AGENT_GUILD_URL}\r\n`);
   } else if (cmd === 'size') {
-    process.stdout.write(`SIZE:${process.stdout.columns}x${process.stdout.rows}\r\n`);
+    // getWindowSize() asks the console directly; .columns can be stale on Windows.
+    const [cols, rows] = process.stdout.getWindowSize ? process.stdout.getWindowSize() : [process.stdout.columns, process.stdout.rows];
+    process.stdout.write(`SIZE:${cols}x${rows}\r\n`);
   } else if (cmd === 'stubborn') {
     process.removeAllListeners('SIGHUP');
     process.on('SIGHUP', () => process.stdout.write('IGNORING-HUP\r\n'));

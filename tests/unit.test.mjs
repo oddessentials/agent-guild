@@ -7,6 +7,7 @@ import { resolveCommand, buildSpawnSpec, quoteForCmd } from '../src/manager/comm
 import { mergePathLists } from '../src/manager/shell-env.mjs';
 import { loadProviders, defaultShell } from '../src/manager/providers.mjs';
 import { claudeHookToReport } from '../src/report/claude-hook.mjs';
+import { ensurePtyReady, spawnHelperCandidates } from '../src/manager/pty-setup.mjs';
 
 function tempDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-unit-'));
@@ -137,4 +138,19 @@ test('claudeHookToReport maps sub-agent tool calls and subagent events', () => {
   assert.equal(claudeHookToReport({ hook_event_name: 'SubagentStop', agent_id: 'a1' }).status, 'done');
   assert.equal(claudeHookToReport({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: {} }), null);
   assert.equal(claudeHookToReport({ hook_event_name: 'SubagentStop' }), null);
+});
+
+test('ensurePtyReady restores the macOS spawn-helper executable bit', { skip: process.platform === 'win32' }, () => {
+  const dir = tempDir();
+  const helper = spawnHelperCandidates(dir, 'arm64')[0];
+  fs.mkdirSync(path.dirname(helper), { recursive: true });
+  fs.writeFileSync(helper, '', { mode: 0o644 });
+  const original = process.arch;
+  Object.defineProperty(process, 'arch', { value: 'arm64' });
+  try {
+    ensurePtyReady({ platform: 'darwin', ptyDir: dir });
+  } finally {
+    Object.defineProperty(process, 'arch', { value: original });
+  }
+  assert.equal(fs.statSync(helper).mode & 0o777, 0o755);
 });

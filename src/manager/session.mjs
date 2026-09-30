@@ -7,6 +7,7 @@ import crypto from 'node:crypto';
 import pty from 'node-pty';
 import headless from '@xterm/headless';
 import serializeAddon from '@xterm/addon-serialize';
+import { ensurePtyReady } from './pty-setup.mjs';
 
 const { Terminal } = headless;
 const { SerializeAddon } = serializeAddon;
@@ -63,6 +64,8 @@ export class Session extends EventEmitter {
     this._activityTimer = null;
     this._agentTimers = new Map();
     this._killTimer = null;
+    /** Resolves when the process has exited, even after dispose(). */
+    this.exited = new Promise((resolve) => { this._resolveExited = resolve; });
 
     this.term = new Terminal({
       cols: this.cols,
@@ -78,6 +81,7 @@ export class Session extends EventEmitter {
     });
 
     this.disposed = false;
+    ensurePtyReady();
     try {
       this.pty = pty.spawn(opts.spawnSpec.file, opts.spawnSpec.args, {
         name: 'xterm-256color',
@@ -117,6 +121,7 @@ export class Session extends EventEmitter {
 
   _onExit(exitCode, signal) {
     clearTimeout(this._killTimer);
+    this._resolveExited();
     if (this.disposed) return;
     this.status = 'exited';
     this.exitCode = exitCode ?? null;
@@ -210,9 +215,9 @@ export class Session extends EventEmitter {
    * Detach everything. A still-running process gets the normal hang-up and
    * is force-killed after the grace period if it ignores it.
    */
-  dispose() {
+  dispose({ graceMs } = {}) {
     if (this.disposed) return;
-    this.kill();
+    this.kill(graceMs === undefined ? {} : { graceMs });
     this.disposed = true;
     clearTimeout(this._activityTimer);
     for (const t of this._agentTimers.values()) clearTimeout(t);
