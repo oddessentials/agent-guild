@@ -268,15 +268,14 @@ test('Gemini CLI credentials come from the keychain item or the legacy file, and
   fs.writeFileSync(path.join(install, 'package.json'), JSON.stringify({ name: '@google/gemini-cli', bin: { gemini: 'bundle/gemini.js' } }));
   fs.writeFileSync(path.join(install, 'bundle', 'gemini.js'), 'import "./chunk-abc.js";\n');
   fs.writeFileSync(path.join(install, 'bundle', 'chunk-abc.js'), `var OAUTH_CLIENT_ID = "${fakeClient.id}";\nvar OAUTH_CLIENT_SECRET = "${fakeClient.secret}";\n`);
-  let command;
-  if (process.platform === 'win32') {
-    command = path.join(dir, 'gemini.cmd');
-    fs.writeFileSync(command, '@"%~dp0\\node_modules\\@google\\gemini-cli\\bundle\\gemini.js" %*\r\n');
-  } else {
-    command = path.join(dir, 'gemini');
-    fs.symlinkSync(path.join(install, 'bundle', 'gemini.js'), command);
+  const shim = path.join(dir, 'gemini.cmd');
+  fs.writeFileSync(shim, '@"%~dp0\\node_modules\\@google\\gemini-cli\\bundle\\gemini.js" %*\r\n');
+  assert.deepEqual(geminiOAuthClientFromInstall(shim), fakeClient, 'a Windows npm shim leads to the package next to it');
+  if (process.platform !== 'win32') {
+    const link = path.join(dir, 'gemini');
+    fs.symlinkSync(path.join(install, 'bundle', 'gemini.js'), link);
+    assert.deepEqual(geminiOAuthClientFromInstall(link), fakeClient, 'a symlinked bin leads to its package');
   }
-  assert.deepEqual(geminiOAuthClientFromInstall(command), fakeClient);
   assert.equal(geminiOAuthClientFromInstall(path.join(dir, 'missing')), null);
   assert.equal(geminiOAuthClientFromInstall(process.execPath), null, 'other programs have no Gemini client');
 
