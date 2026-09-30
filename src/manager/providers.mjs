@@ -43,6 +43,7 @@ function normalize(raw, platform) {
     tool: String(merged.tool || merged.command || ''),
     command: String(merged.command || ''),
     args: Array.isArray(merged.args) ? merged.args.map(String) : [],
+    resumeArgs: Array.isArray(merged.resumeArgs) ? merged.resumeArgs.map(String) : [],
     env: normalizeEnv(merged.env),
     color: String(merged.color || '#64748B'),
     monogram: String(merged.monogram || String(merged.vendor || merged.id).charAt(0)).slice(0, 2),
@@ -136,6 +137,7 @@ export class ProviderRegistry {
       tool: provider.tool,
       command: this.commandFor(provider),
       args: provider.args,
+      resumable: provider.resumeArgs.length > 0,
       color: provider.color,
       monogram: provider.monogram,
       iconUrl: this.iconUrl(provider),
@@ -151,7 +153,7 @@ export class ProviderRegistry {
   }
 
   /** Spawn spec for node-pty, or throws with a user-facing message. */
-  spawnSpec(provider, extraArgs = []) {
+  spawnSpec(provider, extraArgs = [], resume = null) {
     const resolved = this.resolve(provider);
     if (!resolved) {
       const hint = provider.install ? ` ${provider.install}` : '';
@@ -160,6 +162,16 @@ export class ProviderRegistry {
       err.code = 'provider_unavailable';
       throw err;
     }
-    return buildSpawnSpec(resolved, [...provider.args, ...extraArgs], this.env, this.platform);
+    let resumeArgs = [];
+    if (resume !== null) {
+      if (provider.resumeArgs.length === 0) {
+        const err = new Error(`${provider.tool} has no resumeArgs configured, so an existing session cannot be resumed`);
+        err.status = 400;
+        err.code = 'resume_unsupported';
+        throw err;
+      }
+      resumeArgs = provider.resumeArgs.map((arg) => arg.replaceAll('{id}', resume));
+    }
+    return buildSpawnSpec(resolved, [...provider.args, ...resumeArgs, ...extraArgs], this.env, this.platform);
   }
 }

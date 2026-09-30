@@ -76,7 +76,7 @@ export class SessionManager extends EventEmitter {
     return dir;
   }
 
-  create({ providerId, cwd, cols, rows, name, args } = {}) {
+  create({ providerId, cwd, cols, rows, name, args, resume } = {}) {
     const provider = this.registry.get(String(providerId || ''));
     if (!provider) throw httpError(404, `unknown provider "${providerId}"`, 'unknown_provider');
     if (this.sessions.size >= MAX_SESSIONS) {
@@ -85,8 +85,9 @@ export class SessionManager extends EventEmitter {
     if (args !== undefined && (!Array.isArray(args) || args.some((a) => typeof a !== 'string'))) {
       throw httpError(400, 'args must be an array of strings', 'bad_args');
     }
+    const resumeId = cleanResumeId(resume);
     const workDir = this.resolveCwd(cwd);
-    const spawnSpec = this.registry.spawnSpec(provider, args || []);
+    const spawnSpec = this.registry.spawnSpec(provider, args || [], resumeId);
     const description = this.registry.describe(provider);
     const id = newId();
     const reportToken = crypto.randomBytes(16).toString('hex');
@@ -113,6 +114,7 @@ export class SessionManager extends EventEmitter {
         rows: clampDimension(rows, 32, 1, 500),
         name,
         reportToken,
+        resume: resumeId,
       });
     } catch (err) {
       throw httpError(500, `could not start ${provider.tool}: ${err.message}`, 'spawn_failed');
@@ -175,6 +177,18 @@ export class SessionManager extends EventEmitter {
     ]);
     clearTimeout(timer);
   }
+}
+
+const MAX_RESUME_ID = 200;
+
+/** A session id or name to resume: one printable line, or null when absent. */
+export function cleanResumeId(resume) {
+  if (resume === undefined || resume === null) return null;
+  const id = String(resume).trim();
+  if (!id || id.length > MAX_RESUME_ID || /\p{Cc}/u.test(id)) {
+    throw httpError(400, `resume must be a printable id of at most ${MAX_RESUME_ID} characters`, 'bad_resume');
+  }
+  return id;
 }
 
 export function timingSafeEqualString(a, b) {

@@ -74,14 +74,19 @@
   <div id="toast" class="toast" role="alert" hidden></div>
 
   <template id="provider-template">
-    <button class="provider" type="button" role="listitem">
+    <article class="provider" role="listitem">
       <span class="provider-icon"></span>
       <span class="provider-text">
         <span class="vendor"></span>
         <span class="tool"></span>
         <span class="state"></span>
       </span>
-    </button>
+      <div class="provider-actions">
+        <button class="btn primary new" type="button">New</button>
+        <button class="btn existing" type="button">Existing…</button>
+        <span class="hint"></span>
+      </div>
+    </article>
   </template>
 
   <template id="session-template">

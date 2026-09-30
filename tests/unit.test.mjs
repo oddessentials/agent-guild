@@ -5,8 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { resolveCommand, buildSpawnSpec, quoteForCmd } from '../src/manager/command-resolver.mjs';
 import { mergePathLists, parsePathFromEnvOutput } from '../src/manager/shell-env.mjs';
-import { mergeEnv } from '../src/manager/session-manager.mjs';
-import { loadProviders, defaultShell } from '../src/manager/providers.mjs';
+import { mergeEnv, cleanResumeId } from '../src/manager/session-manager.mjs';
+import { loadProviders, defaultShell, ProviderRegistry } from '../src/manager/providers.mjs';
 import { claudeHookToReport } from '../src/report/claude-hook.mjs';
 import { ensurePtyReady, spawnHelperCandidates } from '../src/manager/pty-setup.mjs';
 
@@ -99,6 +99,26 @@ test('loadProviders merges user overrides, platform keys and disabled entries', 
   const win = loadProviders({ userFile, platform: 'win32' });
   assert.equal(win.providers[0].command, 'claude-win');
   assert.equal(win.providers[0].win32, undefined);
+});
+
+test('resume arguments are filled in from the provider template', () => {
+  const dir = tempDir();
+  const userFile = path.join(dir, 'providers.json');
+  fs.writeFileSync(userFile, JSON.stringify({ providers: [
+    { id: 'anthropic', command: process.execPath },
+    { id: 'shell', command: process.execPath },
+  ] }));
+  const registry = new ProviderRegistry({ userFile, env: { PATH: path.dirname(process.execPath) }, platform: process.platform });
+  const anthropic = registry.get('anthropic');
+  assert.deepEqual(registry.spawnSpec(anthropic, ['-p'], 'sess-1').args, ['--resume', 'sess-1', '-p']);
+  assert.deepEqual(registry.spawnSpec(anthropic, [], null).args, []);
+  assert.throws(() => registry.spawnSpec(registry.get('shell'), [], 'x'), (err) => err.code === 'resume_unsupported');
+
+  assert.equal(cleanResumeId(undefined), null);
+  assert.equal(cleanResumeId('  550e8400-e29b  '), '550e8400-e29b');
+  assert.throws(() => cleanResumeId(''), (err) => err.status === 400);
+  assert.throws(() => cleanResumeId('a\x1bb'), (err) => err.status === 400);
+  assert.throws(() => cleanResumeId('x'.repeat(201)), (err) => err.status === 400);
 });
 
 test('loadProviders survives a broken user file', () => {

@@ -119,36 +119,44 @@ function renderProviders() {
     node.querySelector('.tool').textContent = provider.tool;
     node.querySelector('.state').textContent = provider.available ? 'Ready' : 'Not installed';
     node.dataset.id = provider.id;
-    if (!provider.available) {
-      node.setAttribute('aria-disabled', 'true');
-      node.title = provider.install || `${provider.command} was not found on PATH.`;
-    } else {
-      node.title = `Start ${provider.tool}`;
-    }
-    node.addEventListener('click', () => startSession(provider, node));
+    node.classList.toggle('unavailable', !provider.available);
+    node.setAttribute('aria-label', `${provider.vendor} ${provider.tool}, ${provider.available ? 'ready' : 'not installed'}`);
+    const start = node.querySelector('.new');
+    const existing = node.querySelector('.existing');
+    const hint = node.querySelector('.hint');
+    start.hidden = !provider.available;
+    start.title = `Start a new ${provider.tool} session`;
+    start.addEventListener('click', () => startSession(provider, node));
+    existing.hidden = !provider.available || !provider.resumable;
+    existing.title = `Resume one of ${provider.tool}'s own sessions by its id`;
+    existing.addEventListener('click', () => resumeSession(provider, node));
+    hint.hidden = provider.available;
+    hint.textContent = provider.install || `${provider.command} was not found on PATH.`;
     return node;
   }));
 }
 
-async function startSession(provider, button) {
-  if (!provider.available) {
-    const hint = provider.install ? `\n${provider.install}` : '';
-    toast(`${provider.tool} is not installed (command "${provider.command}" not found).${hint}`, 9000);
-    return;
-  }
+async function startSession(provider, card, { resume } = {}) {
   const cwd = $('cwd').value.trim();
   save(CWD_KEY, cwd);
-  button.classList.add('busy');
+  card.classList.add('busy');
   try {
-    const { session } = await api('POST', '/sessions', { providerId: provider.id, cwd: cwd || undefined, cols: 120, rows: 32 });
+    const body = { providerId: provider.id, cwd: cwd || undefined, cols: 120, rows: 32, resume };
+    const { session } = await api('POST', '/sessions', body);
     upsertSession(session);
     openPanel(session.id);
   } catch (err) {
     if (err instanceof AuthError) return showAuth(err.message);
     toast(err.message, 8000);
   } finally {
-    button.classList.remove('busy');
+    card.classList.remove('busy');
   }
+}
+
+function resumeSession(provider, card) {
+  const id = prompt(`${provider.tool} session id or name to resume`);
+  if (id === null || !id.trim()) return;
+  startSession(provider, card, { resume: id.trim() });
 }
 
 // ---- session cards --------------------------------------------------------
@@ -179,7 +187,8 @@ function buildCard(session) {
 function updateCard(node, s) {
   paintProviderIcon(node.querySelector('.provider-icon'), s.provider);
   node.querySelector('.name').textContent = s.name;
-  node.querySelector('.meta').textContent = `${s.provider.vendor} · ${s.provider.tool} · started ${relativeTime(s.createdAt)}`;
+  const resumed = s.resume ? ` · resumed ${s.resume}` : '';
+  node.querySelector('.meta').textContent = `${s.provider.vendor} · ${s.provider.tool} · started ${relativeTime(s.createdAt)}${resumed}`;
   const pill = node.querySelector('.status-pill');
   pill.textContent = statusText(s);
   pill.className = `status-pill ${s.status === 'exited' ? 'exited' : s.activity}`;

@@ -56,6 +56,7 @@ Errors use one shape:
   "tool": "Claude Code",
   "command": "claude",
   "args": [],
+  "resumable": true,
   "color": "#D97757",
   "monogram": "A",
   "iconUrl": null,
@@ -67,7 +68,9 @@ Errors use one shape:
 ```
 
 `available` is false when the command is not installed. A client should show
-the provider as disabled and offer the `install` hint.
+the provider as disabled and offer the `install` hint. `resumable` is true
+when the provider has `resumeArgs`, so one of the tool's own earlier sessions
+can be resumed by id.
 
 ### Session
 
@@ -77,6 +80,7 @@ the provider as disabled and offer the `install` hint.
   "name": "Claude Code",
   "provider": { "id": "anthropic", "vendor": "Anthropic", "tool": "Claude Code", "color": "#D97757", "monogram": "A", "iconUrl": null },
   "cwd": "/Users/me/src/app",
+  "resume": null,
   "pid": 3518,
   "status": "running",
   "exitCode": null,
@@ -95,6 +99,7 @@ the provider as disabled and offer the `install` hint.
   final screen, until a client removes them.
 * `activity` is `active` while the terminal is producing output and `quiet`
   after a short pause.
+* `resume` is the id of the tool's own session that was resumed, or null.
 
 ### Agent
 
@@ -129,7 +134,7 @@ All paths are under `/api/v1`.
 | GET | `/providers` | | `{ providers: Provider[] }` |
 | POST | `/providers/reload` | | Re-reads `providers.json`. |
 | GET | `/sessions` | | `{ sessions: Session[] }` |
-| POST | `/sessions` | `{ providerId, cwd?, cols?, rows?, name?, args? }` | `201 { session }` |
+| POST | `/sessions` | `{ providerId, cwd?, cols?, rows?, name?, args?, resume? }` | `201 { session }` |
 | GET | `/sessions/:id` | | `{ session }` |
 | PATCH | `/sessions/:id` | `{ name }` | `{ session }`. `name` must be a non-empty string; it is trimmed to 80 characters. |
 | POST | `/sessions/:id/stop` | | Ends the process. The session stays listed as exited. |
@@ -139,7 +144,9 @@ All paths are under `/api/v1`.
 
 `cwd` defaults to the user's home folder and must be an existing folder. A
 leading `~` is expanded. `args` are appended to the provider's configured
-arguments.
+arguments. `resume` is an id or name of one of the tool's own sessions; it is
+substituted for `{id}` in the provider's `resumeArgs` (400 `resume_unsupported`
+when the provider has none).
 
 `POST /sessions/:id/agents` also accepts the per-session report token instead
 of the API token, in an `X-Agent-Guild-Report-Token` header. The manager gives

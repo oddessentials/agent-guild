@@ -6,10 +6,11 @@ coding tool, and see at a glance which sessions and agents are working.
 
 ![Agent Guild session cards](docs/screenshot.png)
 
-* **Start sessions from provider icons.** Anthropic (Claude Code), OpenAI
+* **Start sessions from provider cards.** Anthropic (Claude Code), OpenAI
   (Codex CLI), Google (Gemini CLI), xAI (a Grok CLI you configure), and a
-  plain shell. Providers whose tool is not installed are shown greyed out
-  with install instructions.
+  plain shell. **New** starts a fresh session; **Existing** resumes one of
+  the tool's own earlier sessions from its id. Providers whose tool is not
+  installed are shown greyed out with install instructions.
 * **Work in real terminals.** Each session is a card. Open it for a full
   interactive terminal: type instructions, answer prompts, watch output. Run
   as many sessions at once as you like.
@@ -73,6 +74,7 @@ one platform under a `win32` or `darwin` key. See
 | `id` | Lowercase identifier. |
 | `vendor`, `tool` | Names shown on the icon. |
 | `command`, `args` | What to run. `command` is looked up on PATH. `@shell` means the user's default shell. |
+| `resumeArgs` | Arguments that resume the tool's own session, with `{id}` standing for the id, e.g. `["--resume", "{id}"]`. Without it the card has no **Existing** button. |
 | `env` | Extra environment variables for the tool. |
 | `color`, `monogram`, `icon` | Icon appearance. `icon` is a URL path; you can also drop `<id>.svg` into `web/icons/`. |
 | `install`, `docs` | Help shown when the tool is not installed. |

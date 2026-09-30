@@ -17,7 +17,8 @@ process.env.AGENT_GUILD_SKIP_SHELL_ENV = '1';
 
 fs.writeFileSync(path.join(home, 'providers.json'), JSON.stringify({
   providers: [
-    { id: 'fake', vendor: 'Test', tool: 'Fake Tool', command: process.execPath, args: [path.join(here, 'fixtures', 'fake-tool.mjs')] },
+    { id: 'fake', vendor: 'Test', tool: 'Fake Tool', command: process.execPath, args: [path.join(here, 'fixtures', 'fake-tool.mjs')], resumeArgs: ['--resume', '{id}'] },
+    { id: 'plain', vendor: 'Test', tool: 'Plain Tool', command: process.execPath, args: [path.join(here, 'fixtures', 'fake-tool.mjs')] },
     { id: 'missing', vendor: 'Nobody', tool: 'Missing Tool', command: 'definitely-not-installed-agent-guild', install: 'npm i -g nothing' },
   ],
 }));
@@ -168,8 +169,31 @@ test('providers report availability', async () => {
   const fake = body.providers.find((p) => p.id === 'fake');
   const missing = body.providers.find((p) => p.id === 'missing');
   assert.equal(fake.available, true);
+  assert.equal(fake.resumable, true);
+  assert.equal(body.providers.find((p) => p.id === 'plain').resumable, false);
   assert.equal(missing.available, false);
   assert.ok(body.providers.some((p) => p.id === 'anthropic'), 'built-in providers are still listed');
+});
+
+test('an existing tool session can be resumed by id', async () => {
+  const session = await createFake({ resume: ' abc-123 ' });
+  assert.equal(session.resume, 'abc-123');
+  const client = terminal(session.id);
+  await client.opened;
+  client.input('args');
+  await waitForText(client, session.id, 'ARGS:["--resume","abc-123"]', 'resume args');
+  await client.close();
+  await call('DELETE', `/sessions/${session.id}`);
+
+  const fresh = await createFake();
+  assert.equal(fresh.resume, null);
+  await call('DELETE', `/sessions/${fresh.id}`);
+
+  assert.equal((await call('POST', '/sessions', { providerId: 'fake', resume: '' })).status, 400);
+  assert.equal((await call('POST', '/sessions', { providerId: 'fake', resume: 'a\nb' })).status, 400);
+  const unsupported = await call('POST', '/sessions', { providerId: 'plain', resume: 'abc' });
+  assert.equal(unsupported.status, 400);
+  assert.equal(unsupported.body.error.code, 'resume_unsupported');
 });
 
 test('session creation validates its input', async () => {
