@@ -234,7 +234,7 @@ export function geminiOAuthClientFromInstall(commandPath) {
     let start = fs.realpathSync(commandPath);
     if (/\.(cmd|bat|ps1)$/i.test(start)) {
       const shim = fs.readFileSync(start, 'utf8').match(/([^\s"'%]*node_modules[\\/]@google[\\/]gemini-cli)/);
-      start = shim ? path.resolve(path.dirname(start), shim[1]) : null;
+      start = shim ? path.resolve(path.dirname(start), shim[1].replace(/^[\\/]+/, '')) : null;
     }
     let dir = start && (fs.statSync(start).isDirectory() ? start : path.dirname(start));
     for (let depth = 0; dir && depth < 8; depth++) {
