@@ -30,5 +30,9 @@
 
   "frame-corner": {"seed": 901, "w": 1024, "h": 1024,
     "style": "Premium dark fantasy game asset illustration, painterly high detail, polished antique gold metal with warm rim light, isolated on a flat pure pitch-black background, no text, no letters, no gems.",
-    "prompt": "An ornate antique gold filigree corner ornament for the top-left corner of a trading card frame: two thin straight gold rails meeting at a right angle in the top-left, decorated at the corner with a small elegant scrollwork flourish and a tiny leaf motif, the rails fading out along the top edge and the left edge, the rest of the image empty black."}
+    "prompt": "An ornate antique gold filigree corner ornament for the top-left corner of a trading card frame: two thin straight gold rails meeting at a right angle in the top-left, decorated at the corner with a small elegant scrollwork flourish and a tiny leaf motif, the rails fading out along the top edge and the left edge, the rest of the image empty black."},
+
+  "frame-ornate": {"seed": 911, "w": 1024, "h": 1344,
+    "style": "Premium dark fantasy game asset illustration, painterly high detail, polished antique gold metal with warm rim light, isolated on a flat pure pitch-black background, no text, no letters, no gems.",
+    "prompt": "An ornate antique gold trading card frame border viewed straight-on, a thin elegant rectangular gold frame with engraved filigree along all four edges and decorative scrollwork corners, symmetrical, filling the whole image edge to edge, the entire inside of the frame is empty flat pitch-black."}
 }
