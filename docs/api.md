@@ -169,11 +169,11 @@ Claude Code sub-agent. See [agent-reporting.md](agent-reporting.md).
 
 ```json
 {
-  "id": "hook-task-toolu_01",
-  "name": "Explore",
+  "id": "hook-task-c9df2e9f7dd4e090",
+  "name": "codebase_investigator",
   "kind": "subagent",
   "status": "working",
-  "detail": "Search the codebase for auth code",
+  "detail": "Map the auth flow",
   "foreground": true,
   "startedAt": "2026-09-30T03:11:02.000Z",
   "updatedAt": "2026-09-30T03:11:02.000Z",

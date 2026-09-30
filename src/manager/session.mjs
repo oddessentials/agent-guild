@@ -356,6 +356,9 @@ export class Session extends EventEmitter {
     // Claude Code's internal helpers (prompt suggestions, side questions)
     // stop without ever having started here.
     if (!existing && status === 'done') return null;
+    // A repeated done (Grok Build ends a sub-agent's session after its
+    // turn) must not restart the linger.
+    if (existing?.status === 'done' && status === 'done') return existing;
     if (!existing && this.agents.size >= MAX_AGENTS && !this._evictDoneAgent()) {
       throw badRequest(`too many agents (max ${MAX_AGENTS})`);
     }

@@ -56,7 +56,7 @@ function handle(line) {
   else if (cmd === 'env') {
     const pathKey = Object.keys(process.env).find((k) => k.toUpperCase() === 'PATH');
     const first = (process.env[pathKey] || '').split(path.delimiter)[0];
-    out(`ENV:${process.env.AGENT_GUILD_SESSION_ID}|${process.env.AGENT_GUILD_PROVIDER}|${process.env.AGENT_GUILD_URL}|${first}|tmux=${process.env.TMUX ?? ''}`);
+    out(`ENV:${process.env.AGENT_GUILD_SESSION_ID}|${process.env.AGENT_GUILD_PROVIDER}|${process.env.AGENT_GUILD_URL}|${first}|tmux=${process.env.TMUX ?? ''}|term_program=${process.env.TERM_PROGRAM ?? ''}`);
   } else if (cmd === 'hook') {
     const [file, args] = hookSpawn(rest[0]);
     const child = spawn(file, args, {

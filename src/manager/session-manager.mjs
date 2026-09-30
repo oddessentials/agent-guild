@@ -137,11 +137,13 @@ export class SessionManager extends EventEmitter {
       AGENT_GUILD_PROVIDER: provider.id,
       AGENT_GUILD_URL: this.getApiUrl(),
       AGENT_GUILD_REPORT_TOKEN: reportToken,
+      AGENT_GUILD_NODE: process.execPath,
     }]), this.shimDir);
-    // The tool runs in its own terminal, not inside a multiplexer the
-    // manager was started from; Claude Code would otherwise open agent-team
-    // panes in that tmux window, outside the page.
-    for (const key of ['TMUX', 'TMUX_PANE', 'STY']) delete env[key];
+    // The tool runs in its own terminal, not in the terminal or multiplexer
+    // the manager was started from: Claude Code would otherwise open
+    // agent-team panes in that tmux window, outside the page, and tools
+    // would tune their output to a terminal program that is not there.
+    for (const key of ['TMUX', 'TMUX_PANE', 'STY', 'TERM_PROGRAM', 'TERM_PROGRAM_VERSION', 'ZELLIJ', 'ZELLIJ_SESSION_NAME', 'ZELLIJ_PANE_ID']) delete env[key];
 
     let session;
     try {

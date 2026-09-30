@@ -9,7 +9,7 @@ import { mergePathLists, parsePathFromEnvOutput } from '../src/manager/shell-env
 import { mergeEnv, cleanResumeId, modelFromArgs } from '../src/manager/session-manager.mjs';
 import { loadProviders, defaultShell, ProviderRegistry } from '../src/manager/providers.mjs';
 import { hookToReports, claudeStatuslineToReport, formatStatusLine } from '../src/report/hooks.mjs';
-import { shimContents, writeReportShims, prependPath, SHIM_NAME } from '../src/manager/report-shims.mjs';
+import { shimContents, writeReportShims, prependPath, fileUrl, SHIM_NAME, LOADER_NAME } from '../src/manager/report-shims.mjs';
 import { execFileSync } from 'node:child_process';
 import { parseVersion, compareVersions, installedVersion, latestVersion } from '../src/manager/versions.mjs';
 import {
@@ -572,12 +572,15 @@ test('hook events map to agent reports for every tool\'s spelling', () => {
   assert.equal(pre.status, 'working');
   assert.equal(pre.name, 'Explore');
   assert.equal(pre.detail, 'Search the codebase');
-  assert.equal(pre.foreground, true, 'the parent waits for a tool-call sub-agent');
+  assert.equal(pre.foreground, false, 'Claude Code reports the main model itself, so no guard is needed');
   assert.equal(post.status, 'done');
   assert.equal(pre.agentId, post.agentId, 'pre and post events must refer to the same agent');
 
   const [withId] = hookToReports({ hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_use_id: 'toolu_1', tool_input: {} });
   assert.equal(withId.agentId, 'hook-task-toolu_1');
+  // Esc during the call fires PostToolUseFailure instead of PostToolUse.
+  const [failed] = hookToReports({ hook_event_name: 'PostToolUseFailure', tool_name: 'Agent', tool_use_id: 'toolu_1', tool_input: {}, error: 'interrupted', is_interrupt: true });
+  assert.deepEqual([failed.agentId, failed.status], ['hook-task-toolu_1', 'done']);
 
   // Claude Code
   assert.deepEqual(hookToReports({ hook_event_name: 'SubagentStart', agent_id: 'a1', agent_type: 'Plan' }),
@@ -590,6 +593,10 @@ test('hook events map to agent reports for every tool\'s spelling', () => {
   assert.equal(hookToReports({ hook_event_name: 'SubagentStop', turn_id: 't2', agent_id: 'c1', agent_type: 'explorer', model: 'gpt-5-codex' })[0].status, 'done');
   assert.deepEqual(hookToReports({ hook_event_name: 'UserPromptSubmit', turn_id: 't3', agent_id: 'c1', agent_type: 'explorer', model: 'gpt-5-codex', prompt: 'next task' }),
     [{ agentId: 'hook-c1', name: 'explorer', kind: 'subagent', status: 'working' }], 'a re-tasked Codex sub-agent works again, and its model stays its own');
+  // With multi_agent_v2, a follow-up turn fires no prompt event; its tool calls carry the agent and Codex's turn_id.
+  assert.deepEqual(hookToReports({ hook_event_name: 'PreToolUse', turn_id: 't4', agent_id: 'c1', agent_type: 'explorer', model: 'gpt-5-codex', tool_name: 'shell', tool_input: { command: ['ls'] } }),
+    [{ agentId: 'hook-c1', name: 'explorer', kind: 'subagent', status: 'working' }]);
+  assert.deepEqual(hookToReports({ hook_event_name: 'PreToolUse', agent_id: 'internal-1', tool_name: 'Bash', tool_input: {} }), [], 'a Claude Code helper\'s tool call has no turn_id and is not an agent');
   assert.deepEqual(hookToReports({ hook_event_name: 'UserPromptSubmit', model: 'gpt-5-codex', prompt: 'main' }), [{ finishForeground: true }, { model: 'gpt-5-codex' }], 'a main-thread prompt is not an agent');
   // Grok Build: camelCase fields and a snake_case event name beside the PascalCase one
   assert.deepEqual(hookToReports({ hookEventName: 'subagent_stop', hook_event_name: 'SubagentStop', subagentId: 'g1', subagentType: 'reviewer', modelId: 'grok-build' }),
@@ -599,13 +606,15 @@ test('hook events map to agent reports for every tool\'s spelling', () => {
   assert.deepEqual(hookToReports({ hookEventName: 'subagent_start', hook_event_name: 'SubagentStart', sessionId: 'parent', subagentId: 'g3', subagentType: 'explore', description: 'Read b.txt contents' }),
     [{ agentId: 'hook-g3', name: 'explore', kind: 'subagent', status: 'working', detail: 'Read b.txt contents' }]);
   // A cancelled Grok sub-agent never fires SubagentStop; the SessionEnd of its own session names it.
-  assert.deepEqual(hookToReports({ hookEventName: 'session_end', hook_event_name: 'SessionEnd', sessionId: 'g3', session_id: 'g3', subagentType: 'explore', reason: 'cancelled' }),
+  assert.deepEqual(hookToReports({ hookEventName: 'session_end', hook_event_name: 'SessionEnd', sessionId: 'g3', session_id: 'g3', subagentType: 'explore', reason: 'shutdown' }),
     [{ agentId: 'hook-g3', name: 'explore', kind: 'subagent', status: 'done' }]);
-  assert.deepEqual(hookToReports({ hookEventName: 'session_end', hook_event_name: 'SessionEnd', sessionId: 'parent', reason: 'exit' }), [], 'the main session ending is not an agent');
-  assert.deepEqual(hookToReports({ hookEventName: 'stop_cancelled', hook_event_name: 'StopCancelled', sessionId: 'g4', subagentType: 'plan', reason: 'max_turns' }),
+  assert.deepEqual(hookToReports({ hookEventName: 'session_end', hook_event_name: 'SessionEnd', sessionId: 'parent', session_id: 'parent', reason: 'channel_closed' }), [], 'the main session ending is not an agent');
+  assert.deepEqual(hookToReports({ hookEventName: 'stop_cancelled', hook_event_name: 'StopCancelled', sessionId: 'g4', session_id: 'g4', subagentType: 'plan', reason: 'max_turns', cancelledBy: 'runtime' }),
     [{ agentId: 'hook-g4', name: 'plan', kind: 'subagent', status: 'done' }], 'a sub-agent cut off at its turn limit is done');
-  assert.deepEqual(hookToReports({ hookEventName: 'stop_cancelled', hook_event_name: 'StopCancelled', sessionId: 'parent', reason: 'user_interrupt' }), []);
+  assert.deepEqual(hookToReports({ hookEventName: 'stop_cancelled', hook_event_name: 'StopCancelled', sessionId: 'parent', session_id: 'parent', reason: 'user_interrupt', cancelledBy: 'user' }), []);
   assert.deepEqual(hookToReports({ hook_event_name: 'SessionEnd', session_id: 's', reason: 'exit', agent_type: 'security-reviewer' }), [], 'a Claude Code --agent session ending is not an agent either');
+  assert.deepEqual(hookToReports({ cwd: '/w', hook_event_name: 'SessionEnd', reason: 'other', session_id: 's', transcript_path: null }), [], 'Codex SessionEnd is root-only');
+  assert.deepEqual(hookToReports({ session_id: 's', cwd: '/w', hook_event_name: 'SessionEnd', timestamp: 't', reason: 'exit' }), [], 'Gemini SessionEnd names no agent');
   // Gemini CLI has no sub-agent events; the invoke_agent tool call brackets each sub-agent run.
   const gi = { agent_name: 'codebase_investigator', prompt: 'Map the auth flow' };
   const [gb] = hookToReports({ hook_event_name: 'BeforeTool', session_id: 'g', timestamp: '2026-09-30T00:00:00Z', tool_name: 'invoke_agent', tool_input: gi });
@@ -633,34 +642,51 @@ test('the agent-guild-report launchers run the reporter from any hook shell', ()
   const script = '/opt/agent guild/bin/agent-guild-report.mjs';
   const posix = shimContents({ execPath: '/usr/local/n$v/node', script, platform: 'linux' });
   assert.deepEqual(Object.keys(posix), [SHIM_NAME]);
-  assert.equal(posix[SHIM_NAME], '#!/bin/sh\nexec "/usr/local/n\\$v/node" "/opt/agent guild/bin/agent-guild-report.mjs" "$@"\n');
+  assert.equal(posix[SHIM_NAME], '#!/bin/sh\nn="/usr/local/n\\$v/node"\n[ -x "$n" ] || n=node\nexec "$n" "/opt/agent guild/bin/agent-guild-report.mjs" "$@"\n');
 
-  const win = shimContents({ execPath: 'C:\\Program Files\\nodejs\\node.exe', script: 'C:\\Users\\me\\100%\\agent-guild\\bin\\agent-guild-report.mjs', platform: 'win32' });
-  assert.deepEqual(Object.keys(win).sort(), [SHIM_NAME, `${SHIM_NAME}.cmd`], 'no .ps1: PowerShell would prefer it and its default policy refuses it');
-  assert.equal(win[SHIM_NAME], '#!/bin/sh\nexec "C:/Program Files/nodejs/node.exe" "C:/Users/me/100%/agent-guild/bin/agent-guild-report.mjs" "$@"\n', 'Git Bash takes forward slashes');
-  assert.equal(win[`${SHIM_NAME}.cmd`], '@ECHO OFF\r\n"C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\me\\100%%\\agent-guild\\bin\\agent-guild-report.mjs" %*\r\n');
+  const winScript = 'C:\\Users\\José\\100%\\agent-guild\\bin\\agent-guild-report.mjs';
+  const win = shimContents({ execPath: 'C:\\Program Files\\nodejs\\node.exe', script: winScript, platform: 'win32' });
+  assert.deepEqual(Object.keys(win).sort(), [SHIM_NAME, LOADER_NAME, `${SHIM_NAME}.cmd`], 'no .ps1: PowerShell would prefer it and its default policy refuses it');
+  assert.equal(win[SHIM_NAME], '#!/bin/sh\nn="C:/Program Files/nodejs/node.exe"\n[ -x "$n" ] || n=node\nexec "$n" "C:/Users/José/100%/agent-guild/bin/agent-guild-report.mjs" "$@"\n', 'Git Bash takes forward slashes');
+  // cmd.exe reads the batch file in the OEM code page, so the paths stay out of it.
+  assert.equal(win[`${SHIM_NAME}.cmd`], '@ECHO OFF\r\nIF EXIST "%AGENT_GUILD_NODE%" GOTO manager\r\nnode "%~dp0agent-guild-report-loader.mjs" %*\r\nEXIT /B %ERRORLEVEL%\r\n:manager\r\n"%AGENT_GUILD_NODE%" "%~dp0agent-guild-report-loader.mjs" %*\r\n');
+  assert.equal(win[LOADER_NAME], 'import "file:///C:/Users/Jos%C3%A9/100%25/agent-guild/bin/agent-guild-report.mjs";\n');
+  for (const name of [`${SHIM_NAME}.cmd`, LOADER_NAME]) assert.match(win[name], /^[\x20-\x7e\r\n]+$/, `${name} is ASCII`);
+  assert.equal(fileUrl('/tmp/a b/#1/x.mjs', 'linux'), 'file:///tmp/a%20b/%231/x.mjs');
 
   assert.deepEqual(prependPath({ Path: 'C:\\a;C:\\b', HOME: 'x' }, 'C:\\shims', { platform: 'win32' }), { Path: 'C:\\shims;C:\\a;C:\\b', HOME: 'x' }, 'keeps the "Path" spelling');
   assert.deepEqual(prependPath({}, '/shims', { platform: 'linux' }), { PATH: '/shims' });
   assert.deepEqual(prependPath({ PATH: '/a:/shims:/b' }, '/shims', { platform: 'linux' }), { PATH: '/shims:/a:/b' }, 'no duplicate entry');
+  assert.deepEqual(prependPath({ Path: 'x', PATH: '/a' }, '/shims', { platform: 'linux' }), { Path: 'x', PATH: '/shims:/a' }, 'names are case-sensitive outside Windows');
   assert.deepEqual(prependPath({ PATH: '/a' }, null), { PATH: '/a' });
 
   // Written for real, then run by name through the shells the tools use.
   const dir = path.join(tempDir(), 'bin');
-  fs.writeFileSync(path.join(path.dirname(dir), 'stale.txt'), '');
   fs.mkdirSync(dir);
   fs.writeFileSync(path.join(dir, `${SHIM_NAME}.ps1`), 'stale');
   const reporter = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../bin/agent-guild-report.mjs');
   assert.equal(writeReportShims({ dir, script: reporter }), dir);
   assert.ok(!fs.existsSync(path.join(dir, `${SHIM_NAME}.ps1`)), 'a stale .ps1 is removed');
-  const env = prependPath({ ...process.env }, dir);
-  const run = (file, args) => execFileSync(file, args, { env, encoding: 'utf8', timeout: 20000, windowsHide: true });
+  const withNode = prependPath({ ...process.env, AGENT_GUILD_NODE: process.execPath }, dir);
+  // The manager's Node.js is gone (a version manager removed it); `node` on PATH takes over.
+  const nodeDir = path.join(tempDir(), 'node-on-path');
+  fs.mkdirSync(nodeDir);
+  const gone = path.join(tempDir(), 'removed', 'node');
+  const run = (file, args, env) => execFileSync(file, args, { env, encoding: 'utf8', timeout: 20000, windowsHide: true });
   if (process.platform === 'win32') {
-    assert.match(run('cmd.exe', ['/d', '/s', '/c', `${SHIM_NAME} --help`]), /^Usage: agent-guild-report/, 'cmd.exe (Codex CLI) finds the .cmd through PATHEXT');
-    assert.match(run('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Restricted', '-Command', `${SHIM_NAME} --help`]), /^Usage: agent-guild-report/, 'PowerShell (Gemini CLI, Grok Build) runs the .cmd under the Restricted policy');
+    const winArgs = [['cmd.exe', ['/d', '/s', '/c', `${SHIM_NAME} --help`], 'cmd.exe (Codex CLI) finds the .cmd through PATHEXT'],
+      ['powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Restricted', '-Command', `${SHIM_NAME} --help`], 'PowerShell (Gemini CLI, Grok Build) runs the .cmd under the Restricted policy']];
+    for (const [file, args, why] of winArgs) assert.match(run(file, args, withNode), /^Usage: agent-guild-report/, why);
+    fs.copyFileSync(process.execPath, path.join(nodeDir, 'node.exe'));
+    const fallback = prependPath({ ...process.env, AGENT_GUILD_NODE: gone, Path: nodeDir }, dir);
+    delete fallback.PATH;
+    assert.match(run('cmd.exe', ['/d', '/s', '/c', `${SHIM_NAME} --help`], fallback), /^Usage: agent-guild-report/, 'falls back to node on PATH');
   } else {
     assert.ok((fs.statSync(path.join(dir, SHIM_NAME)).mode & 0o111) !== 0, 'the sh launcher is executable');
-    assert.match(run('/bin/sh', ['-c', `${SHIM_NAME} --help`]), /^Usage: agent-guild-report/, 'sh (Claude Code, Grok Build) runs the launcher');
+    assert.match(run('/bin/sh', ['-c', `${SHIM_NAME} --help`], withNode), /^Usage: agent-guild-report/, 'sh (Claude Code, Grok Build) runs the launcher');
+    fs.symlinkSync(process.execPath, path.join(nodeDir, 'node'));
+    writeReportShims({ dir, execPath: gone, script: reporter });
+    assert.match(run('/bin/sh', ['-c', `${SHIM_NAME} --help`], { PATH: `${dir}:${nodeDir}` }), /^Usage: agent-guild-report/, 'falls back to node on PATH');
   }
 });
 

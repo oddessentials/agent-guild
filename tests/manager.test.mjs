@@ -16,9 +16,12 @@ process.env.AGENT_GUILD_PORT = '0';
 process.env.AGENT_GUILD_SKIP_SHELL_ENV = '1';
 // As if the manager were started from a tmux shell; the tools must not inherit it.
 process.env.TMUX = '/tmp/tmux-0/default,1,0';
+process.env.TERM_PROGRAM = 'tmux';
 
-// A stand-in npm so install sessions never touch the real global prefix.
-const bin = path.join(home, 'bin');
+// A stand-in npm so install sessions never touch the real global prefix. Not
+// the manager's launcher folder (<home>/bin), so that folder reaches the
+// session PATH only through the manager.
+const bin = path.join(home, 'fake-npm');
 fs.mkdirSync(bin);
 if (process.platform === 'win32') {
   fs.writeFileSync(path.join(bin, 'npm.cmd'), '@echo off\r\necho FAKE-NPM %*\r\n');
@@ -326,8 +329,8 @@ test('a session runs, streams output, accepts input and resizes', async () => {
 
   client.input('env');
   await waitFor(() => client.output.includes('ENV:'), { label: 'env' });
-  await waitForText(client, session.id, '|tmux=', 'env line');
-  assert.ok(client.output.includes(`ENV:${session.id}|fake|${base}|${path.join(home, 'bin')}|tmux=\r`), client.output);
+  await waitForText(client, session.id, '|term_program=', 'env line');
+  assert.ok(client.output.includes(`ENV:${session.id}|fake|${base}|${path.join(home, 'bin')}|tmux=|term_program=\r`), client.output);
 
   client.send({ type: 'resize', cols: 101, rows: 33 });
   await waitFor(async () => (await call('GET', `/sessions/${session.id}`)).body.session.cols === 101, { label: 'resize' });
@@ -390,6 +393,9 @@ test('agents can be reported over HTTP with the session report token', async () 
   await call('POST', route, { agentId: 'explore-1', status: 'done' });
   ({ body } = await call('GET', `/sessions/${session.id}`));
   assert.equal(body.session.agents[0].status, 'done', 'done agents linger briefly');
+  const lingerFrom = body.session.agents[0].updatedAt;
+  await new Promise((r) => setTimeout(r, 60));
+  assert.equal((await call('POST', route, { agentId: 'explore-1', status: 'done' })).body.agent.updatedAt, lingerFrom, 'a repeated done keeps the first linger');
   await waitFor(async () => (await call('GET', `/sessions/${session.id}`)).body.session.agents.length === 0, { label: 'agent removal' });
 
   // A stop for an agent that never started (Claude Code's internal helpers) shows nothing.
