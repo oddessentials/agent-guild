@@ -245,7 +245,7 @@ test('a provider can be installed or updated from a visible npm session', async 
   assert.equal(body.session.provider.id, 'missing');
   const client = terminal(body.session.id);
   await client.opened;
-  await waitForText(client, body.session.id, `FAKE-NPM install -g nothing@latest --registry=${process.env.AGENT_GUILD_NPM_REGISTRY}`, 'npm output');
+  await waitForText(client, body.session.id, `FAKE-NPM install -g nothing@latest --registry ${process.env.AGENT_GUILD_NPM_REGISTRY}`, 'npm output');
   await waitFor(() => client.messages.find((m) => m.type === 'exit'), { label: 'npm exit' });
   const updated = await waitFor(() => events.messages.find((m) => m.type === 'providers.updated'), { label: 'providers.updated' });
   assert.ok(updated.providers.some((p) => p.id === 'missing'));

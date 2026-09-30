@@ -126,11 +126,13 @@ test('resume and install specs come from the provider configuration', async () =
   const npmEnv = { PATH: npmDir, PATHEXT: '.EXE;.CMD' };
   const withNpm = new ProviderRegistry({ userFile, env: npmEnv, platform: process.platform });
   const argsOf = (spec) => (typeof spec.args === 'string' ? spec.args : spec.args.join(' '));
-  assert.ok(argsOf(withNpm.installSpec(withNpm.get('anthropic'))).endsWith('install -g @anthropic-ai/claude-code@latest'));
+  assert.ok(argsOf(withNpm.installSpec(withNpm.get('anthropic'))).includes('install -g @anthropic-ai/claude-code@latest'));
   assert.equal(await withNpm.npmRegistryUrl(), 'https://mirror.example/npm/', "installs and lookups share npm's own registry");
   const mirrored = new ProviderRegistry({ userFile, env: npmEnv, platform: process.platform, registryUrl: 'https://mirror.example/other' });
-  assert.ok(argsOf(mirrored.installSpec(mirrored.get('anthropic'))).endsWith('@latest --registry=https://mirror.example/other'));
+  assert.ok(argsOf(mirrored.installSpec(mirrored.get('anthropic'))).includes('@latest --registry https://mirror.example/other'));
   assert.equal(await mirrored.npmRegistryUrl(), 'https://mirror.example/other');
+  const onWindows = buildSpawnSpec('C:\\npm\\npm.cmd', ['install', '-g', 'x@latest', '--registry', 'http://127.0.0.1:1'], {}, 'win32');
+  assert.ok(onWindows.args.endsWith(' --registry http://127.0.0.1:1"'), 'the registry URL needs no cmd.exe quoting');
   const withoutNpm = new ProviderRegistry({ userFile, env: { PATH: tempDir() }, platform: process.platform });
   assert.throws(() => withoutNpm.installSpec(withoutNpm.get('anthropic')), (err) => err.code === 'npm_unavailable');
   assert.equal(await withoutNpm.npmRegistryUrl(), 'https://registry.npmjs.org');

@@ -316,7 +316,7 @@ export class ProviderRegistry extends EventEmitter {
       throw err;
     }
     const args = ['install', '-g', `${provider.package}@latest`];
-    if (this.registryUrl) args.push(`--registry=${this.registryUrl}`);
+    if (this.registryUrl) args.push('--registry', this.registryUrl);
     return buildSpawnSpec(npm, args, this.env, this.platform);
   }
 }
