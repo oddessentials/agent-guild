@@ -43,15 +43,28 @@ export function windowLabel(seconds) {
 
 // ---- Claude Code ----------------------------------------------------------
 
-export function claudeCredentialsFile(env = process.env) {
-  return path.join(env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), '.credentials.json');
+/**
+ * The directory Claude Code keeps credentials under. As in Claude Code,
+ * CLAUDE_SECURESTORAGE_CONFIG_DIR wins when defined (empty means the
+ * default directory), else CLAUDE_CONFIG_DIR, and paths are NFC-normalised.
+ */
+function claudeCredentialsDir(env) {
+  const secure = env.CLAUDE_SECURESTORAGE_CONFIG_DIR;
+  const dir = (secure !== undefined ? secure : env.CLAUDE_CONFIG_DIR) || path.join(os.homedir(), '.claude');
+  return dir.normalize('NFC');
 }
 
-/** The keychain item Claude Code uses: keyed to CLAUDE_CONFIG_DIR when set. */
+export function claudeCredentialsFile(env = process.env) {
+  return path.join(claudeCredentialsDir(env), '.credentials.json');
+}
+
+/** The keychain item Claude Code uses: the default one, or one keyed to a custom directory. */
 export function claudeKeychainService(env = process.env) {
-  const dir = env.CLAUDE_CONFIG_DIR;
-  if (!dir) return CLAUDE_KEYCHAIN_SERVICE;
-  return `${CLAUDE_KEYCHAIN_SERVICE}-${crypto.createHash('sha256').update(dir).digest('hex').slice(0, 8)}`;
+  const secure = env.CLAUDE_SECURESTORAGE_CONFIG_DIR;
+  const custom = secure !== undefined ? secure : env.CLAUDE_CONFIG_DIR;
+  if (!custom) return CLAUDE_KEYCHAIN_SERVICE;
+  const hash = crypto.createHash('sha256').update(claudeCredentialsDir(env)).digest('hex').slice(0, 8);
+  return `${CLAUDE_KEYCHAIN_SERVICE}-${hash}`;
 }
 
 function readKeychainItem(service) {

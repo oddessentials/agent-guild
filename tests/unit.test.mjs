@@ -12,7 +12,8 @@ import { claudeHookToReport, claudeStatuslineToReport, formatStatusLine } from '
 import { ensurePtyReady, spawnHelperCandidates } from '../src/manager/pty-setup.mjs';
 import { parseVersion, compareVersions, installedVersion, latestVersion } from '../src/manager/versions.mjs';
 import {
-  UsageMonitor, readClaudeCredentials, readCodexCredentials, claudeKeychainService, fetchClaudeUsage, fetchCodexUsage, commandUsage, toIso, windowLabel,
+  UsageMonitor, readClaudeCredentials, readCodexCredentials, claudeKeychainService, claudeCredentialsFile, fetchClaudeUsage, fetchCodexUsage,
+  commandUsage, toIso, windowLabel,
 } from '../src/manager/usage.mjs';
 import crypto from 'node:crypto';
 
@@ -181,7 +182,10 @@ test('the registry lookup matches npm install -g, not a project .npmrc', { skip:
   fs.writeFileSync(userConfig, 'registry=https://user.example/\n');
   const userFile = path.join(dir, 'providers.json');
   fs.writeFileSync(userFile, JSON.stringify({ providers: [] }));
-  const registry = new ProviderRegistry({ userFile, env: { ...process.env, NPM_CONFIG_USERCONFIG: userConfig }, checkUpdates: false });
+  // Inherited npm_config_* variables (from the shell, or from npm running the
+  // tests) would override the fixture files.
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^npm_config_/i.test(key)));
+  const registry = new ProviderRegistry({ userFile, env: { ...env, NPM_CONFIG_USERCONFIG: userConfig }, checkUpdates: false });
   const cwd = process.cwd();
   process.chdir(project);
   try {
@@ -248,7 +252,27 @@ test('the macOS keychain item follows CLAUDE_CONFIG_DIR, so accounts stay apart'
   const workDir = '/Users/me/.claude-work';
   const workHash = crypto.createHash('sha256').update(workDir).digest('hex').slice(0, 8);
   assert.equal(claudeKeychainService({}), 'Claude Code-credentials');
+  assert.equal(claudeKeychainService({ CLAUDE_CONFIG_DIR: '' }), 'Claude Code-credentials');
   assert.equal(claudeKeychainService({ CLAUDE_CONFIG_DIR: workDir }), `Claude Code-credentials-${workHash}`);
+
+  // CLAUDE_SECURESTORAGE_CONFIG_DIR wins when defined; empty means the default account.
+  const otherDir = '/Users/me/.claude-other';
+  const otherHash = crypto.createHash('sha256').update(otherDir).digest('hex').slice(0, 8);
+  assert.equal(claudeKeychainService({ CLAUDE_CONFIG_DIR: workDir, CLAUDE_SECURESTORAGE_CONFIG_DIR: '' }), 'Claude Code-credentials');
+  assert.equal(claudeKeychainService({ CLAUDE_CONFIG_DIR: workDir, CLAUDE_SECURESTORAGE_CONFIG_DIR: otherDir }), `Claude Code-credentials-${otherHash}`);
+  assert.equal(claudeKeychainService({ CLAUDE_SECURESTORAGE_CONFIG_DIR: otherDir }), `Claude Code-credentials-${otherHash}`);
+  const home = path.join(os.homedir(), '.claude', '.credentials.json');
+  assert.equal(claudeCredentialsFile({ CLAUDE_CONFIG_DIR: workDir, CLAUDE_SECURESTORAGE_CONFIG_DIR: '' }), home);
+  assert.equal(claudeCredentialsFile({ CLAUDE_CONFIG_DIR: workDir, CLAUDE_SECURESTORAGE_CONFIG_DIR: otherDir }), path.join(otherDir, '.credentials.json'));
+  assert.equal(claudeCredentialsFile({ CLAUDE_CONFIG_DIR: workDir }), path.join(workDir, '.credentials.json'));
+
+  // Decomposed and composed spellings of one path name the same item.
+  const composed = '/Users/me/.claude-résumé';
+  const decomposed = '/Users/me/.claude-résumé';
+  assert.notEqual(composed, decomposed);
+  assert.equal(claudeKeychainService({ CLAUDE_CONFIG_DIR: decomposed }), claudeKeychainService({ CLAUDE_CONFIG_DIR: composed }));
+  assert.equal(claudeKeychainService({ CLAUDE_SECURESTORAGE_CONFIG_DIR: decomposed }), claudeKeychainService({ CLAUDE_CONFIG_DIR: composed }));
+  assert.equal(claudeCredentialsFile({ CLAUDE_CONFIG_DIR: decomposed }), path.join(composed, '.credentials.json'));
 
   const items = {
     'Claude Code-credentials': JSON.stringify({ claudeAiOauth: { accessToken: 'personal', subscriptionType: 'pro' } }),
