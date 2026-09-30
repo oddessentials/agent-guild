@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { Session, newId, clampDimension } from './session.mjs';
+import { prependPath } from './report-shims.mjs';
 
 export const MAX_SESSIONS = 32;
 
@@ -43,13 +44,15 @@ export class SessionManager extends EventEmitter {
    * @param {object} opts.baseEnv   environment the tools inherit
    * @param {() => string} opts.getApiUrl  base URL handed to tools for reporting
    * @param {object} [opts.sessionDefaults] passed through to Session
+   * @param {string|null} [opts.shimDir]  folder with the agent-guild-report launchers, put first on PATH
    */
-  constructor({ registry, baseEnv, getApiUrl, sessionDefaults = {} }) {
+  constructor({ registry, baseEnv, getApiUrl, sessionDefaults = {}, shimDir = null }) {
     super();
     this.registry = registry;
     this.baseEnv = baseEnv;
     this.getApiUrl = getApiUrl;
     this.sessionDefaults = sessionDefaults;
+    this.shimDir = shimDir;
     this.sessions = new Map();
     /** Removed sessions whose process has not exited yet. */
     this.exiting = new Set();
@@ -125,14 +128,20 @@ export class SessionManager extends EventEmitter {
     const id = newId();
     const reportToken = crypto.randomBytes(16).toString('hex');
 
-    const env = mergeEnv([this.baseEnv, provider.env, {
+    // The tool's hooks run `agent-guild-report` by name, so the launchers
+    // go first on PATH, after any provider PATH override.
+    const env = prependPath(mergeEnv([this.baseEnv, provider.env, {
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
       AGENT_GUILD_SESSION_ID: id,
       AGENT_GUILD_PROVIDER: provider.id,
       AGENT_GUILD_URL: this.getApiUrl(),
       AGENT_GUILD_REPORT_TOKEN: reportToken,
-    }]);
+    }]), this.shimDir);
+    // The tool runs in its own terminal, not inside a multiplexer the
+    // manager was started from; Claude Code would otherwise open agent-team
+    // panes in that tmux window, outside the page.
+    for (const key of ['TMUX', 'TMUX_PANE', 'STY']) delete env[key];
 
     let session;
     try {

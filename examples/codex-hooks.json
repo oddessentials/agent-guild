@@ -1,4 +1,5 @@
 {
+  "description": "Agent Guild agent and model reporting. Codex skips these hooks until you trust them: choose \"Trust all and continue\" when Codex starts, or run /hooks.",
   "hooks": {
     "SessionStart": [
       {

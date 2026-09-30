@@ -344,13 +344,22 @@ export class Session extends EventEmitter {
     }
     const now = new Date().toISOString();
     const existing = this.agents.get(id);
-    if (!existing && this.agents.size >= MAX_AGENTS) throw badRequest(`too many agents (max ${MAX_AGENTS})`);
+    // A first report that already says done would only flash an icon:
+    // Claude Code's internal helpers (prompt suggestions, side questions)
+    // stop without ever having started here.
+    if (!existing && status === 'done') return null;
+    if (!existing && this.agents.size >= MAX_AGENTS && !this._evictDoneAgent()) {
+      throw badRequest(`too many agents (max ${MAX_AGENTS})`);
+    }
     const agent = {
       id,
       name: String(report.name ?? existing?.name ?? id).slice(0, 80),
       kind: String(report.kind ?? existing?.kind ?? 'agent').slice(0, 40),
       status,
       detail: report.detail === undefined ? existing?.detail ?? '' : String(report.detail).slice(0, 200),
+      // The parent waits for a foreground agent, so a model reported while
+      // it works belongs to the agent, not to the session.
+      foreground: report.foreground === undefined ? existing?.foreground ?? false : report.foreground === true,
       startedAt: existing?.startedAt ?? now,
       updatedAt: now,
       source,
@@ -371,6 +380,17 @@ export class Session extends EventEmitter {
     clearTimeout(this._agentTimers.get(id));
     this._agentTimers.delete(id);
     if (this.agents.delete(id)) this._changed();
+  }
+
+  /** Drop the done agent that has lingered longest, to make room. */
+  _evictDoneAgent() {
+    let oldest = null;
+    for (const agent of this.agents.values()) {
+      if (agent.status === 'done' && (!oldest || agent.updatedAt < oldest.updatedAt)) oldest = agent;
+    }
+    if (!oldest) return false;
+    this._removeAgent(oldest.id);
+    return true;
   }
 
   _clearAgents() {
@@ -411,8 +431,19 @@ export class Session extends EventEmitter {
     const name = String(report.model ?? '').trim().slice(0, 120);
     if (!name) throw badRequest('model is required');
     const displayName = report.displayName === undefined || report.displayName === null ? null : String(report.displayName).trim().slice(0, 80) || null;
+    // Gemini CLI fires BeforeModel for a sub-agent's requests too, with the
+    // sub-agent's model and nothing to tell them apart. While a foreground
+    // agent works its parent makes no request, so the report is the agent's.
+    if (this._foregroundAgentWorking()) return this.model;
     this.setModel({ name, displayName }, 'report');
     return this.model;
+  }
+
+  _foregroundAgentWorking() {
+    for (const agent of this.agents.values()) {
+      if (agent.foreground && agent.status === 'working') return true;
+    }
+    return false;
   }
 
   /**

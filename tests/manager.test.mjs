@@ -14,6 +14,8 @@ const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-test-'));
 process.env.AGENT_GUILD_HOME = home;
 process.env.AGENT_GUILD_PORT = '0';
 process.env.AGENT_GUILD_SKIP_SHELL_ENV = '1';
+// As if the manager were started from a tmux shell; the tools must not inherit it.
+process.env.TMUX = '/tmp/tmux-0/default,1,0';
 
 // A stand-in npm so install sessions never touch the real global prefix.
 const bin = path.join(home, 'bin');
@@ -324,7 +326,8 @@ test('a session runs, streams output, accepts input and resizes', async () => {
 
   client.input('env');
   await waitFor(() => client.output.includes('ENV:'), { label: 'env' });
-  assert.ok(client.output.includes(`ENV:${session.id}|fake|${base}`), client.output);
+  await waitForText(client, session.id, '|tmux=', 'env line');
+  assert.ok(client.output.includes(`ENV:${session.id}|fake|${base}|${path.join(home, 'bin')}|tmux=\r`), client.output);
 
   client.send({ type: 'resize', cols: 101, rows: 33 });
   await waitFor(async () => (await call('GET', `/sessions/${session.id}`)).body.session.cols === 101, { label: 'resize' });
@@ -388,6 +391,18 @@ test('agents can be reported over HTTP with the session report token', async () 
   ({ body } = await call('GET', `/sessions/${session.id}`));
   assert.equal(body.session.agents[0].status, 'done', 'done agents linger briefly');
   await waitFor(async () => (await call('GET', `/sessions/${session.id}`)).body.session.agents.length === 0, { label: 'agent removal' });
+
+  // A stop for an agent that never started (Claude Code's internal helpers) shows nothing.
+  assert.equal((await call('POST', route, { agentId: 'ghost', status: 'done' })).body.agent, null);
+  assert.deepEqual((await call('GET', `/sessions/${session.id}`)).body.session.agents, []);
+
+  // The cap counts working agents; a lingering done agent makes room.
+  for (let i = 0; i < 64; i++) assert.equal((await call('POST', route, { agentId: `w${i}` })).status, 200);
+  assert.equal((await call('POST', route, { agentId: 'w64' })).status, 400);
+  await call('POST', route, { agentId: 'w0', status: 'done' });
+  assert.equal((await call('POST', route, { agentId: 'w64' })).status, 200);
+  const ids = (await call('GET', `/sessions/${session.id}`)).body.session.agents.map((a) => a.id);
+  assert.ok(ids.includes('w64') && !ids.includes('w0'), ids.join(','));
   await call('DELETE', `/sessions/${session.id}`);
 });
 
@@ -476,6 +491,47 @@ test('the model comes from arguments, the screen, or an explicit report', async 
 
   await client.close();
   await call('DELETE', `/sessions/${session.id}`);
+});
+
+test('a hook run through the shell finds agent-guild-report on the session PATH', async () => {
+  // The tools run `agent-guild-report --hook` by name in a shell that inherits
+  // the session environment; nobody ran npm link here.
+  const session = await createFake();
+  const client = terminal(session.id);
+  await client.opened;
+  client.input('env');
+  await waitForText(client, session.id, `|${path.join(home, 'bin')}`, 'launcher folder first on PATH');
+
+  const shells = process.platform === 'win32' ? ['cmd', 'powershell'] : ['sh'];
+  for (const [i, shell] of shells.entries()) {
+    const payload = { session_id: 'claude-session', hook_event_name: 'SubagentStart', agent_id: `via-${shell}`, agent_type: 'Explore' };
+    client.input(`hook ${shell} ${JSON.stringify(payload)}`);
+    await waitFor(() => (stripAnsi(client.output).match(/HOOK-EXIT:[^\r\n]*/g) || []).length > i, { timeout: 20000, label: `${shell} hook exit` });
+    const line = stripAnsi(client.output).match(/HOOK-EXIT:[^\r\n]*/g)[i];
+    assert.match(line, /^HOOK-EXIT:0 STDERR:""/, `${shell}: ${line}`);
+    const agents = (await call('GET', `/sessions/${session.id}`)).body.session.agents;
+    assert.ok(agents.some((a) => a.id === `hook-via-${shell}` && a.name === 'Explore' && a.status === 'working'), `${shell}: ${JSON.stringify(agents)}`);
+  }
+  await client.close();
+  await call('DELETE', `/sessions/${session.id}`);
+});
+
+test('a model reported while a foreground agent works is the agent\'s, not the session\'s', async () => {
+  const session = await createFake();
+  const route = `/sessions/${session.id}`;
+  assert.equal((await call('POST', `${route}/model`, { model: 'fake-model-main' })).body.model.name, 'fake-model-main');
+  // Gemini CLI: BeforeModel fires for the sub-agent's own requests while invoke_agent runs.
+  const [start] = [{ agentId: 'hook-task-1', name: 'codebase_investigator', kind: 'subagent', foreground: true }];
+  assert.equal((await call('POST', `${route}/agents`, start)).body.agent.foreground, true);
+  assert.equal((await call('POST', `${route}/model`, { model: 'fake-model-sub' })).body.model.name, 'fake-model-main', 'ignored while the agent works');
+  await call('POST', `${route}/agents`, { agentId: 'hook-task-1', status: 'done' });
+  assert.equal((await call('POST', `${route}/model`, { model: 'fake-model-next' })).body.model.name, 'fake-model-next', 'accepted once the agent is done');
+  // A background agent (Claude Code, Codex CLI) does not block its parent.
+  await call('POST', `${route}/agents`, { agentId: 'hook-bg', name: 'Explore', kind: 'subagent' });
+  assert.equal((await call('POST', `${route}/model`, { model: 'fake-model-switched' })).body.model.name, 'fake-model-switched');
+  const { agents } = (await call('GET', route)).body.session;
+  assert.equal(agents.find((a) => a.id === 'hook-bg').foreground, false);
+  await call('DELETE', route);
 });
 
 test('agent-guild-report does nothing outside an Agent Guild terminal', async () => {
