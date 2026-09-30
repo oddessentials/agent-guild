@@ -39,9 +39,10 @@ fs.writeFileSync(path.join(home, 'providers.json'), JSON.stringify({
     { id: 'fake', vendor: 'Test', tool: 'Fake Tool', command: process.execPath, args: [path.join(here, 'fixtures', 'fake-tool.mjs')], resumeArgs: ['--resume', '{id}'], package: 'fake-tool-pkg', versionArgs: [path.join(here, 'fixtures', 'fake-tool.mjs'), '--version'], modelPattern: 'fake-model-[a-z0-9.]+' },
     { id: 'plain', vendor: 'Test', tool: 'Plain Tool', command: process.execPath, args: [path.join(here, 'fixtures', 'fake-tool.mjs')], usage: { command: process.execPath, args: [path.join(here, 'fixtures', 'fake-usage.mjs')] } },
     { id: 'missing', vendor: 'Nobody', tool: 'Missing Tool', command: 'definitely-not-installed-agent-guild', install: 'npm i -g nothing', package: 'nothing' },
-    // Never read the developer's real Claude Code or Codex sign-in during tests.
+    // Never read the developer's real Claude Code, Codex or Gemini sign-in during tests.
     { id: 'anthropic', usage: null },
     { id: 'openai', usage: null },
+    { id: 'google', usage: null },
   ],
 }));
 
@@ -394,7 +395,7 @@ test('Claude Code sub-agent hooks reach the session through agent-guild-report',
     AGENT_GUILD_REPORT_TOKEN: managed.reportToken,
   };
   const runHook = (payload) => new Promise((resolve, reject) => {
-    const child = execFile(process.execPath, [reporter, '--claude-hook'], { env, timeout: 10000 }, (err, stdout, stderr) => {
+    const child = execFile(process.execPath, [reporter, '--hook'], { env, timeout: 10000 }, (err, stdout, stderr) => {
       if (err) reject(new Error(`${err.message}\n${stderr}`)); else resolve(stderr);
     });
     child.stdin.end(JSON.stringify(payload));
@@ -403,11 +404,19 @@ test('Claude Code sub-agent hooks reach the session through agent-guild-report',
 
   assert.equal(await runHook({ ...common, hook_event_name: 'SubagentStart', agent_id: 'agent-7', agent_type: 'Explore' }), '');
   let { body } = await call('GET', `/sessions/${session.id}`);
-  assert.deepEqual(body.session.agents.map((a) => [a.id, a.name, a.status]), [['claude-agent-7', 'Explore', 'working']]);
+  assert.deepEqual(body.session.agents.map((a) => [a.id, a.name, a.status]), [['hook-agent-7', 'Explore', 'working']]);
 
   await runHook({ ...common, hook_event_name: 'SubagentStop', agent_id: 'agent-7', agent_type: 'Explore', stop_hook_active: false });
   ({ body } = await call('GET', `/sessions/${session.id}`));
   assert.equal(body.session.agents[0].status, 'done');
+
+  // Codex CLI's events carry the model too, and Grok Build spells the fields in camelCase.
+  await runHook({ session_id: 'codex', cwd: home, hook_event_name: 'SessionStart', source: 'startup', model: 'gpt-5-codex' });
+  ({ body } = await call('GET', `/sessions/${session.id}`));
+  assert.deepEqual(body.session.model, { name: 'gpt-5-codex', displayName: null, source: 'report' });
+  await runHook({ hookEventName: 'subagent_start', hook_event_name: 'SubagentStart', sessionId: 'grok', subagentId: 'sub-1', agentType: 'reviewer', modelId: 'grok-build' });
+  ({ body } = await call('GET', `/sessions/${session.id}`));
+  assert.ok(body.session.agents.some((a) => a.id === 'hook-sub-1' && a.name === 'reviewer' && a.status === 'working'));
   await call('DELETE', `/sessions/${session.id}`);
 });
 

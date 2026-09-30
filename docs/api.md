@@ -88,8 +88,8 @@ skips the lookup). Both are null until the first check finishes; a
 `updateAvailable` is true when the latest version is newer, and
 `POST /providers/:id/install` performs the update.
 
-`usageSource` is `claude`, `codex`, `command` or null, and says whether
-`GET /usage` reports the provider.
+`usageSource` is `claude`, `codex`, `gemini`, `command` or null, and says
+whether `GET /usage` reports the provider.
 
 ### Usage
 
@@ -109,8 +109,9 @@ skips the lookup). Both are null until the first check finishes; a
 Each window is one rate limit of the provider's subscription. When the
 provider is not signed in or the lookup failed, `windows` is empty and
 `error` says why. The manager reads the tool's own sign-in (Claude Code's
-credentials file or macOS keychain item, Codex CLI's `auth.json`) and asks
-the vendor's usage endpoint; a `command` source runs a program that prints
+credentials file or macOS keychain item, Codex CLI's `auth.json`, Gemini
+CLI's keychain item or `oauth_creds.json`) and asks the vendor's usage
+endpoint; a `command` source runs a program that prints
 `{ plan?, windows: [{ label, usedPercent | remainingPercent, resetsAt? }] }`.
 Snapshots are cached for a minute.
 
@@ -160,7 +161,7 @@ Claude Code sub-agent. See [agent-reporting.md](agent-reporting.md).
 
 ```json
 {
-  "id": "claude-task-toolu_01",
+  "id": "hook-task-toolu_01",
   "name": "Explore",
   "kind": "subagent",
   "status": "working",

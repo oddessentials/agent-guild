@@ -9,19 +9,20 @@
 //   agent-guild-report <agent-id> [--name N] [--status working|waiting|idle|done]
 //                      [--detail TEXT] [--kind KIND] [--remove]
 //   agent-guild-report --model NAME [--display-name TEXT]
-//   agent-guild-report --claude-hook         (reads Claude Code hook JSON on stdin)
+//   agent-guild-report --hook                (reads a hook event as JSON on stdin:
+//                                             Claude Code, Codex CLI, Gemini CLI, Grok Build)
 //   agent-guild-report --claude-statusline [--passthrough]
 //                      (reads Claude Code status line JSON on stdin; prints a
 //                       status line, or the JSON itself with --passthrough)
 
-import { claudeHookToReport, claudeStatuslineToReport, formatStatusLine } from '../src/report/claude-hook.mjs';
+import { hookToReports, claudeStatuslineToReport, formatStatusLine } from '../src/report/hooks.mjs';
 
 const env = process.env;
 const inSession = env.AGENT_GUILD_URL && env.AGENT_GUILD_SESSION_ID && env.AGENT_GUILD_REPORT_TOKEN;
 
 const USAGE = `Usage: agent-guild-report <agent-id> [--name N] [--status working|waiting|idle|done] [--detail TEXT] [--kind KIND] [--remove]
        agent-guild-report --model NAME [--display-name TEXT]
-       agent-guild-report --claude-hook                    (reads Claude Code hook JSON from stdin)
+       agent-guild-report --hook                           (reads a coding tool's hook event JSON from stdin)
        agent-guild-report --claude-statusline [--passthrough]  (reads Claude Code status line JSON from stdin)`;
 
 function parseArgs(argv) {
@@ -29,7 +30,7 @@ function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--remove') out.remove = true;
-    else if (a === '--claude-hook') out.claudeHook = true;
+    else if (a === '--hook' || a === '--claude-hook') out.hook = true;
     else if (a === '--claude-statusline') out.claudeStatusline = true;
     else if (a === '--passthrough') out.passthrough = true;
     else if (a === '-h' || a === '--help') out.help = true;
@@ -84,11 +85,10 @@ async function main() {
     console.log(USAGE);
     return;
   }
-  if (args.claudeHook) {
+  if (args.hook) {
     const input = parseJson(await readStdin());
     if (!inSession || !input) return;
-    const report = claudeHookToReport(input);
-    if (report) await sendQuietly(report);
+    for (const report of hookToReports(input)) await sendQuietly(report);
     return;
   }
   if (args.claudeStatusline) {

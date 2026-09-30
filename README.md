@@ -7,18 +7,18 @@ coding tool, and see at a glance which sessions and agents are working.
 ![Agent Guild session cards](docs/screenshot.png)
 
 * **Start sessions from provider cards.** Anthropic (Claude Code), OpenAI
-  (Codex CLI), Google (Gemini CLI), xAI (a Grok CLI you configure), and a
-  plain shell. **New** starts a fresh session; **Existing** resumes one of
+  (Codex CLI), Google (Gemini CLI), xAI (Grok Build), and a plain shell.
+  **New** starts a fresh session; **Existing** resumes one of
   the tool's own earlier sessions from its id. Providers whose tool is not
   installed are shown greyed out with an **Install** button that runs
   `npm install -g` in a session you can watch, or with install instructions
   when the tool is not an npm package. Installed tools show their version
   and an **Update** button when npm has a newer one; updating while that
   tool's sessions are running asks first, because it can break them.
-* **See what is left of your limits.** Claude Code and Codex CLI cards show
-  a meter per rate-limit window (5-hour, 7-day) with the time until it
-  resets, read from the tool's own sign-in. Other providers can supply a
-  command that prints usage.
+* **See what is left of your limits.** Claude Code, Codex CLI and Gemini
+  CLI cards show a meter per rate-limit window (5-hour, 7-day, or per
+  model) with the time until it resets, read from the tool's own sign-in.
+  Other providers can supply a command that prints usage.
 * **Work in real terminals.** Each session is a card. Open it for a full
   interactive terminal: type instructions, answer prompts, watch output. Run
   as many sessions at once as you like.
@@ -86,7 +86,7 @@ one platform under a `win32` or `darwin` key. See
 | `command`, `args` | What to run. `command` is looked up on PATH. `@shell` means the user's default shell. |
 | `package` | The tool's npm package, e.g. `@openai/codex`. Enables the **Install** and **Update** buttons and the version check. |
 | `versionArgs` | Arguments that make the command print its version, used instead of `args`, e.g. `["--version"]`. |
-| `usage` | Where the usage meters come from: `"claude"`, `"codex"`, `{ "command", "args" }` for a program that prints `{ "windows": [{ "label", "usedPercent", "resetsAt" }] }`, or `null` for none. |
+| `usage` | Where the usage meters come from: `"claude"`, `"codex"`, `"gemini"`, `{ "command", "args" }` for a program that prints `{ "windows": [{ "label", "usedPercent", "resetsAt" }] }`, or `null` for none. |
 | `modelPattern` | Regular expression that finds the model name on the tool's screen when the tool does not report it. |
 | `resumeArgs` | Arguments that resume the tool's own session, with `{id}` standing for the id, e.g. `["--resume", "{id}"]`. Without it the card has no **Existing** button. |
 | `env` | Extra environment variables for the tool. |
@@ -103,13 +103,12 @@ registry. Set `AGENT_GUILD_NPM_REGISTRY` to override it for both, or
 
 ## Show agents and models
 
-Agents are reported by the coding tool, not guessed from its output. For
-Claude Code, add the hooks and status line in
-[examples/claude-code-settings.json](examples/claude-code-settings.json):
-each sub-agent appears on the card while it runs, and the card shows the
-model in use. Any tool or script can also report agents and the model with
-the `agent-guild-report` command or an escape sequence. See
-[docs/agent-reporting.md](docs/agent-reporting.md).
+Agents are reported by the coding tool, not guessed from its output. Add
+the hooks from the matching file in [examples/](examples/) to Claude Code,
+Codex CLI, Gemini CLI or Grok Build: each sub-agent appears on the card
+while it runs, and the card shows the model in use. Any tool or script can
+also report agents and the model with the `agent-guild-report` command or an
+escape sequence. See [docs/agent-reporting.md](docs/agent-reporting.md).
 
 ## Security
 
@@ -121,9 +120,10 @@ the `agent-guild-report` command or an escape sequence. See
 * Tools inside a session get a separate token that can only report agents
   for that session.
 * Usage meters are fetched by the manager with the coding tool's own
-  sign-in (Claude Code's credentials, Codex CLI's `auth.json`). The page only
-  ever receives percentages. On macOS the first lookup may ask for keychain
-  access to the "Claude Code-credentials" item; choose Always Allow.
+  sign-in (Claude Code's credentials, Codex CLI's `auth.json`, Gemini CLI's
+  sign-in). The page only ever receives percentages. On macOS the first
+  lookup may ask for keychain access to the "Claude Code-credentials" and
+  "gemini-cli-oauth" items; choose Always Allow.
 
 Anyone who can run programs as your user can already read the token, as with
 any local developer tool.
@@ -152,5 +152,6 @@ coding tool in `tests/fixtures`. CI runs them on Windows, macOS and Linux.
   folder. A bundled runtime with a Windows installer and a macOS app bundle
   is the next packaging step.
 * Sessions end when the manager stops or the computer restarts.
-* No official xAI coding CLI is configured by default. Point the `xai`
-  provider at the Grok tool you use.
+* Gemini CLI usage meters need its sign-in in the OS keychain (macOS, or
+  Linux with `secret-tool`) or in the older `oauth_creds.json`; Gemini CLI's
+  encrypted-file storage cannot be read.

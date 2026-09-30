@@ -32,32 +32,28 @@ safe to leave in hooks that also run elsewhere.
 It is on PATH after `npm install -g .` or `npm link` in the Agent Guild
 folder. Otherwise call it as `node <agent-guild>/bin/agent-guild-report.mjs`.
 
-## 2. Claude Code hooks
+## 2. Hooks in Claude Code, Codex CLI, Gemini CLI and Grok Build
 
-`agent-guild-report --claude-hook` reads Claude Code's hook input from stdin.
-Claude Code's `SubagentStart` and `SubagentStop` hook events fire when a
-sub-agent starts and finishes, including sub-agents running in the
-background. Each one then appears on the card for as long as it runs,
-labelled with its agent type, for example `Explore` or `Plan`.
+`agent-guild-report --hook` reads one hook event as JSON from stdin and
+reports what it carries: a sub-agent starting or stopping (`SubagentStart`
+and `SubagentStop`), and the main model when the event names it (`model`,
+`modelId`, Gemini CLI's `llm_request.model`, or `to_model` on Claude Code's
+`PostModelSwitch`). The four tools spell these fields differently; all
+spellings are accepted. Each sub-agent appears on the card for as long as it
+runs, labelled with its agent type, for example `Explore` or `Plan`.
 
-Add the hooks from [examples/claude-code-settings.json](../examples/claude-code-settings.json)
-to `~/.claude/settings.json`, or to `.claude/settings.json` in one project:
-
-```json
-{
-  "hooks": {
-    "SubagentStart": [{ "hooks": [{ "type": "command", "command": "agent-guild-report --claude-hook" }] }],
-    "SubagentStop":  [{ "hooks": [{ "type": "command", "command": "agent-guild-report --claude-hook" }] }]
-  }
-}
-```
+| Tool | Put the hooks in | Example |
+| --- | --- | --- |
+| Claude Code | `~/.claude/settings.json`, or `.claude/settings.json` in one project | [claude-code-settings.json](../examples/claude-code-settings.json) |
+| Codex CLI | `~/.codex/hooks.json`, then trust them with `/hooks` inside Codex | [codex-hooks.json](../examples/codex-hooks.json) |
+| Gemini CLI | `~/.gemini/settings.json`; it has no sub-agent events, so `BeforeModel` reports the model | [gemini-settings.json](../examples/gemini-settings.json) |
+| Grok Build | `~/.grok/hooks/agent-guild.json`; it also reads `~/.claude/settings.json` hooks | [grok-hooks.json](../examples/grok-hooks.json) |
 
 A `matcher` on these events filters by agent type. Leave it out to show
 every sub-agent.
 
-The same command on the `SessionStart` and `PostModelSwitch` events reports
-the model, and as the status line command it reports the model id and
-display name on every update:
+Claude Code's status line command reports the model id and display name on
+every update:
 
 ```json
 { "statusLine": { "type": "command", "command": "agent-guild-report --claude-statusline" } }
@@ -67,15 +63,17 @@ It prints a short status line (model, folder, context use). To keep your own
 status line script, pipe through it: `agent-guild-report --claude-statusline
 --passthrough | ~/.claude/statusline.sh`.
 
-Older Claude Code versions without these events can use `PreToolUse` and
-`PostToolUse` with `"matcher": "Agent|Task"` and the same command. That style
-shows the task description, but skips sub-agents launched in the background,
-because their tool call returns before they finish. Configure one style, not
-both, or each sub-agent appears twice.
+Older Claude Code versions without the sub-agent events can use `PreToolUse`
+and `PostToolUse` with `"matcher": "Agent|Task"` and the same command. That
+style shows the task description, but skips sub-agents launched in the
+background, because their tool call returns before they finish. Configure
+one style, not both, or each sub-agent appears twice.
 
-Hook names and payloads belong to Claude Code and can change. See the
-[hooks reference](https://code.claude.com/docs/en/hooks) if agents stop
-appearing.
+Hook names and payloads belong to the tools and can change. See the hooks
+reference of [Claude Code](https://code.claude.com/docs/en/hooks),
+[Codex CLI](https://developers.openai.com/codex/hooks),
+[Gemini CLI](https://geminicli.com/docs/hooks/reference/) or Grok Build
+(`/hooks` inside it) if agents stop appearing.
 
 ## 3. In-band escape sequence
 
@@ -111,12 +109,11 @@ This works without network access or extra tools, which suits wrapper scripts.
 When nothing reports the model, the manager looks for a model name on the
 terminal screen using the provider's `modelPattern` (a regular expression;
 the built-in providers match names like `claude-opus-4-5`, `gpt-5-codex`,
-`gemini-2.5-pro` and `grok-4`), and before that uses a `--model` argument.
-A screen match is a guess: the card marks where the name came from, and a
-report always wins.
+`gemini-2.5-pro`, `grok-build` and `grok-4`), and before that uses a
+`--model` argument. A screen match is a guess: the card marks where the name
+came from, and a report always wins.
 
 ## Other providers
 
-Codex CLI, Gemini CLI and Grok tools have no built-in integration yet. Any of
-them can report through the command or the escape sequence from their own hook
-or extension mechanism, where one exists.
+Any other tool can report through the command or the escape sequence from its
+own hook or extension mechanism, where one exists.
