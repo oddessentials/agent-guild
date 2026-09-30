@@ -39,13 +39,6 @@ npm install
 npm start          # same as: node bin/agent-guild.mjs open
 ```
 
-Or install the commands globally:
-
-```sh
-npm install -g .
-agent-guild
-```
-
 Without a terminal, double-click `launchers/AgentGuild.cmd` on Windows or
 `launchers/AgentGuild.command` on macOS. The first run installs dependencies.
 

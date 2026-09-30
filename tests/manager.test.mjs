@@ -421,7 +421,6 @@ test('snapshots restore a hidden cursor and SGR mouse reporting', async () => {
   await second.opened;
   const snapshot = await waitFor(() => second.messages.find((m) => m.type === 'snapshot'), { label: 'snapshot' });
   assert.ok(snapshot.data.includes('\x1b[?25l'), 'cursor stays hidden');
-  // ConPTY does not pass the SGR mouse mode through to the manager on Windows.
   if (process.platform !== 'win32') assert.ok(snapshot.data.includes('\x1b[?1006h'), 'SGR mouse encoding is restored');
   await second.close();
   await call('DELETE', `/sessions/${session.id}`);
