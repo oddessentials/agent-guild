@@ -674,13 +674,14 @@ test('the agent-guild-report launchers run the reporter from any hook shell', ()
   const gone = path.join(tempDir(), 'removed', 'node');
   const run = (file, args, env) => execFileSync(file, args, { env, encoding: 'utf8', timeout: 20000, windowsHide: true });
   if (process.platform === 'win32') {
-    const winArgs = [['cmd.exe', ['/d', '/s', '/c', `${SHIM_NAME} --help`], 'cmd.exe (Codex CLI) finds the .cmd through PATHEXT'],
-      ['powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Restricted', '-Command', `${SHIM_NAME} --help`], 'PowerShell (Gemini CLI, Grok Build) runs the .cmd under the Restricted policy']];
+    // Absolute shell paths: the env under test need not carry System32.
+    const system32 = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32');
+    const cmd = path.join(system32, 'cmd.exe');
+    const winArgs = [[cmd, ['/d', '/s', '/c', `${SHIM_NAME} --help`], 'cmd.exe (Codex CLI) finds the .cmd through PATHEXT'],
+      [path.join(system32, 'WindowsPowerShell', 'v1.0', 'powershell.exe'), ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Restricted', '-Command', `${SHIM_NAME} --help`], 'PowerShell (Gemini CLI, Grok Build) runs the .cmd under the Restricted policy']];
     for (const [file, args, why] of winArgs) assert.match(run(file, args, withNode), /^Usage: agent-guild-report/, why);
-    fs.copyFileSync(process.execPath, path.join(nodeDir, 'node.exe'));
-    const fallback = prependPath({ ...process.env, AGENT_GUILD_NODE: gone, Path: nodeDir }, dir);
-    delete fallback.PATH;
-    assert.match(run('cmd.exe', ['/d', '/s', '/c', `${SHIM_NAME} --help`], fallback), /^Usage: agent-guild-report/, 'falls back to node on PATH');
+    // The manager's Node.js is gone: `node` on the (real) PATH takes over.
+    assert.match(run(cmd, ['/d', '/s', '/c', `${SHIM_NAME} --help`], { ...withNode, AGENT_GUILD_NODE: gone }), /^Usage: agent-guild-report/, 'falls back to node on PATH');
   } else {
     assert.ok((fs.statSync(path.join(dir, SHIM_NAME)).mode & 0o111) !== 0, 'the sh launcher is executable');
     assert.match(run('/bin/sh', ['-c', `${SHIM_NAME} --help`], withNode), /^Usage: agent-guild-report/, 'sh (Claude Code, Grok Build) runs the launcher');
