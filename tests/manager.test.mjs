@@ -579,6 +579,7 @@ test('the events socket announces session lifecycle changes', async () => {
   await waitFor(() => events.messages.find((m) => m.type === 'hello'), { label: 'hello' });
 
   const session = await createFake({ name: 'Lifecycle' });
+  assert.equal(session.exitedAt, null);
   await waitFor(() => events.messages.find((m) => m.type === 'session.created' && m.session.id === session.id), { label: 'created' });
 
   const renamed = await call('PATCH', `/sessions/${session.id}`, { name: 'Renamed' });
@@ -586,16 +587,28 @@ test('the events socket announces session lifecycle changes', async () => {
 
   const term = terminal(session.id);
   await term.opened;
+  const beforeExit = Date.now();
   term.input('exit 3');
   const exit = await waitFor(() => term.messages.find((m) => m.type === 'exit'), { label: 'exit message' });
   assert.equal(exit.exitCode, 3);
-  await waitFor(() => events.messages.find((m) => m.type === 'session.updated' && m.session.id === session.id && m.session.status === 'exited'), { label: 'exited event' });
+  const updated = await waitFor(() => events.messages.find((m) => m.type === 'session.updated' && m.session.id === session.id && m.session.status === 'exited'), { label: 'exited event' });
+  const exitedAt = updated.session.exitedAt;
+  assert.ok(Date.parse(exitedAt) >= beforeExit && Date.parse(exitedAt) <= Date.now(), 'exit time is recorded when the process exits');
+  assert.equal((await call('GET', `/sessions/${session.id}`)).body.session.exitedAt, exitedAt);
+  assert.equal((await call('GET', '/sessions')).body.sessions.find((s) => s.id === session.id).exitedAt, exitedAt);
+
+  const reconnected = new Client(`${base.replace('http', 'ws')}/api/v1/events?token=${token}`);
+  await reconnected.opened;
+  const hello = await waitFor(() => reconnected.messages.find((m) => m.type === 'hello'), { label: 'reconnected hello' });
+  assert.equal(hello.sessions.find((s) => s.id === session.id).exitedAt, exitedAt);
+  await reconnected.close();
 
   // Exited sessions stay listed until removed, and still replay their last screen.
   const late = terminal(session.id);
   await late.opened;
   await waitFor(() => late.messages.find((m) => m.type === 'exit'), { label: 'exit replay' });
   assert.equal(late.messages[0].type, 'snapshot');
+  assert.equal(late.messages[0].session.exitedAt, exitedAt);
 
   assert.equal((await call('DELETE', `/sessions/${session.id}`)).status, 200);
   await waitFor(() => events.messages.find((m) => m.type === 'session.removed' && m.sessionId === session.id), { label: 'removed' });
@@ -607,10 +620,14 @@ test('the events socket announces session lifecycle changes', async () => {
 
 test('stop ends a running session', async () => {
   const session = await createFake();
+  assert.equal(session.exitedAt, null);
+  const beforeStop = Date.now();
   const { status } = await call('POST', `/sessions/${session.id}/stop`);
   assert.equal(status, 200);
   await waitFor(async () => (await call('GET', `/sessions/${session.id}`)).body.session.status === 'exited', { label: 'stopped' });
-  assert.equal((await call('GET', `/sessions/${session.id}`)).body.session.pid, null, 'an exited session has no pid');
+  const stopped = (await call('GET', `/sessions/${session.id}`)).body.session;
+  assert.equal(stopped.pid, null, 'an exited session has no pid');
+  assert.ok(Date.parse(stopped.exitedAt) >= beforeStop && Date.parse(stopped.exitedAt) <= Date.now(), 'stopping records an exit time');
   await call('DELETE', `/sessions/${session.id}`);
 });
 

@@ -1,0 +1,177 @@
+.level-badge { display: none; }
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --gold: #e8c47c;
+    --gold-dim: #8a6d3b;
+    --card-bg: rgba(18, 20, 26, 0.9);
+  }
+
+  .provider, .session-card {
+    --pc: #a67cf6;
+    --idle: url("/art/characters/shell/idle.png");
+    --working: url("/art/characters/shell/working.png");
+    --locked: url("/art/characters/shell/locked.png");
+  }
+  .provider[data-id="anthropic"], .session-card[data-provider="anthropic"] {
+    --pc: #d97757;
+    --idle: url("/art/characters/anthropic/idle.png");
+    --working: url("/art/characters/anthropic/working.png");
+    --locked: url("/art/characters/anthropic/locked.png");
+  }
+  .provider[data-id="openai"], .session-card[data-provider="openai"] {
+    --pc: #1fd08f;
+    --idle: url("/art/characters/openai/idle.png");
+    --working: url("/art/characters/openai/working.png");
+    --locked: url("/art/characters/openai/locked.png");
+  }
+  .provider[data-id="google"], .session-card[data-provider="google"] {
+    --pc: #5b9cff;
+    --idle: url("/art/characters/google/idle.png");
+    --working: url("/art/characters/google/working.png");
+    --locked: url("/art/characters/google/locked.png");
+  }
+  .provider[data-id="xai"], .session-card[data-provider="xai"] {
+    --pc: #38d6e8;
+    --idle: url("/art/characters/xai/idle.png");
+    --working: url("/art/characters/xai/working.png");
+    --locked: url("/art/characters/xai/locked.png");
+  }
+
+  .provider-icon[data-provider="anthropic"] { --icon: url("/art/icons/anthropic.png"); }
+  .provider-icon[data-provider="openai"] { --icon: url("/art/icons/openai.png"); }
+  .provider-icon[data-provider="google"] { --icon: url("/art/icons/google.png"); }
+  .provider-icon[data-provider="xai"] { --icon: url("/art/icons/xai.png"); }
+  .provider-icon[data-provider="shell"] { --icon: url("/art/icons/shell.png"); }
+  .provider-icon:not(.has-image)[data-provider="anthropic"],
+  .provider-icon:not(.has-image)[data-provider="openai"],
+  .provider-icon:not(.has-image)[data-provider="google"],
+  .provider-icon:not(.has-image)[data-provider="xai"],
+  .provider-icon:not(.has-image)[data-provider="shell"] {
+    background: var(--icon) center / cover no-repeat; color: transparent;
+  }
+
+  body { background: #0b0c10 url("/art/page.png") center bottom / cover fixed; }
+  .topbar { background: rgba(12, 13, 17, 0.88); backdrop-filter: blur(6px); border-bottom-color: #2a2418; }
+  .brand-mark { display: none; }
+  .brand::before {
+    content: ""; width: 34px; height: 34px; flex: none;
+    background: url("/art/ui/guild-crest.png") center / contain no-repeat;
+  }
+  h1, h2 { font-family: "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif; letter-spacing: 0.01em; }
+  h1 {
+    font-size: 1.3rem; font-weight: 600; color: var(--gold);
+    background: linear-gradient(180deg, #fbe9bd 0%, #e2b867 55%, #a97b35 100%);
+    -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  h2 { color: #f1e2c2; font-size: 1.15rem; font-weight: 600; }
+
+  .provider, .session-card {
+    position: relative; isolation: isolate; overflow: hidden;
+    border-radius: 6px; padding: 18px;
+    background: var(--card-bg);
+    border: 1px solid color-mix(in srgb, var(--pc) 35%, #2a303b);
+    box-shadow: inset 0 0 0 1px rgba(232, 196, 124, 0.06), 0 8px 24px rgba(0, 0, 0, 0.35);
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .provider:hover, .session-card:hover {
+    border-color: color-mix(in srgb, var(--pc) 70%, #2a303b);
+    box-shadow: inset 0 0 0 1px rgba(232, 196, 124, 0.1), 0 0 22px color-mix(in srgb, var(--pc) 22%, transparent);
+  }
+  .provider::before, .session-card::before {
+    content: ""; position: absolute; z-index: -1; pointer-events: none;
+    background-repeat: no-repeat; background-size: cover; background-position: center top;
+  }
+  .provider::after, .session-card::after {
+    content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+    border: 44px solid transparent; border-image: url("/art/ui/frame.png") 168;
+  }
+
+  .provider { padding-top: 188px; align-content: start; }
+  .provider::before {
+    inset: 0 0 auto 0; height: 250px;
+    background-image: var(--idle);
+    -webkit-mask-image: linear-gradient(to bottom, #000 55%, transparent 100%);
+            mask-image: linear-gradient(to bottom, #000 55%, transparent 100%);
+  }
+  .provider.unavailable::before { background-image: var(--locked); }
+  .provider.unavailable { border-color: #2a2d33; }
+  .provider.unavailable::after {
+    background: url("/art/ui/padlock.png") right 16px top 14px / 30px 40px no-repeat border-box;
+  }
+  .provider .vendor { color: #f3ead8; }
+
+  .meter-label { padding-left: 18px; background: url("/art/ui/gem-vitality.png") left center / 14px auto no-repeat; }
+  .meter + .meter .meter-label { background-image: url("/art/ui/gem-mana.png"); }
+  .meter-bar { height: 7px; background: #0c0e12; box-shadow: inset 0 0 0 1px rgba(232, 196, 124, 0.18); }
+  .meter-fill { background: linear-gradient(90deg, #1f9d5c, #52e08f); box-shadow: 0 0 8px rgba(82, 224, 143, 0.55); }
+  .meter + .meter .meter-fill { background: linear-gradient(90deg, #2a62c9, #5ba6ff); box-shadow: 0 0 8px rgba(91, 166, 255, 0.55); }
+  .meter.low .meter-fill { background: var(--warn); box-shadow: 0 0 8px rgba(224, 168, 74, 0.5); }
+  .meter.empty .meter-fill { background: var(--danger); box-shadow: 0 0 8px rgba(239, 107, 102, 0.5); }
+
+  .session-card { padding-left: 152px; min-height: 196px; }
+  .session-card::before {
+    inset: 0 auto 0 0; width: 168px; background-size: 168px auto;
+    background-image: var(--idle);
+    -webkit-mask-image: linear-gradient(to right, #000 62%, transparent 100%);
+            mask-image: linear-gradient(to right, #000 62%, transparent 100%);
+  }
+  .session-card:has(.status-pill.active)::before { background-image: var(--working); }
+  .session-card:has(.status-pill.active) {
+    border-color: color-mix(in srgb, var(--pc) 75%, #2a303b);
+    box-shadow: inset 0 0 0 1px rgba(232, 196, 124, 0.1), 0 0 26px color-mix(in srgb, var(--pc) 28%, transparent);
+  }
+  .session-card.exited::before { filter: grayscale(1) brightness(0.7); }
+  .session-card .card-top > .provider-icon { display: none; }
+  .session-card .card-top { flex-wrap: wrap; gap: 6px 8px; }
+  .session-card .card-title { flex-basis: 100%; }
+
+  .level-badge {
+    display: grid; place-items: center; position: absolute; left: 12px; bottom: 12px; z-index: 1;
+    width: 46px; height: 46px; padding-top: 1px;
+    background: url("/art/ui/level-medallion.png") center / contain no-repeat;
+    font: 700 1.05rem "Palatino Linotype", Palatino, Georgia, serif; color: #f6dea6;
+    text-shadow: 0 1px 2px #000, 0 0 6px rgba(0, 0, 0, 0.8);
+  }
+
+  .session-card .agent {
+    width: 34px; height: 34px; border-width: 1px; border-color: var(--fc);
+    place-items: end end; padding: 0 3px 1px 0;
+    background: #0e1016 center / 118% auto no-repeat;
+    color: #fff; font-size: 0.62rem; text-shadow: 0 0 3px #000, 0 1px 2px #000;
+    box-shadow: 0 0 10px color-mix(in srgb, var(--fc) 45%, transparent);
+  }
+  .session-card .agent.working::after { border-color: var(--fc); }
+  .session-card .agent[data-familiar="flame"] { --fc: #f08a3c; background-image: url("/art/familiars/flame.png"); }
+  .session-card .agent[data-familiar="leaf"] { --fc: #5fd068; background-image: url("/art/familiars/leaf.png"); }
+  .session-card .agent[data-familiar="night"] { --fc: #a66cf0; background-image: url("/art/familiars/night.png"); }
+  .session-card .agent[data-familiar="aether"] { --fc: #7cc8ff; background-image: url("/art/familiars/aether.png"); }
+
+  .status-pill { background: rgba(0, 0, 0, 0.45); border: 1px solid #4a3d25; }
+  .model-pill { border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); }
+  .provider .tier { background: rgba(0, 0, 0, 0.45); border-color: #4a3d25; color: var(--gold); }
+
+  .btn {
+    border-radius: 6px; border-color: #4a3d25;
+    background: linear-gradient(#242834, #171a22);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 1px 2px rgba(0, 0, 0, 0.5);
+  }
+  .btn:hover { border-color: var(--gold-dim); }
+  .btn.primary {
+    border-color: #b8955a; color: #fff; text-shadow: 0 1px 1px rgba(0, 0, 0, 0.35);
+    background: linear-gradient(#8e8ef6, #6262d6);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 2px 8px rgba(124, 124, 240, 0.25);
+  }
+  .btn.primary:hover { border-color: var(--gold); filter: brightness(1.08); }
+  .cwd input, .auth input { border-color: #4a3d25; background: rgba(12, 13, 17, 0.8); }
+  .status-pill.active { border-color: color-mix(in srgb, var(--ok) 55%, transparent); box-shadow: 0 0 10px rgba(76, 195, 138, 0.25); }
+
+  @media (max-width: 640px) {
+    .session-card { padding-left: 118px; }
+    .session-card::before { width: 132px; background-size: 132px auto; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .provider, .session-card { transition: none; }
+  }
+}

@@ -84,6 +84,7 @@ function planLabel(plan) {
 
 function paintProviderIcon(el, provider) {
   el.style.setProperty('--c', provider.color || '#64748b');
+  el.dataset.provider = provider.id;
   if (provider.iconUrl) {
     el.classList.add('has-image');
     el.style.backgroundImage = `url(${JSON.stringify(provider.iconUrl)})`;
@@ -96,11 +97,14 @@ function paintProviderIcon(el, provider) {
   el.setAttribute('aria-hidden', 'true');
 }
 
+const FAMILIARS = ['flame', 'leaf', 'night', 'aether'];
+
 function renderAgents(container, agents) {
   container.replaceChildren(...agents.map((agent) => {
     const el = document.createElement('span');
     el.className = `agent ${agent.status}`;
     el.style.setProperty('--c', `hsl(${hueFor(agent.name)} 65% 50%)`);
+    el.dataset.familiar = FAMILIARS[hueFor(agent.name) % FAMILIARS.length];
     el.textContent = (agent.name || '?').charAt(0).toUpperCase();
     const detail = agent.detail ? ` — ${agent.detail}` : '';
     el.title = `${agent.name} (${agent.status})${detail}`;
@@ -327,8 +331,21 @@ function buildCard(session) {
   return node;
 }
 
+function sessionLevel(s) {
+  const end = s.status === 'exited'
+    ? Date.parse(s.exitedAt ?? s.lastOutputAt ?? s.createdAt)
+    : Date.now();
+  const hours = (end - Date.parse(s.createdAt)) / 3_600_000;
+  return Number.isFinite(hours) ? Math.max(0, Math.floor(hours)) + 1 : 1;
+}
+
 function updateCard(node, s) {
+  node.dataset.provider = s.provider.id;
   paintProviderIcon(node.querySelector('.provider-icon'), s.provider);
+  const level = sessionLevel(s);
+  const badge = node.querySelector('.level-badge');
+  badge.textContent = level;
+  badge.title = `Level ${level}`;
   node.querySelector('.name').textContent = s.name;
   const resumed = s.resume ? ` · resumed ${s.resume}` : '';
   node.querySelector('.meta').textContent = `${s.provider.vendor} · ${s.provider.tool} · started ${relativeTime(s.createdAt)}${resumed}`;
