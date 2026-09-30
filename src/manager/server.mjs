@@ -211,6 +211,12 @@ export function createManagerServer({
       registry.reload();
       return sendJson(res, 200, { providers: registry.list(), warnings: registry.warnings });
     }
+    const installMatch = route.match(/^\/providers\/([a-z0-9][a-z0-9_-]{0,31})\/install$/);
+    if (installMatch && method === 'POST') {
+      const body = await readJsonBody(req);
+      const session = manager.install(installMatch[1], { force: body.force === true });
+      return sendJson(res, 201, { session: session.toJSON() });
+    }
     if (route === '/sessions' && method === 'GET') {
       return sendJson(res, 200, { sessions: manager.list() });
     }
@@ -260,7 +266,9 @@ export function createManagerServer({
       const status = err.status || 500;
       if (status >= 500) console.error('[server]', err);
       if (!res.headersSent) {
-        sendJson(res, status, { error: { code: err.code || 'error', message: err.message } });
+        const error = { code: err.code || 'error', message: err.message };
+        if (err.running !== undefined) error.running = err.running;
+        sendJson(res, status, { error });
       }
     }
   });

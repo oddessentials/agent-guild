@@ -79,15 +79,45 @@ export class SessionManager extends EventEmitter {
   create({ providerId, cwd, cols, rows, name, args, resume } = {}) {
     const provider = this.registry.get(String(providerId || ''));
     if (!provider) throw httpError(404, `unknown provider "${providerId}"`, 'unknown_provider');
-    if (this.sessions.size >= MAX_SESSIONS) {
-      throw httpError(429, `session limit reached (${MAX_SESSIONS}); remove finished sessions first`, 'too_many_sessions');
-    }
     if (args !== undefined && (!Array.isArray(args) || args.some((a) => typeof a !== 'string'))) {
       throw httpError(400, 'args must be an array of strings', 'bad_args');
     }
     const resumeId = cleanResumeId(resume);
     const workDir = this.resolveCwd(cwd);
     const spawnSpec = this.registry.spawnSpec(provider, args || [], resumeId);
+    return this._spawn({ provider, spawnSpec, cwd: workDir, cols, rows, name, resume: resumeId });
+  }
+
+  /**
+   * Install or update a provider's npm package in a visible session, so the
+   * user can watch npm and answer any prompt. Refuses while sessions of that
+   * provider are running unless `force` is set, because replacing a tool
+   * under a running process can break it.
+   */
+  install(providerId, { force = false } = {}) {
+    const provider = this.registry.get(String(providerId || ''));
+    if (!provider) throw httpError(404, `unknown provider "${providerId}"`, 'unknown_provider');
+    const running = this.runningFor(provider.id);
+    if (running > 0 && !force) {
+      const err = httpError(409, `${running} ${provider.tool} session(s) are running; updating the tool now may break them`, 'provider_in_use');
+      err.running = running;
+      throw err;
+    }
+    const spawnSpec = this.registry.installSpec(provider);
+    const verb = this.registry.resolve(provider) ? 'Update' : 'Install';
+    return this._spawn({ provider, spawnSpec, cwd: os.homedir(), name: `${verb} ${provider.tool}`, task: 'install' });
+  }
+
+  runningFor(providerId) {
+    let n = 0;
+    for (const s of this.sessions.values()) if (s.status === 'running' && s.task === null && s.provider.id === providerId) n++;
+    return n;
+  }
+
+  _spawn({ provider, spawnSpec, cwd, cols, rows, name, resume = null, task = null }) {
+    if (this.sessions.size >= MAX_SESSIONS) {
+      throw httpError(429, `session limit reached (${MAX_SESSIONS}); remove finished sessions first`, 'too_many_sessions');
+    }
     const description = this.registry.describe(provider);
     const id = newId();
     const reportToken = crypto.randomBytes(16).toString('hex');
@@ -108,13 +138,14 @@ export class SessionManager extends EventEmitter {
         id,
         provider: description,
         spawnSpec,
-        cwd: workDir,
+        cwd,
         env,
         cols: clampDimension(cols, 120, 2, 1000),
         rows: clampDimension(rows, 32, 1, 500),
         name,
         reportToken,
-        resume: resumeId,
+        resume,
+        task,
       });
     } catch (err) {
       throw httpError(500, `could not start ${provider.tool}: ${err.message}`, 'spawn_failed');
@@ -124,6 +155,9 @@ export class SessionManager extends EventEmitter {
       if (this.sessions.has(id)) this.emit('event', { type: 'session.updated', session: session.toJSON() });
     });
     session.on('warning', (msg) => console.warn(`[session ${id}] ${msg}`));
+    if (task === 'install') {
+      session.on('exit', () => this.emit('event', { type: 'providers.updated', providers: this.registry.list() }));
+    }
     this.sessions.set(id, session);
     this.emit('event', { type: 'session.created', session: session.toJSON() });
     return session;

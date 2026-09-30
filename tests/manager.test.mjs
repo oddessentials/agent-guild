@@ -15,11 +15,21 @@ process.env.AGENT_GUILD_HOME = home;
 process.env.AGENT_GUILD_PORT = '0';
 process.env.AGENT_GUILD_SKIP_SHELL_ENV = '1';
 
+// A stand-in npm so install sessions never touch the real global prefix.
+const bin = path.join(home, 'bin');
+fs.mkdirSync(bin);
+if (process.platform === 'win32') {
+  fs.writeFileSync(path.join(bin, 'npm.cmd'), '@echo off\r\necho FAKE-NPM %*\r\n');
+} else {
+  fs.writeFileSync(path.join(bin, 'npm'), '#!/bin/sh\necho "FAKE-NPM $*"\n', { mode: 0o755 });
+}
+process.env.PATH = `${bin}${path.delimiter}${process.env.PATH}`;
+
 fs.writeFileSync(path.join(home, 'providers.json'), JSON.stringify({
   providers: [
-    { id: 'fake', vendor: 'Test', tool: 'Fake Tool', command: process.execPath, args: [path.join(here, 'fixtures', 'fake-tool.mjs')], resumeArgs: ['--resume', '{id}'] },
+    { id: 'fake', vendor: 'Test', tool: 'Fake Tool', command: process.execPath, args: [path.join(here, 'fixtures', 'fake-tool.mjs')], resumeArgs: ['--resume', '{id}'], package: 'fake-tool-pkg' },
     { id: 'plain', vendor: 'Test', tool: 'Plain Tool', command: process.execPath, args: [path.join(here, 'fixtures', 'fake-tool.mjs')] },
-    { id: 'missing', vendor: 'Nobody', tool: 'Missing Tool', command: 'definitely-not-installed-agent-guild', install: 'npm i -g nothing' },
+    { id: 'missing', vendor: 'Nobody', tool: 'Missing Tool', command: 'definitely-not-installed-agent-guild', install: 'npm i -g nothing', package: 'nothing' },
   ],
 }));
 
@@ -170,9 +180,48 @@ test('providers report availability', async () => {
   const missing = body.providers.find((p) => p.id === 'missing');
   assert.equal(fake.available, true);
   assert.equal(fake.resumable, true);
-  assert.equal(body.providers.find((p) => p.id === 'plain').resumable, false);
+  assert.equal(fake.installable, true);
+  const plain = body.providers.find((p) => p.id === 'plain');
+  assert.equal(plain.resumable, false);
+  assert.equal(plain.installable, false, 'no npm package configured');
   assert.equal(missing.available, false);
+  assert.equal(missing.installable, true);
   assert.ok(body.providers.some((p) => p.id === 'anthropic'), 'built-in providers are still listed');
+});
+
+test('a provider can be installed or updated from a visible npm session', async () => {
+  const events = new Client(`${base.replace('http', 'ws')}/api/v1/events?token=${token}`);
+  await events.opened;
+
+  const { status, body } = await call('POST', '/providers/missing/install');
+  assert.equal(status, 201, JSON.stringify(body));
+  assert.equal(body.session.task, 'install');
+  assert.equal(body.session.name, 'Install Missing Tool');
+  assert.equal(body.session.provider.id, 'missing');
+  const client = terminal(body.session.id);
+  await client.opened;
+  await waitForText(client, body.session.id, 'FAKE-NPM install -g nothing@latest', 'npm output');
+  await waitFor(() => client.messages.find((m) => m.type === 'exit'), { label: 'npm exit' });
+  await waitFor(() => events.messages.find((m) => m.type === 'providers.updated'), { label: 'providers.updated' });
+  await client.close();
+  await call('DELETE', `/sessions/${body.session.id}`);
+
+  assert.equal((await call('POST', '/providers/plain/install')).body.error.code, 'not_installable');
+  assert.equal((await call('POST', '/providers/nope/install')).status, 404);
+
+  // Updating a tool that has running sessions needs an explicit go-ahead.
+  const running = await createFake();
+  const refused = await call('POST', '/providers/fake/install');
+  assert.equal(refused.status, 409);
+  assert.equal(refused.body.error.code, 'provider_in_use');
+  assert.equal(refused.body.error.running, 1);
+  const forced = await call('POST', '/providers/fake/install', { force: true });
+  assert.equal(forced.status, 201);
+  assert.equal(forced.body.session.name, 'Update Fake Tool');
+  await waitFor(async () => (await call('GET', `/sessions/${forced.body.session.id}`)).body.session.status === 'exited', { label: 'update exit' });
+  await call('DELETE', `/sessions/${forced.body.session.id}`);
+  await call('DELETE', `/sessions/${running.id}`);
+  await events.close();
 });
 
 test('an existing tool session can be resumed by id', async () => {

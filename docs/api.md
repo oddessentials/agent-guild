@@ -55,8 +55,10 @@ Errors use one shape:
   "vendor": "Anthropic",
   "tool": "Claude Code",
   "command": "claude",
+  "package": "@anthropic-ai/claude-code",
   "args": [],
   "resumable": true,
+  "installable": true,
   "color": "#D97757",
   "monogram": "A",
   "iconUrl": null,
@@ -68,9 +70,11 @@ Errors use one shape:
 ```
 
 `available` is false when the command is not installed. A client should show
-the provider as disabled and offer the `install` hint. `resumable` is true
-when the provider has `resumeArgs`, so one of the tool's own earlier sessions
-can be resumed by id.
+the provider as disabled and offer `POST /providers/:id/install` when
+`installable` is true (the provider names an npm `package` and npm is on
+PATH), or the `install` hint otherwise. `resumable` is true when the provider
+has `resumeArgs`, so one of the tool's own earlier sessions can be resumed by
+id.
 
 ### Session
 
@@ -81,6 +85,7 @@ can be resumed by id.
   "provider": { "id": "anthropic", "vendor": "Anthropic", "tool": "Claude Code", "color": "#D97757", "monogram": "A", "iconUrl": null },
   "cwd": "/Users/me/src/app",
   "resume": null,
+  "task": null,
   "pid": 3518,
   "status": "running",
   "exitCode": null,
@@ -100,6 +105,8 @@ can be resumed by id.
 * `activity` is `active` while the terminal is producing output and `quiet`
   after a short pause.
 * `resume` is the id of the tool's own session that was resumed, or null.
+* `task` is `install` for a session that runs npm to install or update the
+  provider's tool, and null for a session that runs the tool itself.
 
 ### Agent
 
@@ -133,6 +140,7 @@ All paths are under `/api/v1`.
 | GET | `/info` | | Manager version, platform, start time, provider config warnings. |
 | GET | `/providers` | | `{ providers: Provider[] }` |
 | POST | `/providers/reload` | | Re-reads `providers.json`. |
+| POST | `/providers/:id/install` | `{ force? }` | `201 { session }`: a session running `npm install -g <package>@latest`. 409 `provider_in_use` (with `running`, the session count) while the provider's sessions are running, unless `force` is true. |
 | GET | `/sessions` | | `{ sessions: Session[] }` |
 | POST | `/sessions` | `{ providerId, cwd?, cols?, rows?, name?, args?, resume? }` | `201 { session }` |
 | GET | `/sessions/:id` | | `{ session }` |
@@ -170,6 +178,7 @@ This socket pushes changes to every session. It is server-to-client only.
 | `{ type: "session.created", session }` | A session was started by any client. |
 | `{ type: "session.updated", session }` | Status, activity, agents, name or size changed. |
 | `{ type: "session.removed", sessionId }` | A session was removed. |
+| `{ type: "providers.updated", providers }` | The provider list changed, for example after an install session ended. |
 
 After a reconnect, treat `hello` as the new source of truth.
 

@@ -52,6 +52,7 @@ export class Session extends EventEmitter {
    * @param {number} opts.rows
    * @param {string} [opts.name]
    * @param {string|null} [opts.resume]  id of the tool's own session being resumed
+   * @param {string|null} [opts.task]    "install" for a package install, else null
    * @param {string} opts.reportToken
    * @param {number} [opts.scrollback]
    * @param {number} [opts.activityIdleMs]
@@ -64,6 +65,7 @@ export class Session extends EventEmitter {
     this.provider = opts.provider;
     this.name = cleanName(opts.name) || opts.provider.tool;
     this.resume = opts.resume ?? null;
+    this.task = opts.task ?? null;
     this.cwd = opts.cwd;
     this.cols = opts.cols;
     this.rows = opts.rows;
@@ -385,6 +387,7 @@ export class Session extends EventEmitter {
       },
       cwd: this.cwd,
       resume: this.resume,
+      task: this.task,
       pid: this.pid,
       status: this.status,
       exitCode: this.exitCode,

@@ -101,7 +101,7 @@ test('loadProviders merges user overrides, platform keys and disabled entries', 
   assert.equal(win.providers[0].win32, undefined);
 });
 
-test('resume arguments are filled in from the provider template', () => {
+test('resume and install specs come from the provider configuration', () => {
   const dir = tempDir();
   const userFile = path.join(dir, 'providers.json');
   fs.writeFileSync(userFile, JSON.stringify({ providers: [
@@ -113,6 +113,15 @@ test('resume arguments are filled in from the provider template', () => {
   assert.deepEqual(registry.spawnSpec(anthropic, ['-p'], 'sess-1').args, ['--resume', 'sess-1', '-p']);
   assert.deepEqual(registry.spawnSpec(anthropic, [], null).args, []);
   assert.throws(() => registry.spawnSpec(registry.get('shell'), [], 'x'), (err) => err.code === 'resume_unsupported');
+
+  assert.throws(() => registry.installSpec(registry.get('shell')), (err) => err.code === 'not_installable');
+  const npmDir = tempDir();
+  fs.writeFileSync(path.join(npmDir, process.platform === 'win32' ? 'npm.cmd' : 'npm'), '', { mode: 0o755 });
+  const withNpm = new ProviderRegistry({ userFile, env: { PATH: npmDir, PATHEXT: '.EXE;.CMD' }, platform: process.platform });
+  const spec = withNpm.installSpec(withNpm.get('anthropic'));
+  assert.ok(String(spec.args).includes('install -g @anthropic-ai/claude-code@latest') || spec.args.join(' ') === 'install -g @anthropic-ai/claude-code@latest', JSON.stringify(spec));
+  const withoutNpm = new ProviderRegistry({ userFile, env: { PATH: tempDir() }, platform: process.platform });
+  assert.throws(() => withoutNpm.installSpec(withoutNpm.get('anthropic')), (err) => err.code === 'npm_unavailable');
 
   assert.equal(cleanResumeId(undefined), null);
   assert.equal(cleanResumeId('  550e8400-e29b  '), '550e8400-e29b');

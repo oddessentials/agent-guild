@@ -42,6 +42,7 @@ function normalize(raw, platform) {
     vendor: String(merged.vendor || merged.id),
     tool: String(merged.tool || merged.command || ''),
     command: String(merged.command || ''),
+    package: merged.package ? String(merged.package) : null,
     args: Array.isArray(merged.args) ? merged.args.map(String) : [],
     resumeArgs: Array.isArray(merged.resumeArgs) ? merged.resumeArgs.map(String) : [],
     env: normalizeEnv(merged.env),
@@ -120,6 +121,10 @@ export class ProviderRegistry {
     return resolveCommand(this.commandFor(provider), { ...this.env, ...provider.env }, this.platform);
   }
 
+  resolveNpm() {
+    return resolveCommand('npm', this.env, this.platform);
+  }
+
   iconUrl(provider) {
     if (provider.icon) return provider.icon;
     if (this.iconDir && fs.existsSync(path.join(this.iconDir, `${provider.id}.svg`))) {
@@ -136,8 +141,10 @@ export class ProviderRegistry {
       vendor: provider.vendor,
       tool: provider.tool,
       command: this.commandFor(provider),
+      package: provider.package,
       args: provider.args,
       resumable: provider.resumeArgs.length > 0,
+      installable: Boolean(provider.package && this.resolveNpm()),
       color: provider.color,
       monogram: provider.monogram,
       iconUrl: this.iconUrl(provider),
@@ -173,5 +180,23 @@ export class ProviderRegistry {
       resumeArgs = provider.resumeArgs.map((arg) => arg.replaceAll('{id}', resume));
     }
     return buildSpawnSpec(resolved, [...provider.args, ...resumeArgs, ...extraArgs], this.env, this.platform);
+  }
+
+  /** Spawn spec that installs or updates the provider's npm package. */
+  installSpec(provider) {
+    if (!provider.package) {
+      const err = new Error(`${provider.tool} has no npm package configured; install it by hand: ${provider.install || provider.docs || 'see its documentation'}`);
+      err.status = 400;
+      err.code = 'not_installable';
+      throw err;
+    }
+    const npm = this.resolveNpm();
+    if (!npm) {
+      const err = new Error('npm was not found on PATH. Install Node.js from https://nodejs.org and restart the session manager.');
+      err.status = 409;
+      err.code = 'npm_unavailable';
+      throw err;
+    }
+    return buildSpawnSpec(npm, ['install', '-g', `${provider.package}@latest`], this.env, this.platform);
   }
 }

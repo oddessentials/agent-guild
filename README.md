@@ -10,7 +10,9 @@ coding tool, and see at a glance which sessions and agents are working.
   (Codex CLI), Google (Gemini CLI), xAI (a Grok CLI you configure), and a
   plain shell. **New** starts a fresh session; **Existing** resumes one of
   the tool's own earlier sessions from its id. Providers whose tool is not
-  installed are shown greyed out with install instructions.
+  installed are shown greyed out with an **Install** button that runs
+  `npm install -g` in a session you can watch, or with install instructions
+  when the tool is not an npm package.
 * **Work in real terminals.** Each session is a card. Open it for a full
   interactive terminal: type instructions, answer prompts, watch output. Run
   as many sessions at once as you like.
@@ -25,8 +27,8 @@ coding tool, and see at a glance which sessions and agents are working.
 
 * Windows 10 1809 or later, or macOS 11 or later. Linux works for development.
 * Node.js 22 or newer.
-* Each coding tool you want to use, installed and signed in on its own. Agent
-  Guild launches these tools; it does not install or authenticate them.
+* Each coding tool you want to use, signed in on its own. Agent Guild can
+  install the npm-packaged tools for you; it does not authenticate them.
 
 node-pty ships prebuilt binaries for Windows and macOS on x64 and arm64, so no
 compiler is needed there. WSL is not required.
@@ -74,6 +76,7 @@ one platform under a `win32` or `darwin` key. See
 | `id` | Lowercase identifier. |
 | `vendor`, `tool` | Names shown on the icon. |
 | `command`, `args` | What to run. `command` is looked up on PATH. `@shell` means the user's default shell. |
+| `package` | The tool's npm package, e.g. `@openai/codex`. Enables the **Install** button. |
 | `resumeArgs` | Arguments that resume the tool's own session, with `{id}` standing for the id, e.g. `["--resume", "{id}"]`. Without it the card has no **Existing** button. |
 | `env` | Extra environment variables for the tool. |
 | `color`, `monogram`, `icon` | Icon appearance. `icon` is a URL path; you can also drop `<id>.svg` into `web/icons/`. |

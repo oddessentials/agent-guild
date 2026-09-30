@@ -98,7 +98,7 @@ async function api(method, path, body) {
   });
   if (res.status === 401) throw new AuthError('The access token was rejected.');
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data?.error?.message || `Request failed (HTTP ${res.status})`);
+  if (!res.ok) throw Object.assign(new Error(data?.error?.message || `Request failed (HTTP ${res.status})`), data?.error);
   return data;
 }
 
@@ -130,10 +130,37 @@ function renderProviders() {
     existing.hidden = !provider.available || !provider.resumable;
     existing.title = `Resume one of ${provider.tool}'s own sessions by its id`;
     existing.addEventListener('click', () => resumeSession(provider, node));
-    hint.hidden = provider.available;
+    const install = node.querySelector('.install');
+    install.hidden = provider.available || !provider.installable;
+    install.title = `Run "npm install -g ${provider.package}@latest" in a session`;
+    install.addEventListener('click', () => installProvider(provider, node));
+    hint.hidden = provider.available || provider.installable;
     hint.textContent = provider.install || `${provider.command} was not found on PATH.`;
     return node;
   }));
+}
+
+async function installProvider(provider, card, { force = false } = {}) {
+  card.classList.add('busy');
+  try {
+    const { session } = await api('POST', `/providers/${provider.id}/install`, { force });
+    upsertSession(session);
+    openPanel(session.id);
+  } catch (err) {
+    if (err instanceof AuthError) return showAuth(err.message);
+    if (err.code === 'provider_in_use') {
+      card.classList.remove('busy');
+      const n = err.running;
+      const what = `${n} ${provider.tool} session${n === 1 ? ' is' : 's are'} running`;
+      if (confirm(`${what}. Updating ${provider.tool} while it runs can break ${n === 1 ? 'that session' : 'those sessions'}. Update anyway?`)) {
+        return installProvider(provider, card, { force: true });
+      }
+      return;
+    }
+    toast(err.message, 8000);
+  } finally {
+    card.classList.remove('busy');
+  }
 }
 
 async function startSession(provider, card, { resume } = {}) {
@@ -460,6 +487,9 @@ function connectEvents() {
       upsertSession(msg.session);
     } else if (msg.type === 'session.removed') {
       dropSession(msg.sessionId);
+    } else if (msg.type === 'providers.updated') {
+      state.providers = msg.providers;
+      renderProviders();
     }
   };
   ws.onclose = () => {
