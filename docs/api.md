@@ -222,8 +222,11 @@ running process is still the old version until it is restarted
 last upgrade session: `{ outcome, exitCode, version, installedVersion, at }`
 with `outcome` `installed`, `failed`, or `unchanged` when npm exited cleanly
 but did not replace the files the manager runs from. It is dropped once a
-newer release appears or the files on disk change. A check that fails keeps
-the release already known. `installing` is true from the start of an upgrade
+newer release appears or the files on disk change. After a `failed`
+upgrade the files on disk are not trusted, since npm may have replaced
+`package.json` before it was stopped: `pendingVersion` is null and
+`available` stays true for the same release, so it can be run again. A
+check that fails keeps the release already known. `installing` is true from the start of an upgrade
 session until its npm process has exited, even if the session was removed
 meanwhile; `available` and `pendingVersion` are withheld during that time,
 because the files on disk are mid-replacement, and `POST /upgrade` answers

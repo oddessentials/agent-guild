@@ -1887,6 +1887,23 @@ test('the manager checks its own release and knows when a restart is needed', as
   assert.equal(info.pendingVersion, '1.1.0');
   assert.equal(info.lastInstall.outcome, 'installed');
 
+  // An upgrade stopped after npm replaced package.json: the files are
+  // suspect, so no restart advice, and the same release is offered again.
+  self.beginInstall();
+  self.finishInstall({ exitCode: null });
+  info = self.describe();
+  assert.equal(info.lastInstall.outcome, 'failed');
+  assert.equal(info.pendingVersion, null, 'no restart advice after an interrupted install');
+  assert.equal(info.available, true, 'the same release stays on offer');
+  assert.equal(info.command, '/usr/bin/npm install -g @scope/app@1.1.0');
+  assert.equal((await self.spec()).version, '1.1.0', 'the retry is accepted');
+  self.beginInstall();
+  self.finishInstall({ exitCode: 0 });
+  info = self.describe();
+  assert.equal(info.lastInstall.outcome, 'installed');
+  assert.equal(info.pendingVersion, '1.1.0', 'a completed retry restores the restart advice');
+  assert.equal(info.available, false);
+
   // Without npm there is guidance instead of a command.
   writeVersion('1.0.0');
   registry.resolveNpm = () => null;

@@ -101,7 +101,7 @@ function renderUpgrade() {
     title = `Agent Guild ${u.pendingVersion} is installed, but this manager is still ${u.version}. Stop the manager and run "agent-guild open" to use it.`;
   } else if (last?.outcome === 'failed') {
     text = last.exitCode === null ? 'Upgrade failed' : `Upgrade failed (exit ${last.exitCode})`;
-    title = 'See the upgrade session for npm\'s output. On Windows, files in use cannot be replaced: stop the manager first and run the command yourself.';
+    title = 'See the upgrade session for npm\'s output, then run the upgrade again: the files on disk may be incomplete. On Windows, files in use cannot be replaced: stop the manager first and run the command yourself.';
   } else if (last?.outcome === 'unchanged') {
     text = 'Upgrade finished, but this copy was not replaced';
     title = `npm did not replace the files this manager runs from. Run${u.command ? ` "${u.command}"` : ' the npm install'} where Agent Guild is installed.`;

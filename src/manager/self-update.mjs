@@ -97,15 +97,25 @@ export class SelfUpdate extends EventEmitter {
     }
   }
 
+  /**
+   * True after an upgrade that did not finish: npm may have replaced
+   * package.json before it was stopped, so the files on disk are not to be
+   * trusted until an upgrade completes or the files change again.
+   */
+  _diskSuspect() {
+    return this.lastInstall?.outcome === 'failed';
+  }
+
   /** A version installed on disk that the running manager does not use yet, or null. */
   pendingVersion(installed = this.installedVersion()) {
+    if (this._diskSuspect()) return null;
     return installed && installed !== this.version && compareVersions(installed, this.version) > 0 ? installed : null;
   }
 
-  /** True when the latest release is newer than both the running manager and the files on disk. */
+  /** True when the latest release is newer than the running manager and not yet, or not reliably, on disk. */
   available(installed = this.installedVersion()) {
-    if (!this.latest) return false;
-    return compareVersions(this.latest, this.version) > 0 && compareVersions(this.latest, installed || this.version) > 0;
+    if (!this.latest || compareVersions(this.latest, this.version) <= 0) return false;
+    return this._diskSuspect() || compareVersions(this.latest, installed || this.version) > 0;
   }
 
   args() {
@@ -155,9 +165,11 @@ export class SelfUpdate extends EventEmitter {
       throw refusal(400, 'not_updatable', 'Version checks are off (AGENT_GUILD_NO_UPDATE_CHECK), so Agent Guild cannot upgrade itself.');
     }
     await this.refresh();
-    if (!this.available()) {
+    const installed = this.installedVersion();
+    this._pruneLastInstall(installed);
+    if (!this.available(installed)) {
       throw refusal(400, 'not_updatable', this.latest
-        ? `Agent Guild ${this.latest} is the latest release${this.pendingVersion() ? ' and is installed; restart the manager to use it' : ''}.`
+        ? `Agent Guild ${this.latest} is the latest release${this.pendingVersion(installed) ? ' and is installed; restart the manager to use it' : ''}.`
         : `Could not read the latest Agent Guild release${this.error ? `: ${this.error}` : ''}. Nothing was changed.`);
     }
     const npm = this.registry.resolveNpm();
