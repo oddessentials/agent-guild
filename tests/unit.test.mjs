@@ -1764,6 +1764,113 @@ test('shutdown reports the processes that did not confirm exiting in time', asyn
   assert.deepEqual(await stuck.shutdown({ timeoutMs: 50 }), { remaining: 1 });
 });
 
+test('the manager checks its own release and knows when a restart is needed', async () => {
+  const dir = tempDir();
+  const packageFile = path.join(dir, 'package.json');
+  const writeVersion = (version) => fs.writeFileSync(packageFile, JSON.stringify({ name: '@scope/app', version }));
+  writeVersion('1.0.0');
+  const calls = [];
+  let latest = '1.1.0';
+  const registry = {
+    checkUpdates: true,
+    registryUrl: null,
+    env: {},
+    platform: 'linux',
+    fetchImpl: async (url) => { calls.push(url); if (!latest) throw new Error('offline'); return { ok: true, json: async () => ({ version: latest }) }; },
+    npmRegistryUrl: async () => 'https://registry.example',
+    resolveNpm: () => '/usr/bin/npm',
+    npmArgs: ProviderRegistry.prototype.npmArgs,
+  };
+  const self = new SelfUpdate({ pkg: '@scope/app', version: '1.0.0', packageFile, registry });
+  let updates = 0;
+  self.on('updated', () => updates++);
+  assert.equal(self.describe().available, false, 'nothing is on offer before the first check');
+
+  await self.refresh();
+  assert.deepEqual(calls, ['https://registry.example/@scope%2fapp/latest']);
+  let info = self.describe();
+  assert.equal(info.version, '1.0.0');
+  assert.equal(info.latestVersion, '1.1.0');
+  assert.equal(info.available, true);
+  assert.equal(info.command, '/usr/bin/npm install -g @scope/app@1.1.0');
+  assert.equal(info.pendingVersion, null);
+  assert.equal(updates, 1);
+  await self.refresh();
+  assert.equal(calls.length, 1, 'the registry is asked about once an hour');
+  await self.refresh({ force: true });
+  assert.equal(calls.length, 2);
+  assert.equal(updates, 1, 'no event when nothing changed');
+  assert.deepEqual(await self.spec(), { spec: { file: '/usr/bin/npm', args: ['install', '-g', '@scope/app@1.1.0'] }, version: '1.1.0' });
+
+  // A check that fails keeps the release already known.
+  latest = null;
+  await self.refresh({ force: true });
+  assert.equal(calls.length, 3);
+  info = self.describe();
+  assert.equal(info.latestVersion, '1.1.0', 'the last known release survives a failed check');
+  assert.equal(info.available, true);
+  assert.equal(updates, 2, 'the error is reported');
+  latest = '1.1.0';
+  await self.refresh();
+  assert.equal(calls.length, 3, 'not retried at once');
+  self.checkedAt -= 6 * 60 * 1000;
+  await self.refresh();
+  assert.equal(calls.length, 4, 'a failed check is retried after a few minutes, not an hour');
+  assert.equal(updates, 3, 'the error clears');
+
+  // npm exited cleanly but did not replace these files (another prefix, say).
+  self.finishInstall({ exitCode: 0 });
+  assert.equal(self.describe().lastInstall.outcome, 'unchanged');
+  assert.equal(self.describe().available, true, 'the upgrade stays on offer');
+  self.finishInstall({ exitCode: 1 });
+  assert.equal(self.describe().lastInstall.outcome, 'failed');
+  assert.equal(self.describe().lastInstall.exitCode, 1);
+
+  // A newer release supersedes the outcome of the old attempt.
+  latest = '1.2.0';
+  await self.refresh({ force: true });
+  assert.equal(self.describe().latestVersion, '1.2.0');
+  assert.equal(self.describe().lastInstall, null, 'the stale outcome is dropped');
+  latest = '1.1.0';
+  await self.refresh({ force: true });
+  self.finishInstall({ exitCode: 1 });
+  assert.equal(self.describe().lastInstall.outcome, 'failed');
+
+  writeVersion('1.1.0');
+  self.finishInstall({ exitCode: 0 });
+  info = self.describe();
+  assert.equal(info.lastInstall.outcome, 'installed');
+  assert.equal(info.pendingVersion, '1.1.0', 'the new files are on disk while the running manager is still 1.0.0');
+  assert.equal(info.available, false, 'nothing newer than the files on disk');
+  assert.equal(info.command, null);
+  await assert.rejects(self.spec(), { code: 'not_updatable', message: /restart the manager/ });
+
+  // Without npm there is guidance instead of a command.
+  writeVersion('1.0.0');
+  registry.resolveNpm = () => null;
+  info = self.describe();
+  assert.equal(info.available, true);
+  assert.equal(info.command, null);
+  assert.match(info.guidance, /npm install -g @scope\/app@1\.1\.0/);
+  await assert.rejects(self.spec(), { code: 'npm_unavailable' });
+
+  // Development builds and disabled checks never ask the registry.
+  assert.equal(isDevelopmentBuild('0.0.0-development'), true);
+  assert.equal(isDevelopmentBuild('0.0.0'), true);
+  assert.equal(isDevelopmentBuild('1.0.0'), false);
+  const before = calls.length;
+  const dev = new SelfUpdate({ pkg: '@scope/app', version: '0.0.0-development', packageFile, registry });
+  await dev.refresh();
+  assert.equal(calls.length, before);
+  assert.equal(dev.describe().available, false);
+  await assert.rejects(dev.spec(), { code: 'not_updatable', message: /development build/ });
+  const off = new SelfUpdate({ pkg: '@scope/app', version: '1.0.0', packageFile, registry: { ...registry, checkUpdates: false } });
+  await off.refresh();
+  assert.equal(calls.length, before);
+  assert.equal(off.describe().latestVersion, null);
+  await assert.rejects(off.spec(), { code: 'not_updatable', message: /AGENT_GUILD_NO_UPDATE_CHECK/ });
+});
+
 function catalogEntry(id, { created = 1780000000, coding, intelligence, agentic, arena = [], tools = true, output = ['text'], canonical = '', name = `Test: ${id}`, context = 100000 } = {}) {
   return {
     id,
@@ -1959,79 +2066,4 @@ test('the catalog is fetched once, shared while in flight, and kept when a refre
   assert.equal((await failing(() => ({ ok: true, json: async () => { throw new SyntaxError('Unexpected token'); } }))).error,
     'OpenRouter sent a model list that could not be read');
   assert.equal((await failing(() => ({ ok: true, json: async () => ({ data: [] }) }))).error, 'OpenRouter sent an empty model list');
-});
-
-test('the manager checks its own release and knows when a restart is needed', async () => {
-  const dir = tempDir();
-  const packageFile = path.join(dir, 'package.json');
-  const writeVersion = (version) => fs.writeFileSync(packageFile, JSON.stringify({ name: '@scope/app', version }));
-  writeVersion('1.0.0');
-  const calls = [];
-  const registry = {
-    checkUpdates: true,
-    registryUrl: null,
-    fetchImpl: async (url) => { calls.push(url); return { ok: true, json: async () => ({ version: '1.1.0' }) }; },
-    npmRegistryUrl: async () => 'https://registry.example',
-    resolveNpm: () => '/usr/bin/npm',
-    npmArgs: ProviderRegistry.prototype.npmArgs,
-  };
-  const self = new SelfUpdate({ pkg: '@scope/app', version: '1.0.0', packageFile, registry });
-  let updates = 0;
-  self.on('updated', () => updates++);
-  assert.equal(self.describe().available, false, 'nothing is on offer before the first check');
-
-  await self.refresh();
-  assert.deepEqual(calls, ['https://registry.example/@scope%2fapp/latest']);
-  let info = self.describe();
-  assert.equal(info.version, '1.0.0');
-  assert.equal(info.latestVersion, '1.1.0');
-  assert.equal(info.available, true);
-  assert.equal(info.command, '/usr/bin/npm install -g @scope/app@1.1.0');
-  assert.equal(info.pendingVersion, null);
-  assert.equal(updates, 1);
-  await self.refresh();
-  assert.equal(calls.length, 1, 'the registry is asked about once an hour');
-  await self.refresh({ force: true });
-  assert.equal(calls.length, 2);
-  assert.equal(updates, 1, 'no event when nothing changed');
-  assert.deepEqual(await self.spec(), { file: '/usr/bin/npm', args: ['install', '-g', '@scope/app@1.1.0'], version: '1.1.0' });
-
-  // npm exited cleanly but did not replace these files (another prefix, say).
-  self.finishInstall({ exitCode: 0 });
-  assert.equal(self.describe().lastInstall.outcome, 'unchanged');
-  assert.equal(self.describe().available, true, 'the upgrade stays on offer');
-  self.finishInstall({ exitCode: 1 });
-  assert.equal(self.describe().lastInstall.outcome, 'failed');
-  assert.equal(self.describe().lastInstall.exitCode, 1);
-
-  writeVersion('1.1.0');
-  self.finishInstall({ exitCode: 0 });
-  info = self.describe();
-  assert.equal(info.lastInstall.outcome, 'installed');
-  assert.equal(info.pendingVersion, '1.1.0', 'the new files are on disk while the running manager is still 1.0.0');
-  assert.equal(info.available, false, 'nothing newer than the files on disk');
-  assert.equal(info.command, null);
-  await assert.rejects(self.spec(), { code: 'not_updatable', message: /restart the manager/ });
-
-  // Without npm there is guidance instead of a command.
-  writeVersion('1.0.0');
-  registry.resolveNpm = () => null;
-  info = self.describe();
-  assert.equal(info.available, true);
-  assert.equal(info.command, null);
-  assert.match(info.guidance, /npm install -g @scope\/app@1\.1\.0/);
-  await assert.rejects(self.spec(), { code: 'npm_unavailable' });
-
-  // Development builds and disabled checks never ask the registry.
-  assert.equal(isDevelopmentBuild('0.0.0-development'), true);
-  assert.equal(isDevelopmentBuild('0.0.0'), true);
-  assert.equal(isDevelopmentBuild('1.0.0'), false);
-  const dev = new SelfUpdate({ pkg: '@scope/app', version: '0.0.0-development', packageFile, registry });
-  await dev.refresh();
-  assert.equal(calls.length, 2);
-  assert.equal(dev.describe().available, false);
-  const off = new SelfUpdate({ pkg: '@scope/app', version: '1.0.0', packageFile, registry: { ...registry, checkUpdates: false } });
-  await off.refresh();
-  assert.equal(calls.length, 2);
-  assert.equal(off.describe().latestVersion, null);
 });

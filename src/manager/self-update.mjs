@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import { EventEmitter } from 'node:events';
 import { compareVersions, fetchManifest } from './versions.mjs';
 import { formatCommand } from './install-channels.mjs';
+import { buildSpawnSpec } from './command-resolver.mjs';
 
 const CHECK_TTL_MS = 60 * 60 * 1000;
 const FAILED_CHECK_TTL_MS = 5 * 60 * 1000;
@@ -64,16 +65,23 @@ export class SelfUpdate extends EventEmitter {
   async _refresh(force) {
     if (!this.registry.checkUpdates || isDevelopmentBuild(this.version)) return;
     const now = Date.now();
-    const ttl = this.latest ? CHECK_TTL_MS : FAILED_CHECK_TTL_MS;
+    const ttl = this.error ? FAILED_CHECK_TTL_MS : CHECK_TTL_MS;
     if (!force && now - this.checkedAt < ttl) return;
     this.checkedAt = now;
     const registryUrl = await this.registry.npmRegistryUrl();
     const { manifest, error } = await fetchManifest(this.pkg, 'latest', { registryUrl, fetchImpl: this.registry.fetchImpl });
-    const latest = manifest?.version ?? null;
+    // A failed check keeps the release already known; it is still published.
+    const latest = manifest?.version ?? this.latest;
     const changed = latest !== this.latest || error !== this.error;
     this.latest = latest;
     this.error = error;
     if (changed) this.emit('updated');
+  }
+
+  /** Forget an upgrade's outcome once a newer release or a different install supersedes it. */
+  _pruneLastInstall(installed) {
+    const last = this.lastInstall;
+    if (last && (last.version !== this.latest || last.installedVersion !== installed)) this.lastInstall = null;
   }
 
   /** The version of the package files on disk, or null when unreadable (for example mid-install). */
@@ -88,16 +96,14 @@ export class SelfUpdate extends EventEmitter {
   }
 
   /** A version installed on disk that the running manager does not use yet, or null. */
-  pendingVersion() {
-    const onDisk = this.installedVersion();
-    return onDisk && onDisk !== this.version && compareVersions(onDisk, this.version) > 0 ? onDisk : null;
+  pendingVersion(installed = this.installedVersion()) {
+    return installed && installed !== this.version && compareVersions(installed, this.version) > 0 ? installed : null;
   }
 
   /** True when the latest release is newer than both the running manager and the files on disk. */
-  available() {
-    if (!this.latest || isDevelopmentBuild(this.version)) return false;
-    const onDisk = this.installedVersion() || this.version;
-    return compareVersions(this.latest, this.version) > 0 && compareVersions(this.latest, onDisk) > 0;
+  available(installed = this.installedVersion()) {
+    if (!this.latest) return false;
+    return compareVersions(this.latest, this.version) > 0 && compareVersions(this.latest, installed || this.version) > 0;
   }
 
   args() {
@@ -112,7 +118,9 @@ export class SelfUpdate extends EventEmitter {
 
   /** Public description, sent in `/info`, `hello` and `manager.upgrade`. */
   describe() {
-    const available = this.available();
+    const installed = this.installedVersion();
+    this._pruneLastInstall(installed);
+    const available = this.available(installed);
     const command = available ? this.command() : null;
     return {
       version: this.version,
@@ -120,13 +128,19 @@ export class SelfUpdate extends EventEmitter {
       available,
       command,
       guidance: available && !command ? `npm was not found on PATH. Install Node.js from https://nodejs.org, then run: npm install -g ${this.pkg}@${this.latest}` : null,
-      pendingVersion: this.pendingVersion(),
+      pendingVersion: this.pendingVersion(installed),
       lastInstall: this.lastInstall,
     };
   }
 
-  /** Spawn spec for the upgrade session, or throws with a user-facing message. */
+  /** Spawn spec for the upgrade session and the version it installs, or throws with a user-facing message. */
   async spec() {
+    if (isDevelopmentBuild(this.version)) {
+      throw refusal(400, 'not_updatable', `This is a development build of Agent Guild (${this.version}); it is not upgraded from the registry.`);
+    }
+    if (!this.registry.checkUpdates) {
+      throw refusal(400, 'not_updatable', 'Version checks are off (AGENT_GUILD_NO_UPDATE_CHECK), so Agent Guild cannot upgrade itself.');
+    }
     await this.refresh();
     if (!this.available()) {
       throw refusal(400, 'not_updatable', this.latest
@@ -137,7 +151,8 @@ export class SelfUpdate extends EventEmitter {
     if (!npm) {
       throw refusal(409, 'npm_unavailable', 'npm was not found on PATH. Install Node.js from https://nodejs.org and restart the session manager.');
     }
-    return { file: npm, args: this.args(), version: this.latest };
+    // buildSpawnSpec wraps npm.cmd in cmd.exe on Windows, which a PTY needs.
+    return { spec: buildSpawnSpec(npm, this.args(), this.registry.env, this.registry.platform), version: this.latest };
   }
 
   /** Record how the upgrade session ended. The files on disk say whether the running copy was replaced. */

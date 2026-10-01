@@ -176,10 +176,10 @@ export class SessionManager extends EventEmitter {
     if (!this.selfUpdate) throw httpError(400, 'this manager cannot upgrade itself', 'not_updatable');
     if (this.closing) throw httpError(503, 'the session manager is stopping', 'manager_stopping');
     if (this.upgradesRunning() > 0) throw httpError(409, 'Agent Guild is already being upgraded', 'upgrade_in_progress');
-    const { file, args, version } = await this.selfUpdate.spec();
+    const { spec, version } = await this.selfUpdate.spec();
     if (this.upgradesRunning() > 0) throw httpError(409, 'Agent Guild is already being upgraded', 'upgrade_in_progress');
     const session = this._spawn({
-      provider: SELF_PROVIDER, description: SELF_PROVIDER, spawnSpec: { file, args },
+      provider: SELF_PROVIDER, description: SELF_PROVIDER, spawnSpec: spec,
       cwd: os.homedir(), name: `Upgrade Agent Guild to ${version}`, task: 'upgrade',
     });
     session.on('exit', () => this.selfUpdate.finishInstall({ exitCode: session.exitCode, version }));

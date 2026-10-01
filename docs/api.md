@@ -220,7 +220,9 @@ running process is still the old version until it is restarted
 (`agent-guild stop`, then `agent-guild open`). `lastInstall` describes the
 last upgrade session: `{ outcome, exitCode, version, installedVersion, at }`
 with `outcome` `installed`, `failed`, or `unchanged` when npm exited cleanly
-but did not replace the files the manager runs from.
+but did not replace the files the manager runs from. It is dropped once a
+newer release appears or the files on disk change. A check that fails keeps
+the release already known.
 
 ### Agent
 
@@ -257,7 +259,7 @@ All paths are under `/api/v1`.
 | --- | --- | --- | --- |
 | GET | `/health` | | `{ ok, name, version, pid }`. No token needed. |
 | GET | `/info` | | Manager version, platform, start time, provider config warnings, and `upgrade` (an Upgrade object). |
-| POST | `/upgrade` | | `201 { session }`: a session with `task` `upgrade` running the Upgrade `command`. 400 `not_updatable` when no newer release is known or it is already installed on disk. 409 `npm_unavailable` without npm on PATH. 409 `upgrade_in_progress` while one is running. Sessions keep running; the new version is used after the manager restarts. |
+| POST | `/upgrade` | | `201 { session }`: a session with `task` `upgrade` running the Upgrade `command`. 400 `not_updatable` when no newer release is known, it is already installed on disk, the manager is a development build, or version checks are off. 409 `npm_unavailable` without npm on PATH. 409 `upgrade_in_progress` while one is running. Sessions keep running; the new version is used after the manager restarts. |
 | GET | `/providers` | | `{ providers: Provider[] }` |
 | POST | `/providers/reload` | | Re-reads `providers.json`. |
 | POST | `/providers/:id/install` | `{ force? }` | `201 { session }`: a session running `npm install -g <package>@<version>`, or `updateCommand` when the tool is installed. 400 `not_updatable` when an installed tool has no `updateCommand`. 503 `release_unresolved` or 409 `release_incomplete` when the release cannot be read or its platform build is not published; nothing is run. 409 `install_in_progress` while one is already running. 409 `provider_in_use` (with `running`, the session count) while the provider's sessions are running, unless `force` is true. |
