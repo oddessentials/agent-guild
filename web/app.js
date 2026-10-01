@@ -3,6 +3,7 @@
 
 const TOKEN_KEY = 'agentGuild.token';
 const CWD_KEY = 'agentGuild.cwd';
+const ACCOUNTS_KEY = 'agentGuild.accounts';
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
 const $ = (id) => document.getElementById(id);
@@ -146,6 +147,55 @@ function wsUrl(path) {
 
 // ---- providers ------------------------------------------------------------
 
+function storedAccounts() {
+  try { return JSON.parse(load(ACCOUNTS_KEY)) || {}; } catch { return {}; }
+}
+
+function selectedAccount(provider) {
+  const accounts = provider.accounts || [];
+  const wanted = storedAccounts()[provider.id];
+  return accounts.find((a) => a.id === wanted) || accounts[0] || { id: 'default', label: 'Default' };
+}
+
+function selectAccount(provider, id) {
+  save(ACCOUNTS_KEY, JSON.stringify({ ...storedAccounts(), [provider.id]: id }));
+}
+
+function usageFor(provider, account = selectedAccount(provider)) {
+  return state.usage.get(`${provider.id}/${account.id}`);
+}
+
+function renderAccounts(card, provider) {
+  const host = card.querySelector('.accounts');
+  const accounts = provider.accounts || [];
+  host.hidden = accounts.length < 2;
+  if (host.hidden) return host.replaceChildren();
+  const selected = selectedAccount(provider).id;
+  const same = host.children.length === accounts.length && accounts.every((a, i) => host.children[i].dataset.account === a.id);
+  if (!same) {
+    host.replaceChildren(...accounts.map((account) => {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'account-chip';
+      chip.setAttribute('role', 'tab');
+      chip.dataset.account = account.id;
+      chip.addEventListener('click', () => {
+        selectAccount(provider, account.id);
+        renderAccounts(card, provider);
+        renderUsage(card, provider);
+      });
+      return chip;
+    }));
+  }
+  accounts.forEach((account, i) => {
+    const chip = host.children[i];
+    chip.classList.toggle('unsigned', usageFor(provider, account)?.signedIn === false);
+    chip.setAttribute('aria-selected', String(account.id === selected));
+    chip.textContent = account.label;
+    chip.title = `Start new ${provider.tool} sessions as the ${account.label} account`;
+  });
+}
+
 function renderProviders() {
   const list = $('providers');
   const tpl = $('provider-template');
@@ -166,7 +216,6 @@ function renderProviders() {
     const existing = node.querySelector('.existing');
     const hint = node.querySelector('.hint');
     start.hidden = !provider.available;
-    start.title = `Start a new ${provider.tool} session`;
     start.addEventListener('click', () => startSession(provider, node));
     existing.hidden = !provider.available || !provider.resumable;
     existing.title = `Resume one of ${provider.tool}'s own sessions by its id`;
@@ -184,6 +233,7 @@ function renderProviders() {
     renderHint(hint, provider);
     renderCopies(node.querySelector('.copies'), provider);
     renderConsoleLinks(node, provider);
+    renderAccounts(node, provider);
     renderUsage(node, provider);
     return node;
   }));
@@ -281,14 +331,21 @@ function creditsNote(usage) {
 
 function renderUsage(card, provider) {
   const host = card.querySelector('.usage');
-  const usage = state.usage.get(provider.id);
+  const account = selectedAccount(provider);
+  const usage = usageFor(provider, account);
   renderTier(card, provider, provider.usageSource ? usage : null);
+  const start = card.querySelector('.new');
+  const unsigned = Boolean(provider.available && usage?.signedIn === false);
+  start.textContent = unsigned ? 'Sign in' : 'New';
+  start.title = unsigned
+    ? `Start a ${provider.tool} session and sign in as the ${account.label} account`
+    : `Start a new ${provider.tool} session${provider.accounts?.length > 1 ? ` as the ${account.label} account` : ''}`;
   if (!provider.available || !provider.usageSource || !usage) return host.replaceChildren();
   if (usage.error || usage.windows.length === 0) {
     const note = document.createElement('div');
     note.className = 'usage-note';
-    note.textContent = `Usage: ${usage.error || 'no limits reported'}`;
-    note.title = note.textContent;
+    note.textContent = unsigned ? 'Not signed in yet' : `Usage: ${usage.error || 'no limits reported'}`;
+    note.title = unsigned ? usage.error : note.textContent;
     return host.replaceChildren(note, ...creditsNote(usage));
   }
   host.replaceChildren(...usage.windows.map((w) => {
@@ -310,10 +367,12 @@ function renderUsage(card, provider) {
 async function loadUsage() {
   let usage;
   try { ({ usage } = await api('GET', '/usage')); } catch { return; }
-  state.usage = new Map(usage.map((u) => [u.providerId, u]));
+  state.usage = new Map(usage.map((u) => [`${u.providerId}/${u.accountId ?? 'default'}`, u]));
   for (const card of $('providers').children) {
     const provider = state.providers.find((p) => p.id === card.dataset.id);
-    if (provider) renderUsage(card, provider);
+    if (!provider) continue;
+    renderAccounts(card, provider);
+    renderUsage(card, provider);
   }
 }
 
@@ -381,7 +440,7 @@ async function startSession(provider, card, { resume } = {}) {
   save(CWD_KEY, cwd);
   card.classList.add('busy');
   try {
-    const body = { providerId: provider.id, cwd: cwd || undefined, cols: 120, rows: 32, resume };
+    const body = { providerId: provider.id, account: selectedAccount(provider).id, cwd: cwd || undefined, cols: 120, rows: 32, resume };
     const { session } = await api('POST', '/sessions', body);
     upsertSession(session);
     openPanel(session.id);
@@ -413,6 +472,12 @@ function modelTitle(s) {
   if (!s.model) return '';
   const id = s.model.displayName && s.model.displayName !== s.model.name ? ` (${s.model.name})` : '';
   return `Model ${modelText(s)}${id}, ${MODEL_SOURCES[s.model.source] || s.model.source}`;
+}
+
+function accountLabel(s) {
+  if (!s.account) return '';
+  const provider = state.providers.find((p) => p.id === s.provider.id);
+  return (provider?.accounts?.length ?? 0) > 1 || s.account.id !== 'default' ? s.account.label : '';
 }
 
 function statusText(s) {
@@ -453,7 +518,7 @@ function updateCard(node, s) {
   badge.title = `Level ${level}`;
   node.querySelector('.name').textContent = s.name;
   const resumed = s.resume ? ` · resumed ${s.resume}` : '';
-  node.querySelector('.meta').textContent = `${s.provider.vendor} · ${s.provider.tool} · started ${relativeTime(s.createdAt)}${resumed}`;
+  node.querySelector('.meta').textContent = [s.provider.vendor, s.provider.tool, accountLabel(s), `started ${relativeTime(s.createdAt)}${resumed}`].filter(Boolean).join(' · ');
   const pill = node.querySelector('.status-pill');
   pill.textContent = statusText(s);
   pill.className = `status-pill ${s.status === 'exited' ? 'exited' : s.activity}`;
@@ -471,7 +536,8 @@ function updateCard(node, s) {
   node.querySelector('.stop').hidden = s.status !== 'running';
   node.querySelector('.remove').hidden = s.status === 'running';
   const modelLabel = s.model ? `, model ${modelText(s)}` : '';
-  node.setAttribute('aria-label', `${s.name}, ${s.provider.vendor}${modelLabel}, ${statusText(s)}, ${s.agents.length} agents`);
+  const accountName = accountLabel(s) ? `, ${accountLabel(s)} account` : '';
+  node.setAttribute('aria-label', `${s.name}, ${s.provider.vendor}${accountName}${modelLabel}, ${statusText(s)}, ${s.agents.length} agents`);
 }
 
 function renderSessions() {
@@ -706,7 +772,7 @@ function updatePanel() {
   if (!s) return;
   paintProviderIcon($('panel-icon'), s.provider);
   $('panel-title').textContent = s.name;
-  $('panel-sub').textContent = [s.provider.tool, modelText(s), statusText(s), s.cwd].filter(Boolean).join(' · ');
+  $('panel-sub').textContent = [s.provider.tool, accountLabel(s), modelText(s), statusText(s), s.cwd].filter(Boolean).join(' · ');
   $('panel-sub').title = modelTitle(s);
   renderAgents($('panel-agents'), s.agents);
   const stop = $('panel-stop');

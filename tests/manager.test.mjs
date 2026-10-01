@@ -101,6 +101,7 @@ fs.writeFileSync(path.join(home, 'providers.json'), JSON.stringify({
     { id: 'oddtool', vendor: 'Test', tool: 'Odd Tool', command: 'fake-native', versionArgs: ['--version'], env: { FAKE_TOOL_VERSION_TEXT: 'fake-tool nightly build' } },
     { id: 'absent', vendor: 'Nobody', tool: 'Absent Tool', command: 'definitely-not-installed-agent-guild', package: 'fake-tool-pkg' },
     { id: 'racytool', vendor: 'Nobody', tool: 'Racy Tool', command: 'definitely-not-installed-agent-guild', package: 'racy-pkg' },
+    { id: 'multi', vendor: 'Test', tool: 'Multi Tool', command: process.execPath, args: [path.join(here, 'fixtures', 'fake-tool.mjs')], homeVar: 'FAKE_TOOL_HOME', hooks: { path: 'hooks/settings.json', example: 'claude-code-settings.json' }, accounts: [{ id: 'work', label: 'Work' }, { id: 'kept', dir: path.join(home, 'kept-home') }] },
     // Never read the developer's real Claude Code, Codex or Gemini sign-in during tests.
     { id: 'anthropic', usage: null },
     { id: 'openai', usage: null },
@@ -528,6 +529,53 @@ test('session creation validates its input', async () => {
   assert.equal((await call('POST', '/sessions', { providerId: 'fake', args: 'x' })).status, 400);
 });
 
+test('a session runs under the account picked, in that account\'s own home folder', async () => {
+  const { body: listed } = await call('GET', '/providers');
+  assert.deepEqual(listed.providers.find((p) => p.id === 'multi').accounts, [{ id: 'default', label: 'Default' }, { id: 'work', label: 'Work' }, { id: 'kept', label: 'Kept' }]);
+  assert.deepEqual(listed.providers.find((p) => p.id === 'fake').accounts, [{ id: 'default', label: 'Default' }]);
+
+  const workHome = path.join(home, 'accounts', 'multi', 'work');
+  assert.ok(!fs.existsSync(workHome), 'nothing is created before the first session');
+  const { status, body } = await call('POST', '/sessions', { providerId: 'multi', account: 'work', cwd: home, cols: 90, rows: 20 });
+  assert.equal(status, 201, JSON.stringify(body));
+  const work = body.session;
+  assert.deepEqual(work.account, { id: 'work', label: 'Work' });
+  assert.equal(work.name, 'Multi Tool · Work');
+  assert.equal(fs.readFileSync(path.join(workHome, 'hooks', 'settings.json'), 'utf8'), fs.readFileSync(path.join(here, '..', 'examples', 'claude-code-settings.json'), 'utf8'), 'the reporting hooks are seeded');
+  const client = terminal(work.id);
+  await client.opened;
+  client.input('env');
+  await waitFor(() => client.output.includes('ENV:'), { label: 'env' });
+  assert.ok(client.output.includes(`|home=${workHome}\r`), client.output);
+  await client.close();
+  await call('DELETE', `/sessions/${work.id}`);
+
+  fs.writeFileSync(path.join(workHome, 'hooks', 'settings.json'), '{"mine":true}');
+  const again = (await call('POST', '/sessions', { providerId: 'multi', account: 'work', cwd: home, name: 'Named' })).body.session;
+  assert.equal(again.name, 'Named');
+  assert.equal(fs.readFileSync(path.join(workHome, 'hooks', 'settings.json'), 'utf8'), '{"mine":true}', 'an existing hooks file is kept');
+  await call('DELETE', `/sessions/${again.id}`);
+
+  const kept = (await call('POST', '/sessions', { providerId: 'multi', account: 'kept', cwd: home })).body.session;
+  assert.ok(fs.existsSync(path.join(home, 'kept-home', 'hooks', 'settings.json')), 'a configured dir is used as is');
+  await call('DELETE', `/sessions/${kept.id}`);
+
+  const plain = (await call('POST', '/sessions', { providerId: 'multi', cwd: home })).body.session;
+  assert.deepEqual(plain.account, { id: 'default', label: 'Default' });
+  assert.equal(plain.name, 'Multi Tool · Default');
+  const single = await createFake();
+  assert.deepEqual(single.account, { id: 'default', label: 'Default' });
+  assert.equal(single.name, 'Fake Tool', 'one account leaves the name alone');
+  await call('DELETE', `/sessions/${plain.id}`);
+  await call('DELETE', `/sessions/${single.id}`);
+
+  const unknown = await call('POST', '/sessions', { providerId: 'multi', account: 'nope', cwd: home });
+  assert.equal(unknown.status, 404);
+  assert.equal(unknown.body.error.code, 'unknown_account');
+  assert.equal((await call('POST', '/sessions', { providerId: 'multi', account: 3, cwd: home })).status, 400);
+  assert.equal((await call('POST', '/sessions', { providerId: 'fake', account: 'work', cwd: home })).status, 404, 'other providers have only the default account');
+});
+
 test('a session runs, streams output, accepts input and resizes', async () => {
   const session = await createFake();
   assert.equal(session.status, 'running');
@@ -547,7 +595,7 @@ test('a session runs, streams output, accepts input and resizes', async () => {
   client.input('env');
   await waitFor(() => client.output.includes('ENV:'), { label: 'env' });
   await waitForText(client, session.id, '|term_program=', 'env line');
-  assert.ok(client.output.includes(`ENV:${session.id}|fake|${base}|${path.join(home, 'bin')}|tmux=|term_program=\r`), client.output);
+  assert.ok(client.output.includes(`ENV:${session.id}|fake|${base}|${path.join(home, 'bin')}|tmux=|term_program=|home=\r`), client.output);
 
   client.send({ type: 'resize', cols: 101, rows: 33 });
   await waitFor(async () => (await call('GET', `/sessions/${session.id}`)).body.session.cols === 101, { label: 'resize' });

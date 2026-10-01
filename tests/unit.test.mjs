@@ -8,13 +8,14 @@ import { resolveCommand, resolveAllCommands, buildSpawnSpec, quoteForCmd } from 
 import { mergePathLists, parsePathFromEnvOutput, weavePaths, parseRegValue, expandWindowsVars, readWindowsPath, trimPathExt } from '../src/manager/shell-env.mjs';
 import { mergeEnv, cleanResumeId, modelFromArgs, SessionManager } from '../src/manager/session-manager.mjs';
 import { loadProviders, defaultShell, ProviderRegistry } from '../src/manager/providers.mjs';
+import { paths } from '../src/manager/config.mjs';
 import { classifyInstall, expandHome, helpDescribes, platformDependency, listInstallations, knownLaunchers, shellCommand } from '../src/manager/install-channels.mjs';
 import { hookToReports, claudeStatuslineToReport, formatStatusLine } from '../src/report/hooks.mjs';
 import { shimContents, writeReportShims, prependPath, fileUrl, SHIM_NAME, LOADER_NAME } from '../src/manager/report-shims.mjs';
 import { execFileSync } from 'node:child_process';
 import { parseVersion, compareVersions, probeVersion, diagnosticLine, latestVersion } from '../src/manager/versions.mjs';
 import {
-  UsageMonitor, readClaudeCredentials, readCodexCredentials, readGeminiCredentials, geminiOAuthClientFromInstall, geminiKeychainLookup,
+  UsageMonitor, UsageError, readClaudeCredentials, readCodexCredentials, readGeminiCredentials, geminiOAuthClientFromInstall, geminiKeychainLookup,
   claudeKeychainService, claudeCredentialsFile, fetchClaudeUsage, fetchCodexUsage, fetchGeminiUsage, commandUsage, toIso, windowLabel, clampPercent,
 } from '../src/manager/usage.mjs';
 import crypto from 'node:crypto';
@@ -1301,6 +1302,114 @@ test('a usage command prints JSON, and the monitor caches snapshots', async () =
   assert.equal(files.codex, path.join(dir, 'codex-home', 'auth.json'), 'the manager env applies otherwise');
   await monitor.all();
   assert.equal(fetches, 2, 'fresh snapshots are served from the cache');
+});
+
+test('accounts get their own home folder and environment, the default keeps the tool\'s own', () => {
+  const dir = tempDir();
+  const userFile = path.join(dir, 'providers.json');
+  fs.writeFileSync(userFile, JSON.stringify({ providers: [
+    { id: 'anthropic', accounts: [{ id: 'work', label: ' Work ' }, { id: 'personal', dir: '~/.claude-personal' }, { id: 'default', label: 'Main', dir: '/ignored' }, { id: 'Bad Id' }, { id: 'work' }, 'shared', 7] },
+    { id: 'openai', accounts: 'work' },
+    { id: 'shell', accounts: [{ id: 'other' }] },
+    { id: 'google', hooks: { path: '../settings.json', example: 'gemini-settings.json' } },
+    { id: 'xai', homeVar: 'not a name', accounts: [{ id: 'x' }] },
+  ] }));
+  const { providers, warnings } = loadProviders({ userFile, platform: 'linux' });
+  const byId = Object.fromEntries(providers.map((p) => [p.id, p]));
+  assert.deepEqual(byId.anthropic.accounts, [
+    { id: 'default', label: 'Main', dir: null },
+    { id: 'work', label: 'Work', dir: null },
+    { id: 'personal', label: 'Personal', dir: '~/.claude-personal' },
+    { id: 'shared', label: 'Shared', dir: null },
+  ]);
+  assert.deepEqual(byId.openai.accounts, [{ id: 'default', label: 'Default', dir: null }]);
+  assert.deepEqual(byId.shell.accounts, [{ id: 'default', label: 'Default', dir: null }]);
+  assert.deepEqual(byId.xai.accounts, [{ id: 'default', label: 'Default', dir: null }]);
+  assert.equal(byId.xai.homeVar, null);
+  assert.equal(byId.google.hooks, null, 'a hooks path cannot leave the home folder');
+  assert.deepEqual(byId.anthropic.hooks, { path: 'settings.json', example: 'claude-code-settings.json' });
+  assert.equal(byId.google.homeVar, 'GEMINI_CLI_HOME');
+  const expected = ['ignored dir of the default account', 'invalid id "Bad Id"', 'duplicate account "work"', 'invalid id 7', 'openai": ignored accounts; it must be an array', 'shell": ignored accounts; the provider has no homeVar', 'xai": ignored accounts; the provider has no homeVar'];
+  for (const text of expected) assert.ok(warnings.some((w) => w.includes(text)), `${text} in ${JSON.stringify(warnings)}`);
+  assert.equal(warnings.length, expected.length, JSON.stringify(warnings));
+
+  const accountsDir = path.join(dir, 'accounts');
+  const registry = new ProviderRegistry({ userFile, env: { PATH: '', HOME: '/Users/a' }, platform: 'linux', checkUpdates: false, accountsDir });
+  const anthropic = registry.get('anthropic');
+  assert.deepEqual(registry.accountsFor(anthropic), [
+    { id: 'default', label: 'Main', dir: null, env: {} },
+    { id: 'work', label: 'Work', dir: path.join(accountsDir, 'anthropic', 'work'), env: { CLAUDE_CONFIG_DIR: path.join(accountsDir, 'anthropic', 'work') } },
+    { id: 'personal', label: 'Personal', dir: path.resolve('/Users/a/.claude-personal'), env: { CLAUDE_CONFIG_DIR: path.resolve('/Users/a/.claude-personal') } },
+    { id: 'shared', label: 'Shared', dir: path.join(accountsDir, 'anthropic', 'shared'), env: { CLAUDE_CONFIG_DIR: path.join(accountsDir, 'anthropic', 'shared') } },
+  ]);
+  assert.deepEqual(registry.account(anthropic), registry.accountsFor(anthropic)[0]);
+  assert.deepEqual(registry.account(anthropic, 'work'), registry.accountsFor(anthropic)[1]);
+  assert.throws(() => registry.account(anthropic, 'nope'), (err) => err.status === 404 && err.code === 'unknown_account');
+  assert.deepEqual(registry.describe(anthropic).accounts, [{ id: 'default', label: 'Main' }, { id: 'work', label: 'Work' }, { id: 'personal', label: 'Personal' }, { id: 'shared', label: 'Shared' }]);
+  assert.deepEqual(registry.describe(registry.get('openai')).accounts, [{ id: 'default', label: 'Default' }]);
+
+  const relativeFile = path.join(dir, 'relative.json');
+  fs.writeFileSync(relativeFile, JSON.stringify({ providers: [{ id: 'anthropic', accounts: [{ id: 'two', dir: 'claude-two' }] }] }));
+  const relative = loadProviders({ userFile: relativeFile, platform: 'linux' }).providers[0];
+  assert.equal(registry.accountFor(relative, relative.accounts[1]).dir, path.join(accountsDir, 'anthropic', 'claude-two'), 'a relative dir lives under the provider\'s accounts folder');
+  const windows = new ProviderRegistry({ userFile, env: { PATH: '', USERPROFILE: 'C:\\Users\\a' }, platform: 'win32', checkUpdates: false, accountsDir: 'C:\\Data\\accounts' });
+  assert.equal(windows.account(windows.get('anthropic'), 'personal').env.CLAUDE_CONFIG_DIR, 'C:\\Users\\a\\.claude-personal');
+  assert.equal(windows.account(windows.get('anthropic'), 'work').env.CLAUDE_CONFIG_DIR, 'C:\\Data\\accounts\\anthropic\\work');
+
+  const dataDirDefault = new ProviderRegistry({ userFile, env: { PATH: '' }, platform: 'linux', checkUpdates: false });
+  assert.equal(dataDirDefault.accountsDir, paths.accounts, 'accounts live in the data folder by default');
+  assert.equal(dataDirDefault.account(dataDirDefault.get('anthropic'), 'work').dir, path.join(paths.accounts, 'anthropic', 'work'));
+});
+
+test('usage is read per account, from that account\'s home folder only', async () => {
+  const dir = tempDir();
+  const userFile = path.join(dir, 'providers.json');
+  fs.writeFileSync(userFile, JSON.stringify({ providers: [
+    { id: 'anthropic', accounts: [{ id: 'work' }] },
+    { id: 'google', accounts: [{ id: 'work' }] },
+    { id: 'openai', usage: null },
+    { id: 'xai', usage: null },
+  ] }));
+  const accountsDir = path.join(dir, 'accounts');
+  const registry = new ProviderRegistry({ userFile, env: { PATH: '' }, platform: 'linux', checkUpdates: false, accountsDir });
+  const claudeHome = path.join(dir, 'claude-home');
+  fs.mkdirSync(claudeHome);
+  fs.writeFileSync(path.join(claudeHome, '.credentials.json'), JSON.stringify({ claudeAiOauth: { accessToken: 'tok', subscriptionType: 'pro' } }));
+  const geminiCalls = [];
+  const monitor = new UsageMonitor({
+    registry,
+    platform: 'linux',
+    env: { PATH: '', CLAUDE_CONFIG_DIR: claudeHome },
+    fetchImpl: async (url) => {
+      if (url.endsWith(':loadCodeAssist')) return { ok: true, json: async () => ({ cloudaicompanionProject: 'proj-1', currentTier: { name: 'Free' } }) };
+      if (url.endsWith(':retrieveUserQuota')) return { ok: true, json: async () => ({ buckets: [{ modelId: 'gemini-2.5-pro', remainingFraction: 0.5 }] }) };
+      return { ok: true, json: async () => ({ five_hour: { utilization: 5 } }) };
+    },
+    readers: {
+      gemini: async ({ file, platform, readKeychain }) => {
+        geminiCalls.push({ file, platform, keychain: readKeychain ? await readKeychain(platform) : 'default' });
+        if (file.includes('accounts')) throw Object.assign(new UsageError('Gemini CLI is not signed in on this machine'), { notSignedIn: true });
+        return { accessToken: 'g', refreshToken: null, expiresAt: Date.now() + 3600000 };
+      },
+    },
+  });
+  const all = await monitor.all();
+  const byKey = Object.fromEntries(all.map((u) => [`${u.providerId}/${u.accountId}`, u]));
+  assert.deepEqual(Object.keys(byKey), ['anthropic/default', 'anthropic/work', 'google/default', 'google/work']);
+  assert.equal(byKey['anthropic/default'].signedIn, true);
+  assert.equal(byKey['anthropic/default'].plan, 'pro');
+  assert.deepEqual(byKey['anthropic/default'].windows, [{ label: '5-hour', usedPercent: 5, resetsAt: null }]);
+  assert.equal(byKey['anthropic/work'].signedIn, false, 'an account without a credentials file is not signed in');
+  assert.match(byKey['anthropic/work'].error, new RegExp(path.join('accounts', 'anthropic', 'work').replace(/\\/g, '\\\\')));
+  assert.deepEqual(byKey['anthropic/work'].windows, []);
+  assert.equal(byKey['google/default'].signedIn, true);
+  assert.equal(byKey['google/work'].signedIn, false);
+  assert.deepEqual(geminiCalls.map((c) => c.keychain), ['default', null], 'only the tool\'s own home consults the keychain');
+  assert.equal(geminiCalls[0].file, path.join(os.homedir(), '.gemini', 'oauth_creds.json'));
+  assert.equal(geminiCalls[1].file, path.join(accountsDir, 'google', 'work', '.gemini', 'oauth_creds.json'));
+  assert.equal(byKey['google/default'].windows[0].usedPercent, 50);
+  await monitor.all();
+  assert.equal(geminiCalls.length, 2, 'each account has its own cache entry');
 });
 
 test('Gemini usage keeps its refreshed token and project only while the sign-in is the same', async () => {

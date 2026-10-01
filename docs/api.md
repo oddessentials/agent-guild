@@ -63,6 +63,7 @@ Errors use one shape:
   "latestVersion": "2.1.290",
   "updateAvailable": true,
   "usageSource": "claude",
+  "accounts": [{ "id": "default", "label": "Default" }, { "id": "work", "label": "Work" }],
   "color": "#D97757",
   "monogram": "A",
   "iconUrl": null,
@@ -92,6 +93,9 @@ skips the lookup). Both are null until the first check finishes; a
 
 `usageSource` is `claude`, `codex`, `gemini`, `command` or null, and says
 whether `GET /usage` reports the provider.
+`accounts` lists the sign-ins the tool can run under: `default` is the
+tool's own, and each further one has its own home folder, so it keeps its
+own sign-in and usage. `POST /sessions` takes an account id.
 `usageUrl` and `billingUrl` are `https://` links to the vendor's usage and
 billing pages, or null when none is configured. A usage snapshot's `plan` is
 the subscription tier.
@@ -101,7 +105,9 @@ the subscription tier.
 ```json
 {
   "providerId": "anthropic",
+  "accountId": "default",
   "plan": "max",
+  "signedIn": true,
   "windows": [
     { "label": "5-hour", "usedPercent": 42.5, "resetsAt": "2026-09-30T08:00:00.000Z" },
     { "label": "7-day", "usedPercent": 12, "resetsAt": "2026-10-03T05:00:00.000Z" },
@@ -122,7 +128,9 @@ usage is enabled, whose `resetsAt` is the end of the spend period when the
 vendor reports it. `credits` is a prepaid credit balance
 (Codex), or null when the account has none, it is unlimited, or it is
 unknown. When the provider is not signed in or the lookup failed,
-`windows` is empty and `error` says why. The manager reads the tool's own sign-in (Claude Code's
+`windows` is empty and `error` says why; `signedIn` is false when no
+sign-in was found for that account, true when one was read, and null when
+that is unknown. One snapshot is reported per account. The manager reads the tool's own sign-in (Claude Code's
 credentials file or macOS keychain item, Codex CLI's `auth.json`, Gemini
 CLI's keychain item or `oauth_creds.json`) and asks the vendor's usage
 endpoint; a `command` source runs a program that prints
@@ -140,6 +148,7 @@ rather than shown as unused. Snapshots are cached for a minute.
   "cwd": "/Users/me/src/app",
   "resume": null,
   "task": null,
+  "account": { "id": "default", "label": "Default" },
   "pid": 3518,
   "status": "running",
   "exitCode": null,
@@ -170,6 +179,8 @@ rather than shown as unused. Snapshots are cached for a minute.
 * `resume` is the id of the tool's own session that was resumed, or null.
 * `task` is `install` for a session that runs npm to install or update the
   provider's tool, and null for a session that runs the tool itself.
+* `account` is the provider account the tool runs under, or null for an
+  install session.
 * `model` is the main model the tool is using, or null while unknown.
   `source` is `report` when the tool said so (see
   [agent-reporting.md](agent-reporting.md)), `screen` when the name was
@@ -215,9 +226,9 @@ All paths are under `/api/v1`.
 | GET | `/providers` | | `{ providers: Provider[] }` |
 | POST | `/providers/reload` | | Re-reads `providers.json`. |
 | POST | `/providers/:id/install` | `{ force? }` | `201 { session }`: a session running `npm install -g <package>@<version>`, or `updateCommand` when the tool is installed. 400 `not_updatable` when an installed tool has no `updateCommand`. 503 `release_unresolved` or 409 `release_incomplete` when the release cannot be read or its platform build is not published; nothing is run. 409 `install_in_progress` while one is already running. 409 `provider_in_use` (with `running`, the session count) while the provider's sessions are running, unless `force` is true. |
-| GET | `/usage` | | `{ usage: Usage[] }` for every provider with a `usageSource`. |
+| GET | `/usage` | | `{ usage: Usage[] }`, one per account of every provider with a `usageSource`. |
 | GET | `/sessions` | | `{ sessions: Session[] }` |
-| POST | `/sessions` | `{ providerId, cwd?, cols?, rows?, name?, args?, resume? }` | `201 { session }` |
+| POST | `/sessions` | `{ providerId, account?, cwd?, cols?, rows?, name?, args?, resume? }` | `201 { session }` |
 | GET | `/sessions/:id` | | `{ session }` |
 | PATCH | `/sessions/:id` | `{ name }` | `{ session }`. `name` must be a non-empty string; it is trimmed to 80 characters. |
 | POST | `/sessions/:id/stop` | | Ends the process. The session stays listed as exited. |
@@ -230,7 +241,9 @@ All paths are under `/api/v1`.
 leading `~` is expanded. `args` are appended to the provider's configured
 arguments. `resume` is an id or name of one of the tool's own sessions; it is
 substituted for `{id}` in the provider's `resumeArgs` (400 `resume_unsupported`
-when the provider has none).
+when the provider has none). `account` is one of the provider's account ids
+(404 `unknown_account` otherwise) and defaults to `default`; the account's
+home folder is created before its first session.
 
 `POST /sessions/:id/agents` and `POST /sessions/:id/model` also accept the
 per-session report token instead of the API token, in an

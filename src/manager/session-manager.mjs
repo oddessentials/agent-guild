@@ -6,11 +6,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { Session, newId, clampDimension } from './session.mjs';
+import { fileURLToPath } from 'node:url';
+import { Session, newId, clampDimension, cleanName } from './session.mjs';
 import { prependPath } from './report-shims.mjs';
 import { CHANNEL_LABELS } from './install-channels.mjs';
 
 export const MAX_SESSIONS = 32;
+const examplesDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../examples');
 
 function httpError(status, message, code) {
   return Object.assign(new Error(message), { status, code });
@@ -83,19 +85,42 @@ export class SessionManager extends EventEmitter {
     return dir;
   }
 
-  create({ providerId, cwd, cols, rows, name, args, resume } = {}) {
+  create({ providerId, cwd, cols, rows, name, args, resume, account } = {}) {
     const provider = this.registry.get(String(providerId || ''));
     if (!provider) throw httpError(404, `unknown provider "${providerId}"`, 'unknown_provider');
     if (args !== undefined && (!Array.isArray(args) || args.some((a) => typeof a !== 'string'))) {
       throw httpError(400, 'args must be an array of strings', 'bad_args');
     }
+    if (account !== undefined && account !== null && typeof account !== 'string') throw httpError(400, 'account must be a string', 'bad_account');
     const resumeId = cleanResumeId(resume);
     const workDir = this.resolveCwd(cwd);
+    const signIn = this.registry.account(provider, account);
     const spawnSpec = this.registry.spawnSpec(provider, args || [], resumeId);
-    const session = this._spawn({ provider, spawnSpec, cwd: workDir, cols, rows, name, resume: resumeId });
+    this.prepareAccount(provider, signIn);
+    const sessionName = cleanName(name) || (provider.accounts.length > 1 ? `${provider.tool} · ${signIn.label}` : null);
+    const session = this._spawn({ provider, spawnSpec, cwd: workDir, cols, rows, name: sessionName, resume: resumeId, account: signIn });
     const model = modelFromArgs([...provider.args, ...(args || [])]);
     if (model) session.setModel({ name: model }, 'args');
     return session;
+  }
+
+  prepareAccount(provider, account) {
+    if (!account.dir) return;
+    try {
+      fs.mkdirSync(account.dir, { recursive: true, mode: 0o700 });
+      if (!provider.hooks) return;
+      const target = path.join(account.dir, ...provider.hooks.path.split('/'));
+      const example = path.join(examplesDir, provider.hooks.example);
+      if (fs.existsSync(target)) return;
+      if (!fs.existsSync(example)) {
+        console.warn(`[accounts] no hooks example ${example} for ${provider.tool}; ${target} was not written`);
+        return;
+      }
+      fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
+      fs.copyFileSync(example, target, fs.constants.COPYFILE_EXCL);
+    } catch (err) {
+      throw httpError(500, `could not prepare the ${account.label} account folder ${account.dir}: ${err.message}`, 'account_unavailable');
+    }
   }
 
   /**
@@ -153,7 +178,7 @@ export class SessionManager extends EventEmitter {
     return n;
   }
 
-  _spawn({ provider, spawnSpec, cwd, cols, rows, name, resume = null, task = null, installKind = null }) {
+  _spawn({ provider, spawnSpec, cwd, cols, rows, name, resume = null, task = null, installKind = null, account = null }) {
     if (this.closing) throw httpError(503, 'the session manager is stopping', 'manager_stopping');
     if (this.sessions.size >= MAX_SESSIONS) {
       throw httpError(429, `session limit reached (${MAX_SESSIONS}); remove finished sessions first`, 'too_many_sessions');
@@ -164,7 +189,7 @@ export class SessionManager extends EventEmitter {
 
     // The tool's hooks run `agent-guild-report` by name, so the launchers
     // go first on PATH, after any provider PATH override.
-    const env = prependPath(mergeEnv([this.baseEnv, provider.env, {
+    const env = prependPath(mergeEnv([this.baseEnv, provider.env, account?.env, {
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
       AGENT_GUILD_SESSION_ID: id,
@@ -194,6 +219,7 @@ export class SessionManager extends EventEmitter {
         reportToken,
         resume,
         task,
+        account: account ? { id: account.id, label: account.label } : null,
       });
     } catch (err) {
       throw httpError(500, `could not start ${provider.tool}: ${err.message}`, 'spawn_failed');

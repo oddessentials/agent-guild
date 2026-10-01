@@ -19,6 +19,10 @@ const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 
 export class UsageError extends Error {}
 
+function notSignedIn(message) {
+  return Object.assign(new UsageError(message), { notSignedIn: true });
+}
+
 function shortPath(file) {
   const home = os.homedir();
   return file.startsWith(home) ? `~${file.slice(home.length)}` : file;
@@ -112,7 +116,7 @@ export async function readClaudeCredentials({
     try {
       raw = await fs.promises.readFile(file, 'utf8');
     } catch {
-      throw new UsageError(`Claude Code is not signed in on this machine (no ${keychain ? 'keychain item or ' : ''}${shortPath(file)})`);
+      throw notSignedIn(`Claude Code is not signed in on this machine (no ${keychain ? 'keychain item or ' : ''}${shortPath(file)})`);
     }
   }
   let creds;
@@ -195,7 +199,7 @@ export async function readCodexCredentials({ file = codexAuthFile() } = {}) {
   try {
     raw = await fs.promises.readFile(file, 'utf8');
   } catch {
-    throw new UsageError(`Codex CLI is not signed in on this machine (no ${shortPath(file)})`);
+    throw notSignedIn(`Codex CLI is not signed in on this machine (no ${shortPath(file)})`);
   }
   let auth;
   try { auth = JSON.parse(raw); } catch { throw new UsageError('Codex CLI credentials could not be parsed'); }
@@ -260,11 +264,6 @@ export function geminiCredentialsFile(env = process.env) {
   return path.join(env.GEMINI_CLI_HOME || os.homedir(), '.gemini', 'oauth_creds.json');
 }
 
-/**
- * Gemini CLI keeps its OAuth token in the OS keychain (service
- * "gemini-cli-oauth", account "main-account") and, before it did, in
- * oauth_creds.json. Its encrypted-file fallback cannot be read from here.
- */
 export function geminiKeychainLookup(platform) {
   if (platform === 'darwin') return { file: 'security', args: ['find-generic-password', '-s', GEMINI_KEYCHAIN_SERVICE, '-a', GEMINI_KEYCHAIN_ACCOUNT, '-w'] };
   // keytar stores libsecret items with the attributes "service" and "account".
@@ -295,7 +294,7 @@ export async function readGeminiCredentials({
   try {
     legacy = JSON.parse(await fs.promises.readFile(file, 'utf8'));
   } catch {
-    throw new UsageError(`Gemini CLI is not signed in on this machine (no "${GEMINI_KEYCHAIN_SERVICE}" keychain item or ${shortPath(file)})`);
+    throw notSignedIn(`Gemini CLI is not signed in on this machine (no "${GEMINI_KEYCHAIN_SERVICE}" keychain item or ${shortPath(file)})`);
   }
   if (typeof legacy?.access_token !== 'string' || !legacy.access_token) throw new UsageError('Gemini CLI credentials could not be parsed');
   const client = typeof legacy.client_id === 'string' && typeof legacy.client_secret === 'string'
@@ -471,28 +470,35 @@ export class UsageMonitor {
     this.gemini = new Map();
   }
 
-  /** Snapshots for every provider that has a usage source. */
+  /** Snapshots for every account of every provider that has a usage source. */
   all() {
-    return Promise.all(this.registry.providers.filter((p) => p.usage).map((p) => this.snapshot(p)));
+    const jobs = [];
+    for (const provider of this.registry.providers) {
+      if (!provider.usage) continue;
+      for (const account of this.registry.accountsFor(provider)) jobs.push(this.snapshot(provider, account));
+    }
+    return Promise.all(jobs);
   }
 
-  snapshot(provider) {
-    const entry = this.cache.get(provider.id);
+  snapshot(provider, account = this.registry.account(provider)) {
+    const key = `${provider.id}\0${account.id}`;
+    const entry = this.cache.get(key);
     const now = Date.now();
     if (entry?.inflight) return entry.inflight;
     if (entry && now - entry.at < entry.ttl) return Promise.resolve(entry.snapshot);
-    const inflight = this._fetch(provider).then((snapshot) => {
+    const inflight = this._fetch(provider, account, key).then((snapshot) => {
       const ttl = snapshot.rateLimited ? RATE_LIMITED_TTL_MS : this.ttlMs;
-      this.cache.set(provider.id, { snapshot, at: Date.now(), ttl });
+      this.cache.set(key, { snapshot, at: Date.now(), ttl });
       return snapshot;
     });
-    this.cache.set(provider.id, { ...entry, inflight });
+    this.cache.set(key, { ...entry, inflight });
     return inflight;
   }
 
-  async _fetch(provider) {
-    const base = { providerId: provider.id, plan: null, windows: [], credits: null, fetchedAt: new Date().toISOString(), error: null };
-    const env = { ...this.env, ...provider.env };
+  async _fetch(provider, account, key) {
+    const base = { providerId: provider.id, accountId: account.id, plan: null, windows: [], credits: null, signedIn: null, fetchedAt: new Date().toISOString(), error: null };
+    const env = { ...this.env, ...provider.env, ...account.env };
+    let signedIn = null;
     try {
       let result;
       if (provider.usage === 'claude') {
@@ -501,16 +507,25 @@ export class UsageMonitor {
           keychain: this.platform === 'darwin',
           service: claudeKeychainService(env),
         });
+        signedIn = true;
         result = await fetchClaudeUsage({ ...creds, version: this.registry.versions.get(provider.id)?.installed, fetchImpl: this.fetchImpl });
       } else if (provider.usage === 'codex') {
         const creds = await this.readers.codex({ file: codexAuthFile(env) });
+        signedIn = true;
         result = await fetchCodexUsage({ ...creds, fetchImpl: this.fetchImpl });
       } else if (provider.usage === 'gemini') {
-        const creds = await this.readers.gemini({ file: geminiCredentialsFile(env), platform: this.platform });
+        // The keychain item has one fixed name, so it can only belong to the
+        // tool's own home; an account with its own home is read from there.
+        const creds = await this.readers.gemini({
+          file: geminiCredentialsFile(env),
+          platform: this.platform,
+          ...(account.dir ? { readKeychain: async () => null } : {}),
+        });
+        signedIn = true;
         // The refreshed token, project and plan belong to one sign-in; a new
         // sign-in (another account, or the same one again) starts over.
         const signIn = creds.refreshToken || creds.accessToken;
-        const cached = this.gemini.get(provider.id);
+        const cached = this.gemini.get(key);
         const known = cached?.signIn === signIn ? cached : {};
         const fresh = known.token && known.token.expiresAt > Date.now() + 60000 ? known.token : null;
         const { plan, windows, project, token } = await fetchGeminiUsage({
@@ -521,15 +536,15 @@ export class UsageMonitor {
           version: this.registry.versions.get(provider.id)?.installed,
           fetchImpl: this.fetchImpl,
         });
-        this.gemini.set(provider.id, { signIn, project, token, plan: plan ?? known.plan ?? null });
+        this.gemini.set(key, { signIn, project, token, plan: plan ?? known.plan ?? null });
         result = { plan: plan ?? known.plan ?? null, windows };
       } else {
         result = await commandUsage(provider.usage, env, this.platform);
       }
-      return { ...base, ...result };
+      return { ...base, signedIn, ...result };
     } catch (err) {
       const message = err instanceof UsageError ? err.message : `usage check failed: ${err.name === 'TimeoutError' ? 'timed out' : err.message}`;
-      return { ...base, error: message, ...(err.rateLimited ? { rateLimited: true } : {}) };
+      return { ...base, signedIn: err.notSignedIn ? false : signedIn, error: message, ...(err.rateLimited ? { rateLimited: true } : {}) };
     }
   }
 }

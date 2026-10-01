@@ -95,6 +95,9 @@ one platform under a `win32` or `darwin` key. See
 | `modelPattern` | Regular expression that finds the model name on the tool's screen when the tool does not report it. |
 | `resumeArgs` | Arguments that resume the tool's own session, with `{id}` standing for the id, e.g. `["--resume", "{id}"]`. Without it the card has no **Existing** button. |
 | `env` | Extra environment variables for the tool. |
+| `accounts` | Further sign-ins of the tool, each in its own home folder, e.g. `[{ "id": "work", "label": "Work", "dir": "~/.claude-work" }]`. Without `dir`, the folder is `accounts/<provider>/<account>` in the data folder. The card shows one chip per account with its own meters, and a session starts under the chip picked; the tool signs in from inside the first session, and its reporting hooks are copied into the folder on first use. An entry with id `default` renames the tool's own sign-in. Needs `homeVar`. |
+| `homeVar` | The environment variable that moves the tool's home folder, e.g. `CLAUDE_CONFIG_DIR`. Set for Claude Code, Codex CLI, Gemini CLI and Grok Build by default. |
+| `hooks` | `{ "path", "example" }`: the hooks file inside the home folder and the file in `examples/` copied there for a new account. |
 | `color`, `monogram`, `icon` | Icon appearance. `icon` is a URL path; you can also drop `<id>.svg` into `web/icons/`. |
 | `install`, `docs` | Help shown when the tool is not installed. |
 | `usageUrl`, `billingUrl` | `https://` links to the vendor's usage and billing pages, shown on the card. The defaults point at the subscription pages; set your API console instead, or `null` to hide a link. Google's usage link opens AI Studio, which counts API-key usage only, not the Gemini CLI sign-in quota the card's meters show. |
@@ -160,6 +163,6 @@ coding tool in `tests/fixtures`. CI runs them on Windows, macOS and Linux.
 ## Current limits
 
 * Sessions end when the manager stops or the computer restarts.
-* Gemini CLI usage meters need its sign-in in the OS keychain (macOS, or
-  Linux with `secret-tool`) or in the older `oauth_creds.json`; Gemini CLI's
+* Gemini CLI usage meters read its sign-in from `oauth_creds.json` or the
+  OS keychain (macOS, or Linux with `secret-tool`); Gemini CLI's
   encrypted-file storage cannot be read.
