@@ -198,7 +198,6 @@ body:has(#app[hidden]):has(#auth[hidden]):has(#stopped[hidden])::after {
 .terminal-panel { border-radius: 6px; }
 .panel-bar { padding: 10px 14px; border-bottom: 1px solid; border-image: linear-gradient(90deg, transparent, var(--gold) 20%, var(--gold) 80%, transparent) 1; }
 
-.btn { border-radius: 6px; }
 .auth { position: relative; border-radius: 6px; padding: 40px 44px; }
 .auth pre { color: var(--gold-ink); }
 
@@ -429,6 +428,16 @@ body:has(#app[hidden]):has(#auth[hidden]):has(#stopped[hidden])::after {
     .session-card .card-art, .session-card .card-aura { width: 112px; }
     .session-card .card-art::before, .session-card .card-art::after { background-size: 165% auto; }
   }
+}
+
+@media (max-width: 640px) {
+  .models::after, .auth::after { border-width: 40px; }
+  .models-bar { padding: 24px 26px 10px; }
+  .models-body { margin: 0 16px; padding: 0 10px 12px; }
+  .models-source { padding: 10px 26px 24px; }
+  .history-tools { padding: 10px 26px 0; }
+  .history-form { padding: 10px 26px 24px; }
+  .auth { padding: 32px 30px; }
 }
 
 @keyframes deal { from { opacity: 0; transform: translateY(16px) rotate(-1.2deg) scale(0.97); } }
