@@ -11,6 +11,7 @@ import crypto from 'node:crypto';
 
 export const DEFAULT_PORT = 47821;
 export const DEFAULT_HOST = '127.0.0.1';
+export const VERSION = JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version;
 
 /** Per-user data directory. Override with AGENT_GUILD_HOME (used by tests). */
 export function dataDir() {

@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import net from 'node:net';
+import http from 'node:http';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -37,13 +38,15 @@ const port = await freePort();
 const base = `http://127.0.0.1:${port}`;
 const env = { ...process.env, AGENT_GUILD_HOME: home, AGENT_GUILD_PORT: String(port), AGENT_GUILD_SKIP_SHELL_ENV: '1', AGENT_GUILD_NO_UPDATE_CHECK: '1' };
 
-function run(...args) {
+function runWith(runEnv, ...args) {
   return new Promise((resolve) => {
-    execFile(process.execPath, [cli, ...args], { env, timeout: 30000 }, (error, stdout, stderr) => {
+    execFile(process.execPath, [cli, ...args], { env: runEnv, timeout: 30000 }, (error, stdout, stderr) => {
       resolve({ code: error ? error.code : 0, stdout, stderr });
     });
   });
 }
+
+const run = (...args) => runWith(env, ...args);
 
 const token = () => fs.readFileSync(path.join(home, 'auth-token'), 'utf8').trim();
 
@@ -73,6 +76,7 @@ test('open starts a background manager, status reports it, stop ends it', async 
 
   const again = await run('open', '--no-browser');
   assert.match(again.stdout, /already running/);
+  assert.doesNotMatch(again.stdout, /running manager is version/);
 
   const status = await run('status');
   assert.equal(status.code, 0);
@@ -127,4 +131,30 @@ test('open starts a background manager, status reports it, stop ends it', async 
   const after = await run('status');
   assert.equal(after.code, 3);
   assert.ok(!fs.existsSync(path.join(home, 'manager.json')), 'runtime file is removed on shutdown');
+});
+
+test('open and status say when the running manager is another version', async () => {
+  const otherHome = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-launcher-'));
+  const server = http.createServer((req, res) => {
+    const body = req.url === '/api/v1/health' ? { ok: true, name: 'agent-guild', version: '9.9.9', pid: process.pid } : { sessions: [] };
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(body));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const otherEnv = { ...env, AGENT_GUILD_HOME: otherHome, AGENT_GUILD_PORT: String(server.address().port) };
+  try {
+    const opened = await runWith(otherEnv, 'open', '--no-browser');
+    assert.equal(opened.code, 0, opened.stderr);
+    assert.match(opened.stdout, /already running/);
+    assert.match(opened.stdout, /running manager is version 9\.9\.9/);
+    assert.match(opened.stdout, /agent-guild stop/);
+
+    const status = await runWith(otherEnv, 'status');
+    assert.equal(status.code, 0, status.stderr);
+    assert.match(status.stdout, /running manager is version 9\.9\.9/);
+  } finally {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+    fs.rmSync(otherHome, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  }
 });

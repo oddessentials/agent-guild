@@ -13,6 +13,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
   DEFAULT_HOST,
+  VERSION,
   ensureDataDir,
   loadOrCreateToken,
   paths,
@@ -61,6 +62,12 @@ function pageUrl(url, token) {
   return `${url}/#token=${token}`;
 }
 
+function versionNotice(running) {
+  if (!running || running === VERSION) return null;
+  return `The running manager is version ${running}; the installed Agent Guild is ${VERSION}. ` +
+    `Run "agent-guild stop" to end its sessions, then start again to use ${VERSION}.`;
+}
+
 function openBrowser(url) {
   const opts = { detached: true, stdio: 'ignore' };
   let child;
@@ -92,7 +99,7 @@ function rotateLog() {
 
 async function ensureManager() {
   const running = await health(baseUrl());
-  if (running) return { url: baseUrl(), started: false };
+  if (running) return { url: baseUrl(), started: false, version: running.version };
 
   ensureDataDir();
   rotateLog();
@@ -114,20 +121,24 @@ async function ensureManager() {
   while (Date.now() < deadline && !exited) {
     await new Promise((r) => setTimeout(r, 250));
     const url = readRuntimeFile()?.pid === child.pid ? readRuntimeFile().url : expectedUrl;
-    if (await health(url, 500)) return { url, started: true };
+    const up = await health(url, 500);
+    if (up) return { url, started: true, version: up.version };
   }
   // Two launchers started together both try to start a manager; the one
   // that lost the race should use the winner rather than report a failure.
-  if (await health(expectedUrl, 1000)) return { url: expectedUrl, started: false };
+  const winner = await health(expectedUrl, 1000);
+  if (winner) return { url: expectedUrl, started: false, version: winner.version };
   const details = tailLog();
   throw new Error(`the session manager did not start.${details ? `\n\nRecent log (${paths.log}):\n${details}` : ''}`);
 }
 
 async function cmdOpen({ browser }) {
-  const { url, started } = await ensureManager();
+  const { url, started, version } = await ensureManager();
   const token = loadOrCreateToken();
   const target = pageUrl(url, token);
   console.log(started ? `Session manager started at ${url}` : `Session manager already running at ${url}`);
+  const notice = versionNotice(version);
+  if (notice) console.log(notice);
   if (browser) {
     openBrowser(target);
     console.log('Opening Agent Guild in your browser. You can close the page at any time; sessions keep running.');
@@ -174,6 +185,8 @@ async function cmdStatus() {
   const { sessions = [] } = res.ok ? await res.json() : {};
   const running = sessions.filter((s) => s.status === 'running').length;
   console.log(`Session manager ${h.version} running at ${url} (pid ${h.pid}).`);
+  const notice = versionNotice(h.version);
+  if (notice) console.log(notice);
   console.log(`${sessions.length} session(s), ${running} running.`);
   for (const s of sessions) {
     const model = s.model ? ` [${s.model.displayName || s.model.name}]` : '';
