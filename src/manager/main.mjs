@@ -8,6 +8,7 @@ import { ProviderRegistry } from './providers.mjs';
 import { SessionManager } from './session-manager.mjs';
 import { UsageMonitor } from './usage.mjs';
 import { ModelStats } from './model-stats.mjs';
+import { NewsFeed } from './news.mjs';
 import { createManagerServer } from './server.mjs';
 import { SelfUpdate } from './self-update.mjs';
 import { resolveBaseEnv, pathReader } from './shell-env.mjs';
@@ -59,6 +60,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
   const manager = new SessionManager({ registry, baseEnv, getApiUrl: () => api.url, sessionDefaults, shimDir, selfUpdate });
   const usage = new UsageMonitor({ registry, env: baseEnv });
   const modelStats = new ModelStats({ registry });
+  const news = new NewsFeed({ registry });
   let closing = null;
 
   const refreshVersions = () => {
@@ -91,6 +93,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
     registry,
     usage,
     modelStats,
+    news,
     token,
     host,
     port,

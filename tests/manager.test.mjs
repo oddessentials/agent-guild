@@ -1007,6 +1007,44 @@ test('model stats come from the catalog and match each session\'s model', async 
   }
 });
 
+test('the news endpoint needs the token, answers at once while it refreshes, and announces the refresh', async () => {
+  const { createManagerServer } = await import('../src/manager/server.mjs');
+  const { NewsFeed } = await import('../src/manager/news.mjs');
+  const published = new Date(Date.now() - 3600000).toUTCString();
+  const news = new NewsFeed({
+    feeds: [{ id: 'test', name: 'Test News', category: 'news', url: 'https://news.test/feed' }],
+    fetchImpl: async () => new Response(`<rss version="2.0"><channel><item><title>Agents ship</title><link>https://news.test/agents</link><pubDate>${published}</pubDate><description>Plain words</description></item></channel></rss>`),
+  });
+  const spare = createManagerServer({
+    manager: ctx.manager,
+    registry: ctx.registry,
+    usage: { all: async () => [] },
+    modelStats: { snapshot: async () => ({}) },
+    news,
+    token,
+    webDir: path.join(here, '..', 'web'),
+    onShutdownRequest: () => {},
+  });
+  await spare.listen();
+  const events = new Client(`${spare.url.replace('http', 'ws')}/api/v1/events?token=${token}`);
+  const read = async () => (await fetch(`${spare.url}/api/v1/news`, { headers: { Authorization: `Bearer ${token}` } })).json();
+  try {
+    await events.opened;
+    assert.equal((await fetch(`${spare.url}/api/v1/news`)).status, 401);
+    assert.deepEqual(await read(), {
+      refreshedAt: null, refreshing: true, sources: [{ id: 'test', name: 'Test News', category: 'news', error: null, okAt: null }], items: [],
+    });
+    await waitFor(() => events.messages.find((m) => m.type === 'news.updated'), { label: 'news.updated' });
+    const body = await read();
+    assert.equal(body.refreshing, false);
+    assert.deepEqual(body.items.map((i) => [i.title, i.url, i.source, i.summary]), [['Agents ship', 'https://news.test/agents', 'Test News', 'Plain words']]);
+    assert.deepEqual(body.sources.map((s) => [s.name, s.error]), [['Test News', null]]);
+  } finally {
+    await events.close();
+    await spare.close();
+  }
+});
+
 test('no session can start once a shutdown has been accepted', async () => {
   // A second API server over the same manager, whose shutdown callback does
   // nothing, so the accepted request can be observed without exiting.

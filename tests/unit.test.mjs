@@ -22,6 +22,10 @@ import {
 import {
   ModelStats, parseCatalog, indexCatalog, standing, tierFor, providerModels, modelNames, resolveModel, describeCatalog,
 } from '../src/manager/model-stats.mjs';
+import {
+  NewsFeed, parseFeed, parseHackerNews, parseGithubRelease, markdownText, releaseTitle, isPrerelease, canonicalUrl, cleanUrl, matchesTerms,
+} from '../src/manager/news.mjs';
+import { once } from 'node:events';
 import crypto from 'node:crypto';
 
 function tempDir() {
@@ -2135,4 +2139,276 @@ test('the catalog is fetched once, shared while in flight, and kept when a refre
   assert.equal((await failing(() => ({ ok: true, json: async () => { throw new SyntaxError('Unexpected token'); } }))).error,
     'OpenRouter sent a model list that could not be read');
   assert.equal((await failing(() => ({ ok: true, json: async () => ({ data: [] }) }))).error, 'OpenRouter sent an empty model list');
+});
+
+const hoursAgo = (hours) => new Date(Date.now() - hours * 3600000);
+const rssOf = (...items) => `<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel><title>Test</title>${items.join('')}</channel></rss>`;
+const rssItem = ({ title, link, date = hoursAgo(1), description = '', extra = '' }) =>
+  `<item><title>${title}</title><link>${link}</link><pubDate>${date.toUTCString()}</pubDate><description>${description}</description>${extra}</item>`;
+const feedReply = (body, headers = {}) => new Response(body, { headers: { 'Content-Type': 'application/rss+xml', ...headers } });
+const newsSource = (id, extra = {}) => ({ id, name: `Source ${id}`, category: 'news', url: `https://${id}.test/feed`, ...extra });
+
+test('feeds are read from RSS 2.0, RSS 1.0 and Atom as plain text, with web links only', () => {
+  const rss = parseFeed(`<?xml version="1.0"?>
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+<channel><title>Feed</title>
+<item><title>Fish &amp;amp; chips &#8217;26</title><link>/posts/fish?id=7&amp;utm_source=rss</link><pubDate>Wed, 30 Sep 2026 10:30:00 GMT</pubDate>
+<description><![CDATA[<p>Hello <b>world</b> &amp; </item> friends</p><script>alert(1)</script>]]></description></item>
+<!-- <item><title>Commented out</title></item> -->
+<item><title>No link</title><pubDate>Wed, 30 Sep 2026 10:30:00 GMT</pubDate></item>
+<item><title>Script link</title><link>javascript:alert(1)</link><pubDate>Wed, 30 Sep 2026 10:30:00 GMT</pubDate></item>
+<item><title><![CDATA[Guid &amp; only]]></title><guid>https://feed.test/guid</guid><content:encoded>&lt;p&gt;Encoded &amp;lt;tag&amp;gt; text&lt;/p&gt;</content:encoded></item>
+</channel></rss>`, 'https://feed.test/rss.xml');
+  assert.deepEqual(rss.map((e) => [e.title, e.link, e.text]), [
+    ['Fish & chips ’26', 'https://feed.test/posts/fish?id=7&utm_source=rss', 'Hello world & friends'],
+    ['No link', null, ''],
+    ['Script link', null, ''],
+    ['Guid & only', 'https://feed.test/guid', 'Encoded <tag> text'],
+  ]);
+  assert.deepEqual([rss[0].date, rss[3].date], [Date.parse('2026-09-30T10:30:00Z'), null]);
+
+  const rdf = parseFeed(`<?xml version="1.0" encoding="ISO-8859-1"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns="http://purl.org/rss/1.0/" xmlns:dc="http://purl.org/dc/elements/1.1/">
+<channel rdf:about="https://slashdot.test/"><title>Slashdot</title><link>https://slashdot.test/</link></channel>
+<item rdf:about="https://tech.slashdot.test/story/1"><title>Agents everywhere</title><link>https://tech.slashdot.test/story/1</link>
+<description>Caf&#233; agents &lt;a href="https://x.test"&gt;read more&lt;/a&gt;</description><dc:date>2026-09-30T23:00:00+00:00</dc:date></item>
+</rdf:RDF>`, 'https://slashdot.test/rss');
+  assert.deepEqual(rdf, [{ title: 'Agents everywhere', link: 'https://tech.slashdot.test/story/1', text: 'Café agents read more', announce: null, date: Date.parse('2026-09-30T23:00:00Z') }]);
+
+  const atom = parseFeed(`<feed xmlns="http://www.w3.org/2005/Atom"><title>Blog</title><link rel="self" href="https://blog.test/feed"/>
+<entry><title type="html">The &amp;lt;dialog&amp;gt; element</title>
+<link rel="self" href="https://blog.test/self"/><link rel="alternate" type="text/html" href="https://blog.test/dialog?a=1&amp;b=2"/>
+<published>2026-09-29T22:20:00Z</published><updated>2026-09-30T01:00:00Z</updated>
+<summary type="html">&lt;p&gt;Escaped &amp;amp; clean&lt;/p&gt;</summary></entry>
+<entry><title>The &lt;dialog&gt; element, as text</title><link href="posts/2"/><updated>2026-09-28T00:00:00Z</updated>
+<content type="xhtml"><div xmlns="http://www.w3.org/1999/xhtml"><p>Inline <em>markup</em></p></div></content></entry>
+</feed>`, 'https://blog.test/atom/feed.xml');
+  assert.deepEqual(atom.map((e) => [e.title, e.link, e.text, e.date]), [
+    ['The <dialog> element', 'https://blog.test/dialog?a=1&b=2', 'Escaped & clean', Date.parse('2026-09-29T22:20:00Z')],
+    ['The <dialog> element, as text', 'https://blog.test/atom/posts/2', 'Inline markup', Date.parse('2026-09-28T00:00:00Z')],
+  ]);
+
+  assert.throws(() => parseFeed('<!doctype html><html><body>Sign in</body></html>', 'https://x.test/'), /did not send a feed/);
+  assert.deepEqual(parseFeed('<rss version="2.0"><channel><title>Empty</title></channel></rss>', 'https://x.test/'), []);
+});
+
+test('filtered sources keep only the agentic and local-model terms the POC used', () => {
+  for (const [title, text] of [
+    ['Agents that use tools', ''], ['agentic workflow', ''], ['multi-agent systems', ''], ['', 'multi agent planning'], ['tool use for browsing', ''],
+    ['tool-use demo', ''], ['an MCP server', ''], ['Ollama 0.5', ''], ['llama.cpp build', ''], ['ggml kernels', ''], ['GGUF file', ''],
+    ['open-weight model', ''], ['open weight models', ''], ['a local model', ''], ['local-model runtime', ''], ['vLLM serving', ''],
+    ['SGLang runtime', ''], ['quantization aware', ''], ['', 'quantized to 4-bit'],
+  ]) assert.ok(matchesTerms(title, text), `${title}${text}`);
+  for (const title of ['mcperson weekly', 'the weather today', 'travel agency', 'quantitative easing']) assert.ok(!matchesTerms(title, 'clear skies'), title);
+});
+
+test('copies of one story share a canonical URL, and links lose their tracking parameters', () => {
+  assert.equal(canonicalUrl('http://WWW.Example.com/a/b/?utm_source=x&id=1#frag'), canonicalUrl('https://example.com/a/b?id=1'));
+  assert.equal(canonicalUrl('https://arxiv.org/pdf/2401.01234v2'), canonicalUrl('http://www.arxiv.org/abs/2401.01234'));
+  assert.notEqual(canonicalUrl('https://example.com/a?id=1'), canonicalUrl('https://example.com/a?id=2'));
+  assert.equal(cleanUrl('https://tech.slashdot.test/story/1?utm_source=rss1.0&utm_medium=feed'), 'https://tech.slashdot.test/story/1');
+  assert.equal(cleanUrl('https://x.test/p?fbclid=z&id=2'), 'https://x.test/p?id=2');
+  assert.equal(cleanUrl('https://x.test/p?q=a%20b&id=2'), 'https://x.test/p?q=a%20b&id=2', 'a link without trackers is left exactly as sent');
+});
+
+test('Hacker News stories and the latest GitHub release are read from their JSON APIs', () => {
+  const stories = parseHackerNews(JSON.stringify({ hits: [
+    { objectID: '49906637', title: 'You said no MCP', url: 'https://earendil.test/posts/no-mcp/', points: 649, num_comments: 356, created_at: '2026-09-30T09:55:00Z' },
+    { objectID: '49911995', title: 'Ask HN: Agents &amp; you', url: null, points: 1, num_comments: 0, created_at: '2026-09-30T08:00:00Z' },
+    { objectID: '1', title: 'Bad link', url: 'javascript:alert(1)', points: 'many', created_at: 'soon' },
+    null,
+  ] }));
+  assert.deepEqual(stories, [
+    { title: 'You said no MCP', link: 'https://earendil.test/posts/no-mcp/', text: '649 points · 356 comments', discussion: 'https://news.ycombinator.com/item?id=49906637', date: Date.parse('2026-09-30T09:55:00Z') },
+    { title: 'Ask HN: Agents & you', link: 'https://news.ycombinator.com/item?id=49911995', text: '1 point · 0 comments', discussion: null, date: Date.parse('2026-09-30T08:00:00Z') },
+    { title: 'Bad link', link: 'https://news.ycombinator.com/item?id=1', text: '', discussion: null, date: NaN },
+  ]);
+  assert.throws(() => parseHackerNews('{}'), /sent no stories/);
+
+  const release = (fields) => JSON.stringify({
+    tag_name: 'rust-v0.159.3', name: '0.159.3', html_url: 'https://github.com/openai/codex/releases/tag/rust-v0.159.3', published_at: '2026-09-30T22:57:34Z',
+    draft: false, prerelease: false,
+    body: '## New Features\n- Optional reminders to finish account security setup. (#49744)\n\n## Changelog\n**Full Changelog**: https://github.com/openai/codex/compare/rust-v0.159.2...rust-v0.159.3\n* #49744 [0.159] Backport the reminder by @someone in https://github.com/openai/codex/pull/49744',
+    ...fields,
+  });
+  assert.deepEqual(parseGithubRelease(release(), 'Codex CLI'), [{
+    title: 'Codex CLI 0.159.3', link: 'https://github.com/openai/codex/releases/tag/rust-v0.159.3',
+    text: 'Optional reminders to finish account security setup. · [0.159] Backport the reminder', date: Date.parse('2026-09-30T22:57:34Z'),
+  }]);
+  assert.equal(parseGithubRelease(release({ name: 'Release v0.62.0', tag_name: 'v0.62.0' }), 'Gemini CLI')[0].title, 'Gemini CLI v0.62.0');
+  assert.equal(parseGithubRelease(release({ name: '' }), 'Codex CLI')[0].title, 'Codex CLI v0.159.3');
+  assert.deepEqual(parseGithubRelease(release({ prerelease: true }), 'Codex CLI'), []);
+  assert.throws(() => parseGithubRelease('{"message":"Not Found"}', 'Codex CLI'), /sent no release/);
+
+  assert.deepEqual([
+    releaseTitle('Transformers', 'Release 5.18.0'), releaseTitle('Transformers', 'Patch release: v5.15.1'), releaseTitle('llama.cpp', 'b11320'),
+    releaseTitle('Ollama', 'v0.35.0'), releaseTitle('Ollama', 'Ollama v0.35.0'), releaseTitle('Claude Code', 'v2.1.286'),
+  ], ['Transformers 5.18.0', 'Transformers v5.15.1', 'llama.cpp b11320', 'Ollama v0.35.0', 'Ollama v0.35.0', 'Claude Code v2.1.286']);
+  for (const tag of ['v0.35.1-rc0', 'rust-v0.161.0-alpha.12', 'v0.64.0-nightly.20261001.gc6bccb7ec', 'v0.63.0-preview.0', 'v1.0.0-beta.2']) assert.ok(isPrerelease(tag), tag);
+  for (const tag of ['v0.35.0', 'b11320', 'v2.1.286', 'rust-v0.159.3', 'v5.18.0']) assert.ok(!isPrerelease(tag), tag);
+  assert.equal(markdownText('[Docs](https://x.test) and ![img](a.png) `code`\n```\nblock\n```\n> quoted'), 'Docs and code · quoted');
+});
+
+test('news is fetched only when a page asks, once per source while a refresh runs, and revalidated with its validators', async () => {
+  const seen = [];
+  let reply = () => feedReply(rssOf(rssItem({ title: 'One', link: 'https://a.test/1' })), { ETag: '"v1"', 'Last-Modified': 'Wed, 30 Sep 2026 10:00:00 GMT' });
+  const news = new NewsFeed({ feeds: [newsSource('a')], fetchImpl: async (url, init) => { seen.push({ url, init }); return reply(); } });
+  assert.equal(seen.length, 0, 'nothing is fetched before a page asks');
+  const first = news.snapshot();
+  assert.deepEqual([first.refreshing, first.refreshedAt, first.items], [true, null, []]);
+  assert.deepEqual(first.sources, [{ id: 'a', name: 'Source a', category: 'news', error: null, okAt: null }]);
+  news.snapshot();
+  await once(news, 'updated');
+  assert.equal(seen.length, 1, 'asking again during a refresh starts no second request');
+  assert.equal(seen[0].url, 'https://a.test/feed');
+  assert.match(seen[0].init.headers['User-Agent'], /^agent-guild\/\S+ \(\+https:\/\/github\.com\/oddessentials\/agent-guild\)$/);
+  assert.equal(seen[0].init.headers['If-None-Match'], undefined);
+  const second = news.snapshot();
+  assert.equal(second.refreshing, false);
+  assert.ok(Date.parse(second.refreshedAt) <= Date.now() && second.sources[0].okAt);
+  assert.deepEqual(second.items.map((i) => [i.title, i.url, i.source, i.sourceId, i.category]), [['One', 'https://a.test/1', 'Source a', 'a', 'news']]);
+  assert.match(second.items[0].id, /^[0-9a-f]{16}$/);
+  assert.equal(seen.length, 1, 'a source checked in the last 30 minutes is not asked again');
+
+  news.ttlMs = 0;
+  reply = () => new Response(null, { status: 304 });
+  news.snapshot();
+  news.ttlMs = 3600000;
+  await once(news, 'updated');
+  assert.deepEqual([seen[1].init.headers['If-None-Match'], seen[1].init.headers['If-Modified-Since']], ['"v1"', 'Wed, 30 Sep 2026 10:00:00 GMT']);
+  assert.deepEqual(news.snapshot().items.map((i) => i.title), ['One'], 'an unchanged source keeps its items');
+  assert.equal(seen.length, 2);
+});
+
+test('a failed source keeps what it sent before, says why, and is asked again on its own retry interval', async () => {
+  let reply = () => feedReply(rssOf(rssItem({ title: 'Kept', link: 'https://b.test/kept' })));
+  let asked = 0;
+  const news = new NewsFeed({ feeds: [newsSource('b')], fetchImpl: async () => { asked++; return reply(); }, ttlMs: 3600000, retryMs: 3600000 });
+  const refresh = async () => {
+    news.ttlMs = news.retryMs = 0;
+    news.snapshot();
+    news.ttlMs = news.retryMs = 3600000;
+    await once(news, 'updated');
+    return news.snapshot();
+  };
+  await refresh();
+  reply = () => new Response('Bad gateway', { status: 502 });
+  const failed = await refresh();
+  assert.deepEqual([failed.sources[0].error, failed.items.map((i) => i.title)], ['HTTP 502', ['Kept']]);
+  assert.ok(failed.sources[0].okAt, 'the last good read is still reported');
+  news.snapshot();
+  assert.equal(asked, 2, 'a failed source waits for its retry interval');
+  news.retryMs = 0;
+  news.snapshot();
+  news.retryMs = 3600000;
+  await once(news, 'updated');
+  assert.equal(asked, 3, 'and is asked again once it has passed');
+
+  const error = async (next) => {
+    reply = next;
+    return (await refresh()).sources[0].error;
+  };
+  assert.equal(await error(() => { throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ENOTFOUND' } }); }), 'could not be reached (ENOTFOUND)');
+  assert.equal(await error(() => { throw new DOMException('timed out', 'TimeoutError'); }), 'did not answer within 20 seconds');
+  assert.equal(await error(() => feedReply('<!doctype html><html><body>Sign in</body></html>', { 'Content-Type': 'text/html' })), 'did not send a feed');
+  assert.deepEqual(news.snapshot().items.map((i) => i.title), ['Kept']);
+});
+
+test('the feed keeps 30 days, a limit per source and one copy of each story, credited to the earlier source, newest first', async () => {
+  const primary = Array.from({ length: 24 }, (_, i) => rssItem({ title: `Primary ${i + 1}`, link: `https://primary.test/${i + 1}`, date: hoursAgo(i + 1) }));
+  const replies = {
+    'https://primary.test/feed': rssOf(...primary,
+      rssItem({ title: 'Too old', link: 'https://primary.test/old', date: hoursAgo(31 * 24) }),
+      rssItem({ title: 'Far future', link: 'https://primary.test/future', date: hoursAgo(-72) }),
+      rssItem({ title: 'Soon', link: 'https://primary.test/soon', date: hoursAgo(-1) }),
+      '<item><title>Undated</title><link>https://primary.test/undated</link></item>'),
+    'https://arxiv.test/feed': rssOf(
+      rssItem({ title: 'Agents that plan', link: 'https://arxiv.org/abs/2609.00001', date: hoursAgo(3), description: 'arXiv:2609.00001v1 Announce Type: new Abstract: We study agents.', extra: '<arxiv:announce_type>new</arxiv:announce_type>' }),
+      rssItem({ title: 'Agents, revised', link: 'https://arxiv.org/abs/2601.00002', date: hoursAgo(3), extra: '<arxiv:announce_type>replace</arxiv:announce_type>' }),
+      rssItem({ title: 'Weather models', link: 'https://arxiv.org/abs/2609.00003', date: hoursAgo(3), extra: '<arxiv:announce_type>cross</arxiv:announce_type>' })),
+    'https://digest.test/feed': rssOf(
+      rssItem({ title: 'Primary 1, again', link: 'http://www.primary.test/1/?utm_source=digest', date: hoursAgo(0.5) }),
+      rssItem({ title: 'Digest only', link: 'https://digest.test/only', date: hoursAgo(2.5), description: 'Digest only The Publisher' })),
+  };
+  const news = new NewsFeed({
+    feeds: [newsSource('primary'), newsSource('arxiv', { category: 'research', filter: true }), newsSource('digest')],
+    fetchImpl: async (url) => feedReply(replies[url]),
+  });
+  news.snapshot();
+  await once(news, 'updated');
+  const { items } = news.snapshot();
+  const from = (id) => items.filter((i) => i.sourceId === id).map((i) => i.title);
+  assert.deepEqual(from('primary'), ['Soon', ...Array.from({ length: 19 }, (_, i) => `Primary ${i + 1}`)]);
+  assert.deepEqual(from('arxiv'), ['Agents that plan']);
+  assert.equal(items.find((i) => i.sourceId === 'arxiv').summary, 'We study agents.');
+  assert.deepEqual(from('digest'), ['Digest only']);
+  assert.equal(items.find((i) => i.title === 'Digest only').summary, 'The Publisher');
+  assert.ok(Date.parse(items[0].publishedAt) <= Date.now(), 'a date slightly ahead is shown as now');
+  const times = items.map((i) => Date.parse(i.publishedAt));
+  assert.deepEqual(times, [...times].sort((a, b) => b - a));
+});
+
+test('release notes come only for installed tools, and pre-releases are skipped in every source', async () => {
+  const seen = [];
+  const latest = JSON.stringify({
+    tag_name: 'v2.1.286', name: 'v2.1.286', html_url: 'https://github.com/anthropics/claude-code/releases/tag/v2.1.286', published_at: hoursAgo(2).toISOString(),
+    draft: false, prerelease: false, body: '- Added a count to stacked permission prompts',
+  });
+  const atomEntry = (title, tag, hours) => `<entry><title>${title}</title><link rel="alternate" type="text/html" href="https://github.com/ollama/ollama/releases/tag/${tag}"/><updated>${hoursAgo(hours).toISOString()}</updated><content type="html">&lt;p&gt;Notes for ${tag}&lt;/p&gt;</content></entry>`;
+  const replies = {
+    'https://api.github.com/repos/anthropics/claude-code/releases/latest': () => new Response(latest, { headers: { 'Content-Type': 'application/json' } }),
+    'https://ollama.test/releases.atom': () => feedReply(`<feed xmlns="http://www.w3.org/2005/Atom">${atomEntry('v0.35.1', 'v0.35.1-rc0', 1)}${atomEntry('v0.35.0', 'v0.35.0', 3)}</feed>`),
+    'https://digest.test/feed': () => feedReply(rssOf(rssItem({ title: 'codex 0.161.0-alpha.11', link: 'https://github.com/openai/codex/releases/tag/rust-v0.161.0-alpha.11' }))),
+  };
+  let installed = false;
+  const news = new NewsFeed({
+    registry: { providers: [{ id: 'anthropic', command: 'claude' }], resolve: () => (installed ? '/usr/local/bin/claude' : null) },
+    feeds: [
+      { id: 'claude-code', name: 'Claude Code', category: 'releases', provider: 'anthropic', format: 'github', url: 'https://api.github.com/repos/anthropics/claude-code/releases/latest' },
+      { id: 'ollama', name: 'Ollama', category: 'releases', url: 'https://ollama.test/releases.atom' },
+      newsSource('digest'),
+    ],
+    fetchImpl: async (url, init) => { seen.push({ url, init }); return replies[url](); },
+  });
+  const refresh = async () => {
+    news.ttlMs = news.retryMs = 0;
+    news.snapshot();
+    news.ttlMs = news.retryMs = 3600000;
+    await once(news, 'updated');
+    return news.snapshot();
+  };
+  let snap = await refresh();
+  assert.deepEqual(snap.sources.map((s) => s.id), ['ollama', 'digest'], 'a tool that is not installed has no release source');
+  assert.ok(!seen.some((s) => s.url.startsWith('https://api.github.com/')));
+  assert.deepEqual(snap.items.map((i) => [i.title, i.summary]), [['Ollama v0.35.0', 'Notes for v0.35.0']]);
+
+  installed = true;
+  snap = await refresh();
+  assert.deepEqual(snap.sources.map((s) => s.id), ['claude-code', 'ollama', 'digest']);
+  const github = seen.find((s) => s.url.startsWith('https://api.github.com/'));
+  assert.deepEqual([github.init.headers.Accept, github.init.headers['X-GitHub-Api-Version']], ['application/vnd.github+json', '2022-11-28']);
+  assert.deepEqual(snap.items.map((i) => [i.title, i.category, i.summary]), [
+    ['Claude Code v2.1.286', 'releases', 'Added a count to stacked permission prompts'],
+    ['Ollama v0.35.0', 'releases', 'Notes for v0.35.0'],
+  ]);
+
+  replies['https://api.github.com/repos/anthropics/claude-code/releases/latest'] = () => new Response('{"message":"API rate limit exceeded"}', { status: 403, headers: { 'X-RateLimit-Remaining': '0' } });
+  snap = await refresh();
+  assert.equal(snap.sources[0].error, 'GitHub API rate limit exceeded');
+  assert.equal(snap.items[0].title, 'Claude Code v2.1.286', 'the last release stays listed');
+});
+
+test('a response over the size limit is refused, and a declared character set is honoured', async () => {
+  const latin = Buffer.from(`<?xml version="1.0" encoding="ISO-8859-1"?><rss version="2.0"><channel><item><title>Café agents</title><link>https://latin.test/1</link><pubDate>${hoursAgo(1).toUTCString()}</pubDate></item></channel></rss>`, 'latin1');
+  const replies = {
+    'https://big.test/feed': () => new Response('<rss/>', { headers: { 'Content-Length': String(6 * 1024 * 1024) } }),
+    'https://stream.test/feed': () => new Response(new ReadableStream({ pull(controller) { controller.enqueue(new Uint8Array(1024 * 1024)); } })),
+    'https://latin.test/feed': () => feedReply(latin),
+  };
+  const news = new NewsFeed({ feeds: [newsSource('big'), newsSource('stream'), newsSource('latin')], fetchImpl: async (url) => replies[url]() });
+  news.snapshot();
+  await once(news, 'updated');
+  const snap = news.snapshot();
+  assert.deepEqual(snap.sources.map((s) => s.error), ['sent more than 5 MB', 'sent more than 5 MB', null]);
+  assert.deepEqual(snap.items.map((i) => i.title), ['Café agents']);
 });
