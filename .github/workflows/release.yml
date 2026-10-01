@@ -80,7 +80,6 @@ jobs:
       - id: publish
         env:
           VERSION: ${{ needs.plan.outputs.version }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           sha256sum --check SHA256SUMS
           tarball=$(echo ./*.tgz)
