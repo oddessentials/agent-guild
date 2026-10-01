@@ -248,7 +248,7 @@ main { max-width: 1200px; margin: 0 auto; padding: 26px 16px 56px; display: grid
   background: var(--surface); box-shadow: var(--shadow); cursor: pointer;
 }
 .session-card:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-.session-card.exited { opacity: 0.75; }
+.session-card.exited .name { color: var(--muted); }
 .card-top { display: flex; align-items: center; gap: 12px; }
 .card-title { flex: 1; min-width: 0; }
 .card-title .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
