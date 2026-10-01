@@ -55,8 +55,9 @@ export class Session extends EventEmitter {
    * @param {number} opts.rows
    * @param {string} [opts.name]
    * @param {string|null} [opts.resume]  id of the tool's own session being resumed
-   * @param {string|null} [opts.task]    "install" for a package install, "upgrade" for the manager's own, else null
+   * @param {string|null} [opts.task]    "install" for a package install, "upgrade" for the manager's own, "clone" for a GitHub clone, else null
    * @param {{id: string, label: string}|null} [opts.account]  the tool sign-in the session runs under
+   * @param {{repo: string, path: string, accountId: number}|null} [opts.clone]  what a clone session clones, and where
    * @param {string} opts.reportToken
    * @param {number} [opts.scrollback]
    * @param {number} [opts.activityIdleMs]
@@ -71,6 +72,7 @@ export class Session extends EventEmitter {
     this.resume = opts.resume ?? null;
     this.task = opts.task ?? null;
     this.account = opts.account ?? null;
+    this.clone = opts.clone ?? null;
     this.cwd = opts.cwd;
     this.cols = opts.cols;
     this.rows = opts.rows;
@@ -523,6 +525,7 @@ export class Session extends EventEmitter {
       resume: this.resume,
       task: this.task,
       account: this.account,
+      clone: this.clone,
       pid: this.pid,
       status: this.status,
       exitCode: this.exitCode,

@@ -11,6 +11,7 @@ import { Session, newId, clampDimension, cleanName } from './session.mjs';
 import { prependPath } from './report-shims.mjs';
 import { CHANNEL_LABELS } from './install-channels.mjs';
 import { SELF_PROVIDER } from './self-update.mjs';
+import { GITHUB_PROVIDER, dropsFromCloneEnv, parseRepo } from './github.mjs';
 
 export const MAX_SESSIONS = 32;
 const examplesDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../examples');
@@ -50,8 +51,9 @@ export class SessionManager extends EventEmitter {
    * @param {object} [opts.sessionDefaults] passed through to Session
    * @param {string|null} [opts.shimDir]  folder with the agent-guild-report launchers, put first on PATH
    * @param {import('./self-update.mjs').SelfUpdate|null} [opts.selfUpdate]  the manager's own upgrade
+   * @param {import('./github.mjs').GitHub|null} [opts.github]
    */
-  constructor({ registry, baseEnv, getApiUrl, sessionDefaults = {}, shimDir = null, selfUpdate = null }) {
+  constructor({ registry, baseEnv, getApiUrl, sessionDefaults = {}, shimDir = null, selfUpdate = null, github = null }) {
     super();
     this.registry = registry;
     this.baseEnv = baseEnv;
@@ -59,6 +61,7 @@ export class SessionManager extends EventEmitter {
     this.sessionDefaults = sessionDefaults;
     this.shimDir = shimDir;
     this.selfUpdate = selfUpdate;
+    this.github = github;
     this.sessions = new Map();
     /** Removed sessions whose process has not exited yet. */
     this.exiting = new Set();
@@ -191,6 +194,26 @@ export class SessionManager extends EventEmitter {
     return session;
   }
 
+  /** Clone a GitHub repository into a folder under `parent`, in a visible session. */
+  clone({ account, repo, parent } = {}) {
+    if (!this.github) throw httpError(400, 'this manager has no GitHub integration', 'github_unavailable');
+    if (this.closing) throw httpError(503, 'the session manager is stopping', 'manager_stopping');
+    if (parent === undefined || parent === null || String(parent).trim() === '') throw httpError(400, 'parent must name the folder to clone into', 'bad_cwd');
+    const dir = this.resolveCwd(parent);
+    const target = path.join(dir, parseRepo(repo).name);
+    for (const s of this.sessions.values()) {
+      if (s.status === 'running' && s.task === 'clone' && s.clone?.path === target) {
+        throw httpError(409, `${s.clone.repo} is already being cloned into ${target}`, 'clone_in_progress');
+      }
+    }
+    const spec = this.github.cloneSpec({ accountId: account, repo, parent: dir });
+    return this._spawn({
+      provider: GITHUB_PROVIDER, description: GITHUB_PROVIDER, spawnSpec: spec.spawnSpec, cwd: dir,
+      name: `Clone ${spec.fullName}`, task: 'clone', extraEnv: spec.env, dropEnv: dropsFromCloneEnv,
+      clone: { repo: spec.fullName, path: spec.target, accountId: spec.account.id },
+    });
+  }
+
   runningFor(providerId) {
     let n = 0;
     for (const s of this.sessions.values()) if (s.status === 'running' && s.task === null && s.provider.id === providerId) n++;
@@ -204,7 +227,10 @@ export class SessionManager extends EventEmitter {
     return n;
   }
 
-  _spawn({ provider, description = this.registry.describe(provider), spawnSpec, cwd, cols, rows, name, resume = null, task = null, installKind = null, account = null }) {
+  _spawn({
+    provider, description = this.registry.describe(provider), spawnSpec, cwd, cols, rows, name, resume = null, task = null, installKind = null, account = null,
+    extraEnv = null, dropEnv = null, clone = null,
+  }) {
     if (this.closing) throw httpError(503, 'the session manager is stopping', 'manager_stopping');
     if (this.sessions.size >= MAX_SESSIONS) {
       throw httpError(429, `session limit reached (${MAX_SESSIONS}); remove finished sessions first`, 'too_many_sessions');
@@ -214,7 +240,7 @@ export class SessionManager extends EventEmitter {
 
     // The tool's hooks run `agent-guild-report` by name, so the launchers
     // go first on PATH, after any provider PATH override.
-    const env = prependPath(mergeEnv([this.baseEnv, provider.env, account?.env, {
+    let env = prependPath(mergeEnv([this.baseEnv, provider.env, account?.env, {
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
       AGENT_GUILD_SESSION_ID: id,
@@ -228,6 +254,8 @@ export class SessionManager extends EventEmitter {
     // agent-team panes in that tmux window, outside the page, and tools
     // would tune their output to a terminal program that is not there.
     for (const key of ['TMUX', 'TMUX_PANE', 'STY', 'TERM_PROGRAM', 'TERM_PROGRAM_VERSION', 'ZELLIJ', 'ZELLIJ_SESSION_NAME', 'ZELLIJ_PANE_ID']) delete env[key];
+    if (dropEnv) for (const key of Object.keys(env)) if (dropEnv(key)) delete env[key];
+    if (extraEnv) env = mergeEnv([env, extraEnv]);
 
     let session;
     try {
@@ -245,6 +273,7 @@ export class SessionManager extends EventEmitter {
         resume,
         task,
         account: account ? { id: account.id, label: account.label } : null,
+        clone,
       });
     } catch (err) {
       throw httpError(500, `could not start ${provider.tool}: ${err.message}`, 'spawn_failed');

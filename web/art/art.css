@@ -191,6 +191,7 @@ body:has(#app[hidden]):has(#auth[hidden]):has(#stopped[hidden])::after {
 .models-source { padding: 10px 36px 30px; }
 .history-tools { padding: 10px 36px 0; }
 .history-form { padding: 10px 36px 30px; }
+.github-accounts { padding: 10px 36px; }
 .model-group h4, .news-day, .changelog-type { font-family: var(--font-display); letter-spacing: 0.08em; color: var(--gold-ink); }
 .news-bar { padding: 16px 18px 12px; }
 .news-filters, .news-status { padding-left: 18px; padding-right: 18px; }
@@ -444,6 +445,7 @@ body:has(#app[hidden]):has(#auth[hidden]):has(#stopped[hidden])::after {
   .models-source { padding: 10px 26px 24px; }
   .history-tools { padding: 10px 26px 0; }
   .history-form { padding: 10px 26px 24px; }
+  .github-accounts { padding: 10px 26px; }
   .auth { padding: 32px 30px; }
 }
 

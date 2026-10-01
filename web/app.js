@@ -8,6 +8,8 @@ const THEME_KEY = 'agentGuild.theme';
 const NEWS_SEEN_KEY = 'agentGuild.newsSeen';
 const NEWS_FILTER_KEY = 'agentGuild.newsFilter';
 const CHANGELOG_SEEN_KEY = 'agentGuild.changelogSeen';
+const GITHUB_ACCOUNT_KEY = 'agentGuild.githubAccount';
+const CLONE_PARENT_KEY = 'agentGuild.cloneParent';
 const RELEASES_URL = 'https://github.com/oddessentials/agent-guild/releases';
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -23,6 +25,7 @@ const state = {
   statsFor: new Map(),
   news: null,
   changelog: null,
+  github: null,
   sessions: new Map(),
   views: new Map(),
   activeId: null,
@@ -55,9 +58,20 @@ function save(key, value) { try { value === null ? localStorage.removeItem(key) 
 // ---- helpers --------------------------------------------------------------
 
 let toastTimer;
-function toast(message, ms = 5000) {
+function toast(message, ms = 5000, action = null) {
   const el = $('toast');
-  el.textContent = message;
+  el.replaceChildren(message);
+  if (action) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'btn toast-action';
+    button.textContent = action.label;
+    button.addEventListener('click', () => {
+      el.hidden = true;
+      action.run();
+    });
+    el.append(button);
+  }
   el.hidden = false;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { el.hidden = true; }, ms);
@@ -1611,8 +1625,12 @@ function shortId(id) {
   return id.length > 12 ? id.slice(0, 8) : id;
 }
 
+function copyText(text, what) {
+  navigator.clipboard?.writeText(text).then(() => toast(`Copied ${what}`, 2500), () => toast(text, 10000));
+}
+
 function copyId(id) {
-  navigator.clipboard?.writeText(id).then(() => toast(`Copied ${id}`, 2500), () => toast(id, 8000));
+  copyText(id, id);
 }
 
 function paintIdButton(button, id) {
@@ -1782,6 +1800,510 @@ function resumeById(event) {
   if (provider && id) resumeFromHistory(provider, id, null);
 }
 
+// ---- GitHub ---------------------------------------------------------------
+
+const GITHUB_SCOPES = {
+  repo: 'Read and write access to all your repositories, private ones included. GitHub offers apps no read-only choice; Agent Guild only lists them.',
+  'write:public_key': 'Add the SSH key Agent Guild creates for this account.',
+};
+const githubView = { accountId: null, repos: null, reposFor: null, loading: null, error: null, parentError: null, opener: null, card: null, started: new Set(), announced: new Set() };
+let githubLoading = null;
+
+function el(tag, className, ...children) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  node.append(...children.filter((child) => child !== null && child !== undefined && child !== false));
+  return node;
+}
+
+function button(label, onClick, className = 'btn') {
+  const node = el('button', className, label);
+  node.type = 'button';
+  node.addEventListener('click', onClick);
+  return node;
+}
+
+function externalLink(label, href, className = 'console-link') {
+  const link = el('a', className, label);
+  link.href = webHref(href) ?? '';
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  link.setAttribute('aria-description', 'Opens in a new tab');
+  return link;
+}
+
+function githubAccount() {
+  return state.github?.accounts.find((a) => a.id === githubView.accountId) ?? null;
+}
+
+function selectGitHubAccount(id) {
+  if (githubView.accountId === id) return;
+  githubView.accountId = id;
+  githubView.repos = null;
+  githubView.reposFor = null;
+  githubView.error = null;
+  save(GITHUB_ACCOUNT_KEY, id === null ? null : String(id));
+}
+
+let githubAgain = false;
+
+function loadGitHub() {
+  if (githubLoading) {
+    githubAgain = true;
+    return githubLoading;
+  }
+  githubLoading = api('GET', '/github').then(({ github }) => setGitHub(github), (err) => {
+    if (err instanceof AuthError) return showAuth(err.message);
+    toast(err.message, 8000);
+  }).finally(() => {
+    githubLoading = null;
+    if (githubAgain) {
+      githubAgain = false;
+      loadGitHub();
+    }
+  });
+  return githubLoading;
+}
+
+function setGitHub(github) {
+  const before = state.github?.signIn;
+  state.github = github;
+  const done = github.signIn?.status === 'done' && before?.status === 'pending' ? github.signIn : null;
+  if (done) selectGitHubAccount(done.accountId);
+  if (!githubAccount()) selectGitHubAccount(github.accounts[0]?.id ?? null);
+  const account = githubAccount();
+  if (done && account) {
+    toast(done.again
+      ? `You are already signed in as @${account.login}; that sign-in was renewed. To add another account, switch to it on github.com first.`
+      : `Signed in to GitHub as @${account.login}.`, done.again ? 10000 : 4000);
+  }
+  if (!$('github').open) return;
+  renderGitHub();
+  ensureRepos();
+}
+
+function cloneParent() {
+  return $('github-parent').value.trim();
+}
+
+function reposKey(account) {
+  return account ? `${account.id}\n${cloneParent()}` : null;
+}
+
+function ensureRepos() {
+  const account = githubAccount();
+  if (!account || account.needsSignIn) return;
+  const key = reposKey(account);
+  if (githubView.reposFor !== key && githubView.loading !== key) loadRepos();
+}
+
+async function loadRepos({ refresh = false } = {}) {
+  const account = githubAccount();
+  if (!account) return;
+  const key = reposKey(account);
+  const parent = cloneParent();
+  githubView.loading = key;
+  renderGitHub();
+  const ask = (withParent) => {
+    const query = new URLSearchParams();
+    if (withParent && parent) query.set('parent', parent);
+    if (refresh) query.set('refresh', '1');
+    return api('GET', `/github/accounts/${account.id}/repos?${query}`);
+  };
+  let result = null;
+  let error = null;
+  let parentError = null;
+  try {
+    try {
+      result = (await ask(true)).repos;
+    } catch (err) {
+      if (err.code !== 'bad_cwd') throw err;
+      parentError = err.message;
+      result = (await ask(false)).repos;
+    }
+  } catch (err) {
+    if (err instanceof AuthError) return showAuth(err.message);
+    error = err.message;
+  }
+  if (githubView.loading !== key) return;
+  Object.assign(githubView, { loading: null, reposFor: key, error, parentError });
+  if (result || !githubView.repos || githubView.repos.accountId !== account.id) githubView.repos = result;
+  renderGitHub();
+}
+
+async function startGitHubSignIn() {
+  try {
+    setGitHub((await api('POST', '/github/sign-in')).github);
+  } catch (err) {
+    if (err instanceof AuthError) return showAuth(err.message);
+    toast(err.message, 8000);
+  }
+}
+
+async function cancelGitHubSignIn() {
+  try {
+    setGitHub((await api('DELETE', '/github/sign-in')).github);
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+async function setupGitHubSsh(account) {
+  try {
+    const result = await api('POST', `/github/accounts/${account.id}/ssh`);
+    if (result.account.ssh.status === 'ready') toast(`SSH is ready for @${account.login}.`, 4000);
+  } catch (err) {
+    if (err instanceof AuthError) return showAuth(err.message);
+    toast(err.message, 8000);
+  }
+  loadGitHub();
+}
+
+async function signOutGitHub(account) {
+  const text = `Sign out of @${account.login}? Agent Guild forgets this sign-in. Its SSH key stays in the Agent Guild data folder and on your GitHub account, so existing clones keep working.\n\nTo remove Agent Guild's access entirely, revoke it on GitHub; GitHub then also removes the SSH keys Agent Guild added.`;
+  if (!confirm(text)) return;
+  try {
+    const { github } = await api('DELETE', `/github/accounts/${account.id}`);
+    if (githubView.accountId === account.id) selectGitHubAccount(null);
+    setGitHub(github);
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+function openGitHub() {
+  const dialog = $('github');
+  $('github-parent').value = load(CLONE_PARENT_KEY) ?? $('cwd').value.trim();
+  $('github-filter').value = '';
+  githubView.card = null;
+  if (!dialog.open) {
+    githubView.opener = document.activeElement;
+    dialog.showModal();
+  }
+  renderGitHub();
+  if (githubAccount() && !githubAccount().needsSignIn) loadRepos();
+  loadGitHub();
+  ($('github-card').querySelector('.btn.primary') ?? $('github-close')).focus();
+}
+
+function closeGitHub({ focusOpener = true } = {}) {
+  if (!$('github').open) return;
+  if (!focusOpener) githubView.opener = false;
+  $('github').close();
+}
+
+function renderGitHub() {
+  const github = state.github;
+  const account = githubAccount();
+  const repos = githubView.repos?.accountId === account?.id ? githubView.repos : null;
+  const sub = !github ? 'Loading…'
+    : !account ? 'Clone your repositories over SSH'
+    : [`@${account.login}`, account.name, repos && `${repos.repos.length} ${repos.repos.length === 1 ? 'repository' : 'repositories'}`].filter(Boolean).join(' · ');
+  $('github-sub').textContent = sub;
+  renderGitHubChips(github);
+  renderGitHubCard(github, account);
+  renderGitHubStatus(github, account);
+  renderGitHubRepos(github, account, repos);
+}
+
+function githubAvatar(account) {
+  if (account.avatar?.startsWith('data:image/')) {
+    const img = el('img', 'github-avatar');
+    img.src = account.avatar;
+    img.alt = '';
+    return img;
+  }
+  const mono = el('span', 'github-avatar', account.login.charAt(0).toUpperCase());
+  mono.style.setProperty('--c', `hsl(${hueFor(account.login)} 45% 45%)`);
+  return mono;
+}
+
+function renderGitHubChips(github) {
+  const accounts = github?.accounts ?? [];
+  $('github-accounts').hidden = accounts.length === 0;
+  const host = $('github-chips');
+  const focused = document.activeElement?.closest?.('#github-chips .account-chip')?.dataset.account;
+  host.replaceChildren(...accounts.map((account) => {
+    const chip = el('button', `account-chip github-chip${account.needsSignIn ? ' unsigned' : ''}`, githubAvatar(account), el('span', null, account.login));
+    chip.type = 'button';
+    chip.setAttribute('role', 'tab');
+    chip.dataset.account = account.id;
+    chip.setAttribute('aria-selected', String(account.id === githubView.accountId));
+    chip.title = account.needsSignIn ? `@${account.login}: sign in again` : `${account.name ? `${account.name} · ` : ''}@${account.login}${account.ssh.status === 'ready' ? ' · SSH ready' : ' · SSH not set up'}`;
+    chip.addEventListener('click', () => {
+      selectGitHubAccount(account.id);
+      githubView.card = null;
+      renderGitHub();
+      ensureRepos();
+    });
+    return chip;
+  }));
+  if (focused) [...host.children].find((chip) => chip.dataset.account === focused)?.focus({ preventScroll: true });
+  const pending = github?.signIn?.status === 'pending';
+  $('github-add').hidden = accounts.length === 0 || pending;
+}
+
+function minutesLeft(iso) {
+  return Math.max(1, Math.ceil((Date.parse(iso) - Date.now()) / 60000));
+}
+
+function scopeList(github) {
+  return el('ul', 'github-scopes', ...(github.scopes ?? []).map((scope) => el('li', null, el('code', null, scope), ` ${GITHUB_SCOPES[scope] ?? ''}`)));
+}
+
+function signInCard(github) {
+  return [
+    el('h3', null, 'Sign in to GitHub'),
+    el('p', null, 'See your repositories and clone them over SSH, with a key Agent Guild keeps for each account.'),
+    el('p', 'github-small', 'GitHub will ask you to allow Agent Guild to:'),
+    scopeList(github),
+    el('p', 'github-small', 'Your sign-in stays in the Agent Guild data folder on this computer; this page never receives it.'),
+    el('div', 'github-actions', button('Sign in with GitHub', startGitHubSignIn, 'btn primary')),
+  ];
+}
+
+function codeCard(signIn) {
+  const code = signIn.userCode;
+  const open = externalLink('Open GitHub', signIn.verificationUri, 'btn primary');
+  open.addEventListener('click', () => navigator.clipboard?.writeText(code).catch(() => {}));
+  open.title = `Copies the code and opens ${signIn.verificationUri}`;
+  const codeText = el('span', 'github-code-text', code);
+  codeText.setAttribute('aria-label', `Code ${[...code].join(' ')}`);
+  return [
+    el('h3', null, 'Enter this code on GitHub'),
+    el('div', 'github-code', codeText, button('Copy', () => copyText(code, 'the code'))),
+    el('div', 'github-actions', open, button('Cancel', cancelGitHubSignIn)),
+    el('p', 'github-small github-waiting', `Waiting for you to approve Agent Guild on GitHub. The code expires in ${minutesLeft(signIn.expiresAt)} min.`),
+    el('p', 'github-small', 'Adding another account? Switch to it on github.com before you enter the code.'),
+  ];
+}
+
+function signInResultCard(signIn) {
+  const text = signIn.status === 'expired' ? 'The code expired before it was entered on GitHub.'
+    : signIn.status === 'denied' ? 'The sign-in was declined on GitHub.'
+    : `The sign-in did not finish: ${signIn.error || 'GitHub refused it'}.`;
+  return [
+    el('h3', null, 'Not signed in'),
+    el('p', null, text),
+    el('div', 'github-actions', button('Try again', startGitHubSignIn, 'btn primary'), button('Dismiss', cancelGitHubSignIn)),
+  ];
+}
+
+function signInAgainCard(account) {
+  return [
+    el('h3', null, `Sign in again as @${account.login}`),
+    el('p', null, `GitHub no longer accepts Agent Guild's sign-in for @${account.login}. If github.com is signed in to another account, switch to @${account.login} there first.`),
+    el('div', 'github-actions', button('Sign in again', startGitHubSignIn, 'btn primary'), button('Sign out', () => signOutGitHub(account))),
+  ];
+}
+
+function sshCard(github, account) {
+  const ssh = account.ssh;
+  const missing = !github.tools.ssh || !github.tools.sshKeygen;
+  const step = (done, text) => el('li', done ? 'done' : null, text);
+  const parts = [
+    el('h3', null, `Set up SSH for @${account.login}`),
+    el('p', null, 'Agent Guild clones over SSH with a key of its own for each account, so your other SSH keys and settings are never used or changed.'),
+    el('ol', 'github-steps',
+      step(Boolean(ssh.key), 'Create a key for this account in the Agent Guild data folder'),
+      step(false, 'Add its public key to your GitHub account'),
+      step(false, `Check that GitHub signs in as @${account.login}`)),
+  ];
+  if (missing) {
+    parts.push(el('p', 'github-error', 'OpenSSH (ssh and ssh-keygen) was not found. On Windows, add the "OpenSSH Client" optional feature in Settings, or install Git for Windows; on Linux, install the openssh-client package. Then check again.'));
+  } else if (ssh.error) {
+    parts.push(el('p', 'github-error', ssh.error.message));
+  }
+  const setup = button(ssh.settingUp ? 'Setting up…' : ssh.error || ssh.key ? 'Check again' : 'Set up SSH', () => setupGitHubSsh(account), 'btn primary');
+  setup.disabled = ssh.settingUp || missing;
+  const actions = el('div', 'github-actions', setup);
+  if (ssh.error?.manual && ssh.publicKey) {
+    actions.append(button('Copy public key', () => copyText(ssh.publicKey, 'the public key')), externalLink('Open GitHub SSH settings', github.newKeyUrl, 'btn'));
+  }
+  parts.push(actions);
+  const approve = externalLink('request access', github.appUrl);
+  parts.push(el('p', 'github-small', 'Organizations that restrict third-party apps accept this key only once an owner approves Agent Guild: ', approve, '.'));
+  return parts;
+}
+
+function renderGitHubCard(github, account) {
+  const card = $('github-card');
+  let kind = null;
+  let build = null;
+  const signIn = github?.signIn;
+  if (!github) kind = null;
+  else if (signIn?.status === 'pending') [kind, build] = [`code:${signIn.userCode}:${minutesLeft(signIn.expiresAt)}`, () => codeCard(signIn)];
+  else if (signIn && signIn.status !== 'done') [kind, build] = [`result:${signIn.status}`, () => signInResultCard(signIn)];
+  else if (!account) [kind, build] = ['welcome', () => signInCard(github)];
+  else if (account.needsSignIn) [kind, build] = [`again:${account.id}`, () => signInAgainCard(account)];
+  else if (account.ssh.status !== 'ready') {
+    const { settingUp, key, error } = account.ssh;
+    [kind, build] = [`ssh:${account.id}:${settingUp}:${Boolean(key)}:${error?.message}:${github.tools.ssh && github.tools.sshKeygen}`, () => sshCard(github, account)];
+  }
+  card.hidden = !kind;
+  if (kind === githubView.card) return;
+  const hadFocus = card.contains(document.activeElement);
+  githubView.card = kind;
+  card.replaceChildren(...(build ? build() : []));
+  if (hadFocus) (card.querySelector('.btn.primary:not(:disabled)') ?? card.querySelector('button, a'))?.focus({ preventScroll: true });
+}
+
+function renderGitHubStatus(github, account) {
+  const strip = $('github-status');
+  strip.hidden = !account || account.needsSignIn;
+  if (strip.hidden) return strip.replaceChildren();
+  const ssh = account.ssh;
+  const text = ssh.status === 'ready'
+    ? el('span', 'github-ready', 'SSH ready', el('span', 'github-small', ` · checked ${relativeTime(ssh.verifiedAt)}`))
+    : el('span', 'github-small', 'SSH not set up yet');
+  const actions = el('span', 'github-status-actions');
+  if (ssh.status === 'ready') {
+    const check = button(ssh.settingUp ? 'Checking…' : 'Check SSH', () => setupGitHubSsh(account));
+    check.disabled = ssh.settingUp;
+    check.title = `Check that GitHub still signs in as @${account.login} with Agent Guild's key`;
+    actions.append(check);
+  }
+  actions.append(button('Sign out', () => signOutGitHub(account)));
+  const focused = strip.contains(document.activeElement) ? document.activeElement.textContent : null;
+  strip.replaceChildren(text, actions);
+  if (focused) [...strip.querySelectorAll('button')].find((b) => b.textContent === focused)?.focus({ preventScroll: true });
+}
+
+function runningClone(target) {
+  return [...state.sessions.values()].find((s) => s.task === 'clone' && s.status === 'running' && s.clone?.path === target) ?? null;
+}
+
+function cloneBlocker(github, account) {
+  if (!github.tools.git) return 'Git was not found. Install it from git-scm.com, then reopen this dialog.';
+  if (account.ssh.status !== 'ready') return `Set up SSH for @${account.login} first.`;
+  if (githubView.parentError) return githubView.parentError;
+  if (!cloneParent()) return 'Choose the folder to clone into below.';
+  return null;
+}
+
+function buildRepoRow(fullName) {
+  const node = $('github-repo-template').content.firstElementChild.cloneNode(true);
+  node.dataset.repo = fullName;
+  node.querySelector('.github-action').addEventListener('click', (event) => {
+    const repo = githubView.repos?.repos.find((r) => r.fullName === fullName);
+    if (repo) repoAction(repo, event.currentTarget);
+  });
+  return node;
+}
+
+function repoAction(repo, control) {
+  const running = runningClone(repo.target);
+  if (running) {
+    closeGitHub({ focusOpener: false });
+    openPanel(running.id);
+  } else if (repo.local === 'cloned') {
+    useFolder(repo.target);
+  } else {
+    cloneRepo(repo, control);
+  }
+}
+
+function updateRepoRow(node, repo, blocker) {
+  const name = node.querySelector('.repo-name');
+  name.replaceChildren(el('span', 'repo-owner', `${repo.owner}/`), repo.name);
+  name.title = repo.url;
+  const title = node.querySelector('.history-title');
+  title.replaceChildren(name,
+    ...(repo.private ? [badge('', 'Private', 'Only people with access can see it')] : []),
+    ...(repo.fork ? [badge('', 'Fork', 'A fork of another repository')] : []),
+    ...(repo.archived ? [badge('', 'Archived', 'Read-only on GitHub')] : []));
+  const running = runningClone(repo.target);
+  const conflict = repo.local === 'conflict';
+  const meta = node.querySelector('.history-meta');
+  meta.textContent = conflict
+    ? `${repo.target} already exists and is not a clone of ${repo.fullName}`
+    : [running && 'Cloning…', repo.local === 'cloned' && `Cloned in ${repo.target}`, repo.description, repo.language, repo.pushedAt && `pushed ${relativeTime(repo.pushedAt)}`].filter(Boolean).join(' · ');
+  meta.title = [repo.description, repo.target].filter(Boolean).join('\n');
+  node.classList.toggle('conflict', conflict);
+  node.classList.toggle('running', Boolean(running) || repo.local === 'cloned');
+  const action = node.querySelector('.github-action');
+  action.hidden = conflict && !running;
+  action.className = `btn github-action${running ? '' : ' primary'}`;
+  action.textContent = running ? 'Show' : repo.local === 'cloned' ? 'Use folder' : 'Clone';
+  action.disabled = !running && repo.local !== 'cloned' && Boolean(blocker);
+  action.title = running ? `Show the session cloning ${repo.fullName}`
+    : repo.local === 'cloned' ? `Make ${repo.target} the working folder, so new sessions start there`
+    : blocker || `Clone ${repo.fullName} into ${repo.target} over SSH`;
+  action.setAttribute('aria-label', `${action.textContent} ${repo.fullName}`);
+}
+
+function renderGitHubRepos(github, account, repos) {
+  const ready = Boolean(github && account && !account.needsSignIn);
+  $('github-tools').hidden = !ready;
+  $('github-parent').closest('.github-form').hidden = !ready;
+  const list = $('github-list');
+  const filter = $('github-filter').value.trim().toLowerCase();
+  const shown = ready && repos ? repos.repos.filter((repo) => !filter || `${repo.fullName}\n${repo.description ?? ''}`.toLowerCase().includes(filter)) : [];
+  const blocker = ready ? cloneBlocker(github, account) : null;
+  const rows = new Map([...list.children].map((node) => [node.dataset.repo, node]));
+  const wanted = new Set(shown.map((repo) => repo.fullName));
+  for (const [id, node] of rows) if (!wanted.has(id)) node.remove();
+  shown.forEach((repo, index) => {
+    const node = rows.get(repo.fullName) ?? buildRepoRow(repo.fullName);
+    updateRepoRow(node, repo, blocker);
+    if (list.children[index] !== node) list.insertBefore(node, list.children[index] || null);
+  });
+  const note = $('github-note');
+  const lines = [];
+  if (ready) {
+    if (githubView.loading && !repos) lines.push('Loading repositories…');
+    else if (githubView.error) lines.push(`Repositories could not be loaded: ${githubView.error}`);
+    else if (repos && repos.repos.length === 0) lines.push(`@${account.login} has no repositories yet.`);
+    else if (repos && shown.length === 0) lines.push('No repository matches the filter.');
+    if (githubView.parentError) lines.push(githubView.parentError);
+    if (repos?.truncated) lines.push(`Showing the ${repos.repos.length} most recently pushed repositories.`);
+    if (repos) lines.push(['Missing an organization\'s repositories? Its owners may need to approve Agent Guild: ', externalLink('request access', github.appUrl), '.']);
+  }
+  note.replaceChildren(...lines.map((line) => el('span', null, ...[line].flat())));
+  note.hidden = lines.length === 0;
+  $('github-refresh').disabled = Boolean(githubView.loading);
+}
+
+async function cloneRepo(repo, control) {
+  const account = githubAccount();
+  if (!account) return;
+  control.disabled = true;
+  try {
+    const { session } = await api('POST', '/github/clone', { account: account.id, repo: repo.fullName, parent: cloneParent() });
+    githubView.started.add(session.id);
+    upsertSession(session);
+    closeGitHub({ focusOpener: false });
+    openPanel(session.id);
+  } catch (err) {
+    if (err instanceof AuthError) return showAuth(err.message);
+    toast(err.message, 8000);
+    if (err.code === 'clone_exists' || err.code === 'folder_conflict') loadRepos();
+  } finally {
+    control.disabled = false;
+  }
+}
+
+function clonedPath(s) {
+  return s.task === 'clone' && s.status === 'exited' && s.exitCode === 0 && s.clone?.path ? s.clone.path : null;
+}
+
+function noticeClone(s) {
+  if (s.task !== 'clone' || s.status !== 'exited' || githubView.announced.has(s.id)) return;
+  githubView.announced.add(s.id);
+  githubView.reposFor = null;
+  if ($('github').open) loadRepos();
+  if (!githubView.started.has(s.id)) return;
+  if (clonedPath(s)) toast(`Cloned ${s.clone.repo} into ${s.clone.path}.`, 12000, { label: 'Use folder', run: () => useFolder(s.clone.path) });
+  else toast(`Cloning ${s.clone?.repo ?? 'the repository'} did not finish. Its session shows why.`, 8000);
+}
+
+function useFolder(dir) {
+  $('cwd').value = dir;
+  save(CWD_KEY, dir);
+  if ($('github').open) renderGitHub();
+  toast(`New sessions start in ${dir}.`, 4000);
+}
+
 // ---- session cards --------------------------------------------------------
 
 const cards = new Map();
@@ -1824,6 +2346,10 @@ function buildCard(session) {
   node.querySelector('.remove').addEventListener('click', () => removeSession(session.id));
   node.querySelector('.rename').addEventListener('click', () => renameSession(session.id));
   node.querySelector('.resume').addEventListener('click', () => resumeCard(session.id));
+  node.querySelector('.use-folder').addEventListener('click', () => {
+    const path = state.sessions.get(session.id)?.clone?.path;
+    if (path) useFolder(path);
+  });
   node.querySelector('.session-id').addEventListener('click', () => {
     const id = toolSessionId(state.sessions.get(session.id) ?? session);
     if (id) copyId(id);
@@ -1889,6 +2415,9 @@ function updateCard(node, s) {
   node.classList.toggle('exited', s.status === 'exited');
   node.querySelector('.stop').hidden = s.status !== 'running';
   node.querySelector('.remove').hidden = s.status === 'running';
+  const useButton = node.querySelector('.use-folder');
+  useButton.hidden = !clonedPath(s);
+  useButton.title = clonedPath(s) ? `Make ${s.clone.path} the working folder, so new sessions start there` : '';
   const resume = node.querySelector('.resume');
   resume.hidden = !resumable(s);
   resume.title = `Start ${s.provider.tool} again on this session${id ? ` (${id})` : ''} in ${s.cwd}`;
@@ -1938,6 +2467,7 @@ function guardLeaving() {
 function upsertSession(session) {
   state.sessions.set(session.id, session);
   renderSessions();
+  noticeClone(session);
 }
 
 function dropSession(id) {
@@ -2207,6 +2737,7 @@ function enterStopping(running = 0, restart = false) {
   closeNews();
   closeChangelog();
   closeHistory();
+  closeGitHub();
   for (const view of state.views.values()) view.dispose();
   state.views.clear();
   state.sessions.clear();
@@ -2325,8 +2856,11 @@ function connectEvents() {
       loadNews();
       // A changelog.updated sent while the socket was down is lost; catch up the open panel.
       if ($('changelog').open) loadChangelog();
+      if ($('github').open) loadGitHub();
     } else if (msg.type === 'news.updated') {
       loadNews();
+    } else if (msg.type === 'github.updated') {
+      if ($('github').open) loadGitHub();
     } else if (msg.type === 'changelog.updated') {
       if ($('changelog').open) loadChangelog();
     } else if (msg.type === 'manager.upgrade') {
@@ -2390,6 +2924,7 @@ function showAuth(message = '') {
   closeNews();
   closeChangelog();
   closeHistory();
+  closeGitHub();
   $('app').hidden = true;
   $('terminal-panel').hidden = true;
   $('stopped').hidden = true;
@@ -2448,6 +2983,20 @@ $('history').addEventListener('close', () => {
   historyOpener = null;
 });
 $('history-filter').addEventListener('input', renderHistory);
+$('github-open').addEventListener('click', openGitHub);
+$('github-close').addEventListener('click', () => closeGitHub());
+$('github').addEventListener('click', (e) => { if (e.target === $('github')) closeGitHub(); });
+$('github').addEventListener('close', () => {
+  if (githubView.opener !== false) (githubView.opener?.isConnected && !githubView.opener.closest('[hidden]') ? githubView.opener : $('github-open')).focus();
+  githubView.opener = null;
+});
+$('github-add').addEventListener('click', startGitHubSignIn);
+$('github-filter').addEventListener('input', () => renderGitHub());
+$('github-refresh').addEventListener('click', () => loadRepos({ refresh: true }));
+$('github-parent').addEventListener('change', () => {
+  save(CLONE_PARENT_KEY, cloneParent());
+  loadRepos();
+});
 $('history-here').addEventListener('change', renderHistory);
 $('history-form').addEventListener('submit', resumeById);
 $('models').addEventListener('click', (e) => { if (e.target === $('models')) closeModels(); });
@@ -2561,9 +3110,11 @@ $('panel-stop').addEventListener('click', () => {
 });
 $('cwd').value = load(CWD_KEY) || '';
 try { state.accounts = JSON.parse(load(ACCOUNTS_KEY)) || {}; } catch { state.accounts = {}; }
+githubView.accountId = Number(load(GITHUB_ACCOUNT_KEY)) || null;
 if (typeof state.accounts !== 'object' || Array.isArray(state.accounts)) state.accounts = {};
 setInterval(renderSessions, 30000);
 setInterval(tickNews, 30000);
+setInterval(() => { if ($('github').open && state.github) renderGitHub(); }, 30000);
 
 // The terminal panel sits below the top bar, which wraps onto two rows on
 // narrow screens; publish its height so the panel never covers its controls.

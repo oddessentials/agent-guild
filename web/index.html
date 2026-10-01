@@ -34,10 +34,13 @@
     <section class="launcher" aria-labelledby="launch-heading">
       <div class="section-head">
         <h2 id="launch-heading">Start a session</h2>
-        <label class="cwd">
-          <span>Working folder</span>
-          <input id="cwd" type="text" spellcheck="false" autocomplete="off" placeholder="Home folder">
-        </label>
+        <div class="launch-tools">
+          <label class="cwd">
+            <span>Working folder</span>
+            <input id="cwd" type="text" spellcheck="false" autocomplete="off" placeholder="Home folder">
+          </label>
+          <button id="github-open" class="btn github-open" type="button" aria-haspopup="dialog">Clone from GitHub…</button>
+        </div>
       </div>
       <div id="providers" class="providers" role="list"></div>
     </section>
@@ -182,6 +185,35 @@
     </form>
   </dialog>
 
+  <dialog id="github" class="models history github" aria-labelledby="github-title">
+    <div class="models-bar">
+      <span class="github-mark" aria-hidden="true"></span>
+      <div class="models-heading">
+        <h2 id="github-title">GitHub</h2>
+        <p id="github-sub" class="sub"></p>
+      </div>
+      <button id="github-close" class="btn" type="button">Close</button>
+    </div>
+    <div id="github-accounts" class="github-accounts" hidden>
+      <div id="github-chips" class="github-chips" role="tablist" aria-label="GitHub accounts"></div>
+      <button id="github-add" class="btn github-add" type="button">Add account</button>
+    </div>
+    <div class="models-body">
+      <section id="github-card" class="github-card" aria-live="polite" hidden></section>
+      <div id="github-status" class="github-status" hidden></div>
+      <div id="github-tools" class="history-tools github-tools" hidden>
+        <input id="github-filter" type="search" placeholder="Filter repositories" aria-label="Filter repositories" spellcheck="false" autocomplete="off">
+        <button id="github-refresh" class="btn" type="button">Refresh</button>
+      </div>
+      <div id="github-list" class="history-list" role="list"></div>
+      <p id="github-note" class="models-note" hidden></p>
+    </div>
+    <div class="history-form github-form">
+      <label for="github-parent">Clone into</label>
+      <input id="github-parent" type="text" placeholder="Folder that holds your clones" spellcheck="false" autocomplete="off">
+    </div>
+  </dialog>
+
   <div id="tip" class="tip" aria-hidden="true" hidden><strong id="tip-title"></strong><span id="tip-source"></span><p id="tip-text"></p></div>
 
   <div id="toast" class="toast" role="alert" hidden></div>
@@ -259,6 +291,16 @@
     </article>
   </template>
 
+  <template id="github-repo-template">
+    <article class="history-row github-repo" role="listitem">
+      <div class="history-main">
+        <div class="history-title"><span class="repo-name"></span></div>
+        <div class="history-meta"></div>
+      </div>
+      <button class="btn github-action" type="button"></button>
+    </article>
+  </template>
+
   <template id="session-template">
     <article class="session-card" role="listitem" tabindex="0">
       <span class="card-art" aria-hidden="true"></span>
@@ -281,6 +323,7 @@
       <div class="card-actions">
         <button class="btn primary open" type="button">Open</button>
         <button class="btn resume" type="button" hidden>Resume</button>
+        <button class="btn primary use-folder" type="button" hidden>Use folder</button>
         <button class="btn rename" type="button">Rename</button>
         <button class="btn danger stop" type="button">Stop</button>
         <button class="btn remove" type="button">Remove</button>
