@@ -17,6 +17,8 @@ const cases = [
   { from: '0.1.0', title: 'fix(deps): bump ws from 8.22.0 to 8.22.1', version: '0.1.1' },
   { from: '0.1.0', title: 'feat(usage): show weekly limits', version: '0.2.0' },
   { from: '0.1.0', title: 'feat!: drop the legacy report flag', version: '0.2.0' },
+  { from: '0.1.0', title: 'revert: show weekly limits', version: '0.1.1' },
+  { from: '0.1.0', title: 'revert!: drop the legacy report flag', version: '0.2.0' },
   { from: '0.1.0', title: 'docs: remove a stale sentence', version: null },
   { from: '0.1.0', title: 'ci(deps): bump actions/checkout from 7.0.1 to 7.0.2', version: null },
   { from: '0.1.0', title: 'Merge pull request #1 from someone/branch', version: null },
