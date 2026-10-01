@@ -204,6 +204,7 @@ The manager's own version check, in `GET /info`, the `hello` message and
   "command": "/usr/local/bin/npm install -g @oddessentials/agent-guild@1.3.0",
   "guidance": null,
   "pendingVersion": null,
+  "installing": false,
   "lastInstall": null
 }
 ```
@@ -222,7 +223,11 @@ last upgrade session: `{ outcome, exitCode, version, installedVersion, at }`
 with `outcome` `installed`, `failed`, or `unchanged` when npm exited cleanly
 but did not replace the files the manager runs from. It is dropped once a
 newer release appears or the files on disk change. A check that fails keeps
-the release already known.
+the release already known. `installing` is true from the start of an upgrade
+session until its npm process has exited, even if the session was removed
+meanwhile; `available` and `pendingVersion` are withheld during that time,
+because the files on disk are mid-replacement, and `POST /upgrade` answers
+409 `upgrade_in_progress`.
 
 ### Agent
 

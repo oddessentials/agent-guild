@@ -236,6 +236,7 @@ export class ProviderRegistry extends EventEmitter {
     this.fetchImpl = fetchImpl;
     this.pathReader = pathReader;
     this._pathReadAt = 0;
+    this._pathPending = null;
     this._installs = new Map();
     this.versions = new Map();
     this._refreshing = null;
@@ -261,6 +262,8 @@ export class ProviderRegistry extends EventEmitter {
   npmRegistryUrl() {
     if (this.registryUrl) return Promise.resolve(this.registryUrl);
     this._npmRegistry ??= (async () => {
+      // PATH discovery in flight may change which npm is found; wait for it.
+      await this._pathPending;
       const npm = this.resolveNpm();
       if (!npm) return DEFAULT_NPM_REGISTRY;
       try {
@@ -288,11 +291,18 @@ export class ProviderRegistry extends EventEmitter {
     return pending;
   }
 
-  async refreshPath({ force = false } = {}) {
-    if (!this.pathReader) return false;
+  /** Resolves to true when the PATH changed. A concurrent caller waits for the read already in flight. */
+  refreshPath({ force = false } = {}) {
+    if (!this.pathReader) return Promise.resolve(false);
     const now = Date.now();
-    if (!force && now - this._pathReadAt < PATH_REFRESH_MS) return false;
+    if (!force && now - this._pathReadAt < PATH_REFRESH_MS) return this._pathPending ?? Promise.resolve(false);
     this._pathReadAt = now;
+    const pending = this._readPath().finally(() => { if (this._pathPending === pending) this._pathPending = null; });
+    this._pathPending = pending;
+    return pending;
+  }
+
+  async _readPath() {
     const discovered = await Promise.resolve().then(() => this.pathReader()).catch(() => null);
     if (!discovered) return false;
     const key = pathKey(this.env, this.platform);

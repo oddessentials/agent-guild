@@ -175,21 +175,20 @@ export class SessionManager extends EventEmitter {
   async upgrade() {
     if (!this.selfUpdate) throw httpError(400, 'this manager cannot upgrade itself', 'not_updatable');
     if (this.closing) throw httpError(503, 'the session manager is stopping', 'manager_stopping');
-    if (this.upgradesRunning() > 0) throw httpError(409, 'Agent Guild is already being upgraded', 'upgrade_in_progress');
+    const inProgress = () => httpError(409, 'Agent Guild is already being upgraded', 'upgrade_in_progress');
+    if (this.selfUpdate.installing) throw inProgress();
     const { spec, version } = await this.selfUpdate.spec();
-    if (this.upgradesRunning() > 0) throw httpError(409, 'Agent Guild is already being upgraded', 'upgrade_in_progress');
+    if (this.selfUpdate.installing) throw inProgress();
     const session = this._spawn({
       provider: SELF_PROVIDER, description: SELF_PROVIDER, spawnSpec: spec,
       cwd: os.homedir(), name: `Upgrade Agent Guild to ${version}`, task: 'upgrade',
     });
-    session.on('exit', () => this.selfUpdate.finishInstall({ exitCode: session.exitCode, version }));
+    // The lock is held until the npm process has exited, not until the
+    // session is removed: a removed session's process may still be writing
+    // the package, and two installers must not touch it at once.
+    this.selfUpdate.beginInstall();
+    session.exited.then(() => this.selfUpdate.finishInstall({ exitCode: session.exitCode, version }));
     return session;
-  }
-
-  upgradesRunning() {
-    let n = 0;
-    for (const s of this.sessions.values()) if (s.status === 'running' && s.task === 'upgrade') n++;
-    return n;
   }
 
   runningFor(providerId) {

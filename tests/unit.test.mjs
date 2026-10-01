@@ -1764,6 +1764,31 @@ test('shutdown reports the processes that did not confirm exiting in time', asyn
   assert.deepEqual(await stuck.shutdown({ timeoutMs: 50 }), { remaining: 1 });
 });
 
+test('the npm registry lookup waits for PATH discovery in flight', async () => {
+  const root = tempDir();
+  const toolDir = path.join(root, 'tools');
+  fs.mkdirSync(toolDir);
+  const env = { PATH: root, HOME: root, USERPROFILE: root };
+  const discovered = [root, toolDir].join(path.delimiter);
+  let release;
+  const registry = new ProviderRegistry({
+    userFile: path.join(root, 'none.json'), env, checkUpdates: false,
+    pathReader: () => new Promise((resolve) => { release = () => resolve(discovered); }),
+  });
+  // As at startup: the provider check starts reading the PATH, and the
+  // manager's own check asks for the registry straight after.
+  const refresh = registry.refreshVersions();
+  const pathSeen = [];
+  const lookup = registry.npmRegistryUrl().then((url) => { pathSeen.push(env.PATH); return url; });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(pathSeen.length, 0, 'the lookup waits while the PATH is being read');
+  release();
+  await refresh;
+  assert.equal(await lookup, 'https://registry.npmjs.org', 'no npm on that PATH, so the default registry');
+  assert.equal(pathSeen[0], discovered, 'the lookup ran against the discovered PATH');
+  assert.equal(await registry.refreshPath(), false, 'nothing in flight afterwards');
+});
+
 test('the manager checks its own release and knows when a restart is needed', async () => {
   const dir = tempDir();
   const packageFile = path.join(dir, 'package.json');
@@ -1844,6 +1869,23 @@ test('the manager checks its own release and knows when a restart is needed', as
   assert.equal(info.available, false, 'nothing newer than the files on disk');
   assert.equal(info.command, null);
   await assert.rejects(self.spec(), { code: 'not_updatable', message: /restart the manager/ });
+
+  // While npm runs, nothing is offered or announced, even once package.json
+  // is already new: dependencies may still be being written.
+  writeVersion('1.0.0');
+  self.beginInstall();
+  writeVersion('1.1.0');
+  info = self.describe();
+  assert.equal(info.installing, true);
+  assert.equal(info.available, false);
+  assert.equal(info.pendingVersion, null, 'no restart advice mid-install');
+  assert.equal(info.lastInstall, null);
+  await assert.rejects(self.spec(), { code: 'upgrade_in_progress' });
+  self.finishInstall({ exitCode: 0 });
+  info = self.describe();
+  assert.equal(info.installing, false);
+  assert.equal(info.pendingVersion, '1.1.0');
+  assert.equal(info.lastInstall.outcome, 'installed');
 
   // Without npm there is guidance instead of a command.
   writeVersion('1.0.0');

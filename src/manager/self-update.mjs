@@ -50,6 +50,8 @@ export class SelfUpdate extends EventEmitter {
     this.error = null;
     this.checkedAt = 0;
     this.lastInstall = null;
+    /** True from the start of an upgrade session until its npm process has exited. */
+    this.installing = false;
     this._refreshing = null;
   }
 
@@ -118,6 +120,15 @@ export class SelfUpdate extends EventEmitter {
 
   /** Public description, sent in `/info`, `hello` and `manager.upgrade`. */
   describe() {
+    // While npm runs, the files on disk are in flux: package.json may already
+    // be new while dependencies are still being written, so nothing is
+    // offered or announced until the process has exited.
+    if (this.installing) {
+      return {
+        version: this.version, latestVersion: this.latest, available: false, command: null, guidance: null,
+        pendingVersion: null, installing: true, lastInstall: null,
+      };
+    }
     const installed = this.installedVersion();
     this._pruneLastInstall(installed);
     const available = this.available(installed);
@@ -129,12 +140,14 @@ export class SelfUpdate extends EventEmitter {
       command,
       guidance: available && !command ? `npm was not found on PATH. Install Node.js from https://nodejs.org, then run: npm install -g ${this.pkg}@${this.latest}` : null,
       pendingVersion: this.pendingVersion(installed),
+      installing: false,
       lastInstall: this.lastInstall,
     };
   }
 
   /** Spawn spec for the upgrade session and the version it installs, or throws with a user-facing message. */
   async spec() {
+    if (this.installing) throw refusal(409, 'upgrade_in_progress', 'Agent Guild is already being upgraded');
     if (isDevelopmentBuild(this.version)) {
       throw refusal(400, 'not_updatable', `This is a development build of Agent Guild (${this.version}); it is not upgraded from the registry.`);
     }
@@ -155,8 +168,15 @@ export class SelfUpdate extends EventEmitter {
     return { spec: buildSpawnSpec(npm, this.args(), this.registry.env, this.registry.platform), version: this.latest };
   }
 
-  /** Record how the upgrade session ended. The files on disk say whether the running copy was replaced. */
+  /** An upgrade session started; hold the lock until finishInstall. Emits "updated". */
+  beginInstall() {
+    this.installing = true;
+    this.emit('updated');
+  }
+
+  /** Record how the upgrade session ended, once its process has exited. The files on disk say whether the running copy was replaced. */
   finishInstall({ exitCode = null, version = this.latest } = {}) {
+    this.installing = false;
     const installed = this.installedVersion();
     let outcome;
     if (exitCode !== 0) outcome = 'failed';

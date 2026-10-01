@@ -93,7 +93,10 @@ function renderUpgrade() {
   let text = '';
   let title = '';
   const last = u?.lastInstall;
-  if (u?.pendingVersion) {
+  if (u?.installing) {
+    text = `Upgrading${u.latestVersion ? ` to v${u.latestVersion}` : ''}…`;
+    title = 'npm is running in a session. Keep the manager running until it finishes.';
+  } else if (u?.pendingVersion) {
     text = `v${u.pendingVersion} installed · restart to use it`;
     title = `Agent Guild ${u.pendingVersion} is installed, but this manager is still ${u.version}. Stop the manager and run "agent-guild open" to use it.`;
   } else if (last?.outcome === 'failed') {
