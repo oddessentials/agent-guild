@@ -11,40 +11,40 @@
 
   .provider, .session-card {
     --pc: #a67cf6;
-    --idle: url("/art/characters/shell/idle.png");
-    --working: url("/art/characters/shell/working.png");
-    --locked: url("/art/characters/shell/locked.png");
+    --idle: image-set(url("/art/characters/shell/idle.avif") type("image/avif"), url("/art/characters/shell/idle.webp") type("image/webp"));
+    --working: image-set(url("/art/characters/shell/working.avif") type("image/avif"), url("/art/characters/shell/working.webp") type("image/webp"));
+    --locked: image-set(url("/art/characters/shell/locked.avif") type("image/avif"), url("/art/characters/shell/locked.webp") type("image/webp"));
   }
   .provider[data-id="anthropic"], .session-card[data-provider="anthropic"] {
     --pc: #d97757;
-    --idle: url("/art/characters/anthropic/idle.png");
-    --working: url("/art/characters/anthropic/working.png");
-    --locked: url("/art/characters/anthropic/locked.png");
+    --idle: image-set(url("/art/characters/anthropic/idle.avif") type("image/avif"), url("/art/characters/anthropic/idle.webp") type("image/webp"));
+    --working: image-set(url("/art/characters/anthropic/working.avif") type("image/avif"), url("/art/characters/anthropic/working.webp") type("image/webp"));
+    --locked: image-set(url("/art/characters/anthropic/locked.avif") type("image/avif"), url("/art/characters/anthropic/locked.webp") type("image/webp"));
   }
   .provider[data-id="openai"], .session-card[data-provider="openai"] {
     --pc: #1fd08f;
-    --idle: url("/art/characters/openai/idle.png");
-    --working: url("/art/characters/openai/working.png");
-    --locked: url("/art/characters/openai/locked.png");
+    --idle: image-set(url("/art/characters/openai/idle.avif") type("image/avif"), url("/art/characters/openai/idle.webp") type("image/webp"));
+    --working: image-set(url("/art/characters/openai/working.avif") type("image/avif"), url("/art/characters/openai/working.webp") type("image/webp"));
+    --locked: image-set(url("/art/characters/openai/locked.avif") type("image/avif"), url("/art/characters/openai/locked.webp") type("image/webp"));
   }
   .provider[data-id="google"], .session-card[data-provider="google"] {
     --pc: #5b9cff;
-    --idle: url("/art/characters/google/idle.png");
-    --working: url("/art/characters/google/working.png");
-    --locked: url("/art/characters/google/locked.png");
+    --idle: image-set(url("/art/characters/google/idle.avif") type("image/avif"), url("/art/characters/google/idle.webp") type("image/webp"));
+    --working: image-set(url("/art/characters/google/working.avif") type("image/avif"), url("/art/characters/google/working.webp") type("image/webp"));
+    --locked: image-set(url("/art/characters/google/locked.avif") type("image/avif"), url("/art/characters/google/locked.webp") type("image/webp"));
   }
   .provider[data-id="xai"], .session-card[data-provider="xai"] {
     --pc: #38d6e8;
-    --idle: url("/art/characters/xai/idle.png");
-    --working: url("/art/characters/xai/working.png");
-    --locked: url("/art/characters/xai/locked.png");
+    --idle: image-set(url("/art/characters/xai/idle.avif") type("image/avif"), url("/art/characters/xai/idle.webp") type("image/webp"));
+    --working: image-set(url("/art/characters/xai/working.avif") type("image/avif"), url("/art/characters/xai/working.webp") type("image/webp"));
+    --locked: image-set(url("/art/characters/xai/locked.avif") type("image/avif"), url("/art/characters/xai/locked.webp") type("image/webp"));
   }
 
-  .provider-icon[data-provider="anthropic"] { --icon: url("/art/icons/anthropic.png"); }
-  .provider-icon[data-provider="openai"] { --icon: url("/art/icons/openai.png"); }
-  .provider-icon[data-provider="google"] { --icon: url("/art/icons/google.png"); }
-  .provider-icon[data-provider="xai"] { --icon: url("/art/icons/xai.png"); }
-  .provider-icon[data-provider="shell"] { --icon: url("/art/icons/shell.png"); }
+  .provider-icon[data-provider="anthropic"] { --icon: image-set(url("/art/icons/anthropic.avif") type("image/avif"), url("/art/icons/anthropic.webp") type("image/webp")); }
+  .provider-icon[data-provider="openai"] { --icon: image-set(url("/art/icons/openai.avif") type("image/avif"), url("/art/icons/openai.webp") type("image/webp")); }
+  .provider-icon[data-provider="google"] { --icon: image-set(url("/art/icons/google.avif") type("image/avif"), url("/art/icons/google.webp") type("image/webp")); }
+  .provider-icon[data-provider="xai"] { --icon: image-set(url("/art/icons/xai.avif") type("image/avif"), url("/art/icons/xai.webp") type("image/webp")); }
+  .provider-icon[data-provider="shell"] { --icon: image-set(url("/art/icons/shell.avif") type("image/avif"), url("/art/icons/shell.webp") type("image/webp")); }
   .provider-icon:not(.has-image)[data-provider="anthropic"],
   .provider-icon:not(.has-image)[data-provider="openai"],
   .provider-icon:not(.has-image)[data-provider="google"],
@@ -53,7 +53,7 @@
     background: var(--icon) center / cover no-repeat; color: transparent;
   }
 
-  body { background: #0b0c10 url("/art/page.png") center bottom / cover fixed; }
+  body { background: #0b0c10 image-set(url("/art/page.avif") type("image/avif"), url("/art/page.webp") type("image/webp")) center bottom / cover fixed; }
   .topbar { background: rgba(12, 13, 17, 0.88); backdrop-filter: blur(6px); border-bottom-color: #2a2418; }
   .brand-mark { display: none; }
   .brand::before {

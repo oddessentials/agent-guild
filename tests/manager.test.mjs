@@ -276,6 +276,20 @@ test('the web page and xterm assets are served', async () => {
   assert.equal((await fetch(`${base}/app.js`)).status, 200);
   assert.equal((await fetch(`${base}/theme.js`)).status, 200);
   assert.equal((await fetch(`${base}/..%2fpackage.json`)).status, 404);
+  assert.equal((await fetch(`${base}/art/page.avif`)).headers.get('content-type'), 'image/avif');
+});
+
+test('static files revalidate with their ETag instead of downloading again', async () => {
+  const first = await fetch(`${base}/styles.css`);
+  const etag = first.headers.get('etag');
+  assert.ok(etag, 'an ETag is sent');
+  assert.equal(first.headers.get('cache-control'), 'no-cache');
+  const again = await fetch(`${base}/styles.css`, { headers: { 'If-None-Match': etag } });
+  assert.equal(again.status, 304);
+  assert.equal((await again.arrayBuffer()).byteLength, 0);
+  const vendor = await fetch(`${base}/vendor/xterm/xterm.js`);
+  assert.equal((await fetch(`${base}/vendor/xterm/xterm.js`, { headers: { 'If-None-Match': vendor.headers.get('etag') } })).status, 304);
+  assert.equal((await fetch(`${base}/styles.css`, { headers: { 'If-None-Match': 'W/"0-0"' } })).status, 200);
 });
 
 test('the manager offers its own upgrade in a visible npm session', async () => {

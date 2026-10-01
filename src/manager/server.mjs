@@ -21,6 +21,9 @@ const MIME = {
   '.css': 'text/css; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
+  '.avif': 'image/avif',
+  '.webp': 'image/webp',
+  '.woff2': 'font/woff2',
   '.ico': 'image/x-icon',
   '.json': 'application/json; charset=utf-8',
 };
@@ -148,16 +151,27 @@ export function createManagerServer({
     }
   }
 
-  function serveFile(res, file, { cache = false } = {}) {
-    fs.readFile(file, (err, data) => {
-      if (err) return sendJson(res, 404, { error: { code: 'not_found', message: 'not found' } });
-      res.writeHead(200, {
+  function serveFile(req, res, file, { cache = false } = {}) {
+    const notFound = () => sendJson(res, 404, { error: { code: 'not_found', message: 'not found' } });
+    fs.stat(file, (statErr, stat) => {
+      if (statErr || !stat.isFile()) return notFound();
+      const etag = `W/"${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}"`;
+      const headers = {
         ...SECURITY_HEADERS,
         'Content-Type': MIME[path.extname(file).toLowerCase()] || 'application/octet-stream',
         'Cache-Control': cache ? 'public, max-age=3600' : 'no-cache',
-        'Content-Length': data.length,
+        ETag: etag,
+      };
+      const known = String(req.headers['if-none-match'] || '').split(',').map((tag) => tag.trim());
+      if (known.includes(etag) || known.includes('*')) {
+        res.writeHead(304, headers);
+        return res.end();
+      }
+      fs.readFile(file, (err, data) => {
+        if (err) return notFound();
+        res.writeHead(200, { ...headers, 'Content-Length': data.length });
+        res.end(data);
       });
-      res.end(data);
     });
   }
 
@@ -165,7 +179,7 @@ export function createManagerServer({
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       throw new HttpError(405, 'method not allowed', 'method_not_allowed');
     }
-    if (vendor[pathname]) return serveFile(res, vendor[pathname], { cache: true });
+    if (vendor[pathname]) return serveFile(req, res, vendor[pathname], { cache: true });
     let rel;
     try {
       rel = pathname === '/' ? 'index.html' : decodeURIComponent(pathname).replace(/^\/+/, '');
@@ -177,7 +191,7 @@ export function createManagerServer({
     if (file !== webDir && !file.startsWith(webDir + path.sep)) {
       throw new HttpError(404, 'not found', 'not_found');
     }
-    return serveFile(res, file);
+    return serveFile(req, res, file);
   }
 
   async function handleApi(req, res, url) {

@@ -8,6 +8,7 @@ WEB = PACK.parent.parent / "web" / "art"
 GEN = Path("E:/projects/local-image-studio/scripts/gen.py")
 PROVIDERS = ["anthropic", "google", "openai", "shell", "xai"]
 STATES = ["idle", "working", "locked"]
+CHARACTER_WIDTH = 640
 PROPS = {
     "ui/guild-crest.png": 96,
     "ui/level-medallion.png": 128,
@@ -24,6 +25,16 @@ PROPS = {
 def quantize(im, out):
     out.parent.mkdir(parents=True, exist_ok=True)
     im.quantize(256, method=Image.Quantize.FASTOCTREE, dither=Image.Dither.FLOYDSTEINBERG).save(out, optimize=True)
+
+
+def encode(im, out, avif, webp=82):
+    out.parent.mkdir(parents=True, exist_ok=True)
+    im.save(out.with_suffix(".avif"), quality=avif, subsampling="4:4:4", speed=2)
+    im.save(out.with_suffix(".webp"), quality=webp, method=6)
+
+
+def shrink(im, width):
+    return im.convert("RGBa").resize((width, round(im.height * width / im.width)), Image.LANCZOS).convert("RGBA")
 
 
 def remask(src, mask):
@@ -67,16 +78,15 @@ def main():
             mask = PACK / "characters" / pid / f"{st}-mask.png"
             if args.masks:
                 remask(src, mask)
-            quantize(cutout(src, mask), WEB / "characters" / pid / f"{st}.png")
-        (WEB / "icons").mkdir(parents=True, exist_ok=True)
-        Image.open(PACK / "icons" / f"{pid}.png").convert("RGB").save(WEB / "icons" / f"{pid}.png", optimize=True)
+            encode(shrink(cutout(src, mask), CHARACTER_WIDTH), WEB / "characters" / pid / st, avif=60)
+        encode(Image.open(PACK / "icons" / f"{pid}.png").convert("RGB"), WEB / "icons" / pid, avif=70)
 
     for rel, height in PROPS.items():
         im = Image.open(PACK / rel).convert("RGBA")
         quantize(im.resize((round(im.width * height / im.height), height), Image.LANCZOS), WEB / rel)
 
     frame(PACK / "ui" / "frame-corner.png", WEB / "ui" / "frame.png")
-    Image.open(PACK / "backgrounds" / "page.png").convert("RGB").save(WEB / "page.png", optimize=True)
+    encode(Image.open(PACK / "backgrounds" / "page.png").convert("RGB"), WEB / "page", avif=80, webp=85)
 
     if shutil.which("oxipng"):
         subprocess.run(["oxipng", "-o", "4", "--strip", "safe", "-q", "-r", str(WEB)], check=True)
