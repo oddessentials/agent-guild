@@ -15,7 +15,7 @@ import { shimContents, writeReportShims, prependPath, fileUrl, SHIM_NAME, LOADER
 import { execFileSync } from 'node:child_process';
 import { parseVersion, compareVersions, probeVersion, diagnosticLine, latestVersion } from '../src/manager/versions.mjs';
 import {
-  UsageMonitor, UsageError, readClaudeCredentials, readCodexCredentials, readGeminiCredentials, geminiOAuthClientFromInstall, geminiKeychainLookup,
+  UsageMonitor, UsageError, readClaudeCredentials, readCodexCredentials, readGeminiCredentials, readGeminiFileKeychain, geminiFileKey, geminiOAuthClientFromInstall, geminiKeychainLookup,
   claudeKeychainService, claudeCredentialsFile, fetchClaudeUsage, fetchCodexUsage, fetchGeminiUsage, commandUsage, toIso, windowLabel, clampPercent,
 } from '../src/manager/usage.mjs';
 import {
@@ -1090,6 +1090,36 @@ test('Gemini CLI credentials come from the keychain item or the legacy file, and
   await assert.rejects(fetchGeminiUsage({ accessToken: 'x', fetchImpl: async () => ({ ok: false, status: 401 }) }), /sign in again in Gemini CLI/);
 });
 
+test('Gemini CLI\'s encrypted credentials file is read like its keychain item', async () => {
+  const dir = tempDir();
+  const keychainFile = path.join(dir, 'gemini-credentials.json');
+  const legacyFile = path.join(dir, 'oauth_creds.json');
+  const key = geminiFileKey({ hostname: 'box', username: 'me' });
+  assert.deepEqual(geminiFileKey({ hostname: 'box', username: 'me' }), key, 'the key is derived from the machine and user alone');
+  assert.notDeepEqual(geminiFileKey({ hostname: 'other', username: 'me' }), key);
+  const seal = (data, k = key) => {
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv('aes-256-gcm', k, iv, { authTagLength: 16 });
+    const encrypted = Buffer.concat([cipher.update(JSON.stringify(data), 'utf8'), cipher.final()]);
+    return `${iv.toString('hex')}:${cipher.getAuthTag().toString('hex')}:${encrypted.toString('hex')}`;
+  };
+  const item = { serverName: 'main-account', token: { accessToken: 'enc', refreshToken: 'r9', expiresAt: 1893456000000, tokenType: 'Bearer' } };
+  assert.equal(await readGeminiFileKeychain(keychainFile, { key }), null, 'no file is no item');
+  fs.writeFileSync(keychainFile, seal({ 'gemini-cli-oauth': { 'main-account': JSON.stringify(item) } }));
+  assert.equal(await readGeminiFileKeychain(keychainFile, { key }), JSON.stringify(item));
+  fs.writeFileSync(legacyFile, JSON.stringify({ access_token: 'legacy', refresh_token: 'r1' }));
+  const none = async () => null;
+  const read = (overrides) => readGeminiCredentials({ file: legacyFile, keychainFile, platform: 'linux', readKeychain: none, readFileKeychain: (file) => readGeminiFileKeychain(file, { key }), ...overrides });
+  assert.deepEqual(await read(), { accessToken: 'enc', refreshToken: 'r9', expiresAt: 1893456000000, client: null }, 'the file item wins over oauth_creds.json');
+  assert.equal((await read({ readKeychain: async () => JSON.stringify({ token: { accessToken: 'os' } }) })).accessToken, 'os', 'the OS keychain wins over the file');
+  fs.writeFileSync(keychainFile, seal({ 'gemini-cli-oauth': { other: '{}' } }));
+  assert.equal((await read()).accessToken, 'legacy', 'a file without the main account falls through');
+  fs.writeFileSync(keychainFile, seal({ 'gemini-cli-oauth': { 'main-account': JSON.stringify(item) } }, geminiFileKey({ hostname: 'other', username: 'me' })));
+  await assert.rejects(read(), /could not be decrypted/, 'another machine\'s file is reported, not mistaken for no sign-in');
+  fs.writeFileSync(keychainFile, 'not:encrypted');
+  await assert.rejects(read(), /could not be decrypted/);
+});
+
 test('the macOS keychain item follows CLAUDE_CONFIG_DIR, so accounts stay apart', async () => {
   const workDir = '/Users/me/.claude-work';
   const workHash = crypto.createHash('sha256').update(workDir).digest('hex').slice(0, 8);
@@ -1336,15 +1366,17 @@ test('accounts get their own home folder and environment, the default keeps the 
   for (const text of expected) assert.ok(warnings.some((w) => w.includes(text)), `${text} in ${JSON.stringify(warnings)}`);
   assert.equal(warnings.length, expected.length, JSON.stringify(warnings));
 
-  const accountsDir = path.join(dir, 'accounts');
+  const accountsDir = '/data/accounts';
   const registry = new ProviderRegistry({ userFile, env: { PATH: '', HOME: '/Users/a' }, platform: 'linux', checkUpdates: false, accountsDir });
   const anthropic = registry.get('anthropic');
+  const claudeEnv = (home) => ({ CLAUDE_CONFIG_DIR: home, CLAUDE_SECURESTORAGE_CONFIG_DIR: home });
   assert.deepEqual(registry.accountsFor(anthropic), [
     { id: 'default', label: 'Main', dir: null, env: {} },
-    { id: 'work', label: 'Work', dir: path.join(accountsDir, 'anthropic', 'work'), env: { CLAUDE_CONFIG_DIR: path.join(accountsDir, 'anthropic', 'work') } },
-    { id: 'personal', label: 'Personal', dir: path.resolve('/Users/a/.claude-personal'), env: { CLAUDE_CONFIG_DIR: path.resolve('/Users/a/.claude-personal') } },
-    { id: 'shared', label: 'Shared', dir: path.join(accountsDir, 'anthropic', 'shared'), env: { CLAUDE_CONFIG_DIR: path.join(accountsDir, 'anthropic', 'shared') } },
-  ]);
+    { id: 'work', label: 'Work', dir: '/data/accounts/anthropic/work', env: claudeEnv('/data/accounts/anthropic/work') },
+    { id: 'personal', label: 'Personal', dir: '/Users/a/.claude-personal', env: claudeEnv('/Users/a/.claude-personal') },
+    { id: 'shared', label: 'Shared', dir: '/data/accounts/anthropic/shared', env: claudeEnv('/data/accounts/anthropic/shared') },
+  ], 'the secure-storage folder follows the account, so an inherited one cannot point every account at one sign-in');
+  assert.deepEqual(registry.account(registry.get('google'), 'default').env, {});
   assert.deepEqual(registry.account(anthropic), registry.accountsFor(anthropic)[0]);
   assert.deepEqual(registry.account(anthropic, 'work'), registry.accountsFor(anthropic)[1]);
   assert.throws(() => registry.account(anthropic, 'nope'), (err) => err.status === 404 && err.code === 'unknown_account');
@@ -1354,14 +1386,17 @@ test('accounts get their own home folder and environment, the default keeps the 
   const relativeFile = path.join(dir, 'relative.json');
   fs.writeFileSync(relativeFile, JSON.stringify({ providers: [{ id: 'anthropic', accounts: [{ id: 'two', dir: 'claude-two' }] }] }));
   const relative = loadProviders({ userFile: relativeFile, platform: 'linux' }).providers[0];
-  assert.equal(registry.accountFor(relative, relative.accounts[1]).dir, path.join(accountsDir, 'anthropic', 'claude-two'), 'a relative dir lives under the provider\'s accounts folder');
+  assert.equal(registry.accountFor(relative, relative.accounts[1]).dir, '/data/accounts/anthropic/claude-two', 'a relative dir lives under the provider\'s accounts folder');
   const windows = new ProviderRegistry({ userFile, env: { PATH: '', USERPROFILE: 'C:\\Users\\a' }, platform: 'win32', checkUpdates: false, accountsDir: 'C:\\Data\\accounts' });
-  assert.equal(windows.account(windows.get('anthropic'), 'personal').env.CLAUDE_CONFIG_DIR, 'C:\\Users\\a\\.claude-personal');
+  assert.deepEqual(windows.account(windows.get('anthropic'), 'personal').env, claudeEnv('C:\\Users\\a\\.claude-personal'));
   assert.equal(windows.account(windows.get('anthropic'), 'work').env.CLAUDE_CONFIG_DIR, 'C:\\Data\\accounts\\anthropic\\work');
+
+  const gemini = loadProviders({ userFile: relativeFile, platform: 'linux' }).providers.find((p) => p.id === 'google');
+  assert.deepEqual(registry.accountFor(gemini, { id: 'work', label: 'Work', dir: null }).env, { GEMINI_CLI_HOME: '/data/accounts/google/work', GEMINI_FORCE_FILE_STORAGE: 'true' }, 'Gemini keeps an account\'s sign-in in that account\'s folder, never the shared keychain item');
 
   const dataDirDefault = new ProviderRegistry({ userFile, env: { PATH: '' }, platform: 'linux', checkUpdates: false });
   assert.equal(dataDirDefault.accountsDir, paths.accounts, 'accounts live in the data folder by default');
-  assert.equal(dataDirDefault.account(dataDirDefault.get('anthropic'), 'work').dir, path.join(paths.accounts, 'anthropic', 'work'));
+  assert.equal(dataDirDefault.account(dataDirDefault.get('anthropic'), 'work').dir, path.posix.join(paths.accounts, 'anthropic', 'work'));
 });
 
 test('usage is read per account, from that account\'s home folder only', async () => {
@@ -1374,7 +1409,7 @@ test('usage is read per account, from that account\'s home folder only', async (
     { id: 'xai', usage: null },
   ] }));
   const accountsDir = path.join(dir, 'accounts');
-  const registry = new ProviderRegistry({ userFile, env: { PATH: '' }, platform: 'linux', checkUpdates: false, accountsDir });
+  const registry = new ProviderRegistry({ userFile, env: { PATH: '' }, checkUpdates: false, accountsDir });
   const claudeHome = path.join(dir, 'claude-home');
   fs.mkdirSync(claudeHome);
   fs.writeFileSync(path.join(claudeHome, '.credentials.json'), JSON.stringify({ claudeAiOauth: { accessToken: 'tok', subscriptionType: 'pro' } }));
@@ -1389,8 +1424,8 @@ test('usage is read per account, from that account\'s home folder only', async (
       return { ok: true, json: async () => ({ five_hour: { utilization: 5 } }) };
     },
     readers: {
-      gemini: async ({ file, platform, readKeychain }) => {
-        geminiCalls.push({ file, platform, keychain: readKeychain ? await readKeychain(platform) : 'default' });
+      gemini: async ({ file, keychainFile, platform, readKeychain }) => {
+        geminiCalls.push({ file, keychainFile, platform, keychain: readKeychain ? await readKeychain(platform) : 'default' });
         if (file.includes('accounts')) throw Object.assign(new UsageError('Gemini CLI is not signed in on this machine'), { notSignedIn: true });
         return { accessToken: 'g', refreshToken: null, expiresAt: Date.now() + 3600000 };
       },
@@ -1410,6 +1445,8 @@ test('usage is read per account, from that account\'s home folder only', async (
   assert.deepEqual(geminiCalls.map((c) => c.keychain), ['default', null], 'only the tool\'s own home consults the keychain');
   assert.equal(geminiCalls[0].file, path.join(os.homedir(), '.gemini', 'oauth_creds.json'));
   assert.equal(geminiCalls[1].file, path.join(accountsDir, 'google', 'work', '.gemini', 'oauth_creds.json'));
+  assert.equal(geminiCalls[1].keychainFile, path.join(accountsDir, 'google', 'work', '.gemini', 'gemini-credentials.json'));
+  assert.equal(geminiCalls[0].keychainFile, path.join(os.homedir(), '.gemini', 'gemini-credentials.json'));
   assert.equal(byKey['google/default'].windows[0].usedPercent, 50);
   await monitor.all();
   assert.equal(geminiCalls.length, 2, 'each account has its own cache entry');

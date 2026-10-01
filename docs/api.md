@@ -132,7 +132,8 @@ unknown. When the provider is not signed in or the lookup failed,
 sign-in was found for that account, true when one was read, and null when
 that is unknown. One snapshot is reported per account. The manager reads the tool's own sign-in (Claude Code's
 credentials file or macOS keychain item, Codex CLI's `auth.json`, Gemini
-CLI's keychain item or `oauth_creds.json`) and asks the vendor's usage
+CLI's keychain item, encrypted credentials file or `oauth_creds.json`) and
+asks the vendor's usage
 endpoint; a `command` source runs a program that prints
 `{ plan?, windows: [{ label, usedPercent | remainingPercent, resetsAt? }] }`.
 A window whose share is not a number (missing, null or blank) is left out

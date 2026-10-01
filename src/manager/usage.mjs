@@ -264,6 +264,37 @@ export function geminiCredentialsFile(env = process.env) {
   return path.join(env.GEMINI_CLI_HOME || os.homedir(), '.gemini', 'oauth_creds.json');
 }
 
+export function geminiKeychainFile(env = process.env) {
+  return path.join(env.GEMINI_CLI_HOME || os.homedir(), '.gemini', 'gemini-credentials.json');
+}
+
+export function geminiFileKey({ hostname = os.hostname(), username = os.userInfo().username } = {}) {
+  return crypto.scryptSync(GEMINI_KEYCHAIN_SERVICE, `${hostname}-${username}-gemini-cli`, 32);
+}
+
+/**
+ * The item Gemini CLI keeps in its own encrypted file when it does not use
+ * the OS keychain: AES-256-GCM as iv:tag:ciphertext in hex, over a JSON
+ * map of service to account to secret.
+ */
+export async function readGeminiFileKeychain(file, { key = geminiFileKey() } = {}) {
+  let raw;
+  try {
+    raw = await fs.promises.readFile(file, 'utf8');
+  } catch {
+    return null;
+  }
+  try {
+    const [iv, tag, encrypted] = raw.trim().split(':').map((part) => Buffer.from(part, 'hex'));
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv, { authTagLength: 16 });
+    decipher.setAuthTag(tag);
+    const json = Buffer.concat([decipher.update(encrypted), decipher.final()]).toString('utf8');
+    return JSON.parse(json)?.[GEMINI_KEYCHAIN_SERVICE]?.[GEMINI_KEYCHAIN_ACCOUNT] ?? null;
+  } catch {
+    throw new UsageError(`Gemini CLI credentials file ${shortPath(file)} could not be decrypted`);
+  }
+}
+
 export function geminiKeychainLookup(platform) {
   if (platform === 'darwin') return { file: 'security', args: ['find-generic-password', '-s', GEMINI_KEYCHAIN_SERVICE, '-a', GEMINI_KEYCHAIN_ACCOUNT, '-w'] };
   // keytar stores libsecret items with the attributes "service" and "account".
@@ -279,10 +310,12 @@ function readGeminiKeychainItem(platform) {
 
 export async function readGeminiCredentials({
   file = geminiCredentialsFile(),
+  keychainFile = geminiKeychainFile(),
   platform = process.platform,
   readKeychain = readGeminiKeychainItem,
+  readFileKeychain = readGeminiFileKeychain,
 } = {}) {
-  const raw = await readKeychain(platform);
+  const raw = (await readKeychain(platform)) || (await readFileKeychain(keychainFile));
   if (raw && raw.trim()) {
     let item;
     try { item = JSON.parse(raw); } catch { throw new UsageError('Gemini CLI credentials could not be parsed'); }
@@ -518,6 +551,7 @@ export class UsageMonitor {
         // tool's own home; an account with its own home is read from there.
         const creds = await this.readers.gemini({
           file: geminiCredentialsFile(env),
+          keychainFile: geminiKeychainFile(env),
           platform: this.platform,
           ...(account.dir ? { readKeychain: async () => null } : {}),
         });

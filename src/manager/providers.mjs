@@ -158,6 +158,7 @@ function normalize(raw, platform, warnings) {
     resumeArgs: Array.isArray(merged.resumeArgs) ? merged.resumeArgs.map(String) : [],
     env: normalizeEnv(merged.env),
     homeVar,
+    accountEnv: normalizeEnv(merged.accountEnv),
     hooks: normalizeHooks(merged.hooks),
     accounts: normalizeAccounts(merged.accounts, merged.id, homeVar, warnings),
     color: String(merged.color || '#64748B'),
@@ -518,7 +519,9 @@ export class ProviderRegistry extends EventEmitter {
     const p = this.platform === 'win32' ? path.win32 : path.posix;
     const own = account.dir ? expandHome(account.dir, this.env, this.platform) : null;
     const dir = own && p.isAbsolute(own) ? p.normalize(own) : p.join(this.accountsDir, provider.id, own || account.id);
-    return { id: account.id, label: account.label, dir, env: { [provider.homeVar]: dir } };
+    const env = { [provider.homeVar]: dir };
+    for (const [key, value] of Object.entries(provider.accountEnv)) env[key] = value.replaceAll('{dir}', dir);
+    return { id: account.id, label: account.label, dir, env };
   }
 
   accountsFor(provider) {

@@ -11,6 +11,7 @@ const state = {
   token: null,
   providers: [],
   usage: new Map(),
+  accounts: {},
   stats: null,
   statsFor: new Map(),
   sessions: new Map(),
@@ -149,18 +150,14 @@ function wsUrl(path) {
 
 // ---- providers ------------------------------------------------------------
 
-function storedAccounts() {
-  try { return JSON.parse(load(ACCOUNTS_KEY)) || {}; } catch { return {}; }
-}
-
 function selectedAccount(provider) {
   const accounts = provider.accounts || [];
-  const wanted = storedAccounts()[provider.id];
-  return accounts.find((a) => a.id === wanted) || accounts[0] || { id: 'default', label: 'Default' };
+  return accounts.find((a) => a.id === state.accounts[provider.id]) || accounts[0] || { id: 'default', label: 'Default' };
 }
 
 function selectAccount(provider, id) {
-  save(ACCOUNTS_KEY, JSON.stringify({ ...storedAccounts(), [provider.id]: id }));
+  state.accounts[provider.id] = id;
+  save(ACCOUNTS_KEY, JSON.stringify(state.accounts));
 }
 
 function usageFor(provider, account = selectedAccount(provider)) {
@@ -1454,6 +1451,8 @@ $('panel-stop').addEventListener('click', () => {
   else removeSession(s.id);
 });
 $('cwd').value = load(CWD_KEY) || '';
+try { state.accounts = JSON.parse(load(ACCOUNTS_KEY)) || {}; } catch { state.accounts = {}; }
+if (typeof state.accounts !== 'object' || Array.isArray(state.accounts)) state.accounts = {};
 setInterval(renderSessions, 30000);
 
 // The terminal panel sits below the top bar, which wraps onto two rows on
