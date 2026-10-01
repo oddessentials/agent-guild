@@ -14,8 +14,8 @@ variables the manager reads.
 
 `AGENT_GUILD_HOME` moves it. The folder holds the access token
 (`auth-token`), the running manager's address (`manager.json`), its log
-(`manager.log`), extra accounts' home folders (`accounts/`) and your
-`providers.json`.
+(`manager.log`), extra accounts' home folders (`accounts/`), GitHub sign-ins
+and SSH keys (`github/`) and your `providers.json`.
 
 ## providers.json
 

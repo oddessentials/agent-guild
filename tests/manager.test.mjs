@@ -8,6 +8,7 @@ import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
 import { execFile } from 'node:child_process';
+import { startFakeGitHub } from './fixtures/fake-github.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-test-'));
@@ -35,6 +36,20 @@ function writeScript(file, body) {
   if (win) fs.writeFileSync(`${file}.cmd`, `@echo off\r\n${body.win}\r\n`);
   else fs.writeFileSync(file, `#!/bin/sh\n${body.sh}\n`, { mode: 0o755 });
 }
+
+const gitTools = path.join(here, 'fixtures', 'fake-git-tools.mjs');
+for (const name of ['ssh', 'ssh-keygen', 'git']) {
+  writeScript(path.join(bin, name), { win: `"${process.execPath}" "${gitTools}" ${name} %*`, sh: `exec "${process.execPath}" "${gitTools}" ${name} "$@"` });
+}
+process.env.FAKE_GIT_TOOLS_LOG = path.join(home, 'git-tools.log');
+process.env.FAKE_GIT_TOOLS_STATE = path.join(home, 'git-tools.json');
+// Inherited settings a clone must not pick up.
+process.env.GIT_SSH_COMMAND = 'ssh -i /somebody/elses/key';
+process.env.GIT_CONFIG_COUNT = '1';
+process.env.GIT_CONFIG_KEY_0 = 'url.https://github.com/.insteadOf';
+process.env.GIT_CONFIG_VALUE_0 = 'git@github.com:';
+process.env.GIT_COMMON_DIR = path.join(home, 'someone-elses-repo', '.git');
+const fakeGitHub = await startFakeGitHub();
 
 const nativeDir = path.join(home, 'native-bin');
 fs.mkdirSync(nativeDir);
@@ -122,7 +137,10 @@ let base;
 let token;
 
 before(async () => {
-  ctx = await startManager({ version: '1.0.0', packageFile, sessionDefaults: { doneAgentLingerMs: 200, activityIdleMs: 200, killGraceMs: 500 } });
+  ctx = await startManager({
+    version: '1.0.0', packageFile, sessionDefaults: { doneAgentLingerMs: 200, activityIdleMs: 200, killGraceMs: 500 },
+    github: { apiUrl: fakeGitHub.url, webUrl: fakeGitHub.url, clientId: 'test-client' },
+  });
   base = ctx.api.url;
   token = ctx.token;
 });
@@ -130,6 +148,7 @@ before(async () => {
 after(async () => {
   await ctx.shutdown('tests done');
   npmRegistry.close();
+  await fakeGitHub.close();
   assert.equal(ctx.manager.exiting.size, 0, 'shutdown waits for removed sessions to exit');
   try {
     // Windows may hold the folder briefly after a process exits.
@@ -1289,6 +1308,88 @@ test('several sessions run concurrently', async () => {
   clients.forEach((c, i) => assert.ok(!c.output.includes(`ECHO:session-${(i + 1) % 3}`), 'output does not leak between sessions'));
   await Promise.all(clients.map((c) => c.close()));
   for (const s of sessions) await call('DELETE', `/sessions/${s.id}`);
+});
+
+test('a GitHub account signs in, sets up SSH and clones over it in a visible session', async () => {
+  assert.equal((await fetch(`${base}/api/v1/github`)).status, 401);
+  let { status, body } = await call('GET', '/github');
+  assert.equal(status, 200);
+  assert.deepEqual(body.github.accounts, []);
+  assert.deepEqual(body.github.tools, { git: true, ssh: true, sshKeygen: true });
+  assert.equal(body.github.appUrl, `${fakeGitHub.url}/settings/connections/applications/test-client`);
+
+  const events = new Client(`${base.replace('http', 'ws')}/api/v1/events?token=${token}`);
+  await events.opened;
+  ({ status, body } = await call('POST', '/github/sign-in'));
+  assert.equal(status, 202);
+  assert.equal(body.github.signIn.status, 'pending');
+  assert.equal(body.github.signIn.userCode, 'WDJB-MJHT');
+  const account = await waitFor(async () => (await call('GET', '/github')).body.github.accounts[0], { label: 'GitHub sign-in', timeout: 15000 });
+  assert.equal(account.id, 4242);
+  assert.equal(account.login, 'octo-cat');
+  assert.ok(events.messages.some((m) => m.type === 'github.updated'), 'github.updated');
+  assert.ok(!JSON.stringify((await call('GET', '/github')).body).includes('access-1'), 'tokens never reach a client');
+
+  const parent = fs.mkdtempSync(path.join(home, 'clones '));
+  const repos = await call('GET', `/github/accounts/4242/repos?parent=${encodeURIComponent(parent)}`);
+  assert.equal(repos.status, 200);
+  assert.deepEqual(repos.body.repos.repos.map((r) => [r.fullName, r.local]), [['octo-cat/agent-guild', 'absent'], ['acme/api', 'absent'], ['octo-cat/old-tool', 'absent']]);
+  assert.equal((await call('GET', '/github/accounts/4242/repos?parent=%2Fno%2Fsuch%2Ffolder')).body.error.code, 'bad_cwd');
+  assert.equal((await call('GET', '/github/accounts/1/repos')).status, 404);
+
+  const early = await call('POST', '/github/clone', { account: 4242, repo: 'octo-cat/agent-guild', parent });
+  assert.equal(early.status, 409);
+  assert.equal(early.body.error.code, 'ssh_not_ready');
+
+  ({ status, body } = await call('POST', '/github/accounts/4242/ssh'));
+  assert.equal(status, 200);
+  assert.equal(body.account.ssh.status, 'ready', JSON.stringify(body.account.ssh.error));
+  const data = path.join(home, 'github');
+  assert.equal(body.account.ssh.key, path.join(data, 'keys', 'agent-guild-github-4242'));
+  assert.equal(fakeGitHub.state.keyPosts.length, 1);
+
+  assert.equal((await call('POST', '/github/clone', { account: 4242, repo: 'octo-cat/../x', parent })).status, 400);
+  const started = await call('POST', '/github/clone', { account: 4242, repo: 'octo-cat/agent-guild', parent });
+  assert.equal(started.status, 201, JSON.stringify(started.body));
+  const { session } = started.body;
+  assert.equal(session.task, 'clone');
+  assert.equal(session.name, 'Clone octo-cat/agent-guild');
+  assert.deepEqual(session.clone, { repo: 'octo-cat/agent-guild', path: path.join(parent, 'agent-guild'), accountId: 4242 });
+  const client = terminal(session.id);
+  await client.opened;
+  const exit = await waitFor(() => client.messages.find((m) => m.type === 'exit'), { label: 'clone exit' });
+  assert.equal(exit.exitCode, 0, stripAnsi(client.output));
+  await client.close();
+
+  const runs = fs.readFileSync(process.env.FAKE_GIT_TOOLS_LOG, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  const git = runs.find((r) => r.tool === 'git');
+  assert.equal(git.args.length, 5);
+  assert.deepEqual([git.args[0], git.args[1], git.args[3], git.args[4]], ['clone', '--config', 'git@github.com:octo-cat/agent-guild.git', path.join(parent, 'agent-guild')]);
+  assert.match(git.args[2], /^core\.sshCommand='[^']*ssh[^']*' '-F' .* '-o' 'IdentitiesOnly=yes' '-o' 'BatchMode=yes' '-o' 'StrictHostKeyChecking=yes' '-o' 'GlobalKnownHostsFile=none' '-o' 'UserKnownHostsFile="[^"]+known_hosts"'$/);
+  const gitEnv = Object.fromEntries(Object.entries(git.env).map(([k, v]) => [k.toUpperCase(), v]));
+  assert.equal(gitEnv.GIT_CONFIG_GLOBAL, path.join(data, 'clone.gitconfig'));
+  assert.equal(gitEnv.GIT_CONFIG_SYSTEM, path.join(data, 'clone.gitconfig'));
+  for (const key of ['GIT_SSH_COMMAND', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0', 'GIT_COMMON_DIR']) assert.equal(gitEnv[key], undefined, key);
+
+  const after = await call('GET', `/github/accounts/4242/repos?parent=${encodeURIComponent(parent)}`);
+  assert.equal(after.body.repos.repos[0].local, 'cloned');
+  const again = await call('POST', '/github/clone', { account: 4242, repo: 'octo-cat/agent-guild', parent });
+  assert.equal(again.body.error.code, 'clone_exists');
+  assert.equal(again.body.error.target, path.join(parent, 'agent-guild'));
+
+  const created = await call('POST', '/github/accounts/4242/repos', { owner: 'octo-cat', name: 'new-thing', private: true, readme: true });
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  assert.equal(created.body.repo.fullName, 'octo-cat/new-thing');
+  assert.equal((await call('POST', '/github/accounts/4242/repos', { owner: 'octo-cat', name: 'new-thing' })).body.error.code, 'repo_exists');
+  const cloneNew = await call('POST', '/github/clone', { account: 4242, repo: 'octo-cat/new-thing', parent });
+  assert.equal(cloneNew.status, 201);
+
+  await call('DELETE', `/sessions/${session.id}`);
+  await waitFor(async () => (await call('GET', `/sessions/${cloneNew.body.session.id}`)).body.session.status === 'exited', { label: 'second clone exit' });
+  await call('DELETE', `/sessions/${cloneNew.body.session.id}`);
+  ({ body } = await call('DELETE', '/github/accounts/4242'));
+  assert.deepEqual(body.github.accounts, []);
+  await events.close();
 });
 
 test('the runtime file lets other clients discover the manager', () => {

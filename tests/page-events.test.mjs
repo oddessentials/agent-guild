@@ -9,7 +9,7 @@ const app = readFileSync(new URL('../web/app.js', import.meta.url), 'utf8');
 const connectSource = app.match(/function connectEvents\(\) \{[^]*?\n\}/)?.[0];
 assert.ok(connectSource, 'connectEvents is present in app.js');
 
-function connect({ changelogOpen }) {
+function connect({ changelogOpen, githubOpen = false }) {
   const calls = [];
   const sockets = [];
   const noop = () => {};
@@ -17,10 +17,11 @@ function connect({ changelogOpen }) {
     state: { stopping: false, views: new Map() },
     sessionsShown: false,
     WebSocket: class { constructor() { sockets.push(this); } },
-    $: (id) => ({ open: id === 'changelog' && changelogOpen }),
+    $: (id) => ({ open: (id === 'changelog' && changelogOpen) || (id === 'github' && githubOpen) }),
     wsUrl: (path) => path,
     loadChangelog: () => calls.push('changelog'),
     loadNews: () => calls.push('news'),
+    loadGitHub: () => calls.push('github'),
     setUpgrade: noop,
     renderVersion: noop,
     setConnection: noop,
@@ -43,4 +44,11 @@ test('a reconnect leaves the changelog alone while its panel is closed', () => {
   const page = connect({ changelogOpen: false });
   page.send(page.hello);
   assert.deepEqual(page.calls, ['news']);
+});
+
+test('a reconnect and a github.updated reload the open GitHub panel', () => {
+  const page = connect({ changelogOpen: false, githubOpen: true });
+  page.send(page.hello);
+  page.send({ type: 'github.updated' });
+  assert.deepEqual(page.calls, ['news', 'github', 'github']);
 });

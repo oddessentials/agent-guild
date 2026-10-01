@@ -11,6 +11,7 @@ import { SessionHistory } from './session-history.mjs';
 import { ModelStats } from './model-stats.mjs';
 import { NewsFeed } from './news.mjs';
 import { Changelog } from './changelog.mjs';
+import { GitHub } from './github.mjs';
 import { createManagerServer } from './server.mjs';
 import { SelfUpdate } from './self-update.mjs';
 import { resolveBaseEnv, pathReader } from './shell-env.mjs';
@@ -34,8 +35,8 @@ const rootDir = path.resolve(here, '../..');
 
 const VERSION_REFRESH_MS = 60 * 60 * 1000;
 
-/** `version` and `packageFile` stand in for the real ones in tests. */
-export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, sessionDefaults, version = VERSION, packageFile = PACKAGE_FILE } = {}) {
+/** `version`, `packageFile` and `github` (GitHub's URLs and client id) stand in for the real ones in tests. */
+export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, sessionDefaults, version = VERSION, packageFile = PACKAGE_FILE, github: githubOptions = {} } = {}) {
   ensureDataDir();
   const token = loadOrCreateToken();
   const baseEnv = resolveBaseEnv();
@@ -60,7 +61,8 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
 
   let api;
   const selfUpdate = new SelfUpdate({ pkg: PACKAGE_NAME, version, packageFile, registry });
-  const manager = new SessionManager({ registry, baseEnv, getApiUrl: () => api.url, sessionDefaults, shimDir, selfUpdate });
+  const github = new GitHub({ dir: paths.github, registry, ...githubOptions });
+  const manager = new SessionManager({ registry, baseEnv, getApiUrl: () => api.url, sessionDefaults, shimDir, selfUpdate, github });
   const usage = new UsageMonitor({ registry, env: baseEnv });
   const history = new SessionHistory({ registry, env: baseEnv });
   const modelStats = new ModelStats({ registry });
@@ -84,6 +86,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
     if (closing) return closing;
     console.log(`[manager] ${restart ? 'restarting' : 'stopping'} (${reason}); ending ${manager.sessions.size} session(s)`);
     clearInterval(versionTimer);
+    github.close();
     removeRuntimeFile();
     // Sessions end before the API closes, and the last event says whether
     // every process confirmed its exit, so a client can tell a clean stop
@@ -116,6 +119,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
     modelStats,
     news,
     changelog,
+    github,
     token,
     host,
     port,

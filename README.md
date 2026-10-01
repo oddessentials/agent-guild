@@ -160,6 +160,10 @@ Any other tool or script can report agents and its model too. See
   websites cannot reach your terminals through your browser.
 * Tools inside a session get a separate token that can only report agents
   for that session.
+* GitHub sign-ins, the SSH key Agent Guild makes for each GitHub account and
+  GitHub's SSH host keys are kept in the `github` folder of the data folder,
+  readable only by you. A clone uses only that key and those host keys; your
+  own `~/.ssh` and Git configuration are not read or changed.
 * Usage meters are fetched by the manager with each tool's own sign-in. The
   page only receives percentages. On macOS the first lookup may ask for
   keychain access to the "Claude Code-credentials" and "gemini-cli-oauth"
@@ -175,6 +179,7 @@ or prompts:
 | OpenRouter's public model list | Benchmarks | Every 6 hours |
 | Public news feeds, Hacker News, arXiv and GitHub | The newsfeed | Every 30 minutes while the page is open |
 | GitHub's releases API | What's new | Hourly |
+| GitHub (sign-in, API, avatars and SSH) | Signing in to GitHub, listing your repositories, adding your SSH key and cloning | When you use **Clone from GitHub…** |
 
 ## Other front ends
 

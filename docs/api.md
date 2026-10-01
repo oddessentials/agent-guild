@@ -184,6 +184,7 @@ that has never run lists no sessions and no error.
   "resume": null,
   "task": null,
   "account": { "id": "default", "label": "Default" },
+  "clone": null,
   "pid": 3518,
   "status": "running",
   "exitCode": null,
@@ -215,8 +216,13 @@ that has never run lists no sessions and no error.
 * `resume` is the id of the tool's own session that was resumed, or null.
 * `task` is `install` for a session that runs npm to install or update the
   provider's tool, `upgrade` for the session that runs npm to upgrade the
-  manager itself (its `provider` is a stand-in with id `agent-guild`), and
-  null for a session that runs the tool itself.
+  manager itself (its `provider` is a stand-in with id `agent-guild`),
+  `clone` for a session that runs `git clone` for a GitHub repository (its
+  `provider` is a stand-in with id `github`), and null for a session that
+  runs the tool itself.
+* `clone` is `{ repo, path, accountId }` for a clone session: the
+  repository as owner/name, the folder it is cloned into and the GitHub
+  account id. Null otherwise.
 * `account` is the provider account the tool runs under, or null for an
   install or upgrade session.
 * `model` is the main model the tool is using, or null while unknown.
@@ -273,6 +279,39 @@ meanwhile; `available` and `pendingVersion` are withheld during that time,
 because the files on disk are mid-replacement, and `POST /upgrade` answers
 409 `upgrade_in_progress`.
 
+### GitHub
+
+The GitHub accounts signed in to Agent Guild, in `GET /github` and
+`github.updated` events. Tokens never leave the manager.
+
+```json
+{
+  "scopes": ["repo", "write:public_key"],
+  "appUrl": "https://github.com/settings/connections/applications/Ov23lif6qqYKtXZTb130",
+  "keysUrl": "https://github.com/settings/keys",
+  "newKeyUrl": "https://github.com/settings/ssh/new",
+  "tools": { "git": true, "ssh": true, "sshKeygen": true },
+  "signIn": { "status": "pending", "userCode": "WDJB-MJHT", "verificationUri": "https://github.com/login/device", "expiresAt": "2026-10-01T14:15:00.000Z", "accountId": null, "again": false, "error": null },
+  "accounts": [
+    {
+      "id": 4242, "login": "octo-cat", "name": "Octo Cat", "avatar": "data:image/png;base64,...", "scopes": ["repo", "write:public_key"],
+      "needsSignIn": false, "addedAt": "2026-10-01T14:00:00.000Z",
+      "ssh": { "status": "ready", "key": "/home/me/.config/agent-guild/github/keys/agent-guild-github-4242", "publicKey": "ssh-ed25519 AAAA... agent-guild github octo-cat (4242)", "verifiedAt": "2026-10-01T14:01:00.000Z", "settingUp": false, "error": null }
+    }
+  ]
+}
+```
+
+Sign-in uses GitHub's device flow: `signIn` is `pending` while the user
+enters `userCode` at `verificationUri`, then `done` (with `accountId`, and
+`again` when that GitHub user was already signed in), `expired`, `denied` or
+`failed`; null when none was started or it was cancelled. Accounts are keyed
+by GitHub's numeric user id; `login` is display only. `needsSignIn` is true
+once GitHub refuses the account's token and its refresh. `ssh.status` is
+`none` (no key yet), `unverified` or `ready` (GitHub signed the key in as this
+account). `ssh.error` is `{ code, message, manual }`, with `manual` true when
+the user must add `publicKey` on GitHub themselves.
+
 ### Agent
 
 An agent is a worker that the coding tool reports inside a session, such as a
@@ -317,6 +356,14 @@ All paths are under `/api/v1`.
 | GET | `/news` | | `{ refreshedAt, refreshing, sources, items }`. `items` are the last 30 days of the built-in feeds, newest first, each `{ id, title, url, discussion, summary, source, sourceId, category, publishedAt }` with `category` `news`, `releases` or `research`. A coding tool's own release feed is included only while that tool is installed. `sources` lists each feed with its `error` and the time it last answered. Feeds that are due are re-read in the background; a `news.updated` event follows. |
 | GET | `/changelog` | | `{ refreshing, okAt, error, releases }`: Agent Guild's own releases from GitHub, newest first, each `{ version, url, publishedAt, sections: [{ title, changes }] }`, where a change is a list of text runs. Re-read hourly in the background; a `changelog.updated` event follows. |
 | GET | `/providers/:id/history?account=&limit=` | | `{ history }`: a History object for one account (default `default`; 404 `unknown_account`), with at most `limit` sessions (default 100, at most 500). 400 `history_unsupported` when the provider has no `historySource`. |
+| GET | `/github` | | `{ github }`: a GitHub object. |
+| POST | `/github/sign-in` | | `202 { github }`: starts a device-flow sign-in; the manager polls GitHub and announces the result in `github.updated`. |
+| DELETE | `/github/sign-in` | | `{ github }`: cancels it. |
+| DELETE | `/github/accounts/:id` | | `{ github }`: forgets the account's sign-in. Its key stays in the data folder and on GitHub. |
+| GET | `/github/accounts/:id/repos?parent=&refresh=1` | | `{ repos: { accountId, fetchedAt, truncated, owners, parent, repos } }`: the account's repositories, most recently pushed first, each `{ fullName, owner, ownerType, name, private, fork, archived, description, language, pushedAt, url, target, local }`. `owners` is the account's login, then the organizations among the repositories' owners: where a new repository can be created. With `parent` (a folder; 400 `bad_cwd` when it does not exist), `target` is `<parent>/<name>` and `local` is `absent`, `cloned` (a Git repository whose origin is this repository) or `conflict`. Cached for 5 minutes unless `refresh=1`. |
+| POST | `/github/accounts/:id/repos` | `{ owner, name, description?, private?, readme? }` | `201 { repo }`: creates a repository under the account or the organization `owner`, private unless `private` is false, with a README unless `readme` is false. 409 `repo_exists`, 403 `repo_forbidden` when GitHub refuses the owner. |
+| POST | `/github/accounts/:id/ssh` | | `{ account }`: makes the account's SSH key if it has none, adds it to the account, and checks that GitHub signs it in as this account. A failure is reported in `account.ssh.error`. |
+| POST | `/github/clone` | `{ account, repo, parent }` | `201 { session }`: a session with `task` `clone` running `git clone` for `repo` (owner/name) into `<parent>/<name>` over SSH with the account's key. 409 `ssh_not_ready`, `git_unavailable`, `clone_exists` or `folder_conflict` (both with `target`), or `clone_in_progress`. |
 | GET | `/sessions` | | `{ sessions: Session[] }` |
 | POST | `/sessions` | `{ providerId, account?, cwd?, cols?, rows?, name?, args?, resume? }` | `201 { session }` |
 | GET | `/sessions/:id` | | `{ session }` |
@@ -363,6 +410,7 @@ This socket pushes changes to every session. It is server-to-client only.
 | `{ type: "providers.updated", providers }` | The provider list changed: a version check finished, `providers.json` was reloaded, or an install session ended. |
 | `{ type: "news.updated" }` | A news refresh finished; fetch `/news` again. |
 | `{ type: "changelog.updated" }` | A refresh of the release list finished; fetch `/changelog` again. |
+| `{ type: "github.updated" }` | A GitHub sign-in, account or SSH setup changed; fetch `/github` again. |
 | `{ type: "manager.upgrade", upgrade }` | The manager's own version check changed: a newer release was found, or an upgrade session ended. |
 | `{ type: "manager.stopping", running, restart }` | A client asked the manager to stop. `running` sessions are being ended. A client should show that the manager was stopped on purpose, not that it is unreachable. `restart` is true when a new manager will take over; a client should then say it is waiting for that one rather than tell the user how to start one. |
 | `{ type: "manager.stopped", remaining, restart }` | The last event before the socket closes. `remaining` is how many session processes had not confirmed their exit when the manager gave up waiting (about five seconds); 0 means every session has ended. `restart` is as in `manager.stopping`. A socket that closes after `manager.stopping` without this event means the manager went away before it could confirm. |

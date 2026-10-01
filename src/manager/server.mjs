@@ -107,6 +107,7 @@ export function createManagerServer({
   modelStats,
   news = null,
   changelog = null,
+  github = null,
   token,
   host = '127.0.0.1',
   port = 0,
@@ -259,6 +260,7 @@ export function createManagerServer({
     if (route === '/changelog' && method === 'GET' && changelog) {
       return sendJson(res, 200, changelog.snapshot());
     }
+    if (route.startsWith('/github') && github) return handleGitHub(req, res, url, route, method);
     const historyMatch = route.match(/^\/providers\/([a-z0-9][a-z0-9_-]{0,31})\/history$/);
     if (historyMatch && method === 'GET') {
       const provider = registry.get(historyMatch[1]);
@@ -328,6 +330,45 @@ export function createManagerServer({
     throw new HttpError(404, `no route for ${method} ${url.pathname}`, 'not_found');
   }
 
+  async function handleGitHub(req, res, url, route, method) {
+    const snapshot = () => ({ github: github.snapshot() });
+    if (route === '/github' && method === 'GET') return sendJson(res, 200, snapshot());
+    if (route === '/github/sign-in' && method === 'POST') {
+      await github.startSignIn();
+      return sendJson(res, 202, snapshot());
+    }
+    if (route === '/github/sign-in' && method === 'DELETE') {
+      github.cancelSignIn();
+      return sendJson(res, 200, snapshot());
+    }
+    if (route === '/github/clone' && method === 'POST') {
+      const body = await readJsonBody(req);
+      const session = manager.clone({ account: body.account, repo: body.repo, parent: body.parent });
+      return sendJson(res, 201, { session: session.toJSON() });
+    }
+    const match = route.match(/^\/github\/accounts\/([^/]+)(\/repos|\/ssh)?$/);
+    if (match) {
+      const [, id, action] = match;
+      if (!action && method === 'DELETE') {
+        github.signOut(id);
+        return sendJson(res, 200, snapshot());
+      }
+      if (action === '/repos' && method === 'POST') {
+        const body = await readJsonBody(req);
+        return sendJson(res, 201, { repo: await github.createRepo(id, body) });
+      }
+      if (action === '/repos' && method === 'GET') {
+        const raw = url.searchParams.get('parent');
+        const parent = raw && raw.trim() ? manager.resolveCwd(raw) : null;
+        return sendJson(res, 200, { repos: await github.repos(id, { parent, refresh: url.searchParams.get('refresh') === '1' }) });
+      }
+      if (action === '/ssh' && method === 'POST') {
+        return sendJson(res, 200, { account: await github.setupSsh(id) });
+      }
+    }
+    throw new HttpError(404, `no route for ${method} ${url.pathname}`, 'not_found');
+  }
+
   const server = http.createServer(async (req, res) => {
     let url;
     try {
@@ -341,6 +382,7 @@ export function createManagerServer({
       if (!res.headersSent) {
         const error = { code: err.code || 'error', message: err.message };
         if (err.running !== undefined) error.running = err.running;
+        if (err.target !== undefined) error.target = err.target;
         sendJson(res, status, { error });
       }
     }
@@ -383,6 +425,7 @@ export function createManagerServer({
   selfUpdate?.on('updated', () => broadcast({ type: 'manager.upgrade', upgrade: upgradeInfo() }));
   news?.on('updated', () => broadcast({ type: 'news.updated' }));
   changelog?.on('updated', () => broadcast({ type: 'changelog.updated' }));
+  github?.on('updated', () => broadcast({ type: 'github.updated' }));
 
   function handleEvents(ws) {
     eventClients.add(ws);
