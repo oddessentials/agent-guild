@@ -240,16 +240,24 @@ test('restart keeps an ephemeral port, and starts the manager itself when the ol
   const oldPort = old.address().port;
   // Found through its runtime file, as with an ephemeral port setting; the successor must keep that port.
   fs.writeFileSync(path.join(oldHome, 'manager.json'), JSON.stringify({ pid: process.pid, port: oldPort, url: `http://127.0.0.1:${oldPort}` }));
-  const oldEnv = { ...env, AGENT_GUILD_HOME: oldHome, AGENT_GUILD_PORT: '0' };
+  // Another manager answers at the port the environment names; it is not the one being restarted.
+  const other = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, name: 'agent-guild', version: '0.0.2', pid: process.pid }));
+  });
+  await new Promise((resolve) => other.listen(0, '127.0.0.1', resolve));
+  const oldEnv = { ...env, AGENT_GUILD_HOME: oldHome, AGENT_GUILD_PORT: String(other.address().port) };
   try {
     const restarted = await runWith(oldEnv, 'restart');
     assert.equal(restarted.code, 0, restarted.stderr);
-    assert.match(restarted.stdout, /Session manager restarted at .* \(was 0\.0\.1\)/);
+    assert.match(restarted.stdout, new RegExp(`Session manager restarted at http://127\\.0\\.0\\.1:${oldPort}.* \\(was 0\\.0\\.1\\)`));
     const runtimeNow = JSON.parse(fs.readFileSync(path.join(oldHome, 'manager.json'), 'utf8'));
-    assert.equal(runtimeNow.port, oldPort, 'the new manager took over the port');
+    assert.equal(runtimeNow.port, oldPort, 'the new manager took over the port, not the one the environment names');
     assert.notEqual(runtimeNow.pid, process.pid);
     assert.match((await runWith(oldEnv, 'stop')).stdout, /stopped/);
   } finally {
+    other.closeAllConnections();
+    await new Promise((resolve) => other.close(resolve));
     fs.rmSync(oldHome, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   }
 });
