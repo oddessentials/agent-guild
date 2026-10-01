@@ -312,6 +312,7 @@ function select(feed, entries, now) {
       url: cleanUrl(found.link),
       discussion: found.discussion ?? null,
       summary: summaryFor(found.text, found.title),
+      date: found.date,
       time: Math.min(found.date, now),
     });
   }
@@ -320,7 +321,12 @@ function select(feed, entries, now) {
 
 function merge(previous, fresh, limit, now) {
   const byKey = new Map(previous.filter((item) => now - item.time <= WINDOW_MS).map((item) => [item.key, item]));
-  for (const item of fresh) byKey.set(item.key, item);
+  for (const item of fresh) {
+    const stored = byKey.get(item.key);
+    // Do not move a future-dated story forward on every successful refresh.
+    if (stored?.date === item.date) item.time = stored.time;
+    byKey.set(item.key, item);
+  }
   return [...byKey.values()].sort((a, b) => b.time - a.time).slice(0, limit);
 }
 

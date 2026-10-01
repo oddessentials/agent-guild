@@ -2280,6 +2280,52 @@ test('news is fetched only when a page asks, once per source while a refresh run
   assert.equal(seen.length, 2);
 });
 
+test('future-dated news keeps its normalized time across refreshes unless the source date changes', async (t) => {
+  const started = Date.parse('2026-10-01T12:00:00Z');
+  let now = started;
+  t.mock.method(Date, 'now', () => now);
+  let date = new Date(started + 3600000);
+  let description = 'Original summary';
+  const news = new NewsFeed({
+    feeds: [newsSource('future')],
+    fetchImpl: async () => feedReply(rssOf(rssItem({ title: 'Soon', link: 'https://future.test/soon', date, description }))),
+  });
+  const refresh = async () => {
+    news.ttlMs = 0;
+    news.snapshot();
+    news.ttlMs = 3600000;
+    await once(news, 'updated');
+    const snapshot = news.snapshot();
+    assert.equal(snapshot.sources[0].error, null);
+    assert.equal(snapshot.items.length, 1);
+    return snapshot.items[0];
+  };
+  const first = await refresh();
+  assert.equal(first.publishedAt, new Date(started).toISOString(), 'a future date is initially clamped to now');
+  const seen = Date.parse(first.publishedAt);
+
+  now += 30 * 60000;
+  const unchanged = await refresh();
+  assert.deepEqual(unchanged, first, 'an unchanged HTTP 200 response keeps the same public item');
+  assert.equal(Date.parse(unchanged.publishedAt) > seen, false, 'the page does not mark the read item new again');
+
+  now += 60 * 60000;
+  description = 'Updated summary';
+  const updated = await refresh();
+  assert.equal(updated.publishedAt, first.publishedAt, 'the normalized time stays stable after the source date passes');
+  assert.equal(updated.summary, description, 'other fields still refresh');
+
+  date = new Date(now + 3600000);
+  const redated = await refresh();
+  assert.equal(redated.id, first.id);
+  assert.equal(redated.publishedAt, new Date(now).toISOString(), 'a changed future date gets a new normalized time');
+  now += 30 * 60000;
+  assert.equal((await refresh()).publishedAt, redated.publishedAt, 'the changed date is then stable too');
+
+  date = new Date(now - 60000);
+  assert.equal((await refresh()).publishedAt, date.toISOString(), 'a corrected past date is used as stated');
+});
+
 test('a failed source keeps what it sent before, says why, and is asked again on its own retry interval', async () => {
   let reply = () => feedReply(rssOf(rssItem({ title: 'Kept', link: 'https://b.test/kept' })));
   let asked = 0;
