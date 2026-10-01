@@ -67,6 +67,14 @@ def frame(src, out, origin=(40, 44), size=860, corner=168):
     quantize(im, out)
 
 
+def favicon(src, out, box=(110, 60, 395, 470), size=64):
+    shield = Image.open(src).convert("RGBA").crop(box)
+    side = max(shield.size)
+    im = Image.new("RGBA", (side, side))
+    im.paste(shield, ((side - shield.width) // 2, (side - shield.height) // 2))
+    im.resize((size, size), Image.LANCZOS).save(out, optimize=True)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--masks", action="store_true", help="recompute the BiRefNet masks with the local image studio")
@@ -86,6 +94,7 @@ def main():
         quantize(im.resize((round(im.width * height / im.height), height), Image.LANCZOS), WEB / rel)
 
     frame(PACK / "ui" / "frame-corner.png", WEB / "ui" / "frame.png")
+    favicon(PACK / "ui" / "guild-crest.png", WEB / "ui" / "favicon.png")
     encode(Image.open(PACK / "backgrounds" / "page.png").convert("RGB"), WEB / "page", avif=80, webp=85)
 
     if shutil.which("oxipng"):

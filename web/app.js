@@ -94,7 +94,8 @@ function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
   const button = $('theme-toggle');
   const other = theme === 'dark' ? 'light' : 'dark';
-  button.textContent = theme === 'dark' ? '☀ Light' : '☾ Dark';
+  button.textContent = theme === 'dark' ? 'Light' : 'Dark';
+  button.dataset.next = other;
   button.title = `Switch to the ${other} theme`;
   button.setAttribute('aria-label', `Switch to the ${other} theme`);
 }
@@ -426,7 +427,7 @@ function renderHint(hint, provider) {
   link.href = docs;
   link.target = '_blank';
   link.rel = 'noopener noreferrer';
-  link.textContent = 'Docs ↗';
+  link.textContent = 'Docs';
   hint.append(' ', link);
 }
 
@@ -810,7 +811,7 @@ function modelFacts(card) {
   link.href = httpsHref(`https://openrouter.ai/${card.id}`) ?? '';
   link.target = '_blank';
   link.rel = 'noopener noreferrer';
-  link.textContent = 'OpenRouter ↗';
+  link.textContent = 'OpenRouter';
   link.setAttribute('aria-label', `${card.name} on OpenRouter (opens in a new tab)`);
   const facts = document.createElement('div');
   facts.className = 'model-more';
