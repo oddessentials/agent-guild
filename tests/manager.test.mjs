@@ -1105,6 +1105,43 @@ test('the news endpoint needs the token, answers at once while it refreshes, and
   }
 });
 
+test('the changelog endpoint needs the token, answers at once while it checks, and announces the result', async () => {
+  const { createManagerServer } = await import('../src/manager/server.mjs');
+  const { Changelog } = await import('../src/manager/changelog.mjs');
+  const release = {
+    tag_name: 'v1.0.0', html_url: 'https://github.com/oddessentials/agent-guild/releases/tag/v1.0.0', published_at: '2026-10-01T15:42:18Z',
+    body: '### Features\n\n* **page:** show the changelog',
+  };
+  const spare = createManagerServer({
+    manager: ctx.manager,
+    registry: ctx.registry,
+    usage: { all: async () => [] },
+    modelStats: { snapshot: async () => ({}) },
+    changelog: new Changelog({ fetchImpl: async () => new Response(JSON.stringify([release])) }),
+    token,
+    webDir: path.join(here, '..', 'web'),
+    onShutdownRequest: () => {},
+  });
+  await spare.listen();
+  const events = new Client(`${spare.url.replace('http', 'ws')}/api/v1/events?token=${token}`);
+  const read = async () => (await fetch(`${spare.url}/api/v1/changelog`, { headers: { Authorization: `Bearer ${token}` } })).json();
+  try {
+    await events.opened;
+    assert.equal((await fetch(`${spare.url}/api/v1/changelog`)).status, 401);
+    assert.deepEqual(await read(), { refreshing: true, okAt: null, error: null, releases: [] });
+    await waitFor(() => events.messages.find((m) => m.type === 'changelog.updated'), { label: 'changelog.updated' });
+    const body = await read();
+    assert.deepEqual([body.refreshing, body.error], [false, null]);
+    assert.deepEqual(body.releases, [{
+      version: '1.0.0', url: release.html_url, publishedAt: '2026-10-01T15:42:18.000Z',
+      sections: [{ title: 'Features', changes: [[{ text: 'page:', strong: true }, { text: ' show the changelog' }]] }],
+    }]);
+  } finally {
+    await events.close();
+    await spare.close();
+  }
+});
+
 test('no session can start once a shutdown has been accepted', async () => {
   // A second API server over the same manager, whose shutdown callback does
   // nothing, so the accepted request can be observed without exiting.

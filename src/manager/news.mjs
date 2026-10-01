@@ -14,7 +14,7 @@ const LIMITS = { news: 20, releases: 5, research: 10 };
 const TITLE_MAX = 300;
 const SUMMARY_MAX = 240;
 const RAW_MAX = 8000;
-const USER_AGENT = `agent-guild/${VERSION} (+https://github.com/oddessentials/agent-guild)`;
+export const USER_AGENT = `agent-guild/${VERSION} (+https://github.com/oddessentials/agent-guild)`;
 const FEED_ACCEPT = 'application/rss+xml, application/atom+xml, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.5';
 
 const latestRelease = (id, name, repo, provider) => ({
@@ -64,7 +64,7 @@ const NAMED = {
   uacute: 'ú', uuml: 'ü', ccedil: 'ç', ntilde: 'ñ', szlig: 'ß', Auml: 'Ä', Ouml: 'Ö', Uuml: 'Ü',
 };
 
-class FeedError extends Error {}
+export class FeedError extends Error {}
 
 const fields = new Map();
 const attrs = new Map();
@@ -329,7 +329,7 @@ function merge(previous, fresh, limit, now) {
   return [...byKey.values()].sort((a, b) => b.time - a.time).slice(0, limit);
 }
 
-async function readBody(res, maxBytes) {
+export async function readBody(res, maxBytes) {
   const tooLarge = () => new FeedError(`sent more than ${maxBytes / 1024 / 1024} MB`);
   if (Number(res.headers.get('content-length')) > maxBytes) throw tooLarge();
   const chunks = [];
@@ -349,12 +349,12 @@ async function readBody(res, maxBytes) {
   }
 }
 
-function refusal(res) {
+export function refusal(res) {
   if ((res.status === 403 || res.status === 429) && res.headers.get('x-ratelimit-remaining') === '0') return 'GitHub API rate limit exceeded';
   return `HTTP ${res.status}`;
 }
 
-function failure(err, timeoutMs) {
+export function failure(err, timeoutMs) {
   if (err instanceof FeedError) return err.message;
   if (err?.name === 'TimeoutError') return `did not answer within ${timeoutMs / 1000} seconds`;
   if (err instanceof SyntaxError) return 'sent data that could not be read';

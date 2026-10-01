@@ -89,8 +89,14 @@ code, pre { font-family: var(--font-mono); }
 }
 .brand { display: flex; align-items: center; gap: 10px; }
 .version {
-  font-size: 0.72rem; font-weight: 600; padding: 1px 7px; border-radius: 999px; white-space: nowrap;
-  background: var(--surface-2); color: var(--muted); border: 1px solid var(--border); font-variant-numeric: tabular-nums;
+  position: relative; font-family: inherit; font-size: 0.72rem; font-weight: 600; padding: 1px 7px; border-radius: 999px; white-space: nowrap;
+  background: var(--surface-2); color: var(--muted); border: 1px solid var(--border); font-variant-numeric: tabular-nums; cursor: pointer;
+}
+.version:hover { color: var(--text); border-color: var(--muted); }
+.version:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.version.unread::after {
+  content: ""; position: absolute; top: -3px; right: -3px; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--accent); box-shadow: 0 0 0 2px var(--surface);
 }
 .topbar-end { display: flex; align-items: center; justify-content: flex-end; gap: 14px; flex-wrap: wrap; min-width: 0; }
 .connection { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 0.85rem; }
@@ -379,10 +385,10 @@ main { max-width: 1200px; margin: 0 auto; padding: 26px 16px 56px; display: grid
 }
 .badge.in-use { --badge: var(--accent); color: color-mix(in srgb, var(--badge) 80%, #000); }
 .badge.new { --badge: var(--ok); color: color-mix(in srgb, var(--badge) 72%, #000); }
-.badge.expires { --badge: var(--warn); color: color-mix(in srgb, var(--badge) 62%, #000); }
-.badge.in-use, .badge.new, .badge.expires { border-color: color-mix(in srgb, var(--badge) 45%, transparent); }
+.badge.expires, .badge.installed { --badge: var(--warn); color: color-mix(in srgb, var(--badge) 62%, #000); }
+.badge.in-use, .badge.new, .badge.expires, .badge.installed { border-color: color-mix(in srgb, var(--badge) 45%, transparent); }
 :where(:root[data-theme="dark"]) {
-  .badge.in-use, .badge.new, .badge.expires { color: var(--badge); }
+  .badge.in-use, .badge.new, .badge.expires, .badge.installed { color: var(--badge); }
 }
 .model-detail {
   display: grid; grid-template-columns: max-content minmax(48px, 1fr) auto minmax(0, 19em); gap: 14px 10px;
@@ -467,6 +473,19 @@ a.news-link:visited { color: var(--muted); }
 .news-empty { margin: 14px 0 0; color: var(--muted); }
 .news-status { margin: 0; padding: 10px 14px; border-top: 1px solid var(--border); color: var(--muted); font-size: 0.75rem; line-height: 1.45; }
 .news-status span { display: block; }
+
+.changelog-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.changelog-actions .btn { flex: 1 1 auto; }
+.changelog-list { list-style: none; margin: 0; padding: 0; }
+.changelog-release { padding: 14px 0 12px; }
+.changelog-release + .changelog-release { border-top: 1px solid var(--border); }
+.changelog-release h3 { margin: 0; font-size: 1rem; }
+.changelog-release .news-meta { display: block; margin-top: 2px; }
+.changelog-type { margin: 10px 0 4px; font-size: 0.7rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+.changelog-type.breaking { color: var(--danger); }
+.changelog-changes { margin: 0; padding-left: 1.2em; display: grid; gap: 4px; list-style: disc; font-size: 0.85rem; line-height: 1.45; overflow-wrap: anywhere; }
+.changelog-changes li::marker { color: var(--muted); }
+.changelog-changes code { font-size: 0.8rem; padding: 0 4px; border-radius: 4px; background: var(--surface-2); }
 
 .history-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 14px 0; }
 .history-tools input[type="search"] {

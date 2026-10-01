@@ -16,7 +16,7 @@
   <header class="topbar">
     <div class="brand">
       <h1>Agent Guild</h1>
-      <span id="version" class="version" hidden></span>
+      <button id="version" class="version" type="button" aria-haspopup="dialog" hidden></button>
     </div>
     <div class="topbar-end">
       <div id="connection" class="connection" role="status" aria-live="polite">
@@ -137,6 +137,25 @@
       <p id="news-empty" class="news-empty" hidden></p>
     </div>
     <p id="news-status" class="news-status" hidden></p>
+  </dialog>
+
+  <dialog id="changelog" class="news-panel" aria-labelledby="changelog-title">
+    <div class="news-bar">
+      <div class="news-heading">
+        <h2 id="changelog-title">What’s new</h2>
+        <p id="changelog-sub" class="sub"></p>
+      </div>
+      <button id="changelog-close" class="btn" type="button">Close</button>
+    </div>
+    <div class="news-body">
+      <div id="changelog-actions" class="changelog-actions" hidden>
+        <button id="changelog-upgrade" class="btn upgrade" type="button" hidden></button>
+        <button id="changelog-restart" class="btn restart-manager pending" type="button" hidden></button>
+      </div>
+      <ol id="changelog-list" class="changelog-list"></ol>
+      <p id="changelog-note" class="news-empty" hidden></p>
+    </div>
+    <p id="changelog-status" class="news-status" hidden></p>
   </dialog>
 
   <dialog id="history" class="models history" aria-labelledby="history-title">

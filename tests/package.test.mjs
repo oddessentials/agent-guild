@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { readTar, checkPackage } from './package/check-tarball.mjs';
 import { generateNotes } from '../.github/release/capture.mjs';
+import { parseNotes } from '../src/manager/changelog.mjs';
 
 function header(name, size, { mode = 0o644, type = '0', prefix = '' } = {}) {
   const block = Buffer.alloc(512);
@@ -138,5 +139,24 @@ test('the release plan records the version and notes that end with the install c
   fs.rmSync(out, { recursive: true, force: true });
   await assert.rejects(generateNotes({}, { ...context, lastRelease: {} }), /No release tag was found/);
   assert.equal(fs.existsSync(out), false, 'a first release without a baseline tag plans nothing');
+  fs.rmSync(cwd, { recursive: true, force: true });
+});
+
+test('the changelog in the page leaves out the install steps that end every release note', async () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-release-'));
+  const out = path.join(cwd, 'plan');
+  fs.writeFileSync(path.join(cwd, 'package.json'), JSON.stringify({ name: NAME }));
+  const notes = [
+    '## [1.2.3](https://github.com/oddessentials/agent-guild/compare/v1.2.2...v1.2.3) (2026-10-01)',
+    '',
+    '### Bug Fixes',
+    '',
+    '* keep the fix ([#9](https://github.com/oddessentials/agent-guild/issues/9)) ([abc1234](https://github.com/oddessentials/agent-guild/commit/abc1234))',
+  ].join('\n');
+  await generateNotes({}, { cwd, env: { RELEASE_PLAN_DIR: out }, lastRelease: { version: '1.2.2' }, nextRelease: { version: '1.2.3', notes } });
+  assert.deepEqual(parseNotes(fs.readFileSync(path.join(out, 'notes.md'), 'utf8')), [{
+    title: 'Bug Fixes',
+    changes: [[{ text: 'keep the fix (' }, { text: '#9', url: 'https://github.com/oddessentials/agent-guild/issues/9' }, { text: ')' }]],
+  }]);
   fs.rmSync(cwd, { recursive: true, force: true });
 });

@@ -106,6 +106,7 @@ export function createManagerServer({
   history,
   modelStats,
   news = null,
+  changelog = null,
   token,
   host = '127.0.0.1',
   port = 0,
@@ -255,6 +256,9 @@ export function createManagerServer({
     if (route === '/news' && method === 'GET' && news) {
       return sendJson(res, 200, news.snapshot());
     }
+    if (route === '/changelog' && method === 'GET' && changelog) {
+      return sendJson(res, 200, changelog.snapshot());
+    }
     const historyMatch = route.match(/^\/providers\/([a-z0-9][a-z0-9_-]{0,31})\/history$/);
     if (historyMatch && method === 'GET') {
       const provider = registry.get(historyMatch[1]);
@@ -378,6 +382,7 @@ export function createManagerServer({
   registry.on('updated', () => broadcast({ type: 'providers.updated', providers: registry.list() }));
   selfUpdate?.on('updated', () => broadcast({ type: 'manager.upgrade', upgrade: upgradeInfo() }));
   news?.on('updated', () => broadcast({ type: 'news.updated' }));
+  changelog?.on('updated', () => broadcast({ type: 'changelog.updated' }));
 
   function handleEvents(ws) {
     eventClients.add(ws);
