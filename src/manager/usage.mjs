@@ -24,9 +24,16 @@ function shortPath(file) {
   return file.startsWith(home) ? `~${file.slice(home.length)}` : file;
 }
 
+/** A finite number from a number or a numeric string, else null. */
+export function toNumber(value) {
+  if (typeof value === 'string' && value.trim() !== '') value = Number(value);
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+/** A percentage from a number or numeric string, or null when it is unknown. */
 export function clampPercent(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return null;
+  const n = toNumber(value);
+  if (n === null) return null;
   return Math.min(100, Math.max(0, Math.round(n * 10) / 10));
 }
 
@@ -38,9 +45,22 @@ export function toIso(value) {
   return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
 }
 
-export function windowLabel(seconds) {
+/** The first value that is a non-blank string, trimmed, else null. */
+function firstText(...values) {
+  return values.find((v) => typeof v === 'string' && v.trim() !== '')?.trim() ?? null;
+}
+
+/** Adds a window, keeping labels within 40 characters and unique: a repeat gets " (2)", " (3)", … */
+function addWindow(windows, window) {
+  const base = String(window.label).slice(0, 35);
+  let label = base;
+  for (let n = 2; windows.some((w) => w.label.toLowerCase() === label.toLowerCase()); n++) label = `${base} (${n})`;
+  windows.push({ ...window, label });
+}
+
+export function windowLabel(seconds, fallback = 'usage') {
   const s = Number(seconds);
-  if (!Number.isFinite(s) || s <= 0) return 'usage';
+  if (!Number.isFinite(s) || s <= 0) return fallback;
   if (s % 86400 === 0) return `${s / 86400}-day`;
   return `${Math.round(s / 3600)}-hour`;
 }
@@ -127,6 +147,40 @@ export async function fetchClaudeUsage({ accessToken, plan = null, version = nul
     const used = clampPercent(w?.utilization);
     if (used !== null) windows.push({ label, usedPercent: used, resetsAt: toIso(w.resets_at) });
   }
+  // Per-model weekly windows arrive as rows in `limits`, the way Claude
+  // Code's own /usage screen reads them; Fable is reported only there. A
+  // plan-wide row named for a fixed window above ("Sonnet") repeats it and
+  // is skipped. A row scoped to a surface as well ("Sonnet" in Cowork) is
+  // a different limit and is kept under both names, as is a versioned
+  // model ("Opus 4.8"), since whether it shares the family's pool is not
+  // knowable here and a repeated meter loses nothing. Every row is shown:
+  // `is_active` only marks the server's headline row.
+  const fixed = windows.map((w) => w.label.toLowerCase());
+  const rows = Array.isArray(body?.limits) ? body.limits.filter((row) => row && typeof row === 'object') : [];
+  for (const row of rows) {
+    if (row.kind !== 'weekly_scoped') continue;
+    const { model, surface } = row.scope ?? {};
+    const name = firstText(model?.display_name, model?.name, model?.id);
+    const where = firstText(surface?.display_name, surface?.name, surface?.id);
+    const used = clampPercent(row.percent);
+    if (!name || used === null) continue;
+    const label = where ? `7-day ${name} (${where})` : `7-day ${name}`;
+    if (where || !fixed.includes(label.toLowerCase())) addWindow(windows, { label, usedPercent: used, resetsAt: toIso(row.resets_at) });
+  }
+  // Extra usage is the paid pool that takes over once the included windows
+  // are spent. The share is computed from the spend and the monthly limit
+  // (both in minor currency units) when both are known, else taken from
+  // `utilization`, which is 0-100 like the windows above. Its period ends
+  // when the `spend` row says, the headline one when several are listed.
+  const extra = body?.extra_usage;
+  if (extra?.is_enabled === true) {
+    const limit = toNumber(extra.monthly_limit);
+    const spent = toNumber(extra.used_credits);
+    const used = clampPercent(limit !== null && limit > 0 && spent !== null ? (spent / limit) * 100 : extra.utilization);
+    const spend = rows.filter((row) => row.kind === 'spend');
+    const period = spend.find((row) => row.is_active === true) ?? spend[0];
+    if (used !== null) windows.push({ label: 'Extra usage', usedPercent: used, resetsAt: toIso(period?.resets_at) });
+  }
   return { plan, windows };
 }
 
@@ -158,19 +212,46 @@ export async function fetchCodexUsage({ accessToken, accountId = null, fetchImpl
   const res = await fetchImpl(CODEX_USAGE_URL, { headers, signal: AbortSignal.timeout(10000) });
   if (!res.ok) throw httpUsageError(res.status, 'sign in again in Codex CLI');
   const body = await res.json();
-  const limits = body?.rate_limit ?? body?.rateLimit ?? {};
+  const windows = codexWindows(body?.rate_limit ?? body?.rateLimit);
+  // Limits metered apart from the plan's main windows, one entry per
+  // feature or model (`limit_name`), each with its own windows.
+  const additional = body?.additional_rate_limits ?? body?.additionalRateLimits;
+  for (const entry of Array.isArray(additional) ? additional : []) {
+    if (!entry || typeof entry !== 'object') continue;
+    const name = firstText(entry.limit_name, entry.limitName, entry.metered_feature, entry.meteredFeature);
+    if (!name) continue;
+    // The name is shortened, never the window, so both windows of one limit stay apart.
+    for (const w of codexWindows(entry.rate_limit ?? entry.rateLimit ?? entry)) addWindow(windows, { ...w, label: `${name.slice(0, 28)} ${w.label}` });
+  }
+  // Prepaid credits are a balance, not a window: null unless the account has
+  // a finite, metered balance.
+  const credits = body?.credits;
+  const balance = toNumber(credits?.balance);
+  return {
+    plan: body?.plan_type ?? body?.planType ?? null,
+    windows,
+    credits: credits?.has_credits === true && credits.unlimited !== true ? balance : null,
+  };
+}
+
+/**
+ * The 5-hour and weekly windows of one Codex rate limit, in either key
+ * style. A window of unstated length keeps its position as its label.
+ */
+function codexWindows(limits) {
   const windows = [];
-  for (const key of ['primary_window', 'primaryWindow', 'secondary_window', 'secondaryWindow']) {
+  if (!limits || typeof limits !== 'object') return windows;
+  for (const [key, position] of [['primary_window', 'primary'], ['primaryWindow', 'primary'], ['secondary_window', 'secondary'], ['secondaryWindow', 'secondary']]) {
     const w = limits[key];
     const used = clampPercent(w?.used_percent ?? w?.usedPercent);
     if (used === null) continue;
     const seconds = w.limit_window_seconds ?? w.limitWindowSeconds;
     const resetAt = w.reset_at ?? w.resetAt;
-    const resetAfter = w.reset_after_seconds ?? w.resetAfterSeconds;
-    const resetsAt = toIso(resetAt) ?? (Number.isFinite(Number(resetAfter)) ? new Date(Date.now() + Number(resetAfter) * 1000).toISOString() : null);
-    windows.push({ label: windowLabel(seconds), usedPercent: used, resetsAt });
+    const resetAfter = toNumber(w.reset_after_seconds ?? w.resetAfterSeconds);
+    const resetsAt = toIso(resetAt) ?? (resetAfter !== null ? new Date(Date.now() + resetAfter * 1000).toISOString() : null);
+    windows.push({ label: windowLabel(seconds, position), usedPercent: used, resetsAt });
   }
-  return { plan: body?.plan_type ?? body?.planType ?? null, windows };
+  return windows;
 }
 
 // ---- Gemini CLI -----------------------------------------------------------
@@ -354,7 +435,8 @@ export async function commandUsage({ command, args = [] }, env, platform = proce
   if (!Array.isArray(body?.windows)) throw new UsageError('usage command output has no "windows" array');
   const windows = [];
   for (const w of body.windows) {
-    const used = clampPercent(w?.usedPercent ?? (w?.remainingPercent === undefined ? undefined : 100 - Number(w.remainingPercent)));
+    const remaining = toNumber(w?.remainingPercent);
+    const used = clampPercent(w?.usedPercent ?? (remaining === null ? undefined : 100 - remaining));
     if (used === null) continue;
     windows.push({ label: String(w.label || 'usage').slice(0, 40), usedPercent: used, resetsAt: toIso(w.resetsAt) });
   }
@@ -409,7 +491,7 @@ export class UsageMonitor {
   }
 
   async _fetch(provider) {
-    const base = { providerId: provider.id, plan: null, windows: [], fetchedAt: new Date().toISOString(), error: null };
+    const base = { providerId: provider.id, plan: null, windows: [], credits: null, fetchedAt: new Date().toISOString(), error: null };
     const env = { ...this.env, ...provider.env };
     try {
       let result;

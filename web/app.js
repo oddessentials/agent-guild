@@ -269,6 +269,16 @@ function renderTier(card, provider, usage) {
   tier.title = label ? `${provider.vendor} subscription: ${label}` : '';
 }
 
+/** One line for a prepaid credit balance, when the provider reports one. */
+function creditsNote(usage) {
+  if (typeof usage?.credits !== 'number' || !Number.isFinite(usage.credits)) return [];
+  const note = document.createElement('div');
+  note.className = 'usage-note';
+  note.textContent = `Credits: ${usage.credits.toLocaleString(undefined, { maximumFractionDigits: 2 })} left`;
+  note.title = note.textContent;
+  return [note];
+}
+
 function renderUsage(card, provider) {
   const host = card.querySelector('.usage');
   const usage = state.usage.get(provider.id);
@@ -279,7 +289,7 @@ function renderUsage(card, provider) {
     note.className = 'usage-note';
     note.textContent = `Usage: ${usage.error || 'no limits reported'}`;
     note.title = note.textContent;
-    return host.replaceChildren(note);
+    return host.replaceChildren(note, ...creditsNote(usage));
   }
   host.replaceChildren(...usage.windows.map((w) => {
     const node = $('meter-template').content.firstElementChild.cloneNode(true);
@@ -294,7 +304,7 @@ function renderUsage(card, provider) {
     node.setAttribute('role', 'img');
     node.setAttribute('aria-label', node.title);
     return node;
-  }));
+  }), ...creditsNote(usage));
 }
 
 async function loadUsage() {

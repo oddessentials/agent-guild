@@ -17,8 +17,12 @@ coding tool, and see at a glance which sessions and agents are working.
   asks first, because it can break them.
 * **See what is left of your limits.** Claude Code, Codex CLI and Gemini
   CLI cards show a meter per rate-limit window (5-hour, 7-day, or per
-  model) with the time until it resets, read from the tool's own sign-in.
-  Other providers can supply a command that prints usage.
+  model, including Claude's weekly Fable window and the model and feature
+  limits Codex meters separately) with the time until it resets, read from
+  the tool's own sign-in.
+  Claude's extra-usage spend and Codex's prepaid credit balance appear
+  when the account has them. Other providers can supply a command that
+  prints usage.
 * **Work in real terminals.** Each session is a card. Open it for a full
   interactive terminal: type instructions, answer prompts, watch output. Run
   as many sessions at once as you like.
