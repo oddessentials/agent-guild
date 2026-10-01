@@ -12,6 +12,7 @@ import { resolveBaseEnv, pathReader } from './shell-env.mjs';
 import { writeReportShims } from './report-shims.mjs';
 import {
   DEFAULT_HOST,
+  VERSION,
   ensureDataDir,
   loadOrCreateToken,
   paths,
@@ -22,7 +23,6 @@ import {
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(here, '../..');
-export const VERSION = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8')).version;
 
 const VERSION_REFRESH_MS = 60 * 60 * 1000;
 

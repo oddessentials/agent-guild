@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveCommand, resolveAllCommands, buildSpawnSpec, quoteForCmd } from '../src/manager/command-resolver.mjs';
-import { mergePathLists, parsePathFromEnvOutput, weavePaths, parseRegValue, expandWindowsVars, readWindowsPath } from '../src/manager/shell-env.mjs';
+import { mergePathLists, parsePathFromEnvOutput, weavePaths, parseRegValue, expandWindowsVars, readWindowsPath, trimPathExt } from '../src/manager/shell-env.mjs';
 import { mergeEnv, cleanResumeId, modelFromArgs, SessionManager } from '../src/manager/session-manager.mjs';
 import { loadProviders, defaultShell, ProviderRegistry } from '../src/manager/providers.mjs';
 import { classifyInstall, expandHome, helpDescribes, platformDependency, listInstallations, knownLaunchers, shellCommand } from '../src/manager/install-channels.mjs';
@@ -1479,6 +1479,13 @@ test('parsePathFromEnvOutput reads PATH from env output of any shell', () => {
   assert.equal(parsePathFromEnvOutput(`${START}PATH=/a:/b${END}`), '/a:/b');
   assert.equal(parsePathFromEnvOutput('no markers'), null);
   assert.equal(parsePathFromEnvOutput(`${START}HOME=/x\n${END}`), null);
+});
+
+test('PATHEXT entries are trimmed on Windows, so a stray space cannot hide .cmd files from sessions', () => {
+  assert.deepEqual(trimPathExt({ PATHEXT: '.COM;.EXE;.BAT;.CMD ' }, 'win32'), { PATHEXT: '.COM;.EXE;.BAT;.CMD' });
+  assert.deepEqual(trimPathExt({ PathExt: ' .EXE ;; .CMD' }, 'win32'), { PathExt: '.EXE;.CMD' });
+  assert.deepEqual(trimPathExt({ Path: 'C:\\a' }, 'win32'), { Path: 'C:\\a' });
+  assert.deepEqual(trimPathExt({ PATHEXT: '.CMD ' }, 'linux'), { PATHEXT: '.CMD ' });
 });
 
 test('mergeEnv replaces variables case-insensitively on Windows', () => {

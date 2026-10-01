@@ -52,8 +52,15 @@ export function loginShellPath({ shell = process.env.SHELL, timeoutMs = 8000 } =
  * Returns a copy of process.env whose PATH also contains the login shell's
  * PATH entries. Set AGENT_GUILD_SKIP_SHELL_ENV=1 to disable the lookup.
  */
+export function trimPathExt(env, platform = process.platform) {
+  if (platform !== 'win32') return env;
+  const key = Object.keys(env).find((k) => k.toUpperCase() === 'PATHEXT');
+  if (key) env[key] = env[key].split(';').map((ext) => ext.trim()).filter(Boolean).join(';');
+  return env;
+}
+
 export function resolveBaseEnv() {
-  const env = { ...process.env };
+  const env = trimPathExt({ ...process.env });
   if (process.env.AGENT_GUILD_SKIP_SHELL_ENV === '1') return env;
   const shellPath = loginShellPath();
   if (shellPath) env.PATH = mergePathLists(shellPath, env.PATH);
