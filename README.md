@@ -44,7 +44,7 @@ coding tool, and see at a glance which sessions and agents are working.
   can watch. Sessions keep running; once they are done, **Restart to use
   vX.Y.Z** in the top bar switches to the new version.
 * **Light or dark.** The page follows your system theme and the top-bar
-  toggle switches it. The guild artwork is the dark theme.
+  toggle switches it.
 
 ## Requirements
 
