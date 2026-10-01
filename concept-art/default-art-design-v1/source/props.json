@@ -34,5 +34,8 @@
 
   "frame-ornate": {"seed": 911, "w": 1024, "h": 1344,
     "style": "Premium dark fantasy game asset illustration, painterly high detail, polished antique gold metal with warm rim light, isolated on a flat pure pitch-black background, no text, no letters, no gems.",
-    "prompt": "An ornate antique gold trading card frame border viewed straight-on, a thin elegant rectangular gold frame with engraved filigree along all four edges and decorative scrollwork corners, symmetrical, filling the whole image edge to edge, the entire inside of the frame is empty flat pitch-black."}
+    "prompt": "An ornate antique gold trading card frame border viewed straight-on, a thin elegant rectangular gold frame with engraved filigree along all four edges and decorative scrollwork corners, symmetrical, filling the whole image edge to edge, the entire inside of the frame is empty flat pitch-black."},
+
+  "empty-state": {"seed": 1002, "w": 1024, "h": 1024,
+    "prompt": "A small round dark oak guild table seen in three-quarter view from slightly above, an unrolled parchment map held flat by a brass compass, a feather quill standing in an inkwell, a single lit candle with a warm glow, and one empty carved high-backed wooden chair pulled up to it, quiet and waiting."}
 }

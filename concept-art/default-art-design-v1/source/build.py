@@ -53,6 +53,12 @@ def cutout(src, mask):
     return Image.fromarray((np.dstack([rgb, a]) * 255 + 0.5).astype(np.uint8), "RGBA")
 
 
+def masked(src, mask):
+    im = Image.open(src).convert("RGBA")
+    im.putalpha(Image.open(mask).convert("L"))
+    return im.crop(im.getbbox())
+
+
 def frame(src, out, origin=(40, 44), size=860, corner=168):
     nine_slice(Image.open(src).convert("RGBA").crop((*origin, origin[0] + size, origin[1] + size)).resize((corner, corner), Image.LANCZOS), out)
 
@@ -108,6 +114,7 @@ def main():
     ornate = diagonal(Image.open(PACK / "ui" / "frame-ornate.png").convert("RGBA").crop((0, 0, 465, 465)))
     nine_slice(ornate.resize((232, 232), Image.LANCZOS), WEB / "ui" / "frame-ornate.png")
     favicon(PACK / "ui" / "guild-crest.png", WEB / "ui" / "favicon.png")
+    encode(shrink(masked(PACK / "ui" / "empty-state.png", PACK / "ui" / "empty-state-mask.png"), 420), WEB / "ui" / "empty-state", avif=60)
     encode(Image.open(PACK / "backgrounds" / "page.png").convert("RGB"), WEB / "page", avif=80, webp=85)
 
     if shutil.which("oxipng"):
