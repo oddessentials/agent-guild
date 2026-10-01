@@ -6,7 +6,8 @@
   <title>Agent Guild</title>
   <meta name="color-scheme" content="light dark">
   <script src="/theme.js"></script>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%235B5BD6'/%3E%3Cpath d='M9 22l7-12 7 12' stroke='white' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="icon" href="/art/ui/favicon.png" type="image/png">
+  <link rel="preload" href="/fonts/cinzel.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/vendor/xterm/xterm.css">
   <link rel="stylesheet" href="/styles.css">
   <link rel="stylesheet" href="/art/art.css">
@@ -14,9 +15,8 @@
 <body>
   <header class="topbar">
     <div class="brand">
-      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="currentColor"/><path d="M9 22l7-12 7 12" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
       <h1>Agent Guild</h1>
-      <span id="version" class="version" hidden></span>
+      <button id="version" class="version" type="button" aria-haspopup="dialog" hidden></button>
     </div>
     <div class="topbar-end">
       <div id="connection" class="connection" role="status" aria-live="polite">
@@ -139,6 +139,25 @@
     <p id="news-status" class="news-status" hidden></p>
   </dialog>
 
+  <dialog id="changelog" class="news-panel" aria-labelledby="changelog-title">
+    <div class="news-bar">
+      <div class="news-heading">
+        <h2 id="changelog-title">What’s new</h2>
+        <p id="changelog-sub" class="sub"></p>
+      </div>
+      <button id="changelog-close" class="btn" type="button">Close</button>
+    </div>
+    <div class="news-body">
+      <div id="changelog-actions" class="changelog-actions" hidden>
+        <button id="changelog-upgrade" class="btn upgrade" type="button" hidden></button>
+        <button id="changelog-restart" class="btn restart-manager pending" type="button" hidden></button>
+      </div>
+      <ol id="changelog-list" class="changelog-list"></ol>
+      <p id="changelog-note" class="news-empty" hidden></p>
+    </div>
+    <p id="changelog-status" class="news-status" hidden></p>
+  </dialog>
+
   <dialog id="history" class="models history" aria-labelledby="history-title">
     <div class="models-bar">
       <span id="history-icon" class="provider-icon small"></span>
@@ -169,18 +188,21 @@
 
   <template id="provider-template">
     <article class="provider" role="listitem">
-      <span class="provider-icon"></span>
-      <span class="provider-text">
-        <span class="vendor-line"><span class="vendor"></span><span class="tier" hidden></span></span>
-        <span class="tool"></span>
-        <span class="state"></span>
-      </span>
+      <span class="card-art" aria-hidden="true"></span>
+      <div class="provider-head">
+        <span class="provider-icon"></span>
+        <span class="provider-text">
+          <span class="vendor-line"><span class="vendor"></span><span class="tier" hidden></span></span>
+          <span class="tool"></span>
+          <span class="state"></span>
+        </span>
+      </div>
       <div class="accounts" role="tablist" aria-label="Accounts" hidden></div>
       <div class="usage"></div>
       <div class="model-stats"></div>
       <div class="provider-links">
-        <a class="console-link usage-link" target="_blank" rel="noopener noreferrer">Usage ↗</a>
-        <a class="console-link billing-link" target="_blank" rel="noopener noreferrer">Billing ↗</a>
+        <a class="console-link usage-link" target="_blank" rel="noopener noreferrer">Usage</a>
+        <a class="console-link billing-link" target="_blank" rel="noopener noreferrer">Billing</a>
       </div>
       <div class="provider-actions">
         <button class="btn primary new" type="button">New</button>
@@ -239,6 +261,8 @@
 
   <template id="session-template">
     <article class="session-card" role="listitem" tabindex="0">
+      <span class="card-art" aria-hidden="true"></span>
+      <span class="card-aura" aria-hidden="true"></span>
       <span class="level-badge" aria-hidden="true"></span>
       <div class="card-top">
         <span class="provider-icon"></span>

@@ -26,6 +26,7 @@ import {
 import {
   NewsFeed, parseFeed, parseHackerNews, parseGithubRelease, markdownText, releaseTitle, isPrerelease, canonicalUrl, cleanUrl, matchesTerms,
 } from '../src/manager/news.mjs';
+import { Changelog, parseNotes, parseReleases } from '../src/manager/changelog.mjs';
 import { once } from 'node:events';
 import {
   SessionHistory, FileMemo, listClaudeSessions, listCodexSessions, listGeminiSessions, listGrokSessions, commandHistory, cleanEntry,
@@ -2700,6 +2701,190 @@ test('a response over the size limit is refused, and a declared character set is
   const snap = news.snapshot();
   assert.deepEqual(snap.sources.map((s) => s.error), ['sent more than 5 MB', 'sent more than 5 MB', null]);
   assert.deepEqual(snap.items.map((i) => i.title), ['Café agents']);
+});
+
+const issue = (n) => `https://github.com/oddessentials/agent-guild/issues/${n}`;
+const releaseNotes = (version, ...lines) => [
+  `## [${version}](https://github.com/oddessentials/agent-guild/compare/v0.4.0...v${version}) (2026-10-01)`,
+  '',
+  ...lines,
+  '',
+  '### Install or update',
+  '',
+  'If Agent Guild is running, stop it first with `agent-guild stop`. That ends its sessions; a manager left running keeps the old version.',
+  '',
+  '```sh',
+  `npm install -g @oddessentials/agent-guild@${version}`,
+  'agent-guild',
+  '```',
+  '',
+].join('\n');
+
+test('release notes become sections of changes, without commit links or the install steps', () => {
+  const notes = releaseNotes('0.5.0',
+    '### ⚠ BREAKING CHANGES',
+    '',
+    '* **api:** the events socket needs the token',
+    '',
+    '### Features',
+    '',
+    `* list each tool's earlier sessions to resume, and restart the manager from the page ([#41](${issue(41)})) ([924e520](https://github.com/oddessentials/agent-guild/commit/924e5209b1ab457d94331f1c55a7162c1bfce31a))`,
+    `* add \`--resume\` support, closes [#7](${issue(7)}) [#8](${issue(8)})`,
+    '',
+    '### Bug Fixes',
+    '',
+    `* **release:** enforce title-based release rules ([#32](${issue(32)})) ([2e2d667](https://github.com/oddessentials/agent-guild/commit/2e2d667))`);
+  assert.deepEqual(parseNotes(notes), [
+    { title: '⚠ BREAKING CHANGES', changes: [[{ text: 'api:', strong: true }, { text: ' the events socket needs the token' }]] },
+    {
+      title: 'Features',
+      changes: [
+        [{ text: 'list each tool\'s earlier sessions to resume, and restart the manager from the page (' }, { text: '#41', url: issue(41) }, { text: ')' }],
+        [{ text: 'add ' }, { text: '--resume', code: true }, { text: ' support, closes ' }, { text: '#7', url: issue(7) }, { text: ' ' }, { text: '#8', url: issue(8) }],
+      ],
+    },
+    { title: 'Bug Fixes', changes: [[{ text: 'release:', strong: true }, { text: ' enforce title-based release rules (' }, { text: '#32', url: issue(32) }, { text: ')' }]] },
+  ]);
+  assert.deepEqual(parseNotes(releaseNotes('0.6.0')), [], 'a release with only the install steps lists no changes');
+});
+
+test('release notes keep bold, code and web links, and leave out images, markup and other links', () => {
+  const notes = [
+    'Intro with <https://example.com/a?b=1> and a [bad link](javascript:alert).',
+    '',
+    '## Highlights',
+    '',
+    '- A <b>bold</b> &amp; ![logo](https://example.com/logo.png) claim that a < b',
+    '  continues on the next line',
+    '+ plus item',
+    '1. numbered `a &amp; b` item',
+    '',
+    '> quoted line',
+    '---',
+    '<!-- hidden',
+    'comment -->',
+    '#### Notes',
+    '```js',
+    'console.log("left out")',
+    '```',
+    '* **bold [inside](https://example.com/in) link**',
+    '## 1.2.3 (2026-10-01)',
+    '* after a version heading',
+  ].join('\n');
+  assert.deepEqual(parseNotes(notes), [
+    { title: null, changes: [[{ text: 'Intro with ' }, { text: 'https://example.com/a?b=1', url: 'https://example.com/a?b=1' }, { text: ' and a bad link.' }]] },
+    {
+      title: 'Highlights',
+      changes: [
+        [{ text: 'A bold & claim that a < b continues on the next line' }],
+        [{ text: 'plus item' }],
+        [{ text: 'numbered ' }, { text: 'a &amp; b', code: true }, { text: ' item' }],
+        [{ text: 'quoted line' }],
+      ],
+    },
+    { title: 'Notes', changes: [[{ text: 'bold ', strong: true }, { text: 'inside', url: 'https://example.com/in', strong: true }, { text: ' link', strong: true }]] },
+    { title: null, changes: [[{ text: 'after a version heading' }]] },
+  ]);
+});
+
+test('release notes are read up to a limit of changes, characters and line length', () => {
+  const many = Array.from({ length: 120 }, (_, i) => `* change ${i + 1}`).join('\n');
+  assert.deepEqual(parseNotes(`### Features\n${many}\n### Bug Fixes\n* one more`).map((s) => [s.title, s.changes.length]), [['Features', 100]]);
+  assert.equal(parseNotes(`* ${'['.repeat(200000)}`)[0].changes[0][0].text.length, 998);
+  assert.equal(parseNotes(Array.from({ length: 50 }, () => `* ${'x'.repeat(999)}`).join('\n'))[0].changes.length, 20);
+});
+
+test('releases are listed newest version first, without drafts, pre-releases or other tags', () => {
+  const release = (tag, extra = {}) => ({
+    tag_name: tag, html_url: `https://github.com/oddessentials/agent-guild/releases/tag/${tag}`, published_at: '2026-10-01T15:42:18Z',
+    draft: false, prerelease: false, body: '### Features\n\n* a change', ...extra,
+  });
+  assert.deepEqual(parseReleases(JSON.stringify([
+    release('v0.9.0'),
+    release('v0.10.0', { html_url: 'javascript:alert(1)', published_at: 'soon', body: null }),
+    release('v0.11.0', { draft: true }),
+    release('v0.12.0', { prerelease: true }),
+    release('v0.13.0-rc.1'),
+    release('nightly'),
+    release('v0.9.0', { body: '### Features\n\n* a second copy' }),
+    null,
+    'v1.0.0',
+  ])), [
+    { version: '0.10.0', url: 'https://github.com/oddessentials/agent-guild/releases/tag/v0.10.0', publishedAt: null, sections: [] },
+    {
+      version: '0.9.0', url: 'https://github.com/oddessentials/agent-guild/releases/tag/v0.9.0', publishedAt: '2026-10-01T15:42:18.000Z',
+      sections: [{ title: 'Features', changes: [[{ text: 'a change' }]] }],
+    },
+  ]);
+  assert.throws(() => parseReleases('{"message":"Not Found"}'), /sent no releases/);
+});
+
+const releasesReply = (tags, headers = {}) => new Response(JSON.stringify(tags.map((tag) => ({
+  tag_name: tag, html_url: `https://github.com/oddessentials/agent-guild/releases/tag/${tag}`, published_at: '2026-10-01T15:42:18Z', body: `### Features\n\n* ${tag}`,
+}))), { headers: { 'Content-Type': 'application/json', ...headers } });
+
+test('the changelog is fetched only when a page asks, revalidated with its ETag, and kept when a check fails', async () => {
+  const seen = [];
+  let reply = () => releasesReply(['v0.5.0'], { ETag: 'W/"one"' });
+  const changelog = new Changelog({ fetchImpl: async (url, init) => { seen.push({ url, init }); return reply(); } });
+  assert.equal(seen.length, 0, 'nothing is fetched before a page asks');
+  assert.deepEqual(changelog.snapshot(), { refreshing: true, okAt: null, error: null, releases: [] });
+  changelog.snapshot();
+  await once(changelog, 'updated');
+  assert.equal(seen.length, 1, 'asking again during a check starts no second request');
+  assert.equal(seen[0].url, 'https://api.github.com/repos/oddessentials/agent-guild/releases?per_page=30');
+  const { headers } = seen[0].init;
+  assert.deepEqual([headers.Accept, headers['X-GitHub-Api-Version'], headers['If-None-Match']], ['application/vnd.github+json', '2022-11-28', undefined]);
+  assert.match(headers['User-Agent'], /^agent-guild\/\S+ \(\+https:\/\/github\.com\/oddessentials\/agent-guild\)$/);
+  const fetched = changelog.snapshot();
+  assert.deepEqual([fetched.refreshing, fetched.error, fetched.releases.map((r) => r.version)], [false, null, ['0.5.0']]);
+  assert.ok(Date.parse(fetched.okAt) <= Date.now());
+  assert.equal(seen.length, 1, 'the list is checked at most hourly');
+
+  const check = async () => {
+    changelog.ttlMs = changelog.retryMs = 0;
+    changelog.snapshot();
+    changelog.ttlMs = changelog.retryMs = 3600000;
+    await once(changelog, 'updated');
+    return changelog.snapshot();
+  };
+  reply = () => new Response(null, { status: 304 });
+  assert.deepEqual((await check()).releases.map((r) => r.version), ['0.5.0'], 'an unchanged list is kept');
+  assert.equal(seen[1].init.headers['If-None-Match'], 'W/"one"');
+
+  reply = () => new Response('{"message":"API rate limit exceeded"}', { status: 403, headers: { 'X-RateLimit-Remaining': '0' } });
+  const limited = await check();
+  assert.deepEqual([limited.error, limited.releases.map((r) => r.version)], ['GitHub API rate limit exceeded', ['0.5.0']]);
+  assert.ok(limited.okAt, 'the last good check is still reported');
+  changelog.snapshot();
+  assert.equal(seen.length, 3, 'a failed check waits for its retry interval');
+
+  reply = () => { throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ENOTFOUND' } }); };
+  assert.equal((await check()).error, 'could not be reached (ENOTFOUND)');
+  reply = () => releasesReply(['v0.5.0', 'v0.6.0']);
+  const recovered = await check();
+  assert.deepEqual([recovered.error, recovered.releases.map((r) => r.version)], [null, ['0.6.0', '0.5.0']]);
+});
+
+test('the changelog is checked again soon while npm names a release it does not list yet', async () => {
+  let latest = '0.5.0';
+  let tags = ['v0.5.0'];
+  let asked = 0;
+  const changelog = new Changelog({ latest: () => latest, fetchImpl: async () => { asked++; return releasesReply(tags); }, missingMs: 3600000 });
+  changelog.snapshot();
+  await once(changelog, 'updated');
+  changelog.missingMs = 0;
+  changelog.snapshot();
+  assert.equal(asked, 1, 'a listed release waits for the hourly check');
+  latest = '0.6.0';
+  changelog.snapshot();
+  await once(changelog, 'updated');
+  assert.equal(asked, 2, 'a release npm names but the list lacks is looked for again');
+  tags = ['v0.6.0', 'v0.5.0'];
+  changelog.snapshot();
+  await once(changelog, 'updated');
+  assert.deepEqual(changelog.snapshot().releases.map((r) => r.version), ['0.6.0', '0.5.0']);
+  assert.equal(asked, 3, 'once it is listed, the hourly check applies again');
 });
 
 test('the launcher path names the double-click file for the platform only when the package carries it', () => {

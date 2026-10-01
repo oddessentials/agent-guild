@@ -7,7 +7,11 @@ const ACCOUNTS_KEY = 'agentGuild.accounts';
 const THEME_KEY = 'agentGuild.theme';
 const NEWS_SEEN_KEY = 'agentGuild.newsSeen';
 const NEWS_FILTER_KEY = 'agentGuild.newsFilter';
+const CHANGELOG_SEEN_KEY = 'agentGuild.changelogSeen';
+const RELEASES_URL = 'https://github.com/oddessentials/agent-guild/releases';
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+const finePointer = window.matchMedia('(hover: hover) and (pointer: fine)');
 
 const $ = (id) => document.getElementById(id);
 const state = {
@@ -18,6 +22,7 @@ const state = {
   stats: null,
   statsFor: new Map(),
   news: null,
+  changelog: null,
   sessions: new Map(),
   views: new Map(),
   activeId: null,
@@ -67,6 +72,7 @@ function setConnection(kind, label) {
   $('stop-manager').hidden = !state.connected;
   $('restart-manager').hidden = !state.connected || !state.restartable;
   renderUpgrade();
+  guardLeaving();
 }
 
 // ---- the running version --------------------------------------------------
@@ -82,9 +88,42 @@ function renderVersion() {
   badge.hidden = !v;
   if (!v) return;
   const dev = isDevelopmentBuild(v);
+  const unread = unreadRelease();
+  const notes = unread ? `What’s new in v${unread}` : 'What’s new';
   badge.textContent = dev ? 'dev' : `v${v}`;
-  badge.title = [dev ? `Development build (${v})` : `Agent Guild ${v}`, state.pid && `session manager pid ${state.pid}`].filter(Boolean).join(' · ');
-  badge.setAttribute('aria-label', dev ? `Agent Guild development build ${v}` : `Agent Guild version ${v}`);
+  badge.classList.toggle('unread', Boolean(unread));
+  badge.title = [dev ? `Development build (${v})` : `Agent Guild ${v}`, state.pid && `session manager pid ${state.pid}`, notes].filter(Boolean).join(' · ');
+  badge.setAttribute('aria-label', `${dev ? `Agent Guild development build ${v}` : `Agent Guild version ${v}`}. ${notes}${unread ? ', not read yet' : ''}`);
+}
+
+const RELEASE_VERSION = /^\d+\.\d+\.\d+$/;
+
+function compareReleases(a, b) {
+  const [x, y] = [a, b].map((version) => version.split('.').map(Number));
+  return x[0] - y[0] || x[1] - y[1] || x[2] - y[2];
+}
+
+function newestRelease(versions) {
+  return versions.filter((v) => RELEASE_VERSION.test(v ?? '')).reduce((newest, v) => (newest && compareReleases(newest, v) >= 0 ? newest : v), null);
+}
+
+function seenRelease() {
+  const saved = load(CHANGELOG_SEEN_KEY);
+  return RELEASE_VERSION.test(saved ?? '') ? saved : changelogView.seen;
+}
+
+function markReleasesSeen(...versions) {
+  const newest = newestRelease([seenRelease(), ...versions]);
+  if (!newest) return;
+  changelogView.seen = newest;
+  save(CHANGELOG_SEEN_KEY, newest);
+}
+
+function unreadRelease() {
+  if (!RELEASE_VERSION.test(state.version ?? '')) return null;
+  if (!seenRelease()) markReleasesSeen(state.version);
+  const newest = newestRelease([state.version, state.upgrade?.pendingVersion, state.upgrade?.latestVersion]);
+  return compareReleases(newest, seenRelease()) > 0 ? newest : null;
 }
 
 // ---- theme ----------------------------------------------------------------
@@ -94,7 +133,8 @@ function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
   const button = $('theme-toggle');
   const other = theme === 'dark' ? 'light' : 'dark';
-  button.textContent = theme === 'dark' ? '☀ Light' : '☾ Dark';
+  button.textContent = theme === 'dark' ? 'Light' : 'Dark';
+  button.dataset.next = other;
   button.title = `Switch to the ${other} theme`;
   button.setAttribute('aria-label', `Switch to the ${other} theme`);
 }
@@ -103,10 +143,18 @@ function currentTheme() {
   return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
 }
 
-function toggleTheme() {
+function toggleTheme(event) {
   const theme = currentTheme() === 'dark' ? 'light' : 'dark';
   save(THEME_KEY, theme);
-  applyTheme(theme);
+  if (!document.startViewTransition || reducedMotion.matches) return applyTheme(theme);
+  const box = event.currentTarget.getBoundingClientRect();
+  const x = box.left + box.width / 2;
+  const y = box.top + box.height / 2;
+  const root = document.documentElement.style;
+  root.setProperty('--reveal-x', `${Math.round(x)}px`);
+  root.setProperty('--reveal-y', `${Math.round(y)}px`);
+  root.setProperty('--reveal-r', `${Math.ceil(Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y)))}px`);
+  document.startViewTransition(() => applyTheme(theme));
 }
 
 // ---- upgrading the manager ------------------------------------------------
@@ -130,6 +178,15 @@ function renderUpgrade() {
   restart.title = pending
     ? `Agent Guild ${pending} is installed, but this manager is still ${u.version}. Restarting ends every session and starts the new version; this page reconnects by itself.`
     : 'Stop the session manager and start it again. This ends every session; this page reconnects by itself.';
+  const panelUpgrade = $('changelog-upgrade');
+  panelUpgrade.hidden = button.hidden;
+  panelUpgrade.textContent = button.textContent;
+  panelUpgrade.title = button.title;
+  const panelRestart = $('changelog-restart');
+  panelRestart.hidden = restart.hidden || !pending;
+  panelRestart.textContent = restart.textContent;
+  panelRestart.title = restart.title;
+  $('changelog-actions').hidden = panelUpgrade.hidden && panelRestart.hidden;
   let text = '';
   let title = '';
   const last = u?.lastInstall;
@@ -158,6 +215,8 @@ function setUpgrade(upgrade) {
   const before = state.upgrade;
   state.upgrade = upgrade || null;
   renderUpgrade();
+  renderVersion();
+  if ($('changelog').open) renderChangelog();
   const pending = state.upgrade?.pendingVersion;
   if (pending && pending !== before?.pendingVersion) {
     toast(state.restartable
@@ -242,9 +301,13 @@ function paintProviderIcon(el, provider) {
 const FAMILIARS = ['flame', 'leaf', 'night', 'aether'];
 
 function renderAgents(container, agents) {
+  const known = container.dataset.rendered ? new Set([...container.children].map((el) => el.dataset.agent)) : null;
+  container.dataset.rendered = 'true';
   container.replaceChildren(...agents.map((agent) => {
     const el = document.createElement('span');
     el.className = `agent ${agent.status}`;
+    el.dataset.agent = agent.id;
+    if (known && !known.has(agent.id)) el.classList.add('summon');
     el.style.setProperty('--c', `hsl(${hueFor(agent.name)} 65% 50%)`);
     el.dataset.familiar = FAMILIARS[hueFor(agent.name) % FAMILIARS.length];
     el.textContent = (agent.name || '?').charAt(0).toUpperCase();
@@ -327,6 +390,8 @@ function renderAccounts(card, provider) {
   });
 }
 
+let dealt = false;
+
 function renderProviders() {
   const list = $('providers');
   const tpl = $('provider-template');
@@ -371,6 +436,10 @@ function renderProviders() {
     renderModelStats(node, provider);
     return node;
   }));
+  if (!dealt && state.providers.length) {
+    dealt = true;
+    if (!reducedMotion.matches) list.classList.add('deal');
+  }
 }
 
 const openCopies = new Set();
@@ -426,7 +495,7 @@ function renderHint(hint, provider) {
   link.href = docs;
   link.target = '_blank';
   link.rel = 'noopener noreferrer';
-  link.textContent = 'Docs ↗';
+  link.textContent = 'Docs';
   hint.append(' ', link);
 }
 
@@ -810,7 +879,7 @@ function modelFacts(card) {
   link.href = httpsHref(`https://openrouter.ai/${card.id}`) ?? '';
   link.target = '_blank';
   link.rel = 'noopener noreferrer';
-  link.textContent = 'OpenRouter ↗';
+  link.textContent = 'OpenRouter';
   link.setAttribute('aria-label', `${card.name} on OpenRouter (opens in a new tab)`);
   const facts = document.createElement('div');
   facts.className = 'model-more';
@@ -1229,6 +1298,212 @@ function tickNews() {
   if ($('news').open) renderNewsStatus();
 }
 
+const RELEASE_BADGES = {
+  running: ['in-use', 'Running', 'The session manager runs this version'],
+  installed: ['installed', 'Installed', 'Installed. Restart the session manager to use it.'],
+  newer: ['new', 'New', 'Released after the version the session manager runs'],
+};
+const changelogView = { opener: null, failed: null, seen: null };
+let changelogLoading = null;
+let changelogAgain = false;
+
+function loadChangelog() {
+  if (changelogLoading) {
+    changelogAgain = true;
+    return changelogLoading;
+  }
+  changelogLoading = api('GET', '/changelog').then((changelog) => {
+    state.changelog = changelog;
+    changelogView.failed = null;
+  }, (err) => {
+    if (err instanceof AuthError) return showAuth(err.message);
+    changelogView.failed = state.connected ? err.message : 'the session manager is not reachable';
+  }).finally(() => {
+    changelogLoading = null;
+    if ($('changelog').open) {
+      markReleasesSeen(state.changelog?.releases[0]?.version);
+      renderVersion();
+      renderChangelog();
+    }
+    if (changelogAgain) {
+      changelogAgain = false;
+      loadChangelog();
+    }
+  });
+  return changelogLoading;
+}
+
+function openChangelog() {
+  const dialog = $('changelog');
+  renderChangelog();
+  if (!dialog.open) {
+    changelogView.opener = document.activeElement;
+    dialog.showModal();
+  }
+  ($('changelog-list').querySelector('a') ?? $('changelog-close')).focus();
+  markReleasesSeen(state.version, state.upgrade?.pendingVersion, state.upgrade?.latestVersion, state.changelog?.releases[0]?.version);
+  renderVersion();
+  loadChangelog();
+}
+
+function closeChangelog() {
+  if ($('changelog').open) $('changelog').close();
+}
+
+function releasesLink(label) {
+  const link = document.createElement('a');
+  link.className = 'console-link';
+  link.href = RELEASES_URL;
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  link.textContent = label;
+  link.setAttribute('aria-description', 'Opens in a new tab');
+  return link;
+}
+
+function releaseStatus(version) {
+  const running = state.version;
+  if (!RELEASE_VERSION.test(running ?? '')) return null;
+  const order = compareReleases(version, running);
+  if (order <= 0) return order === 0 ? 'running' : null;
+  const installed = state.upgrade?.pendingVersion;
+  return RELEASE_VERSION.test(installed ?? '') && compareReleases(version, installed) <= 0 ? 'installed' : 'newer';
+}
+
+function changeRun(run) {
+  const href = run.url ? webHref(run.url) : null;
+  let node;
+  if (href) {
+    node = document.createElement('a');
+    node.className = 'console-link';
+    node.href = href;
+    node.target = '_blank';
+    node.rel = 'noopener noreferrer';
+    node.textContent = run.text;
+  } else if (run.code) {
+    node = document.createElement('code');
+    node.textContent = run.text;
+  } else {
+    node = document.createTextNode(run.text);
+  }
+  if (!run.strong) return node;
+  const strong = document.createElement('strong');
+  strong.append(node);
+  return strong;
+}
+
+function changeGroup(section) {
+  const group = document.createElement('div');
+  group.className = 'changelog-group';
+  if (section.title) {
+    const title = document.createElement('h4');
+    title.className = 'changelog-type';
+    title.classList.toggle('breaking', /breaking/i.test(section.title));
+    title.textContent = section.title;
+    group.append(title);
+  }
+  const list = document.createElement('ul');
+  list.className = 'changelog-changes';
+  list.append(...section.changes.map((runs) => {
+    const item = document.createElement('li');
+    item.append(...runs.map(changeRun));
+    return item;
+  }));
+  group.append(list);
+  return group;
+}
+
+function releaseEntry(release) {
+  const entry = document.createElement('li');
+  entry.className = 'changelog-release';
+  entry.dataset.version = release.version;
+  const heading = document.createElement('h3');
+  heading.className = 'news-head';
+  const href = webHref(release.url);
+  const title = document.createElement(href ? 'a' : 'span');
+  title.className = 'news-link';
+  title.textContent = `v${release.version}`;
+  if (href) {
+    title.href = href;
+    title.target = '_blank';
+    title.rel = 'noopener noreferrer';
+    title.setAttribute('aria-description', 'Opens the release on GitHub in a new tab');
+  }
+  heading.append(title);
+  const status = releaseStatus(release.version);
+  if (status) heading.append(badge(...RELEASE_BADGES[status]));
+  entry.append(heading);
+  if (release.publishedAt) {
+    const time = document.createElement('time');
+    time.className = 'news-meta';
+    time.dateTime = release.publishedAt;
+    time.textContent = relativeTime(release.publishedAt);
+    time.title = new Date(release.publishedAt).toLocaleString();
+    entry.append(time);
+  }
+  entry.append(...release.sections.map(changeGroup));
+  return entry;
+}
+
+function changelogSummary() {
+  const v = state.version;
+  if (!v) return 'Agent Guild releases, newest first';
+  if (isDevelopmentBuild(v)) return `Development build (${v}) · releases, newest first`;
+  const u = state.upgrade;
+  const parts = [`Running v${v}`];
+  if (u?.pendingVersion) parts.push(`v${u.pendingVersion} installed`);
+  const newer = state.changelog?.releases.some((release) => compareReleases(release.version, v) > 0);
+  if (u?.available && u.latestVersion) parts.push(`v${u.latestVersion} available`);
+  else if (!u?.pendingVersion && u?.latestVersion === v && !newer) parts.push('the latest release');
+  return parts.join(' · ');
+}
+
+function changelogNote(changelog) {
+  if (changelog?.releases.length) return [];
+  if (changelogView.failed) return [`Release notes could not be loaded: ${changelogView.failed}. `, releasesLink('Read them on GitHub')];
+  if (!changelog || changelog.refreshing) return ['Loading release notes…'];
+  if (changelog.error) return [`Release notes could not be loaded. GitHub Releases: ${changelog.error}. `, releasesLink('Read them on GitHub')];
+  return ['No releases yet.'];
+}
+
+function renderChangelogStatus(changelog) {
+  const lines = [];
+  if (changelog) {
+    const updated = changelog.refreshing ? 'checking for new releases…' : changelog.okAt ? `updated ${relativeTime(changelog.okAt)}` : '';
+    lines.push(['From GitHub Releases', updated].filter(Boolean).join(' · '));
+    if (changelog.error && changelog.releases.length) lines.push(`The last check failed (${changelog.error}); showing notes fetched ${relativeTime(changelog.okAt)}.`);
+  }
+  lines.push(releasesLink('All releases on GitHub'));
+  $('changelog-status').replaceChildren(...lines.map((content) => {
+    const line = document.createElement('span');
+    line.append(content);
+    return line;
+  }));
+  $('changelog-status').hidden = false;
+}
+
+function renderChangelog() {
+  const changelog = state.changelog;
+  const releases = changelog?.releases ?? [];
+  $('changelog-sub').textContent = changelogSummary();
+  const list = $('changelog-list');
+  const body = list.parentElement;
+  const top = body.scrollTop;
+  const entry = document.activeElement?.closest?.('#changelog-list .changelog-release');
+  const focus = entry && { version: entry.dataset.version, index: [...entry.querySelectorAll('a')].indexOf(document.activeElement) };
+  list.replaceChildren(...releases.map(releaseEntry));
+  list.hidden = releases.length === 0;
+  const note = changelogNote(changelog);
+  $('changelog-note').replaceChildren(...note);
+  $('changelog-note').hidden = note.length === 0;
+  renderChangelogStatus(changelog);
+  body.scrollTop = top;
+  if (focus) {
+    const again = [...list.children].find((el) => el.dataset.version === focus.version);
+    (again?.querySelectorAll('a')[focus.index] ?? again?.querySelector('a') ?? $('changelog-close')).focus({ preventScroll: true });
+  }
+}
+
 const CHANNEL_LABELS = {
   npm: 'npm', native: 'native', brew: 'Homebrew', winget: 'WinGet', legacy: 'legacy install', unknown: 'unknown install',
 };
@@ -1510,6 +1785,7 @@ function resumeById(event) {
 // ---- session cards --------------------------------------------------------
 
 const cards = new Map();
+let sessionsShown = false;
 
 const MODEL_SOURCES = { report: 'reported by the tool', screen: 'seen on the tool\'s screen', args: 'from the --model argument' };
 
@@ -1553,6 +1829,10 @@ function buildCard(session) {
     if (id) copyId(id);
   });
   node.querySelector('.model-pill').addEventListener('click', () => openSessionModel(session.id));
+  node.addEventListener('animationend', (e) => {
+    if (e.animationName === 'level-up') e.target.classList.remove('level-up');
+    else if (e.animationName === 'card-enter' && e.target === node) node.classList.remove('enter');
+  });
   return node;
 }
 
@@ -1584,6 +1864,7 @@ function updateCard(node, s) {
   paintProviderIcon(node.querySelector('.provider-icon'), s.provider);
   const level = sessionLevel(s);
   const badge = node.querySelector('.level-badge');
+  if (badge.textContent && Number(badge.textContent) < level) badge.classList.add('level-up');
   badge.textContent = level;
   badge.title = `Level ${level}`;
   node.querySelector('.name').textContent = s.name;
@@ -1624,7 +1905,11 @@ function renderSessions() {
   }
   sessions.forEach((s, index) => {
     let node = cards.get(s.id);
-    if (!node) { node = buildCard(s); cards.set(s.id, node); }
+    if (!node) {
+      node = buildCard(s);
+      cards.set(s.id, node);
+      if (sessionsShown) node.classList.add('enter');
+    }
     updateCard(node, s);
     // Move a card only when it is out of place: re-inserting a node drops
     // keyboard focus and can swallow a click that is in progress.
@@ -1633,9 +1918,21 @@ function renderSessions() {
   const running = sessions.filter((s) => s.status === 'running').length;
   $('session-count').textContent = sessions.length ? `· ${running} running` : '';
   $('empty').hidden = sessions.length > 0;
+  guardLeaving();
   if (state.activeId) updatePanel();
   if ($('history').open) renderHistory();
   if (state.stats && sessions.some((s) => s.model && state.statsFor.get(s.id) !== modelKey(s))) scheduleStats();
+}
+
+function confirmLeaving(event) {
+  event.preventDefault();
+  event.returnValue = true;
+}
+
+function guardLeaving() {
+  const running = state.connected && [...state.sessions.values()].some((s) => s.status === 'running');
+  if (running) addEventListener('beforeunload', confirmLeaving);
+  else removeEventListener('beforeunload', confirmLeaving);
 }
 
 function upsertSession(session) {
@@ -1908,6 +2205,7 @@ function enterStopping(running = 0, restart = false) {
   closePanel();
   closeModels();
   closeNews();
+  closeChangelog();
   closeHistory();
   for (const view of state.views.values()) view.dispose();
   state.views.clear();
@@ -2022,10 +2320,15 @@ function connectEvents() {
       state.sessions = new Map(msg.sessions.map((s) => [s.id, s]));
       for (const id of [...state.views.keys()]) if (!state.sessions.has(id)) dropSession(id);
       renderSessions();
+      sessionsShown = true;
       setUpgrade(msg.upgrade);
       loadNews();
+      // A changelog.updated sent while the socket was down is lost; catch up the open panel.
+      if ($('changelog').open) loadChangelog();
     } else if (msg.type === 'news.updated') {
       loadNews();
+    } else if (msg.type === 'changelog.updated') {
+      if ($('changelog').open) loadChangelog();
     } else if (msg.type === 'manager.upgrade') {
       setUpgrade(msg.upgrade);
     } else if (msg.type === 'manager.stopping') {
@@ -2085,6 +2388,7 @@ let newsTimer;
 function showAuth(message = '') {
   closeModels();
   closeNews();
+  closeChangelog();
   closeHistory();
   $('app').hidden = true;
   $('terminal-panel').hidden = true;
@@ -2192,6 +2496,23 @@ $('news').addEventListener('close', () => {
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && state.connected && Date.now() - newsLoadedAt > 60000) loadNews();
 });
+$('version').addEventListener('click', openChangelog);
+$('changelog-close').addEventListener('click', closeChangelog);
+$('changelog').addEventListener('click', (e) => { if (e.target === $('changelog')) closeChangelog(); });
+$('changelog').addEventListener('close', () => {
+  const opener = changelogView.opener?.isConnected && !changelogView.opener.closest('[hidden]') ? changelogView.opener : $('version');
+  opener.focus();
+  changelogView.opener = null;
+});
+$('changelog-upgrade').addEventListener('click', () => {
+  closeChangelog();
+  upgradeManager();
+});
+$('changelog-restart').addEventListener('click', () => {
+  closeChangelog();
+  stopManager({ restart: true });
+});
+addEventListener('storage', (e) => { if (e.key === CHANGELOG_SEEN_KEY) renderVersion(); });
 $('models-more').addEventListener('click', () => {
   const before = $('models-list').childElementCount;
   modelsView.all = true;
@@ -2203,6 +2524,30 @@ $('restart-manager').addEventListener('click', () => stopManager({ restart: true
 $('copy-command').addEventListener('click', copyCommand);
 $('upgrade').addEventListener('click', upgradeManager);
 $('theme-toggle').addEventListener('click', toggleTheme);
+$('providers').addEventListener('animationend', (e) => {
+  if (e.animationName === 'deal' && e.target === e.currentTarget.lastElementChild) e.currentTarget.classList.remove('deal');
+});
+let tiltFrame = 0;
+$('providers').addEventListener('pointermove', (e) => {
+  const card = e.target.closest('.provider');
+  if (!card || !finePointer.matches || reducedMotion.matches) return;
+  const box = card.getBoundingClientRect();
+  const x = ((e.clientX - box.left) / box.width) * 2 - 1;
+  const y = ((e.clientY - box.top) / box.height) * 2 - 1;
+  cancelAnimationFrame(tiltFrame);
+  tiltFrame = requestAnimationFrame(() => {
+    card.style.setProperty('--px', x.toFixed(3));
+    card.style.setProperty('--py', y.toFixed(3));
+  });
+});
+$('providers').addEventListener('pointerout', (e) => {
+  const card = e.target.closest('.provider');
+  if (card && !card.contains(e.relatedTarget)) {
+    cancelAnimationFrame(tiltFrame);
+    card.style.removeProperty('--px');
+    card.style.removeProperty('--py');
+  }
+});
 applyTheme(currentTheme());
 // Follow the system setting until the user picks a theme.
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {

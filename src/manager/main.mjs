@@ -10,6 +10,7 @@ import { UsageMonitor } from './usage.mjs';
 import { SessionHistory } from './session-history.mjs';
 import { ModelStats } from './model-stats.mjs';
 import { NewsFeed } from './news.mjs';
+import { Changelog } from './changelog.mjs';
 import { createManagerServer } from './server.mjs';
 import { SelfUpdate } from './self-update.mjs';
 import { resolveBaseEnv, pathReader } from './shell-env.mjs';
@@ -64,6 +65,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
   const history = new SessionHistory({ registry, env: baseEnv });
   const modelStats = new ModelStats({ registry });
   const news = new NewsFeed({ registry });
+  const changelog = new Changelog({ latest: () => selfUpdate.latest });
   let closing = null;
 
   const refreshVersions = () => {
@@ -113,6 +115,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
     history,
     modelStats,
     news,
+    changelog,
     token,
     host,
     port,
