@@ -116,6 +116,8 @@ def main():
     favicon(PACK / "ui" / "guild-crest.png", WEB / "ui" / "favicon.png")
     encode(shrink(masked(PACK / "ui" / "empty-state.png", PACK / "ui" / "empty-state-mask.png"), 420), WEB / "ui" / "empty-state", avif=60)
     encode(Image.open(PACK / "backgrounds" / "page.png").convert("RGB"), WEB / "page", avif=80, webp=85)
+    light = Image.open(PACK / "backgrounds" / "page-light.png").convert("RGB")
+    encode(Image.blend(light, Image.new("RGB", light.size, (243, 238, 227)), 0.25), WEB / "page-light", avif=90, webp=90)
 
     if shutil.which("oxipng"):
         subprocess.run(["oxipng", "-o", "4", "--strip", "safe", "-q", "-r", str(WEB)], check=True)

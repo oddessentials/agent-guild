@@ -27,6 +27,8 @@
 
   "page-background": {"seed": 801, "w": 1920, "h": 1088, "style": false,
     "prompt": "Extremely dark, low-contrast background texture for a website: an ancient dark stone guild hall wall in deep shadow, faint barely visible golden rune etchings, subtle warm ember glow at the bottom edge, a few tiny drifting embers, almost black overall (#0f1115), even and calm, no focal object, no text, no people."},
+  "page-background-light": {"seed": 11, "workflow": "qwen-edit", "input": "backgrounds/page.png",
+    "prompt": "Turn this into its bright daytime counterpart: the same textured surface as pale warm ivory vellum lit by soft morning light, remove every rune and etching completely, the glow at the bottom becomes a soft warm golden sunlight glow, almost white overall, even and calm, very low contrast, no objects, no text, no symbols."},
 
   "frame-corner": {"seed": 901, "w": 1024, "h": 1024,
     "style": "Premium dark fantasy game asset illustration, painterly high detail, polished antique gold metal with warm rim light, isolated on a flat pure pitch-black background, no text, no letters, no gems.",
