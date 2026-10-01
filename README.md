@@ -1,183 +1,225 @@
-# Agent Guild
+<p align="center">
+  <img src="docs/images/banner.webp" alt="Agent Guild: Work hard, play hard. An agentic UI that enhances instead of hinders." width="100%">
+</p>
 
-Agent Guild runs AI coding assistants side by side from one local web page.
-Pick a provider, get a real interactive terminal running that provider's
-coding tool, and see at a glance which sessions and agents are working.
+<p align="center">
+  <a href="https://www.npmjs.com/package/@oddessentials/agent-guild"><img src="https://img.shields.io/npm/v/@oddessentials/agent-guild?color=7c5cff&label=npm" alt="npm version"></a>
+  <a href="https://github.com/oddessentials/agent-guild/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/oddessentials/agent-guild/release.yml?branch=main&label=release" alt="Release status"></a>
+  <img src="https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-e8c47c" alt="Windows, macOS and Linux">
+  <img src="https://img.shields.io/node/v/@oddessentials/agent-guild?color=4cc38a" alt="Node.js version">
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/oddessentials/agent-guild?color=a67cf6" alt="MIT license"></a>
+</p>
 
-![Agent Guild session cards](docs/screenshot.png)
+**Agent Guild** runs Claude Code, Codex CLI, Gemini CLI, Grok Build and your
+own shell side by side, in real terminals, from one local web page. Each
+session is a card that shows what the tool is doing, which model it runs and
+which helper agents it has summoned. Close the page whenever you like; the
+sessions keep working.
 
-* **Start sessions from provider cards.** Anthropic (Claude Code), OpenAI
-  (Codex CLI), Google (Gemini CLI), xAI (Grok Build), and a plain shell.
-  **New** starts a fresh session; **Existing** lists the tool's own earlier
-  sessions, read from where the tool keeps them, with their ids, and
-  resumes one in its own folder, or any session by id. Providers whose tool is not
-  installed are shown greyed out with an **Install** button that runs
-  `npm install -g` in a session you can watch, or with install instructions
-  when the tool is not an npm package. Installed tools show their version
-  and an **Update** button; updating while that tool's sessions are running
-  asks first, because it can break them.
-* **See what is left of your limits.** Claude Code, Codex CLI and Gemini
-  CLI cards show a meter per rate-limit window (5-hour, 7-day, or per
-  model, including Claude's weekly Fable window and the model and feature
-  limits Codex meters separately) with the time until it resets, read from
-  the tool's own sign-in.
-  Claude's extra-usage spend and Codex's prepaid credit balance appear
-  when the account has them. Other providers can supply a command that
-  prints usage.
-* **Work in real terminals.** Each session is a card. Open it for a full
-  interactive terminal: type instructions, answer prompts, watch output. Run
-  as many sessions at once as you like.
-* **See agents and models at work.** When a coding tool reports helper
-  agents, they appear as small icons on that session's card. The card also
-  names the main model in use, reported by the tool or, failing that,
-  spotted on its screen.
-* **Close the page any time.** A separate local session manager owns the
-  terminals. Reopen the page and it reconnects to the same sessions with
-  their screens intact, as long as the manager is still running. Sessions do
-  not survive a computer restart. **Restart manager** in the top bar ends
-  every session and starts a fresh manager, and the page reconnects to it by
-  itself; **Stop manager** ends every session and leaves the manager
-  stopped. Both ask first while any session is still running. The top bar
-  also shows the version you are running.
-* **Stay current.** When a newer Agent Guild is on npm, an **Upgrade**
-  button appears in the top bar and runs `npm install -g` in a session you
-  can watch. Sessions keep running; once they are done, **Restart to use
-  vX.Y.Z** in the top bar switches to the new version.
-* **Light or dark.** The page follows your system theme and the top-bar
-  toggle switches it.
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/overview-light.webp">
+  <img src="docs/images/overview-dark.webp" alt="Agent Guild with one card per coding tool and six sessions at work">
+</picture>
 
-## Requirements
-
-* Windows 10 1809 or later, or macOS 11 or later. Linux works for development.
-* Node.js 22 or newer.
-* Each coding tool you want to use, signed in on its own. Agent Guild can
-  install the npm-packaged tools for you; it does not authenticate them.
-
-node-pty ships prebuilt binaries for Windows, macOS and Linux on x64 and
-arm64, so no compiler is needed. WSL is not required.
-
-## Install and run
+## Quick start
 
 ```sh
 npm install -g @oddessentials/agent-guild
 agent-guild
 ```
 
-`agent-guild open` starts the session manager in the background if needed and
-opens the page. The page URL carries an access token in its `#` fragment. The
-page stores it and then removes it from the address bar.
+The page opens in your browser. Pick a provider, press **New**, and you are
+in a live terminal.
+
+**You need** Node.js 22 or newer on Windows 10 1809+, macOS 11+ or Linux
+(x64 or arm64), and each coding tool you want to use, signed in on its own.
+Agent Guild installs the tools for you but never handles your sign-in. No
+compiler and no WSL are needed.
+
+## Features
+
+**Every major coding CLI, one place.** Claude Code, Codex CLI, Gemini CLI,
+Grok Build and a plain shell each get a card. A tool that is missing shows
+**Install**, which runs the install in a session you can watch. An installed
+tool shows its version and offers **Update** when a newer one is out, using
+the same installer that put it there: npm, Homebrew, WinGet or the vendor's
+own.
+
+**Real terminals that outlive the page.** Every session is a full interactive
+terminal: type instructions, answer prompts, watch output. Run as many as you
+like. A local session manager owns them, so you can close or reload the page
+and come back to the same screens.
+
+<img src="docs/images/terminal.webp" alt="An open Claude Code session with its helper agents shown in the header">
+
+**Agents and models at work.** Helper agents that a tool starts appear on its
+card as familiars while they run, and the card names the model in use. The
+character comes alive while the session works, and the session's level rises
+with every hour it runs.
+
+**Several subscriptions per tool.** Add a work account next to your personal
+one and switch with a chip on the card. Each account keeps its own sign-in,
+usage meters and sessions. See [Accounts](docs/configuration.md#accounts).
+
+**See what is left of your limits.** Claude Code, Codex CLI and Gemini CLI
+cards show a meter for each rate-limit window, such as 5-hour and 7-day, with
+the time until it resets. They also show your plan, Claude's extra-usage
+spend and Codex's credit balance when the account has them. Any other tool
+can supply a command that prints its usage.
+
+**Pick the right model.** Each card grades the tool's newest fully
+benchmarked model on coding, intelligence and agentic work, from S to D. Open it to compare every
+model the tool offers across 13 benchmarks: Artificial Analysis indexes and
+Design Arena results for websites, UI, game dev, data visualization, 3D, SVG,
+web apps, full stack and mobile. It also shows context size and price.
+
+<img src="docs/images/models.webp" alt="The Claude Code models dialog with benchmark tiers for each model">
+
+**Pick up where you left off.** **Existing…** lists the tool's own earlier
+sessions, newest first, read from where the tool keeps them. Filter by title,
+folder or id and resume one in its own folder, or resume any session by id.
+
+<img src="docs/images/history.webp" alt="The Claude Code session history with a filter and Resume buttons">
+
+**Agentic development news.** A newsfeed gathers about 20 sources on AI
+coding, agents and local models, including vendor blogs, Hacker News, arXiv,
+and releases of the tools you have installed. The five latest headlines
+appear on the page; **All news** opens the full feed with News, Releases and Research
+filters.
+
+<img src="docs/images/news.webp" alt="The news panel with today's items from news sources and tool releases">
+
+**Always current.** When a new Agent Guild is published, **Upgrade to
+vX.Y.Z** installs it while your sessions keep running, and **Restart to use
+vX.Y.Z** switches over when you are ready. The version badge opens
+**What's new** with the notes of every release.
+
+<img src="docs/images/whats-new.webp" alt="The What's new panel listing the release notes of each version">
+
+**Light or dark.** The page follows your system theme, and the top-bar
+toggle switches it.
+
+## Commands
 
 | Command | What it does |
 | --- | --- |
 | `agent-guild` or `agent-guild open` | Start the manager if needed and open the page. `--no-browser` prints the URL instead. |
 | `agent-guild status` | Show whether the manager is running and list its sessions. |
-| `agent-guild stop` | Stop the manager. This ends every session, without asking. The page's **Stop manager** button does the same and asks first while sessions are running. |
-| `agent-guild restart` | Stop the manager and start it again, on the version installed on disk. This ends every session, without asking. The page's **Restart manager** button does the same and asks first while sessions are running. |
+| `agent-guild stop` | Stop the manager, ending every session. |
+| `agent-guild restart` | Stop the manager and start it again on the version installed on disk, ending every session. |
+| `agent-guild url` | Print the page URL with its access token. |
 | `agent-guild start` | Run the manager in the foreground, for debugging. |
-| `agent-guild url` | Print the page URL with its token. |
 
-**Changelog:** each version's changes are listed on the
-[Releases page](https://github.com/oddessentials/agent-guild/releases).
+The page's **Restart manager** and **Stop manager** buttons do the same as
+`restart` and `stop`, but ask first while sessions are running. The page also
+asks before you close it with sessions running. Sessions end when the manager
+stops or the computer restarts.
 
-## Configure providers
+## Configuration
 
-Create `providers.json` in the data folder to change or add providers:
+Nothing needs configuring. To add a provider, change a command, sign in with
+more than one account or point usage meters at your own command, create a
+`providers.json` in the data folder:
 
 | Platform | Data folder |
 | --- | --- |
 | Windows | `%APPDATA%\AgentGuild` |
 | macOS | `~/Library/Application Support/AgentGuild` |
+| Linux | `~/.config/agent-guild` |
 
-Entries are merged with the built-in ones by `id`. A new `id` adds a
-provider, and `"enabled": false` hides one. Any field can be overridden for
-one platform under a `win32` or `darwin` key. See
-[examples/providers.json](examples/providers.json).
-
-| Field | Meaning |
-| --- | --- |
-| `id` | Lowercase identifier. |
-| `vendor`, `tool` | Names shown on the icon. |
-| `command`, `args` | What to run. `command` is looked up on PATH. `@shell` means the user's default shell. |
-| `package` | The tool's npm package, e.g. `@openai/codex`. Enables the **Install** button and the version check. |
-| `channels` | How an installed copy is recognised, so **Update** runs that installation's own updater. A copy installed by npm needs no entry. `brew.names` lists the tool's own Homebrew formula or cask names, e.g. `{ "brew": { "names": ["gemini-cli"] } }`, and `winget.id` is its WinGet package id. A provider you add must set these for its Homebrew or WinGet copy to get an **Update** button or a removal command; without them that copy shows as an unknown install with guidance only. `native.paths` are the launcher and folders the vendor's own installer uses, and `native.update` the arguments that make the tool update itself, e.g. `["update"]`. |
-| `versionArgs` | Arguments that make the command print its version, used instead of `args`, e.g. `["--version"]`. |
-| `usage` | Where the usage meters come from: `"claude"`, `"codex"`, `"gemini"`, `{ "command", "args" }` for a program that prints `{ "windows": [{ "label", "usedPercent", "resetsAt" }] }`, or `null` for none. |
-| `modelPattern` | Regular expression that finds the model name on the tool's screen when the tool does not report it. |
-| `resumeArgs` | Arguments that resume the tool's own session, with `{id}` standing for the id, e.g. `["--resume", "{id}"]`. Without it the card has no **Existing** button. |
-| `history` | Where the list of earlier sessions comes from: `"claude"`, `"codex"`, `"gemini"`, `"grok"` (the tool's own session files under its home folder), `{ "command", "args" }` for a program that prints `{ "sessions": [{ "id", "title", "cwd", "startedAt", "updatedAt" }] }`, or `null` for none, in which case **Existing** asks for an id. |
-| `env` | Extra environment variables for the tool. |
-| `accounts` | Further sign-ins of the tool, each in its own home folder, e.g. `[{ "id": "work", "label": "Work", "dir": "~/.claude-work" }]`. Without `dir`, the folder is `accounts/<provider>/<account>` in the data folder. The card shows one chip per account with its own meters, and a session starts under the chip picked; the tool signs in from inside the first session, and its reporting hooks are copied into the folder on first use. An entry with id `default` renames the tool's own sign-in. Needs `homeVar`. |
-| `homeVar` | The environment variable that moves the tool's home folder, e.g. `CLAUDE_CONFIG_DIR`. Set for Claude Code, Codex CLI, Gemini CLI and Grok Build by default. |
-| `accountEnv` | Further variables set for every account other than the default, with `{dir}` standing for the account's folder. By default Claude Code's secure-storage folder follows the account, and Gemini CLI keeps the account's sign-in in a file rather than the shared OS keychain. |
-| `hooks` | `{ "path", "example" }`: the hooks file inside the home folder and the file in `examples/` copied there for a new account. |
-| `color`, `monogram`, `icon` | Icon appearance. `icon` is a URL path; you can also drop `<id>.svg` into `web/icons/`. |
-| `install`, `docs` | Help shown when the tool is not installed. |
-| `usageUrl`, `billingUrl` | `https://` links to the vendor's usage and billing pages, shown on the card. The defaults point at the subscription pages; set your API console instead, or `null` to hide a link. Google's usage link opens AI Studio, which counts API-key usage only, not the Gemini CLI sign-in quota the card's meters show. |
-
-The page's "Working folder" field sets where new sessions start. It defaults
-to your home folder.
-
-Version checks, for the tools and for Agent Guild itself, ask the registry
-from npm's global configuration (the one `npm install -g` uses) about once
-an hour, and installs use the same registry. Set `AGENT_GUILD_NPM_REGISTRY`
-to override it for both, or `AGENT_GUILD_NO_UPDATE_CHECK=1` to skip the
-checks.
+The full reference, including every field and environment variable, is in
+[docs/configuration.md](docs/configuration.md).
 
 ## Show agents and models
 
-Agents are reported by the coding tool, not guessed from its output. Add
-the hooks from the matching file in [examples/](examples/) to Claude Code,
-Codex CLI, Gemini CLI or Grok Build: each sub-agent appears on the card
-while it runs, and the card shows the model in use. The hooks call
-`agent-guild-report`, which the manager puts on the PATH of every session it
-starts, so no global install is needed. Codex CLI runs no hook until you
-trust it (choose "Trust all and continue" when it starts, or run `/hooks`),
-and Claude Code runs none until you accept its workspace-trust prompt. Any
-tool or script can also report agents and the model with the
-`agent-guild-report` command or an escape sequence. See
+Agents are reported by the coding tool, not guessed from its output. To see
+them, add the hooks from the matching file in [examples/](examples/) to
+Claude Code, Codex CLI, Gemini CLI or Grok Build. Each helper agent then
+appears on the card while it runs, and the card shows the model in use.
+Without hooks, the card still names the model when it is given with
+`--model` or shown on the tool's screen.
+
+The hooks call `agent-guild-report`, which the manager puts on the PATH of
+every session, so nothing else needs installing. Two tools need a one-time
+approval:
+
+* Codex CLI runs no hook until you trust it: choose "Trust all and continue"
+  when it starts, or run `/hooks`.
+* Claude Code runs none until you accept its workspace-trust prompt.
+
+Any other tool or script can report agents and its model too. See
 [docs/agent-reporting.md](docs/agent-reporting.md).
 
-## Security
+## Security and privacy
 
 * The manager listens on `127.0.0.1` only.
 * Every API call needs a random per-user token, stored in the data folder
-  with owner-only permissions.
-* Requests with a foreign `Host` or `Origin` header are refused. This stops
-  other websites from reaching the terminals through your browser.
+  with owner-only permissions. Anyone who can run programs as your user can
+  read it, as with any local developer tool.
+* Requests with a foreign `Host` or `Origin` header are refused, so other
+  websites cannot reach your terminals through your browser.
 * Tools inside a session get a separate token that can only report agents
   for that session.
-* Usage meters are fetched by the manager with the coding tool's own
-  sign-in (Claude Code's credentials, Codex CLI's `auth.json`, Gemini CLI's
-  sign-in). The page only ever receives percentages. On macOS the first
-  lookup may ask for keychain access to the "Claude Code-credentials" and
-  "gemini-cli-oauth" items; choose Always Allow.
+* Usage meters are fetched by the manager with each tool's own sign-in. The
+  page only receives percentages. On macOS the first lookup may ask for
+  keychain access to the "Claude Code-credentials" and "gemini-cli-oauth"
+  items; choose Always Allow.
 
-Anyone who can run programs as your user can already read the token, as with
-any local developer tool.
+The manager makes these outbound requests, and none of them carry your code
+or prompts:
+
+| To | For | How often |
+| --- | --- | --- |
+| npm registry | Tool and Agent Guild version checks | About hourly; `AGENT_GUILD_NO_UPDATE_CHECK=1` turns them off |
+| Anthropic, OpenAI and Google usage endpoints | Usage meters, with the tool's own sign-in | Every minute while the page is open |
+| OpenRouter's public model list | Benchmarks | Every 6 hours |
+| Public news feeds, Hacker News, arXiv and GitHub | The newsfeed | Every 30 minutes while the page is open |
+| GitHub's releases API | What's new | Hourly |
 
 ## Other front ends
 
-The page is only one client. The manager's API is documented in
-[docs/api.md](docs/api.md) so that another interface, such as a planned
-Unreal Engine version where provider characters and their workers stand in
-for the icons, can drive the same sessions. See
+The page is one client of the manager's local API, documented in
+[docs/api.md](docs/api.md). Another interface, such as a planned Unreal Engine
+guild hall, can drive the same sessions at the same time. See
 [docs/architecture.md](docs/architecture.md).
 
 ## Development
 
 ```sh
+git clone https://github.com/oddessentials/agent-guild.git
+cd agent-guild
 npm install
+npm start      # open the page, starting a manager from this checkout if none runs
 npm test
 ```
 
-The tests start real managers and real pseudo-terminals, using a small fake
-coding tool in `tests/fixtures`. CI runs them on Windows, macOS and Linux.
+* The tests start real managers and real pseudo-terminals, using a small fake
+  coding tool in `tests/fixtures`. CI runs them on Windows, macOS and Linux
+  with Node.js 22, 24 and 26, and installs the packed package on x64 and
+  arm64.
+* In a checkout, `launchers/AgentGuild.cmd` (Windows) and
+  `launchers/AgentGuild.command` (macOS) start Agent Guild with a
+  double-click.
+* `node docs/capture/capture.mjs --root <folder>` refreshes the screenshots
+  in `docs/images` from the real page, with demo sessions in place of real
+  tools. The cards show the folder's path, so pick a neutral one such as
+  `D:\code` or `/work`. It needs Chrome or Edge and leaves any running
+  manager alone. See the comment at the top of the script for options.
+* Pull request titles follow
+  [Conventional Commits](https://www.conventionalcommits.org/). Merging to
+  `main` publishes a release to npm and GitHub when it includes a `feat`,
+  `fix`, `perf` or `revert`.
 
 ## Current limits
 
 * Sessions end when the manager stops or the computer restarts.
+* Grok Build has no usage meter.
 * Gemini CLI usage meters read its sign-in where Gemini CLI keeps it:
-  `oauth_creds.json`, or with `GEMINI_FORCE_ENCRYPTED_FILE_STORAGE=true`
-  the OS keychain (macOS, or Linux with `secret-tool`) or its encrypted
-  credentials file. A sign-in kept in the Windows Credential Manager
-  cannot be read.
+  `oauth_creds.json`, or with `GEMINI_FORCE_ENCRYPTED_FILE_STORAGE=true` the
+  OS keychain (macOS, or Linux with `secret-tool`) or its encrypted
+  credentials file. A sign-in kept in the Windows Credential Manager cannot
+  be read.
+
+## License
+
+[MIT](LICENSE) © Odd Essentials

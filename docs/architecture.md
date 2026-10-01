@@ -12,6 +12,9 @@
                                                            │  ProviderRegistry        │──▶ tool --version, npm registry
                                                            │  UsageMonitor            │──▶ vendor usage endpoints
                                                            │  SessionHistory          │──▶ the tools' own session files
+                                                           │  ModelStats              │──▶ OpenRouter model list (benchmarks)
+                                                           │  NewsFeed                │──▶ news, release and research feeds
+                                                           │  Changelog, SelfUpdate   │──▶ GitHub releases, npm registry
                                                            └──────────────────────────┘
 ```
 
@@ -45,6 +48,17 @@
 * **Session history** (`session-history.mjs`). Lists each tool's earlier
   sessions from the transcripts the tool keeps in its home folder, reading
   only their heads, so one can be resumed from the page.
+* **Model stats** (`model-stats.mjs`). Reads OpenRouter's public model list
+  for Artificial Analysis and Design Arena results, picks each provider's
+  models with its `modelPattern`, and grades every model against the models
+  of all configured tools. Cached for 6 hours.
+* **News feed** (`news.mjs`). Reads a fixed list of RSS, Atom, Hacker News
+  and GitHub release feeds when a client asks and a feed is due, and keeps
+  the last 30 days. Hacker News, Slashdot and arXiv are filtered to agentic
+  and local-model topics.
+* **Changelog and self-update** (`changelog.mjs`, `self-update.mjs`). Read
+  Agent Guild's own releases from GitHub for the What's new panel, check npm
+  for a newer version, and run the upgrade as a session.
 * **API server** (`server.mjs`). REST for control, one WebSocket for
   lifecycle events, one WebSocket per attached terminal. See [api.md](api.md).
 * **Web page** (`web/`). Plain HTML, CSS and JavaScript with xterm.js, served
