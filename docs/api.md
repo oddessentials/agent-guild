@@ -257,7 +257,7 @@ what `POST /upgrade` runs, or null with `guidance` when npm is not on PATH.
 `pendingVersion` is a newer version whose files are already on disk: the
 manager runs from the package npm replaces in place, so after an upgrade the
 running process is still the old version until it is restarted
-(`agent-guild stop`, then `agent-guild open`). `lastInstall` describes the
+(`POST /shutdown` with `restart`, or `agent-guild restart`). `lastInstall` describes the
 last upgrade session: `{ outcome, exitCode, version, installedVersion, at }`
 with `outcome` `installed`, `failed`, or `unchanged` when npm exited cleanly
 but did not replace the files the manager runs from. It is dropped once a
@@ -307,7 +307,7 @@ All paths are under `/api/v1`.
 | Method | Path | Body | Result |
 | --- | --- | --- | --- |
 | GET | `/health` | | `{ ok, name, version, pid }`. No token needed. |
-| GET | `/info` | | Manager version, platform, start time, provider config warnings, and `upgrade` (an Upgrade object). |
+| GET | `/info` | | Manager version, platform, start time, provider config warnings, `upgrade` (an Upgrade object), and `launcher`: the path of the double-click launcher for this platform when the install carries one (a checkout of the repository), else null. |
 | POST | `/upgrade` | | `201 { session }`: a session with `task` `upgrade` running the Upgrade `command`. 400 `not_updatable` when no newer release is known, it is already installed on disk, the manager is a development build, or version checks are off. 409 `npm_unavailable` without npm on PATH. 409 `upgrade_in_progress` while one is running. Sessions keep running; the new version is used after the manager restarts. |
 | GET | `/providers` | | `{ providers: Provider[] }` |
 | POST | `/providers/reload` | | Re-reads `providers.json`. |
@@ -323,7 +323,7 @@ All paths are under `/api/v1`.
 | POST | `/sessions/:id/agents` | Agent report | `{ agent }`, or `{ agent: null }` after a removal, for a `done` report about an agent that was never reported, or for `{ finishForeground: true }`, which marks every foreground agent still working as done. |
 | POST | `/sessions/:id/model` | `{ model, displayName? }` | `{ model }`. Sets the session's model with source `report`, unless a foreground agent is working; then the current model is returned unchanged. |
 | POST | `/sessions/:id/tool-session` | `{ toolSessionId }` | `{ toolSessionId }`. Records the id the tool gave its own session: one printable line of at most 200 characters. 409 once the session has exited. |
-| POST | `/shutdown` | `{ force? }` | `202 { ok, running }`: stops the manager and every session. 409 `sessions_running` (with `running`, the session count) while any session is running, unless `force` is true. From the 202 on, `POST /sessions` and `POST /providers/:id/install` answer 503 `manager_stopping`. Events clients get `manager.stopping` first and `manager.stopped` last, after the sessions have ended and before the API closes. |
+| POST | `/shutdown` | `{ force?, restart? }` | `202 { ok, running, restart }`: stops the manager and every session. 409 `sessions_running` (with `running`, the session count) while any session is running, unless `force` is true. From the 202 on, `POST /sessions` and `POST /providers/:id/install` answer 503 `manager_stopping`. Events clients get `manager.stopping` first and `manager.stopped` last, after the sessions have ended and before the API closes. With `restart` true, the manager then starts a new manager from the package on disk, on the same port and with the same token, before it exits; the new one runs whatever version is installed, so this is how an upgrade's `pendingVersion` is put to use. Clients reconnect to it as to any manager; its `hello` is the new source of truth. |
 
 `cwd` defaults to the user's home folder and must be an existing folder. A
 leading `~` is expanded. `args` are appended to the provider's configured
@@ -353,14 +353,14 @@ This socket pushes changes to every session. It is server-to-client only.
 
 | Message | Meaning |
 | --- | --- |
-| `{ type: "hello", version, upgrade, sessions }` | Sent first. The full session list and the manager's Upgrade object. |
+| `{ type: "hello", version, pid, launcher, upgrade, sessions }` | Sent first. The manager's version and pid, its `launcher` path (as in `/info`), the full session list and the manager's Upgrade object. |
 | `{ type: "session.created", session }` | A session was started by any client. |
 | `{ type: "session.updated", session }` | Status, activity, agents, name or size changed. |
 | `{ type: "session.removed", sessionId }` | A session was removed. |
 | `{ type: "providers.updated", providers }` | The provider list changed: a version check finished, `providers.json` was reloaded, or an install session ended. |
 | `{ type: "manager.upgrade", upgrade }` | The manager's own version check changed: a newer release was found, or an upgrade session ended. |
-| `{ type: "manager.stopping", running }` | A client asked the manager to stop. `running` sessions are being ended. A client should show that the manager was stopped on purpose, not that it is unreachable. |
-| `{ type: "manager.stopped", remaining }` | The last event before the socket closes. `remaining` is how many session processes had not confirmed their exit when the manager gave up waiting (about five seconds); 0 means every session has ended. A socket that closes after `manager.stopping` without this event means the manager went away before it could confirm. |
+| `{ type: "manager.stopping", running, restart }` | A client asked the manager to stop. `running` sessions are being ended. A client should show that the manager was stopped on purpose, not that it is unreachable. `restart` is true when a new manager will take over; a client should then say it is waiting for that one rather than tell the user how to start one. |
+| `{ type: "manager.stopped", remaining, restart }` | The last event before the socket closes. `remaining` is how many session processes had not confirmed their exit when the manager gave up waiting (about five seconds); 0 means every session has ended. `restart` is as in `manager.stopping`. A socket that closes after `manager.stopping` without this event means the manager went away before it could confirm. |
 
 After a reconnect, treat `hello` as the new source of truth.
 

@@ -110,6 +110,9 @@ export function createManagerServer({
   version = '0.0.0',
   selfUpdate = null,
   extraOrigins = [],
+  /** The double-click launcher file for this platform, or null when the package carries none. */
+  launcher = null,
+  /** @type {(opts: { restart: boolean }) => void} */
   onShutdownRequest = () => {},
 }) {
   const upgradeInfo = () => (selfUpdate ? selfUpdate.describe() : null);
@@ -213,6 +216,7 @@ export function createManagerServer({
         startedAt,
         warnings: registry.warnings,
         upgrade: upgradeInfo(),
+        launcher,
       });
     }
     if (route === '/upgrade' && method === 'POST') {
@@ -269,14 +273,16 @@ export function createManagerServer({
         err.running = running;
         throw err;
       }
+      // With `restart`, a new manager is started once this one has closed.
+      const restart = body.restart === true;
       // Refuse new sessions from this moment, before the shutdown itself
       // runs: a session accepted in between would be ended without warning.
       manager.closing = true;
-      sendJson(res, 202, { ok: true, running });
+      sendJson(res, 202, { ok: true, running, restart });
       // Tell every client first, so a second page shows "stopped" rather
       // than "not reachable" when its socket drops.
-      broadcast({ type: 'manager.stopping', running });
-      setImmediate(onShutdownRequest);
+      broadcast({ type: 'manager.stopping', running, restart });
+      setImmediate(() => onShutdownRequest({ restart }));
       return undefined;
     }
 
@@ -361,7 +367,7 @@ export function createManagerServer({
 
   function handleEvents(ws) {
     eventClients.add(ws);
-    safeSend(ws, { type: 'hello', version, upgrade: upgradeInfo(), sessions: manager.list() });
+    safeSend(ws, { type: 'hello', version, pid: process.pid, launcher, upgrade: upgradeInfo(), sessions: manager.list() });
     ws.on('close', () => eventClients.delete(ws));
     ws.on('message', () => { /* events socket is server -> client only */ });
   }

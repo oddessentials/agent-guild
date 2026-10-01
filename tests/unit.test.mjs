@@ -15,6 +15,7 @@ import { shimContents, writeReportShims, prependPath, fileUrl, SHIM_NAME, LOADER
 import { execFileSync } from 'node:child_process';
 import { parseVersion, compareVersions, probeVersion, diagnosticLine, latestVersion } from '../src/manager/versions.mjs';
 import { SelfUpdate, isDevelopmentBuild } from '../src/manager/self-update.mjs';
+import { launcherPath, MANAGER_ENTRY, ROOT_DIR } from '../src/manager/launch.mjs';
 import {
   UsageMonitor, UsageError, readClaudeCredentials, readCodexCredentials, readGeminiCredentials, readGeminiFileKeychain, readGeminiKeychainItem, geminiFileKey, geminiStorageMode, geminiOAuthClientFromInstall, geminiKeychainLookup,
   claudeKeychainService, claudeCredentialsFile, fetchClaudeUsage, fetchCodexUsage, fetchGeminiUsage, commandUsage, toIso, windowLabel, clampPercent,
@@ -2699,4 +2700,19 @@ test('a response over the size limit is refused, and a declared character set is
   const snap = news.snapshot();
   assert.deepEqual(snap.sources.map((s) => s.error), ['sent more than 5 MB', 'sent more than 5 MB', null]);
   assert.deepEqual(snap.items.map((i) => i.title), ['Café agents']);
+});
+
+test('the launcher path names the double-click file for the platform only when the package carries it', () => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const repo = path.resolve(here, '..');
+  assert.equal(ROOT_DIR, repo, 'the manager runs from the package root');
+  assert.equal(MANAGER_ENTRY, path.join(repo, 'src', 'manager', 'main.mjs'));
+  // The repository checkout has both launchers; the npm package has neither.
+  assert.equal(launcherPath('win32', repo), path.join(repo, 'launchers', 'AgentGuild.cmd'));
+  assert.equal(launcherPath('darwin', repo), path.join(repo, 'launchers', 'AgentGuild.command'));
+  assert.equal(launcherPath('linux', repo), null, 'Linux has no double-click launcher');
+  const bare = tempDir();
+  assert.equal(launcherPath('win32', bare), null);
+  assert.equal(launcherPath('darwin', bare), null);
+  fs.rmSync(bare, { recursive: true, force: true });
 });

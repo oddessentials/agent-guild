@@ -34,13 +34,15 @@ coding tool, and see at a glance which sessions and agents are working.
 * **Close the page any time.** A separate local session manager owns the
   terminals. Reopen the page and it reconnects to the same sessions with
   their screens intact, as long as the manager is still running. Sessions do
-  not survive a computer restart. **Stop manager** in the top bar stops the
-  manager and ends every session; it asks first while any session is still
-  running.
+  not survive a computer restart. **Restart manager** in the top bar ends
+  every session and starts a fresh manager, and the page reconnects to it by
+  itself; **Stop manager** ends every session and leaves the manager
+  stopped. Both ask first while any session is still running. The top bar
+  also shows the version you are running.
 * **Stay current.** When a newer Agent Guild is on npm, an **Upgrade**
   button appears in the top bar and runs `npm install -g` in a session you
-  can watch. Sessions keep running; stop the manager and run `agent-guild
-  open` to use the new version.
+  can watch. Sessions keep running; once they are done, **Restart to use
+  vX.Y.Z** in the top bar switches to the new version.
 * **Light or dark.** The page follows your system theme and the top-bar
   toggle switches it. The guild artwork is the dark theme.
 
@@ -70,6 +72,7 @@ page stores it and then removes it from the address bar.
 | `agent-guild` or `agent-guild open` | Start the manager if needed and open the page. `--no-browser` prints the URL instead. |
 | `agent-guild status` | Show whether the manager is running and list its sessions. |
 | `agent-guild stop` | Stop the manager. This ends every session, without asking. The page's **Stop manager** button does the same and asks first while sessions are running. |
+| `agent-guild restart` | Stop the manager and start it again, on the version installed on disk. This ends every session, without asking. The page's **Restart manager** button does the same and asks first while sessions are running. |
 | `agent-guild start` | Run the manager in the foreground, for debugging. |
 | `agent-guild url` | Print the page URL with its token. |
 

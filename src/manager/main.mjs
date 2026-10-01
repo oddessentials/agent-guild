@@ -14,6 +14,7 @@ import { createManagerServer } from './server.mjs';
 import { SelfUpdate } from './self-update.mjs';
 import { resolveBaseEnv, pathReader } from './shell-env.mjs';
 import { writeReportShims } from './report-shims.mjs';
+import { launcherPath, spawnManager } from './launch.mjs';
 import {
   DEFAULT_HOST,
   PACKAGE_FILE,
@@ -72,9 +73,14 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
   const versionTimer = setInterval(refreshVersions, VERSION_REFRESH_MS);
   versionTimer.unref();
 
-  const shutdown = (reason = 'shutdown') => {
+  /**
+   * End every session and close the API. With `restart`, a new manager is
+   * then started from the package on disk, so it comes up on the version
+   * an upgrade installed; clients reconnect to it by themselves.
+   */
+  const shutdown = (reason = 'shutdown', { restart = false } = {}) => {
     if (closing) return closing;
-    console.log(`[manager] stopping (${reason}); ending ${manager.sessions.size} session(s)`);
+    console.log(`[manager] ${restart ? 'restarting' : 'stopping'} (${reason}); ending ${manager.sessions.size} session(s)`);
     clearInterval(versionTimer);
     removeRuntimeFile();
     // Sessions end before the API closes, and the last event says whether
@@ -82,7 +88,16 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
     // from a timeout. The manager refuses new sessions meanwhile.
     closing = manager.shutdown().then(({ remaining }) => {
       if (remaining > 0) console.warn(`[manager] ${remaining} session process(es) did not confirm exiting in time`);
-      return api.close({ notice: { type: 'manager.stopped', remaining } });
+      return api.close({ notice: { type: 'manager.stopped', remaining, restart } });
+    }).then(() => {
+      // Only once the port is released: the successor listens on the same one.
+      if (!restart) return;
+      try {
+        const child = spawnManager({ note: 'restarting manager' });
+        console.log(`[manager] started the next manager (pid ${child.pid})`);
+      } catch (err) {
+        console.error(`[manager] could not start the next manager: ${err.message}`);
+      }
     });
     return closing;
   };
@@ -104,7 +119,8 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
     version,
     selfUpdate,
     extraOrigins,
-    onShutdownRequest: () => shutdown('requested via API').then(() => process.exit(0)),
+    launcher: launcherPath(),
+    onShutdownRequest: ({ restart = false } = {}) => shutdown('requested via API', { restart }).then(() => process.exit(0)),
   });
 
   try {

@@ -27,8 +27,15 @@ const state = {
   connected: false,
   /** The manager's own version check, from `hello` and `manager.upgrade`. */
   upgrade: null,
+  /** The running manager's version and pid, from `hello`. */
+  version: null,
+  pid: null,
+  /** The double-click launcher file on this computer, or null when the install has none. */
+  launcher: null,
   /** True from a shutdown request until the manager is reachable again. */
   stopping: false,
+  /** True while the stop is a restart: a new manager is expected to take over. */
+  restarting: false,
   /** After a stop: how many session processes did not confirm exiting, or null if the manager never said. */
   stopRemaining: null,
 };
@@ -53,10 +60,29 @@ function setConnection(kind, label) {
   const el = $('connection');
   el.className = `connection ${kind}`;
   el.querySelector('.label').textContent = label;
-  // The manager can only be stopped or upgraded while the page can reach it.
+  // The manager can only be stopped, restarted or upgraded while the page can reach it.
   state.connected = kind === 'ok';
   $('stop-manager').hidden = !state.connected;
+  $('restart-manager').hidden = !state.connected;
   renderUpgrade();
+}
+
+// ---- the running version --------------------------------------------------
+
+/** A development checkout runs as 0.0.0-development; releases carry a real version. */
+function isDevelopmentBuild(version) {
+  return !version || /^0\.0\.0(?:-|$)/.test(String(version));
+}
+
+function renderVersion() {
+  const badge = $('version');
+  const v = state.version;
+  badge.hidden = !v;
+  if (!v) return;
+  const dev = isDevelopmentBuild(v);
+  badge.textContent = dev ? 'dev' : `v${v}`;
+  badge.title = [dev ? `Development build (${v})` : `Agent Guild ${v}`, state.pid && `session manager pid ${state.pid}`].filter(Boolean).join(' · ');
+  badge.setAttribute('aria-label', dev ? `Agent Guild development build ${v}` : `Agent Guild version ${v}`);
 }
 
 // ---- theme ----------------------------------------------------------------
@@ -93,15 +119,21 @@ function renderUpgrade() {
     button.textContent = `Upgrade to ${u.latestVersion}`;
     button.title = `Run "${u.command}" in a session. Sessions keep running; the new version is used once the manager is restarted.`;
   }
+  // A newer version on disk is used by the next manager, so the restart
+  // button becomes the way to pick it up.
+  const restart = $('restart-manager');
+  const pending = u?.pendingVersion;
+  restart.classList.toggle('pending', Boolean(pending));
+  restart.textContent = pending ? `Restart to use v${pending}` : 'Restart manager';
+  restart.title = pending
+    ? `Agent Guild ${pending} is installed, but this manager is still ${u.version}. Restarting ends every session and starts the new version; this page reconnects by itself.`
+    : 'Stop the session manager and start it again. This ends every session; this page reconnects by itself.';
   let text = '';
   let title = '';
   const last = u?.lastInstall;
   if (u?.installing) {
     text = `Upgrading${u.latestVersion ? ` to v${u.latestVersion}` : ''}…`;
     title = 'npm is running in a session. Keep the manager running until it finishes.';
-  } else if (u?.pendingVersion) {
-    text = `v${u.pendingVersion} installed · restart to use it`;
-    title = `Agent Guild ${u.pendingVersion} is installed, but this manager is still ${u.version}. Stop the manager and run "agent-guild open" to use it.`;
   } else if (last?.outcome === 'failed') {
     text = last.exitCode === null ? 'Upgrade failed' : `Upgrade failed (exit ${last.exitCode})`;
     title = 'See the upgrade session for npm\'s output, then run the upgrade again: the files on disk may be incomplete. On Windows, files in use cannot be replaced: stop the manager first and run the command yourself.';
@@ -123,7 +155,7 @@ function setUpgrade(upgrade) {
   renderUpgrade();
   const pending = state.upgrade?.pendingVersion;
   if (pending && pending !== before?.pendingVersion) {
-    toast(`Agent Guild ${pending} is installed. Stop the manager and run "agent-guild open" to use it.`, 10000);
+    toast(`Agent Guild ${pending} is installed. Use "Restart to use v${pending}" in the top bar when your sessions are done.`, 10000);
   }
 }
 
@@ -1793,35 +1825,43 @@ function updatePanel() {
 // ---- stopping the manager -------------------------------------------------
 
 /**
- * Stop the session manager. The manager refuses while sessions are running
- * unless told to force, so the warning is enforced for every client and the
- * count in the dialog is the manager's, not this page's possibly stale list.
+ * Stop the session manager, or stop it and start it again. The manager
+ * refuses while sessions are running unless told to force, so the warning is
+ * enforced for every client and the count in the dialog is the manager's,
+ * not this page's possibly stale list.
  */
-async function stopManager({ force = false } = {}) {
-  const button = $('stop-manager');
-  button.disabled = true;
+async function stopManager({ force = false, restart = false } = {}) {
+  const buttons = [$('stop-manager'), $('restart-manager')];
+  for (const button of buttons) button.disabled = true;
   try {
-    const { running } = await api('POST', '/shutdown', force ? { force: true } : undefined);
-    enterStopping(running);
+    const body = force || restart ? { ...(force && { force: true }), ...(restart && { restart: true }) } : undefined;
+    const { running } = await api('POST', '/shutdown', body);
+    enterStopping(running, restart);
   } catch (err) {
     if (err instanceof AuthError) return showAuth(err.message);
     if (err.code === 'sessions_running') {
       const n = err.running;
       const what = `${n} session${n === 1 ? ' is' : 's are'} still running`;
       const them = n === 1 ? 'it' : 'all of them';
-      if (confirm(`${what}. Stopping the session manager ends ${them}. Stop anyway?`)) {
-        return stopManager({ force: true });
+      const verb = restart ? 'Restarting' : 'Stopping';
+      if (confirm(`${what}. ${verb} the session manager ends ${them}. ${restart ? 'Restart' : 'Stop'} anyway?`)) {
+        return stopManager({ force: true, restart });
       }
       return;
     }
     toast(err.message, 8000);
   } finally {
-    button.disabled = false;
+    for (const button of buttons) button.disabled = false;
   }
 }
 
+/** How long to wait for a restarted manager before telling the user how to start one by hand. */
+const RESTART_WAIT_MS = 30000;
+let restartTimer;
+
 /** The manager is going down, by this page's request or another client's. */
-function enterStopping(running = 0) {
+function enterStopping(running = 0, restart = false) {
+  if (restart) state.restarting = true;
   if (state.stopping) return;
   state.stopping = true;
   state.stopRemaining = null;
@@ -1835,17 +1875,70 @@ function enterStopping(running = 0) {
   renderSessions();
   $('app').hidden = true;
   const n = Number(running) || 0;
-  showStopped('stopping', 'Stopping the session manager…',
-    n ? `Ending ${n} running session${n === 1 ? '' : 's'}. This can take a few seconds.` : 'This can take a few seconds.');
-  setConnection('down', 'Stopping the session manager…');
+  const ending = n ? `Ending ${n} running session${n === 1 ? '' : 's'}. ` : '';
+  if (state.restarting) {
+    showStopped('restarting', 'Restarting the session manager…', `${ending}A new manager starts in a moment and this page reconnects to it by itself.`);
+    clearTimeout(restartTimer);
+    restartTimer = setTimeout(restartGaveUp, RESTART_WAIT_MS);
+  } else {
+    showStopped('stopping', 'Stopping the session manager…', `${ending}This can take a few seconds.`);
+  }
+  setConnection('down', state.restarting ? 'Restarting the session manager…' : 'Stopping the session manager…');
+}
+
+/** The manager is back: a `hello` arrived while the page was waiting out a stop. */
+function leaveStopping() {
+  state.stopping = false;
+  state.restarting = false;
+  clearTimeout(restartTimer);
+  $('stopped').hidden = true;
+  $('app').hidden = false;
+}
+
+/** A restarted manager did not come back in time; the user has to start one by hand. */
+function restartGaveUp() {
+  if (!state.stopping || !state.restarting) return;
+  state.restarting = false;
+  setConnection('down', 'Session manager stopped');
+  showStopped('stopped', 'The session manager did not come back',
+    `Nothing answered within ${Math.round(RESTART_WAIT_MS / 1000)} seconds of the restart. Check manager.log in the Agent Guild data folder, then start it yourself.`);
 }
 
 function showStopped(phase, title, text) {
   const el = $('stopped');
   el.classList.toggle('stopping', phase === 'stopping');
+  el.classList.toggle('restarting', phase === 'restarting');
   $('stopped-title').textContent = title;
   $('stopped-text').textContent = text;
+  // How to start again is only useful once the manager is really gone; a
+  // restart brings it back without the user doing anything.
+  $('stopped-help').hidden = phase !== 'stopped';
+  if (phase === 'stopped') renderStoppedHelp();
   el.hidden = false;
+}
+
+/** Instructions for starting the manager again, worded for this computer. */
+function renderStoppedHelp() {
+  const windows = /Win/.test(navigator.platform || navigator.userAgent);
+  $('stopped-how').textContent = isMac
+    ? 'To start again, open Terminal (search for it with Spotlight) and run:'
+    : windows
+      ? 'To start again, open Windows Terminal or PowerShell (search for it in the Start menu) and run:'
+      : 'To start again, open a terminal and run:';
+  const launcher = state.launcher;
+  $('stopped-launcher').hidden = !launcher;
+  $('stopped-launcher-path').textContent = launcher || '';
+}
+
+async function copyCommand() {
+  const button = $('copy-command');
+  try {
+    await navigator.clipboard.writeText('agent-guild open');
+    button.textContent = 'Copied';
+    setTimeout(() => { button.textContent = 'Copy'; }, 1500);
+  } catch {
+    toast('Could not copy. Select the command and copy it yourself.');
+  }
 }
 
 /**
@@ -1854,14 +1947,16 @@ function showStopped(phase, title, text) {
  * dropped without the event, must not be announced as a clean stop.
  */
 function showManagerStopped() {
-  setConnection('down', 'Session manager stopped');
   const n = state.stopRemaining;
-  if (n === 0) return showStopped('stopped', 'Session manager stopped', 'Every session has ended.');
-  if (n > 0) {
-    return showStopped('stopped', 'Session manager stopped',
-      `${n} session process${n === 1 ? '' : 'es'} did not confirm exiting in time and may still be running. Check your system's process list.`);
+  const sessions = n === 0 ? 'Every session has ended.'
+    : n > 0 ? `${n} session process${n === 1 ? '' : 'es'} did not confirm exiting in time and may still be running. Check your system's process list.`
+    : 'The manager went away before confirming that every session had ended.';
+  if (state.restarting) {
+    setConnection('down', 'Restarting the session manager…');
+    return showStopped('restarting', 'Restarting the session manager…', `${sessions} Waiting for the new manager; this page reconnects to it by itself.`);
   }
-  showStopped('stopped', 'Session manager stopped', 'The manager went away before confirming that every session had ended.');
+  setConnection('down', 'Session manager stopped');
+  showStopped('stopped', 'Session manager stopped', sessions);
 }
 
 // ---- events ---------------------------------------------------------------
@@ -1876,12 +1971,12 @@ function connectEvents() {
   ws.onmessage = (event) => {
     const msg = JSON.parse(event.data);
     if (msg.type === 'hello') {
-      if (state.stopping) {
-        // The manager is back after a stop; the page picks up where it was.
-        state.stopping = false;
-        $('stopped').hidden = true;
-        $('app').hidden = false;
-      }
+      // The manager is back after a stop or restart; the page picks up where it was.
+      if (state.stopping) leaveStopping();
+      state.version = msg.version || null;
+      state.pid = msg.pid || null;
+      state.launcher = typeof msg.launcher === 'string' ? msg.launcher : null;
+      renderVersion();
       state.sessions = new Map(msg.sessions.map((s) => [s.id, s]));
       for (const id of [...state.views.keys()]) if (!state.sessions.has(id)) dropSession(id);
       renderSessions();
@@ -1892,9 +1987,9 @@ function connectEvents() {
     } else if (msg.type === 'manager.upgrade') {
       setUpgrade(msg.upgrade);
     } else if (msg.type === 'manager.stopping') {
-      enterStopping(msg.running);
+      enterStopping(msg.running, msg.restart === true);
     } else if (msg.type === 'manager.stopped') {
-      enterStopping();
+      enterStopping(0, msg.restart === true);
       state.stopRemaining = Number(msg.remaining) || 0;
       showManagerStopped();
     } else if (msg.type === 'session.created' || msg.type === 'session.updated') {
@@ -1953,6 +2048,8 @@ function showAuth(message = '') {
   $('terminal-panel').hidden = true;
   $('stopped').hidden = true;
   state.stopping = false;
+  state.restarting = false;
+  clearTimeout(restartTimer);
   $('auth').hidden = false;
   $('auth-error').textContent = message;
   setConnection('down', 'Not connected');
@@ -2058,6 +2155,8 @@ $('models-more').addEventListener('click', () => {
   $('models-list').children[before]?.querySelector('.model-toggle')?.focus();
 });
 $('stop-manager').addEventListener('click', () => stopManager());
+$('restart-manager').addEventListener('click', () => stopManager({ restart: true }));
+$('copy-command').addEventListener('click', copyCommand);
 $('upgrade').addEventListener('click', upgradeManager);
 $('theme-toggle').addEventListener('click', toggleTheme);
 applyTheme(currentTheme());

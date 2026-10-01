@@ -133,6 +133,73 @@ test('open starts a background manager, status reports it, stop ends it', async 
   assert.ok(!fs.existsSync(path.join(home, 'manager.json')), 'runtime file is removed on shutdown');
 });
 
+test('restart starts a manager when none runs, and replaces a running one on the same port and token', async () => {
+  const health = async () => {
+    try {
+      const res = await fetch(`${base}/api/v1/health`, { signal: AbortSignal.timeout(500) });
+      return res.ok ? await res.json() : null;
+    } catch {
+      return null;
+    }
+  };
+  assert.equal(await health(), null, 'the previous test left the manager stopped');
+
+  const first = await run('restart');
+  assert.equal(first.code, 0, first.stderr);
+  assert.match(first.stdout, /was not running; started/);
+  const before = await health();
+  assert.ok(before, 'restart started a manager');
+  const tokenBefore = token();
+
+  // A session is running: the CLI's restart forces, like its stop.
+  const created = await call('POST', '/sessions', { providerId: 'fake', cwd: home });
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+
+  const events = new WebSocket(`ws://127.0.0.1:${port}/api/v1/events?token=${token()}`);
+  const messages = [];
+  events.on('message', (raw) => messages.push(JSON.parse(raw.toString())));
+  await new Promise((resolve, reject) => { events.once('open', resolve); events.once('error', reject); });
+  const closed = new Promise((resolve) => events.once('close', resolve));
+
+  const restarted = await run('restart');
+  assert.equal(restarted.code, 0, restarted.stderr);
+  assert.match(restarted.stdout, /Ending 1 running session/);
+  assert.match(restarted.stdout, /Session manager restarted/);
+  await closed;
+
+  // Clients learn that the stop is a restart, so a page can wait for the new manager.
+  const stopping = messages.find((m) => m.type === 'manager.stopping');
+  assert.equal(stopping?.restart, true, `manager.stopping should carry restart: ${JSON.stringify(messages.map((m) => m.type))}`);
+  assert.equal(stopping.running, 1);
+  const done = messages.find((m) => m.type === 'manager.stopped');
+  assert.equal(done?.restart, true);
+  assert.equal(done.remaining, 0);
+
+  const after = await health();
+  assert.ok(after, 'a manager answers after the restart');
+  assert.notEqual(after.pid, before.pid, 'the new manager is another process');
+  assert.equal(token(), tokenBefore, 'the token is kept');
+  const sessions = await call('GET', '/sessions');
+  assert.equal(sessions.status, 200, 'the kept token works against the new manager');
+  assert.deepEqual(sessions.body.sessions, [], 'the new manager starts with no sessions');
+  const runtime = JSON.parse(fs.readFileSync(path.join(home, 'manager.json'), 'utf8'));
+  assert.equal(runtime.pid, after.pid, 'the runtime file names the new manager');
+
+  // The hello message carries what the page shows: the version and the launcher, if any.
+  const hello = await new Promise((resolve, reject) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/api/v1/events?token=${token()}`);
+    ws.once('message', (raw) => { resolve(JSON.parse(raw.toString())); ws.close(); });
+    ws.once('error', reject);
+  });
+  assert.equal(hello.type, 'hello');
+  assert.equal(hello.version, after.version);
+  assert.equal(hello.pid, after.pid);
+  assert.ok(hello.launcher === null || typeof hello.launcher === 'string');
+
+  const stopped = await run('stop');
+  assert.match(stopped.stdout, /stopped/);
+});
+
 test('open and status say when the running manager is another version', async () => {
   const otherHome = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-launcher-'));
   const server = http.createServer((req, res) => {

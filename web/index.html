@@ -16,6 +16,7 @@
     <div class="brand">
       <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="currentColor"/><path d="M9 22l7-12 7 12" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
       <h1>Agent Guild</h1>
+      <span id="version" class="version" hidden></span>
     </div>
     <div class="topbar-end">
       <div id="connection" class="connection" role="status" aria-live="polite">
@@ -24,6 +25,7 @@
       <span id="upgrade-note" class="upgrade-note" hidden></span>
       <button id="upgrade" class="btn upgrade" type="button" hidden></button>
       <button id="theme-toggle" class="btn theme-toggle" type="button"></button>
+      <button id="restart-manager" class="btn restart-manager" type="button" hidden>Restart manager</button>
       <button id="stop-manager" class="btn danger stop-manager" type="button" hidden title="Stop the session manager. This ends every session.">Stop manager</button>
     </div>
   </header>
@@ -73,9 +75,15 @@
   <section id="stopped" class="auth notice" hidden aria-live="polite">
     <h2 id="stopped-title">Stopping the session manager…</h2>
     <p id="stopped-text">Ending every session. This can take a few seconds.</p>
-    <p>To start again, run this command or double-click the launcher:</p>
-    <pre>agent-guild open</pre>
-    <p>This page reconnects by itself when the manager is back.</p>
+    <div id="stopped-help" class="stopped-help" hidden>
+      <p id="stopped-how">To start again, open a terminal and run:</p>
+      <div class="command">
+        <pre>agent-guild open</pre>
+        <button id="copy-command" class="btn" type="button" title="Copy the command">Copy</button>
+      </div>
+      <p id="stopped-launcher" hidden>Or double-click <code id="stopped-launcher-path"></code> in your file manager.</p>
+      <p>This page reconnects by itself when the manager is back.</p>
+    </div>
   </section>
 
   <div id="terminal-panel" class="terminal-panel" hidden role="dialog" aria-modal="false" aria-labelledby="panel-title">

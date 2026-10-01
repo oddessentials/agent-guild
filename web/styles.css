@@ -49,6 +49,10 @@ code, pre { font-family: ui-monospace, "Cascadia Code", Menlo, Consolas, monospa
 }
 .brand { display: flex; align-items: center; gap: 10px; }
 .brand-mark { width: 26px; height: 26px; color: var(--accent); flex: none; }
+.version {
+  font-size: 0.72rem; font-weight: 600; padding: 1px 7px; border-radius: 999px; white-space: nowrap;
+  background: var(--surface-2); color: var(--muted); border: 1px solid var(--border); font-variant-numeric: tabular-nums;
+}
 .topbar-end { display: flex; align-items: center; justify-content: flex-end; gap: 14px; flex-wrap: wrap; min-width: 0; }
 .connection { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 0.85rem; }
 .connection .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); }
@@ -249,8 +253,8 @@ main { max-width: 1200px; margin: 0 auto; padding: 20px 16px 48px; display: grid
 .btn.danger { color: var(--danger); }
 .btn.danger:hover { border-color: var(--danger); }
 .btn:disabled { opacity: 0.6; cursor: progress; }
-.stop-manager, .theme-toggle, .upgrade { white-space: nowrap; }
-.btn.upgrade { color: var(--warn); border-color: var(--warn); }
+.stop-manager, .restart-manager, .theme-toggle, .upgrade { white-space: nowrap; }
+.btn.upgrade, .btn.restart-manager.pending { color: var(--warn); border-color: var(--warn); }
 .upgrade-note { font-size: 0.85rem; color: var(--warn); }
 
 .empty { color: var(--muted); margin: 8px 0 0; }
@@ -259,8 +263,12 @@ main { max-width: 1200px; margin: 0 auto; padding: 20px 16px 48px; display: grid
 .auth p { margin: 0; color: var(--muted); line-height: 1.5; }
 .auth pre { margin: 0; padding: 10px 12px; background: var(--surface-2); border-radius: 8px; }
 .auth form { display: flex; gap: 8px; }
+.stopped-help { display: grid; gap: 12px; }
+.command { display: flex; align-items: center; gap: 8px; }
+.command pre { flex: 1; min-width: 0; overflow-x: auto; }
+.stopped-help code { color: var(--text); overflow-wrap: anywhere; }
 .notice h2 { color: var(--danger); }
-.notice.stopping h2 { color: var(--warn); }
+.notice.stopping h2, .notice.restarting h2 { color: var(--warn); }
 .error { color: var(--danger); min-height: 1.2em; }
 
 .terminal-panel {

@@ -4,25 +4,21 @@
 //   agent-guild [open]     start the session manager if needed, open the page
 //   agent-guild start      run the session manager in the foreground
 //   agent-guild stop       stop the manager (ends all sessions)
+//   agent-guild restart    stop the manager and start it again (ends all sessions)
 //   agent-guild status     show whether the manager is running
 //   agent-guild url        print the page URL (includes the access token)
 
 import fs from 'node:fs';
-import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
 import {
   DEFAULT_HOST,
   VERSION,
-  ensureDataDir,
   loadOrCreateToken,
   paths,
   readRuntimeFile,
   resolvePort,
 } from '../src/manager/config.mjs';
-
-const here = path.dirname(fileURLToPath(import.meta.url));
-const managerEntry = path.resolve(here, '../src/manager/main.mjs');
+import { spawnManager } from '../src/manager/launch.mjs';
 
 function usage() {
   console.log(`Usage: agent-guild [command] [--no-browser]
@@ -31,6 +27,7 @@ Commands:
   open      Start the session manager if needed and open the web page (default)
   start     Run the session manager in the foreground
   stop      Stop the session manager and every session it owns
+  restart   Stop the session manager and start it again; ends every session
   status    Show whether the session manager is running
   url       Print the web page URL, including the access token
 
@@ -88,31 +85,11 @@ function tailLog(lines = 15) {
   }
 }
 
-const MAX_LOG_BYTES = 5 * 1024 * 1024;
-
-/** Keep one previous log so the file cannot grow without bound. */
-function rotateLog() {
-  try {
-    if (fs.statSync(paths.log).size > MAX_LOG_BYTES) fs.renameSync(paths.log, `${paths.log}.1`);
-  } catch { /* no log yet */ }
-}
-
 async function ensureManager() {
   const running = await health(baseUrl());
   if (running) return { url: baseUrl(), started: false, version: running.version };
 
-  ensureDataDir();
-  rotateLog();
-  const log = fs.openSync(paths.log, 'a');
-  fs.writeSync(log, `\n--- starting manager ${new Date().toISOString()} ---\n`);
-  const child = spawn(process.execPath, [managerEntry], {
-    detached: true,
-    stdio: ['ignore', log, log],
-    windowsHide: true,
-    env: process.env,
-  });
-  child.unref();
-  fs.closeSync(log);
+  const child = spawnManager();
 
   let exited = false;
   child.once('exit', () => { exited = true; });
@@ -147,22 +124,28 @@ async function cmdOpen({ browser }) {
   }
 }
 
+/** Ask a running manager to stop, or to stop and start again. Resolves to the running session count it reported. */
+async function requestShutdown(url, { restart = false } = {}) {
+  // `stop` and `restart` are documented as ending every session, so they do
+  // not ask; the web page's buttons are the ones that confirm first.
+  const res = await fetch(`${url}/api/v1/shutdown`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${loadOrCreateToken()}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(restart ? { force: true, restart: true } : { force: true }),
+  });
+  if (!res.ok) throw new Error(`${restart ? 'restart' : 'stop'} failed: HTTP ${res.status}`);
+  const { running = 0 } = await res.json().catch(() => ({}));
+  if (running > 0) console.log(`Ending ${running} running session(s).`);
+  return running;
+}
+
 async function cmdStop() {
   const url = baseUrl();
   if (!(await health(url))) {
     console.log('Session manager is not running.');
     return;
   }
-  // `stop` is documented as ending every session, so it does not ask; the
-  // web page's Stop manager button is the one that confirms first.
-  const res = await fetch(`${url}/api/v1/shutdown`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${loadOrCreateToken()}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ force: true }),
-  });
-  if (!res.ok) throw new Error(`stop failed: HTTP ${res.status}`);
-  const { running = 0 } = await res.json().catch(() => ({}));
-  if (running > 0) console.log(`Ending ${running} running session(s).`);
+  await requestShutdown(url);
   for (let i = 0; i < 40; i++) {
     await new Promise((r) => setTimeout(r, 150));
     if (!(await health(url, 300))) {
@@ -171,6 +154,32 @@ async function cmdStop() {
     }
   }
   console.log('Stop requested; the manager is still shutting down.');
+}
+
+async function cmdRestart() {
+  const url = baseUrl();
+  const before = await health(url);
+  if (!before) {
+    // Nothing to stop: a restart of a stopped manager is a start.
+    const { url: started, version } = await ensureManager();
+    console.log(`Session manager was not running; started Agent Guild ${version} at ${started}.`);
+    return;
+  }
+  await requestShutdown(url, { restart: true });
+  // The old manager starts its successor from the package on disk once its
+  // sessions have ended and its port is free, then exits.
+  const deadline = Date.now() + 30000;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 250));
+    const now = await health(url, 500);
+    if (now && now.pid !== before.pid) {
+      const changed = now.version !== before.version ? `, now Agent Guild ${now.version} (was ${before.version})` : '';
+      console.log(`Session manager restarted at ${url}${changed}.`);
+      return;
+    }
+  }
+  const details = tailLog();
+  throw new Error(`the session manager did not come back after the restart.${details ? `\n\nRecent log (${paths.log}):\n${details}` : ''}`);
 }
 
 async function cmdStatus() {
@@ -222,6 +231,7 @@ async function main() {
       return undefined;
     }
     case 'stop': return cmdStop();
+    case 'restart': return cmdRestart();
     case 'status': return cmdStatus();
     case 'url': {
       console.log(pageUrl(baseUrl(), loadOrCreateToken()));
