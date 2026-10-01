@@ -118,7 +118,12 @@ test('the release plan records the version and notes that end with the install c
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-release-'));
   const out = path.join(cwd, 'plan');
   fs.writeFileSync(path.join(cwd, 'package.json'), JSON.stringify({ name: NAME }));
-  const context = { cwd, env: { RELEASE_PLAN_DIR: out }, nextRelease: { version: '1.2.3', notes: '## 1.2.3\n\n* a change' } };
+  const context = {
+    cwd,
+    env: { RELEASE_PLAN_DIR: out },
+    lastRelease: { version: '1.2.2' },
+    nextRelease: { version: '1.2.3', notes: '## 1.2.3\n\n* a change' },
+  };
 
   const added = await generateNotes({}, context);
   assert.match(added, /npm install -g @scope\/app@1\.2\.3\n/);
@@ -129,5 +134,9 @@ test('the release plan records the version and notes that end with the install c
   await generateNotes({}, { ...context, nextRelease: { version: '1.2.4' } });
   assert.equal(fs.readFileSync(path.join(out, 'notes.md'), 'utf8').startsWith('### Install or update'), true);
   await assert.rejects(generateNotes({}, { ...context, env: {} }), /RELEASE_PLAN_DIR/);
+
+  fs.rmSync(out, { recursive: true, force: true });
+  await assert.rejects(generateNotes({}, { ...context, lastRelease: {} }), /No release tag was found/);
+  assert.equal(fs.existsSync(out), false, 'a first release without a baseline tag plans nothing');
   fs.rmSync(cwd, { recursive: true, force: true });
 });
