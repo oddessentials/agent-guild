@@ -66,6 +66,9 @@ page stores it and then removes it from the address bar.
 | `agent-guild start` | Run the manager in the foreground, for debugging. |
 | `agent-guild url` | Print the page URL with its token. |
 
+**Changelog:** each version's changes are listed on the
+[Releases page](https://github.com/oddessentials/agent-guild/releases).
+
 ## Configure providers
 
 Create `providers.json` in the data folder to change or add providers:
