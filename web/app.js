@@ -1460,9 +1460,9 @@ function changelogSummary() {
 
 function changelogNote(changelog) {
   if (changelog?.releases.length) return [];
-  if (changelogView.failed) return [`Release notes could not be loaded: ${changelogView.failed}. `, releasesLink('Read them on GitHub ↗')];
+  if (changelogView.failed) return [`Release notes could not be loaded: ${changelogView.failed}. `, releasesLink('Read them on GitHub')];
   if (!changelog || changelog.refreshing) return ['Loading release notes…'];
-  if (changelog.error) return [`Release notes could not be loaded. GitHub Releases: ${changelog.error}. `, releasesLink('Read them on GitHub ↗')];
+  if (changelog.error) return [`Release notes could not be loaded. GitHub Releases: ${changelog.error}. `, releasesLink('Read them on GitHub')];
   return ['No releases yet.'];
 }
 
@@ -1473,7 +1473,7 @@ function renderChangelogStatus(changelog) {
     lines.push(['From GitHub Releases', updated].filter(Boolean).join(' · '));
     if (changelog.error && changelog.releases.length) lines.push(`The last check failed (${changelog.error}); showing notes fetched ${relativeTime(changelog.okAt)}.`);
   }
-  lines.push(releasesLink('All releases on GitHub ↗'));
+  lines.push(releasesLink('All releases on GitHub'));
   $('changelog-status').replaceChildren(...lines.map((content) => {
     const line = document.createElement('span');
     line.append(content);

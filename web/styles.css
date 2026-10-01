@@ -93,7 +93,7 @@ code, pre { font-family: var(--font-mono); }
   background: var(--surface-2); color: var(--muted); border: 1px solid var(--border); font-variant-numeric: tabular-nums; cursor: pointer;
 }
 .version:hover { color: var(--text); border-color: var(--muted); }
-.version:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.version:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 .version.unread::after {
   content: ""; position: absolute; top: -3px; right: -3px; width: 8px; height: 8px; border-radius: 50%;
   background: var(--accent); box-shadow: 0 0 0 2px var(--surface);
