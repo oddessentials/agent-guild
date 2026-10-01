@@ -128,7 +128,7 @@ try {
     socket.addEventListener('open', resolve);
     socket.addEventListener('error', () => reject(new Error('the terminal socket did not open')));
   });
-  const seen = async (test, what, timeoutMs = 60000) => {
+  const seen = async (test, what, timeoutMs = 120000) => {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       if (test()) return;

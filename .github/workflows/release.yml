@@ -15,8 +15,6 @@ jobs:
   plan:
     name: Plan
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     outputs:
       version: ${{ steps.plan.outputs.version }}
     steps:
@@ -33,10 +31,10 @@ jobs:
         working-directory: .github/release
       - id: plan
         env:
-          GITHUB_TOKEN: ${{ github.token }}
           RELEASE_PLAN_DIR: ${{ runner.temp }}/release-plan
         run: |
-          node .github/release/node_modules/semantic-release/bin/semantic-release.js --dry-run
+          git clone --quiet --bare . "$RUNNER_TEMP/origin.git"
+          node .github/release/node_modules/semantic-release/bin/semantic-release.js --dry-run --repository-url "file://$RUNNER_TEMP/origin.git"
           if [ -f "$RELEASE_PLAN_DIR/version" ]; then
             version=$(cat "$RELEASE_PLAN_DIR/version")
             if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -96,11 +94,11 @@ jobs:
           integrity="sha512-$(openssl dgst -sha512 -binary "$tarball" | base64 -w 0)"
           echo "name=$name" >> "$GITHUB_OUTPUT"
           echo "integrity=$integrity" >> "$GITHUB_OUTPUT"
-          published=$(npm view "$name@$VERSION" dist.integrity 2>/dev/null || true)
+          published=$(npm view "$name@$VERSION" dist.integrity --prefer-online 2>/dev/null || true)
           if [ "$published" = "$integrity" ]; then
             echo "$name@$VERSION is already on npm with these contents."
           elif [ -n "$published" ]; then
-            echo "::error::$name@$VERSION is already on npm with different contents."
+            echo "::error::$name@$VERSION is already on npm with different contents. If an earlier release run published it and then failed, re-run the failed jobs of that run so it is tagged, then re-run this one."
             exit 1
           else
             npm publish "$tarball" --provenance --access public
@@ -164,7 +162,7 @@ jobs:
         run: |
           published=''
           for attempt in $(seq 1 30); do
-            published=$(npm view "$PACKAGE" dist.integrity 2>/dev/null || true)
+            published=$(npm view "$PACKAGE" dist.integrity --prefer-online 2>/dev/null || true)
             if [ -n "$published" ]; then break; fi
             sleep 10
           done

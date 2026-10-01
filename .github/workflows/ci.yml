@@ -36,6 +36,23 @@ jobs:
       - run: npm test
         timeout-minutes: 5
 
+  plan:
+    name: Release plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: .github/release/package-lock.json
+      - run: npm ci --ignore-scripts
+        working-directory: .github/release
+      - run: node tests/release/plan.mjs
+
   pack:
     name: Pack
     runs-on: ubuntu-latest
@@ -107,8 +124,10 @@ jobs:
           NPM: ${{ matrix.npm }}
         run: |
           if [ "$NPM" = bundled ]; then
+            npm --version
             npm install --global ./package/*.tgz
           else
+            npx --yes "npm@$NPM" --version
             npx --yes "npm@$NPM" install --global ./package/*.tgz
           fi
       - env:
@@ -118,13 +137,14 @@ jobs:
   required:
     name: Required checks
     if: always()
-    needs: [test, pack, verify]
+    needs: [test, plan, pack, verify]
     runs-on: ubuntu-latest
     steps:
       - env:
           TEST: ${{ needs.test.result }}
+          PLAN: ${{ needs.plan.result }}
           PACK: ${{ needs.pack.result }}
           VERIFY: ${{ needs.verify.result }}
         run: |
-          echo "test: $TEST, pack: $PACK, verify: $VERIFY"
-          [ "$TEST" = success ] && [ "$PACK" = success ] && [ "$VERIFY" = success ]
+          echo "test: $TEST, plan: $PLAN, pack: $PACK, verify: $VERIFY"
+          [ "$TEST" = success ] && [ "$PLAN" = success ] && [ "$PACK" = success ] && [ "$VERIFY" = success ]
