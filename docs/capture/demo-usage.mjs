@@ -21,9 +21,6 @@ const REPORTS = {
   google: {
     default: { plan: 'free', windows: [{ label: 'Pro', usedPercent: 18, resetsAt: inHours(15) }, { label: 'Flash', usedPercent: 6, resetsAt: inHours(15) }] },
   },
-  xai: {
-    default: { plan: 'supergrok', windows: [{ label: 'Daily', usedPercent: 33, resetsAt: inHours(9) }] },
-  },
 };
 
 const report = REPORTS[provider]?.[account] || REPORTS[provider]?.default || { windows: [] };

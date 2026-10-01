@@ -200,10 +200,11 @@ npm test
 * In a checkout, `launchers/AgentGuild.cmd` (Windows) and
   `launchers/AgentGuild.command` (macOS) start Agent Guild with a
   double-click.
-* `node docs/capture/capture.mjs` refreshes the screenshots in `docs/images`
-  from the real page, with demo sessions in place of real tools. It needs
-  Chrome or Edge and leaves any running manager alone. See the comment at the
-  top of the script for options.
+* `node docs/capture/capture.mjs --root <folder>` refreshes the screenshots
+  in `docs/images` from the real page, with demo sessions in place of real
+  tools. The cards show the folder's path, so pick a neutral one such as
+  `D:\code` or `/work`. It needs Chrome or Edge and leaves any running
+  manager alone. See the comment at the top of the script for options.
 * Pull request titles follow
   [Conventional Commits](https://www.conventionalcommits.org/). Merging to
   `main` publishes a release to npm and GitHub when it includes a `feat`,
