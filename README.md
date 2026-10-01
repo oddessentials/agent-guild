@@ -45,15 +45,10 @@ arm64, so no compiler is needed. WSL is not required.
 
 ## Install and run
 
-From a copy of this repository:
-
 ```sh
-npm install
-npm start          # same as: node bin/agent-guild.mjs open
+npm install -g @oddessentials/agent-guild
+agent-guild
 ```
-
-Without a terminal, double-click `launchers/AgentGuild.cmd` on Windows or
-`launchers/AgentGuild.command` on macOS. The first run installs dependencies.
 
 `agent-guild open` starts the session manager in the background if needed and
 opens the page. The page URL carries an access token in its `#` fragment. The
@@ -157,9 +152,6 @@ coding tool in `tests/fixtures`. CI runs them on Windows, macOS and Linux.
 
 ## Current limits
 
-* There is no packaged installer yet. Users need Node.js and a copy of this
-  folder. A bundled runtime with a Windows installer and a macOS app bundle
-  is the next packaging step.
 * Sessions end when the manager stops or the computer restarts.
 * Gemini CLI usage meters need its sign-in in the OS keychain (macOS, or
   Linux with `secret-tool`) or in the older `oauth_creds.json`; Gemini CLI's
