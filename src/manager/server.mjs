@@ -100,6 +100,7 @@ export function createManagerServer({
   manager,
   registry,
   usage,
+  modelStats,
   token,
   host = '127.0.0.1',
   port = 0,
@@ -217,6 +218,9 @@ export function createManagerServer({
     }
     if (route === '/usage' && method === 'GET') {
       return sendJson(res, 200, { usage: await usage.all() });
+    }
+    if (route === '/model-stats' && method === 'GET') {
+      return sendJson(res, 200, await modelStats.snapshot(manager.list()));
     }
     const installMatch = route.match(/^\/providers\/([a-z0-9][a-z0-9_-]{0,31})\/install$/);
     if (installMatch && method === 'POST') {

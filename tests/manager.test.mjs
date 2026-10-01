@@ -860,6 +860,51 @@ test('shutdown is refused while sessions are running unless forced', async () =>
   await call('DELETE', `/sessions/${session.id}`);
 });
 
+test('model stats come from the catalog and match each session\'s model', async () => {
+  const { createManagerServer } = await import('../src/manager/server.mjs');
+  const { ModelStats } = await import('../src/manager/model-stats.mjs');
+  const entry = (id, coding) => ({
+    id,
+    name: `Test: ${id}`,
+    created: 1780000000,
+    architecture: { output_modalities: ['text'] },
+    supported_parameters: ['tools'],
+    benchmarks: { artificial_analysis: { coding_index: coding } },
+  });
+  let fetches = 0;
+  const modelStats = new ModelStats({
+    registry: ctx.registry,
+    fetchImpl: async () => {
+      fetches++;
+      return { ok: true, json: async () => ({ data: [entry('test/fake-model-1', 50), entry('test/fake-model-2', 70)] }) };
+    },
+  });
+  const spare = createManagerServer({
+    manager: ctx.manager,
+    registry: ctx.registry,
+    usage: { all: async () => [] },
+    modelStats,
+    token,
+    webDir: path.join(here, '..', 'web'),
+    onShutdownRequest: () => {},
+  });
+  await spare.listen();
+  const session = await createFake({ args: ['--model', 'fake-model-1'] });
+  try {
+    const res = await fetch(`${spare.url}/api/v1/model-stats`, { headers: { Authorization: `Bearer ${token}` } });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.deepEqual(body.providers.fake.models, ['test/fake-model-1', 'test/fake-model-2']);
+    assert.equal(body.sessions[session.id], 'test/fake-model-1');
+    assert.deepEqual([body.models['test/fake-model-1'].stats.coding.level, body.models['test/fake-model-2'].stats.coding.tier], [0, 'S']);
+    assert.equal((await fetch(`${spare.url}/api/v1/model-stats`)).status, 401);
+    assert.equal(fetches, 1);
+  } finally {
+    await call('DELETE', `/sessions/${session.id}`);
+    await spare.close();
+  }
+});
+
 test('no session can start once a shutdown has been accepted', async () => {
   // A second API server over the same manager, whose shutdown callback does
   // nothing, so the accepted request can be observed without exiting.
