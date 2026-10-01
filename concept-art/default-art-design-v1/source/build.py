@@ -10,7 +10,7 @@ PROVIDERS = ["anthropic", "google", "openai", "shell", "xai"]
 STATES = ["idle", "working", "locked"]
 CHARACTER_WIDTH = 640
 PROPS = {
-    "ui/guild-crest.png": 96,
+    "ui/guild-crest.png": 160,
     "ui/level-medallion.png": 128,
     "ui/gem-mana.png": 48,
     "ui/gem-vitality.png": 48,
