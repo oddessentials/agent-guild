@@ -109,6 +109,43 @@
   .meter.low .meter-fill { background: var(--warn); box-shadow: 0 0 8px rgba(224, 168, 74, 0.5); }
   .meter.empty .meter-fill { background: var(--danger); box-shadow: 0 0 8px rgba(239, 107, 102, 0.5); }
 
+  .model-stats-head { color: var(--gold); }
+  .stat-bar { height: 7px; background: #0c0e12; box-shadow: inset 0 0 0 1px rgba(232, 196, 124, 0.18); }
+  .stat-fill {
+    background: linear-gradient(90deg, color-mix(in srgb, var(--tier) 55%, #000), var(--tier));
+    box-shadow: 0 0 8px color-mix(in srgb, var(--tier) 50%, transparent);
+  }
+  .stat-tier {
+    border-radius: 3px; font-family: "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    background: linear-gradient(color-mix(in srgb, var(--tier) 34%, #1a1d26), #0d0f15);
+    border-color: color-mix(in srgb, var(--tier) 70%, #000);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 0 6px color-mix(in srgb, var(--tier) 30%, transparent);
+  }
+  .tier-s .stat-tier {
+    color: #2b1b06; border-color: #f6dea6;
+    background: linear-gradient(180deg, #fbe9bd 0%, #e2b867 55%, #a97b35 100%);
+    box-shadow: 0 0 10px rgba(232, 196, 124, 0.6);
+  }
+
+  .models {
+    border-radius: 6px; border-color: #4a3d25; background: #12141a;
+    box-shadow: inset 0 0 0 1px rgba(232, 196, 124, 0.06), 0 24px 60px rgba(0, 0, 0, 0.6);
+  }
+  .models::after {
+    content: ""; position: absolute; inset: 0; z-index: 2; pointer-events: none;
+    border: 44px solid transparent; border-image: url("/art/ui/frame.png") 168;
+  }
+  .models::backdrop { background: rgba(5, 6, 9, 0.72); }
+  .models-bar { padding: 20px 24px 12px; }
+  .models-body { padding: 0 24px 14px; }
+  .models-source { padding: 10px 24px 20px; }
+  .models-bar, .models-source, .model-columns, .model { border-color: #2a2418; }
+  .model-columns { background: #12141a; }
+  .model-toggle:hover { background: rgba(232, 196, 124, 0.06); }
+  .model-group h4 { color: #c9ab72; }
+  .badge { background: rgba(0, 0, 0, 0.45); border-color: #4a3d25; }
+  .model-pill:hover { border-color: var(--gold-dim); }
+
   .session-card { padding-left: 152px; min-height: 196px; }
   .session-card::before {
     inset: 0 auto 0 0; width: 168px; background-size: 168px auto;

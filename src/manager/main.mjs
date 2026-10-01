@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { ProviderRegistry } from './providers.mjs';
 import { SessionManager } from './session-manager.mjs';
 import { UsageMonitor } from './usage.mjs';
+import { ModelStats } from './model-stats.mjs';
 import { createManagerServer } from './server.mjs';
 import { resolveBaseEnv, pathReader } from './shell-env.mjs';
 import { writeReportShims } from './report-shims.mjs';
@@ -52,6 +53,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
   let api;
   const manager = new SessionManager({ registry, baseEnv, getApiUrl: () => api.url, sessionDefaults, shimDir });
   const usage = new UsageMonitor({ registry, env: baseEnv });
+  const modelStats = new ModelStats({ registry });
   let closing = null;
 
   const versionTimer = setInterval(() => registry.refreshVersions().catch(() => {}), VERSION_REFRESH_MS);
@@ -79,6 +81,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
     manager,
     registry,
     usage,
+    modelStats,
     token,
     host,
     port,

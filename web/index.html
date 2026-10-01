@@ -83,6 +83,24 @@
     <div id="terminal-host" class="terminal-host"></div>
   </div>
 
+  <dialog id="models" class="models" aria-labelledby="models-title">
+    <div class="models-bar">
+      <span id="models-icon" class="provider-icon small"></span>
+      <div class="models-heading">
+        <h2 id="models-title"></h2>
+        <p id="models-sub" class="sub"></p>
+      </div>
+      <button id="models-close" class="btn" type="button">Close</button>
+    </div>
+    <div class="models-body">
+      <div id="models-columns" class="model-columns" aria-hidden="true"></div>
+      <div id="models-list"></div>
+      <button id="models-more" class="btn models-more" type="button" hidden></button>
+      <p id="models-note" class="models-note"></p>
+    </div>
+    <p id="models-source" class="models-source"></p>
+  </dialog>
+
   <div id="toast" class="toast" role="alert" hidden></div>
 
   <template id="provider-template">
@@ -94,6 +112,7 @@
         <span class="state"></span>
       </span>
       <div class="usage"></div>
+      <div class="model-stats"></div>
       <div class="provider-links">
         <a class="console-link usage-link" target="_blank" rel="noopener noreferrer">Usage ↗</a>
         <a class="console-link billing-link" target="_blank" rel="noopener noreferrer">Billing ↗</a>
@@ -120,6 +139,26 @@
     </div>
   </template>
 
+  <template id="stat-template">
+    <div class="stat">
+      <span class="stat-label"></span>
+      <span class="stat-bar"><span class="stat-fill"></span></span>
+      <span class="stat-value"></span>
+      <span class="stat-note"></span>
+    </div>
+  </template>
+
+  <template id="model-template">
+    <section class="model">
+      <h3 class="model-head">
+        <button class="model-toggle" type="button" aria-expanded="false">
+          <span class="model-title"><span class="model-name"></span></span>
+        </button>
+      </h3>
+      <div class="model-detail" hidden></div>
+    </section>
+  </template>
+
   <template id="session-template">
     <article class="session-card" role="listitem" tabindex="0">
       <span class="level-badge" aria-hidden="true"></span>
@@ -129,7 +168,7 @@
           <div class="name"></div>
           <div class="meta"></div>
         </div>
-        <span class="model-pill"></span>
+        <button class="model-pill" type="button"></button>
         <span class="status-pill"></span>
       </div>
       <div class="cwd-line"></div>

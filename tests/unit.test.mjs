@@ -17,6 +17,9 @@ import {
   UsageMonitor, readClaudeCredentials, readCodexCredentials, readGeminiCredentials, geminiOAuthClientFromInstall, geminiKeychainLookup,
   claudeKeychainService, claudeCredentialsFile, fetchClaudeUsage, fetchCodexUsage, fetchGeminiUsage, commandUsage, toIso, windowLabel, clampPercent,
 } from '../src/manager/usage.mjs';
+import {
+  ModelStats, parseCatalog, indexCatalog, standing, tierFor, providerModels, modelNames, resolveModel, describeCatalog,
+} from '../src/manager/model-stats.mjs';
 import crypto from 'node:crypto';
 
 function tempDir() {
@@ -1597,4 +1600,182 @@ test('shutdown reports the processes that did not confirm exiting in time', asyn
   stuck.sessions.set('a', fakeSession(Promise.resolve()));
   stuck.sessions.set('b', fakeSession(new Promise(() => {}))); // never exits
   assert.deepEqual(await stuck.shutdown({ timeoutMs: 50 }), { remaining: 1 });
+});
+
+function catalogEntry(id, { created = 1780000000, coding, intelligence, agentic, arena = [], tools = true, output = ['text'], canonical = '', name = `Test: ${id}`, context = 100000 } = {}) {
+  return {
+    id,
+    canonical_slug: canonical,
+    name,
+    created,
+    context_length: context,
+    architecture: { input_modalities: ['text', 'image'], output_modalities: output },
+    pricing: { prompt: '0.000003', completion: '0.000015' },
+    top_provider: { max_completion_tokens: 64000 },
+    supported_parameters: tools ? ['temperature', 'tools'] : ['temperature'],
+    benchmarks: {
+      artificial_analysis: { coding_index: coding ?? null, intelligence_index: intelligence ?? null, agentic_index: agentic ?? null },
+      design_arena: arena,
+    },
+  };
+}
+
+const arenaRow = (category, elo, rank = null, arena = 'models') => ({ arena, category, elo, win_rate: 60, rank });
+const catalogOf = (...entries) => indexCatalog(parseCatalog({ data: entries }));
+const statsOf = (index, providers, sessions = []) =>
+  describeCatalog({ index, retrievedAt: '2026-10-01T00:00:00.000Z', stale: false, error: null }, providers, sessions);
+
+test('levels rank a result among the other results, and ties share the average place', () => {
+  assert.deepEqual([100, 90, 89, 75, 74, 50, 49, 25, 24, 0].map(tierFor), ['S', 'S', 'A', 'A', 'B', 'B', 'C', 'C', 'D', 'D']);
+  const values = Array.from({ length: 21 }, (_, i) => 100 - i);
+  const others = (i) => values.filter((_, j) => j !== i);
+  assert.deepEqual(standing(98, others(2)), { level: 90, tier: 'S', place: 3, tied: false, of: 21 });
+  assert.equal(standing(100, others(0)).level, 100);
+  assert.equal(standing(80, others(20)).level, 0);
+  assert.deepEqual(standing(8, [10, 8, 8, 1]), { level: 50, tier: 'B', place: 2, tied: true, of: 5 });
+  assert.equal(standing(5, [5, 3, 2, 1]).level, 88, 'half a level rounds up');
+  assert.equal(standing(99, []), null, 'no level without another result to compare with');
+});
+
+test('the catalog keeps well-formed listings and only published numbers', () => {
+  const entry = catalogEntry('anthropic/claude-x-1', {
+    name: 'Anthropic: Claude X 1',
+    coding: 70,
+    arena: [arenaRow('website', 1300, 4), arenaRow('website', 1200, 9), arenaRow('svg', 1250, 2), { arena: 'models', category: 'gamedev', elo: 'high' }],
+  });
+  entry.benchmarks.artificial_analysis.intelligence_index = '55';
+  entry.pricing = { prompt: '0.000004', completion: '-1' };
+  const listings = parseCatalog({ data: [entry, catalogEntry('~anthropic/claude-x-latest'), catalogEntry('No Author'), null, { id: 42 }] });
+  assert.deepEqual(listings.map((listing) => listing.id), ['anthropic/claude-x-1']);
+  const [listing] = listings;
+  assert.equal(listing.name, 'Claude X 1');
+  assert.deepEqual(Object.keys(listing.values).sort(), ['coding', 'svg'], 'a string score and a category listed twice are not results');
+  assert.deepEqual(listing.values.svg, { value: 1250, rank: 2, winRate: 60 });
+  assert.deepEqual(listing.price, { input: 4, output: null });
+  assert.deepEqual([listing.context, listing.maxOutput, listing.tools, listing.text], [100000, 64000, true, true]);
+  assert.deepEqual(parseCatalog({}), []);
+});
+
+test('confirmed duplicate listings merge, and listings that disagree stay apart or are dropped', () => {
+  const index = catalogOf(
+    catalogEntry('openai/gpt-9-luna', { canonical: 'openai/gpt-9-luna-20260922', coding: 70, arena: [arenaRow('website', 1500, 2)] }),
+    catalogEntry('openai/gpt-9-luna:batch', { canonical: 'openai/gpt-9-luna-20260922', coding: 70, arena: [arenaRow('website', 1500, 2)], context: 999 }),
+    catalogEntry('qwen/a', { canonical: 'qwen/same', coding: 10 }),
+    catalogEntry('qwen/b', { canonical: 'qwen/same', coding: 90 }),
+    catalogEntry('x/dup', { coding: 10 }),
+    catalogEntry('x/dup', { coding: 90 }),
+  );
+  assert.deepEqual([...index.models.keys()].sort(), ['openai/gpt-9-luna', 'qwen/a', 'qwen/b']);
+  assert.equal(index.aliasOf.get('openai/gpt-9-luna:batch'), 'openai/gpt-9-luna');
+  assert.equal(index.bySlug.get('gpt-9-luna'), 'openai/gpt-9-luna');
+  assert.equal(index.aliasOf.has('x/dup'), false, 'copies of one id that disagree are not scored');
+});
+
+test('levels compare the benchmarked models the configured tools run, and missing results stay missing', () => {
+  const providers = [
+    { id: 'one', tool: 'Tool One', modelPattern: 'one-[a-z0-9.]+' },
+    { id: 'two', tool: 'Tool Two', modelPattern: 'two-[a-z0-9.]+' },
+    { id: 'shell', tool: 'Shell', modelPattern: null },
+  ];
+  const entries = [
+    catalogEntry('a/one-new', { created: 1790000000, intelligence: 60 }),
+    catalogEntry('a/one-full', { created: 1780000000, coding: 80, intelligence: 50, agentic: 40 }),
+    catalogEntry('a/one-old', { created: 1770000000, coding: 60 }),
+    catalogEntry('a/one-unmeasured', { created: 1795000000 }),
+    catalogEntry('a/one-notools', { coding: 99, tools: false }),
+    catalogEntry('a/one-image', { coding: 99, output: ['image'] }),
+    catalogEntry('b/two-1', { coding: 70, arena: [arenaRow('webapps', 1300, 1, 'agents')] }),
+    catalogEntry('c/outside', { coding: 100 }),
+  ];
+  const stats = statsOf(catalogOf(...entries), providers, [
+    { id: 's1', provider: { id: 'shell' }, model: { name: 'outside', displayName: null } },
+    { id: 's2', provider: { id: 'one' }, model: null },
+  ]);
+  assert.deepEqual(stats.pool, { models: 4, tools: ['Tool One', 'Tool Two'] });
+  assert.deepEqual(stats.providers.one, { featured: 'a/one-full', models: ['a/one-new', 'a/one-full', 'a/one-old'] });
+  assert.equal(stats.providers.shell, undefined);
+  assert.equal(stats.stats.find((stat) => stat.id === 'coding').measured, 3);
+  const coding = (id) => stats.models[id].stats.coding;
+  assert.deepEqual([coding('a/one-full').level, coding('b/two-1').level, coding('a/one-old').level], [100, 50, 0]);
+  assert.equal(coding('a/one-full').of, 3);
+  assert.equal(stats.models['a/one-old'].stats.intelligence, undefined, 'a missing result is not a zero');
+  assert.equal(stats.models['a/one-new'].stats.intelligence.level, 100);
+  assert.deepEqual([stats.models['a/one-new'].new, stats.models['a/one-full'].new], [true, false]);
+  assert.equal(stats.sessions.s1, 'c/outside');
+  assert.deepEqual(coding('c/outside'), { level: 100, tier: 'S', place: 1, tied: false, of: 4, value: 100, rank: null, winRate: null });
+  assert.equal(coding('a/one-full').level, 100, 'a model outside the lists moves nobody else');
+  assert.equal('s2' in stats.sessions, false);
+  assert.deepEqual(stats.models['b/two-1'].stats.webapps, { level: null, tier: null, place: null, tied: false, of: null, value: 1300, rank: 1, winRate: 60 });
+  const shuffled = statsOf(catalogOf(...[...entries].reverse()), providers);
+  for (const id of Object.keys(shuffled.models)) assert.deepEqual(shuffled.models[id], stats.models[id]);
+});
+
+test('a session model matches its catalog listing exactly, never a provider, prefix or sibling', () => {
+  const index = catalogOf(...[
+    'anthropic/claude-opus-5.5', 'anthropic/claude-opus-5', 'anthropic/claude-sonnet-5', 'anthropic/claude-haiku-4.5',
+    'openai/gpt-6-astra', 'openai/gpt-4o-2024-11-20', 'google/gemini-3.8-flash', 'x-ai/grok-4.7', 'x-ai/grok-build-0.1',
+  ].map((id) => catalogEntry(id, { intelligence: 50 })));
+  const providers = loadProviders({ platform: 'linux' }).providers;
+  const related = (id) => providerModels(index, providers.find((p) => p.id === id));
+  assert.deepEqual(related('anthropic').map((m) => m.id).sort(),
+    ['anthropic/claude-haiku-4.5', 'anthropic/claude-opus-5', 'anthropic/claude-opus-5.5', 'anthropic/claude-sonnet-5']);
+  assert.deepEqual(related('xai').map((m) => m.slug).sort(), ['grok-4.7', 'grok-build-0.1']);
+  assert.deepEqual(related('shell'), []);
+  const match = (provider, name, displayName = null) => resolveModel(index, related(provider), { name, displayName });
+  assert.equal(match('anthropic', 'claude-opus-5-5'), 'anthropic/claude-opus-5.5');
+  assert.equal(match('anthropic', 'claude-opus-5-5[1m]'), 'anthropic/claude-opus-5.5');
+  assert.equal(match('anthropic', 'Opus 5.5'), 'anthropic/claude-opus-5.5');
+  assert.equal(match('anthropic', 'Opus 5'), 'anthropic/claude-opus-5');
+  assert.equal(match('anthropic', 'claude-haiku-4-5-20251001'), 'anthropic/claude-haiku-4.5');
+  assert.equal(match('anthropic', 'opus', 'Sonnet 5'), 'anthropic/claude-sonnet-5');
+  assert.equal(match('anthropic', 'anthropic/claude-opus-5.5:nitro'), 'anthropic/claude-opus-5.5');
+  assert.equal(match('openai', 'gpt-6-astra'), 'openai/gpt-6-astra');
+  assert.equal(match('openai', 'gpt-4o-2024-11-20'), 'openai/gpt-4o-2024-11-20');
+  assert.equal(match('google', 'gemini-3.8-flash'), 'google/gemini-3.8-flash');
+  assert.equal(match('xai', 'grok-4.7'), 'x-ai/grok-4.7');
+  assert.equal(match('shell', 'claude-opus-5-5'), 'anthropic/claude-opus-5.5');
+  for (const name of ['anthropic', 'claude', 'anthropic/claude', 'anthropic/claude-opus', 'opus', 'Opus', 'claude-opus-5-6', 'gpt-6', '5.5', '']) {
+    assert.equal(match('anthropic', name), null, name);
+  }
+  for (const name of ['grok-build', 'grok-4.7-build-fast']) assert.equal(match('xai', name), null, name);
+  assert.deepEqual(modelNames(' Claude-Opus-4-5-20251101 '), ['claude-opus-4-5-20251101', 'claude-opus-4-5', 'claude-opus-4.5']);
+});
+
+test('the catalog is fetched once, shared while in flight, and kept when a refresh fails', async () => {
+  const registry = { providers: [{ id: 'one', tool: 'Tool One', modelPattern: 'one-[a-z0-9]+' }] };
+  const payload = { data: [catalogEntry('a/one-1', { coding: 10 }), catalogEntry('a/one-2', { coding: 20 })] };
+  const seen = [];
+  let answer = () => ({ ok: true, json: async () => payload });
+  const fetchImpl = async (url, init) => {
+    seen.push({ url, init });
+    return answer();
+  };
+  const stats = new ModelStats({ registry, fetchImpl, ttlMs: 60000, retryMs: 60000 });
+  const [first, second] = await Promise.all([stats.snapshot(), stats.snapshot()]);
+  assert.equal(seen.length, 1);
+  assert.deepEqual(first, second);
+  assert.equal(seen[0].url, 'https://openrouter.ai/api/v1/models');
+  assert.equal(seen[0].init.headers.Accept, 'application/json');
+  assert.equal(first.error, null);
+  assert.deepEqual(first.providers.one.models, ['a/one-1', 'a/one-2']);
+  await stats.snapshot();
+  assert.equal(seen.length, 1, 'cached while fresh');
+
+  stats.ttlMs = 0;
+  answer = () => ({ ok: false, status: 503, json: async () => ({}) });
+  const stale = await stats.snapshot();
+  assert.equal(seen.length, 2);
+  assert.deepEqual([stale.stale, stale.error, stale.retrievedAt], [true, 'OpenRouter answered HTTP 503', first.retrievedAt]);
+  assert.deepEqual(stale.providers, first.providers);
+  await stats.snapshot();
+  assert.equal(seen.length, 2, 'a failed refresh is retried later, not on every request');
+
+  const failing = (fail) => new ModelStats({ registry, fetchImpl: async () => fail() }).snapshot();
+  const offline = await failing(() => { throw Object.assign(new Error('fetch failed'), { cause: { code: 'ENOTFOUND' } }); });
+  assert.deepEqual([offline.error, offline.pool, offline.providers, offline.stats.length],
+    ['OpenRouter could not be reached (ENOTFOUND)', null, {}, 13]);
+  assert.equal((await failing(() => { throw new DOMException('timed out', 'TimeoutError'); })).error, 'OpenRouter did not answer within 20 seconds');
+  assert.equal((await failing(() => ({ ok: true, json: async () => { throw new SyntaxError('Unexpected token'); } }))).error,
+    'OpenRouter sent a model list that could not be read');
+  assert.equal((await failing(() => ({ ok: true, json: async () => ({ data: [] }) }))).error, 'OpenRouter sent an empty model list');
 });

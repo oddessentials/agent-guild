@@ -10,6 +10,8 @@ const state = {
   token: null,
   providers: [],
   usage: new Map(),
+  stats: null,
+  statsFor: new Map(),
   sessions: new Map(),
   views: new Map(),
   activeId: null,
@@ -185,6 +187,7 @@ function renderProviders() {
     renderCopies(node.querySelector('.copies'), provider);
     renderConsoleLinks(node, provider);
     renderUsage(node, provider);
+    renderModelStats(node, provider);
     return node;
   }));
 }
@@ -317,6 +320,383 @@ async function loadUsage() {
   }
 }
 
+const ARTIFICIAL_ANALYSIS = 'Artificial Analysis';
+const MODELS_SHOWN = 8;
+const modelsView = { providerId: null, sessionId: null, focus: null, all: false, expanded: new Set() };
+let modelsOpener = null;
+let statsLoading = null;
+let statsAgain = false;
+let statsTimer;
+
+function modelKey(s) {
+  return s.model ? `${s.model.name}\n${s.model.displayName ?? ''}` : '';
+}
+
+function sessionModelId(s) {
+  return state.statsFor.get(s.id) === modelKey(s) ? state.stats?.sessions[s.id] ?? null : null;
+}
+
+function loadStats() {
+  if (statsLoading) {
+    statsAgain = true;
+    return statsLoading;
+  }
+  const asked = new Map([...state.sessions.values()].map((s) => [s.id, modelKey(s)]));
+  statsLoading = api('GET', '/model-stats').then((stats) => {
+    state.stats = stats;
+    state.statsFor = asked;
+    for (const card of $('providers').children) {
+      const provider = state.providers.find((p) => p.id === card.dataset.id);
+      if (provider) renderModelStats(card, provider);
+    }
+    renderSessions();
+    if ($('models').open) renderModels();
+  }, () => {}).finally(() => {
+    statsLoading = null;
+    if (statsAgain) {
+      statsAgain = false;
+      loadStats();
+    }
+  });
+  return statsLoading;
+}
+
+function scheduleStats() {
+  clearTimeout(statsTimer);
+  statsTimer = setTimeout(loadStats, 300);
+}
+
+function indexStats() {
+  return state.stats?.stats.filter((stat) => stat.group === ARTIFICIAL_ANALYSIS) ?? [];
+}
+
+function ordinal(n) {
+  const suffixes = ['th', 'st', 'nd', 'rd'];
+  const v = n % 100;
+  return `${n}${suffixes[(v - 20) % 10] || suffixes[v] || suffixes[0]}`;
+}
+
+function listJoin(items) {
+  return items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`;
+}
+
+function formatTokens(n) {
+  if (typeof n !== 'number' || !Number.isFinite(n) || n <= 0) return '—';
+  if (n >= 1e6) return `${Number((n / 1e6).toFixed(2))}M`;
+  if (n >= 1e3) return `${Math.round(n / 1e3)}K`;
+  return String(n);
+}
+
+function formatPrice(n) {
+  return `$${Number(n.toFixed(n < 1 ? 3 : 2))}`;
+}
+
+function formatDate(iso, options = { year: 'numeric', month: 'short', day: 'numeric' }) {
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString(undefined, options);
+}
+
+function statValue(stat, entry) {
+  return stat.group === ARTIFICIAL_ANALYSIS ? String(entry.value) : `Elo ${entry.value}`;
+}
+
+function statPlace(entry) {
+  return `${entry.tied ? 'tied ' : ''}${ordinal(entry.place)} of ${entry.of}`;
+}
+
+function statSummary(stat, entry) {
+  if (!entry) return `${stat.label}: no published result`;
+  const value = `${stat.label} ${statValue(stat, entry)}`;
+  if (entry.level === null) return `${value}: no other model has this result to compare with`;
+  const rank = entry.rank === null ? '' : `, Design Arena rank ${entry.rank}`;
+  return `${value}: level ${entry.level}, tier ${entry.tier}, ${statPlace(entry)}${rank}`;
+}
+
+function levelValue(entry) {
+  if (!entry) return ['—'];
+  if (entry.level === null) return [String(entry.value)];
+  const tier = document.createElement('span');
+  tier.className = 'stat-tier';
+  tier.textContent = entry.tier;
+  const level = document.createElement('span');
+  level.className = 'level';
+  level.textContent = entry.level;
+  return [tier, level];
+}
+
+function tierClass(entry) {
+  return entry?.tier ? `tier-${entry.tier.toLowerCase()}` : '';
+}
+
+function statRow(stat, card, { detail = false } = {}) {
+  const node = $('stat-template').content.firstElementChild.cloneNode(true);
+  const entry = card.stats[stat.id];
+  node.querySelector('.stat-label').textContent = detail ? stat.label : stat.short;
+  node.querySelector('.stat-value').replaceChildren(...levelValue(entry));
+  node.classList.toggle('unmeasured', !entry);
+  if (entry?.tier) {
+    node.classList.add(tierClass(entry));
+    node.querySelector('.stat-fill').style.width = `${entry.level}%`;
+  }
+  if (detail) {
+    const rank = entry?.rank == null ? '' : ` · Rank ${entry.rank}`;
+    node.querySelector('.stat-note').textContent = !entry ? 'No published result'
+      : entry.level === null ? statValue(stat, entry) : `${statPlace(entry)} · ${statValue(stat, entry)}${rank}`;
+  }
+  node.title = statSummary(stat, entry);
+  node.setAttribute('role', 'img');
+  node.setAttribute('aria-label', node.title);
+  return node;
+}
+
+function renderModelStats(card, provider) {
+  const host = card.querySelector('.model-stats');
+  const stats = state.stats;
+  const entry = stats?.providers[provider.id];
+  if (!entry) {
+    if (!stats?.error || !provider.modelPattern) return host.replaceChildren();
+    const note = document.createElement('div');
+    note.className = 'usage-note';
+    note.textContent = `Benchmarks: ${stats.error}`;
+    note.title = note.textContent;
+    return host.replaceChildren(note);
+  }
+  const featured = stats.models[entry.featured];
+  const count = entry.models.length;
+  const complete = indexStats().every((stat) => featured.stats[stat.id]);
+  const head = document.createElement('button');
+  head.type = 'button';
+  head.className = 'model-stats-head';
+  head.textContent = `${featured.name} · ${count} model${count === 1 ? '' : 's'}`;
+  head.setAttribute('aria-label', head.textContent);
+  head.title = `${featured.name} is the newest ${provider.tool} model with ${complete ? 'all three Artificial Analysis indexes' : 'published benchmarks'}. Open to compare ${count === 1 ? 'it' : `all ${count}`}.`;
+  head.addEventListener('click', () => showModels({ providerId: provider.id, focus: featured.id }));
+  host.replaceChildren(head, ...indexStats().map((stat) => statRow(stat, featured)));
+}
+
+function modelStatsLine(s) {
+  const id = sessionModelId(s);
+  const card = id ? state.stats.models[id] : null;
+  if (!card) return '';
+  return indexStats().map((stat) => {
+    const entry = card.stats[stat.id];
+    return `${stat.short} ${entry?.tier ? `${entry.tier} ${entry.level}` : '—'}`;
+  }).join(' · ');
+}
+
+function showModels({ providerId = null, sessionId = null, focus = null }) {
+  Object.assign(modelsView, { providerId, sessionId, focus, all: false, expanded: new Set(focus ? [focus] : []) });
+  const dialog = $('models');
+  renderModels();
+  if (!dialog.open) {
+    modelsOpener = document.activeElement;
+    dialog.showModal();
+  }
+  const toggle = $('models-list').querySelector('[aria-expanded="true"]');
+  toggle?.focus();
+  toggle?.scrollIntoView({ block: 'nearest' });
+}
+
+function openSessionModel(id) {
+  const s = state.sessions.get(id);
+  if (!s?.model) return;
+  if (!state.stats || state.statsFor.get(id) !== modelKey(s)) scheduleStats();
+  showModels({ sessionId: id, focus: sessionModelId(s) });
+}
+
+function unmatchedText(s) {
+  const stats = state.stats;
+  if (!stats) return 'Loading benchmarks from OpenRouter…';
+  if (!stats.pool) return `Benchmarks are unavailable: ${stats.error}.`;
+  if (!(s.id in stats.sessions) || state.statsFor.get(s.id) !== modelKey(s)) return 'Looking this model up in OpenRouter’s catalog…';
+  const names = [s.model.name, s.model.displayName].filter((name, i, all) => name && all.indexOf(name) === i);
+  return `OpenRouter’s catalog has no model named ${names.map((name) => `“${name}”`).join(' or ')}.`;
+}
+
+function sourceText(stats, { levels = true } = {}) {
+  if (!stats?.retrievedAt) return '';
+  const parts = [`Benchmarks from Artificial Analysis and Design Arena via OpenRouter, fetched ${relativeTime(stats.retrievedAt)}.`];
+  if (stats.stale) parts.push(`The last refresh failed (${stats.error}), so these results may be out of date.`);
+  if (stats.pool && levels) {
+    parts.push(`Level 0–100 is a model's standing on each benchmark among the models ${listJoin(stats.pool.tools)} run; 100 is the best result.`);
+    parts.push('Tier: S 90+, A 75+, B 50+, C 25+, D below 25.');
+  }
+  return parts.join(' ');
+}
+
+function usedBy(id) {
+  return [...state.sessions.values()]
+    .filter((s) => s.status === 'running' && sessionModelId(s) === id)
+    .map((s) => s.name);
+}
+
+function badge(kind, label, title) {
+  const el = document.createElement('span');
+  el.className = `badge ${kind}`;
+  el.textContent = label;
+  el.title = title;
+  return el;
+}
+
+function modelFacts(card) {
+  const list = document.createElement('dl');
+  list.className = 'model-facts';
+  const fact = (term, value) => {
+    if (!value) return;
+    const row = document.createElement('div');
+    const dt = document.createElement('dt');
+    const dd = document.createElement('dd');
+    dt.textContent = term;
+    dd.textContent = value;
+    row.append(dt, dd);
+    list.append(row);
+  };
+  fact('Context', card.context ? `${formatTokens(card.context)} tokens` : '');
+  fact('Max output', card.maxOutput ? `${formatTokens(card.maxOutput)} tokens` : '');
+  fact('Input', card.input.join(', '));
+  if (card.price.input !== null && card.price.output !== null) {
+    fact('Price', `${formatPrice(card.price.input)} input · ${formatPrice(card.price.output)} output per 1M tokens`);
+  }
+  fact('Created', card.created ? formatDate(card.created) : '');
+  fact('Expires', card.expires ? formatDate(card.expires, { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' }) : '');
+  const link = document.createElement('a');
+  link.className = 'console-link';
+  link.href = httpsHref(`https://openrouter.ai/${card.id}`) ?? '';
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  link.textContent = 'OpenRouter ↗';
+  link.setAttribute('aria-label', `${card.name} on OpenRouter (opens in a new tab)`);
+  const facts = document.createElement('div');
+  facts.className = 'model-more';
+  facts.append(list, link);
+  return facts;
+}
+
+function modelDetail(card) {
+  const groups = [];
+  for (const stat of state.stats.stats) {
+    if (groups.at(-1)?.name !== stat.group) groups.push({ name: stat.group, stats: [] });
+    groups.at(-1).stats.push(stat);
+  }
+  const sections = groups.map(({ name, stats }) => {
+    const section = document.createElement('div');
+    section.className = 'model-group';
+    const heading = document.createElement('h4');
+    heading.textContent = name;
+    section.append(heading);
+    if (stats.some((stat) => card.stats[stat.id])) {
+      section.append(...stats.map((stat) => statRow(stat, card, { detail: true })));
+    } else {
+      const none = document.createElement('p');
+      none.className = 'model-none';
+      none.textContent = 'No published results';
+      section.append(none);
+    }
+    return section;
+  });
+  return [...sections, modelFacts(card)];
+}
+
+function modelRow(card) {
+  const node = $('model-template').content.firstElementChild.cloneNode(true);
+  const toggle = node.querySelector('.model-toggle');
+  const detail = node.querySelector('.model-detail');
+  node.querySelector('.model-name').textContent = card.name;
+  const users = usedBy(card.id);
+  const badges = [];
+  if (users.length) badges.push(badge('in-use', 'In use', `Used by ${listJoin(users)}`));
+  if (card.new) badges.push(badge('new', 'New', `Created ${formatDate(card.created)}`));
+  if (card.expires) {
+    const day = formatDate(card.expires, { month: 'short', day: 'numeric', timeZone: 'UTC' });
+    badges.push(badge('expires', `Expires ${day}`, `OpenRouter lists this model as expiring on ${formatDate(card.expires, { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' })}`));
+  }
+  node.querySelector('.model-title').append(...badges);
+  for (const stat of indexStats()) {
+    const entry = card.stats[stat.id];
+    const cell = document.createElement('span');
+    cell.className = ['model-index', tierClass(entry), entry ? '' : 'unmeasured'].filter(Boolean).join(' ');
+    cell.replaceChildren(...levelValue(entry));
+    cell.title = statSummary(stat, entry);
+    toggle.append(cell);
+  }
+  const context = document.createElement('span');
+  context.className = 'model-context';
+  context.textContent = formatTokens(card.context);
+  context.title = card.context ? `Context: ${card.context.toLocaleString()} tokens` : 'Context: not listed';
+  toggle.append(context);
+  const summary = indexStats().map((stat) => statSummary(stat, card.stats[stat.id])).join('. ');
+  toggle.setAttribute('aria-label', `${card.name}${users.length ? ', in use' : ''}. ${summary}`);
+  const expand = (open) => {
+    toggle.setAttribute('aria-expanded', String(open));
+    if (open && !detail.childElementCount) detail.replaceChildren(...modelDetail(card));
+    detail.hidden = !open;
+  };
+  expand(modelsView.expanded.has(card.id));
+  toggle.addEventListener('click', () => {
+    const open = toggle.getAttribute('aria-expanded') !== 'true';
+    if (open) modelsView.expanded.add(card.id);
+    else modelsView.expanded.delete(card.id);
+    expand(open);
+  });
+  return node;
+}
+
+function renderModels() {
+  const stats = state.stats;
+  const session = modelsView.sessionId ? state.sessions.get(modelsView.sessionId) : null;
+  const provider = session?.provider ?? state.providers.find((p) => p.id === modelsView.providerId);
+  if (!provider || (modelsView.sessionId && !session?.model)) return $('models').close();
+  paintProviderIcon($('models-icon'), provider);
+  const list = stats?.providers[provider.id]?.models ?? [];
+  let ids = list;
+  let title = `${provider.tool} models`;
+  let note = '';
+  if (session) {
+    const id = sessionModelId(session);
+    if (id && !modelsView.focus) {
+      modelsView.focus = id;
+      modelsView.expanded.add(id);
+    }
+    if (!id) {
+      ids = [];
+      title = `${provider.tool} · ${modelText(session)}`;
+      note = unmatchedText(session);
+    } else if (!list.includes(id)) {
+      ids = [id];
+      title = `${provider.tool} · ${stats.models[id].name}`;
+    }
+  } else if (!stats) {
+    note = 'Loading benchmarks from OpenRouter…';
+  } else if (list.length === 0) {
+    note = stats.error ? `Benchmarks are unavailable: ${stats.error}.` : `OpenRouter lists no benchmarked ${provider.tool} models.`;
+  }
+  $('models-title').textContent = title;
+  $('models-sub').textContent = ids.length > 1
+    ? `${ids.length} models with published benchmarks, newest first`
+    : session ? `Reported by ${session.name} as “${session.model.name}”` : '';
+  const all = modelsView.all || ids.length <= MODELS_SHOWN || ids.indexOf(modelsView.focus) >= MODELS_SHOWN;
+  const shown = all ? ids : ids.slice(0, MODELS_SHOWN);
+  const columns = $('models-columns');
+  columns.hidden = shown.length === 0;
+  columns.replaceChildren(...['Model', ...indexStats().map((stat) => stat.short), 'Context'].map((label) => {
+    const span = document.createElement('span');
+    span.textContent = label;
+    return span;
+  }));
+  $('models-list').replaceChildren(...shown.map((id) => modelRow(stats.models[id])));
+  const more = $('models-more');
+  more.hidden = all;
+  more.textContent = `Show ${ids.length - shown.length} older models`;
+  $('models-note').textContent = note;
+  $('models-note').hidden = !note;
+  $('models-source').textContent = sourceText(stats, { levels: shown.length > 0 });
+  $('models-source').hidden = !$('models-source').textContent;
+}
+
+function closeModels() {
+  if ($('models').open) $('models').close();
+}
+
 const CHANNEL_LABELS = {
   npm: 'npm', native: 'native', brew: 'Homebrew', winget: 'WinGet', legacy: 'legacy install', unknown: 'unknown install',
 };
@@ -433,6 +813,7 @@ function buildCard(session) {
   node.querySelector('.stop').addEventListener('click', () => stopSession(session.id));
   node.querySelector('.remove').addEventListener('click', () => removeSession(session.id));
   node.querySelector('.rename').addEventListener('click', () => renameSession(session.id));
+  node.querySelector('.model-pill').addEventListener('click', () => openSessionModel(session.id));
   return node;
 }
 
@@ -460,7 +841,8 @@ function updateCard(node, s) {
   const model = node.querySelector('.model-pill');
   model.hidden = !s.model;
   model.textContent = modelText(s);
-  model.title = modelTitle(s);
+  model.title = [modelTitle(s), modelStatsLine(s)].filter(Boolean).join('\n');
+  model.setAttribute('aria-label', `Benchmarks for ${modelText(s)}`);
   model.className = `model-pill ${s.model?.source || ''}`;
   const cwd = node.querySelector('.cwd-line');
   // The LRM keeps a leading "/" in place under the right-to-left truncation style.
@@ -492,6 +874,7 @@ function renderSessions() {
   $('session-count').textContent = sessions.length ? `· ${running} running` : '';
   $('empty').hidden = sessions.length > 0;
   if (state.activeId) updatePanel();
+  if (state.stats && sessions.some((s) => s.model && state.statsFor.get(s.id) !== modelKey(s))) scheduleStats();
 }
 
 function upsertSession(session) {
@@ -749,6 +1132,7 @@ function enterStopping(running = 0) {
   state.stopping = true;
   state.stopRemaining = null;
   closePanel();
+  closeModels();
   for (const view of state.views.values()) view.dispose();
   state.views.clear();
   state.sessions.clear();
@@ -818,6 +1202,7 @@ function connectEvents() {
     } else if (msg.type === 'providers.updated') {
       state.providers = msg.providers;
       renderProviders();
+      scheduleStats();
     }
   };
   ws.onclose = () => {
@@ -854,8 +1239,10 @@ function readTokenFromHash() {
 }
 
 let usageTimer;
+let statsInterval;
 
 function showAuth(message = '') {
+  closeModels();
   $('app').hidden = true;
   $('terminal-panel').hidden = true;
   $('stopped').hidden = true;
@@ -885,6 +1272,9 @@ async function boot() {
   loadUsage();
   clearInterval(usageTimer);
   usageTimer = setInterval(loadUsage, 60000);
+  loadStats();
+  clearInterval(statsInterval);
+  statsInterval = setInterval(loadStats, 60 * 60 * 1000);
 }
 
 $('auth-form').addEventListener('submit', (e) => {
@@ -895,6 +1285,18 @@ $('auth-form').addEventListener('submit', (e) => {
   boot();
 });
 $('panel-close').addEventListener('click', closePanel);
+$('models-close').addEventListener('click', closeModels);
+$('models').addEventListener('click', (e) => { if (e.target === $('models')) closeModels(); });
+$('models').addEventListener('close', () => {
+  if (modelsOpener?.isConnected) modelsOpener.focus();
+  modelsOpener = null;
+});
+$('models-more').addEventListener('click', () => {
+  const before = $('models-list').childElementCount;
+  modelsView.all = true;
+  renderModels();
+  $('models-list').children[before]?.querySelector('.model-toggle')?.focus();
+});
 $('stop-manager').addEventListener('click', () => stopManager());
 $('panel-stop').addEventListener('click', () => {
   const s = state.sessions.get(state.activeId);
