@@ -302,10 +302,24 @@ export function geminiKeychainLookup(platform) {
   return null;
 }
 
-function readGeminiKeychainItem(platform) {
+/**
+ * What the OS keychain holds for Gemini CLI: the item, or that it is
+ * absent, that there is no keychain to ask (so the tool keeps its own
+ * encrypted file instead), or that it is one this manager cannot read.
+ */
+export async function readGeminiKeychainItem(platform) {
   const spec = geminiKeychainLookup(platform);
-  if (!spec) return Promise.resolve(null);
-  return runSpec(spec, { timeoutMs: 30000 }).then((r) => r.stdout, () => null);
+  if (!spec) return { status: platform === 'win32' ? 'unreadable' : 'unavailable' };
+  try {
+    const { stdout } = await runSpec(spec, { timeoutMs: 30000 });
+    return stdout.trim() ? { status: 'found', item: stdout } : { status: 'absent' };
+  } catch (err) {
+    // security exits 44 for a missing item; secret-tool exits 1 for one and
+    // says why on stderr when it has no Secret Service at all.
+    if (platform === 'darwin' && err.code === 44) return { status: 'absent' };
+    if (platform === 'linux' && err.code === 1 && !String(err.stderr || '').trim()) return { status: 'absent' };
+    return { status: 'unavailable' };
+  }
 }
 
 /** Gemini CLI's own storage choice, read from the environment the tool runs with. */
@@ -316,8 +330,9 @@ export function geminiStorageMode(env = process.env) {
 /**
  * Reads the sign-in from where Gemini CLI keeps it: oauth_creds.json, or
  * with GEMINI_FORCE_ENCRYPTED_FILE_STORAGE the OS keychain item, or its
- * encrypted file when GEMINI_FORCE_FILE_STORAGE is set or the keychain has
- * no item, falling back to oauth_creds.json as the tool itself migrates it.
+ * encrypted file when GEMINI_FORCE_FILE_STORAGE is set or there is no
+ * keychain. An absent item falls back to oauth_creds.json, as the tool
+ * itself migrates it from there.
  */
 export async function readGeminiCredentials({
   file = geminiCredentialsFile(),
@@ -329,7 +344,12 @@ export async function readGeminiCredentials({
   readFileKeychain = readGeminiFileKeychain,
 } = {}) {
   let raw = null;
-  if (encrypted) raw = (!fileStorage && await readKeychain(platform)) || await readFileKeychain(keychainFile);
+  if (encrypted) {
+    const keychain = fileStorage ? { status: 'unavailable' } : await readKeychain(platform);
+    if (keychain.status === 'found') raw = keychain.item;
+    else if (keychain.status === 'unavailable') raw = await readFileKeychain(keychainFile);
+    else if (keychain.status === 'unreadable') throw new UsageError('Gemini CLI keeps its sign-in in the Windows Credential Manager, which cannot be read from here');
+  }
   if (raw && raw.trim()) {
     let item;
     try { item = JSON.parse(raw); } catch { throw new UsageError('Gemini CLI credentials could not be parsed'); }
