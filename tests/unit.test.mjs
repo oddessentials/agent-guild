@@ -1650,7 +1650,7 @@ test('the catalog keeps well-formed listings and only published numbers', () => 
   const [listing] = listings;
   assert.equal(listing.name, 'Claude X 1');
   assert.deepEqual(Object.keys(listing.values).sort(), ['coding', 'svg'], 'a string score and a category listed twice are not results');
-  assert.deepEqual(listing.values.svg, { value: 1250, rank: 2, winRate: 60 });
+  assert.deepEqual(listing.values.svg, { value: 1250, rank: 2 });
   assert.deepEqual(listing.price, { input: 4, output: null });
   assert.deepEqual([listing.context, listing.maxOutput, listing.tools, listing.text], [100000, 64000, true, true]);
   assert.deepEqual(parseCatalog({}), []);
@@ -1691,10 +1691,10 @@ test('levels compare the benchmarked models the configured tools run, and missin
     { id: 's1', provider: { id: 'shell' }, model: { name: 'outside', displayName: null } },
     { id: 's2', provider: { id: 'one' }, model: null },
   ]);
-  assert.deepEqual(stats.pool, { models: 4, tools: ['Tool One', 'Tool Two'] });
+  assert.deepEqual(stats.pool, { tools: ['Tool One', 'Tool Two'] });
   assert.deepEqual(stats.providers.one, { featured: 'a/one-full', models: ['a/one-new', 'a/one-full', 'a/one-old'] });
   assert.equal(stats.providers.shell, undefined);
-  assert.equal(stats.stats.find((stat) => stat.id === 'coding').measured, 3);
+  assert.ok(stats.stats.every((stat) => stat.about.includes('When building:')), 'every benchmark says what it means for building');
   const coding = (id) => stats.models[id].stats.coding;
   assert.deepEqual([coding('a/one-full').level, coding('b/two-1').level, coding('a/one-old').level], [100, 50, 0]);
   assert.equal(coding('a/one-full').of, 3);
@@ -1702,10 +1702,10 @@ test('levels compare the benchmarked models the configured tools run, and missin
   assert.equal(stats.models['a/one-new'].stats.intelligence.level, 100);
   assert.deepEqual([stats.models['a/one-new'].new, stats.models['a/one-full'].new], [true, false]);
   assert.equal(stats.sessions.s1, 'c/outside');
-  assert.deepEqual(coding('c/outside'), { level: 100, tier: 'S', place: 1, tied: false, of: 4, value: 100, rank: null, winRate: null });
+  assert.deepEqual(coding('c/outside'), { level: 100, tier: 'S', place: 1, tied: false, of: 4, value: 100, rank: null });
   assert.equal(coding('a/one-full').level, 100, 'a model outside the lists moves nobody else');
   assert.equal('s2' in stats.sessions, false);
-  assert.deepEqual(stats.models['b/two-1'].stats.webapps, { level: null, tier: null, place: null, tied: false, of: null, value: 1300, rank: 1, winRate: 60 });
+  assert.deepEqual(stats.models['b/two-1'].stats.webapps, { level: null, tier: null, place: null, tied: false, of: null, value: 1300, rank: 1 });
   const shuffled = statsOf(catalogOf(...[...entries].reverse()), providers);
   for (const id of Object.keys(shuffled.models)) assert.deepEqual(shuffled.models[id], stats.models[id]);
 });

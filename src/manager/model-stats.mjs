@@ -1,6 +1,6 @@
 import { toNumber } from './usage.mjs';
 
-export const CATALOG_URL = 'https://openrouter.ai/api/v1/models';
+const CATALOG_URL = 'https://openrouter.ai/api/v1/models';
 const CATALOG_TTL_MS = 6 * 60 * 60 * 1000;
 const RETRY_MS = 10 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 20000;
@@ -11,24 +11,63 @@ const AA = 'Artificial Analysis';
 const DA_MODELS = 'Design Arena · Models';
 const DA_AGENTS = 'Design Arena · Agents';
 
-export const STATS = [
-  { id: 'coding', label: 'Coding Index', short: 'Coding', group: AA, index: 'coding_index' },
-  { id: 'intelligence', label: 'Intelligence Index', short: 'Intelligence', group: AA, index: 'intelligence_index' },
-  { id: 'agentic', label: 'Agentic Index', short: 'Agentic', group: AA, index: 'agentic_index' },
-  { id: 'overall', label: 'Overall', group: DA_MODELS, arena: 'models', category: 'codecategories' },
-  { id: 'website', label: 'Website', group: DA_MODELS, arena: 'models', category: 'website' },
-  { id: 'uicomponent', label: 'UI Component', group: DA_MODELS, arena: 'models', category: 'uicomponent' },
-  { id: 'gamedev', label: 'Game Dev', group: DA_MODELS, arena: 'models', category: 'gamedev' },
-  { id: 'dataviz', label: 'Data Visualization', group: DA_MODELS, arena: 'models', category: 'dataviz' },
-  { id: '3d', label: '3D', group: DA_MODELS, arena: 'models', category: '3d' },
-  { id: 'svg', label: 'SVG', group: DA_MODELS, arena: 'models', category: 'svg' },
-  { id: 'webapps', label: 'Web Apps', group: DA_AGENTS, arena: 'agents', category: 'webapps' },
-  { id: 'fullstack', label: 'Full Stack', group: DA_AGENTS, arena: 'agents', category: 'fullstack' },
-  { id: 'mobileapps', label: 'Mobile Apps', group: DA_AGENTS, arena: 'agents', category: 'mobileapps' },
+const STATS = [
+  {
+    id: 'coding', label: 'Coding Index', short: 'Coding', group: AA, index: 'coding_index',
+    about: 'How well the model writes and fixes code, scored by Artificial Analysis on coding evaluations such as Terminal-Bench (real tasks in a terminal). When building: working code with fewer retries.',
+  },
+  {
+    id: 'intelligence', label: 'Intelligence Index', short: 'Intelligence', group: AA, index: 'intelligence_index',
+    about: 'Artificial Analysis\'s overall score across its evaluations of agentic work, coding, scientific reasoning and general knowledge. When building: understanding what you ask, planning changes, solving hard problems.',
+  },
+  {
+    id: 'agentic', label: 'Agentic Index', short: 'Agentic', group: AA, index: 'agentic_index',
+    about: 'How well the model completes multi-step tasks on its own, using tools until the job is done (Artificial Analysis). When building: longer agent runs that stay on track without your help.',
+  },
+  {
+    id: 'overall', label: 'Overall', group: DA_MODELS, arena: 'models', category: 'codecategories',
+    about: 'Design Arena\'s combined result for Website, UI Component, Game Dev, Data Visualization and 3D, judged by real users\' votes. When building: overall front-end quality.',
+  },
+  {
+    id: 'website', label: 'Website', group: DA_MODELS, arena: 'models', category: 'website',
+    about: 'Complete websites built as one HTML file from real users\' prompts; users vote for the better one. When building: landing pages and site layouts.',
+  },
+  {
+    id: 'uicomponent', label: 'UI Component', group: DA_MODELS, arena: 'models', category: 'uicomponent',
+    about: 'Focused interface components as one HTML file; users vote. When building: individual pieces of an interface.',
+  },
+  {
+    id: 'gamedev', label: 'Game Dev', group: DA_MODELS, arena: 'models', category: 'gamedev',
+    about: 'Playable browser games as one HTML file; users play them and vote. When building: interactive, game-like front ends.',
+  },
+  {
+    id: 'dataviz', label: 'Data Visualization', group: DA_MODELS, arena: 'models', category: 'dataviz',
+    about: 'Interactive visualizations of provided data as one HTML file; users vote. When building: charts and dashboards.',
+  },
+  {
+    id: '3d', label: '3D', group: DA_MODELS, arena: 'models', category: '3d',
+    about: 'Interactive 3D experiences in the browser as one HTML file; users try them and vote. When building: 3D scenes.',
+  },
+  {
+    id: 'svg', label: 'SVG', group: DA_MODELS, arena: 'models', category: 'svg',
+    about: 'Scalable vector graphics as SVG markup: icons, illustrations, diagrams. When building: graphics as code.',
+  },
+  {
+    id: 'webapps', label: 'Web Apps', group: DA_AGENTS, arena: 'agents', category: 'webapps',
+    about: 'Multi-file React front ends built by the model as an agent over many steps; users compare results. When building: the multi-file work a coding agent does.',
+  },
+  {
+    id: 'fullstack', label: 'Full Stack', group: DA_AGENTS, arena: 'agents', category: 'fullstack',
+    about: 'Complete React apps with sign-in, a database and a back end, built by the model as an agent. When building: whole applications, not just pages.',
+  },
+  {
+    id: 'mobileapps', label: 'Mobile Apps', group: DA_AGENTS, arena: 'agents', category: 'mobileapps',
+    about: 'Cross-platform React Native mobile apps built by the model as an agent; users compare them. When building: mobile apps.',
+  },
 ];
 const INDEXES = STATS.filter((stat) => stat.index).map((stat) => stat.id);
 
-export class CatalogError extends Error {}
+class CatalogError extends Error {}
 
 const compare = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 const newestFirst = (a, b) => (b.created ?? 0) - (a.created ?? 0) || compare(a.id, b.id);
@@ -62,11 +101,11 @@ function readValues(benchmarks) {
   for (const stat of STATS) {
     if (stat.index) {
       const value = finite(analysis[stat.index]);
-      if (value !== null) values[stat.id] = { value, rank: null, winRate: null };
+      if (value !== null) values[stat.id] = { value, rank: null };
       continue;
     }
     const rows = arena.filter((row) => row.arena === stat.arena && row.category === stat.category && finite(row.elo) !== null);
-    if (rows.length === 1) values[stat.id] = { value: rows[0].elo, rank: finite(rows[0].rank), winRate: finite(rows[0].win_rate) };
+    if (rows.length === 1) values[stat.id] = { value: rows[0].elo, rank: finite(rows[0].rank) };
   }
   return values;
 }
@@ -202,7 +241,7 @@ function cardFor(model, pool, retrievedAt) {
     if (!own) continue;
     const others = pool[stat.id].filter((entry) => entry.id !== model.id).map((entry) => entry.value);
     const place = standing(own.value, others) ?? { level: null, tier: null, place: null, tied: false, of: null };
-    stats[stat.id] = { ...place, value: own.value, rank: own.rank, winRate: own.winRate };
+    stats[stat.id] = { ...place, value: own.value, rank: own.rank };
   }
   const created = model.created === null ? null : model.created * 1000;
   return {
@@ -221,12 +260,9 @@ function cardFor(model, pool, retrievedAt) {
 }
 
 export function describeCatalog({ index, retrievedAt, stale, error }, providers, sessions = []) {
-  const result = { retrievedAt, stale, error, stats: [], pool: null, providers: {}, models: {}, sessions: {} };
-  const statInfo = (stat, measured) => ({ id: stat.id, label: stat.label, short: stat.short ?? stat.label, group: stat.group, measured });
-  if (!index) {
-    result.stats = STATS.map((stat) => statInfo(stat, 0));
-    return result;
-  }
+  const stats = STATS.map((stat) => ({ id: stat.id, label: stat.label, short: stat.short ?? stat.label, group: stat.group, about: stat.about }));
+  const result = { retrievedAt, stale, error, stats, pool: null, providers: {}, models: {}, sessions: {} };
+  if (!index) return result;
   const related = new Map(providers.map((provider) => [provider.id, providerModels(index, provider)]));
   const listed = new Map([...related].map(([id, models]) => [id, models.filter(isMeasured)]));
   const members = new Map();
@@ -235,8 +271,7 @@ export function describeCatalog({ index, retrievedAt, stale, error }, providers,
   for (const stat of STATS) {
     pool[stat.id] = [...members.values()].filter((m) => m.values[stat.id]).map((m) => ({ id: m.id, value: m.values[stat.id].value }));
   }
-  result.stats = STATS.map((stat) => statInfo(stat, pool[stat.id].length));
-  result.pool = { models: members.size, tools: providers.filter((p) => listed.get(p.id).length).map((p) => p.tool) };
+  result.pool = { tools: providers.filter((p) => listed.get(p.id).length).map((p) => p.tool) };
   const card = (id) => (result.models[id] ??= cardFor(index.models.get(id), pool, retrievedAt));
   for (const provider of providers) {
     const models = listed.get(provider.id);
@@ -261,10 +296,9 @@ function failure(err) {
 }
 
 export class ModelStats {
-  constructor({ registry, fetchImpl = fetch, url = CATALOG_URL, ttlMs = CATALOG_TTL_MS, retryMs = RETRY_MS } = {}) {
+  constructor({ registry, fetchImpl = fetch, ttlMs = CATALOG_TTL_MS, retryMs = RETRY_MS } = {}) {
     this.registry = registry;
     this.fetchImpl = fetchImpl;
-    this.url = url;
     this.ttlMs = ttlMs;
     this.retryMs = retryMs;
     this.current = null;
@@ -288,7 +322,7 @@ export class ModelStats {
 
   async _fetch() {
     try {
-      const res = await this.fetchImpl(this.url, {
+      const res = await this.fetchImpl(CATALOG_URL, {
         headers: { Accept: 'application/json', 'User-Agent': 'agent-guild' },
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       });

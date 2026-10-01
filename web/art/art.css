@@ -110,6 +110,13 @@
   .meter.empty .meter-fill { background: var(--danger); box-shadow: 0 0 8px rgba(239, 107, 102, 0.5); }
 
   .model-stats-head { color: var(--gold); }
+  .info { color: #b89a5e; }
+  .info:hover, .info:focus-visible { color: var(--gold); }
+  .tip {
+    background: #12141a; color: #e9e2cf; border: 1px solid #4a3d25;
+    box-shadow: inset 0 0 0 1px rgba(232, 196, 124, 0.06), 0 10px 28px rgba(0, 0, 0, 0.6);
+  }
+  .tip strong { color: var(--gold); font-family: "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif; }
   .stat-bar { height: 7px; background: #0c0e12; box-shadow: inset 0 0 0 1px rgba(232, 196, 124, 0.18); }
   .stat-fill {
     background: linear-gradient(90deg, color-mix(in srgb, var(--tier) 55%, #000), var(--tier));

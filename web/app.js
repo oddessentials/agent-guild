@@ -350,7 +350,16 @@ function loadStats() {
       if (provider) renderModelStats(card, provider);
     }
     renderSessions();
-    if ($('models').open) renderModels();
+    if ($('models').open) {
+      const body = document.querySelector('.models-body');
+      const top = body.scrollTop;
+      const focus = modelsFocus();
+      const withTip = Boolean(tipFor?.closest('#models-list'));
+      renderModels();
+      body.scrollTop = top;
+      restoreModelsFocus(focus, withTip);
+    }
+    if (tipFor && !tipFor.isConnected) hideTip();
   }, () => {}).finally(() => {
     statsLoading = null;
     if (statsAgain) {
@@ -431,22 +440,51 @@ function tierClass(entry) {
 function statRow(stat, card, { detail = false } = {}) {
   const node = $('stat-template').content.firstElementChild.cloneNode(true);
   const entry = card.stats[stat.id];
-  node.querySelector('.stat-label').textContent = detail ? stat.label : stat.short;
-  node.querySelector('.stat-value').replaceChildren(...levelValue(entry));
+  node.querySelector('.stat-name').textContent = detail ? stat.label : stat.short;
+  const info = node.querySelector('.info');
+  info.dataset.stat = stat.id;
+  info.setAttribute('aria-label', `${stat.label}: ${stat.about}`);
+  const reading = node.querySelector('.stat-reading');
+  reading.querySelector('.stat-value').replaceChildren(...levelValue(entry));
   node.classList.toggle('unmeasured', !entry);
   if (entry?.tier) {
     node.classList.add(tierClass(entry));
-    node.querySelector('.stat-fill').style.width = `${entry.level}%`;
+    reading.querySelector('.stat-fill').style.width = `${entry.level}%`;
   }
   if (detail) {
     const rank = entry?.rank == null ? '' : ` · Rank ${entry.rank}`;
-    node.querySelector('.stat-note').textContent = !entry ? 'No published result'
+    reading.querySelector('.stat-note').textContent = !entry ? 'No published result'
       : entry.level === null ? statValue(stat, entry) : `${statPlace(entry)} · ${statValue(stat, entry)}${rank}`;
   }
-  node.title = statSummary(stat, entry);
-  node.setAttribute('role', 'img');
-  node.setAttribute('aria-label', node.title);
+  reading.title = statSummary(stat, entry);
+  reading.setAttribute('aria-label', reading.title);
   return node;
+}
+
+let tipFor = null;
+let quietFocus = false;
+
+function showTip(button) {
+  const stat = state.stats?.stats.find((s) => s.id === button.dataset.stat);
+  if (!stat) return;
+  const tip = $('tip');
+  $('tip-title').textContent = stat.label;
+  $('tip-source').textContent = stat.group;
+  $('tip-text').textContent = stat.about;
+  const host = $('models').open ? $('models') : document.body;
+  if (tip.parentElement !== host) host.append(tip);
+  tip.hidden = false;
+  const box = button.getBoundingClientRect();
+  const left = Math.min(Math.max(8, box.left + box.width / 2 - tip.offsetWidth / 2), innerWidth - tip.offsetWidth - 8);
+  const below = box.bottom + 8 + tip.offsetHeight <= innerHeight;
+  tip.style.left = `${Math.round(left)}px`;
+  tip.style.top = `${Math.round(below ? box.bottom + 8 : box.top - tip.offsetHeight - 8)}px`;
+  tipFor = button;
+}
+
+function hideTip() {
+  $('tip').hidden = true;
+  tipFor = null;
 }
 
 function renderModelStats(card, provider) {
@@ -484,6 +522,22 @@ function modelStatsLine(s) {
   }).join(' · ');
 }
 
+function modelsFocus() {
+  const active = document.activeElement;
+  const row = active?.closest?.('#models-list .model');
+  return row ? { id: row.dataset.id, stat: active.dataset.stat ?? null } : null;
+}
+
+function restoreModelsFocus(focus, withTip) {
+  const row = focus && [...$('models-list').children].find((el) => el.dataset.id === focus.id);
+  if (!row) return;
+  const info = focus.stat && row.querySelector(`.info[data-stat="${focus.stat}"]`);
+  quietFocus = true;
+  (info || row.querySelector('.model-toggle')).focus({ preventScroll: true });
+  quietFocus = false;
+  if (withTip && info) showTip(info);
+}
+
 function showModels({ providerId = null, sessionId = null, focus = null }) {
   Object.assign(modelsView, { providerId, sessionId, focus, all: false, expanded: new Set(focus ? [focus] : []) });
   const dialog = $('models');
@@ -518,6 +572,7 @@ function sourceText(stats, { levels = true } = {}) {
   const parts = [`Benchmarks from Artificial Analysis and Design Arena via OpenRouter, fetched ${relativeTime(stats.retrievedAt)}.`];
   if (stats.stale) parts.push(`The last refresh failed (${stats.error}), so these results may be out of date.`);
   if (stats.pool && levels) {
+    parts.push('Artificial Analysis results are index scores. Design Arena results are Elo ratings from real users\' head-to-head votes, and Rank is the model\'s place on Design Arena\'s own leaderboard.');
     parts.push(`Level 0–100 is a model's standing on each benchmark among the models ${listJoin(stats.pool.tools)} run; 100 is the best result.`);
     parts.push('Tier: S 90+, A 75+, B 50+, C 25+, D below 25.');
   }
@@ -554,6 +609,7 @@ function modelFacts(card) {
   fact('Context', card.context ? `${formatTokens(card.context)} tokens` : '');
   fact('Max output', card.maxOutput ? `${formatTokens(card.maxOutput)} tokens` : '');
   fact('Input', card.input.join(', '));
+  fact('Reasoning effort', card.reasoning.join(', '));
   if (card.price.input !== null && card.price.output !== null) {
     fact('Price', `${formatPrice(card.price.input)} input · ${formatPrice(card.price.output)} output per 1M tokens`);
   }
@@ -599,6 +655,7 @@ function modelDetail(card) {
 
 function modelRow(card) {
   const node = $('model-template').content.firstElementChild.cloneNode(true);
+  node.dataset.id = card.id;
   const toggle = node.querySelector('.model-toggle');
   const detail = node.querySelector('.model-detail');
   node.querySelector('.model-name').textContent = card.name;
@@ -625,7 +682,7 @@ function modelRow(card) {
   context.title = card.context ? `Context: ${card.context.toLocaleString()} tokens` : 'Context: not listed';
   toggle.append(context);
   const summary = indexStats().map((stat) => statSummary(stat, card.stats[stat.id])).join('. ');
-  toggle.setAttribute('aria-label', `${card.name}${users.length ? ', in use' : ''}. ${summary}`);
+  toggle.setAttribute('aria-description', summary);
   const expand = (open) => {
     toggle.setAttribute('aria-expanded', String(open));
     if (open && !detail.childElementCount) detail.replaceChildren(...modelDetail(card));
@@ -1288,9 +1345,35 @@ $('panel-close').addEventListener('click', closePanel);
 $('models-close').addEventListener('click', closeModels);
 $('models').addEventListener('click', (e) => { if (e.target === $('models')) closeModels(); });
 $('models').addEventListener('close', () => {
-  if (modelsOpener?.isConnected) modelsOpener.focus();
+  hideTip();
+  const opener = modelsOpener?.isConnected ? modelsOpener
+    : modelsView.sessionId ? cards.get(modelsView.sessionId)?.querySelector('.model-pill')
+    : $('providers').querySelector(`.provider[data-id="${modelsView.providerId}"] .model-stats-head`);
+  opener?.focus();
   modelsOpener = null;
 });
+document.addEventListener('pointerover', (e) => {
+  const info = e.target.closest?.('.info');
+  if (info && e.pointerType !== 'touch') showTip(info);
+});
+document.addEventListener('pointerout', (e) => {
+  if (tipFor && e.target === tipFor && document.activeElement !== tipFor) hideTip();
+});
+document.addEventListener('pointerdown', (e) => { if (tipFor && !e.target.closest?.('.info')) hideTip(); });
+document.addEventListener('click', (e) => {
+  const info = e.target.closest?.('.info');
+  if (info) showTip(info);
+});
+document.addEventListener('focusin', (e) => { if (!quietFocus && e.target.matches?.('.info')) showTip(e.target); });
+document.addEventListener('focusout', (e) => { if (e.target === tipFor) hideTip(); });
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || !tipFor) return;
+  hideTip();
+  e.preventDefault();
+  e.stopPropagation();
+}, true);
+addEventListener('scroll', () => { if (tipFor) hideTip(); }, true);
+addEventListener('resize', () => { if (tipFor) hideTip(); });
 $('models-more').addEventListener('click', () => {
   const before = $('models-list').childElementCount;
   modelsView.all = true;

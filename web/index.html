@@ -101,6 +101,8 @@
     <p id="models-source" class="models-source"></p>
   </dialog>
 
+  <div id="tip" class="tip" aria-hidden="true" hidden><strong id="tip-title"></strong><span id="tip-source"></span><p id="tip-text"></p></div>
+
   <div id="toast" class="toast" role="alert" hidden></div>
 
   <template id="provider-template">
@@ -141,10 +143,12 @@
 
   <template id="stat-template">
     <div class="stat">
-      <span class="stat-label"></span>
-      <span class="stat-bar"><span class="stat-fill"></span></span>
-      <span class="stat-value"></span>
-      <span class="stat-note"></span>
+      <span class="stat-label"><span class="stat-name"></span><button class="info" type="button">i</button></span>
+      <span class="stat-reading" role="img">
+        <span class="stat-bar"><span class="stat-fill"></span></span>
+        <span class="stat-value"></span>
+        <span class="stat-note"></span>
+      </span>
     </div>
   </template>
 
