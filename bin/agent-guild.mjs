@@ -124,7 +124,11 @@ async function cmdOpen({ browser }) {
   }
 }
 
-/** Ask a running manager to stop, or to stop and start again. Resolves to the running session count it reported. */
+/**
+ * Ask a running manager to stop, or to stop and start again. Resolves to
+ * what it reported: the running session count, and whether it will start
+ * a successor itself (a manager from before restarts only stops).
+ */
 async function requestShutdown(url, { restart = false } = {}) {
   // `stop` and `restart` are documented as ending every session, so they do
   // not ask; the web page's buttons are the ones that confirm first.
@@ -134,9 +138,20 @@ async function requestShutdown(url, { restart = false } = {}) {
     body: JSON.stringify(restart ? { force: true, restart: true } : { force: true }),
   });
   if (!res.ok) throw new Error(`${restart ? 'restart' : 'stop'} failed: HTTP ${res.status}`);
-  const { running = 0 } = await res.json().catch(() => ({}));
+  const body = await res.json().catch(() => ({}));
+  const running = body.running ?? 0;
   if (running > 0) console.log(`Ending ${running} running session(s).`);
-  return running;
+  return { running, restart: body.restart === true };
+}
+
+/** Resolves to true once nothing answers at `url`, false when it still does after `timeoutMs`. */
+async function waitForStop(url, timeoutMs = 6000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 150));
+    if (!(await health(url, 300))) return true;
+  }
+  return false;
 }
 
 async function cmdStop() {
@@ -146,14 +161,7 @@ async function cmdStop() {
     return;
   }
   await requestShutdown(url);
-  for (let i = 0; i < 40; i++) {
-    await new Promise((r) => setTimeout(r, 150));
-    if (!(await health(url, 300))) {
-      console.log('Session manager stopped.');
-      return;
-    }
-  }
-  console.log('Stop requested; the manager is still shutting down.');
+  console.log(await waitForStop(url) ? 'Session manager stopped.' : 'Stop requested; the manager is still shutting down.');
 }
 
 async function cmdRestart() {
@@ -165,7 +173,16 @@ async function cmdRestart() {
     console.log(`Session manager was not running; started Agent Guild ${version} at ${started}.`);
     return;
   }
-  await requestShutdown(url, { restart: true });
+  const { restart } = await requestShutdown(url, { restart: true });
+  if (!restart) {
+    // A manager from before restarts stops without starting a successor,
+    // which is the case right after an upgrade: start one here instead.
+    if (!(await waitForStop(url, 15000))) throw new Error('the session manager did not stop, so it could not be restarted.');
+    const { url: started, version } = await ensureManager();
+    const changed = version !== before.version ? `, now Agent Guild ${version} (was ${before.version})` : '';
+    console.log(`Session manager restarted at ${started}${changed}.`);
+    return;
+  }
   // The old manager starts its successor from the package on disk once its
   // sessions have ended and its port is free, then exits.
   const deadline = Date.now() + 30000;

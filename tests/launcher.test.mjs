@@ -200,6 +200,56 @@ test('restart starts a manager when none runs, and replaces a running one on the
   assert.match(stopped.stdout, /stopped/);
 });
 
+test('restart keeps an ephemeral port, and starts the manager itself when the old one only stops', async () => {
+  // AGENT_GUILD_PORT=0: the successor must listen where the old manager did, not on another free port.
+  const zeroHome = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-launcher-'));
+  const zeroEnv = { ...env, AGENT_GUILD_HOME: zeroHome, AGENT_GUILD_PORT: '0' };
+  const runtime = () => JSON.parse(fs.readFileSync(path.join(zeroHome, 'manager.json'), 'utf8'));
+  try {
+    const opened = await runWith(zeroEnv, 'open', '--no-browser');
+    assert.equal(opened.code, 0, opened.stderr);
+    const before = runtime();
+    assert.notEqual(before.port, 0);
+    const restarted = await runWith(zeroEnv, 'restart');
+    assert.equal(restarted.code, 0, restarted.stderr);
+    assert.match(restarted.stdout, /Session manager restarted/);
+    const after = runtime();
+    assert.equal(after.port, before.port, 'the successor serves the same port');
+    assert.notEqual(after.pid, before.pid);
+    assert.match((await runWith(zeroEnv, 'stop')).stdout, /stopped/);
+  } finally {
+    fs.rmSync(zeroHome, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  }
+
+  // A manager from before restarts (the one still running after an upgrade)
+  // answers a shutdown without `restart` and starts nothing.
+  const oldHome = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-launcher-'));
+  const old = http.createServer((req, res) => {
+    if (req.url === '/api/v1/shutdown') {
+      res.writeHead(202, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, running: 0 }));
+      setImmediate(() => { old.closeAllConnections(); old.close(); });
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, name: 'agent-guild', version: '0.0.1', pid: process.pid }));
+  });
+  await new Promise((resolve) => old.listen(0, '127.0.0.1', resolve));
+  const oldPort = old.address().port;
+  const oldEnv = { ...env, AGENT_GUILD_HOME: oldHome, AGENT_GUILD_PORT: String(oldPort) };
+  try {
+    const restarted = await runWith(oldEnv, 'restart');
+    assert.equal(restarted.code, 0, restarted.stderr);
+    assert.match(restarted.stdout, /Session manager restarted at .* \(was 0\.0\.1\)/);
+    const runtimeNow = JSON.parse(fs.readFileSync(path.join(oldHome, 'manager.json'), 'utf8'));
+    assert.equal(runtimeNow.port, oldPort, 'the new manager took over the port');
+    assert.notEqual(runtimeNow.pid, process.pid);
+    assert.match((await runWith(oldEnv, 'stop')).stdout, /stopped/);
+  } finally {
+    fs.rmSync(oldHome, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  }
+});
+
 test('open and status say when the running manager is another version', async () => {
   const otherHome = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-launcher-'));
   const server = http.createServer((req, res) => {

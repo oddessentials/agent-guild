@@ -90,10 +90,11 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
       if (remaining > 0) console.warn(`[manager] ${remaining} session process(es) did not confirm exiting in time`);
       return api.close({ notice: { type: 'manager.stopped', remaining, restart } });
     }).then(() => {
-      // Only once the port is released: the successor listens on the same one.
+      // Only once the port is released: the successor listens on the same one,
+      // the bound one rather than a configured 0, so clients find it again.
       if (!restart) return;
       try {
-        const child = spawnManager({ note: 'restarting manager' });
+        const child = spawnManager({ note: 'restarting manager', env: { ...process.env, AGENT_GUILD_PORT: String(api.port) } });
         console.log(`[manager] started the next manager (pid ${child.pid})`);
       } catch (err) {
         console.error(`[manager] could not start the next manager: ${err.message}`);

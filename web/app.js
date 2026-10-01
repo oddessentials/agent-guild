@@ -1286,12 +1286,12 @@ async function installProvider(provider, card, { force = false } = {}) {
  * names, since Claude Code and Gemini CLI only find a session from there;
  * when that folder is gone, the working folder is used instead.
  */
-async function startSession(provider, card, { resume, cwd } = {}) {
+async function startSession(provider, card, { resume, cwd, account = selectedAccount(provider).id } = {}) {
   const working = $('cwd').value.trim();
   save(CWD_KEY, working);
   card?.classList.add('busy');
   try {
-    const body = { providerId: provider.id, account: selectedAccount(provider).id, cwd: cwd || working || undefined, cols: 120, rows: 32, resume };
+    const body = { providerId: provider.id, account, cwd: cwd || working || undefined, cols: 120, rows: 32, resume };
     let session;
     try {
       ({ session } = await api('POST', '/sessions', body));
@@ -1341,8 +1341,9 @@ function paintIdButton(button, id) {
   button.setAttribute('aria-label', `Copy session id ${id}`);
 }
 
-function runningOn(providerId, id) {
-  return [...state.sessions.values()].find((s) => s.status === 'running' && s.task === null && s.provider.id === providerId && toolSessionId(s) === id) ?? null;
+function runningOn(providerId, accountId, id) {
+  return [...state.sessions.values()].find((s) =>
+    s.status === 'running' && s.task === null && s.provider.id === providerId && (s.account?.id ?? 'default') === accountId && toolSessionId(s) === id) ?? null;
 }
 
 function showHistory(provider) {
@@ -1393,9 +1394,34 @@ function sameFolder(a, b) {
   return clean(a) === clean(b);
 }
 
-function historyRow(provider, entry) {
+function historyEntry(id) {
+  return historyView.snapshot?.sessions.find((entry) => entry.id === id) ?? null;
+}
+
+function resumeFromHistory(provider, id, cwd) {
+  const running = runningOn(provider.id, historyView.accountId, id);
+  if (running) {
+    closeHistory();
+    openPanel(running.id);
+  } else startSession(provider, null, { resume: id, cwd: cwd || undefined, account: historyView.accountId });
+}
+
+function buildHistoryRow(id) {
   const node = $('history-template').content.firstElementChild.cloneNode(true);
-  const running = runningOn(provider.id, entry.id);
+  node.dataset.id = id;
+  const idButton = node.querySelector('.session-id');
+  paintIdButton(idButton, id);
+  idButton.addEventListener('click', () => copyId(id));
+  node.querySelector('.history-resume').addEventListener('click', () => {
+    const provider = historyProvider();
+    const entry = historyEntry(id);
+    if (provider && entry) resumeFromHistory(provider, id, entry.cwd);
+  });
+  return node;
+}
+
+function updateHistoryRow(node, provider, entry) {
+  const running = runningOn(provider.id, historyView.accountId, entry.id);
   node.classList.toggle('untitled', !entry.title);
   node.classList.toggle('running', Boolean(running));
   node.querySelector('.history-title').textContent = entry.title ?? 'Untitled session';
@@ -1404,22 +1430,26 @@ function historyRow(provider, entry) {
   const when = entry.updatedAt ? `updated ${relativeTime(entry.updatedAt)}` : '';
   meta.textContent = [entry.cwd && folderName(entry.cwd), when, running && `open in Agent Guild as ${running.name}`].filter(Boolean).join(' · ');
   meta.title = [entry.cwd, entry.startedAt && `started ${new Date(entry.startedAt).toLocaleString()}`].filter(Boolean).join('\n');
-  const idButton = node.querySelector('.session-id');
-  paintIdButton(idButton, entry.id);
-  idButton.addEventListener('click', () => copyId(entry.id));
   const action = node.querySelector('.history-resume');
   action.textContent = running ? 'Open' : 'Resume';
   action.title = running
     ? `This session is running in Agent Guild as "${running.name}". Open it instead of resuming it twice.`
     : `Resume this ${provider.tool} session${entry.cwd ? ` in ${entry.cwd}` : ''}`;
   action.setAttribute('aria-label', `${action.textContent} ${entry.title ?? entry.id}`);
-  action.addEventListener('click', () => {
-    if (running) {
-      closeHistory();
-      openPanel(running.id);
-    } else startSession(provider, null, { resume: entry.id, cwd: entry.cwd || undefined });
+}
+
+/** Rows are kept and updated in place, so a refresh never drops keyboard focus from a row's buttons. */
+function renderHistoryRows(provider, shown) {
+  const list = $('history-list');
+  const rows = new Map([...list.children].map((node) => [node.dataset.id, node]));
+  const wanted = new Set(shown.map((entry) => entry.id));
+  for (const [id, node] of rows) if (!wanted.has(id)) node.remove();
+  shown.forEach((entry, index) => {
+    let node = rows.get(entry.id);
+    if (!node) node = buildHistoryRow(entry.id);
+    updateHistoryRow(node, provider, entry);
+    if (list.children[index] !== node) list.insertBefore(node, list.children[index] || null);
   });
-  return node;
 }
 
 function renderHistory() {
@@ -1443,7 +1473,7 @@ function renderHistory() {
     if (shown.length !== all.length) parts.push(`${shown.length} shown`);
   }
   $('history-sub').textContent = parts.join(' · ');
-  $('history-list').replaceChildren(...shown.map((entry) => historyRow(provider, entry)));
+  renderHistoryRows(provider, shown);
   let note = '';
   if (!provider.historySource) note = `Agent Guild cannot list ${provider.tool}'s sessions. Enter the id of one to resume it.`;
   else if (historyView.loading && !snapshot) note = `Reading ${provider.tool}'s sessions…`;
@@ -1464,13 +1494,7 @@ function resumeById(event) {
   event.preventDefault();
   const provider = historyProvider();
   const id = $('history-id').value.trim();
-  if (!provider || !id) return;
-  const running = runningOn(provider.id, id);
-  if (running) {
-    closeHistory();
-    return openPanel(running.id);
-  }
-  startSession(provider, null, { resume: id });
+  if (provider && id) resumeFromHistory(provider, id, null);
 }
 
 // ---- session cards --------------------------------------------------------
@@ -1531,8 +1555,8 @@ function resumeCard(id) {
   const s = state.sessions.get(id);
   if (!s || !resumable(s)) return;
   const provider = state.providers.find((p) => p.id === s.provider.id);
-  if (s.account && provider.accounts?.some((a) => a.id === s.account.id)) selectAccount(provider, s.account.id);
-  startSession(provider, cards.get(id), { resume: toolSessionId(s), cwd: s.cwd });
+  const account = provider.accounts?.find((a) => a.id === s.account?.id)?.id;
+  startSession(provider, cards.get(id), { resume: toolSessionId(s), cwd: s.cwd, account });
 }
 
 function sessionLevel(s) {
