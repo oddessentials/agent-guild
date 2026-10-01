@@ -85,16 +85,17 @@ function tailLog(lines = 15) {
   }
 }
 
-async function ensureManager() {
+/** Start a manager unless one answers. `port` pins the one to listen on; by default the configured one. */
+async function ensureManager({ port = resolvePort() } = {}) {
   const running = await health(baseUrl());
   if (running) return { url: baseUrl(), started: false, version: running.version };
 
-  const child = spawnManager();
+  const child = spawnManager({ env: { ...process.env, AGENT_GUILD_PORT: String(port) } });
 
   let exited = false;
   child.once('exit', () => { exited = true; });
   const deadline = Date.now() + 20000;
-  const expectedUrl = `http://${DEFAULT_HOST}:${resolvePort()}`;
+  const expectedUrl = `http://${DEFAULT_HOST}:${port}`;
   while (Date.now() < deadline && !exited) {
     await new Promise((r) => setTimeout(r, 250));
     const url = readRuntimeFile()?.pid === child.pid ? readRuntimeFile().url : expectedUrl;
@@ -178,7 +179,8 @@ async function cmdRestart() {
     // A manager from before restarts stops without starting a successor,
     // which is the case right after an upgrade: start one here instead.
     if (!(await waitForStop(url, 15000))) throw new Error('the session manager did not stop, so it could not be restarted.');
-    const { url: started, version } = await ensureManager();
+    // On the port the old one served, which an ephemeral port setting would otherwise lose.
+    const { url: started, version } = await ensureManager({ port: Number(new URL(url).port) });
     const changed = version !== before.version ? `, now Agent Guild ${version} (was ${before.version})` : '';
     console.log(`Session manager restarted at ${started}${changed}.`);
     return;

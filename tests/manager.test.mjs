@@ -609,7 +609,7 @@ test('the tool\'s own session id is reported over HTTP, in-band, and through hoo
   await client.opened;
   client.input('session in-band-1');
   await waitFor(() => ctx.manager.get(session.id).toolSessionId === 'in-band-1', { label: 'in-band tool session id' });
-  client.input(`hook sh ${JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'hooked-2', source: 'startup' })}`);
+  client.input(`hook ${process.platform === 'win32' ? 'cmd' : 'sh'} ${JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'hooked-2', source: 'startup' })}`);
   await waitForText(client, session.id, 'HOOK-EXIT:0', 'hook exit');
   await waitFor(() => ctx.manager.get(session.id).toolSessionId === 'hooked-2', { label: 'hook tool session id' });
   await client.close();

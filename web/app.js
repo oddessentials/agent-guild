@@ -30,6 +30,8 @@ const state = {
   /** The running manager's version and pid, from `hello`. */
   version: null,
   pid: null,
+  /** False for a manager from before restarts, which only stops: `agent-guild restart` replaces it. */
+  restartable: false,
   /** The double-click launcher file on this computer, or null when the install has none. */
   launcher: null,
   /** True from a shutdown request until the manager is reachable again. */
@@ -63,7 +65,7 @@ function setConnection(kind, label) {
   // The manager can only be stopped, restarted or upgraded while the page can reach it.
   state.connected = kind === 'ok';
   $('stop-manager').hidden = !state.connected;
-  $('restart-manager').hidden = !state.connected;
+  $('restart-manager').hidden = !state.connected || !state.restartable;
   renderUpgrade();
 }
 
@@ -134,6 +136,9 @@ function renderUpgrade() {
   if (u?.installing) {
     text = `Upgrading${u.latestVersion ? ` to v${u.latestVersion}` : ''}…`;
     title = 'npm is running in a session. Keep the manager running until it finishes.';
+  } else if (pending && !state.restartable) {
+    text = `v${pending} installed · run "agent-guild restart" to use it`;
+    title = `Agent Guild ${pending} is installed, but this manager is still ${u.version} and cannot restart itself. Run "agent-guild restart" in a terminal when your sessions are done; this page reconnects by itself.`;
   } else if (last?.outcome === 'failed') {
     text = last.exitCode === null ? 'Upgrade failed' : `Upgrade failed (exit ${last.exitCode})`;
     title = 'See the upgrade session for npm\'s output, then run the upgrade again: the files on disk may be incomplete. On Windows, files in use cannot be replaced: stop the manager first and run the command yourself.';
@@ -155,7 +160,9 @@ function setUpgrade(upgrade) {
   renderUpgrade();
   const pending = state.upgrade?.pendingVersion;
   if (pending && pending !== before?.pendingVersion) {
-    toast(`Agent Guild ${pending} is installed. Use "Restart to use v${pending}" in the top bar when your sessions are done.`, 10000);
+    toast(state.restartable
+      ? `Agent Guild ${pending} is installed. Use "Restart to use v${pending}" in the top bar when your sessions are done.`
+      : `Agent Guild ${pending} is installed. Run "agent-guild restart" in a terminal when your sessions are done.`, 10000);
   }
 }
 
@@ -1301,7 +1308,7 @@ async function startSession(provider, card, { resume, cwd, account = selectedAcc
       ({ session } = await api('POST', '/sessions', { ...body, cwd: working || undefined }));
     }
     upsertSession(session);
-    closeHistory();
+    closeHistory({ focusOpener: false });
     openPanel(session.id);
   } catch (err) {
     if (err instanceof AuthError) return showAuth(err.message);
@@ -1401,7 +1408,7 @@ function historyEntry(id) {
 function resumeFromHistory(provider, id, cwd) {
   const running = runningOn(provider.id, historyView.accountId, id);
   if (running) {
-    closeHistory();
+    closeHistory({ focusOpener: false });
     openPanel(running.id);
   } else startSession(provider, null, { resume: id, cwd: cwd || undefined, account: historyView.accountId });
 }
@@ -1486,8 +1493,11 @@ function renderHistory() {
   here.parentElement.hidden = !provider.historySource;
 }
 
-function closeHistory() {
-  if ($('history').open) $('history').close();
+/** Closing to open a session leaves focus with the terminal; otherwise it returns to the opener. */
+function closeHistory({ focusOpener = true } = {}) {
+  if (!$('history').open) return;
+  if (!focusOpener) historyOpener = false;
+  $('history').close();
 }
 
 function resumeById(event) {
@@ -1548,7 +1558,9 @@ function buildCard(session) {
 
 function resumable(s) {
   const provider = state.providers.find((p) => p.id === s.provider.id);
-  return Boolean(s.status === 'exited' && s.task === null && toolSessionId(s) && provider?.available && provider.resumable);
+  const id = toolSessionId(s);
+  return Boolean(s.status === 'exited' && s.task === null && id && provider?.available && provider.resumable
+    && !runningOn(s.provider.id, s.account?.id ?? 'default', id));
 }
 
 function resumeCard(id) {
@@ -1859,8 +1871,12 @@ async function stopManager({ force = false, restart = false } = {}) {
   for (const button of buttons) button.disabled = true;
   try {
     const body = force || restart ? { ...(force && { force: true }), ...(restart && { restart: true }) } : undefined;
-    const { running } = await api('POST', '/shutdown', body);
-    enterStopping(running, restart);
+    const answer = await api('POST', '/shutdown', body);
+    // A manager that does not say it will restart only stops.
+    enterStopping(answer.running, restart && answer.restart === true);
+    if (restart && answer.restart !== true) {
+      toast('This manager cannot restart itself. Run "agent-guild restart" in a terminal to start the new one.', 12000);
+    }
   } catch (err) {
     if (err instanceof AuthError) return showAuth(err.message);
     if (err.code === 'sessions_running') {
@@ -1999,8 +2015,10 @@ function connectEvents() {
       if (state.stopping) leaveStopping();
       state.version = msg.version || null;
       state.pid = msg.pid || null;
+      state.restartable = typeof msg.pid === 'number';
       state.launcher = typeof msg.launcher === 'string' ? msg.launcher : null;
       renderVersion();
+      setConnection('ok', 'Connected to session manager');
       state.sessions = new Map(msg.sessions.map((s) => [s.id, s]));
       for (const id of [...state.views.keys()]) if (!state.sessions.has(id)) dropSession(id);
       renderSessions();
@@ -2118,9 +2136,11 @@ $('models-close').addEventListener('click', closeModels);
 $('history-close').addEventListener('click', closeHistory);
 $('history').addEventListener('click', (e) => { if (e.target === $('history')) closeHistory(); });
 $('history').addEventListener('close', () => {
-  const opener = historyOpener?.isConnected ? historyOpener
-    : $('providers').querySelector(`.provider[data-id="${historyView.providerId}"] .existing`);
-  opener?.focus();
+  if (historyOpener !== false) {
+    const opener = historyOpener?.isConnected ? historyOpener
+      : $('providers').querySelector(`.provider[data-id="${historyView.providerId}"] .existing`);
+    opener?.focus();
+  }
   historyOpener = null;
 });
 $('history-filter').addEventListener('input', renderHistory);

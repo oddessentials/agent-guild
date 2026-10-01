@@ -228,6 +228,8 @@ test('restart keeps an ephemeral port, and starts the manager itself when the ol
     if (req.url === '/api/v1/shutdown') {
       res.writeHead(202, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, running: 0 }));
+      // As a real manager: the runtime file goes with it.
+      fs.rmSync(path.join(oldHome, 'manager.json'), { force: true });
       setImmediate(() => { old.closeAllConnections(); old.close(); });
       return;
     }
@@ -236,7 +238,9 @@ test('restart keeps an ephemeral port, and starts the manager itself when the ol
   });
   await new Promise((resolve) => old.listen(0, '127.0.0.1', resolve));
   const oldPort = old.address().port;
-  const oldEnv = { ...env, AGENT_GUILD_HOME: oldHome, AGENT_GUILD_PORT: String(oldPort) };
+  // Found through its runtime file, as with an ephemeral port setting; the successor must keep that port.
+  fs.writeFileSync(path.join(oldHome, 'manager.json'), JSON.stringify({ pid: process.pid, port: oldPort, url: `http://127.0.0.1:${oldPort}` }));
+  const oldEnv = { ...env, AGENT_GUILD_HOME: oldHome, AGENT_GUILD_PORT: '0' };
   try {
     const restarted = await runWith(oldEnv, 'restart');
     assert.equal(restarted.code, 0, restarted.stderr);
