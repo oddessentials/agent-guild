@@ -25,6 +25,12 @@ export async function startFakeGitHub({ user = { id: 4242, login: 'octo-cat', na
       { full_name: 'acme/api', private: true, fork: true, archived: false, description: null, language: null, pushed_at: '2026-06-01T00:00:00Z' },
     ],
     requests: [],
+    created: [],
+    orgs: ['acme'],
+  };
+  const withOwner = (repo) => {
+    const owner = repo.full_name.split('/')[0];
+    return { owner: { login: owner, type: state.orgs.includes(owner) ? 'Organization' : 'User' }, ...repo };
   };
   const issue = () => {
     state.issued++;
@@ -82,7 +88,21 @@ export async function startFakeGitHub({ user = { id: 4242, login: 'octo-cat', na
       const half = Math.ceil(state.repos.length / 2);
       const slice = page === 1 ? state.repos.slice(0, half) : state.repos.slice(half);
       const link = page === 1 && state.repos.length > half ? { Link: `<${base}/user/repos?page=2>; rel="next", <${base}/user/repos?page=2>; rel="last"` } : {};
-      return json(200, slice, { ...scoped, ...link });
+      return json(200, slice.map(withOwner), { ...scoped, ...link });
+    }
+    const orgRepos = /^\/orgs\/([^/]+)\/repos$/.exec(url.pathname);
+    if (req.method === 'POST' && (url.pathname === '/user/repos' || orgRepos)) {
+      const body = JSON.parse(raw);
+      const owner = orgRepos ? decodeURIComponent(orgRepos[1]) : state.user.login;
+      if (orgRepos && !state.orgs.includes(owner)) return json(404, { message: 'Not Found' });
+      const fullName = `${owner}/${body.name}`;
+      if (state.repos.some((r) => r.full_name.toLowerCase() === fullName.toLowerCase())) {
+        return json(422, { message: 'Repository creation failed.', errors: [{ resource: 'Repository', code: 'custom', field: 'name', message: 'name already exists on this account' }] });
+      }
+      state.created.push({ owner, ...body });
+      const repo = { full_name: fullName, private: body.private, fork: false, archived: false, description: body.description ?? null, language: null, pushed_at: new Date().toISOString() };
+      state.repos.unshift(repo);
+      return json(201, withOwner(repo), scoped);
     }
     if (url.pathname === '/user/keys') {
       if (!/public_key/.test(state.scopes)) return json(404, { message: 'Not Found' });

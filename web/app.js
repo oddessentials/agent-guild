@@ -2262,6 +2262,16 @@ function renderGitHubRepos(github, account, repos) {
   note.replaceChildren(...lines.map((line) => el('span', null, ...[line].flat())));
   note.hidden = lines.length === 0;
   $('github-refresh').disabled = Boolean(githubView.loading);
+  if (!ready) showCreate(false);
+  renderCreate();
+}
+
+async function startClone(account, fullName) {
+  const { session } = await api('POST', '/github/clone', { account: account.id, repo: fullName, parent: cloneParent() });
+  githubView.started.add(session.id);
+  upsertSession(session);
+  closeGitHub({ focusOpener: false });
+  openPanel(session.id);
 }
 
 async function cloneRepo(repo, control) {
@@ -2269,17 +2279,92 @@ async function cloneRepo(repo, control) {
   if (!account) return;
   control.disabled = true;
   try {
-    const { session } = await api('POST', '/github/clone', { account: account.id, repo: repo.fullName, parent: cloneParent() });
-    githubView.started.add(session.id);
-    upsertSession(session);
-    closeGitHub({ focusOpener: false });
-    openPanel(session.id);
+    await startClone(account, repo.fullName);
   } catch (err) {
     if (err instanceof AuthError) return showAuth(err.message);
     toast(err.message, 8000);
     if (err.code === 'clone_exists' || err.code === 'folder_conflict') loadRepos();
   } finally {
     control.disabled = false;
+  }
+}
+
+function showCreate(open) {
+  const form = $('github-create');
+  form.hidden = !open;
+  $('github-new').setAttribute('aria-expanded', String(open));
+  if (!open) return;
+  $('github-create-name').value = '';
+  $('github-create-description').value = '';
+  $('github-create-error').hidden = true;
+  renderCreate();
+  $('github-create-name').focus();
+}
+
+function renderCreate() {
+  const form = $('github-create');
+  const account = githubAccount();
+  if (form.hidden || !account) return;
+  const repos = githubView.repos?.accountId === account.id ? githubView.repos : null;
+  const owners = repos?.owners ?? [account.login];
+  const select = $('github-create-owner');
+  const chosen = select.value;
+  if ([...select.options].map((o) => o.value).join('\n') !== owners.join('\n')) {
+    select.replaceChildren(...owners.map((owner) => {
+      const option = el('option', null, owner === account.login ? `${owner} (you)` : owner);
+      option.value = owner;
+      return option;
+    }));
+    select.value = owners.includes(chosen) ? chosen : owners[0];
+  }
+  const blocker = cloneBlocker(state.github, account);
+  const clone = $('github-create-clone');
+  clone.disabled = Boolean(blocker);
+  if (blocker) clone.checked = false;
+  const name = $('github-create-name').value.trim();
+  $('github-create-clone-label').textContent = blocker ? 'Clone it' : `Clone it into ${cloneParent()}${name ? `/${name}` : ''}`;
+  clone.parentElement.title = blocker ?? '';
+}
+
+async function createRepo(event) {
+  event.preventDefault();
+  const account = githubAccount();
+  if (!account) return;
+  const submit = $('github-create-submit');
+  const error = $('github-create-error');
+  const owner = $('github-create-owner').value;
+  const name = $('github-create-name').value.trim();
+  const clone = $('github-create-clone').checked && !$('github-create-clone').disabled;
+  submit.disabled = true;
+  error.hidden = true;
+  try {
+    const { repo } = await api('POST', `/github/accounts/${account.id}/repos`, {
+      owner,
+      name,
+      description: $('github-create-description').value.trim() || null,
+      private: $('github-create-private').checked,
+      readme: $('github-create-readme').checked,
+    });
+    showCreate(false);
+    githubView.reposFor = null;
+    if (clone) {
+      toast(`Created ${repo.fullName} on GitHub.`, 4000);
+      await startClone(account, repo.fullName);
+    } else {
+      toast(`Created ${repo.fullName} on GitHub.`, 6000);
+      await loadRepos();
+    }
+  } catch (err) {
+    if (err instanceof AuthError) return showAuth(err.message);
+    if ($('github-create').hidden) {
+      toast(err.message, 8000);
+      loadRepos();
+    } else {
+      error.textContent = err.message;
+      error.hidden = false;
+    }
+  } finally {
+    submit.disabled = false;
   }
 }
 
@@ -2993,6 +3078,16 @@ $('github').addEventListener('close', () => {
 $('github-add').addEventListener('click', startGitHubSignIn);
 $('github-filter').addEventListener('input', () => renderGitHub());
 $('github-refresh').addEventListener('click', () => loadRepos({ refresh: true }));
+$('github-new').addEventListener('click', () => showCreate($('github-create').hidden));
+$('github-create').addEventListener('submit', createRepo);
+$('github-create-cancel').addEventListener('click', () => {
+  showCreate(false);
+  $('github-new').focus();
+});
+$('github-create').addEventListener('input', () => {
+  $('github-create-error').hidden = true;
+  renderCreate();
+});
 $('github-parent').addEventListener('change', () => {
   save(CLONE_PARENT_KEY, cloneParent());
   loadRepos();

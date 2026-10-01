@@ -129,7 +129,7 @@ test('small parsers: Link pagination, repositories, scopes and the clone environ
   assert.equal(nextLink('<https://x/?page=1>; rel="prev"'), null);
   assert.equal(nextLink(null), null);
   assert.deepEqual(cleanRepo({ full_name: 'o/r', private: true, description: '  hi ', language: 'Go', pushed_at: 'nope' }), {
-    fullName: 'o/r', owner: 'o', name: 'r', private: true, fork: false, archived: false, description: 'hi', language: 'Go', pushedAt: null, url: 'https://github.com/o/r',
+    fullName: 'o/r', owner: 'o', ownerType: 'User', name: 'r', private: true, fork: false, archived: false, description: 'hi', language: 'Go', pushedAt: null, url: 'https://github.com/o/r',
   });
   assert.equal(cleanRepo({ full_name: '../evil' }), null);
   assert.deepEqual(parseScopes('repo, write:public_key'), ['repo', 'write:public_key']);
@@ -399,4 +399,28 @@ test('an outage during a check keeps a verified key, and a failed or cancelled s
   await waitFor(() => ctx.updates.length > before, 'announced');
   assert.ok(ctx.updates.at(-1).accounts.some((a) => a.id === 99));
   assert.equal(ctx.hub.snapshot().signIn, null);
+});
+
+test('a new repository is created under the account or one of its organizations and joins the list', async () => {
+  const ctx = await setup();
+  const account = await signIn(ctx);
+  const listed = await ctx.hub.repos(account.id);
+  assert.deepEqual(listed.owners, ['octo-cat', 'acme']);
+
+  const repo = await ctx.hub.createRepo(account.id, { owner: 'octo-cat', name: 'fresh-idea', description: ' A test ', private: true, readme: true });
+  assert.equal(repo.fullName, 'octo-cat/fresh-idea');
+  assert.deepEqual(ctx.github.state.created.at(-1), { owner: 'octo-cat', name: 'fresh-idea', description: 'A test', private: true, auto_init: true });
+  assert.ok(ctx.github.state.requests.includes('POST /user/repos'));
+  assert.equal((await ctx.hub.repos(account.id)).repos[0].fullName, 'octo-cat/fresh-idea', 'listed first without a refetch');
+
+  const org = await ctx.hub.createRepo(account.id, { owner: 'acme', name: 'tools', private: false, readme: false });
+  assert.equal(org.ownerType, 'Organization');
+  assert.ok(ctx.github.state.requests.includes('POST /orgs/acme/repos'));
+  assert.deepEqual(ctx.github.state.created.at(-1), { owner: 'acme', name: 'tools', private: false, auto_init: false });
+
+  await assert.rejects(ctx.hub.createRepo(account.id, { owner: 'octo-cat', name: 'fresh-idea' }), { code: 'repo_exists' });
+  await assert.rejects(ctx.hub.createRepo(account.id, { owner: 'elsewhere', name: 'x' }), { code: 'repo_forbidden' });
+  for (const name of ['', 'a b', '..', 'x.git', '-x/']) {
+    await assert.rejects(ctx.hub.createRepo(account.id, { owner: 'octo-cat', name }), { code: 'bad_repo' }, name);
+  }
 });

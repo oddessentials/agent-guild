@@ -204,7 +204,26 @@
       <div id="github-tools" class="history-tools github-tools" hidden>
         <input id="github-filter" type="search" placeholder="Filter repositories" aria-label="Filter repositories" spellcheck="false" autocomplete="off">
         <button id="github-refresh" class="btn" type="button">Refresh</button>
+        <button id="github-new" class="btn" type="button" aria-expanded="false" aria-controls="github-create">New repository</button>
       </div>
+      <form id="github-create" class="github-card github-create" hidden>
+        <h3>New repository</h3>
+        <div class="github-fields">
+          <label><span>Owner</span><select id="github-create-owner"></select></label>
+          <label><span>Name</span><input id="github-create-name" type="text" required maxlength="100" pattern="[A-Za-z0-9._\-]+" spellcheck="false" autocomplete="off" placeholder="my-project"></label>
+          <label class="wide"><span>Description</span><input id="github-create-description" type="text" maxlength="350" autocomplete="off" placeholder="Optional"></label>
+        </div>
+        <div class="github-options">
+          <label><input id="github-create-private" type="checkbox" checked> Private</label>
+          <label><input id="github-create-readme" type="checkbox" checked> Start with a README</label>
+          <label><input id="github-create-clone" type="checkbox" checked> <span id="github-create-clone-label">Clone it</span></label>
+        </div>
+        <p id="github-create-error" class="github-error" role="alert" hidden></p>
+        <div class="github-actions">
+          <button id="github-create-submit" class="btn primary" type="submit">Create repository</button>
+          <button id="github-create-cancel" class="btn" type="button">Cancel</button>
+        </div>
+      </form>
       <div id="github-list" class="history-list" role="list"></div>
       <p id="github-note" class="models-note" hidden></p>
     </div>

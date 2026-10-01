@@ -167,6 +167,7 @@ export function cleanRepo(raw) {
   return {
     fullName: repo.fullName,
     owner: repo.owner,
+    ownerType: raw.owner?.type === 'Organization' ? 'Organization' : 'User',
     name: repo.name,
     private: raw.private === true,
     fork: raw.fork === true,
@@ -602,10 +603,13 @@ export class GitHub extends EventEmitter {
       }
       cached = await this._repos.get(account.id).loading;
     }
+    const orgs = new Map();
+    for (const repo of cached.repos) if (repo.ownerType === 'Organization') orgs.set(repo.owner.toLowerCase(), repo.owner);
     return {
       accountId: account.id,
       fetchedAt: new Date(cached.at).toISOString(),
       truncated: cached.truncated,
+      owners: [account.login, ...[...orgs.values()].sort((a, b) => a.localeCompare(b))],
       parent,
       repos: cached.repos.map((repo) => {
         const target = parent ? path.join(parent, repo.name) : null;
@@ -634,6 +638,40 @@ export class GitHub extends EventEmitter {
     }
     const repos = [...seen.values()].sort((a, b) => (Date.parse(b.pushedAt) || 0) - (Date.parse(a.pushedAt) || 0));
     return { repos, truncated: Boolean(url), at: Date.now() };
+  }
+
+  async createRepo(id, { owner, name, description = null, private: isPrivate = true, readme = true } = {}) {
+    const account = this.account(id);
+    const { fullName } = parseRepo(`${owner ?? ''}/${name ?? ''}`);
+    const repoOwner = fullName.split('/')[0];
+    if (description !== null && typeof description !== 'string') throw refusal(400, 'bad_description', 'description must be a string');
+    const personal = repoOwner.toLowerCase() === account.login.toLowerCase();
+    const route = personal ? '/user/repos' : `/orgs/${encodeURIComponent(repoOwner)}/repos`;
+    const res = await this._api(account, route, {
+      method: 'POST',
+      body: JSON.stringify({
+        name: fullName.split('/')[1],
+        description: description?.trim().slice(0, 350) || undefined,
+        private: isPrivate !== false,
+        auto_init: readme !== false,
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      const detail = [body?.message, ...(Array.isArray(body?.errors) ? body.errors.map((e) => e?.message) : [])].filter(Boolean).join(' ');
+      if (res.status === 422 && /already exists/i.test(detail)) throw refusal(409, 'repo_exists', `${fullName} already exists on GitHub`);
+      if (res.status === 403 || res.status === 404) {
+        throw refusal(403, 'repo_forbidden', `GitHub did not let @${account.login} create repositories in ${repoOwner}${detail ? `: ${detail}` : ''}`);
+      }
+      throw refusal(502, 'github_error', `GitHub answered HTTP ${res.status}${detail ? `: ${detail}` : ''}`);
+    }
+    const repo = cleanRepo(await res.json());
+    if (!repo) throw refusal(502, 'github_error', 'GitHub did not describe the new repository');
+    const cached = this._repos.get(account.id);
+    if (cached?.repos) {
+      this._repos.set(account.id, { ...cached, repos: [repo, ...cached.repos.filter((r) => r.fullName.toLowerCase() !== repo.fullName.toLowerCase())] });
+    }
+    return repo;
   }
 
   _ensureFiles() {

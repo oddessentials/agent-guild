@@ -1376,7 +1376,16 @@ test('a GitHub account signs in, sets up SSH and clones over it in a visible ses
   assert.equal(again.body.error.code, 'clone_exists');
   assert.equal(again.body.error.target, path.join(parent, 'agent-guild'));
 
+  const created = await call('POST', '/github/accounts/4242/repos', { owner: 'octo-cat', name: 'new-thing', private: true, readme: true });
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  assert.equal(created.body.repo.fullName, 'octo-cat/new-thing');
+  assert.equal((await call('POST', '/github/accounts/4242/repos', { owner: 'octo-cat', name: 'new-thing' })).body.error.code, 'repo_exists');
+  const cloneNew = await call('POST', '/github/clone', { account: 4242, repo: 'octo-cat/new-thing', parent });
+  assert.equal(cloneNew.status, 201);
+
   await call('DELETE', `/sessions/${session.id}`);
+  await waitFor(async () => (await call('GET', `/sessions/${cloneNew.body.session.id}`)).body.session.status === 'exited', { label: 'second clone exit' });
+  await call('DELETE', `/sessions/${cloneNew.body.session.id}`);
   ({ body } = await call('DELETE', '/github/accounts/4242'));
   assert.deepEqual(body.github.accounts, []);
   await events.close();

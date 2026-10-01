@@ -353,6 +353,10 @@ export function createManagerServer({
         github.signOut(id);
         return sendJson(res, 200, snapshot());
       }
+      if (action === '/repos' && method === 'POST') {
+        const body = await readJsonBody(req);
+        return sendJson(res, 201, { repo: await github.createRepo(id, body) });
+      }
       if (action === '/repos' && method === 'GET') {
         const raw = url.searchParams.get('parent');
         const parent = raw && raw.trim() ? manager.resolveCwd(raw) : null;
