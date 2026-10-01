@@ -25,10 +25,30 @@ function windowsExtensions(env) {
   return exts;
 }
 
-function getPath(env) {
+export function pathKey(env, platform = process.platform) {
   // Windows environment keys are case-insensitive ("Path" is common).
-  const key = Object.keys(env).find((k) => k.toUpperCase() === 'PATH');
-  return key ? env[key] : '';
+  return Object.keys(env).find((k) => k.toUpperCase() === 'PATH') || (platform === 'win32' ? 'Path' : 'PATH');
+}
+
+function getPath(env) {
+  return env[pathKey(env)] || '';
+}
+
+function candidateGroups(command, env, platform) {
+  const p = platform === 'win32' ? path.win32 : path.posix;
+  const hasExt = platform === 'win32' && p.extname(command) !== '';
+  const withExts = (base) =>
+    platform === 'win32' && !hasExt ? windowsExtensions(env).map((e) => base + e) : [base];
+
+  if (command.includes('/') || (platform === 'win32' && command.includes('\\'))) return [withExts(p.resolve(command))];
+  const groups = [];
+  const delimiter = platform === 'win32' ? ';' : ':';
+  for (const dir of getPath(env).split(delimiter)) {
+    if (!dir) continue;
+    const clean = dir.replace(/^"(.*)"$/, '$1');
+    groups.push(withExts(p.join(clean, command)));
+  }
+  return groups;
 }
 
 /**
@@ -40,23 +60,27 @@ export function resolveCommand(command, env = process.env, platform = process.pl
   isExecutable = (file) => isExecutableFile(file, platform),
 } = {}) {
   if (!command) return null;
-  const p = platform === 'win32' ? path.win32 : path.posix;
-  const candidates = [];
-  const hasExt = platform === 'win32' && p.extname(command) !== '';
-  const withExts = (base) =>
-    platform === 'win32' && !hasExt ? windowsExtensions(env).map((e) => base + e) : [base];
-
-  if (command.includes('/') || (platform === 'win32' && command.includes('\\'))) {
-    candidates.push(...withExts(p.resolve(command)));
-  } else {
-    const delimiter = platform === 'win32' ? ';' : ':';
-    for (const dir of getPath(env).split(delimiter)) {
-      if (!dir) continue;
-      const clean = dir.replace(/^"(.*)"$/, '$1');
-      candidates.push(...withExts(p.join(clean, command)));
-    }
+  for (const group of candidateGroups(command, env, platform)) {
+    const hit = group.find((c) => isExecutable(c));
+    if (hit) return hit;
   }
-  return candidates.find((c) => isExecutable(c)) || null;
+  return null;
+}
+
+export function resolveAllCommands(command, env = process.env, platform = process.platform, {
+  isExecutable = (file) => isExecutableFile(file, platform),
+} = {}) {
+  if (!command) return [];
+  const seen = new Set();
+  const hits = [];
+  for (const group of candidateGroups(command, env, platform)) {
+    const hit = group.find((c) => isExecutable(c));
+    const id = hit && (platform === 'win32' ? hit.toLowerCase() : hit);
+    if (!hit || seen.has(id)) continue;
+    seen.add(id);
+    hits.push(hit);
+  }
+  return hits;
 }
 
 /** Quote one argument for a cmd.exe command line. */

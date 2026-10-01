@@ -19,6 +19,9 @@ export const defaultFsx = {
   readText: (file) => {
     try { return fs.readFileSync(file, 'utf8').slice(0, 8192); } catch { return ''; }
   },
+  isFile: (file) => {
+    try { return fs.statSync(file).isFile(); } catch { return false; }
+  },
 };
 
 function pathModule(platform) {
@@ -55,8 +58,11 @@ function matchesEntry(file, entry, platform) {
   return f.startsWith(e.endsWith(m.sep) ? e : e + m.sep);
 }
 
-function matchesAny(file, entries, env, platform) {
-  return entries.some((entry) => matchesEntry(file, expandHome(entry, env, platform), platform));
+function matchesAny(files, entries, env, platform, fsx) {
+  return entries.some((entry) => {
+    const expanded = expandHome(entry, env, platform);
+    return [expanded, fsx.realpath(expanded)].some((target) => files.some((file) => matchesEntry(file, target, platform)));
+  });
 }
 
 function isInside(file, dir, platform) {
@@ -66,20 +72,26 @@ function isInside(file, dir, platform) {
 
 function npmOwner({ resolvedPath, realPath, pkg, platform, fsx }) {
   const m = pathModule(platform);
-  const dir = m.dirname(resolvedPath);
+  const win = platform === 'win32';
   const segments = pkg.split('/');
-  const prefix = platform === 'win32' ? dir : m.resolve(dir, '..');
-  const pkgDir = platform === 'win32'
-    ? m.join(prefix, 'node_modules', ...segments)
-    : m.join(prefix, 'lib', 'node_modules', ...segments);
-  if (!fsx.exists(m.join(pkgDir, 'package.json'))) return null;
-  if (!isInside(realPath, pkgDir, platform) && !isInside(realPath, fsx.realpath(pkgDir), platform)) {
-    const text = fsx.readText(resolvedPath).toLowerCase();
-    const needle = ['node_modules', ...segments].join('/').toLowerCase();
-    if (!text.replace(/\\/g, '/').includes(needle)) return null;
+  const owned = (prefix) => {
+    const pkgDir = win ? m.join(prefix, 'node_modules', ...segments) : m.join(prefix, 'lib', 'node_modules', ...segments);
+    if (!fsx.exists(m.join(pkgDir, 'package.json'))) return null;
+    const npm = win ? m.join(prefix, 'npm.cmd') : m.join(prefix, 'bin', 'npm');
+    return { prefix, pkgDir, npm: fsx.exists(npm) ? npm : null };
+  };
+
+  const dir = m.dirname(resolvedPath);
+  const beside = owned(win ? dir : m.resolve(dir, '..'));
+  if (beside) {
+    if (isInside(realPath, beside.pkgDir, platform) || isInside(realPath, fsx.realpath(beside.pkgDir), platform)) return beside;
+    const text = fsx.readText(resolvedPath).toLowerCase().replace(/\\/g, '/');
+    if (text.includes(['node_modules', ...segments].join('/').toLowerCase())) return beside;
   }
-  const npm = platform === 'win32' ? m.join(prefix, 'npm.cmd') : m.join(dir, 'npm');
-  return { prefix, npm: fsx.exists(npm) ? npm : null };
+
+  const inner = m.sep + m.join(...(win ? [] : ['lib']), 'node_modules', ...segments) + m.sep;
+  const at = (win ? realPath.toLowerCase() : realPath).lastIndexOf(win ? inner.toLowerCase() : inner);
+  return at > 0 ? owned(realPath.slice(0, at)) : null;
 }
 
 function brewOwner({ realPath, platform, fsx }) {
@@ -136,13 +148,13 @@ export function classifyInstall({
     const owner = npmOwner({ resolvedPath, realPath, pkg: provider.package, platform, fsx });
     if (owner) {
       const npm = owner.npm || npmOnPath;
-      if (!npm) return result('npm', { guidance: `Installed by npm under ${owner.prefix}, but npm was not found.` });
-      return result('npm', { update: { file: npm, args: ['install', '-g', '--prefix', owner.prefix], package: provider.package } });
+      if (!npm) return result('npm', { prefix: owner.prefix, guidance: `Installed by npm under ${owner.prefix}, but npm was not found.` });
+      return result('npm', { prefix: owner.prefix, update: { file: npm, args: ['install', '-g', '--prefix', owner.prefix], package: provider.package } });
     }
   }
 
   const native = channels.native;
-  if (native && (matchesAny(resolvedPath, native.paths, env, platform) || matchesAny(realPath, native.paths, env, platform))) {
+  if (native && matchesAny([resolvedPath, realPath], native.paths, env, platform, fsx)) {
     if (native.update.length === 0) {
       return result('native', { guidance: `${provider.tool} at ${resolvedPath} has no update command configured. Update it the way you installed it.` });
     }
@@ -151,20 +163,85 @@ export function classifyInstall({
 
   const brew = brewOwner({ realPath, platform, fsx });
   if (brew) {
-    if (!brew.brew) return result('brew', { guidance: `Installed by Homebrew under ${brew.prefix}, but brew was not found at ${brew.prefix}/bin/brew.` });
-    return result('brew', { update: { file: brew.brew, args: brew.cask ? ['upgrade', '--cask', brew.token] : ['upgrade', brew.token] } });
+    const owned = { brewPrefix: brew.prefix, token: brew.token, cask: brew.cask };
+    if (!brew.brew) return result('brew', { ...owned, guidance: `Installed by Homebrew under ${brew.prefix}, but brew was not found at ${brew.prefix}/bin/brew.` });
+    return result('brew', { ...owned, update: { file: brew.brew, args: brew.cask ? ['upgrade', '--cask', brew.token] : ['upgrade', brew.token] } });
   }
 
   const winget = wingetOwner({ realPath, id: channels.winget?.id, platform });
   if (winget) {
-    if (!wingetOnPath) return result('winget', { guidance: 'Installed by WinGet, but winget was not found on PATH.' });
-    return result('winget', { update: { file: wingetOnPath, args: ['upgrade', '--id', winget.id, '--exact'] } });
+    if (!wingetOnPath) return result('winget', { wingetId: winget.id, guidance: 'Installed by WinGet, but winget was not found on PATH.' });
+    return result('winget', { wingetId: winget.id, update: { file: wingetOnPath, args: ['upgrade', '--id', winget.id, '--exact'] } });
   }
 
   const legacy = channels.legacy;
-  if (legacy && (matchesAny(resolvedPath, legacy.paths, env, platform) || matchesAny(realPath, legacy.paths, env, platform))) {
+  if (legacy && matchesAny([resolvedPath, realPath], legacy.paths, env, platform, fsx)) {
     return result('legacy', { guidance: legacy.guidance || `Installed by an older installer at ${resolvedPath}. Update it the way you installed it.` });
   }
 
   return result('unknown', { guidance: `Installed at ${resolvedPath} by a method Agent Guild does not recognise. Update it the way you installed it.` });
+}
+
+export function installationKey(install, provider, platform, fsx = defaultFsx) {
+  switch (install.channel) {
+    case 'npm':
+      return provider.channels?.native?.sharedWithNpm ? 'native' : `npm:${normalize(fsx.realpath(install.prefix), platform)}`;
+    case 'native':
+      return 'native';
+    case 'legacy':
+      return 'legacy';
+    case 'brew':
+      return `brew:${install.brewPrefix}:${install.token}`;
+    case 'winget':
+      return `winget:${install.wingetId.toLowerCase()}`;
+    default:
+      return `path:${normalize(install.realPath, platform)}`;
+  }
+}
+
+export function removalCommand(install, provider) {
+  switch (install.channel) {
+    case 'npm':
+      return install.update ? formatCommand(install.update.file, ['uninstall', '-g', '--prefix', install.prefix, provider.package]) : null;
+    case 'brew':
+      return install.update ? formatCommand(install.update.file, install.cask ? ['uninstall', '--cask', install.token] : ['uninstall', install.token]) : null;
+    case 'winget':
+      return `winget uninstall --id ${install.wingetId} --exact`;
+    case 'native':
+      return provider.channels?.native?.uninstall || null;
+    case 'legacy':
+      return provider.channels?.legacy?.uninstall || null;
+    default:
+      return null;
+  }
+}
+
+export function knownLaunchers({ provider, command, env = process.env, platform = process.platform, fsx = defaultFsx }) {
+  if (!command || /[\\/]/.test(command)) return [];
+  const m = pathModule(platform);
+  const exts = platform === 'win32' ? ['.exe', '.cmd', ''] : [''];
+  const firstFile = (base) => exts.map((ext) => base + ext).find((file) => fsx.isFile(file)) || null;
+  const found = [];
+  for (const channel of [provider.channels?.native, provider.channels?.legacy]) {
+    for (const entry of channel?.paths || []) {
+      const base = expandHome(entry, env, platform);
+      const hit = firstFile(base) || firstFile(m.join(base, command));
+      if (hit) found.push(hit);
+    }
+  }
+  return found;
+}
+
+export function listInstallations({
+  onPath = [], known = [], provider, env = process.env, platform = process.platform, fsx = defaultFsx, npmOnPath = null, wingetOnPath = null,
+}) {
+  const installs = new Map();
+  const add = (file, isOnPath) => {
+    const install = classifyInstall({ resolvedPath: file, provider, env, platform, fsx, npmOnPath, wingetOnPath });
+    const key = installationKey(install, provider, platform, fsx);
+    if (!installs.has(key)) installs.set(key, { ...install, key, onPath: isOnPath, removeCommand: removalCommand(install, provider) });
+  };
+  for (const file of onPath) add(file, true);
+  for (const file of known) add(file, false);
+  return [...installs.values()];
 }

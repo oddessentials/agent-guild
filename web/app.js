@@ -182,9 +182,49 @@ function renderProviders() {
     update.title = provider.updateCommand ? `Run "${provider.updateCommand}" in a session` : '';
     update.addEventListener('click', () => installProvider(provider, node));
     renderHint(hint, provider);
+    renderCopies(node.querySelector('.copies'), provider);
     renderConsoleLinks(node, provider);
     renderUsage(node, provider);
     return node;
+  }));
+}
+
+const openCopies = new Set();
+
+function renderCopies(box, provider) {
+  const installs = provider.installs || [];
+  const warnings = provider.warnings || [];
+  box.hidden = warnings.length === 0;
+  if (box.hidden) return;
+  const inUse = installs.some((i) => i.active);
+  const older = installs.some((i) => i.newer);
+  box.querySelector('summary').textContent = !inUse
+    ? 'A copy exists off PATH'
+    : `${installs.length} copies installed${older ? ' · older copy in use' : ''}`;
+  box.open = openCopies.has(provider.id);
+  box.addEventListener('toggle', () => (box.open ? openCopies.add(provider.id) : openCopies.delete(provider.id)));
+  const line = (className, ...content) => {
+    const span = document.createElement('span');
+    span.className = className;
+    span.append(...content);
+    return span;
+  };
+  box.querySelector('ul').replaceChildren(...warnings.map((text) => {
+    const item = document.createElement('li');
+    item.textContent = text;
+    return item;
+  }), ...installs.map((install) => {
+    const item = document.createElement('li');
+    const name = [CHANNEL_LABELS[install.channel] || install.channel, install.version && `v${install.version}`, install.active ? 'in use' : 'not in use'];
+    item.append(line('copy-name', name.filter(Boolean).join(' · ')), line('copy-path', install.path));
+    if (install.removeCommand) {
+      const code = document.createElement('code');
+      code.textContent = install.removeCommand;
+      item.append(line('copy-remove', 'To remove it: ', code));
+    } else {
+      item.append(line('copy-remove', 'No removal command is known for this copy.'));
+    }
+    return item;
   }));
 }
 
