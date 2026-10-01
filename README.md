@@ -13,8 +13,8 @@ coding tool, and see at a glance which sessions and agents are working.
   installed are shown greyed out with an **Install** button that runs
   `npm install -g` in a session you can watch, or with install instructions
   when the tool is not an npm package. Installed tools show their version
-  and an **Update** button when npm has a newer one; updating while that
-  tool's sessions are running asks first, because it can break them.
+  and an **Update** button; updating while that tool's sessions are running
+  asks first, because it can break them.
 * **See what is left of your limits.** Claude Code, Codex CLI and Gemini
   CLI cards show a meter per rate-limit window (5-hour, 7-day, or per
   model) with the time until it resets, read from the tool's own sign-in.
@@ -86,7 +86,7 @@ one platform under a `win32` or `darwin` key. See
 | `id` | Lowercase identifier. |
 | `vendor`, `tool` | Names shown on the icon. |
 | `command`, `args` | What to run. `command` is looked up on PATH. `@shell` means the user's default shell. |
-| `package` | The tool's npm package, e.g. `@openai/codex`. Enables the **Install** and **Update** buttons and the version check. |
+| `package` | The tool's npm package, e.g. `@openai/codex`. Enables the **Install** button and the version check. |
 | `versionArgs` | Arguments that make the command print its version, used instead of `args`, e.g. `["--version"]`. |
 | `usage` | Where the usage meters come from: `"claude"`, `"codex"`, `"gemini"`, `{ "command", "args" }` for a program that prints `{ "windows": [{ "label", "usedPercent", "resetsAt" }] }`, or `null` for none. |
 | `modelPattern` | Regular expression that finds the model name on the tool's screen when the tool does not report it. |

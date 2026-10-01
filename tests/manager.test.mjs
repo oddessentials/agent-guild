@@ -28,13 +28,50 @@ if (process.platform === 'win32') {
 } else {
   fs.writeFileSync(path.join(bin, 'npm'), '#!/bin/sh\necho "FAKE-NPM $*"\n', { mode: 0o755 });
 }
-process.env.PATH = `${bin}${path.delimiter}${process.env.PATH}`;
+const win = process.platform === 'win32';
+const fixture = path.join(here, 'fixtures', 'fake-tool.mjs');
+const runFixture = { win: `"${process.execPath}" "${fixture}" %*`, sh: `exec "${process.execPath}" "${fixture}" "$@"` };
+function writeScript(file, body) {
+  if (win) fs.writeFileSync(`${file}.cmd`, `@echo off\r\n${body.win}\r\n`);
+  else fs.writeFileSync(file, `#!/bin/sh\n${body.sh}\n`, { mode: 0o755 });
+}
 
-// A stand-in npm registry that knows one package.
+const nativeDir = path.join(home, 'native-bin');
+fs.mkdirSync(nativeDir);
+writeScript(path.join(nativeDir, 'fake-native'), runFixture);
+
+const npmPrefix = path.join(home, 'npm-prefix');
+const npmBinDir = win ? npmPrefix : path.join(npmPrefix, 'bin');
+const npmPkgDir = path.join(npmPrefix, ...(win ? [] : ['lib']), 'node_modules', 'fake-tool-pkg');
+fs.mkdirSync(path.join(npmPkgDir, 'bin'), { recursive: true });
+fs.mkdirSync(npmBinDir, { recursive: true });
+fs.writeFileSync(path.join(npmPkgDir, 'package.json'), JSON.stringify({ name: 'fake-tool-pkg' }));
+if (win) {
+  writeScript(path.join(npmBinDir, 'fake-npmtool'), { win: `REM "%~dp0\\node_modules\\fake-tool-pkg\\bin\\tool.js"\r\n${runFixture.win}` });
+} else {
+  writeScript(path.join(npmPkgDir, 'bin', 'fake-npmtool'), runFixture);
+  fs.symlinkSync(path.join(npmPkgDir, 'bin', 'fake-npmtool'), path.join(npmBinDir, 'fake-npmtool'));
+}
+writeScript(path.join(npmBinDir, 'npm'), {
+  win: 'echo FAKE-NPM-OWNER %*\r\nif not defined FAKE_NPM_BREAKS exit /b 0\r\nif exist "%FAKE_TOOL_BREAK_FILE%" (del "%FAKE_TOOL_BREAK_FILE%") else (type nul > "%FAKE_TOOL_BREAK_FILE%")',
+  sh: 'echo "FAKE-NPM-OWNER $*"\n[ -z "$FAKE_NPM_BREAKS" ] && exit 0\nif [ -e "$FAKE_TOOL_BREAK_FILE" ]; then rm -f "$FAKE_TOOL_BREAK_FILE"; else : > "$FAKE_TOOL_BREAK_FILE"; fi',
+});
+const breakFlag = path.join(home, 'broken.flag');
+fs.writeFileSync(path.join(home, 'break-version.txt'), '9.9.9');
+
+process.env.PATH = [bin, npmBinDir, nativeDir, process.env.PATH].join(path.delimiter);
+
+const racyBuild = `racy-pkg-${process.platform}-${process.arch}`;
+const registryRequests = [];
 const npmRegistry = http.createServer((req, res) => {
-  const known = req.url === '/fake-tool-pkg/latest';
+  registryRequests.push(req.url);
+  const manifests = {
+    '/fake-tool-pkg/latest': { name: 'fake-tool-pkg', version: '9.9.9' },
+    '/racy-pkg/latest': { name: 'racy-pkg', version: '2.0.0', optionalDependencies: { [racyBuild]: `npm:racy-pkg@2.0.0-${process.platform}-${process.arch}` } },
+  };
+  const known = manifests[req.url];
   res.writeHead(known ? 200 : 404, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify(known ? { name: 'fake-tool-pkg', version: '9.9.9' } : { error: 'Not found' }));
+  res.end(JSON.stringify(known || { error: 'Not found' }));
 });
 await new Promise((resolve) => npmRegistry.listen(0, '127.0.0.1', resolve));
 process.env.AGENT_GUILD_NPM_REGISTRY = `http://127.0.0.1:${npmRegistry.address().port}`;
@@ -44,6 +81,13 @@ fs.writeFileSync(path.join(home, 'providers.json'), JSON.stringify({
     { id: 'fake', vendor: 'Test', tool: 'Fake Tool', command: process.execPath, args: [path.join(here, 'fixtures', 'fake-tool.mjs')], resumeArgs: ['--resume', '{id}'], package: 'fake-tool-pkg', versionArgs: [path.join(here, 'fixtures', 'fake-tool.mjs'), '--version'], modelPattern: 'fake-model-[a-z0-9.]+' },
     { id: 'plain', vendor: 'Test', tool: 'Plain Tool', command: process.execPath, args: [path.join(here, 'fixtures', 'fake-tool.mjs')], usage: { command: process.execPath, args: [path.join(here, 'fixtures', 'fake-usage.mjs')] } },
     { id: 'missing', vendor: 'Nobody', tool: 'Missing Tool', command: 'definitely-not-installed-agent-guild', install: 'npm i -g nothing', package: 'nothing' },
+    { id: 'nativetool', vendor: 'Test', tool: 'Native Tool', command: 'fake-native', package: 'fake-tool-pkg', versionArgs: ['--version'], env: { FAKE_TOOL_VERSION_FILE: path.join(home, 'native-version-1.txt') }, channels: { native: { paths: [path.join(nativeDir, 'fake-native')], update: ['update'] } } },
+    { id: 'nativetool2', vendor: 'Test', tool: 'Native Tool Two', command: 'fake-native', package: 'fake-tool-pkg', versionArgs: ['--version'], env: { FAKE_TOOL_VERSION_FILE: path.join(home, 'native-version-2.txt'), FAKE_TOOL_UPDATE_TO: '2.0.0' }, channels: { native: { paths: [path.join(nativeDir, 'fake-native')], update: ['update'] } } },
+    { id: 'npmtool', vendor: 'Test', tool: 'Npm Tool', command: 'fake-npmtool', package: 'fake-tool-pkg', versionArgs: ['--version'] },
+    { id: 'breaktool', vendor: 'Test', tool: 'Break Tool', command: 'fake-npmtool', package: 'fake-tool-pkg', versionArgs: ['--version'], env: { FAKE_TOOL_VERSION_FILE: path.join(home, 'break-version.txt'), FAKE_TOOL_BREAK_FILE: breakFlag, FAKE_NPM_BREAKS: '1' } },
+    { id: 'oddtool', vendor: 'Test', tool: 'Odd Tool', command: 'fake-native', versionArgs: ['--version'], env: { FAKE_TOOL_VERSION_TEXT: 'fake-tool nightly build' } },
+    { id: 'absent', vendor: 'Nobody', tool: 'Absent Tool', command: 'definitely-not-installed-agent-guild', package: 'fake-tool-pkg' },
+    { id: 'racytool', vendor: 'Nobody', tool: 'Racy Tool', command: 'definitely-not-installed-agent-guild', package: 'racy-pkg' },
     // Never read the developer's real Claude Code, Codex or Gemini sign-in during tests.
     { id: 'anthropic', usage: null },
     { id: 'openai', usage: null },
@@ -156,6 +200,26 @@ async function waitForText(client, sessionId, text, label) {
 
 const terminal = (id) => new Client(`${base.replace('http', 'ws')}/api/v1/sessions/${id}/terminal?token=${token}`);
 
+const findProvider = async (id) => (await call('GET', '/providers')).body.providers.find((p) => p.id === id);
+
+async function runInstall(id) {
+  const startedAt = Date.now();
+  const started = await call('POST', `/providers/${id}/install`);
+  assert.equal(started.status, 201, JSON.stringify(started.body));
+  const { session } = started.body;
+  const client = terminal(session.id);
+  await client.opened;
+  await waitFor(() => client.messages.find((m) => m.type === 'exit'), { label: `${id} update exit` });
+  const output = `${stripAnsi(client.output)}\n${screenText(session.id)}`;
+  await client.close();
+  await call('DELETE', `/sessions/${session.id}`);
+  const provider = await waitFor(async () => {
+    const p = await findProvider(id);
+    return p.lastInstall?.at >= startedAt ? p : null;
+  }, { label: `${id} update outcome` });
+  return { session, output, provider };
+}
+
 async function createFake(extra = {}) {
   const { status, body } = await call('POST', '/sessions', { providerId: 'fake', cwd: home, cols: 90, rows: 20, ...extra });
   assert.equal(status, 201, JSON.stringify(body));
@@ -249,36 +313,152 @@ test('a provider can be installed or updated from a visible npm session', async 
   const events = new Client(`${base.replace('http', 'ws')}/api/v1/events?token=${token}`);
   await events.opened;
 
-  const { status, body } = await call('POST', '/providers/missing/install');
+  const { status, body } = await call('POST', '/providers/absent/install');
   assert.equal(status, 201, JSON.stringify(body));
   assert.equal(body.session.task, 'install');
-  assert.equal(body.session.name, 'Install Missing Tool');
-  assert.equal(body.session.provider.id, 'missing');
+  assert.equal(body.session.name, 'Install Absent Tool');
+  assert.equal(body.session.provider.id, 'absent');
   const client = terminal(body.session.id);
   await client.opened;
-  await waitForText(client, body.session.id, `FAKE-NPM install -g nothing@latest --registry ${process.env.AGENT_GUILD_NPM_REGISTRY}`, 'npm output');
+  await waitForText(client, body.session.id, `FAKE-NPM install -g fake-tool-pkg@9.9.9 --registry ${process.env.AGENT_GUILD_NPM_REGISTRY}`, 'npm output');
   await waitFor(() => client.messages.find((m) => m.type === 'exit'), { label: 'npm exit' });
   const updated = await waitFor(() => events.messages.find((m) => m.type === 'providers.updated'), { label: 'providers.updated' });
-  assert.ok(updated.providers.some((p) => p.id === 'missing'));
+  assert.ok(updated.providers.some((p) => p.id === 'absent'));
   await client.close();
   await call('DELETE', `/sessions/${body.session.id}`);
 
-  assert.equal((await call('POST', '/providers/plain/install')).body.error.code, 'not_installable');
+  assert.equal((await call('POST', '/providers/plain/install')).body.error.code, 'not_updatable');
+  const unresolved = await call('POST', '/providers/missing/install');
+  assert.equal(unresolved.status, 503);
+  assert.equal(unresolved.body.error.code, 'release_unresolved');
   assert.equal((await call('POST', '/providers/nope/install')).status, 404);
 
   // Updating a tool that has running sessions needs an explicit go-ahead.
-  const running = await createFake();
-  const refused = await call('POST', '/providers/fake/install');
+  await waitFor(async () => (await findProvider('nativetool')).updateCommand, { label: 'self-update probe' });
+  const running = (await call('POST', '/sessions', { providerId: 'nativetool', cwd: home, cols: 90, rows: 20 })).body.session;
+  const refused = await call('POST', '/providers/nativetool/install');
   assert.equal(refused.status, 409);
   assert.equal(refused.body.error.code, 'provider_in_use');
   assert.equal(refused.body.error.running, 1);
-  const forced = await call('POST', '/providers/fake/install', { force: true });
+  const forced = await call('POST', '/providers/nativetool/install', { force: true });
   assert.equal(forced.status, 201);
-  assert.equal(forced.body.session.name, 'Update Fake Tool');
+  assert.equal(forced.body.session.name, 'Update Native Tool (native)');
   await waitFor(async () => (await call('GET', `/sessions/${forced.body.session.id}`)).body.session.status === 'exited', { label: 'update exit' });
   await call('DELETE', `/sessions/${forced.body.session.id}`);
   await call('DELETE', `/sessions/${running.id}`);
   await events.close();
+});
+
+test('an installed tool reports the installation that owns it', async () => {
+  const native = await waitFor(async () => {
+    const p = await findProvider('nativetool');
+    return p.updateCommand ? p : null;
+  }, { label: 'self-update probe' });
+  assert.equal(native.installChannel, 'native');
+  assert.ok(native.resolvedPath.startsWith(nativeDir));
+  assert.ok(native.updateCommand.includes(native.resolvedPath), 'the detected launcher is named by its absolute path');
+  assert.ok(native.updateCommand.endsWith(' update'));
+
+  const npmtool = await waitFor(async () => {
+    const p = await findProvider('npmtool');
+    return p.latestVersion ? p : null;
+  }, { label: 'release lookup' });
+  assert.equal(npmtool.installChannel, 'npm');
+  assert.ok(npmtool.updateCommand.includes(path.join(npmBinDir, win ? 'npm.cmd' : 'npm')), 'the npm of the owning prefix');
+  assert.ok(npmtool.updateCommand.includes('install -g --prefix'));
+  assert.ok(npmtool.updateCommand.includes(npmPrefix));
+  assert.ok(npmtool.updateCommand.includes('fake-tool-pkg@9.9.9'), 'the known release, as an exact version');
+
+  const fake = await findProvider('fake');
+  assert.equal(fake.installChannel, 'unknown');
+  assert.equal(fake.updateCommand, null);
+  assert.match(fake.updateGuidance, /does not recognise/);
+  assert.equal((await findProvider('missing')).installChannel, null);
+});
+
+test('an update runs the updater of the owning installation and stays retryable', async () => {
+  const native = await runInstall('nativetool');
+  assert.equal(native.session.name, 'Update Native Tool (native)');
+  assert.ok(native.output.includes('FAKE-TOOL UPDATE update'), native.output);
+  assert.ok(!native.output.includes('FAKE-NPM'), 'npm is not run for a tool npm does not own');
+
+  const unchanged = native.provider;
+  assert.equal(unchanged.lastInstall.outcome, 'unchanged');
+  assert.equal(unchanged.lastInstall.exitCode, 0);
+  assert.equal(unchanged.installedVersion, '1.2.3');
+  assert.equal(unchanged.latestVersion, '9.9.9', 'the release is still reported');
+  assert.equal(unchanged.updateAvailable, true);
+  assert.ok(unchanged.updateCommand, 'the update can be tried again');
+  const retry = await runInstall('nativetool');
+  assert.ok(retry.output.includes('FAKE-TOOL UPDATE update'), retry.output);
+
+  const viaNpm = await runInstall('npmtool');
+  assert.equal(viaNpm.session.name, 'Update Npm Tool (npm)');
+  assert.ok(viaNpm.output.includes('FAKE-NPM-OWNER install -g --prefix'), viaNpm.output);
+  assert.ok(!viaNpm.output.includes('FAKE-NPM install'), 'the first npm on PATH is not used');
+
+  const unknown = await call('POST', '/providers/fake/install');
+  assert.equal(unknown.status, 400);
+  assert.equal(unknown.body.error.code, 'not_updatable');
+});
+
+test('the version is read again right after an update', async () => {
+  const before = await waitFor(async () => {
+    const p = await findProvider('nativetool2');
+    return p.installedVersion && p.updateCommand ? p : null;
+  }, { label: 'version check' });
+  assert.equal(before.installedVersion, '1.2.3');
+  const { provider: after } = await runInstall('nativetool2');
+  assert.equal(after.lastInstall.outcome, 'updated');
+  assert.equal(after.lastInstall.before, '1.2.3');
+  assert.equal(after.installedVersion, '2.0.0');
+  assert.equal(after.updateAvailable, true);
+});
+
+test('a clean npm exit that leaves the tool broken is reported and stays repairable', async () => {
+  const healthy = await waitFor(async () => {
+    const p = await findProvider('breaktool');
+    return p.installedVersion ? p : null;
+  }, { label: 'version check' });
+  assert.equal(healthy.installedVersion, '9.9.9');
+  assert.equal(healthy.updateAvailable, false, 'no newer release is known');
+  assert.equal(healthy.versionStatus, 'ok');
+
+  const broke = await runInstall('breaktool');
+  assert.ok(broke.output.includes('FAKE-NPM-OWNER install -g --prefix'), broke.output);
+  assert.equal(broke.provider.lastInstall.exitCode, 0, 'npm itself reported success');
+  assert.equal(broke.provider.lastInstall.verification, 'failed');
+  assert.equal(broke.provider.versionStatus, 'failed');
+  assert.equal(broke.provider.installedVersion, null, 'the Node.js version in the error is not taken as the tool version');
+  assert.match(broke.provider.versionError, /^Error: Missing optional dependency/);
+  assert.equal(broke.provider.installChannel, 'npm');
+  assert.equal(broke.provider.updateAvailable, false);
+  assert.ok(broke.provider.updateCommand, 'the reinstall stays on offer with no newer release');
+
+  const repaired = await runInstall('breaktool');
+  assert.equal(repaired.provider.lastInstall.exitCode, 0);
+  assert.equal(repaired.provider.lastInstall.verification, 'ok');
+  assert.equal(repaired.provider.versionStatus, 'ok');
+  assert.equal(repaired.provider.installedVersion, '9.9.9');
+
+  const odd = await waitFor(async () => {
+    const p = await findProvider('oddtool');
+    return p.versionStatus ? p : null;
+  }, { label: 'odd version check' });
+  assert.equal(odd.versionStatus, 'unavailable');
+  assert.equal(odd.installedVersion, null);
+});
+
+test('an unpublished platform build stops the install before anything runs', async () => {
+  const before = (await call('GET', '/sessions')).body.sessions.length;
+  registryRequests.length = 0;
+  const refused = await call('POST', '/providers/racytool/install');
+  assert.equal(refused.status, 409, JSON.stringify(refused.body));
+  assert.equal(refused.body.error.code, 'release_incomplete');
+  assert.ok(refused.body.error.message.includes(`racy-pkg@2.0.0-${process.platform}-${process.arch}`));
+  assert.match(refused.body.error.message, /Nothing was changed/);
+  assert.deepEqual(registryRequests, ['/racy-pkg/latest', `/racy-pkg/2.0.0-${process.platform}-${process.arch}`]);
+  assert.equal((await call('GET', '/sessions')).body.sessions.length, before, 'no session was started');
 });
 
 test('an existing tool session can be resumed by id', async () => {

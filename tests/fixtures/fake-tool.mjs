@@ -19,10 +19,40 @@
 // Started with --version it prints "fake-tool 1.2.3" and exits.
 
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
 
+const versionFile = process.env.FAKE_TOOL_VERSION_FILE;
+
+if (process.argv.includes('update')) {
+  if (process.argv.includes('--help')) {
+    console.log('usage: fake-tool update');
+    process.exit(0);
+  }
+  console.log(`FAKE-TOOL UPDATE ${process.argv.slice(2).join(' ')}`);
+  if (versionFile && process.env.FAKE_TOOL_UPDATE_TO) fs.writeFileSync(versionFile, process.env.FAKE_TOOL_UPDATE_TO);
+  process.exit(Number(process.env.FAKE_TOOL_UPDATE_EXIT || 0));
+}
+
 if (process.argv.includes('--version')) {
-  console.log('fake-tool 1.2.3');
+  if (process.env.FAKE_TOOL_BREAK_FILE && fs.existsSync(process.env.FAKE_TOOL_BREAK_FILE)) {
+    console.error([
+      'file:///C:/nodejs/v-24.20.0/nodejs-24.20.0/node_modules/fake-tool/bin/fake.js:107',
+      '  throw new Error(',
+      '        ^',
+      '',
+      'Error: Missing optional dependency fake-tool-win32-x64. Reinstall: npm install -g fake-tool-pkg@latest',
+      '    at findExecutable (file:///C:/nodejs/v-24.20.0/nodejs-24.20.0/node_modules/fake-tool/bin/fake.js:107:9)',
+    ].join('\n'));
+    process.exit(1);
+  }
+  if (process.env.FAKE_TOOL_VERSION_TEXT) {
+    console.log(process.env.FAKE_TOOL_VERSION_TEXT);
+    process.exit(0);
+  }
+  let version = '1.2.3';
+  try { if (versionFile) version = fs.readFileSync(versionFile, 'utf8').trim() || version; } catch { /* not updated yet */ }
+  console.log(`fake-tool ${version}`);
   process.exit(0);
 }
 

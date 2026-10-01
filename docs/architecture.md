@@ -37,7 +37,7 @@
   get it. On Windows it runs `.cmd` and `.ps1` shims through `cmd.exe` or
   PowerShell, because ConPTY can only start real executables. It also checks
   each tool's installed and latest versions, and builds the `npm install -g`
-  session that installs or updates a tool.
+  session that installs a tool.
 * **Usage monitor** (`usage.mjs`). Reads each tool's own sign-in and asks the
   vendor's usage endpoint for the remaining rate-limit windows. Tokens stay
   in the manager.

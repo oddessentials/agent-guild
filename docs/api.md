@@ -88,7 +88,7 @@ id.
 skips the lookup). Both are null until the first check finishes; a
 `providers.updated` event follows.
 `updateAvailable` is true when the latest version is newer, and
-`POST /providers/:id/install` performs the update.
+`POST /providers/:id/install` performs the update when `updateCommand` is not null.
 
 `usageSource` is `claude`, `codex`, `gemini`, `command` or null, and says
 whether `GET /usage` reports the provider.
@@ -204,7 +204,7 @@ All paths are under `/api/v1`.
 | GET | `/info` | | Manager version, platform, start time, provider config warnings. |
 | GET | `/providers` | | `{ providers: Provider[] }` |
 | POST | `/providers/reload` | | Re-reads `providers.json`. |
-| POST | `/providers/:id/install` | `{ force? }` | `201 { session }`: a session running `npm install -g <package>@latest`. 409 `provider_in_use` (with `running`, the session count) while the provider's sessions are running, unless `force` is true. |
+| POST | `/providers/:id/install` | `{ force? }` | `201 { session }`: a session running `npm install -g <package>@<version>`, or `updateCommand` when the tool is installed. 400 `not_updatable` when an installed tool has no `updateCommand`. 503 `release_unresolved` or 409 `release_incomplete` when the release cannot be read or its platform build is not published; nothing is run. 409 `install_in_progress` while one is already running. 409 `provider_in_use` (with `running`, the session count) while the provider's sessions are running, unless `force` is true. |
 | GET | `/usage` | | `{ usage: Usage[] }` for every provider with a `usageSource`. |
 | GET | `/sessions` | | `{ sessions: Session[] }` |
 | POST | `/sessions` | `{ providerId, cwd?, cols?, rows?, name?, args?, resume? }` | `201 { session }` |
