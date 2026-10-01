@@ -323,7 +323,6 @@ function merge(previous, fresh, limit, now) {
   const byKey = new Map(previous.filter((item) => now - item.time <= WINDOW_MS).map((item) => [item.key, item]));
   for (const item of fresh) {
     const stored = byKey.get(item.key);
-    // Do not move a future-dated story forward on every successful refresh.
     if (stored?.date === item.date) item.time = stored.time;
     byKey.set(item.key, item);
   }

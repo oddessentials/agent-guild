@@ -1091,6 +1091,7 @@ function renderNewsFilters() {
       for (const other of $('news-filters').children) other.setAttribute('aria-pressed', String(other === chip));
       newsView.shown = state.news;
       renderNewsList();
+      document.querySelector('.news-body').scrollTop = 0;
     });
     return chip;
   }));
