@@ -164,7 +164,6 @@ export function indexCatalog(listings) {
   }
   const bySlug = new Map();
   for (const [id, main] of aliasOf) {
-    if (id.includes(':')) continue;
     const slug = id.slice(id.indexOf('/') + 1);
     bySlug.set(slug, bySlug.has(slug) && bySlug.get(slug) !== main ? null : main);
   }
@@ -208,15 +207,15 @@ export function providerModels(index, provider) {
 }
 
 export function modelNames(raw) {
-  const name = String(raw ?? '').trim().toLowerCase()
+  const exact = String(raw ?? '').trim().toLowerCase()
     .replace(/\[[^\]]*\]$/, '')
-    .replace(/:[a-z0-9-]+$/, '')
     .trim()
     .replace(/\s+/g, '-');
-  if (!name) return [];
+  if (!exact) return [];
+  const name = exact.replace(/:[a-z0-9-]+$/, '');
   const undated = name.replace(/(?:-\d{8}|-\d{4}-\d{2}-\d{2}|@\d{8})$/, '');
   const dotted = undated.replace(/(\d+)-(\d+)(?=$|-)/g, '$1.$2');
-  return [...new Set([name, undated, dotted])];
+  return [...new Set([exact, name, undated, dotted])];
 }
 
 export function resolveModel(index, related, model) {

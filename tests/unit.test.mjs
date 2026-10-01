@@ -1741,6 +1741,25 @@ test('a session model matches its catalog listing exactly, never a provider, pre
   assert.deepEqual(modelNames(' Claude-Opus-4-5-20251101 '), ['claude-opus-4-5-20251101', 'claude-opus-4-5', 'claude-opus-4.5']);
 });
 
+test('a reported variant matches its own listing, and only a suffix the catalog lacks falls back to the base model', () => {
+  const index = catalogOf(
+    catalogEntry('cohere/north-mini-code:free', { coding: 36.5 }),
+    catalogEntry('x/merged', { canonical: 'x/merged-1', coding: 50 }),
+    catalogEntry('x/merged:batch', { canonical: 'x/merged-1', coding: 50 }),
+    catalogEntry('x/split', { canonical: 'x/split-1', coding: 50 }),
+    catalogEntry('x/split:batch', { canonical: 'x/split-1', coding: 70 }),
+  );
+  const match = (name) => resolveModel(index, [], { name, displayName: null });
+  assert.equal(match('cohere/north-mini-code:free'), 'cohere/north-mini-code:free', 'a listing that only exists with its suffix');
+  assert.equal(match('north-mini-code:free'), 'cohere/north-mini-code:free');
+  assert.equal(match('cohere/north-mini-code'), null, 'a base id that is not listed borrows nothing');
+  assert.equal(match('x/split:batch'), 'x/split:batch', 'a variant with its own results is not its base');
+  assert.equal(match('split:batch'), 'x/split:batch');
+  assert.equal(match('x/merged:batch'), 'x/merged', 'a merged variant is its base');
+  assert.equal(match('x/split:nitro'), 'x/split', 'a routing suffix the catalog does not list');
+  assert.deepEqual(modelNames('X/Split:Batch'), ['x/split:batch', 'x/split']);
+});
+
 test('the catalog is fetched once, shared while in flight, and kept when a refresh fails', async () => {
   const registry = { providers: [{ id: 'one', tool: 'Tool One', modelPattern: 'one-[a-z0-9]+' }] };
   const payload = { data: [catalogEntry('a/one-1', { coding: 10 }), catalogEntry('a/one-2', { coding: 20 })] };
