@@ -390,7 +390,7 @@ function renderProviders() {
   }));
   if (!dealt && state.providers.length) {
     dealt = true;
-    list.classList.add('deal');
+    if (!reducedMotion.matches) list.classList.add('deal');
   }
 }
 
