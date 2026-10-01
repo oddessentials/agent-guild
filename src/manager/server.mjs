@@ -100,6 +100,7 @@ export function createManagerServer({
   manager,
   registry,
   usage,
+  history,
   modelStats,
   news = null,
   token,
@@ -109,6 +110,9 @@ export function createManagerServer({
   version = '0.0.0',
   selfUpdate = null,
   extraOrigins = [],
+  /** The double-click launcher file for this platform, or null when the package carries none. */
+  launcher = null,
+  /** @type {(opts: { restart: boolean }) => void} */
   onShutdownRequest = () => {},
 }) {
   const upgradeInfo = () => (selfUpdate ? selfUpdate.describe() : null);
@@ -184,9 +188,10 @@ export function createManagerServer({
       return sendJson(res, 200, { ok: true, name: 'agent-guild', version, pid: process.pid });
     }
 
-    // Agent and model reports may authenticate with the per-session report
-    // token that the manager injects into each tool's environment.
-    const reportMatch = route.match(/^\/sessions\/([a-f0-9]+)\/(agents|model)$/);
+    // Agent, model and tool-session reports may authenticate with the
+    // per-session report token that the manager injects into each tool's
+    // environment.
+    const reportMatch = route.match(/^\/sessions\/([a-f0-9]+)\/(agents|model|tool-session)$/);
     if (reportMatch && method === 'POST') {
       const [, id, kind] = reportMatch;
       const body = await readJsonBody(req);
@@ -195,7 +200,8 @@ export function createManagerServer({
         reportToken: req.headers['x-agent-guild-report-token'],
       };
       if (kind === 'agents') return sendJson(res, 200, { agent: manager.reportAgent(id, body, auth) });
-      return sendJson(res, 200, { model: manager.reportModel(id, body, auth) });
+      if (kind === 'model') return sendJson(res, 200, { model: manager.reportModel(id, body, auth) });
+      return sendJson(res, 200, { toolSessionId: manager.reportToolSession(id, body, auth) });
     }
 
     requireAuth(req, url);
@@ -210,6 +216,7 @@ export function createManagerServer({
         startedAt,
         warnings: registry.warnings,
         upgrade: upgradeInfo(),
+        launcher,
       });
     }
     if (route === '/upgrade' && method === 'POST') {
@@ -233,6 +240,14 @@ export function createManagerServer({
     }
     if (route === '/news' && method === 'GET' && news) {
       return sendJson(res, 200, news.snapshot());
+    }
+    const historyMatch = route.match(/^\/providers\/([a-z0-9][a-z0-9_-]{0,31})\/history$/);
+    if (historyMatch && method === 'GET') {
+      const provider = registry.get(historyMatch[1]);
+      if (!provider) throw new HttpError(404, `unknown provider "${historyMatch[1]}"`, 'unknown_provider');
+      if (!provider.history) throw new HttpError(400, `${provider.tool} has no history source configured`, 'history_unsupported');
+      const account = registry.account(provider, url.searchParams.get('account'));
+      return sendJson(res, 200, { history: await history.list(provider, account, { limit: url.searchParams.get('limit') }) });
     }
     const installMatch = route.match(/^\/providers\/([a-z0-9][a-z0-9_-]{0,31})\/install$/);
     if (installMatch && method === 'POST') {
@@ -258,14 +273,16 @@ export function createManagerServer({
         err.running = running;
         throw err;
       }
+      // With `restart`, a new manager is started once this one has closed.
+      const restart = body.restart === true;
       // Refuse new sessions from this moment, before the shutdown itself
       // runs: a session accepted in between would be ended without warning.
       manager.closing = true;
-      sendJson(res, 202, { ok: true, running });
+      sendJson(res, 202, { ok: true, running, restart });
       // Tell every client first, so a second page shows "stopped" rather
       // than "not reachable" when its socket drops.
-      broadcast({ type: 'manager.stopping', running });
-      setImmediate(onShutdownRequest);
+      broadcast({ type: 'manager.stopping', running, restart });
+      setImmediate(() => onShutdownRequest({ restart }));
       return undefined;
     }
 
@@ -350,7 +367,7 @@ export function createManagerServer({
 
   function handleEvents(ws) {
     eventClients.add(ws);
-    safeSend(ws, { type: 'hello', version, upgrade: upgradeInfo(), sessions: manager.list() });
+    safeSend(ws, { type: 'hello', version, pid: process.pid, launcher, upgrade: upgradeInfo(), sessions: manager.list() });
     ws.on('close', () => eventClients.delete(ws));
     ws.on('message', () => { /* events socket is server -> client only */ });
   }

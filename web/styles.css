@@ -49,6 +49,10 @@ code, pre { font-family: ui-monospace, "Cascadia Code", Menlo, Consolas, monospa
 }
 .brand { display: flex; align-items: center; gap: 10px; }
 .brand-mark { width: 26px; height: 26px; color: var(--accent); flex: none; }
+.version {
+  font-size: 0.72rem; font-weight: 600; padding: 1px 7px; border-radius: 999px; white-space: nowrap;
+  background: var(--surface-2); color: var(--muted); border: 1px solid var(--border); font-variant-numeric: tabular-nums;
+}
 .topbar-end { display: flex; align-items: center; justify-content: flex-end; gap: 14px; flex-wrap: wrap; min-width: 0; }
 .connection { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 0.85rem; }
 .connection .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); }
@@ -249,8 +253,8 @@ main { max-width: 1200px; margin: 0 auto; padding: 20px 16px 48px; display: grid
 .btn.danger { color: var(--danger); }
 .btn.danger:hover { border-color: var(--danger); }
 .btn:disabled { opacity: 0.6; cursor: progress; }
-.stop-manager, .theme-toggle, .upgrade { white-space: nowrap; }
-.btn.upgrade { color: var(--warn); border-color: var(--warn); }
+.stop-manager, .restart-manager, .theme-toggle, .upgrade { white-space: nowrap; }
+.btn.upgrade, .btn.restart-manager.pending { color: var(--warn); border-color: var(--warn); }
 .upgrade-note { font-size: 0.85rem; color: var(--warn); }
 
 .empty { color: var(--muted); margin: 8px 0 0; }
@@ -259,8 +263,12 @@ main { max-width: 1200px; margin: 0 auto; padding: 20px 16px 48px; display: grid
 .auth p { margin: 0; color: var(--muted); line-height: 1.5; }
 .auth pre { margin: 0; padding: 10px 12px; background: var(--surface-2); border-radius: 8px; }
 .auth form { display: flex; gap: 8px; }
+.stopped-help { display: grid; gap: 12px; }
+.command { display: flex; align-items: center; gap: 8px; }
+.command pre { flex: 1; min-width: 0; overflow-x: auto; }
+.stopped-help code { color: var(--text); overflow-wrap: anywhere; }
 .notice h2 { color: var(--danger); }
-.notice.stopping h2 { color: var(--warn); }
+.notice.stopping h2, .notice.restarting h2 { color: var(--warn); }
 .error { color: var(--danger); min-height: 1.2em; }
 
 .terminal-panel {
@@ -394,6 +402,38 @@ a.news-link:visited { color: var(--muted); }
 .news-status { margin: 0; padding: 10px 14px; border-top: 1px solid var(--border); color: var(--muted); font-size: 0.75rem; line-height: 1.45; }
 .news-status span { display: block; }
 
+.history-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 14px 0; }
+.history-tools input[type="search"] {
+  flex: 1 1 220px; min-width: 0; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text); font: inherit; font-size: 0.9rem;
+}
+.history-tools input:focus-visible, .history-form input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.history-here { display: flex; align-items: center; gap: 6px; font-size: 0.8rem; color: var(--muted); white-space: nowrap; cursor: pointer; }
+.history-here:has(input:disabled) { opacity: 0.6; cursor: default; }
+.history .models-body { padding-top: 6px; }
+.history-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 4px 12px;
+  padding: 10px 8px; border-bottom: 1px solid var(--border);
+}
+.history-main { min-width: 0; }
+.history-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history-row.untitled .history-title { font-weight: 500; color: var(--muted); }
+.history-meta { color: var(--muted); font-size: 0.78rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history-row.running .history-meta { color: var(--ok); }
+.session-id {
+  font-family: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace; font-size: 0.72rem; padding: 2px 7px;
+  border-radius: 6px; border: 1px solid var(--border); background: var(--surface-2); color: var(--muted); cursor: copy; white-space: nowrap;
+}
+.session-id:hover { color: var(--text); border-color: var(--muted); }
+.session-id:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.card-title .meta { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.card-title .meta-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history-form { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--border); font-size: 0.85rem; color: var(--muted); }
+.history-form input {
+  flex: 1; min-width: 0; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text); font: inherit; font-size: 0.85rem;
+}
+
 .toast {
   position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 20;
   max-width: min(640px, calc(100vw - 32px)); padding: 10px 14px; border-radius: 8px;
@@ -427,4 +467,7 @@ a.news-link:visited { color: var(--muted); }
   .news-row { flex-wrap: wrap; }
   .news-row .news-link { flex-basis: 100%; white-space: normal; }
   .news-panel { border-left: 0; }
+  .history-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .history-row .session-id { grid-row: 2; justify-self: start; }
+  .history-form { flex-wrap: wrap; }
 }

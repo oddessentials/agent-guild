@@ -63,6 +63,7 @@ Errors use one shape:
   "latestVersion": "2.1.290",
   "updateAvailable": true,
   "usageSource": "claude",
+  "historySource": "claude",
   "accounts": [{ "id": "default", "label": "Default" }, { "id": "work", "label": "Work" }],
   "color": "#D97757",
   "monogram": "A",
@@ -92,7 +93,9 @@ skips the lookup). Both are null until the first check finishes; a
 `POST /providers/:id/install` performs the update when `updateCommand` is not null.
 
 `usageSource` is `claude`, `codex`, `gemini`, `command` or null, and says
-whether `GET /usage` reports the provider.
+whether `GET /usage` reports the provider. `historySource` is `claude`,
+`codex`, `gemini`, `grok`, `command` or null, and says whether
+`GET /providers/:id/history` can list the tool's earlier sessions.
 `accounts` lists the sign-ins the tool can run under: `default` is the
 tool's own, and each further one has its own home folder, so it keeps its
 own sign-in and usage. `POST /sessions` takes an account id.
@@ -139,6 +142,37 @@ endpoint; a `command` source runs a program that prints
 A window whose share is not a number (missing, null or blank) is left out
 rather than shown as unused. Snapshots are cached for a minute.
 
+### History
+
+```json
+{
+  "providerId": "anthropic",
+  "accountId": "default",
+  "sessions": [
+    { "id": "581893e5-a93d-5e49-968b-1c1c277d3255", "title": "Fix the login bug", "cwd": "/Users/me/src/app", "startedAt": "2026-10-01T13:26:53.713Z", "updatedAt": "2026-10-01T13:49:28.000Z" }
+  ],
+  "total": 42,
+  "fetchedAt": "2026-10-01T14:00:00.000Z",
+  "error": null
+}
+```
+
+The tool's own earlier sessions, newest first, read from where the tool
+keeps them under the account's home folder: Claude Code's
+`projects/<folder>/<id>.jsonl` transcripts, Codex CLI's
+`sessions/<date>/rollout-*.jsonl` files, Gemini CLI's
+`tmp/<project>/chats/session-*.jsonl` files and Grok Build's
+`sessions/<folder>/<id>/summary.json`. Sub-agent sessions are left out.
+`id` is what the tool resumes by (`POST /sessions` with `resume`); `title` is
+the session's name or first prompt, or null; `cwd` is the folder the session
+ran in, or null when the tool did not record it. Claude Code and Gemini CLI
+find a session only from its own folder, so a client should resume with that
+`cwd`. `updatedAt` is when the transcript last changed. `sessions` holds at
+most `limit` entries of the `total` found. Only the head of each transcript
+is read, and a transcript is read again only when it changed; the list is
+cached for a few seconds. `error` says why nothing could be listed; a tool
+that has never run lists no sessions and no error.
+
 ### Session
 
 ```json
@@ -162,6 +196,7 @@ rather than shown as unused. Snapshots are cached for a minute.
   "rows": 32,
   "attachedClients": 1,
   "model": { "name": "claude-opus-4-5", "displayName": "Opus 4.5", "source": "report" },
+  "toolSessionId": "581893e5-a93d-5e49-968b-1c1c277d3255",
   "agents": [ /* Agent */ ]
 }
 ```
@@ -190,6 +225,10 @@ rather than shown as unused. Snapshots are cached for a minute.
   matched on the terminal screen by the provider's `modelPattern`, or `args`
   when it came from a `--model` argument. Reports win over the screen, which
   wins over arguments.
+* `toolSessionId` is the id the tool gave its own session, reported by its
+  hooks (see [agent-reporting.md](agent-reporting.md)), or null. It names
+  the session in `GET /providers/:id/history` and resumes it later; it stays
+  after the session exits.
 
 ### Upgrade
 
@@ -218,7 +257,7 @@ what `POST /upgrade` runs, or null with `guidance` when npm is not on PATH.
 `pendingVersion` is a newer version whose files are already on disk: the
 manager runs from the package npm replaces in place, so after an upgrade the
 running process is still the old version until it is restarted
-(`agent-guild stop`, then `agent-guild open`). `lastInstall` describes the
+(`POST /shutdown` with `restart`, or `agent-guild restart`). `lastInstall` describes the
 last upgrade session: `{ outcome, exitCode, version, installedVersion, at }`
 with `outcome` `installed`, `failed`, or `unchanged` when npm exited cleanly
 but did not replace the files the manager runs from. It is dropped once a
@@ -268,12 +307,13 @@ All paths are under `/api/v1`.
 | Method | Path | Body | Result |
 | --- | --- | --- | --- |
 | GET | `/health` | | `{ ok, name, version, pid }`. No token needed. |
-| GET | `/info` | | Manager version, platform, start time, provider config warnings, and `upgrade` (an Upgrade object). |
+| GET | `/info` | | Manager version, platform, start time, provider config warnings, `upgrade` (an Upgrade object), and `launcher`: the path of the double-click launcher for this platform when the install carries one (a checkout of the repository), else null. |
 | POST | `/upgrade` | | `201 { session }`: a session with `task` `upgrade` running the Upgrade `command`. 400 `not_updatable` when no newer release is known, it is already installed on disk, the manager is a development build, or version checks are off. 409 `npm_unavailable` without npm on PATH. 409 `upgrade_in_progress` while one is running. Sessions keep running; the new version is used after the manager restarts. |
 | GET | `/providers` | | `{ providers: Provider[] }` |
 | POST | `/providers/reload` | | Re-reads `providers.json`. |
 | POST | `/providers/:id/install` | `{ force? }` | `201 { session }`: a session running `npm install -g <package>@<version>`, or `updateCommand` when the tool is installed. 400 `not_updatable` when an installed tool has no `updateCommand`. 503 `release_unresolved` or 409 `release_incomplete` when the release cannot be read or its platform build is not published; nothing is run. 409 `install_in_progress` while one is already running. 409 `provider_in_use` (with `running`, the session count) while the provider's sessions are running, unless `force` is true. |
 | GET | `/usage` | | `{ usage: Usage[] }`, one per account of every provider with a `usageSource`. |
+| GET | `/providers/:id/history?account=&limit=` | | `{ history }`: a History object for one account (default `default`; 404 `unknown_account`), with at most `limit` sessions (default 100, at most 500). 400 `history_unsupported` when the provider has no `historySource`. |
 | GET | `/sessions` | | `{ sessions: Session[] }` |
 | POST | `/sessions` | `{ providerId, account?, cwd?, cols?, rows?, name?, args?, resume? }` | `201 { session }` |
 | GET | `/sessions/:id` | | `{ session }` |
@@ -282,7 +322,8 @@ All paths are under `/api/v1`.
 | DELETE | `/sessions/:id` | | Ends the process if needed and removes the session. |
 | POST | `/sessions/:id/agents` | Agent report | `{ agent }`, or `{ agent: null }` after a removal, for a `done` report about an agent that was never reported, or for `{ finishForeground: true }`, which marks every foreground agent still working as done. |
 | POST | `/sessions/:id/model` | `{ model, displayName? }` | `{ model }`. Sets the session's model with source `report`, unless a foreground agent is working; then the current model is returned unchanged. |
-| POST | `/shutdown` | `{ force? }` | `202 { ok, running }`: stops the manager and every session. 409 `sessions_running` (with `running`, the session count) while any session is running, unless `force` is true. From the 202 on, `POST /sessions` and `POST /providers/:id/install` answer 503 `manager_stopping`. Events clients get `manager.stopping` first and `manager.stopped` last, after the sessions have ended and before the API closes. |
+| POST | `/sessions/:id/tool-session` | `{ toolSessionId }` | `{ toolSessionId }`. Records the id the tool gave its own session: one printable line of at most 200 characters. 409 once the session has exited. |
+| POST | `/shutdown` | `{ force?, restart? }` | `202 { ok, running, restart }`: stops the manager and every session. 409 `sessions_running` (with `running`, the session count) while any session is running, unless `force` is true. From the 202 on, `POST /sessions` and `POST /providers/:id/install` answer 503 `manager_stopping`. Events clients get `manager.stopping` first and `manager.stopped` last, after the sessions have ended and before the API closes. With `restart` true, the manager then starts a new manager from the package on disk, on the same port and with the same token, before it exits; the new one runs whatever version is installed, so this is how an upgrade's `pendingVersion` is put to use. Clients reconnect to it as to any manager; its `hello` is the new source of truth. |
 
 `cwd` defaults to the user's home folder and must be an existing folder. A
 leading `~` is expanded. `args` are appended to the provider's configured
@@ -292,7 +333,8 @@ when the provider has none). `account` is one of the provider's account ids
 (404 `unknown_account` otherwise) and defaults to `default`; the account's
 home folder is created before its first session.
 
-`POST /sessions/:id/agents` and `POST /sessions/:id/model` also accept the
+`POST /sessions/:id/agents`, `POST /sessions/:id/model` and
+`POST /sessions/:id/tool-session` also accept the
 per-session report token instead of the API token, in an
 `X-Agent-Guild-Report-Token` header. The manager gives that token only to the
 processes inside that session. Without the API token, an unknown session id
@@ -311,14 +353,14 @@ This socket pushes changes to every session. It is server-to-client only.
 
 | Message | Meaning |
 | --- | --- |
-| `{ type: "hello", version, upgrade, sessions }` | Sent first. The full session list and the manager's Upgrade object. |
+| `{ type: "hello", version, pid, launcher, upgrade, sessions }` | Sent first. The manager's version and pid, its `launcher` path (as in `/info`), the full session list and the manager's Upgrade object. |
 | `{ type: "session.created", session }` | A session was started by any client. |
 | `{ type: "session.updated", session }` | Status, activity, agents, name or size changed. |
 | `{ type: "session.removed", sessionId }` | A session was removed. |
 | `{ type: "providers.updated", providers }` | The provider list changed: a version check finished, `providers.json` was reloaded, or an install session ended. |
 | `{ type: "manager.upgrade", upgrade }` | The manager's own version check changed: a newer release was found, or an upgrade session ended. |
-| `{ type: "manager.stopping", running }` | A client asked the manager to stop. `running` sessions are being ended. A client should show that the manager was stopped on purpose, not that it is unreachable. |
-| `{ type: "manager.stopped", remaining }` | The last event before the socket closes. `remaining` is how many session processes had not confirmed their exit when the manager gave up waiting (about five seconds); 0 means every session has ended. A socket that closes after `manager.stopping` without this event means the manager went away before it could confirm. |
+| `{ type: "manager.stopping", running, restart }` | A client asked the manager to stop. `running` sessions are being ended. A client should show that the manager was stopped on purpose, not that it is unreachable. `restart` is true when a new manager will take over; a client should then say it is waiting for that one rather than tell the user how to start one. |
+| `{ type: "manager.stopped", remaining, restart }` | The last event before the socket closes. `remaining` is how many session processes had not confirmed their exit when the manager gave up waiting (about five seconds); 0 means every session has ended. `restart` is as in `manager.stopping`. A socket that closes after `manager.stopping` without this event means the manager went away before it could confirm. |
 
 After a reconnect, treat `hello` as the new source of truth.
 

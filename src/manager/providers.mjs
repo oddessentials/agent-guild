@@ -60,6 +60,15 @@ function normalizeUsage(usage) {
   return null;
 }
 
+/** "claude", "codex", "gemini", "grok", a { command, args } that prints past sessions as JSON, or null. */
+function normalizeHistory(history) {
+  if (['claude', 'codex', 'gemini', 'grok'].includes(history)) return history;
+  if (history && typeof history === 'object' && typeof history.command === 'string' && history.command) {
+    return { command: history.command, args: Array.isArray(history.args) ? history.args.map(String) : [] };
+  }
+  return null;
+}
+
 function stringList(value) {
   return Array.isArray(value) ? value.map(String).filter(Boolean) : [];
 }
@@ -153,6 +162,7 @@ function normalize(raw, platform, warnings) {
     package: merged.package ? String(merged.package) : null,
     versionArgs: Array.isArray(merged.versionArgs) && merged.versionArgs.length ? merged.versionArgs.map(String) : null,
     usage: normalizeUsage(merged.usage),
+    history: normalizeHistory(merged.history),
     modelPattern: merged.modelPattern ? String(merged.modelPattern) : null,
     args: Array.isArray(merged.args) ? merged.args.map(String) : [],
     resumeArgs: Array.isArray(merged.resumeArgs) ? merged.resumeArgs.map(String) : [],
@@ -612,6 +622,7 @@ export class ProviderRegistry extends EventEmitter {
       warnings: this.installWarnings(provider, installs),
       npmNote: provider.npmNote,
       usageSource: provider.usage === null ? null : typeof provider.usage === 'string' ? provider.usage : 'command',
+      historySource: provider.history === null ? null : typeof provider.history === 'string' ? provider.history : 'command',
       accounts: provider.accounts.map(({ id, label }) => ({ id, label })),
       modelPattern: provider.modelPattern,
       color: provider.color,

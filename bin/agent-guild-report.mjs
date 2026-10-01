@@ -9,6 +9,7 @@
 //   agent-guild-report <agent-id> [--name N] [--status working|waiting|idle|done]
 //                      [--detail TEXT] [--kind KIND] [--remove]
 //   agent-guild-report --model NAME [--display-name TEXT]
+//   agent-guild-report --session ID          (the tool's own session id, for resuming it later)
 //   agent-guild-report --hook                (reads a hook event as JSON on stdin:
 //                                             Claude Code, Codex CLI, Gemini CLI, Grok Build)
 //   agent-guild-report --claude-statusline [--passthrough]
@@ -27,6 +28,7 @@ if (!inSession && env.AGENT_GUILD_SESSION_ID && !env.AGENT_GUILD_REPORT_TOKEN) {
 
 const USAGE = `Usage: agent-guild-report <agent-id> [--name N] [--status working|waiting|idle|done] [--detail TEXT] [--kind KIND] [--remove]
        agent-guild-report --model NAME [--display-name TEXT]
+       agent-guild-report --session ID                     (the tool's own session id)
        agent-guild-report --hook                           (reads a coding tool's hook event JSON from stdin)
        agent-guild-report --claude-statusline [--passthrough]  (reads Claude Code status line JSON from stdin)`;
 
@@ -60,7 +62,8 @@ function readStdin() {
 }
 
 async function send(report) {
-  const kind = report.agentId !== undefined || report.finishForeground === true ? 'agents' : 'model';
+  const kind = report.agentId !== undefined || report.finishForeground === true ? 'agents'
+    : report.toolSessionId !== undefined ? 'tool-session' : 'model';
   const url = `${env.AGENT_GUILD_URL}/api/v1/sessions/${env.AGENT_GUILD_SESSION_ID}/${kind}`;
   const res = await fetch(url, {
     method: 'POST',
@@ -113,6 +116,16 @@ async function main() {
     }
     if (!inSession) return;
     await send({ model: args.model, displayName: args['display-name'] });
+    return;
+  }
+  if (args.session !== undefined && args.positional.length === 0) {
+    if (!args.session) {
+      console.error('agent-guild-report: --session needs an id');
+      process.exitCode = 2;
+      return;
+    }
+    if (!inSession) return;
+    await send({ toolSessionId: args.session });
     return;
   }
   const agentId = args.positional[0];

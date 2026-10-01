@@ -15,6 +15,7 @@ import { shimContents, writeReportShims, prependPath, fileUrl, SHIM_NAME, LOADER
 import { execFileSync } from 'node:child_process';
 import { parseVersion, compareVersions, probeVersion, diagnosticLine, latestVersion } from '../src/manager/versions.mjs';
 import { SelfUpdate, isDevelopmentBuild } from '../src/manager/self-update.mjs';
+import { launcherPath, MANAGER_ENTRY, ROOT_DIR } from '../src/manager/launch.mjs';
 import {
   UsageMonitor, UsageError, readClaudeCredentials, readCodexCredentials, readGeminiCredentials, readGeminiFileKeychain, readGeminiKeychainItem, geminiFileKey, geminiStorageMode, geminiOAuthClientFromInstall, geminiKeychainLookup,
   claudeKeychainService, claudeCredentialsFile, fetchClaudeUsage, fetchCodexUsage, fetchGeminiUsage, commandUsage, toIso, windowLabel, clampPercent,
@@ -26,7 +27,11 @@ import {
   NewsFeed, parseFeed, parseHackerNews, parseGithubRelease, markdownText, releaseTitle, isPrerelease, canonicalUrl, cleanUrl, matchesTerms,
 } from '../src/manager/news.mjs';
 import { once } from 'node:events';
+import {
+  SessionHistory, FileMemo, listClaudeSessions, listCodexSessions, listGeminiSessions, listGrokSessions, commandHistory, cleanEntry,
+} from '../src/manager/session-history.mjs';
 import crypto from 'node:crypto';
+import zlib from 'node:zlib';
 
 function tempDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-unit-'));
@@ -1509,6 +1514,238 @@ test('Gemini usage keeps its refreshed token and project only while the sign-in 
   assert.equal(other.error, null);
 });
 
+const jsonl = (...records) => records.map((r) => (typeof r === 'string' ? r : JSON.stringify(r))).join('\n') + '\n';
+function writeAt(file, contents, when) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, contents);
+  fs.utimesSync(file, new Date(when), new Date(when));
+}
+
+test('Claude Code sessions are read from the head of each project transcript', async () => {
+  const dir = tempDir();
+  const project = path.join(dir, 'projects', '-home-me-app');
+  const user = (text, extra = {}) => ({ type: 'user', cwd: '/home/me/app', sessionId: 'x', timestamp: '2026-09-30T10:00:00.000Z', message: { role: 'user', content: text }, ...extra });
+  writeAt(path.join(project, 'aaaaaaaa-1111.jsonl'), jsonl(
+    { type: 'queue-operation', operation: 'enqueue', timestamp: '2026-09-30T09:59:59.000Z', sessionId: 'aaaaaaaa-1111', content: 'Fix the login bug' },
+    user('Fix the   login\nbug, please'),
+    { type: 'assistant', cwd: '/home/me/app', timestamp: '2026-09-30T10:00:05.000Z', message: { role: 'assistant', content: [{ type: 'text', text: 'On it' }] } },
+  ), '2026-09-30T10:05:00.000Z');
+  writeAt(path.join(project, 'bbbbbbbb-2222.jsonl'), jsonl(
+    user('<command-name>/clear</command-name>\n<command-message>clear</command-message>'),
+    user([{ type: 'tool_result', tool_use_id: 't1', content: 'done' }], { toolUseResult: {} }),
+    user('ignored sidechain', { isSidechain: true }),
+    '{"type":"user", not json',
+    user([{ type: 'text', text: 'Add dark mode' }, { type: 'image', source: {} }]),
+  ), '2026-10-01T08:00:00.000Z');
+  writeAt(path.join(project, 'cccccccc-3333.jsonl'), jsonl(
+    user('Original prompt'),
+    { type: 'custom-title', customTitle: 'Renamed by /rename', sessionId: 'cccccccc-3333' },
+  ), '2026-09-29T12:00:00.000Z');
+  writeAt(path.join(project, 'dddddddd-4444.jsonl'), jsonl({ type: 'summary', summary: 'A summary of another session', leafUuid: 'u' }), '2026-10-01T09:00:00.000Z');
+  writeAt(path.join(project, 'bbbbbbbb-2222', 'subagents', 'agent-x.jsonl'), jsonl(user('sub-agent prompt', { isSidechain: true, agentId: 'x' })), '2026-10-01T10:00:00.000Z');
+  writeAt(path.join(project, 'notes.txt'), 'not a transcript', '2026-10-01T10:00:00.000Z');
+
+  const memo = new FileMemo();
+  const sessions = await listClaudeSessions(dir, memo);
+  assert.deepEqual(sessions, [
+    { id: 'bbbbbbbb-2222', title: 'Add dark mode', cwd: '/home/me/app', startedAt: '2026-09-30T10:00:00.000Z', updatedAt: '2026-10-01T08:00:00.000Z' },
+    { id: 'aaaaaaaa-1111', title: 'Fix the login bug, please', cwd: '/home/me/app', startedAt: '2026-09-30T09:59:59.000Z', updatedAt: '2026-09-30T10:05:00.000Z' },
+    { id: 'cccccccc-3333', title: 'Renamed by /rename', cwd: '/home/me/app', startedAt: '2026-09-30T10:00:00.000Z', updatedAt: '2026-09-29T12:00:00.000Z' },
+  ], 'newest first; sub-agent transcripts, summaries without a session and other files are left out');
+
+  // Unchanged files are not read again; a changed one is.
+  assert.equal(memo.entries.size, 4);
+  const cached = memo.entries.get(path.join(project, 'aaaaaaaa-1111.jsonl'));
+  await listClaudeSessions(dir, memo);
+  assert.equal(memo.entries.get(path.join(project, 'aaaaaaaa-1111.jsonl')), cached);
+  writeAt(path.join(project, 'aaaaaaaa-1111.jsonl'), jsonl(user('Fix the login bug, please'), { type: 'assistant', timestamp: 't' }, { type: 'assistant', timestamp: 't' }), '2026-10-02T00:00:00.000Z');
+  fs.rmSync(path.join(project, 'cccccccc-3333.jsonl'));
+  const again = await listClaudeSessions(dir, memo);
+  assert.deepEqual(again.map((s) => [s.id, s.updatedAt]), [['aaaaaaaa-1111', '2026-10-02T00:00:00.000Z'], ['bbbbbbbb-2222', '2026-10-01T08:00:00.000Z']]);
+  assert.ok(!memo.entries.has(path.join(project, 'cccccccc-3333.jsonl')), 'removed files leave the memo');
+
+  assert.deepEqual(await listClaudeSessions(path.join(dir, 'nowhere')), [], 'a tool never run has no sessions');
+});
+
+test('Codex CLI sessions come from rollout files, in either history mode, without sub-agent threads', async () => {
+  const dir = tempDir();
+  const day = path.join(dir, 'sessions', '2026', '10', '01');
+  const meta = (id, extra = {}) => ({ timestamp: '2026-10-01T13:28:46.535Z', type: 'session_meta', payload: { id, session_id: id, timestamp: '2026-10-01T13:28:46.480Z', cwd: '/work/proj', originator: 'codex_cli_rs', cli_version: '0.159.3', source: 'cli', thread_source: 'user', ...extra } });
+  writeAt(path.join(day, 'rollout-2026-10-01T13-28-46-01a0f7a7-387f-7e11-b368-5335205ef1a6.jsonl'), jsonl(
+    meta('01a0f7a7-387f-7e11-b368-5335205ef1a6'),
+    { timestamp: 't', type: 'response_item', payload: { type: 'message', role: 'developer', content: [{ type: 'input_text', text: 'skills…' }] } },
+    { timestamp: 't', type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '<environment_context>\n  <cwd>/work/proj</cwd>\n</environment_context>' }] } },
+    { timestamp: 't', type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'say hello' }] } },
+    { timestamp: 't', type: 'event_msg', payload: { type: 'item_completed', item: { type: 'UserMessage', content: [{ type: 'text', text: 'say hello' }] } } },
+  ), '2026-10-01T13:29:05.000Z');
+  writeAt(path.join(dir, 'sessions', '2026', '09', '30', 'rollout-2026-09-30T08-00-00-11111111-2222-3333-4444-555555555555.jsonl'), jsonl(
+    { timestamp: 't', type: 'session_meta', payload: { id: '11111111-2222-3333-4444-555555555555', timestamp: '2026-09-30T08:00:00.000Z', cwd: 'C:\\work\\legacy', source: 'exec' } },
+    { timestamp: 't', type: 'event_msg', payload: { type: 'user_message', message: 'Refactor the parser', kind: 'plain' } },
+  ), '2026-09-30T08:10:00.000Z');
+  writeAt(path.join(day, 'rollout-2026-10-01T14-00-00-aaaaaaaa-0000-0000-0000-000000000001.jsonl'), jsonl(
+    meta('aaaaaaaa-0000-0000-0000-000000000001', { source: { subagent: { thread_spawn: { parent_thread_id: '01a0f7a7-387f-7e11-b368-5335205ef1a6', depth: 1 } } }, parent_thread_id: '01a0f7a7-387f-7e11-b368-5335205ef1a6', thread_source: 'subagent' }),
+    { timestamp: 't', type: 'event_msg', payload: { type: 'user_message', message: 'explore the repo' } },
+  ), '2026-10-01T14:00:00.000Z');
+  writeAt(path.join(day, 'rollout-2026-10-01T14-30-00-aaaaaaaa-0000-0000-0000-000000000002.jsonl'), jsonl(meta('aaaaaaaa-0000-0000-0000-000000000002', { source: { subagent: 'review' } })), '2026-10-01T14:30:00.000Z');
+  writeAt(path.join(day, 'rollout-2026-10-01T15-00-00-aaaaaaaa-0000-0000-0000-000000000003.jsonl'), jsonl({ timestamp: 't', type: 'event_msg', payload: { type: 'user_message', message: 'no meta' } }), '2026-10-01T15:00:00.000Z');
+  writeAt(path.join(day, 'notes.jsonl'), jsonl(meta('not-a-rollout')), '2026-10-01T15:00:00.000Z');
+  // The same thread after a revert: thread id, then rollout id.
+  writeAt(path.join(day, 'rollout-2026-10-01T16-00-00-01a0f7a7-387f-7e11-b368-5335205ef1a6_0199.jsonl'), jsonl(
+    meta('01a0f7a7-387f-7e11-b368-5335205ef1a6'),
+    { timestamp: 't', type: 'event_msg', payload: { type: 'user_message', message: 'say hello' } },
+  ), '2026-10-01T16:00:00.000Z');
+  const zstd = typeof zlib.zstdCompressSync === 'function';
+  if (zstd) {
+    const archived = jsonl(
+      { timestamp: 't', type: 'session_meta', payload: { id: 'cccccccc-0000-0000-0000-000000000003', timestamp: '2026-08-01T00:00:00.000Z', cwd: '/work/old', source: 'vscode' } },
+      { timestamp: 't', type: 'event_msg', payload: { type: 'user_message', message: 'Old compressed session' } },
+      ...Array.from({ length: 4000 }, (_, i) => ({ timestamp: 't', type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: `line ${i} `.repeat(20) }] } })),
+    );
+    writeAt(path.join(dir, 'sessions', '2026', '08', '01', 'rollout-2026-08-01T00-00-00-cccccccc-0000-0000-0000-000000000003.jsonl.zst'), zlib.zstdCompressSync(Buffer.from(archived)), '2026-08-01T00:30:00.000Z');
+  }
+
+  const sessions = await listCodexSessions(dir);
+  assert.deepEqual(sessions, [
+    { id: '01a0f7a7-387f-7e11-b368-5335205ef1a6', title: 'say hello', cwd: '/work/proj', startedAt: '2026-10-01T13:28:46.480Z', updatedAt: '2026-10-01T16:00:00.000Z' },
+    { id: '11111111-2222-3333-4444-555555555555', title: 'Refactor the parser', cwd: 'C:\\work\\legacy', startedAt: '2026-09-30T08:00:00.000Z', updatedAt: '2026-09-30T08:10:00.000Z' },
+    ...(zstd ? [{ id: 'cccccccc-0000-0000-0000-000000000003', title: 'Old compressed session', cwd: '/work/old', startedAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:30:00.000Z' }] : []),
+  ], 'one entry per thread, newest first; sub-agent threads and files without session_meta are left out');
+});
+
+test('Gemini CLI sessions come from each project\'s chats folder, with the project folder from its marker or the registry', async () => {
+  const dir = tempDir();
+  const tmp = path.join(dir, 'tmp');
+  fs.mkdirSync(path.join(tmp, 'app', 'chats'), { recursive: true });
+  fs.writeFileSync(path.join(tmp, 'app', '.project_root'), '/home/me/app\n');
+  fs.writeFileSync(path.join(dir, 'projects.json'), JSON.stringify({ projects: { '/home/me/app': 'app', '/home/me/other': 'other' } }));
+  const user = (text) => ({ id: crypto.randomUUID(), timestamp: '2026-10-01T13:36:14.855Z', type: 'user', content: Array.isArray(text) ? text : [{ text }] });
+  writeAt(path.join(tmp, 'app', 'chats', 'session-2026-10-01T13-34-1c79fc07.jsonl'), jsonl(
+    { sessionId: '1c79fc07-2d1a-4a5e-97a7-09d277e99039', projectHash: 'abc', startTime: '2026-10-01T13:34:50.234Z', lastUpdated: '2026-10-01T13:34:50.234Z', kind: 'main' },
+    { $set: { messages: [user('<session_context>\nsummary\n</session_context>')], lastUpdated: 't' } },
+    user('/help'),
+    user('?'),
+    user('second session: explain foo'),
+    { $set: { lastUpdated: '2026-10-01T13:36:14.855Z' } },
+    { id: 'g1', timestamp: 't', type: 'gemini', content: 'Hello', model: 'gemini-3.1-pro-preview' },
+  ), '2026-10-01T13:36:17.000Z');
+  // A resumed session writes a second file with the same id; the newer one counts.
+  writeAt(path.join(tmp, 'app', 'chats', 'session-2026-10-01T13-40-1c79fc07.jsonl'), jsonl(
+    { sessionId: '1c79fc07-2d1a-4a5e-97a7-09d277e99039', startTime: '2026-10-01T13:34:50.234Z', kind: 'main', summary: 'Explaining foo' },
+  ), '2026-10-01T13:40:00.000Z');
+  writeAt(path.join(tmp, 'app', 'chats', 'session-2026-10-01T13-50-99999999.jsonl'), jsonl(
+    { sessionId: '99999999-0000-0000-0000-000000000000', startTime: '2026-10-01T13:50:00.000Z', kind: 'subagent', directories: [] },
+    user('sub-agent task'),
+  ), '2026-10-01T13:51:00.000Z');
+  writeAt(path.join(tmp, 'app', 'chats', '1c79fc07-2d1a-4a5e-97a7-09d277e99039', 'aaaa.jsonl'), jsonl({ sessionId: 'aaaa', kind: 'subagent' }), '2026-10-01T13:52:00.000Z');
+  writeAt(path.join(tmp, 'other', 'chats', 'session-2026-03-01T09-00-72fbcb94.json'), JSON.stringify({
+    sessionId: '72fbcb94-12a5-4624-b8c5-15f595b9a39f',
+    projectHash: 'def',
+    startTime: '2026-03-01T09:00:00.000Z',
+    lastUpdated: '2026-03-01T09:30:00.000Z',
+    messages: [{ id: 'u1', timestamp: 't', type: 'user', content: 'Legacy  pretty-printed\nsession' }, { id: 'g1', type: 'gemini', content: 'ok' }],
+  }, null, 2), '2026-03-01T09:30:00.000Z');
+  writeAt(path.join(tmp, 'unknown', 'chats', 'session-2026-05-01T09-00-deadbeef.jsonl'), jsonl({ sessionId: 'deadbeef-0000-0000-0000-000000000000', startTime: '2026-05-01T09:00:00.000Z' }, user('No folder known')), '2026-05-01T09:01:00.000Z');
+  writeAt(path.join(tmp, 'app', 'chats', 'session-broken.jsonl'), 'not json\n', '2026-10-01T14:00:00.000Z');
+  writeAt(path.join(tmp, 'app', 'logs', 'session-1c79fc07.jsonl'), jsonl({ sessionId: 'log' }), '2026-10-01T14:00:00.000Z');
+
+  assert.deepEqual(await listGeminiSessions(dir), [
+    { id: '1c79fc07-2d1a-4a5e-97a7-09d277e99039', title: 'Explaining foo', cwd: '/home/me/app', startedAt: '2026-10-01T13:34:50.234Z', updatedAt: '2026-10-01T13:40:00.000Z' },
+    { id: 'deadbeef-0000-0000-0000-000000000000', title: 'No folder known', cwd: null, startedAt: '2026-05-01T09:00:00.000Z', updatedAt: '2026-05-01T09:01:00.000Z' },
+    { id: '72fbcb94-12a5-4624-b8c5-15f595b9a39f', title: 'Legacy pretty-printed session', cwd: '/home/me/other', startedAt: '2026-03-01T09:00:00.000Z', updatedAt: '2026-03-01T09:30:00.000Z' },
+  ]);
+});
+
+test('Grok Build sessions come from each folder bucket\'s summaries, hidden and sub-agent sessions left out', async () => {
+  const dir = tempDir();
+  const bucket = path.join(dir, 'sessions', encodeURIComponent('/home/me/app'));
+  const summary = (id, extra = {}) => JSON.stringify({ info: { id, cwd: '/home/me/app' }, session_summary: '', created_at: '2026-10-01T10:00:00Z', updated_at: '2026-10-01T10:30:00Z', num_messages: 4, num_chat_messages: 9, current_model_id: 'grok-4.6', ...extra });
+  const uuid = (n) => `0199${n}000-0000-7000-8000-000000000000`;
+  writeAt(path.join(bucket, uuid(1), 'summary.json'), summary(uuid(1), { generated_title: 'Fix Login Bug', title_is_manual: true, last_active_at: '2026-10-01T11:00:00Z' }), '2026-10-01T11:00:00Z');
+  writeAt(path.join(bucket, uuid(2), 'summary.json'), summary(uuid(2), { session_summary: 'Explored the data layer' }), '2026-10-01T10:30:00Z');
+  writeAt(path.join(bucket, uuid(3), 'summary.json'), summary(uuid(3), { session_kind: 'subagent', parent_session_id: uuid(1) }), '2026-10-01T10:45:00Z');
+  writeAt(path.join(bucket, uuid(4), 'summary.json'), summary(uuid(4), { hidden: true }), '2026-10-01T10:45:00Z');
+  writeAt(path.join(bucket, uuid(5), 'summary.json'), summary(uuid(5), { num_messages: 0 }), '2026-10-01T12:00:00Z');
+  writeAt(path.join(bucket, uuid(6), 'summary.json'), summary(uuid(6), { info: { id: uuid(6) }, updated_at: '2026-09-30T09:00:00Z' }), '2026-09-30T09:00:00Z');
+  writeAt(path.join(bucket, uuid(6), 'updates.jsonl'), jsonl(
+    { timestamp: 1, method: 'session/update', params: { sessionId: uuid(6), update: { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: '!ls', _meta: { bash_command: true } } } } },
+    { timestamp: 2, method: 'session/update', params: { sessionId: uuid(6), update: { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'Write the ' } }, _meta: { promptId: 'p1' } } },
+    { timestamp: 3, method: 'session/update', params: { sessionId: uuid(6), update: { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'release notes' } }, _meta: { promptId: 'p1' } } },
+    { timestamp: 4, method: 'session/update', params: { sessionId: uuid(6), update: { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'next prompt' } }, _meta: { promptId: 'p2' } } },
+  ), '2026-09-30T09:00:00Z');
+  const hashed = path.join(dir, 'sessions', 'very-long-name-0123456789abcdef');
+  writeAt(path.join(hashed, '.cwd'), '/home/me/a very long project path\n', '2026-09-01T00:00:00Z');
+  writeAt(path.join(hashed, uuid(7), 'summary.json'), summary(uuid(7), { info: { id: uuid(7) }, generated_title: 'Elsewhere', updated_at: '2026-09-01T00:00:00Z' }), '2026-09-01T00:00:00Z');
+  writeAt(path.join(dir, 'sessions', 'session_search.sqlite'), '', '2026-10-01T12:00:00Z');
+
+  assert.deepEqual(await listGrokSessions(dir), [
+    { id: uuid(1), title: 'Fix Login Bug', cwd: '/home/me/app', startedAt: '2026-10-01T10:00:00.000Z', updatedAt: '2026-10-01T11:00:00.000Z' },
+    { id: uuid(2), title: 'Explored the data layer', cwd: '/home/me/app', startedAt: '2026-10-01T10:00:00.000Z', updatedAt: '2026-10-01T10:30:00.000Z' },
+    { id: uuid(6), title: 'Write the release notes', cwd: '/home/me/app', startedAt: '2026-10-01T10:00:00.000Z', updatedAt: '2026-09-30T09:00:00.000Z' },
+    { id: uuid(7), title: 'Elsewhere', cwd: '/home/me/a very long project path', startedAt: '2026-10-01T10:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z' },
+  ]);
+});
+
+test('a history command prints JSON, and the monitor reads each account\'s own folder and caches the list', async () => {
+  const fixture = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-history.mjs');
+  const env = { PATH: path.dirname(process.execPath) };
+  assert.deepEqual(await commandHistory({ command: process.execPath, args: [fixture] }, env), [
+    { id: 'newer-2', title: null, cwd: null, startedAt: null, updatedAt: '2030-01-01T00:00:00.000Z' },
+    { id: 'older-1', title: 'Fix the login bug', cwd: '/work/app', startedAt: '2030-01-01T00:00:00.000Z', updatedAt: '2030-01-01T01:00:00.000Z' },
+  ].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), 'entries without a usable id are dropped');
+  await assert.rejects(commandHistory({ command: 'no-such-history-command', args: [] }, env), /not found on PATH/);
+  await assert.rejects(commandHistory({ command: process.execPath, args: ['-e', 'console.log("nope")'] }, env), /did not print JSON/);
+  await assert.rejects(commandHistory({ command: process.execPath, args: ['-e', 'console.log("{}")'] }, env), /no "sessions" array/);
+  assert.equal(cleanEntry({ id: 'x'.repeat(201) }), null);
+  assert.equal(cleanEntry({ id: 'a\x1bb' }), null);
+  assert.deepEqual(cleanEntry({ id: ' s1 ', title: '  ', cwd: ' /w ', startedAt: 'not a date' }), { id: 's1', title: null, cwd: '/w', startedAt: null, updatedAt: null });
+
+  const dir = tempDir();
+  const userFile = path.join(dir, 'providers.json');
+  fs.writeFileSync(userFile, JSON.stringify({ providers: [
+    { id: 'anthropic', accounts: [{ id: 'work' }] },
+    { id: 'openai', history: null },
+    { id: 'custom', command: 'x', history: { command: process.execPath, args: [fixture] } },
+    { id: 'bad', command: 'x', history: { args: ['x'] } },
+    { id: 'shell' },
+  ] }));
+  const accountsDir = path.join(dir, 'accounts');
+  const registry = new ProviderRegistry({ userFile, env, checkUpdates: false, accountsDir });
+  assert.equal(registry.get('anthropic').history, 'claude');
+  assert.equal(registry.get('google').history, 'gemini');
+  assert.equal(registry.get('xai').history, 'grok');
+  assert.equal(registry.get('openai').history, null);
+  assert.deepEqual(registry.get('custom').history, { command: process.execPath, args: [fixture] });
+  assert.equal(registry.get('bad').history, null);
+  assert.equal(registry.get('shell').history, null);
+  assert.deepEqual(registry.list().map((p) => [p.id, p.historySource]), [['anthropic', 'claude'], ['openai', null], ['google', 'gemini'], ['xai', 'grok'], ['shell', null], ['custom', 'command'], ['bad', null]]);
+
+  const defaultHome = path.join(dir, 'claude-home');
+  const workHome = path.join(accountsDir, 'anthropic', 'work');
+  const transcript = (id, prompt) => jsonl({ type: 'user', cwd: '/w', timestamp: '2026-10-01T00:00:00.000Z', message: { role: 'user', content: prompt } });
+  writeAt(path.join(defaultHome, 'projects', '-w', 'd1.jsonl'), transcript('d1', 'default account'), '2026-10-01T01:00:00.000Z');
+  writeAt(path.join(workHome, 'projects', '-w', 'w1.jsonl'), transcript('w1', 'work account'), '2026-10-01T01:00:00.000Z');
+  let reads = 0;
+  const history = new SessionHistory({ registry, env: { ...env, CLAUDE_CONFIG_DIR: defaultHome }, ttlMs: 60000, readers: {
+    claude: (home, memo) => { reads++; return listClaudeSessions(home, memo); },
+  } });
+  const anthropic = registry.get('anthropic');
+  const byDefault = await history.list(anthropic);
+  assert.deepEqual(byDefault.sessions.map((s) => [s.id, s.title]), [['d1', 'default account']]);
+  assert.deepEqual([byDefault.providerId, byDefault.accountId, byDefault.total, byDefault.error], ['anthropic', 'default', 1, null]);
+  const byWork = await history.list(anthropic, registry.account(anthropic, 'work'));
+  assert.deepEqual(byWork.sessions.map((s) => [s.id, s.title]), [['w1', 'work account']], 'the work account reads its own home folder');
+  await Promise.all([history.list(anthropic), history.list(anthropic, undefined, { limit: 1 })]);
+  assert.equal(reads, 2, 'a list within the TTL comes from the cache');
+  const limited = await history.list(registry.get('custom'), undefined, { limit: 1 });
+  assert.deepEqual([limited.sessions.length, limited.total], [1, 2]);
+  assert.equal((await history.list(registry.get('custom'), undefined, { limit: 'lots' })).sessions.length, 2);
+  const failing = new SessionHistory({ registry, env });
+  const missing = { id: 'missing', env: {}, history: { command: 'no-such-history-command', args: [] } };
+  assert.match((await failing.list(missing, { id: 'default', env: {} })).error, /not found on PATH/);
+  const unreadable = new SessionHistory({ registry, env: { ...env, CLAUDE_CONFIG_DIR: path.join(dir, 'nothing-here') } });
+  assert.deepEqual((await unreadable.list(anthropic)).sessions, [], 'a tool never run has no sessions and no error');
+});
+
 test('console links are https URLs that users can override per platform or turn off', () => {
   const defaults = loadProviders({ platform: 'linux' });
   assert.deepEqual(defaults.warnings, []);
@@ -1625,7 +1862,7 @@ test('hook events map to agent reports for every tool\'s spelling', () => {
   assert.equal(ga.status, 'done');
   assert.deepEqual(hookToReports({ hook_event_name: 'BeforeTool', tool_name: 'read_file', tool_input: { path: 'x' } }), []);
   // A cancelled or denied invoke_agent gets no AfterTool; the parent's turn boundaries close what is left.
-  assert.deepEqual(hookToReports({ hook_event_name: 'BeforeAgent', session_id: 'g', prompt: 'next' }), [{ finishForeground: true }]);
+  assert.deepEqual(hookToReports({ hook_event_name: 'BeforeAgent', session_id: 'g', prompt: 'next' }), [{ finishForeground: true }, { toolSessionId: 'g' }]);
   assert.deepEqual(hookToReports({ hook_event_name: 'AfterAgent', session_id: 'g', prompt: 'p', prompt_response: 'r', stop_hook_active: false }), [{ finishForeground: true }]);
   assert.deepEqual(hookToReports({ hook_event_name: 'Stop', session_id: 'c', stop_hook_active: false }), [{ finishForeground: true }], 'a main-thread Stop is a turn boundary too');
   assert.deepEqual(hookToReports({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: {} }), []);
@@ -1704,7 +1941,13 @@ test('hook events and the Claude Code status line report the model', () => {
   assert.deepEqual(hookToReports({ hookEventName: 'user_prompt_submit', hook_event_name: 'UserPromptSubmit', subagentType: 'reviewer', modelId: 'grok-build' }), []);
   assert.deepEqual(hookToReports({ hook_event_name: 'UserPromptSubmit', agent_type: 'security-reviewer', model: 'claude-opus-5' }), [{ finishForeground: true }, { model: 'claude-opus-5' }], 'a session started with --agent is still the main session');
   // Grok Build's real SessionStart carries no model: the card uses the screen scan.
-  assert.deepEqual(hookToReports({ hookEventName: 'session_start', hook_event_name: 'SessionStart', sessionId: 's', cwd: '/w', source: 'new' }), []);
+  assert.deepEqual(hookToReports({ hookEventName: 'session_start', hook_event_name: 'SessionStart', sessionId: 's', cwd: '/w', source: 'new' }), [{ toolSessionId: 's' }]);
+
+  // The tool's own session id comes with the event that opens the session, and only for the main session.
+  assert.deepEqual(hookToReports({ hook_event_name: 'SessionStart', session_id: '550e8400-e29b-41d4-a716-446655440000', source: 'resume', model: 'claude-opus-5' }),
+    [{ model: 'claude-opus-5' }, { toolSessionId: '550e8400-e29b-41d4-a716-446655440000' }]);
+  assert.deepEqual(hookToReports({ hook_event_name: 'SessionStart', session_id: 'child', agent_id: 'c1', agent_type: 'explorer' }), [], 'a sub-agent\'s session is not the tool session');
+  assert.deepEqual(hookToReports({ hook_event_name: 'UserPromptSubmit', session_id: 's', prompt: 'hi' }), [{ finishForeground: true }], 'later events do not repeat the id');
 
   const input = { model: { id: 'claude-opus-4-5', display_name: 'Opus 4.5' }, workspace: { current_dir: '/home/me/app' }, context_window: { used_percentage: 41.7 } };
   assert.deepEqual(claudeStatuslineToReport(input), { model: 'claude-opus-4-5', displayName: 'Opus 4.5' });
@@ -2457,4 +2700,19 @@ test('a response over the size limit is refused, and a declared character set is
   const snap = news.snapshot();
   assert.deepEqual(snap.sources.map((s) => s.error), ['sent more than 5 MB', 'sent more than 5 MB', null]);
   assert.deepEqual(snap.items.map((i) => i.title), ['Café agents']);
+});
+
+test('the launcher path names the double-click file for the platform only when the package carries it', () => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const repo = path.resolve(here, '..');
+  assert.equal(ROOT_DIR, repo, 'the manager runs from the package root');
+  assert.equal(MANAGER_ENTRY, path.join(repo, 'src', 'manager', 'main.mjs'));
+  // The repository checkout has both launchers; the npm package has neither.
+  assert.equal(launcherPath('win32', repo), path.join(repo, 'launchers', 'AgentGuild.cmd'));
+  assert.equal(launcherPath('darwin', repo), path.join(repo, 'launchers', 'AgentGuild.command'));
+  assert.equal(launcherPath('linux', repo), null, 'Linux has no double-click launcher');
+  const bare = tempDir();
+  assert.equal(launcherPath('win32', bare), null);
+  assert.equal(launcherPath('darwin', bare), null);
+  fs.rmSync(bare, { recursive: true, force: true });
 });

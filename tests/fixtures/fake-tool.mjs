@@ -2,6 +2,7 @@
 //   echo <text>        prints "ECHO:<text>"
 //   agent <id> <name>  emits an in-band agent report (OSC 7777)
 //   model <name>       emits an in-band model report (OSC 7777)
+//   session <id>       emits an in-band tool session id report (OSC 7777)
 //   args               prints the arguments that followed the script path
 //   env                prints the Agent Guild variables, the first PATH entry, TMUX and FAKE_TOOL_HOME
 //   hook <shell> <json> runs `agent-guild-report --hook` through sh, cmd or
@@ -82,6 +83,8 @@ function handle(line) {
     process.stdout.write(`\x1b]7777;agent-guild;${report}\x07`);
   } else if (cmd === 'model') {
     process.stdout.write(`\x1b]7777;agent-guild;${JSON.stringify({ model: rest[0], displayName: rest[1] })}\x07`);
+  } else if (cmd === 'session') {
+    process.stdout.write(`\x1b]7777;agent-guild;${JSON.stringify({ toolSessionId: rest[0] })}\x07`);
   } else if (cmd === 'args') out(`ARGS:${JSON.stringify(process.argv.slice(2))}`);
   else if (cmd === 'env') {
     const pathKey = Object.keys(process.env).find((k) => k.toUpperCase() === 'PATH');

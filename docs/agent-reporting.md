@@ -4,7 +4,9 @@ A coding tool often starts helper agents inside one session. Agent Guild shows
 each reported agent as a small icon on the session's card. Terminal output
 alone cannot tell us reliably when an agent starts or stops, so the tool (or a
 hook it runs) reports agents explicitly. The same channels report the main
-model the tool is using, which the card shows next to the session's status.
+model the tool is using, which the card shows next to the session's status,
+and the id the tool gives its own session, which the card shows so the
+session can be found in the tool's history and resumed later.
 
 Every terminal the manager starts has these environment variables:
 
@@ -25,6 +27,7 @@ agent-guild-report explore-1 --name Explorer --status working --detail "Reading 
 agent-guild-report explore-1 --status done
 agent-guild-report explore-1 --remove
 agent-guild-report --model gpt-5-codex
+agent-guild-report --session 01a0f7a7-387f-7e11-b368-5335205ef1a6
 ```
 
 Outside an Agent Guild terminal the command does nothing and exits 0, so it is
@@ -45,9 +48,12 @@ reports what it carries: a sub-agent starting or stopping (`SubagentStart`
 and `SubagentStop`, or Gemini CLI's `invoke_agent` tool call on `BeforeTool`
 and `AfterTool`), and the main model when the event names it (`model`,
 `modelId`, Gemini CLI's `llm_request.model`, or `to_model` on Claude Code's
-`PostModelSwitch`). The four tools spell these fields differently; all
-spellings are accepted. An event that fires inside a sub-agent never sets
-the main model. Each sub-agent appears on the card for as long as it runs,
+`PostModelSwitch`), and the tool's own session id (`session_id`) from the
+event that opens a session: `SessionStart` in Claude Code, Codex CLI and
+Grok Build, and `BeforeAgent` in Gemini CLI, which has no start event. The
+four tools spell these fields differently; all spellings are accepted. An
+event that fires inside a sub-agent never sets the main model or the
+session id. Each sub-agent appears on the card for as long as it runs,
 labelled with its agent type, for example `Explore` or `Plan`.
 
 | Tool | Put the hooks in | Example |
@@ -157,6 +163,7 @@ For example, from a shell:
 ```sh
 printf '\033]7777;agent-guild;{"agentId":"w1","name":"Worker","status":"working"}\007'
 printf '\033]7777;agent-guild;{"model":"grok-4","displayName":"Grok 4"}\007'
+printf '\033]7777;agent-guild;{"toolSessionId":"0199a000-0000-7000-8000-000000000000"}\007'
 ```
 
 This works without network access or extra tools, which suits wrapper scripts.
@@ -173,6 +180,9 @@ This works without network access or extra tools, which suits wrapper scripts.
 | `foreground` | no | `true` when the reporting tool waits for this agent. A model reported while a foreground agent works is not applied to the session. |
 | `remove` | no | `true` removes the agent immediately. |
 | `finishForeground` | no | `true`, sent without an `agentId`, marks every foreground agent still working as done. Send it when the tool is between turns. |
+
+A report with `toolSessionId` instead of an `agentId` or `model` records the
+id the tool gives its own session, as its `resume` argument expects it.
 
 ## Model without a report
 

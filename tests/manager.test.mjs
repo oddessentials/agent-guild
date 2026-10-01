@@ -93,7 +93,7 @@ process.env.AGENT_GUILD_NPM_REGISTRY = `http://127.0.0.1:${npmRegistry.address()
 fs.writeFileSync(path.join(home, 'providers.json'), JSON.stringify({
   providers: [
     { id: 'fake', vendor: 'Test', tool: 'Fake Tool', command: process.execPath, args: [path.join(here, 'fixtures', 'fake-tool.mjs')], resumeArgs: ['--resume', '{id}'], package: 'fake-tool-pkg', versionArgs: [path.join(here, 'fixtures', 'fake-tool.mjs'), '--version'], modelPattern: 'fake-model-[a-z0-9.]+' },
-    { id: 'plain', vendor: 'Test', tool: 'Plain Tool', command: process.execPath, args: [path.join(here, 'fixtures', 'fake-tool.mjs')], usage: { command: process.execPath, args: [path.join(here, 'fixtures', 'fake-usage.mjs')] } },
+    { id: 'plain', vendor: 'Test', tool: 'Plain Tool', command: process.execPath, args: [path.join(here, 'fixtures', 'fake-tool.mjs')], usage: { command: process.execPath, args: [path.join(here, 'fixtures', 'fake-usage.mjs')] }, history: { command: process.execPath, args: [path.join(here, 'fixtures', 'fake-history.mjs')] } },
     { id: 'missing', vendor: 'Nobody', tool: 'Missing Tool', command: 'definitely-not-installed-agent-guild', install: 'npm i -g nothing', package: 'nothing' },
     { id: 'nativetool', vendor: 'Test', tool: 'Native Tool', command: 'fake-native', package: 'fake-tool-pkg', versionArgs: ['--version'], env: { FAKE_TOOL_VERSION_FILE: path.join(home, 'native-version-1.txt') }, channels: { native: { paths: [path.join(nativeDir, 'fake-native')], update: ['update'] } } },
     { id: 'nativetool2', vendor: 'Test', tool: 'Native Tool Two', command: 'fake-native', package: 'fake-tool-pkg', versionArgs: ['--version'], env: { FAKE_TOOL_VERSION_FILE: path.join(home, 'native-version-2.txt'), FAKE_TOOL_UPDATE_TO: '2.0.0' }, channels: { native: { paths: [path.join(nativeDir, 'fake-native')], update: ['update'] } } },
@@ -103,10 +103,11 @@ fs.writeFileSync(path.join(home, 'providers.json'), JSON.stringify({
     { id: 'absent', vendor: 'Nobody', tool: 'Absent Tool', command: 'definitely-not-installed-agent-guild', package: 'fake-tool-pkg' },
     { id: 'racytool', vendor: 'Nobody', tool: 'Racy Tool', command: 'definitely-not-installed-agent-guild', package: 'racy-pkg' },
     { id: 'multi', vendor: 'Test', tool: 'Multi Tool', command: process.execPath, args: [path.join(here, 'fixtures', 'fake-tool.mjs')], homeVar: 'FAKE_TOOL_HOME', hooks: { path: 'hooks/settings.json', example: 'claude-code-settings.json' }, accounts: [{ id: 'work', label: 'Work' }, { id: 'kept', dir: path.join(home, 'kept-home') }] },
-    // Never read the developer's real Claude Code, Codex or Gemini sign-in during tests.
-    { id: 'anthropic', usage: null },
-    { id: 'openai', usage: null },
-    { id: 'google', usage: null },
+    // Never read the developer's real Claude Code, Codex, Gemini or Grok sign-in or sessions during tests.
+    { id: 'anthropic', usage: null, history: null },
+    { id: 'openai', usage: null, history: null },
+    { id: 'google', usage: null, history: null },
+    { id: 'xai', history: null },
   ],
 }));
 
@@ -572,6 +573,51 @@ test('an existing tool session can be resumed by id', async () => {
   const unsupported = await call('POST', '/sessions', { providerId: 'plain', resume: 'abc' });
   assert.equal(unsupported.status, 400);
   assert.equal(unsupported.body.error.code, 'resume_unsupported');
+});
+
+test('past sessions of a provider are listed from its history source', async () => {
+  const { body: listed } = await call('GET', '/providers');
+  assert.equal(listed.providers.find((p) => p.id === 'plain').historySource, 'command');
+  assert.equal(listed.providers.find((p) => p.id === 'fake').historySource, null);
+  assert.equal(listed.providers.find((p) => p.id === 'anthropic').historySource, null, 'built-in sources are disabled for tests');
+
+  const { status, body } = await call('GET', '/providers/plain/history');
+  assert.equal(status, 200, JSON.stringify(body));
+  assert.deepEqual(body.history.sessions.map((s) => s.id), ['older-1', 'newer-2']);
+  assert.deepEqual([body.history.providerId, body.history.accountId, body.history.total, body.history.error], ['plain', 'default', 2, null]);
+  assert.ok(Date.parse(body.history.fetchedAt));
+  assert.equal((await call('GET', '/providers/plain/history?limit=1')).body.history.sessions.length, 1);
+  const unsupported = await call('GET', '/providers/fake/history');
+  assert.deepEqual([unsupported.status, unsupported.body.error.code], [400, 'history_unsupported']);
+  assert.equal((await call('GET', '/providers/nope/history')).status, 404);
+  assert.equal((await call('GET', '/providers/plain/history?account=nobody')).body.error.code, 'unknown_account');
+});
+
+test('the tool\'s own session id is reported over HTTP, in-band, and through hooks', async () => {
+  const session = await createFake();
+  assert.equal(session.toolSessionId, null);
+  const managed = ctx.manager.get(session.id);
+  const route = `/sessions/${session.id}/tool-session`;
+  assert.equal((await call('POST', route, { toolSessionId: 'x' }, { Authorization: '', 'X-Agent-Guild-Report-Token': 'wrong' })).status, 401);
+  const ok = await call('POST', route, { toolSessionId: ' 550e8400-e29b-41d4-a716-446655440000 ' }, { Authorization: '', 'X-Agent-Guild-Report-Token': managed.reportToken });
+  assert.deepEqual([ok.status, ok.body.toolSessionId], [200, '550e8400-e29b-41d4-a716-446655440000']);
+  assert.equal((await call('GET', `/sessions/${session.id}`)).body.session.toolSessionId, '550e8400-e29b-41d4-a716-446655440000');
+  assert.equal((await call('POST', route, { toolSessionId: '' })).status, 400);
+  assert.equal((await call('POST', route, { toolSessionId: 'a\nb' })).status, 400);
+
+  const client = terminal(session.id);
+  await client.opened;
+  client.input('session in-band-1');
+  await waitFor(() => ctx.manager.get(session.id).toolSessionId === 'in-band-1', { label: 'in-band tool session id' });
+  client.input(`hook ${process.platform === 'win32' ? 'cmd' : 'sh'} ${JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'hooked-2', source: 'startup' })}`);
+  await waitForText(client, session.id, 'HOOK-EXIT:0', 'hook exit');
+  await waitFor(() => ctx.manager.get(session.id).toolSessionId === 'hooked-2', { label: 'hook tool session id' });
+  await client.close();
+  await call('POST', `/sessions/${session.id}/stop`);
+  await waitFor(async () => (await call('GET', `/sessions/${session.id}`)).body.session.status === 'exited', { label: 'exit' });
+  assert.equal((await call('POST', route, { toolSessionId: 'late' })).status, 409, 'an exited session takes no reports');
+  assert.equal((await call('GET', `/sessions/${session.id}`)).body.session.toolSessionId, 'hooked-2', 'the id outlives the process');
+  await call('DELETE', `/sessions/${session.id}`);
 });
 
 test('session creation validates its input', async () => {

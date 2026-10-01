@@ -4,25 +4,21 @@
 //   agent-guild [open]     start the session manager if needed, open the page
 //   agent-guild start      run the session manager in the foreground
 //   agent-guild stop       stop the manager (ends all sessions)
+//   agent-guild restart    stop the manager and start it again (ends all sessions)
 //   agent-guild status     show whether the manager is running
 //   agent-guild url        print the page URL (includes the access token)
 
 import fs from 'node:fs';
-import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
 import {
   DEFAULT_HOST,
   VERSION,
-  ensureDataDir,
   loadOrCreateToken,
   paths,
   readRuntimeFile,
   resolvePort,
 } from '../src/manager/config.mjs';
-
-const here = path.dirname(fileURLToPath(import.meta.url));
-const managerEntry = path.resolve(here, '../src/manager/main.mjs');
+import { spawnManager } from '../src/manager/launch.mjs';
 
 function usage() {
   console.log(`Usage: agent-guild [command] [--no-browser]
@@ -31,6 +27,7 @@ Commands:
   open      Start the session manager if needed and open the web page (default)
   start     Run the session manager in the foreground
   stop      Stop the session manager and every session it owns
+  restart   Stop the session manager and start it again; ends every session
   status    Show whether the session manager is running
   url       Print the web page URL, including the access token
 
@@ -45,6 +42,12 @@ function baseUrl() {
   const runtime = readRuntimeFile();
   if (runtime?.url) return runtime.url;
   return `http://${DEFAULT_HOST}:${resolvePort()}`;
+}
+
+/** The port a URL names, including the one its scheme implies. */
+function portOf(url) {
+  const parsed = new URL(url);
+  return parsed.port ? Number(parsed.port) : parsed.protocol === 'https:' ? 443 : 80;
 }
 
 async function health(url, timeoutMs = 1000) {
@@ -88,36 +91,21 @@ function tailLog(lines = 15) {
   }
 }
 
-const MAX_LOG_BYTES = 5 * 1024 * 1024;
+/** Start a manager unless one answers. `port` pins the one to listen on; by default the configured one. */
+async function ensureManager({ port = null } = {}) {
+  const listenPort = port ?? resolvePort();
+  const expectedUrl = `http://${DEFAULT_HOST}:${listenPort}`;
+  // A pinned port is the endpoint to serve, so it is also the one to check;
+  // a manager found anywhere else is not the one asked for.
+  const knownUrl = port === null ? baseUrl() : expectedUrl;
+  const running = await health(knownUrl);
+  if (running) return { url: knownUrl, started: false, version: running.version };
 
-/** Keep one previous log so the file cannot grow without bound. */
-function rotateLog() {
-  try {
-    if (fs.statSync(paths.log).size > MAX_LOG_BYTES) fs.renameSync(paths.log, `${paths.log}.1`);
-  } catch { /* no log yet */ }
-}
-
-async function ensureManager() {
-  const running = await health(baseUrl());
-  if (running) return { url: baseUrl(), started: false, version: running.version };
-
-  ensureDataDir();
-  rotateLog();
-  const log = fs.openSync(paths.log, 'a');
-  fs.writeSync(log, `\n--- starting manager ${new Date().toISOString()} ---\n`);
-  const child = spawn(process.execPath, [managerEntry], {
-    detached: true,
-    stdio: ['ignore', log, log],
-    windowsHide: true,
-    env: process.env,
-  });
-  child.unref();
-  fs.closeSync(log);
+  const child = spawnManager({ env: { ...process.env, AGENT_GUILD_PORT: String(listenPort) } });
 
   let exited = false;
   child.once('exit', () => { exited = true; });
   const deadline = Date.now() + 20000;
-  const expectedUrl = `http://${DEFAULT_HOST}:${resolvePort()}`;
   while (Date.now() < deadline && !exited) {
     await new Promise((r) => setTimeout(r, 250));
     const url = readRuntimeFile()?.pid === child.pid ? readRuntimeFile().url : expectedUrl;
@@ -147,30 +135,80 @@ async function cmdOpen({ browser }) {
   }
 }
 
+/**
+ * Ask a running manager to stop, or to stop and start again. Resolves to
+ * what it reported: the running session count, and whether it will start
+ * a successor itself (a manager from before restarts only stops).
+ */
+async function requestShutdown(url, { restart = false } = {}) {
+  // `stop` and `restart` are documented as ending every session, so they do
+  // not ask; the web page's buttons are the ones that confirm first.
+  const res = await fetch(`${url}/api/v1/shutdown`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${loadOrCreateToken()}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(restart ? { force: true, restart: true } : { force: true }),
+  });
+  if (!res.ok) throw new Error(`${restart ? 'restart' : 'stop'} failed: HTTP ${res.status}`);
+  const body = await res.json().catch(() => ({}));
+  const running = body.running ?? 0;
+  if (running > 0) console.log(`Ending ${running} running session(s).`);
+  return { running, restart: body.restart === true };
+}
+
+/** Resolves to true once nothing answers at `url`, false when it still does after `timeoutMs`. */
+async function waitForStop(url, timeoutMs = 6000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 150));
+    if (!(await health(url, 300))) return true;
+  }
+  return false;
+}
+
 async function cmdStop() {
   const url = baseUrl();
   if (!(await health(url))) {
     console.log('Session manager is not running.');
     return;
   }
-  // `stop` is documented as ending every session, so it does not ask; the
-  // web page's Stop manager button is the one that confirms first.
-  const res = await fetch(`${url}/api/v1/shutdown`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${loadOrCreateToken()}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ force: true }),
-  });
-  if (!res.ok) throw new Error(`stop failed: HTTP ${res.status}`);
-  const { running = 0 } = await res.json().catch(() => ({}));
-  if (running > 0) console.log(`Ending ${running} running session(s).`);
-  for (let i = 0; i < 40; i++) {
-    await new Promise((r) => setTimeout(r, 150));
-    if (!(await health(url, 300))) {
-      console.log('Session manager stopped.');
+  await requestShutdown(url);
+  console.log(await waitForStop(url) ? 'Session manager stopped.' : 'Stop requested; the manager is still shutting down.');
+}
+
+async function cmdRestart() {
+  const url = baseUrl();
+  const before = await health(url);
+  if (!before) {
+    // Nothing to stop: a restart of a stopped manager is a start.
+    const { url: started, version } = await ensureManager();
+    console.log(`Session manager was not running; started Agent Guild ${version} at ${started}.`);
+    return;
+  }
+  const { restart } = await requestShutdown(url, { restart: true });
+  if (!restart) {
+    // A manager from before restarts stops without starting a successor,
+    // which is the case right after an upgrade: start one here instead.
+    if (!(await waitForStop(url, 15000))) throw new Error('the session manager did not stop, so it could not be restarted.');
+    // On the port the old one served, which an ephemeral port setting would otherwise lose.
+    const { url: started, version } = await ensureManager({ port: portOf(url) });
+    const changed = version !== before.version ? `, now Agent Guild ${version} (was ${before.version})` : '';
+    console.log(`Session manager restarted at ${started}${changed}.`);
+    return;
+  }
+  // The old manager starts its successor from the package on disk once its
+  // sessions have ended and its port is free, then exits.
+  const deadline = Date.now() + 30000;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 250));
+    const now = await health(url, 500);
+    if (now && now.pid !== before.pid) {
+      const changed = now.version !== before.version ? `, now Agent Guild ${now.version} (was ${before.version})` : '';
+      console.log(`Session manager restarted at ${url}${changed}.`);
       return;
     }
   }
-  console.log('Stop requested; the manager is still shutting down.');
+  const details = tailLog();
+  throw new Error(`the session manager did not come back after the restart.${details ? `\n\nRecent log (${paths.log}):\n${details}` : ''}`);
 }
 
 async function cmdStatus() {
@@ -222,6 +260,7 @@ async function main() {
       return undefined;
     }
     case 'stop': return cmdStop();
+    case 'restart': return cmdRestart();
     case 'status': return cmdStatus();
     case 'url': {
       console.log(pageUrl(baseUrl(), loadOrCreateToken()));

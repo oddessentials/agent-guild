@@ -27,8 +27,17 @@ const state = {
   connected: false,
   /** The manager's own version check, from `hello` and `manager.upgrade`. */
   upgrade: null,
+  /** The running manager's version and pid, from `hello`. */
+  version: null,
+  pid: null,
+  /** False for a manager from before restarts, which only stops: `agent-guild restart` replaces it. */
+  restartable: false,
+  /** The double-click launcher file on this computer, or null when the install has none. */
+  launcher: null,
   /** True from a shutdown request until the manager is reachable again. */
   stopping: false,
+  /** True while the stop is a restart: a new manager is expected to take over. */
+  restarting: false,
   /** After a stop: how many session processes did not confirm exiting, or null if the manager never said. */
   stopRemaining: null,
 };
@@ -53,10 +62,29 @@ function setConnection(kind, label) {
   const el = $('connection');
   el.className = `connection ${kind}`;
   el.querySelector('.label').textContent = label;
-  // The manager can only be stopped or upgraded while the page can reach it.
+  // The manager can only be stopped, restarted or upgraded while the page can reach it.
   state.connected = kind === 'ok';
   $('stop-manager').hidden = !state.connected;
+  $('restart-manager').hidden = !state.connected || !state.restartable;
   renderUpgrade();
+}
+
+// ---- the running version --------------------------------------------------
+
+/** A development checkout runs as 0.0.0-development; releases carry a real version. */
+function isDevelopmentBuild(version) {
+  return !version || /^0\.0\.0(?:-|$)/.test(String(version));
+}
+
+function renderVersion() {
+  const badge = $('version');
+  const v = state.version;
+  badge.hidden = !v;
+  if (!v) return;
+  const dev = isDevelopmentBuild(v);
+  badge.textContent = dev ? 'dev' : `v${v}`;
+  badge.title = [dev ? `Development build (${v})` : `Agent Guild ${v}`, state.pid && `session manager pid ${state.pid}`].filter(Boolean).join(' · ');
+  badge.setAttribute('aria-label', dev ? `Agent Guild development build ${v}` : `Agent Guild version ${v}`);
 }
 
 // ---- theme ----------------------------------------------------------------
@@ -93,15 +121,24 @@ function renderUpgrade() {
     button.textContent = `Upgrade to ${u.latestVersion}`;
     button.title = `Run "${u.command}" in a session. Sessions keep running; the new version is used once the manager is restarted.`;
   }
+  // A newer version on disk is used by the next manager, so the restart
+  // button becomes the way to pick it up.
+  const restart = $('restart-manager');
+  const pending = u?.pendingVersion;
+  restart.classList.toggle('pending', Boolean(pending));
+  restart.textContent = pending ? `Restart to use v${pending}` : 'Restart manager';
+  restart.title = pending
+    ? `Agent Guild ${pending} is installed, but this manager is still ${u.version}. Restarting ends every session and starts the new version; this page reconnects by itself.`
+    : 'Stop the session manager and start it again. This ends every session; this page reconnects by itself.';
   let text = '';
   let title = '';
   const last = u?.lastInstall;
   if (u?.installing) {
     text = `Upgrading${u.latestVersion ? ` to v${u.latestVersion}` : ''}…`;
     title = 'npm is running in a session. Keep the manager running until it finishes.';
-  } else if (u?.pendingVersion) {
-    text = `v${u.pendingVersion} installed · restart to use it`;
-    title = `Agent Guild ${u.pendingVersion} is installed, but this manager is still ${u.version}. Stop the manager and run "agent-guild open" to use it.`;
+  } else if (pending && !state.restartable) {
+    text = `v${pending} installed · run "agent-guild restart" to use it`;
+    title = `Agent Guild ${pending} is installed, but this manager is still ${u.version} and cannot restart itself. Run "agent-guild restart" in a terminal when your sessions are done; this page reconnects by itself.`;
   } else if (last?.outcome === 'failed') {
     text = last.exitCode === null ? 'Upgrade failed' : `Upgrade failed (exit ${last.exitCode})`;
     title = 'See the upgrade session for npm\'s output, then run the upgrade again: the files on disk may be incomplete. On Windows, files in use cannot be replaced: stop the manager first and run the command yourself.';
@@ -123,7 +160,9 @@ function setUpgrade(upgrade) {
   renderUpgrade();
   const pending = state.upgrade?.pendingVersion;
   if (pending && pending !== before?.pendingVersion) {
-    toast(`Agent Guild ${pending} is installed. Stop the manager and run "agent-guild open" to use it.`, 10000);
+    toast(state.restartable
+      ? `Agent Guild ${pending} is installed. Use "Restart to use v${pending}" in the top bar when your sessions are done.`
+      : `Agent Guild ${pending} is installed. Run "agent-guild restart" in a terminal when your sessions are done.`, 10000);
   }
 }
 
@@ -310,8 +349,10 @@ function renderProviders() {
     start.hidden = !provider.available;
     start.addEventListener('click', () => startSession(provider, node));
     existing.hidden = !provider.available || !provider.resumable;
-    existing.title = `Resume one of ${provider.tool}'s own sessions by its id`;
-    existing.addEventListener('click', () => resumeSession(provider, node));
+    existing.title = provider.historySource
+      ? `Resume one of ${provider.tool}'s own earlier sessions`
+      : `Resume one of ${provider.tool}'s own sessions by its id`;
+    existing.addEventListener('click', () => showHistory(provider));
     const install = node.querySelector('.install');
     install.hidden = provider.available || !provider.installable;
     install.title = `Install ${provider.tool} using npm.${provider.npmNote ? ` ${provider.npmNote}` : ''}`;
@@ -1247,27 +1288,223 @@ async function installProvider(provider, card, { force = false } = {}) {
   }
 }
 
-async function startSession(provider, card, { resume } = {}) {
-  const cwd = $('cwd').value.trim();
-  save(CWD_KEY, cwd);
-  card.classList.add('busy');
+/**
+ * Start a session. A resumed session starts in the folder its transcript
+ * names, since Claude Code and Gemini CLI only find a session from there;
+ * when that folder is gone, the working folder is used instead.
+ */
+async function startSession(provider, card, { resume, cwd, account = selectedAccount(provider).id } = {}) {
+  const working = $('cwd').value.trim();
+  save(CWD_KEY, working);
+  card?.classList.add('busy');
   try {
-    const body = { providerId: provider.id, account: selectedAccount(provider).id, cwd: cwd || undefined, cols: 120, rows: 32, resume };
-    const { session } = await api('POST', '/sessions', body);
+    const body = { providerId: provider.id, account, cwd: cwd || working || undefined, cols: 120, rows: 32, resume };
+    let session;
+    try {
+      ({ session } = await api('POST', '/sessions', body));
+    } catch (err) {
+      if (err.code !== 'bad_cwd' || !cwd) throw err;
+      toast(`${cwd} no longer exists; starting in the working folder instead.`, 8000);
+      ({ session } = await api('POST', '/sessions', { ...body, cwd: working || undefined }));
+    }
     upsertSession(session);
+    closeHistory({ focusOpener: false });
     openPanel(session.id);
   } catch (err) {
     if (err instanceof AuthError) return showAuth(err.message);
     toast(err.message, 8000);
   } finally {
-    card.classList.remove('busy');
+    card?.classList.remove('busy');
   }
 }
 
-function resumeSession(provider, card) {
-  const id = prompt(`${provider.tool} session id or name to resume`);
-  if (id === null || !id.trim()) return;
-  startSession(provider, card, { resume: id.trim() });
+// ---- session history ------------------------------------------------------
+
+const HISTORY_LIMIT = 200;
+const historyView = { providerId: null, accountId: null, snapshot: null, loading: false };
+let historyOpener = null;
+
+function historyProvider() {
+  return state.providers.find((p) => p.id === historyView.providerId) ?? null;
+}
+
+function toolSessionId(s) {
+  return s.toolSessionId || s.resume || null;
+}
+
+function shortId(id) {
+  return id.length > 12 ? id.slice(0, 8) : id;
+}
+
+function copyId(id) {
+  navigator.clipboard?.writeText(id).then(() => toast(`Copied ${id}`, 2500), () => toast(id, 8000));
+}
+
+function paintIdButton(button, id) {
+  button.hidden = !id;
+  if (!id) return;
+  button.textContent = shortId(id);
+  button.title = `Session id ${id}. Click to copy it.`;
+  button.setAttribute('aria-label', `Copy session id ${id}`);
+}
+
+function runningOn(providerId, accountId, id) {
+  return [...state.sessions.values()].find((s) =>
+    s.status === 'running' && s.task === null && s.provider.id === providerId && (s.account?.id ?? 'default') === accountId && toolSessionId(s) === id) ?? null;
+}
+
+function showHistory(provider) {
+  const account = selectedAccount(provider);
+  const same = historyView.providerId === provider.id && historyView.accountId === account.id;
+  if (!same) Object.assign(historyView, { providerId: provider.id, accountId: account.id, snapshot: null, loading: false });
+  const dialog = $('history');
+  $('history-filter').value = '';
+  $('history-id').value = '';
+  renderHistory();
+  if (!dialog.open) {
+    historyOpener = document.activeElement;
+    dialog.showModal();
+  }
+  if (provider.historySource) loadHistory();
+  else $('history-id').focus();
+}
+
+async function loadHistory() {
+  const provider = historyProvider();
+  if (!provider || historyView.loading) return;
+  const { providerId, accountId } = historyView;
+  historyView.loading = true;
+  renderHistory();
+  try {
+    const { history } = await api('GET', `/providers/${providerId}/history?account=${encodeURIComponent(accountId)}&limit=${HISTORY_LIMIT}`);
+    if (historyView.providerId === providerId && historyView.accountId === accountId) historyView.snapshot = history;
+  } catch (err) {
+    if (err instanceof AuthError) return showAuth(err.message);
+    if (historyView.providerId === providerId) historyView.snapshot = { sessions: [], total: 0, error: err.message };
+  } finally {
+    historyView.loading = false;
+    renderHistory();
+  }
+}
+
+function historyText(entry) {
+  return `${entry.title ?? ''}\n${entry.cwd ?? ''}\n${entry.id}`.toLowerCase();
+}
+
+function folderName(dir) {
+  const parts = dir.replace(/[\\/]+$/, '').split(/[\\/]/);
+  return parts.at(-1) || dir;
+}
+
+function sameFolder(a, b) {
+  const clean = (dir) => (dir || '').replace(/[\\/]+$/, '').replace(/\\/g, '/').toLowerCase();
+  return clean(a) === clean(b);
+}
+
+function historyEntry(id) {
+  return historyView.snapshot?.sessions.find((entry) => entry.id === id) ?? null;
+}
+
+function resumeFromHistory(provider, id, cwd) {
+  const running = runningOn(provider.id, historyView.accountId, id);
+  if (running) {
+    closeHistory({ focusOpener: false });
+    openPanel(running.id);
+  } else startSession(provider, null, { resume: id, cwd: cwd || undefined, account: historyView.accountId });
+}
+
+function buildHistoryRow(id) {
+  const node = $('history-template').content.firstElementChild.cloneNode(true);
+  node.dataset.id = id;
+  const idButton = node.querySelector('.session-id');
+  paintIdButton(idButton, id);
+  idButton.addEventListener('click', () => copyId(id));
+  node.querySelector('.history-resume').addEventListener('click', () => {
+    const provider = historyProvider();
+    const entry = historyEntry(id);
+    if (provider && entry) resumeFromHistory(provider, id, entry.cwd);
+  });
+  return node;
+}
+
+function updateHistoryRow(node, provider, entry) {
+  const running = runningOn(provider.id, historyView.accountId, entry.id);
+  node.classList.toggle('untitled', !entry.title);
+  node.classList.toggle('running', Boolean(running));
+  node.querySelector('.history-title').textContent = entry.title ?? 'Untitled session';
+  node.querySelector('.history-title').title = entry.title ?? '';
+  const meta = node.querySelector('.history-meta');
+  const when = entry.updatedAt ? `updated ${relativeTime(entry.updatedAt)}` : '';
+  meta.textContent = [entry.cwd && folderName(entry.cwd), when, running && `open in Agent Guild as ${running.name}`].filter(Boolean).join(' · ');
+  meta.title = [entry.cwd, entry.startedAt && `started ${new Date(entry.startedAt).toLocaleString()}`].filter(Boolean).join('\n');
+  const action = node.querySelector('.history-resume');
+  action.textContent = running ? 'Open' : 'Resume';
+  action.title = running
+    ? `This session is running in Agent Guild as "${running.name}". Open it instead of resuming it twice.`
+    : `Resume this ${provider.tool} session${entry.cwd ? ` in ${entry.cwd}` : ''}`;
+  action.setAttribute('aria-label', `${action.textContent} ${entry.title ?? entry.id}`);
+}
+
+/** Rows are kept and updated in place, so a refresh never drops keyboard focus from a row's buttons. */
+function renderHistoryRows(provider, shown) {
+  const list = $('history-list');
+  const rows = new Map([...list.children].map((node) => [node.dataset.id, node]));
+  const wanted = new Set(shown.map((entry) => entry.id));
+  for (const [id, node] of rows) if (!wanted.has(id)) node.remove();
+  shown.forEach((entry, index) => {
+    let node = rows.get(entry.id);
+    if (!node) node = buildHistoryRow(entry.id);
+    updateHistoryRow(node, provider, entry);
+    if (list.children[index] !== node) list.insertBefore(node, list.children[index] || null);
+  });
+}
+
+function renderHistory() {
+  const provider = historyProvider();
+  if (!provider) return closeHistory();
+  const account = provider.accounts?.find((a) => a.id === historyView.accountId);
+  paintProviderIcon($('history-icon'), provider);
+  $('history-title').textContent = `${provider.tool} sessions`;
+  const snapshot = historyView.snapshot;
+  const filter = $('history-filter').value.trim().toLowerCase();
+  const working = $('cwd').value.trim();
+  const here = $('history-here');
+  here.disabled = !working;
+  here.parentElement.title = working ? `Only sessions started in ${working}` : 'Set a working folder above to filter by it';
+  const all = snapshot?.sessions ?? [];
+  const shown = all.filter((entry) => (!filter || historyText(entry).includes(filter)) && (!here.checked || here.disabled || sameFolder(entry.cwd, working)));
+  const parts = [];
+  if ((provider.accounts?.length ?? 0) > 1 && account) parts.push(`${account.label} account`);
+  if (snapshot && !snapshot.error) {
+    parts.push(snapshot.total === 0 ? 'no sessions found' : `${snapshot.total} session${snapshot.total === 1 ? '' : 's'}, newest first`);
+    if (shown.length !== all.length) parts.push(`${shown.length} shown`);
+  }
+  $('history-sub').textContent = parts.join(' · ');
+  renderHistoryRows(provider, shown);
+  let note = '';
+  if (!provider.historySource) note = `Agent Guild cannot list ${provider.tool}'s sessions. Enter the id of one to resume it.`;
+  else if (historyView.loading && !snapshot) note = `Reading ${provider.tool}'s sessions…`;
+  else if (snapshot?.error) note = `Sessions could not be read: ${snapshot.error}`;
+  else if (snapshot && all.length === 0) note = `No ${provider.tool} sessions were found${account && account.id !== 'default' ? ` for the ${account.label} account` : ''}.`;
+  else if (snapshot && shown.length === 0) note = 'No session matches the filter.';
+  $('history-note').textContent = note;
+  $('history-note').hidden = !note;
+  $('history-filter').disabled = !provider.historySource;
+  here.parentElement.hidden = !provider.historySource;
+}
+
+/** Closing to open a session leaves focus with the terminal; otherwise it returns to the opener. */
+function closeHistory({ focusOpener = true } = {}) {
+  if (!$('history').open) return;
+  if (!focusOpener) historyOpener = false;
+  $('history').close();
+}
+
+function resumeById(event) {
+  event.preventDefault();
+  const provider = historyProvider();
+  const id = $('history-id').value.trim();
+  if (provider && id) resumeFromHistory(provider, id, null);
 }
 
 // ---- session cards --------------------------------------------------------
@@ -1310,8 +1547,28 @@ function buildCard(session) {
   node.querySelector('.stop').addEventListener('click', () => stopSession(session.id));
   node.querySelector('.remove').addEventListener('click', () => removeSession(session.id));
   node.querySelector('.rename').addEventListener('click', () => renameSession(session.id));
+  node.querySelector('.resume').addEventListener('click', () => resumeCard(session.id));
+  node.querySelector('.session-id').addEventListener('click', () => {
+    const id = toolSessionId(state.sessions.get(session.id) ?? session);
+    if (id) copyId(id);
+  });
   node.querySelector('.model-pill').addEventListener('click', () => openSessionModel(session.id));
   return node;
+}
+
+function resumable(s) {
+  const provider = state.providers.find((p) => p.id === s.provider.id);
+  const id = toolSessionId(s);
+  return Boolean(s.status === 'exited' && s.task === null && id && provider?.available && provider.resumable
+    && !runningOn(s.provider.id, s.account?.id ?? 'default', id));
+}
+
+function resumeCard(id) {
+  const s = state.sessions.get(id);
+  if (!s || !resumable(s)) return;
+  const provider = state.providers.find((p) => p.id === s.provider.id);
+  const account = provider.accounts?.find((a) => a.id === s.account?.id)?.id;
+  startSession(provider, cards.get(id), { resume: toolSessionId(s), cwd: s.cwd, account });
 }
 
 function sessionLevel(s) {
@@ -1330,8 +1587,10 @@ function updateCard(node, s) {
   badge.textContent = level;
   badge.title = `Level ${level}`;
   node.querySelector('.name').textContent = s.name;
-  const resumed = s.resume ? ` · resumed ${s.resume}` : '';
-  node.querySelector('.meta').textContent = [s.provider.vendor, s.provider.tool, accountLabel(s), `started ${relativeTime(s.createdAt)}${resumed}`].filter(Boolean).join(' · ');
+  const id = toolSessionId(s);
+  const resumed = s.resume && s.resume !== id ? ` · resumed ${s.resume}` : s.resume ? ' · resumed' : '';
+  node.querySelector('.meta-text').textContent = [s.provider.vendor, s.provider.tool, accountLabel(s), `started ${relativeTime(s.createdAt)}${resumed}`].filter(Boolean).join(' · ');
+  paintIdButton(node.querySelector('.session-id'), id);
   const pill = node.querySelector('.status-pill');
   pill.textContent = statusText(s);
   pill.className = `status-pill ${s.status === 'exited' ? 'exited' : s.activity}`;
@@ -1349,6 +1608,9 @@ function updateCard(node, s) {
   node.classList.toggle('exited', s.status === 'exited');
   node.querySelector('.stop').hidden = s.status !== 'running';
   node.querySelector('.remove').hidden = s.status === 'running';
+  const resume = node.querySelector('.resume');
+  resume.hidden = !resumable(s);
+  resume.title = `Start ${s.provider.tool} again on this session${id ? ` (${id})` : ''} in ${s.cwd}`;
   const modelLabel = s.model ? `, model ${modelText(s)}` : '';
   const accountName = accountLabel(s) ? `, ${accountLabel(s)} account` : '';
   node.setAttribute('aria-label', `${s.name}, ${s.provider.vendor}${accountName}${modelLabel}, ${statusText(s)}, ${s.agents.length} agents`);
@@ -1372,6 +1634,7 @@ function renderSessions() {
   $('session-count').textContent = sessions.length ? `· ${running} running` : '';
   $('empty').hidden = sessions.length > 0;
   if (state.activeId) updatePanel();
+  if ($('history').open) renderHistory();
   if (state.stats && sessions.some((s) => s.model && state.statsFor.get(s.id) !== modelKey(s))) scheduleStats();
 }
 
@@ -1587,7 +1850,8 @@ function updatePanel() {
   if (!s) return;
   paintProviderIcon($('panel-icon'), s.provider);
   $('panel-title').textContent = s.name;
-  $('panel-sub').textContent = [s.provider.tool, accountLabel(s), modelText(s), statusText(s), s.cwd].filter(Boolean).join(' · ');
+  const id = toolSessionId(s);
+  $('panel-sub').textContent = [s.provider.tool, accountLabel(s), modelText(s), statusText(s), s.cwd, id && `session ${id}`].filter(Boolean).join(' · ');
   $('panel-sub').title = modelTitle(s);
   renderAgents($('panel-agents'), s.agents);
   const stop = $('panel-stop');
@@ -1597,58 +1861,124 @@ function updatePanel() {
 // ---- stopping the manager -------------------------------------------------
 
 /**
- * Stop the session manager. The manager refuses while sessions are running
- * unless told to force, so the warning is enforced for every client and the
- * count in the dialog is the manager's, not this page's possibly stale list.
+ * Stop the session manager, or stop it and start it again. The manager
+ * refuses while sessions are running unless told to force, so the warning is
+ * enforced for every client and the count in the dialog is the manager's,
+ * not this page's possibly stale list.
  */
-async function stopManager({ force = false } = {}) {
-  const button = $('stop-manager');
-  button.disabled = true;
+async function stopManager({ force = false, restart = false } = {}) {
+  const buttons = [$('stop-manager'), $('restart-manager')];
+  for (const button of buttons) button.disabled = true;
   try {
-    const { running } = await api('POST', '/shutdown', force ? { force: true } : undefined);
-    enterStopping(running);
+    const body = force || restart ? { ...(force && { force: true }), ...(restart && { restart: true }) } : undefined;
+    const answer = await api('POST', '/shutdown', body);
+    // A manager that does not say it will restart only stops.
+    enterStopping(answer.running, restart && answer.restart === true);
+    if (restart && answer.restart !== true) {
+      toast('This manager cannot restart itself. Run "agent-guild restart" in a terminal to start the new one.', 12000);
+    }
   } catch (err) {
     if (err instanceof AuthError) return showAuth(err.message);
     if (err.code === 'sessions_running') {
       const n = err.running;
       const what = `${n} session${n === 1 ? ' is' : 's are'} still running`;
       const them = n === 1 ? 'it' : 'all of them';
-      if (confirm(`${what}. Stopping the session manager ends ${them}. Stop anyway?`)) {
-        return stopManager({ force: true });
+      const verb = restart ? 'Restarting' : 'Stopping';
+      if (confirm(`${what}. ${verb} the session manager ends ${them}. ${restart ? 'Restart' : 'Stop'} anyway?`)) {
+        return stopManager({ force: true, restart });
       }
       return;
     }
     toast(err.message, 8000);
   } finally {
-    button.disabled = false;
+    for (const button of buttons) button.disabled = false;
   }
 }
 
+/** How long to wait for a restarted manager before telling the user how to start one by hand. */
+const RESTART_WAIT_MS = 30000;
+let restartTimer;
+
 /** The manager is going down, by this page's request or another client's. */
-function enterStopping(running = 0) {
+function enterStopping(running = 0, restart = false) {
+  if (restart) state.restarting = true;
   if (state.stopping) return;
   state.stopping = true;
   state.stopRemaining = null;
   closePanel();
   closeModels();
   closeNews();
+  closeHistory();
   for (const view of state.views.values()) view.dispose();
   state.views.clear();
   state.sessions.clear();
   renderSessions();
   $('app').hidden = true;
   const n = Number(running) || 0;
-  showStopped('stopping', 'Stopping the session manager…',
-    n ? `Ending ${n} running session${n === 1 ? '' : 's'}. This can take a few seconds.` : 'This can take a few seconds.');
-  setConnection('down', 'Stopping the session manager…');
+  const ending = n ? `Ending ${n} running session${n === 1 ? '' : 's'}. ` : '';
+  if (state.restarting) {
+    showStopped('restarting', 'Restarting the session manager…', `${ending}A new manager starts in a moment and this page reconnects to it by itself.`);
+    clearTimeout(restartTimer);
+    restartTimer = setTimeout(restartGaveUp, RESTART_WAIT_MS);
+  } else {
+    showStopped('stopping', 'Stopping the session manager…', `${ending}This can take a few seconds.`);
+  }
+  setConnection('down', state.restarting ? 'Restarting the session manager…' : 'Stopping the session manager…');
+}
+
+/** The manager is back: a `hello` arrived while the page was waiting out a stop. */
+function leaveStopping() {
+  state.stopping = false;
+  state.restarting = false;
+  clearTimeout(restartTimer);
+  $('stopped').hidden = true;
+  $('app').hidden = false;
+}
+
+/** A restarted manager did not come back in time; the user has to start one by hand. */
+function restartGaveUp() {
+  if (!state.stopping || !state.restarting) return;
+  state.restarting = false;
+  setConnection('down', 'Session manager stopped');
+  showStopped('stopped', 'The session manager did not come back',
+    `Nothing answered within ${Math.round(RESTART_WAIT_MS / 1000)} seconds of the restart. Check manager.log in the Agent Guild data folder, then start it yourself.`);
 }
 
 function showStopped(phase, title, text) {
   const el = $('stopped');
   el.classList.toggle('stopping', phase === 'stopping');
+  el.classList.toggle('restarting', phase === 'restarting');
   $('stopped-title').textContent = title;
   $('stopped-text').textContent = text;
+  // How to start again is only useful once the manager is really gone; a
+  // restart brings it back without the user doing anything.
+  $('stopped-help').hidden = phase !== 'stopped';
+  if (phase === 'stopped') renderStoppedHelp();
   el.hidden = false;
+}
+
+/** Instructions for starting the manager again, worded for this computer. */
+function renderStoppedHelp() {
+  const windows = /Win/.test(navigator.platform || navigator.userAgent);
+  $('stopped-how').textContent = isMac
+    ? 'To start again, open Terminal (search for it with Spotlight) and run:'
+    : windows
+      ? 'To start again, open Windows Terminal or PowerShell (search for it in the Start menu) and run:'
+      : 'To start again, open a terminal and run:';
+  const launcher = state.launcher;
+  $('stopped-launcher').hidden = !launcher;
+  $('stopped-launcher-path').textContent = launcher || '';
+}
+
+async function copyCommand() {
+  const button = $('copy-command');
+  try {
+    await navigator.clipboard.writeText('agent-guild open');
+    button.textContent = 'Copied';
+    setTimeout(() => { button.textContent = 'Copy'; }, 1500);
+  } catch {
+    toast('Could not copy. Select the command and copy it yourself.');
+  }
 }
 
 /**
@@ -1657,14 +1987,16 @@ function showStopped(phase, title, text) {
  * dropped without the event, must not be announced as a clean stop.
  */
 function showManagerStopped() {
-  setConnection('down', 'Session manager stopped');
   const n = state.stopRemaining;
-  if (n === 0) return showStopped('stopped', 'Session manager stopped', 'Every session has ended.');
-  if (n > 0) {
-    return showStopped('stopped', 'Session manager stopped',
-      `${n} session process${n === 1 ? '' : 'es'} did not confirm exiting in time and may still be running. Check your system's process list.`);
+  const sessions = n === 0 ? 'Every session has ended.'
+    : n > 0 ? `${n} session process${n === 1 ? '' : 'es'} did not confirm exiting in time and may still be running. Check your system's process list.`
+    : 'The manager went away before confirming that every session had ended.';
+  if (state.restarting) {
+    setConnection('down', 'Restarting the session manager…');
+    return showStopped('restarting', 'Restarting the session manager…', `${sessions} Waiting for the new manager; this page reconnects to it by itself.`);
   }
-  showStopped('stopped', 'Session manager stopped', 'The manager went away before confirming that every session had ended.');
+  setConnection('down', 'Session manager stopped');
+  showStopped('stopped', 'Session manager stopped', sessions);
 }
 
 // ---- events ---------------------------------------------------------------
@@ -1679,12 +2011,14 @@ function connectEvents() {
   ws.onmessage = (event) => {
     const msg = JSON.parse(event.data);
     if (msg.type === 'hello') {
-      if (state.stopping) {
-        // The manager is back after a stop; the page picks up where it was.
-        state.stopping = false;
-        $('stopped').hidden = true;
-        $('app').hidden = false;
-      }
+      // The manager is back after a stop or restart; the page picks up where it was.
+      if (state.stopping) leaveStopping();
+      state.version = msg.version || null;
+      state.pid = msg.pid || null;
+      state.restartable = typeof msg.pid === 'number';
+      state.launcher = typeof msg.launcher === 'string' ? msg.launcher : null;
+      renderVersion();
+      setConnection('ok', 'Connected to session manager');
       state.sessions = new Map(msg.sessions.map((s) => [s.id, s]));
       for (const id of [...state.views.keys()]) if (!state.sessions.has(id)) dropSession(id);
       renderSessions();
@@ -1695,9 +2029,9 @@ function connectEvents() {
     } else if (msg.type === 'manager.upgrade') {
       setUpgrade(msg.upgrade);
     } else if (msg.type === 'manager.stopping') {
-      enterStopping(msg.running);
+      enterStopping(msg.running, msg.restart === true);
     } else if (msg.type === 'manager.stopped') {
-      enterStopping();
+      enterStopping(0, msg.restart === true);
       state.stopRemaining = Number(msg.remaining) || 0;
       showManagerStopped();
     } else if (msg.type === 'session.created' || msg.type === 'session.updated') {
@@ -1707,6 +2041,7 @@ function connectEvents() {
     } else if (msg.type === 'providers.updated') {
       state.providers = msg.providers;
       renderProviders();
+      if ($('history').open) renderHistory();
       scheduleStats();
     }
   };
@@ -1750,10 +2085,13 @@ let newsTimer;
 function showAuth(message = '') {
   closeModels();
   closeNews();
+  closeHistory();
   $('app').hidden = true;
   $('terminal-panel').hidden = true;
   $('stopped').hidden = true;
   state.stopping = false;
+  state.restarting = false;
+  clearTimeout(restartTimer);
   $('auth').hidden = false;
   $('auth-error').textContent = message;
   setConnection('down', 'Not connected');
@@ -1795,6 +2133,19 @@ $('auth-form').addEventListener('submit', (e) => {
 });
 $('panel-close').addEventListener('click', closePanel);
 $('models-close').addEventListener('click', closeModels);
+$('history-close').addEventListener('click', closeHistory);
+$('history').addEventListener('click', (e) => { if (e.target === $('history')) closeHistory(); });
+$('history').addEventListener('close', () => {
+  if (historyOpener !== false) {
+    const opener = historyOpener?.isConnected ? historyOpener
+      : $('providers').querySelector(`.provider[data-id="${historyView.providerId}"] .existing`);
+    opener?.focus();
+  }
+  historyOpener = null;
+});
+$('history-filter').addEventListener('input', renderHistory);
+$('history-here').addEventListener('change', renderHistory);
+$('history-form').addEventListener('submit', resumeById);
 $('models').addEventListener('click', (e) => { if (e.target === $('models')) closeModels(); });
 $('models').addEventListener('close', () => {
   hideTip();
@@ -1848,6 +2199,8 @@ $('models-more').addEventListener('click', () => {
   $('models-list').children[before]?.querySelector('.model-toggle')?.focus();
 });
 $('stop-manager').addEventListener('click', () => stopManager());
+$('restart-manager').addEventListener('click', () => stopManager({ restart: true }));
+$('copy-command').addEventListener('click', copyCommand);
 $('upgrade').addEventListener('click', upgradeManager);
 $('theme-toggle').addEventListener('click', toggleTheme);
 applyTheme(currentTheme());

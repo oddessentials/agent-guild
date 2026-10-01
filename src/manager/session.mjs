@@ -18,6 +18,7 @@ const AGENT_STATUSES = new Set(['working', 'waiting', 'idle', 'done']);
 const MODEL_SOURCE_RANK = { args: 0, screen: 1, report: 2 };
 const SCREEN_SCAN_DELAY_MS = 400;
 const SCREEN_SCAN_MAX_DELAY_MS = 2000;
+const MAX_TOOL_SESSION_ID = 200;
 
 /**
  * Colours reported to programs that query them (OSC 10/11/12), matching the
@@ -87,6 +88,7 @@ export class Session extends EventEmitter {
     this.lastOutputAt = null;
     this.agents = new Map();
     this.model = null;
+    this.toolSessionId = null;
     this.modelRegex = null;
     if (opts.provider.modelPattern && this.task === null) {
       try {
@@ -421,6 +423,7 @@ export class Session extends EventEmitter {
       const isAgent = report && typeof report === 'object' &&
         ((report.agentId ?? report.agent ?? report.id) !== undefined || report.finishForeground === true);
       if (isAgent) this.reportAgent(report, 'terminal');
+      else if (report?.toolSessionId !== undefined) this.reportToolSession(report);
       else this.reportModel(report);
     } catch (err) {
       this.emit('warning', `ignored in-band report: ${err.message}`);
@@ -453,6 +456,18 @@ export class Session extends EventEmitter {
     if (this._foregroundAgentWorking()) return this.model;
     this.setModel({ name, displayName }, 'report');
     return this.model;
+  }
+
+  reportToolSession(report) {
+    if (!report || typeof report !== 'object') throw badRequest('tool session report must be an object');
+    if (this.status !== 'running') throw Object.assign(new Error('session has exited'), { status: 409 });
+    const id = String(report.toolSessionId ?? '').trim();
+    if (!id || id.length > MAX_TOOL_SESSION_ID || /\p{Cc}/u.test(id)) throw badRequest(`toolSessionId must be a printable id of at most ${MAX_TOOL_SESSION_ID} characters`);
+    if (this.toolSessionId !== id) {
+      this.toolSessionId = id;
+      this._changed();
+    }
+    return this.toolSessionId;
   }
 
   _foregroundAgentWorking() {
@@ -520,6 +535,7 @@ export class Session extends EventEmitter {
       rows: this.rows,
       attachedClients: this.subscribers.size,
       model: this.model,
+      toolSessionId: this.toolSessionId,
       agents: [...this.agents.values()],
     };
   }

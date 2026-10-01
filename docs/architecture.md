@@ -11,6 +11,7 @@
                                                            │      └ agents, model     │◀── agent-guild-report, OSC 7777
                                                            │  ProviderRegistry        │──▶ tool --version, npm registry
                                                            │  UsageMonitor            │──▶ vendor usage endpoints
+                                                           │  SessionHistory          │──▶ the tools' own session files
                                                            └──────────────────────────┘
 ```
 
@@ -41,11 +42,16 @@
 * **Usage monitor** (`usage.mjs`). Reads each tool's own sign-in and asks the
   vendor's usage endpoint for the remaining rate-limit windows. Tokens stay
   in the manager.
+* **Session history** (`session-history.mjs`). Lists each tool's earlier
+  sessions from the transcripts the tool keeps in its home folder, reading
+  only their heads, so one can be resumed from the page.
 * **API server** (`server.mjs`). REST for control, one WebSocket for
   lifecycle events, one WebSocket per attached terminal. See [api.md](api.md).
 * **Web page** (`web/`). Plain HTML, CSS and JavaScript with xterm.js, served
   by the manager. No build step.
-* **Launcher** (`bin/agent-guild.mjs`). Starts, stops and opens.
+* **Launcher** (`bin/agent-guild.mjs`). Starts, stops, restarts and opens.
+  Starting a detached manager lives in `launch.mjs`, which the manager also
+  uses to start its successor on a restart.
 
 ## Lifetimes
 
@@ -54,6 +60,7 @@
 | Close or reload the page | None. Reopening reconnects and redraws. |
 | An unexpected error inside the manager | Logged to `manager.log`; sessions keep running. |
 | `agent-guild stop`, the page's **Stop manager** button, or quitting the manager | All sessions end. The button asks first while any session is running; the manager enforces that for every client. |
+| `agent-guild restart` or the page's **Restart manager** button | All sessions end, with the same guard. The manager then starts a new manager from the package on disk and exits; clients reconnect to the new one. An upgrade's files are picked up this way. |
 | Computer restart or logout | All sessions end. Nothing is restored. |
 
 ## Toward a game interface
