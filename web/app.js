@@ -1089,6 +1089,7 @@ function renderNewsFilters() {
       newsView.filter = id;
       save(NEWS_FILTER_KEY, id);
       for (const other of $('news-filters').children) other.setAttribute('aria-pressed', String(other === chip));
+      newsView.shown = state.news;
       renderNewsList();
     });
     return chip;
@@ -1146,7 +1147,7 @@ function updateNewsPanel() {
     return;
   }
   const shownIds = new Set(newsView.shown.items.map((item) => item.id));
-  const added = state.news.items.filter((item) => !shownIds.has(item.id)).length;
+  const added = state.news.items.filter((item) => !shownIds.has(item.id) && (newsView.filter === 'all' || item.category === newsView.filter)).length;
   const fresh = $('news-fresh');
   fresh.hidden = added === 0;
   fresh.textContent = `Show ${added} new item${added === 1 ? '' : 's'}`;
