@@ -1192,10 +1192,17 @@ test('usage endpoints are called with the right headers and parsed into windows'
   ], 'a versioned row is its own limit, the family row repeats the fixed window, and a model falls back to its id');
   assert.deepEqual(await claudeAgain({ extra_usage: { is_enabled: true, monthly_limit: '5000', used_credits: '500' } }),
     [{ label: 'Extra usage', usedPercent: 10, resetsAt: null }], 'amounts sent as strings are read');
-  assert.deepEqual((await claudeAgain({ limits: [
+  assert.deepEqual(await claudeAgain({ seven_day_sonnet: { utilization: 20 }, limits: [
+    { kind: 'weekly_scoped', percent: 20, scope: { model: { display_name: 'Sonnet' } } },
+    { kind: 'weekly_scoped', percent: 95, scope: { model: { display_name: 'Sonnet' }, surface: { display_name: 'Cowork' } } },
     { kind: 'weekly_scoped', percent: 1, scope: { model: { display_name: 'Twin' } } },
-    { kind: 'weekly_scoped', percent: 2, scope: { model: { display_name: 'Twin' }, surface: { display_name: 'Cowork' } } },
-  ] })).map((w) => w.label), ['7-day Twin', '7-day Twin (2)'], 'two rows with one name are both kept');
+    { kind: 'weekly_scoped', percent: 2, scope: { model: { display_name: 'Twin' } } },
+  ] }), [
+    { label: '7-day Sonnet', usedPercent: 20, resetsAt: null },
+    { label: '7-day Sonnet (Cowork)', usedPercent: 95, resetsAt: null },
+    { label: '7-day Twin', usedPercent: 1, resetsAt: null },
+    { label: '7-day Twin (2)', usedPercent: 2, resetsAt: null },
+  ], 'only the plan-wide row repeats the fixed window; a surface-scoped row and a repeated name are both kept');
 
   const codex = await fetchCodexUsage({ accessToken: 'ctok', accountId: 'acc-1', fetchImpl });
   assert.equal(seen[1].headers['ChatGPT-Account-Id'], 'acc-1');

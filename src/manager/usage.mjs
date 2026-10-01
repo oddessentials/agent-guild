@@ -149,21 +149,23 @@ export async function fetchClaudeUsage({ accessToken, plan = null, version = nul
   }
   // Per-model weekly windows arrive as rows in `limits`, the way Claude
   // Code's own /usage screen reads them; Fable is reported only there. A
-  // row named for a fixed window above ("Sonnet") repeats it and is
-  // skipped; a versioned one ("Opus 4.8") is kept as its own limit, since
-  // whether it shares the family's pool is not knowable here and a
-  // repeated meter loses nothing. Every row is shown: `is_active` only
-  // marks the server's headline row.
+  // plan-wide row named for a fixed window above ("Sonnet") repeats it and
+  // is skipped. A row scoped to a surface as well ("Sonnet" in Cowork) is
+  // a different limit and is kept under both names, as is a versioned
+  // model ("Opus 4.8"), since whether it shares the family's pool is not
+  // knowable here and a repeated meter loses nothing. Every row is shown:
+  // `is_active` only marks the server's headline row.
   const fixed = windows.map((w) => w.label.toLowerCase());
   const rows = Array.isArray(body?.limits) ? body.limits.filter((row) => row && typeof row === 'object') : [];
   for (const row of rows) {
     if (row.kind !== 'weekly_scoped') continue;
-    const model = row.scope?.model;
+    const { model, surface } = row.scope ?? {};
     const name = firstText(model?.display_name, model?.name, model?.id);
+    const where = firstText(surface?.display_name, surface?.name, surface?.id);
     const used = clampPercent(row.percent);
     if (!name || used === null) continue;
-    const label = `7-day ${name}`;
-    if (!fixed.includes(label.toLowerCase())) addWindow(windows, { label, usedPercent: used, resetsAt: toIso(row.resets_at) });
+    const label = where ? `7-day ${name} (${where})` : `7-day ${name}`;
+    if (where || !fixed.includes(label.toLowerCase())) addWindow(windows, { label, usedPercent: used, resetsAt: toIso(row.resets_at) });
   }
   // Extra usage is the paid pool that takes over once the included windows
   // are spent. The share is computed from the spend and the monthly limit
