@@ -47,6 +47,15 @@
       <div id="sessions" class="session-grid" role="list"></div>
       <p id="empty" class="empty">No sessions yet. Pick a provider above to start one. Sessions keep running when you close this page.</p>
     </section>
+
+    <section class="news" aria-labelledby="news-heading">
+      <div class="section-head">
+        <h2 id="news-heading">Latest news <span id="news-count" class="count"></span></h2>
+        <button id="news-all" class="btn" type="button" aria-haspopup="dialog">All news</button>
+      </div>
+      <ol id="news-latest" class="news-latest" hidden></ol>
+      <p id="news-note" class="empty">Loading news…</p>
+    </section>
   </main>
 
   <section id="auth" class="auth" hidden>
@@ -103,6 +112,23 @@
       <p id="models-note" class="models-note"></p>
     </div>
     <p id="models-source" class="models-source"></p>
+  </dialog>
+
+  <dialog id="news" class="news-panel" aria-labelledby="news-title">
+    <div class="news-bar">
+      <div class="news-heading">
+        <h2 id="news-title">News</h2>
+        <p id="news-sub" class="sub"></p>
+      </div>
+      <button id="news-close" class="btn" type="button">Close</button>
+    </div>
+    <div id="news-filters" class="news-filters" role="group" aria-label="Show"></div>
+    <div class="news-body">
+      <button id="news-fresh" class="btn news-fresh" type="button" hidden></button>
+      <div id="news-list"></div>
+      <p id="news-empty" class="news-empty" hidden></p>
+    </div>
+    <p id="news-status" class="news-status" hidden></p>
   </dialog>
 
   <div id="tip" class="tip" aria-hidden="true" hidden><strong id="tip-title"></strong><span id="tip-source"></span><p id="tip-text"></p></div>
