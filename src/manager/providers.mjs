@@ -11,8 +11,9 @@ import { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { resolveCommand, resolveAllCommands, pathKey, buildSpawnSpec, runSpec } from './command-resolver.mjs';
 import { compareVersions, probeVersion, fetchManifest, latestVersion, DEFAULT_NPM_REGISTRY } from './versions.mjs';
-import { CHANNEL_LABELS, classifyInstall, formatCommand, helpDescribes, knownLaunchers, listInstallations, platformDependency } from './install-channels.mjs';
+import { CHANNEL_LABELS, classifyInstall, expandHome, formatCommand, helpDescribes, knownLaunchers, listInstallations, platformDependency } from './install-channels.mjs';
 import { weavePaths } from './shell-env.mjs';
+import { paths } from './config.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULTS_FILE = path.resolve(here, '../../config/providers.default.json');
@@ -86,6 +87,50 @@ function normalizeChannels(raw) {
   return out;
 }
 
+function normalizeHooks(raw) {
+  if (!raw || typeof raw !== 'object' || typeof raw.path !== 'string' || typeof raw.example !== 'string') return null;
+  const parts = raw.path.split(/[\\/]+/);
+  if (parts.some((part) => part === '' || part === '.' || part === '..') || !/^[A-Za-z0-9._-]+$/.test(raw.example)) return null;
+  return { path: parts.join('/'), example: raw.example };
+}
+
+const DEFAULT_ACCOUNT = 'default';
+
+function normalizeAccounts(raw, id, homeVar, warnings) {
+  const accounts = [{ id: DEFAULT_ACCOUNT, label: 'Default', dir: null }];
+  if (raw === undefined || raw === null) return accounts;
+  if (!Array.isArray(raw)) {
+    warnings.push(`provider "${id}": ignored accounts; it must be an array`);
+    return accounts;
+  }
+  if (!homeVar && raw.length > 0) {
+    warnings.push(`provider "${id}": ignored accounts; the provider has no homeVar`);
+    return accounts;
+  }
+  for (const entry of raw) {
+    const item = typeof entry === 'string' ? { id: entry } : entry;
+    const accountId = item && typeof item === 'object' ? String(item.id ?? '') : '';
+    if (!ID_RE.test(accountId)) {
+      warnings.push(`provider "${id}": skipped account with invalid id ${JSON.stringify(item?.id ?? entry)}`);
+      continue;
+    }
+    const label = typeof item.label === 'string' && item.label.trim() ? item.label.trim().slice(0, 40) : accountId.charAt(0).toUpperCase() + accountId.slice(1);
+    const dir = typeof item.dir === 'string' && item.dir.trim() ? item.dir.trim() : null;
+    const existing = accounts.find((a) => a.id === accountId);
+    if (existing) {
+      if (accountId !== DEFAULT_ACCOUNT) {
+        warnings.push(`provider "${id}": skipped duplicate account "${accountId}"`);
+        continue;
+      }
+      existing.label = label;
+      if (dir) warnings.push(`provider "${id}": ignored dir of the default account; it uses the tool's own home folder`);
+      continue;
+    }
+    accounts.push({ id: accountId, label, dir });
+  }
+  return accounts;
+}
+
 function httpsUrl(value, field, id, warnings) {
   if (value === undefined || value === null || value === '') return null;
   try {
@@ -99,6 +144,7 @@ function httpsUrl(value, field, id, warnings) {
 function normalize(raw, platform, warnings) {
   const merged = { ...raw, ...(raw[platform] || {}) };
   for (const key of PLATFORM_KEYS) delete merged[key];
+  const homeVar = typeof merged.homeVar === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(merged.homeVar) ? merged.homeVar : null;
   return {
     id: merged.id,
     vendor: String(merged.vendor || merged.id),
@@ -111,6 +157,10 @@ function normalize(raw, platform, warnings) {
     args: Array.isArray(merged.args) ? merged.args.map(String) : [],
     resumeArgs: Array.isArray(merged.resumeArgs) ? merged.resumeArgs.map(String) : [],
     env: normalizeEnv(merged.env),
+    homeVar,
+    accountEnv: normalizeEnv(merged.accountEnv),
+    hooks: normalizeHooks(merged.hooks),
+    accounts: normalizeAccounts(merged.accounts, merged.id, homeVar, warnings),
     color: String(merged.color || '#64748B'),
     monogram: String(merged.monogram || String(merged.vendor || merged.id).charAt(0)).slice(0, 2),
     icon: merged.icon ? String(merged.icon) : null,
@@ -172,10 +222,12 @@ export class ProviderRegistry extends EventEmitter {
    * @param {string} [opts.registryUrl]   npm registry for lookups and installs; default: npm's own configuration
    * @param {boolean} [opts.checkUpdates] false skips registry lookups entirely
    * @param {Function} [opts.fetchImpl]
+   * @param {string} [opts.accountsDir]  where accounts without a dir get their home folders
    */
-  constructor({ userFile, env, platform = process.platform, iconDir, registryUrl = null, checkUpdates = true, fetchImpl, pathReader = null } = {}) {
+  constructor({ userFile, env, platform = process.platform, iconDir, registryUrl = null, checkUpdates = true, fetchImpl, pathReader = null, accountsDir = paths.accounts } = {}) {
     super();
     this.userFile = userFile;
+    this.accountsDir = accountsDir;
     this.env = env || process.env;
     this.platform = platform;
     this.iconDir = iconDir;
@@ -462,6 +514,27 @@ export class ProviderRegistry extends EventEmitter {
     return this.providers.find((p) => p.id === id) || null;
   }
 
+  accountFor(provider, account) {
+    if (account.id === DEFAULT_ACCOUNT || !provider.homeVar) return { id: account.id, label: account.label, dir: null, env: {} };
+    const p = this.platform === 'win32' ? path.win32 : path.posix;
+    const own = account.dir ? expandHome(account.dir, this.env, this.platform) : null;
+    const dir = own && p.isAbsolute(own) ? p.normalize(own) : p.join(this.accountsDir, provider.id, own || account.id);
+    const env = { [provider.homeVar]: dir };
+    for (const [key, value] of Object.entries(provider.accountEnv)) env[key] = value.replaceAll('{dir}', dir);
+    return { id: account.id, label: account.label, dir, env };
+  }
+
+  accountsFor(provider) {
+    return provider.accounts.map((account) => this.accountFor(provider, account));
+  }
+
+  account(provider, id = null) {
+    const wanted = id === null || id === undefined || id === '' ? DEFAULT_ACCOUNT : String(id);
+    const found = provider.accounts.find((a) => a.id === wanted);
+    if (!found) throw refusal(404, 'unknown_account', `${provider.tool} has no account "${wanted}"`);
+    return this.accountFor(provider, found);
+  }
+
   commandFor(provider) {
     return provider.command === '@shell' ? defaultShell(this.env, this.platform) : provider.command;
   }
@@ -529,6 +602,7 @@ export class ProviderRegistry extends EventEmitter {
       warnings: this.installWarnings(provider, installs),
       npmNote: provider.npmNote,
       usageSource: provider.usage === null ? null : typeof provider.usage === 'string' ? provider.usage : 'command',
+      accounts: provider.accounts.map(({ id, label }) => ({ id, label })),
       modelPattern: provider.modelPattern,
       color: provider.color,
       monogram: provider.monogram,
