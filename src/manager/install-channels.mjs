@@ -22,6 +22,9 @@ export const defaultFsx = {
   isFile: (file) => {
     try { return fs.statSync(file).isFile(); } catch { return false; }
   },
+  isLink: (file) => {
+    try { return fs.lstatSync(file).isSymbolicLink(); } catch { return false; }
+  },
 };
 
 function pathModule(platform) {
@@ -46,52 +49,55 @@ function normalize(p, platform) {
   return out.length > 1 ? out.replace(/[\\/]+$/, '') : out;
 }
 
-function withoutLauncherExt(file, platform) {
-  return platform === 'win32' ? file.replace(/\.(exe|cmd|bat|ps1|com)$/i, '') : file;
-}
-
-function matchesEntry(file, entry, platform) {
-  const m = pathModule(platform);
-  const f = normalize(file, platform);
-  const e = normalize(entry, platform);
-  if (f === e || withoutLauncherExt(f, platform) === e) return true;
-  return f.startsWith(e.endsWith(m.sep) ? e : e + m.sep);
-}
-
-function matchesAny(files, entries, env, platform, fsx) {
-  return entries.some((entry) => {
-    const expanded = expandHome(entry, env, platform);
-    return [expanded, fsx.realpath(expanded)].some((target) => files.some((file) => matchesEntry(file, target, platform)));
-  });
-}
-
 function isInside(file, dir, platform) {
   const m = pathModule(platform);
   return normalize(file, platform).startsWith(normalize(dir, platform) + m.sep);
 }
 
-function npmOwner({ resolvedPath, realPath, pkg, platform, fsx }) {
+function samePath(a, b, platform) {
+  return normalize(a, platform) === normalize(b, platform);
+}
+
+function ownsLocation({ resolvedPath, realPath }, entries, env, platform, fsx) {
+  const exts = platform === 'win32' ? ['', '.exe', '.cmd'] : [''];
+  return entries.some((entry) => {
+    const expanded = expandHome(entry, env, platform);
+    const inside = (dir) => isInside(resolvedPath, dir, platform) || isInside(realPath, dir, platform);
+    if (inside(expanded) || inside(fsx.realpath(expanded))) return true;
+    return exts.map((ext) => expanded + ext)
+      .filter((launcher) => fsx.isFile(launcher) && !fsx.isLink(launcher))
+      .some((launcher) => samePath(resolvedPath, launcher, platform) || samePath(realPath, fsx.realpath(launcher), platform));
+  });
+}
+
+function npmPrefixAt(prefix, segments, platform, fsx) {
+  const m = pathModule(platform);
+  const win = platform === 'win32';
+  const pkgDir = win ? m.join(prefix, 'node_modules', ...segments) : m.join(prefix, 'lib', 'node_modules', ...segments);
+  if (!fsx.exists(m.join(pkgDir, 'package.json'))) return null;
+  const npm = win ? m.join(prefix, 'npm.cmd') : m.join(prefix, 'bin', 'npm');
+  return { prefix, pkgDir, npm: fsx.exists(npm) ? npm : null };
+}
+
+function npmBeside({ resolvedPath, realPath, pkg, platform, fsx }) {
+  const m = pathModule(platform);
+  const segments = pkg.split('/');
+  const dir = m.dirname(resolvedPath);
+  const beside = npmPrefixAt(platform === 'win32' ? dir : m.resolve(dir, '..'), segments, platform, fsx);
+  if (!beside) return null;
+  if (isInside(realPath, beside.pkgDir, platform) || isInside(realPath, fsx.realpath(beside.pkgDir), platform)) return beside;
+  if (fsx.isLink(resolvedPath)) return null;
+  const text = fsx.readText(resolvedPath).toLowerCase().replace(/\\/g, '/');
+  return text.includes(['node_modules', ...segments].join('/').toLowerCase()) ? beside : null;
+}
+
+function npmLinkedInto({ realPath, pkg, platform, fsx }) {
   const m = pathModule(platform);
   const win = platform === 'win32';
   const segments = pkg.split('/');
-  const owned = (prefix) => {
-    const pkgDir = win ? m.join(prefix, 'node_modules', ...segments) : m.join(prefix, 'lib', 'node_modules', ...segments);
-    if (!fsx.exists(m.join(pkgDir, 'package.json'))) return null;
-    const npm = win ? m.join(prefix, 'npm.cmd') : m.join(prefix, 'bin', 'npm');
-    return { prefix, pkgDir, npm: fsx.exists(npm) ? npm : null };
-  };
-
-  const dir = m.dirname(resolvedPath);
-  const beside = owned(win ? dir : m.resolve(dir, '..'));
-  if (beside) {
-    if (isInside(realPath, beside.pkgDir, platform) || isInside(realPath, fsx.realpath(beside.pkgDir), platform)) return beside;
-    const text = fsx.readText(resolvedPath).toLowerCase().replace(/\\/g, '/');
-    if (text.includes(['node_modules', ...segments].join('/').toLowerCase())) return beside;
-  }
-
   const inner = m.sep + m.join(...(win ? [] : ['lib']), 'node_modules', ...segments) + m.sep;
   const at = (win ? realPath.toLowerCase() : realPath).lastIndexOf(win ? inner.toLowerCase() : inner);
-  return at > 0 ? owned(realPath.slice(0, at)) : null;
+  return at > 0 ? npmPrefixAt(realPath.slice(0, at), segments, platform, fsx) : null;
 }
 
 function brewOwner({ realPath, platform, fsx }) {
@@ -137,6 +143,17 @@ export function formatCommand(file, args) {
   return [file, ...args].map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(' ');
 }
 
+function shellQuote(arg, platform) {
+  if (platform === 'win32') return /^[\w\\/.:=+-]+$/.test(arg) ? arg : `'${arg.replace(/'/g, "''")}'`;
+  return /^[\w/.:=,+@%-]+$/.test(arg) ? arg : `'${arg.replace(/'/g, "'\\''")}'`;
+}
+
+export function shellCommand(file, args, platform) {
+  const command = shellQuote(file, platform);
+  const line = [command, ...args.map((arg) => shellQuote(arg, platform))].join(' ');
+  return platform === 'win32' && command !== file ? `& ${line}` : line;
+}
+
 export function classifyInstall({
   resolvedPath, provider, env = process.env, platform = process.platform, fsx = defaultFsx, npmOnPath = null, wingetOnPath = null,
 }) {
@@ -144,28 +161,32 @@ export function classifyInstall({
   const channels = provider.channels || {};
   const result = (channel, extra = {}) => ({ channel, resolvedPath, realPath, update: null, probe: false, guidance: null, ...extra });
 
-  if (provider.package) {
-    const owner = npmOwner({ resolvedPath, realPath, pkg: provider.package, platform, fsx });
-    if (owner) {
-      const npm = owner.npm || npmOnPath;
-      if (!npm) return result('npm', { prefix: owner.prefix, guidance: `Installed by npm under ${owner.prefix}, but npm was not found.` });
-      return result('npm', { prefix: owner.prefix, update: { file: npm, args: ['install', '-g', '--prefix', owner.prefix], package: provider.package } });
-    }
-  }
+  const ownedByNpm = (owner) => {
+    const npm = owner.npm || npmOnPath;
+    if (!npm) return result('npm', { prefix: owner.prefix, guidance: `Installed by npm under ${owner.prefix}, but npm was not found.` });
+    return result('npm', { prefix: owner.prefix, update: { file: npm, args: ['install', '-g', '--prefix', owner.prefix], package: provider.package } });
+  };
+  const npmArgs = { resolvedPath, realPath, pkg: provider.package, platform, fsx };
 
-  const native = channels.native;
-  if (native && matchesAny([resolvedPath, realPath], native.paths, env, platform, fsx)) {
-    if (native.update.length === 0) {
-      return result('native', { guidance: `${provider.tool} at ${resolvedPath} has no update command configured. Update it the way you installed it.` });
-    }
-    return result('native', { update: { file: resolvedPath, args: [...native.update] }, probe: true });
-  }
+  const beside = provider.package ? npmBeside(npmArgs) : null;
+  if (beside) return ownedByNpm(beside);
 
   const brew = brewOwner({ realPath, platform, fsx });
   if (brew) {
     const owned = { brewPrefix: brew.prefix, token: brew.token, cask: brew.cask };
     if (!brew.brew) return result('brew', { ...owned, guidance: `Installed by Homebrew under ${brew.prefix}, but brew was not found at ${brew.prefix}/bin/brew.` });
     return result('brew', { ...owned, update: { file: brew.brew, args: brew.cask ? ['upgrade', '--cask', brew.token] : ['upgrade', brew.token] } });
+  }
+
+  const linked = provider.package ? npmLinkedInto(npmArgs) : null;
+  if (linked) return ownedByNpm(linked);
+
+  const native = channels.native;
+  if (native && ownsLocation({ resolvedPath, realPath }, native.paths, env, platform, fsx)) {
+    if (native.update.length === 0) {
+      return result('native', { guidance: `${provider.tool} at ${resolvedPath} has no update command configured. Update it the way you installed it.` });
+    }
+    return result('native', { update: { file: resolvedPath, args: [...native.update] }, probe: true });
   }
 
   const winget = wingetOwner({ realPath, id: channels.winget?.id, platform });
@@ -175,7 +196,7 @@ export function classifyInstall({
   }
 
   const legacy = channels.legacy;
-  if (legacy && matchesAny([resolvedPath, realPath], legacy.paths, env, platform, fsx)) {
+  if (legacy && ownsLocation({ resolvedPath, realPath }, legacy.paths, env, platform, fsx)) {
     return result('legacy', { guidance: legacy.guidance || `Installed by an older installer at ${resolvedPath}. Update it the way you installed it.` });
   }
 
@@ -199,14 +220,14 @@ export function installationKey(install, provider, platform, fsx = defaultFsx) {
   }
 }
 
-export function removalCommand(install, provider) {
+export function removalCommand(install, provider, platform) {
   switch (install.channel) {
     case 'npm':
-      return install.update ? formatCommand(install.update.file, ['uninstall', '-g', '--prefix', install.prefix, provider.package]) : null;
+      return install.update ? shellCommand(install.update.file, ['uninstall', '-g', '--prefix', install.prefix, provider.package], platform) : null;
     case 'brew':
-      return install.update ? formatCommand(install.update.file, install.cask ? ['uninstall', '--cask', install.token] : ['uninstall', install.token]) : null;
+      return install.update ? shellCommand(install.update.file, install.cask ? ['uninstall', '--cask', install.token] : ['uninstall', install.token], platform) : null;
     case 'winget':
-      return `winget uninstall --id ${install.wingetId} --exact`;
+      return shellCommand('winget', ['uninstall', '--id', install.wingetId, '--exact'], platform);
     case 'native':
       return provider.channels?.native?.uninstall || null;
     case 'legacy':
@@ -239,7 +260,7 @@ export function listInstallations({
   const add = (file, isOnPath) => {
     const install = classifyInstall({ resolvedPath: file, provider, env, platform, fsx, npmOnPath, wingetOnPath });
     const key = installationKey(install, provider, platform, fsx);
-    if (!installs.has(key)) installs.set(key, { ...install, key, onPath: isOnPath, removeCommand: removalCommand(install, provider) });
+    if (!installs.has(key)) installs.set(key, { ...install, key, onPath: isOnPath, removeCommand: removalCommand(install, provider, platform) });
   };
   for (const file of onPath) add(file, true);
   for (const file of known) add(file, false);

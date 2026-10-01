@@ -491,7 +491,9 @@ test('other copies of a tool are listed, wrappers of one copy are not', async ()
   const npmtool = await findProvider('npmtool');
   assert.equal(npmtool.installs.length, 1, 'several entry points of one installation are one installation');
   assert.equal(npmtool.installs[0].channel, 'npm');
-  assert.ok(npmtool.installs[0].removeCommand.includes(`uninstall -g --prefix ${npmPrefix} fake-tool-pkg`));
+  assert.ok(npmtool.installs[0].removeCommand.includes('uninstall -g --prefix'));
+  assert.ok(npmtool.installs[0].removeCommand.includes(npmPrefix));
+  assert.ok(npmtool.installs[0].removeCommand.endsWith('fake-tool-pkg'));
   assert.deepEqual(npmtool.warnings, []);
   assert.deepEqual((await findProvider('missing')).installs, []);
 });
