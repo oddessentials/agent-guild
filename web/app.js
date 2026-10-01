@@ -5,6 +5,8 @@ const TOKEN_KEY = 'agentGuild.token';
 const CWD_KEY = 'agentGuild.cwd';
 const ACCOUNTS_KEY = 'agentGuild.accounts';
 const THEME_KEY = 'agentGuild.theme';
+const NEWS_SEEN_KEY = 'agentGuild.newsSeen';
+const NEWS_FILTER_KEY = 'agentGuild.newsFilter';
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
 const $ = (id) => document.getElementById(id);
@@ -15,6 +17,7 @@ const state = {
   accounts: {},
   stats: null,
   statsFor: new Map(),
+  news: null,
   sessions: new Map(),
   views: new Map(),
   activeId: null,
@@ -900,6 +903,291 @@ function closeModels() {
   if ($('models').open) $('models').close();
 }
 
+const NEWS_LATEST = 5;
+const NEWS_POLL_MS = 10 * 60 * 1000;
+const NEWS_FILTERS = [['all', 'All'], ['news', 'News'], ['releases', 'Releases'], ['research', 'Research']];
+const newsView = { shown: null, since: Infinity, filter: 'all', opener: null };
+let newsLoading = null;
+let newsAgain = false;
+let newsLoadedAt = 0;
+
+function newsSeen() {
+  const seen = Date.parse(load(NEWS_SEEN_KEY));
+  return Number.isFinite(seen) ? seen : null;
+}
+
+function newestTime(items) {
+  return items.reduce((newest, item) => Math.max(newest, Date.parse(item.publishedAt) || 0), 0);
+}
+
+function loadNews() {
+  if (newsLoading) {
+    newsAgain = true;
+    return newsLoading;
+  }
+  newsLoading = api('GET', '/news').then(setNews, () => {}).finally(() => {
+    newsLoading = null;
+    newsLoadedAt = Date.now();
+    if (newsAgain) {
+      newsAgain = false;
+      loadNews();
+    }
+  });
+  return newsLoading;
+}
+
+function setNews(news) {
+  state.news = news;
+  if (newsSeen() === null && news.items.length) save(NEWS_SEEN_KEY, new Date(newestTime(news.items)).toISOString());
+  renderLatestNews();
+  if ($('news').open) updateNewsPanel();
+}
+
+function webHref(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+function newsTitle(item) {
+  const href = webHref(item.url);
+  const title = document.createElement(href ? 'a' : 'span');
+  title.className = 'news-link';
+  title.textContent = item.title;
+  if (href) {
+    title.href = href;
+    title.target = '_blank';
+    title.rel = 'noopener noreferrer';
+    title.setAttribute('aria-description', 'Opens in a new tab');
+  }
+  return title;
+}
+
+function newsMeta(item) {
+  const meta = document.createElement('span');
+  meta.className = 'news-meta';
+  const time = document.createElement('time');
+  time.dateTime = item.publishedAt;
+  time.textContent = relativeTime(item.publishedAt);
+  time.title = new Date(item.publishedAt).toLocaleString();
+  meta.append(`${item.source} · `, time);
+  return meta;
+}
+
+function isNew(item, since) {
+  return Date.parse(item.publishedAt) > since;
+}
+
+function newBadge() {
+  return badge('new', 'New', 'Published since you last opened the news');
+}
+
+function latestNews(items) {
+  const sources = new Set();
+  const latest = [];
+  for (const item of items) {
+    if (item.category !== 'news' || sources.has(item.source)) continue;
+    sources.add(item.source);
+    latest.push(item);
+    if (latest.length === NEWS_LATEST) break;
+  }
+  return latest;
+}
+
+function failureLines(news) {
+  const groups = new Map();
+  for (const source of news.sources) if (source.error) groups.set(source.error, [...(groups.get(source.error) ?? []), source]);
+  return [...groups].map(([error, sources]) => {
+    if (sources.length === 1) {
+      const [source] = sources;
+      return `${source.name}: ${error} · ${source.okAt ? `showing items fetched ${relativeTime(source.okAt)}` : 'nothing fetched yet'}`;
+    }
+    const names = [...new Set(sources.map((source) => source.name))];
+    return `${names.length <= 3 ? listJoin(names) : `${sources.length} sources`}: ${error}`;
+  });
+}
+
+function newsNote(news) {
+  if (!news || (news.refreshing && news.items.length === 0)) return 'Loading news…';
+  const failed = news.sources.filter((s) => s.error);
+  if (news.items.length === 0 && failed.length > 0 && failed.length === news.sources.length) {
+    return `News could not be loaded. ${failureLines(news)[0]}. Agent Guild tries again in a few minutes.`;
+  }
+  return 'No news from the last 30 days.';
+}
+
+function renderLatestNews() {
+  const news = state.news;
+  const list = $('news-latest');
+  const seen = newsSeen() ?? Infinity;
+  const items = news ? latestNews(news.items) : [];
+  const focused = document.activeElement?.closest?.('#news-latest .news-row')?.dataset.id;
+  list.replaceChildren(...items.map((item) => {
+    const row = document.createElement('li');
+    row.className = 'news-row';
+    row.dataset.id = item.id;
+    row.append(newsTitle(item), ...(isNew(item, seen) ? [newBadge()] : []), newsMeta(item));
+    return row;
+  }));
+  if (focused) [...list.children].find((row) => row.dataset.id === focused)?.querySelector('.news-link')?.focus({ preventScroll: true });
+  list.hidden = items.length === 0;
+  const fresh = news ? news.items.filter((item) => item.category === 'news' && isNew(item, seen)).length : 0;
+  $('news-count').textContent = fresh ? `· ${fresh} new` : '';
+  $('news-note').textContent = items.length ? '' : newsNote(news);
+  $('news-note').hidden = items.length > 0;
+}
+
+function dayLabel(time) {
+  const date = new Date(time);
+  const today = new Date();
+  const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
+  if (date.toDateString() === today.toDateString()) return 'Today';
+  if (date.toDateString() === yesterday.toDateString()) return 'Yesterday';
+  return date.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+}
+
+function newsEntry(item) {
+  const entry = document.createElement('li');
+  entry.className = 'news-item';
+  entry.dataset.id = item.id;
+  const head = document.createElement('div');
+  head.className = 'news-head';
+  head.append(newsTitle(item), ...(isNew(item, newsView.since) ? [newBadge()] : []));
+  entry.append(head, newsMeta(item));
+  if (item.summary) {
+    const summary = document.createElement('p');
+    summary.className = 'news-summary';
+    const discussion = webHref(item.discussion);
+    if (discussion) {
+      const link = document.createElement('a');
+      link.className = 'news-discussion';
+      link.href = discussion;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = item.summary;
+      link.setAttribute('aria-description', `Opens the discussion on ${item.source} in a new tab`);
+      summary.append(link);
+    } else {
+      summary.textContent = item.summary;
+    }
+    entry.append(summary);
+  }
+  return entry;
+}
+
+function renderNewsFilters() {
+  $('news-filters').replaceChildren(...NEWS_FILTERS.map(([id, label]) => {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'news-filter';
+    chip.textContent = label;
+    chip.setAttribute('aria-pressed', String(id === newsView.filter));
+    chip.addEventListener('click', () => {
+      newsView.filter = id;
+      save(NEWS_FILTER_KEY, id);
+      for (const other of $('news-filters').children) other.setAttribute('aria-pressed', String(other === chip));
+      newsView.shown = state.news;
+      renderNewsList();
+      document.querySelector('.news-body').scrollTop = 0;
+    });
+    return chip;
+  }));
+}
+
+function renderNewsList() {
+  const shown = newsView.shown;
+  const items = (shown?.items ?? []).filter((item) => newsView.filter === 'all' || item.category === newsView.filter);
+  const groups = [];
+  for (const item of items) {
+    const label = dayLabel(Date.parse(item.publishedAt));
+    if (groups.at(-1)?.label !== label) groups.push({ label, items: [] });
+    groups.at(-1).items.push(item);
+  }
+  $('news-list').replaceChildren(...groups.map((group) => {
+    const section = document.createElement('section');
+    section.className = 'news-group';
+    const heading = document.createElement('h3');
+    heading.className = 'news-day';
+    heading.textContent = group.label;
+    const list = document.createElement('ul');
+    list.className = 'news-items';
+    list.append(...group.items.map(newsEntry));
+    section.append(heading, list);
+    return section;
+  }));
+  const label = NEWS_FILTERS.find(([id]) => id === newsView.filter)[1];
+  $('news-empty').textContent = items.length ? '' : newsView.filter === 'all' || !shown ? newsNote(shown) : `Nothing in ${label} from the last 30 days.`;
+  $('news-empty').hidden = items.length > 0;
+  $('news-fresh').hidden = true;
+  const fresh = (shown?.items ?? []).filter((item) => isNew(item, newsView.since)).length;
+  $('news-sub').textContent = fresh ? `${fresh} new since your last visit` : 'Newest first';
+}
+
+function renderNewsStatus() {
+  const news = state.news;
+  const status = $('news-status');
+  status.hidden = !news;
+  if (!news) return;
+  const updated = news.refreshing ? 'checking for news…' : news.refreshedAt ? `updated ${relativeTime(news.refreshedAt)}` : '';
+  const lines = [[`${news.sources.length} source${news.sources.length === 1 ? '' : 's'}`, updated].filter(Boolean).join(' · '), ...failureLines(news)];
+  status.replaceChildren(...lines.map((text) => {
+    const line = document.createElement('span');
+    line.textContent = text;
+    return line;
+  }));
+}
+
+function updateNewsPanel() {
+  renderNewsStatus();
+  if (!newsView.shown?.items.length) {
+    newsView.shown = state.news;
+    renderNewsList();
+    return;
+  }
+  const shownIds = new Set(newsView.shown.items.map((item) => item.id));
+  const added = state.news.items.filter((item) => !shownIds.has(item.id) && (newsView.filter === 'all' || item.category === newsView.filter)).length;
+  const fresh = $('news-fresh');
+  fresh.hidden = added === 0;
+  fresh.textContent = `Show ${added} new item${added === 1 ? '' : 's'}`;
+}
+
+function showFreshNews() {
+  const before = new Set(newsView.shown.items.map((item) => item.id));
+  newsView.shown = state.news;
+  renderNewsList();
+  const first = [...$('news-list').querySelectorAll('.news-item')].find((entry) => !before.has(entry.dataset.id));
+  (first?.querySelector('.news-link') ?? $('news-close')).focus();
+}
+
+function openNews() {
+  const dialog = $('news');
+  const saved = load(NEWS_FILTER_KEY);
+  newsView.filter = NEWS_FILTERS.some(([id]) => id === saved) ? saved : 'all';
+  newsView.since = newsSeen() ?? Infinity;
+  newsView.shown = state.news;
+  renderNewsFilters();
+  renderNewsList();
+  renderNewsStatus();
+  if (!dialog.open) {
+    newsView.opener = document.activeElement;
+    dialog.showModal();
+  }
+  ($('news-list').querySelector('.news-link') ?? $('news-close')).focus();
+  if (!state.news) loadNews();
+}
+
+function closeNews() {
+  if ($('news').open) $('news').close();
+}
+
+function tickNews() {
+  for (const time of document.querySelectorAll('#news-latest time, #news-list time')) time.textContent = relativeTime(time.dateTime);
+  if ($('news').open) renderNewsStatus();
+}
+
 const CHANNEL_LABELS = {
   npm: 'npm', native: 'native', brew: 'Homebrew', winget: 'WinGet', legacy: 'legacy install', unknown: 'unknown install',
 };
@@ -1343,6 +1631,7 @@ function enterStopping(running = 0) {
   state.stopRemaining = null;
   closePanel();
   closeModels();
+  closeNews();
   for (const view of state.views.values()) view.dispose();
   state.views.clear();
   state.sessions.clear();
@@ -1400,6 +1689,9 @@ function connectEvents() {
       for (const id of [...state.views.keys()]) if (!state.sessions.has(id)) dropSession(id);
       renderSessions();
       setUpgrade(msg.upgrade);
+      loadNews();
+    } else if (msg.type === 'news.updated') {
+      loadNews();
     } else if (msg.type === 'manager.upgrade') {
       setUpgrade(msg.upgrade);
     } else if (msg.type === 'manager.stopping') {
@@ -1453,9 +1745,11 @@ function readTokenFromHash() {
 
 let usageTimer;
 let statsInterval;
+let newsTimer;
 
 function showAuth(message = '') {
   closeModels();
+  closeNews();
   $('app').hidden = true;
   $('terminal-panel').hidden = true;
   $('stopped').hidden = true;
@@ -1488,6 +1782,8 @@ async function boot() {
   loadStats();
   clearInterval(statsInterval);
   statsInterval = setInterval(loadStats, 60 * 60 * 1000);
+  clearInterval(newsTimer);
+  newsTimer = setInterval(() => { if (document.visibilityState === 'visible') loadNews(); }, NEWS_POLL_MS);
 }
 
 $('auth-form').addEventListener('submit', (e) => {
@@ -1530,6 +1826,21 @@ document.addEventListener('keydown', (e) => {
 }, true);
 addEventListener('scroll', () => { if (tipFor) hideTip(); }, true);
 addEventListener('resize', () => { if (tipFor) hideTip(); });
+$('news-all').addEventListener('click', openNews);
+$('news-close').addEventListener('click', closeNews);
+$('news-fresh').addEventListener('click', showFreshNews);
+$('news').addEventListener('click', (e) => { if (e.target === $('news')) closeNews(); });
+$('news').addEventListener('close', () => {
+  const newest = newestTime(newsView.shown?.items ?? []);
+  if (newest > (newsSeen() ?? 0)) save(NEWS_SEEN_KEY, new Date(newest).toISOString());
+  renderLatestNews();
+  const opener = newsView.opener?.isConnected && !newsView.opener.closest('[hidden]') ? newsView.opener : $('news-all');
+  opener.focus();
+  newsView.opener = null;
+});
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && state.connected && Date.now() - newsLoadedAt > 60000) loadNews();
+});
 $('models-more').addEventListener('click', () => {
   const before = $('models-list').childElementCount;
   modelsView.all = true;
@@ -1554,6 +1865,7 @@ $('cwd').value = load(CWD_KEY) || '';
 try { state.accounts = JSON.parse(load(ACCOUNTS_KEY)) || {}; } catch { state.accounts = {}; }
 if (typeof state.accounts !== 'object' || Array.isArray(state.accounts)) state.accounts = {};
 setInterval(renderSessions, 30000);
+setInterval(tickNews, 30000);
 
 // The terminal panel sits below the top bar, which wraps onto two rows on
 // narrow screens; publish its height so the panel never covers its controls.

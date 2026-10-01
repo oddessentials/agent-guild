@@ -101,6 +101,7 @@ export function createManagerServer({
   registry,
   usage,
   modelStats,
+  news = null,
   token,
   host = '127.0.0.1',
   port = 0,
@@ -230,6 +231,9 @@ export function createManagerServer({
     if (route === '/model-stats' && method === 'GET') {
       return sendJson(res, 200, await modelStats.snapshot(manager.list()));
     }
+    if (route === '/news' && method === 'GET' && news) {
+      return sendJson(res, 200, news.snapshot());
+    }
     const installMatch = route.match(/^\/providers\/([a-z0-9][a-z0-9_-]{0,31})\/install$/);
     if (installMatch && method === 'POST') {
       const body = await readJsonBody(req);
@@ -342,6 +346,7 @@ export function createManagerServer({
   manager.on('event', broadcast);
   registry.on('updated', () => broadcast({ type: 'providers.updated', providers: registry.list() }));
   selfUpdate?.on('updated', () => broadcast({ type: 'manager.upgrade', upgrade: upgradeInfo() }));
+  news?.on('updated', () => broadcast({ type: 'news.updated' }));
 
   function handleEvents(ws) {
     eventClients.add(ws);
