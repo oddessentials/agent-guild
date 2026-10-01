@@ -69,6 +69,7 @@ function setConnection(kind, label) {
   $('stop-manager').hidden = !state.connected;
   $('restart-manager').hidden = !state.connected || !state.restartable;
   renderUpgrade();
+  guardLeaving();
 }
 
 // ---- the running version --------------------------------------------------
@@ -1664,9 +1665,21 @@ function renderSessions() {
   const running = sessions.filter((s) => s.status === 'running').length;
   $('session-count').textContent = sessions.length ? `· ${running} running` : '';
   $('empty').hidden = sessions.length > 0;
+  guardLeaving();
   if (state.activeId) updatePanel();
   if ($('history').open) renderHistory();
   if (state.stats && sessions.some((s) => s.model && state.statsFor.get(s.id) !== modelKey(s))) scheduleStats();
+}
+
+function confirmLeaving(event) {
+  event.preventDefault();
+  event.returnValue = true;
+}
+
+function guardLeaving() {
+  const running = state.connected && [...state.sessions.values()].some((s) => s.status === 'running');
+  if (running) addEventListener('beforeunload', confirmLeaving);
+  else removeEventListener('beforeunload', confirmLeaving);
 }
 
 function upsertSession(session) {
