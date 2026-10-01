@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { ProviderRegistry } from './providers.mjs';
 import { SessionManager } from './session-manager.mjs';
 import { UsageMonitor } from './usage.mjs';
+import { SessionHistory } from './session-history.mjs';
 import { ModelStats } from './model-stats.mjs';
 import { NewsFeed } from './news.mjs';
 import { createManagerServer } from './server.mjs';
@@ -59,6 +60,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
   const selfUpdate = new SelfUpdate({ pkg: PACKAGE_NAME, version, packageFile, registry });
   const manager = new SessionManager({ registry, baseEnv, getApiUrl: () => api.url, sessionDefaults, shimDir, selfUpdate });
   const usage = new UsageMonitor({ registry, env: baseEnv });
+  const history = new SessionHistory({ registry, env: baseEnv });
   const modelStats = new ModelStats({ registry });
   const news = new NewsFeed({ registry });
   let closing = null;
@@ -92,6 +94,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
     manager,
     registry,
     usage,
+    history,
     modelStats,
     news,
     token,

@@ -131,6 +131,30 @@
     <p id="news-status" class="news-status" hidden></p>
   </dialog>
 
+  <dialog id="history" class="models history" aria-labelledby="history-title">
+    <div class="models-bar">
+      <span id="history-icon" class="provider-icon small"></span>
+      <div class="models-heading">
+        <h2 id="history-title"></h2>
+        <p id="history-sub" class="sub"></p>
+      </div>
+      <button id="history-close" class="btn" type="button">Close</button>
+    </div>
+    <div class="history-tools">
+      <input id="history-filter" type="search" placeholder="Filter by title, folder or id" aria-label="Filter sessions" spellcheck="false" autocomplete="off">
+      <label class="history-here"><input id="history-here" type="checkbox"><span>Working folder only</span></label>
+    </div>
+    <div class="models-body">
+      <div id="history-list" class="history-list" role="list"></div>
+      <p id="history-note" class="models-note"></p>
+    </div>
+    <form id="history-form" class="history-form">
+      <label for="history-id">Resume by id</label>
+      <input id="history-id" type="text" placeholder="Session id or name" spellcheck="false" autocomplete="off">
+      <button type="submit" class="btn">Resume</button>
+    </form>
+  </dialog>
+
   <div id="tip" class="tip" aria-hidden="true" hidden><strong id="tip-title"></strong><span id="tip-source"></span><p id="tip-text"></p></div>
 
   <div id="toast" class="toast" role="alert" hidden></div>
@@ -194,6 +218,17 @@
     </section>
   </template>
 
+  <template id="history-template">
+    <article class="history-row" role="listitem">
+      <div class="history-main">
+        <div class="history-title"></div>
+        <div class="history-meta"></div>
+      </div>
+      <button class="session-id" type="button"></button>
+      <button class="btn primary history-resume" type="button"></button>
+    </article>
+  </template>
+
   <template id="session-template">
     <article class="session-card" role="listitem" tabindex="0">
       <span class="level-badge" aria-hidden="true"></span>
@@ -201,7 +236,7 @@
         <span class="provider-icon"></span>
         <div class="card-title">
           <div class="name"></div>
-          <div class="meta"></div>
+          <div class="meta"><span class="meta-text"></span><button class="session-id" type="button" hidden></button></div>
         </div>
         <button class="model-pill" type="button"></button>
         <span class="status-pill"></span>
@@ -213,6 +248,7 @@
       </div>
       <div class="card-actions">
         <button class="btn primary open" type="button">Open</button>
+        <button class="btn resume" type="button" hidden>Resume</button>
         <button class="btn rename" type="button">Rename</button>
         <button class="btn danger stop" type="button">Stop</button>
         <button class="btn remove" type="button">Remove</button>

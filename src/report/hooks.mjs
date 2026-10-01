@@ -126,6 +126,10 @@ export function hookToReports(input) {
     ? text(input.to_model)
     : text(input.model, input.modelId, input.llm_request?.model);
   if (model) reports.push({ model });
+
+  // Gemini CLI has no session-start event; its turn start stands in.
+  const toolSessionId = insideSubagent ? null : text(input.session_id, input.sessionId);
+  if (toolSessionId && (event === 'SessionStart' || event === 'BeforeAgent')) reports.push({ toolSessionId });
   return reports;
 }
 

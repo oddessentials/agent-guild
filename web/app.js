@@ -310,8 +310,10 @@ function renderProviders() {
     start.hidden = !provider.available;
     start.addEventListener('click', () => startSession(provider, node));
     existing.hidden = !provider.available || !provider.resumable;
-    existing.title = `Resume one of ${provider.tool}'s own sessions by its id`;
-    existing.addEventListener('click', () => resumeSession(provider, node));
+    existing.title = provider.historySource
+      ? `Resume one of ${provider.tool}'s own earlier sessions`
+      : `Resume one of ${provider.tool}'s own sessions by its id`;
+    existing.addEventListener('click', () => showHistory(provider));
     const install = node.querySelector('.install');
     install.hidden = provider.available || !provider.installable;
     install.title = `Install ${provider.tool} using npm.${provider.npmNote ? ` ${provider.npmNote}` : ''}`;
@@ -1247,27 +1249,196 @@ async function installProvider(provider, card, { force = false } = {}) {
   }
 }
 
-async function startSession(provider, card, { resume } = {}) {
-  const cwd = $('cwd').value.trim();
-  save(CWD_KEY, cwd);
-  card.classList.add('busy');
+/**
+ * Start a session. A resumed session starts in the folder its transcript
+ * names, since Claude Code and Gemini CLI only find a session from there;
+ * when that folder is gone, the working folder is used instead.
+ */
+async function startSession(provider, card, { resume, cwd } = {}) {
+  const working = $('cwd').value.trim();
+  save(CWD_KEY, working);
+  card?.classList.add('busy');
   try {
-    const body = { providerId: provider.id, account: selectedAccount(provider).id, cwd: cwd || undefined, cols: 120, rows: 32, resume };
-    const { session } = await api('POST', '/sessions', body);
+    const body = { providerId: provider.id, account: selectedAccount(provider).id, cwd: cwd || working || undefined, cols: 120, rows: 32, resume };
+    let session;
+    try {
+      ({ session } = await api('POST', '/sessions', body));
+    } catch (err) {
+      if (err.code !== 'bad_cwd' || !cwd) throw err;
+      toast(`${cwd} no longer exists; starting in the working folder instead.`, 8000);
+      ({ session } = await api('POST', '/sessions', { ...body, cwd: working || undefined }));
+    }
     upsertSession(session);
+    closeHistory();
     openPanel(session.id);
   } catch (err) {
     if (err instanceof AuthError) return showAuth(err.message);
     toast(err.message, 8000);
   } finally {
-    card.classList.remove('busy');
+    card?.classList.remove('busy');
   }
 }
 
-function resumeSession(provider, card) {
-  const id = prompt(`${provider.tool} session id or name to resume`);
-  if (id === null || !id.trim()) return;
-  startSession(provider, card, { resume: id.trim() });
+// ---- session history ------------------------------------------------------
+
+const HISTORY_LIMIT = 200;
+const historyView = { providerId: null, accountId: null, snapshot: null, loading: false };
+let historyOpener = null;
+
+function historyProvider() {
+  return state.providers.find((p) => p.id === historyView.providerId) ?? null;
+}
+
+function toolSessionId(s) {
+  return s.toolSessionId || s.resume || null;
+}
+
+function shortId(id) {
+  return id.length > 12 ? id.slice(0, 8) : id;
+}
+
+function copyId(id) {
+  navigator.clipboard?.writeText(id).then(() => toast(`Copied ${id}`, 2500), () => toast(id, 8000));
+}
+
+function paintIdButton(button, id) {
+  button.hidden = !id;
+  if (!id) return;
+  button.textContent = shortId(id);
+  button.title = `Session id ${id}. Click to copy it.`;
+  button.setAttribute('aria-label', `Copy session id ${id}`);
+}
+
+function runningOn(providerId, id) {
+  return [...state.sessions.values()].find((s) => s.status === 'running' && s.task === null && s.provider.id === providerId && toolSessionId(s) === id) ?? null;
+}
+
+function showHistory(provider) {
+  const account = selectedAccount(provider);
+  const same = historyView.providerId === provider.id && historyView.accountId === account.id;
+  if (!same) Object.assign(historyView, { providerId: provider.id, accountId: account.id, snapshot: null, loading: false });
+  const dialog = $('history');
+  $('history-filter').value = '';
+  $('history-id').value = '';
+  renderHistory();
+  if (!dialog.open) {
+    historyOpener = document.activeElement;
+    dialog.showModal();
+  }
+  if (provider.historySource) loadHistory();
+  else $('history-id').focus();
+}
+
+async function loadHistory() {
+  const provider = historyProvider();
+  if (!provider || historyView.loading) return;
+  const { providerId, accountId } = historyView;
+  historyView.loading = true;
+  renderHistory();
+  try {
+    const { history } = await api('GET', `/providers/${providerId}/history?account=${encodeURIComponent(accountId)}&limit=${HISTORY_LIMIT}`);
+    if (historyView.providerId === providerId && historyView.accountId === accountId) historyView.snapshot = history;
+  } catch (err) {
+    if (err instanceof AuthError) return showAuth(err.message);
+    if (historyView.providerId === providerId) historyView.snapshot = { sessions: [], total: 0, error: err.message };
+  } finally {
+    historyView.loading = false;
+    renderHistory();
+  }
+}
+
+function historyText(entry) {
+  return `${entry.title ?? ''}\n${entry.cwd ?? ''}\n${entry.id}`.toLowerCase();
+}
+
+function folderName(dir) {
+  const parts = dir.replace(/[\\/]+$/, '').split(/[\\/]/);
+  return parts.at(-1) || dir;
+}
+
+function sameFolder(a, b) {
+  const clean = (dir) => (dir || '').replace(/[\\/]+$/, '').replace(/\\/g, '/').toLowerCase();
+  return clean(a) === clean(b);
+}
+
+function historyRow(provider, entry) {
+  const node = $('history-template').content.firstElementChild.cloneNode(true);
+  const running = runningOn(provider.id, entry.id);
+  node.classList.toggle('untitled', !entry.title);
+  node.classList.toggle('running', Boolean(running));
+  node.querySelector('.history-title').textContent = entry.title ?? 'Untitled session';
+  node.querySelector('.history-title').title = entry.title ?? '';
+  const meta = node.querySelector('.history-meta');
+  const when = entry.updatedAt ? `updated ${relativeTime(entry.updatedAt)}` : '';
+  meta.textContent = [entry.cwd && folderName(entry.cwd), when, running && `open in Agent Guild as ${running.name}`].filter(Boolean).join(' · ');
+  meta.title = [entry.cwd, entry.startedAt && `started ${new Date(entry.startedAt).toLocaleString()}`].filter(Boolean).join('\n');
+  const idButton = node.querySelector('.session-id');
+  paintIdButton(idButton, entry.id);
+  idButton.addEventListener('click', () => copyId(entry.id));
+  const action = node.querySelector('.history-resume');
+  action.textContent = running ? 'Open' : 'Resume';
+  action.title = running
+    ? `This session is running in Agent Guild as "${running.name}". Open it instead of resuming it twice.`
+    : `Resume this ${provider.tool} session${entry.cwd ? ` in ${entry.cwd}` : ''}`;
+  action.setAttribute('aria-label', `${action.textContent} ${entry.title ?? entry.id}`);
+  action.addEventListener('click', () => {
+    if (running) {
+      closeHistory();
+      openPanel(running.id);
+    } else startSession(provider, null, { resume: entry.id, cwd: entry.cwd || undefined });
+  });
+  return node;
+}
+
+function renderHistory() {
+  const provider = historyProvider();
+  if (!provider) return closeHistory();
+  const account = provider.accounts?.find((a) => a.id === historyView.accountId);
+  paintProviderIcon($('history-icon'), provider);
+  $('history-title').textContent = `${provider.tool} sessions`;
+  const snapshot = historyView.snapshot;
+  const filter = $('history-filter').value.trim().toLowerCase();
+  const working = $('cwd').value.trim();
+  const here = $('history-here');
+  here.disabled = !working;
+  here.parentElement.title = working ? `Only sessions started in ${working}` : 'Set a working folder above to filter by it';
+  const all = snapshot?.sessions ?? [];
+  const shown = all.filter((entry) => (!filter || historyText(entry).includes(filter)) && (!here.checked || here.disabled || sameFolder(entry.cwd, working)));
+  const parts = [];
+  if ((provider.accounts?.length ?? 0) > 1 && account) parts.push(`${account.label} account`);
+  if (snapshot && !snapshot.error) {
+    parts.push(snapshot.total === 0 ? 'no sessions found' : `${snapshot.total} session${snapshot.total === 1 ? '' : 's'}, newest first`);
+    if (shown.length !== all.length) parts.push(`${shown.length} shown`);
+  }
+  $('history-sub').textContent = parts.join(' · ');
+  $('history-list').replaceChildren(...shown.map((entry) => historyRow(provider, entry)));
+  let note = '';
+  if (!provider.historySource) note = `Agent Guild cannot list ${provider.tool}'s sessions. Enter the id of one to resume it.`;
+  else if (historyView.loading && !snapshot) note = `Reading ${provider.tool}'s sessions…`;
+  else if (snapshot?.error) note = `Sessions could not be read: ${snapshot.error}`;
+  else if (snapshot && all.length === 0) note = `No ${provider.tool} sessions were found${account && account.id !== 'default' ? ` for the ${account.label} account` : ''}.`;
+  else if (snapshot && shown.length === 0) note = 'No session matches the filter.';
+  $('history-note').textContent = note;
+  $('history-note').hidden = !note;
+  $('history-filter').disabled = !provider.historySource;
+  here.parentElement.hidden = !provider.historySource;
+}
+
+function closeHistory() {
+  if ($('history').open) $('history').close();
+}
+
+function resumeById(event) {
+  event.preventDefault();
+  const provider = historyProvider();
+  const id = $('history-id').value.trim();
+  if (!provider || !id) return;
+  const running = runningOn(provider.id, id);
+  if (running) {
+    closeHistory();
+    return openPanel(running.id);
+  }
+  startSession(provider, null, { resume: id });
 }
 
 // ---- session cards --------------------------------------------------------
@@ -1310,8 +1481,26 @@ function buildCard(session) {
   node.querySelector('.stop').addEventListener('click', () => stopSession(session.id));
   node.querySelector('.remove').addEventListener('click', () => removeSession(session.id));
   node.querySelector('.rename').addEventListener('click', () => renameSession(session.id));
+  node.querySelector('.resume').addEventListener('click', () => resumeCard(session.id));
+  node.querySelector('.session-id').addEventListener('click', () => {
+    const id = toolSessionId(state.sessions.get(session.id) ?? session);
+    if (id) copyId(id);
+  });
   node.querySelector('.model-pill').addEventListener('click', () => openSessionModel(session.id));
   return node;
+}
+
+function resumable(s) {
+  const provider = state.providers.find((p) => p.id === s.provider.id);
+  return Boolean(s.status === 'exited' && s.task === null && toolSessionId(s) && provider?.available && provider.resumable);
+}
+
+function resumeCard(id) {
+  const s = state.sessions.get(id);
+  if (!s || !resumable(s)) return;
+  const provider = state.providers.find((p) => p.id === s.provider.id);
+  if (s.account && provider.accounts?.some((a) => a.id === s.account.id)) selectAccount(provider, s.account.id);
+  startSession(provider, cards.get(id), { resume: toolSessionId(s), cwd: s.cwd });
 }
 
 function sessionLevel(s) {
@@ -1330,8 +1519,10 @@ function updateCard(node, s) {
   badge.textContent = level;
   badge.title = `Level ${level}`;
   node.querySelector('.name').textContent = s.name;
-  const resumed = s.resume ? ` · resumed ${s.resume}` : '';
-  node.querySelector('.meta').textContent = [s.provider.vendor, s.provider.tool, accountLabel(s), `started ${relativeTime(s.createdAt)}${resumed}`].filter(Boolean).join(' · ');
+  const id = toolSessionId(s);
+  const resumed = s.resume && s.resume !== id ? ` · resumed ${s.resume}` : s.resume ? ' · resumed' : '';
+  node.querySelector('.meta-text').textContent = [s.provider.vendor, s.provider.tool, accountLabel(s), `started ${relativeTime(s.createdAt)}${resumed}`].filter(Boolean).join(' · ');
+  paintIdButton(node.querySelector('.session-id'), id);
   const pill = node.querySelector('.status-pill');
   pill.textContent = statusText(s);
   pill.className = `status-pill ${s.status === 'exited' ? 'exited' : s.activity}`;
@@ -1349,6 +1540,9 @@ function updateCard(node, s) {
   node.classList.toggle('exited', s.status === 'exited');
   node.querySelector('.stop').hidden = s.status !== 'running';
   node.querySelector('.remove').hidden = s.status === 'running';
+  const resume = node.querySelector('.resume');
+  resume.hidden = !resumable(s);
+  resume.title = `Start ${s.provider.tool} again on this session${id ? ` (${id})` : ''} in ${s.cwd}`;
   const modelLabel = s.model ? `, model ${modelText(s)}` : '';
   const accountName = accountLabel(s) ? `, ${accountLabel(s)} account` : '';
   node.setAttribute('aria-label', `${s.name}, ${s.provider.vendor}${accountName}${modelLabel}, ${statusText(s)}, ${s.agents.length} agents`);
@@ -1372,6 +1566,7 @@ function renderSessions() {
   $('session-count').textContent = sessions.length ? `· ${running} running` : '';
   $('empty').hidden = sessions.length > 0;
   if (state.activeId) updatePanel();
+  if ($('history').open) renderHistory();
   if (state.stats && sessions.some((s) => s.model && state.statsFor.get(s.id) !== modelKey(s))) scheduleStats();
 }
 
@@ -1587,7 +1782,8 @@ function updatePanel() {
   if (!s) return;
   paintProviderIcon($('panel-icon'), s.provider);
   $('panel-title').textContent = s.name;
-  $('panel-sub').textContent = [s.provider.tool, accountLabel(s), modelText(s), statusText(s), s.cwd].filter(Boolean).join(' · ');
+  const id = toolSessionId(s);
+  $('panel-sub').textContent = [s.provider.tool, accountLabel(s), modelText(s), statusText(s), s.cwd, id && `session ${id}`].filter(Boolean).join(' · ');
   $('panel-sub').title = modelTitle(s);
   renderAgents($('panel-agents'), s.agents);
   const stop = $('panel-stop');
@@ -1632,6 +1828,7 @@ function enterStopping(running = 0) {
   closePanel();
   closeModels();
   closeNews();
+  closeHistory();
   for (const view of state.views.values()) view.dispose();
   state.views.clear();
   state.sessions.clear();
@@ -1707,6 +1904,7 @@ function connectEvents() {
     } else if (msg.type === 'providers.updated') {
       state.providers = msg.providers;
       renderProviders();
+      if ($('history').open) renderHistory();
       scheduleStats();
     }
   };
@@ -1750,6 +1948,7 @@ let newsTimer;
 function showAuth(message = '') {
   closeModels();
   closeNews();
+  closeHistory();
   $('app').hidden = true;
   $('terminal-panel').hidden = true;
   $('stopped').hidden = true;
@@ -1795,6 +1994,17 @@ $('auth-form').addEventListener('submit', (e) => {
 });
 $('panel-close').addEventListener('click', closePanel);
 $('models-close').addEventListener('click', closeModels);
+$('history-close').addEventListener('click', closeHistory);
+$('history').addEventListener('click', (e) => { if (e.target === $('history')) closeHistory(); });
+$('history').addEventListener('close', () => {
+  const opener = historyOpener?.isConnected ? historyOpener
+    : $('providers').querySelector(`.provider[data-id="${historyView.providerId}"] .existing`);
+  opener?.focus();
+  historyOpener = null;
+});
+$('history-filter').addEventListener('input', renderHistory);
+$('history-here').addEventListener('change', renderHistory);
+$('history-form').addEventListener('submit', resumeById);
 $('models').addEventListener('click', (e) => { if (e.target === $('models')) closeModels(); });
 $('models').addEventListener('close', () => {
   hideTip();

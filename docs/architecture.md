@@ -11,6 +11,7 @@
                                                            │      └ agents, model     │◀── agent-guild-report, OSC 7777
                                                            │  ProviderRegistry        │──▶ tool --version, npm registry
                                                            │  UsageMonitor            │──▶ vendor usage endpoints
+                                                           │  SessionHistory          │──▶ the tools' own session files
                                                            └──────────────────────────┘
 ```
 
@@ -41,6 +42,9 @@
 * **Usage monitor** (`usage.mjs`). Reads each tool's own sign-in and asks the
   vendor's usage endpoint for the remaining rate-limit windows. Tokens stay
   in the manager.
+* **Session history** (`session-history.mjs`). Lists each tool's earlier
+  sessions from the transcripts the tool keeps in its home folder, reading
+  only their heads, so one can be resumed from the page.
 * **API server** (`server.mjs`). REST for control, one WebSocket for
   lifecycle events, one WebSocket per attached terminal. See [api.md](api.md).
 * **Web page** (`web/`). Plain HTML, CSS and JavaScript with xterm.js, served

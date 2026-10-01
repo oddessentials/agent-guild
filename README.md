@@ -8,8 +8,9 @@ coding tool, and see at a glance which sessions and agents are working.
 
 * **Start sessions from provider cards.** Anthropic (Claude Code), OpenAI
   (Codex CLI), Google (Gemini CLI), xAI (Grok Build), and a plain shell.
-  **New** starts a fresh session; **Existing** resumes one of
-  the tool's own earlier sessions from its id. Providers whose tool is not
+  **New** starts a fresh session; **Existing** lists the tool's own earlier
+  sessions, read from where the tool keeps them, with their ids, and
+  resumes one in its own folder, or any session by id. Providers whose tool is not
   installed are shown greyed out with an **Install** button that runs
   `npm install -g` in a session you can watch, or with install instructions
   when the tool is not an npm package. Installed tools show their version
@@ -100,6 +101,7 @@ one platform under a `win32` or `darwin` key. See
 | `usage` | Where the usage meters come from: `"claude"`, `"codex"`, `"gemini"`, `{ "command", "args" }` for a program that prints `{ "windows": [{ "label", "usedPercent", "resetsAt" }] }`, or `null` for none. |
 | `modelPattern` | Regular expression that finds the model name on the tool's screen when the tool does not report it. |
 | `resumeArgs` | Arguments that resume the tool's own session, with `{id}` standing for the id, e.g. `["--resume", "{id}"]`. Without it the card has no **Existing** button. |
+| `history` | Where the list of earlier sessions comes from: `"claude"`, `"codex"`, `"gemini"`, `"grok"` (the tool's own session files under its home folder), `{ "command", "args" }` for a program that prints `{ "sessions": [{ "id", "title", "cwd", "startedAt", "updatedAt" }] }`, or `null` for none, in which case **Existing** asks for an id. |
 | `env` | Extra environment variables for the tool. |
 | `accounts` | Further sign-ins of the tool, each in its own home folder, e.g. `[{ "id": "work", "label": "Work", "dir": "~/.claude-work" }]`. Without `dir`, the folder is `accounts/<provider>/<account>` in the data folder. The card shows one chip per account with its own meters, and a session starts under the chip picked; the tool signs in from inside the first session, and its reporting hooks are copied into the folder on first use. An entry with id `default` renames the tool's own sign-in. Needs `homeVar`. |
 | `homeVar` | The environment variable that moves the tool's home folder, e.g. `CLAUDE_CONFIG_DIR`. Set for Claude Code, Codex CLI, Gemini CLI and Grok Build by default. |

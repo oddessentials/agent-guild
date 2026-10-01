@@ -292,6 +292,10 @@ export class SessionManager extends EventEmitter {
     return this._reportingSession(id, auth).reportModel(report);
   }
 
+  reportToolSession(id, report, auth) {
+    return this._reportingSession(id, auth).reportToolSession(report);
+  }
+
   _reportingSession(id, { reportToken, trusted = false } = {}) {
     const session = this.sessions.get(id);
     // Without the API token, an unknown session and a wrong token look the
