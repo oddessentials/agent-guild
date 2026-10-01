@@ -54,7 +54,18 @@ def cutout(src, mask):
 
 
 def frame(src, out, origin=(40, 44), size=860, corner=168):
-    tl = Image.open(src).convert("RGBA").crop((*origin, origin[0] + size, origin[1] + size)).resize((corner, corner), Image.LANCZOS)
+    nine_slice(Image.open(src).convert("RGBA").crop((*origin, origin[0] + size, origin[1] + size)).resize((corner, corner), Image.LANCZOS), out)
+
+
+def diagonal(im):
+    a = np.asarray(im).copy()
+    upper = np.triu_indices(a.shape[0], 1)
+    a[upper] = a.transpose(1, 0, 2)[upper]
+    return Image.fromarray(a, "RGBA")
+
+
+def nine_slice(tl, out):
+    corner = tl.width
     im = Image.new("RGBA", (corner * 2 + 1, corner * 2 + 1))
     im.paste(tl, (0, 0))
     im.paste(tl.transpose(Image.FLIP_LEFT_RIGHT), (corner + 1, 0))
@@ -94,6 +105,8 @@ def main():
         quantize(im.resize((round(im.width * height / im.height), height), Image.LANCZOS), WEB / rel)
 
     frame(PACK / "ui" / "frame-corner.png", WEB / "ui" / "frame.png")
+    ornate = diagonal(Image.open(PACK / "ui" / "frame-ornate.png").convert("RGBA").crop((0, 0, 465, 465)))
+    nine_slice(ornate.resize((232, 232), Image.LANCZOS), WEB / "ui" / "frame-ornate.png")
     favicon(PACK / "ui" / "guild-crest.png", WEB / "ui" / "favicon.png")
     encode(Image.open(PACK / "backgrounds" / "page.png").convert("RGB"), WEB / "page", avif=80, webp=85)
 
