@@ -48,6 +48,7 @@ process.env.GIT_SSH_COMMAND = 'ssh -i /somebody/elses/key';
 process.env.GIT_CONFIG_COUNT = '1';
 process.env.GIT_CONFIG_KEY_0 = 'url.https://github.com/.insteadOf';
 process.env.GIT_CONFIG_VALUE_0 = 'git@github.com:';
+process.env.GIT_COMMON_DIR = path.join(home, 'someone-elses-repo', '.git');
 const fakeGitHub = await startFakeGitHub();
 
 const nativeDir = path.join(home, 'native-bin');
@@ -1364,11 +1365,11 @@ test('a GitHub account signs in, sets up SSH and clones over it in a visible ses
   const git = runs.find((r) => r.tool === 'git');
   assert.equal(git.args.length, 5);
   assert.deepEqual([git.args[0], git.args[1], git.args[3], git.args[4]], ['clone', '--config', 'git@github.com:octo-cat/agent-guild.git', path.join(parent, 'agent-guild')]);
-  assert.match(git.args[2], /^core\.sshCommand='[^']*ssh[^']*' '-F' .* '-o' 'IdentitiesOnly=yes' '-o' 'BatchMode=yes' '-o' 'StrictHostKeyChecking=yes' '-o' 'UserKnownHostsFile="[^"]+known_hosts"'$/);
+  assert.match(git.args[2], /^core\.sshCommand='[^']*ssh[^']*' '-F' .* '-o' 'IdentitiesOnly=yes' '-o' 'BatchMode=yes' '-o' 'StrictHostKeyChecking=yes' '-o' 'GlobalKnownHostsFile=none' '-o' 'UserKnownHostsFile="[^"]+known_hosts"'$/);
   const gitEnv = Object.fromEntries(Object.entries(git.env).map(([k, v]) => [k.toUpperCase(), v]));
   assert.equal(gitEnv.GIT_CONFIG_GLOBAL, path.join(data, 'clone.gitconfig'));
   assert.equal(gitEnv.GIT_CONFIG_SYSTEM, path.join(data, 'clone.gitconfig'));
-  for (const key of ['GIT_SSH_COMMAND', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0']) assert.equal(gitEnv[key], undefined, key);
+  for (const key of ['GIT_SSH_COMMAND', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0', 'GIT_COMMON_DIR']) assert.equal(gitEnv[key], undefined, key);
 
   const after = await call('GET', `/github/accounts/4242/repos?parent=${encodeURIComponent(parent)}`);
   assert.equal(after.body.repos.repos[0].local, 'cloned');

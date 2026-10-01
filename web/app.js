@@ -1869,7 +1869,10 @@ function setGitHub(github) {
   const before = state.github?.signIn;
   state.github = github;
   const done = github.signIn?.status === 'done' && before?.status === 'pending' ? github.signIn : null;
-  if (done) selectGitHubAccount(done.accountId);
+  if (done) {
+    selectGitHubAccount(done.accountId);
+    Object.assign(githubView, { repos: null, reposFor: null, error: null });
+  }
   if (!githubAccount()) selectGitHubAccount(github.accounts[0]?.id ?? null);
   const account = githubAccount();
   if (done && account) {

@@ -96,7 +96,7 @@ test('repository names, remotes and clone targets are recognised strictly', () =
 
 test('core.sshCommand is one shell-quoted value that survives spaces, apostrophes, percent signs and Windows paths', () => {
   const posix = sshCommand({ ssh: '/usr/bin/ssh', key: "/data/Jo's files/keys/agent-guild-github-7", knownHosts: '/data/Jo\'s files/known_hosts', config: '/data/a b/ssh_config', platform: 'linux' });
-  assert.equal(posix, "'/usr/bin/ssh' '-F' '/data/a b/ssh_config' '-o' 'IdentityFile=\"/data/Jo'\\''s files/keys/agent-guild-github-7\"' '-o' 'IdentitiesOnly=yes' '-o' 'BatchMode=yes' '-o' 'StrictHostKeyChecking=yes' '-o' 'UserKnownHostsFile=\"/data/Jo'\\''s files/known_hosts\"'");
+  assert.equal(posix, "'/usr/bin/ssh' '-F' '/data/a b/ssh_config' '-o' 'IdentityFile=\"/data/Jo'\\''s files/keys/agent-guild-github-7\"' '-o' 'IdentitiesOnly=yes' '-o' 'BatchMode=yes' '-o' 'StrictHostKeyChecking=yes' '-o' 'GlobalKnownHostsFile=none' '-o' 'UserKnownHostsFile=\"/data/Jo'\\''s files/known_hosts\"'");
   const windows = sshCommand({
     ssh: 'C:\\Windows\\System32\\OpenSSH\\ssh.exe',
     key: 'C:\\Users\\Jo Ann\\AppData\\Roaming\\AgentGuild\\github\\keys\\agent-guild-github-7',
@@ -104,7 +104,7 @@ test('core.sshCommand is one shell-quoted value that survives spaces, apostrophe
     config: 'C:\\Users\\Jo Ann\\AppData\\Roaming\\AgentGuild\\github\\ssh_config',
     platform: 'win32',
   });
-  assert.equal(windows, "'C:/Windows/System32/OpenSSH/ssh.exe' '-F' 'C:/Users/Jo Ann/AppData/Roaming/AgentGuild/github/ssh_config' '-o' 'IdentityFile=\"C:/Users/Jo Ann/AppData/Roaming/AgentGuild/github/keys/agent-guild-github-7\"' '-o' 'IdentitiesOnly=yes' '-o' 'BatchMode=yes' '-o' 'StrictHostKeyChecking=yes' '-o' 'UserKnownHostsFile=\"C:/Users/Jo Ann/AppData/Roaming/AgentGuild/github/known_hosts\"'");
+  assert.equal(windows, "'C:/Windows/System32/OpenSSH/ssh.exe' '-F' 'C:/Users/Jo Ann/AppData/Roaming/AgentGuild/github/ssh_config' '-o' 'IdentityFile=\"C:/Users/Jo Ann/AppData/Roaming/AgentGuild/github/keys/agent-guild-github-7\"' '-o' 'IdentitiesOnly=yes' '-o' 'BatchMode=yes' '-o' 'StrictHostKeyChecking=yes' '-o' 'GlobalKnownHostsFile=none' '-o' 'UserKnownHostsFile=\"C:/Users/Jo Ann/AppData/Roaming/AgentGuild/github/known_hosts\"'");
   const percent = sshArgs({ key: '/50%/k', knownHosts: '/100%/kh', config: '/c', platform: 'linux' });
   assert.ok(percent.includes('IdentityFile="/50%%/k"') && percent.includes('UserKnownHostsFile="/100%%/kh"'), 'ssh expands %-tokens in both options');
   assert.throws(() => sshArgs({ key: '/x${HOME}/k', knownHosts: '/kh', config: '/c', platform: 'linux' }), { code: 'ssh_path_unsupported' });
@@ -137,7 +137,8 @@ test('small parsers: Link pagination, repositories, scopes and the clone environ
   for (const key of ['GIT_SSH_COMMAND', 'GIT_SSH', 'GIT_SSH_VARIANT', 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_PARAMETERS', 'GIT_CONFIG_GLOBAL', 'git_ssh_command']) {
     assert.equal(dropsFromCloneEnv(key), true, key);
   }
-  for (const key of ['PATH', 'HOME', 'GIT_AUTHOR_NAME', 'GIT_TERMINAL_PROMPT']) assert.equal(dropsFromCloneEnv(key), false, key);
+  for (const key of ['GIT_COMMON_DIR', 'GIT_INDEX_VERSION', 'GIT_AUTHOR_NAME']) assert.equal(dropsFromCloneEnv(key), true, key);
+  for (const key of ['PATH', 'HOME', 'SSH_AUTH_SOCK', 'DIGIT_X']) assert.equal(dropsFromCloneEnv(key), false, key);
 });
 
 test('device-flow sign-in waits out pending and slow_down answers, then keeps the account by id without exposing its token', async () => {
@@ -423,4 +424,36 @@ test('a new repository is created under the account or one of its organizations 
   for (const name of ['', 'a b', '..', 'x.git', '-x/']) {
     await assert.rejects(ctx.hub.createRepo(account.id, { owner: 'octo-cat', name }), { code: 'bad_repo' }, name);
   }
+});
+
+test('an approved sign-in that finishes after a newer one for the same user keeps a single account', async () => {
+  const ctx = await setup();
+  const online = ctx.hub.fetchImpl;
+  let release;
+  let holding = false;
+  const held = new Promise((resolve) => { release = resolve; });
+  ctx.hub.fetchImpl = async (url, init) => {
+    if (new URL(url).pathname.startsWith('/avatar/') && !holding) {
+      holding = true;
+      await held;
+    }
+    return online(url, init);
+  };
+  await ctx.hub.startSignIn();
+  await waitFor(() => holding, 'the first sign-in fetching its avatar');
+  ctx.hub.cancelSignIn();
+  await ctx.hub.startSignIn();
+  await waitFor(() => ctx.hub.signIn?.status === 'done', 'second sign-in');
+  release();
+  await waitFor(() => ctx.github.state.requests.filter((r) => r === 'GET /user').length >= 2 && ctx.updates.length > 0, 'first sign-in finished');
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.deepEqual(ctx.hub.accounts.map((a) => a.id), [4242]);
+  ctx.hub.signOut(4242);
+  assert.deepEqual(ctx.hub.snapshot().accounts, []);
+
+  const file = path.join(ctx.root, 'data', 'github', 'accounts.json');
+  const stored = { accounts: [{ id: 5, login: 'a', token: { access: 'x' } }, { id: 5, login: 'a', token: { access: 'y' } }] };
+  fs.writeFileSync(file, JSON.stringify(stored));
+  const reloaded = new GitHub({ dir: path.join(ctx.root, 'data', 'github'), registry: { env: {}, platform: process.platform } });
+  assert.deepEqual(reloaded.accounts.map((a) => a.token.access), ['y'], 'duplicates written by an older version collapse to one');
 });

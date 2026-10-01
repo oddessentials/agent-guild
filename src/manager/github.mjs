@@ -45,16 +45,9 @@ const ACCOUNT_ID_RE = /^[1-9]\d{0,15}$/;
 const GREETING = /Hi ([^!\s]+)! You've successfully authenticated/;
 const KEY_FAILURES = new Set(['ssh_key_manual', 'ssh_wrong_account', 'ssh_host_key', 'ssh_key_in_use', 'ssh_key_failed', 'ssh_unavailable', 'ssh_path_unsupported']);
 
-/** Variables that would change what `git clone` does or which SSH it runs; GIT_CONFIG_* is matched by prefix. */
-const CLONE_ENV_DROP = new Set([
-  'GIT_SSH', 'GIT_SSH_COMMAND', 'GIT_SSH_VARIANT', 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY',
-  'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_NAMESPACE', 'GIT_CEILING_DIRECTORIES', 'GIT_DISCOVERY_ACROSS_FILESYSTEM',
-  'GIT_TEMPLATE_DIR', 'GIT_PROTOCOL', 'GIT_EXEC_PATH', 'GIT_PROXY_COMMAND', 'GIT_ALLOW_PROTOCOL', 'GIT_PROTOCOL_FROM_USER',
-]);
-
+/** Every inherited GIT_* variable is dropped: several (GIT_DIR, GIT_COMMON_DIR, GIT_SSH_COMMAND, ...) redirect a clone. */
 export function dropsFromCloneEnv(key) {
-  const name = key.toUpperCase();
-  return CLONE_ENV_DROP.has(name) || name.startsWith('GIT_CONFIG');
+  return key.toUpperCase().startsWith('GIT_');
 }
 
 function refusal(status, code, message, extra = {}) {
@@ -137,6 +130,7 @@ export function sshArgs({ key, knownHosts, config, platform = process.platform }
     '-o', 'IdentitiesOnly=yes',
     '-o', 'BatchMode=yes',
     '-o', 'StrictHostKeyChecking=yes',
+    '-o', 'GlobalKnownHostsFile=none',
     '-o', sshFileOption('UserKnownHostsFile', knownHosts, platform),
   ];
 }
@@ -255,7 +249,8 @@ export class GitHub extends EventEmitter {
     try { raw = fs.readFileSync(this.file, 'utf8'); } catch { return []; }
     try {
       const list = JSON.parse(raw)?.accounts;
-      return Array.isArray(list) ? list.filter((a) => Number.isSafeInteger(a?.id) && typeof a.login === 'string' && a.token?.access) : [];
+      const valid = Array.isArray(list) ? list.filter((a) => Number.isSafeInteger(a?.id) && typeof a.login === 'string' && a.token?.access) : [];
+      return [...new Map(valid.map((a) => [a.id, a])).values()];
     } catch (err) {
       console.warn(`[github] ${this.file} could not be read (${err.message}); starting without GitHub accounts`);
       return [];
@@ -551,9 +546,9 @@ export class GitHub extends EventEmitter {
     const user = await res.json();
     if (!Number.isSafeInteger(user?.id) || typeof user.login !== 'string') throw refusal(502, 'github_error', 'GitHub sent no user for the sign-in');
     const scopes = res.headers.has('x-oauth-scopes') ? parseScopes(res.headers.get('x-oauth-scopes')) : parseScopes(tokenBody.scope);
+    const avatar = await this._avatar(user.avatar_url).catch(() => null);
     const existing = this.accounts.find((a) => a.id === user.id);
-    const avatar = await this._avatar(user.avatar_url).catch(() => existing?.avatar ?? null);
-    const fields = { login: user.login, name: typeof user.name === 'string' && user.name.trim() ? user.name.trim().slice(0, 100) : null, avatar, scopes, token, needsSignIn: false };
+    const fields = { login: user.login, name: typeof user.name === 'string' && user.name.trim() ? user.name.trim().slice(0, 100) : null, avatar: avatar ?? existing?.avatar ?? null, scopes, token, needsSignIn: false };
     let account;
     if (existing) {
       account = Object.assign(existing, fields);
