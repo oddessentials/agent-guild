@@ -308,14 +308,28 @@ function readGeminiKeychainItem(platform) {
   return runSpec(spec, { timeoutMs: 30000 }).then((r) => r.stdout, () => null);
 }
 
+/** Gemini CLI's own storage choice, read from the environment the tool runs with. */
+export function geminiStorageMode(env = process.env) {
+  return { encrypted: env.GEMINI_FORCE_ENCRYPTED_FILE_STORAGE === 'true', fileStorage: env.GEMINI_FORCE_FILE_STORAGE === 'true' };
+}
+
+/**
+ * Reads the sign-in from where Gemini CLI keeps it: oauth_creds.json, or
+ * with GEMINI_FORCE_ENCRYPTED_FILE_STORAGE the OS keychain item, or its
+ * encrypted file when GEMINI_FORCE_FILE_STORAGE is set or the keychain has
+ * no item, falling back to oauth_creds.json as the tool itself migrates it.
+ */
 export async function readGeminiCredentials({
   file = geminiCredentialsFile(),
   keychainFile = geminiKeychainFile(),
   platform = process.platform,
+  encrypted = false,
+  fileStorage = false,
   readKeychain = readGeminiKeychainItem,
   readFileKeychain = readGeminiFileKeychain,
 } = {}) {
-  const raw = (await readKeychain(platform)) || (await readFileKeychain(keychainFile));
+  let raw = null;
+  if (encrypted) raw = (!fileStorage && await readKeychain(platform)) || await readFileKeychain(keychainFile);
   if (raw && raw.trim()) {
     let item;
     try { item = JSON.parse(raw); } catch { throw new UsageError('Gemini CLI credentials could not be parsed'); }
@@ -547,13 +561,11 @@ export class UsageMonitor {
         signedIn = true;
         result = await fetchCodexUsage({ ...creds, fetchImpl: this.fetchImpl });
       } else if (provider.usage === 'gemini') {
-        // The keychain item has one fixed name, so it can only belong to the
-        // tool's own home; an account with its own home is read from there.
         const creds = await this.readers.gemini({
           file: geminiCredentialsFile(env),
           keychainFile: geminiKeychainFile(env),
           platform: this.platform,
-          ...(account.dir ? { readKeychain: async () => null } : {}),
+          ...geminiStorageMode(env),
         });
         signedIn = true;
         // The refreshed token, project and plan belong to one sign-in; a new

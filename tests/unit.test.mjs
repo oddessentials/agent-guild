@@ -15,7 +15,7 @@ import { shimContents, writeReportShims, prependPath, fileUrl, SHIM_NAME, LOADER
 import { execFileSync } from 'node:child_process';
 import { parseVersion, compareVersions, probeVersion, diagnosticLine, latestVersion } from '../src/manager/versions.mjs';
 import {
-  UsageMonitor, UsageError, readClaudeCredentials, readCodexCredentials, readGeminiCredentials, readGeminiFileKeychain, geminiFileKey, geminiOAuthClientFromInstall, geminiKeychainLookup,
+  UsageMonitor, UsageError, readClaudeCredentials, readCodexCredentials, readGeminiCredentials, readGeminiFileKeychain, geminiFileKey, geminiStorageMode, geminiOAuthClientFromInstall, geminiKeychainLookup,
   claudeKeychainService, claudeCredentialsFile, fetchClaudeUsage, fetchCodexUsage, fetchGeminiUsage, commandUsage, toIso, windowLabel, clampPercent,
 } from '../src/manager/usage.mjs';
 import {
@@ -1010,16 +1010,22 @@ test('usage credentials are read from the tools\' own sign-in files', async () =
 test('Gemini CLI credentials come from the keychain item or the legacy file, and usage from Code Assist', async () => {
   const dir = tempDir();
   const legacyFile = path.join(dir, 'oauth_creds.json');
+  const keychainFile = path.join(dir, 'gemini-credentials.json');
   const none = async () => null;
-  await assert.rejects(readGeminiCredentials({ file: legacyFile, platform: 'linux', readKeychain: none }), /not signed in/);
+  const read = (overrides) => readGeminiCredentials({ file: legacyFile, keychainFile, platform: 'linux', readKeychain: none, ...overrides });
+  await assert.rejects(read(), /not signed in/);
   const fakeClient = { id: '12345-abc.apps.googleusercontent.com', secret: 'GOCSPX-fake' };
   fs.writeFileSync(legacyFile, JSON.stringify({ access_token: 'legacy', refresh_token: 'r1', expiry_date: 1893456000000, client_id: fakeClient.id, client_secret: fakeClient.secret }));
-  assert.deepEqual(await readGeminiCredentials({ file: legacyFile, platform: 'linux', readKeychain: none }),
-    { accessToken: 'legacy', refreshToken: 'r1', expiresAt: 1893456000000, client: fakeClient });
+  assert.deepEqual(await read(), { accessToken: 'legacy', refreshToken: 'r1', expiresAt: 1893456000000, client: fakeClient });
   const item = JSON.stringify({ serverName: 'main-account', token: { accessToken: 'kc', refreshToken: 'r2', expiresAt: 1893456000000, tokenType: 'Bearer' } });
-  assert.deepEqual(await readGeminiCredentials({ file: legacyFile, platform: 'darwin', readKeychain: async () => item }),
-    { accessToken: 'kc', refreshToken: 'r2', expiresAt: 1893456000000, client: null }, 'the keychain item wins over the legacy file');
-  await assert.rejects(readGeminiCredentials({ file: legacyFile, platform: 'darwin', readKeychain: async () => 'not json' }), /parsed/);
+  const keychain = async () => item;
+  assert.deepEqual(await read({ platform: 'darwin', readKeychain: keychain, encrypted: true }),
+    { accessToken: 'kc', refreshToken: 'r2', expiresAt: 1893456000000, client: null }, 'with encrypted storage the keychain item wins over the legacy file');
+  assert.equal((await read({ platform: 'darwin', readKeychain: keychain })).accessToken, 'legacy', 'without it the keychain is not consulted, as in Gemini CLI');
+  assert.equal((await read({ platform: 'darwin', readKeychain: keychain, encrypted: true, fileStorage: true })).accessToken, 'legacy', 'forced file storage skips the keychain too');
+  assert.deepEqual(geminiStorageMode({ GEMINI_FORCE_ENCRYPTED_FILE_STORAGE: 'true', GEMINI_FORCE_FILE_STORAGE: 'true' }), { encrypted: true, fileStorage: true });
+  assert.deepEqual(geminiStorageMode({ GEMINI_FORCE_ENCRYPTED_FILE_STORAGE: 'false' }), { encrypted: false, fileStorage: false });
+  await assert.rejects(read({ platform: 'darwin', readKeychain: async () => 'not json', encrypted: true }), /parsed/);
   // keytar, which Gemini CLI stores through, labels libsecret items with "service" and "account".
   assert.deepEqual(geminiKeychainLookup('linux'), { file: 'secret-tool', args: ['lookup', 'service', 'gemini-cli-oauth', 'account', 'main-account'] });
   assert.deepEqual(geminiKeychainLookup('darwin').args, ['find-generic-password', '-s', 'gemini-cli-oauth', '-a', 'main-account', '-w']);
@@ -1109,9 +1115,12 @@ test('Gemini CLI\'s encrypted credentials file is read like its keychain item', 
   assert.equal(await readGeminiFileKeychain(keychainFile, { key }), JSON.stringify(item));
   fs.writeFileSync(legacyFile, JSON.stringify({ access_token: 'legacy', refresh_token: 'r1' }));
   const none = async () => null;
-  const read = (overrides) => readGeminiCredentials({ file: legacyFile, keychainFile, platform: 'linux', readKeychain: none, readFileKeychain: (file) => readGeminiFileKeychain(file, { key }), ...overrides });
+  const read = (overrides) => readGeminiCredentials({ file: legacyFile, keychainFile, platform: 'linux', encrypted: true, readKeychain: none, readFileKeychain: (file) => readGeminiFileKeychain(file, { key }), ...overrides });
   assert.deepEqual(await read(), { accessToken: 'enc', refreshToken: 'r9', expiresAt: 1893456000000, client: null }, 'the file item wins over oauth_creds.json');
-  assert.equal((await read({ readKeychain: async () => JSON.stringify({ token: { accessToken: 'os' } }) })).accessToken, 'os', 'the OS keychain wins over the file');
+  assert.equal((await read({ encrypted: false })).accessToken, 'legacy', 'without encrypted storage only oauth_creds.json counts, as in Gemini CLI');
+  const os = async () => JSON.stringify({ token: { accessToken: 'os' } });
+  assert.equal((await read({ readKeychain: os })).accessToken, 'os', 'the OS keychain wins over the file');
+  assert.equal((await read({ readKeychain: os, fileStorage: true })).accessToken, 'enc', 'unless file storage is forced');
   fs.writeFileSync(keychainFile, seal({ 'gemini-cli-oauth': { other: '{}' } }));
   assert.equal((await read()).accessToken, 'legacy', 'a file without the main account falls through');
   fs.writeFileSync(keychainFile, seal({ 'gemini-cli-oauth': { 'main-account': JSON.stringify(item) } }, geminiFileKey({ hostname: 'other', username: 'me' })));
@@ -1417,15 +1426,15 @@ test('usage is read per account, from that account\'s home folder only', async (
   const monitor = new UsageMonitor({
     registry,
     platform: 'linux',
-    env: { PATH: '', CLAUDE_CONFIG_DIR: claudeHome },
+    env: { PATH: '', CLAUDE_CONFIG_DIR: claudeHome, GEMINI_FORCE_ENCRYPTED_FILE_STORAGE: 'false' },
     fetchImpl: async (url) => {
       if (url.endsWith(':loadCodeAssist')) return { ok: true, json: async () => ({ cloudaicompanionProject: 'proj-1', currentTier: { name: 'Free' } }) };
       if (url.endsWith(':retrieveUserQuota')) return { ok: true, json: async () => ({ buckets: [{ modelId: 'gemini-2.5-pro', remainingFraction: 0.5 }] }) };
       return { ok: true, json: async () => ({ five_hour: { utilization: 5 } }) };
     },
     readers: {
-      gemini: async ({ file, keychainFile, platform, readKeychain }) => {
-        geminiCalls.push({ file, keychainFile, platform, keychain: readKeychain ? await readKeychain(platform) : 'default' });
+      gemini: async ({ file, keychainFile, encrypted, fileStorage, readKeychain }) => {
+        geminiCalls.push({ file, keychainFile, encrypted, fileStorage, readKeychain });
         if (file.includes('accounts')) throw Object.assign(new UsageError('Gemini CLI is not signed in on this machine'), { notSignedIn: true });
         return { accessToken: 'g', refreshToken: null, expiresAt: Date.now() + 3600000 };
       },
@@ -1442,7 +1451,8 @@ test('usage is read per account, from that account\'s home folder only', async (
   assert.deepEqual(byKey['anthropic/work'].windows, []);
   assert.equal(byKey['google/default'].signedIn, true);
   assert.equal(byKey['google/work'].signedIn, false);
-  assert.deepEqual(geminiCalls.map((c) => c.keychain), ['default', null], 'only the tool\'s own home consults the keychain');
+  assert.deepEqual(geminiCalls.map((c) => [c.encrypted, c.fileStorage]), [[false, false], [false, true]], 'an account with its own folder never reads the shared keychain item');
+  assert.ok(geminiCalls.every((c) => c.readKeychain === undefined), 'the storage choice comes from the environment, as in Gemini CLI');
   assert.equal(geminiCalls[0].file, path.join(os.homedir(), '.gemini', 'oauth_creds.json'));
   assert.equal(geminiCalls[1].file, path.join(accountsDir, 'google', 'work', '.gemini', 'oauth_creds.json'));
   assert.equal(geminiCalls[1].keychainFile, path.join(accountsDir, 'google', 'work', '.gemini', 'gemini-credentials.json'));

@@ -164,7 +164,8 @@ coding tool in `tests/fixtures`. CI runs them on Windows, macOS and Linux.
 ## Current limits
 
 * Sessions end when the manager stops or the computer restarts.
-* Gemini CLI usage meters read its sign-in from `oauth_creds.json`, from
-  its encrypted credentials file, or from the OS keychain on macOS and on
-  Linux with `secret-tool`; a sign-in kept in the Windows Credential
-  Manager cannot be read.
+* Gemini CLI usage meters read its sign-in where Gemini CLI keeps it:
+  `oauth_creds.json`, or with `GEMINI_FORCE_ENCRYPTED_FILE_STORAGE=true`
+  the OS keychain (macOS, or Linux with `secret-tool`) or its encrypted
+  credentials file. A sign-in kept in the Windows Credential Manager
+  cannot be read.
