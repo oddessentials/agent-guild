@@ -8,10 +8,15 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 
 export const DEFAULT_PORT = 47821;
 export const DEFAULT_HOST = '127.0.0.1';
-export const VERSION = JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version;
+/** The package.json the manager runs from; an upgrade replaces it in place. */
+export const PACKAGE_FILE = fileURLToPath(new URL('../../package.json', import.meta.url));
+const packageJson = JSON.parse(fs.readFileSync(PACKAGE_FILE, 'utf8'));
+export const VERSION = packageJson.version;
+export const PACKAGE_NAME = packageJson.name;
 
 /** Per-user data directory. Override with AGENT_GUILD_HOME (used by tests). */
 export function dataDir() {

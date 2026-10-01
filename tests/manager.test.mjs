@@ -80,6 +80,7 @@ const npmRegistry = http.createServer((req, res) => {
   registryRequests.push(req.url);
   const manifests = {
     '/fake-tool-pkg/latest': { name: 'fake-tool-pkg', version: '9.9.9' },
+    '/@oddessentials%2fagent-guild/latest': { name: '@oddessentials/agent-guild', version: '9.9.9' },
     '/racy-pkg/latest': { name: 'racy-pkg', version: '2.0.0', optionalDependencies: { [racyBuild]: `npm:racy-pkg@2.0.0-${process.platform}-${process.arch}` } },
   };
   const known = manifests[req.url];
@@ -111,12 +112,16 @@ fs.writeFileSync(path.join(home, 'providers.json'), JSON.stringify({
 
 const { startManager } = await import('../src/manager/main.mjs');
 
+// The manager runs as a released version, from package files an upgrade can replace.
+const packageFile = path.join(home, 'package.json');
+fs.writeFileSync(packageFile, JSON.stringify({ name: '@oddessentials/agent-guild', version: '1.0.0' }));
+
 let ctx;
 let base;
 let token;
 
 before(async () => {
-  ctx = await startManager({ sessionDefaults: { doneAgentLingerMs: 200, activityIdleMs: 200, killGraceMs: 500 } });
+  ctx = await startManager({ version: '1.0.0', packageFile, sessionDefaults: { doneAgentLingerMs: 200, activityIdleMs: 200, killGraceMs: 500 } });
   base = ctx.api.url;
   token = ctx.token;
 });
@@ -268,7 +273,56 @@ test('the web page and xterm assets are served', async () => {
   assert.match(await page.text(), /Agent Guild/);
   assert.equal((await fetch(`${base}/vendor/xterm/xterm.js`)).status, 200);
   assert.equal((await fetch(`${base}/app.js`)).status, 200);
+  assert.equal((await fetch(`${base}/theme.js`)).status, 200);
   assert.equal((await fetch(`${base}/..%2fpackage.json`)).status, 404);
+});
+
+test('the manager offers its own upgrade in a visible npm session', async () => {
+  const events = new Client(`${base.replace('http', 'ws')}/api/v1/events?token=${token}`);
+  await events.opened;
+  const hello = await waitFor(() => events.messages.find((m) => m.type === 'hello'), { label: 'hello' });
+  assert.equal(hello.upgrade.version, '1.0.0');
+
+  const info = await waitFor(async () => {
+    const { body } = await call('GET', '/info');
+    return body.upgrade.latestVersion ? body.upgrade : null;
+  }, { label: 'self version check' });
+  assert.equal(info.latestVersion, '9.9.9');
+  assert.equal(info.available, true);
+  assert.ok(info.command.endsWith(`install -g @oddessentials/agent-guild@9.9.9 --registry ${process.env.AGENT_GUILD_NPM_REGISTRY}`), info.command);
+  assert.equal(info.pendingVersion, null);
+  assert.equal(info.lastInstall, null);
+
+  const { status, body } = await call('POST', '/upgrade');
+  assert.equal(status, 201, JSON.stringify(body));
+  assert.equal(body.session.task, 'upgrade');
+  assert.equal(body.session.name, 'Upgrade Agent Guild to 9.9.9');
+  assert.equal(body.session.provider.id, 'agent-guild');
+  const client = terminal(body.session.id);
+  await client.opened;
+  await waitForText(client, body.session.id, `FAKE-NPM install -g @oddessentials/agent-guild@9.9.9 --registry ${process.env.AGENT_GUILD_NPM_REGISTRY}`, 'npm output');
+  await waitFor(() => client.messages.find((m) => m.type === 'exit'), { label: 'npm exit' });
+  const result = await waitFor(() => events.messages.find((m) => m.type === 'manager.upgrade' && m.upgrade.lastInstall), { label: 'manager.upgrade' });
+  assert.equal(result.upgrade.lastInstall.outcome, 'unchanged', 'the fake npm did not replace the package files');
+  assert.equal(result.upgrade.lastInstall.exitCode, 0);
+  assert.equal(result.upgrade.available, true, 'the upgrade stays on offer');
+  await client.close();
+  await call('DELETE', `/sessions/${body.session.id}`);
+
+  // Once npm has replaced the files, the new version waits for a restart.
+  fs.writeFileSync(packageFile, JSON.stringify({ name: '@oddessentials/agent-guild', version: '9.9.9' }));
+  try {
+    const pending = (await call('GET', '/info')).body.upgrade;
+    assert.equal(pending.pendingVersion, '9.9.9');
+    assert.equal(pending.available, false);
+    const refused = await call('POST', '/upgrade');
+    assert.equal(refused.status, 400);
+    assert.equal(refused.body.error.code, 'not_updatable');
+    assert.match(refused.body.error.message, /restart the manager/);
+  } finally {
+    fs.writeFileSync(packageFile, JSON.stringify({ name: '@oddessentials/agent-guild', version: '1.0.0' }));
+  }
+  await events.close();
 });
 
 test('providers report availability', async () => {

@@ -36,6 +36,12 @@ coding tool, and see at a glance which sessions and agents are working.
   not survive a computer restart. **Stop manager** in the top bar stops the
   manager and ends every session; it asks first while any session is still
   running.
+* **Stay current.** When a newer Agent Guild is on npm, an **Upgrade**
+  button appears in the top bar and runs `npm install -g` in a session you
+  can watch. Sessions keep running; stop the manager and run `agent-guild
+  open` to use the new version.
+* **Light or dark.** The page follows your system theme and the top-bar
+  toggle switches it. The guild artwork is the dark theme.
 
 ## Requirements
 
@@ -106,10 +112,11 @@ one platform under a `win32` or `darwin` key. See
 The page's "Working folder" field sets where new sessions start. It defaults
 to your home folder.
 
-Version checks ask the registry from npm's global configuration (the one
-`npm install -g` uses) about once an hour, and installs use the same
-registry. Set `AGENT_GUILD_NPM_REGISTRY` to override it for both, or
-`AGENT_GUILD_NO_UPDATE_CHECK=1` to skip the checks.
+Version checks, for the tools and for Agent Guild itself, ask the registry
+from npm's global configuration (the one `npm install -g` uses) about once
+an hour, and installs use the same registry. Set `AGENT_GUILD_NPM_REGISTRY`
+to override it for both, or `AGENT_GUILD_NO_UPDATE_CHECK=1` to skip the
+checks.
 
 ## Show agents and models
 

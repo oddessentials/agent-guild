@@ -179,15 +179,60 @@ rather than shown as unused. Snapshots are cached for a minute.
   after a short pause.
 * `resume` is the id of the tool's own session that was resumed, or null.
 * `task` is `install` for a session that runs npm to install or update the
-  provider's tool, and null for a session that runs the tool itself.
+  provider's tool, `upgrade` for the session that runs npm to upgrade the
+  manager itself (its `provider` is a stand-in with id `agent-guild`), and
+  null for a session that runs the tool itself.
 * `account` is the provider account the tool runs under, or null for an
-  install session.
+  install or upgrade session.
 * `model` is the main model the tool is using, or null while unknown.
   `source` is `report` when the tool said so (see
   [agent-reporting.md](agent-reporting.md)), `screen` when the name was
   matched on the terminal screen by the provider's `modelPattern`, or `args`
   when it came from a `--model` argument. Reports win over the screen, which
   wins over arguments.
+
+### Upgrade
+
+The manager's own version check, in `GET /info`, the `hello` message and
+`manager.upgrade` events.
+
+```json
+{
+  "version": "1.2.0",
+  "latestVersion": "1.3.0",
+  "available": true,
+  "command": "/usr/local/bin/npm install -g @oddessentials/agent-guild@1.3.0",
+  "guidance": null,
+  "pendingVersion": null,
+  "installing": false,
+  "lastInstall": null
+}
+```
+
+`version` is the running manager. `latestVersion` comes from the same npm
+registry as the provider checks, about once an hour, and is null until the
+first check finishes or while the manager is a development build
+(`0.0.0-development`), which is never offered an upgrade. `available` is true
+when a newer release exists that is not yet installed; `command` is then
+what `POST /upgrade` runs, or null with `guidance` when npm is not on PATH.
+`pendingVersion` is a newer version whose files are already on disk: the
+manager runs from the package npm replaces in place, so after an upgrade the
+running process is still the old version until it is restarted
+(`agent-guild stop`, then `agent-guild open`). `lastInstall` describes the
+last upgrade session: `{ outcome, exitCode, version, installedVersion, at }`
+with `outcome` `installed`, `failed`, or `unchanged` when npm exited cleanly
+but did not replace the files the manager runs from. It is dropped once a
+newer release appears or the files on disk change. After a `failed`
+upgrade the files on disk are not trusted, since npm may have replaced
+`package.json` before it was stopped: `pendingVersion` is null and
+`available` stays true for the same release, so it can be run again. That
+holds even once a newer release has replaced the `failed` record, until an
+upgrade completes or the files on disk change. A check that fails keeps
+the release already known. `installing` is true from the start of an upgrade
+session until its npm process has exited, even if the session was removed
+meanwhile; `available` and `pendingVersion` are withheld during that time,
+because the files on disk are mid-replacement, and `POST /upgrade` answers
+409 `upgrade_in_progress`.
 
 ### Agent
 
@@ -223,7 +268,8 @@ All paths are under `/api/v1`.
 | Method | Path | Body | Result |
 | --- | --- | --- | --- |
 | GET | `/health` | | `{ ok, name, version, pid }`. No token needed. |
-| GET | `/info` | | Manager version, platform, start time, provider config warnings. |
+| GET | `/info` | | Manager version, platform, start time, provider config warnings, and `upgrade` (an Upgrade object). |
+| POST | `/upgrade` | | `201 { session }`: a session with `task` `upgrade` running the Upgrade `command`. 400 `not_updatable` when no newer release is known, it is already installed on disk, the manager is a development build, or version checks are off. 409 `npm_unavailable` without npm on PATH. 409 `upgrade_in_progress` while one is running. Sessions keep running; the new version is used after the manager restarts. |
 | GET | `/providers` | | `{ providers: Provider[] }` |
 | POST | `/providers/reload` | | Re-reads `providers.json`. |
 | POST | `/providers/:id/install` | `{ force? }` | `201 { session }`: a session running `npm install -g <package>@<version>`, or `updateCommand` when the tool is installed. 400 `not_updatable` when an installed tool has no `updateCommand`. 503 `release_unresolved` or 409 `release_incomplete` when the release cannot be read or its platform build is not published; nothing is run. 409 `install_in_progress` while one is already running. 409 `provider_in_use` (with `running`, the session count) while the provider's sessions are running, unless `force` is true. |
@@ -265,11 +311,12 @@ This socket pushes changes to every session. It is server-to-client only.
 
 | Message | Meaning |
 | --- | --- |
-| `{ type: "hello", version, sessions }` | Sent first. The full session list. |
+| `{ type: "hello", version, upgrade, sessions }` | Sent first. The full session list and the manager's Upgrade object. |
 | `{ type: "session.created", session }` | A session was started by any client. |
 | `{ type: "session.updated", session }` | Status, activity, agents, name or size changed. |
 | `{ type: "session.removed", sessionId }` | A session was removed. |
 | `{ type: "providers.updated", providers }` | The provider list changed: a version check finished, `providers.json` was reloaded, or an install session ended. |
+| `{ type: "manager.upgrade", upgrade }` | The manager's own version check changed: a newer release was found, or an upgrade session ended. |
 | `{ type: "manager.stopping", running }` | A client asked the manager to stop. `running` sessions are being ended. A client should show that the manager was stopped on purpose, not that it is unreachable. |
 | `{ type: "manager.stopped", remaining }` | The last event before the socket closes. `remaining` is how many session processes had not confirmed their exit when the manager gave up waiting (about five seconds); 0 means every session has ended. A socket that closes after `manager.stopping` without this event means the manager went away before it could confirm. |
 

@@ -54,7 +54,7 @@ export class Session extends EventEmitter {
    * @param {number} opts.rows
    * @param {string} [opts.name]
    * @param {string|null} [opts.resume]  id of the tool's own session being resumed
-   * @param {string|null} [opts.task]    "install" for a package install, else null
+   * @param {string|null} [opts.task]    "install" for a package install, "upgrade" for the manager's own, else null
    * @param {{id: string, label: string}|null} [opts.account]  the tool sign-in the session runs under
    * @param {string} opts.reportToken
    * @param {number} [opts.scrollback]

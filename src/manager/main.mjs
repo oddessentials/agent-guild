@@ -9,10 +9,13 @@ import { SessionManager } from './session-manager.mjs';
 import { UsageMonitor } from './usage.mjs';
 import { ModelStats } from './model-stats.mjs';
 import { createManagerServer } from './server.mjs';
+import { SelfUpdate } from './self-update.mjs';
 import { resolveBaseEnv, pathReader } from './shell-env.mjs';
 import { writeReportShims } from './report-shims.mjs';
 import {
   DEFAULT_HOST,
+  PACKAGE_FILE,
+  PACKAGE_NAME,
   VERSION,
   ensureDataDir,
   loadOrCreateToken,
@@ -27,7 +30,8 @@ const rootDir = path.resolve(here, '../..');
 
 const VERSION_REFRESH_MS = 60 * 60 * 1000;
 
-export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, sessionDefaults } = {}) {
+/** `version` and `packageFile` stand in for the real ones in tests. */
+export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, sessionDefaults, version = VERSION, packageFile = PACKAGE_FILE } = {}) {
   ensureDataDir();
   const token = loadOrCreateToken();
   const baseEnv = resolveBaseEnv();
@@ -51,12 +55,17 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
   });
 
   let api;
-  const manager = new SessionManager({ registry, baseEnv, getApiUrl: () => api.url, sessionDefaults, shimDir });
+  const selfUpdate = new SelfUpdate({ pkg: PACKAGE_NAME, version, packageFile, registry });
+  const manager = new SessionManager({ registry, baseEnv, getApiUrl: () => api.url, sessionDefaults, shimDir, selfUpdate });
   const usage = new UsageMonitor({ registry, env: baseEnv });
   const modelStats = new ModelStats({ registry });
   let closing = null;
 
-  const versionTimer = setInterval(() => registry.refreshVersions().catch(() => {}), VERSION_REFRESH_MS);
+  const refreshVersions = () => {
+    registry.refreshVersions().catch(() => {});
+    selfUpdate.refresh().catch(() => {});
+  };
+  const versionTimer = setInterval(refreshVersions, VERSION_REFRESH_MS);
   versionTimer.unref();
 
   const shutdown = (reason = 'shutdown') => {
@@ -86,7 +95,8 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
     host,
     port,
     webDir,
-    version: VERSION,
+    version,
+    selfUpdate,
     extraOrigins,
     onShutdownRequest: () => shutdown('requested via API').then(() => process.exit(0)),
   });
@@ -106,11 +116,11 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
     host,
     port: api.port,
     url: api.url,
-    version: VERSION,
+    version,
     startedAt: new Date().toISOString(),
   });
-  console.log(`[manager] Agent Guild ${VERSION} listening on ${api.url} (pid ${process.pid})`);
-  registry.refreshVersions().catch(() => {});
+  console.log(`[manager] Agent Guild ${version} listening on ${api.url} (pid ${process.pid})`);
+  refreshVersions();
   return { api, manager, registry, token, shutdown };
 }
 

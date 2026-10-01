@@ -1,11 +1,13 @@
 .level-badge { display: none; }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --gold: #e8c47c;
-    --gold-dim: #8a6d3b;
-    --card-bg: rgba(18, 20, 26, 0.9);
-  }
+/* The guild look is the dark theme. The rules below nest under the theme
+   attribute that theme.js sets on <html>, so they apply whether the user
+   chose dark or the system did. :where() keeps their specificity as it was
+   inside the media query, so styles.css still loses to them only on order. */
+:where(:root[data-theme="dark"]) {
+  --gold: #e8c47c;
+  --gold-dim: #8a6d3b;
+  --card-bg: rgba(18, 20, 26, 0.9);
 
   .provider, .session-card {
     --pc: #a67cf6;
