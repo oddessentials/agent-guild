@@ -2323,6 +2323,8 @@ function connectEvents() {
       sessionsShown = true;
       setUpgrade(msg.upgrade);
       loadNews();
+      // A changelog.updated sent while the socket was down is lost; catch up the open panel.
+      if ($('changelog').open) loadChangelog();
     } else if (msg.type === 'news.updated') {
       loadNews();
     } else if (msg.type === 'changelog.updated') {
