@@ -18,21 +18,20 @@
   color-scheme: light;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0f1115;
-    --surface: #171a21;
-    --surface-2: #1e222b;
-    --border: #2a303b;
-    --text: #e6e9ef;
-    --muted: #9aa4b2;
-    --accent: #7c7cf0;
-    --danger: #ef6b66;
-    --ok: #4cc38a;
-    --warn: #e0a84a;
-    --shadow: none;
-    color-scheme: dark;
-  }
+/* theme.js sets data-theme from the saved choice or the system setting before the first paint. */
+:root[data-theme="dark"] {
+  --bg: #0f1115;
+  --surface: #171a21;
+  --surface-2: #1e222b;
+  --border: #2a303b;
+  --text: #e6e9ef;
+  --muted: #9aa4b2;
+  --accent: #7c7cf0;
+  --danger: #ef6b66;
+  --ok: #4cc38a;
+  --warn: #e0a84a;
+  --shadow: none;
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -162,7 +161,7 @@ main { max-width: 1200px; margin: 0 auto; padding: 20px 16px 48px; display: grid
 .tier-b { --tier: #3b82f6; --tier-ink: #1d4ed8; }
 .tier-c { --tier: #22a35a; --tier-ink: #166534; }
 .tier-d { --tier: #94a3b8; --tier-ink: #475569; }
-@media (prefers-color-scheme: dark) {
+:where(:root[data-theme="dark"]) {
   .tier-s { --tier: #e0b45c; --tier-ink: #f6dea6; }
   .tier-a { --tier: #a78bfa; --tier-ink: #ddd3ff; }
   .tier-b { --tier: #60a5fa; --tier-ink: #cfe3ff; }
@@ -250,7 +249,9 @@ main { max-width: 1200px; margin: 0 auto; padding: 20px 16px 48px; display: grid
 .btn.danger { color: var(--danger); }
 .btn.danger:hover { border-color: var(--danger); }
 .btn:disabled { opacity: 0.6; cursor: progress; }
-.stop-manager { white-space: nowrap; }
+.stop-manager, .theme-toggle, .upgrade { white-space: nowrap; }
+.btn.upgrade { color: var(--warn); border-color: var(--warn); }
+.upgrade-note { font-size: 0.85rem; color: var(--warn); }
 
 .empty { color: var(--muted); margin: 8px 0 0; }
 
@@ -318,7 +319,7 @@ main { max-width: 1200px; margin: 0 auto; padding: 20px 16px 48px; display: grid
 .badge.new { --badge: var(--ok); color: color-mix(in srgb, var(--badge) 72%, #000); }
 .badge.expires { --badge: var(--warn); color: color-mix(in srgb, var(--badge) 62%, #000); }
 .badge.in-use, .badge.new, .badge.expires { border-color: color-mix(in srgb, var(--badge) 45%, transparent); }
-@media (prefers-color-scheme: dark) {
+:where(:root[data-theme="dark"]) {
   .badge.in-use, .badge.new, .badge.expires { color: var(--badge); }
 }
 .model-detail {

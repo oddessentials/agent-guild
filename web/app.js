@@ -4,6 +4,7 @@
 const TOKEN_KEY = 'agentGuild.token';
 const CWD_KEY = 'agentGuild.cwd';
 const ACCOUNTS_KEY = 'agentGuild.accounts';
+const THEME_KEY = 'agentGuild.theme';
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
 const $ = (id) => document.getElementById(id);
@@ -19,6 +20,10 @@ const state = {
   activeId: null,
   eventsSocket: null,
   eventsRetry: 0,
+  /** True while the events socket is open. */
+  connected: false,
+  /** The manager's own version check, from `hello` and `manager.upgrade`. */
+  upgrade: null,
   /** True from a shutdown request until the manager is reachable again. */
   stopping: false,
   /** After a stop: how many session processes did not confirm exiting, or null if the manager never said. */
@@ -45,8 +50,90 @@ function setConnection(kind, label) {
   const el = $('connection');
   el.className = `connection ${kind}`;
   el.querySelector('.label').textContent = label;
-  // The manager can only be stopped while the page can reach it.
-  $('stop-manager').hidden = kind !== 'ok';
+  // The manager can only be stopped or upgraded while the page can reach it.
+  state.connected = kind === 'ok';
+  $('stop-manager').hidden = !state.connected;
+  renderUpgrade();
+}
+
+// ---- theme ----------------------------------------------------------------
+
+/** theme.js applied the saved or system theme before the first paint; this keeps the button in step. */
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  const button = $('theme-toggle');
+  const other = theme === 'dark' ? 'light' : 'dark';
+  button.textContent = theme === 'dark' ? '☀ Light' : '☾ Dark';
+  button.title = `Switch to the ${other} theme`;
+  button.setAttribute('aria-label', `Switch to the ${other} theme`);
+}
+
+function currentTheme() {
+  return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
+}
+
+function toggleTheme() {
+  const theme = currentTheme() === 'dark' ? 'light' : 'dark';
+  save(THEME_KEY, theme);
+  applyTheme(theme);
+}
+
+// ---- upgrading the manager ------------------------------------------------
+
+function renderUpgrade() {
+  const u = state.upgrade;
+  const button = $('upgrade');
+  const note = $('upgrade-note');
+  const offer = Boolean(state.connected && u?.available && u.command);
+  button.hidden = !offer;
+  if (offer) {
+    button.textContent = `Upgrade to ${u.latestVersion}`;
+    button.title = `Run "${u.command}" in a session. Sessions keep running; the new version is used once the manager is restarted.`;
+  }
+  let text = '';
+  let title = '';
+  const last = u?.lastInstall;
+  if (u?.pendingVersion) {
+    text = `v${u.pendingVersion} installed · restart to use it`;
+    title = `Agent Guild ${u.pendingVersion} is installed, but this manager is still ${u.version}. Stop the manager and run "agent-guild open" to use it.`;
+  } else if (last?.outcome === 'failed') {
+    text = last.exitCode === null ? 'Upgrade failed' : `Upgrade failed (exit ${last.exitCode})`;
+    title = 'See the upgrade session for npm\'s output. On Windows, files in use cannot be replaced: stop the manager first and run the command yourself.';
+  } else if (last?.outcome === 'unchanged') {
+    text = 'Upgrade finished, but this copy was not replaced';
+    title = `npm did not replace the files this manager runs from. Run${u.command ? ` "${u.command}"` : ' the npm install'} where Agent Guild is installed.`;
+  } else if (u?.available && !u.command) {
+    text = `v${u.latestVersion} available`;
+    title = u.guidance || '';
+  }
+  note.hidden = !state.connected || !text;
+  note.textContent = text;
+  note.title = title;
+}
+
+function setUpgrade(upgrade) {
+  const before = state.upgrade;
+  state.upgrade = upgrade || null;
+  renderUpgrade();
+  const pending = state.upgrade?.pendingVersion;
+  if (pending && pending !== before?.pendingVersion) {
+    toast(`Agent Guild ${pending} is installed. Stop the manager and run "agent-guild open" to use it.`, 10000);
+  }
+}
+
+async function upgradeManager() {
+  const button = $('upgrade');
+  button.disabled = true;
+  try {
+    const { session } = await api('POST', '/upgrade');
+    upsertSession(session);
+    openPanel(session.id);
+  } catch (err) {
+    if (err instanceof AuthError) return showAuth(err.message);
+    toast(err.message, 8000);
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function relativeTime(iso) {
@@ -1309,6 +1396,9 @@ function connectEvents() {
       state.sessions = new Map(msg.sessions.map((s) => [s.id, s]));
       for (const id of [...state.views.keys()]) if (!state.sessions.has(id)) dropSession(id);
       renderSessions();
+      setUpgrade(msg.upgrade);
+    } else if (msg.type === 'manager.upgrade') {
+      setUpgrade(msg.upgrade);
     } else if (msg.type === 'manager.stopping') {
       enterStopping(msg.running);
     } else if (msg.type === 'manager.stopped') {
@@ -1444,6 +1534,13 @@ $('models-more').addEventListener('click', () => {
   $('models-list').children[before]?.querySelector('.model-toggle')?.focus();
 });
 $('stop-manager').addEventListener('click', () => stopManager());
+$('upgrade').addEventListener('click', upgradeManager);
+$('theme-toggle').addEventListener('click', toggleTheme);
+applyTheme(currentTheme());
+// Follow the system setting until the user picks a theme.
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+  if (!load(THEME_KEY)) applyTheme(e.matches ? 'dark' : 'light');
+});
 $('panel-stop').addEventListener('click', () => {
   const s = state.sessions.get(state.activeId);
   if (!s) return;

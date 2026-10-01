@@ -106,9 +106,11 @@ export function createManagerServer({
   port = 0,
   webDir,
   version = '0.0.0',
+  selfUpdate = null,
   extraOrigins = [],
   onShutdownRequest = () => {},
 }) {
+  const upgradeInfo = () => (selfUpdate ? selfUpdate.describe() : null);
   const startedAt = new Date().toISOString();
   const vendor = vendorFiles();
   let boundPort = port;
@@ -198,6 +200,7 @@ export function createManagerServer({
     requireAuth(req, url);
 
     if (route === '/info' && method === 'GET') {
+      selfUpdate?.refresh().catch(() => {});
       return sendJson(res, 200, {
         name: 'agent-guild',
         version,
@@ -205,7 +208,12 @@ export function createManagerServer({
         platform: process.platform,
         startedAt,
         warnings: registry.warnings,
+        upgrade: upgradeInfo(),
       });
+    }
+    if (route === '/upgrade' && method === 'POST') {
+      const session = await manager.upgrade();
+      return sendJson(res, 201, { session: session.toJSON() });
     }
     if (route === '/providers' && method === 'GET') {
       registry.refreshVersions().catch(() => {});
@@ -333,10 +341,11 @@ export function createManagerServer({
   }
   manager.on('event', broadcast);
   registry.on('updated', () => broadcast({ type: 'providers.updated', providers: registry.list() }));
+  selfUpdate?.on('updated', () => broadcast({ type: 'manager.upgrade', upgrade: upgradeInfo() }));
 
   function handleEvents(ws) {
     eventClients.add(ws);
-    safeSend(ws, { type: 'hello', version, sessions: manager.list() });
+    safeSend(ws, { type: 'hello', version, upgrade: upgradeInfo(), sessions: manager.list() });
     ws.on('close', () => eventClients.delete(ws));
     ws.on('message', () => { /* events socket is server -> client only */ });
   }

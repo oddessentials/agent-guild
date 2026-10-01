@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { Session, newId, clampDimension, cleanName } from './session.mjs';
 import { prependPath } from './report-shims.mjs';
 import { CHANNEL_LABELS } from './install-channels.mjs';
+import { SELF_PROVIDER } from './self-update.mjs';
 
 export const MAX_SESSIONS = 32;
 const examplesDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../examples');
@@ -48,14 +49,16 @@ export class SessionManager extends EventEmitter {
    * @param {() => string} opts.getApiUrl  base URL handed to tools for reporting
    * @param {object} [opts.sessionDefaults] passed through to Session
    * @param {string|null} [opts.shimDir]  folder with the agent-guild-report launchers, put first on PATH
+   * @param {import('./self-update.mjs').SelfUpdate|null} [opts.selfUpdate]  the manager's own upgrade
    */
-  constructor({ registry, baseEnv, getApiUrl, sessionDefaults = {}, shimDir = null }) {
+  constructor({ registry, baseEnv, getApiUrl, sessionDefaults = {}, shimDir = null, selfUpdate = null }) {
     super();
     this.registry = registry;
     this.baseEnv = baseEnv;
     this.getApiUrl = getApiUrl;
     this.sessionDefaults = sessionDefaults;
     this.shimDir = shimDir;
+    this.selfUpdate = selfUpdate;
     this.sessions = new Map();
     /** Removed sessions whose process has not exited yet. */
     this.exiting = new Set();
@@ -165,6 +168,30 @@ export class SessionManager extends EventEmitter {
     return n;
   }
 
+  /**
+   * Upgrade the manager itself: a visible session running npm. Sessions
+   * keep running; the new version is used once the manager is restarted.
+   */
+  async upgrade() {
+    if (!this.selfUpdate) throw httpError(400, 'this manager cannot upgrade itself', 'not_updatable');
+    if (this.closing) throw httpError(503, 'the session manager is stopping', 'manager_stopping');
+    if (this.upgradesRunning() > 0) throw httpError(409, 'Agent Guild is already being upgraded', 'upgrade_in_progress');
+    const { file, args, version } = await this.selfUpdate.spec();
+    if (this.upgradesRunning() > 0) throw httpError(409, 'Agent Guild is already being upgraded', 'upgrade_in_progress');
+    const session = this._spawn({
+      provider: SELF_PROVIDER, description: SELF_PROVIDER, spawnSpec: { file, args },
+      cwd: os.homedir(), name: `Upgrade Agent Guild to ${version}`, task: 'upgrade',
+    });
+    session.on('exit', () => this.selfUpdate.finishInstall({ exitCode: session.exitCode, version }));
+    return session;
+  }
+
+  upgradesRunning() {
+    let n = 0;
+    for (const s of this.sessions.values()) if (s.status === 'running' && s.task === 'upgrade') n++;
+    return n;
+  }
+
   runningFor(providerId) {
     let n = 0;
     for (const s of this.sessions.values()) if (s.status === 'running' && s.task === null && s.provider.id === providerId) n++;
@@ -178,12 +205,11 @@ export class SessionManager extends EventEmitter {
     return n;
   }
 
-  _spawn({ provider, spawnSpec, cwd, cols, rows, name, resume = null, task = null, installKind = null, account = null }) {
+  _spawn({ provider, description = this.registry.describe(provider), spawnSpec, cwd, cols, rows, name, resume = null, task = null, installKind = null, account = null }) {
     if (this.closing) throw httpError(503, 'the session manager is stopping', 'manager_stopping');
     if (this.sessions.size >= MAX_SESSIONS) {
       throw httpError(429, `session limit reached (${MAX_SESSIONS}); remove finished sessions first`, 'too_many_sessions');
     }
-    const description = this.registry.describe(provider);
     const id = newId();
     const reportToken = crypto.randomBytes(16).toString('hex');
 

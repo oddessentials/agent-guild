@@ -14,6 +14,7 @@ import { hookToReports, claudeStatuslineToReport, formatStatusLine } from '../sr
 import { shimContents, writeReportShims, prependPath, fileUrl, SHIM_NAME, LOADER_NAME } from '../src/manager/report-shims.mjs';
 import { execFileSync } from 'node:child_process';
 import { parseVersion, compareVersions, probeVersion, diagnosticLine, latestVersion } from '../src/manager/versions.mjs';
+import { SelfUpdate, isDevelopmentBuild } from '../src/manager/self-update.mjs';
 import {
   UsageMonitor, UsageError, readClaudeCredentials, readCodexCredentials, readGeminiCredentials, readGeminiFileKeychain, readGeminiKeychainItem, geminiFileKey, geminiStorageMode, geminiOAuthClientFromInstall, geminiKeychainLookup,
   claudeKeychainService, claudeCredentialsFile, fetchClaudeUsage, fetchCodexUsage, fetchGeminiUsage, commandUsage, toIso, windowLabel, clampPercent,
@@ -1958,4 +1959,79 @@ test('the catalog is fetched once, shared while in flight, and kept when a refre
   assert.equal((await failing(() => ({ ok: true, json: async () => { throw new SyntaxError('Unexpected token'); } }))).error,
     'OpenRouter sent a model list that could not be read');
   assert.equal((await failing(() => ({ ok: true, json: async () => ({ data: [] }) }))).error, 'OpenRouter sent an empty model list');
+});
+
+test('the manager checks its own release and knows when a restart is needed', async () => {
+  const dir = tempDir();
+  const packageFile = path.join(dir, 'package.json');
+  const writeVersion = (version) => fs.writeFileSync(packageFile, JSON.stringify({ name: '@scope/app', version }));
+  writeVersion('1.0.0');
+  const calls = [];
+  const registry = {
+    checkUpdates: true,
+    registryUrl: null,
+    fetchImpl: async (url) => { calls.push(url); return { ok: true, json: async () => ({ version: '1.1.0' }) }; },
+    npmRegistryUrl: async () => 'https://registry.example',
+    resolveNpm: () => '/usr/bin/npm',
+    npmArgs: ProviderRegistry.prototype.npmArgs,
+  };
+  const self = new SelfUpdate({ pkg: '@scope/app', version: '1.0.0', packageFile, registry });
+  let updates = 0;
+  self.on('updated', () => updates++);
+  assert.equal(self.describe().available, false, 'nothing is on offer before the first check');
+
+  await self.refresh();
+  assert.deepEqual(calls, ['https://registry.example/@scope%2fapp/latest']);
+  let info = self.describe();
+  assert.equal(info.version, '1.0.0');
+  assert.equal(info.latestVersion, '1.1.0');
+  assert.equal(info.available, true);
+  assert.equal(info.command, '/usr/bin/npm install -g @scope/app@1.1.0');
+  assert.equal(info.pendingVersion, null);
+  assert.equal(updates, 1);
+  await self.refresh();
+  assert.equal(calls.length, 1, 'the registry is asked about once an hour');
+  await self.refresh({ force: true });
+  assert.equal(calls.length, 2);
+  assert.equal(updates, 1, 'no event when nothing changed');
+  assert.deepEqual(await self.spec(), { file: '/usr/bin/npm', args: ['install', '-g', '@scope/app@1.1.0'], version: '1.1.0' });
+
+  // npm exited cleanly but did not replace these files (another prefix, say).
+  self.finishInstall({ exitCode: 0 });
+  assert.equal(self.describe().lastInstall.outcome, 'unchanged');
+  assert.equal(self.describe().available, true, 'the upgrade stays on offer');
+  self.finishInstall({ exitCode: 1 });
+  assert.equal(self.describe().lastInstall.outcome, 'failed');
+  assert.equal(self.describe().lastInstall.exitCode, 1);
+
+  writeVersion('1.1.0');
+  self.finishInstall({ exitCode: 0 });
+  info = self.describe();
+  assert.equal(info.lastInstall.outcome, 'installed');
+  assert.equal(info.pendingVersion, '1.1.0', 'the new files are on disk while the running manager is still 1.0.0');
+  assert.equal(info.available, false, 'nothing newer than the files on disk');
+  assert.equal(info.command, null);
+  await assert.rejects(self.spec(), { code: 'not_updatable', message: /restart the manager/ });
+
+  // Without npm there is guidance instead of a command.
+  writeVersion('1.0.0');
+  registry.resolveNpm = () => null;
+  info = self.describe();
+  assert.equal(info.available, true);
+  assert.equal(info.command, null);
+  assert.match(info.guidance, /npm install -g @scope\/app@1\.1\.0/);
+  await assert.rejects(self.spec(), { code: 'npm_unavailable' });
+
+  // Development builds and disabled checks never ask the registry.
+  assert.equal(isDevelopmentBuild('0.0.0-development'), true);
+  assert.equal(isDevelopmentBuild('0.0.0'), true);
+  assert.equal(isDevelopmentBuild('1.0.0'), false);
+  const dev = new SelfUpdate({ pkg: '@scope/app', version: '0.0.0-development', packageFile, registry });
+  await dev.refresh();
+  assert.equal(calls.length, 2);
+  assert.equal(dev.describe().available, false);
+  const off = new SelfUpdate({ pkg: '@scope/app', version: '1.0.0', packageFile, registry: { ...registry, checkUpdates: false } });
+  await off.refresh();
+  assert.equal(calls.length, 2);
+  assert.equal(off.describe().latestVersion, null);
 });
