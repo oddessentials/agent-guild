@@ -52,6 +52,8 @@ export class SelfUpdate extends EventEmitter {
     this.lastInstall = null;
     /** True from the start of an upgrade session until its npm process has exited. */
     this.installing = false;
+    /** The on-disk version a failed upgrade left behind, not to be trusted until an upgrade completes. */
+    this.suspectVersion = null;
     this._refreshing = null;
   }
 
@@ -98,24 +100,25 @@ export class SelfUpdate extends EventEmitter {
   }
 
   /**
-   * True after an upgrade that did not finish: npm may have replaced
-   * package.json before it was stopped, so the files on disk are not to be
-   * trusted until an upgrade completes or the files change again.
+   * True while the files on disk are what an upgrade that did not finish
+   * left behind: npm may have replaced package.json before it was stopped.
+   * Kept apart from `lastInstall`, which a newer release supersedes; the
+   * files stay suspect until an upgrade completes or they change again.
    */
-  _diskSuspect() {
-    return this.lastInstall?.outcome === 'failed';
+  _diskSuspect(installed) {
+    return this.suspectVersion !== null && installed === this.suspectVersion;
   }
 
   /** A version installed on disk that the running manager does not use yet, or null. */
   pendingVersion(installed = this.installedVersion()) {
-    if (this._diskSuspect()) return null;
+    if (this._diskSuspect(installed)) return null;
     return installed && installed !== this.version && compareVersions(installed, this.version) > 0 ? installed : null;
   }
 
   /** True when the latest release is newer than the running manager and not yet, or not reliably, on disk. */
   available(installed = this.installedVersion()) {
     if (!this.latest || compareVersions(this.latest, this.version) <= 0) return false;
-    return this._diskSuspect() || compareVersions(this.latest, installed || this.version) > 0;
+    return this._diskSuspect(installed) || compareVersions(this.latest, installed || this.version) > 0;
   }
 
   args() {
@@ -194,6 +197,8 @@ export class SelfUpdate extends EventEmitter {
     if (exitCode !== 0) outcome = 'failed';
     else if (installed && version && compareVersions(installed, version) >= 0) outcome = 'installed';
     else outcome = 'unchanged';
+    if (outcome === 'failed') this.suspectVersion = installed;
+    else if (outcome === 'installed') this.suspectVersion = null;
     this.lastInstall = { outcome, exitCode, version, installedVersion: installed, at: Date.now() };
     this.emit('updated');
   }

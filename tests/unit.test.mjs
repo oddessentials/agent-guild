@@ -1897,6 +1897,16 @@ test('the manager checks its own release and knows when a restart is needed', as
   assert.equal(info.available, true, 'the same release stays on offer');
   assert.equal(info.command, '/usr/bin/npm install -g @scope/app@1.1.0');
   assert.equal((await self.spec()).version, '1.1.0', 'the retry is accepted');
+  // A newer release supersedes the failure record, not the suspicion.
+  latest = '1.2.0';
+  await self.refresh({ force: true });
+  info = self.describe();
+  assert.equal(info.lastInstall, null);
+  assert.equal(info.pendingVersion, null, 'the unfinished files are still not advertised');
+  assert.equal(info.available, true);
+  assert.equal(info.command, '/usr/bin/npm install -g @scope/app@1.2.0');
+  latest = '1.1.0';
+  await self.refresh({ force: true });
   self.beginInstall();
   self.finishInstall({ exitCode: 0 });
   info = self.describe();
