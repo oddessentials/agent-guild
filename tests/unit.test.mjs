@@ -4,11 +4,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { resolveCommand, buildSpawnSpec, quoteForCmd } from '../src/manager/command-resolver.mjs';
-import { mergePathLists, parsePathFromEnvOutput } from '../src/manager/shell-env.mjs';
+import { resolveCommand, resolveAllCommands, buildSpawnSpec, quoteForCmd } from '../src/manager/command-resolver.mjs';
+import { mergePathLists, parsePathFromEnvOutput, weavePaths, parseRegValue, expandWindowsVars, readWindowsPath } from '../src/manager/shell-env.mjs';
 import { mergeEnv, cleanResumeId, modelFromArgs, SessionManager } from '../src/manager/session-manager.mjs';
 import { loadProviders, defaultShell, ProviderRegistry } from '../src/manager/providers.mjs';
-import { classifyInstall, expandHome, helpDescribes, platformDependency } from '../src/manager/install-channels.mjs';
+import { classifyInstall, expandHome, helpDescribes, platformDependency, listInstallations, knownLaunchers, shellCommand } from '../src/manager/install-channels.mjs';
 import { hookToReports, claudeStatuslineToReport, formatStatusLine } from '../src/report/hooks.mjs';
 import { shimContents, writeReportShims, prependPath, fileUrl, SHIM_NAME, LOADER_NAME } from '../src/manager/report-shims.mjs';
 import { execFileSync } from 'node:child_process';
@@ -158,12 +158,15 @@ test('an installed tool is classified by the installation that owns it', () => {
     package: '@anthropic-ai/claude-code',
     channels: {
       native: { paths: ['~/.local/bin/claude', '~/.local/share/claude'], update: ['update'] },
+      brew: { names: ['claude-code', 'claude-code@latest'] },
       winget: { id: 'Anthropic.ClaudeCode' },
       legacy: { paths: ['~/.claude/local'], guidance: 'old installer' },
     },
   };
   const fsx = ({ files = [], links = {}, texts = {} } = {}) => ({
     exists: (f) => files.includes(f),
+    isFile: (f) => files.includes(f) || Object.hasOwn(links, f),
+    isLink: (f) => Object.hasOwn(links, f),
     realpath: (f) => links[f] || f,
     readText: (f) => texts[f] || '',
   });
@@ -218,12 +221,14 @@ test('an installed tool is classified by the installation that owns it', () => {
   assert.equal(nativeMac.channel, 'native');
   assert.deepEqual(nativeMac.update, { file: '/Users/a/.local/bin/claude', args: ['update'] }, 'the detected launcher by its absolute path');
   assert.equal(nativeMac.probe, true);
-  const nativeLinux = classifyInstall({ provider, platform: 'linux', env: { HOME: '/home/a' }, resolvedPath: '/home/a/.local/bin/claude', fsx: fsx() });
+  const nativeLinux = classifyInstall({ provider, platform: 'linux', env: { HOME: '/home/a' }, resolvedPath: '/home/a/.local/bin/claude', fsx: fsx({
+    links: { '/home/a/.local/bin/claude': '/home/a/.local/share/claude/versions/2.1.286' },
+  }) });
   assert.equal(nativeLinux.channel, 'native');
-  const nativeWin = classifyInstall({ ...windows, resolvedPath: 'c:\\users\\A\\.local\\bin\\claude.exe', fsx: fsx() });
+  const nativeWin = classifyInstall({ ...windows, resolvedPath: 'c:\\users\\A\\.local\\bin\\claude.exe', fsx: fsx({ files: ['C:\\Users\\a\\.local\\bin\\claude.exe'] }) });
   assert.equal(nativeWin.channel, 'native');
   assert.equal(nativeWin.update.file, 'c:\\users\\A\\.local\\bin\\claude.exe');
-  const noUpdater = classifyInstall({ ...mac, provider: { ...provider, channels: { native: { paths: ['~/.local/bin/claude'], update: [] } } }, resolvedPath: '/Users/a/.local/bin/claude', fsx: fsx() });
+  const noUpdater = classifyInstall({ ...mac, provider: { ...provider, channels: { native: { paths: ['~/.local/bin/claude'], update: [] } } }, resolvedPath: '/Users/a/.local/bin/claude', fsx: fsx({ files: ['/Users/a/.local/bin/claude'] }) });
   assert.equal(noUpdater.update, null);
   assert.match(noUpdater.guidance, /no update command/);
 
@@ -233,11 +238,12 @@ test('an installed tool is classified by the installation that owns it', () => {
   }) });
   assert.equal(arm.channel, 'brew');
   assert.deepEqual(arm.update, { file: '/opt/homebrew/bin/brew', args: ['upgrade', '--cask', 'claude-code@latest'] });
-  const gemini = { tool: 'Gemini CLI', package: '@google/gemini-cli', channels: {} };
+  const gemini = { tool: 'Gemini CLI', package: '@google/gemini-cli', channels: { brew: { names: ['gemini-cli'] } } };
   const intel = classifyInstall({ ...mac, provider: gemini, resolvedPath: '/usr/local/bin/gemini', fsx: fsx({
-    files: ['/usr/local/bin/brew', '/opt/homebrew/bin/brew'],
-    links: { '/usr/local/bin/gemini': '/usr/local/Cellar/gemini-cli/0.46.0/bin/gemini' },
+    files: ['/usr/local/bin/brew', '/opt/homebrew/bin/brew', '/usr/local/Cellar/gemini-cli/0.46.0/libexec/lib/node_modules/@google/gemini-cli/package.json'],
+    links: { '/usr/local/bin/gemini': '/usr/local/Cellar/gemini-cli/0.46.0/libexec/lib/node_modules/@google/gemini-cli/bundle/gemini.js' },
   }) });
+  assert.equal(intel.channel, 'brew', 'a formula that bundles an npm package is still Homebrew-owned');
   assert.deepEqual(intel.update, { file: '/usr/local/bin/brew', args: ['upgrade', 'gemini-cli'] }, 'the Homebrew that owns the file');
   const linuxbrew = classifyInstall({ provider: gemini, platform: 'linux', env: { HOME: '/home/a' }, resolvedPath: '/home/linuxbrew/.linuxbrew/bin/gemini', fsx: fsx({
     files: ['/home/linuxbrew/.linuxbrew/bin/brew'],
@@ -301,7 +307,7 @@ test('updates are bound to the installation that owns the resolved tool', async 
   fs.writeFileSync(userFile, JSON.stringify({ providers: [
     { id: 'mytool', tool: 'My Tool', command: 'mytool', package: 'mytool-pkg', channels: { native: { paths: [path.join(nativeDir, 'mytool')], update: ['update'] } } },
   ] }));
-  const base = { PATHEXT: '.EXE;.CMD', ComSpec: process.env.ComSpec, SystemRoot: process.env.SystemRoot };
+  const base = { PATHEXT: '.EXE;.CMD', ComSpec: process.env.ComSpec, SystemRoot: process.env.SystemRoot, HOME: root, USERPROFILE: root };
   const lineOf = (spec) => (typeof spec.args === 'string' ? spec.args : [spec.file, ...spec.args].join(' '));
 
   const nativeFirst = new ProviderRegistry({ userFile, env: { ...base, PATH: [otherNpmDir, nativeDir, prefixBin].join(path.delimiter) }, checkUpdates: false });
@@ -531,6 +537,363 @@ test('a clean updater exit is reported apart from the verification that follows'
   assert.equal(repaired.installedVersion, '1.2.3');
 });
 
+test('every copy of a command on PATH is found, one per folder', () => {
+  const winFiles = ['C:\\a\\claude.cmd', 'C:\\a\\claude.ps1', 'C:\\b\\claude.exe', 'C:\\b\\claude.cmd'];
+  const winEnv = { Path: 'C:\\a;C:\\b;C:\\a;C:\\empty', PATHEXT: '.EXE;.CMD' };
+  const onWindows = { isExecutable: (file) => winFiles.includes(file) };
+  assert.deepEqual(resolveAllCommands('claude', winEnv, 'win32', onWindows), ['C:\\a\\claude.cmd', 'C:\\b\\claude.exe']);
+  assert.equal(resolveCommand('claude', winEnv, 'win32', onWindows), 'C:\\a\\claude.cmd');
+
+  const posixFiles = ['/a/claude', '/c/claude', '/x/claude'];
+  const onPosix = { isExecutable: (file) => posixFiles.includes(file) };
+  assert.deepEqual(resolveAllCommands('claude', { PATH: '/a:/b:/c:/a' }, 'linux', onPosix), ['/a/claude', '/c/claude']);
+  assert.deepEqual(resolveAllCommands('/x/claude', { PATH: '/a' }, 'linux', onPosix), ['/x/claude']);
+  assert.deepEqual(resolveAllCommands('missing', { PATH: '/a:/c' }, 'linux', onPosix), []);
+});
+
+test('installations are counted once however many entry points they have', () => {
+  const claude = {
+    tool: 'Claude Code',
+    package: '@anthropic-ai/claude-code',
+    channels: {
+      native: { paths: ['~/.local/bin/claude', '~/.local/share/claude'], update: ['update'], uninstall: 'remove-native', sharedWithNpm: false },
+      brew: { names: ['claude-code', 'claude-code@latest'] },
+      winget: { id: 'Anthropic.ClaudeCode' },
+      legacy: { paths: ['~/.claude/local'], guidance: null, uninstall: 'remove-legacy' },
+    },
+  };
+  const fsx = ({ files = [], links = {}, texts = {} } = {}) => ({
+    exists: (f) => files.includes(f),
+    isFile: (f) => files.includes(f) || Object.hasOwn(links, f),
+    isLink: (f) => Object.hasOwn(links, f),
+    realpath: (f) => links[f] || f,
+    readText: (f) => texts[f] || '',
+  });
+  const mac = { provider: claude, platform: 'darwin', env: { HOME: '/Users/a' }, npmOnPath: '/opt/other/bin/npm' };
+  const windows = { provider: claude, platform: 'win32', env: { USERPROFILE: 'C:\\Users\\a' }, npmOnPath: 'C:\\other\\npm.cmd', wingetOnPath: 'C:\\WindowsApps\\winget.exe' };
+  const channelsOf = (list) => list.map((i) => i.channel);
+
+  const current = 'C:\\node\\current';
+  const real = 'C:\\node\\v24';
+  const shimText = '"%dp0%\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe" %*';
+  const junction = listInstallations({ ...windows, onPath: [`${current}\\claude.cmd`, `${real}\\claude.cmd`], fsx: fsx({
+    files: [`${current}\\node_modules\\@anthropic-ai\\claude-code\\package.json`, `${real}\\node_modules\\@anthropic-ai\\claude-code\\package.json`, `${real}\\npm.cmd`, `${current}\\npm.cmd`],
+    links: { [current]: real },
+    texts: { [`${current}\\claude.cmd`]: shimText, [`${real}\\claude.cmd`]: shimText },
+  }) });
+  assert.deepEqual(channelsOf(junction), ['npm'], 'one npm prefix reached through two PATH entries is one installation');
+  assert.equal(junction[0].resolvedPath, `${current}\\claude.cmd`);
+  assert.equal(junction[0].removeCommand, `${current}\\npm.cmd uninstall -g --prefix ${current} '@anthropic-ai/claude-code'`);
+
+  const versions = '/Users/a/.local/share/claude/versions/2.1.286';
+  const linked = listInstallations({ ...mac, onPath: ['/Users/a/.local/bin/claude', '/usr/local/bin/claude'], fsx: fsx({
+    links: { '/Users/a/.local/bin/claude': versions, '/usr/local/bin/claude': versions },
+  }) });
+  assert.deepEqual(channelsOf(linked), ['native'], 'a second link to the native build is the same installation');
+  assert.equal(linked[0].removeCommand, 'remove-native');
+
+  const nvm = '/Users/a/.nvm/versions/node/v22';
+  const nvmPkg = `${nvm}/lib/node_modules/@anthropic-ai/claude-code`;
+  const npmFiles = { files: [`${nvmPkg}/package.json`, `${nvm}/bin/npm`], links: { [`${nvm}/bin/claude`]: `${nvmPkg}/bin/claude.exe`, '/usr/local/bin/claude': `${nvmPkg}/bin/claude.exe` } };
+  const npmLinked = listInstallations({ ...mac, onPath: [`${nvm}/bin/claude`, '/usr/local/bin/claude'], fsx: fsx(npmFiles) });
+  assert.deepEqual(channelsOf(npmLinked), ['npm'], 'a link elsewhere into the npm package is the same installation');
+  const viaLink = listInstallations({ ...mac, onPath: ['/usr/local/bin/claude'], fsx: fsx(npmFiles) });
+  assert.equal(viaLink[0].channel, 'npm');
+  assert.equal(viaLink[0].removeCommand, `${nvm}/bin/npm uninstall -g --prefix ${nvm} @anthropic-ai/claude-code`);
+
+  const both = listInstallations({ ...mac, onPath: ['/Users/a/.local/bin/claude', `${nvm}/bin/claude`], fsx: fsx({
+    files: npmFiles.files, links: { ...npmFiles.links, '/Users/a/.local/bin/claude': versions },
+  }) });
+  assert.deepEqual(channelsOf(both), ['native', 'npm'], 'a native build and an npm install are two installations');
+
+  const grok = { tool: 'Grok Build', package: '@xai-official/grok', channels: { native: { paths: ['~/.grok/bin'], update: ['update'], uninstall: null, sharedWithNpm: true } } };
+  const grokPkg = `${nvm}/lib/node_modules/@xai-official/grok`;
+  const shared = listInstallations({ ...mac, provider: grok, onPath: [`${nvm}/bin/grok`, '/Users/a/.grok/bin/grok'], fsx: fsx({
+    files: [`${grokPkg}/package.json`, `${nvm}/bin/npm`], links: { [`${nvm}/bin/grok`]: `${grokPkg}/bin/grok-native` },
+  }) });
+  assert.deepEqual(channelsOf(shared), ['npm'], 'an npm wrapper over the native location is one installation');
+
+  const cask = '/opt/homebrew/Caskroom/claude-code/2.1.285/claude';
+  const intel = '/usr/local/Caskroom/claude-code/2.1.285/claude';
+  const brews = listInstallations({ ...mac, onPath: ['/opt/homebrew/bin/claude', cask, '/usr/local/bin/claude'], fsx: fsx({
+    files: ['/opt/homebrew/bin/brew', '/usr/local/bin/brew'], links: { '/opt/homebrew/bin/claude': cask, '/usr/local/bin/claude': intel },
+  }) });
+  assert.deepEqual(channelsOf(brews), ['brew', 'brew'], 'a link and its Caskroom file are one installation; another Homebrew is another');
+  assert.deepEqual(brews.map((i) => i.removeCommand), ['/opt/homebrew/bin/brew uninstall --cask claude-code', '/usr/local/bin/brew uninstall --cask claude-code']);
+
+  const packages = 'C:\\Users\\a\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Anthropic.ClaudeCode_Microsoft.Winget.Source_8wekyb3d8bbwe\\claude.exe';
+  const link = 'C:\\Users\\a\\AppData\\Local\\Microsoft\\WinGet\\Links\\claude.exe';
+  const acceptance = listInstallations({ ...windows, onPath: ['C:\\Users\\a\\.local\\bin\\claude.exe', link, packages], fsx: fsx({
+    files: ['C:\\Users\\a\\.local\\bin\\claude.exe'], links: { [link]: packages },
+  }) });
+  assert.deepEqual(channelsOf(acceptance), ['native', 'winget']);
+  assert.equal(acceptance[1].removeCommand, 'winget uninstall --id Anthropic.ClaudeCode --exact');
+
+  const unknown = listInstallations({ ...mac, onPath: ['/opt/a/claude', '/opt/b/claude', '/opt/c/claude'], fsx: fsx({ links: { '/opt/c/claude': '/opt/a/claude' } }) });
+  assert.deepEqual(channelsOf(unknown), ['unknown', 'unknown'], 'two links to one unrecognised file count once');
+  assert.deepEqual(unknown.map((i) => i.removeCommand), [null, null], 'no removal command without confirmed ownership');
+
+  const offPath = fsx({ files: ['/Users/a/.local/bin/claude', '/Users/a/.claude/local/claude', '/Users/a/.local/share/claude/versions/2.1.286'] });
+  assert.deepEqual(knownLaunchers({ provider: claude, command: 'claude', env: mac.env, platform: 'darwin', fsx: offPath }), ['/Users/a/.local/bin/claude', '/Users/a/.claude/local/claude'], 'kept versions are not launchers');
+  assert.deepEqual(knownLaunchers({ provider: claude, command: '/abs/claude', env: mac.env, platform: 'darwin', fsx: offPath }), []);
+  assert.deepEqual(knownLaunchers({ provider: claude, command: 'claude', env: windows.env, platform: 'win32', fsx: fsx({ files: ['C:\\Users\\a\\.local\\bin\\claude.exe'] }) }), ['C:\\Users\\a\\.local\\bin\\claude.exe']);
+  const found = listInstallations({ ...mac, onPath: [], known: ['/Users/a/.local/bin/claude', '/Users/a/.claude/local/claude'], fsx: offPath });
+  assert.deepEqual(found.map((i) => [i.channel, i.onPath, i.removeCommand]), [['native', false, 'remove-native'], ['legacy', false, 'remove-legacy']]);
+});
+
+test('ownership follows where a tool is really installed, and removal commands suit the shell', () => {
+  const fsx = ({ files = [], links = {}, texts = {} } = {}) => ({
+    exists: (f) => files.includes(f),
+    isFile: (f) => files.includes(f) || Object.hasOwn(links, f),
+    isLink: (f) => Object.hasOwn(links, f),
+    realpath: (f) => links[f] || f,
+    readText: (f) => texts[f] || '',
+  });
+  const claude = {
+    tool: 'Claude Code',
+    package: '@anthropic-ai/claude-code',
+    channels: {
+      native: { paths: ['~/.local/bin/claude', '~/.local/share/claude'], update: ['update'], uninstall: 'remove-native', sharedWithNpm: false },
+      brew: { names: ['claude-code', 'claude-code@latest'] },
+    },
+  };
+  const mac = { provider: claude, platform: 'darwin', env: { HOME: '/Users/a' }, npmOnPath: '/opt/homebrew/bin/npm' };
+  const commandOf = (install) => install.update && [install.update.file, ...install.update.args].join(' ');
+
+  const gemini = { tool: 'Gemini CLI', package: '@google/gemini-cli', channels: { brew: { names: ['gemini-cli'] } } };
+  const cellar = '/opt/homebrew/Cellar/gemini-cli/0.46.0';
+  const formula = listInstallations({ ...mac, provider: gemini, onPath: ['/opt/homebrew/bin/gemini'], fsx: fsx({
+    files: ['/opt/homebrew/bin/brew', '/opt/homebrew/bin/npm', `${cellar}/libexec/lib/node_modules/@google/gemini-cli/package.json`, `${cellar}/libexec/bin/npm`],
+    links: { '/opt/homebrew/bin/gemini': `${cellar}/libexec/lib/node_modules/@google/gemini-cli/bundle/gemini.js` },
+  }) });
+  assert.equal(formula.length, 1);
+  assert.equal(formula[0].channel, 'brew', 'the package tree inside a Cellar is not an npm prefix');
+  assert.equal(commandOf(formula[0]), '/opt/homebrew/bin/brew upgrade gemini-cli');
+  assert.equal(formula[0].removeCommand, '/opt/homebrew/bin/brew uninstall gemini-cli');
+
+  const cask = '/opt/homebrew/Caskroom/claude-code/2.1.285/claude';
+  const aliasToBrew = listInstallations({ ...mac, onPath: ['/opt/homebrew/bin/claude', '/Users/a/.local/bin/claude'], fsx: fsx({
+    files: ['/opt/homebrew/bin/brew'],
+    links: { '/opt/homebrew/bin/claude': cask, '/Users/a/.local/bin/claude': cask },
+  }) });
+  assert.equal(aliasToBrew.length, 1, 'one Homebrew installation reached through two launchers');
+  assert.equal(aliasToBrew[0].channel, 'brew');
+  assert.equal(commandOf(aliasToBrew[0]), '/opt/homebrew/bin/brew upgrade --cask claude-code');
+  assert.equal(aliasToBrew[0].removeCommand, '/opt/homebrew/bin/brew uninstall --cask claude-code');
+
+  const alsoNpm = listInstallations({ ...mac, onPath: ['/opt/homebrew/bin/claude'], fsx: fsx({
+    files: ['/opt/homebrew/bin/brew', '/opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/package.json'],
+    links: { '/opt/homebrew/bin/claude': cask },
+    texts: { '/opt/homebrew/bin/claude': 'node_modules/@anthropic-ai/claude-code' },
+  }) });
+  assert.equal(alsoNpm[0].channel, 'brew', 'a link into the Caskroom is not npm-owned because an npm copy shares the folder');
+
+  const keg = '/opt/homebrew/opt/node@20';
+  const kegReal = '/opt/homebrew/Cellar/node@20/20.19.0';
+  const kegPkg = `${keg}/lib/node_modules/@anthropic-ai/claude-code`;
+  const inKeg = listInstallations({ ...mac, onPath: [`${keg}/bin/claude`], fsx: fsx({
+    files: ['/opt/homebrew/bin/brew', `${kegPkg}/package.json`, `${keg}/bin/npm`],
+    links: { [`${keg}/bin/claude`]: `${kegReal}/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe`, [kegPkg]: `${kegReal}/lib/node_modules/@anthropic-ai/claude-code` },
+  }) });
+  assert.equal(inKeg[0].channel, 'npm', 'an npm package under a Homebrew Node keg is still npm-owned');
+  assert.equal(commandOf(inKeg[0]), `${keg}/bin/npm install -g --prefix ${keg}`);
+
+  const kegPackage = `${kegReal}/lib/node_modules/@anthropic-ai/claude-code`;
+  const kegLayout = {
+    files: ['/opt/homebrew/bin/brew', `${kegPkg}/package.json`, `${kegPackage}/package.json`, `${keg}/bin/npm`, `${kegReal}/bin/npm`],
+    links: {
+      '/Users/a/.local/bin/claude': `${kegPackage}/bin/claude.exe`,
+      [`${keg}/bin/claude`]: `${kegPackage}/bin/claude.exe`,
+      [keg]: kegReal,
+      [kegPkg]: kegPackage,
+    },
+  };
+  const aliasIntoKeg = listInstallations({ ...mac, onPath: ['/Users/a/.local/bin/claude'], fsx: fsx(kegLayout) });
+  assert.equal(aliasIntoKeg[0].channel, 'npm', 'a link into a package under a Homebrew Node keg is npm-owned, not the Node formula');
+  assert.equal(commandOf(aliasIntoKeg[0]), `${kegReal}/bin/npm install -g --prefix ${kegReal}`);
+  assert.equal(aliasIntoKeg[0].removeCommand, `${kegReal}/bin/npm uninstall -g --prefix ${kegReal} @anthropic-ai/claude-code`);
+  const aliasAndLauncher = listInstallations({ ...mac, onPath: ['/Users/a/.local/bin/claude', `${keg}/bin/claude`], fsx: fsx(kegLayout) });
+  assert.deepEqual(aliasAndLauncher.map((i) => i.channel), ['npm'], 'the alias and the npm launcher are one installation');
+
+  const foreign = listInstallations({ ...mac, onPath: ['/opt/homebrew/bin/claude'], fsx: fsx({
+    files: ['/opt/homebrew/bin/brew'], links: { '/opt/homebrew/bin/claude': '/opt/homebrew/Cellar/sometool/1.0/bin/claude' },
+  }) });
+  assert.equal(foreign[0].channel, 'unknown', "a file in another formula's keg is not attributed to that formula");
+  assert.equal(foreign[0].update, null);
+  assert.equal(foreign[0].removeCommand, null);
+
+  const elsewhere = '/opt/tools/claude/claude';
+  const aliasFirst = listInstallations({ ...mac, onPath: ['/Users/a/.local/bin/claude', '/opt/tools/bin/claude'], fsx: fsx({
+    links: { '/Users/a/.local/bin/claude': elsewhere, '/opt/tools/bin/claude': elsewhere },
+  }) });
+  assert.equal(aliasFirst.length, 1);
+  assert.equal(aliasFirst[0].channel, 'unknown', 'a link at the native launcher path does not make its target a native install');
+  assert.equal(aliasFirst[0].update, null);
+  assert.equal(aliasFirst[0].removeCommand, null);
+  const aliasSecond = listInstallations({ ...mac, onPath: ['/opt/tools/bin/claude'], known: ['/Users/a/.local/bin/claude'], fsx: fsx({
+    links: { '/Users/a/.local/bin/claude': elsewhere, '/opt/tools/bin/claude': elsewhere },
+  }) });
+  assert.deepEqual(aliasSecond.map((i) => i.channel), ['unknown']);
+
+  const versions = '/Users/a/.local/share/claude/versions/2.1.286';
+  const real = listInstallations({ ...mac, onPath: ['/Users/a/.local/bin/claude'], fsx: fsx({ links: { '/Users/a/.local/bin/claude': versions } }) });
+  assert.equal(real[0].channel, 'native', "a launcher that links into the installer's own folder is native");
+  const pointedAt = listInstallations({ ...mac, onPath: ['/usr/local/bin/claude'], fsx: fsx({
+    files: ['/Users/a/.local/bin/claude'], links: { '/usr/local/bin/claude': '/Users/a/.local/bin/claude' },
+  }) });
+  assert.equal(pointedAt[0].channel, 'native', 'a link that points at the native launcher belongs to it');
+  assert.equal(commandOf(pointedAt[0]), '/usr/local/bin/claude update');
+
+  const prefix = 'C:\\Users\\First Last\\AppData\\Roaming\\npm';
+  const shim = `${prefix}\\claude.cmd`;
+  const spaced = listInstallations({
+    provider: claude, platform: 'win32', env: { USERPROFILE: 'C:\\Users\\First Last' }, npmOnPath: 'C:\\Program Files\\nodejs\\npm.cmd',
+    onPath: [shim],
+    fsx: fsx({
+      files: [`${prefix}\\node_modules\\@anthropic-ai\\claude-code\\package.json`],
+      texts: { [shim]: '"%dp0%\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe" %*' },
+    }),
+  });
+  assert.equal(spaced[0].removeCommand, "& 'C:\\Program Files\\nodejs\\npm.cmd' uninstall -g --prefix 'C:\\Users\\First Last\\AppData\\Roaming\\npm' '@anthropic-ai/claude-code'");
+
+  assert.equal(shellCommand('C:\\nodejs\\npm.cmd', ['uninstall', '-g', '--prefix', 'C:\\nodejs', 'pkg'], 'win32'), 'C:\\nodejs\\npm.cmd uninstall -g --prefix C:\\nodejs pkg');
+  assert.equal(shellCommand("C:\\Users\\O'Brien\\npm.cmd", ['uninstall'], 'win32'), "& 'C:\\Users\\O''Brien\\npm.cmd' uninstall");
+  assert.equal(shellCommand('winget', ['uninstall', '--id', 'Anthropic.ClaudeCode', '--exact'], 'win32'), 'winget uninstall --id Anthropic.ClaudeCode --exact');
+  assert.equal(
+    shellCommand('/Users/First Last/.nvm/bin/npm', ['uninstall', '-g', '--prefix', '/Users/First Last/.nvm', '@anthropic-ai/claude-code'], 'darwin'),
+    "'/Users/First Last/.nvm/bin/npm' uninstall -g --prefix '/Users/First Last/.nvm' @anthropic-ai/claude-code",
+  );
+  assert.equal(shellCommand("/Users/o'brien/bin/brew", ['uninstall', '--cask', 'claude-code@latest'], 'darwin'), "'/Users/o'\\''brien/bin/brew' uninstall --cask claude-code@latest");
+});
+
+test('other copies of a tool are reported with their versions, and wrappers of one copy are not', async () => {
+  const win = process.platform === 'win32';
+  const fixture = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-tool.mjs');
+  const root = tempDir();
+  const launcher = (dir, version) => {
+    fs.mkdirSync(dir, { recursive: true });
+    const versionFile = path.join(dir, 'version.txt');
+    fs.writeFileSync(versionFile, version);
+    const file = path.join(dir, win ? 'dup.cmd' : 'dup');
+    fs.writeFileSync(file, win
+      ? `@echo off\r\nset "FAKE_TOOL_VERSION_FILE=${versionFile}"\r\n"${process.execPath}" "${fixture}" %*\r\n`
+      : `#!/bin/sh\nFAKE_TOOL_VERSION_FILE="${versionFile}" exec "${process.execPath}" "${fixture}" "$@"\n`, { mode: 0o755 });
+    return file;
+  };
+  const dirA = path.join(root, 'a');
+  const dirB = path.join(root, 'b');
+  const copyA = launcher(dirA, '1.0.0');
+  const copyB = launcher(dirB, '2.0.0');
+  const wrappers = path.join(root, 'wrappers');
+  fs.mkdirSync(wrappers);
+  if (win) {
+    fs.writeFileSync(path.join(dirA, 'dup.ps1'), '& "$PSScriptRoot\\dup.cmd" @args\r\n');
+    fs.writeFileSync(path.join(dirA, 'dup'), '#!/bin/sh\n');
+  } else {
+    fs.symlinkSync(copyA, path.join(wrappers, 'dup'));
+  }
+  const userFile = path.join(root, 'providers.json');
+  fs.writeFileSync(userFile, JSON.stringify({ providers: [
+    { id: 'dup', tool: 'Dup Tool', command: 'dup', package: 'dup-pkg', versionArgs: ['--version'], channels: { native: { paths: [path.join(dirA, 'dup')], update: ['update'], uninstall: 'remove-native' } } },
+  ] }));
+  const base = { PATHEXT: '.EXE;.CMD', ComSpec: process.env.ComSpec, SystemRoot: process.env.SystemRoot, HOME: root, USERPROFILE: root };
+  const registryFor = (dirs) => new ProviderRegistry({ userFile, env: { ...base, PATH: dirs.join(path.delimiter) }, checkUpdates: false });
+
+  const single = registryFor([dirA, wrappers]);
+  await single.refreshVersions();
+  const one = single.describe(single.get('dup'));
+  assert.equal(one.installs.length, 1, 'several wrappers of one installation are one installation');
+  assert.deepEqual(one.warnings, []);
+
+  const olderFirst = registryFor([dirA, wrappers, dirB]);
+  await olderFirst.refreshVersions();
+  const shadowed = olderFirst.describe(olderFirst.get('dup'));
+  assert.deepEqual(shadowed.installs.map((i) => [i.path, i.channel, i.version, i.active, i.newer, i.removeCommand]), [
+    [copyA, 'native', '1.0.0', true, false, 'remove-native'],
+    [copyB, 'unknown', '2.0.0', false, true, null],
+  ]);
+  assert.equal(shadowed.installedVersion, '1.0.0');
+  assert.equal(shadowed.warnings.length, 2);
+  assert.match(shadowed.warnings[0], /^2 copies of Dup Tool are installed\. The one in use is native v1\.0\.0 at /);
+  assert.match(shadowed.warnings[1], /^An older copy comes first on PATH: native v1\.0\.0 is in use while unknown install v2\.0\.0 is installed at /);
+
+  const newerFirst = registryFor([dirB, dirA]);
+  await newerFirst.refreshVersions();
+  const fine = newerFirst.describe(newerFirst.get('dup'));
+  assert.deepEqual(fine.installs.map((i) => [i.channel, i.version, i.active, i.newer]), [['unknown', '2.0.0', true, false], ['native', '1.0.0', false, false]]);
+  assert.equal(fine.warnings.length, 1);
+
+  const offPath = registryFor([path.join(root, 'empty')]);
+  const hidden = offPath.describe(offPath.get('dup'));
+  assert.equal(hidden.available, false);
+  assert.deepEqual(hidden.installs.map((i) => [i.path, i.channel, i.active, i.onPath]), [[copyA, 'native', false, false]]);
+  assert.match(hidden.warnings[0], /^A copy of Dup Tool exists at .* but its folder is not on PATH\.$/);
+});
+
+test('PATH is refreshed for detection and sessions alike, within limits', async () => {
+  const win = process.platform === 'win32';
+  const root = tempDir();
+  const toolDir = path.join(root, 'tool');
+  const emptyDir = path.join(root, 'empty');
+  const otherDir = path.join(root, 'other');
+  for (const dir of [toolDir, emptyDir, otherDir]) fs.mkdirSync(dir);
+  fs.writeFileSync(path.join(toolDir, win ? 'latecomer.cmd' : 'latecomer'), win ? '@echo off\r\n' : '#!/bin/sh\n', { mode: 0o755 });
+  const userFile = path.join(root, 'providers.json');
+  fs.writeFileSync(userFile, JSON.stringify({ providers: [
+    { id: 'late', tool: 'Latecomer', command: 'latecomer' },
+    { id: 'pinned', tool: 'Pinned', command: 'latecomer', env: { PATH: otherDir } },
+  ] }));
+  const env = { PATHEXT: '.EXE;.CMD', ComSpec: process.env.ComSpec, SystemRoot: process.env.SystemRoot, HOME: root, USERPROFILE: root, PATH: emptyDir };
+  let discovered = emptyDir;
+  let reads = 0;
+  const registry = new ProviderRegistry({ userFile, env, checkUpdates: false, pathReader: async () => { reads++; return discovered; } });
+  const late = registry.get('late');
+  assert.equal(registry.describe(late).available, false);
+
+  await registry.refreshVersions();
+  assert.equal(reads, 1);
+  discovered = [emptyDir, toolDir].join(path.delimiter);
+  await registry.refreshVersions();
+  assert.equal(reads, 1, 'the PATH is not read again within the minimum interval');
+  assert.equal(registry.describe(late).available, false);
+
+  await registry.refreshVersions({ force: true });
+  assert.equal(reads, 2);
+  assert.equal(registry.describe(late).available, true, 'a tool installed after startup is found without a restart');
+  assert.equal(env.PATH, [emptyDir, toolDir].join(path.delimiter), 'the launch environment gains the new folder');
+  assert.equal(mergeEnv([env, late.env]).PATH, env.PATH, 'new sessions start with the PATH detection used');
+
+  const pinned = registry.get('pinned');
+  assert.equal(registry.describe(pinned).available, false, "a provider's own PATH still decides for that provider");
+  assert.equal(mergeEnv([env, pinned.env]).PATH, otherDir);
+
+  discovered = null;
+  await registry.refreshVersions({ force: true });
+  assert.equal(registry.describe(late).available, true, 'a failed read keeps the last working PATH');
+  const failing = new ProviderRegistry({ userFile, env: { ...env }, checkUpdates: false, pathReader: async () => { throw new Error('reader broke'); } });
+  await failing.refreshVersions({ force: true });
+  assert.equal(failing.describe(failing.get('late')).available, true);
+
+  const semi = { delimiter: ';', caseInsensitive: true };
+  assert.equal(weavePaths('A;B', 'A;NEW;B;LAST', semi), 'A;NEW;B;LAST');
+  assert.equal(weavePaths('X;A;B', 'NEW;A;B', semi), 'X;NEW;A;B', 'entries only the launch environment has are kept');
+  assert.equal(weavePaths('C:\\A;C:\\b\\', 'c:\\a;C:\\B;C:\\New', semi), 'C:\\A;C:\\b\\;C:\\New');
+  assert.equal(weavePaths('', 'A;B', semi), 'A;B');
+  assert.equal(weavePaths('A', '', semi), 'A');
+  assert.equal(weavePaths('/a:/b', '/A:/b:/c', { delimiter: ':', caseInsensitive: false }), '/a:/A:/b:/c');
+
+  const userOut = '\r\nHKEY_CURRENT_USER\\Environment\r\n    Path    REG_EXPAND_SZ    %USERPROFILE%\\bin;%Missing%\\y\r\n\r\n';
+  const machineOut = '\r\nHKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment\r\n    Path    REG_SZ    C:\\Windows\r\n';
+  assert.equal(parseRegValue(userOut), '%USERPROFILE%\\bin;%Missing%\\y');
+  assert.equal(parseRegValue('ERROR: The system was unable to find the specified registry key or value.'), null);
+  assert.equal(expandWindowsVars('%USERPROFILE%\\bin;%Missing%\\y', { UserProfile: 'C:\\Users\\a' }), 'C:\\Users\\a\\bin;%Missing%\\y');
+  const query = (outputs) => async (key) => outputs[key.startsWith('HKLM') ? 'machine' : 'user'];
+  const winEnv = { USERPROFILE: 'C:\\Users\\a' };
+  assert.equal(await readWindowsPath({ env: winEnv, query: query({ machine: machineOut, user: userOut }) }), 'C:\\Windows;C:\\Users\\a\\bin;%Missing%\\y');
+  assert.equal(await readWindowsPath({ env: winEnv, query: query({ machine: machineOut, user: null }) }), 'C:\\Windows');
+  assert.equal(await readWindowsPath({ env: winEnv, query: query({ machine: null, user: userOut }) }), null, 'no machine PATH means the read failed');
+});
+
 test('versions are parsed, compared and looked up', async () => {
   assert.equal(parseVersion('2.1.285 (Claude Code)'), '2.1.285');
   assert.equal(parseVersion('codex-cli 0.45.0\n'), '0.45.0');
@@ -591,7 +954,7 @@ test('installed versions are re-read when the tool changes, hourly, and after a 
     { id: 'anthropic', command: process.execPath, versionArgs: [tool, '--version'], package: null },
     { id: 'openai', command: process.execPath, versionArgs: ['-e', 'process.exit(1)'], package: null },
   ] }));
-  const registry = new ProviderRegistry({ userFile, env: { PATH: path.dirname(process.execPath) }, checkUpdates: false });
+  const registry = new ProviderRegistry({ userFile, env: { PATH: path.dirname(process.execPath), HOME: dir, USERPROFILE: dir }, checkUpdates: false });
   await registry.refreshVersions();
   const entry = registry.versions.get('anthropic');
   assert.equal(entry.installed, '1.2.3');

@@ -59,7 +59,20 @@ writeScript(path.join(npmBinDir, 'npm'), {
 const breakFlag = path.join(home, 'broken.flag');
 fs.writeFileSync(path.join(home, 'break-version.txt'), '9.9.9');
 
-process.env.PATH = [bin, npmBinDir, nativeDir, process.env.PATH].join(path.delimiter);
+const secondDir = path.join(home, 'second-bin');
+fs.mkdirSync(secondDir);
+const secondVersion = path.join(secondDir, 'version.txt');
+fs.writeFileSync(secondVersion, '0.9.0');
+writeScript(path.join(secondDir, 'fake-native'), {
+  win: `set "FAKE_TOOL_VERSION_FILE=${secondVersion}"\r\n${runFixture.win}`,
+  sh: `FAKE_TOOL_VERSION_FILE="${secondVersion}" ${runFixture.sh}`,
+});
+const linkDir = path.join(home, 'links');
+fs.mkdirSync(linkDir);
+if (win) fs.writeFileSync(path.join(npmBinDir, 'fake-npmtool.ps1'), '& "$PSScriptRoot\\fake-npmtool.cmd" @args\r\n');
+else fs.symlinkSync(path.join(npmBinDir, 'fake-npmtool'), path.join(linkDir, 'fake-npmtool'));
+
+process.env.PATH = [bin, npmBinDir, nativeDir, secondDir, linkDir, process.env.PATH].join(path.delimiter);
 
 const racyBuild = `racy-pkg-${process.platform}-${process.arch}`;
 const registryRequests = [];
@@ -459,6 +472,30 @@ test('an unpublished platform build stops the install before anything runs', asy
   assert.match(refused.body.error.message, /Nothing was changed/);
   assert.deepEqual(registryRequests, ['/racy-pkg/latest', `/racy-pkg/2.0.0-${process.platform}-${process.arch}`]);
   assert.equal((await call('GET', '/sessions')).body.sessions.length, before, 'no session was started');
+});
+
+test('other copies of a tool are listed, wrappers of one copy are not', async () => {
+  const native = await waitFor(async () => {
+    const p = await findProvider('nativetool');
+    return p.installs.length === 2 && p.installs.every((i) => i.version) ? p : null;
+  }, { label: 'copy versions' });
+  assert.deepEqual(native.installs.map((i) => [i.channel, i.version, i.active, i.onPath, i.newer]), [
+    ['native', '1.2.3', true, true, false],
+    ['unknown', '0.9.0', false, true, false],
+  ]);
+  assert.ok(native.installs[1].path.startsWith(secondDir));
+  assert.equal(native.installs[1].removeCommand, null, 'no removal command without confirmed ownership');
+  assert.equal(native.warnings.length, 1);
+  assert.match(native.warnings[0], /^2 copies of Native Tool are installed\. The one in use is native v1\.2\.3 at /);
+
+  const npmtool = await findProvider('npmtool');
+  assert.equal(npmtool.installs.length, 1, 'several entry points of one installation are one installation');
+  assert.equal(npmtool.installs[0].channel, 'npm');
+  assert.ok(npmtool.installs[0].removeCommand.includes('uninstall -g --prefix'));
+  assert.ok(npmtool.installs[0].removeCommand.includes(npmPrefix));
+  assert.ok(npmtool.installs[0].removeCommand.endsWith('fake-tool-pkg'));
+  assert.deepEqual(npmtool.warnings, []);
+  assert.deepEqual((await findProvider('missing')).installs, []);
 });
 
 test('an existing tool session can be resumed by id', async () => {

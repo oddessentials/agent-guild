@@ -102,6 +102,12 @@ main { max-width: 1200px; margin: 0 auto; padding: 20px 16px 48px; display: grid
 .console-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
 .provider-actions { grid-column: 1 / -1; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .provider .hint { font-size: 0.78rem; color: var(--muted); overflow-wrap: anywhere; }
+.provider .copies { grid-column: 1 / -1; font-size: 0.78rem; color: var(--muted); overflow-wrap: anywhere; }
+.provider .copies summary { cursor: pointer; color: var(--warn); }
+.provider .copies ul { margin: 6px 0 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+.provider .copies li span { display: block; }
+.provider .copies .copy-name { color: var(--text); }
+.provider .copies code { font-family: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace; color: var(--text); }
 .provider.busy { opacity: 0.6; pointer-events: none; }
 
 .provider-icon {

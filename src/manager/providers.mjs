@@ -9,9 +9,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
-import { resolveCommand, buildSpawnSpec, runSpec } from './command-resolver.mjs';
+import { resolveCommand, resolveAllCommands, pathKey, buildSpawnSpec, runSpec } from './command-resolver.mjs';
 import { compareVersions, probeVersion, fetchManifest, latestVersion, DEFAULT_NPM_REGISTRY } from './versions.mjs';
-import { classifyInstall, formatCommand, helpDescribes, platformDependency } from './install-channels.mjs';
+import { CHANNEL_LABELS, classifyInstall, formatCommand, helpDescribes, knownLaunchers, listInstallations, platformDependency } from './install-channels.mjs';
+import { weavePaths } from './shell-env.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULTS_FILE = path.resolve(here, '../../config/providers.default.json');
@@ -19,6 +20,8 @@ const ID_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 const PLATFORM_KEYS = ['win32', 'darwin', 'linux'];
 const VERSION_TTL_MS = 60 * 60 * 1000;
 const FAILED_PROBE_TTL_MS = 5 * 60 * 1000;
+const PATH_REFRESH_MS = 60 * 1000;
+const INSTALLS_TTL_MS = 30 * 1000;
 
 function fileMtime(file) {
   try { return fs.statSync(file).mtimeMs; } catch { return null; }
@@ -64,11 +67,21 @@ function normalizeChannels(raw) {
   const out = {};
   if (!raw || typeof raw !== 'object') return out;
   if (raw.native && typeof raw.native === 'object') {
-    out.native = { paths: stringList(raw.native.paths), update: stringList(raw.native.update) };
+    out.native = {
+      paths: stringList(raw.native.paths),
+      update: stringList(raw.native.update),
+      uninstall: raw.native.uninstall ? String(raw.native.uninstall) : null,
+      sharedWithNpm: raw.native.sharedWithNpm === true,
+    };
   }
+  if (raw.brew && typeof raw.brew === 'object') out.brew = { names: stringList(raw.brew.names) };
   if (raw.winget && typeof raw.winget === 'object' && raw.winget.id) out.winget = { id: String(raw.winget.id) };
   if (raw.legacy && typeof raw.legacy === 'object') {
-    out.legacy = { paths: stringList(raw.legacy.paths), guidance: raw.legacy.guidance ? String(raw.legacy.guidance) : null };
+    out.legacy = {
+      paths: stringList(raw.legacy.paths),
+      guidance: raw.legacy.guidance ? String(raw.legacy.guidance) : null,
+      uninstall: raw.legacy.uninstall ? String(raw.legacy.uninstall) : null,
+    };
   }
   return out;
 }
@@ -160,7 +173,7 @@ export class ProviderRegistry extends EventEmitter {
    * @param {boolean} [opts.checkUpdates] false skips registry lookups entirely
    * @param {Function} [opts.fetchImpl]
    */
-  constructor({ userFile, env, platform = process.platform, iconDir, registryUrl = null, checkUpdates = true, fetchImpl } = {}) {
+  constructor({ userFile, env, platform = process.platform, iconDir, registryUrl = null, checkUpdates = true, fetchImpl, pathReader = null } = {}) {
     super();
     this.userFile = userFile;
     this.env = env || process.env;
@@ -169,6 +182,9 @@ export class ProviderRegistry extends EventEmitter {
     this.registryUrl = registryUrl || null;
     this.checkUpdates = checkUpdates;
     this.fetchImpl = fetchImpl;
+    this.pathReader = pathReader;
+    this._pathReadAt = 0;
+    this._installs = new Map();
     this.versions = new Map();
     this._refreshing = null;
     this._npmRegistry = null;
@@ -180,6 +196,7 @@ export class ProviderRegistry extends EventEmitter {
     this.providers = providers;
     this.warnings = warnings;
     this._npmRegistry = null;
+    this._installs.clear();
     for (const w of warnings) console.warn(`[providers] ${w}`);
     this.emit('updated');
   }
@@ -219,16 +236,35 @@ export class ProviderRegistry extends EventEmitter {
     return pending;
   }
 
+  async refreshPath({ force = false } = {}) {
+    if (!this.pathReader) return false;
+    const now = Date.now();
+    if (!force && now - this._pathReadAt < PATH_REFRESH_MS) return false;
+    this._pathReadAt = now;
+    const discovered = await Promise.resolve().then(() => this.pathReader()).catch(() => null);
+    if (!discovered) return false;
+    const key = pathKey(this.env, this.platform);
+    const next = weavePaths(this.env[key] || '', discovered, {
+      delimiter: this.platform === 'win32' ? ';' : ':',
+      caseInsensitive: this.platform === 'win32',
+    });
+    if (next === (this.env[key] || '')) return false;
+    this.env[key] = next;
+    this._installs.clear();
+    return true;
+  }
+
   async _refreshVersions({ force, ids }) {
     const now = Date.now();
-    let changed = false;
+    let changed = await this.refreshPath({ force });
     const providers = this.providers.filter((p) => !ids || ids.includes(p.id));
+    if (force) for (const provider of providers) this._installs.delete(provider.id);
     const lookups = this.checkUpdates && providers.some((p) => p.package);
     const registryUrl = lookups ? await this.npmRegistryUrl() : null;
     await Promise.all(providers.map(async (provider) => {
       const entry = this.versions.get(provider.id) || {
         installed: null, versionStatus: null, versionError: null, installedPath: null, installedMtime: null, installedAt: 0,
-        latest: null, latestAt: 0, probePath: null, probeMtime: null, probeAt: 0, probeOk: null, lastInstall: null,
+        latest: null, latestAt: 0, probePath: null, probeMtime: null, probeAt: 0, probeOk: null, lastInstall: null, copies: {},
       };
       const found = this.resolve(provider);
       const channel = found ? this.channelFor(provider, found) : null;
@@ -264,6 +300,23 @@ export class ProviderRegistry extends EventEmitter {
         Object.assign(entry, { installed: null, versionStatus: null, versionError: null, installedPath: null, installedMtime: null, installedAt: 0 });
         changed = true;
       }
+      const copies = {};
+      for (const other of provider.versionArgs ? this.installsFor(provider, found).filter((i) => i.resolvedPath !== found) : []) {
+        const file = other.resolvedPath;
+        const mtime = fileMtime(file);
+        const cached = entry.copies[file];
+        const ttl = cached?.version ? VERSION_TTL_MS : FAILED_PROBE_TTL_MS;
+        if (!force && cached && cached.mtime === mtime && now - cached.at <= ttl) {
+          copies[file] = cached;
+          continue;
+        }
+        const probe = await probeVersion(buildSpawnSpec(file, provider.versionArgs, this.env, this.platform), { env: { ...this.env, ...provider.env } });
+        const status = !probe.ok ? 'failed' : probe.version ? 'ok' : 'unavailable';
+        changed ||= !cached || cached.version !== probe.version || cached.status !== status;
+        copies[file] = { version: probe.version, status, mtime, at: now };
+      }
+      changed ||= Object.keys(entry.copies).length !== Object.keys(copies).length;
+      entry.copies = copies;
       if (provider.package && lookups && (force || now - entry.latestAt > VERSION_TTL_MS)) {
         const latest = await latestVersion(provider.package, { registryUrl, fetchImpl: this.fetchImpl });
         changed ||= latest !== entry.latest;
@@ -346,8 +399,48 @@ export class ProviderRegistry extends EventEmitter {
       env: { ...this.env, ...provider.env },
       platform: this.platform,
       npmOnPath: this.resolveNpm(),
-      wingetOnPath: this.platform === 'win32' ? resolveCommand('winget', this.env, this.platform) : null,
+      wingetOnPath: this.resolveWinget(),
     });
+  }
+
+  resolveWinget() {
+    return this.platform === 'win32' ? resolveCommand('winget', this.env, this.platform) : null;
+  }
+
+  installsFor(provider, resolvedPath = this.resolve(provider)) {
+    const cached = this._installs.get(provider.id);
+    if (cached && cached.resolvedPath === resolvedPath && Date.now() - cached.at < INSTALLS_TTL_MS) return cached.list;
+    const list = this.listInstalls(provider);
+    this._installs.set(provider.id, { list, resolvedPath, at: Date.now() });
+    return list;
+  }
+
+  listInstalls(provider) {
+    const env = { ...this.env, ...provider.env };
+    const command = this.commandFor(provider);
+    const tracked = Boolean(provider.package) || Object.keys(provider.channels).length > 0;
+    return listInstallations({
+      onPath: tracked ? resolveAllCommands(command, env, this.platform) : [this.resolve(provider)].filter(Boolean),
+      known: tracked ? knownLaunchers({ provider, command, env, platform: this.platform }) : [],
+      provider,
+      env,
+      platform: this.platform,
+      npmOnPath: this.resolveNpm(),
+      wingetOnPath: this.resolveWinget(),
+    });
+  }
+
+  installWarnings(provider, installs) {
+    const label = (i) => [CHANNEL_LABELS[i.channel], i.version && `v${i.version}`].filter(Boolean).join(' ');
+    const active = installs.find((i) => i.active);
+    if (!active) return installs.map((i) => `A copy of ${provider.tool} exists at ${i.path}, but its folder is not on PATH.`);
+    const warnings = [];
+    if (installs.length > 1) {
+      warnings.push(`${installs.length} copies of ${provider.tool} are installed. The one in use is ${label(active)} at ${active.path}.`);
+    }
+    const newer = installs.find((i) => i.newer);
+    if (newer) warnings.push(`An older copy comes first on PATH: ${label(active)} is in use while ${label(newer)} is installed at ${newer.path}.`);
+    return warnings;
   }
 
   updateFor(provider, channel = this.channelFor(provider)) {
@@ -397,6 +490,23 @@ export class ProviderRegistry extends EventEmitter {
     const latest = versions?.latest ?? null;
     const channel = this.channelFor(provider, resolvedPath);
     const update = this.updateFor(provider, channel);
+    const installs = this.installsFor(provider, resolvedPath).map((install) => {
+      const active = install.resolvedPath === resolvedPath;
+      const copy = active ? { version: installed, status: versions?.versionStatus ?? null } : versions?.copies?.[install.resolvedPath];
+      return {
+        path: install.resolvedPath,
+        channel: install.channel,
+        version: copy?.version ?? null,
+        versionStatus: copy?.status ?? null,
+        active,
+        onPath: install.onPath,
+        removeCommand: install.removeCommand,
+      };
+    });
+    const inUse = installs.find((i) => i.active)?.version;
+    for (const install of installs) {
+      install.newer = Boolean(!install.active && inUse && install.version && compareVersions(install.version, inUse) > 0);
+    }
     return {
       id: provider.id,
       vendor: provider.vendor,
@@ -415,6 +525,8 @@ export class ProviderRegistry extends EventEmitter {
       updateCommand: update.command,
       updateGuidance: update.guidance,
       lastInstall: versions?.lastInstall ?? null,
+      installs,
+      warnings: this.installWarnings(provider, installs),
       npmNote: provider.npmNote,
       usageSource: provider.usage === null ? null : typeof provider.usage === 'string' ? provider.usage : 'command',
       modelPattern: provider.modelPattern,

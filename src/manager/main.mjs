@@ -8,7 +8,7 @@ import { ProviderRegistry } from './providers.mjs';
 import { SessionManager } from './session-manager.mjs';
 import { UsageMonitor } from './usage.mjs';
 import { createManagerServer } from './server.mjs';
-import { resolveBaseEnv } from './shell-env.mjs';
+import { resolveBaseEnv, pathReader } from './shell-env.mjs';
 import { writeReportShims } from './report-shims.mjs';
 import {
   DEFAULT_HOST,
@@ -46,6 +46,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
     iconDir: path.join(webDir, 'icons'),
     registryUrl: process.env.AGENT_GUILD_NPM_REGISTRY || undefined,
     checkUpdates: process.env.AGENT_GUILD_NO_UPDATE_CHECK !== '1',
+    pathReader: pathReader(process.platform, baseEnv),
   });
 
   let api;

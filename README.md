@@ -87,6 +87,7 @@ one platform under a `win32` or `darwin` key. See
 | `vendor`, `tool` | Names shown on the icon. |
 | `command`, `args` | What to run. `command` is looked up on PATH. `@shell` means the user's default shell. |
 | `package` | The tool's npm package, e.g. `@openai/codex`. Enables the **Install** button and the version check. |
+| `channels` | How an installed copy is recognised, so **Update** runs that installation's own updater. A copy installed by npm needs no entry. `brew.names` lists the tool's own Homebrew formula or cask names, e.g. `{ "brew": { "names": ["gemini-cli"] } }`, and `winget.id` is its WinGet package id. A provider you add must set these for its Homebrew or WinGet copy to get an **Update** button or a removal command; without them that copy shows as an unknown install with guidance only. `native.paths` are the launcher and folders the vendor's own installer uses, and `native.update` the arguments that make the tool update itself, e.g. `["update"]`. |
 | `versionArgs` | Arguments that make the command print its version, used instead of `args`, e.g. `["--version"]`. |
 | `usage` | Where the usage meters come from: `"claude"`, `"codex"`, `"gemini"`, `{ "command", "args" }` for a program that prints `{ "windows": [{ "label", "usedPercent", "resetsAt" }] }`, or `null` for none. |
 | `modelPattern` | Regular expression that finds the model name on the tool's screen when the tool does not report it. |
