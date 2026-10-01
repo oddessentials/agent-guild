@@ -145,7 +145,7 @@ jobs:
     name: Install from npm
     needs: [plan, publish]
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 80
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -159,15 +159,24 @@ jobs:
           VERSION: ${{ needs.plan.outputs.version }}
           INTEGRITY: ${{ needs.publish.outputs.integrity }}
         run: |
-          published=''
-          for attempt in $(seq 1 30); do
-            published=$(npm view "$PACKAGE" dist.integrity --prefer-online 2>/dev/null || true)
-            if [ -n "$published" ]; then break; fi
-            sleep 10
+          deadline=$((SECONDS + 60 * 60))
+          until published=$(npm view "$PACKAGE" dist.integrity --prefer-online 2>npm-view.log) && [ -n "$published" ]; do
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              cat npm-view.log
+              echo "::error::npm still does not serve $PACKAGE an hour after it was published. Re-run this job once \"npm view $PACKAGE\" shows it."
+              exit 1
+            fi
+            echo "npm is still processing $PACKAGE ($((SECONDS / 60)) min): $(grep -m 1 -o 'No match found.*' npm-view.log || head -n 1 npm-view.log)"
+            sleep 30
           done
           if [ "$published" != "$INTEGRITY" ]; then
             echo "::error::npm serves $PACKAGE as \"$published\", not the tested $INTEGRITY."
             exit 1
           fi
-          npm install --global "$PACKAGE"
+          for attempt in 1 2 3 4 5 6; do
+            if npm install --global "$PACKAGE"; then break; fi
+            if [ "$attempt" = 6 ]; then exit 1; fi
+            echo "npm lists $PACKAGE but could not install it yet; its package list may still be cached. Trying again in a minute."
+            sleep 60
+          done
           node tests/package/smoke.mjs "$(npm prefix --global)" --version "$VERSION"
