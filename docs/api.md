@@ -104,21 +104,31 @@ the subscription tier.
   "plan": "max",
   "windows": [
     { "label": "5-hour", "usedPercent": 42.5, "resetsAt": "2026-09-30T08:00:00.000Z" },
-    { "label": "7-day", "usedPercent": 12, "resetsAt": "2026-10-03T05:00:00.000Z" }
+    { "label": "7-day", "usedPercent": 12, "resetsAt": "2026-10-03T05:00:00.000Z" },
+    { "label": "7-day Fable 5.1", "usedPercent": 48, "resetsAt": "2026-10-03T05:00:00.000Z" }
   ],
+  "credits": null,
   "fetchedAt": "2026-09-30T03:12:01.120Z",
   "error": null
 }
 ```
 
-Each window is one rate limit of the provider's subscription. When the
-provider is not signed in or the lookup failed, `windows` is empty and
-`error` says why. The manager reads the tool's own sign-in (Claude Code's
+Each window is one rate limit of the provider's subscription: the plan's
+own windows first, then the further limits the vendor lists (every
+per-model weekly window Claude reports, such as Fable; each window of
+Codex's additional limits, labelled with the model or feature they meter),
+then Claude's "Extra usage" share of the monthly spend limit when extra
+usage is enabled, whose `resetsAt` is the end of the spend period when the
+vendor reports it. `credits` is a prepaid credit balance
+(Codex), or null when the account has none, it is unlimited, or it is
+unknown. When the provider is not signed in or the lookup failed,
+`windows` is empty and `error` says why. The manager reads the tool's own sign-in (Claude Code's
 credentials file or macOS keychain item, Codex CLI's `auth.json`, Gemini
 CLI's keychain item or `oauth_creds.json`) and asks the vendor's usage
 endpoint; a `command` source runs a program that prints
 `{ plan?, windows: [{ label, usedPercent | remainingPercent, resetsAt? }] }`.
-Snapshots are cached for a minute.
+A window whose share is not a number (missing, null or blank) is left out
+rather than shown as unused. Snapshots are cached for a minute.
 
 ### Session
 

@@ -15,7 +15,7 @@ import { execFileSync } from 'node:child_process';
 import { parseVersion, compareVersions, probeVersion, diagnosticLine, latestVersion } from '../src/manager/versions.mjs';
 import {
   UsageMonitor, readClaudeCredentials, readCodexCredentials, readGeminiCredentials, geminiOAuthClientFromInstall, geminiKeychainLookup,
-  claudeKeychainService, claudeCredentialsFile, fetchClaudeUsage, fetchCodexUsage, fetchGeminiUsage, commandUsage, toIso, windowLabel,
+  claudeKeychainService, claudeCredentialsFile, fetchClaudeUsage, fetchCodexUsage, fetchGeminiUsage, commandUsage, toIso, windowLabel, clampPercent,
 } from '../src/manager/usage.mjs';
 import crypto from 'node:crypto';
 
@@ -1130,9 +1130,36 @@ test('usage endpoints are called with the right headers and parsed into windows'
   const fetchImpl = async (url, init) => {
     seen.push({ url, headers: init.headers });
     if (url.includes('anthropic')) {
-      return { ok: true, json: async () => ({ five_hour: { utilization: 42.55, resets_at: '2030-01-01T05:00:00Z' }, seven_day: { utilization: 12, resets_at: 1893456000 }, seven_day_opus: null }) };
+      return { ok: true, json: async () => ({
+        five_hour: { utilization: 42.55, resets_at: '2030-01-01T05:00:00Z' },
+        seven_day: { utilization: 12, resets_at: 1893456000 },
+        seven_day_opus: null,
+        seven_day_sonnet: { utilization: 30, resets_at: 1893456000 },
+        // Per-model rows as the endpoint lists them: Fable only appears here,
+        // and the Sonnet row repeats seven_day_sonnet.
+        limits: [
+          { kind: 'session', group: 'session', percent: 42.55, resets_at: '2030-01-01T05:00:00Z' },
+          { kind: 'weekly_scoped', group: 'weekly', percent: 55.55, resets_at: '2030-01-01T00:00:00Z', scope: { model: { display_name: 'Fable 5.1' } } },
+          { kind: 'weekly_scoped', group: 'weekly', percent: 30, resets_at: '2030-01-01T00:00:00Z', scope: { model: { display_name: 'Sonnet' } } },
+          { kind: 'weekly_scoped', group: 'weekly', percent: 1, resets_at: null, scope: { surface: { display_name: 'no model' } } },
+          { kind: 'spend', group: 'monthly', percent: 25, resets_at: '2030-02-01T00:00:00Z', is_active: false },
+          { kind: 'spend', group: 'monthly', percent: 25, resets_at: '2030-03-01T00:00:00Z', is_active: true },
+          null,
+        ],
+        extra_usage: { is_enabled: true, monthly_limit: 5000, used_credits: 1250, utilization: 25, currency: 'USD' },
+      }) };
     }
-    return { ok: true, json: async () => ({ plan_type: 'plus', rate_limit: { primary_window: { used_percent: 30, limit_window_seconds: 18000, reset_at: 1893456000 }, secondaryWindow: { usedPercent: 80, limitWindowSeconds: 604800, resetAfterSeconds: 60 } } }) };
+    return { ok: true, json: async () => ({
+      plan_type: 'plus',
+      rate_limit: { primary_window: { used_percent: 30, limit_window_seconds: 18000, reset_at: 1893456000 }, secondaryWindow: { usedPercent: 80, limitWindowSeconds: 604800, resetAfterSeconds: 60 } },
+      additional_rate_limits: [
+        { limit_name: 'Spark', metered_feature: 'spark', rate_limit: { primary_window: { used_percent: 10, limit_window_seconds: 18000, reset_at: 1893456000 }, secondary_window: { used_percent: 100, limit_window_seconds: 604800, reset_at: 1893456000 } } },
+        { limit_name: '', metered_feature: 'review', rate_limit: { primary_window: { used_percent: 5 }, secondary_window: { used_percent: 95 } } },
+        { metered_feature: '  ' },
+        null,
+      ],
+      credits: { has_credits: true, unlimited: false, balance: 12.5 },
+    }) };
   };
   const claude = await fetchClaudeUsage({ accessToken: 'tok', plan: 'max', version: '2.1.0', fetchImpl });
   assert.equal(seen[0].headers.Authorization, 'Bearer tok');
@@ -1141,16 +1168,63 @@ test('usage endpoints are called with the right headers and parsed into windows'
   assert.deepEqual(claude, { plan: 'max', windows: [
     { label: '5-hour', usedPercent: 42.6, resetsAt: '2030-01-01T05:00:00.000Z' },
     { label: '7-day', usedPercent: 12, resetsAt: '2030-01-01T00:00:00.000Z' },
+    { label: '7-day Sonnet', usedPercent: 30, resetsAt: '2030-01-01T00:00:00.000Z' },
+    { label: '7-day Fable 5.1', usedPercent: 55.6, resetsAt: '2030-01-01T00:00:00.000Z' },
+    { label: 'Extra usage', usedPercent: 25, resetsAt: '2030-03-01T00:00:00.000Z' },
   ] });
+  const claudeAgain = async (body) => (await fetchClaudeUsage({ accessToken: 'tok', fetchImpl: async () => ({ ok: true, json: async () => body }) })).windows;
+  assert.deepEqual(await claudeAgain({ five_hour: { utilization: 1 }, limits: 'nope', extra_usage: { is_enabled: false, monthly_limit: 100, used_credits: 100 } }),
+    [{ label: '5-hour', usedPercent: 1, resetsAt: null }], 'extra usage that is not enabled has no meter');
+  assert.deepEqual(await claudeAgain({ extra_usage: { is_enabled: true, monthly_limit: null, used_credits: null, utilization: 40 } }),
+    [{ label: 'Extra usage', usedPercent: 40, resetsAt: null }], 'without amounts the share is the server utilization');
+  assert.deepEqual(await claudeAgain({ extra_usage: { is_enabled: true, monthly_limit: 0, used_credits: 7, utilization: null } }), [], 'an unknown share has no meter');
+  assert.deepEqual(await claudeAgain({ limits: [{ kind: 'weekly_scoped', percent: 9, scope: { model: { display_name: 'Opus 4.8' } } }] }),
+    [{ label: '7-day Opus 4.8', usedPercent: 9, resetsAt: null }], 'a per-model row stands alone when its fixed key is absent');
+  assert.deepEqual(await claudeAgain({ seven_day_opus: { utilization: 20 }, limits: [
+    { kind: 'weekly_scoped', percent: 95, scope: { model: { display_name: 'Opus 4.1' } } },
+    { kind: 'weekly_scoped', percent: 20, scope: { model: { display_name: 'opus' } } },
+    { kind: 'weekly_scoped', percent: 50, scope: { model: { id: 'claude-fable-5-1' } } },
+    { kind: 'weekly_scoped', percent: ' ', scope: { model: { display_name: 'Blank' } } },
+  ] }), [
+    { label: '7-day Opus', usedPercent: 20, resetsAt: null },
+    { label: '7-day Opus 4.1', usedPercent: 95, resetsAt: null },
+    { label: '7-day claude-fable-5-1', usedPercent: 50, resetsAt: null },
+  ], 'a versioned row is its own limit, the family row repeats the fixed window, and a model falls back to its id');
+  assert.deepEqual(await claudeAgain({ extra_usage: { is_enabled: true, monthly_limit: '5000', used_credits: '500' } }),
+    [{ label: 'Extra usage', usedPercent: 10, resetsAt: null }], 'amounts sent as strings are read');
+  assert.deepEqual((await claudeAgain({ limits: [
+    { kind: 'weekly_scoped', percent: 1, scope: { model: { display_name: 'Twin' } } },
+    { kind: 'weekly_scoped', percent: 2, scope: { model: { display_name: 'Twin' }, surface: { display_name: 'Cowork' } } },
+  ] })).map((w) => w.label), ['7-day Twin', '7-day Twin (2)'], 'two rows with one name are both kept');
 
   const codex = await fetchCodexUsage({ accessToken: 'ctok', accountId: 'acc-1', fetchImpl });
   assert.equal(seen[1].headers['ChatGPT-Account-Id'], 'acc-1');
   assert.equal(codex.plan, 'plus');
-  assert.equal(codex.windows.length, 2);
+  assert.equal(codex.credits, 12.5);
   assert.deepEqual(codex.windows[0], { label: '5-hour', usedPercent: 30, resetsAt: '2030-01-01T00:00:00.000Z' });
   assert.equal(codex.windows[1].label, '7-day');
   assert.equal(codex.windows[1].usedPercent, 80);
   assert.ok(Date.parse(codex.windows[1].resetsAt) - Date.now() > 50000);
+  assert.deepEqual(codex.windows.slice(2), [
+    { label: 'Spark 5-hour', usedPercent: 10, resetsAt: '2030-01-01T00:00:00.000Z' },
+    { label: 'Spark 7-day', usedPercent: 100, resetsAt: '2030-01-01T00:00:00.000Z' },
+    { label: 'review primary', usedPercent: 5, resetsAt: null },
+    { label: 'review secondary', usedPercent: 95, resetsAt: null },
+  ], 'additional limits are named after the limit or its feature, and keep both windows');
+  const codexAgain = async (body) => fetchCodexUsage({ accessToken: 'ctok', fetchImpl: async () => ({ ok: true, json: async () => body }) });
+  assert.deepEqual(await codexAgain({ plan_type: 'pro', rate_limit: {}, credits: { has_credits: true, unlimited: true, balance: 0 } }), { plan: 'pro', windows: [], credits: null }, 'unlimited credits have no balance');
+  assert.deepEqual(await codexAgain({ plan_type: 'plus', credits: { has_credits: false, unlimited: false, balance: null } }), { plan: 'plus', windows: [], credits: null }, 'no credits is not a zero balance');
+  assert.equal((await codexAgain({ credits: { has_credits: true, unlimited: false, balance: '3.25' } })).credits, 3.25, 'a balance sent as a string is read');
+  assert.equal((await codexAgain({ credits: { has_credits: true, unlimited: false, balance: ' ' } })).credits, null, 'a blank balance is unknown');
+  const bare = await codexAgain({ additional_rate_limits: [{ limit_name: 'A model name that is far too long for a meter', primary_window: { used_percent: 1, limit_window_seconds: 18000 }, secondary_window: { used_percent: ' ', limit_window_seconds: 604800 } }] });
+  assert.deepEqual(bare.windows, [{ label: 'A model name that is far too 5-hour', usedPercent: 1, resetsAt: null }], 'windows on the entry itself are read, the name is shortened, and a blank share is skipped');
+  const blankReset = await codexAgain({ rate_limit: { primary_window: { used_percent: 30, limit_window_seconds: 18000, reset_after_seconds: '' } } });
+  assert.deepEqual(blankReset.windows, [{ label: '5-hour', usedPercent: 30, resetsAt: null }], 'a blank reset delay is unknown, not now');
+
+  for (const unknown of [null, undefined, '', ' ', false, true, [], {}, 'soon', NaN]) assert.equal(clampPercent(unknown), null, `clampPercent(${JSON.stringify(unknown)}) is unknown`);
+  assert.equal(clampPercent('42.26'), 42.3);
+  assert.equal(clampPercent(0), 0);
+  assert.equal(clampPercent(140), 100);
 
   await assert.rejects(fetchClaudeUsage({ accessToken: 'x', fetchImpl: async () => ({ ok: false, status: 401 }) }), /sign in again/);
   await assert.rejects(fetchCodexUsage({ accessToken: 'x', fetchImpl: async () => ({ ok: false, status: 429 }) }), (err) => err.rateLimited === true);
