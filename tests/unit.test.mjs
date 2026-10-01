@@ -158,6 +158,7 @@ test('an installed tool is classified by the installation that owns it', () => {
     package: '@anthropic-ai/claude-code',
     channels: {
       native: { paths: ['~/.local/bin/claude', '~/.local/share/claude'], update: ['update'] },
+      brew: { names: ['claude-code', 'claude-code@latest'] },
       winget: { id: 'Anthropic.ClaudeCode' },
       legacy: { paths: ['~/.claude/local'], guidance: 'old installer' },
     },
@@ -237,7 +238,7 @@ test('an installed tool is classified by the installation that owns it', () => {
   }) });
   assert.equal(arm.channel, 'brew');
   assert.deepEqual(arm.update, { file: '/opt/homebrew/bin/brew', args: ['upgrade', '--cask', 'claude-code@latest'] });
-  const gemini = { tool: 'Gemini CLI', package: '@google/gemini-cli', channels: {} };
+  const gemini = { tool: 'Gemini CLI', package: '@google/gemini-cli', channels: { brew: { names: ['gemini-cli'] } } };
   const intel = classifyInstall({ ...mac, provider: gemini, resolvedPath: '/usr/local/bin/gemini', fsx: fsx({
     files: ['/usr/local/bin/brew', '/opt/homebrew/bin/brew', '/usr/local/Cellar/gemini-cli/0.46.0/libexec/lib/node_modules/@google/gemini-cli/package.json'],
     links: { '/usr/local/bin/gemini': '/usr/local/Cellar/gemini-cli/0.46.0/libexec/lib/node_modules/@google/gemini-cli/bundle/gemini.js' },
@@ -556,6 +557,7 @@ test('installations are counted once however many entry points they have', () =>
     package: '@anthropic-ai/claude-code',
     channels: {
       native: { paths: ['~/.local/bin/claude', '~/.local/share/claude'], update: ['update'], uninstall: 'remove-native', sharedWithNpm: false },
+      brew: { names: ['claude-code', 'claude-code@latest'] },
       winget: { id: 'Anthropic.ClaudeCode' },
       legacy: { paths: ['~/.claude/local'], guidance: null, uninstall: 'remove-legacy' },
     },
@@ -650,12 +652,15 @@ test('ownership follows where a tool is really installed, and removal commands s
   const claude = {
     tool: 'Claude Code',
     package: '@anthropic-ai/claude-code',
-    channels: { native: { paths: ['~/.local/bin/claude', '~/.local/share/claude'], update: ['update'], uninstall: 'remove-native', sharedWithNpm: false } },
+    channels: {
+      native: { paths: ['~/.local/bin/claude', '~/.local/share/claude'], update: ['update'], uninstall: 'remove-native', sharedWithNpm: false },
+      brew: { names: ['claude-code', 'claude-code@latest'] },
+    },
   };
   const mac = { provider: claude, platform: 'darwin', env: { HOME: '/Users/a' }, npmOnPath: '/opt/homebrew/bin/npm' };
   const commandOf = (install) => install.update && [install.update.file, ...install.update.args].join(' ');
 
-  const gemini = { tool: 'Gemini CLI', package: '@google/gemini-cli', channels: {} };
+  const gemini = { tool: 'Gemini CLI', package: '@google/gemini-cli', channels: { brew: { names: ['gemini-cli'] } } };
   const cellar = '/opt/homebrew/Cellar/gemini-cli/0.46.0';
   const formula = listInstallations({ ...mac, provider: gemini, onPath: ['/opt/homebrew/bin/gemini'], fsx: fsx({
     files: ['/opt/homebrew/bin/brew', '/opt/homebrew/bin/npm', `${cellar}/libexec/lib/node_modules/@google/gemini-cli/package.json`, `${cellar}/libexec/bin/npm`],
@@ -692,6 +697,30 @@ test('ownership follows where a tool is really installed, and removal commands s
   }) });
   assert.equal(inKeg[0].channel, 'npm', 'an npm package under a Homebrew Node keg is still npm-owned');
   assert.equal(commandOf(inKeg[0]), `${keg}/bin/npm install -g --prefix ${keg}`);
+
+  const kegPackage = `${kegReal}/lib/node_modules/@anthropic-ai/claude-code`;
+  const kegLayout = {
+    files: ['/opt/homebrew/bin/brew', `${kegPkg}/package.json`, `${kegPackage}/package.json`, `${keg}/bin/npm`, `${kegReal}/bin/npm`],
+    links: {
+      '/Users/a/.local/bin/claude': `${kegPackage}/bin/claude.exe`,
+      [`${keg}/bin/claude`]: `${kegPackage}/bin/claude.exe`,
+      [keg]: kegReal,
+      [kegPkg]: kegPackage,
+    },
+  };
+  const aliasIntoKeg = listInstallations({ ...mac, onPath: ['/Users/a/.local/bin/claude'], fsx: fsx(kegLayout) });
+  assert.equal(aliasIntoKeg[0].channel, 'npm', 'a link into a package under a Homebrew Node keg is npm-owned, not the Node formula');
+  assert.equal(commandOf(aliasIntoKeg[0]), `${kegReal}/bin/npm install -g --prefix ${kegReal}`);
+  assert.equal(aliasIntoKeg[0].removeCommand, `${kegReal}/bin/npm uninstall -g --prefix ${kegReal} @anthropic-ai/claude-code`);
+  const aliasAndLauncher = listInstallations({ ...mac, onPath: ['/Users/a/.local/bin/claude', `${keg}/bin/claude`], fsx: fsx(kegLayout) });
+  assert.deepEqual(aliasAndLauncher.map((i) => i.channel), ['npm'], 'the alias and the npm launcher are one installation');
+
+  const foreign = listInstallations({ ...mac, onPath: ['/opt/homebrew/bin/claude'], fsx: fsx({
+    files: ['/opt/homebrew/bin/brew'], links: { '/opt/homebrew/bin/claude': '/opt/homebrew/Cellar/sometool/1.0/bin/claude' },
+  }) });
+  assert.equal(foreign[0].channel, 'unknown', "a file in another formula's keg is not attributed to that formula");
+  assert.equal(foreign[0].update, null);
+  assert.equal(foreign[0].removeCommand, null);
 
   const elsewhere = '/opt/tools/claude/claude';
   const aliasFirst = listInstallations({ ...mac, onPath: ['/Users/a/.local/bin/claude', '/opt/tools/bin/claude'], fsx: fsx({

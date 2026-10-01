@@ -100,11 +100,11 @@ function npmLinkedInto({ realPath, pkg, platform, fsx }) {
   return at > 0 ? npmPrefixAt(realPath.slice(0, at), segments, platform, fsx) : null;
 }
 
-function brewOwner({ realPath, platform, fsx }) {
+function brewOwner({ realPath, names, platform, fsx }) {
   if (platform === 'win32') return null;
   const segments = realPath.split('/');
   const index = segments.findIndex((s, i) => i > 0 && (s === 'Caskroom' || s === 'Cellar'));
-  if (index === -1 || !segments[index + 1]) return null;
+  if (index === -1 || !names.includes(segments[index + 1])) return null;
   const prefix = segments.slice(0, index).join('/') || '/';
   const brew = `${prefix}/bin/brew`;
   return { prefix, token: segments[index + 1], cask: segments[index] === 'Caskroom', brew: fsx.exists(brew) ? brew : null };
@@ -171,7 +171,7 @@ export function classifyInstall({
   const beside = provider.package ? npmBeside(npmArgs) : null;
   if (beside) return ownedByNpm(beside);
 
-  const brew = brewOwner({ realPath, platform, fsx });
+  const brew = brewOwner({ realPath, names: channels.brew?.names || [], platform, fsx });
   if (brew) {
     const owned = { brewPrefix: brew.prefix, token: brew.token, cask: brew.cask };
     if (!brew.brew) return result('brew', { ...owned, guidance: `Installed by Homebrew under ${brew.prefix}, but brew was not found at ${brew.prefix}/bin/brew.` });

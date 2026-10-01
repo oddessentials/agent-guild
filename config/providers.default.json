@@ -17,6 +17,7 @@
       "npmNote": "npm installs the same native build as Anthropic's installer.",
       "channels": {
         "native": { "paths": ["~/.local/bin/claude", "~/.local/share/claude"], "update": ["update"], "uninstall": "rm -f ~/.local/bin/claude && rm -rf ~/.local/share/claude" },
+        "brew": { "names": ["claude-code", "claude-code@latest"] },
         "winget": { "id": "Anthropic.ClaudeCode" },
         "legacy": { "paths": ["~/.claude/local"], "guidance": "This copy comes from an older Claude Code installer. Remove ~/.claude/local and reinstall with the current installer.", "uninstall": "rm -rf ~/.claude/local" }
       },
@@ -49,6 +50,7 @@
       "npmNote": "npm installs the native Codex binary.",
       "channels": {
         "native": { "paths": ["~/.local/bin/codex", "~/.codex/packages/standalone"], "update": ["update"] },
+        "brew": { "names": ["codex"] },
         "winget": { "id": "OpenAI.Codex" }
       },
       "docs": "https://github.com/openai/codex",
@@ -76,6 +78,9 @@
       "color": "#4285F4",
       "monogram": "G",
       "install": "npm install -g @google/gemini-cli",
+      "channels": {
+        "brew": { "names": ["gemini-cli"] }
+      },
       "docs": "https://github.com/google-gemini/gemini-cli",
       "usageUrl": "https://aistudio.google.com/usage",
       "billingUrl": "https://one.google.com/settings"

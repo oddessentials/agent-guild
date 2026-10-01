@@ -74,6 +74,7 @@ function normalizeChannels(raw) {
       sharedWithNpm: raw.native.sharedWithNpm === true,
     };
   }
+  if (raw.brew && typeof raw.brew === 'object') out.brew = { names: stringList(raw.brew.names) };
   if (raw.winget && typeof raw.winget === 'object' && raw.winget.id) out.winget = { id: String(raw.winget.id) };
   if (raw.legacy && typeof raw.legacy === 'object') {
     out.legacy = {
