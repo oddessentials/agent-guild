@@ -1,10 +1,25 @@
-// Applies the chosen theme before the first paint, so the page never flashes
-// the other one. Loaded in <head> as a plain script; app.js owns the toggle.
+// Applies the chosen skin and light or dark theme before the first paint, so
+// the page never flashes another one. Loaded in <head> as a plain script;
+// app.js owns the controls.
 (function () {
+  // The skins the page offers, in menu order; the first is the default. Each
+  // has a stylesheet at /skins/<id>/skin.css, linked from index.html.
+  var skins = [
+    { id: 'guild', name: 'Guild' },
+    { id: 'professional', name: 'Professional' },
+  ];
+  window.agentGuildSkins = skins;
+
   var theme = null;
-  try { theme = localStorage.getItem('agentGuild.theme'); } catch (e) { /* storage unavailable */ }
+  var skin = null;
+  try {
+    theme = localStorage.getItem('agentGuild.theme');
+    skin = localStorage.getItem('agentGuild.skin');
+  } catch (e) { /* storage unavailable */ }
   if (theme !== 'light' && theme !== 'dark') {
     theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   }
+  if (!skins.some(function (s) { return s.id === skin; })) skin = skins[0].id;
   document.documentElement.dataset.theme = theme;
+  document.documentElement.dataset.skin = skin;
 })();

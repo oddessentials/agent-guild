@@ -100,7 +100,7 @@ try {
   check(health.ok === true && health.name === 'agent-guild', 'the manager answers', `version ${health.version}`);
   if (expectedVersion !== null) check(health.version === expectedVersion, 'the manager is the expected version', expectedVersion);
 
-  const assets = ['/', '/app.js', '/theme.js', '/styles.css', '/art/art.css', '/art/page.avif', '/vendor/xterm/xterm.js', '/vendor/xterm/xterm.css',
+  const assets = ['/', '/app.js', '/theme.js', '/styles.css', '/skins/guild/skin.css', '/skins/guild/page.avif', '/skins/professional/skin.css', '/vendor/xterm/xterm.js', '/vendor/xterm/xterm.css',
     '/vendor/xterm/addon-fit.js', '/vendor/xterm/addon-web-links.js'];
   for (const asset of assets) {
     const res = await fetch(`${base}${asset}`);

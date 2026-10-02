@@ -6,11 +6,12 @@
   <title>Agent Guild</title>
   <meta name="color-scheme" content="light dark">
   <script src="/theme.js"></script>
-  <link rel="icon" href="/art/ui/favicon.png" type="image/png">
+  <link rel="icon" href="/brand/favicon.png" type="image/png">
   <link rel="preload" href="/fonts/cinzel.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/vendor/xterm/xterm.css">
   <link rel="stylesheet" href="/styles.css">
-  <link rel="stylesheet" href="/art/art.css">
+  <link rel="stylesheet" href="/skins/guild/skin.css">
+  <link rel="stylesheet" href="/skins/professional/skin.css">
 </head>
 <body>
   <header class="topbar">
@@ -24,6 +25,7 @@
       </div>
       <span id="upgrade-note" class="upgrade-note" hidden></span>
       <button id="upgrade" class="btn upgrade" type="button" hidden></button>
+      <span class="skin-picker"><select id="skin-select" class="btn" aria-label="Skin" title="Skin"></select></span>
       <button id="theme-toggle" class="btn theme-toggle" type="button"></button>
       <button id="restart-manager" class="btn restart-manager" type="button" hidden>Restart manager</button>
       <button id="stop-manager" class="btn danger stop-manager" type="button" hidden title="Stop the session manager. This ends every session.">Stop manager</button>

@@ -4,13 +4,13 @@ import numpy as np
 from PIL import Image
 
 PACK = Path(__file__).resolve().parent.parent
-WEB = PACK.parent.parent / "web" / "art"
+WEB = PACK.parent.parent / "web" / "skins" / "guild"
+BRAND = PACK.parent.parent / "web" / "brand"
 GEN = Path("E:/projects/local-image-studio/scripts/gen.py")
 PROVIDERS = ["anthropic", "google", "openai", "shell", "xai"]
 STATES = ["idle", "working", "locked"]
 CHARACTER_WIDTH = 640
 PROPS = {
-    "ui/guild-crest.png": 160,
     "ui/level-medallion.png": 128,
     "ui/gem-mana.png": 48,
     "ui/gem-vitality.png": 48,
@@ -113,14 +113,16 @@ def main():
     frame(PACK / "ui" / "frame-corner.png", WEB / "ui" / "frame.png")
     ornate = diagonal(Image.open(PACK / "ui" / "frame-ornate.png").convert("RGBA").crop((0, 0, 465, 465)))
     nine_slice(ornate.resize((232, 232), Image.LANCZOS), WEB / "ui" / "frame-ornate.png")
-    favicon(PACK / "ui" / "guild-crest.png", WEB / "ui" / "favicon.png")
+    crest = Image.open(PACK / "ui" / "guild-crest.png").convert("RGBA")
+    quantize(crest.resize((round(crest.width * 160 / crest.height), 160), Image.LANCZOS), BRAND / "crest.png")
+    favicon(PACK / "ui" / "guild-crest.png", BRAND / "favicon.png")
     encode(shrink(masked(PACK / "ui" / "empty-state.png", PACK / "ui" / "empty-state-mask.png"), 420), WEB / "ui" / "empty-state", avif=60)
     encode(Image.open(PACK / "backgrounds" / "page.png").convert("RGB"), WEB / "page", avif=80, webp=85)
     light = Image.open(PACK / "backgrounds" / "page-light.png").convert("RGB")
     encode(Image.blend(light, Image.new("RGB", light.size, (243, 238, 227)), 0.25), WEB / "page-light", avif=90, webp=90)
 
     if shutil.which("oxipng"):
-        subprocess.run(["oxipng", "-o", "4", "--strip", "safe", "-q", "-r", str(WEB)], check=True)
+        subprocess.run(["oxipng", "-o", "4", "--strip", "safe", "-q", "-r", str(WEB), str(BRAND)], check=True)
 
 
 if __name__ == "__main__":

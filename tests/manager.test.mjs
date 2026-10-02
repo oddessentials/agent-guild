@@ -295,7 +295,8 @@ test('the web page and xterm assets are served', async () => {
   assert.equal((await fetch(`${base}/app.js`)).status, 200);
   assert.equal((await fetch(`${base}/theme.js`)).status, 200);
   assert.equal((await fetch(`${base}/..%2fpackage.json`)).status, 404);
-  assert.equal((await fetch(`${base}/art/page.avif`)).headers.get('content-type'), 'image/avif');
+  assert.equal((await fetch(`${base}/skins/guild/page.avif`)).headers.get('content-type'), 'image/avif');
+  assert.equal((await fetch(`${base}/skins/professional/page.svg`)).headers.get('content-type'), 'image/svg+xml');
 });
 
 test('static files revalidate with their ETag instead of downloading again', async () => {

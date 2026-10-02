@@ -102,6 +102,11 @@ vX.Y.Z** switches over when you are ready. The version badge opens
 **Light or dark.** The page follows your system theme, and the top-bar
 toggle switches it.
 
+**Skins.** The top-bar menu switches the page's art and styling without a
+reload: **Guild** (the default fantasy look) or **Professional** (no
+characters, a plain business look). Both have light and dark versions. See
+[docs/SKINS.md](docs/SKINS.md) to make another.
+
 ## Commands
 
 | Command | What it does |
