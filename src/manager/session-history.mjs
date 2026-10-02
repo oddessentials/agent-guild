@@ -8,6 +8,7 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { resolveCommand, buildSpawnSpec, runSpec } from './command-resolver.mjs';
 import { toIso } from './usage.mjs';
+import { antigravityUserConversation } from '../report/hooks.mjs';
 
 export const HISTORY_TTL_MS = 5 * 1000;
 export const DEFAULT_LIMIT = 100;
@@ -265,7 +266,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 function antigravityEntry(id, text, stat) {
   const [first] = parseLines(text ?? '');
-  if (first?.type !== 'USER_INPUT' || first.source !== 'USER_EXPLICIT' || typeof first.content !== 'string') return null;
+  if (!antigravityUserConversation(first) || typeof first.content !== 'string') return null;
   const request = first.content.match(/<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/)?.[1];
   return cleanEntry({ id, title: promptTitle(request), startedAt: first.created_at, updatedAt: stat.mtime });
 }

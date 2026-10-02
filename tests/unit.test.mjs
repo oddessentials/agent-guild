@@ -9,7 +9,7 @@ import { mergePathLists, parsePathFromEnvOutput, weavePaths, parseRegValue, expa
 import { mergeEnv, cleanResumeId, modelFromArgs, SessionManager } from '../src/manager/session-manager.mjs';
 import { loadProviders, defaultShell, ProviderRegistry } from '../src/manager/providers.mjs';
 import { paths } from '../src/manager/config.mjs';
-import { classifyInstall, expandHome, helpDescribes, platformDependency, listInstallations, knownLaunchers, shellCommand } from '../src/manager/install-channels.mjs';
+import { classifyInstall, expandHome, helpDescribes, platformDependency, listInstallations, knownLaunchers, shellCommand, updateHelpAccepted } from '../src/manager/install-channels.mjs';
 import { hookToReports, claudeStatuslineToReport, formatStatusLine } from '../src/report/hooks.mjs';
 import { shimContents, writeReportShims, prependPath, fileUrl, SHIM_NAME, LOADER_NAME } from '../src/manager/report-shims.mjs';
 import { bundleFiles, codexHookArgs, codexTrustArgs, codexHooksFrom, antigravityInstalled, antigravityPluginDir, helpLists, REPORT_COMMAND } from '../src/manager/session-hooks.mjs';
@@ -368,9 +368,41 @@ test('updates are bound to the installation that owns the resolved tool', async 
   await nativeFirst.refreshVersions({ force: true });
   assert.ok(nativeFirst.describe(tool).updateCommand?.includes(' update'), 'Go help exits 2 and still describes the command');
 
+  script(nativeDir, 'mytool', { win: 'echo error: unknown option --help& echo Usage: mytool update& exit /b 1', sh: 'echo "error: unknown option --help"; echo "Usage: mytool update"; exit 1' });
+  await nativeFirst.refreshVersions({ force: true });
+  assert.equal(nativeFirst.describe(tool).updateCommand, null, 'a failure that reports an error is no help');
+
   script(nativeDir, 'mytool', { win: 'exit /b 1', sh: 'exit 1' });
   await nativeFirst.refreshVersions({ force: true });
   assert.equal(nativeFirst.describe(tool).updateCommand, null);
+
+  const realHelp = {
+    'claude update --help': 'Usage: claude update|upgrade [options]\n\nCheck for updates and install if available\n\nOptions:\n  -h, --help  Display help for command\n',
+    'codex update --help': 'Update Codex to the latest version\n\nUsage: codex update [OPTIONS]\n\nOptions:\n  -c, --config <key=value>\n',
+    'grok update --help': 'Check for updates or install a specific version\n\nUsage: grok update [OPTIONS]\n\nOptions:\n      --check                 Check for updates without installing\n',
+  };
+  for (const [run, stdout] of Object.entries(realHelp)) {
+    assert.equal(updateHelpAccepted({ stdout, stderr: '' }, ['update']), true, run);
+    assert.equal(updateHelpAccepted({ stdout, stderr: '' }, ['update'], { failed: true }), true, `${run}, had it exited non-zero`);
+  }
+  assert.equal(updateHelpAccepted({ stdout: '', stderr: 'Usage of update:\n' }, ['update'], { failed: true }), true, 'agy update --help exits 2');
+  const generalHelp = {
+    claude: 'Usage: claude [options] [command] [prompt]\n\nClaude Code - starts an interactive session by default\n',
+    codex: 'Codex CLI\n\nUsage: codex [OPTIONS] [PROMPT]\n       codex [OPTIONS] <COMMAND> [ARGS]\n',
+    grok: 'Grok Build TUI\n\nUsage: grok [OPTIONS] [PROMPT] [COMMAND]\n',
+    agy: 'Usage of agy.exe:\n  --add-dir   Add a directory to the workspace\n\nAvailable subcommands:\n  update          Update CLI\n',
+  };
+  for (const [tool, stdout] of Object.entries(generalHelp)) {
+    assert.equal(updateHelpAccepted({ stdout, stderr: '' }, ['update']), false, `${tool}'s general help lists no update usage`);
+    assert.equal(updateHelpAccepted({ stdout: '', stderr: stdout }, ['update'], { failed: true }), false, `${tool}'s general help on a failure`);
+  }
+  const refusals = [
+    "error: unknown command 'update'\nUsage: tool update [options]",
+    "error: unrecognized subcommand 'update'\n\nUsage: tool update [OPTIONS]",
+    'Error: unknown command "update" for "tool"\nRun \'tool --help\' for usage of update.',
+    'invalid choice: update\nusage: tool update',
+  ];
+  for (const stderr of refusals) assert.equal(updateHelpAccepted({ stdout: '', stderr }, ['update'], { failed: true }), false, stderr.split('\n')[0]);
 
   assert.equal(helpDescribes('Usage: claude update|upgrade [options]\n\nCheck for updates and install if available', ['update']), true);
   assert.equal(helpDescribes('Check for updates or install a specific version\n\nUsage: grok update [OPTIONS]', ['update']), true);

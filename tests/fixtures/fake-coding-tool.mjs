@@ -180,11 +180,16 @@ function shellFor(command) {
 }
 
 const conversationId = '0f1e2d3c-4b5a-4697-8877-665544332211';
-const agyPayload = (payload) => ({
-  conversationId, workspacePaths: [process.cwd()], modelName: 'gemini-3.8-flash-high',
-  transcriptPath: path.join(os.homedir(), '.gemini', 'antigravity-cli', 'brain', conversationId, '.system_generated', 'logs', 'transcript_full.jsonl'),
-  ...payload,
+const agyBrain = path.join(os.tmpdir(), `fake-agy-${process.pid}`);
+const agyTranscript = (id) => path.join(agyBrain, id, '.system_generated', 'logs', 'transcript_full.jsonl');
+const writeAgyTranscript = (id, first) => {
+  fs.mkdirSync(path.dirname(agyTranscript(id)), { recursive: true });
+  fs.writeFileSync(agyTranscript(id), `${JSON.stringify(first)}\n`);
+};
+const agyPayload = ({ conversationId: id = conversationId, ...payload }) => ({
+  conversationId: id, workspacePaths: [process.cwd()], modelName: 'gemini-3.8-flash-high', transcriptPath: agyTranscript(id), ...payload,
 });
+if (tool === 'agy') process.on('exit', () => fs.rmSync(agyBrain, { recursive: true, force: true }));
 
 function runHooks(hooks, event, payload, toolName = null) {
   const matching = hooks.filter((h) => h.event === event && (!h.matcher || (toolName !== null && new RegExp(`^(?:${h.matcher})$`).test(toolName))));
@@ -325,12 +330,21 @@ function runTool() {
     }
     if (cmd === 'prompt') {
       await sessionStart();
-      if (tool === 'agy') await runHooks(hooks, 'PreInvocation', { invocationNum: 0, initialNumSteps: 1 });
+      if (tool === 'agy') {
+        writeAgyTranscript(conversationId, { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', content: '<USER_REQUEST>\nhi\n</USER_REQUEST>' });
+        await runHooks(hooks, 'PreInvocation', { invocationNum: 0, initialNumSteps: 1 });
+      }
       else await runHooks(hooks, 'UserPromptSubmit', { prompt: 'hi', ...(tool === 'codex' ? { turn_id: 'turn-1' } : {}) });
       out('PROMPT-DONE');
     } else if (cmd === 'subagent' || cmd === 'subagent-done') {
       const start = cmd === 'subagent';
-      if (tool === 'grok') {
+      if (tool === 'agy') {
+        // Antigravity CLI: a sub-agent is a conversation of its own, whose first step is its parent's message.
+        const sub = { conversationId: id, modelName: 'gemini-3.6-flash-low' };
+        await runHooks(hooks, 'PreInvocation', { ...sub, invocationNum: 0, initialNumSteps: 0 });
+        writeAgyTranscript(id, { step_index: 0, source: 'SYSTEM', type: 'SYSTEM_MESSAGE', content: `sender=${conversationId} content=${type}` });
+        await runHooks(hooks, 'PreInvocation', { ...sub, invocationNum: 1, initialNumSteps: 3 });
+      } else if (tool === 'grok') {
         await runHooks(hooks, start ? 'SubagentStart' : 'SubagentStop', { hookEventName: start ? 'subagent_start' : 'subagent_stop', subagentId: id, subagentType: type });
       } else {
         await runHooks(hooks, start ? 'SubagentStart' : 'SubagentStop', { agent_id: id, agent_type: type });

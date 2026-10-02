@@ -177,6 +177,11 @@ export function hookToReports(input) {
   return reports;
 }
 
+/** Whether an Antigravity CLI conversation starts with the user's own request; a sub-agent's starts with its parent's message. */
+export function antigravityUserConversation(firstRecord) {
+  return firstRecord?.type === 'USER_INPUT' && firstRecord.source === 'USER_EXPLICIT';
+}
+
 /** Model report from the JSON Claude Code feeds to a status line command. */
 export function claudeStatuslineToReport(input) {
   const id = input?.model?.id;

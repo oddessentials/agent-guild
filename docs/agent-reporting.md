@@ -65,9 +65,11 @@ overrides, after Agent Guild has checked that the installed Codex accepts
 them. Antigravity CLI cannot take hooks for one session, so its card has an
 **Agent reporting** switch that installs an Agent Guild plugin with
 `agy plugin install`. Its one hook, on `PreInvocation`, reports the model
-and the conversation id; Antigravity CLI has no sub-agent events, and its
-only event before a tool runs must also decide whether the tool may run, so
-Agent Guild leaves it alone. The hook does nothing in sessions started
+and the conversation id. Antigravity CLI runs that hook in its sub-agents
+too, each a conversation of its own that starts with its parent's message
+rather than the user's request; those are not reported. It has no events
+for a sub-agent starting or stopping, and its only event before a tool runs
+must also decide whether the tool may run, so Agent Guild leaves it alone. The hook does nothing in sessions started
 outside Agent Guild. Grok Build gets them with `--plugin-dir` once `grok --help`
 lists that option; the versions released so far do not. To report from a
 tool Agent Guild does not supply, or from Grok Build today, add the hooks

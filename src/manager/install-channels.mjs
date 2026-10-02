@@ -122,6 +122,13 @@ function wingetOwner({ realPath, id, platform }) {
   return folder.startsWith(`${id.toLowerCase()}_`) ? { id } : null;
 }
 
+/** Whether `<tool> <update args> --help` shows the update command. Go programs exit 2 after their help; a failure that reports an error does not count. */
+export function updateHelpAccepted({ stdout = '', stderr = '' }, args, { failed = false } = {}) {
+  const text = `${stdout}\n${stderr}`;
+  if (failed && /\b(?:error|unknown|unrecogni[sz]ed|invalid)\b/i.test(text)) return false;
+  return helpDescribes(text, args);
+}
+
 export function helpDescribes(text, args) {
   const words = args.map((a) => a.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
   const named = new RegExp(`(?<![\\w-])${words.join('(?![\\w-]).*(?<![\\w-])')}(?![\\w-])`, 'i');

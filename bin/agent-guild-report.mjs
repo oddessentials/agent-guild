@@ -17,8 +17,9 @@
 //                      (reads Claude Code status line JSON on stdin; prints a
 //                       status line, or the JSON itself with --passthrough)
 
+import fs from 'node:fs';
 import { createRequire } from 'node:module';
-import { hookToReports, claudeStatuslineToReport, formatStatusLine } from '../src/report/hooks.mjs';
+import { hookToReports, claudeStatuslineToReport, formatStatusLine, antigravityUserConversation } from '../src/report/hooks.mjs';
 
 // Importing node:http as an ES module costs a hook about 50 ms more than requiring it.
 const http = createRequire(import.meta.url)('node:http');
@@ -95,6 +96,32 @@ function send(report) {
 /** A hook must never break the coding tool, so report failures quietly. */
 const sendQuietly = (report) => send(report).catch((err) => console.error(`agent-guild-report: ${err.message}`));
 
+const MAX_FIRST_LINE = 1024 * 1024;
+
+/** The first JSON record of a JSONL file, or null. */
+function firstRecord(file) {
+  if (typeof file !== 'string') return null;
+  let fd;
+  try {
+    fd = fs.openSync(file, 'r');
+    const chunks = [];
+    const buffer = Buffer.alloc(64 * 1024);
+    for (let total = 0; total < MAX_FIRST_LINE;) {
+      const n = fs.readSync(fd, buffer, 0, buffer.length, null);
+      if (n === 0) break;
+      const end = buffer.subarray(0, n).indexOf(10);
+      chunks.push(Buffer.from(buffer.subarray(0, end === -1 ? n : end)));
+      if (end !== -1) break;
+      total += n;
+    }
+    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
+
 function parseJson(raw) {
   try { return JSON.parse(raw); } catch { return null; }
 }
@@ -109,6 +136,8 @@ async function main() {
     const input = parseJson(await readStdin());
     if (!inSession || !input || typeof input !== 'object') return;
     if (args.event && input.hook_event_name === undefined) input.hook_event_name = args.event;
+    // Antigravity CLI runs the hook in its sub-agents too, each a conversation of its own.
+    if (typeof input.conversationId === 'string' && !antigravityUserConversation(firstRecord(input.transcriptPath))) return;
     for (const report of hookToReports(input)) await sendQuietly(report);
     return;
   }

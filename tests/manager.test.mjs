@@ -1009,6 +1009,10 @@ test('Antigravity CLI reports its model and conversation once its plugin is turn
     .catch((err) => { err.message += `\n${stripAnsi(tool.client.output).slice(-1500)}`; throw err; });
   assert.equal(reported.model.name, 'gemini-3.8-flash-high');
   assert.equal(reported.toolSessionId, '0f1e2d3c-4b5a-4697-8877-665544332211');
+  await runShells(tool, ['subagent 9a8b7c6d-0000-4000-8000-000000000001 research'], 'SUBAGENT 9a8b7c6d-0000-4000-8000-000000000001');
+  const after = await sessionNow(tool.session.id);
+  assert.equal(after.toolSessionId, '0f1e2d3c-4b5a-4697-8877-665544332211', 'a sub-agent\'s conversation never becomes the one to resume');
+  assert.equal(after.model.name, 'gemini-3.8-flash-high', 'nor its model the session\'s');
   assert.ok(!stripAnsi(tool.client.output).includes('STDERR'), 'the hook ran cleanly');
   await tool.client.close();
   await call('DELETE', `/sessions/${tool.session.id}`);
@@ -1022,12 +1026,14 @@ test('Antigravity CLI reports its model and conversation once its plugin is turn
 test('the Antigravity hook answers with an empty object and reports only into an Antigravity session', async () => {
   const bundle = path.join(home, 'reporting', 'antigravity');
   const { command } = JSON.parse(fs.readFileSync(path.join(bundle, 'hooks.json'), 'utf8'))['agent-guild'].PreInvocation[0];
-  const runHook = (extra) => new Promise((resolve, reject) => {
+  const transcript = path.join(home, 'agy-transcript.jsonl');
+  writeFile(transcript, `${JSON.stringify({ step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', content: '<USER_REQUEST>\nhi\n</USER_REQUEST>' })}\n`);
+  const runHook = (extra, transcriptPath = transcript) => new Promise((resolve, reject) => {
     const env = { ...process.env };
     for (const key of Object.keys(env)) if (key.startsWith('AGENT_GUILD_')) delete env[key];
     const [file, args] = win ? ['cmd.exe', ['/d', '/s', '/c', `"${command}"`]] : ['/bin/sh', ['-c', command]];
     const child = execFile(file, args, { cwd: bundle, env: { ...env, ...extra }, windowsVerbatimArguments: win }, (err, out) => (err ? reject(err) : resolve(JSON.parse(out))));
-    child.stdin.end(JSON.stringify({ conversationId: 'agy-conversation', modelName: 'gemini-3.8-flash-high' }));
+    child.stdin.end(JSON.stringify({ conversationId: 'agy-conversation', modelName: 'gemini-3.8-flash-high', transcriptPath }));
   });
   assert.deepEqual(await runHook({}), {});
 
@@ -1039,6 +1045,8 @@ test('the Antigravity hook answers with an empty object and reports only into an
   });
   assert.deepEqual(await runHook(inside('claude')), {}, 'an agy run inside another tool\'s session');
   assert.equal(ctx.manager.get(session.id).toolSessionId, null, 'leaves that session\'s resume id alone');
+  assert.deepEqual(await runHook(inside('antigravity'), path.join(home, 'no-such-transcript.jsonl')), {});
+  assert.equal(ctx.manager.get(session.id).toolSessionId, null, 'a conversation without its user request yet, as a sub-agent\'s first call');
   assert.deepEqual(await runHook(inside('antigravity')), {});
   assert.equal(ctx.manager.get(session.id).toolSessionId, 'agy-conversation');
   await call('DELETE', `/sessions/${session.id}`);

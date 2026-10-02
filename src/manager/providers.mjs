@@ -11,7 +11,7 @@ import { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { resolveCommand, resolveAllCommands, pathKey, buildSpawnSpec, runSpec } from './command-resolver.mjs';
 import { compareVersions, probeVersion, fetchManifest, latestVersion, DEFAULT_NPM_REGISTRY } from './versions.mjs';
-import { CHANNEL_LABELS, classifyInstall, expandHome, formatCommand, helpDescribes, knownLaunchers, listInstallations, platformDependency } from './install-channels.mjs';
+import { CHANNEL_LABELS, classifyInstall, expandHome, formatCommand, knownLaunchers, listInstallations, platformDependency, updateHelpAccepted } from './install-channels.mjs';
 import { weavePaths } from './shell-env.mjs';
 import { paths } from './config.mjs';
 
@@ -348,9 +348,8 @@ export class ProviderRegistry extends EventEmitter {
         const ttl = entry.probeOk === true ? VERSION_TTL_MS : FAILED_PROBE_TTL_MS;
         if (force || entry.probePath !== found || entry.probeMtime !== mtime || now - entry.probeAt > ttl) {
           const spec = buildSpawnSpec(channel.update.file, [...channel.update.args, '--help'], this.env, this.platform);
-          // Go programs such as Antigravity CLI exit with 2 after printing their help.
-          const described = ({ stdout = '', stderr = '' }) => helpDescribes(`${stdout}\n${stderr}`, channel.update.args);
-          const ok = await runSpec(spec, { env: { ...this.env, ...provider.env } }).then(described, described);
+          const ok = await runSpec(spec, { env: { ...this.env, ...provider.env } })
+            .then((out) => updateHelpAccepted(out, channel.update.args), (err) => updateHelpAccepted(err, channel.update.args, { failed: true }));
           changed ||= ok !== entry.probeOk;
           Object.assign(entry, { probePath: found, probeMtime: mtime, probeAt: now, probeOk: ok });
         }
