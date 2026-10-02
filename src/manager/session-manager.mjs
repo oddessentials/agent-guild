@@ -54,7 +54,7 @@ export class SessionManager extends EventEmitter {
    * @param {import('./self-update.mjs').SelfUpdate|null} [opts.selfUpdate]  the manager's own upgrade
    * @param {import('./github.mjs').GitHub|null} [opts.github]
    */
-  constructor({ registry, baseEnv, getApiUrl, sessionDefaults = {}, shimDir = null, selfUpdate = null, github = null, sessionHooks = null, reportTokenDir = null }) {
+  constructor({ registry, baseEnv, getApiUrl, sessionDefaults = {}, shimDir = null, selfUpdate = null, github = null, sessionHooks = null }) {
     super();
     this.registry = registry;
     this.baseEnv = baseEnv;
@@ -64,7 +64,6 @@ export class SessionManager extends EventEmitter {
     this.selfUpdate = selfUpdate;
     this.github = github;
     this.sessionHooks = sessionHooks;
-    this.reportTokenDir = reportTokenDir;
     this.sessions = new Map();
     /** Removed sessions whose process has not exited yet. */
     this.exiting = new Set();
@@ -104,7 +103,7 @@ export class SessionManager extends EventEmitter {
     const resumeId = cleanResumeId(resume);
     const workDir = this.resolveCwd(cwd);
     const signIn = this.registry.account(provider, account);
-    const hooks = this.sessionHooks ? await this.sessionHooks.launch(provider, signIn) : { args: [], reporting: null };
+    const hooks = this.sessionHooks ? await this.sessionHooks.launch(provider) : { args: [], reporting: null };
     const spawnSpec = this.registry.spawnSpec(provider, args || [], resumeId, hooks.args);
     this.prepareAccount(provider, signIn, { hooksSupplied: hooks.args.length > 0 });
     const sessionName = cleanName(name) || (provider.accounts.length > 1 ? `${provider.tool} · ${signIn.label}` : null);
@@ -236,7 +235,6 @@ export class SessionManager extends EventEmitter {
     }
     const id = newId();
     const reportToken = crypto.randomBytes(16).toString('hex');
-    const reportFile = this._writeReportToken(id, reportToken);
 
     // The tool's hooks run `agent-guild-report` by name, so the launchers
     // go first on PATH, after any provider PATH override.
@@ -245,9 +243,9 @@ export class SessionManager extends EventEmitter {
       COLORTERM: 'truecolor',
       AGENT_GUILD_SESSION_ID: id,
       AGENT_GUILD_PROVIDER: provider.id,
+      AGENT_GUILD_REPORTING: provider.reporting || '',
       AGENT_GUILD_URL: this.getApiUrl(),
       AGENT_GUILD_REPORT_TOKEN: reportToken,
-      AGENT_GUILD_REPORT_FILE: reportFile,
       AGENT_GUILD_NODE: process.execPath,
     }]), this.shimDir);
     // The tool runs in its own terminal, not in the terminal or multiplexer
@@ -278,10 +276,8 @@ export class SessionManager extends EventEmitter {
         reporting,
       });
     } catch (err) {
-      this._removeReportToken(reportFile);
       throw httpError(500, `could not start ${provider.tool}: ${err.message}`, 'spawn_failed');
     }
-    session.exited.then(() => this._removeReportToken(reportFile));
 
     session.on('changed', () => {
       if (this.sessions.has(id)) this.emit('event', { type: 'session.updated', session: session.toJSON() });
@@ -301,32 +297,6 @@ export class SessionManager extends EventEmitter {
     const session = this.get(id);
     session.kill();
     return session;
-  }
-
-  // Only once this manager owns the port, so a second one that fails to start leaves the running one's files.
-  sweepReportTokens() {
-    if (!this.reportTokenDir) return;
-    const live = new Set(this.sessions.keys());
-    let names = [];
-    try { names = fs.readdirSync(this.reportTokenDir); } catch { return; }
-    for (const name of names) if (!live.has(name)) fs.rm(path.join(this.reportTokenDir, name), { force: true }, () => {});
-  }
-
-  _writeReportToken(id, token) {
-    if (!this.reportTokenDir) return null;
-    try {
-      fs.mkdirSync(this.reportTokenDir, { recursive: true, mode: 0o700 });
-      const file = path.join(this.reportTokenDir, id);
-      fs.writeFileSync(file, token, { mode: 0o600, flag: 'wx' });
-      return file;
-    } catch (err) {
-      console.warn(`[manager] could not write the report token file for session ${id}: ${err.message}`);
-      return null;
-    }
-  }
-
-  _removeReportToken(file) {
-    if (file) fs.rm(file, { force: true }, () => {});
   }
 
   /** Remove a session from the list, ending its process if still running. */

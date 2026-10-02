@@ -29,9 +29,7 @@ test('demo usage reports a plan and windows per provider and account', async () 
     { ...process.env, DEMO_ACCOUNT: path.join('accounts', 'anthropic', 'work') },
   );
   assert.equal(work.plan, 'max');
-  for (const id of ['openai', 'google']) {
-    assert.ok((await commandUsage({ command: node, args: [demo('demo-usage.mjs'), id] }, process.env)).windows.length > 0, id);
-  }
+  assert.ok((await commandUsage({ command: node, args: [demo('demo-usage.mjs'), 'openai'] }, process.env)).windows.length > 0);
 });
 
 test('demo history lists sessions in the demo root', async () => {

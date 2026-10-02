@@ -56,7 +56,7 @@ const FOLDERS = ['storefront', 'billing', 'api-gateway', 'docs-site', 'game-engi
 const PACKAGES = {
   anthropic: '@anthropic-ai/claude-code',
   openai: '@openai/codex',
-  google: '@google/gemini-cli',
+  google: null,
   xai: '@xai-official/grok',
 };
 
@@ -124,14 +124,14 @@ async function demoProviders() {
       // No install channels: the demo tool is not the copy on this machine.
       channels: {},
       // What the real provider has: no version for the shell, no usage meter
-      // for Grok Build.
+      // for Antigravity CLI or Grok Build.
       ...(id === 'shell' ? {} : {
         versionArgs: [script('demo-tool.mjs'), '--version'],
         env: { DEMO_VERSION: toolVersion || '1.0.0' },
         history: { command: node, args: [script('demo-history.mjs'), id, root] },
         accountEnv: { DEMO_ACCOUNT: '{dir}' },
       }),
-      ...(id === 'shell' || id === 'xai' ? {} : { usage: { command: node, args: [script('demo-usage.mjs'), id] } }),
+      ...(id === 'shell' || id === 'google' || id === 'xai' ? {} : { usage: { command: node, args: [script('demo-usage.mjs'), id] } }),
       ...(id === 'anthropic' ? { accounts: [{ id: 'default', label: 'Personal' }, { id: 'work', label: 'Work' }] } : {}),
     });
   }
@@ -184,7 +184,7 @@ async function startSessions(call) {
     { providerId: 'anthropic', name: 'Checkout: wallet payments', folder: 'storefront', script: 'checkout', agents: 'Explore:working,Test writer:working,Reviewer:waiting', model: model('anthropic') },
     { providerId: 'anthropic', account: 'work', name: 'Billing API migration', folder: 'billing', script: 'billing', agents: 'Explore:working', model: model('anthropic', { other: true }) },
     { providerId: 'openai', name: 'Gateway rate limits', folder: 'api-gateway', script: 'ratelimit', agents: 'Worker:working,Tests:working', model: model('openai') },
-    { providerId: 'google', name: 'Docs site migration', folder: 'docs-site', script: 'docs', agents: 'Migrator:working', model: model('google') },
+    { providerId: 'google', name: 'Docs site migration', folder: 'docs-site', script: 'docs', model: model('google') },
     { providerId: 'xai', name: 'Particle shader perf', folder: 'game-engine', script: 'shaders', agents: 'Profiler:working', model: model('xai') },
     { providerId: 'shell', name: 'Storefront dev server', folder: 'storefront', script: 'shell', quiet: true },
   ];

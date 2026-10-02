@@ -5,8 +5,8 @@ import { spawn } from 'node:child_process';
 import { buildSpawnSpec, runSpec, killWindowsTree } from './command-resolver.mjs';
 
 export const REPORT_COMMAND = 'agent-guild-report --hook';
-export const EXTENSION_NAME = 'agent-guild';
-const MANIFEST_DESCRIPTION = 'Reports sub-agents to the Agent Guild session they run in.';
+export const PLUGIN_NAME = 'agent-guild';
+const MANIFEST_DESCRIPTION = 'Reports to the Agent Guild session it runs in.';
 const PROBE_TIMEOUT_MS = 20000;
 const PROBE_RETRY_MS = 5 * 60 * 1000;
 
@@ -28,35 +28,32 @@ const claudeHooks = () => Object.fromEntries(CLAUDE_EVENTS.map((event) => [event
 }]]));
 const GROK_EVENTS = ['SessionStart', 'SubagentStart', 'SubagentStop', 'StopCancelled', 'SessionEnd', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Stop'];
 
-// Gemini's extension stays linked outside Agent Guild, where the launchers are not on PATH.
-export function geminiCommand(shimDir, platform = process.platform) {
-  if (!shimDir) return REPORT_COMMAND;
-  if (platform === 'win32') return `& '${path.win32.join(shimDir, 'agent-guild-report.cmd').replace(/'/g, "''")}' --hook`;
-  return `'${path.posix.join(shimDir, 'agent-guild-report').replace(/'/g, `'\\''`)}' --hook`;
+// Antigravity CLI loads an installed plugin into every session, also those started outside Agent Guild, and runs
+// its hooks in the plugin's folder, on Windows through cmd /C, which cannot take a quoted path. So the hook is a
+// script in that folder: it reports only inside an Agent Guild Antigravity session, and always prints the JSON object
+// Antigravity reads.
+function antigravityFiles(manifest, platform) {
+  const script = platform === 'win32'
+    ? ['@echo off', `if "%AGENT_GUILD_REPORTING%"=="antigravity" call ${REPORT_COMMAND} --event %1`, 'echo {}', ''].join('\r\n')
+    : ['#!/bin/sh', `if [ "$AGENT_GUILD_REPORTING" = antigravity ] && command -v agent-guild-report >/dev/null 2>&1; then ${REPORT_COMMAND} --event "$1"; else cat >/dev/null; fi`, "echo '{}'", ''].join('\n');
+  const name = platform === 'win32' ? 'agent-guild-hook.cmd' : 'agent-guild-hook.sh';
+  const command = platform === 'win32' ? `.\\${name} PreInvocation` : `sh ${name} PreInvocation`;
+  return {
+    'plugin.json': `${JSON.stringify(manifest, null, 2)}\n`,
+    'hooks.json': `${JSON.stringify({ [PLUGIN_NAME]: { PreInvocation: [{ type: 'command', command, timeout: 10 }] } }, null, 2)}\n`,
+    [name]: script,
+  };
 }
 
-export function bundleFiles(version, { shimDir = null, platform = process.platform } = {}) {
+export function bundleFiles(version, { platform = process.platform } = {}) {
   const json = (value) => `${JSON.stringify(value, null, 2)}\n`;
-  const manifest = { name: EXTENSION_NAME, version, description: MANIFEST_DESCRIPTION };
-  const gemini = (name, matcher) => ({ ...(matcher ? { matcher } : {}), hooks: [handler({ name: `Agent Guild ${name}`, command: geminiCommand(shimDir, platform) })] });
+  const manifest = { name: PLUGIN_NAME, version, description: MANIFEST_DESCRIPTION };
   return {
     claude: {
       '.claude-plugin/plugin.json': json(manifest),
       'hooks/hooks.json': json({ hooks: claudeHooks() }),
     },
-    gemini: {
-      'gemini-extension.json': json(manifest),
-      'hooks/hooks.json': json({
-        hooks: {
-          SessionStart: [gemini('session start')],
-          BeforeTool: [gemini('agent start', 'invoke_agent'), gemini('shell start', 'run_shell_command')],
-          AfterTool: [gemini('agent stop', 'invoke_agent'), gemini('shell stop', 'run_shell_command')],
-          BeforeAgent: [gemini('turn start')],
-          AfterAgent: [gemini('turn end')],
-          BeforeModel: [gemini('model')],
-        },
-      }),
-    },
+    antigravity: antigravityFiles({ name: PLUGIN_NAME, description: MANIFEST_DESCRIPTION }, platform),
     grok: {
       '.grok-plugin/plugin.json': json(manifest),
       'hooks/hooks.json': json({
@@ -188,50 +185,51 @@ export function helpLists(text, flag) {
   return new RegExp(`^\\s+(?:-\\w, )?${flag.replace(/[-]/g, '\\-')}\\b`, 'm').test(text);
 }
 
-export function geminiHome(env = {}) {
-  return env.GEMINI_CLI_HOME || os.homedir();
+const geminiHome = (env, platform) => path.join((platform === 'win32' ? env.USERPROFILE : env.HOME) || os.homedir(), '.gemini');
+
+/** Where `agy plugin install` copies the plugin and where Antigravity CLI loads it from. */
+export function antigravityPluginDir(env = {}, platform = process.platform) {
+  return path.join(geminiHome(env, platform), 'config', 'plugins', PLUGIN_NAME);
 }
 
-function geminiRecord(home) {
+/** The shared Antigravity settings, where `agy plugin disable` turns a plugin off. */
+export function antigravityConfigFile(env = {}, platform = process.platform) {
+  return path.join(geminiHome(env, platform), 'config', 'config.json');
+}
+
+/** True unless the settings turn the plugin off or cannot be read; no settings file means every plugin is on. */
+export function antigravityPluginEnabled(configFile) {
+  let config;
   try {
-    return JSON.parse(fs.readFileSync(path.join(home, '.gemini', 'extensions', EXTENSION_NAME, '.gemini-extension-install.json'), 'utf8'));
-  } catch {
-    return null;
-  }
-}
-
-export function geminiLinked(home, bundle) {
-  const record = geminiRecord(home);
-  return record?.type === 'link' && typeof record.source === 'string' && path.resolve(record.source) === path.resolve(bundle);
-}
-
-export function geminiStaleLink(home, bundle) {
-  const record = geminiRecord(home);
-  if (!record || geminiLinked(home, bundle)) return false;
-  if (record.type !== 'link' || typeof record.source !== 'string') return false;
-  try {
-    return JSON.parse(fs.readFileSync(path.join(record.source, 'gemini-extension.json'), 'utf8')).description === MANIFEST_DESCRIPTION;
+    config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
   } catch (err) {
     return err.code === 'ENOENT';
   }
+  if (!config || typeof config !== 'object') return false;
+  return config.plugins?.[PLUGIN_NAME]?.enabled !== false;
 }
 
-// Gemini's uninstall finds only extensions that load, so a link to a folder without its manifest is removed here, as uninstall would.
-function removeDanglingLink(home) {
-  const extensions = path.join(home, '.gemini', 'extensions');
-  fs.rmSync(path.join(extensions, EXTENSION_NAME), { recursive: true, force: true });
-  const enablement = path.join(extensions, 'extension-enablement.json');
-  let config;
-  try { config = JSON.parse(fs.readFileSync(enablement, 'utf8')); } catch { return; }
-  if (!config || typeof config !== 'object' || !(EXTENSION_NAME in config)) return;
-  delete config[EXTENSION_NAME];
-  fs.writeFileSync(enablement, JSON.stringify(config, null, 2));
+function readOr(file, fallback) {
+  try { return fs.readFileSync(file, 'utf8'); } catch { return fallback; }
+}
+
+/** "current" when the installed copy matches the bundle, "stale" when it is an older one of ours, "other" or null. */
+export function antigravityInstalled(pluginDir, bundle) {
+  const manifest = readOr(path.join(pluginDir, 'plugin.json'), null);
+  if (manifest === null) return null;
+  let description = null;
+  try { description = JSON.parse(manifest)?.description; } catch { /* not ours */ }
+  if (description !== MANIFEST_DESCRIPTION) return 'other';
+  let names = [];
+  try { names = fs.readdirSync(bundle); } catch { return 'stale'; }
+  const same = names.every((name) => readOr(path.join(pluginDir, name), null) === readOr(path.join(bundle, name), ''));
+  return same ? 'current' : 'stale';
 }
 
 const pending = (tool, when) => ({ state: 'pending', reason: `Agent Guild added its reporting hooks to this ${tool} session. They report once ${tool} ${when}.` });
 
 export class SessionHooks {
-  constructor({ registry, dir, version, shimDir = null, probeTimeoutMs = PROBE_TIMEOUT_MS, probeRetryMs = PROBE_RETRY_MS }) {
+  constructor({ registry, dir, version, probeTimeoutMs = PROBE_TIMEOUT_MS, probeRetryMs = PROBE_RETRY_MS }) {
     this.registry = registry;
     this.probeTimeoutMs = probeTimeoutMs;
     this.probeRetryMs = probeRetryMs;
@@ -240,7 +238,7 @@ export class SessionHooks {
     this.probes = new Map();
     if (dir) {
       try {
-        this.bundles = writeBundles(dir, version, { shimDir, platform: registry.platform });
+        this.bundles = writeBundles(dir, version, { platform: registry.platform });
       } catch (err) {
         console.warn(`[reporting] could not write the reporting hooks to ${dir}: ${err.message}`);
       }
@@ -278,15 +276,15 @@ export class SessionHooks {
     return entry.promise;
   }
 
-  async launch(provider, account) {
+  async launch(provider) {
     const mode = provider.reporting;
     if (!mode) return { args: [], reporting: null };
     const tool = provider.tool;
     if (!this.bundles) {
       return { args: [], reporting: { state: 'unavailable', reason: `Agent Guild could not write its reporting hooks, so ${tool} cannot report agents.` } };
     }
-    if (mode === 'gemini') {
-      if (this.enabled(provider, account)) return { args: [], reporting: pending(tool, 'starts its session') };
+    if (mode === 'antigravity') {
+      if (this.enabled(provider)) return { args: [], reporting: pending(tool, 'runs its first prompt') };
       return { args: [], reporting: { state: 'setup_required', reason: `Agent reporting is off for ${tool}. Turn it on from the ${tool} card; it applies to new sessions.` } };
     }
     const probe = await this._probe(provider);
@@ -308,42 +306,45 @@ export class SessionHooks {
     };
   }
 
-  enabled(provider, account) {
-    if (provider.reporting !== 'gemini' || !this.bundles) return null;
-    return geminiLinked(geminiHome({ ...this.registry.env, ...provider.env, ...account?.env }), this.bundles.gemini);
+  enabled(provider) {
+    if (provider.reporting !== 'antigravity' || !this.bundles) return null;
+    return this._installed(provider) === 'current' && this._pluginEnabled(provider);
   }
 
-  async setEnabled(provider, account, enabled) {
-    if (provider.reporting !== 'gemini') throw Object.assign(new Error(`${provider.tool} needs no setup for agent reporting`), { status: 400, code: 'not_applicable' });
+  _installed(provider) {
+    return antigravityInstalled(antigravityPluginDir({ ...this.registry.env, ...provider.env }, this.registry.platform), this.bundles.antigravity);
+  }
+
+  _pluginEnabled(provider) {
+    return antigravityPluginEnabled(antigravityConfigFile({ ...this.registry.env, ...provider.env }, this.registry.platform));
+  }
+
+  async setEnabled(provider, enabled) {
+    if (provider.reporting !== 'antigravity') throw Object.assign(new Error(`${provider.tool} needs no setup for agent reporting`), { status: 400, code: 'not_applicable' });
     if (!this.bundles) throw Object.assign(new Error('Agent Guild could not write its reporting hooks'), { status: 500, code: 'reporting_unavailable' });
     const resolved = this.registry.resolve(provider);
     if (!resolved) throw Object.assign(new Error(`${provider.tool} is not installed`), { status: 409, code: 'provider_unavailable' });
-    const env = { ...this.registry.env, ...provider.env, ...account?.env };
-    const home = geminiHome(env);
-    const stale = geminiStaleLink(home, this.bundles.gemini);
-    if (enabled === this.enabled(provider, account) && !stale) return enabled;
-    if (enabled && !stale && geminiRecord(home)) {
-      throw Object.assign(new Error(`${provider.tool} already has another extension named "${EXTENSION_NAME}". Remove it with "${provider.command} extensions uninstall ${EXTENSION_NAME}" to turn on agent reporting.`), { status: 409, code: 'extension_conflict' });
+    const installed = this._installed(provider);
+    if (enabled ? installed === 'current' && this._pluginEnabled(provider) : !installed) return enabled;
+    if (installed === 'other') {
+      if (!enabled) return false;
+      throw Object.assign(new Error(`${provider.tool} already has another plugin named "${PLUGIN_NAME}". Remove it with "${provider.command} plugin uninstall ${PLUGIN_NAME}" to turn on agent reporting.`), { status: 409, code: 'plugin_conflict' });
     }
+    const env = { ...this.registry.env, ...provider.env };
     const run = async (args, what) => {
       try {
-        const commandEnv = { ...env, GEMINI_CLI_TRUST_WORKSPACE: 'true' };
-        await runSpec(buildSpawnSpec(resolved, args, commandEnv, this.registry.platform), { env: commandEnv, timeoutMs: 60000, cwd: this.dir });
+        await runSpec(buildSpawnSpec(resolved, args, env, this.registry.platform), { env, timeoutMs: 60000, cwd: this.dir });
       } catch (err) {
         const detail = `${err.stderr || ''}\n${err.stdout || ''}`.trim().split('\n').filter(Boolean).pop() || err.message;
-        throw Object.assign(new Error(`${provider.tool} could not ${what} the Agent Guild extension: ${detail}`), { status: 502, code: 'reporting_setup_failed' });
+        throw Object.assign(new Error(`${provider.tool} could not ${what} the Agent Guild plugin: ${detail}`), { status: 502, code: 'reporting_setup_failed' });
       }
     };
-    const record = geminiRecord(home);
-    if (stale && !fs.existsSync(path.join(record.source, 'gemini-extension.json'))) {
-      removeDanglingLink(home);
-    } else if (stale || !enabled) {
-      await run(['extensions', 'uninstall', EXTENSION_NAME], 'remove');
-    }
-    if (enabled) await run(['extensions', 'link', this.bundles.gemini, '--consent'], 'link');
-    const now = this.enabled(provider, account);
+    if (installed && (!enabled || installed === 'stale')) await run(['plugin', 'uninstall', PLUGIN_NAME], 'remove');
+    if (enabled && installed !== 'current') await run(['plugin', 'install', this.bundles.antigravity], 'install');
+    if (enabled && !this._pluginEnabled(provider)) await run(['plugin', 'enable', PLUGIN_NAME], 'turn on');
+    const now = this.enabled(provider);
     if (now !== enabled) {
-      throw Object.assign(new Error(`${provider.tool} reported success, but the Agent Guild extension is ${now ? 'still linked' : 'not linked'}`), { status: 502, code: 'reporting_setup_failed' });
+      throw Object.assign(new Error(`${provider.tool} reported success, but the Agent Guild plugin is ${now ? 'still on' : 'not on'}`), { status: 502, code: 'reporting_setup_failed' });
     }
     return now;
   }

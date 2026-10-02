@@ -18,9 +18,6 @@ const REPORTS = {
   openai: {
     default: { plan: 'plus', windows: [{ label: '5-hour', usedPercent: 27, resetsAt: inHours(3.4) }, { label: '7-day', usedPercent: 12, resetsAt: inHours(130) }] },
   },
-  google: {
-    default: { plan: 'free', windows: [{ label: 'Pro', usedPercent: 18, resetsAt: inHours(15) }, { label: 'Flash', usedPercent: 6, resetsAt: inHours(15) }] },
-  },
 };
 
 const report = REPORTS[provider]?.[account] || REPORTS[provider]?.default || { windows: [] };

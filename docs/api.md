@@ -92,15 +92,15 @@ skips the lookup). Both are null until the first check finishes; a
 `updateAvailable` is true when the latest version is newer, and
 `POST /providers/:id/install` performs the update when `updateCommand` is not null.
 
-`usageSource` is `claude`, `codex`, `gemini`, `command` or null, and says
+`usageSource` is `claude`, `codex`, `command` or null, and says
 whether `GET /usage` reports the provider. `historySource` is `claude`,
-`codex`, `gemini`, `grok`, `command` or null, and says whether
+`codex`, `antigravity`, `grok`, `command` or null, and says whether
 `GET /providers/:id/history` can list the tool's earlier sessions.
 `accounts` lists the sign-ins the tool can run under: `default` is the
 tool's own, and each further one has its own home folder, so it keeps its
 own sign-in and usage. `POST /sessions` takes an account id. For a tool
-whose agent reporting is turned on per account (`reporting` is `gemini`),
-each account also has `reportingEnabled`.
+whose agent reporting has to be turned on (`reporting` is `antigravity`),
+`reportingEnabled` says whether it is.
 `usageUrl` and `billingUrl` are `https://` links to the vendor's usage and
 billing pages, or null when none is configured. A usage snapshot's `plan` is
 the subscription tier.
@@ -136,8 +136,7 @@ unknown. When the provider is not signed in or the lookup failed,
 `windows` is empty and `error` says why; `signedIn` is false when no
 sign-in was found for that account, true when one was read, and null when
 that is unknown. One snapshot is reported per account. The manager reads the tool's own sign-in (Claude Code's
-credentials file or macOS keychain item, Codex CLI's `auth.json`, Gemini
-CLI's keychain item, encrypted credentials file or `oauth_creds.json`) and
+credentials file or macOS keychain item, Codex CLI's `auth.json`) and
 asks the vendor's usage
 endpoint; a `command` source runs a program that prints
 `{ plan?, windows: [{ label, usedPercent | remainingPercent, resetsAt? }] }`.
@@ -162,13 +161,13 @@ rather than shown as unused. Snapshots are cached for a minute.
 The tool's own earlier sessions, newest first, read from where the tool
 keeps them under the account's home folder: Claude Code's
 `projects/<folder>/<id>.jsonl` transcripts, Codex CLI's
-`sessions/<date>/rollout-*.jsonl` files, Gemini CLI's
-`tmp/<project>/chats/session-*.jsonl` files and Grok Build's
+`sessions/<date>/rollout-*.jsonl` files, Antigravity CLI's
+`brain/<id>/.system_generated/logs/transcript.jsonl` files and Grok Build's
 `sessions/<folder>/<id>/summary.json`. Sub-agent sessions are left out.
 `id` is what the tool resumes by (`POST /sessions` with `resume`); `title` is
 the session's name or first prompt, or null; `cwd` is the folder the session
-ran in, or null when the tool did not record it. Claude Code and Gemini CLI
-find a session only from its own folder, so a client should resume with that
+ran in, or null when the tool did not record it. Claude Code
+finds a session only from its own folder, so a client should resume with that
 `cwd`. `updatedAt` is when the transcript last changed. `sessions` holds at
 most `limit` entries of the `total` found. Only the head of each transcript
 is read, and a transcript is read again only when it changed; the list is
@@ -244,7 +243,7 @@ that has never run lists no sessions and no error.
   hooks announce themselves, `active` once any hook report arrives,
   `unavailable` when none has arrived some time after the first prompt or
   the tool refused the hooks, `setup_required` when the user has to turn
-  reporting on first (Gemini CLI), and `unsupported` when the installed tool
+  reporting on first (Antigravity CLI), and `unsupported` when the installed tool
   cannot take hooks for one session. `reason` explains every state but `active`.
 * `shells` lists the shell commands the tool is running for the model, as
   its hooks report them, once each has run for about 600 ms; each leaves
@@ -339,7 +338,6 @@ Claude Code sub-agent. See [agent-reporting.md](agent-reporting.md).
   "kind": "subagent",
   "status": "working",
   "detail": "Map the auth flow",
-  "foreground": true,
   "startedAt": "2026-09-30T03:11:02.000Z",
   "updatedAt": "2026-09-30T03:11:02.000Z",
   "source": "api"
@@ -350,9 +348,6 @@ Claude Code sub-agent. See [agent-reporting.md](agent-reporting.md).
 as `done` stays visible for about 15 seconds and is then removed. A session
 holds at most 64 agents; a new one displaces the done agent that has
 lingered longest. All agents are cleared when their session exits.
-`foreground` is true when the tool
-waits for the agent; while such an agent is `working`, model reports are
-taken to be the agent's and leave the session's `model` unchanged.
 
 ## HTTP endpoints
 
@@ -365,7 +360,7 @@ All paths are under `/api/v1`.
 | POST | `/upgrade` | | `201 { session }`: a session with `task` `upgrade` running the Upgrade `command`. 400 `not_updatable` when no newer release is known, it is already installed on disk, the manager is a development build, or version checks are off. 409 `npm_unavailable` without npm on PATH. 409 `upgrade_in_progress` while one is running. Sessions keep running; the new version is used after the manager restarts. |
 | GET | `/providers` | | `{ providers: Provider[] }` |
 | POST | `/providers/reload` | | Re-reads `providers.json`. |
-| POST | `/providers/:id/reporting` | `{ enabled, account? }` | `{ provider }`: turns agent reporting on or off for one account of a tool that needs it, by running the tool's own `extensions link` or `extensions uninstall`. A link left by an earlier Agent Guild data folder is replaced. 400 `not_applicable` for any other tool, 409 `extension_conflict` when another extension has the same name, 502 `reporting_setup_failed` when the tool's command fails. |
+| POST | `/providers/:id/reporting` | `{ enabled }` | `{ provider }`: turns agent reporting on or off for a tool that needs it, by running the tool's own `plugin install`, `plugin enable` or `plugin uninstall`. An older copy of the Agent Guild plugin is replaced, and one turned off in the tool is turned back on. 400 `not_applicable` for any other tool, 409 `plugin_conflict` when another plugin has the same name, 502 `reporting_setup_failed` when the tool's command fails. |
 | POST | `/providers/:id/install` | `{ force? }` | `201 { session }`: a session running `npm install -g <package>@<version>`, or `updateCommand` when the tool is installed. 400 `not_updatable` when an installed tool has no `updateCommand`. 503 `release_unresolved` or 409 `release_incomplete` when the release cannot be read or its platform build is not published; nothing is run. 409 `install_in_progress` while one is already running. 409 `provider_in_use` (with `running`, the session count) while the provider's sessions are running, unless `force` is true. |
 | GET | `/usage` | | `{ usage: Usage[] }`, one per account of every provider with a `usageSource`. |
 | GET | `/model-stats` | | Benchmarks for the models of every provider with a `modelPattern`, from OpenRouter's public model list (Artificial Analysis and Design Arena results), cached for 6 hours. `{ retrievedAt, stale, error, stats, pool, providers, models, sessions }`: `stats` describes each benchmark; `providers[id]` is `{ featured, models }`, a provider's model ids newest first; `models[id]` holds a model's name, context and price, and in `stats`, per benchmark, its `value`, `rank`, `level` (0-100, its standing among the models of all configured tools) and `tier` (S 90+, A 75+, B 50+, C 25+, D below); `sessions[id]` is the model id a session's reported model matched, or null. |
@@ -386,11 +381,11 @@ All paths are under `/api/v1`.
 | PATCH | `/sessions/:id` | `{ name }` | `{ session }`. `name` must be a non-empty string; it is trimmed to 80 characters. |
 | POST | `/sessions/:id/stop` | | Ends the process. The session stays listed as exited. |
 | DELETE | `/sessions/:id` | | Ends the process if needed and removes the session. |
-| POST | `/sessions/:id/agents` | Agent report | `{ agent }`, or `{ agent: null }` after a removal, for a `done` report about an agent that was never reported, or for `{ finishForeground: true }`, which marks every foreground agent still working as done. |
-| POST | `/sessions/:id/model` | `{ model, displayName? }` | `{ model }`. Sets the session's model with source `report`, unless a foreground agent is working; then the current model is returned unchanged. |
+| POST | `/sessions/:id/agents` | Agent report | `{ agent }`, or `{ agent: null }` after a removal, for a `done` report about an agent that was never reported, or for `{ finishForeground: true }`, which ends the commands of the turn that just ended. |
+| POST | `/sessions/:id/model` | `{ model, displayName? }` | `{ model }`. Sets the session's model with source `report`. |
 | POST | `/sessions/:id/tool-session` | `{ toolSessionId }` | `{ toolSessionId }`. Records the id the tool gave its own session: one printable line of at most 200 characters. 409 once the session has exited. |
 | POST | `/sessions/:id/reporting` | | `{ reporting }`: the tool's hooks announce themselves, which makes `reporting.state` `active`. |
-| POST | `/sessions/:id/shells` | `{ shell, key \| bucket \| task, match?, agentId?, persist?, pids?, endsWithAgent?, tasks? }` | `{ ok }`. `shell` is `start`, `end`, `background` (with the tool's `task` id, or the `pids` of the processes it left running), `waiting` (a permission request, which hides the command), `asked` (one that ends the command with its turn), `running` (`tasks` lists the background tasks still running; any other ends) or `reset` (every command ends). `key` is the tool's call id; without one, `bucket` groups identical calls, which end in the order they started. `match` is a hash of the command, which pairs a permission request with it; `persist` keeps a command past the end of its turn, and `endsWithAgent` ends a background one with its sub-agent. |
+| POST | `/sessions/:id/shells` | `{ shell, key \| task, match?, agentId?, persist?, endsWithAgent?, tasks? }` | `{ ok }`. `shell` is `start`, `end`, `background` (with the tool's `task` id), `waiting` (a permission request, which hides the command), `asked` (one that ends the command with its turn), `running` (`tasks` lists the background tasks still running; any other ends) or `reset` (every command ends). `key` is the tool's call id. `match` is a hash of the command, which pairs a permission request with it; `persist` keeps a command past the end of its turn, and `endsWithAgent` ends a background one with its sub-agent. |
 | POST | `/shutdown` | `{ force?, restart? }` | `202 { ok, running, restart }`: stops the manager and every session. 409 `sessions_running` (with `running`, the session count) while any session is running, unless `force` is true. From the 202 on, `POST /sessions` and `POST /providers/:id/install` answer 503 `manager_stopping`. Events clients get `manager.stopping` first and `manager.stopped` last, after the sessions have ended and before the API closes. With `restart` true, the manager then starts a new manager from the package on disk, on the same port and with the same token, before it exits; the new one runs whatever version is installed, so this is how an upgrade's `pendingVersion` is put to use. Clients reconnect to it as to any manager; its `hello` is the new source of truth. |
 
 `cwd` defaults to the user's home folder and must be an existing folder. A

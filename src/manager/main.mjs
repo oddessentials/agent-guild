@@ -63,11 +63,11 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
   let api;
   const selfUpdate = new SelfUpdate({ pkg: PACKAGE_NAME, version, packageFile, registry });
   const github = new GitHub({ dir: paths.github, registry, ...githubOptions });
-  const sessionHooks = new SessionHooks({ registry, dir: paths.reporting, version, shimDir });
-  registry.reportingEnabled = (provider, account) => sessionHooks.enabled(provider, account);
+  const sessionHooks = new SessionHooks({ registry, dir: paths.reporting, version });
+  registry.reportingEnabled = (provider) => sessionHooks.enabled(provider);
   sessionHooks.warm();
   const manager = new SessionManager({
-    registry, baseEnv, getApiUrl: () => api.url, sessionDefaults, shimDir, selfUpdate, github, sessionHooks, reportTokenDir: paths.reportTokens,
+    registry, baseEnv, getApiUrl: () => api.url, sessionDefaults, shimDir, selfUpdate, github, sessionHooks,
   });
   const usage = new UsageMonitor({ registry, env: baseEnv });
   const history = new SessionHistory({ registry, env: baseEnv });
@@ -147,7 +147,6 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
     throw err;
   }
 
-  manager.sweepReportTokens();
   writeRuntimeFile({
     pid: process.pid,
     host,

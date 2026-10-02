@@ -1,31 +1,32 @@
-// Stand-ins for Claude Code, Codex CLI, Gemini CLI and Grok Build that find
-// and run hooks the way each real tool does, so tests can follow a sub-agent
-// from the tool's hook to the session card. The first argument names the
-// tool: claude, codex, gemini or grok.
+// Stand-ins for Claude Code, Codex CLI, Antigravity CLI and Grok Build that
+// find and run hooks the way each real tool does, so tests can follow a
+// sub-agent from the tool's hook to the session card. The first argument
+// names the tool: claude, codex, agy or grok.
 //
 // Hooks come from:
 //   claude  --plugin-dir <dir> (hooks/hooks.json), and $CLAUDE_CONFIG_DIR/settings.json
 //   codex   -c hooks.<Event>=[...] (run only when hooks.state trusts them by key and hash),
 //           and $CODEX_HOME/hooks.json; `app-server` answers initialize and hooks/list
-//   gemini  extensions linked under $GEMINI_CLI_HOME/.gemini/extensions; hooks run with
-//           Gemini's variable redaction (names containing TOKEN, KEY, AUTH ... removed)
+//   agy     plugins installed with `plugin install` under ~/.gemini/config/plugins, unless
+//           `plugin disable` turned them off in ~/.gemini/config/config.json; hooks run in
+//           the plugin's folder (on Windows through cmd /C, which gets a quoted path wrong), take
+//           no event name, and must print a JSON object
 //   grok    --plugin-dir <dir>, accepted only when FAKE_GROK_PLUGIN_DIR=1, and $GROK_HOME/hooks/*.json
 // FAKE_CODEX_LOADS_NONE=1 makes Codex's hooks/list answer without our hooks.
 //
 // Lines typed into the session:
 //   prompt                 a user prompt (Codex runs its SessionStart hooks here)
-//   subagent <id> <type>   a sub-agent starts; Gemini: an invoke_agent call starts
+//   subagent <id> <type>   a sub-agent starts
 //   subagent-done <id> <type>
-//   subagent-done-rewritten <id> <type>   Gemini: the end, with input a BeforeTool hook rewrote
 //   subagent-killed <id> <type>           Claude Code's TaskStop: a task notification, no SubagentStop
-//   shell <id> <ms> [fg|bg|bg-silent|bg-instant|ps|interrupt|esc-bg|unpolled|ask-yes|ask-no|ask-rewrite|fg-rewrite|bg-rewrite] [command...]
-//                          runs a shell command for <ms> with the tool's hooks. Claude Code and
-//                          Gemini CLI return a bg command's call at once; Claude Code notifies its
+//   shell <id> <ms> [fg|bg|bg-silent|ps|interrupt|esc-bg|unpolled|ask-yes|ask-no|ask-rewrite] [command...]
+//                          runs a shell command for <ms> with the tool's hooks. Claude Code
+//                          returns a bg command's call at once and notifies its
 //                          end as a prompt, except for bg-silent; Codex CLI reports a command's
 //                          end when it ends, except for unpolled, which the model never checks on
 //                          again; ps runs it as Claude Code's PowerShell tool; ask-yes and ask-no
-//                          ask permission for a while, then run the command or not; the -rewrite
-//                          modes run a command a hook rewrote; interrupt is Esc after <ms>, which
+//                          ask permission for a while, then run the command or not; ask-rewrite
+//                          runs a command a hook rewrote; interrupt is Esc after <ms>, which
 //                          kills the command and fires no hook; esc-bg is Esc after 300 ms, which
 //                          moves the command to the background, also with no hook
 //   shell-denied <id> [command...]
@@ -72,32 +73,32 @@ if (tool === 'grok' && argv.includes('--plugin-dir') && process.env.FAKE_GROK_PL
   process.exit(2);
 }
 
-const geminiHome = () => path.join(process.env.GEMINI_CLI_HOME || os.homedir(), '.gemini');
+const agyPlugins = () => path.join(os.homedir(), '.gemini', 'config', 'plugins');
+const agyConfig = () => path.join(os.homedir(), '.gemini', 'config', 'config.json');
+const agyEnablement = (name, enabled) => {
+  const config = readJson(agyConfig()) || {};
+  config.plugins = { ...config.plugins };
+  if (enabled === null) delete config.plugins[name];
+  else config.plugins[name] = { enabled };
+  fs.mkdirSync(path.dirname(agyConfig()), { recursive: true });
+  fs.writeFileSync(agyConfig(), JSON.stringify(config, null, 2));
+};
 
-if (tool === 'gemini' && argv[0] === 'extensions') {
-  const dir = path.join(geminiHome(), 'extensions', 'agent-guild');
-  if (argv[1] === 'link') {
-    if (!argv.includes('--consent')) process.exit(1);
-    if (process.env.FAKE_GEMINI_CWD_LOG) fs.appendFileSync(process.env.FAKE_GEMINI_CWD_LOG, `${process.cwd()}\n`);
-    if (process.env.GEMINI_CLI_TRUST_WORKSPACE !== 'true') {
-      const trusted = path.join(geminiHome(), 'trustedFolders.json');
-      fs.writeFileSync(trusted, JSON.stringify({ ...readJson(trusted), [process.cwd()]: 'TRUST_FOLDER' }));
-    }
-    if (fs.existsSync(dir)) {
-      out('Extension "agent-guild" is already installed. Please uninstall it first.');
+if (tool === 'agy' && argv[0] === 'plugin') {
+  if (argv[1] === 'enable' || argv[1] === 'disable') {
+    agyEnablement(argv[2], argv[1] === 'enable');
+  } else if (argv[1] === 'install') {
+    const name = readJson(path.join(argv[2], 'plugin.json'))?.name;
+    if (!name) {
+      process.stderr.write(`Error: missing plugin.json in ${argv[2]}\n`);
       process.exit(1);
     }
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, '.gemini-extension-install.json'), JSON.stringify({ source: path.resolve(argv[2]), type: 'link' }));
-    out('Extension "agent-guild" linked successfully and enabled.');
+    fs.cpSync(argv[2], path.join(agyPlugins(), name), { recursive: true });
+    out(`  [ok]    ${name}`);
   } else if (argv[1] === 'uninstall') {
-    const source = readJson(path.join(dir, '.gemini-extension-install.json'))?.source;
-    if (!source || !readJson(path.join(source, 'gemini-extension.json'))) {
-      process.stderr.write('Extension not found.\n');
-      process.exit(1);
-    }
-    fs.rmSync(dir, { recursive: true, force: true });
-    out('Extension "agent-guild" successfully uninstalled.');
+    fs.rmSync(path.join(agyPlugins(), argv[2]), { recursive: true, force: true });
+    if (readJson(agyConfig())) agyEnablement(argv[2], null);
+    out(`Uninstalled plugin "${argv[2]}"`);
   }
   process.exit(0);
 }
@@ -173,41 +174,56 @@ function discover() {
     });
     return [...own, ...settingsHooks(path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'hooks.json'))];
   }
-  if (tool === 'gemini') {
-    const extensions = path.join(geminiHome(), 'extensions');
-    const dirs = [];
-    for (const name of fs.existsSync(extensions) ? fs.readdirSync(extensions) : []) {
-      const record = readJson(path.join(extensions, name, '.gemini-extension-install.json'));
-      if (record?.source) dirs.push(record.source);
-    }
-    return [...pluginHooks(dirs), ...settingsHooks(path.join(geminiHome(), 'settings.json'))];
+  if (tool === 'agy') {
+    const root = agyPlugins();
+    const disabled = (name) => readJson(agyConfig())?.plugins?.[name]?.enabled === false;
+    return (fs.existsSync(root) ? fs.readdirSync(root) : []).filter((name) => !disabled(name)).flatMap((name) => {
+      const cwd = path.join(root, name);
+      return Object.values(readJson(path.join(cwd, 'hooks.json')) || {}).flatMap((named) => Object.entries(named)
+        .flatMap(([event, entries]) => entries.flatMap((entry) => (entry.hooks || [entry]).map((h) => ({ event, matcher: entry.hooks ? entry.matcher : undefined, command: h.command, cwd })))));
+    });
   }
   const home = process.env.GROK_HOME || path.join(os.homedir(), '.grok');
   const files = fs.existsSync(path.join(home, 'hooks')) ? fs.readdirSync(path.join(home, 'hooks')).filter((f) => f.endsWith('.json')) : [];
   return [...pluginHooks(flag('--plugin-dir')), ...files.flatMap((f) => settingsHooks(path.join(home, 'hooks', f)))];
 }
 
-const REDACTED = [/TOKEN/i, /SECRET/i, /PASSWORD/i, /PASSWD/i, /KEY/i, /AUTH/i, /CREDENTIAL/i, /CREDS/i, /PRIVATE/i, /CERT/i];
-function hookEnv() {
-  if (tool !== 'gemini') return process.env;
-  return Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toUpperCase() === 'PATH' || !REDACTED.some((re) => re.test(key))));
-}
-
 function shellFor(command) {
-  if (tool === 'gemini') return win ? ['powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command]] : ['bash', ['-c', command]];
+  if (tool === 'agy' && win) return ['cmd.exe', ['/d', '/s', '/c', `"${command.replace(/"/g, '\\"')}"`]];
   return win ? ['cmd.exe', ['/d', '/s', '/c', `"${command}"`]] : ['/bin/sh', ['-c', command]];
 }
+
+const conversationId = '0f1e2d3c-4b5a-4697-8877-665544332211';
+const agyBrain = path.join(os.tmpdir(), `fake-agy-${process.pid}`);
+const agyTranscript = (id) => path.join(agyBrain, id, '.system_generated', 'logs', 'transcript_full.jsonl');
+const writeAgyTranscript = (id, first) => {
+  fs.mkdirSync(path.dirname(agyTranscript(id)), { recursive: true });
+  fs.writeFileSync(agyTranscript(id), `${JSON.stringify(first)}\n`);
+};
+const agyPayload = ({ conversationId: id = conversationId, ...payload }) => ({
+  conversationId: id, workspacePaths: [process.cwd()], modelName: 'gemini-3.8-flash-high', transcriptPath: agyTranscript(id), ...payload,
+});
+if (tool === 'agy') process.on('exit', () => fs.rmSync(agyBrain, { recursive: true, force: true }));
 
 function runHooks(hooks, event, payload, toolName = null) {
   const matching = hooks.filter((h) => h.event === event && (!h.matcher || (toolName !== null && new RegExp(`^(?:${h.matcher})$`).test(toolName))));
   return matching.reduce((prev, hook) => prev.then(() => new Promise((resolve) => {
     const [file, args] = shellFor(hook.command);
-    const child = spawn(file, args, { env: hookEnv(), stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, windowsVerbatimArguments: file === 'cmd.exe' });
+    const child = spawn(file, args, { cwd: hook.cwd, env: process.env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, windowsVerbatimArguments: file === 'cmd.exe' });
+    let stdout = '';
     let stderr = '';
+    child.stdout.on('data', (d) => { stdout += d; });
     child.stderr.on('data', (d) => { stderr += d; });
     child.on('error', (err) => { out(`HOOK ${event} ERROR ${err.message}`); resolve(); });
-    child.on('close', (code) => { out(`HOOK ${event} EXIT:${code}${stderr.trim() ? ` STDERR:${JSON.stringify(stderr.trim())}` : ''}`); resolve(); });
-    child.stdin.end(JSON.stringify({ hook_event_name: event, session_id: `${tool}-session`, cwd: process.cwd(), ...payload }));
+    child.on('close', (code) => {
+      let answer = '';
+      if (tool === 'agy') {
+        try { answer = ` ANSWER:${JSON.stringify(JSON.parse(stdout))}`; } catch { answer = ` NOT-JSON:${JSON.stringify(stdout)}`; }
+      }
+      out(`HOOK ${event} EXIT:${code}${answer}${stderr.trim() ? ` STDERR:${JSON.stringify(stderr.trim())}` : ''}`);
+      resolve();
+    });
+    child.stdin.end(JSON.stringify(tool === 'agy' ? agyPayload(payload) : { hook_event_name: event, session_id: `${tool}-session`, cwd: process.cwd(), ...payload }));
   })), Promise.resolve());
 }
 
@@ -220,25 +236,23 @@ function runTool() {
     started = true;
     return runHooks(hooks, 'SessionStart', { source: 'startup' });
   };
-  if (tool !== 'codex') sessionStart();
+  if (tool !== 'codex' && tool !== 'agy') sessionStart();
 
   const shellSleep = 'setTimeout(() => {}, Number(process.env.FAKE_SHELL_MS))';
   const running = new Map();
   // Claude Code's background tasks still running, by task id, as its Stop lists them.
   const tasks = new Map();
   const codexTurn = tool === 'codex' ? { turn_id: 'turn-1' } : {};
-  const toolName = { claude: 'Bash', codex: 'Bash', gemini: 'run_shell_command', grok: 'run_terminal_command' }[tool];
+  const toolName = { claude: 'Bash', codex: 'Bash', grok: 'run_terminal_command' }[tool];
   const shellEvent = (start, id, input, response, name = toolName) => {
-    if (tool === 'gemini') return [start ? 'BeforeTool' : 'AfterTool', { tool_name: name, tool_input: input, ...(response ? { tool_response: response } : {}) }, name];
     if (tool === 'grok') return [start ? 'PreToolUse' : 'PostToolUse', { hookEventName: start ? 'pre_tool_use' : 'post_tool_use', toolName: name, toolUseId: id, toolInput: input, ...(response ? { toolResult: response } : {}) }, name];
     return [start ? 'PreToolUse' : 'PostToolUse', { tool_name: name, tool_use_id: id, tool_input: input, ...codexTurn, ...(response ? { tool_response: response } : {}) }, name];
   };
   const notification = (task, id, status) => `<task-notification>\n<task-id>${task}</task-id>\n<tool-use-id>${id}</tool-use-id>\n<output-file>/tmp/tasks/${task}.output</output-file>\n<status>${status}</status>\n<summary>Background command "test" ${status} (exit code 0)</summary>\n</task-notification>`;
   const runShell = async (id, ms, mode, command) => {
-    const background = mode === 'bg' || mode === 'bg-silent' || mode === 'bg-rewrite' || mode === 'bg-instant';
+    const background = mode === 'bg' || mode === 'bg-silent';
     const name = mode === 'ps' ? 'PowerShell' : toolName;
-    const announced = tool === 'gemini' ? { command, description: 'test', is_background: background }
-      : { command, ...(background && tool === 'claude' ? { run_in_background: true } : {}) };
+    const announced = { command, ...(background && tool === 'claude' ? { run_in_background: true } : {}) };
     const [startEvent, startPayload, matcher] = shellEvent(true, id, announced, null, name);
     await runHooks(hooks, startEvent, startPayload, matcher);
     const input = mode.endsWith('-rewrite') ? { ...announced, command: `${command} -- --runInBand` } : announced;
@@ -265,25 +279,18 @@ function runTool() {
       running.delete(id);
       tasks.delete(task);
       out(`SHELL-EXITED ${id}`);
-      if (child.silent || mode === 'bg-silent' || mode === 'unpolled' || (background && tool === 'gemini')) return;
+      if (child.silent || mode === 'bg-silent' || mode === 'unpolled') return;
       if (tool === 'claude' && (background || mode === 'esc-bg')) {
         await runHooks(hooks, 'UserPromptSubmit', { prompt: notification(task, id, 'completed') });
         out(`SHELL-NOTIFIED ${id}`);
         return;
       }
-      await end(tool === 'gemini' ? { llmContent: 'Output: (empty)' } : tool === 'codex' ? 'Exit code: 0' : { stdout: '' });
+      await end(tool === 'codex' ? 'Exit code: 0' : { stdout: '' });
       out(`SHELL-DONE ${id}`);
     });
     if (background && tool === 'claude') {
       tasks.set(task, child);
       await end({ stdout: '', stderr: '', interrupted: false, backgroundTaskId: task });
-    }
-    if (background && tool === 'gemini') {
-      // Gemini CLI 0.62.0 names the pid even when the command has already ended.
-      if (mode === 'bg-instant') await new Promise((resolve) => (child.exitCode !== null ? resolve() : child.on('exit', resolve)));
-      const moved = `Command moved to background (PID: ${child.pid}). Output hidden. Press Ctrl+B to view.`;
-      await end({ llmContent: `<untrusted_context>\n${moved}\n</untrusted_context>`, returnDisplay: moved });
-      out(`SHELL-BACKGROUNDED ${id}`);
     }
   };
 
@@ -317,7 +324,7 @@ function runTool() {
     }
     if (cmd === 'turn-end') {
       const listed = tool === 'claude' ? { background_tasks: [...tasks.keys()].map((task) => ({ id: task, type: 'shell', status: 'running', description: 'test', command: 'test' })), session_crons: [] } : {};
-      await runHooks(hooks, { claude: 'Stop', codex: 'Stop', gemini: 'AfterAgent', grok: 'Stop' }[tool], { stop_hook_active: false, ...codexTurn, ...listed });
+      await runHooks(hooks, 'Stop', { stop_hook_active: false, ...codexTurn, ...listed });
       out('TURN-ENDED');
       return;
     }
@@ -337,13 +344,20 @@ function runTool() {
     }
     if (cmd === 'prompt') {
       await sessionStart();
-      await runHooks(hooks, tool === 'gemini' ? 'BeforeAgent' : 'UserPromptSubmit', { prompt: 'hi', ...(tool === 'codex' ? { turn_id: 'turn-1' } : {}) });
+      if (tool === 'agy') {
+        writeAgyTranscript(conversationId, { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', content: '<USER_REQUEST>\nhi\n</USER_REQUEST>' });
+        await runHooks(hooks, 'PreInvocation', { invocationNum: 0, initialNumSteps: 1 });
+      }
+      else await runHooks(hooks, 'UserPromptSubmit', { prompt: 'hi', ...(tool === 'codex' ? { turn_id: 'turn-1' } : {}) });
       out('PROMPT-DONE');
-    } else if (cmd === 'subagent' || cmd === 'subagent-done' || cmd === 'subagent-done-rewritten') {
+    } else if (cmd === 'subagent' || cmd === 'subagent-done') {
       const start = cmd === 'subagent';
-      if (tool === 'gemini') {
-        const prompt = cmd === 'subagent-done-rewritten' ? `task ${id}, rewritten by a BeforeTool hook` : `task ${id}`;
-        await runHooks(hooks, start ? 'BeforeTool' : 'AfterTool', { tool_name: 'invoke_agent', tool_input: { agent_name: type, prompt } }, 'invoke_agent');
+      if (tool === 'agy') {
+        // Antigravity CLI: a sub-agent is a conversation of its own, whose first step is its parent's message.
+        const sub = { conversationId: id, modelName: 'gemini-3.6-flash-low' };
+        await runHooks(hooks, 'PreInvocation', { ...sub, invocationNum: 0, initialNumSteps: 0 });
+        writeAgyTranscript(id, { step_index: 0, source: 'SYSTEM', type: 'SYSTEM_MESSAGE', content: `sender=${conversationId} content=${type}` });
+        await runHooks(hooks, 'PreInvocation', { ...sub, invocationNum: 1, initialNumSteps: 3 });
       } else if (tool === 'grok') {
         await runHooks(hooks, start ? 'SubagentStart' : 'SubagentStop', { hookEventName: start ? 'subagent_start' : 'subagent_stop', subagentId: id, subagentType: type });
       } else {
