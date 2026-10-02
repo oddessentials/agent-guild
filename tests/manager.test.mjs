@@ -797,8 +797,14 @@ test('a session runs, streams output, accepts input and resizes', async () => {
     // report is not a reliable signal there.)
     await waitFor(() => client.output.includes('\x1b[8;33;101t'), { label: 'ConPTY resize' });
   } else {
+    // The tool's cached size changes only once it has handled SIGWINCH, so ask until it has.
+    const ask = setInterval(() => client.input('size'), 300);
     client.input('size');
-    await waitForText(client, session.id, 'SIZE:101x33', 'pty size');
+    try {
+      await waitForText(client, session.id, 'SIZE:101x33', 'pty size');
+    } finally {
+      clearInterval(ask);
+    }
   }
 
   await client.close();
