@@ -17,8 +17,11 @@
 //                       status line, or the JSON itself with --passthrough)
 
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import { hookToReports, claudeStatuslineToReport, formatStatusLine } from '../src/report/hooks.mjs';
 
+// Importing node:http as an ES module costs a hook about 50 ms more than requiring it.
+const http = createRequire(import.meta.url)('node:http');
 const env = process.env;
 
 function reportToken() {
@@ -72,24 +75,31 @@ function readStdin() {
   });
 }
 
-async function send(report) {
-  const kind = report.agentId !== undefined || report.finishForeground === true ? 'agents'
+function send(report) {
+  const kind = report.shell !== undefined ? 'shells'
+    : report.agentId !== undefined || report.finishForeground === true ? 'agents'
     : report.hello === true ? 'reporting'
     : report.toolSessionId !== undefined ? 'tool-session' : 'model';
-  const url = `${env.AGENT_GUILD_URL}/api/v1/sessions/${env.AGENT_GUILD_SESSION_ID}/${kind}`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Agent-Guild-Report-Token': token,
-    },
-    body: JSON.stringify(report),
-    signal: AbortSignal.timeout(3000),
+  const body = JSON.stringify(report);
+  return new Promise((resolve, reject) => {
+    const req = http.request(`${env.AGENT_GUILD_URL}/api/v1/sessions/${env.AGENT_GUILD_SESSION_ID}/${kind}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+        'X-Agent-Guild-Report-Token': token,
+      },
+      timeout: 3000,
+    }, (res) => {
+      let text = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => { text += chunk; });
+      res.on('end', () => (res.statusCode >= 200 && res.statusCode < 300 ? resolve() : reject(new Error(`HTTP ${res.statusCode}: ${text}`))));
+    });
+    req.on('timeout', () => req.destroy(new Error('the manager did not answer in time')));
+    req.on('error', reject);
+    req.end(body);
   });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`HTTP ${res.status}: ${body}`);
-  }
 }
 
 /** A hook must never break the coding tool, so report failures quietly. */

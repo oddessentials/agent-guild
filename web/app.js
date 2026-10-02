@@ -334,23 +334,49 @@ function paintReporting(row, s) {
   why.onclick = () => toast(reason, 12000);
 }
 
-function renderAgents(container, agents) {
+const MAX_SHELLS_SHOWN = 16;
+
+function renderAgents(container, agents, shells = []) {
   const known = container.dataset.rendered ? new Set([...container.children].map((el) => el.dataset.agent)) : null;
   container.dataset.rendered = 'true';
-  container.replaceChildren(...agents.map((agent) => {
+  const familiar = (id, name, hue) => {
     const el = document.createElement('span');
-    el.className = `agent ${agent.status}`;
-    el.dataset.agent = agent.id;
-    if (known && !known.has(agent.id)) el.classList.add('summon');
-    el.style.setProperty('--c', `hsl(${hueFor(agent.name)} 65% 50%)`);
-    el.dataset.familiar = FAMILIARS[hueFor(agent.name) % FAMILIARS.length];
+    el.dataset.agent = id;
+    if (known && !known.has(id)) el.classList.add('summon');
+    el.style.setProperty('--c', `hsl(${hue} 65% 50%)`);
+    el.dataset.familiar = FAMILIARS[hue % FAMILIARS.length];
+    el.setAttribute('role', 'img');
+    return el;
+  };
+  const agentEls = agents.map((agent) => {
+    const el = familiar(agent.id, agent.name, hueFor(agent.name));
+    el.classList.add('agent', agent.status);
     el.textContent = (agent.name || '?').charAt(0).toUpperCase();
     const detail = agent.detail ? ` — ${agent.detail}` : '';
     el.title = `${agent.name} (${agent.status})${detail}`;
-    el.setAttribute('role', 'img');
     el.setAttribute('aria-label', el.title);
     return el;
-  }));
+  });
+  const shellEls = shells.slice(0, MAX_SHELLS_SHOWN).map((shell) => {
+    const el = familiar(shell.id, 'Shell', hueFor(shell.id));
+    el.classList.add('agent', 'working', 'shell');
+    el.textContent = '>';
+    el.title = 'Shell command (running)';
+    el.setAttribute('aria-label', el.title);
+    return el;
+  });
+  if (shells.length > MAX_SHELLS_SHOWN) {
+    const more = document.createElement('span');
+    const hidden = shells.length - MAX_SHELLS_SHOWN;
+    more.className = 'agent-overflow';
+    more.dataset.agent = 'shell-overflow';
+    more.textContent = `+${hidden}`;
+    more.title = `${shells.length} shell commands running; ${hidden} more not drawn`;
+    more.setAttribute('role', 'img');
+    more.setAttribute('aria-label', more.title);
+    shellEls.push(more);
+  }
+  container.replaceChildren(...agentEls, ...shellEls);
 }
 
 // ---- API ------------------------------------------------------------------
@@ -2548,7 +2574,7 @@ function updateCard(node, s) {
   // The LRM keeps a leading "/" in place under the right-to-left truncation style.
   cwd.textContent = `\u200E${s.cwd}`;
   cwd.title = s.cwd;
-  renderAgents(node.querySelector('.agents'), s.agents);
+  renderAgents(node.querySelector('.agents'), s.agents, s.shells || []);
   paintReporting(node.querySelector('.agents-row'), s);
   node.classList.toggle('exited', s.status === 'exited');
   node.querySelector('.stop').hidden = s.status !== 'running';
@@ -2561,8 +2587,9 @@ function updateCard(node, s) {
   resume.title = `Start ${s.provider.tool} again on this session${id ? ` (${id})` : ''} in ${s.cwd}`;
   const modelLabel = s.model ? `, model ${modelText(s)}` : '';
   const accountName = accountLabel(s) ? `, ${accountLabel(s)} account` : '';
+  const shellCount = (s.shells || []).length;
   const reportingNote = s.status === 'running' && REPORTING_TEXT[s.reporting?.state] ? `, agent reporting: ${REPORTING_TEXT[s.reporting.state]}` : '';
-  node.setAttribute('aria-label', `${s.name}, ${s.provider.vendor}${accountName}${modelLabel}, ${statusText(s)}, ${s.agents.length} agents${reportingNote}`);
+  node.setAttribute('aria-label', `${s.name}, ${s.provider.vendor}${accountName}${modelLabel}, ${statusText(s)}, ${s.agents.length} agents${shellCount ? `, ${shellCount} shell command${shellCount === 1 ? '' : 's'} running` : ''}${reportingNote}`);
 }
 
 function renderSessions() {
@@ -2819,7 +2846,7 @@ function updatePanel() {
   const id = toolSessionId(s);
   $('panel-sub').textContent = [s.provider.tool, accountLabel(s), modelText(s), statusText(s), s.cwd, id && `session ${id}`].filter(Boolean).join(' · ');
   $('panel-sub').title = modelTitle(s);
-  renderAgents($('panel-agents'), s.agents);
+  renderAgents($('panel-agents'), s.agents, s.shells || []);
   const stop = $('panel-stop');
   stop.textContent = s.status === 'running' ? 'Stop' : 'Remove';
 }

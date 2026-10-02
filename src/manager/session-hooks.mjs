@@ -11,11 +11,14 @@ const PROBE_TIMEOUT_MS = 20000;
 const PROBE_RETRY_MS = 5 * 60 * 1000;
 
 const handler = (extra = {}) => ({ type: 'command', command: REPORT_COMMAND, ...extra });
-const groups = (events, extra) => Object.fromEntries(events.map((event) => [event, [{ hooks: [handler(extra?.[event])] }]]));
+const groups = (events, extra) => Object.fromEntries(events.map((event) => [event, [{ ...extra?.[event]?.group, hooks: [handler(extra?.[event]?.handler)] }]]));
 
-const CLAUDE_EVENTS = ['SessionStart', 'SubagentStart', 'SubagentStop', 'PostModelSwitch'];
-export const CODEX_EVENTS = ['SessionStart', 'UserPromptSubmit', 'SubagentStart', 'SubagentStop', 'PreToolUse'];
-const GROK_EVENTS = ['SessionStart', 'SubagentStart', 'SubagentStop', 'StopCancelled', 'SessionEnd'];
+const shellEvents = (events, matcher) => Object.fromEntries(events.map((event) => [event, { group: { matcher } }]));
+
+const CLAUDE_EVENTS = ['SessionStart', 'SubagentStart', 'SubagentStop', 'PostModelSwitch', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Stop'];
+export const CODEX_EVENTS = ['SessionStart', 'UserPromptSubmit', 'SubagentStart', 'SubagentStop', 'PreToolUse', 'PostToolUse'];
+const CODEX_MATCHERS = { PostToolUse: 'Bash' };
+const GROK_EVENTS = ['SessionStart', 'SubagentStart', 'SubagentStop', 'StopCancelled', 'SessionEnd', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Stop'];
 
 // Gemini's extension stays linked outside Agent Guild, where the launchers are not on PATH.
 export function geminiCommand(shimDir, platform = process.platform) {
@@ -31,15 +34,15 @@ export function bundleFiles(version, { shimDir = null, platform = process.platfo
   return {
     claude: {
       '.claude-plugin/plugin.json': json(manifest),
-      'hooks/hooks.json': json({ hooks: groups(CLAUDE_EVENTS) }),
+      'hooks/hooks.json': json({ hooks: groups(CLAUDE_EVENTS, shellEvents(['PreToolUse', 'PostToolUse', 'PostToolUseFailure'], 'Bash')) }),
     },
     gemini: {
       'gemini-extension.json': json(manifest),
       'hooks/hooks.json': json({
         hooks: {
           SessionStart: [gemini('session start')],
-          BeforeTool: [gemini('agent start', 'invoke_agent')],
-          AfterTool: [gemini('agent stop', 'invoke_agent')],
+          BeforeTool: [gemini('agent start', 'invoke_agent'), gemini('shell start', 'run_shell_command')],
+          AfterTool: [gemini('agent stop', 'invoke_agent'), gemini('shell stop', 'run_shell_command')],
           BeforeAgent: [gemini('turn start')],
           AfterAgent: [gemini('turn end')],
           BeforeModel: [gemini('model')],
@@ -48,7 +51,9 @@ export function bundleFiles(version, { shimDir = null, platform = process.platfo
     },
     grok: {
       '.grok-plugin/plugin.json': json(manifest),
-      'hooks/hooks.json': json({ hooks: groups(GROK_EVENTS, { SessionEnd: { timeout: 10 } }) }),
+      'hooks/hooks.json': json({
+        hooks: groups(GROK_EVENTS, { SessionEnd: { handler: { timeout: 10 } }, ...shellEvents(['PreToolUse', 'PostToolUse', 'PostToolUseFailure'], 'run_terminal_command') }),
+      }),
     },
   };
 }
@@ -72,8 +77,11 @@ export function writeBundles(dir, version, opts) {
 const tomlString = (value) => `'${value}'`;
 
 export function codexHookArgs() {
-  const value = `[{hooks=[{type=${tomlString('command')},command=${tomlString(REPORT_COMMAND)}}]}]`;
-  return CODEX_EVENTS.flatMap((event) => ['-c', `hooks.${event}=${value}`]);
+  const value = (event) => {
+    const matcher = CODEX_MATCHERS[event] ? `matcher=${tomlString(CODEX_MATCHERS[event])},` : '';
+    return `[{${matcher}hooks=[{type=${tomlString('command')},command=${tomlString(REPORT_COMMAND)}}]}]`;
+  };
+  return CODEX_EVENTS.flatMap((event) => ['-c', `hooks.${event}=${value(event)}`]);
 }
 
 export function codexTrustArgs(hooks) {

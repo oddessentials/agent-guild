@@ -28,12 +28,134 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 
 const SUBAGENT_TOOLS = new Set(['Task', 'Agent', 'invoke_agent']);
+const SHELL_TOOLS = new Set(['Bash', 'run_shell_command', 'run_terminal_command']);
 const TOOL_START_EVENTS = new Set(['PreToolUse', 'BeforeTool']);
 const TOOL_END_EVENTS = new Set(['PostToolUse', 'PostToolUseFailure', 'AfterTool']);
 const TURN_BOUNDARY_EVENTS = new Set(['BeforeAgent', 'AfterAgent', 'UserPromptSubmit', 'Stop']);
 const MAX_DETAIL = 200;
 
 const text = (...values) => values.find((v) => typeof v === 'string' && v.trim())?.trim() ?? null;
+
+export function commandHash(command) {
+  const normal = String(command).replace(/[\u0000-\u001f\u007f?\s]+/g, ' ').trim();
+  return crypto.createHash('sha256').update(normal).digest('hex').slice(0, 32);
+}
+
+// bash and zsh replace themselves with the last simple command of a -c script, leaving its words as the process's argv.
+export function execHash(command) {
+  const segments = [{ words: [], after: null, opaque: false }];
+  let word = null;
+  let quoted = false;
+  let target = false;
+  const push = () => {
+    if (word !== null && !target) segments.at(-1).words.push(word);
+    if (word !== null) target = false;
+    word = null;
+    quoted = false;
+  };
+  for (let i = 0; i < command.length;) {
+    const c = command[i];
+    if (c === "'") {
+      const end = command.indexOf("'", i + 1);
+      if (end === -1) return null;
+      word = (word ?? '') + command.slice(i + 1, end);
+      quoted = true;
+      i = end + 1;
+    } else if (c === '"') {
+      let part = '';
+      for (i++; i < command.length && command[i] !== '"'; i++) {
+        if ('$`'.includes(command[i])) return null;
+        if (command[i] === '\\' && command[i + 1] === '\n') {
+          i++;
+          continue;
+        }
+        if (command[i] === '\\' && '"\\'.includes(command[i + 1])) i++;
+        part += command[i];
+      }
+      if (i >= command.length) return null;
+      word = (word ?? '') + part;
+      quoted = true;
+      i++;
+    } else if (c === '\\') {
+      if (command[i + 1] !== '\n') {
+        word = (word ?? '') + (command[i + 1] ?? '');
+        quoted = true;
+      }
+      i += 2;
+    } else if (c === '#' && word === null) {
+      while (i < command.length && command[i] !== '\n') i++;
+    } else if ('<>'.includes(c) || (c === '&' && command[i + 1] === '>')) {
+      if (command.startsWith('<<', i)) return null;
+      if (word !== null && (quoted || !/^\d+$/.test(word))) push();
+      word = null;
+      quoted = false;
+      while ('<>&|'.includes(command[i])) i++;
+      target = true;
+    } else if (';&|\n'.includes(c)) {
+      push();
+      const op = command[i + 1] === c && c !== '\n' && c !== ';' ? c + c : c;
+      segments.at(-1).after = op;
+      segments.push({ words: [], after: null, opaque: false });
+      i += op.length;
+    } else if (/\s/.test(c)) {
+      push();
+      i++;
+    } else if ('$`(){}'.includes(c)) {
+      return null;
+    } else if ('*?[~'.includes(c)) {
+      segments.at(-1).opaque = true;
+      word = (word ?? '') + c;
+      i++;
+    } else {
+      word = (word ?? '') + c;
+      i++;
+    }
+  }
+  push();
+  const index = segments.findLastIndex((s) => s.words.length > 0);
+  if (index === -1 || segments[index].opaque || segments[index].after === '&' || segments[index].after === '|' || segments[index - 1]?.after === '|') return null;
+  const words = segments[index].words;
+  for (;;) {
+    while (words.length > 1 && /^[A-Za-z_]\w*=/.test(words[0])) words.shift();
+    if (words.length < 2 || !['exec', 'command', 'env'].includes(words[0]) || words[1].startsWith('-')) break;
+    words.shift();
+  }
+  if (['if', 'then', 'else', 'elif', 'fi', 'do', 'done', 'case', 'esac', 'while', 'until', 'for', 'select', '!', '{', '}', '[[', 'function', 'time', 'coproc'].includes(words[0])) return null;
+  return commandHash(words.join(' '));
+}
+
+function geminiBackgroundPid(response) {
+  const content = response?.llmContent;
+  const body = typeof content === 'string' ? content
+    : Array.isArray(content) ? content.map((part) => (typeof part === 'string' ? part : part?.text || '')).join('\n') : '';
+  const match = body.match(/Command is running in background\. PID: (\d+)/) || body.match(/moved to background \(PID: (\d+)\)/);
+  return match ? Number(match[1]) : null;
+}
+
+function shellReport(event, input, subagentId) {
+  const toolInput = input.tool_input || input.toolInput || {};
+  const id = text(input.tool_use_id, input.toolUseId);
+  const ref = id ? { key: id.slice(0, 128) } : { bucket: crypto.createHash('sha256').update(JSON.stringify(toolInput)).digest('hex').slice(0, 32) };
+  const command = typeof toolInput.command === 'string' ? toolInput.command : null;
+  if (TOOL_START_EVENTS.has(event)) {
+    const report = { shell: 'start', ...ref };
+    if (subagentId) report.agentId = `hook-${subagentId}`;
+    if (text(input.turn_id)) report.track = true;
+    if (command) {
+      report.match = commandHash(command);
+      const exec = execHash(command);
+      if (exec && exec !== report.match) report.exec = exec;
+    }
+    return report;
+  }
+  if (event === 'PostToolUse' || event === 'AfterTool') {
+    const response = input.tool_response ?? input.toolResponse;
+    if (response && typeof response === 'object' && text(response.backgroundTaskId)) return { shell: 'background', ...ref };
+    const pid = geminiBackgroundPid(response);
+    if (pid) return { shell: 'background', ...ref, pid };
+  }
+  return { shell: 'end', ...ref };
+}
 
 /** "subagent_start", "subagentStart" and "SubagentStart" all become "SubagentStart". */
 function eventName(input) {
@@ -83,7 +205,9 @@ export function hookToReports(input) {
   }
 
   const toolName = text(input.tool_name, input.toolName);
-  if ((TOOL_START_EVENTS.has(event) || TOOL_END_EVENTS.has(event)) && SUBAGENT_TOOLS.has(toolName)) {
+  const toolEvent = TOOL_START_EVENTS.has(event) || TOOL_END_EVENTS.has(event);
+  if (toolEvent && SHELL_TOOLS.has(toolName)) reports.push(shellReport(event, input, subagentId));
+  if (toolEvent && SUBAGENT_TOOLS.has(toolName)) {
     const toolInput = input.tool_input || input.toolInput || {};
     if (toolInput.run_in_background !== true) {
       // tool_use_id links the start and end events; fall back to hashing the
@@ -122,7 +246,7 @@ export function hookToReports(input) {
   // working then has been orphaned.
   if (!insideSubagent && TURN_BOUNDARY_EVENTS.has(event)) reports.push({ finishForeground: true });
 
-  const model = insideSubagent ? null : event === 'PostModelSwitch'
+  const model = insideSubagent || toolEvent ? null : event === 'PostModelSwitch'
     ? text(input.to_model)
     : text(input.model, input.modelId, input.llm_request?.model);
   if (model) reports.push({ model });

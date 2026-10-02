@@ -16,7 +16,17 @@
 //   prompt                 a user prompt (Codex runs its SessionStart hooks here)
 //   subagent <id> <type>   a sub-agent starts; Gemini: an invoke_agent call starts
 //   subagent-done <id> <type>
-//   tool <agent-id> <tool>  a sub-agent calls a tool
+//   shell <id> <ms> [fg|bg|exec] [command...]
+//                          runs a shell command for <ms> as the tool would: its hooks, and a
+//                          process whose command line has the tool's own form (Claude Code's
+//                          eval script, Codex CLI's sandbox wrapper and -lc). Claude Code and
+//                          Gemini CLI return a bg command's call at once; Codex CLI never
+//                          reports the end of one that outlives its 1 s yield; exec runs the
+//                          command itself with bash -lc, which replaces itself with it
+//   shell-denied <id> [command...]
+//                          a start event with no process and no end event
+//   tool <agent-id> <tool>  a sub-agent calls a tool that is not a shell
+//   turn-end               the main thread's turn ends
 //   exit
 
 import { spawn } from 'node:child_process';
@@ -193,8 +203,61 @@ function runTool() {
   };
   if (tool !== 'codex') sessionStart();
 
+  const shellSleep = 'setTimeout(() => {}, Number(process.env.FAKE_SHELL_MS))';
+  const quote = (text) => `'${text.replace(/'/g, `'"'"'`)}'`;
+  const shellArgv = (command) => {
+    if (tool === 'claude') return ['--', '/bin/bash', '-c', `source /tmp/snapshot.sh && eval ${quote(command)} < /dev/null && pwd -P >| /tmp/cwd`];
+    if (tool === 'codex') return ['--', 'codex-linux-sandbox', '--sandbox-policy-cwd', process.cwd(), '--', '/bin/zsh', '-lc', command];
+    return ['--', 'bash', '-c', command];
+  };
+  const toolName = { claude: 'Bash', codex: 'Bash', gemini: 'run_shell_command', grok: 'run_terminal_command' }[tool];
+  const shellEvent = (start, id, input, response) => {
+    if (tool === 'gemini') return [start ? 'BeforeTool' : 'AfterTool', { tool_name: toolName, tool_input: input, ...(response ? { tool_response: response } : {}) }, toolName];
+    if (tool === 'grok') return [start ? 'PreToolUse' : 'PostToolUse', { hookEventName: start ? 'pre_tool_use' : 'post_tool_use', toolName, toolUseId: id, toolInput: input, ...(response ? { toolResult: response } : {}) }, toolName];
+    return [start ? 'PreToolUse' : 'PostToolUse', { tool_name: toolName, tool_use_id: id, tool_input: input, ...(tool === 'codex' ? { turn_id: 'turn-1' } : {}), ...(response ? { tool_response: response } : {}) }, toolName];
+  };
+  const runShell = async (id, ms, mode, command) => {
+    const background = mode === 'bg';
+    const input = tool === 'gemini' ? { command, description: 'test', is_background: background }
+      : { command, ...(background && tool === 'claude' ? { run_in_background: true } : {}) };
+    const [startEvent, startPayload, matcher] = shellEvent(true, id, input);
+    await runHooks(hooks, startEvent, startPayload, matcher);
+    const child = mode === 'exec'
+      ? spawn('bash', ['-lc', command], { stdio: 'ignore' })
+      : spawn(process.execPath, ['-e', shellSleep, ...shellArgv(command)], { env: { ...process.env, FAKE_SHELL_MS: String(ms) }, stdio: 'ignore', windowsHide: true });
+    out(`SHELL-STARTED ${id} ${child.pid}`);
+    const end = (response) => {
+      const [event, payload] = shellEvent(false, id, input, response);
+      return runHooks(hooks, event, payload, matcher);
+    };
+    child.on('exit', async () => {
+      out(`SHELL-EXITED ${id}`);
+      if (background && (tool === 'claude' || tool === 'gemini')) return;
+      if (tool === 'codex' && ms > 1000) return;
+      await end(tool === 'gemini' ? { llmContent: 'Output: (empty)' } : { stdout: '' });
+      out(`SHELL-DONE ${id}`);
+    });
+    if (background && tool === 'claude') await end({ stdout: '', backgroundTaskId: `bg-${id}` });
+    if (background && tool === 'gemini') await end({ llmContent: `Command is running in background. PID: ${child.pid}. Initial output:\n(empty)` });
+  };
+
   const handle = async (line) => {
-    const [cmd, id, type] = line.trim().split(/\s+/);
+    const [cmd, id, type, ...rest] = line.trim().split(/\s+/);
+    if (cmd === 'shell') {
+      const [mode = 'fg', ...words] = rest;
+      return runShell(id, Number(type), mode, words.length ? words.join(' ') : `sleep-for ${id}`);
+    }
+    if (cmd === 'shell-denied') {
+      const [event, payload, matcher] = shellEvent(true, id, { command: [type, ...rest].join(' ') || `denied ${id}` });
+      await runHooks(hooks, event, payload, matcher);
+      out(`SHELL-DENIED ${id}`);
+      return;
+    }
+    if (cmd === 'turn-end') {
+      await runHooks(hooks, { claude: 'Stop', codex: 'UserPromptSubmit', gemini: 'AfterAgent', grok: 'Stop' }[tool], { stop_hook_active: false, prompt: 'next' });
+      out('TURN-ENDED');
+      return;
+    }
     if (cmd === 'prompt') {
       await sessionStart();
       await runHooks(hooks, tool === 'gemini' ? 'BeforeAgent' : 'UserPromptSubmit', { prompt: 'hi' });

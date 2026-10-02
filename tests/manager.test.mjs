@@ -10,6 +10,7 @@ import WebSocket from 'ws';
 import { execFile } from 'node:child_process';
 import crypto from 'node:crypto';
 import { startFakeGitHub } from './fixtures/fake-github.mjs';
+import { snapshotProcesses } from '../src/manager/process-tree.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-test-'));
@@ -191,8 +192,9 @@ let base;
 let token;
 
 before(async () => {
+  if (win) await snapshotProcesses('win32');
   ctx = await startManager({
-    version: '1.0.0', packageFile, sessionDefaults: { doneAgentLingerMs: 200, activityIdleMs: 200, killGraceMs: 500, reportingTimeoutMs: 1500 },
+    version: '1.0.0', packageFile, sessionDefaults: { doneAgentLingerMs: 200, activityIdleMs: 200, killGraceMs: 500, reportingTimeoutMs: 1500, shellFollowDelayMs: 1500 },
     github: { apiUrl: fakeGitHub.url, webUrl: fakeGitHub.url, clientId: 'test-client' },
   });
   probesAtStart = new Set(ctx.manager.sessionHooks.probes.keys());
@@ -931,7 +933,7 @@ test('a Default Claude Code session reports sub-agents through a plugin loaded f
   assert.equal(tool.session.reporting.state, 'pending');
   await waitFor(reportingIs(tool.session.id, 'active'), { label: 'the session start hook', timeout: 15000 });
   await followSubagent(tool, 'claude-1', 'Explore');
-  assert.match(stripAnsi(tool.client.output), /FAKE-CLAUDE READY hooks=5/, 'the plugin hooks load beside the user\'s own');
+  assert.match(stripAnsi(tool.client.output), /FAKE-CLAUDE READY hooks=9/, 'the plugin hooks load beside the user\'s own');
   assert.match(fs.readFileSync(userHookLog, 'utf8'), /claude-user/, 'the user\'s own hook still runs');
   await tool.client.close();
   await call('DELETE', `/sessions/${tool.session.id}`);
@@ -948,7 +950,7 @@ test('a Default Codex CLI session reports sub-agents through trusted hooks passe
   await followSubagent(tool, 'codex-1', 'explorer');
   const output = stripAnsi(tool.client.output);
   assert.ok(!output.includes('CODEX-UNTRUSTED'), 'every Agent Guild hook is trusted for the session');
-  assert.match(output, /FAKE-CODEX READY hooks=6/);
+  assert.match(output, /FAKE-CODEX READY hooks=7/);
   assert.match(fs.readFileSync(userHookLog, 'utf8'), /codex-user/, 'the user\'s own hooks still run');
   await tool.client.close();
   await call('DELETE', `/sessions/${tool.session.id}`);
@@ -974,7 +976,7 @@ test('a Codex CLI that refuses the hook overrides still starts, and says it is n
   await call('DELETE', `/sessions/${tool.session.id}`);
 });
 
-test('Gemini CLI reports invoke_agent helpers once its extension is turned on, through a redacted environment', async () => {
+test('Gemini CLI reports invoke_agent helpers once its extension is turned on, through a redacted environment', async (t) => {
   const google = async () => (await call('GET', '/providers')).body.providers.find((p) => p.id === 'google');
   assert.equal((await google()).accounts[0].reportingEnabled, false);
   const before = await startTool('google');
@@ -983,6 +985,7 @@ test('Gemini CLI reports invoke_agent helpers once its extension is turned on, t
   await before.client.close();
   await call('DELETE', `/sessions/${before.session.id}`);
 
+  t.after(() => call('POST', '/providers/google/reporting', { enabled: false }));
   const on = await call('POST', '/providers/google/reporting', { enabled: true });
   assert.equal(on.status, 200, JSON.stringify(on.body));
   assert.equal(on.body.provider.accounts[0].reportingEnabled, true);
@@ -1112,6 +1115,193 @@ test('turning Gemini reporting on replaces a link left by an earlier data folder
   assert.equal(res.body.error.code, 'extension_conflict');
   assert.equal((await call('POST', '/providers/google/reporting', { enabled: false })).status, 200);
   assert.equal(JSON.parse(fs.readFileSync(record, 'utf8')).source, foreign, 'someone else\'s extension is never removed');
+});
+
+function watchShells(id) {
+  const seen = [];
+  let leaked = false;
+  const onEvent = (event) => {
+    const text = JSON.stringify(event);
+    if (text.includes('SECRET-MARKER')) leaked = true;
+    if (event.session?.id === id) seen.push(event.session.shells.map((sh) => sh.id));
+  };
+  ctx.manager.on('event', onEvent);
+  return { seen, leaked: () => leaked, stop: () => ctx.manager.off('event', onEvent) };
+}
+const shellsNow = async (id) => (await sessionNow(id)).shells;
+const bindTimeout = 15000;
+const boundShells = (id, n) => () => {
+  const bound = [...ctx.manager.get(id).shells.values()].filter((sh) => sh.start !== null);
+  return bound.length === n && new Set(bound.map((sh) => sh.pid)).size === n;
+};
+const shellCountIs = (id, n) => async () => (await shellsNow(id)).length === n;
+
+async function runShells(tool, lines, label) {
+  for (const line of lines) tool.client.input(line);
+  await waitFor(() => stripAnsi(tool.client.output).includes(label), { label, timeout: 15000 })
+    .catch((err) => { err.message += `\n${stripAnsi(tool.client.output).slice(-1500)}`; throw err; });
+}
+
+test('Claude Code shell commands show while they run: not the brief ones, and not after they end', async (t) => {
+  const tool = await startTool('anthropic');
+  await waitFor(reportingIs(tool.session.id, 'active'), { label: 'hooks', timeout: 15000 });
+  const watch = watchShells(tool.session.id);
+  await runShells(tool, ['shell quick 150 fg echo SECRET-MARKER quick'], 'SHELL-DONE quick');
+  await new Promise((r) => setTimeout(r, 800));
+  assert.ok(watch.seen.every((ids) => ids.length === 0), 'a 150 ms command is never drawn');
+  tool.client.input('shell long 2500 fg sleep 2.5 SECRET-MARKER');
+  await waitFor(shellCountIs(tool.session.id, 1), { label: 'the running command' });
+  await waitForText(tool.client, tool.session.id, 'SHELL-DONE long', 'long command end');
+  await waitFor(shellCountIs(tool.session.id, 0), { label: 'prompt removal', timeout: 1000 });
+  tool.client.input('shell bg1 8000 bg npm run dev SECRET-MARKER');
+  tool.client.input('shell bg2 12000 bg npm run dev SECRET-MARKER');
+  await waitFor(shellCountIs(tool.session.id, 2), { label: 'two background commands', timeout: 15000 });
+  await waitFor(boundShells(tool.session.id, 2), { label: 'each bound to its own process', timeout: bindTimeout });
+  const managed = ctx.manager.get(tool.session.id);
+  assert.equal(managed.shellSampleDelayMs, 1000, 'just bound: checked often');
+  for (const sh of managed.shells.values()) sh.boundAt -= 11000;
+  assert.equal(managed.shellSampleDelayMs, 5000, 'bound a while: checked every 5 s');
+  for (const sh of managed.shells.values()) sh.boundAt += 11000;
+  await waitFor(() => stripAnsi(tool.client.output).includes('SHELL-EXITED bg1'), { label: 'first exit', timeout: 20000 });
+  await waitFor(shellCountIs(tool.session.id, 1), { label: 'the first ends with its process', timeout: 10000 });
+  assert.ok(!stripAnsi(tool.client.output).includes('SHELL-EXITED bg2'), 'the one left is the command still running');
+  await waitFor(() => stripAnsi(tool.client.output).includes('SHELL-EXITED bg2'), { label: 'second exit', timeout: 20000 });
+  await waitFor(shellCountIs(tool.session.id, 0), { label: 'the second ends with its process', timeout: 10000 });
+  t.diagnostic(`one process list took ${ctx.manager.shellSampling.lastMs} ms on ${process.platform}`);
+  assert.deepEqual((await sessionNow(tool.session.id)).agents, []);
+  watch.stop();
+  assert.ok(!watch.leaked(), 'no command text in any event');
+  assert.ok(!JSON.stringify(await call('GET', '/sessions')).includes('SECRET-MARKER'));
+  await tool.client.close();
+  await call('DELETE', `/sessions/${tool.session.id}`);
+});
+
+test('a shell command whose end event never comes ends with the turn that ran it', async () => {
+  const tool = await startTool('anthropic');
+  await waitFor(reportingIs(tool.session.id, 'active'), { label: 'hooks', timeout: 15000 });
+  await runShells(tool, ['shell-denied refused rm -rf /'], 'SHELL-DENIED refused');
+  await waitFor(shellCountIs(tool.session.id, 1), { label: 'the announced command' });
+  await runShells(tool, ['turn-end'], 'TURN-ENDED');
+  await waitFor(shellCountIs(tool.session.id, 0), { label: 'end of turn', timeout: 2000 });
+  await tool.client.close();
+  await call('DELETE', `/sessions/${tool.session.id}`);
+});
+
+test('more shell commands than the card draws are still all counted', async () => {
+  const tool = await startTool('anthropic');
+  await waitFor(reportingIs(tool.session.id, 'active'), { label: 'hooks', timeout: 15000 });
+  for (let i = 0; i < 20; i++) tool.client.input(`shell many${i} 4000 fg build part ${i}`);
+  await waitFor(shellCountIs(tool.session.id, 20), { label: 'twenty commands', timeout: 15000 });
+  await waitFor(shellCountIs(tool.session.id, 0), { label: 'all ended', timeout: 15000 });
+  await tool.client.close();
+  await call('DELETE', `/sessions/${tool.session.id}`);
+});
+
+test('Codex CLI commands are followed through their process when Codex never reports the end', async () => {
+  const tool = await startTool('openai');
+  tool.client.input('prompt');
+  await waitFor(reportingIs(tool.session.id, 'active'), { label: 'hooks', timeout: 15000 });
+  const watch = watchShells(tool.session.id);
+  await runShells(tool, ['shell quick 200 fg ls SECRET-MARKER'], 'SHELL-DONE quick');
+  const session = ctx.manager.get(tool.session.id);
+  let followed = false;
+  const poll = setInterval(() => { followed ||= session.followsShells; }, 20);
+  await runShells(tool, ['shell mid 900 fg npm test'], 'SHELL-DONE mid');
+  await new Promise((r) => setTimeout(r, 1200));
+  clearInterval(poll);
+  assert.ok(!followed, 'a command Codex ends itself is not followed through the process list');
+  tool.client.input('shell long 8000 fg cargo build SECRET-MARKER');
+  await waitFor(shellCountIs(tool.session.id, 1), { label: 'the long command', timeout: 15000 });
+  await waitFor(boundShells(tool.session.id, 1), { label: 'bound through the sandbox wrapper', timeout: bindTimeout });
+  await waitFor(() => stripAnsi(tool.client.output).includes('SHELL-EXITED long'), { label: 'long exit', timeout: 20000 });
+  await waitFor(shellCountIs(tool.session.id, 0), { label: 'ended with its process', timeout: 10000 });
+  assert.ok(!stripAnsi(tool.client.output).includes('SHELL-DONE long'), 'Codex reported no end');
+  assert.ok(watch.seen.every((ids) => ids.length <= 1), 'the brief command never showed');
+  await runShells(tool, ['shell-denied gone true'], 'SHELL-DENIED gone');
+  await waitFor(shellCountIs(tool.session.id, 1), { label: 'announced' });
+  await waitFor(shellCountIs(tool.session.id, 0), { label: 'no process found', timeout: 20000 });
+  watch.stop();
+  assert.ok(!watch.leaked());
+  await tool.client.close();
+  await call('DELETE', `/sessions/${tool.session.id}`);
+});
+
+test('a Codex CLI command still running when its turn ends is followed, not dropped', async () => {
+  const tool = await startTool('openai');
+  tool.client.input('prompt');
+  await waitFor(reportingIs(tool.session.id, 'active'), { label: 'hooks', timeout: 15000 });
+  tool.client.input('shell held 4000 fg cargo build');
+  await waitFor(shellCountIs(tool.session.id, 1), { label: 'shown', timeout: 15000 });
+  await runShells(tool, ['turn-end'], 'TURN-ENDED');
+  assert.equal((await sessionNow(tool.session.id)).shells.length, 1, 'the command still runs');
+  await waitFor(boundShells(tool.session.id, 1), { label: 'bound to its process', timeout: bindTimeout });
+  await waitFor(() => stripAnsi(tool.client.output).includes('SHELL-EXITED held'), { label: 'exit', timeout: 20000 });
+  await waitFor(shellCountIs(tool.session.id, 0), { label: 'ended with its process', timeout: 10000 });
+  await tool.client.close();
+  await call('DELETE', `/sessions/${tool.session.id}`);
+});
+
+test('a Codex CLI command is found after its shell replaces itself with it', { skip: win && 'bash -lc is the POSIX form' }, async () => {
+  const tool = await startTool('openai');
+  tool.client.input('prompt');
+  await waitFor(reportingIs(tool.session.id, 'active'), { label: 'hooks', timeout: 15000 });
+  tool.client.input('shell replaced 4000 exec cd . && sleep 4');
+  await waitFor(shellCountIs(tool.session.id, 1), { label: 'shown', timeout: 15000 });
+  await waitFor(boundShells(tool.session.id, 1), { label: 'bound to sleep 4 itself', timeout: bindTimeout });
+  await waitFor(() => stripAnsi(tool.client.output).includes('SHELL-EXITED replaced'), { label: 'exit', timeout: 20000 });
+  await waitFor(shellCountIs(tool.session.id, 0), { label: 'ended with its process', timeout: 10000 });
+  await tool.client.close();
+  await call('DELETE', `/sessions/${tool.session.id}`);
+});
+
+test('a followed command ends when the process list cannot be read, instead of staying on the card', async () => {
+  const tool = await startTool('openai');
+  tool.client.input('prompt');
+  await waitFor(reportingIs(tool.session.id, 'active'), { label: 'hooks', timeout: 15000 });
+  tool.client.input('shell blind 30000 fg cargo build');
+  await waitFor(shellCountIs(tool.session.id, 1), { label: 'announced' });
+  const session = ctx.manager.get(tool.session.id);
+  await waitFor(() => session.followsShells, { label: 'followed', timeout: 15000 });
+  session.shellProcessesUnknown();
+  session.shellProcessesUnknown();
+  assert.equal((await sessionNow(tool.session.id)).shells.length, 1, 'two failed lists are not enough');
+  session.shellProcessesUnknown();
+  assert.equal((await sessionNow(tool.session.id)).shells.length, 0, 'ended after three failed lists');
+  assert.ok(!stripAnsi(tool.client.output).includes('SHELL-EXITED blind'), 'the process itself still runs');
+  await tool.client.close();
+  await call('DELETE', `/sessions/${tool.session.id}`);
+});
+
+test('identical Gemini CLI commands each get their own familiar, and a background one ends with its pid', async (t) => {
+  assert.equal((await call('POST', '/providers/google/reporting', { enabled: true })).status, 200);
+  t.after(() => call('POST', '/providers/google/reporting', { enabled: false }));
+  const tool = await startTool('google');
+  await waitFor(reportingIs(tool.session.id, 'active'), { label: 'hooks', timeout: 15000 });
+  tool.client.input('shell a 2500 fg npm test');
+  tool.client.input('shell b 4000 fg npm test');
+  await waitFor(shellCountIs(tool.session.id, 2), { label: 'two identical commands' });
+  await waitForText(tool.client, tool.session.id, 'SHELL-DONE a', 'first end');
+  await waitFor(shellCountIs(tool.session.id, 1), { label: 'one left', timeout: 1000 });
+  await waitForText(tool.client, tool.session.id, 'SHELL-DONE b', 'second end');
+  await waitFor(shellCountIs(tool.session.id, 0), { label: 'none left', timeout: 1000 });
+  tool.client.input('shell server 8000 bg python -m http.server');
+  await waitFor(shellCountIs(tool.session.id, 1), { label: 'background command', timeout: 15000 });
+  await waitFor(boundShells(tool.session.id, 1), { label: 'bound to the pid Gemini named', timeout: bindTimeout });
+  await waitFor(() => stripAnsi(tool.client.output).includes('SHELL-EXITED server'), { label: 'server exit', timeout: 20000 });
+  await waitFor(shellCountIs(tool.session.id, 0), { label: 'ended with its pid', timeout: 10000 });
+  await tool.client.close();
+  await call('DELETE', `/sessions/${tool.session.id}`);
+});
+
+test('Grok Build shell commands show from its hooks where it takes them', async () => {
+  const tool = await startTool('grokplugins');
+  await waitFor(reportingIs(tool.session.id, 'active'), { label: 'hooks', timeout: 15000 });
+  tool.client.input('shell build 2500 fg make');
+  await waitFor(shellCountIs(tool.session.id, 1), { label: 'running command' });
+  await waitForText(tool.client, tool.session.id, 'SHELL-DONE build', 'end');
+  await waitFor(shellCountIs(tool.session.id, 0), { label: 'removed', timeout: 1000 });
+  await tool.client.close();
+  await call('DELETE', `/sessions/${tool.session.id}`);
 });
 
 test('no session changed a tool\'s own home folder', () => {

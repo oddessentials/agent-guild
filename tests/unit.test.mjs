@@ -10,7 +10,7 @@ import { mergeEnv, cleanResumeId, modelFromArgs, SessionManager } from '../src/m
 import { loadProviders, defaultShell, ProviderRegistry } from '../src/manager/providers.mjs';
 import { paths } from '../src/manager/config.mjs';
 import { classifyInstall, expandHome, helpDescribes, platformDependency, listInstallations, knownLaunchers, shellCommand } from '../src/manager/install-channels.mjs';
-import { hookToReports, claudeStatuslineToReport, formatStatusLine } from '../src/report/hooks.mjs';
+import { hookToReports, claudeStatuslineToReport, formatStatusLine, commandHash, execHash } from '../src/report/hooks.mjs';
 import { shimContents, writeReportShims, prependPath, fileUrl, SHIM_NAME, LOADER_NAME } from '../src/manager/report-shims.mjs';
 import { bundleFiles, codexHookArgs, codexTrustArgs, codexHooksFrom, geminiCommand, geminiLinked, helpLists, REPORT_COMMAND } from '../src/manager/session-hooks.mjs';
 import { execFileSync } from 'node:child_process';
@@ -1833,7 +1833,7 @@ test('hook events map to agent reports for every tool\'s spelling', () => {
   // With multi_agent_v2, a follow-up turn fires no prompt event; its tool calls carry the agent and Codex's turn_id.
   assert.deepEqual(hookToReports({ hook_event_name: 'PreToolUse', turn_id: 't4', agent_id: 'c1', agent_type: 'explorer', model: 'gpt-5-codex', tool_name: 'shell', tool_input: { command: ['ls'] } }),
     [{ agentId: 'hook-c1', name: 'explorer', kind: 'subagent', status: 'working' }]);
-  assert.deepEqual(hookToReports({ hook_event_name: 'PreToolUse', agent_id: 'internal-1', tool_name: 'Bash', tool_input: {} }), [], 'a Claude Code helper\'s tool call has no turn_id and is not an agent');
+  assert.deepEqual(hookToReports({ hook_event_name: 'PreToolUse', agent_id: 'internal-1', tool_name: 'Read', tool_input: {} }), [], 'a Claude Code helper\'s tool call has no turn_id and is not an agent');
   assert.deepEqual(hookToReports({ hook_event_name: 'UserPromptSubmit', model: 'gpt-5-codex', prompt: 'main' }), [{ finishForeground: true }, { model: 'gpt-5-codex' }], 'a main-thread prompt is not an agent');
   // Grok Build: camelCase fields and a snake_case event name beside the PascalCase one
   assert.deepEqual(hookToReports({ hookEventName: 'subagent_stop', hook_event_name: 'SubagentStop', subagentId: 'g1', subagentType: 'reviewer', modelId: 'grok-build' }),
@@ -1867,7 +1867,7 @@ test('hook events map to agent reports for every tool\'s spelling', () => {
   assert.deepEqual(hookToReports({ hook_event_name: 'BeforeAgent', session_id: 'g', prompt: 'next' }), [{ finishForeground: true }, { toolSessionId: 'g' }]);
   assert.deepEqual(hookToReports({ hook_event_name: 'AfterAgent', session_id: 'g', prompt: 'p', prompt_response: 'r', stop_hook_active: false }), [{ finishForeground: true }]);
   assert.deepEqual(hookToReports({ hook_event_name: 'Stop', session_id: 'c', stop_hook_active: false }), [{ finishForeground: true }], 'a main-thread Stop is a turn boundary too');
-  assert.deepEqual(hookToReports({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: {} }), []);
+  assert.deepEqual(hookToReports({ hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: {} }), []);
   assert.deepEqual(hookToReports({ hook_event_name: 'SubagentStop' }), []);
   assert.deepEqual(hookToReports(null), []);
   // Background launches return at once, so the tool-call style cannot tell when they end.
@@ -1920,7 +1920,8 @@ test('the agent-guild-report launchers run the reporter from any hook shell', ()
     // The manager's Node.js is gone: `node` on the (real) PATH takes over.
     assert.match(run(cmd, ['/d', '/s', '/c', `${SHIM_NAME} --help`], { ...withNode, AGENT_GUILD_NODE: gone }), /^Usage: agent-guild-report/, 'falls back to node on PATH');
     const outside = { SystemRoot: process.env.SystemRoot, ComSpec: cmd, PATH: system32, AGENT_GUILD_NODE: gone };
-    assert.equal(run(cmd, ['/d', '/s', '/c', `"${path.join(dir, `${SHIM_NAME}.cmd`)}" --hook`], outside), '');
+    const hook = execFileSync(cmd, [`/d /s /c ""${path.join(dir, `${SHIM_NAME}.cmd`)}" --hook"`], { env: outside, encoding: 'utf8', timeout: 20000, windowsHide: true, windowsVerbatimArguments: true });
+    assert.equal(hook, '');
   } else {
     assert.ok((fs.statSync(path.join(dir, SHIM_NAME)).mode & 0o111) !== 0, 'the sh launcher is executable');
     assert.match(run('/bin/sh', ['-c', `${SHIM_NAME} --help`], withNode), /^Usage: agent-guild-report/, 'sh (Claude Code, Grok Build) runs the launcher');
@@ -2014,6 +2015,22 @@ test('shutdown reports the processes that did not confirm exiting in time', asyn
   stuck.sessions.set('a', fakeSession(Promise.resolve()));
   stuck.sessions.set('b', fakeSession(new Promise(() => {}))); // never exits
   assert.deepEqual(await stuck.shutdown({ timeoutMs: 50 }), { remaining: 1 });
+});
+
+test('a shell command that needs following soon is not held back by a settled one', async () => {
+  const manager = new SessionManager({ registry: null, baseEnv: {}, getApiUrl: () => '' });
+  const started = Date.now();
+  const sampled = new Promise((resolve) => { manager._sampleShells = () => resolve(Date.now() - started); });
+  manager.sessions.set('settled', { shellSampleDelayMs: 5000 });
+  manager._sampleShellsSoon();
+  manager.sessions.set('new', { shellSampleDelayMs: 50 });
+  manager._sampleShellsSoon();
+  manager.sessions.set('another settled', { shellSampleDelayMs: 5000 });
+  manager._sampleShellsSoon();
+  const alive = setTimeout(() => {}, 6000);
+  assert.ok(await sampled < 1000);
+  clearTimeout(alive);
+  clearTimeout(manager.shellSampling.timer);
 });
 
 test('the npm registry lookup waits for PATH discovery in flight', async () => {
@@ -2909,14 +2926,19 @@ test('the launcher path names the double-click file for the platform only when t
 test('every reporting bundle runs the reporter, Gemini\'s by full path in the shell it uses', () => {
   const unix = bundleFiles('1.2.3', { shimDir: '/data/agent guild/bin', platform: 'linux' });
   const commands = (files) => [...JSON.stringify(JSON.parse(files['hooks/hooks.json'])).matchAll(/"command":"((?:[^"\\]|\\.)*)"/g)].map((m) => JSON.parse(`"${m[1]}"`));
-  assert.deepEqual(Object.keys(JSON.parse(unix.claude['hooks/hooks.json']).hooks), ['SessionStart', 'SubagentStart', 'SubagentStop', 'PostModelSwitch']);
+  const claude = JSON.parse(unix.claude['hooks/hooks.json']).hooks;
+  assert.deepEqual(Object.keys(claude), ['SessionStart', 'SubagentStart', 'SubagentStop', 'PostModelSwitch', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Stop']);
+  assert.equal(claude.PreToolUse[0].matcher, 'Bash', 'only shell commands pay for the tool hooks');
+  assert.equal(claude.SessionStart[0].matcher, undefined);
+  assert.equal(JSON.parse(unix.grok['hooks/hooks.json']).hooks.PreToolUse[0].matcher, 'run_terminal_command');
   assert.ok(commands(unix.claude).every((c) => c === REPORT_COMMAND));
   assert.ok(commands(unix.grok).every((c) => c === REPORT_COMMAND));
   assert.equal(JSON.parse(unix.claude['.claude-plugin/plugin.json']).name, 'agent-guild');
   assert.equal(JSON.parse(unix.grok['.grok-plugin/plugin.json']).name, 'agent-guild');
   assert.equal(JSON.parse(unix.gemini['gemini-extension.json']).version, '1.2.3');
   const gemini = JSON.parse(unix.gemini['hooks/hooks.json']).hooks;
-  assert.equal(gemini.BeforeTool[0].matcher, 'invoke_agent');
+  assert.deepEqual(gemini.BeforeTool.map((g) => g.matcher), ['invoke_agent', 'run_shell_command']);
+  assert.deepEqual(gemini.AfterTool.map((g) => g.matcher), ['invoke_agent', 'run_shell_command']);
   assert.ok(gemini.SessionStart, 'the session start announces the hooks');
   assert.ok(commands(unix.gemini).every((c) => c === "'/data/agent guild/bin/agent-guild-report' --hook"));
   assert.equal(geminiCommand("/o'neil/bin", 'linux'), `'/o'\\''neil/bin/agent-guild-report' --hook`);
@@ -2926,8 +2948,10 @@ test('every reporting bundle runs the reporter, Gemini\'s by full path in the sh
 
 test('Codex hook overrides avoid double quotes, and trust only the handlers Codex lists as ours', () => {
   const args = codexHookArgs();
-  assert.deepEqual(args.filter((a, i) => i % 2 === 0), ['-c', '-c', '-c', '-c', '-c']);
-  assert.deepEqual(args.filter((a, i) => i % 2 === 1).map((a) => a.split('=')[0]), ['hooks.SessionStart', 'hooks.UserPromptSubmit', 'hooks.SubagentStart', 'hooks.SubagentStop', 'hooks.PreToolUse']);
+  assert.deepEqual(args.filter((a, i) => i % 2 === 0), ['-c', '-c', '-c', '-c', '-c', '-c']);
+  assert.deepEqual(args.filter((a, i) => i % 2 === 1).map((a) => a.split('=')[0]), ['hooks.SessionStart', 'hooks.UserPromptSubmit', 'hooks.SubagentStart', 'hooks.SubagentStop', 'hooks.PreToolUse', 'hooks.PostToolUse']);
+  assert.match(args[9], /^hooks\.PreToolUse=\[\{hooks=/, 'every tool call: a multi_agent_v2 follow-up starts with any tool');
+  assert.match(args[11], /^hooks\.PostToolUse=\[\{matcher='Bash',/);
   assert.ok(args.every((a) => !a.includes('"')), 'nothing for cmd.exe or argv parsing to escape');
   for (const a of args.filter((x, i) => i % 2 === 1)) assert.equal(buildSpawnSpec('C:\\npm\\codex.cmd', [a], {}, 'win32').args.includes(`"${a}"`), true);
 
@@ -2935,13 +2959,13 @@ test('Codex hook overrides avoid double quotes, and trust only the handlers Code
     key: `/<session-flags>/config.toml:${eventName}:0:0`, eventName, command: REPORT_COMMAND, source: 'sessionFlags', enabled: true,
     currentHash: `sha256:${eventName}`, trustStatus: 'untrusted', ...extra,
   });
-  const all = [hook('sessionStart'), hook('userPromptSubmit'), hook('subagentStart'), hook('subagentStop'), hook('preToolUse')];
+  const all = [hook('sessionStart'), hook('userPromptSubmit'), hook('subagentStart'), hook('subagentStop'), hook('preToolUse'), hook('postToolUse')];
   const listed = codexHooksFrom({ data: [{ hooks: [...all, hook('subagentStart', { source: 'user', key: 'user-key', command: 'mine' })] }] });
   assert.deepEqual(listed.map((h) => h.key), all.map((h) => h.key), 'the user\'s own hooks are never trusted by us');
   assert.equal(codexHooksFrom({ data: [{ hooks: all.slice(1) }] }), null, 'a missing handler means Codex did not load ours');
   assert.equal(codexHooksFrom({ data: [{ hooks: [...all.slice(1), hook('sessionStart', { enabled: false })] }] }), null);
   const [, state] = codexTrustArgs(listed);
-  assert.equal(state, `hooks.state={'/<session-flags>/config.toml:sessionStart:0:0'={trusted_hash='sha256:sessionStart'},'/<session-flags>/config.toml:userPromptSubmit:0:0'={trusted_hash='sha256:userPromptSubmit'},'/<session-flags>/config.toml:subagentStart:0:0'={trusted_hash='sha256:subagentStart'},'/<session-flags>/config.toml:subagentStop:0:0'={trusted_hash='sha256:subagentStop'},'/<session-flags>/config.toml:preToolUse:0:0'={trusted_hash='sha256:preToolUse'}}`);
+  assert.equal(state, `hooks.state={${all.map((h) => `'${h.key}'={trusted_hash='${h.currentHash}'}`).join(',')}}`);
   assert.equal(codexTrustArgs([{ key: "it's", hash: 'h' }]), null, 'a key that cannot be quoted is not trusted');
 });
 
@@ -2962,4 +2986,97 @@ test('Gemini counts as set up only with our extension linked to our folder', () 
   fs.writeFileSync(record, JSON.stringify({ source: bundle, type: 'link' }));
   assert.equal(geminiLinked(dir, bundle), true);
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('shell commands map to shell reports that carry no command text', () => {
+  const secret = 'curl -H "Authorization: Bearer s3cr3t" https://example.test';
+  const hashes = { match: commandHash(secret), exec: execHash(secret) };
+  assert.ok(hashes.exec && hashes.exec !== hashes.match);
+  assert.deepEqual(hookToReports({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'toolu_1', tool_input: { command: secret } }), [{ shell: 'start', key: 'toolu_1', ...hashes }]);
+  assert.deepEqual(hookToReports({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_use_id: 'toolu_1', tool_input: { command: secret }, tool_response: { stdout: '' } }), [{ shell: 'end', key: 'toolu_1' }]);
+  assert.deepEqual(hookToReports({ hook_event_name: 'PostToolUseFailure', tool_name: 'Bash', tool_use_id: 'toolu_1', tool_input: { command: secret } }), [{ shell: 'end', key: 'toolu_1' }]);
+  const [bgStart] = hookToReports({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'toolu_2', tool_input: { command: secret, run_in_background: true } });
+  assert.deepEqual(bgStart, { shell: 'start', key: 'toolu_2', ...hashes });
+  assert.deepEqual(hookToReports({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_use_id: 'toolu_2', tool_input: { command: secret, run_in_background: true }, tool_response: { backgroundTaskId: 'b1' } }), [{ shell: 'background', key: 'toolu_2' }]);
+  assert.deepEqual(hookToReports({ hook_event_name: 'PreToolUse', turn_id: 't1', model: 'gpt-5-codex', tool_name: 'Bash', tool_use_id: 'call_1', tool_input: { command: secret } }),
+    [{ shell: 'start', key: 'call_1', track: true, ...hashes }]);
+  const gi = { command: secret, description: 'x', is_background: true };
+  const [gStart] = hookToReports({ hook_event_name: 'BeforeTool', tool_name: 'run_shell_command', tool_input: gi });
+  const [gEnd] = hookToReports({ hook_event_name: 'AfterTool', tool_name: 'run_shell_command', tool_input: gi, tool_response: { llmContent: 'Command is running in background. PID: 4242. Initial output:\nx' } });
+  assert.equal(gStart.shell, 'start');
+  assert.equal(gStart.bucket, gEnd.bucket);
+  assert.deepEqual(gEnd, { shell: 'background', bucket: gStart.bucket, pid: 4242 });
+  assert.equal(hookToReports({ hook_event_name: 'AfterTool', tool_name: 'run_shell_command', tool_input: gi, tool_response: { llmContent: [{ text: 'Command moved to background (PID: 77). Output hidden.' }] } })[0].pid, 77);
+  assert.equal(hookToReports({ hook_event_name: 'AfterTool', tool_name: 'run_shell_command', tool_input: gi, tool_response: { llmContent: 'Output: done\nBackground PIDs: 9' } })[0].shell, 'end', 'finished, with a child left behind: not the command\'s own pid');
+  assert.deepEqual(hookToReports({ hookEventName: 'pre_tool_use', hook_event_name: 'PreToolUse', toolName: 'run_terminal_command', toolUseId: 'g1', toolInput: { command: secret } }), [{ shell: 'start', key: 'g1', ...hashes }]);
+  for (const report of [bgStart, gStart, gEnd]) assert.ok(!JSON.stringify(report).includes('s3cr3t'));
+  assert.equal(commandHash('echo a\n  b'), commandHash('echo a? b'));
+  assert.notEqual(commandHash('echo a'), commandHash('echo b'));
+});
+
+test('process lists from ps and PowerShell parse to the same shape', async () => {
+  const { parsePs, parseWindowsProcesses, splitWindowsCommandLine, descendants, commandCandidates } = await import('../src/manager/process-tree.mjs');
+  const ps = parsePs([
+    '    1     0 Thu Oct  2 01:00:00 2026     /sbin/launchd',
+    '  500     1 Thu Oct  2 02:16:20 2026     node /usr/local/bin/codex',
+    '  501   500 Thu Oct  2 02:16:27 2026     /usr/bin/sandbox-exec -p (version 1) -- /bin/zsh -lc npm test -- --watch',
+    '  502   501 Thu Oct 12 02:16:27 2026     npm test',
+    'garbage line',
+  ].join('\n'));
+  assert.equal(ps.size, 4);
+  assert.deepEqual({ ...ps.get(501), args: undefined }, { pid: 501, ppid: 500, start: 'Thu Oct  2 02:16:27 2026', args: undefined });
+  assert.deepEqual(descendants(ps, 500).map((p) => p.pid), [501, 502], 'nearest first');
+  assert.ok(commandCandidates(ps.get(501).args()).has(commandHash('npm test -- --watch')), 'the -lc argument through the sandbox wrapper');
+
+  const win = parseWindowsProcesses(JSON.stringify([
+    { p: 10, q: 4, s: '133700000000000000', c: '"C:\\Program Files\\nodejs\\node.exe" codex.js' },
+    { p: 11, q: 10, s: '133700000000000001', c: '"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "Get-Item \\"C:\\a b\\""' },
+    { p: 12, q: 11, s: '133700000000000002', c: null },
+  ]));
+  assert.deepEqual(descendants(win, 10).map((p) => p.pid), [11, 12]);
+  assert.equal(win.get(11).start, '133700000000000001');
+  assert.ok(commandCandidates(win.get(11).args()).has(commandHash('Get-Item "C:\\a b"')), 'PowerShell -Command, unquoted the way the C runtime does');
+  assert.deepEqual(win.get(12).args(), []);
+  assert.equal(parseWindowsProcesses(JSON.stringify({ p: 3, q: 0, s: 1, c: 'x' })).size, 1, 'a single process is not an array');
+  assert.equal(parseWindowsProcesses(`\uFEFF${JSON.stringify([{ p: 3, q: 0, s: 1, c: 'x' }])}`).size, 1, 'a byte order mark from Windows PowerShell');
+
+  assert.deepEqual(splitWindowsCommandLine('a "b c" d\\\\"e f" g\\h "i""j"'), ['a', 'b c', 'd\\e f', 'g\\h', 'i"j']);
+  const claude = ['/bin/bash', '-c', `source ~/.claude/shell-snapshots/s.sh 2>/dev/null || true && eval 'grep '"'"'it'"'"'"'"'"'"'"'"'s'"'"' a' \\< /dev/null && pwd -P >| /tmp/c`];
+  assert.ok(commandCandidates(claude).has(commandHash(`grep 'it'"'"'s' a`)));
+  assert.ok(!commandCandidates(['/bin/bash', '-c', 'sleep 1']).has(commandHash('sleep 2')));
+  assert.ok(commandCandidates(['cargo', 'build', '--release']).has(commandHash('cargo build --release')), 'a shell that replaced itself with the command');
+});
+
+test('the words a shell leaves as its argv when it replaces itself with the last command', () => {
+  const words = (command, expected) => assert.equal(execHash(command), expected === null ? null : commandHash(expected), command);
+  words('cargo build', 'cargo build');
+  words('cd app && npm test -- --watch', 'npm test -- --watch');
+  words(`grep 'a b' "c d" e\\ f`, 'grep a b c d e f');
+  words('RUST_LOG=debug cargo run', 'cargo run');
+  words('npm test 2>&1 >/tmp/log', 'npm test');
+  words('make > out; ./run --fast', './run --fast');
+  words('cat a | wc -l', null);
+  words('sleep 9 &', null);
+  words('ls *.js', null);
+  words('echo $HOME', null);
+  words('echo "$(date)"', null);
+  words("echo 'open", null);
+  words('cat <<EOF\nx\nEOF', null);
+  words('true && sleep 9 # wait', 'sleep 9');
+  words('echo a#b; sleep 9', 'sleep 9');
+  words('true && exec sleep 9', 'sleep 9');
+  words('command sleep 9', 'sleep 9');
+  words('env FOO=1 sleep 9', 'sleep 9');
+  words('command -v sleep', 'command -v sleep');
+  words("sleep 9 '2'>o", 'sleep 9 2');
+  words('sleep 9 "a\\\nb"', 'sleep 9 ab');
+  words('if true; then sleep 9; fi', null);
+  words('for x in 1; do sleep 9; done', null);
+});
+
+test('a reused pid is not the process a shell command was bound to', async () => {
+  const { descendants } = await import('../src/manager/process-tree.mjs');
+  const procs = new Map([[7, { pid: 7, ppid: 1, start: 'later', args: () => [] }]]);
+  assert.deepEqual(descendants(procs, 1).map((p) => p.start), ['later']);
+  assert.deepEqual(descendants(new Map([[2, { pid: 2, ppid: 2, start: 's', args: () => [] }]]), 2), [], 'a cycle in the list does not loop');
 });

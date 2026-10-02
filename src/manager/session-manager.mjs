@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { Session, newId, clampDimension, cleanName } from './session.mjs';
+import { snapshotProcesses, descendants } from './process-tree.mjs';
 import { prependPath } from './report-shims.mjs';
 import { CHANNEL_LABELS } from './install-channels.mjs';
 import { SELF_PROVIDER } from './self-update.mjs';
@@ -65,6 +66,7 @@ export class SessionManager extends EventEmitter {
     this.github = github;
     this.sessionHooks = sessionHooks;
     this.reportTokenDir = reportTokenDir;
+    this.shellSampling = { timer: null, dueAt: null, running: false, lastMs: null };
     this.sessions = new Map();
     /** Removed sessions whose process has not exited yet. */
     this.exiting = new Set();
@@ -287,6 +289,7 @@ export class SessionManager extends EventEmitter {
       if (this.sessions.has(id)) this.emit('event', { type: 'session.updated', session: session.toJSON() });
     });
     session.on('warning', (msg) => console.warn(`[session ${id}] ${msg}`));
+    session.on('shells-tracking', () => this._sampleShellsSoon());
     if (task === 'install') {
       session.on('exit', () => {
         this.registry.finishInstall(provider.id, { exitCode: session.exitCode, kind: installKind }).catch(() => {});
@@ -359,6 +362,46 @@ export class SessionManager extends EventEmitter {
     return this._reportingSession(id, auth).reportHello();
   }
 
+  reportShell(id, report, auth) {
+    return this._reportingSession(id, auth).reportShell(report);
+  }
+
+  _sampleShellsSoon() {
+    const sampling = this.shellSampling;
+    if (sampling.running || this.closing) return;
+    const wanted = Math.min(...[...this.sessions.values()].map((s) => s.shellSampleDelayMs ?? Infinity));
+    if (!Number.isFinite(wanted)) return;
+    const delay = Math.max(wanted, 2 * (sampling.lastMs ?? 0));
+    if (sampling.timer && sampling.dueAt <= Date.now() + delay) return;
+    clearTimeout(sampling.timer);
+    sampling.dueAt = Date.now() + delay;
+    sampling.timer = setTimeout(() => this._sampleShells(), delay);
+    sampling.timer.unref?.();
+  }
+
+  async _sampleShells() {
+    const sampling = this.shellSampling;
+    sampling.timer = null;
+    const following = [...this.sessions.values()].filter((s) => s.followsShells && s.pid);
+    if (following.length === 0 || this.closing) return;
+    sampling.running = true;
+    const started = Date.now();
+    try {
+      const procs = await snapshotProcesses(process.platform, following.map((s) => s.pid));
+      sampling.lastMs = Date.now() - started;
+      for (const session of following) {
+        if (session.followsShells && session.pid) session.syncShellProcesses(descendants(procs, session.pid));
+      }
+    } catch (err) {
+      sampling.lastMs = Date.now() - started;
+      console.warn(`[manager] could not list processes to follow shell commands after ${sampling.lastMs} ms: ${err.message}`);
+      for (const session of following) session.shellProcessesUnknown();
+    } finally {
+      sampling.running = false;
+    }
+    if ([...this.sessions.values()].some((s) => s.followsShells)) this._sampleShellsSoon();
+  }
+
   _reportingSession(id, { reportToken, trusted = false } = {}) {
     const session = this.sessions.get(id);
     // Without the API token, an unknown session and a wrong token look the
@@ -379,6 +422,7 @@ export class SessionManager extends EventEmitter {
    */
   async shutdown({ graceMs = 1500, timeoutMs = 5000 } = {}) {
     this.closing = true;
+    clearTimeout(this.shellSampling.timer);
     const sessions = [...this.sessions.values()];
     this.sessions.clear();
     const pending = new Set([...sessions.filter((s) => s.status === 'running'), ...this.exiting]);

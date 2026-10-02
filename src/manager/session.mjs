@@ -7,6 +7,7 @@ import crypto from 'node:crypto';
 import pty from 'node-pty';
 import headless from '@xterm/headless';
 import serializeAddon from '@xterm/addon-serialize';
+import { commandCandidates } from './process-tree.mjs';
 import { killWindowsTree } from './command-resolver.mjs';
 
 const { Terminal } = headless;
@@ -20,6 +21,12 @@ const SCREEN_SCAN_DELAY_MS = 400;
 const SCREEN_SCAN_MAX_DELAY_MS = 2000;
 const MAX_TOOL_SESSION_ID = 200;
 const REPORTING_STATES = new Set(['pending', 'active', 'unavailable', 'setup_required', 'unsupported']);
+const SHELL_EVENTS = new Set(['start', 'end', 'background']);
+const MAX_SHELLS = 256;
+const SHELL_MISSES = 3;
+const SHELL_SETTLED_MS = 10000;
+const SHELL_SAMPLE_FAST_MS = 1000;
+const SHELL_SAMPLE_SLOW_MS = 5000;
 
 /**
  * Colours reported to programs that query them (OSC 10/11/12), matching the
@@ -85,6 +92,11 @@ export class Session extends EventEmitter {
     this.reportingTimeoutMs = opts.reportingTimeoutMs ?? 30000;
     this.reporting = REPORTING_STATES.has(opts.reporting?.state) ? { state: opts.reporting.state, reason: opts.reporting.reason ?? null } : null;
     this._reportingTimer = null;
+    this.shellDisplayDelayMs = opts.shellDisplayDelayMs ?? 600;
+    // Codex CLI reports the end of a command only when it finishes within its default 10 s wait.
+    this.shellFollowDelayMs = opts.shellFollowDelayMs ?? 10000;
+    this.shells = new Map();
+    this._shellSeq = 0;
     this.createdAt = new Date().toISOString();
     this.exitedAt = null;
     this.status = 'running';
@@ -196,6 +208,7 @@ export class Session extends EventEmitter {
     clearTimeout(this._scanTimer);
     clearTimeout(this._reportingTimer);
     this._clearAgents();
+    this._clearShells();
     // Let the headless terminal finish parsing before announcing the exit so
     // any client attaching afterwards still sees the final screen.
     this.term.write('', () => {
@@ -336,6 +349,7 @@ export class Session extends EventEmitter {
     clearTimeout(this._activityTimer);
     clearTimeout(this._scanTimer);
     clearTimeout(this._reportingTimer);
+    this._clearShells();
     for (const t of this._agentTimers.values()) clearTimeout(t);
     this.subscribers.clear();
     this.term.dispose();
@@ -365,6 +379,7 @@ export class Session extends EventEmitter {
       for (const agent of [...this.agents.values()]) {
         if (agent.foreground && agent.status === 'working') this.reportAgent({ agentId: agent.id, status: 'done' }, source);
       }
+      this._endForegroundShells(null);
       return null;
     }
     const id = String(report.agentId ?? report.agent ?? report.id ?? '').trim().slice(0, 128);
@@ -387,6 +402,7 @@ export class Session extends EventEmitter {
     // A repeated done (Grok Build ends a sub-agent's session after its
     // turn) must not restart the linger.
     if (existing?.status === 'done' && status === 'done') return existing;
+    if (status === 'done') this._endForegroundShells(id);
     if (!existing && this.agents.size >= MAX_AGENTS && !this._evictDoneAgent()) {
       throw badRequest(`too many agents (max ${MAX_AGENTS})`);
     }
@@ -450,6 +466,145 @@ export class Session extends EventEmitter {
     } catch (err) {
       this.emit('warning', `ignored in-band report: ${err.message}`);
     }
+  }
+
+  // ---- shells ------------------------------------------------------------
+
+  reportShell(report) {
+    if (!report || typeof report !== 'object') throw badRequest('shell report must be an object');
+    if (this.status !== 'running') throw Object.assign(new Error('session has exited'), { status: 409 });
+    if (!SHELL_EVENTS.has(report.shell)) throw badRequest(`shell must be one of ${[...SHELL_EVENTS].join(', ')}`);
+    const key = typeof report.key === 'string' && report.key ? report.key.slice(0, 128) : null;
+    const bucket = !key && typeof report.bucket === 'string' && /^[a-f0-9]{1,64}$/.test(report.bucket) ? report.bucket : null;
+    if (!key && !bucket) throw badRequest('a shell report needs a key or a bucket');
+    const hash = (value) => (typeof value === 'string' && /^[a-f0-9]{32}$/.test(value) ? value : null);
+    const match = hash(report.match);
+    this._reportingHeard();
+
+    if (report.shell === 'start') {
+      if (key && this._shellByKey(key)) return null;
+      if (this.shells.size >= MAX_SHELLS) {
+        this.emit('warning', `ignored a shell command: ${MAX_SHELLS} are already running`);
+        return null;
+      }
+      const shell = {
+        id: `shell-${++this._shellSeq}`, key, bucket, match, exec: match && hash(report.exec), open: true, visible: false, timer: null,
+        agentId: typeof report.agentId === 'string' ? report.agentId.slice(0, 128) : null,
+        track: false, followTimer: null, pid: null, start: null, boundAt: null, misses: 0,
+      };
+      shell.timer = setTimeout(() => {
+        shell.visible = true;
+        this._changed();
+      }, this.shellDisplayDelayMs);
+      shell.timer.unref?.();
+      this.shells.set(shell.id, shell);
+      if (report.track === true && match) {
+        shell.followTimer = setTimeout(() => {
+          if (!this.shells.has(shell.id) || shell.track) return;
+          shell.track = true;
+          this.emit('shells-tracking', this);
+        }, this.shellFollowDelayMs);
+        shell.followTimer.unref?.();
+      }
+      return null;
+    }
+
+    const shell = key ? this._shellByKey(key) : [...this.shells.values()].find((s) => s.bucket === bucket && s.open);
+    if (!shell) return null;
+    shell.open = false;
+    const pid = Number.isInteger(report.pid) && report.pid > 0 ? report.pid : null;
+    clearTimeout(shell.followTimer);
+    if (report.shell === 'background' && (pid || shell.match)) {
+      Object.assign(shell, { track: true, pid: pid ?? shell.pid, start: null, boundAt: null, misses: 0 });
+      this.emit('shells-tracking', this);
+    } else {
+      this._endShell(shell);
+    }
+    return null;
+  }
+
+  _shellByKey(key) {
+    for (const shell of this.shells.values()) if (shell.key === key) return shell;
+    return null;
+  }
+
+  get shellSampleDelayMs() {
+    if (!this.followsShells) return null;
+    const now = Date.now();
+    for (const shell of this.shells.values()) {
+      if (shell.track && (shell.start === null || now - shell.boundAt < SHELL_SETTLED_MS)) return SHELL_SAMPLE_FAST_MS;
+    }
+    return SHELL_SAMPLE_SLOW_MS;
+  }
+
+  get followsShells() {
+    if (this.status !== 'running') return false;
+    for (const shell of this.shells.values()) if (shell.track) return true;
+    return false;
+  }
+
+  syncShellProcesses(procs) {
+    const byPid = new Map(procs.map((p) => [p.pid, p]));
+    const taken = new Set();
+    for (const shell of this.shells.values()) if (shell.start !== null) taken.add(`${shell.pid}:${shell.start}`);
+    let candidates = null;
+    const candidatesOf = (p) => {
+      candidates ??= new Map();
+      if (!candidates.has(p)) candidates.set(p, commandCandidates(p.args()));
+      return candidates.get(p);
+    };
+    for (const shell of [...this.shells.values()]) {
+      if (!shell.track) continue;
+      if (shell.start !== null) {
+        if (byPid.get(shell.pid)?.start !== shell.start) this._endShell(shell);
+        else shell.misses = 0;
+        continue;
+      }
+      const found = shell.pid !== null
+        ? byPid.get(shell.pid)
+        : procs.find((p) => !taken.has(`${p.pid}:${p.start}`) && (candidatesOf(p).has(shell.match) || candidatesOf(p).has(shell.exec)));
+      if (found) {
+        shell.pid = found.pid;
+        shell.start = found.start;
+        shell.boundAt = Date.now();
+        taken.add(`${found.pid}:${found.start}`);
+      } else if (++shell.misses >= SHELL_MISSES) {
+        this._endShell(shell);
+      }
+    }
+  }
+
+  _endForegroundShells(agentId) {
+    let follow = false;
+    for (const shell of [...this.shells.values()]) {
+      if (!shell.open || shell.track || shell.agentId !== agentId) continue;
+      if (shell.followTimer) {
+        clearTimeout(shell.followTimer);
+        shell.track = true;
+        follow = true;
+      } else {
+        this._endShell(shell);
+      }
+    }
+    if (follow) this.emit('shells-tracking', this);
+  }
+
+  shellProcessesUnknown() {
+    for (const shell of [...this.shells.values()]) if (shell.track && ++shell.misses >= SHELL_MISSES) this._endShell(shell);
+  }
+
+  _endShell(shell) {
+    clearTimeout(shell.timer);
+    clearTimeout(shell.followTimer);
+    if (this.shells.delete(shell.id) && shell.visible) this._changed();
+  }
+
+  _clearShells() {
+    for (const shell of this.shells.values()) {
+      clearTimeout(shell.timer);
+      clearTimeout(shell.followTimer);
+    }
+    this.shells.clear();
   }
 
   // ---- model -------------------------------------------------------------
@@ -576,6 +731,7 @@ export class Session extends EventEmitter {
       toolSessionId: this.toolSessionId,
       reporting: this.reporting,
       agents: [...this.agents.values()],
+      shells: [...this.shells.values()].filter((s) => s.visible).map((s) => ({ id: s.id })),
     };
   }
 }
