@@ -101,7 +101,8 @@ vX.Y.Z** switches over when you are ready. The version badge opens
 
 **Appearance.** The Appearance menu in the top bar picks a skin and light or
 dark mode, without a reload. **Guild** is the default fantasy look;
-**Professional** is a plain business look with no characters. The page
+**Professional** is a plain business look with no characters; **Orbital**
+puts a crew of little robots in deep space. The page
 follows your system's light or dark setting until you pick one. See
 [docs/SKINS.md](docs/SKINS.md) to make another.
 
