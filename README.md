@@ -99,8 +99,11 @@ vX.Y.Z** switches over when you are ready. The version badge opens
 
 <img src="docs/images/whats-new.webp" alt="The What's new panel listing the release notes of each version">
 
-**Light or dark.** The page follows your system theme, and the top-bar
-toggle switches it.
+**Appearance.** The Appearance menu in the top bar picks a skin and light or
+dark mode, without a reload. **Guild** is the default fantasy look;
+**Professional** is a plain business look with no characters. The page
+follows your system's light or dark setting until you pick one. See
+[docs/SKINS.md](docs/SKINS.md) to make another.
 
 ## Commands
 

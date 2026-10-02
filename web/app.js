@@ -5,6 +5,7 @@ const TOKEN_KEY = 'agentGuild.token';
 const CWD_KEY = 'agentGuild.cwd';
 const ACCOUNTS_KEY = 'agentGuild.accounts';
 const THEME_KEY = 'agentGuild.theme';
+const SKIN_KEY = 'agentGuild.skin';
 const NEWS_SEEN_KEY = 'agentGuild.newsSeen';
 const NEWS_FILTER_KEY = 'agentGuild.newsFilter';
 const CHANGELOG_SEEN_KEY = 'agentGuild.changelogSeen';
@@ -142,33 +143,72 @@ function unreadRelease() {
 
 // ---- theme ----------------------------------------------------------------
 
-/** theme.js applied the saved or system theme before the first paint; this keeps the button in step. */
+/** theme.js applied the saved or system theme before the first paint; this keeps the menu in step. */
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
-  const button = $('theme-toggle');
-  const other = theme === 'dark' ? 'light' : 'dark';
-  button.textContent = theme === 'dark' ? 'Light' : 'Dark';
-  button.dataset.next = other;
-  button.title = `Switch to the ${other} theme`;
-  button.setAttribute('aria-label', `Switch to the ${other} theme`);
+  document.querySelector(`#appearance-menu input[name="theme"][value="${theme}"]`).checked = true;
 }
 
 function currentTheme() {
   return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
 }
 
-function toggleTheme(event) {
-  const theme = currentTheme() === 'dark' ? 'light' : 'dark';
-  save(THEME_KEY, theme);
-  if (!document.startViewTransition || reducedMotion.matches) return applyTheme(theme);
-  const box = event.currentTarget.getBoundingClientRect();
+/** Repaints the page with `change`, revealed in a circle growing from the control that asked for it. */
+function revealChange(control, change) {
+  if (!document.startViewTransition || reducedMotion.matches) return change();
+  const box = control.getBoundingClientRect();
   const x = box.left + box.width / 2;
   const y = box.top + box.height / 2;
   const root = document.documentElement.style;
   root.setProperty('--reveal-x', `${Math.round(x)}px`);
   root.setProperty('--reveal-y', `${Math.round(y)}px`);
   root.setProperty('--reveal-r', `${Math.ceil(Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y)))}px`);
-  document.startViewTransition(() => applyTheme(theme));
+  // The browser skips the animation (still applying the change) when the page is hidden or another transition starts.
+  document.startViewTransition(change).ready.catch(() => {});
+}
+
+function changeTheme(input) {
+  const theme = input.value === 'dark' ? 'dark' : 'light';
+  save(THEME_KEY, theme);
+  revealChange(input.closest('label'), () => applyTheme(theme));
+}
+
+// ---- skin -----------------------------------------------------------------
+
+/** The skins theme.js offers; it applied the saved one before the first paint. */
+const SKINS = window.agentGuildSkins ?? [{ id: 'guild', name: 'Guild' }];
+
+function renderSkinChoices() {
+  const choices = SKINS.map((skin) => {
+    const label = document.createElement('label');
+    label.className = 'choice';
+    const input = Object.assign(document.createElement('input'), { type: 'radio', name: 'skin', value: skin.id });
+    input.checked = skin.id === document.documentElement.dataset.skin;
+    label.append(input, Object.assign(document.createElement('span'), { textContent: skin.name }));
+    return label;
+  });
+  $('skin-choices').append(...choices);
+}
+
+/**
+ * Switches skin in place. Entrance and level-up animations are cleared first
+ * so the new skin does not replay them on every card.
+ */
+function changeSkin(input) {
+  const skin = input.value;
+  if (!SKINS.some((s) => s.id === skin) || skin === document.documentElement.dataset.skin) return;
+  save(SKIN_KEY, skin);
+  for (const el of document.querySelectorAll('.deal, .enter, .level-up, .summon')) el.classList.remove('deal', 'enter', 'level-up', 'summon');
+  revealChange(input.closest('label'), () => { document.documentElement.dataset.skin = skin; });
+}
+
+/** Places the open menu under its button, right-aligned with it and kept on screen. */
+function placeAppearanceMenu() {
+  const menu = $('appearance-menu');
+  if (!menu.matches(':popover-open')) return;
+  const box = $('appearance').getBoundingClientRect();
+  menu.style.top = `${Math.round(box.bottom + 6)}px`;
+  menu.style.right = `${Math.max(8, Math.round(innerWidth - box.right))}px`;
 }
 
 // ---- upgrading the manager ------------------------------------------------
@@ -2443,9 +2483,11 @@ function buildCard(session) {
     if (id) copyId(id);
   });
   node.querySelector('.model-pill').addEventListener('click', () => openSessionModel(session.id));
+  // Skins name their own keyframes, so the one-shot classes clear on any animation they run.
   node.addEventListener('animationend', (e) => {
-    if (e.animationName === 'level-up') e.target.classList.remove('level-up');
-    else if (e.animationName === 'card-enter' && e.target === node) node.classList.remove('enter');
+    if (e.target.classList.contains('level-up')) e.target.classList.remove('level-up');
+    else if (e.target.classList.contains('summon')) e.target.classList.remove('summon');
+    else if (e.target === node) node.classList.remove('enter');
   });
   return node;
 }
@@ -3170,9 +3212,18 @@ $('stop-manager').addEventListener('click', () => stopManager());
 $('restart-manager').addEventListener('click', () => stopManager({ restart: true }));
 $('copy-command').addEventListener('click', copyCommand);
 $('upgrade').addEventListener('click', upgradeManager);
-$('theme-toggle').addEventListener('click', toggleTheme);
+$('appearance-menu').addEventListener('change', (e) => {
+  if (e.target.name === 'skin') changeSkin(e.target);
+  else if (e.target.name === 'theme') changeTheme(e.target);
+});
+$('appearance-menu').addEventListener('toggle', (e) => {
+  if (e.newState !== 'open') return;
+  placeAppearanceMenu();
+  e.currentTarget.querySelector('input:checked')?.focus();
+});
+window.addEventListener('resize', placeAppearanceMenu);
 $('providers').addEventListener('animationend', (e) => {
-  if (e.animationName === 'deal' && e.target === e.currentTarget.lastElementChild) e.currentTarget.classList.remove('deal');
+  if (e.target === e.currentTarget.lastElementChild) e.currentTarget.classList.remove('deal');
 });
 let tiltFrame = 0;
 $('providers').addEventListener('pointermove', (e) => {
@@ -3196,6 +3247,7 @@ $('providers').addEventListener('pointerout', (e) => {
   }
 });
 applyTheme(currentTheme());
+renderSkinChoices();
 // Follow the system setting until the user picks a theme.
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
   if (!load(THEME_KEY)) applyTheme(e.matches ? 'dark' : 'light');
