@@ -124,7 +124,7 @@ def familiar(src):
 def write(rel, svg):
     file = WEB / rel
     file.parent.mkdir(parents=True, exist_ok=True)
-    file.write_text("".join(line.strip() for line in svg.strip().splitlines()) + "\n", encoding="utf-8")
+    file.write_text("".join(line.strip() for line in svg.strip().splitlines()) + "\n", encoding="utf-8", newline="\n")
 
 
 # The level badge: a dark planet with a ring orbiting it; the level number sits on the planet.
