@@ -215,6 +215,7 @@ export class SessionHooks {
     this.registry = registry;
     this.probeTimeoutMs = probeTimeoutMs;
     this.probeRetryMs = probeRetryMs;
+    this.dir = dir;
     this.bundles = null;
     this.probes = new Map();
     if (dir) {
@@ -306,13 +307,19 @@ export class SessionHooks {
     }
     const run = async (args, what) => {
       try {
-        await runSpec(buildSpawnSpec(resolved, args, env, this.registry.platform), { env, timeoutMs: 60000 });
+        const commandEnv = { ...env, GEMINI_CLI_TRUST_WORKSPACE: 'true' };
+        await runSpec(buildSpawnSpec(resolved, args, commandEnv, this.registry.platform), { env: commandEnv, timeoutMs: 60000, cwd: this.dir });
       } catch (err) {
         const detail = `${err.stderr || ''}\n${err.stdout || ''}`.trim().split('\n').filter(Boolean).pop() || err.message;
         throw Object.assign(new Error(`${provider.tool} could not ${what} the Agent Guild extension: ${detail}`), { status: 502, code: 'reporting_setup_failed' });
       }
     };
-    if (stale || !enabled) await run(['extensions', 'uninstall', EXTENSION_NAME], 'remove');
+    const record = geminiRecord(home);
+    if (stale && !fs.existsSync(record.source)) {
+      fs.rmSync(path.join(home, '.gemini', 'extensions', EXTENSION_NAME), { recursive: true, force: true });
+    } else if (stale || !enabled) {
+      await run(['extensions', 'uninstall', EXTENSION_NAME], 'remove');
+    }
     if (enabled) await run(['extensions', 'link', this.bundles.gemini, '--consent'], 'link');
     const now = this.enabled(provider, account);
     if (now !== enabled) {

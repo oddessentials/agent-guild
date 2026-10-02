@@ -96,6 +96,8 @@ for (const name of ['claude', 'codex', 'gemini', 'grok']) {
   writeScript(path.join(toolsDir, name), { win: `"${process.execPath}" "${codingTool}" ${name} %*`, sh: `exec "${process.execPath}" "${codingTool}" ${name} "$@"` });
 }
 const userHookLog = path.join(home, 'user-hooks.log');
+const geminiCwdLog = path.join(home, 'gemini-extension-cwd.log');
+process.env.FAKE_GEMINI_CWD_LOG = geminiCwdLog;
 const userHook = path.join(home, 'user-hook.mjs');
 fs.writeFileSync(userHook, `import fs from 'node:fs';\nfs.appendFileSync(${JSON.stringify(userHookLog)}, process.argv[2] + '\\n');\n`);
 const userHookCommand = (name) => `"${process.execPath}" "${userHook}" ${name}`;
@@ -1110,6 +1112,8 @@ test('turning Gemini reporting on replaces a link left by an earlier data folder
   let res = await call('POST', '/providers/google/reporting', { enabled: true });
   assert.equal(res.status, 200, JSON.stringify(res.body));
   assert.equal(JSON.parse(fs.readFileSync(record, 'utf8')).source, path.join(home, 'reporting', 'gemini'));
+  assert.ok(!fs.existsSync(path.join(toolHomes.gemini, '.gemini', 'trustedFolders.json')), 'linking trusts no folder');
+  assert.deepEqual([...new Set(fs.readFileSync(geminiCwdLog, 'utf8').trim().split('\n'))], [path.join(home, 'reporting')], 'never the folder the manager was started in');
   assert.equal((await call('POST', '/providers/google/reporting', { enabled: false })).status, 200);
   assert.ok(!fs.existsSync(record));
 

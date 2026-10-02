@@ -69,6 +69,11 @@ if (tool === 'gemini' && argv[0] === 'extensions') {
   const dir = path.join(geminiHome(), 'extensions', 'agent-guild');
   if (argv[1] === 'link') {
     if (!argv.includes('--consent')) process.exit(1);
+    if (process.env.FAKE_GEMINI_CWD_LOG) fs.appendFileSync(process.env.FAKE_GEMINI_CWD_LOG, `${process.cwd()}\n`);
+    if (process.env.GEMINI_CLI_TRUST_WORKSPACE !== 'true') {
+      const trusted = path.join(geminiHome(), 'trustedFolders.json');
+      fs.writeFileSync(trusted, JSON.stringify({ ...readJson(trusted), [process.cwd()]: 'TRUST_FOLDER' }));
+    }
     if (fs.existsSync(dir)) {
       out('Extension "agent-guild" is already installed. Please uninstall it first.');
       process.exit(1);
@@ -77,6 +82,11 @@ if (tool === 'gemini' && argv[0] === 'extensions') {
     fs.writeFileSync(path.join(dir, '.gemini-extension-install.json'), JSON.stringify({ source: path.resolve(argv[2]), type: 'link' }));
     out('Extension "agent-guild" linked successfully and enabled.');
   } else if (argv[1] === 'uninstall') {
+    const source = readJson(path.join(dir, '.gemini-extension-install.json'))?.source;
+    if (!source || !fs.existsSync(source)) {
+      process.stderr.write('Extension not found.\n');
+      process.exit(1);
+    }
     fs.rmSync(dir, { recursive: true, force: true });
     out('Extension "agent-guild" successfully uninstalled.');
   }

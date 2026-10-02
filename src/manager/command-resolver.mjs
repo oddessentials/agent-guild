@@ -124,9 +124,9 @@ export function buildSpawnSpec(resolvedPath, args = [], env = process.env, platf
  * Run a spawn spec to completion without a terminal. Resolves with its
  * output; rejects with the error carrying stdout and stderr.
  */
-export function runSpec(spec, { env, timeoutMs = 15000 } = {}) {
+export function runSpec(spec, { env, timeoutMs = 15000, cwd } = {}) {
   return new Promise((resolve, reject) => {
-    const opts = { env, timeout: timeoutMs, windowsHide: true, maxBuffer: 1024 * 1024 };
+    const opts = { env, cwd, timeout: timeoutMs, windowsHide: true, maxBuffer: 1024 * 1024 };
     let args = spec.args;
     if (typeof args === 'string') {
       opts.windowsVerbatimArguments = true;
