@@ -8,6 +8,7 @@
     { id: 'guild', name: 'Guild' },
     { id: 'professional', name: 'Professional' },
     { id: 'orbital', name: 'Orbital' },
+    { id: 'grove', name: 'Grove' },
   ];
   window.agentGuildSkins = skins;
 
