@@ -208,6 +208,18 @@ export function geminiStaleLink(home, bundle) {
   }
 }
 
+// Gemini's uninstall finds only extensions that load, so a link to a folder without its manifest is removed here, as uninstall would.
+function removeDanglingLink(home) {
+  const extensions = path.join(home, '.gemini', 'extensions');
+  fs.rmSync(path.join(extensions, EXTENSION_NAME), { recursive: true, force: true });
+  const enablement = path.join(extensions, 'extension-enablement.json');
+  let config;
+  try { config = JSON.parse(fs.readFileSync(enablement, 'utf8')); } catch { return; }
+  if (!config || typeof config !== 'object' || !(EXTENSION_NAME in config)) return;
+  delete config[EXTENSION_NAME];
+  fs.writeFileSync(enablement, JSON.stringify(config, null, 2));
+}
+
 const pending = (tool, when) => ({ state: 'pending', reason: `Agent Guild added its reporting hooks to this ${tool} session. They report once ${tool} ${when}.` });
 
 export class SessionHooks {
@@ -315,8 +327,8 @@ export class SessionHooks {
       }
     };
     const record = geminiRecord(home);
-    if (stale && !fs.existsSync(record.source)) {
-      fs.rmSync(path.join(home, '.gemini', 'extensions', EXTENSION_NAME), { recursive: true, force: true });
+    if (stale && !fs.existsSync(path.join(record.source, 'gemini-extension.json'))) {
+      removeDanglingLink(home);
     } else if (stale || !enabled) {
       await run(['extensions', 'uninstall', EXTENSION_NAME], 'remove');
     }

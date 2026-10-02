@@ -3081,6 +3081,14 @@ test('the words a shell leaves as its argv when it replaces itself with the last
   words('command -p sleep 9', 'sleep 9');
   words('builtin exec noglob sleep 9', 'sleep 9');
   words("env -S 'sleep 9'", null);
+  words('env -u HOME', null);
+  words('exec -a name', null);
+  words('exec -l sleep 9', '-sleep 9');
+  words('exec -a nohup sleep 9', 'nohup 9');
+  words('exec -a name -l sleep 9', null);
+  words('exec -l env FOO=1 sleep 9', 'sleep 9');
+  words('exec -cl nohup sleep 9', 'sleep 9');
+  words('exec -a name nice sleep 9', 'sleep 9');
 });
 
 test('a reused pid is not the process a shell command was bound to', async () => {

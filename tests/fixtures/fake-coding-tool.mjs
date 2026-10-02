@@ -84,7 +84,7 @@ if (tool === 'gemini' && argv[0] === 'extensions') {
     out('Extension "agent-guild" linked successfully and enabled.');
   } else if (argv[1] === 'uninstall') {
     const source = readJson(path.join(dir, '.gemini-extension-install.json'))?.source;
-    if (!source || !fs.existsSync(source)) {
+    if (!source || !readJson(path.join(source, 'gemini-extension.json'))) {
       process.stderr.write('Extension not found.\n');
       process.exit(1);
     }

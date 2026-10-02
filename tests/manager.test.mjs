@@ -1108,11 +1108,17 @@ test('a Codex probe that loads no hooks is asked again, not trusted for good', a
 test('turning Gemini reporting on replaces a link left by an earlier data folder, and refuses another extension\'s name', async (t) => {
   const record = path.join(toolHomes.gemini, '.gemini', 'extensions', 'agent-guild', '.gemini-extension-install.json');
   t.after(() => fs.rmSync(path.dirname(record), { recursive: true, force: true }));
-  writeFile(record, JSON.stringify({ source: path.join(home, 'old-data', 'reporting', 'gemini'), type: 'link' }));
+  const enablement = path.join(toolHomes.gemini, '.gemini', 'extensions', 'extension-enablement.json');
+  t.after(() => fs.rmSync(enablement, { force: true }));
+  writeFile(enablement, JSON.stringify({ 'agent-guild': { overrides: ['!/*'] }, other: { overrides: ['/*'] } }));
+  const oldData = path.join(home, 'old-data', 'reporting', 'gemini');
+  fs.mkdirSync(oldData, { recursive: true });
+  writeFile(record, JSON.stringify({ source: oldData, type: 'link' }));
   let res = await call('POST', '/providers/google/reporting', { enabled: true });
   assert.equal(res.status, 200, JSON.stringify(res.body));
   assert.equal(JSON.parse(fs.readFileSync(record, 'utf8')).source, path.join(home, 'reporting', 'gemini'));
   assert.ok(!fs.existsSync(path.join(toolHomes.gemini, '.gemini', 'trustedFolders.json')), 'linking trusts no folder');
+  assert.deepEqual(JSON.parse(fs.readFileSync(enablement, 'utf8')), { other: { overrides: ['/*'] } }, 'the dangling link\'s disabled state goes with it, as Gemini\'s uninstall would do');
   assert.deepEqual([...new Set(fs.readFileSync(geminiCwdLog, 'utf8').trim().split('\n'))], [path.join(home, 'reporting')], 'never the folder the manager was started in');
   assert.equal((await call('POST', '/providers/google/reporting', { enabled: false })).status, 200);
   assert.ok(!fs.existsSync(record));

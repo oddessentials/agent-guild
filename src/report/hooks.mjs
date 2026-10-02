@@ -41,8 +41,17 @@ export function commandHash(command) {
   return crypto.createHash('sha256').update(normal).digest('hex').slice(0, 32);
 }
 
+const SHELL_KEYWORDS = new Set(['if', 'then', 'else', 'elif', 'fi', 'do', 'done', 'case', 'esac', 'while', 'until', 'for', 'select', '!', '{', '}', '[[', 'function', 'time', 'coproc']);
+const ASSIGNMENT = /^[A-Za-z_]\w*=/;
+
 // bash and zsh replace themselves with the last simple command of a -c script, leaving its words as the process's argv.
 export function execHash(command) {
+  const words = lastSimpleCommand(command);
+  const argv = words && execArgv(words);
+  return argv ? commandHash(argv.join(' ')) : null;
+}
+
+function lastSimpleCommand(command) {
   const segments = [{ words: [], after: null, opaque: false }];
   let word = null;
   let quoted = false;
@@ -113,50 +122,68 @@ export function execHash(command) {
   }
   push();
   const index = segments.findLastIndex((s) => s.words.length > 0);
-  if (index === -1 || segments[index].opaque || segments[index].after === '&' || segments[index].after === '|' || segments[index - 1]?.after === '|') return null;
-  const words = segments[index].words;
-  for (;;) {
-    while (words.length > 1 && /^[A-Za-z_]\w*=/.test(words[0])) words.shift();
-    const [first, ...rest] = words;
-    if (rest.length === 0) break;
-    if (first === 'builtin' || first === 'noglob' || first === 'nohup') {
-      words.shift();
-    } else if (first === 'nice') {
-      words.shift();
-      if (words[0] === '-n' && words.length > 2) words.splice(0, 2);
-      else if (/^(?:-n?-?\d+|--adjustment=-?\d+)$/.test(words[0]) && words.length > 1) words.shift();
-    } else if (first === 'command') {
-      if (/^-[vV]$/.test(rest[0])) break;
-      words.shift();
-      if (words[0] === '-p' && words.length > 1) words.shift();
-    } else if (first === 'env') {
-      words.shift();
-      while (words.length > 1 && words[0].startsWith('-')) {
-        const option = words.shift();
-        if (option === '--') break;
-        if (option === '-u' || option === '-C' || option === '-S') {
-          if (option === '-S') return null;
-          words.shift();
-        } else if (!/^(?:-i|-0|--ignore-environment|--unset=.*|-u.+)$/.test(option)) {
-          return null;
-        }
-      }
-    } else if (first === 'exec') {
-      words.shift();
-      let name = null;
-      while (words.length > 1 && words[0].startsWith('-')) {
-        const option = words.shift();
-        if (option === '--') break;
-        if (option === '-a') name = words.shift();
-        else if (!/^-[cl]+$/.test(option)) return null;
-      }
-      if (name !== null && words.length) words[0] = name;
-    } else {
-      break;
-    }
+  if (index === -1) return null;
+  const last = segments[index];
+  if (last.opaque || last.after === '&' || last.after === '|' || segments[index - 1]?.after === '|') return null;
+  return last.words;
+}
+
+function execArgv(words) {
+  let start = 0;
+  while (start < words.length - 1 && ASSIGNMENT.test(words[start])) start++;
+  const [first, ...rest] = words.slice(start);
+  if (first === undefined || SHELL_KEYWORDS.has(first)) return null;
+  if (rest.length === 0) return [first];
+  switch (first) {
+    case 'builtin':
+    case 'noglob':
+    case 'nohup':
+      return execArgv(rest);
+    case 'command':
+      if (/^-[vV]$/.test(rest[0])) return [first, ...rest];
+      return execArgv(rest[0] === '-p' ? rest.slice(1) : rest);
+    case 'nice':
+      if (rest[0] === '-n' && rest.length > 2) return execArgv(rest.slice(2));
+      return execArgv(/^(?:-n?-?\d+|--adjustment=-?\d+)$/.test(rest[0]) ? rest.slice(1) : rest);
+    case 'env':
+      return envArgv(rest);
+    case 'exec':
+      return execBuiltinArgv(rest);
+    default:
+      return [first, ...rest];
   }
-  if (['if', 'then', 'else', 'elif', 'fi', 'do', 'done', 'case', 'esac', 'while', 'until', 'for', 'select', '!', '{', '}', '[[', 'function', 'time', 'coproc'].includes(words[0])) return null;
-  return commandHash(words.join(' '));
+}
+
+function envArgv(words) {
+  let i = 0;
+  while (i < words.length - 1 && words[i].startsWith('-')) {
+    const option = words[i++];
+    if (option === '--') break;
+    if (option === '-S') return null;
+    if (option === '-u' || option === '-C') i++;
+    else if (!/^(?:-i|-0|--ignore-environment|--unset=.*|-u.+)$/.test(option)) return null;
+  }
+  return execArgv(words.slice(i));
+}
+
+function execBuiltinArgv(words) {
+  let name = null;
+  let login = false;
+  let i = 0;
+  while (i < words.length - 1 && words[i].startsWith('-')) {
+    const option = words[i++];
+    if (option === '--') break;
+    if (option === '-a') name = words[i++];
+    else if (/^-[cl]+$/.test(option)) login ||= option.includes('l');
+    else return null;
+  }
+  const program = words.slice(i);
+  if (program.length === 0 || (login && name !== null)) return null;
+  if (name === null && !login) return execArgv(program);
+  if (['env', 'nohup', 'nice'].includes(program[0])) return execArgv(program);
+  if (['builtin', 'noglob', 'command', 'exec'].includes(program[0])) return null;
+  const argv = execArgv(program);
+  return argv && [name ?? `-${argv[0]}`, ...argv.slice(1)];
 }
 
 function geminiBackgroundPid(response) {
