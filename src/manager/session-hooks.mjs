@@ -16,8 +16,15 @@ const groups = (events, extra) => Object.fromEntries(events.map((event) => [even
 const shellEvents = (events, matcher) => Object.fromEntries(events.map((event) => [event, { group: { matcher } }]));
 
 const CLAUDE_EVENTS = ['SessionStart', 'UserPromptSubmit', 'SubagentStart', 'SubagentStop', 'PostModelSwitch', 'PreToolUse', 'PermissionRequest', 'PostToolUse', 'PostToolUseFailure', 'Stop'];
-export const CODEX_EVENTS = ['SessionStart', 'UserPromptSubmit', 'SubagentStart', 'SubagentStop', 'PreToolUse', 'PostToolUse', 'Stop', 'Interrupt'];
-const CODEX_MATCHERS = { PostToolUse: 'Bash' };
+const CLAUDE_MATCHERS = { PreToolUse: 'Bash|PowerShell', PermissionRequest: 'Bash|PowerShell', PostToolUse: 'Bash|PowerShell|TaskStop', PostToolUseFailure: 'Bash|PowerShell|TaskStop' };
+export const CODEX_EVENTS = ['SessionStart', 'UserPromptSubmit', 'SubagentStart', 'SubagentStop', 'PreToolUse', 'PermissionRequest', 'PostToolUse', 'Stop', 'Interrupt', 'SessionEnd'];
+const CODEX_MATCHERS = { PermissionRequest: 'Bash', PostToolUse: 'Bash' };
+
+// Only PreToolUse holds Claude Code up, so a command's start reaches the manager before its permission request and its end.
+const claudeHooks = () => Object.fromEntries(CLAUDE_EVENTS.map((event) => [event, [{
+  ...(CLAUDE_MATCHERS[event] ? { matcher: CLAUDE_MATCHERS[event] } : {}),
+  hooks: [handler(event === 'PreToolUse' ? {} : { async: true })],
+}]]));
 const GROK_EVENTS = ['SessionStart', 'SubagentStart', 'SubagentStop', 'StopCancelled', 'SessionEnd', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Stop'];
 
 // Gemini's extension stays linked outside Agent Guild, where the launchers are not on PATH.
@@ -34,7 +41,7 @@ export function bundleFiles(version, { shimDir = null, platform = process.platfo
   return {
     claude: {
       '.claude-plugin/plugin.json': json(manifest),
-      'hooks/hooks.json': json({ hooks: groups(CLAUDE_EVENTS, { ...shellEvents(['PreToolUse', 'PostToolUse', 'PostToolUseFailure'], 'Bash|PowerShell'), ...shellEvents(['PermissionRequest'], 'Bash') }) }),
+      'hooks/hooks.json': json({ hooks: claudeHooks() }),
     },
     gemini: {
       'gemini-extension.json': json(manifest),

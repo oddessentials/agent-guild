@@ -7,15 +7,12 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { Session, newId, clampDimension, cleanName } from './session.mjs';
-import { snapshotProcesses, descendants, processAlive } from './process-tree.mjs';
 import { prependPath } from './report-shims.mjs';
 import { CHANNEL_LABELS } from './install-channels.mjs';
 import { SELF_PROVIDER } from './self-update.mjs';
 import { GITHUB_PROVIDER, dropsFromCloneEnv, parseRepo } from './github.mjs';
 
 export const MAX_SESSIONS = 32;
-const SHELL_FIND_SLOW_MS = 10000;
-const SHELL_VERIFY_MS = 30000;
 
 // The hooks.json earlier versions copied into Codex CLI accounts; an untouched copy would run every hook twice.
 const SEEDED_CODEX_HOOKS = '59d1cfb54cda5fd81add1edee7cf0cac56e4b2afec4c26ff207b675eeaaf70ce';
@@ -68,7 +65,6 @@ export class SessionManager extends EventEmitter {
     this.github = github;
     this.sessionHooks = sessionHooks;
     this.reportTokenDir = reportTokenDir;
-    this.shellSampling = { timer: null, dueAt: null, running: false, lastMs: null, now: false };
     this.sessions = new Map();
     /** Removed sessions whose process has not exited yet. */
     this.exiting = new Set();
@@ -291,7 +287,6 @@ export class SessionManager extends EventEmitter {
       if (this.sessions.has(id)) this.emit('event', { type: 'session.updated', session: session.toJSON() });
     });
     session.on('warning', (msg) => console.warn(`[session ${id}] ${msg}`));
-    session.on('shells-tracking', (_session, now) => this._sampleShellsSoon(now === true));
     if (task === 'install') {
       session.on('exit', () => {
         this.registry.finishInstall(provider.id, { exitCode: session.exitCode, kind: installKind }).catch(() => {});
@@ -368,59 +363,6 @@ export class SessionManager extends EventEmitter {
     return this._reportingSession(id, auth).reportShell(report);
   }
 
-  _sampleShellsSoon(now = false) {
-    const sampling = this.shellSampling;
-    if (this.closing) return;
-    if (sampling.running) {
-      sampling.now ||= now;
-      return;
-    }
-    const wanted = Math.min(...[...this.sessions.values()].map((s) => s.shellSampleDelayMs ?? Infinity));
-    if (!Number.isFinite(wanted)) return;
-    const delay = now ? 0 : Math.max(wanted, 2 * (sampling.lastMs ?? 0));
-    if (sampling.timer && sampling.dueAt <= Date.now() + delay) return;
-    clearTimeout(sampling.timer);
-    sampling.dueAt = Date.now() + delay;
-    sampling.timer = setTimeout(() => this._sampleShells(), delay);
-    sampling.timer.unref?.();
-  }
-
-  async _sampleShells() {
-    const sampling = this.shellSampling;
-    sampling.timer = null;
-    const following = [...this.sessions.values()].filter((s) => s.followsShells && s.pid);
-    if (following.length === 0 || this.closing) return;
-    sampling.running = true;
-    sampling.now = false;
-    // A command bound to its process is checked by its pid alone. The process list is read to find one: every second
-    // for one followed lately, every 10 s for one not seen since; and on macOS and Windows, where a pid does not prove
-    // the process is the same one, every 30 s as well.
-    const now = Date.now();
-    const listing = following.filter((s) => s.shellsToFindNow
-      || (s.shellsToFind && (s.shellsListedAt ?? 0) <= now - SHELL_FIND_SLOW_MS)
-      || (process.platform !== 'linux' && (s.shellsListedAt ?? 0) <= now - SHELL_VERIFY_MS));
-    for (const session of following) if (!listing.includes(session)) session.checkBoundShells((pid, start) => processAlive(pid, start));
-    const started = Date.now();
-    try {
-      if (listing.length) {
-        const procs = await snapshotProcesses(process.platform, listing.map((s) => s.pid));
-        sampling.lastMs = Date.now() - started;
-        for (const session of listing) {
-          if (!session.followsShells || !session.pid) continue;
-          session.syncShellProcesses(descendants(procs, session.pid));
-          session.shellsListedAt = Date.now();
-        }
-      }
-    } catch (err) {
-      sampling.lastMs = Date.now() - started;
-      console.warn(`[manager] could not list processes to follow shell commands after ${sampling.lastMs} ms: ${err.message}`);
-      for (const session of listing) session.shellProcessesUnknown();
-    } finally {
-      sampling.running = false;
-    }
-    if ([...this.sessions.values()].some((s) => s.followsShells)) this._sampleShellsSoon(sampling.now);
-  }
-
   _reportingSession(id, { reportToken, trusted = false } = {}) {
     const session = this.sessions.get(id);
     // Without the API token, an unknown session and a wrong token look the
@@ -441,7 +383,6 @@ export class SessionManager extends EventEmitter {
    */
   async shutdown({ graceMs = 1500, timeoutMs = 5000 } = {}) {
     this.closing = true;
-    clearTimeout(this.shellSampling.timer);
     const sessions = [...this.sessions.values()];
     this.sessions.clear();
     const pending = new Set([...sessions.filter((s) => s.status === 'running'), ...this.exiting]);

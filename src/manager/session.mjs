@@ -7,7 +7,6 @@ import crypto from 'node:crypto';
 import pty from 'node-pty';
 import headless from '@xterm/headless';
 import serializeAddon from '@xterm/addon-serialize';
-import { commandCandidates, processExists } from './process-tree.mjs';
 import { killWindowsTree } from './command-resolver.mjs';
 
 const { Terminal } = headless;
@@ -21,18 +20,18 @@ const SCREEN_SCAN_DELAY_MS = 400;
 const SCREEN_SCAN_MAX_DELAY_MS = 2000;
 const MAX_TOOL_SESSION_ID = 200;
 const REPORTING_STATES = new Set(['pending', 'active', 'unavailable', 'setup_required', 'unsupported']);
-const SHELL_EVENTS = new Set(['start', 'waiting', 'end', 'background']);
+const SHELL_EVENTS = new Set(['start', 'waiting', 'asked', 'background', 'end', 'running', 'reset']);
 const MAX_SHELLS = 256;
-const SHELL_MISSES = 3;
-const SHELL_SAMPLE_MS = 1000;
-const SHELL_FIND_FAST_MS = 10000;
+const MAX_SHELL_PIDS = 16;
+const MAX_ENDED_TASKS = 256;
 
-// Process start times: clock ticks on Linux and a FILETIME on Windows (digit strings), the ps date on macOS.
-function startedBefore(a, b) {
-  const digits = /^\d+$/.test(a.start) && /^\d+$/.test(b.start);
-  const order = digits ? a.start.length - b.start.length || (a.start < b.start ? -1 : a.start > b.start ? 1 : 0)
-    : (Date.parse(a.start) || 0) - (Date.parse(b.start) || 0);
-  return order || a.pid - b.pid;
+function processExists(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === 'EPERM';
+  }
 }
 
 /**
@@ -100,10 +99,11 @@ export class Session extends EventEmitter {
     this.reporting = REPORTING_STATES.has(opts.reporting?.state) ? { state: opts.reporting.state, reason: opts.reporting.reason ?? null } : null;
     this._reportingTimer = null;
     this.shellDisplayDelayMs = opts.shellDisplayDelayMs ?? 600;
-    // Codex CLI reports the end of a command only when it finishes within its default 10 s wait.
-    this.shellFollowDelayMs = opts.shellFollowDelayMs ?? 10000;
+    this.shellPidCheckMs = opts.shellPidCheckMs ?? 2000;
     this.shells = new Map();
     this._shellSeq = 0;
+    this._endedTasks = new Set();
+    this._pidTimer = null;
     this.createdAt = new Date().toISOString();
     this.exitedAt = null;
     this.status = 'running';
@@ -486,287 +486,164 @@ export class Session extends EventEmitter {
     if (!report || typeof report !== 'object') throw badRequest('shell report must be an object');
     if (this.status !== 'running') throw Object.assign(new Error('session has exited'), { status: 409 });
     if (!SHELL_EVENTS.has(report.shell)) throw badRequest(`shell must be one of ${[...SHELL_EVENTS].join(', ')}`);
-    const key = typeof report.key === 'string' && report.key ? report.key.slice(0, 128) : null;
+    const id = (value) => (typeof value === 'string' && value ? value.slice(0, 128) : null);
+    const key = id(report.key);
     const bucket = !key && typeof report.bucket === 'string' && /^[a-f0-9]{1,64}$/.test(report.bucket) ? report.bucket : null;
-    if (!key && !bucket) throw badRequest('a shell report needs a key or a bucket');
-    const hash = (value) => (typeof value === 'string' && /^[a-f0-9]{32}$/.test(value) ? value : null);
-    const match = hash(report.match);
+    const task = id(report.task);
+    const match = typeof report.match === 'string' && /^[a-f0-9]{32}$/.test(report.match) ? report.match : null;
+    const agentId = id(report.agentId);
     this._reportingHeard();
 
-    const agentId = typeof report.agentId === 'string' ? report.agentId.slice(0, 128) : null;
-
-    if (report.shell === 'waiting') {
-      // Claude Code's PermissionRequest carries no tool_use_id, and a PreToolUse hook may have rewritten the
-      // command: it belongs to the agent's one command still to run with that command, else to its only one.
-      let pending = key ? this._shellByKey(key) : null;
-      const candidates = [...this.shells.values()].filter((shell) => shell.open && !shell.awaiting && shell.start === null && shell.agentId === agentId);
-      const exact = match ? candidates.filter((shell) => shell.match === match) : [];
-      pending ??= exact.length === 1 ? exact[0] : exact.length === 0 && candidates.length === 1 ? candidates[0] : null;
-      if (!pending) return null;
-      if (match) Object.assign(pending, { match, exec: hash(report.exec), mark: hash(report.mark) ?? pending.mark });
-      this._awaitPermission(pending);
+    if (report.shell === 'reset') {
+      for (const shell of [...this.shells.values()]) this._endShell(shell);
       return null;
     }
 
+    if (report.shell === 'running') {
+      if (!Array.isArray(report.tasks)) throw badRequest('a running report needs a tasks array');
+      const running = new Set(report.tasks.slice(0, MAX_SHELLS).map(id).filter(Boolean));
+      for (const shell of [...this.shells.values()]) if (shell.task && !running.has(shell.task)) this._endShell(shell);
+      const known = new Set([...this.shells.values()].map((shell) => shell.task));
+      for (const each of running) if (!known.has(each) && !this._endedTasks.has(each)) this._addShell({ task: each }, { now: true });
+      return null;
+    }
+
+    if (report.shell === 'waiting' || report.shell === 'asked') {
+      // A permission request carries no call id, and a PreToolUse hook may have rewritten its command: it belongs to the
+      // agent's one foreground command with that command, else to its only one.
+      const candidates = [...this.shells.values()].filter((shell) => shell.agentId === agentId && this._foreground(shell) && !shell.waiting && !shell.asked);
+      const exact = match ? candidates.filter((shell) => shell.match === match) : [];
+      const shell = exact.length === 1 ? exact[0] : exact.length === 0 && candidates.length === 1 ? candidates[0] : null;
+      if (shell && report.shell === 'asked') {
+        shell.asked = true;
+      } else if (shell) {
+        clearTimeout(shell.timer);
+        shell.waiting = true;
+        this._setVisible(shell, false);
+      }
+      return null;
+    }
+
+    if (report.shell === 'end') {
+      if (!key && !bucket && !task) throw badRequest('a shell end needs a key, a bucket or a task');
+      if (task) this._rememberEnded(task);
+      const shell = (key && this._shellBy('key', key)) || (task && this._shellBy('task', task)) || (bucket && this._shellByBucket(bucket));
+      if (shell) this._endShell(shell);
+      return null;
+    }
+
+    if (!key && !bucket) throw badRequest('a shell report needs a key or a bucket');
     if (report.shell === 'start') {
-      if (key && this._shellByKey(key)) return null;
-      if (this.shells.size >= MAX_SHELLS) {
-        this.emit('warning', `ignored a shell command: ${MAX_SHELLS} are already running`);
+      if (!key || !this._shellBy('key', key)) this._addShell({ key, bucket, match, agentId, persist: report.persist === true });
+      return null;
+    }
+
+    const pids = Array.isArray(report.pids) ? report.pids.filter((pid) => Number.isInteger(pid) && pid > 0).slice(0, MAX_SHELL_PIDS) : [];
+    if (!task && pids.length === 0) throw badRequest('a background report needs a task or pids');
+    const shell = key ? this._shellBy('key', key) : this._shellByBucket(bucket);
+    if (!shell) return null;
+    if (task) {
+      Object.assign(shell, { task, endsWithAgent: report.endsWithAgent === true });
+    } else {
+      // Gemini CLI names a pid even for a command that ended at once.
+      shell.pids = pids.filter(processExists);
+      if (shell.pids.length === 0) {
+        this._endShell(shell);
         return null;
       }
-      const shell = {
-        id: `shell-${++this._shellSeq}`, key, bucket, match, exec: match && hash(report.exec), mark: match && hash(report.mark), open: true, visible: false, timer: null,
-        agentId, track: false, followTimer: null, pid: null, start: null, misses: 0, awaiting: false,
-        followShown: report.follow === true && Boolean(match), confirm: false,
-      };
-      this.shells.set(shell.id, shell);
-      this._showAfterDelay(shell);
-      if (report.track === true && match) {
-        shell.followTimer = setTimeout(() => {
-          if (!this.shells.has(shell.id) || shell.track) return;
-          this._follow(shell);
-          this.emit('shells-tracking', this);
-        }, this.shellFollowDelayMs);
-        shell.followTimer.unref?.();
-      }
-      return null;
+      this._checkPids();
     }
-
-    const shell = key ? this._shellByKey(key) : this._shellByBucket(bucket);
-    if (!shell) return null;
-    shell.open = false;
-    const pid = Number.isInteger(report.pid) && report.pid > 0 ? report.pid : null;
-    clearTimeout(shell.followTimer);
-    if (report.shell === 'background' && match) Object.assign(shell, { match, exec: hash(report.exec), mark: hash(report.mark) ?? shell.mark });
-    // Gemini CLI names a pid even for a command that ended at once.
-    if (report.shell === 'background' && pid && !processExists(pid)) {
-      this._endShell(shell);
-    } else if (report.shell === 'background' && (pid || shell.match)) {
-      if (shell.awaiting) {
-        shell.awaiting = false;
-        this._showAfterDelay(shell);
-      }
-      // One already bound while it ran in the foreground keeps its process.
-      if (pid || shell.start === null) Object.assign(shell, { pid: pid ?? shell.pid, start: null, misses: 0 });
-      this._follow(shell);
-      this.emit('shells-tracking', this);
-    } else {
-      this._endShell(shell);
+    if (shell.waiting) {
+      shell.waiting = false;
+      this._showAfterDelay(shell);
     }
     return null;
   }
 
-  _follow(shell) {
-    if (!shell.track) shell.trackedAt = Date.now();
-    shell.track = true;
+  _addShell(fields, { now = false } = {}) {
+    if (this.shells.size >= MAX_SHELLS) {
+      this.emit('warning', `ignored a shell command: ${MAX_SHELLS} are already running`);
+      return;
+    }
+    const shell = {
+      id: `shell-${++this._shellSeq}`, key: null, bucket: null, match: null, agentId: null, persist: false, task: null, pids: null,
+      endsWithAgent: false, waiting: false, asked: false, visible: false, timer: null, ...fields,
+    };
+    this.shells.set(shell.id, shell);
+    if (now) this._setVisible(shell, true);
+    else this._showAfterDelay(shell);
   }
 
   _showAfterDelay(shell) {
     clearTimeout(shell.timer);
-    shell.timer = setTimeout(() => {
-      // A followed command is drawn once its process is seen, so one that Esc ended before then never appears.
-      if (shell.followShown && shell.start === null && shell.pid === null) {
-        shell.confirm = true;
-        this._follow(shell);
-        this.emit('shells-tracking', this, true);
-        return;
-      }
-      shell.visible = true;
-      this._changed();
-    }, this.shellDisplayDelayMs);
+    shell.timer = setTimeout(() => this._setVisible(shell, true), this.shellDisplayDelayMs);
     shell.timer.unref?.();
   }
 
-  _awaitPermission(shell) {
-    clearTimeout(shell.timer);
-    shell.awaiting = true;
-    shell.misses = 0;
-    if (shell.visible) {
-      shell.visible = false;
-      this._changed();
-    }
-    if (shell.match && !shell.track) {
-      clearTimeout(shell.followTimer);
-      this._follow(shell);
-      this.emit('shells-tracking', this);
-    }
+  _setVisible(shell, visible) {
+    if (shell.visible === visible) return;
+    shell.visible = visible;
+    this._changed();
+  }
+
+  _foreground(shell) {
+    return shell.task === null && shell.pids === null;
+  }
+
+  _shellBy(field, value) {
+    for (const shell of this.shells.values()) if (shell[field] === value) return shell;
+    return null;
   }
 
   // Gemini CLI's calls are paired by their input, which a BeforeTool hook may rewrite before AfterTool.
   _shellByBucket(bucket) {
-    const open = [...this.shells.values()].filter((shell) => shell.open && shell.bucket !== null);
+    const open = [...this.shells.values()].filter((shell) => shell.bucket !== null && this._foreground(shell));
     return open.find((shell) => shell.bucket === bucket) ?? (open.length === 1 ? open[0] : null);
   }
 
-  _shellByKey(key) {
-    for (const shell of this.shells.values()) if (shell.key === key) return shell;
-    return null;
-  }
-
-  get shellSampleDelayMs() {
-    return this.followsShells ? SHELL_SAMPLE_MS : null;
-  }
-
-  get followsShells() {
-    if (this.status !== 'running') return false;
-    for (const shell of this.shells.values()) if (shell.track) return true;
-    return false;
-  }
-
-  /** Whether a followed command still has to be found in the process list; one already bound is checked by its pid. */
-  get shellsToFind() {
-    for (const shell of this.shells.values()) if (shell.track && shell.start === null) return true;
-    return false;
-  }
-
-  /** Whether one started being followed lately, so its process is looked for every second rather than every 10 s. */
-  get shellsToFindNow() {
-    const recent = Date.now() - SHELL_FIND_FAST_MS;
-    for (const shell of this.shells.values()) if (shell.track && shell.start === null && shell.trackedAt > recent) return true;
-    return false;
-  }
-
-  checkBoundShells(alive) {
-    for (const shell of [...this.shells.values()]) {
-      if (shell.track && shell.start !== null && !alive(shell.pid, shell.start)) this._endShell(shell);
-    }
-  }
-
-  syncShellProcesses(procs) {
-    const byPid = new Map(procs.map((p) => [p.pid, p]));
-    const children = new Map();
-    for (const p of procs) {
-      if (!children.has(p.ppid)) children.set(p.ppid, []);
-      children.get(p.ppid).push(p);
-    }
-    const owned = new Set();
-    const own = (root) => {
-      const stack = [root];
-      while (stack.length) {
-        const p = stack.pop();
-        if (owned.has(p.pid)) continue;
-        owned.add(p.pid);
-        stack.push(...(children.get(p.pid) || []));
+  _checkPids() {
+    if (this._pidTimer) return;
+    this._pidTimer = setInterval(() => {
+      let watching = false;
+      for (const shell of [...this.shells.values()]) {
+        if (!shell.pids) continue;
+        shell.pids = shell.pids.filter(processExists);
+        if (shell.pids.length) watching = true;
+        else this._endShell(shell);
       }
-    };
-    for (const shell of this.shells.values()) {
-      const bound = shell.start !== null && byPid.get(shell.pid);
-      if (bound && bound.start === shell.start) own(bound);
-    }
-    let candidates = null;
-    const candidatesOf = (p) => {
-      candidates ??= new Map();
-      if (!candidates.has(p)) candidates.set(p, commandCandidates(p.args()));
-      return candidates.get(p);
-    };
-    // Earliest first: the commands are followed in the order they started, so each gets the process it started.
-    const commandsMatching = (hash) => {
-      if (!hash) return [];
-      const hits = procs.filter((p) => !owned.has(p.pid) && candidatesOf(p).has(hash));
-      const hitPids = new Set(hits.map((p) => p.pid));
-      return hits.filter((p) => !hitPids.has(p.ppid)).sort(startedBefore);
-    };
-    const unbound = [];
-    for (const shell of [...this.shells.values()]) {
-      if (!shell.track) continue;
-      if (shell.start === null) {
-        unbound.push(shell);
-      } else if (byPid.get(shell.pid)?.start !== shell.start) {
-        this._endShell(shell);
-      } else {
-        shell.misses = 0;
+      if (!watching) {
+        clearInterval(this._pidTimer);
+        this._pidTimer = null;
       }
-    }
-    const settled = new Set();
-    const bind = (shell, found) => {
-      shell.pid = found.pid;
-      shell.start = found.start;
-      own(found);
-      settled.add(shell);
-      if (shell.awaiting || shell.confirm) this._reveal(shell);
-    };
-    // The command as given, then the program a shell replaced itself with; only then, once every exact match is
-    // bound, the tool's shell form, so no command takes a process another one matches exactly.
-    for (const tiers of [['match', 'exec'], ['mark']]) {
-      for (const shell of unbound) {
-        if (settled.has(shell)) continue;
-        if (shell.pid !== null) {
-          const found = byPid.get(shell.pid);
-          if (found) bind(shell, found);
-          continue;
-        }
-        let field = null;
-        let commands = [];
-        for (const tier of tiers) {
-          commands = commandsMatching(shell[tier]);
-          if (commands.length) {
-            field = tier;
-            break;
-          }
-        }
-        if (!field) continue;
-        let alike = 0;
-        for (const other of unbound) if (!settled.has(other) && other.pid === null && other[field] === shell[field]) alike++;
-        if (commands.length > alike) {
-          // Another run of the same command (in the foreground, say) could be either: wait until it is the only one.
-          // More such processes run than commands are followed for them, so this one runs too.
-          settled.add(shell);
-          if (shell.confirm) this._reveal(shell);
-          continue;
-        }
-        bind(shell, commands[0]);
-      }
-    }
-    for (const shell of unbound) {
-      // A command still waiting for its end event stays undrawn instead: a slow hook of the user's may start it late.
-      if (settled.has(shell) || shell.awaiting || (shell.followShown && shell.open)) continue;
-      if (++shell.misses >= SHELL_MISSES) this._endShell(shell);
-    }
+    }, this.shellPidCheckMs);
+    this._pidTimer.unref?.();
   }
 
+  // A turn's foreground commands end with it; a background command, or one Codex CLI keeps running, does not.
   _endForegroundShells(agentId) {
-    let follow = false;
     for (const shell of [...this.shells.values()]) {
-      if (!shell.open || shell.agentId !== agentId) continue;
-      if (shell.awaiting) {
-        this._endShell(shell);
-      } else if (shell.track && !(shell.followShown && shell.start === null)) {
-        // Followed through its process; one never seen running has not started by the end of its turn.
-        continue;
-      } else if (shell.followTimer) {
-        clearTimeout(shell.followTimer);
-        this._follow(shell);
-        follow = true;
-      } else {
-        this._endShell(shell);
-      }
+      if (shell.agentId !== agentId) continue;
+      const lasting = this._foreground(shell) ? shell.persist && !shell.asked : !(agentId && shell.endsWithAgent);
+      if (!lasting) this._endShell(shell);
     }
-    if (follow) this.emit('shells-tracking', this);
   }
 
-  _reveal(shell) {
-    shell.awaiting = false;
-    shell.confirm = false;
-    if (shell.visible) return;
-    shell.visible = true;
-    this._changed();
-  }
-
-  shellProcessesUnknown() {
-    for (const shell of [...this.shells.values()]) if (shell.track && !shell.awaiting && ++shell.misses >= SHELL_MISSES) this._endShell(shell);
+  _rememberEnded(task) {
+    this._endedTasks.delete(task);
+    this._endedTasks.add(task);
+    if (this._endedTasks.size > MAX_ENDED_TASKS) this._endedTasks.delete(this._endedTasks.values().next().value);
   }
 
   _endShell(shell) {
     clearTimeout(shell.timer);
-    clearTimeout(shell.followTimer);
+    if (shell.task) this._rememberEnded(shell.task);
     if (this.shells.delete(shell.id) && shell.visible) this._changed();
   }
 
   _clearShells() {
-    for (const shell of this.shells.values()) {
-      clearTimeout(shell.timer);
-      clearTimeout(shell.followTimer);
-    }
+    for (const shell of this.shells.values()) clearTimeout(shell.timer);
+    clearInterval(this._pidTimer);
+    this._pidTimer = null;
     this.shells.clear();
   }
 

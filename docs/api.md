@@ -248,9 +248,8 @@ that has never run lists no sessions and no error.
   cannot take hooks for one session. `reason` explains every state but `active`.
 * `shells` lists the shell commands the tool is running for the model, as
   its hooks report them, once each has run for about 600 ms; each leaves
-  the list when it ends. A background command is followed through its
-  process. Every running command is listed; the page draws 16 and counts
-  the rest. Nothing about the command itself is included.
+  the list when it ends. Every running command is listed; the page draws 16
+  and counts the rest. Nothing about the command itself is included.
 
 ### Upgrade
 
@@ -391,7 +390,7 @@ All paths are under `/api/v1`.
 | POST | `/sessions/:id/model` | `{ model, displayName? }` | `{ model }`. Sets the session's model with source `report`, unless a foreground agent is working; then the current model is returned unchanged. |
 | POST | `/sessions/:id/tool-session` | `{ toolSessionId }` | `{ toolSessionId }`. Records the id the tool gave its own session: one printable line of at most 200 characters. 409 once the session has exited. |
 | POST | `/sessions/:id/reporting` | | `{ reporting }`: the tool's hooks announce themselves, which makes `reporting.state` `active`. |
-| POST | `/sessions/:id/shells` | `{ shell, key \| bucket, match?, exec?, track?, pid?, agentId? }` | `{ ok }`. `shell` is `start`, `end` or `background`. `key` is the tool's call id; without one, `bucket` groups identical calls, which end in the order they started. `match` is a hash of the command, and `exec` of the last simple command a shell replaces itself with, by which a followed command finds its process; `track` follows it once it has run past Codex CLI's 10 s wait without an end event; `pid` names the process of a background command. |
+| POST | `/sessions/:id/shells` | `{ shell, key \| bucket \| task, match?, agentId?, persist?, pids?, endsWithAgent?, tasks? }` | `{ ok }`. `shell` is `start`, `end`, `background` (with the tool's `task` id, or the `pids` of the processes it left running), `waiting` (a permission request, which hides the command), `asked` (one that ends the command with its turn), `running` (`tasks` lists the background tasks still running; any other ends) or `reset` (every command ends). `key` is the tool's call id; without one, `bucket` groups identical calls, which end in the order they started. `match` is a hash of the command, which pairs a permission request with it; `persist` keeps a command past the end of its turn, and `endsWithAgent` ends a background one with its sub-agent. |
 | POST | `/shutdown` | `{ force?, restart? }` | `202 { ok, running, restart }`: stops the manager and every session. 409 `sessions_running` (with `running`, the session count) while any session is running, unless `force` is true. From the 202 on, `POST /sessions` and `POST /providers/:id/install` answer 503 `manager_stopping`. Events clients get `manager.stopping` first and `manager.stopped` last, after the sessions have ended and before the API closes. With `restart` true, the manager then starts a new manager from the package on disk, on the same port and with the same token, before it exits; the new one runs whatever version is installed, so this is how an upgrade's `pendingVersion` is put to use. Clients reconnect to it as to any manager; its `hello` is the new source of truth. |
 
 `cwd` defaults to the user's home folder and must be an existing folder. A

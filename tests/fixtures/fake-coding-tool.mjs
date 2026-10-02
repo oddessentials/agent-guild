@@ -18,26 +18,24 @@
 //   subagent-done <id> <type>
 //   subagent-done-rewritten <id> <type>   Gemini: the end, with input a BeforeTool hook rewrote
 //   subagent-killed <id> <type>           Claude Code's TaskStop: a task notification, no SubagentStop
-//   shell <id> <ms> [fg|bg|bg-instant|exec|bg-exec|exec-script|ps|interrupt|ps-interrupt|ask-yes|ask-no|ask-rewrite|bg-rewrite] [command...]
-//                          runs a shell command for <ms> as the tool would: its hooks, and a
-//                          process whose command line has the tool's own form (Claude Code's
-//                          eval script, Codex CLI's sandbox wrapper and -lc). Claude Code and
-//                          Gemini CLI return a bg command's call at once; Codex CLI never
-//                          reports the end of one that outlives its 1 s yield; exec runs the
-//                          command itself with bash -lc, which replaces itself with it, as
-//                          bg-exec does in the background; ps runs
-//                          it as Claude Code's PowerShell tool; ask-yes and ask-no show a
-//                          permission dialog for a while, then run the command or not;
-//                          the -rewrite modes run a command a PreToolUse hook rewrote; interrupt and
-//                          ps-interrupt are Esc after <ms>: the command is killed and no hook fires;
-//                          ps runs Claude Code's Windows PowerShell launcher, which carries no command
-//                          text; exec-script runs a #! script that bash replaces itself with
+//   shell <id> <ms> [fg|bg|bg-silent|bg-instant|ps|interrupt|esc-bg|unpolled|ask-yes|ask-no|ask-rewrite|fg-rewrite|bg-rewrite] [command...]
+//                          runs a shell command for <ms> with the tool's hooks. Claude Code and
+//                          Gemini CLI return a bg command's call at once; Claude Code notifies its
+//                          end as a prompt, except for bg-silent; Codex CLI reports a command's
+//                          end when it ends, except for unpolled, which the model never checks on
+//                          again; ps runs it as Claude Code's PowerShell tool; ask-yes and ask-no
+//                          ask permission for a while, then run the command or not; the -rewrite
+//                          modes run a command a hook rewrote; interrupt is Esc after <ms>, which
+//                          kills the command and fires no hook; esc-bg is Esc after 300 ms, which
+//                          moves the command to the background, also with no hook
 //   shell-denied <id> [command...]
 //                          a start event with no process and no end event
 //   permit <command...>    a permission request for a command, with no tool_use_id
+//   taskstop <id>          Claude Code's TaskStop on the background command <id>
 //   tool <agent-id> <tool>  a sub-agent calls a tool that is not a shell
-//   turn-end               the main thread's turn ends
-//   interrupt [kill]       Codex CLI's Esc: its Interrupt hook, after ending the running commands with kill
+//   turn-end               the main thread's turn ends; Claude Code's Stop lists its running background commands
+//   interrupt              Codex CLI's Esc: its Interrupt hook; the running commands go on
+//   session-end            Codex CLI's thread ends: its commands are stopped, then its SessionEnd hook runs
 //   exit
 
 import { spawn } from 'node:child_process';
@@ -225,46 +223,27 @@ function runTool() {
   if (tool !== 'codex') sessionStart();
 
   const shellSleep = 'setTimeout(() => {}, Number(process.env.FAKE_SHELL_MS))';
-  const quote = (text) => `'${text.replace(/'/g, `'"'"'`)}'`;
   const running = new Map();
-  const shellArgv = (command, powershell) => {
-    // Claude Code's PowerShell launcher on Windows: the command travels in an environment variable, not on the command line.
-    if (tool === 'claude' && powershell) return ['--', 'C:\\Windows\\System32\\cmd.exe', '/d', '/s', '/c', '""C:\\Windows\\System32\\chcp.com" 65001 >nul & "C:\\Program Files\\PowerShell\\7\\pwsh.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$__claudeCodeScript = $env:CLAUDE_CODE_SHELL_LAUNCHER_SCRIPT; $env:CLAUDE_CODE_SHELL_LAUNCHER_SCRIPT = $null; Invoke-Expression -Command $__claudeCodeScript" > "C:\\Temp\\claude-out" 2>&1"'];
-    if (tool === 'claude') return ['--', '/bin/bash', '-c', `source /tmp/snapshot.sh && eval ${quote(command)} < /dev/null && pwd -P >| /tmp/cwd`];
-    if (tool === 'codex') return ['--', 'codex-linux-sandbox', '--sandbox-policy-cwd', process.cwd(), '--', '/bin/zsh', '-lc', command];
-    return ['--', 'bash', '-c', command];
-  };
-  // A script with a #! line, like pnpm or pytest: run by its interpreter once bash has replaced itself with it.
-  const scriptDir = () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-script-'));
-    const file = path.join(dir, 'devserver');
-    fs.writeFileSync(file, `#!${process.execPath}\nsetTimeout(() => {}, Number(process.argv[2]));\n`, { mode: 0o755 });
-    return dir;
-  };
+  // Claude Code's background tasks still running, by task id, as its Stop lists them.
+  const tasks = new Map();
+  const codexTurn = tool === 'codex' ? { turn_id: 'turn-1' } : {};
   const toolName = { claude: 'Bash', codex: 'Bash', gemini: 'run_shell_command', grok: 'run_terminal_command' }[tool];
   const shellEvent = (start, id, input, response, name = toolName) => {
     if (tool === 'gemini') return [start ? 'BeforeTool' : 'AfterTool', { tool_name: name, tool_input: input, ...(response ? { tool_response: response } : {}) }, name];
     if (tool === 'grok') return [start ? 'PreToolUse' : 'PostToolUse', { hookEventName: start ? 'pre_tool_use' : 'post_tool_use', toolName: name, toolUseId: id, toolInput: input, ...(response ? { toolResult: response } : {}) }, name];
-    return [start ? 'PreToolUse' : 'PostToolUse', { tool_name: name, tool_use_id: id, tool_input: input, ...(tool === 'codex' ? { turn_id: 'turn-1' } : {}), ...(response ? { tool_response: response } : {}) }, name];
+    return [start ? 'PreToolUse' : 'PostToolUse', { tool_name: name, tool_use_id: id, tool_input: input, ...codexTurn, ...(response ? { tool_response: response } : {}) }, name];
   };
+  const notification = (task, id, status) => `<task-notification>\n<task-id>${task}</task-id>\n<tool-use-id>${id}</tool-use-id>\n<output-file>/tmp/tasks/${task}.output</output-file>\n<status>${status}</status>\n<summary>Background command "test" ${status} (exit code 0)</summary>\n</task-notification>`;
   const runShell = async (id, ms, mode, command) => {
-    const background = mode === 'bg' || mode === 'bg-rewrite' || mode === 'bg-exec' || mode === 'bg-instant';
-    const interrupted = mode === 'interrupt' || mode === 'ps-interrupt';
-    const powershell = mode === 'ps' || mode === 'ps-interrupt';
-    let script = null;
-    if (mode === 'exec-script') {
-      script = scriptDir();
-      command = `cd ${script} && devserver ${ms}`;
-    }
+    const background = mode === 'bg' || mode === 'bg-silent' || mode === 'bg-rewrite' || mode === 'bg-instant';
+    const name = mode === 'ps' ? 'PowerShell' : toolName;
     const announced = tool === 'gemini' ? { command, description: 'test', is_background: background }
       : { command, ...(background && tool === 'claude' ? { run_in_background: true } : {}) };
-    const name = powershell ? 'PowerShell' : toolName;
     const [startEvent, startPayload, matcher] = shellEvent(true, id, announced, null, name);
     await runHooks(hooks, startEvent, startPayload, matcher);
     const input = mode.endsWith('-rewrite') ? { ...announced, command: `${command} -- --runInBand` } : announced;
-    command = input.command;
     if (mode.startsWith('ask-')) {
-      await runHooks(hooks, 'PermissionRequest', { tool_name: name, tool_input: input, permission_suggestions: [] }, name);
+      await runHooks(hooks, 'PermissionRequest', { tool_name: name, tool_input: input, permission_suggestions: [], ...codexTurn }, name);
       out(`SHELL-ASKED ${id}`);
       await new Promise((resolve) => setTimeout(resolve, Number(process.env.FAKE_PERMISSION_MS || 1000)));
       if (mode === 'ask-no') {
@@ -272,30 +251,33 @@ function runTool() {
         return;
       }
     }
-    // Esc: the tool kills the command after <ms> and reports nothing, no end event and no Stop.
-    const child = mode === 'exec' || mode === 'bg-exec'
-      ? spawn('bash', ['-lc', command], { stdio: 'ignore' })
-      : mode === 'exec-script'
-        ? spawn('bash', ['-c', command], { stdio: 'ignore', env: { ...process.env, PATH: `${script}${path.delimiter}${process.env.PATH}` } })
-        : spawn(process.execPath, ['-e', shellSleep, ...shellArgv(command, powershell)], { env: { ...process.env, FAKE_SHELL_MS: String(interrupted ? 60000 : ms) }, stdio: 'ignore', windowsHide: true });
+    const child = spawn(process.execPath, ['-e', shellSleep], { env: { ...process.env, FAKE_SHELL_MS: String(mode === 'interrupt' ? 60000 : ms) }, stdio: 'ignore', windowsHide: true });
     out(`SHELL-STARTED ${id} ${child.pid}`);
     running.set(id, child);
-    if (interrupted) setTimeout(() => { out(`SHELL-INTERRUPTED ${id}`); child.kill('SIGKILL'); }, ms);
+    const task = `bg-${id}`;
+    if (mode === 'interrupt') setTimeout(() => { child.silent = true; out(`SHELL-INTERRUPTED ${id}`); child.kill(); }, ms);
+    if (mode === 'esc-bg') setTimeout(() => { tasks.set(task, child); out(`SHELL-ESCAPED ${id}`); }, 300);
     const end = (response) => {
       const [event, payload] = shellEvent(false, id, input, response, name);
       return runHooks(hooks, event, payload, matcher);
     };
     child.on('exit', async () => {
       running.delete(id);
-      if (script) fs.rmSync(script, { recursive: true, force: true });
+      tasks.delete(task);
       out(`SHELL-EXITED ${id}`);
-      if (interrupted || child.killedByInterrupt) return;
-      if (background && (tool === 'claude' || tool === 'gemini')) return;
-      if (tool === 'codex' && ms > 1000) return;
-      await end(tool === 'gemini' ? { llmContent: 'Output: (empty)' } : { stdout: '' });
+      if (child.silent || mode === 'bg-silent' || mode === 'unpolled' || (background && tool === 'gemini')) return;
+      if (tool === 'claude' && (background || mode === 'esc-bg')) {
+        await runHooks(hooks, 'UserPromptSubmit', { prompt: notification(task, id, 'completed') });
+        out(`SHELL-NOTIFIED ${id}`);
+        return;
+      }
+      await end(tool === 'gemini' ? { llmContent: 'Output: (empty)' } : tool === 'codex' ? 'Exit code: 0' : { stdout: '' });
       out(`SHELL-DONE ${id}`);
     });
-    if (background && tool === 'claude') await end({ stdout: '', backgroundTaskId: `bg-${id}` });
+    if (background && tool === 'claude') {
+      tasks.set(task, child);
+      await end({ stdout: '', stderr: '', interrupted: false, backgroundTaskId: task });
+    }
     if (background && tool === 'gemini') {
       // Gemini CLI 0.62.0 names the pid even when the command has already ended.
       if (mode === 'bg-instant') await new Promise((resolve) => (child.exitCode !== null ? resolve() : child.on('exit', resolve)));
@@ -319,20 +301,38 @@ function runTool() {
     }
     if (cmd === 'permit') {
       const command = [id, type, ...rest].join(' ');
-      await runHooks(hooks, 'PermissionRequest', { tool_name: toolName, tool_input: { command }, permission_suggestions: [] }, toolName);
+      await runHooks(hooks, 'PermissionRequest', { tool_name: toolName, tool_input: { command }, permission_suggestions: [], ...codexTurn }, toolName);
       out(`PERMIT ${command}`);
       return;
     }
+    if (cmd === 'taskstop') {
+      const child = tasks.get(`bg-${id}`);
+      if (child) {
+        child.silent = true;
+        child.kill();
+      }
+      await runHooks(hooks, 'PostToolUse', { tool_name: 'TaskStop', tool_use_id: `stop-${id}`, tool_input: { task_id: `bg-${id}` }, tool_response: { message: `Successfully stopped task: bg-${id}` } }, 'TaskStop');
+      out(`TASK-STOPPED ${id}`);
+      return;
+    }
     if (cmd === 'turn-end') {
-      await runHooks(hooks, { claude: 'Stop', codex: 'Stop', gemini: 'AfterAgent', grok: 'Stop' }[tool], { stop_hook_active: false, ...(tool === 'codex' ? { turn_id: 'turn-1' } : {}) });
+      const listed = tool === 'claude' ? { background_tasks: [...tasks.keys()].map((task) => ({ id: task, type: 'shell', status: 'running', description: 'test', command: 'test' })), session_crons: [] } : {};
+      await runHooks(hooks, { claude: 'Stop', codex: 'Stop', gemini: 'AfterAgent', grok: 'Stop' }[tool], { stop_hook_active: false, ...codexTurn, ...listed });
       out('TURN-ENDED');
       return;
     }
     if (cmd === 'interrupt') {
-      // Codex CLI's Esc: its Interrupt hook; with `kill`, the running commands end as well.
-      if (id === 'kill') for (const child of running.values()) { child.killedByInterrupt = true; child.kill('SIGKILL'); }
-      await runHooks(hooks, 'Interrupt', { turn_id: 'turn-1' });
+      await runHooks(hooks, 'Interrupt', codexTurn);
       out('INTERRUPTED');
+      return;
+    }
+    if (cmd === 'session-end') {
+      for (const child of running.values()) {
+        child.silent = true;
+        child.kill();
+      }
+      await runHooks(hooks, 'SessionEnd', { turn_id: '' });
+      out('SESSION-ENDED');
       return;
     }
     if (cmd === 'prompt') {

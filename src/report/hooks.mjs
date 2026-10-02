@@ -34,329 +34,41 @@ const TOOL_END_EVENTS = new Set(['PostToolUse', 'PostToolUseFailure', 'AfterTool
 const TURN_BOUNDARY_EVENTS = new Set(['BeforeAgent', 'AfterAgent', 'UserPromptSubmit', 'Stop', 'Interrupt']);
 const MAX_DETAIL = 200;
 
+const FINISHED_TASKS = new Set(['completed', 'failed', 'killed']);
+const LIVE_TASKS = new Set(['pending', 'running', 'paused']);
+const MAX_RUNNING_TASKS = 256;
+
 const text = (...values) => values.find((v) => typeof v === 'string' && v.trim())?.trim() ?? null;
 
-export function normalCommand(command) {
-  return String(command).replace(/[\u0000-\u001f\u007f?\s]+/g, ' ').trim();
+function commandHash(command) {
+  return crypto.createHash('sha256').update(command.replace(/\s+/g, ' ').trim()).digest('hex').slice(0, 32);
 }
 
-export function commandHash(command) {
-  return crypto.createHash('sha256').update(normalCommand(command)).digest('hex').slice(0, 32);
-}
-
-// Every Claude Code Bash command runs in a shell of the same form, and every PowerShell command on Windows in a
-// launcher that carries no command text: one of these finds the command when nothing else does and only one could be it.
-export const CLAUDE_BASH_MARK = commandHash('agent-guild:claude-code-bash');
-export const CLAUDE_POWERSHELL_MARK = commandHash('agent-guild:claude-code-powershell');
-
-const SHELL_KEYWORDS = new Set(['if', 'then', 'else', 'elif', 'fi', 'do', 'done', 'case', 'esac', 'while', 'until', 'for', 'select', '!', '{', '}', '[[', 'function', 'time', 'coproc']);
-const ASSIGNMENT = /^[A-Za-z_]\w*=/;
-
-// bash and zsh replace themselves with the last simple command of a -c script, leaving its words as the process's argv.
-export function execHash(command) {
-  const words = lastSimpleCommand(command);
-  const argv = words && execArgv(words);
-  return argv ? commandHash(argv.join(' ')) : null;
-}
-
-// The index just past the double-quoted string opening at i, or -1 when it never closes.
-function skipDoubleQuoted(command, i) {
-  for (let j = i + 1; j < command.length; j++) {
-    const c = command[j];
-    if (c === '\\') j++;
-    else if (c === '"') return j + 1;
-    else if (c === '`' || (c === '$' && '({'.includes(command[j + 1]))) {
-      const end = skipExpansion(command, j);
-      if (end === -1) return -1;
-      j = end - 1;
-    }
-  }
-  return -1;
-}
-
-// The index just past the $(...), ${...}, (...) or `...` opening at i, or -1 when it never closes.
-function skipExpansion(command, i) {
-  if (command[i] === '`') {
-    for (let j = i + 1; j < command.length; j++) {
-      if (command[j] === '\\') j++;
-      else if (command[j] === '`') return j + 1;
-    }
-    return -1;
-  }
-  const from = command[i] === '$' ? i + 1 : i;
-  const open = command[from];
-  const close = open === '(' ? ')' : '}';
-  let depth = 0;
-  for (let j = from; j < command.length; j++) {
-    const c = command[j];
-    if (c === '\\') {
-      j++;
-    } else if (c === "'") {
-      j = command.indexOf("'", j + 1);
-      if (j === -1) return -1;
-    } else if (c === '"' || c === '`' || (c === '$' && '({'.includes(command[j + 1]))) {
-      const end = c === '"' ? skipDoubleQuoted(command, j) : skipExpansion(command, j);
-      if (end === -1) return -1;
-      j = end - 1;
-    } else if (c === open) {
-      depth++;
-    } else if (c === close && --depth === 0) {
-      return j + 1;
-    }
-  }
-  return -1;
-}
-
-// The here-document delimiter after << at i: { delimiter, stripTabs, end }, or null when there is none.
-function hereDocument(command, i) {
-  let j = i + 2;
-  const stripTabs = command[j] === '-';
-  if (stripTabs) j++;
-  while (command[j] === ' ' || command[j] === '\t') j++;
-  let delimiter = '';
-  while (j < command.length && !/[\s;&|<>()]/.test(command[j])) {
-    const c = command[j];
-    if (c === "'" || c === '"') {
-      const end = command.indexOf(c, j + 1);
-      if (end === -1) return null;
-      delimiter += command.slice(j + 1, end);
-      j = end + 1;
-    } else if (c === '\\') {
-      delimiter += command[j + 1] ?? '';
-      j += 2;
-    } else {
-      delimiter += c;
-      j++;
-    }
-  }
-  return delimiter ? { delimiter, stripTabs, end: j } : null;
-}
-
-// Each part of the command is read on its own, so an expansion, subshell or here-document only hides the part it is in.
-function lastSimpleCommand(command) {
-  const segments = [{ words: [], after: null, opaque: false }];
-  const hereDocuments = [];
-  let word = null;
-  let quoted = false;
-  let target = false;
-  const opaque = () => { segments.at(-1).opaque = true; };
-  const push = () => {
-    if (word !== null && !target) segments.at(-1).words.push(word);
-    if (word !== null) target = false;
-    word = null;
-    quoted = false;
-  };
-  for (let i = 0; i < command.length;) {
-    const c = command[i];
-    if (c === "'") {
-      const end = command.indexOf("'", i + 1);
-      if (end === -1) return null;
-      word = (word ?? '') + command.slice(i + 1, end);
-      quoted = true;
-      i = end + 1;
-    } else if (c === '"') {
-      let part = '';
-      for (i++; i < command.length && command[i] !== '"'; i++) {
-        if (command[i] === '\\' && command[i + 1] === '\n') {
-          i++;
-          continue;
-        }
-        if (command[i] === '\\' && '"\\$`'.includes(command[i + 1])) {
-          part += command[++i];
-          continue;
-        }
-        if (command[i] === '`' || (command[i] === '$' && '({'.includes(command[i + 1]))) {
-          const end = skipExpansion(command, i);
-          if (end === -1) return null;
-          opaque();
-          part += command.slice(i, end);
-          i = end - 1;
-          continue;
-        }
-        if (command[i] === '$') opaque();
-        part += command[i];
-      }
-      if (i >= command.length) return null;
-      word = (word ?? '') + part;
-      quoted = true;
-      i++;
-    } else if (c === '\\') {
-      if (command[i + 1] !== '\n') {
-        word = (word ?? '') + (command[i + 1] ?? '');
-        quoted = true;
-      }
-      i += 2;
-    } else if (c === '#' && word === null) {
-      while (i < command.length && command[i] !== '\n') i++;
-    } else if ('<>'.includes(c) || (c === '&' && command[i + 1] === '>')) {
-      if (command.startsWith('<<', i) && command[i + 2] !== '<') {
-        const here = hereDocument(command, i);
-        if (!here) return null;
-        if (word !== null && (quoted || !/^\d+$/.test(word))) push();
-        word = null;
-        quoted = false;
-        hereDocuments.push(here);
-        opaque();
-        i = here.end;
-        continue;
-      }
-      if (word !== null && (quoted || !/^\d+$/.test(word))) push();
-      word = null;
-      quoted = false;
-      while ('<>&|'.includes(command[i])) i++;
-      target = true;
-    } else if (';&|\n'.includes(c)) {
-      push();
-      const op = command[i + 1] === c && c !== '\n' && c !== ';' ? c + c : c;
-      segments.at(-1).after = op;
-      segments.push({ words: [], after: null, opaque: false });
-      i += op.length;
-      if (c === '\n' && hereDocuments.length) {
-        // The lines after the one that opened them are the documents' bodies, not commands.
-        for (const { delimiter, stripTabs } of hereDocuments.splice(0)) {
-          for (;;) {
-            if (i >= command.length) return null;
-            const eol = command.indexOf('\n', i);
-            const line = command.slice(i, eol === -1 ? command.length : eol);
-            i = eol === -1 ? command.length : eol + 1;
-            if ((stripTabs ? line.replace(/^\t+/, '') : line) === delimiter) break;
-          }
-        }
-      }
-    } else if (/\s/.test(c)) {
-      push();
-      i++;
-    } else if (c === '`' || c === '(' || (c === '$' && '({'.includes(command[i + 1]))) {
-      const end = skipExpansion(command, i);
-      if (end === -1) return null;
-      opaque();
-      word = (word ?? '') + command.slice(i, end);
-      i = end;
-    } else if (c === '$' && command[i + 1] === "'") {
-      let j = i + 2;
-      while (j < command.length && command[j] !== "'") j += command[j] === '\\' ? 2 : 1;
-      if (j >= command.length) return null;
-      opaque();
-      word = (word ?? '') + command.slice(i, j + 1);
-      i = j + 1;
-    } else if (c === ')') {
-      return null;
-    } else if ('${}'.includes(c)) {
-      opaque();
-      word = (word ?? '') + c;
-      i++;
-    } else if ('*?[~'.includes(c)) {
-      segments.at(-1).opaque = true;
-      word = (word ?? '') + c;
-      i++;
-    } else {
-      word = (word ?? '') + c;
-      i++;
-    }
-  }
-  push();
-  if (hereDocuments.length) return null;
-  const index = segments.findLastIndex((s) => s.words.length > 0);
-  if (index === -1) return null;
-  const last = segments[index];
-  if (last.opaque || last.after === '&' || last.after === '|' || segments[index - 1]?.after === '|') return null;
-  return last.words;
-}
-
-function execArgv(words) {
-  let start = 0;
-  while (start < words.length - 1 && ASSIGNMENT.test(words[start])) start++;
-  const [first, ...rest] = words.slice(start);
-  if (first === undefined || SHELL_KEYWORDS.has(first)) return null;
-  if (rest.length === 0) return [first];
-  switch (first) {
-    case 'builtin':
-    case 'noglob':
-    case 'nohup':
-      return execArgv(rest);
-    case 'command':
-      if (/^-[vV]$/.test(rest[0])) return [first, ...rest];
-      return execArgv(rest[0] === '-p' ? rest.slice(1) : rest);
-    case 'nice':
-      if (rest[0] === '-n' && rest.length > 2) return execArgv(rest.slice(2));
-      return execArgv(/^(?:-n?-?\d+|--adjustment=-?\d+)$/.test(rest[0]) ? rest.slice(1) : rest);
-    case 'env':
-      return envArgv(rest);
-    case 'exec':
-      return execBuiltinArgv(rest);
-    default:
-      return [first, ...rest];
-  }
-}
-
-function envArgv(words) {
-  let i = 0;
-  while (i < words.length - 1 && words[i].startsWith('-')) {
-    const option = words[i++];
-    if (option === '--') break;
-    if (option === '-S') return null;
-    if (option === '-u' || option === '-C') i++;
-    else if (!/^(?:-i|-0|--ignore-environment|--unset=.*|-u.+)$/.test(option)) return null;
-  }
-  return execArgv(words.slice(i));
-}
-
-function execBuiltinArgv(words) {
-  let name = null;
-  let login = false;
-  let i = 0;
-  while (i < words.length - 1 && words[i].startsWith('-')) {
-    const option = words[i++];
-    if (option === '--') break;
-    if (option === '-a') name = words[i++];
-    else if (/^-[cl]+$/.test(option)) login ||= option.includes('l');
-    else return null;
-  }
-  const program = words.slice(i);
-  if (program.length === 0 || (login && name !== null)) return null;
-  if (name === null && !login) return execArgv(program);
-  if (['env', 'nohup', 'nice'].includes(program[0])) return execArgv(program);
-  if (['builtin', 'noglob', 'command', 'exec'].includes(program[0])) return null;
-  const argv = execArgv(program);
-  return argv && [name ?? `-${argv[0]}`, ...argv.slice(1)];
-}
-
-function geminiBackgroundPid(response) {
+function geminiBackgroundPids(response) {
   const content = response?.llmContent;
   const body = typeof content === 'string' ? content
     : Array.isArray(content) ? content.map((part) => (typeof part === 'string' ? part : part?.text || '')).join('\n') : '';
-  const match = body.match(/Command is running in background\. PID: (\d+)/) || body.match(/moved to background \(PID: (\d+)\)/);
-  return match ? Number(match[1]) : null;
+  const own = body.match(/Command is running in background\. PID: (\d+)/) || body.match(/moved to background \(PID: (\d+)\)/);
+  if (own) return [Number(own[1])];
+  const left = body.match(/Background PIDs: (\d+(?:, \d+)*)/);
+  return left ? left[1].split(', ').map(Number) : [];
 }
 
-function shellReport(event, input, subagentId, toolName) {
+function shellReport(event, input, subagentId) {
   const toolInput = input.tool_input || input.toolInput || {};
   const id = text(input.tool_use_id, input.toolUseId);
   const ref = id ? { key: id.slice(0, 128) } : { bucket: crypto.createHash('sha256').update(JSON.stringify(toolInput)).digest('hex').slice(0, 32) };
-  const command = typeof toolInput.command === 'string' ? toolInput.command : null;
-  // Claude Code's Bash and PowerShell tools; Codex CLI's Bash carries a turn_id.
-  const claude = !text(input.turn_id) && (toolName === 'Bash' || toolName === 'PowerShell');
-  const hashes = {};
-  if (command) {
-    hashes.match = commandHash(command);
-    const exec = toolName === 'PowerShell' ? null : execHash(command);
-    if (exec && exec !== hashes.match) hashes.exec = exec;
-    if (claude) hashes.mark = toolName === 'PowerShell' ? CLAUDE_POWERSHELL_MARK : CLAUDE_BASH_MARK;
-  }
-  if (TOOL_START_EVENTS.has(event) || event === 'PermissionRequest') {
-    const report = { shell: event === 'PermissionRequest' ? 'waiting' : 'start', ...ref };
-    if (subagentId) report.agentId = `hook-${subagentId}`;
-    if (text(input.turn_id)) report.track = true;
-    // Claude Code reports nothing when Esc ends a command, so its process is followed once it is shown.
-    if (claude && id && event !== 'PermissionRequest') report.follow = true;
-    return { ...report, ...hashes };
-  }
-  if (event === 'PostToolUse' || event === 'AfterTool') {
-    const response = input.tool_response ?? input.toolResponse;
-    if (response && typeof response === 'object' && text(response.backgroundTaskId)) return { shell: 'background', ...ref, ...hashes };
-    const pid = geminiBackgroundPid(response);
-    if (pid) return { shell: 'background', ...ref, pid };
-  }
+  const agent = subagentId ? { agentId: `hook-${subagentId}` } : {};
+  const match = typeof toolInput.command === 'string' ? { match: commandHash(toolInput.command) } : {};
+  // Codex CLI (its events carry turn_id) keeps a command running past its turn, and reports no end for one it refused.
+  const codex = Boolean(text(input.turn_id));
+  if (event === 'PermissionRequest') return { shell: codex ? 'asked' : 'waiting', ...agent, ...match };
+  if (TOOL_START_EVENTS.has(event)) return { shell: 'start', ...ref, ...agent, ...match, ...(codex ? { persist: true } : {}) };
+  const response = input.tool_response ?? input.toolResponse;
+  const task = text(response?.backgroundTaskId);
+  if (task) return { shell: 'background', ...ref, task: task.slice(0, 128), ...(response.backgroundEndsWithFinalResponse === true ? { endsWithAgent: true } : {}) };
+  const pids = geminiBackgroundPids(response);
+  if (pids.length) return { shell: 'background', ...ref, pids };
   return { shell: 'end', ...ref };
 }
 
@@ -365,8 +77,13 @@ function taskNotifications(prompt) {
   if (typeof prompt !== 'string' || !/^\s*<task-notification>/.test(prompt)) return null;
   return [...prompt.matchAll(/<task-notification>([\s\S]*?)<\/task-notification>/g)].map(([, body]) => {
     const tag = (name) => body.match(new RegExp(`<${name}>([^<]*)</${name}>`))?.[1].trim() || null;
-    return { taskId: tag('task-id'), status: tag('status') };
+    return { taskId: tag('task-id'), toolUseId: tag('tool-use-id'), status: tag('status') };
   });
+}
+
+function runningShells(tasks) {
+  const ids = tasks.filter((task) => task?.type === 'shell' && !FINISHED_TASKS.has(task.status)).map((task) => text(task.id)).filter(Boolean);
+  return { shell: 'running', tasks: ids.slice(0, MAX_RUNNING_TASKS).map((id) => id.slice(0, 128)) };
 }
 
 /** "subagent_start", "subagentStart" and "SubagentStart" all become "SubagentStart". */
@@ -375,11 +92,7 @@ function eventName(input) {
   return raw.replace(/(?:^|[_-])([a-z])/g, (_m, c) => c.toUpperCase());
 }
 
-/**
- * Reports for one hook event: an agent report (has agentId) when a
- * sub-agent starts or stops, and a model report (has model) when the event
- * names the main model. Empty for events that carry neither.
- */
+/** Reports for one hook event: its sub-agents, shell commands, model and the tool's own session id. */
 export function hookToReports(input) {
   if (!input || typeof input !== 'object') return [];
   const event = eventName(input);
@@ -403,15 +116,18 @@ export function hookToReports(input) {
       if (detail) report.detail = detail.slice(0, MAX_DETAIL);
       reports.push(report);
     }
+    if (Array.isArray(input.background_tasks)) reports.push(runningShells(input.background_tasks));
     return reports;
   }
 
   if (event === 'UserPromptSubmit' && !text(input.turn_id)) {
     // Claude Code (turn_id is Codex's) fires this for a prompt typed while a turn runs, too, so it is no turn boundary.
-    // It also brings each background task's end; a sub-agent stopped with TaskStop gets no SubagentStop, only this,
-    // and its task id is its agent id.
-    for (const { taskId, status } of taskNotifications(input.prompt) ?? []) {
-      if (taskId && ['completed', 'failed', 'killed'].includes(status)) reports.push({ agentId: `hook-${taskId}`, status: 'done' });
+    // It also brings each background task's end; a sub-agent's task id is its agent id, and one stopped with TaskStop
+    // gets no SubagentStop.
+    for (const { taskId, toolUseId, status } of taskNotifications(input.prompt) ?? []) {
+      if (!taskId || LIVE_TASKS.has(status)) continue;
+      reports.push({ shell: 'end', task: taskId.slice(0, 128), ...(toolUseId ? { key: toolUseId.slice(0, 128) } : {}) });
+      if (FINISHED_TASKS.has(status)) reports.push({ agentId: `hook-${taskId}`, status: 'done' });
     }
     return reports;
   }
@@ -423,13 +139,18 @@ export function hookToReports(input) {
     const childType = text(input.subagent_type, input.subagentType);
     const childId = text(input.session_id, input.sessionId);
     if (childType && childId) reports.push({ agentId: `hook-${childId}`, name: childType, kind: 'subagent', status: 'done' });
+    else if (event === 'SessionEnd') reports.push({ shell: 'reset' });
     return reports;
   }
 
   const toolName = text(input.tool_name, input.toolName);
   const toolEvent = TOOL_START_EVENTS.has(event) || TOOL_END_EVENTS.has(event);
-  const permissionWait = event === 'PermissionRequest' && toolName !== 'PowerShell';
-  if ((toolEvent || permissionWait) && SHELL_TOOLS.has(toolName)) reports.push(shellReport(event, input, subagentId, toolName));
+  if ((toolEvent || event === 'PermissionRequest') && SHELL_TOOLS.has(toolName)) reports.push(shellReport(event, input, subagentId));
+  if (TOOL_END_EVENTS.has(event) && toolName === 'TaskStop') {
+    const toolInput = input.tool_input || input.toolInput || {};
+    const task = text(toolInput.task_id, toolInput.shell_id);
+    if (task) reports.push({ shell: 'end', task: task.slice(0, 128) }, { agentId: `hook-${task}`, status: 'done' });
+  }
   if (toolEvent && SUBAGENT_TOOLS.has(toolName)) {
     const toolInput = input.tool_input || input.toolInput || {};
     if (toolInput.run_in_background !== true) {
@@ -467,6 +188,7 @@ export function hookToReports(input) {
   // AfterAgent in Gemini CLI; a main-thread prompt or Stop elsewhere) cannot
   // happen while the parent waits for a foreground agent, so one still
   // working then has been orphaned.
+  if (event === 'Stop' && Array.isArray(input.background_tasks)) reports.push(runningShells(input.background_tasks));
   if (!insideSubagent && TURN_BOUNDARY_EVENTS.has(event)) reports.push({ finishForeground: true });
 
   const model = insideSubagent || toolEvent ? null : event === 'PostModelSwitch'
