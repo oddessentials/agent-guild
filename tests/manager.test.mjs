@@ -1223,6 +1223,32 @@ test('a Claude Code command waiting for permission shows only once it runs, and 
   await call('DELETE', `/sessions/${tool.session.id}`);
 });
 
+test('a permission request that matches no command and could be any of several leaves them all as they were', async () => {
+  const tool = await startTool('anthropic');
+  await waitFor(reportingIs(tool.session.id, 'active'), { label: 'hooks', timeout: 15000 });
+  await runShells(tool, ['shell-denied a npm test', 'shell-denied b make lint'], 'SHELL-DENIED b');
+  await waitFor(shellCountIs(tool.session.id, 2), { label: 'both shown' });
+  const session = ctx.manager.get(tool.session.id);
+  const byCommand = () => Object.fromEntries([...session.shells.values()].map((sh) => [sh.key, { match: sh.match, awaiting: sh.awaiting }]));
+  const before = byCommand();
+
+  await runShells(tool, ['permit npm test -- --runInBand'], 'PERMIT npm test -- --runInBand');
+  assert.deepEqual(byCommand(), before, 'a rewritten request for a, with b also waiting, changes neither');
+  assert.equal((await shellsNow(tool.session.id)).length, 2);
+
+  await runShells(tool, ['permit make lint'], 'PERMIT make lint');
+  assert.equal(session.shells.size, 2);
+  assert.equal(byCommand().b.awaiting, true, 'the request naming b\'s own command finds b');
+  assert.equal(byCommand().a.awaiting, false);
+  await waitFor(shellCountIs(tool.session.id, 1), { label: 'only b hidden' });
+
+  await runShells(tool, ['permit npm test -- --ci'], 'PERMIT npm test -- --ci');
+  assert.equal(byCommand().a.awaiting, true, 'once a is the only command still to run, the rewritten request is a\'s');
+  await waitFor(shellCountIs(tool.session.id, 0), { label: 'both hidden' });
+  await tool.client.close();
+  await call('DELETE', `/sessions/${tool.session.id}`);
+});
+
 test('a Claude Code background command a PreToolUse hook rewrote ends with the rewritten command\'s process', async () => {
   const tool = await startTool('anthropic');
   await waitFor(reportingIs(tool.session.id, 'active'), { label: 'hooks', timeout: 15000 });
@@ -1358,6 +1384,42 @@ test('identical Gemini CLI commands each get their own familiar, and a backgroun
   await waitFor(boundShells(tool.session.id, 1), { label: 'bound to the pid Gemini named', timeout: bindTimeout });
   await waitFor(() => stripAnsi(tool.client.output).includes('SHELL-EXITED server'), { label: 'server exit', timeout: 20000 });
   await waitFor(shellCountIs(tool.session.id, 0), { label: 'ended with its pid', timeout: 10000 });
+  await tool.client.close();
+  await call('DELETE', `/sessions/${tool.session.id}`);
+});
+
+test('a Gemini CLI call whose input a BeforeTool hook rewrote still ends, unless it could be another call', async (t) => {
+  assert.equal((await call('POST', '/providers/google/reporting', { enabled: true })).status, 200);
+  t.after(() => call('POST', '/providers/google/reporting', { enabled: false }));
+  const tool = await startTool('google');
+  await waitFor(reportingIs(tool.session.id, 'active'), { label: 'hooks', timeout: 15000 });
+
+  tool.client.input('shell fgr 2000 fg-rewrite npm test');
+  await waitFor(shellCountIs(tool.session.id, 1), { label: 'shown' });
+  await waitForText(tool.client, tool.session.id, 'SHELL-DONE fgr', 'end');
+  await waitFor(shellCountIs(tool.session.id, 0), { label: 'ended by its rewritten AfterTool', timeout: 1000 });
+
+  tool.client.input('shell bgr 6000 bg-rewrite npm start');
+  await waitFor(boundShells(tool.session.id, 1), { label: 'bound to the pid its rewritten AfterTool named', timeout: bindTimeout });
+  await waitFor(() => stripAnsi(tool.client.output).includes('SHELL-EXITED bgr'), { label: 'exit', timeout: 20000 });
+  await waitFor(shellCountIs(tool.session.id, 0), { label: 'ended with its pid', timeout: 10000 });
+
+  tool.client.input('shell one 2500 fg-rewrite make a');
+  tool.client.input('shell two 6000 fg make b');
+  await waitFor(shellCountIs(tool.session.id, 2), { label: 'both shown' });
+  await waitForText(tool.client, tool.session.id, 'SHELL-DONE one', 'first end');
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal((await shellsNow(tool.session.id)).length, 2, 'a rewritten end that could be either command ends neither');
+  await waitForText(tool.client, tool.session.id, 'SHELL-DONE two', 'second end');
+  await waitFor(shellCountIs(tool.session.id, 1), { label: 'the second ends by its own input', timeout: 1000 });
+  await runShells(tool, ['turn-end'], 'TURN-ENDED');
+  await waitFor(shellCountIs(tool.session.id, 0), { label: 'the first ends with the turn', timeout: 1000 });
+
+  const working = (name) => agentIs(tool.session.id, name, 'working');
+  await runShells(tool, ['subagent g1 researcher', 'subagent-done-rewritten g1 researcher'], 'SUBAGENT-DONE g1');
+  await waitFor(agentIs(tool.session.id, 'researcher', 'done'), { label: 'the agent ends by its rewritten AfterTool' });
+  await runShells(tool, ['subagent g2 planner', 'subagent g3 coder', 'subagent-done-rewritten g2 planner'], 'SUBAGENT-DONE g2');
+  assert.ok(await working('planner')() && await working('coder')(), 'a rewritten end that could be either agent ends neither');
   await tool.client.close();
   await call('DELETE', `/sessions/${tool.session.id}`);
 });

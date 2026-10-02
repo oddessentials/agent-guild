@@ -16,6 +16,7 @@
 //   prompt                 a user prompt (Codex runs its SessionStart hooks here)
 //   subagent <id> <type>   a sub-agent starts; Gemini: an invoke_agent call starts
 //   subagent-done <id> <type>
+//   subagent-done-rewritten <id> <type>   Gemini: the end, with input a BeforeTool hook rewrote
 //   shell <id> <ms> [fg|bg|exec|ps|ask-yes|ask-no|ask-rewrite|bg-rewrite] [command...]
 //                          runs a shell command for <ms> as the tool would: its hooks, and a
 //                          process whose command line has the tool's own form (Claude Code's
@@ -28,6 +29,7 @@
 //                          the -rewrite modes run a command a PreToolUse hook rewrote
 //   shell-denied <id> [command...]
 //                          a start event with no process and no end event
+//   permit <command...>    a permission request for a command, with no tool_use_id
 //   tool <agent-id> <tool>  a sub-agent calls a tool that is not a shell
 //   turn-end               the main thread's turn ends
 //   exit
@@ -278,6 +280,12 @@ function runTool() {
       out(`SHELL-DENIED ${id}`);
       return;
     }
+    if (cmd === 'permit') {
+      const command = [id, type, ...rest].join(' ');
+      await runHooks(hooks, 'PermissionRequest', { tool_name: toolName, tool_input: { command }, permission_suggestions: [] }, toolName);
+      out(`PERMIT ${command}`);
+      return;
+    }
     if (cmd === 'turn-end') {
       await runHooks(hooks, { claude: 'Stop', codex: 'UserPromptSubmit', gemini: 'AfterAgent', grok: 'Stop' }[tool], { stop_hook_active: false, prompt: 'next' });
       out('TURN-ENDED');
@@ -287,10 +295,11 @@ function runTool() {
       await sessionStart();
       await runHooks(hooks, tool === 'gemini' ? 'BeforeAgent' : 'UserPromptSubmit', { prompt: 'hi' });
       out('PROMPT-DONE');
-    } else if (cmd === 'subagent' || cmd === 'subagent-done') {
+    } else if (cmd === 'subagent' || cmd === 'subagent-done' || cmd === 'subagent-done-rewritten') {
       const start = cmd === 'subagent';
       if (tool === 'gemini') {
-        await runHooks(hooks, start ? 'BeforeTool' : 'AfterTool', { tool_name: 'invoke_agent', tool_input: { agent_name: type, prompt: `task ${id}` } }, 'invoke_agent');
+        const prompt = cmd === 'subagent-done-rewritten' ? `task ${id}, rewritten by a BeforeTool hook` : `task ${id}`;
+        await runHooks(hooks, start ? 'BeforeTool' : 'AfterTool', { tool_name: 'invoke_agent', tool_input: { agent_name: type, prompt } }, 'invoke_agent');
       } else if (tool === 'grok') {
         await runHooks(hooks, start ? 'SubagentStart' : 'SubagentStop', { hookEventName: start ? 'subagent_start' : 'subagent_stop', subagentId: id, subagentType: type });
       } else {

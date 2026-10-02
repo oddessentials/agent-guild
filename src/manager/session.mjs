@@ -395,6 +395,11 @@ export class Session extends EventEmitter {
     }
     const now = new Date().toISOString();
     const existing = this.agents.get(id);
+    if (!existing && status === 'done' && report.foreground === true) {
+      // Gemini CLI's invoke_agent is paired by its input, which a BeforeTool hook may rewrite before AfterTool.
+      const working = [...this.agents.values()].filter((agent) => agent.foreground && agent.status === 'working');
+      return working.length === 1 ? this.reportAgent({ agentId: working[0].id, status: 'done' }, source) : null;
+    }
     // A first report that already says done would only flash an icon:
     // Claude Code's internal helpers (prompt suggestions, side questions)
     // stop without ever having started here.
@@ -485,15 +490,10 @@ export class Session extends EventEmitter {
 
     if (report.shell === 'waiting') {
       // Claude Code's PermissionRequest carries no tool_use_id, and a PreToolUse hook may have rewritten the
-      // command; it belongs to the agent's latest command still to run, as permission is asked one call at a time.
+      // command: without its hash, it belongs to a command only when the agent has no other still to run.
       let pending = key ? this._shellByKey(key) : null;
-      let latest = null;
-      for (const shell of this.shells.values()) {
-        if (pending || !shell.open || shell.awaiting || shell.start !== null || shell.agentId !== agentId) continue;
-        latest = shell;
-        if (match && shell.match === match) pending = shell;
-      }
-      pending ??= latest;
+      const candidates = [...this.shells.values()].filter((shell) => shell.open && !shell.awaiting && shell.start === null && shell.agentId === agentId);
+      pending ??= (match && candidates.find((shell) => shell.match === match)) || (candidates.length === 1 ? candidates[0] : null);
       if (!pending) return null;
       if (match) Object.assign(pending, { match, exec: hash(report.exec) });
       this._awaitPermission(pending);
@@ -523,7 +523,7 @@ export class Session extends EventEmitter {
       return null;
     }
 
-    const shell = key ? this._shellByKey(key) : [...this.shells.values()].find((s) => s.bucket === bucket && s.open);
+    const shell = key ? this._shellByKey(key) : this._shellByBucket(bucket);
     if (!shell) return null;
     shell.open = false;
     const pid = Number.isInteger(report.pid) && report.pid > 0 ? report.pid : null;
@@ -564,6 +564,12 @@ export class Session extends EventEmitter {
       shell.track = true;
       this.emit('shells-tracking', this);
     }
+  }
+
+  // Gemini CLI's calls are paired by their input, which a BeforeTool hook may rewrite before AfterTool.
+  _shellByBucket(bucket) {
+    const open = [...this.shells.values()].filter((shell) => shell.open && shell.bucket !== null);
+    return open.find((shell) => shell.bucket === bucket) ?? (open.length === 1 ? open[0] : null);
   }
 
   _shellByKey(key) {
