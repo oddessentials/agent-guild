@@ -170,7 +170,7 @@ main { max-width: 1200px; margin: 0 auto; padding: 26px 16px 56px; display: grid
   content: ""; display: inline-block; flex: none; width: 0.75em; height: 0.75em; margin-left: 0.3em; vertical-align: -0.05em;
   background: currentColor; mask: var(--icon-chevron) center / contain no-repeat;
 }
-.console-link::after { width: 0.7em; height: 0.7em; margin-left: 0.25em; mask-image: var(--icon-external); }
+.console-link::after { content: "\2060"; display: inline; padding-left: 0.7em; margin-left: 0.25em; mask-image: var(--icon-external); }
 .model-stats-head:hover { text-decoration: underline; }
 .model-stats-head:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 3px; }
 
