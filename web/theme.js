@@ -7,6 +7,7 @@
   var skins = [
     { id: 'guild', name: 'Guild' },
     { id: 'professional', name: 'Professional' },
+    { id: 'orbital', name: 'Orbital' },
   ];
   window.agentGuildSkins = skins;
 
