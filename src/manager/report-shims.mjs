@@ -48,6 +48,7 @@ export function shimContents({ execPath, script, platform = process.platform }) 
   const files = {
     [SHIM_NAME]: [
       '#!/bin/sh',
+      '[ "$1" = --hook ] && [ -z "$AGENT_GUILD_SESSION_ID" ] && exec cat >/dev/null',
       `n=${shQuote(forSh(execPath))}`,
       '[ -x "$n" ] || n=node',
       `exec "$n" ${shQuote(forSh(script))} "$@"`,
@@ -58,6 +59,7 @@ export function shimContents({ execPath, script, platform = process.platform }) 
     files[LOADER_NAME] = `import ${JSON.stringify(fileUrl(script, platform))};\n`;
     files[`${SHIM_NAME}.cmd`] = [
       '@ECHO OFF',
+      'IF "%~1"=="--hook" IF NOT DEFINED AGENT_GUILD_SESSION_ID EXIT /B 0',
       'IF EXIST "%AGENT_GUILD_NODE%" GOTO manager',
       `node "%~dp0${LOADER_NAME}" %*`,
       'EXIT /B %ERRORLEVEL%',

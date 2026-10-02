@@ -253,7 +253,6 @@ export class ProviderRegistry extends EventEmitter {
     this.versions = new Map();
     this._refreshing = null;
     this._npmRegistry = null;
-    /** (provider, account) => true or false for a provider whose reporting needs turning on per account; set by the manager. */
     this.reportingEnabled = null;
     this.reload();
   }

@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 // Report an agent, or the model in use, inside an Agent Guild session.
 //
-// The session manager injects AGENT_GUILD_URL, AGENT_GUILD_SESSION_ID,
-// AGENT_GUILD_REPORT_TOKEN and AGENT_GUILD_REPORT_FILE (a file holding the
-// same token) into every terminal it starts. Outside such a terminal this
-// command does nothing and exits 0, so hooks that call it are harmless when
-// the tool runs elsewhere.
+// The session manager injects AGENT_GUILD_URL, AGENT_GUILD_SESSION_ID and
+// AGENT_GUILD_REPORT_TOKEN into every terminal it starts. Outside such a
+// terminal this command does nothing and exits 0, so hooks that call it are
+// harmless when the tool runs elsewhere.
 //
 //   agent-guild-report <agent-id> [--name N] [--status working|waiting|idle|done]
 //                      [--detail TEXT] [--kind KIND] [--remove]
@@ -22,11 +21,6 @@ import { hookToReports, claudeStatuslineToReport, formatStatusLine } from '../sr
 
 const env = process.env;
 
-/**
- * Gemini CLI's optional environment redaction removes every variable whose
- * name looks secret, AGENT_GUILD_REPORT_TOKEN included, before it runs a
- * hook; the token file's path survives it.
- */
 function reportToken() {
   if (env.AGENT_GUILD_REPORT_TOKEN) return env.AGENT_GUILD_REPORT_TOKEN;
   if (!env.AGENT_GUILD_REPORT_FILE) return null;

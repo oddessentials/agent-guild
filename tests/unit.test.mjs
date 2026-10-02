@@ -1879,14 +1879,14 @@ test('the agent-guild-report launchers run the reporter from any hook shell', ()
   const script = '/opt/agent guild/bin/agent-guild-report.mjs';
   const posix = shimContents({ execPath: '/usr/local/n$v/node', script, platform: 'linux' });
   assert.deepEqual(Object.keys(posix), [SHIM_NAME]);
-  assert.equal(posix[SHIM_NAME], '#!/bin/sh\nn="/usr/local/n\\$v/node"\n[ -x "$n" ] || n=node\nexec "$n" "/opt/agent guild/bin/agent-guild-report.mjs" "$@"\n');
+  assert.equal(posix[SHIM_NAME], '#!/bin/sh\n[ "$1" = --hook ] && [ -z "$AGENT_GUILD_SESSION_ID" ] && exec cat >/dev/null\nn="/usr/local/n\\$v/node"\n[ -x "$n" ] || n=node\nexec "$n" "/opt/agent guild/bin/agent-guild-report.mjs" "$@"\n');
 
   const winScript = 'C:\\Users\\José\\100%\\agent-guild\\bin\\agent-guild-report.mjs';
   const win = shimContents({ execPath: 'C:\\Program Files\\nodejs\\node.exe', script: winScript, platform: 'win32' });
   assert.deepEqual(Object.keys(win).sort(), [SHIM_NAME, LOADER_NAME, `${SHIM_NAME}.cmd`], 'no .ps1: PowerShell would prefer it and its default policy refuses it');
-  assert.equal(win[SHIM_NAME], '#!/bin/sh\nn="C:/Program Files/nodejs/node.exe"\n[ -x "$n" ] || n=node\nexec "$n" "C:/Users/José/100%/agent-guild/bin/agent-guild-report.mjs" "$@"\n', 'Git Bash takes forward slashes');
+  assert.equal(win[SHIM_NAME], '#!/bin/sh\n[ "$1" = --hook ] && [ -z "$AGENT_GUILD_SESSION_ID" ] && exec cat >/dev/null\nn="C:/Program Files/nodejs/node.exe"\n[ -x "$n" ] || n=node\nexec "$n" "C:/Users/José/100%/agent-guild/bin/agent-guild-report.mjs" "$@"\n', 'Git Bash takes forward slashes');
   // cmd.exe reads the batch file in the OEM code page, so the paths stay out of it.
-  assert.equal(win[`${SHIM_NAME}.cmd`], '@ECHO OFF\r\nIF EXIST "%AGENT_GUILD_NODE%" GOTO manager\r\nnode "%~dp0agent-guild-report-loader.mjs" %*\r\nEXIT /B %ERRORLEVEL%\r\n:manager\r\n"%AGENT_GUILD_NODE%" "%~dp0agent-guild-report-loader.mjs" %*\r\n');
+  assert.equal(win[`${SHIM_NAME}.cmd`], '@ECHO OFF\r\nIF "%~1"=="--hook" IF NOT DEFINED AGENT_GUILD_SESSION_ID EXIT /B 0\r\nIF EXIST "%AGENT_GUILD_NODE%" GOTO manager\r\nnode "%~dp0agent-guild-report-loader.mjs" %*\r\nEXIT /B %ERRORLEVEL%\r\n:manager\r\n"%AGENT_GUILD_NODE%" "%~dp0agent-guild-report-loader.mjs" %*\r\n');
   assert.equal(win[LOADER_NAME], 'import "file:///C:/Users/Jos%C3%A9/100%25/agent-guild/bin/agent-guild-report.mjs";\n');
   for (const name of [`${SHIM_NAME}.cmd`, LOADER_NAME]) assert.match(win[name], /^[\x20-\x7e\r\n]+$/, `${name} is ASCII`);
   assert.equal(fileUrl('/tmp/a b/#1/x.mjs', 'linux'), 'file:///tmp/a%20b/%231/x.mjs');
@@ -1919,12 +1919,15 @@ test('the agent-guild-report launchers run the reporter from any hook shell', ()
     for (const [file, args, why] of winArgs) assert.match(run(file, args, withNode), /^Usage: agent-guild-report/, why);
     // The manager's Node.js is gone: `node` on the (real) PATH takes over.
     assert.match(run(cmd, ['/d', '/s', '/c', `${SHIM_NAME} --help`], { ...withNode, AGENT_GUILD_NODE: gone }), /^Usage: agent-guild-report/, 'falls back to node on PATH');
+    const outside = { SystemRoot: process.env.SystemRoot, ComSpec: cmd, PATH: system32, AGENT_GUILD_NODE: gone };
+    assert.equal(run(cmd, ['/d', '/s', '/c', `"${path.join(dir, `${SHIM_NAME}.cmd`)}" --hook`], outside), '');
   } else {
     assert.ok((fs.statSync(path.join(dir, SHIM_NAME)).mode & 0o111) !== 0, 'the sh launcher is executable');
     assert.match(run('/bin/sh', ['-c', `${SHIM_NAME} --help`], withNode), /^Usage: agent-guild-report/, 'sh (Claude Code, Grok Build) runs the launcher');
     fs.symlinkSync(process.execPath, path.join(nodeDir, 'node'));
     writeReportShims({ dir, execPath: gone, script: reporter });
     assert.match(run('/bin/sh', ['-c', `${SHIM_NAME} --help`], { PATH: `${dir}:${nodeDir}` }), /^Usage: agent-guild-report/, 'falls back to node on PATH');
+    assert.equal(execFileSync('/bin/sh', ['-c', `${SHIM_NAME} --hook`], { env: { PATH: `${dir}:/usr/bin:/bin` }, input: '{"hook_event_name":"BeforeModel"}', encoding: 'utf8' }), '');
   }
 });
 
@@ -2923,8 +2926,8 @@ test('every reporting bundle runs the reporter, Gemini\'s by full path in the sh
 
 test('Codex hook overrides avoid double quotes, and trust only the handlers Codex lists as ours', () => {
   const args = codexHookArgs();
-  assert.deepEqual(args.filter((a, i) => i % 2 === 0), ['-c', '-c', '-c', '-c']);
-  assert.deepEqual(args.filter((a, i) => i % 2 === 1).map((a) => a.split('=')[0]), ['hooks.SessionStart', 'hooks.UserPromptSubmit', 'hooks.SubagentStart', 'hooks.SubagentStop']);
+  assert.deepEqual(args.filter((a, i) => i % 2 === 0), ['-c', '-c', '-c', '-c', '-c']);
+  assert.deepEqual(args.filter((a, i) => i % 2 === 1).map((a) => a.split('=')[0]), ['hooks.SessionStart', 'hooks.UserPromptSubmit', 'hooks.SubagentStart', 'hooks.SubagentStop', 'hooks.PreToolUse']);
   assert.ok(args.every((a) => !a.includes('"')), 'nothing for cmd.exe or argv parsing to escape');
   for (const a of args.filter((x, i) => i % 2 === 1)) assert.equal(buildSpawnSpec('C:\\npm\\codex.cmd', [a], {}, 'win32').args.includes(`"${a}"`), true);
 
@@ -2932,13 +2935,13 @@ test('Codex hook overrides avoid double quotes, and trust only the handlers Code
     key: `/<session-flags>/config.toml:${eventName}:0:0`, eventName, command: REPORT_COMMAND, source: 'sessionFlags', enabled: true,
     currentHash: `sha256:${eventName}`, trustStatus: 'untrusted', ...extra,
   });
-  const all = [hook('sessionStart'), hook('userPromptSubmit'), hook('subagentStart'), hook('subagentStop')];
+  const all = [hook('sessionStart'), hook('userPromptSubmit'), hook('subagentStart'), hook('subagentStop'), hook('preToolUse')];
   const listed = codexHooksFrom({ data: [{ hooks: [...all, hook('subagentStart', { source: 'user', key: 'user-key', command: 'mine' })] }] });
   assert.deepEqual(listed.map((h) => h.key), all.map((h) => h.key), 'the user\'s own hooks are never trusted by us');
   assert.equal(codexHooksFrom({ data: [{ hooks: all.slice(1) }] }), null, 'a missing handler means Codex did not load ours');
   assert.equal(codexHooksFrom({ data: [{ hooks: [...all.slice(1), hook('sessionStart', { enabled: false })] }] }), null);
   const [, state] = codexTrustArgs(listed);
-  assert.equal(state, `hooks.state={'/<session-flags>/config.toml:sessionStart:0:0'={trusted_hash='sha256:sessionStart'},'/<session-flags>/config.toml:userPromptSubmit:0:0'={trusted_hash='sha256:userPromptSubmit'},'/<session-flags>/config.toml:subagentStart:0:0'={trusted_hash='sha256:subagentStart'},'/<session-flags>/config.toml:subagentStop:0:0'={trusted_hash='sha256:subagentStop'}}`);
+  assert.equal(state, `hooks.state={'/<session-flags>/config.toml:sessionStart:0:0'={trusted_hash='sha256:sessionStart'},'/<session-flags>/config.toml:userPromptSubmit:0:0'={trusted_hash='sha256:userPromptSubmit'},'/<session-flags>/config.toml:subagentStart:0:0'={trusted_hash='sha256:subagentStart'},'/<session-flags>/config.toml:subagentStop:0:0'={trusted_hash='sha256:subagentStop'},'/<session-flags>/config.toml:preToolUse:0:0'={trusted_hash='sha256:preToolUse'}}`);
   assert.equal(codexTrustArgs([{ key: "it's", hash: 'h' }]), null, 'a key that cannot be quoted is not trusted');
 });
 

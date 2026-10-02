@@ -127,10 +127,8 @@ export function hookToReports(input) {
     : text(input.model, input.modelId, input.llm_request?.model);
   if (model) reports.push({ model });
 
-  // Tells the manager the hooks are running.
   if (!insideSubagent && event === 'SessionStart') reports.push({ hello: true });
 
-  // Gemini CLI versions before its SessionStart event: the turn start stands in.
   const toolSessionId = insideSubagent ? null : text(input.session_id, input.sessionId);
   if (toolSessionId && (event === 'SessionStart' || event === 'BeforeAgent')) reports.push({ toolSessionId });
   return reports;

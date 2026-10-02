@@ -65,7 +65,7 @@ by `GET /api/v1/info`.
 | `homeVar` | The environment variable that moves the tool's home folder, e.g. `CLAUDE_CONFIG_DIR`. Set for Claude Code, Codex CLI, Gemini CLI and Grok Build by default. |
 | `accountEnv` | Further variables set for every account other than the default, with `{dir}` standing for the account's folder. By default Claude Code's secure-storage folder follows the account, and Gemini CLI keeps the account's sign-in in a file rather than the shared OS keychain. |
 | `reporting` | How sessions get the agent reporting hooks: `"claude"`, `"codex"`, `"gemini"` or `"grok"` (see [agent-reporting.md](agent-reporting.md)), or unset for none. |
-| `hooks` | `{ "path", "example" }`: the hooks file inside the home folder that earlier versions copied from `examples/` into a new account. An untouched copy is removed where Agent Guild now supplies the hooks with each session. |
+| `hooks` | `{ "path", "example" }`: the hooks file inside the home folder that earlier versions copied from `examples/` into a new account. An untouched Codex CLI copy is removed when the session gets the same hooks from Agent Guild; Claude Code's copy stays, since it also sets the status line. |
 | `color`, `monogram`, `icon` | Icon appearance. `icon` is a URL path; you can also drop `<id>.svg` into `web/icons/`. |
 | `install`, `docs` | Help shown when the tool is not installed. |
 | `usageUrl`, `billingUrl` | `https://` links to the vendor's usage and billing pages, shown on the card. The defaults point at the subscription pages; set your API console instead, or `null` to hide a link. Google's usage link opens AI Studio, which counts API-key usage only, not the Gemini CLI sign-in quota the card's meters show. |

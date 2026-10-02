@@ -83,6 +83,10 @@ export function resolveAllCommands(command, env = process.env, platform = proces
   return hits;
 }
 
+export function killWindowsTree(pid, done = () => {}) {
+  execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, timeout: 5000 }, (err) => done(err));
+}
+
 /** Quote one argument for a cmd.exe command line. */
 export function quoteForCmd(arg) {
   const s = String(arg);

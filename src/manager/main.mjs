@@ -65,6 +65,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
   const github = new GitHub({ dir: paths.github, registry, ...githubOptions });
   const sessionHooks = new SessionHooks({ registry, dir: paths.reporting, version, shimDir });
   registry.reportingEnabled = (provider, account) => sessionHooks.enabled(provider, account);
+  sessionHooks.warm();
   const manager = new SessionManager({
     registry, baseEnv, getApiUrl: () => api.url, sessionDefaults, shimDir, selfUpdate, github, sessionHooks, reportTokenDir: paths.reportTokens,
   });
@@ -146,6 +147,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
     throw err;
   }
 
+  manager.sweepReportTokens();
   writeRuntimeFile({
     pid: process.pid,
     host,

@@ -10,11 +10,13 @@
 //   gemini  extensions linked under $GEMINI_CLI_HOME/.gemini/extensions; hooks run with
 //           Gemini's variable redaction (names containing TOKEN, KEY, AUTH ... removed)
 //   grok    --plugin-dir <dir>, accepted only when FAKE_GROK_PLUGIN_DIR=1, and $GROK_HOME/hooks/*.json
+// FAKE_CODEX_LOADS_NONE=1 makes Codex's hooks/list answer without our hooks.
 //
 // Lines typed into the session:
 //   prompt                 a user prompt (Codex runs its SessionStart hooks here)
 //   subagent <id> <type>   a sub-agent starts; Gemini: an invoke_agent call starts
 //   subagent-done <id> <type>
+//   tool <agent-id> <tool>  a sub-agent calls a tool
 //   exit
 
 import { spawn } from 'node:child_process';
@@ -57,6 +59,10 @@ if (tool === 'gemini' && argv[0] === 'extensions') {
   const dir = path.join(geminiHome(), 'extensions', 'agent-guild');
   if (argv[1] === 'link') {
     if (!argv.includes('--consent')) process.exit(1);
+    if (fs.existsSync(dir)) {
+      out('Extension "agent-guild" is already installed. Please uninstall it first.');
+      process.exit(1);
+    }
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, '.gemini-extension-install.json'), JSON.stringify({ source: path.resolve(argv[2]), type: 'link' }));
     out('Extension "agent-guild" linked successfully and enabled.');
@@ -67,7 +73,6 @@ if (tool === 'gemini' && argv[0] === 'extensions') {
   process.exit(0);
 }
 
-/** Codex: our parse of the -c TOML is only as deep as the manager's own values. */
 function codexOverrides() {
   const hooks = {};
   let state = {};
@@ -80,14 +85,14 @@ function codexOverrides() {
       process.exit(1);
     }
     const hook = key.match(/^hooks\.([A-Za-z]+)$/);
-    if (hook && hook[1] !== 'state') hooks[hook[1]] = [...body.matchAll(/command='([^']*)'/g)].map((m) => m[1]);
+    if (hook && hook[1] !== 'state') hooks[hook[1]] = { matcher: body.match(/matcher='([^']*)'/)?.[1], commands: [...body.matchAll(/command='([^']*)'/g)].map((m) => m[1]) };
     if (key === 'hooks.state') state = Object.fromEntries([...body.matchAll(/'([^']+)'=\{trusted_hash='([^']+)'\}/g)].map((m) => [m[1], m[2]]));
   }
   const snake = (event) => event.replace(/[A-Z]/g, (c, i) => `${i ? '_' : ''}${c.toLowerCase()}`);
-  return Object.entries(hooks).flatMap(([event, commands]) => commands.map((command, i) => {
+  return Object.entries(hooks).flatMap(([event, { matcher, commands }]) => commands.map((command, i) => {
     const key = `/<session-flags>/config.toml:${snake(event)}:0:${i}`;
     const hash = `sha256:${crypto.createHash('sha256').update(`${event}\0${command}`).digest('hex')}`;
-    return { event, command, key, hash, trusted: state[key] === hash };
+    return { event, matcher, command, key, hash, trusted: state[key] === hash };
   }));
 }
 
@@ -103,7 +108,7 @@ if (tool === 'codex' && argv.includes('app-server')) {
       buffer = buffer.slice(index + 1);
       if (msg.id === 1) process.stdout.write(`${JSON.stringify({ id: 1, result: { userAgent: 'fake' } })}\n`);
       if (msg.id === 2) {
-        const hooks = listed.map((h) => ({
+        const hooks = (process.env.FAKE_CODEX_LOADS_NONE === '1' ? [] : listed).map((h) => ({
           key: h.key, eventName: h.event.charAt(0).toLowerCase() + h.event.slice(1), command: h.command, source: 'sessionFlags',
           enabled: true, currentHash: h.hash, trustStatus: h.trusted ? 'trusted' : 'untrusted',
         }));
@@ -126,7 +131,6 @@ function pluginHooks(dirs) {
   return dirs.flatMap((dir) => settingsHooks(path.join(dir, 'hooks', 'hooks.json')));
 }
 
-/** Every hook the tool would run, as { event, matcher, command }. */
 function discover() {
   if (tool === 'claude') {
     const settings = path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'settings.json');
@@ -154,7 +158,6 @@ function discover() {
   return [...pluginHooks(flag('--plugin-dir')), ...files.flatMap((f) => settingsHooks(path.join(home, 'hooks', f)))];
 }
 
-/** Gemini CLI's redaction, on by default in these tests: what a real user can turn on. */
 const REDACTED = [/TOKEN/i, /SECRET/i, /PASSWORD/i, /PASSWD/i, /KEY/i, /AUTH/i, /CREDENTIAL/i, /CREDS/i, /PRIVATE/i, /CERT/i];
 function hookEnv() {
   if (tool !== 'gemini') return process.env;
@@ -188,7 +191,6 @@ function runTool() {
     started = true;
     return runHooks(hooks, 'SessionStart', { source: 'startup' });
   };
-  // Codex runs SessionStart with the first turn; the others when they start.
   if (tool !== 'codex') sessionStart();
 
   const handle = async (line) => {
@@ -207,6 +209,9 @@ function runTool() {
         await runHooks(hooks, start ? 'SubagentStart' : 'SubagentStop', { agent_id: id, agent_type: type });
       }
       out(`${start ? 'SUBAGENT' : 'SUBAGENT-DONE'} ${id}`);
+    } else if (cmd === 'tool') {
+      await runHooks(hooks, 'PreToolUse', { tool_name: type, tool_use_id: `call-${id}-${type}`, tool_input: {}, agent_id: id, ...(tool === 'codex' ? { turn_id: `turn-${id}` } : {}) }, type);
+      out(`TOOL ${id} ${type}`);
     } else if (cmd === 'exit') process.exit(0);
   };
 

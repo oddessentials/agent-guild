@@ -1,26 +1,12 @@
-// Agent reporting hooks that the manager supplies to each coding tool, so
-// sub-agents show on the card without the user editing the tool's settings.
-//
-// - Claude Code loads a plugin for one process with --plugin-dir.
-// - Codex CLI takes hooks as -c config overrides for one process. Codex runs
-//   a hook only once it is trusted; trust for exactly these handlers is
-//   passed the same way, built from the keys and hashes Codex itself reports
-//   for them, so nothing is written to ~/.codex. Both are probed against the
-//   installed binary first: an override Codex does not understand would stop
-//   it from starting.
-// - Gemini CLI has no per-process mechanism. The user links an extension
-//   holding the hooks, through Gemini's own `extensions link`, once.
-// - Grok Build's interactive mode accepts no --plugin-dir in the versions
-//   released so far; it is used when `grok --help` lists it.
-
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { buildSpawnSpec, runSpec } from './command-resolver.mjs';
+import { buildSpawnSpec, runSpec, killWindowsTree } from './command-resolver.mjs';
 
 export const REPORT_COMMAND = 'agent-guild-report --hook';
 export const EXTENSION_NAME = 'agent-guild';
+const MANIFEST_DESCRIPTION = 'Reports sub-agents to the Agent Guild session they run in.';
 const PROBE_TIMEOUT_MS = 20000;
 const PROBE_RETRY_MS = 5 * 60 * 1000;
 
@@ -28,25 +14,19 @@ const handler = (extra = {}) => ({ type: 'command', command: REPORT_COMMAND, ...
 const groups = (events, extra) => Object.fromEntries(events.map((event) => [event, [{ hooks: [handler(extra?.[event])] }]]));
 
 const CLAUDE_EVENTS = ['SessionStart', 'SubagentStart', 'SubagentStop', 'PostModelSwitch'];
-export const CODEX_EVENTS = ['SessionStart', 'UserPromptSubmit', 'SubagentStart', 'SubagentStop'];
+export const CODEX_EVENTS = ['SessionStart', 'UserPromptSubmit', 'SubagentStart', 'SubagentStop', 'PreToolUse'];
 const GROK_EVENTS = ['SessionStart', 'SubagentStart', 'SubagentStop', 'StopCancelled', 'SessionEnd'];
 
-/**
- * The command Gemini's hooks run. Its extension stays linked for sessions
- * started outside Agent Guild, where the launcher folder is not on PATH, so
- * the launcher is named by its full path, quoted for the shell Gemini uses:
- * PowerShell on Windows, bash elsewhere. Outside a session it does nothing.
- */
+// Gemini's extension stays linked outside Agent Guild, where the launchers are not on PATH.
 export function geminiCommand(shimDir, platform = process.platform) {
   if (!shimDir) return REPORT_COMMAND;
   if (platform === 'win32') return `& '${path.win32.join(shimDir, 'agent-guild-report.cmd').replace(/'/g, "''")}' --hook`;
   return `'${path.posix.join(shimDir, 'agent-guild-report').replace(/'/g, `'\\''`)}' --hook`;
 }
 
-/** The files of each bundle, by path relative to the bundle's folder. */
 export function bundleFiles(version, { shimDir = null, platform = process.platform } = {}) {
   const json = (value) => `${JSON.stringify(value, null, 2)}\n`;
-  const manifest = { name: EXTENSION_NAME, version, description: 'Reports sub-agents to the Agent Guild session they run in.' };
+  const manifest = { name: EXTENSION_NAME, version, description: MANIFEST_DESCRIPTION };
   const gemini = (name, matcher) => ({ ...(matcher ? { matcher } : {}), hooks: [handler({ name: `Agent Guild ${name}`, command: geminiCommand(shimDir, platform) })] });
   return {
     claude: {
@@ -73,7 +53,6 @@ export function bundleFiles(version, { shimDir = null, platform = process.platfo
   };
 }
 
-/** Write every bundle under `dir`, replacing each file atomically. Returns their folders. */
 export function writeBundles(dir, version, opts) {
   const out = {};
   for (const [name, files] of Object.entries(bundleFiles(version, opts))) {
@@ -90,7 +69,6 @@ export function writeBundles(dir, version, opts) {
   return out;
 }
 
-/** TOML literal strings: no double quotes, which cmd.exe and argv parsing would have to escape. */
 const tomlString = (value) => `'${value}'`;
 
 export function codexHookArgs() {
@@ -98,13 +76,11 @@ export function codexHookArgs() {
   return CODEX_EVENTS.flatMap((event) => ['-c', `hooks.${event}=${value}`]);
 }
 
-/** Trust for exactly the given hooks: [{ key, hash }] as Codex lists them. */
 export function codexTrustArgs(hooks) {
   if (hooks.some(({ key, hash }) => /['\n]/.test(key) || /['\n]/.test(hash))) return null;
   return ['-c', `hooks.state={${hooks.map(({ key, hash }) => `${tomlString(key)}={trusted_hash=${tomlString(hash)}}`).join(',')}}`];
 }
 
-/** Our handlers in a Codex `hooks/list` result, one per event, or null when any is missing. */
 export function codexHooksFrom(result) {
   const hooks = (result?.data || []).flatMap((entry) => entry.hooks || [])
     .filter((h) => h.source === 'sessionFlags' && h.command === REPORT_COMMAND && h.enabled !== false);
@@ -116,12 +92,6 @@ export function codexHooksFrom(result) {
   return found.map((h) => ({ key: h.key, hash: h.currentHash, trusted: h.trustStatus === 'trusted' }));
 }
 
-/**
- * Ask a Codex binary which hooks it loads with `args`, through its app-server
- * and a private, empty CODEX_HOME, so the user's own ~/.codex is not read or
- * written. Resolves to the `hooks/list` result; rejects when Codex refuses
- * the arguments or does not answer in time.
- */
 export function codexHooksList(resolved, args, { env, platform = process.platform, timeoutMs = PROBE_TIMEOUT_MS, tmpDir = os.tmpdir() } = {}) {
   const home = fs.mkdtempSync(path.join(tmpDir, 'agent-guild-codex-'));
   const spec = buildSpawnSpec(resolved, [...args, 'app-server'], env, platform);
@@ -132,7 +102,7 @@ export function codexHooksList(resolved, args, { env, platform = process.platfor
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      try { child?.kill(); } catch { /* gone */ }
+      endTree(child, platform);
       setTimeout(() => fs.rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }, () => {}), 500).unref();
       if (err) reject(err);
       else resolve(value);
@@ -176,7 +146,13 @@ export function codexHooksList(resolved, args, { env, platform = process.platfor
   });
 }
 
-/** The arguments that load and trust our hooks in this Codex, or { args: [] } when it takes neither. */
+function endTree(child, platform) {
+  if (!child || child.exitCode !== null) return;
+  try { child.stdin.end(); } catch { /* closed */ }
+  if (platform === 'win32' && child.pid) return killWindowsTree(child.pid);
+  try { child.kill(); } catch { /* gone */ }
+}
+
 export async function probeCodex(resolved, opts) {
   const hookArgs = codexHookArgs();
   const listed = codexHooksFrom(await codexHooksList(resolved, hookArgs, opts));
@@ -192,43 +168,45 @@ export async function probeCodex(resolved, opts) {
   return { args: hookArgs, trusted: false };
 }
 
-/** True when `--help` output lists `flag` as an option of the command itself. */
 export function helpLists(text, flag) {
   return new RegExp(`^\\s+(?:-\\w, )?${flag.replace(/[-]/g, '\\-')}\\b`, 'm').test(text);
 }
 
-/** Gemini's folder for this account: GEMINI_CLI_HOME, else the user's home. */
 export function geminiHome(env = {}) {
   return env.GEMINI_CLI_HOME || os.homedir();
 }
 
-/** Whether Gemini has our extension linked to `bundle`, read from Gemini's own install record. */
-export function geminiLinked(home, bundle) {
+function geminiRecord(home) {
   try {
-    const record = JSON.parse(fs.readFileSync(path.join(home, '.gemini', 'extensions', EXTENSION_NAME, '.gemini-extension-install.json'), 'utf8'));
-    return record?.type === 'link' && typeof record.source === 'string' && path.resolve(record.source) === path.resolve(bundle);
+    return JSON.parse(fs.readFileSync(path.join(home, '.gemini', 'extensions', EXTENSION_NAME, '.gemini-extension-install.json'), 'utf8'));
   } catch {
-    return false;
+    return null;
   }
 }
 
-/**
- * What each provider's sessions get for agent reporting, by the provider's
- * `reporting` key ("claude", "codex", "gemini" or "grok"). Capabilities are
- * probed once per binary and cached by its path and modification time.
- */
+export function geminiLinked(home, bundle) {
+  const record = geminiRecord(home);
+  return record?.type === 'link' && typeof record.source === 'string' && path.resolve(record.source) === path.resolve(bundle);
+}
+
+export function geminiStaleLink(home, bundle) {
+  const record = geminiRecord(home);
+  if (!record || geminiLinked(home, bundle)) return false;
+  if (record.type !== 'link' || typeof record.source !== 'string') return false;
+  try {
+    return JSON.parse(fs.readFileSync(path.join(record.source, 'gemini-extension.json'), 'utf8')).description === MANIFEST_DESCRIPTION;
+  } catch (err) {
+    return err.code === 'ENOENT';
+  }
+}
+
+const pending = (tool, when) => ({ state: 'pending', reason: `Agent Guild added its reporting hooks to this ${tool} session. They report once ${tool} ${when}.` });
+
 export class SessionHooks {
-  /**
-   * @param {object} opts
-   * @param {import('./providers.mjs').ProviderRegistry} opts.registry
-   * @param {string|null} opts.dir     where the plugin and extension folders are written
-   * @param {string} opts.version
-   * @param {string|null} [opts.shimDir]  the agent-guild-report launchers
-   * @param {number} [opts.probeTimeoutMs]
-   */
-  constructor({ registry, dir, version, shimDir = null, probeTimeoutMs = PROBE_TIMEOUT_MS }) {
+  constructor({ registry, dir, version, shimDir = null, probeTimeoutMs = PROBE_TIMEOUT_MS, probeRetryMs = PROBE_RETRY_MS }) {
     this.registry = registry;
     this.probeTimeoutMs = probeTimeoutMs;
+    this.probeRetryMs = probeRetryMs;
     this.bundles = null;
     this.probes = new Map();
     if (dir) {
@@ -240,7 +218,6 @@ export class SessionHooks {
     }
   }
 
-  /** Start the probes for every installed provider, so the first session does not wait for them. */
   warm() {
     for (const provider of this.registry.providers) {
       if (provider.reporting === 'claude' || provider.reporting === 'codex' || provider.reporting === 'grok') this._probe(provider).catch(() => {});
@@ -253,7 +230,7 @@ export class SessionHooks {
     let mtime = null;
     try { mtime = fs.statSync(resolved).mtimeMs; } catch { /* probe anyway */ }
     const cached = this.probes.get(provider.id);
-    const fresh = cached && cached.resolved === resolved && cached.mtime === mtime && (cached.ok || Date.now() - cached.at < PROBE_RETRY_MS);
+    const fresh = cached && cached.resolved === resolved && cached.mtime === mtime && (cached.ok || Date.now() - cached.at < this.probeRetryMs);
     if (fresh) return cached.promise;
     const env = { ...this.registry.env, ...provider.env };
     const platform = this.registry.platform;
@@ -261,7 +238,7 @@ export class SessionHooks {
     entry.promise = (async () => {
       if (provider.reporting === 'codex') {
         const result = await probeCodex(resolved, { env, platform, timeoutMs: this.probeTimeoutMs });
-        entry.ok = true;
+        entry.ok = result.args.length > 0;
         return result;
       }
       const { stdout, stderr } = await runSpec(buildSpawnSpec(resolved, ['--help'], env, platform), { env, timeoutMs: this.probeTimeoutMs });
@@ -272,10 +249,6 @@ export class SessionHooks {
     return entry.promise;
   }
 
-  /**
-   * Arguments to put before the provider's own, and the session's starting
-   * reporting state: { args, reporting: { state, reason } | null }.
-   */
   async launch(provider, account) {
     const mode = provider.reporting;
     if (!mode) return { args: [], reporting: null };
@@ -284,16 +257,16 @@ export class SessionHooks {
       return { args: [], reporting: { state: 'unavailable', reason: `Agent Guild could not write its reporting hooks, so ${tool} cannot report agents.` } };
     }
     if (mode === 'gemini') {
-      if (this.enabled(provider, account)) return { args: [], reporting: { state: 'pending', reason: null } };
+      if (this.enabled(provider, account)) return { args: [], reporting: pending(tool, 'starts its session') };
       return { args: [], reporting: { state: 'setup_required', reason: `Agent reporting is off for ${tool}. Turn it on from the ${tool} card; it applies to new sessions.` } };
     }
     const probe = await this._probe(provider);
     if (mode === 'codex') {
-      if (probe?.args?.length) return { args: probe.args, reporting: { state: 'pending', reason: null } };
+      if (probe?.args?.length) return { args: probe.args, reporting: pending(tool, 'runs its first prompt') };
       return { args: [], reporting: { state: 'unavailable', reason: `${tool} did not accept Agent Guild's reporting hooks${probe?.error ? ` (${probe.error})` : ''}.` } };
     }
     const dir = mode === 'claude' ? this.bundles.claude : this.bundles.grok;
-    if (probe?.pluginDir) return { args: ['--plugin-dir', dir], reporting: { state: 'pending', reason: null } };
+    if (probe?.pluginDir) return { args: ['--plugin-dir', dir], reporting: pending(tool, 'starts its session') };
     if (probe?.error) {
       return { args: [], reporting: { state: 'unavailable', reason: `Could not check whether ${tool} can load Agent Guild's reporting hooks (${probe.error}).` } };
     }
@@ -306,27 +279,33 @@ export class SessionHooks {
     };
   }
 
-  /** Per-account opt-in state for providers that need one: true, false, or null when not applicable. */
   enabled(provider, account) {
     if (provider.reporting !== 'gemini' || !this.bundles) return null;
     return geminiLinked(geminiHome({ ...this.registry.env, ...provider.env, ...account?.env }), this.bundles.gemini);
   }
 
-  /** Link or unlink the Gemini extension for one account, through Gemini's own commands. */
   async setEnabled(provider, account, enabled) {
     if (provider.reporting !== 'gemini') throw Object.assign(new Error(`${provider.tool} needs no setup for agent reporting`), { status: 400, code: 'not_applicable' });
     if (!this.bundles) throw Object.assign(new Error('Agent Guild could not write its reporting hooks'), { status: 500, code: 'reporting_unavailable' });
     const resolved = this.registry.resolve(provider);
     if (!resolved) throw Object.assign(new Error(`${provider.tool} is not installed`), { status: 409, code: 'provider_unavailable' });
     const env = { ...this.registry.env, ...provider.env, ...account?.env };
-    const args = enabled ? ['extensions', 'link', this.bundles.gemini, '--consent'] : ['extensions', 'uninstall', EXTENSION_NAME];
-    if (enabled === this.enabled(provider, account)) return enabled;
-    try {
-      await runSpec(buildSpawnSpec(resolved, args, env, this.registry.platform), { env, timeoutMs: 60000 });
-    } catch (err) {
-      const detail = `${err.stderr || ''}\n${err.stdout || ''}`.trim().split('\n').filter(Boolean).pop() || err.message;
-      throw Object.assign(new Error(`${provider.tool} could not ${enabled ? 'link' : 'remove'} the Agent Guild extension: ${detail}`), { status: 502, code: 'reporting_setup_failed' });
+    const home = geminiHome(env);
+    const stale = geminiStaleLink(home, this.bundles.gemini);
+    if (enabled === this.enabled(provider, account) && !stale) return enabled;
+    if (enabled && !stale && geminiRecord(home)) {
+      throw Object.assign(new Error(`${provider.tool} already has another extension named "${EXTENSION_NAME}". Remove it with "${provider.command} extensions uninstall ${EXTENSION_NAME}" to turn on agent reporting.`), { status: 409, code: 'extension_conflict' });
     }
+    const run = async (args, what) => {
+      try {
+        await runSpec(buildSpawnSpec(resolved, args, env, this.registry.platform), { env, timeoutMs: 60000 });
+      } catch (err) {
+        const detail = `${err.stderr || ''}\n${err.stdout || ''}`.trim().split('\n').filter(Boolean).pop() || err.message;
+        throw Object.assign(new Error(`${provider.tool} could not ${what} the Agent Guild extension: ${detail}`), { status: 502, code: 'reporting_setup_failed' });
+      }
+    };
+    if (stale || !enabled) await run(['extensions', 'uninstall', EXTENSION_NAME], 'remove');
+    if (enabled) await run(['extensions', 'link', this.bundles.gemini, '--consent'], 'link');
     const now = this.enabled(provider, account);
     if (now !== enabled) {
       throw Object.assign(new Error(`${provider.tool} reported success, but the Agent Guild extension is ${now ? 'still linked' : 'not linked'}`), { status: 502, code: 'reporting_setup_failed' });

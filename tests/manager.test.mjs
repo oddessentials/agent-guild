@@ -88,9 +88,6 @@ fs.mkdirSync(linkDir);
 if (win) fs.writeFileSync(path.join(npmBinDir, 'fake-npmtool.ps1'), '& "$PSScriptRoot\\fake-npmtool.cmd" @args\r\n');
 else fs.symlinkSync(path.join(npmBinDir, 'fake-npmtool'), path.join(linkDir, 'fake-npmtool'));
 
-// Claude Code, Codex CLI, Gemini CLI and Grok Build stand-ins that find and
-// run hooks the way the real tools do, each with a home folder holding the
-// user's own settings, which no session may change.
 const codingTool = path.join(here, 'fixtures', 'fake-coding-tool.mjs');
 const toolsDir = path.join(home, 'coding-tools');
 fs.mkdirSync(toolsDir);
@@ -123,7 +120,6 @@ process.env.GROK_HOME = toolHomes.grok;
 const claudeHooksOff = path.join(home, 'tool-homes', 'claude-hooks-off');
 writeFile(path.join(claudeHooksOff, 'settings.json'), JSON.stringify({ disableAllHooks: true }));
 
-/** Every file under `dir` with a hash of its contents. */
 function snapshot(dir) {
   const files = {};
   const walk = (d) => {
@@ -170,12 +166,15 @@ fs.writeFileSync(path.join(home, 'providers.json'), JSON.stringify({
     { id: 'racytool', vendor: 'Nobody', tool: 'Racy Tool', command: 'definitely-not-installed-agent-guild', package: 'racy-pkg' },
     { id: 'multi', vendor: 'Test', tool: 'Multi Tool', command: process.execPath, args: [path.join(here, 'fixtures', 'fake-tool.mjs')], homeVar: 'FAKE_TOOL_HOME', hooks: { path: 'hooks/settings.json', example: 'claude-code-settings.json' }, accounts: [{ id: 'work', label: 'Work' }, { id: 'kept', dir: path.join(home, 'kept-home') }] },
     // Never read the developer's real Claude Code, Codex, Gemini or Grok sign-in or sessions during tests.
-    { id: 'anthropic', usage: null, history: null, accounts: [{ id: 'work', label: 'Work' }, { id: 'edited', label: 'Edited' }] },
-    { id: 'openai', usage: null, history: null },
+    { id: 'anthropic', usage: null, history: null, accounts: [{ id: 'work', label: 'Work' }] },
+    { id: 'openai', usage: null, history: null, accounts: [{ id: 'work', label: 'Work' }] },
     { id: 'google', usage: null, history: null },
     { id: 'xai', history: null },
     { id: 'claudeoff', vendor: 'Test', tool: 'Claude Hooks Off', command: 'claude', reporting: 'claude', env: { CLAUDE_CONFIG_DIR: claudeHooksOff } },
-    { id: 'codexbroken', vendor: 'Test', tool: 'Codex Changed', command: 'codex', reporting: 'codex', env: { FAKE_CODEX_REJECT: '1' } },
+    {
+      id: 'codexbroken', vendor: 'Test', tool: 'Codex Changed', command: 'codex', reporting: 'codex', env: { FAKE_CODEX_REJECT: '1' },
+      homeVar: 'CODEX_HOME', hooks: { path: 'hooks.json', example: 'codex-hooks.json' }, accounts: [{ id: 'work', label: 'Work' }],
+    },
     { id: 'grokplugins', vendor: 'Test', tool: 'Grok Next', command: 'grok', reporting: 'grok', env: { FAKE_GROK_PLUGIN_DIR: '1' } },
   ],
 }));
@@ -187,6 +186,7 @@ const packageFile = path.join(home, 'package.json');
 fs.writeFileSync(packageFile, JSON.stringify({ name: '@oddessentials/agent-guild', version: '1.0.0' }));
 
 let ctx;
+let probesAtStart;
 let base;
 let token;
 
@@ -195,6 +195,7 @@ before(async () => {
     version: '1.0.0', packageFile, sessionDefaults: { doneAgentLingerMs: 200, activityIdleMs: 200, killGraceMs: 500, reportingTimeoutMs: 1500 },
     github: { apiUrl: fakeGitHub.url, webUrl: fakeGitHub.url, clientId: 'test-client' },
   });
+  probesAtStart = new Set(ctx.manager.sessionHooks.probes.keys());
   base = ctx.api.url;
   token = ctx.token;
 });
@@ -914,7 +915,6 @@ const sessionNow = async (id) => (await call('GET', `/sessions/${id}`)).body.ses
 const reportingIs = (id, state) => async () => ((await sessionNow(id)).reporting?.state === state ? sessionNow(id) : null);
 const agentIs = (id, name, status) => async () => (await sessionNow(id)).agents.find((a) => a.name === name && a.status === status);
 
-/** A sub-agent starts and stops inside the tool, and the card follows it through the tool's own hooks. */
 async function followSubagent({ session, client }, agentId, type) {
   client.input(`subagent ${agentId} ${type}`);
   const working = await waitFor(agentIs(session.id, type, 'working'), { label: `${type} working`, timeout: 15000 })
@@ -941,7 +941,6 @@ test('a Default Codex CLI session reports sub-agents through trusted hooks passe
   fs.rmSync(userHookLog, { force: true });
   const tool = await startTool('openai');
   assert.equal(tool.session.reporting.state, 'pending');
-  // Codex runs its SessionStart hooks with the first turn.
   await new Promise((r) => setTimeout(r, 300));
   assert.equal((await sessionNow(tool.session.id)).reporting.state, 'pending', 'no prompt yet, so still waiting');
   tool.client.input('prompt');
@@ -949,8 +948,19 @@ test('a Default Codex CLI session reports sub-agents through trusted hooks passe
   await followSubagent(tool, 'codex-1', 'explorer');
   const output = stripAnsi(tool.client.output);
   assert.ok(!output.includes('CODEX-UNTRUSTED'), 'every Agent Guild hook is trusted for the session');
-  assert.match(output, /FAKE-CODEX READY hooks=5/);
+  assert.match(output, /FAKE-CODEX READY hooks=6/);
   assert.match(fs.readFileSync(userHookLog, 'utf8'), /codex-user/, 'the user\'s own hooks still run');
+  await tool.client.close();
+  await call('DELETE', `/sessions/${tool.session.id}`);
+});
+
+test('a Codex CLI sub-agent given a follow-up works again at its first tool call, whatever the tool', async () => {
+  const tool = await startTool('openai');
+  tool.client.input('prompt');
+  await waitFor(reportingIs(tool.session.id, 'active'), { label: 'the session start hook', timeout: 15000 });
+  await followSubagent(tool, 'codex-2', 'worker');
+  tool.client.input('tool codex-2 apply_patch');
+  await waitFor(async () => (await sessionNow(tool.session.id)).agents.find((a) => a.id === 'hook-codex-2' && a.status === 'working'), { label: 'working again', timeout: 15000 });
   await tool.client.close();
   await call('DELETE', `/sessions/${tool.session.id}`);
 });
@@ -1030,20 +1040,78 @@ test('each session\'s report token sits in an owner-only file that goes with the
   await waitFor(() => !fs.existsSync(file), { label: 'token file removal' });
 });
 
-test('extra accounts get no hooks file, and an untouched one from earlier versions is removed', async () => {
-  const seeded = fs.readFileSync(path.join(here, '..', 'examples', 'claude-code-settings.json'));
-  const workDir = path.join(home, 'accounts', 'anthropic', 'work');
-  const editedDir = path.join(home, 'accounts', 'anthropic', 'edited');
-  writeFile(path.join(workDir, 'settings.json'), seeded);
-  writeFile(path.join(editedDir, 'settings.json'), Buffer.concat([seeded, Buffer.from('\n')]));
-  for (const account of ['work', 'edited']) {
-    const tool = await startTool('anthropic', { account });
-    await waitFor(reportingIs(tool.session.id, 'active'), { label: `${account} session start hook`, timeout: 15000 });
+test('an untouched Codex hooks file from earlier versions goes only where the session gets the same hooks', async () => {
+  const seeded = fs.readFileSync(path.join(here, '..', 'examples', 'codex-hooks.json'));
+  const supplied = path.join(home, 'accounts', 'openai', 'work', 'hooks.json');
+  const refused = path.join(home, 'accounts', 'codexbroken', 'work', 'hooks.json');
+  writeFile(supplied, seeded);
+  writeFile(refused, seeded);
+  for (const providerId of ['openai', 'codexbroken']) {
+    const tool = await startTool(providerId, { account: 'work' });
     await tool.client.close();
     await call('DELETE', `/sessions/${tool.session.id}`);
   }
-  assert.ok(!fs.existsSync(path.join(workDir, 'settings.json')), 'the untouched copy would report every agent twice');
-  assert.equal(fs.readFileSync(path.join(editedDir, 'settings.json')).length, seeded.length + 1, 'an edited copy is kept');
+  assert.ok(!fs.existsSync(supplied), 'Agent Guild supplies these hooks, so the copy would run each one twice');
+  assert.deepEqual(fs.readFileSync(refused), seeded, 'this Codex refused the session hooks, so the copy is all the reporting it has');
+});
+
+test('a Claude Code account keeps the settings file earlier versions seeded, status line and all', async () => {
+  const seeded = fs.readFileSync(path.join(here, '..', 'examples', 'claude-code-settings.json'));
+  const file = path.join(home, 'accounts', 'anthropic', 'work', 'settings.json');
+  writeFile(file, seeded);
+  const tool = await startTool('anthropic', { account: 'work' });
+  await waitFor(reportingIs(tool.session.id, 'active'), { label: 'session start hook', timeout: 15000 });
+  await tool.client.close();
+  await call('DELETE', `/sessions/${tool.session.id}`);
+  assert.deepEqual(fs.readFileSync(file), seeded);
+  assert.match(seeded.toString(), /claude-statusline/, 'the status line a plugin cannot set');
+});
+
+test('the reporting probes start with the manager, before any session asks', () => {
+  for (const id of ['anthropic', 'openai', 'xai']) assert.ok(probesAtStart.has(id), `${id} was being probed when the manager came up`);
+});
+
+test('a second manager that cannot start leaves the running one\'s report token files alone', async () => {
+  const tool = await startTool('anthropic');
+  const file = path.join(home, 'report-tokens', tool.session.id);
+  assert.ok(fs.existsSync(file));
+  await assert.rejects(startManager({ port: ctx.api.port, version: '1.0.0', packageFile, github: { apiUrl: fakeGitHub.url, webUrl: fakeGitHub.url, clientId: 'test-client' } }), /already in use/);
+  assert.ok(fs.existsSync(file), 'the running session still authenticates through it');
+  await tool.client.close();
+  await call('DELETE', `/sessions/${tool.session.id}`);
+});
+
+test('a Codex probe that loads no hooks is asked again, not trusted for good', async () => {
+  const { SessionHooks } = await import('../src/manager/session-hooks.mjs');
+  const codex = path.join(toolsDir, win ? 'codex.cmd' : 'codex');
+  const registry = { providers: [], env: process.env, platform: process.platform, resolve: () => codex };
+  const hooks = new SessionHooks({ registry, dir: path.join(home, 'probe-retry'), version: '1', probeRetryMs: 0 });
+  const provider = { id: 'retry', tool: 'Retry Codex', reporting: 'codex', env: { FAKE_CODEX_LOADS_NONE: '1' } };
+  assert.equal((await hooks.launch(provider, null)).reporting.state, 'unavailable');
+  provider.env = {};
+  const again = await hooks.launch(provider, null);
+  assert.equal(again.reporting.state, 'pending', 'the next session gets the hooks once Codex loads them');
+  assert.ok(again.args.length > 0);
+});
+
+test('turning Gemini reporting on replaces a link left by an earlier data folder, and refuses another extension\'s name', async (t) => {
+  const record = path.join(toolHomes.gemini, '.gemini', 'extensions', 'agent-guild', '.gemini-extension-install.json');
+  t.after(() => fs.rmSync(path.dirname(record), { recursive: true, force: true }));
+  writeFile(record, JSON.stringify({ source: path.join(home, 'old-data', 'reporting', 'gemini'), type: 'link' }));
+  let res = await call('POST', '/providers/google/reporting', { enabled: true });
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.equal(JSON.parse(fs.readFileSync(record, 'utf8')).source, path.join(home, 'reporting', 'gemini'));
+  assert.equal((await call('POST', '/providers/google/reporting', { enabled: false })).status, 200);
+  assert.ok(!fs.existsSync(record));
+
+  const foreign = path.join(home, 'someone-elses-extension');
+  writeFile(path.join(foreign, 'gemini-extension.json'), JSON.stringify({ name: 'agent-guild', version: '1', description: 'Not ours' }));
+  writeFile(record, JSON.stringify({ source: foreign, type: 'link' }));
+  res = await call('POST', '/providers/google/reporting', { enabled: true });
+  assert.equal(res.status, 409);
+  assert.equal(res.body.error.code, 'extension_conflict');
+  assert.equal((await call('POST', '/providers/google/reporting', { enabled: false })).status, 200);
+  assert.equal(JSON.parse(fs.readFileSync(record, 'utf8')).source, foreign, 'someone else\'s extension is never removed');
 });
 
 test('no session changed a tool\'s own home folder', () => {

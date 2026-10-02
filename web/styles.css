@@ -288,6 +288,8 @@ main { max-width: 1200px; margin: 0 auto; padding: 26px 16px 56px; display: grid
 .agents { display: flex; flex-wrap: wrap; gap: 6px; }
 .agents:empty::after { content: attr(data-empty); font-size: 0.75rem; color: var(--muted); }
 .agents.reporting-attention:empty::after { color: var(--warn); }
+.reporting-why { align-self: center; padding: 0 6px; border: 1px solid var(--border); border-radius: 999px; background: none; color: var(--muted); font: inherit; font-size: 0.7rem; cursor: pointer; }
+.reporting-why:hover, .reporting-why:focus-visible { color: var(--text); border-color: var(--muted); }
 .agent {
   --c: #64748b;
   width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; position: relative;

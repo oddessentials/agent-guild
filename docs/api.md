@@ -244,7 +244,7 @@ that has never run lists no sessions and no error.
   `unavailable` when none has arrived some time after the first prompt or
   the tool refused the hooks, `setup_required` when the user has to turn
   reporting on first (Gemini CLI), and `unsupported` when the installed tool
-  cannot take hooks for one session. `reason` explains the last three.
+  cannot take hooks for one session. `reason` explains every state but `active`.
 
 ### Upgrade
 
@@ -360,7 +360,7 @@ All paths are under `/api/v1`.
 | POST | `/upgrade` | | `201 { session }`: a session with `task` `upgrade` running the Upgrade `command`. 400 `not_updatable` when no newer release is known, it is already installed on disk, the manager is a development build, or version checks are off. 409 `npm_unavailable` without npm on PATH. 409 `upgrade_in_progress` while one is running. Sessions keep running; the new version is used after the manager restarts. |
 | GET | `/providers` | | `{ providers: Provider[] }` |
 | POST | `/providers/reload` | | Re-reads `providers.json`. |
-| POST | `/providers/:id/reporting` | `{ enabled, account? }` | `{ provider }`: turns agent reporting on or off for one account of a tool that needs it, by running the tool's own `extensions link` or `extensions uninstall`. 400 `not_applicable` for any other tool, 502 `reporting_setup_failed` when the tool's command fails. |
+| POST | `/providers/:id/reporting` | `{ enabled, account? }` | `{ provider }`: turns agent reporting on or off for one account of a tool that needs it, by running the tool's own `extensions link` or `extensions uninstall`. A link left by an earlier Agent Guild data folder is replaced. 400 `not_applicable` for any other tool, 409 `extension_conflict` when another extension has the same name, 502 `reporting_setup_failed` when the tool's command fails. |
 | POST | `/providers/:id/install` | `{ force? }` | `201 { session }`: a session running `npm install -g <package>@<version>`, or `updateCommand` when the tool is installed. 400 `not_updatable` when an installed tool has no `updateCommand`. 503 `release_unresolved` or 409 `release_incomplete` when the release cannot be read or its platform build is not published; nothing is run. 409 `install_in_progress` while one is already running. 409 `provider_in_use` (with `running`, the session count) while the provider's sessions are running, unless `force` is true. |
 | GET | `/usage` | | `{ usage: Usage[] }`, one per account of every provider with a `usageSource`. |
 | GET | `/model-stats` | | Benchmarks for the models of every provider with a `modelPattern`, from OpenRouter's public model list (Artificial Analysis and Design Arena results), cached for 6 hours. `{ retrievedAt, stale, error, stats, pool, providers, models, sessions }`: `stats` describes each benchmark; `providers[id]` is `{ featured, models }`, a provider's model ids newest first; `models[id]` holds a model's name, context and price, and in `stats`, per benchmark, its `value`, `rank`, `level` (0-100, its standing among the models of all configured tools) and `tier` (S 90+, A 75+, B 50+, C 25+, D below); `sessions[id]` is the model id a session's reported model matched, or null. |

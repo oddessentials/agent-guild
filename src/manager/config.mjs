@@ -47,9 +47,7 @@ export const paths = {
   get log() { return path.join(dataDir(), 'manager.log'); },
   /** Launchers for agent-guild-report, put first on every session's PATH. */
   get shims() { return path.join(dataDir(), 'bin'); },
-  /** The plugin and extension folders that hold the agent reporting hooks. */
   get reporting() { return path.join(dataDir(), 'reporting'); },
-  /** One owner-only file per running session holding its report token. */
   get reportTokens() { return path.join(dataDir(), 'report-tokens'); },
 };
 

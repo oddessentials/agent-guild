@@ -3,11 +3,11 @@
 // byte replay), and the sub-agents and model the coding tool has reported.
 
 import { EventEmitter } from 'node:events';
-import { execFile } from 'node:child_process';
 import crypto from 'node:crypto';
 import pty from 'node-pty';
 import headless from '@xterm/headless';
 import serializeAddon from '@xterm/addon-serialize';
+import { killWindowsTree } from './command-resolver.mjs';
 
 const { Terminal } = headless;
 const { SerializeAddon } = serializeAddon;
@@ -64,8 +64,6 @@ export class Session extends EventEmitter {
    * @param {number} [opts.activityIdleMs]
    * @param {number} [opts.doneAgentLingerMs]
    * @param {number} [opts.killGraceMs]  time between hang-up and force kill
-   * @param {{state: string, reason: string|null}|null} [opts.reporting]  whether the tool's reporting hooks are set up
-   * @param {number} [opts.reportingTimeoutMs]  how long after the first prompt a pending tool may stay silent
    */
   constructor(opts) {
     super();
@@ -267,18 +265,14 @@ export class Session extends EventEmitter {
     try { this.pty.write(data); } catch { /* process is exiting */ }
   }
 
-  /** Keystrokes from a client. */
   input(data) {
     this.write(data);
-    // Codex CLI runs its SessionStart hooks with the first turn, and a
-    // workspace-trust prompt holds Claude Code's back, so silence only
-    // counts once something has been submitted.
     if (this.reporting?.state === 'pending' && !this._reportingTimer && typeof data === 'string' && /[\r\n]/.test(data)) {
       this._reportingTimer = setTimeout(() => {
         if (this.reporting?.state !== 'pending' || this.status !== 'running') return;
         this.reporting = {
           state: 'unavailable',
-          reason: `${this.provider.tool} has not run Agent Guild's reporting hooks. Hooks may be turned off, restricted by an administrator, or not trusted for this folder.`,
+          reason: `${this.provider.tool} has not run Agent Guild's reporting hooks yet. That is expected while it signs in or sets up; otherwise its hooks may be turned off, restricted by an administrator, or not trusted for this folder.`,
         };
         this._changed();
       }, this.reportingTimeoutMs);
@@ -328,9 +322,7 @@ export class Session extends EventEmitter {
     };
     const pid = this.pty.pid;
     if (!pid) return fallback();
-    execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, timeout: 5000 }, (err) => {
-      if (err) fallback();
-    });
+    killWindowsTree(pid, (err) => { if (err) fallback(); });
   }
 
   /**
@@ -502,14 +494,12 @@ export class Session extends EventEmitter {
     return this.toolSessionId;
   }
 
-  /** The tool's reporting hooks announced themselves when the session started. */
   reportHello() {
     if (this.status !== 'running') throw Object.assign(new Error('session has exited'), { status: 409 });
     this._reportingHeard();
     return this.reporting;
   }
 
-  /** A hook got through, so reporting works whatever was expected before. */
   _reportingHeard() {
     clearTimeout(this._reportingTimer);
     if (!this.reporting || this.reporting.state === 'active') return;

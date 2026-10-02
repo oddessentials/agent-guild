@@ -316,20 +316,22 @@ const FAMILIARS = ['flame', 'leaf', 'night', 'aether'];
 
 const REPORTING_TEXT = {
   pending: 'waiting for hooks',
-  unavailable: 'not reporting',
+  unavailable: 'no reports yet',
   setup_required: 'reporting off',
   unsupported: 'not supported',
 };
 
-/** What an empty agents row says, from whether the tool's reporting hooks are working. */
-function paintReporting(container, s) {
+function paintReporting(row, s) {
   const reporting = s.status === 'running' ? s.reporting : null;
-  container.dataset.empty = REPORTING_TEXT[reporting?.state] || 'none reported';
-  container.classList.toggle('reporting-attention', ['unavailable', 'setup_required', 'unsupported'].includes(reporting?.state));
-  const tip = reporting?.state === 'pending'
-    ? `Agent Guild added its reporting hooks to this ${s.provider.tool} session. They report once ${s.provider.tool} starts its session${s.provider.id === 'openai' ? ', with the first prompt' : ''}.`
-    : reporting?.reason || '';
-  container.closest('.agents-row')?.setAttribute('title', tip);
+  const agents = row.querySelector('.agents');
+  agents.dataset.empty = REPORTING_TEXT[reporting?.state] || 'none reported';
+  agents.classList.toggle('reporting-attention', ['unavailable', 'setup_required', 'unsupported'].includes(reporting?.state));
+  const why = row.querySelector('.reporting-why');
+  const reason = reporting?.state !== 'active' ? reporting?.reason || '' : '';
+  why.hidden = !reason;
+  why.title = reason;
+  why.setAttribute('aria-label', `Why agent reporting says ${agents.dataset.empty}: ${reason}`);
+  why.onclick = () => toast(reason, 12000);
 }
 
 function renderAgents(container, agents) {
@@ -423,7 +425,6 @@ function renderAccounts(card, provider) {
   });
 }
 
-/** The per-account switch for a tool whose reporting hooks the user turns on once (Gemini CLI). */
 function renderReportingSetup(card, provider) {
   const row = card.querySelector('.reporting-row');
   const account = selectedAccount(provider);
@@ -2548,7 +2549,7 @@ function updateCard(node, s) {
   cwd.textContent = `\u200E${s.cwd}`;
   cwd.title = s.cwd;
   renderAgents(node.querySelector('.agents'), s.agents);
-  paintReporting(node.querySelector('.agents'), s);
+  paintReporting(node.querySelector('.agents-row'), s);
   node.classList.toggle('exited', s.status === 'exited');
   node.querySelector('.stop').hidden = s.status !== 'running';
   node.querySelector('.remove').hidden = s.status === 'running';
@@ -2560,7 +2561,8 @@ function updateCard(node, s) {
   resume.title = `Start ${s.provider.tool} again on this session${id ? ` (${id})` : ''} in ${s.cwd}`;
   const modelLabel = s.model ? `, model ${modelText(s)}` : '';
   const accountName = accountLabel(s) ? `, ${accountLabel(s)} account` : '';
-  node.setAttribute('aria-label', `${s.name}, ${s.provider.vendor}${accountName}${modelLabel}, ${statusText(s)}, ${s.agents.length} agents`);
+  const reportingNote = s.status === 'running' && REPORTING_TEXT[s.reporting?.state] ? `, agent reporting: ${REPORTING_TEXT[s.reporting.state]}` : '';
+  node.setAttribute('aria-label', `${s.name}, ${s.provider.vendor}${accountName}${modelLabel}, ${statusText(s)}, ${s.agents.length} agents${reportingNote}`);
 }
 
 function renderSessions() {
