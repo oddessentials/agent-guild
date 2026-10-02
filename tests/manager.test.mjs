@@ -1186,6 +1186,17 @@ test('Claude Code shell commands show while they run: not the brief ones, and no
   await call('DELETE', `/sessions/${tool.session.id}`);
 });
 
+test('Claude Code PowerShell commands show and leave like Bash ones', async () => {
+  const tool = await startTool('anthropic');
+  await waitFor(reportingIs(tool.session.id, 'active'), { label: 'hooks', timeout: 15000 });
+  tool.client.input('shell pwsh1 2500 ps Get-ChildItem -Recurse');
+  await waitFor(shellCountIs(tool.session.id, 1), { label: 'shown', timeout: 15000 });
+  await runShells(tool, [], 'SHELL-DONE pwsh1');
+  await waitFor(shellCountIs(tool.session.id, 0), { label: 'gone', timeout: 2000 });
+  await tool.client.close();
+  await call('DELETE', `/sessions/${tool.session.id}`);
+});
+
 test('a shell command whose end event never comes ends with the turn that ran it', async () => {
   const tool = await startTool('anthropic');
   await waitFor(reportingIs(tool.session.id, 'active'), { label: 'hooks', timeout: 15000 });

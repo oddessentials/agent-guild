@@ -16,13 +16,14 @@
 //   prompt                 a user prompt (Codex runs its SessionStart hooks here)
 //   subagent <id> <type>   a sub-agent starts; Gemini: an invoke_agent call starts
 //   subagent-done <id> <type>
-//   shell <id> <ms> [fg|bg|exec] [command...]
+//   shell <id> <ms> [fg|bg|exec|ps] [command...]
 //                          runs a shell command for <ms> as the tool would: its hooks, and a
 //                          process whose command line has the tool's own form (Claude Code's
 //                          eval script, Codex CLI's sandbox wrapper and -lc). Claude Code and
 //                          Gemini CLI return a bg command's call at once; Codex CLI never
 //                          reports the end of one that outlives its 1 s yield; exec runs the
-//                          command itself with bash -lc, which replaces itself with it
+//                          command itself with bash -lc, which replaces itself with it; ps runs
+//                          it as Claude Code's PowerShell tool
 //   shell-denied <id> [command...]
 //                          a start event with no process and no end event
 //   tool <agent-id> <tool>  a sub-agent calls a tool that is not a shell
@@ -190,7 +191,7 @@ function shellFor(command) {
 }
 
 function runHooks(hooks, event, payload, toolName = null) {
-  const matching = hooks.filter((h) => h.event === event && (!h.matcher || h.matcher === toolName));
+  const matching = hooks.filter((h) => h.event === event && (!h.matcher || (toolName !== null && new RegExp(`^(?:${h.matcher})$`).test(toolName))));
   return matching.reduce((prev, hook) => prev.then(() => new Promise((resolve) => {
     const [file, args] = shellFor(hook.command);
     const child = spawn(file, args, { env: hookEnv(), stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, windowsVerbatimArguments: file === 'cmd.exe' });
@@ -221,23 +222,24 @@ function runTool() {
     return ['--', 'bash', '-c', command];
   };
   const toolName = { claude: 'Bash', codex: 'Bash', gemini: 'run_shell_command', grok: 'run_terminal_command' }[tool];
-  const shellEvent = (start, id, input, response) => {
-    if (tool === 'gemini') return [start ? 'BeforeTool' : 'AfterTool', { tool_name: toolName, tool_input: input, ...(response ? { tool_response: response } : {}) }, toolName];
-    if (tool === 'grok') return [start ? 'PreToolUse' : 'PostToolUse', { hookEventName: start ? 'pre_tool_use' : 'post_tool_use', toolName, toolUseId: id, toolInput: input, ...(response ? { toolResult: response } : {}) }, toolName];
-    return [start ? 'PreToolUse' : 'PostToolUse', { tool_name: toolName, tool_use_id: id, tool_input: input, ...(tool === 'codex' ? { turn_id: 'turn-1' } : {}), ...(response ? { tool_response: response } : {}) }, toolName];
+  const shellEvent = (start, id, input, response, name = toolName) => {
+    if (tool === 'gemini') return [start ? 'BeforeTool' : 'AfterTool', { tool_name: name, tool_input: input, ...(response ? { tool_response: response } : {}) }, name];
+    if (tool === 'grok') return [start ? 'PreToolUse' : 'PostToolUse', { hookEventName: start ? 'pre_tool_use' : 'post_tool_use', toolName: name, toolUseId: id, toolInput: input, ...(response ? { toolResult: response } : {}) }, name];
+    return [start ? 'PreToolUse' : 'PostToolUse', { tool_name: name, tool_use_id: id, tool_input: input, ...(tool === 'codex' ? { turn_id: 'turn-1' } : {}), ...(response ? { tool_response: response } : {}) }, name];
   };
   const runShell = async (id, ms, mode, command) => {
     const background = mode === 'bg';
     const input = tool === 'gemini' ? { command, description: 'test', is_background: background }
       : { command, ...(background && tool === 'claude' ? { run_in_background: true } : {}) };
-    const [startEvent, startPayload, matcher] = shellEvent(true, id, input);
+    const name = mode === 'ps' ? 'PowerShell' : toolName;
+    const [startEvent, startPayload, matcher] = shellEvent(true, id, input, null, name);
     await runHooks(hooks, startEvent, startPayload, matcher);
     const child = mode === 'exec'
       ? spawn('bash', ['-lc', command], { stdio: 'ignore' })
       : spawn(process.execPath, ['-e', shellSleep, ...shellArgv(command)], { env: { ...process.env, FAKE_SHELL_MS: String(ms) }, stdio: 'ignore', windowsHide: true });
     out(`SHELL-STARTED ${id} ${child.pid}`);
     const end = (response) => {
-      const [event, payload] = shellEvent(false, id, input, response);
+      const [event, payload] = shellEvent(false, id, input, response, name);
       return runHooks(hooks, event, payload, matcher);
     };
     child.on('exit', async () => {

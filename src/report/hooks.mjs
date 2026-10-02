@@ -28,7 +28,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 
 const SUBAGENT_TOOLS = new Set(['Task', 'Agent', 'invoke_agent']);
-const SHELL_TOOLS = new Set(['Bash', 'run_shell_command', 'run_terminal_command']);
+const SHELL_TOOLS = new Set(['Bash', 'PowerShell', 'run_shell_command', 'run_terminal_command']);
 const TOOL_START_EVENTS = new Set(['PreToolUse', 'BeforeTool']);
 const TOOL_END_EVENTS = new Set(['PostToolUse', 'PostToolUseFailure', 'AfterTool']);
 const TURN_BOUNDARY_EVENTS = new Set(['BeforeAgent', 'AfterAgent', 'UserPromptSubmit', 'Stop']);
@@ -117,8 +117,43 @@ export function execHash(command) {
   const words = segments[index].words;
   for (;;) {
     while (words.length > 1 && /^[A-Za-z_]\w*=/.test(words[0])) words.shift();
-    if (words.length < 2 || !['exec', 'command', 'env'].includes(words[0]) || words[1].startsWith('-')) break;
-    words.shift();
+    const [first, ...rest] = words;
+    if (rest.length === 0) break;
+    if (first === 'builtin' || first === 'noglob' || first === 'nohup') {
+      words.shift();
+    } else if (first === 'nice') {
+      words.shift();
+      if (words[0] === '-n' && words.length > 2) words.splice(0, 2);
+      else if (/^(?:-n?-?\d+|--adjustment=-?\d+)$/.test(words[0]) && words.length > 1) words.shift();
+    } else if (first === 'command') {
+      if (/^-[vV]$/.test(rest[0])) break;
+      words.shift();
+      if (words[0] === '-p' && words.length > 1) words.shift();
+    } else if (first === 'env') {
+      words.shift();
+      while (words.length > 1 && words[0].startsWith('-')) {
+        const option = words.shift();
+        if (option === '--') break;
+        if (option === '-u' || option === '-C' || option === '-S') {
+          if (option === '-S') return null;
+          words.shift();
+        } else if (!/^(?:-i|-0|--ignore-environment|--unset=.*|-u.+)$/.test(option)) {
+          return null;
+        }
+      }
+    } else if (first === 'exec') {
+      words.shift();
+      let name = null;
+      while (words.length > 1 && words[0].startsWith('-')) {
+        const option = words.shift();
+        if (option === '--') break;
+        if (option === '-a') name = words.shift();
+        else if (!/^-[cl]+$/.test(option)) return null;
+      }
+      if (name !== null && words.length) words[0] = name;
+    } else {
+      break;
+    }
   }
   if (['if', 'then', 'else', 'elif', 'fi', 'do', 'done', 'case', 'esac', 'while', 'until', 'for', 'select', '!', '{', '}', '[[', 'function', 'time', 'coproc'].includes(words[0])) return null;
   return commandHash(words.join(' '));
@@ -132,7 +167,7 @@ function geminiBackgroundPid(response) {
   return match ? Number(match[1]) : null;
 }
 
-function shellReport(event, input, subagentId) {
+function shellReport(event, input, subagentId, toolName) {
   const toolInput = input.tool_input || input.toolInput || {};
   const id = text(input.tool_use_id, input.toolUseId);
   const ref = id ? { key: id.slice(0, 128) } : { bucket: crypto.createHash('sha256').update(JSON.stringify(toolInput)).digest('hex').slice(0, 32) };
@@ -143,7 +178,7 @@ function shellReport(event, input, subagentId) {
     if (text(input.turn_id)) report.track = true;
     if (command) {
       report.match = commandHash(command);
-      const exec = execHash(command);
+      const exec = toolName === 'PowerShell' ? null : execHash(command);
       if (exec && exec !== report.match) report.exec = exec;
     }
     return report;
@@ -206,7 +241,7 @@ export function hookToReports(input) {
 
   const toolName = text(input.tool_name, input.toolName);
   const toolEvent = TOOL_START_EVENTS.has(event) || TOOL_END_EVENTS.has(event);
-  if (toolEvent && SHELL_TOOLS.has(toolName)) reports.push(shellReport(event, input, subagentId));
+  if (toolEvent && SHELL_TOOLS.has(toolName)) reports.push(shellReport(event, input, subagentId, toolName));
   if (toolEvent && SUBAGENT_TOOLS.has(toolName)) {
     const toolInput = input.tool_input || input.toolInput || {};
     if (toolInput.run_in_background !== true) {

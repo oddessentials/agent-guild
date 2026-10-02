@@ -34,7 +34,7 @@ export function bundleFiles(version, { shimDir = null, platform = process.platfo
   return {
     claude: {
       '.claude-plugin/plugin.json': json(manifest),
-      'hooks/hooks.json': json({ hooks: groups(CLAUDE_EVENTS, shellEvents(['PreToolUse', 'PostToolUse', 'PostToolUseFailure'], 'Bash')) }),
+      'hooks/hooks.json': json({ hooks: groups(CLAUDE_EVENTS, shellEvents(['PreToolUse', 'PostToolUse', 'PostToolUseFailure'], 'Bash|PowerShell')) }),
     },
     gemini: {
       'gemini-extension.json': json(manifest),

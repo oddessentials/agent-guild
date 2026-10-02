@@ -2928,7 +2928,7 @@ test('every reporting bundle runs the reporter, Gemini\'s by full path in the sh
   const commands = (files) => [...JSON.stringify(JSON.parse(files['hooks/hooks.json'])).matchAll(/"command":"((?:[^"\\]|\\.)*)"/g)].map((m) => JSON.parse(`"${m[1]}"`));
   const claude = JSON.parse(unix.claude['hooks/hooks.json']).hooks;
   assert.deepEqual(Object.keys(claude), ['SessionStart', 'SubagentStart', 'SubagentStop', 'PostModelSwitch', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Stop']);
-  assert.equal(claude.PreToolUse[0].matcher, 'Bash', 'only shell commands pay for the tool hooks');
+  assert.equal(claude.PreToolUse[0].matcher, 'Bash|PowerShell', 'only shell commands pay for the tool hooks');
   assert.equal(claude.SessionStart[0].matcher, undefined);
   assert.equal(JSON.parse(unix.grok['hooks/hooks.json']).hooks.PreToolUse[0].matcher, 'run_terminal_command');
   assert.ok(commands(unix.claude).every((c) => c === REPORT_COMMAND));
@@ -3009,6 +3009,8 @@ test('shell commands map to shell reports that carry no command text', () => {
   assert.equal(hookToReports({ hook_event_name: 'AfterTool', tool_name: 'run_shell_command', tool_input: gi, tool_response: { llmContent: [{ text: 'Command moved to background (PID: 77). Output hidden.' }] } })[0].pid, 77);
   assert.equal(hookToReports({ hook_event_name: 'AfterTool', tool_name: 'run_shell_command', tool_input: gi, tool_response: { llmContent: 'Output: done\nBackground PIDs: 9' } })[0].shell, 'end', 'finished, with a child left behind: not the command\'s own pid');
   assert.deepEqual(hookToReports({ hookEventName: 'pre_tool_use', hook_event_name: 'PreToolUse', toolName: 'run_terminal_command', toolUseId: 'g1', toolInput: { command: secret } }), [{ shell: 'start', key: 'g1', ...hashes }]);
+  assert.deepEqual(hookToReports({ hook_event_name: 'PreToolUse', tool_name: 'PowerShell', tool_use_id: 'toolu_3', tool_input: { command: 'Get-ChildItem C:\\' } }), [{ shell: 'start', key: 'toolu_3', match: commandHash('Get-ChildItem C:\\') }], 'no POSIX exec hash for PowerShell');
+  assert.deepEqual(hookToReports({ hook_event_name: 'PostToolUse', tool_name: 'PowerShell', tool_use_id: 'toolu_3', tool_input: { command: 'x' }, tool_response: { stdout: '' } }), [{ shell: 'end', key: 'toolu_3' }]);
   for (const report of [bgStart, gStart, gEnd]) assert.ok(!JSON.stringify(report).includes('s3cr3t'));
   assert.equal(commandHash('echo a\n  b'), commandHash('echo a? b'));
   assert.notEqual(commandHash('echo a'), commandHash('echo b'));
@@ -3072,6 +3074,13 @@ test('the words a shell leaves as its argv when it replaces itself with the last
   words('sleep 9 "a\\\nb"', 'sleep 9 ab');
   words('if true; then sleep 9; fi', null);
   words('for x in 1; do sleep 9; done', null);
+  words('cd /tmp && nohup nice -n 5 sleep 9', 'sleep 9');
+  words('nice -5 sleep 9', 'sleep 9');
+  words('env -i -u HOME -- sleep 9', 'sleep 9');
+  words('exec -a name sleep 9', 'name 9');
+  words('command -p sleep 9', 'sleep 9');
+  words('builtin exec noglob sleep 9', 'sleep 9');
+  words("env -S 'sleep 9'", null);
 });
 
 test('a reused pid is not the process a shell command was bound to', async () => {
