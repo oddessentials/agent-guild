@@ -2998,7 +2998,7 @@ test('shell commands map to shell reports that carry no command text', () => {
   assert.deepEqual(hookToReports({ hook_event_name: 'PostToolUseFailure', tool_name: 'Bash', tool_use_id: 'toolu_1', tool_input: { command: secret } }), [{ shell: 'end', key: 'toolu_1' }]);
   const [bgStart] = hookToReports({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'toolu_2', tool_input: { command: secret, run_in_background: true } });
   assert.deepEqual(bgStart, { shell: 'start', key: 'toolu_2', ...hashes });
-  assert.deepEqual(hookToReports({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_use_id: 'toolu_2', tool_input: { command: secret, run_in_background: true }, tool_response: { backgroundTaskId: 'b1' } }), [{ shell: 'background', key: 'toolu_2' }]);
+  assert.deepEqual(hookToReports({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_use_id: 'toolu_2', tool_input: { command: secret, run_in_background: true }, tool_response: { backgroundTaskId: 'b1' } }), [{ shell: 'background', key: 'toolu_2', ...hashes }], 'the command that runs, which a PreToolUse hook may have rewritten');
   assert.deepEqual(hookToReports({ hook_event_name: 'PreToolUse', turn_id: 't1', model: 'gpt-5-codex', tool_name: 'Bash', tool_use_id: 'call_1', tool_input: { command: secret } }),
     [{ shell: 'start', key: 'call_1', track: true, ...hashes }]);
   const gi = { command: secret, description: 'x', is_background: true };

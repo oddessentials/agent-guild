@@ -16,7 +16,7 @@
 //   prompt                 a user prompt (Codex runs its SessionStart hooks here)
 //   subagent <id> <type>   a sub-agent starts; Gemini: an invoke_agent call starts
 //   subagent-done <id> <type>
-//   shell <id> <ms> [fg|bg|exec|ps|ask-yes|ask-no] [command...]
+//   shell <id> <ms> [fg|bg|exec|ps|ask-yes|ask-no|ask-rewrite|bg-rewrite] [command...]
 //                          runs a shell command for <ms> as the tool would: its hooks, and a
 //                          process whose command line has the tool's own form (Claude Code's
 //                          eval script, Codex CLI's sandbox wrapper and -lc). Claude Code and
@@ -24,7 +24,8 @@
 //                          reports the end of one that outlives its 1 s yield; exec runs the
 //                          command itself with bash -lc, which replaces itself with it; ps runs
 //                          it as Claude Code's PowerShell tool; ask-yes and ask-no show a
-//                          permission dialog for a while, then run the command or not
+//                          permission dialog for a while, then run the command or not;
+//                          the -rewrite modes run a command a PreToolUse hook rewrote
 //   shell-denied <id> [command...]
 //                          a start event with no process and no end event
 //   tool <agent-id> <tool>  a sub-agent calls a tool that is not a shell
@@ -229,13 +230,15 @@ function runTool() {
     return [start ? 'PreToolUse' : 'PostToolUse', { tool_name: name, tool_use_id: id, tool_input: input, ...(tool === 'codex' ? { turn_id: 'turn-1' } : {}), ...(response ? { tool_response: response } : {}) }, name];
   };
   const runShell = async (id, ms, mode, command) => {
-    const background = mode === 'bg';
-    const input = tool === 'gemini' ? { command, description: 'test', is_background: background }
+    const background = mode === 'bg' || mode === 'bg-rewrite';
+    const announced = tool === 'gemini' ? { command, description: 'test', is_background: background }
       : { command, ...(background && tool === 'claude' ? { run_in_background: true } : {}) };
     const name = mode === 'ps' ? 'PowerShell' : toolName;
-    const [startEvent, startPayload, matcher] = shellEvent(true, id, input, null, name);
+    const [startEvent, startPayload, matcher] = shellEvent(true, id, announced, null, name);
     await runHooks(hooks, startEvent, startPayload, matcher);
-    if (mode === 'ask-yes' || mode === 'ask-no') {
+    const input = mode.endsWith('-rewrite') ? { ...announced, command: `${command} -- --runInBand` } : announced;
+    command = input.command;
+    if (mode.startsWith('ask-')) {
       await runHooks(hooks, 'PermissionRequest', { tool_name: name, tool_input: input, permission_suggestions: [] }, name);
       out(`SHELL-ASKED ${id}`);
       await new Promise((resolve) => setTimeout(resolve, Number(process.env.FAKE_PERMISSION_MS || 1500)));

@@ -1209,7 +1209,27 @@ test('a Claude Code command waiting for permission shows only once it runs, and 
   await waitFor(shellCountIs(tool.session.id, 1), { label: 'shown once its process runs', timeout: bindTimeout });
   await runShells(tool, [], 'SHELL-DONE approved');
   await waitFor(shellCountIs(tool.session.id, 0), { label: 'gone when it ends', timeout: 2000 });
+
+  const before = watch.seen.length;
+  tool.client.input('shell rewritten 4000 ask-rewrite npm test');
+  await runShells(tool, [], 'SHELL-STARTED rewritten');
+  assert.deepEqual(watch.seen.slice(before).filter((ids) => ids.length), [], 'a command a PreToolUse hook rewrote is hidden while it waits too');
+  await waitFor(boundShells(tool.session.id, 1), { label: 'bound to the rewritten command', timeout: bindTimeout });
+  assert.equal((await shellsNow(tool.session.id)).length, 1);
+  await runShells(tool, [], 'SHELL-DONE rewritten');
+  await waitFor(shellCountIs(tool.session.id, 0), { label: 'gone when it ends', timeout: 2000 });
   watch.stop();
+  await tool.client.close();
+  await call('DELETE', `/sessions/${tool.session.id}`);
+});
+
+test('a Claude Code background command a PreToolUse hook rewrote ends with the rewritten command\'s process', async () => {
+  const tool = await startTool('anthropic');
+  await waitFor(reportingIs(tool.session.id, 'active'), { label: 'hooks', timeout: 15000 });
+  tool.client.input('shell rebg 5000 bg-rewrite npm test');
+  await waitFor(boundShells(tool.session.id, 1), { label: 'bound to the rewritten command', timeout: bindTimeout });
+  await waitFor(() => stripAnsi(tool.client.output).includes('SHELL-EXITED rebg'), { label: 'exit', timeout: 20000 });
+  await waitFor(shellCountIs(tool.session.id, 0), { label: 'ended with its process', timeout: 10000 });
   await tool.client.close();
   await call('DELETE', `/sessions/${tool.session.id}`);
 });

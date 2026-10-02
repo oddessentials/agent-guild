@@ -199,20 +199,21 @@ function shellReport(event, input, subagentId, toolName) {
   const id = text(input.tool_use_id, input.toolUseId);
   const ref = id ? { key: id.slice(0, 128) } : { bucket: crypto.createHash('sha256').update(JSON.stringify(toolInput)).digest('hex').slice(0, 32) };
   const command = typeof toolInput.command === 'string' ? toolInput.command : null;
+  const hashes = {};
+  if (command) {
+    hashes.match = commandHash(command);
+    const exec = toolName === 'PowerShell' ? null : execHash(command);
+    if (exec && exec !== hashes.match) hashes.exec = exec;
+  }
   if (TOOL_START_EVENTS.has(event) || event === 'PermissionRequest') {
     const report = { shell: event === 'PermissionRequest' ? 'waiting' : 'start', ...ref };
     if (subagentId) report.agentId = `hook-${subagentId}`;
     if (text(input.turn_id)) report.track = true;
-    if (command) {
-      report.match = commandHash(command);
-      const exec = toolName === 'PowerShell' ? null : execHash(command);
-      if (exec && exec !== report.match) report.exec = exec;
-    }
-    return report;
+    return { ...report, ...hashes };
   }
   if (event === 'PostToolUse' || event === 'AfterTool') {
     const response = input.tool_response ?? input.toolResponse;
-    if (response && typeof response === 'object' && text(response.backgroundTaskId)) return { shell: 'background', ...ref };
+    if (response && typeof response === 'object' && text(response.backgroundTaskId)) return { shell: 'background', ...ref, ...hashes };
     const pid = geminiBackgroundPid(response);
     if (pid) return { shell: 'background', ...ref, pid };
   }
