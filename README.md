@@ -140,20 +140,18 @@ The full reference, including every field and environment variable, is in
 
 ## Show agents and models
 
-Agents are reported by the coding tool, not guessed from its output. To see
-them, add the hooks from the matching file in [examples/](examples/) to
-Claude Code, Codex CLI, Gemini CLI or Grok Build. Each helper agent then
-appears on the card while it runs, and the card shows the model in use.
-Without hooks, the card still names the model when it is given with
-`--model` or shown on the tool's screen.
+Agents are reported by the coding tool's hooks, not guessed from its output.
+Each helper agent appears on the card while it runs. Agent Guild gives every
+Claude Code and Codex CLI session its reporting hooks for that session only,
+without changing the tool's own settings. Gemini CLI has no such option: turn
+on **Agent reporting** on its card once, which links an Agent Guild extension
+into Gemini. Grok Build cannot take hooks for one session yet; add the hooks
+from [examples/grok-hooks.json](examples/grok-hooks.json) to see its agents.
+When a tool's hooks do not run, because hooks are turned off, restricted by
+an administrator or not trusted for the folder, the card says so.
 
-The hooks call `agent-guild-report`, which the manager puts on the PATH of
-every session, so nothing else needs installing. Two tools need a one-time
-approval:
-
-* Codex CLI runs no hook until you trust it: choose "Trust all and continue"
-  when it starts, or run `/hooks`.
-* Claude Code runs none until you accept its workspace-trust prompt.
+The card also names the model, from the hooks, from `--model` or from the
+tool's screen.
 
 Any other tool or script can report agents and its model too. See
 [docs/agent-reporting.md](docs/agent-reporting.md).

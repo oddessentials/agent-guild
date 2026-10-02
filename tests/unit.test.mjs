@@ -12,6 +12,7 @@ import { paths } from '../src/manager/config.mjs';
 import { classifyInstall, expandHome, helpDescribes, platformDependency, listInstallations, knownLaunchers, shellCommand } from '../src/manager/install-channels.mjs';
 import { hookToReports, claudeStatuslineToReport, formatStatusLine } from '../src/report/hooks.mjs';
 import { shimContents, writeReportShims, prependPath, fileUrl, SHIM_NAME, LOADER_NAME } from '../src/manager/report-shims.mjs';
+import { bundleFiles, codexHookArgs, codexTrustArgs, codexHooksFrom, geminiCommand, geminiLinked, helpLists, REPORT_COMMAND } from '../src/manager/session-hooks.mjs';
 import { execFileSync } from 'node:child_process';
 import { parseVersion, compareVersions, probeVersion, diagnosticLine, latestVersion } from '../src/manager/versions.mjs';
 import { SelfUpdate, isDevelopmentBuild } from '../src/manager/self-update.mjs';
@@ -1832,8 +1833,8 @@ test('hook events map to agent reports for every tool\'s spelling', () => {
   // With multi_agent_v2, a follow-up turn fires no prompt event; its tool calls carry the agent and Codex's turn_id.
   assert.deepEqual(hookToReports({ hook_event_name: 'PreToolUse', turn_id: 't4', agent_id: 'c1', agent_type: 'explorer', model: 'gpt-5-codex', tool_name: 'shell', tool_input: { command: ['ls'] } }),
     [{ agentId: 'hook-c1', name: 'explorer', kind: 'subagent', status: 'working' }]);
-  assert.deepEqual(hookToReports({ hook_event_name: 'PreToolUse', agent_id: 'internal-1', tool_name: 'Bash', tool_input: {} }), [], 'a Claude Code helper\'s tool call has no turn_id and is not an agent');
-  assert.deepEqual(hookToReports({ hook_event_name: 'UserPromptSubmit', model: 'gpt-5-codex', prompt: 'main' }), [{ finishForeground: true }, { model: 'gpt-5-codex' }], 'a main-thread prompt is not an agent');
+  assert.deepEqual(hookToReports({ hook_event_name: 'PreToolUse', agent_id: 'internal-1', tool_name: 'Read', tool_input: {} }), [], 'a Claude Code helper\'s tool call has no turn_id and is not an agent');
+  assert.deepEqual(hookToReports({ hook_event_name: 'UserPromptSubmit', turn_id: 't5', model: 'gpt-5-codex', prompt: 'main' }), [{ finishForeground: true }, { model: 'gpt-5-codex' }], 'a main-thread prompt is not an agent');
   // Grok Build: camelCase fields and a snake_case event name beside the PascalCase one
   assert.deepEqual(hookToReports({ hookEventName: 'subagent_stop', hook_event_name: 'SubagentStop', subagentId: 'g1', subagentType: 'reviewer', modelId: 'grok-build' }),
     [{ agentId: 'hook-g1', name: 'reviewer', kind: 'subagent', status: 'done' }]);
@@ -1844,13 +1845,13 @@ test('hook events map to agent reports for every tool\'s spelling', () => {
   // A cancelled Grok sub-agent never fires SubagentStop; the SessionEnd of its own session names it.
   assert.deepEqual(hookToReports({ hookEventName: 'session_end', hook_event_name: 'SessionEnd', sessionId: 'g3', session_id: 'g3', subagentType: 'explore', reason: 'shutdown' }),
     [{ agentId: 'hook-g3', name: 'explore', kind: 'subagent', status: 'done' }]);
-  assert.deepEqual(hookToReports({ hookEventName: 'session_end', hook_event_name: 'SessionEnd', sessionId: 'parent', session_id: 'parent', reason: 'channel_closed' }), [], 'the main session ending is not an agent');
+  assert.deepEqual(hookToReports({ hookEventName: 'session_end', hook_event_name: 'SessionEnd', sessionId: 'parent', session_id: 'parent', reason: 'channel_closed' }), [{ shell: 'reset' }], 'the main session ending is not an agent, and ends its commands');
   assert.deepEqual(hookToReports({ hookEventName: 'stop_cancelled', hook_event_name: 'StopCancelled', sessionId: 'g4', session_id: 'g4', subagentType: 'plan', reason: 'max_turns', cancelledBy: 'runtime' }),
     [{ agentId: 'hook-g4', name: 'plan', kind: 'subagent', status: 'done' }], 'a sub-agent cut off at its turn limit is done');
   assert.deepEqual(hookToReports({ hookEventName: 'stop_cancelled', hook_event_name: 'StopCancelled', sessionId: 'parent', session_id: 'parent', reason: 'user_interrupt', cancelledBy: 'user' }), []);
-  assert.deepEqual(hookToReports({ hook_event_name: 'SessionEnd', session_id: 's', reason: 'exit', agent_type: 'security-reviewer' }), [], 'a Claude Code --agent session ending is not an agent either');
-  assert.deepEqual(hookToReports({ cwd: '/w', hook_event_name: 'SessionEnd', reason: 'other', session_id: 's', transcript_path: null }), [], 'Codex SessionEnd is root-only');
-  assert.deepEqual(hookToReports({ session_id: 's', cwd: '/w', hook_event_name: 'SessionEnd', timestamp: 't', reason: 'exit' }), [], 'Gemini SessionEnd names no agent');
+  assert.deepEqual(hookToReports({ hook_event_name: 'SessionEnd', session_id: 's', reason: 'exit', agent_type: 'security-reviewer' }), [{ shell: 'reset' }], 'a Claude Code --agent session ending is not an agent either');
+  assert.deepEqual(hookToReports({ cwd: '/w', hook_event_name: 'SessionEnd', reason: 'other', session_id: 's', transcript_path: null }), [{ shell: 'reset' }], 'Codex SessionEnd is root-only');
+  assert.deepEqual(hookToReports({ session_id: 's', cwd: '/w', hook_event_name: 'SessionEnd', timestamp: 't', reason: 'exit' }), [{ shell: 'reset' }], 'Gemini SessionEnd names no agent');
   // Gemini CLI has no sub-agent events; the invoke_agent tool call brackets each sub-agent run.
   const gi = { agent_name: 'codebase_investigator', prompt: 'Map the auth flow' };
   const [gb] = hookToReports({ hook_event_name: 'BeforeTool', session_id: 'g', timestamp: '2026-09-30T00:00:00Z', tool_name: 'invoke_agent', tool_input: gi });
@@ -1866,7 +1867,7 @@ test('hook events map to agent reports for every tool\'s spelling', () => {
   assert.deepEqual(hookToReports({ hook_event_name: 'BeforeAgent', session_id: 'g', prompt: 'next' }), [{ finishForeground: true }, { toolSessionId: 'g' }]);
   assert.deepEqual(hookToReports({ hook_event_name: 'AfterAgent', session_id: 'g', prompt: 'p', prompt_response: 'r', stop_hook_active: false }), [{ finishForeground: true }]);
   assert.deepEqual(hookToReports({ hook_event_name: 'Stop', session_id: 'c', stop_hook_active: false }), [{ finishForeground: true }], 'a main-thread Stop is a turn boundary too');
-  assert.deepEqual(hookToReports({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: {} }), []);
+  assert.deepEqual(hookToReports({ hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: {} }), []);
   assert.deepEqual(hookToReports({ hook_event_name: 'SubagentStop' }), []);
   assert.deepEqual(hookToReports(null), []);
   // Background launches return at once, so the tool-call style cannot tell when they end.
@@ -1878,14 +1879,14 @@ test('the agent-guild-report launchers run the reporter from any hook shell', ()
   const script = '/opt/agent guild/bin/agent-guild-report.mjs';
   const posix = shimContents({ execPath: '/usr/local/n$v/node', script, platform: 'linux' });
   assert.deepEqual(Object.keys(posix), [SHIM_NAME]);
-  assert.equal(posix[SHIM_NAME], '#!/bin/sh\nn="/usr/local/n\\$v/node"\n[ -x "$n" ] || n=node\nexec "$n" "/opt/agent guild/bin/agent-guild-report.mjs" "$@"\n');
+  assert.equal(posix[SHIM_NAME], '#!/bin/sh\n[ "$1" = --hook ] && [ -z "$AGENT_GUILD_SESSION_ID" ] && exec cat >/dev/null\nn="/usr/local/n\\$v/node"\n[ -x "$n" ] || n=node\nexec "$n" "/opt/agent guild/bin/agent-guild-report.mjs" "$@"\n');
 
   const winScript = 'C:\\Users\\José\\100%\\agent-guild\\bin\\agent-guild-report.mjs';
   const win = shimContents({ execPath: 'C:\\Program Files\\nodejs\\node.exe', script: winScript, platform: 'win32' });
   assert.deepEqual(Object.keys(win).sort(), [SHIM_NAME, LOADER_NAME, `${SHIM_NAME}.cmd`], 'no .ps1: PowerShell would prefer it and its default policy refuses it');
-  assert.equal(win[SHIM_NAME], '#!/bin/sh\nn="C:/Program Files/nodejs/node.exe"\n[ -x "$n" ] || n=node\nexec "$n" "C:/Users/José/100%/agent-guild/bin/agent-guild-report.mjs" "$@"\n', 'Git Bash takes forward slashes');
+  assert.equal(win[SHIM_NAME], '#!/bin/sh\n[ "$1" = --hook ] && [ -z "$AGENT_GUILD_SESSION_ID" ] && exec cat >/dev/null\nn="C:/Program Files/nodejs/node.exe"\n[ -x "$n" ] || n=node\nexec "$n" "C:/Users/José/100%/agent-guild/bin/agent-guild-report.mjs" "$@"\n', 'Git Bash takes forward slashes');
   // cmd.exe reads the batch file in the OEM code page, so the paths stay out of it.
-  assert.equal(win[`${SHIM_NAME}.cmd`], '@ECHO OFF\r\nIF EXIST "%AGENT_GUILD_NODE%" GOTO manager\r\nnode "%~dp0agent-guild-report-loader.mjs" %*\r\nEXIT /B %ERRORLEVEL%\r\n:manager\r\n"%AGENT_GUILD_NODE%" "%~dp0agent-guild-report-loader.mjs" %*\r\n');
+  assert.equal(win[`${SHIM_NAME}.cmd`], '@ECHO OFF\r\nIF "%~1"=="--hook" IF NOT DEFINED AGENT_GUILD_SESSION_ID EXIT /B 0\r\nIF EXIST "%AGENT_GUILD_NODE%" GOTO manager\r\nnode "%~dp0agent-guild-report-loader.mjs" %*\r\nEXIT /B %ERRORLEVEL%\r\n:manager\r\n"%AGENT_GUILD_NODE%" "%~dp0agent-guild-report-loader.mjs" %*\r\n');
   assert.equal(win[LOADER_NAME], 'import "file:///C:/Users/Jos%C3%A9/100%25/agent-guild/bin/agent-guild-report.mjs";\n');
   for (const name of [`${SHIM_NAME}.cmd`, LOADER_NAME]) assert.match(win[name], /^[\x20-\x7e\r\n]+$/, `${name} is ASCII`);
   assert.equal(fileUrl('/tmp/a b/#1/x.mjs', 'linux'), 'file:///tmp/a%20b/%231/x.mjs');
@@ -1918,37 +1919,41 @@ test('the agent-guild-report launchers run the reporter from any hook shell', ()
     for (const [file, args, why] of winArgs) assert.match(run(file, args, withNode), /^Usage: agent-guild-report/, why);
     // The manager's Node.js is gone: `node` on the (real) PATH takes over.
     assert.match(run(cmd, ['/d', '/s', '/c', `${SHIM_NAME} --help`], { ...withNode, AGENT_GUILD_NODE: gone }), /^Usage: agent-guild-report/, 'falls back to node on PATH');
+    const outside = { SystemRoot: process.env.SystemRoot, ComSpec: cmd, PATH: system32, AGENT_GUILD_NODE: gone };
+    const hook = execFileSync(cmd, [`/d /s /c ""${path.join(dir, `${SHIM_NAME}.cmd`)}" --hook"`], { env: outside, encoding: 'utf8', timeout: 20000, windowsHide: true, windowsVerbatimArguments: true });
+    assert.equal(hook, '');
   } else {
     assert.ok((fs.statSync(path.join(dir, SHIM_NAME)).mode & 0o111) !== 0, 'the sh launcher is executable');
     assert.match(run('/bin/sh', ['-c', `${SHIM_NAME} --help`], withNode), /^Usage: agent-guild-report/, 'sh (Claude Code, Grok Build) runs the launcher');
     fs.symlinkSync(process.execPath, path.join(nodeDir, 'node'));
     writeReportShims({ dir, execPath: gone, script: reporter });
     assert.match(run('/bin/sh', ['-c', `${SHIM_NAME} --help`], { PATH: `${dir}:${nodeDir}` }), /^Usage: agent-guild-report/, 'falls back to node on PATH');
+    assert.equal(execFileSync('/bin/sh', ['-c', `${SHIM_NAME} --hook`], { env: { PATH: `${dir}:/usr/bin:/bin` }, input: '{"hook_event_name":"BeforeModel"}', encoding: 'utf8' }), '');
   }
 });
 
 test('hook events and the Claude Code status line report the model', () => {
-  assert.deepEqual(hookToReports({ hook_event_name: 'SessionStart', source: 'startup', model: 'claude-opus-5' }), [{ model: 'claude-opus-5' }]);
-  assert.deepEqual(hookToReports({ hook_event_name: 'SessionStart', source: 'startup' }), []);
+  assert.deepEqual(hookToReports({ hook_event_name: 'SessionStart', source: 'startup', model: 'claude-opus-5' }), [{ model: 'claude-opus-5' }, { hello: true }]);
+  assert.deepEqual(hookToReports({ hook_event_name: 'SessionStart', source: 'startup' }), [{ hello: true }], 'the session start announces the hooks');
   assert.deepEqual(hookToReports({ hook_event_name: 'PostModelSwitch', from_model: 'a', to_model: 'claude-sonnet-5' }), [{ model: 'claude-sonnet-5' }]);
-  assert.deepEqual(hookToReports({ hook_event_name: 'UserPromptSubmit', prompt: 'hi' }), [{ finishForeground: true }]);
+  assert.deepEqual(hookToReports({ hook_event_name: 'UserPromptSubmit', prompt: 'hi' }), [], 'Claude Code\'s prompt names no model');
   // Codex CLI names the model on every event; Gemini CLI inside BeforeModel's request; Grok Build as modelId.
-  assert.deepEqual(hookToReports({ hook_event_name: 'UserPromptSubmit', model: 'gpt-5-codex', prompt: 'hi' }), [{ finishForeground: true }, { model: 'gpt-5-codex' }]);
+  assert.deepEqual(hookToReports({ hook_event_name: 'UserPromptSubmit', turn_id: 't1', model: 'gpt-5-codex', prompt: 'hi' }), [{ finishForeground: true }, { model: 'gpt-5-codex' }]);
   assert.deepEqual(hookToReports({ hook_event_name: 'BeforeModel', llm_request: { model: 'gemini-2.5-pro', messages: [] } }), [{ model: 'gemini-2.5-pro' }]);
-  assert.deepEqual(hookToReports({ hookEventName: 'session_start', hook_event_name: 'SessionStart', modelId: 'grok-build' }), [{ model: 'grok-build' }]);
+  assert.deepEqual(hookToReports({ hookEventName: 'session_start', hook_event_name: 'SessionStart', modelId: 'grok-build' }), [{ model: 'grok-build' }, { hello: true }]);
   // Turn events that fire inside a sub-agent name it, and its model is not the session's.
   assert.ok(!hookToReports({ hook_event_name: 'UserPromptSubmit', agent_id: 'c1', agent_type: 'explorer', model: 'gpt-5-codex-mini', prompt: 'x' }).some((r) => r.model));
   assert.deepEqual(hookToReports({ hook_event_name: 'Stop', agent_id: 'a1', agent_type: 'Explore', model: 'claude-haiku-4-5' }), []);
   assert.deepEqual(hookToReports({ hookEventName: 'user_prompt_submit', hook_event_name: 'UserPromptSubmit', subagentType: 'reviewer', modelId: 'grok-build' }), []);
-  assert.deepEqual(hookToReports({ hook_event_name: 'UserPromptSubmit', agent_type: 'security-reviewer', model: 'claude-opus-5' }), [{ finishForeground: true }, { model: 'claude-opus-5' }], 'a session started with --agent is still the main session');
+  assert.deepEqual(hookToReports({ hook_event_name: 'SessionStart', agent_type: 'security-reviewer', model: 'claude-opus-5' }), [{ model: 'claude-opus-5' }, { hello: true }], 'a session started with --agent is still the main session');
   // Grok Build's real SessionStart carries no model: the card uses the screen scan.
-  assert.deepEqual(hookToReports({ hookEventName: 'session_start', hook_event_name: 'SessionStart', sessionId: 's', cwd: '/w', source: 'new' }), [{ toolSessionId: 's' }]);
+  assert.deepEqual(hookToReports({ hookEventName: 'session_start', hook_event_name: 'SessionStart', sessionId: 's', cwd: '/w', source: 'new' }), [{ hello: true }, { toolSessionId: 's' }]);
 
   // The tool's own session id comes with the event that opens the session, and only for the main session.
   assert.deepEqual(hookToReports({ hook_event_name: 'SessionStart', session_id: '550e8400-e29b-41d4-a716-446655440000', source: 'resume', model: 'claude-opus-5' }),
-    [{ model: 'claude-opus-5' }, { toolSessionId: '550e8400-e29b-41d4-a716-446655440000' }]);
+    [{ model: 'claude-opus-5' }, { hello: true }, { toolSessionId: '550e8400-e29b-41d4-a716-446655440000' }]);
   assert.deepEqual(hookToReports({ hook_event_name: 'SessionStart', session_id: 'child', agent_id: 'c1', agent_type: 'explorer' }), [], 'a sub-agent\'s session is not the tool session');
-  assert.deepEqual(hookToReports({ hook_event_name: 'UserPromptSubmit', session_id: 's', prompt: 'hi' }), [{ finishForeground: true }], 'later events do not repeat the id');
+  assert.deepEqual(hookToReports({ hook_event_name: 'UserPromptSubmit', turn_id: 't1', session_id: 's', prompt: 'hi' }), [{ finishForeground: true }], 'later events do not repeat the id');
 
   const input = { model: { id: 'claude-opus-4-5', display_name: 'Opus 4.5' }, workspace: { current_dir: '/home/me/app' }, context_window: { used_percentage: 41.7 } };
   assert.deepEqual(claudeStatuslineToReport(input), { model: 'claude-opus-4-5', displayName: 'Opus 4.5' });
@@ -2901,3 +2906,138 @@ test('the launcher path names the double-click file for the platform only when t
   assert.equal(launcherPath('darwin', bare), null);
   fs.rmSync(bare, { recursive: true, force: true });
 });
+
+test('every reporting bundle runs the reporter, Gemini\'s by full path in the shell it uses', () => {
+  const unix = bundleFiles('1.2.3', { shimDir: '/data/agent guild/bin', platform: 'linux' });
+  const commands = (files) => [...JSON.stringify(JSON.parse(files['hooks/hooks.json'])).matchAll(/"command":"((?:[^"\\]|\\.)*)"/g)].map((m) => JSON.parse(`"${m[1]}"`));
+  const claude = JSON.parse(unix.claude['hooks/hooks.json']).hooks;
+  assert.deepEqual(Object.keys(claude), ['SessionStart', 'UserPromptSubmit', 'SubagentStart', 'SubagentStop', 'PostModelSwitch', 'PreToolUse', 'PermissionRequest', 'PostToolUse', 'PostToolUseFailure', 'Stop']);
+  assert.equal(claude.PreToolUse[0].matcher, 'Bash|PowerShell', 'only shell commands pay for the tool hooks');
+  assert.equal(claude.PermissionRequest[0].matcher, 'Bash|PowerShell');
+  assert.equal(claude.PostToolUse[0].matcher, 'Bash|PowerShell|TaskStop', 'TaskStop ends a background command');
+  assert.equal(claude.PostToolUseFailure[0].matcher, 'Bash|PowerShell', 'a TaskStop that failed stopped nothing');
+  assert.deepEqual(Object.keys(claude).filter((event) => claude[event][0].hooks[0].async !== true), ['SubagentStart', 'PreToolUse'], 'only a start holds Claude Code up, so it reaches the manager before its end');
+  assert.equal(claude.SessionStart[0].matcher, undefined);
+  assert.equal(JSON.parse(unix.grok['hooks/hooks.json']).hooks.PreToolUse[0].matcher, 'run_terminal_command');
+  assert.ok(commands(unix.claude).every((c) => c === REPORT_COMMAND));
+  assert.ok(commands(unix.grok).every((c) => c === REPORT_COMMAND));
+  assert.equal(JSON.parse(unix.claude['.claude-plugin/plugin.json']).name, 'agent-guild');
+  assert.equal(JSON.parse(unix.grok['.grok-plugin/plugin.json']).name, 'agent-guild');
+  assert.equal(JSON.parse(unix.gemini['gemini-extension.json']).version, '1.2.3');
+  const gemini = JSON.parse(unix.gemini['hooks/hooks.json']).hooks;
+  assert.deepEqual(gemini.BeforeTool.map((g) => g.matcher), ['invoke_agent', 'run_shell_command']);
+  assert.deepEqual(gemini.AfterTool.map((g) => g.matcher), ['invoke_agent', 'run_shell_command']);
+  assert.ok(gemini.SessionStart, 'the session start announces the hooks');
+  assert.ok(commands(unix.gemini).every((c) => c === "'/data/agent guild/bin/agent-guild-report' --hook"));
+  assert.equal(geminiCommand("/o'neil/bin", 'linux'), `'/o'\\''neil/bin/agent-guild-report' --hook`);
+  assert.equal(geminiCommand("C:\\Users\\o'neil\\bin", 'win32'), "& 'C:\\Users\\o''neil\\bin\\agent-guild-report.cmd' --hook");
+  assert.equal(geminiCommand(null, 'linux'), REPORT_COMMAND);
+});
+
+test('Codex hook overrides avoid double quotes, and trust only the handlers Codex lists as ours', () => {
+  const args = codexHookArgs();
+  assert.deepEqual(args.filter((a, i) => i % 2 === 0), Array(10).fill('-c'));
+  assert.deepEqual(args.filter((a, i) => i % 2 === 1).map((a) => a.split('=')[0]), ['hooks.SessionStart', 'hooks.UserPromptSubmit', 'hooks.SubagentStart', 'hooks.SubagentStop', 'hooks.PreToolUse', 'hooks.PermissionRequest', 'hooks.PostToolUse', 'hooks.Stop', 'hooks.Interrupt', 'hooks.SessionEnd']);
+  assert.match(args[9], /^hooks\.PreToolUse=\[\{hooks=/, 'every tool call: a multi_agent_v2 follow-up starts with any tool');
+  assert.match(args[11], /^hooks\.PermissionRequest=\[\{matcher='Bash',/);
+  assert.match(args[13], /^hooks\.PostToolUse=\[\{matcher='Bash',/);
+  assert.ok(args.every((a) => !a.includes('"')), 'nothing for cmd.exe or argv parsing to escape');
+  for (const a of args.filter((x, i) => i % 2 === 1)) assert.equal(buildSpawnSpec('C:\\npm\\codex.cmd', [a], {}, 'win32').args.includes(`"${a}"`), true);
+
+  const hook = (eventName, extra = {}) => ({
+    key: `/<session-flags>/config.toml:${eventName}:0:0`, eventName, command: REPORT_COMMAND, source: 'sessionFlags', enabled: true,
+    currentHash: `sha256:${eventName}`, trustStatus: 'untrusted', ...extra,
+  });
+  const all = [hook('sessionStart'), hook('userPromptSubmit'), hook('subagentStart'), hook('subagentStop'), hook('preToolUse'), hook('permissionRequest'), hook('postToolUse'), hook('stop'), hook('interrupt'), hook('sessionEnd')];
+  const listed = codexHooksFrom({ data: [{ hooks: [...all, hook('subagentStart', { source: 'user', key: 'user-key', command: 'mine' })] }] });
+  assert.deepEqual(listed.map((h) => h.key), all.map((h) => h.key), 'the user\'s own hooks are never trusted by us');
+  assert.equal(codexHooksFrom({ data: [{ hooks: all.slice(1) }] }), null, 'a missing handler means Codex did not load ours');
+  assert.equal(codexHooksFrom({ data: [{ hooks: [...all.slice(1), hook('sessionStart', { enabled: false })] }] }), null);
+  const [, state] = codexTrustArgs(listed);
+  assert.equal(state, `hooks.state={${all.map((h) => `'${h.key}'={trusted_hash='${h.currentHash}'}`).join(',')}}`);
+  assert.equal(codexTrustArgs([{ key: "it's", hash: 'h' }]), null, 'a key that cannot be quoted is not trusted');
+});
+
+test('the plugin flag counts only when the command itself lists it', () => {
+  assert.ok(helpLists('Options:\n  --plugin-dir <path>   Load a plugin\n', '--plugin-dir'));
+  assert.ok(!helpLists('Commands:\n  agent   Run with --plugin-dir support\n', '--plugin-dir'));
+  assert.ok(!helpLists("error: unexpected argument '--plugin-dir' found", '--plugin-dir'));
+});
+
+test('Gemini counts as set up only with our extension linked to our folder', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-gemini-'));
+  const record = path.join(dir, '.gemini', 'extensions', 'agent-guild', '.gemini-extension-install.json');
+  const bundle = path.join(dir, 'bundle');
+  assert.equal(geminiLinked(dir, bundle), false);
+  fs.mkdirSync(path.dirname(record), { recursive: true });
+  fs.writeFileSync(record, JSON.stringify({ source: path.join(dir, 'elsewhere'), type: 'link' }));
+  assert.equal(geminiLinked(dir, bundle), false, 'another extension of the same name');
+  fs.writeFileSync(record, JSON.stringify({ source: bundle, type: 'link' }));
+  assert.equal(geminiLinked(dir, bundle), true);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('shell commands map to shell reports that carry no command text', () => {
+  const secret = 'curl -H "Authorization: Bearer s3cr3t" https://example.test';
+  const [start] = hookToReports({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'toolu_1', tool_input: { command: secret } });
+  assert.deepEqual(Object.keys(start), ['shell', 'key', 'match']);
+  assert.deepEqual([start.shell, start.key], ['start', 'toolu_1']);
+  assert.match(start.match, /^[a-f0-9]{32}$/);
+  assert.deepEqual(hookToReports({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_use_id: 'toolu_1', tool_input: { command: secret }, tool_response: { stdout: '' } }), [{ shell: 'end', key: 'toolu_1' }]);
+  assert.deepEqual(hookToReports({ hook_event_name: 'PostToolUseFailure', tool_name: 'Bash', tool_use_id: 'toolu_1', tool_input: { command: secret } }), [{ shell: 'end', key: 'toolu_1' }]);
+  assert.deepEqual(hookToReports({ hook_event_name: 'PostToolUse', tool_name: 'PowerShell', tool_use_id: 'toolu_2', tool_input: { command: 'Start-Sleep 60', run_in_background: true }, tool_response: { stdout: '', backgroundTaskId: 'b1', backgroundedByUser: true } }),
+    [{ shell: 'background', key: 'toolu_2', task: 'b1' }]);
+  assert.deepEqual(hookToReports({ hook_event_name: 'PostToolUse', agent_id: 's1', tool_name: 'Bash', tool_use_id: 'toolu_3', tool_input: { command: 'npm run dev' }, tool_response: { backgroundTaskId: 'b2', backgroundEndsWithFinalResponse: true } }),
+    [{ shell: 'background', key: 'toolu_3', task: 'b2', endsWithAgent: true }], 'Claude Code ends it when its sub-agent gives its final response');
+
+  const [waiting] = hookToReports({ hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: secret }, permission_suggestions: [] });
+  assert.deepEqual(waiting, { shell: 'waiting', match: start.match }, 'no tool_use_id in Claude Code\'s PermissionRequest: the command hash finds the command');
+  assert.equal(hookToReports({ hook_event_name: 'PermissionRequest', tool_name: 'PowerShell', tool_input: { command: 'Remove-Item x' } })[0].shell, 'waiting');
+  assert.deepEqual(hookToReports({ hook_event_name: 'PermissionRequest', tool_name: 'Edit', tool_input: {} }), []);
+  assert.deepEqual(hookToReports({ hook_event_name: 'PostToolUse', tool_name: 'TaskStop', tool_use_id: 'toolu_4', tool_input: { task_id: 'b1' }, tool_response: {} }),
+    [{ shell: 'end', task: 'b1' }, { agentId: 'hook-b1', status: 'done' }], 'a stopped task is a background command or a sub-agent');
+  assert.deepEqual(hookToReports({ hook_event_name: 'PostToolUseFailure', tool_name: 'TaskStop', tool_use_id: 'toolu_5', tool_input: { task_id: 'b1' }, error: 'No task found with ID: b1' }), [], 'a TaskStop that failed stopped nothing');
+
+  const tasks = [
+    { id: 'b1', type: 'shell', status: 'running', description: 'dev server', command: secret },
+    { id: 'b3', type: 'shell', status: 'completed', command: 'make' },
+    { id: 'm1', type: 'monitor', status: 'running', server: 's', tool: 't' },
+    { id: 'a1', type: 'subagent', status: 'running', agent_type: 'Explore' },
+  ];
+  assert.deepEqual(hookToReports({ hook_event_name: 'Stop', stop_hook_active: false, background_tasks: tasks, session_crons: [] }), [{ shell: 'running', tasks: ['b1'] }, { finishForeground: true }]);
+  assert.deepEqual(hookToReports({ hook_event_name: 'Stop', stop_hook_active: false }), [{ finishForeground: true }], 'without the list, nothing to match it to');
+  assert.deepEqual(hookToReports({ hook_event_name: 'SubagentStop', agent_id: 's1', agent_type: 'Explore', background_tasks: [] }),
+    [{ agentId: 'hook-s1', name: 'Explore', kind: 'subagent', status: 'done' }, { shell: 'running', tasks: [] }]);
+
+  const [codexStart] = hookToReports({ hook_event_name: 'PreToolUse', turn_id: 't1', model: 'gpt-5-codex', tool_name: 'Bash', tool_use_id: 'call_1', tool_input: { command: secret } });
+  assert.deepEqual(codexStart, { shell: 'start', key: 'call_1', match: start.match, persist: true }, 'Codex CLI keeps a command running past its turn');
+  assert.deepEqual(hookToReports({ hook_event_name: 'PermissionRequest', turn_id: 't1', tool_name: 'Bash', tool_input: { command: secret } }), [{ shell: 'asked', match: start.match }]);
+  assert.deepEqual(hookToReports({ hook_event_name: 'SessionEnd', turn_id: '', session_id: 'thread-1' }), [{ shell: 'reset' }], 'Codex CLI ends every command before SessionEnd');
+
+  const gi = { command: secret, description: 'x', is_background: true };
+  const [gStart] = hookToReports({ hook_event_name: 'BeforeTool', tool_name: 'run_shell_command', tool_input: gi });
+  const [gEnd] = hookToReports({ hook_event_name: 'AfterTool', tool_name: 'run_shell_command', tool_input: gi, tool_response: { llmContent: 'Command is running in background. PID: 4242. Initial output:\nx' } });
+  assert.equal(gStart.shell, 'start');
+  assert.deepEqual(gEnd, { shell: 'background', bucket: gStart.bucket, pids: [4242] });
+  const after = (llmContent) => hookToReports({ hook_event_name: 'AfterTool', tool_name: 'run_shell_command', tool_input: gi, tool_response: { llmContent } })[0];
+  assert.deepEqual(after([{ text: 'Command moved to background (PID: 77). Output hidden.' }]).pids, [77]);
+  const moved = 'Command moved to background (PID: 13845). Output hidden. Press Ctrl+B to view.';
+  assert.deepEqual(after(`<untrusted_context>\n${moved}\n</untrusted_context>`).pids, [13845], 'as Gemini CLI 0.62.0 reports it');
+  assert.deepEqual(after('Output: done\nBackground PIDs: 9, 12').pids, [9, 12], 'processes a finished command left running');
+  assert.deepEqual(after('Output: done'), { shell: 'end', bucket: gStart.bucket });
+
+  assert.deepEqual(hookToReports({ hookEventName: 'pre_tool_use', hook_event_name: 'PreToolUse', toolName: 'run_terminal_command', toolUseId: 'g1', toolInput: { command: secret } }), [{ shell: 'start', key: 'g1', match: start.match }]);
+  for (const report of [start, waiting, codexStart, gStart, gEnd]) assert.ok(!JSON.stringify(report).includes('s3cr3t'));
+});
+
+test('a Claude Code task notification ends the sub-agent it names, and is no turn boundary', () => {
+  const prompt = '<task-notification>\n<task-id>a7</task-id>\n<tool-use-id>toolu_1</tool-use-id>\n<output-file>/tmp/t/a7.output</output-file>\n<status>killed</status>\n<summary>Agent "x" was stopped by Claude</summary>\n</task-notification>';
+  assert.deepEqual(hookToReports({ hook_event_name: 'UserPromptSubmit', session_id: 's', prompt }), [{ shell: 'end', task: 'a7', key: 'toolu_1' }, { agentId: 'hook-a7', status: 'done' }]);
+  assert.deepEqual(hookToReports({ hook_event_name: 'UserPromptSubmit', prompt: `${prompt}\n${prompt.replaceAll('a7', 'b8').replace('toolu_1', 'toolu_2').replace('killed', 'completed')}` }),
+    [{ shell: 'end', task: 'a7', key: 'toolu_1' }, { agentId: 'hook-a7', status: 'done' }, { shell: 'end', task: 'b8', key: 'toolu_2' }, { agentId: 'hook-b8', status: 'done' }]);
+  assert.deepEqual(hookToReports({ hook_event_name: 'UserPromptSubmit', prompt: prompt.replace('killed', 'running') }), []);
+  // Claude Code fires it at once for a prompt typed while a turn still runs, so none is a turn boundary; Codex CLI's is.
+  assert.deepEqual(hookToReports({ hook_event_name: 'UserPromptSubmit', session_id: 's', prompt_id: 'p2', permission_mode: 'default', prompt: 'fix the <task-notification> parser' }), []);
+  assert.deepEqual(hookToReports({ hook_event_name: 'UserPromptSubmit', turn_id: 't2', prompt: 'next' }), [{ finishForeground: true }]);
+});
+

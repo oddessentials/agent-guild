@@ -16,14 +16,28 @@
 //                      (reads Claude Code status line JSON on stdin; prints a
 //                       status line, or the JSON itself with --passthrough)
 
+import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import { hookToReports, claudeStatuslineToReport, formatStatusLine } from '../src/report/hooks.mjs';
 
+// Importing node:http as an ES module costs a hook about 50 ms more than requiring it.
+const http = createRequire(import.meta.url)('node:http');
 const env = process.env;
-const inSession = env.AGENT_GUILD_URL && env.AGENT_GUILD_SESSION_ID && env.AGENT_GUILD_REPORT_TOKEN;
-// Gemini CLI's optional environment redaction removes every variable whose
-// name contains TOKEN before it runs a hook. Say so instead of staying silent.
-if (!inSession && env.AGENT_GUILD_SESSION_ID && !env.AGENT_GUILD_REPORT_TOKEN) {
-  console.error('agent-guild-report: AGENT_GUILD_REPORT_TOKEN is missing from the environment; the tool may be redacting variables named *TOKEN*');
+
+function reportToken() {
+  if (env.AGENT_GUILD_REPORT_TOKEN) return env.AGENT_GUILD_REPORT_TOKEN;
+  if (!env.AGENT_GUILD_REPORT_FILE) return null;
+  try {
+    return fs.readFileSync(env.AGENT_GUILD_REPORT_FILE, 'utf8').trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+const token = env.AGENT_GUILD_URL && env.AGENT_GUILD_SESSION_ID ? reportToken() : null;
+const inSession = Boolean(token);
+if (!inSession && env.AGENT_GUILD_SESSION_ID) {
+  console.error('agent-guild-report: the session report token is missing; the tool may have removed AGENT_GUILD_REPORT_TOKEN and AGENT_GUILD_REPORT_FILE from the environment, or the session has ended');
 }
 
 const USAGE = `Usage: agent-guild-report <agent-id> [--name N] [--status working|waiting|idle|done] [--detail TEXT] [--kind KIND] [--remove]
@@ -61,23 +75,31 @@ function readStdin() {
   });
 }
 
-async function send(report) {
-  const kind = report.agentId !== undefined || report.finishForeground === true ? 'agents'
+function send(report) {
+  const kind = report.shell !== undefined ? 'shells'
+    : report.agentId !== undefined || report.finishForeground === true ? 'agents'
+    : report.hello === true ? 'reporting'
     : report.toolSessionId !== undefined ? 'tool-session' : 'model';
-  const url = `${env.AGENT_GUILD_URL}/api/v1/sessions/${env.AGENT_GUILD_SESSION_ID}/${kind}`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Agent-Guild-Report-Token': env.AGENT_GUILD_REPORT_TOKEN,
-    },
-    body: JSON.stringify(report),
-    signal: AbortSignal.timeout(3000),
+  const body = JSON.stringify(report);
+  return new Promise((resolve, reject) => {
+    const req = http.request(`${env.AGENT_GUILD_URL}/api/v1/sessions/${env.AGENT_GUILD_SESSION_ID}/${kind}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+        'X-Agent-Guild-Report-Token': token,
+      },
+      timeout: 3000,
+    }, (res) => {
+      let text = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => { text += chunk; });
+      res.on('end', () => (res.statusCode >= 200 && res.statusCode < 300 ? resolve() : reject(new Error(`HTTP ${res.statusCode}: ${text}`))));
+    });
+    req.on('timeout', () => req.destroy(new Error('the manager did not answer in time')));
+    req.on('error', reject);
+    req.end(body);
   });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`HTTP ${res.status}: ${body}`);
-  }
 }
 
 /** A hook must never break the coding tool, so report failures quietly. */

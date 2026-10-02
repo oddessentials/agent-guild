@@ -354,23 +354,69 @@ function paintProviderIcon(el, provider) {
 
 const FAMILIARS = ['flame', 'leaf', 'night', 'aether'];
 
-function renderAgents(container, agents) {
+const REPORTING_TEXT = {
+  pending: 'waiting for hooks',
+  unavailable: 'no reports yet',
+  setup_required: 'reporting off',
+  unsupported: 'not supported',
+};
+
+function paintReporting(row, s) {
+  const reporting = s.status === 'running' ? s.reporting : null;
+  const agents = row.querySelector('.agents');
+  agents.dataset.empty = REPORTING_TEXT[reporting?.state] || 'none reported';
+  agents.classList.toggle('reporting-attention', ['unavailable', 'setup_required', 'unsupported'].includes(reporting?.state));
+  const why = row.querySelector('.reporting-why');
+  const reason = reporting?.state !== 'active' ? reporting?.reason || '' : '';
+  why.hidden = !reason;
+  why.title = reason;
+  why.setAttribute('aria-label', `Why agent reporting says ${agents.dataset.empty}: ${reason}`);
+  why.onclick = () => toast(reason, 12000);
+}
+
+const MAX_SHELLS_SHOWN = 16;
+
+function renderAgents(container, agents, shells = []) {
   const known = container.dataset.rendered ? new Set([...container.children].map((el) => el.dataset.agent)) : null;
   container.dataset.rendered = 'true';
-  container.replaceChildren(...agents.map((agent) => {
+  const familiar = (id, name, hue) => {
     const el = document.createElement('span');
-    el.className = `agent ${agent.status}`;
-    el.dataset.agent = agent.id;
-    if (known && !known.has(agent.id)) el.classList.add('summon');
-    el.style.setProperty('--c', `hsl(${hueFor(agent.name)} 65% 50%)`);
-    el.dataset.familiar = FAMILIARS[hueFor(agent.name) % FAMILIARS.length];
+    el.dataset.agent = id;
+    if (known && !known.has(id)) el.classList.add('summon');
+    el.style.setProperty('--c', `hsl(${hue} 65% 50%)`);
+    el.dataset.familiar = FAMILIARS[hue % FAMILIARS.length];
+    el.setAttribute('role', 'img');
+    return el;
+  };
+  const agentEls = agents.map((agent) => {
+    const el = familiar(agent.id, agent.name, hueFor(agent.name));
+    el.classList.add('agent', agent.status);
     el.textContent = (agent.name || '?').charAt(0).toUpperCase();
     const detail = agent.detail ? ` — ${agent.detail}` : '';
     el.title = `${agent.name} (${agent.status})${detail}`;
-    el.setAttribute('role', 'img');
     el.setAttribute('aria-label', el.title);
     return el;
-  }));
+  });
+  const shellEls = shells.slice(0, MAX_SHELLS_SHOWN).map((shell) => {
+    const el = familiar(shell.id, 'Shell', hueFor(shell.id));
+    el.classList.add('agent', 'working', 'shell');
+    el.textContent = '>';
+    el.title = 'Shell command (running)';
+    el.setAttribute('aria-label', el.title);
+    return el;
+  });
+  if (shells.length > MAX_SHELLS_SHOWN) {
+    const more = document.createElement('span');
+    const hidden = shells.length - MAX_SHELLS_SHOWN;
+    more.className = 'agent-overflow';
+    more.dataset.agent = 'shell-overflow';
+    more.textContent = `+${hidden}`;
+    more.title = `${shells.length} shell commands running; ${hidden} more not drawn`;
+    more.setAttribute('role', 'img');
+    more.setAttribute('aria-label', more.title);
+    shellEls.push(more);
+  }
+  container.replaceChildren(...agentEls, ...shellEls);
 }
 
 // ---- API ------------------------------------------------------------------
@@ -431,6 +477,7 @@ function renderAccounts(card, provider) {
         selectAccount(provider, account.id);
         renderAccounts(card, provider);
         renderUsage(card, provider);
+        renderReportingSetup(card, provider);
       });
       return chip;
     }));
@@ -442,6 +489,33 @@ function renderAccounts(card, provider) {
     chip.textContent = account.label;
     chip.title = `Start new ${provider.tool} sessions as the ${account.label} account`;
   });
+}
+
+function renderReportingSetup(card, provider) {
+  const row = card.querySelector('.reporting-row');
+  const account = selectedAccount(provider);
+  row.hidden = !provider.available || typeof account.reportingEnabled !== 'boolean';
+  if (row.hidden) return;
+  const on = account.reportingEnabled;
+  const whose = (provider.accounts || []).length > 1 ? ` for the ${account.label} account` : '';
+  row.querySelector('.reporting-text').textContent = `Agent reporting ${on ? 'on' : 'off'}`;
+  const button = row.querySelector('.reporting-toggle');
+  button.textContent = on ? 'Turn off' : 'Turn on';
+  button.title = on
+    ? `Remove the Agent Guild extension from ${provider.tool}${whose}. New sessions stop reporting sub-agents.`
+    : `Link the Agent Guild extension into ${provider.tool}${whose} with "${provider.command} extensions link", so new sessions show their sub-agents. It does nothing in sessions started outside Agent Guild.`;
+  button.onclick = async () => {
+    button.disabled = true;
+    try {
+      await api('POST', `/providers/${provider.id}/reporting`, { account: account.id, enabled: !on });
+      toast(on ? `Agent reporting is off for ${provider.tool}${whose}.` : `Agent reporting is on for ${provider.tool}${whose}. It applies to new sessions.`);
+    } catch (err) {
+      if (err instanceof AuthError) return showAuth(err.message);
+      toast(err.message, 10000);
+    } finally {
+      button.disabled = false;
+    }
+  };
 }
 
 let dealt = false;
@@ -487,6 +561,7 @@ function renderProviders() {
     renderConsoleLinks(node, provider);
     renderAccounts(node, provider);
     renderUsage(node, provider);
+    renderReportingSetup(node, provider);
     renderModelStats(node, provider);
     return node;
   }));
@@ -2541,7 +2616,8 @@ function updateCard(node, s) {
   // The LRM keeps a leading "/" in place under the right-to-left truncation style.
   cwd.textContent = `\u200E${s.cwd}`;
   cwd.title = s.cwd;
-  renderAgents(node.querySelector('.agents'), s.agents);
+  renderAgents(node.querySelector('.agents'), s.agents, s.shells || []);
+  paintReporting(node.querySelector('.agents-row'), s);
   node.classList.toggle('exited', s.status === 'exited');
   node.querySelector('.stop').hidden = s.status !== 'running';
   node.querySelector('.remove').hidden = s.status === 'running';
@@ -2553,7 +2629,9 @@ function updateCard(node, s) {
   resume.title = `Start ${s.provider.tool} again on this session${id ? ` (${id})` : ''} in ${s.cwd}`;
   const modelLabel = s.model ? `, model ${modelText(s)}` : '';
   const accountName = accountLabel(s) ? `, ${accountLabel(s)} account` : '';
-  node.setAttribute('aria-label', `${s.name}, ${s.provider.vendor}${accountName}${modelLabel}, ${statusText(s)}, ${s.agents.length} agents`);
+  const shellCount = (s.shells || []).length;
+  const reportingNote = s.status === 'running' && REPORTING_TEXT[s.reporting?.state] ? `, agent reporting: ${REPORTING_TEXT[s.reporting.state]}` : '';
+  node.setAttribute('aria-label', `${s.name}, ${s.provider.vendor}${accountName}${modelLabel}, ${statusText(s)}, ${s.agents.length} agents${shellCount ? `, ${shellCount} shell command${shellCount === 1 ? '' : 's'} running` : ''}${reportingNote}`);
 }
 
 function renderSessions() {
@@ -2810,7 +2888,7 @@ function updatePanel() {
   const id = toolSessionId(s);
   $('panel-sub').textContent = [s.provider.tool, accountLabel(s), modelText(s), statusText(s), s.cwd, id && `session ${id}`].filter(Boolean).join(' · ');
   $('panel-sub').title = modelTitle(s);
-  renderAgents($('panel-agents'), s.agents);
+  renderAgents($('panel-agents'), s.agents, s.shells || []);
   const stop = $('panel-stop');
   stop.textContent = s.status === 'running' ? 'Stop' : 'Remove';
 }

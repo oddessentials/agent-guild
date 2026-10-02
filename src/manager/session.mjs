@@ -3,11 +3,11 @@
 // byte replay), and the sub-agents and model the coding tool has reported.
 
 import { EventEmitter } from 'node:events';
-import { execFile } from 'node:child_process';
 import crypto from 'node:crypto';
 import pty from 'node-pty';
 import headless from '@xterm/headless';
 import serializeAddon from '@xterm/addon-serialize';
+import { killWindowsTree } from './command-resolver.mjs';
 
 const { Terminal } = headless;
 const { SerializeAddon } = serializeAddon;
@@ -19,6 +19,20 @@ const MODEL_SOURCE_RANK = { args: 0, screen: 1, report: 2 };
 const SCREEN_SCAN_DELAY_MS = 400;
 const SCREEN_SCAN_MAX_DELAY_MS = 2000;
 const MAX_TOOL_SESSION_ID = 200;
+const REPORTING_STATES = new Set(['pending', 'active', 'unavailable', 'setup_required', 'unsupported']);
+const SHELL_EVENTS = new Set(['start', 'waiting', 'asked', 'background', 'end', 'running', 'reset']);
+const MAX_SHELLS = 256;
+const MAX_SHELL_PIDS = 16;
+const MAX_ENDED_TASKS = 256;
+
+function processExists(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === 'EPERM';
+  }
+}
 
 /**
  * Colours reported to programs that query them (OSC 10/11/12), matching the
@@ -81,6 +95,15 @@ export class Session extends EventEmitter {
     this.activityIdleMs = opts.activityIdleMs ?? 2500;
     this.doneAgentLingerMs = opts.doneAgentLingerMs ?? 15000;
     this.killGraceMs = opts.killGraceMs ?? 4000;
+    this.reportingTimeoutMs = opts.reportingTimeoutMs ?? 30000;
+    this.reporting = REPORTING_STATES.has(opts.reporting?.state) ? { state: opts.reporting.state, reason: opts.reporting.reason ?? null } : null;
+    this._reportingTimer = null;
+    this.shellDisplayDelayMs = opts.shellDisplayDelayMs ?? 600;
+    this.shellPidCheckMs = opts.shellPidCheckMs ?? 2000;
+    this.shells = new Map();
+    this._shellSeq = 0;
+    this._endedTasks = new Set();
+    this._pidTimer = null;
     this.createdAt = new Date().toISOString();
     this.exitedAt = null;
     this.status = 'running';
@@ -190,7 +213,9 @@ export class Session extends EventEmitter {
     clearTimeout(this._activityTimer);
     clearTimeout(this._killTimer);
     clearTimeout(this._scanTimer);
+    clearTimeout(this._reportingTimer);
     this._clearAgents();
+    this._clearShells();
     // Let the headless terminal finish parsing before announcing the exit so
     // any client attaching afterwards still sees the final screen.
     this.term.write('', () => {
@@ -260,6 +285,21 @@ export class Session extends EventEmitter {
     try { this.pty.write(data); } catch { /* process is exiting */ }
   }
 
+  input(data) {
+    this.write(data);
+    if (this.reporting?.state === 'pending' && !this._reportingTimer && typeof data === 'string' && /[\r\n]/.test(data)) {
+      this._reportingTimer = setTimeout(() => {
+        if (this.reporting?.state !== 'pending' || this.status !== 'running') return;
+        this.reporting = {
+          state: 'unavailable',
+          reason: `${this.provider.tool} has not run Agent Guild's reporting hooks yet. That is expected while it signs in or sets up; otherwise its hooks may be turned off, restricted by an administrator, or not trusted for this folder.`,
+        };
+        this._changed();
+      }, this.reportingTimeoutMs);
+      this._reportingTimer.unref?.();
+    }
+  }
+
   _reply(data) {
     this.write(data);
   }
@@ -302,9 +342,7 @@ export class Session extends EventEmitter {
     };
     const pid = this.pty.pid;
     if (!pid) return fallback();
-    execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, timeout: 5000 }, (err) => {
-      if (err) fallback();
-    });
+    killWindowsTree(pid, (err) => { if (err) fallback(); });
   }
 
   /**
@@ -317,6 +355,8 @@ export class Session extends EventEmitter {
     this.disposed = true;
     clearTimeout(this._activityTimer);
     clearTimeout(this._scanTimer);
+    clearTimeout(this._reportingTimer);
+    this._clearShells();
     for (const t of this._agentTimers.values()) clearTimeout(t);
     this.subscribers.clear();
     this.term.dispose();
@@ -339,12 +379,14 @@ export class Session extends EventEmitter {
   reportAgent(report, source = 'api') {
     if (!report || typeof report !== 'object') throw badRequest('agent report must be an object');
     if (this.status !== 'running') throw Object.assign(new Error('session has exited'), { status: 409 });
+    if (source === 'api') this._reportingHeard();
     if (report.finishForeground === true && report.agentId === undefined) {
       // The tool is between turns, so no foreground agent can still be
       // running; one that is never got its end event.
       for (const agent of [...this.agents.values()]) {
         if (agent.foreground && agent.status === 'working') this.reportAgent({ agentId: agent.id, status: 'done' }, source);
       }
+      this._endForegroundShells(null);
       return null;
     }
     const id = String(report.agentId ?? report.agent ?? report.id ?? '').trim().slice(0, 128);
@@ -360,6 +402,12 @@ export class Session extends EventEmitter {
     }
     const now = new Date().toISOString();
     const existing = this.agents.get(id);
+    if (!existing && status === 'done' && report.foreground === true) {
+      // Gemini CLI's invoke_agent is paired by its input, which a BeforeTool hook may rewrite before AfterTool.
+      const working = [...this.agents.values()].filter((agent) => agent.foreground && agent.status === 'working');
+      return working.length === 1 ? this.reportAgent({ agentId: working[0].id, status: 'done' }, source) : null;
+    }
+    if (status === 'done') this._endForegroundShells(id);
     // A first report that already says done would only flash an icon:
     // Claude Code's internal helpers (prompt suggestions, side questions)
     // stop without ever having started here.
@@ -425,11 +473,178 @@ export class Session extends EventEmitter {
       const isAgent = report && typeof report === 'object' &&
         ((report.agentId ?? report.agent ?? report.id) !== undefined || report.finishForeground === true);
       if (isAgent) this.reportAgent(report, 'terminal');
-      else if (report?.toolSessionId !== undefined) this.reportToolSession(report);
-      else this.reportModel(report);
+      else if (report?.toolSessionId !== undefined) this.reportToolSession(report, 'terminal');
+      else this.reportModel(report, 'terminal');
     } catch (err) {
       this.emit('warning', `ignored in-band report: ${err.message}`);
     }
+  }
+
+  // ---- shells ------------------------------------------------------------
+
+  reportShell(report) {
+    if (!report || typeof report !== 'object') throw badRequest('shell report must be an object');
+    if (this.status !== 'running') throw Object.assign(new Error('session has exited'), { status: 409 });
+    if (!SHELL_EVENTS.has(report.shell)) throw badRequest(`shell must be one of ${[...SHELL_EVENTS].join(', ')}`);
+    const id = (value) => (typeof value === 'string' && value ? value.slice(0, 128) : null);
+    const key = id(report.key);
+    const bucket = !key && typeof report.bucket === 'string' && /^[a-f0-9]{1,64}$/.test(report.bucket) ? report.bucket : null;
+    const task = id(report.task);
+    const match = typeof report.match === 'string' && /^[a-f0-9]{32}$/.test(report.match) ? report.match : null;
+    const agentId = id(report.agentId);
+    this._reportingHeard();
+
+    if (report.shell === 'reset') {
+      for (const shell of [...this.shells.values()]) this._endShell(shell);
+      return null;
+    }
+
+    if (report.shell === 'running') {
+      if (!Array.isArray(report.tasks)) throw badRequest('a running report needs a tasks array');
+      const running = new Set(report.tasks.slice(0, MAX_SHELLS).map(id).filter(Boolean));
+      for (const shell of [...this.shells.values()]) if (shell.task && !running.has(shell.task)) this._endShell(shell);
+      const known = new Set([...this.shells.values()].map((shell) => shell.task));
+      for (const each of running) if (!known.has(each) && !this._endedTasks.has(each)) this._addShell({ task: each }, { now: true });
+      return null;
+    }
+
+    if (report.shell === 'waiting' || report.shell === 'asked') {
+      // A permission request carries no call id, and a PreToolUse hook may have rewritten its command: it belongs to the
+      // agent's one foreground command with that command, else to its only one.
+      const candidates = [...this.shells.values()].filter((shell) => shell.agentId === agentId && this._foreground(shell) && !shell.waiting && !shell.asked);
+      const exact = match ? candidates.filter((shell) => shell.match === match) : [];
+      const shell = exact.length === 1 ? exact[0] : exact.length === 0 && candidates.length === 1 ? candidates[0] : null;
+      if (shell && report.shell === 'asked') {
+        shell.asked = true;
+      } else if (shell) {
+        clearTimeout(shell.timer);
+        shell.waiting = true;
+        this._setVisible(shell, false);
+      }
+      return null;
+    }
+
+    if (report.shell === 'end') {
+      if (!key && !bucket && !task) throw badRequest('a shell end needs a key, a bucket or a task');
+      if (task) this._rememberEnded(task);
+      const shell = (key && this._shellBy('key', key)) || (task && this._shellBy('task', task)) || (bucket && this._shellByBucket(bucket));
+      if (shell) this._endShell(shell);
+      return null;
+    }
+
+    if (!key && !bucket) throw badRequest('a shell report needs a key or a bucket');
+    if (report.shell === 'start') {
+      if (!key || !this._shellBy('key', key)) this._addShell({ key, bucket, match, agentId, persist: report.persist === true });
+      return null;
+    }
+
+    const pids = Array.isArray(report.pids) ? report.pids.filter((pid) => Number.isInteger(pid) && pid > 0).slice(0, MAX_SHELL_PIDS) : [];
+    if (!task && pids.length === 0) throw badRequest('a background report needs a task or pids');
+    const shell = key ? this._shellBy('key', key) : this._shellByBucket(bucket);
+    if (!shell) return null;
+    if (task) {
+      Object.assign(shell, { task, endsWithAgent: report.endsWithAgent === true });
+    } else {
+      // Gemini CLI names a pid even for a command that ended at once.
+      shell.pids = pids.filter(processExists);
+      if (shell.pids.length === 0) {
+        this._endShell(shell);
+        return null;
+      }
+      this._checkPids();
+    }
+    if (shell.waiting) {
+      shell.waiting = false;
+      this._showAfterDelay(shell);
+    }
+    return null;
+  }
+
+  _addShell(fields, { now = false } = {}) {
+    if (this.shells.size >= MAX_SHELLS) {
+      this.emit('warning', `ignored a shell command: ${MAX_SHELLS} are already running`);
+      return;
+    }
+    const shell = {
+      id: `shell-${++this._shellSeq}`, key: null, bucket: null, match: null, agentId: null, persist: false, task: null, pids: null,
+      endsWithAgent: false, waiting: false, asked: false, visible: false, timer: null, ...fields,
+    };
+    this.shells.set(shell.id, shell);
+    if (now) this._setVisible(shell, true);
+    else this._showAfterDelay(shell);
+  }
+
+  _showAfterDelay(shell) {
+    clearTimeout(shell.timer);
+    shell.timer = setTimeout(() => this._setVisible(shell, true), this.shellDisplayDelayMs);
+    shell.timer.unref?.();
+  }
+
+  _setVisible(shell, visible) {
+    if (shell.visible === visible) return;
+    shell.visible = visible;
+    this._changed();
+  }
+
+  _foreground(shell) {
+    return shell.task === null && shell.pids === null;
+  }
+
+  _shellBy(field, value) {
+    for (const shell of this.shells.values()) if (shell[field] === value) return shell;
+    return null;
+  }
+
+  // Gemini CLI's calls are paired by their input, which a BeforeTool hook may rewrite before AfterTool.
+  _shellByBucket(bucket) {
+    const open = [...this.shells.values()].filter((shell) => shell.bucket !== null && this._foreground(shell));
+    return open.find((shell) => shell.bucket === bucket) ?? (open.length === 1 ? open[0] : null);
+  }
+
+  _checkPids() {
+    if (this._pidTimer) return;
+    this._pidTimer = setInterval(() => {
+      let watching = false;
+      for (const shell of [...this.shells.values()]) {
+        if (!shell.pids) continue;
+        shell.pids = shell.pids.filter(processExists);
+        if (shell.pids.length) watching = true;
+        else this._endShell(shell);
+      }
+      if (!watching) {
+        clearInterval(this._pidTimer);
+        this._pidTimer = null;
+      }
+    }, this.shellPidCheckMs);
+    this._pidTimer.unref?.();
+  }
+
+  // A turn's foreground commands end with it; a background command, or one Codex CLI keeps running, does not.
+  _endForegroundShells(agentId) {
+    for (const shell of [...this.shells.values()]) {
+      if (shell.agentId !== agentId) continue;
+      const lasting = this._foreground(shell) ? shell.persist && !shell.asked : !(agentId && shell.endsWithAgent);
+      if (!lasting) this._endShell(shell);
+    }
+  }
+
+  _rememberEnded(task) {
+    this._endedTasks.delete(task);
+    this._endedTasks.add(task);
+    if (this._endedTasks.size > MAX_ENDED_TASKS) this._endedTasks.delete(this._endedTasks.values().next().value);
+  }
+
+  _endShell(shell) {
+    clearTimeout(shell.timer);
+    if (shell.task) this._rememberEnded(shell.task);
+    if (this.shells.delete(shell.id) && shell.visible) this._changed();
+  }
+
+  _clearShells() {
+    for (const shell of this.shells.values()) clearTimeout(shell.timer);
+    clearInterval(this._pidTimer);
+    this._pidTimer = null;
+    this.shells.clear();
   }
 
   // ---- model -------------------------------------------------------------
@@ -446,9 +661,10 @@ export class Session extends EventEmitter {
     this._changed();
   }
 
-  reportModel(report) {
+  reportModel(report, source = 'api') {
     if (!report || typeof report !== 'object') throw badRequest('model report must be an object');
     if (this.status !== 'running') throw Object.assign(new Error('session has exited'), { status: 409 });
+    if (source === 'api') this._reportingHeard();
     const name = String(report.model ?? '').trim().slice(0, 120);
     if (!name) throw badRequest('model is required');
     const displayName = report.displayName === undefined || report.displayName === null ? null : String(report.displayName).trim().slice(0, 80) || null;
@@ -460,9 +676,10 @@ export class Session extends EventEmitter {
     return this.model;
   }
 
-  reportToolSession(report) {
+  reportToolSession(report, source = 'api') {
     if (!report || typeof report !== 'object') throw badRequest('tool session report must be an object');
     if (this.status !== 'running') throw Object.assign(new Error('session has exited'), { status: 409 });
+    if (source === 'api') this._reportingHeard();
     const id = String(report.toolSessionId ?? '').trim();
     if (!id || id.length > MAX_TOOL_SESSION_ID || /\p{Cc}/u.test(id)) throw badRequest(`toolSessionId must be a printable id of at most ${MAX_TOOL_SESSION_ID} characters`);
     if (this.toolSessionId !== id) {
@@ -470,6 +687,19 @@ export class Session extends EventEmitter {
       this._changed();
     }
     return this.toolSessionId;
+  }
+
+  reportHello() {
+    if (this.status !== 'running') throw Object.assign(new Error('session has exited'), { status: 409 });
+    this._reportingHeard();
+    return this.reporting;
+  }
+
+  _reportingHeard() {
+    clearTimeout(this._reportingTimer);
+    if (!this.reporting || this.reporting.state === 'active') return;
+    this.reporting = { state: 'active', reason: null };
+    this._changed();
   }
 
   _foregroundAgentWorking() {
@@ -539,7 +769,9 @@ export class Session extends EventEmitter {
       attachedClients: this.subscribers.size,
       model: this.model,
       toolSessionId: this.toolSessionId,
+      reporting: this.reporting,
       agents: [...this.agents.values()],
+      shells: [...this.shells.values()].filter((s) => s.visible).map((s) => ({ id: s.id })),
     };
   }
 }

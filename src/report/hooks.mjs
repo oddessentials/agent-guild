@@ -28,12 +28,63 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 
 const SUBAGENT_TOOLS = new Set(['Task', 'Agent', 'invoke_agent']);
+const SHELL_TOOLS = new Set(['Bash', 'PowerShell', 'run_shell_command', 'run_terminal_command']);
 const TOOL_START_EVENTS = new Set(['PreToolUse', 'BeforeTool']);
 const TOOL_END_EVENTS = new Set(['PostToolUse', 'PostToolUseFailure', 'AfterTool']);
-const TURN_BOUNDARY_EVENTS = new Set(['BeforeAgent', 'AfterAgent', 'UserPromptSubmit', 'Stop']);
+const TURN_BOUNDARY_EVENTS = new Set(['BeforeAgent', 'AfterAgent', 'UserPromptSubmit', 'Stop', 'Interrupt']);
 const MAX_DETAIL = 200;
 
+const FINISHED_TASKS = new Set(['completed', 'failed', 'killed']);
+const LIVE_TASKS = new Set(['pending', 'running', 'paused']);
+const MAX_RUNNING_TASKS = 256;
+
 const text = (...values) => values.find((v) => typeof v === 'string' && v.trim())?.trim() ?? null;
+
+function commandHash(command) {
+  return crypto.createHash('sha256').update(command.replace(/\s+/g, ' ').trim()).digest('hex').slice(0, 32);
+}
+
+function geminiBackgroundPids(response) {
+  const content = response?.llmContent;
+  const body = typeof content === 'string' ? content
+    : Array.isArray(content) ? content.map((part) => (typeof part === 'string' ? part : part?.text || '')).join('\n') : '';
+  const own = body.match(/Command is running in background\. PID: (\d+)/) || body.match(/moved to background \(PID: (\d+)\)/);
+  if (own) return [Number(own[1])];
+  const left = body.match(/Background PIDs: (\d+(?:, \d+)*)/);
+  return left ? left[1].split(', ').map(Number) : [];
+}
+
+function shellReport(event, input, subagentId) {
+  const toolInput = input.tool_input || input.toolInput || {};
+  const id = text(input.tool_use_id, input.toolUseId);
+  const ref = id ? { key: id.slice(0, 128) } : { bucket: crypto.createHash('sha256').update(JSON.stringify(toolInput)).digest('hex').slice(0, 32) };
+  const agent = subagentId ? { agentId: `hook-${subagentId}` } : {};
+  const match = typeof toolInput.command === 'string' ? { match: commandHash(toolInput.command) } : {};
+  // Codex CLI (its events carry turn_id) keeps a command running past its turn, and reports no end for one it refused.
+  const codex = Boolean(text(input.turn_id));
+  if (event === 'PermissionRequest') return { shell: codex ? 'asked' : 'waiting', ...agent, ...match };
+  if (TOOL_START_EVENTS.has(event)) return { shell: 'start', ...ref, ...agent, ...match, ...(codex ? { persist: true } : {}) };
+  const response = input.tool_response ?? input.toolResponse;
+  const task = text(response?.backgroundTaskId);
+  if (task) return { shell: 'background', ...ref, task: task.slice(0, 128), ...(response.backgroundEndsWithFinalResponse === true ? { endsWithAgent: true } : {}) };
+  const pids = geminiBackgroundPids(response);
+  if (pids.length) return { shell: 'background', ...ref, pids };
+  return { shell: 'end', ...ref };
+}
+
+// Claude Code reports a background task ending as a prompt of <task-notification> blocks.
+function taskNotifications(prompt) {
+  if (typeof prompt !== 'string' || !/^\s*<task-notification>/.test(prompt)) return null;
+  return [...prompt.matchAll(/<task-notification>([\s\S]*?)<\/task-notification>/g)].map(([, body]) => {
+    const tag = (name) => body.match(new RegExp(`<${name}>([^<]*)</${name}>`))?.[1].trim() || null;
+    return { taskId: tag('task-id'), toolUseId: tag('tool-use-id'), status: tag('status') };
+  });
+}
+
+function runningShells(tasks) {
+  const ids = tasks.filter((task) => task?.type === 'shell' && !FINISHED_TASKS.has(task.status)).map((task) => text(task.id)).filter(Boolean);
+  return { shell: 'running', tasks: ids.slice(0, MAX_RUNNING_TASKS).map((id) => id.slice(0, 128)) };
+}
 
 /** "subagent_start", "subagentStart" and "SubagentStart" all become "SubagentStart". */
 function eventName(input) {
@@ -41,11 +92,7 @@ function eventName(input) {
   return raw.replace(/(?:^|[_-])([a-z])/g, (_m, c) => c.toUpperCase());
 }
 
-/**
- * Reports for one hook event: an agent report (has agentId) when a
- * sub-agent starts or stops, and a model report (has model) when the event
- * names the main model. Empty for events that carry neither.
- */
+/** Reports for one hook event: its sub-agents, shell commands, model and the tool's own session id. */
 export function hookToReports(input) {
   if (!input || typeof input !== 'object') return [];
   const event = eventName(input);
@@ -69,6 +116,19 @@ export function hookToReports(input) {
       if (detail) report.detail = detail.slice(0, MAX_DETAIL);
       reports.push(report);
     }
+    if (Array.isArray(input.background_tasks)) reports.push(runningShells(input.background_tasks));
+    return reports;
+  }
+
+  if (event === 'UserPromptSubmit' && !text(input.turn_id)) {
+    // Claude Code (turn_id is Codex's) fires this for a prompt typed while a turn runs, too, so it is no turn boundary.
+    // It also brings each background task's end; a sub-agent's task id is its agent id, and one stopped with TaskStop
+    // gets no SubagentStop.
+    for (const { taskId, toolUseId, status } of taskNotifications(input.prompt) ?? []) {
+      if (!taskId || LIVE_TASKS.has(status)) continue;
+      reports.push({ shell: 'end', task: taskId.slice(0, 128), ...(toolUseId ? { key: toolUseId.slice(0, 128) } : {}) });
+      if (FINISHED_TASKS.has(status)) reports.push({ agentId: `hook-${taskId}`, status: 'done' });
+    }
     return reports;
   }
 
@@ -79,11 +139,19 @@ export function hookToReports(input) {
     const childType = text(input.subagent_type, input.subagentType);
     const childId = text(input.session_id, input.sessionId);
     if (childType && childId) reports.push({ agentId: `hook-${childId}`, name: childType, kind: 'subagent', status: 'done' });
+    else if (event === 'SessionEnd') reports.push({ shell: 'reset' });
     return reports;
   }
 
   const toolName = text(input.tool_name, input.toolName);
-  if ((TOOL_START_EVENTS.has(event) || TOOL_END_EVENTS.has(event)) && SUBAGENT_TOOLS.has(toolName)) {
+  const toolEvent = TOOL_START_EVENTS.has(event) || TOOL_END_EVENTS.has(event);
+  if ((toolEvent || event === 'PermissionRequest') && SHELL_TOOLS.has(toolName)) reports.push(shellReport(event, input, subagentId));
+  if (event === 'PostToolUse' && toolName === 'TaskStop') {
+    const toolInput = input.tool_input || input.toolInput || {};
+    const task = text(toolInput.task_id, toolInput.shell_id);
+    if (task) reports.push({ shell: 'end', task: task.slice(0, 128) }, { agentId: `hook-${task}`, status: 'done' });
+  }
+  if (toolEvent && SUBAGENT_TOOLS.has(toolName)) {
     const toolInput = input.tool_input || input.toolInput || {};
     if (toolInput.run_in_background !== true) {
       // tool_use_id links the start and end events; fall back to hashing the
@@ -120,14 +188,16 @@ export function hookToReports(input) {
   // AfterAgent in Gemini CLI; a main-thread prompt or Stop elsewhere) cannot
   // happen while the parent waits for a foreground agent, so one still
   // working then has been orphaned.
+  if (event === 'Stop' && Array.isArray(input.background_tasks)) reports.push(runningShells(input.background_tasks));
   if (!insideSubagent && TURN_BOUNDARY_EVENTS.has(event)) reports.push({ finishForeground: true });
 
-  const model = insideSubagent ? null : event === 'PostModelSwitch'
+  const model = insideSubagent || toolEvent ? null : event === 'PostModelSwitch'
     ? text(input.to_model)
     : text(input.model, input.modelId, input.llm_request?.model);
   if (model) reports.push({ model });
 
-  // Gemini CLI has no session-start event; its turn start stands in.
+  if (!insideSubagent && event === 'SessionStart') reports.push({ hello: true });
+
   const toolSessionId = insideSubagent ? null : text(input.session_id, input.sessionId);
   if (toolSessionId && (event === 'SessionStart' || event === 'BeforeAgent')) reports.push({ toolSessionId });
   return reports;
