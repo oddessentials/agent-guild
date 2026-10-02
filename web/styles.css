@@ -138,7 +138,7 @@ main { max-width: 1200px; margin: 0 auto; padding: 26px 16px 56px; display: grid
   font: inherit; font-size: 0.78rem; text-align: left; cursor: pointer;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.model-stats-head::after, .console-link::after, .theme-toggle::before, .model-name::before, .provider .copies summary::before {
+.model-stats-head::after, .console-link::after, .appearance::after, .model-name::before, .provider .copies summary::before {
   content: ""; display: inline-block; flex: none; width: 0.75em; height: 0.75em; margin-left: 0.3em; vertical-align: -0.05em;
   background: currentColor; mask: var(--icon-chevron) center / contain no-repeat;
 }
@@ -284,15 +284,29 @@ main { max-width: 1200px; margin: 0 auto; padding: 26px 16px 56px; display: grid
 .btn.danger { color: var(--danger); }
 .btn.danger:hover { border-color: var(--danger); }
 .btn:disabled { opacity: 0.6; cursor: progress; }
-.stop-manager, .restart-manager, .theme-toggle, .upgrade { white-space: nowrap; }
-.skin-picker { position: relative; display: inline-flex; }
-.skin-picker select { appearance: none; padding-right: 28px; }
-.skin-picker::after {
-  content: ""; position: absolute; top: 50%; right: 11px; width: 0.65em; height: 0.65em; margin-top: -0.32em; pointer-events: none;
-  background: var(--muted); mask: var(--icon-chevron) center / contain no-repeat; transform: rotate(90deg);
+.stop-manager, .restart-manager, .appearance, .upgrade { white-space: nowrap; }
+.appearance::before, .appearance-menu .choice > span::before {
+  content: ""; display: inline-block; width: 1em; height: 1em; margin-right: 0.4em; vertical-align: -0.15em;
+  background: currentColor; mask: var(--icon-sun) center / contain no-repeat;
 }
-.theme-toggle::before { width: 1em; height: 1em; margin: 0 0.4em 0 0; vertical-align: -0.15em; mask-image: var(--icon-sun); }
-.theme-toggle[data-next="dark"]::before { mask-image: var(--icon-moon); }
+:root[data-theme="dark"] .appearance::before, .appearance-menu .choice > .mode-dark::before { mask-image: var(--icon-moon); }
+.appearance::after { margin-left: 0.45em; transform: rotate(90deg); transition: transform 0.15s var(--ease); }
+.appearance:has(+ :popover-open)::after { transform: rotate(-90deg); }
+.appearance-menu {
+  position: fixed; inset: auto; margin: 0; min-width: 190px; padding: 6px; display: none;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.22); font-size: 0.85rem;
+}
+.appearance-menu:popover-open { display: grid; gap: 4px; animation: fade-in 0.12s var(--ease); }
+.appearance-menu fieldset { margin: 0; padding: 0; border: 0; display: grid; }
+.appearance-menu fieldset + fieldset { padding-top: 4px; border-top: 1px solid var(--border); }
+.appearance-menu legend { padding: 6px 8px 4px; font-size: 0.72rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+.appearance-menu .choice { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: calc(var(--radius) - 2px); cursor: pointer; }
+.appearance-menu .choice:hover, .appearance-menu .choice:has(:focus-visible) { background: var(--surface-2); }
+.appearance-menu .choice:has(:focus-visible) { outline: 2px solid var(--focus); outline-offset: -2px; }
+.appearance-menu .choice input { margin: 0; accent-color: var(--accent-fill); }
+.appearance-menu .choice:has(:checked) { font-weight: 600; }
+#skin-choices .choice > span::before { content: none; }
 .btn.upgrade, .btn.restart-manager.pending { color: var(--warn); border-color: var(--warn); }
 .upgrade-note { font-size: 0.85rem; color: var(--warn); }
 
@@ -595,8 +609,8 @@ a.news-link:visited { color: var(--muted); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .status-pill.active::before, .agent.working::after, .model-detail .stat-fill, .toast:not([hidden]), .tip:not([hidden]) { animation: none; }
-  .model-name::before, .provider .copies summary::before, .btn, .models, .news-panel, .models::backdrop, .news-panel::backdrop { transition: none; }
+  .status-pill.active::before, .agent.working::after, .model-detail .stat-fill, .toast:not([hidden]), .tip:not([hidden]), .appearance-menu:popover-open { animation: none; }
+  .model-name::before, .provider .copies summary::before, .appearance::after, .btn, .models, .news-panel, .models::backdrop, .news-panel::backdrop { transition: none; }
   .github-waiting::before, body:has(#app[hidden]):has(#auth[hidden]):has(#stopped[hidden])::after { animation: none; }
   .btn:active:not(:disabled) { transform: none; }
 }

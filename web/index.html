@@ -25,8 +25,15 @@
       </div>
       <span id="upgrade-note" class="upgrade-note" hidden></span>
       <button id="upgrade" class="btn upgrade" type="button" hidden></button>
-      <span class="skin-picker"><select id="skin-select" class="btn" aria-label="Skin" title="Skin"></select></span>
-      <button id="theme-toggle" class="btn theme-toggle" type="button"></button>
+      <button id="appearance" class="btn appearance" type="button" popovertarget="appearance-menu" aria-haspopup="dialog">Appearance</button>
+      <div id="appearance-menu" class="appearance-menu" popover role="dialog" aria-label="Appearance">
+        <fieldset id="skin-choices"><legend>Skin</legend></fieldset>
+        <fieldset>
+          <legend>Mode</legend>
+          <label class="choice"><input type="radio" name="theme" value="light"><span class="mode-light">Light</span></label>
+          <label class="choice"><input type="radio" name="theme" value="dark"><span class="mode-dark">Dark</span></label>
+        </fieldset>
+      </div>
       <button id="restart-manager" class="btn restart-manager" type="button" hidden>Restart manager</button>
       <button id="stop-manager" class="btn danger stop-manager" type="button" hidden title="Stop the session manager. This ends every session.">Stop manager</button>
     </div>

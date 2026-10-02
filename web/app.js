@@ -143,15 +143,10 @@ function unreadRelease() {
 
 // ---- theme ----------------------------------------------------------------
 
-/** theme.js applied the saved or system theme before the first paint; this keeps the button in step. */
+/** theme.js applied the saved or system theme before the first paint; this keeps the menu in step. */
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
-  const button = $('theme-toggle');
-  const other = theme === 'dark' ? 'light' : 'dark';
-  button.textContent = theme === 'dark' ? 'Light' : 'Dark';
-  button.dataset.next = other;
-  button.title = `Switch to the ${other} theme`;
-  button.setAttribute('aria-label', `Switch to the ${other} theme`);
+  document.querySelector(`#appearance-menu input[name="theme"][value="${theme}"]`).checked = true;
 }
 
 function currentTheme() {
@@ -172,10 +167,10 @@ function revealChange(control, change) {
   document.startViewTransition(change).ready.catch(() => {});
 }
 
-function toggleTheme(event) {
-  const theme = currentTheme() === 'dark' ? 'light' : 'dark';
+function changeTheme(input) {
+  const theme = input.value === 'dark' ? 'dark' : 'light';
   save(THEME_KEY, theme);
-  revealChange(event.currentTarget, () => applyTheme(theme));
+  revealChange(input.closest('label'), () => applyTheme(theme));
 }
 
 // ---- skin -----------------------------------------------------------------
@@ -183,22 +178,37 @@ function toggleTheme(event) {
 /** The skins theme.js offers; it applied the saved one before the first paint. */
 const SKINS = window.agentGuildSkins ?? [{ id: 'guild', name: 'Guild' }];
 
-function renderSkinPicker() {
-  const select = $('skin-select');
-  select.replaceChildren(...SKINS.map((skin) => new Option(skin.name, skin.id)));
-  select.value = document.documentElement.dataset.skin;
+function renderSkinChoices() {
+  const choices = SKINS.map((skin) => {
+    const label = document.createElement('label');
+    label.className = 'choice';
+    const input = Object.assign(document.createElement('input'), { type: 'radio', name: 'skin', value: skin.id });
+    input.checked = skin.id === document.documentElement.dataset.skin;
+    label.append(input, Object.assign(document.createElement('span'), { textContent: skin.name }));
+    return label;
+  });
+  $('skin-choices').append(...choices);
 }
 
 /**
  * Switches skin in place. Entrance and level-up animations are cleared first
  * so the new skin does not replay them on every card.
  */
-function changeSkin(event) {
-  const skin = event.currentTarget.value;
+function changeSkin(input) {
+  const skin = input.value;
   if (!SKINS.some((s) => s.id === skin) || skin === document.documentElement.dataset.skin) return;
   save(SKIN_KEY, skin);
   for (const el of document.querySelectorAll('.deal, .enter, .level-up, .summon')) el.classList.remove('deal', 'enter', 'level-up', 'summon');
-  revealChange(event.currentTarget, () => { document.documentElement.dataset.skin = skin; });
+  revealChange(input.closest('label'), () => { document.documentElement.dataset.skin = skin; });
+}
+
+/** Places the open menu under its button, right-aligned with it and kept on screen. */
+function placeAppearanceMenu() {
+  const menu = $('appearance-menu');
+  if (!menu.matches(':popover-open')) return;
+  const box = $('appearance').getBoundingClientRect();
+  menu.style.top = `${Math.round(box.bottom + 6)}px`;
+  menu.style.right = `${Math.max(8, Math.round(innerWidth - box.right))}px`;
 }
 
 // ---- upgrading the manager ------------------------------------------------
@@ -3202,8 +3212,16 @@ $('stop-manager').addEventListener('click', () => stopManager());
 $('restart-manager').addEventListener('click', () => stopManager({ restart: true }));
 $('copy-command').addEventListener('click', copyCommand);
 $('upgrade').addEventListener('click', upgradeManager);
-$('theme-toggle').addEventListener('click', toggleTheme);
-$('skin-select').addEventListener('change', changeSkin);
+$('appearance-menu').addEventListener('change', (e) => {
+  if (e.target.name === 'skin') changeSkin(e.target);
+  else if (e.target.name === 'theme') changeTheme(e.target);
+});
+$('appearance-menu').addEventListener('toggle', (e) => {
+  if (e.newState !== 'open') return;
+  placeAppearanceMenu();
+  e.currentTarget.querySelector('input:checked')?.focus();
+});
+window.addEventListener('resize', placeAppearanceMenu);
 $('providers').addEventListener('animationend', (e) => {
   if (e.target === e.currentTarget.lastElementChild) e.currentTarget.classList.remove('deal');
 });
@@ -3229,7 +3247,7 @@ $('providers').addEventListener('pointerout', (e) => {
   }
 });
 applyTheme(currentTheme());
-renderSkinPicker();
+renderSkinChoices();
 // Follow the system setting until the user picks a theme.
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
   if (!load(THEME_KEY)) applyTheme(e.matches ? 'dark' : 'light');
