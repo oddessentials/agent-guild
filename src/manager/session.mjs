@@ -21,7 +21,7 @@ const SCREEN_SCAN_DELAY_MS = 400;
 const SCREEN_SCAN_MAX_DELAY_MS = 2000;
 const MAX_TOOL_SESSION_ID = 200;
 const REPORTING_STATES = new Set(['pending', 'active', 'unavailable', 'setup_required', 'unsupported']);
-const SHELL_EVENTS = new Set(['start', 'end', 'background']);
+const SHELL_EVENTS = new Set(['start', 'waiting', 'end', 'background']);
 const MAX_SHELLS = 256;
 const SHELL_MISSES = 3;
 const SHELL_SETTLED_MS = 10000;
@@ -481,8 +481,12 @@ export class Session extends EventEmitter {
     const match = hash(report.match);
     this._reportingHeard();
 
-    if (report.shell === 'start') {
-      if (key && this._shellByKey(key)) return null;
+    if (report.shell === 'start' || report.shell === 'waiting') {
+      const known = key ? this._shellByKey(key) : null;
+      if (known) {
+        if (report.shell === 'waiting') this._awaitPermission(known);
+        return null;
+      }
       if (this.shells.size >= MAX_SHELLS) {
         this.emit('warning', `ignored a shell command: ${MAX_SHELLS} are already running`);
         return null;
@@ -490,14 +494,14 @@ export class Session extends EventEmitter {
       const shell = {
         id: `shell-${++this._shellSeq}`, key, bucket, match, exec: match && hash(report.exec), open: true, visible: false, timer: null,
         agentId: typeof report.agentId === 'string' ? report.agentId.slice(0, 128) : null,
-        track: false, followTimer: null, pid: null, start: null, boundAt: null, misses: 0,
+        track: false, followTimer: null, pid: null, start: null, boundAt: null, misses: 0, awaiting: false,
       };
-      shell.timer = setTimeout(() => {
-        shell.visible = true;
-        this._changed();
-      }, this.shellDisplayDelayMs);
-      shell.timer.unref?.();
       this.shells.set(shell.id, shell);
+      if (report.shell === 'waiting') {
+        this._awaitPermission(shell);
+        return null;
+      }
+      this._showAfterDelay(shell);
       if (report.track === true && match) {
         shell.followTimer = setTimeout(() => {
           if (!this.shells.has(shell.id) || shell.track) return;
@@ -515,12 +519,40 @@ export class Session extends EventEmitter {
     const pid = Number.isInteger(report.pid) && report.pid > 0 ? report.pid : null;
     clearTimeout(shell.followTimer);
     if (report.shell === 'background' && (pid || shell.match)) {
+      if (shell.awaiting) {
+        shell.awaiting = false;
+        this._showAfterDelay(shell);
+      }
       Object.assign(shell, { track: true, pid: pid ?? shell.pid, start: null, boundAt: null, misses: 0 });
       this.emit('shells-tracking', this);
     } else {
       this._endShell(shell);
     }
     return null;
+  }
+
+  _showAfterDelay(shell) {
+    clearTimeout(shell.timer);
+    shell.timer = setTimeout(() => {
+      shell.visible = true;
+      this._changed();
+    }, this.shellDisplayDelayMs);
+    shell.timer.unref?.();
+  }
+
+  _awaitPermission(shell) {
+    clearTimeout(shell.timer);
+    shell.awaiting = true;
+    shell.misses = 0;
+    if (shell.visible) {
+      shell.visible = false;
+      this._changed();
+    }
+    if (shell.match && !shell.track) {
+      clearTimeout(shell.followTimer);
+      shell.track = true;
+      this.emit('shells-tracking', this);
+    }
   }
 
   _shellByKey(key) {
@@ -568,7 +600,12 @@ export class Session extends EventEmitter {
         shell.start = found.start;
         shell.boundAt = Date.now();
         taken.add(`${found.pid}:${found.start}`);
-      } else if (++shell.misses >= SHELL_MISSES) {
+        if (shell.awaiting) {
+          shell.awaiting = false;
+          shell.visible = true;
+          this._changed();
+        }
+      } else if (!shell.awaiting && ++shell.misses >= SHELL_MISSES) {
         this._endShell(shell);
       }
     }
@@ -577,8 +614,12 @@ export class Session extends EventEmitter {
   _endForegroundShells(agentId) {
     let follow = false;
     for (const shell of [...this.shells.values()]) {
-      if (!shell.open || shell.track || shell.agentId !== agentId) continue;
-      if (shell.followTimer) {
+      if (!shell.open || shell.agentId !== agentId) continue;
+      if (shell.awaiting) {
+        this._endShell(shell);
+      } else if (shell.track) {
+        continue;
+      } else if (shell.followTimer) {
         clearTimeout(shell.followTimer);
         shell.track = true;
         follow = true;
@@ -590,7 +631,7 @@ export class Session extends EventEmitter {
   }
 
   shellProcessesUnknown() {
-    for (const shell of [...this.shells.values()]) if (shell.track && ++shell.misses >= SHELL_MISSES) this._endShell(shell);
+    for (const shell of [...this.shells.values()]) if (shell.track && !shell.awaiting && ++shell.misses >= SHELL_MISSES) this._endShell(shell);
   }
 
   _endShell(shell) {

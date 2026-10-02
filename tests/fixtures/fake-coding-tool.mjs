@@ -16,14 +16,15 @@
 //   prompt                 a user prompt (Codex runs its SessionStart hooks here)
 //   subagent <id> <type>   a sub-agent starts; Gemini: an invoke_agent call starts
 //   subagent-done <id> <type>
-//   shell <id> <ms> [fg|bg|exec|ps] [command...]
+//   shell <id> <ms> [fg|bg|exec|ps|ask-yes|ask-no] [command...]
 //                          runs a shell command for <ms> as the tool would: its hooks, and a
 //                          process whose command line has the tool's own form (Claude Code's
 //                          eval script, Codex CLI's sandbox wrapper and -lc). Claude Code and
 //                          Gemini CLI return a bg command's call at once; Codex CLI never
 //                          reports the end of one that outlives its 1 s yield; exec runs the
 //                          command itself with bash -lc, which replaces itself with it; ps runs
-//                          it as Claude Code's PowerShell tool
+//                          it as Claude Code's PowerShell tool; ask-yes and ask-no show a
+//                          permission dialog for a while, then run the command or not
 //   shell-denied <id> [command...]
 //                          a start event with no process and no end event
 //   tool <agent-id> <tool>  a sub-agent calls a tool that is not a shell
@@ -234,6 +235,15 @@ function runTool() {
     const name = mode === 'ps' ? 'PowerShell' : toolName;
     const [startEvent, startPayload, matcher] = shellEvent(true, id, input, null, name);
     await runHooks(hooks, startEvent, startPayload, matcher);
+    if (mode === 'ask-yes' || mode === 'ask-no') {
+      await runHooks(hooks, 'PermissionRequest', { tool_name: name, tool_use_id: id, tool_input: input }, name);
+      out(`SHELL-ASKED ${id}`);
+      await new Promise((resolve) => setTimeout(resolve, Number(process.env.FAKE_PERMISSION_MS || 1500)));
+      if (mode === 'ask-no') {
+        out(`SHELL-REJECTED ${id}`);
+        return;
+      }
+    }
     const child = mode === 'exec'
       ? spawn('bash', ['-lc', command], { stdio: 'ignore' })
       : spawn(process.execPath, ['-e', shellSleep, ...shellArgv(command)], { env: { ...process.env, FAKE_SHELL_MS: String(ms) }, stdio: 'ignore', windowsHide: true });

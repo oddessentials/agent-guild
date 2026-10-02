@@ -15,7 +15,7 @@ const groups = (events, extra) => Object.fromEntries(events.map((event) => [even
 
 const shellEvents = (events, matcher) => Object.fromEntries(events.map((event) => [event, { group: { matcher } }]));
 
-const CLAUDE_EVENTS = ['SessionStart', 'SubagentStart', 'SubagentStop', 'PostModelSwitch', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Stop'];
+const CLAUDE_EVENTS = ['SessionStart', 'SubagentStart', 'SubagentStop', 'PostModelSwitch', 'PreToolUse', 'PermissionRequest', 'PostToolUse', 'PostToolUseFailure', 'Stop'];
 export const CODEX_EVENTS = ['SessionStart', 'UserPromptSubmit', 'SubagentStart', 'SubagentStop', 'PreToolUse', 'PostToolUse'];
 const CODEX_MATCHERS = { PostToolUse: 'Bash' };
 const GROK_EVENTS = ['SessionStart', 'SubagentStart', 'SubagentStop', 'StopCancelled', 'SessionEnd', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Stop'];
@@ -34,7 +34,7 @@ export function bundleFiles(version, { shimDir = null, platform = process.platfo
   return {
     claude: {
       '.claude-plugin/plugin.json': json(manifest),
-      'hooks/hooks.json': json({ hooks: groups(CLAUDE_EVENTS, shellEvents(['PreToolUse', 'PostToolUse', 'PostToolUseFailure'], 'Bash|PowerShell')) }),
+      'hooks/hooks.json': json({ hooks: groups(CLAUDE_EVENTS, { ...shellEvents(['PreToolUse', 'PostToolUse', 'PostToolUseFailure'], 'Bash|PowerShell'), ...shellEvents(['PermissionRequest'], 'Bash') }) }),
     },
     gemini: {
       'gemini-extension.json': json(manifest),

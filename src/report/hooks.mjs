@@ -199,8 +199,8 @@ function shellReport(event, input, subagentId, toolName) {
   const id = text(input.tool_use_id, input.toolUseId);
   const ref = id ? { key: id.slice(0, 128) } : { bucket: crypto.createHash('sha256').update(JSON.stringify(toolInput)).digest('hex').slice(0, 32) };
   const command = typeof toolInput.command === 'string' ? toolInput.command : null;
-  if (TOOL_START_EVENTS.has(event)) {
-    const report = { shell: 'start', ...ref };
+  if (TOOL_START_EVENTS.has(event) || event === 'PermissionRequest') {
+    const report = { shell: event === 'PermissionRequest' ? 'waiting' : 'start', ...ref };
     if (subagentId) report.agentId = `hook-${subagentId}`;
     if (text(input.turn_id)) report.track = true;
     if (command) {
@@ -268,7 +268,8 @@ export function hookToReports(input) {
 
   const toolName = text(input.tool_name, input.toolName);
   const toolEvent = TOOL_START_EVENTS.has(event) || TOOL_END_EVENTS.has(event);
-  if (toolEvent && SHELL_TOOLS.has(toolName)) reports.push(shellReport(event, input, subagentId, toolName));
+  const permissionWait = event === 'PermissionRequest' && toolName !== 'PowerShell';
+  if ((toolEvent || permissionWait) && SHELL_TOOLS.has(toolName)) reports.push(shellReport(event, input, subagentId, toolName));
   if (toolEvent && SUBAGENT_TOOLS.has(toolName)) {
     const toolInput = input.tool_input || input.toolInput || {};
     if (toolInput.run_in_background !== true) {

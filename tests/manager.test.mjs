@@ -941,7 +941,7 @@ test('a Default Claude Code session reports sub-agents through a plugin loaded f
   assert.equal(tool.session.reporting.state, 'pending');
   await waitFor(reportingIs(tool.session.id, 'active'), { label: 'the session start hook', timeout: 15000 });
   await followSubagent(tool, 'claude-1', 'Explore');
-  assert.match(stripAnsi(tool.client.output), /FAKE-CLAUDE READY hooks=9/, 'the plugin hooks load beside the user\'s own');
+  assert.match(stripAnsi(tool.client.output), /FAKE-CLAUDE READY hooks=10/, 'the plugin hooks load beside the user\'s own');
   assert.match(fs.readFileSync(userHookLog, 'utf8'), /claude-user/, 'the user\'s own hook still runs');
   await tool.client.close();
   await call('DELETE', `/sessions/${tool.session.id}`);
@@ -1188,6 +1188,27 @@ test('Claude Code shell commands show while they run: not the brief ones, and no
   watch.stop();
   assert.ok(!watch.leaked(), 'no command text in any event');
   assert.ok(!JSON.stringify(await call('GET', '/sessions')).includes('SECRET-MARKER'));
+  await tool.client.close();
+  await call('DELETE', `/sessions/${tool.session.id}`);
+});
+
+test('a Claude Code command waiting for permission shows only once it runs, and never when refused', async () => {
+  const tool = await startTool('anthropic');
+  await waitFor(reportingIs(tool.session.id, 'active'), { label: 'hooks', timeout: 15000 });
+  const watch = watchShells(tool.session.id);
+  tool.client.input('shell refused 3000 ask-no rm -rf build');
+  await runShells(tool, [], 'SHELL-REJECTED refused');
+  assert.deepEqual(watch.seen.filter((ids) => ids.length), [], 'nothing ran while the dialog was open');
+  await runShells(tool, ['turn-end'], 'TURN-ENDED');
+  await waitFor(() => ctx.manager.get(tool.session.id).shells.size === 0, { label: 'the refused command is gone' });
+
+  tool.client.input('shell approved 4000 ask-yes npm run build');
+  await runShells(tool, [], 'SHELL-STARTED approved');
+  assert.deepEqual(watch.seen.filter((ids) => ids.length), [], 'still nothing before the command started');
+  await waitFor(shellCountIs(tool.session.id, 1), { label: 'shown once its process runs', timeout: bindTimeout });
+  await runShells(tool, [], 'SHELL-DONE approved');
+  await waitFor(shellCountIs(tool.session.id, 0), { label: 'gone when it ends', timeout: 2000 });
+  watch.stop();
   await tool.client.close();
   await call('DELETE', `/sessions/${tool.session.id}`);
 });
