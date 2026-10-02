@@ -280,8 +280,7 @@ export function createManagerServer({
       if (!provider) throw new HttpError(404, `unknown provider "${reportingMatch[1]}"`, 'unknown_provider');
       const body = await readJsonBody(req);
       if (typeof body.enabled !== 'boolean') throw new HttpError(400, 'enabled must be true or false', 'bad_request');
-      const account = registry.account(provider, body.account ?? null);
-      await manager.sessionHooks.setEnabled(provider, account, body.enabled);
+      await manager.sessionHooks.setEnabled(provider, body.enabled);
       registry.emit('updated');
       return sendJson(res, 200, { provider: registry.describe(provider) });
     }

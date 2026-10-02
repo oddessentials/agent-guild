@@ -255,88 +255,45 @@ export async function listCodexSessions(dir, memo = new FileMemo()) {
   return dedupe(entries);
 }
 
-// ---- Gemini CLI -----------------------------------------------------------
+// ---- Antigravity CLI ------------------------------------------------------
 
-export function geminiDir(env = process.env) {
-  return path.join(env.GEMINI_CLI_HOME || os.homedir(), '.gemini');
+export function antigravityDir(env = process.env, platform = process.platform) {
+  return path.join((platform === 'win32' ? env.USERPROFILE : env.HOME) || os.homedir(), '.gemini', 'antigravity-cli');
 }
 
-function geminiPrompt(record) {
-  if (!record || typeof record !== 'object') return null;
-  if (record.type === 'user' && record.id !== undefined) {
-    const text = contentText(record.content);
-    return /^[/?]/.test(text.trim()) ? null : promptTitle(text);
-  }
-  const checkpoint = record.$set?.messages;
-  if (Array.isArray(checkpoint)) {
-    for (const message of checkpoint) {
-      const title = geminiPrompt(message);
-      if (title) return title;
-    }
-  }
-  return null;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function antigravityEntry(id, text, stat) {
+  const [first] = parseLines(text ?? '');
+  if (first?.type !== 'USER_INPUT' || first.source !== 'USER_EXPLICIT' || typeof first.content !== 'string') return null;
+  const request = first.content.match(/<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/)?.[1];
+  return cleanEntry({ id, title: promptTitle(request), startedAt: first.created_at, updatedAt: stat.mtime });
 }
 
-function geminiEntry(text, stat, cwd, legacy) {
-  let meta;
-  let records;
-  if (legacy) {
-    try { meta = JSON.parse(text); } catch { return null; }
-    records = Array.isArray(meta?.messages) ? meta.messages : [];
-  } else {
-    records = parseLines(text);
-    meta = records.shift();
-  }
-  if (!meta || typeof meta !== 'object' || typeof meta.sessionId !== 'string') return null;
-  if (meta.kind === 'subagent') return null;
-  let title = typeof meta.summary === 'string' && meta.summary.trim() ? meta.summary : null;
-  for (const record of records) {
-    if (title) break;
-    title = geminiPrompt(record);
-  }
-  return cleanEntry({ id: meta.sessionId, title, cwd, startedAt: meta.startTime, updatedAt: stat.mtime });
+/** The folder of each folder's latest conversation; the CLI keeps no folder for the others. */
+async function antigravityFolders(dir) {
+  const folders = new Map();
+  let latest = null;
+  try { latest = JSON.parse(await readText(path.join(dir, 'cache', 'last_conversations.json'))); } catch { /* none yet */ }
+  if (!latest || typeof latest !== 'object') return folders;
+  for (const [folder, id] of Object.entries(latest)) if (typeof id === 'string') folders.set(id, folder);
+  return folders;
 }
 
-/** The project folder a Gemini CLI temp folder stands for: its `.project_root` marker, else the registry in `projects.json`. */
-async function geminiProjectRoots(root, folders) {
-  const roots = new Map();
-  let registry = null;
-  for (const folder of folders) {
-    const marker = (await readText(path.join(root, folder, '.project_root')))?.trim();
-    if (marker) {
-      roots.set(folder, marker);
-      continue;
-    }
-    if (registry === null) {
-      let projects = {};
-      try { projects = JSON.parse(await readText(path.join(path.dirname(root), 'projects.json')))?.projects ?? {}; } catch { /* no registry */ }
-      registry = new Map(Object.entries(projects).map(([dir, slug]) => [slug, dir]));
-    }
-    roots.set(folder, registry.get(folder) ?? null);
-  }
-  return roots;
-}
-
-/** Chats under `<dir>/tmp/<project>/chats/session-*.jsonl` (older versions: `.json`). Sub-agent chats sit in sub-folders. */
-export async function listGeminiSessions(dir, memo = new FileMemo()) {
-  const root = path.join(dir, 'tmp');
+/** Conversations under `<dir>/brain/<id>/.system_generated/logs/transcript.jsonl`. */
+export async function listAntigravitySessions(dir, memo = new FileMemo()) {
+  const root = path.join(dir, 'brain');
+  const folders = await antigravityFolders(dir);
   const entries = [];
   const seen = new Set();
-  const folders = (await readDir(root)).filter((item) => item.isDirectory()).map((item) => item.name);
-  const roots = await geminiProjectRoots(root, folders);
-  for (const folder of folders) {
-    const chats = path.join(root, folder, 'chats');
-    for (const item of await readDir(chats)) {
-      const legacy = item.name.endsWith('.json');
-      if (!item.isFile() || !item.name.startsWith('session-') || !(legacy || item.name.endsWith('.jsonl'))) continue;
-      const file = path.join(chats, item.name);
-      const stat = await statFile(file);
-      if (!stat) continue;
-      seen.add(file);
-      const cwd = roots.get(folder);
-      const entry = await memo.entry(file, stat, async () => geminiEntry(legacy ? await readText(file) : await readHead(file), stat, cwd, legacy));
-      if (entry) entries.push(entry);
-    }
+  for (const item of await readDir(root)) {
+    if (!item.isDirectory() || !UUID_RE.test(item.name)) continue;
+    const file = path.join(root, item.name, '.system_generated', 'logs', 'transcript.jsonl');
+    const stat = await statFile(file);
+    if (!stat) continue;
+    seen.add(file);
+    const entry = await memo.entry(file, stat, async () => antigravityEntry(item.name, await readHead(file), stat));
+    if (entry) entries.push({ ...entry, cwd: folders.get(entry.id) ?? null });
   }
   memo.prune(root, seen);
   return dedupe(entries);
@@ -447,7 +404,7 @@ export class SessionHistory {
     this.env = env;
     this.platform = platform;
     this.ttlMs = ttlMs;
-    this.readers = { claude: listClaudeSessions, codex: listCodexSessions, gemini: listGeminiSessions, grok: listGrokSessions, ...readers };
+    this.readers = { claude: listClaudeSessions, codex: listCodexSessions, antigravity: listAntigravitySessions, grok: listGrokSessions, ...readers };
     this.memo = new FileMemo();
     this.cache = new Map();
   }
@@ -455,7 +412,7 @@ export class SessionHistory {
   static sourceDir(source, env) {
     if (source === 'claude') return claudeConfigDir(env);
     if (source === 'codex') return codexHome(env);
-    if (source === 'gemini') return geminiDir(env);
+    if (source === 'antigravity') return antigravityDir(env);
     if (source === 'grok') return grokHome(env);
     return null;
   }

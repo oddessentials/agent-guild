@@ -76,28 +76,28 @@
     {
       "id": "google",
       "vendor": "Google",
-      "tool": "Gemini CLI",
-      "command": "gemini",
-      "package": "@google/gemini-cli",
+      "tool": "Antigravity CLI",
+      "command": "agy",
       "versionArgs": ["--version"],
-      "usage": "gemini",
-      "history": "gemini",
-      "reporting": "gemini",
-      "homeVar": "GEMINI_CLI_HOME",
-      "accountEnv": { "GEMINI_FORCE_FILE_STORAGE": "true" },
-      "hooks": { "path": ".gemini/settings.json", "example": "gemini-settings.json" },
+      "history": "antigravity",
+      "reporting": "antigravity",
       "modelPattern": "\\bgemini-\\d[a-z0-9.-]*",
       "args": [],
-      "resumeArgs": ["--resume", "{id}"],
+      "resumeArgs": ["--conversation", "{id}"],
       "color": "#4285F4",
       "monogram": "G",
-      "install": "npm install -g @google/gemini-cli",
+      "install": "curl -fsSL https://antigravity.google/cli/install.sh | bash",
       "channels": {
-        "brew": { "names": ["gemini-cli"] }
+        "native": { "paths": ["~/.local/bin/agy"], "update": ["update"], "uninstall": "rm -f ~/.local/bin/agy" }
       },
-      "docs": "https://github.com/google-gemini/gemini-cli",
-      "usageUrl": "https://aistudio.google.com/usage",
-      "billingUrl": "https://one.google.com/settings"
+      "docs": "https://antigravity.google/docs/cli/install",
+      "billingUrl": "https://one.google.com/settings",
+      "win32": {
+        "install": "irm https://antigravity.google/cli/install.ps1 | iex",
+        "channels": {
+          "native": { "paths": ["~/AppData/Local/agy/bin"], "update": ["update"], "uninstall": "Remove-Item -Path \"$env:LOCALAPPDATA\\agy\" -Recurse -Force" }
+        }
+      }
     },
     {
       "id": "xai",

@@ -7,8 +7,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
-import { execFile, spawn } from 'node:child_process';
-import { once } from 'node:events';
+import { execFile } from 'node:child_process';
 import crypto from 'node:crypto';
 import { startFakeGitHub } from './fixtures/fake-github.mjs';
 
@@ -92,19 +91,17 @@ else fs.symlinkSync(path.join(npmBinDir, 'fake-npmtool'), path.join(linkDir, 'fa
 const codingTool = path.join(here, 'fixtures', 'fake-coding-tool.mjs');
 const toolsDir = path.join(home, 'coding-tools');
 fs.mkdirSync(toolsDir);
-for (const name of ['claude', 'codex', 'gemini', 'grok']) {
+for (const name of ['claude', 'codex', 'agy', 'grok']) {
   writeScript(path.join(toolsDir, name), { win: `"${process.execPath}" "${codingTool}" ${name} %*`, sh: `exec "${process.execPath}" "${codingTool}" ${name} "$@"` });
 }
 const userHookLog = path.join(home, 'user-hooks.log');
-const geminiCwdLog = path.join(home, 'gemini-extension-cwd.log');
-process.env.FAKE_GEMINI_CWD_LOG = geminiCwdLog;
 const userHook = path.join(home, 'user-hook.mjs');
 fs.writeFileSync(userHook, `import fs from 'node:fs';\nfs.appendFileSync(${JSON.stringify(userHookLog)}, process.argv[2] + '\\n');\n`);
 const userHookCommand = (name) => `"${process.execPath}" "${userHook}" ${name}`;
 const toolHomes = {
   claude: path.join(home, 'tool-homes', 'claude'),
   codex: path.join(home, 'tool-homes', 'codex'),
-  gemini: path.join(home, 'tool-homes', 'gemini'),
+  agy: path.join(home, 'tool-homes', 'agy'),
   grok: path.join(home, 'tool-homes', 'grok'),
 };
 const writeFile = (file, contents) => {
@@ -114,11 +111,10 @@ const writeFile = (file, contents) => {
 writeFile(path.join(toolHomes.claude, 'settings.json'), JSON.stringify({ theme: 'dark', hooks: { SubagentStart: [{ hooks: [{ type: 'command', command: userHookCommand('claude-user') }] }] } }));
 writeFile(path.join(toolHomes.codex, 'hooks.json'), JSON.stringify({ hooks: { SubagentStart: [{ hooks: [{ type: 'command', command: userHookCommand('codex-user') }] }] } }));
 writeFile(path.join(toolHomes.codex, 'config.toml'), 'model = "gpt-5-codex"\n');
-writeFile(path.join(toolHomes.gemini, '.gemini', 'settings.json'), JSON.stringify({ security: { environmentVariableRedaction: { enabled: true } } }));
+writeFile(path.join(toolHomes.agy, '.gemini', 'antigravity-cli', 'settings.json'), '{}\n');
 writeFile(path.join(toolHomes.grok, 'config.toml'), '[ui]\nscreen_mode = "minimal"\n');
 process.env.CLAUDE_CONFIG_DIR = toolHomes.claude;
 process.env.CODEX_HOME = toolHomes.codex;
-process.env.GEMINI_CLI_HOME = toolHomes.gemini;
 process.env.GROK_HOME = toolHomes.grok;
 const claudeHooksOff = path.join(home, 'tool-homes', 'claude-hooks-off');
 writeFile(path.join(claudeHooksOff, 'settings.json'), JSON.stringify({ disableAllHooks: true }));
@@ -168,10 +164,10 @@ fs.writeFileSync(path.join(home, 'providers.json'), JSON.stringify({
     { id: 'absent', vendor: 'Nobody', tool: 'Absent Tool', command: 'definitely-not-installed-agent-guild', package: 'fake-tool-pkg' },
     { id: 'racytool', vendor: 'Nobody', tool: 'Racy Tool', command: 'definitely-not-installed-agent-guild', package: 'racy-pkg' },
     { id: 'multi', vendor: 'Test', tool: 'Multi Tool', command: process.execPath, args: [path.join(here, 'fixtures', 'fake-tool.mjs')], homeVar: 'FAKE_TOOL_HOME', hooks: { path: 'hooks/settings.json', example: 'claude-code-settings.json' }, accounts: [{ id: 'work', label: 'Work' }, { id: 'kept', dir: path.join(home, 'kept-home') }] },
-    // Never read the developer's real Claude Code, Codex, Gemini or Grok sign-in or sessions during tests.
+    // Never read the developer's real Claude Code, Codex, Antigravity or Grok sign-in or sessions during tests.
     { id: 'anthropic', usage: null, history: null, accounts: [{ id: 'work', label: 'Work' }] },
     { id: 'openai', usage: null, history: null, accounts: [{ id: 'work', label: 'Work' }] },
-    { id: 'google', usage: null, history: null },
+    { id: 'google', history: null, env: { [win ? 'USERPROFILE' : 'HOME']: toolHomes.agy } },
     { id: 'xai', history: null },
     { id: 'claudeoff', vendor: 'Test', tool: 'Claude Hooks Off', command: 'claude', reporting: 'claude', env: { CLAUDE_CONFIG_DIR: claudeHooksOff } },
     {
@@ -985,9 +981,9 @@ test('a Codex CLI that refuses the hook overrides still starts, and says it is n
   await call('DELETE', `/sessions/${tool.session.id}`);
 });
 
-test('Gemini CLI reports invoke_agent helpers once its extension is turned on, through a redacted environment', async (t) => {
+test('Antigravity CLI reports its model and conversation once its plugin is turned on, and stays quiet elsewhere', async (t) => {
   const google = async () => (await call('GET', '/providers')).body.providers.find((p) => p.id === 'google');
-  assert.equal((await google()).accounts[0].reportingEnabled, false);
+  assert.equal((await google()).reportingEnabled, false);
   const before = await startTool('google');
   assert.equal(before.session.reporting.state, 'setup_required');
   assert.match(before.session.reporting.reason, /Turn it on/);
@@ -997,22 +993,55 @@ test('Gemini CLI reports invoke_agent helpers once its extension is turned on, t
   t.after(() => call('POST', '/providers/google/reporting', { enabled: false }));
   const on = await call('POST', '/providers/google/reporting', { enabled: true });
   assert.equal(on.status, 200, JSON.stringify(on.body));
-  assert.equal(on.body.provider.accounts[0].reportingEnabled, true);
-  const record = JSON.parse(fs.readFileSync(path.join(toolHomes.gemini, '.gemini', 'extensions', 'agent-guild', '.gemini-extension-install.json'), 'utf8'));
-  assert.equal(record.source, path.join(home, 'reporting', 'gemini'), 'linked through Gemini\'s own command');
+  assert.equal(on.body.provider.reportingEnabled, true);
+  const installed = path.join(toolHomes.agy, '.gemini', 'config', 'plugins', 'agent-guild');
+  assert.deepEqual(snapshot(installed), snapshot(path.join(home, 'reporting', 'antigravity')), 'installed through Antigravity\'s own command');
 
   const tool = await startTool('google');
   assert.equal(tool.session.reporting.state, 'pending');
-  await waitFor(reportingIs(tool.session.id, 'active'), { label: 'the session start hook', timeout: 15000 })
+  await waitForText(tool.client, tool.session.id, 'FAKE-AGY READY hooks=1', 'the plugin\'s hook');
+  tool.client.input('prompt');
+  await waitForText(tool.client, tool.session.id, 'HOOK PreInvocation EXIT:0 ANSWER:{}', 'the hook answers Antigravity with an empty object');
+  const reported = await waitFor(async () => {
+    const s = await sessionNow(tool.session.id);
+    return s.reporting.state === 'active' && s.toolSessionId && s;
+  }, { label: 'the model and conversation', timeout: 15000 })
     .catch((err) => { err.message += `\n${stripAnsi(tool.client.output).slice(-1500)}`; throw err; });
-  await followSubagent(tool, 'gemini-1', 'codebase_investigator');
+  assert.equal(reported.model.name, 'gemini-3.8-flash-high');
+  assert.equal(reported.toolSessionId, '0f1e2d3c-4b5a-4697-8877-665544332211');
+  assert.ok(!stripAnsi(tool.client.output).includes('STDERR'), 'the hook ran cleanly');
   await tool.client.close();
   await call('DELETE', `/sessions/${tool.session.id}`);
 
   const off = await call('POST', '/providers/google/reporting', { enabled: false });
-  assert.equal(off.body.provider.accounts[0].reportingEnabled, false);
-  assert.ok(!fs.existsSync(path.join(toolHomes.gemini, '.gemini', 'extensions', 'agent-guild')));
+  assert.equal(off.body.provider.reportingEnabled, false);
+  assert.ok(!fs.existsSync(installed));
   assert.equal((await call('POST', '/providers/anthropic/reporting', { enabled: true })).status, 400, 'nothing to turn on where hooks come with each session');
+});
+
+test('the Antigravity hook answers with an empty object and reports only into an Antigravity session', async () => {
+  const bundle = path.join(home, 'reporting', 'antigravity');
+  const { command } = JSON.parse(fs.readFileSync(path.join(bundle, 'hooks.json'), 'utf8'))['agent-guild'].PreInvocation[0];
+  const runHook = (extra) => new Promise((resolve, reject) => {
+    const env = { ...process.env };
+    for (const key of Object.keys(env)) if (key.startsWith('AGENT_GUILD_')) delete env[key];
+    const [file, args] = win ? ['cmd.exe', ['/d', '/s', '/c', `"${command}"`]] : ['/bin/sh', ['-c', command]];
+    const child = execFile(file, args, { cwd: bundle, env: { ...env, ...extra }, windowsVerbatimArguments: win }, (err, out) => (err ? reject(err) : resolve(JSON.parse(out))));
+    child.stdin.end(JSON.stringify({ conversationId: 'agy-conversation', modelName: 'gemini-3.8-flash-high' }));
+  });
+  assert.deepEqual(await runHook({}), {});
+
+  const session = await createFake();
+  const pathKey = Object.keys(process.env).find((k) => k.toUpperCase() === 'PATH');
+  const inside = (reporting) => ({
+    [pathKey]: `${path.join(home, 'bin')}${path.delimiter}${process.env[pathKey]}`, AGENT_GUILD_NODE: process.execPath,
+    AGENT_GUILD_URL: base, AGENT_GUILD_SESSION_ID: session.id, AGENT_GUILD_REPORT_TOKEN: ctx.manager.get(session.id).reportToken, AGENT_GUILD_REPORTING: reporting,
+  });
+  assert.deepEqual(await runHook(inside('claude')), {}, 'an agy run inside another tool\'s session');
+  assert.equal(ctx.manager.get(session.id).toolSessionId, null, 'leaves that session\'s resume id alone');
+  assert.deepEqual(await runHook(inside('antigravity')), {});
+  assert.equal(ctx.manager.get(session.id).toolSessionId, 'agy-conversation');
+  await call('DELETE', `/sessions/${session.id}`);
 });
 
 test('Grok Build reports sub-agents through --plugin-dir where it accepts it, and says when it cannot', async () => {
@@ -1040,16 +1069,6 @@ test('a tool whose hooks are turned off keeps running and shows that it is not r
   assert.equal(unavailable.status, 'running');
   await tool.client.close();
   await call('DELETE', `/sessions/${tool.session.id}`);
-});
-
-test('each session\'s report token sits in an owner-only file that goes with the session', async () => {
-  const tool = await startTool('anthropic');
-  const file = path.join(home, 'report-tokens', tool.session.id);
-  assert.equal(fs.readFileSync(file, 'utf8'), ctx.manager.get(tool.session.id).reportToken);
-  if (!win) assert.equal(fs.statSync(file).mode & 0o777, 0o600);
-  await tool.client.close();
-  await call('DELETE', `/sessions/${tool.session.id}`);
-  await waitFor(() => !fs.existsSync(file), { label: 'token file removal' });
 });
 
 test('an untouched Codex hooks file from earlier versions goes only where the session gets the same hooks', async () => {
@@ -1083,16 +1102,6 @@ test('the reporting probes start with the manager, before any session asks', () 
   for (const id of ['anthropic', 'openai', 'xai']) assert.ok(probesAtStart.has(id), `${id} was being probed when the manager came up`);
 });
 
-test('a second manager that cannot start leaves the running one\'s report token files alone', async () => {
-  const tool = await startTool('anthropic');
-  const file = path.join(home, 'report-tokens', tool.session.id);
-  assert.ok(fs.existsSync(file));
-  await assert.rejects(startManager({ port: ctx.api.port, version: '1.0.0', packageFile, github: { apiUrl: fakeGitHub.url, webUrl: fakeGitHub.url, clientId: 'test-client' } }), /already in use/);
-  assert.ok(fs.existsSync(file), 'the running session still authenticates through it');
-  await tool.client.close();
-  await call('DELETE', `/sessions/${tool.session.id}`);
-});
-
 test('a Codex probe that loads no hooks is asked again, not trusted for good', async () => {
   const { SessionHooks } = await import('../src/manager/session-hooks.mjs');
   const codex = path.join(toolsDir, win ? 'codex.cmd' : 'codex');
@@ -1106,33 +1115,31 @@ test('a Codex probe that loads no hooks is asked again, not trusted for good', a
   assert.ok(again.args.length > 0);
 });
 
-test('turning Gemini reporting on replaces a link left by an earlier data folder, and refuses another extension\'s name', async (t) => {
-  const record = path.join(toolHomes.gemini, '.gemini', 'extensions', 'agent-guild', '.gemini-extension-install.json');
-  t.after(() => fs.rmSync(path.dirname(record), { recursive: true, force: true }));
-  const enablement = path.join(toolHomes.gemini, '.gemini', 'extensions', 'extension-enablement.json');
-  t.after(() => fs.rmSync(enablement, { force: true }));
-  writeFile(enablement, JSON.stringify({ 'agent-guild': { overrides: ['!/*'] }, other: { overrides: ['/*'] } }));
-  const oldData = path.join(home, 'old-data', 'reporting', 'gemini');
-  fs.mkdirSync(oldData, { recursive: true });
-  writeFile(record, JSON.stringify({ source: oldData, type: 'link' }));
+test('turning Antigravity reporting on refreshes an older copy of its plugin, and refuses another plugin\'s name', async (t) => {
+  const installed = path.join(toolHomes.agy, '.gemini', 'config', 'plugins', 'agent-guild');
+  t.after(() => fs.rmSync(installed, { recursive: true, force: true }));
+  const bundle = path.join(home, 'reporting', 'antigravity');
+  fs.cpSync(bundle, installed, { recursive: true });
+  writeFile(path.join(installed, 'hooks.json'), '{}\n');
+  const google = async () => (await call('GET', '/providers')).body.providers.find((p) => p.id === 'google');
+  assert.equal((await google()).reportingEnabled, false, 'an older copy is not the current hook');
   let res = await call('POST', '/providers/google/reporting', { enabled: true });
   assert.equal(res.status, 200, JSON.stringify(res.body));
-  assert.equal(JSON.parse(fs.readFileSync(record, 'utf8')).source, path.join(home, 'reporting', 'gemini'));
-  assert.ok(!fs.existsSync(path.join(toolHomes.gemini, '.gemini', 'trustedFolders.json')), 'linking trusts no folder');
-  assert.deepEqual(JSON.parse(fs.readFileSync(enablement, 'utf8')), { other: { overrides: ['/*'] } }, 'the dangling link\'s disabled state goes with it, as Gemini\'s uninstall would do');
-  const cwds = new Set(fs.readFileSync(geminiCwdLog, 'utf8').trim().split(/\r?\n/).map((dir) => fs.realpathSync.native(dir)));
-  assert.deepEqual([...cwds], [fs.realpathSync.native(path.join(home, 'reporting'))], 'never the folder the manager was started in');
+  assert.deepEqual(snapshot(installed), snapshot(bundle));
   assert.equal((await call('POST', '/providers/google/reporting', { enabled: false })).status, 200);
-  assert.ok(!fs.existsSync(record));
+  assert.ok(!fs.existsSync(installed));
 
-  const foreign = path.join(home, 'someone-elses-extension');
-  writeFile(path.join(foreign, 'gemini-extension.json'), JSON.stringify({ name: 'agent-guild', version: '1', description: 'Not ours' }));
-  writeFile(record, JSON.stringify({ source: foreign, type: 'link' }));
+  fs.cpSync(bundle, installed, { recursive: true });
+  writeFile(path.join(installed, 'hooks.json'), '{}\n');
+  assert.equal((await call('POST', '/providers/google/reporting', { enabled: false })).status, 200);
+  assert.ok(!fs.existsSync(installed), 'turning reporting off removes an older copy too, since it still runs');
+
+  writeFile(path.join(installed, 'plugin.json'), JSON.stringify({ name: 'agent-guild', description: 'Not ours' }));
   res = await call('POST', '/providers/google/reporting', { enabled: true });
   assert.equal(res.status, 409);
-  assert.equal(res.body.error.code, 'extension_conflict');
+  assert.equal(res.body.error.code, 'plugin_conflict');
   assert.equal((await call('POST', '/providers/google/reporting', { enabled: false })).status, 200);
-  assert.equal(JSON.parse(fs.readFileSync(record, 'utf8')).source, foreign, 'someone else\'s extension is never removed');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(installed, 'plugin.json'), 'utf8')).description, 'Not ours', 'someone else\'s plugin is never removed');
 });
 
 function watchShells(id) {
@@ -1158,7 +1165,7 @@ async function runShells(tool, lines, label) {
 test('a session shows each shell command from its start until its end, whatever reports that end', async () => {
   const { id } = await createFake();
   const session = ctx.manager.get(id);
-  Object.assign(session, { shellDisplayDelayMs: 0, shellPidCheckMs: 25 });
+  Object.assign(session, { shellDisplayDelayMs: 0 });
   const report = (r) => session.reportShell(r);
   const settle = (ms = 15) => new Promise((resolve) => setTimeout(resolve, ms));
   const drawn = async () => { await settle(); return session.toJSON().shells.length; };
@@ -1218,22 +1225,10 @@ test('a session shows each shell command from its start until its end, whatever 
   assert.equal(await drawn(), 0, 'a rewritten request goes to the only command left');
   report({ shell: 'end', key: 'x2' });
 
-  const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 300)']);
-  await once(child, 'spawn');
-  report({ shell: 'start', bucket: 'ab' });
-  report({ shell: 'background', bucket: 'ab', pids: [child.pid] });
-  assert.equal(await drawn(), 1, 'followed by its pid');
-  await once(child, 'exit');
-  await waitFor(shellCountIs(id, 0), { label: 'gone once its process exits', timeout: 2000 });
-  assert.equal(session._pidTimer, null, 'and no pid is checked any more');
-  report({ shell: 'start', bucket: 'cd' });
-  report({ shell: 'background', bucket: 'cd', pids: [child.pid] });
-  assert.equal(session.shells.size, 0, 'a pid that has already exited ends the command at once');
-
-  assert.throws(() => report({ shell: 'start' }), /key or a bucket/);
-  assert.throws(() => report({ shell: 'background', key: 'k9' }), /task or pids/);
+  assert.throws(() => report({ shell: 'start' }), /needs a key/);
+  assert.throws(() => report({ shell: 'background', key: 'k9' }), /needs a task/);
   assert.throws(() => report({ shell: 'running' }), /tasks array/);
-  assert.throws(() => report({ shell: 'end' }), /key, a bucket or a task/);
+  assert.throws(() => report({ shell: 'end' }), /key or a task/);
   await call('DELETE', `/sessions/${id}`);
 });
 
@@ -1407,43 +1402,6 @@ test('more shell commands than the card draws are still all counted', async () =
   await call('DELETE', `/sessions/${tool.session.id}`);
 });
 
-test('identical Gemini CLI commands each get their own familiar, and a background one ends with its pid', async (t) => {
-  assert.equal((await call('POST', '/providers/google/reporting', { enabled: true })).status, 200);
-  t.after(() => call('POST', '/providers/google/reporting', { enabled: false }));
-  const tool = await startTool('google');
-  await waitFor(reportingIs(tool.session.id, 'active'), { label: 'hooks', timeout: 15000 });
-  tool.client.input('shell a 1500 fg npm test');
-  tool.client.input('shell b 3000 fg npm test');
-  await waitFor(shellCountIs(tool.session.id, 2), { label: 'two identical commands' });
-  await waitForText(tool.client, tool.session.id, 'SHELL-DONE a', 'first end');
-  await waitFor(shellCountIs(tool.session.id, 1), { label: 'one left', timeout: 1000 });
-  await waitForText(tool.client, tool.session.id, 'SHELL-DONE b', 'second end');
-  await waitFor(shellCountIs(tool.session.id, 0), { label: 'none left', timeout: 1000 });
-  tool.client.input('shell server 3000 bg python -m http.server');
-  await waitFor(shellCountIs(tool.session.id, 1), { label: 'background command', timeout: 15000 });
-  await runShells(tool, ['turn-end'], 'TURN-ENDED');
-  assert.equal((await shellsNow(tool.session.id)).length, 1, 'its process outlives the turn');
-  await waitForText(tool.client, tool.session.id, 'SHELL-EXITED server', 'server exit');
-  await waitFor(shellCountIs(tool.session.id, 0), { label: 'ended with its pid', timeout: 5000 });
-  await tool.client.close();
-  await call('DELETE', `/sessions/${tool.session.id}`);
-});
-
-test('a Gemini CLI background command that has already ended is never drawn', async (t) => {
-  assert.equal((await call('POST', '/providers/google/reporting', { enabled: true })).status, 200);
-  t.after(() => call('POST', '/providers/google/reporting', { enabled: false }));
-  const tool = await startTool('google');
-  await waitFor(reportingIs(tool.session.id, 'active'), { label: 'hooks', timeout: 15000 });
-  const watch = watchShells(tool.session.id);
-  await runShells(tool, ['shell instant 1 bg-instant true'], 'SHELL-BACKGROUNDED instant');
-  assert.equal(ctx.manager.get(tool.session.id).shells.size, 0, 'the pid Gemini named had already exited');
-  await new Promise((r) => setTimeout(r, 1500));
-  assert.deepEqual(watch.seen.filter((ids) => ids.length), [], 'never drawn');
-  watch.stop();
-  await tool.client.close();
-  await call('DELETE', `/sessions/${tool.session.id}`);
-});
-
 test('a Claude Code sub-agent stopped with TaskStop leaves the card, and neither its notification nor a prompt typed meanwhile ends the turn', async () => {
   const tool = await startTool('anthropic');
   await waitFor(reportingIs(tool.session.id, 'active'), { label: 'hooks', timeout: 15000 });
@@ -1452,42 +1410,6 @@ test('a Claude Code sub-agent stopped with TaskStop leaves the card, and neither
   await runShells(tool, ['shell meanwhile 4000 fg npm test', 'subagent-killed a7 general-purpose', 'prompt'], 'PROMPT-DONE');
   await waitFor(async () => (await sessionNow(tool.session.id)).agents.length === 0, { label: 'gone without a SubagentStop', timeout: 3000 });
   await waitFor(shellCountIs(tool.session.id, 1), { label: 'the command started just before still runs: no turn ended', timeout: 3000 });
-  await tool.client.close();
-  await call('DELETE', `/sessions/${tool.session.id}`);
-});
-
-test('a Gemini CLI call whose input a BeforeTool hook rewrote still ends, unless it could be another call', async (t) => {
-  assert.equal((await call('POST', '/providers/google/reporting', { enabled: true })).status, 200);
-  t.after(() => call('POST', '/providers/google/reporting', { enabled: false }));
-  const tool = await startTool('google');
-  await waitFor(reportingIs(tool.session.id, 'active'), { label: 'hooks', timeout: 15000 });
-
-  tool.client.input('shell fgr 1200 fg-rewrite npm test');
-  await waitFor(shellCountIs(tool.session.id, 1), { label: 'shown' });
-  await waitForText(tool.client, tool.session.id, 'SHELL-DONE fgr', 'end');
-  await waitFor(shellCountIs(tool.session.id, 0), { label: 'ended by its rewritten AfterTool', timeout: 1000 });
-
-  tool.client.input('shell bgr 2000 bg-rewrite npm start');
-  await waitFor(shellCountIs(tool.session.id, 1), { label: 'its rewritten AfterTool named its pid', timeout: 15000 });
-  await waitForText(tool.client, tool.session.id, 'SHELL-EXITED bgr', 'exit');
-  await waitFor(shellCountIs(tool.session.id, 0), { label: 'ended with its pid', timeout: 5000 });
-
-  tool.client.input('shell one 1500 fg-rewrite make a');
-  tool.client.input('shell two 3500 fg make b');
-  await waitFor(shellCountIs(tool.session.id, 2), { label: 'both shown' });
-  await waitForText(tool.client, tool.session.id, 'SHELL-DONE one', 'first end');
-  await new Promise((r) => setTimeout(r, 300));
-  assert.equal((await shellsNow(tool.session.id)).length, 2, 'a rewritten end that could be either command ends neither');
-  await waitForText(tool.client, tool.session.id, 'SHELL-DONE two', 'second end');
-  await waitFor(shellCountIs(tool.session.id, 1), { label: 'the second ends by its own input', timeout: 1000 });
-  await runShells(tool, ['turn-end'], 'TURN-ENDED');
-  await waitFor(shellCountIs(tool.session.id, 0), { label: 'the first ends with the turn', timeout: 1000 });
-
-  const working = (name) => agentIs(tool.session.id, name, 'working');
-  await runShells(tool, ['subagent g1 researcher', 'subagent-done-rewritten g1 researcher'], 'SUBAGENT-DONE g1');
-  await waitFor(agentIs(tool.session.id, 'researcher', 'done'), { label: 'the agent ends by its rewritten AfterTool' });
-  await runShells(tool, ['subagent g2 planner', 'subagent g3 coder', 'subagent-done-rewritten g2 planner'], 'SUBAGENT-DONE g2');
-  assert.ok(await working('planner')() && await working('coder')(), 'a rewritten end that could be either agent ends neither');
   await tool.client.close();
   await call('DELETE', `/sessions/${tool.session.id}`);
 });
@@ -1579,30 +1501,6 @@ test('a hook run through the shell finds agent-guild-report on the session PATH'
   }
   await client.close();
   await call('DELETE', `/sessions/${session.id}`);
-});
-
-test('a model reported while a foreground agent works is the agent\'s, not the session\'s', async () => {
-  const session = await createFake();
-  const route = `/sessions/${session.id}`;
-  assert.equal((await call('POST', `${route}/model`, { model: 'fake-model-main' })).body.model.name, 'fake-model-main');
-  // Gemini CLI: BeforeModel fires for the sub-agent's own requests while invoke_agent runs.
-  const [start] = [{ agentId: 'hook-task-1', name: 'codebase_investigator', kind: 'subagent', foreground: true }];
-  assert.equal((await call('POST', `${route}/agents`, start)).body.agent.foreground, true);
-  assert.equal((await call('POST', `${route}/model`, { model: 'fake-model-sub' })).body.model.name, 'fake-model-main', 'ignored while the agent works');
-  await call('POST', `${route}/agents`, { agentId: 'hook-task-1', status: 'done' });
-  assert.equal((await call('POST', `${route}/model`, { model: 'fake-model-next' })).body.model.name, 'fake-model-next', 'accepted once the agent is done');
-  // A cancelled call never reports done; the next turn boundary closes it.
-  await call('POST', `${route}/agents`, { agentId: 'hook-task-2', name: 'generalist', kind: 'subagent', foreground: true });
-  assert.equal((await call('POST', `${route}/model`, { model: 'fake-model-sub' })).body.model.name, 'fake-model-next');
-  assert.equal((await call('POST', `${route}/agents`, { finishForeground: true })).body.agent, null);
-  assert.equal((await call('GET', route)).body.session.agents.find((a) => a.id === 'hook-task-2').status, 'done');
-  assert.equal((await call('POST', `${route}/model`, { model: 'fake-model-after' })).body.model.name, 'fake-model-after', 'model reports resume after the boundary');
-  // A background agent (Claude Code, Codex CLI) does not block its parent.
-  await call('POST', `${route}/agents`, { agentId: 'hook-bg', name: 'Explore', kind: 'subagent' });
-  assert.equal((await call('POST', `${route}/model`, { model: 'fake-model-switched' })).body.model.name, 'fake-model-switched');
-  const { agents } = (await call('GET', route)).body.session;
-  assert.equal(agents.find((a) => a.id === 'hook-bg').foreground, false);
-  await call('DELETE', route);
 });
 
 test('agent-guild-report does nothing outside an Agent Guild terminal', async () => {

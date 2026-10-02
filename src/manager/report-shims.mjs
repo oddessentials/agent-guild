@@ -2,8 +2,8 @@
 // session, without `npm link` or a global install.
 //
 // The coding tools run their hook commands through a shell (sh or Git Bash
-// for Claude Code, a login shell for Codex CLI, bash or PowerShell for
-// Gemini CLI, sh or PowerShell for Grok Build) and look the command up on
+// for Claude Code, a login shell for Codex CLI, sh or cmd.exe for
+// Antigravity CLI, sh or PowerShell for Grok Build) and look the command up on
 // the PATH they inherit from the terminal. The manager writes these shims
 // into its data folder at every start and puts that folder first on each
 // session's PATH. They run the reporter with the manager's own Node.js, and
@@ -12,8 +12,8 @@
 //
 // On Windows there is deliberately no .ps1 shim: PowerShell prefers a .ps1
 // over the PATHEXT extensions, and the default Restricted execution policy
-// refuses to run it. Gemini CLI and Grok Build run hooks in PowerShell without
-// bypassing that policy, so they would fail; with only a .cmd present,
+// refuses to run it. Grok Build runs hooks in PowerShell without
+// bypassing that policy, so it would fail; with only a .cmd present,
 // PowerShell falls through to it and cmd.exe runs it with no policy involved.
 // cmd.exe reads a batch file in the OEM code page, so no path may be written
 // into the .cmd: the script's path lives in a loader module next to it, as

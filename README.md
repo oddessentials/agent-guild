@@ -11,7 +11,7 @@
   <a href="https://www.youtube.com/watch?v=ziT62WtXQ1M"><img src="https://img.shields.io/badge/trailer-watch%20on%20YouTube-e5534b?logo=youtube&logoColor=white" alt="Watch the Agent Guild trailer on YouTube"></a>
 </p>
 
-**Agent Guild** runs Claude Code, Codex CLI, Gemini CLI, Grok Build and your
+**Agent Guild** runs Claude Code, Codex CLI, Antigravity CLI, Grok Build and your
 own shell side by side, in real terminals, from one local web page. Each
 session is a card that shows what the tool is doing, which model it runs and
 which helper agents it has summoned. Close the page whenever you like; the
@@ -41,9 +41,10 @@ compiler and no WSL are needed.
 
 ## Features
 
-**Every major coding CLI, one place.** Claude Code, Codex CLI, Gemini CLI,
+**Every major coding CLI, one place.** Claude Code, Codex CLI, Antigravity CLI,
 Grok Build and a plain shell each get a card. A tool that is missing shows
-**Install**, which runs the install in a session you can watch. An installed
+**Install**, which runs the install in a session you can watch, or the
+vendor's install command for a tool not published on npm. An installed
 tool shows its version and offers **Update** when a newer one is out, using
 the same installer that put it there: npm, Homebrew, WinGet or the vendor's
 own.
@@ -64,7 +65,7 @@ with every hour it runs.
 one and switch with a chip on the card. Each account keeps its own sign-in,
 usage meters and sessions. See [Accounts](docs/configuration.md#accounts).
 
-**See what is left of your limits.** Claude Code, Codex CLI and Gemini CLI
+**See what is left of your limits.** Claude Code and Codex CLI
 cards show a meter for each rate-limit window, such as 5-hour and 7-day, with
 the time until it resets. They also show your plan, Claude's extra-usage
 spend and Codex's credit balance when the account has them. Any other tool
@@ -143,9 +144,10 @@ The full reference, including every field and environment variable, is in
 Agents are reported by the coding tool's hooks, not guessed from its output.
 Each helper agent appears on the card while it runs. Agent Guild gives every
 Claude Code and Codex CLI session its reporting hooks for that session only,
-without changing the tool's own settings. Gemini CLI has no such option: turn
-on **Agent reporting** on its card once, which links an Agent Guild extension
-into Gemini. Grok Build cannot take hooks for one session yet; add the hooks
+without changing the tool's own settings. Antigravity CLI has no such option:
+turn on **Agent reporting** on its card once, which installs an Agent Guild
+plugin into Antigravity. It reports the model and the conversation, but no
+helper agents or shell commands. Grok Build cannot take hooks for one session yet; add the hooks
 from [examples/grok-hooks.json](examples/grok-hooks.json) to see its agents.
 When a tool's hooks do not run, because hooks are turned off, restricted by
 an administrator or not trusted for the folder, the card says so.
@@ -172,8 +174,7 @@ Any other tool or script can report agents and its model too. See
   own `~/.ssh` and Git configuration are not read or changed.
 * Usage meters are fetched by the manager with each tool's own sign-in. The
   page only receives percentages. On macOS the first lookup may ask for
-  keychain access to the "Claude Code-credentials" and "gemini-cli-oauth"
-  items; choose Always Allow.
+  keychain access to the "Claude Code-credentials" item; choose Always Allow.
 
 The manager makes these outbound requests, and none of them carry your code
 or prompts:
@@ -181,7 +182,7 @@ or prompts:
 | To | For | How often |
 | --- | --- | --- |
 | npm registry | Tool and Agent Guild version checks | About hourly; `AGENT_GUILD_NO_UPDATE_CHECK=1` turns them off |
-| Anthropic, OpenAI and Google usage endpoints | Usage meters, with the tool's own sign-in | Every minute while the page is open |
+| Anthropic and OpenAI usage endpoints | Usage meters, with the tool's own sign-in | Every minute while the page is open |
 | OpenRouter's public model list | Benchmarks | Every 6 hours |
 | Public news feeds, Hacker News, arXiv and GitHub | The newsfeed | Every 30 minutes while the page is open |
 | GitHub's releases API | What's new | Hourly |
@@ -224,12 +225,9 @@ npm test
 ## Current limits
 
 * Sessions end when the manager stops or the computer restarts.
-* Grok Build has no usage meter.
-* Gemini CLI usage meters read its sign-in where Gemini CLI keeps it:
-  `oauth_creds.json`, or with `GEMINI_FORCE_ENCRYPTED_FILE_STORAGE=true` the
-  OS keychain (macOS, or Linux with `secret-tool`) or its encrypted
-  credentials file. A sign-in kept in the Windows Credential Manager cannot
-  be read.
+* Antigravity CLI and Grok Build have no usage meter.
+* Antigravity CLI has one account per computer user: it keeps its sign-in in
+  the system keychain and has no setting for another home folder.
 
 ## License
 

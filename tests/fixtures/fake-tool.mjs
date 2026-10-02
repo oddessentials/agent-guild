@@ -62,7 +62,7 @@ function hookSpawn(shell) {
   const command = 'agent-guild-report --hook';
   if (shell === 'cmd') return ['cmd.exe', ['/d', '/s', '/c', `"${command}"`]];
   if (shell === 'powershell') {
-    // Gemini CLI and Grok Build pass no execution policy; Restricted (the
+    // Grok Build passes no execution policy; Restricted (the
     // Windows client default) must still find and run the .cmd launcher.
     return ['powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Restricted', '-Command', command]];
   }

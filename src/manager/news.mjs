@@ -30,7 +30,7 @@ export const FEEDS = [
   { id: 'ollama-blog', name: 'Ollama', category: 'news', url: 'https://ollama.com/blog/rss.xml' },
   latestRelease('claude-code', 'Claude Code', 'anthropics/claude-code', 'anthropic'),
   latestRelease('codex-cli', 'Codex CLI', 'openai/codex', 'openai'),
-  latestRelease('gemini-cli', 'Gemini CLI', 'google-gemini/gemini-cli', 'google'),
+  latestRelease('antigravity-cli', 'Antigravity CLI', 'google-antigravity/antigravity-cli', 'google'),
   { id: 'ollama', name: 'Ollama', category: 'releases', url: 'https://github.com/ollama/ollama/releases.atom' },
   { id: 'llama-cpp', name: 'llama.cpp', category: 'releases', url: 'https://github.com/ggml-org/llama.cpp/releases.atom' },
   { id: 'transformers', name: 'Transformers', category: 'releases', url: 'https://github.com/huggingface/transformers/releases.atom' },

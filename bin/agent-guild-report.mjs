@@ -10,13 +10,13 @@
 //                      [--detail TEXT] [--kind KIND] [--remove]
 //   agent-guild-report --model NAME [--display-name TEXT]
 //   agent-guild-report --session ID          (the tool's own session id, for resuming it later)
-//   agent-guild-report --hook                (reads a hook event as JSON on stdin:
-//                                             Claude Code, Codex CLI, Gemini CLI, Grok Build)
+//   agent-guild-report --hook [--event NAME] (reads a hook event as JSON on stdin:
+//                                             Claude Code, Codex CLI, Antigravity CLI, Grok Build;
+//                                             --event names one that does not name itself)
 //   agent-guild-report --claude-statusline [--passthrough]
 //                      (reads Claude Code status line JSON on stdin; prints a
 //                       status line, or the JSON itself with --passthrough)
 
-import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import { hookToReports, claudeStatuslineToReport, formatStatusLine } from '../src/report/hooks.mjs';
 
@@ -24,26 +24,16 @@ import { hookToReports, claudeStatuslineToReport, formatStatusLine } from '../sr
 const http = createRequire(import.meta.url)('node:http');
 const env = process.env;
 
-function reportToken() {
-  if (env.AGENT_GUILD_REPORT_TOKEN) return env.AGENT_GUILD_REPORT_TOKEN;
-  if (!env.AGENT_GUILD_REPORT_FILE) return null;
-  try {
-    return fs.readFileSync(env.AGENT_GUILD_REPORT_FILE, 'utf8').trim() || null;
-  } catch {
-    return null;
-  }
-}
-
-const token = env.AGENT_GUILD_URL && env.AGENT_GUILD_SESSION_ID ? reportToken() : null;
+const token = env.AGENT_GUILD_URL && env.AGENT_GUILD_SESSION_ID ? env.AGENT_GUILD_REPORT_TOKEN || null : null;
 const inSession = Boolean(token);
 if (!inSession && env.AGENT_GUILD_SESSION_ID) {
-  console.error('agent-guild-report: the session report token is missing; the tool may have removed AGENT_GUILD_REPORT_TOKEN and AGENT_GUILD_REPORT_FILE from the environment, or the session has ended');
+  console.error('agent-guild-report: the session report token is missing; the tool may have removed AGENT_GUILD_REPORT_TOKEN from the environment');
 }
 
 const USAGE = `Usage: agent-guild-report <agent-id> [--name N] [--status working|waiting|idle|done] [--detail TEXT] [--kind KIND] [--remove]
        agent-guild-report --model NAME [--display-name TEXT]
        agent-guild-report --session ID                     (the tool's own session id)
-       agent-guild-report --hook                           (reads a coding tool's hook event JSON from stdin)
+       agent-guild-report --hook [--event NAME]            (reads a coding tool's hook event JSON from stdin)
        agent-guild-report --claude-statusline [--passthrough]  (reads Claude Code status line JSON from stdin)`;
 
 function parseArgs(argv) {
@@ -117,7 +107,8 @@ async function main() {
   }
   if (args.hook) {
     const input = parseJson(await readStdin());
-    if (!inSession || !input) return;
+    if (!inSession || !input || typeof input !== 'object') return;
+    if (args.event && input.hook_event_name === undefined) input.hook_event_name = args.event;
     for (const report of hookToReports(input)) await sendQuietly(report);
     return;
   }

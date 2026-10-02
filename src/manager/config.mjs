@@ -48,7 +48,6 @@ export const paths = {
   /** Launchers for agent-guild-report, put first on every session's PATH. */
   get shims() { return path.join(dataDir(), 'bin'); },
   get reporting() { return path.join(dataDir(), 'reporting'); },
-  get reportTokens() { return path.join(dataDir(), 'report-tokens'); },
 };
 
 function writePrivate(file, contents) {

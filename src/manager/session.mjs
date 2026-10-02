@@ -22,17 +22,7 @@ const MAX_TOOL_SESSION_ID = 200;
 const REPORTING_STATES = new Set(['pending', 'active', 'unavailable', 'setup_required', 'unsupported']);
 const SHELL_EVENTS = new Set(['start', 'waiting', 'asked', 'background', 'end', 'running', 'reset']);
 const MAX_SHELLS = 256;
-const MAX_SHELL_PIDS = 16;
 const MAX_ENDED_TASKS = 256;
-
-function processExists(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return err.code === 'EPERM';
-  }
-}
 
 /**
  * Colours reported to programs that query them (OSC 10/11/12), matching the
@@ -99,11 +89,9 @@ export class Session extends EventEmitter {
     this.reporting = REPORTING_STATES.has(opts.reporting?.state) ? { state: opts.reporting.state, reason: opts.reporting.reason ?? null } : null;
     this._reportingTimer = null;
     this.shellDisplayDelayMs = opts.shellDisplayDelayMs ?? 600;
-    this.shellPidCheckMs = opts.shellPidCheckMs ?? 2000;
     this.shells = new Map();
     this._shellSeq = 0;
     this._endedTasks = new Set();
-    this._pidTimer = null;
     this.createdAt = new Date().toISOString();
     this.exitedAt = null;
     this.status = 'running';
@@ -381,11 +369,6 @@ export class Session extends EventEmitter {
     if (this.status !== 'running') throw Object.assign(new Error('session has exited'), { status: 409 });
     if (source === 'api') this._reportingHeard();
     if (report.finishForeground === true && report.agentId === undefined) {
-      // The tool is between turns, so no foreground agent can still be
-      // running; one that is never got its end event.
-      for (const agent of [...this.agents.values()]) {
-        if (agent.foreground && agent.status === 'working') this.reportAgent({ agentId: agent.id, status: 'done' }, source);
-      }
       this._endForegroundShells(null);
       return null;
     }
@@ -402,11 +385,6 @@ export class Session extends EventEmitter {
     }
     const now = new Date().toISOString();
     const existing = this.agents.get(id);
-    if (!existing && status === 'done' && report.foreground === true) {
-      // Gemini CLI's invoke_agent is paired by its input, which a BeforeTool hook may rewrite before AfterTool.
-      const working = [...this.agents.values()].filter((agent) => agent.foreground && agent.status === 'working');
-      return working.length === 1 ? this.reportAgent({ agentId: working[0].id, status: 'done' }, source) : null;
-    }
     if (status === 'done') this._endForegroundShells(id);
     // A first report that already says done would only flash an icon:
     // Claude Code's internal helpers (prompt suggestions, side questions)
@@ -424,9 +402,6 @@ export class Session extends EventEmitter {
       kind: String(report.kind ?? existing?.kind ?? 'agent').slice(0, 40),
       status,
       detail: report.detail === undefined ? existing?.detail ?? '' : String(report.detail).slice(0, 200),
-      // The parent waits for a foreground agent, so a model reported while
-      // it works belongs to the agent, not to the session.
-      foreground: report.foreground === undefined ? existing?.foreground ?? false : report.foreground === true,
       startedAt: existing?.startedAt ?? now,
       updatedAt: now,
       source,
@@ -488,7 +463,6 @@ export class Session extends EventEmitter {
     if (!SHELL_EVENTS.has(report.shell)) throw badRequest(`shell must be one of ${[...SHELL_EVENTS].join(', ')}`);
     const id = (value) => (typeof value === 'string' && value ? value.slice(0, 128) : null);
     const key = id(report.key);
-    const bucket = !key && typeof report.bucket === 'string' && /^[a-f0-9]{1,64}$/.test(report.bucket) ? report.bucket : null;
     const task = id(report.task);
     const match = typeof report.match === 'string' && /^[a-f0-9]{32}$/.test(report.match) ? report.match : null;
     const agentId = id(report.agentId);
@@ -525,34 +499,23 @@ export class Session extends EventEmitter {
     }
 
     if (report.shell === 'end') {
-      if (!key && !bucket && !task) throw badRequest('a shell end needs a key, a bucket or a task');
+      if (!key && !task) throw badRequest('a shell end needs a key or a task');
       if (task) this._rememberEnded(task);
-      const shell = (key && this._shellBy('key', key)) || (task && this._shellBy('task', task)) || (bucket && this._shellByBucket(bucket));
+      const shell = (key && this._shellBy('key', key)) || (task && this._shellBy('task', task));
       if (shell) this._endShell(shell);
       return null;
     }
 
-    if (!key && !bucket) throw badRequest('a shell report needs a key or a bucket');
+    if (!key) throw badRequest('a shell report needs a key');
     if (report.shell === 'start') {
-      if (!key || !this._shellBy('key', key)) this._addShell({ key, bucket, match, agentId, persist: report.persist === true });
+      if (!this._shellBy('key', key)) this._addShell({ key, match, agentId, persist: report.persist === true });
       return null;
     }
 
-    const pids = Array.isArray(report.pids) ? report.pids.filter((pid) => Number.isInteger(pid) && pid > 0).slice(0, MAX_SHELL_PIDS) : [];
-    if (!task && pids.length === 0) throw badRequest('a background report needs a task or pids');
-    const shell = key ? this._shellBy('key', key) : this._shellByBucket(bucket);
+    if (!task) throw badRequest('a background report needs a task');
+    const shell = this._shellBy('key', key);
     if (!shell) return null;
-    if (task) {
-      Object.assign(shell, { task, endsWithAgent: report.endsWithAgent === true });
-    } else {
-      // Gemini CLI names a pid even for a command that ended at once.
-      shell.pids = pids.filter(processExists);
-      if (shell.pids.length === 0) {
-        this._endShell(shell);
-        return null;
-      }
-      this._checkPids();
-    }
+    Object.assign(shell, { task, endsWithAgent: report.endsWithAgent === true });
     if (shell.waiting) {
       shell.waiting = false;
       this._showAfterDelay(shell);
@@ -566,7 +529,7 @@ export class Session extends EventEmitter {
       return;
     }
     const shell = {
-      id: `shell-${++this._shellSeq}`, key: null, bucket: null, match: null, agentId: null, persist: false, task: null, pids: null,
+      id: `shell-${++this._shellSeq}`, key: null, match: null, agentId: null, persist: false, task: null,
       endsWithAgent: false, waiting: false, asked: false, visible: false, timer: null, ...fields,
     };
     this.shells.set(shell.id, shell);
@@ -587,36 +550,12 @@ export class Session extends EventEmitter {
   }
 
   _foreground(shell) {
-    return shell.task === null && shell.pids === null;
+    return shell.task === null;
   }
 
   _shellBy(field, value) {
     for (const shell of this.shells.values()) if (shell[field] === value) return shell;
     return null;
-  }
-
-  // Gemini CLI's calls are paired by their input, which a BeforeTool hook may rewrite before AfterTool.
-  _shellByBucket(bucket) {
-    const open = [...this.shells.values()].filter((shell) => shell.bucket !== null && this._foreground(shell));
-    return open.find((shell) => shell.bucket === bucket) ?? (open.length === 1 ? open[0] : null);
-  }
-
-  _checkPids() {
-    if (this._pidTimer) return;
-    this._pidTimer = setInterval(() => {
-      let watching = false;
-      for (const shell of [...this.shells.values()]) {
-        if (!shell.pids) continue;
-        shell.pids = shell.pids.filter(processExists);
-        if (shell.pids.length) watching = true;
-        else this._endShell(shell);
-      }
-      if (!watching) {
-        clearInterval(this._pidTimer);
-        this._pidTimer = null;
-      }
-    }, this.shellPidCheckMs);
-    this._pidTimer.unref?.();
   }
 
   // A turn's foreground commands end with it; a background command, or one Codex CLI keeps running, does not.
@@ -642,8 +581,6 @@ export class Session extends EventEmitter {
 
   _clearShells() {
     for (const shell of this.shells.values()) clearTimeout(shell.timer);
-    clearInterval(this._pidTimer);
-    this._pidTimer = null;
     this.shells.clear();
   }
 
@@ -668,10 +605,6 @@ export class Session extends EventEmitter {
     const name = String(report.model ?? '').trim().slice(0, 120);
     if (!name) throw badRequest('model is required');
     const displayName = report.displayName === undefined || report.displayName === null ? null : String(report.displayName).trim().slice(0, 80) || null;
-    // Gemini CLI fires BeforeModel for a sub-agent's requests too, with the
-    // sub-agent's model and nothing to tell them apart. While a foreground
-    // agent works its parent makes no request, so the report is the agent's.
-    if (this._foregroundAgentWorking()) return this.model;
     this.setModel({ name, displayName }, 'report');
     return this.model;
   }
@@ -700,13 +633,6 @@ export class Session extends EventEmitter {
     if (!this.reporting || this.reporting.state === 'active') return;
     this.reporting = { state: 'active', reason: null };
     this._changed();
-  }
-
-  _foregroundAgentWorking() {
-    for (const agent of this.agents.values()) {
-      if (agent.foreground && agent.status === 'working') return true;
-    }
-    return false;
   }
 
   /**

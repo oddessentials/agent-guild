@@ -493,22 +493,20 @@ function renderAccounts(card, provider) {
 
 function renderReportingSetup(card, provider) {
   const row = card.querySelector('.reporting-row');
-  const account = selectedAccount(provider);
-  row.hidden = !provider.available || typeof account.reportingEnabled !== 'boolean';
+  row.hidden = !provider.available || typeof provider.reportingEnabled !== 'boolean';
   if (row.hidden) return;
-  const on = account.reportingEnabled;
-  const whose = (provider.accounts || []).length > 1 ? ` for the ${account.label} account` : '';
+  const on = provider.reportingEnabled;
   row.querySelector('.reporting-text').textContent = `Agent reporting ${on ? 'on' : 'off'}`;
   const button = row.querySelector('.reporting-toggle');
   button.textContent = on ? 'Turn off' : 'Turn on';
   button.title = on
-    ? `Remove the Agent Guild extension from ${provider.tool}${whose}. New sessions stop reporting sub-agents.`
-    : `Link the Agent Guild extension into ${provider.tool}${whose} with "${provider.command} extensions link", so new sessions show their sub-agents. It does nothing in sessions started outside Agent Guild.`;
+    ? `Remove the Agent Guild plugin from ${provider.tool}. New sessions stop reporting their model.`
+    : `Install the Agent Guild plugin into ${provider.tool} with "${provider.command} plugin install", so new sessions show their model and can be resumed. It does nothing in sessions started outside Agent Guild.`;
   button.onclick = async () => {
     button.disabled = true;
     try {
-      await api('POST', `/providers/${provider.id}/reporting`, { account: account.id, enabled: !on });
-      toast(on ? `Agent reporting is off for ${provider.tool}${whose}.` : `Agent reporting is on for ${provider.tool}${whose}. It applies to new sessions.`);
+      await api('POST', `/providers/${provider.id}/reporting`, { enabled: !on });
+      toast(on ? `Agent reporting is off for ${provider.tool}.` : `Agent reporting is on for ${provider.tool}. It applies to new sessions.`);
     } catch (err) {
       if (err instanceof AuthError) return showAuth(err.message);
       toast(err.message, 10000);
@@ -1694,7 +1692,7 @@ async function installProvider(provider, card, { force = false } = {}) {
 
 /**
  * Start a session. A resumed session starts in the folder its transcript
- * names, since Claude Code and Gemini CLI only find a session from there;
+ * names, since Claude Code only finds a session from there;
  * when that folder is gone, the working folder is used instead.
  */
 async function startSession(provider, card, { resume, cwd, account = selectedAccount(provider).id } = {}) {

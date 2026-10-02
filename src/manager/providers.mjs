@@ -19,7 +19,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULTS_FILE = path.resolve(here, '../../config/providers.default.json');
 const ID_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 const PLATFORM_KEYS = ['win32', 'darwin', 'linux'];
-const REPORTING_MODES = new Set(['claude', 'codex', 'gemini', 'grok']);
+const REPORTING_MODES = new Set(['claude', 'codex', 'antigravity', 'grok']);
 const VERSION_TTL_MS = 60 * 60 * 1000;
 const FAILED_PROBE_TTL_MS = 5 * 60 * 1000;
 const PATH_REFRESH_MS = 60 * 1000;
@@ -52,18 +52,18 @@ function normalizeEnv(env) {
   return out;
 }
 
-/** "claude", "codex", "gemini", a { command, args } that prints usage JSON, or null. */
+/** "claude", "codex", a { command, args } that prints usage JSON, or null. */
 function normalizeUsage(usage) {
-  if (usage === 'claude' || usage === 'codex' || usage === 'gemini') return usage;
+  if (usage === 'claude' || usage === 'codex') return usage;
   if (usage && typeof usage === 'object' && typeof usage.command === 'string' && usage.command) {
     return { command: usage.command, args: Array.isArray(usage.args) ? usage.args.map(String) : [] };
   }
   return null;
 }
 
-/** "claude", "codex", "gemini", "grok", a { command, args } that prints past sessions as JSON, or null. */
+/** "claude", "codex", "antigravity", "grok", a { command, args } that prints past sessions as JSON, or null. */
 function normalizeHistory(history) {
-  if (['claude', 'codex', 'gemini', 'grok'].includes(history)) return history;
+  if (['claude', 'codex', 'antigravity', 'grok'].includes(history)) return history;
   if (history && typeof history === 'object' && typeof history.command === 'string' && history.command) {
     return { command: history.command, args: Array.isArray(history.args) ? history.args.map(String) : [] };
   }
@@ -348,8 +348,9 @@ export class ProviderRegistry extends EventEmitter {
         const ttl = entry.probeOk === true ? VERSION_TTL_MS : FAILED_PROBE_TTL_MS;
         if (force || entry.probePath !== found || entry.probeMtime !== mtime || now - entry.probeAt > ttl) {
           const spec = buildSpawnSpec(channel.update.file, [...channel.update.args, '--help'], this.env, this.platform);
-          const ok = await runSpec(spec, { env: { ...this.env, ...provider.env } })
-            .then(({ stdout, stderr }) => helpDescribes(`${stdout}\n${stderr}`, channel.update.args), () => false);
+          // Go programs such as Antigravity CLI exit with 2 after printing their help.
+          const described = ({ stdout = '', stderr = '' }) => helpDescribes(`${stdout}\n${stderr}`, channel.update.args);
+          const ok = await runSpec(spec, { env: { ...this.env, ...provider.env } }).then(described, described);
           changed ||= ok !== entry.probeOk;
           Object.assign(entry, { probePath: found, probeMtime: mtime, probeAt: now, probeOk: ok });
         }
@@ -627,10 +628,8 @@ export class ProviderRegistry extends EventEmitter {
       usageSource: provider.usage === null ? null : typeof provider.usage === 'string' ? provider.usage : 'command',
       historySource: provider.history === null ? null : typeof provider.history === 'string' ? provider.history : 'command',
       reporting: provider.reporting,
-      accounts: provider.accounts.map((account) => {
-        const reportingEnabled = this.reportingEnabled?.(provider, this.accountFor(provider, account)) ?? null;
-        return { id: account.id, label: account.label, ...(reportingEnabled === null ? {} : { reportingEnabled }) };
-      }),
+      reportingEnabled: this.reportingEnabled?.(provider) ?? null,
+      accounts: provider.accounts.map((account) => ({ id: account.id, label: account.label })),
       modelPattern: provider.modelPattern,
       color: provider.color,
       monogram: provider.monogram,
