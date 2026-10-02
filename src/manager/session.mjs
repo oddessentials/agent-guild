@@ -490,10 +490,11 @@ export class Session extends EventEmitter {
 
     if (report.shell === 'waiting') {
       // Claude Code's PermissionRequest carries no tool_use_id, and a PreToolUse hook may have rewritten the
-      // command: without its hash, it belongs to a command only when the agent has no other still to run.
+      // command: it belongs to the agent's one command still to run with that command, else to its only one.
       let pending = key ? this._shellByKey(key) : null;
       const candidates = [...this.shells.values()].filter((shell) => shell.open && !shell.awaiting && shell.start === null && shell.agentId === agentId);
-      pending ??= (match && candidates.find((shell) => shell.match === match)) || (candidates.length === 1 ? candidates[0] : null);
+      const exact = match ? candidates.filter((shell) => shell.match === match) : [];
+      pending ??= exact.length === 1 ? exact[0] : exact.length === 0 && candidates.length === 1 ? candidates[0] : null;
       if (!pending) return null;
       if (match) Object.assign(pending, { match, exec: hash(report.exec) });
       this._awaitPermission(pending);
@@ -609,9 +610,23 @@ export class Session extends EventEmitter {
         else shell.misses = 0;
         continue;
       }
-      const found = shell.pid !== null
-        ? byPid.get(shell.pid)
-        : procs.find((p) => !taken.has(`${p.pid}:${p.start}`) && (candidatesOf(p).has(shell.match) || candidatesOf(p).has(shell.exec)));
+      let found = null;
+      let ambiguous = false;
+      if (shell.pid !== null) {
+        found = byPid.get(shell.pid);
+      } else {
+        const hits = procs.filter((p) => !taken.has(`${p.pid}:${p.start}`) && (candidatesOf(p).has(shell.match) || candidatesOf(p).has(shell.exec)));
+        const hitPids = new Set(hits.map((p) => p.pid));
+        const commands = hits.filter((p) => !hitPids.has(p.ppid));
+        let alike = 0;
+        for (const other of this.shells.values()) {
+          if (other.track && other.start === null && other.pid === null && other.match === shell.match && other.exec === shell.exec) alike++;
+        }
+        // Another run of the same command (in the foreground, say) could be either: wait until it is the only one.
+        ambiguous = commands.length > alike;
+        if (!ambiguous) found = commands[0];
+      }
+      if (ambiguous) continue;
       if (found) {
         shell.pid = found.pid;
         shell.start = found.start;

@@ -1245,6 +1245,27 @@ test('a permission request that matches no command and could be any of several l
   await runShells(tool, ['permit npm test -- --ci'], 'PERMIT npm test -- --ci');
   assert.equal(byCommand().a.awaiting, true, 'once a is the only command still to run, the rewritten request is a\'s');
   await waitFor(shellCountIs(tool.session.id, 0), { label: 'both hidden' });
+
+  await runShells(tool, ['turn-end', 'shell-denied c cargo build', 'shell-denied d cargo build'], 'SHELL-DENIED d');
+  await waitFor(shellCountIs(tool.session.id, 2), { label: 'two identical commands shown' });
+  await runShells(tool, ['permit cargo build'], 'PERMIT cargo build');
+  assert.deepEqual([byCommand().c.awaiting, byCommand().d.awaiting], [false, false], 'a request that could be either of two identical commands hides neither');
+  await tool.client.close();
+  await call('DELETE', `/sessions/${tool.session.id}`);
+});
+
+test('a followed command is not bound to an identical command\'s process while both run', async () => {
+  const tool = await startTool('anthropic');
+  await waitFor(reportingIs(tool.session.id, 'active'), { label: 'hooks', timeout: 15000 });
+  await runShells(tool, ['shell fgrun 3000 fg npm test', 'shell bgrun 9000 bg npm test'], 'SHELL-STARTED bgrun');
+  await waitFor(shellCountIs(tool.session.id, 2), { label: 'both shown' });
+  await waitForText(tool.client, tool.session.id, 'SHELL-DONE fgrun', 'the foreground one ends');
+  await waitFor(boundShells(tool.session.id, 1), { label: 'bound once its own process is the only one', timeout: bindTimeout });
+  const bound = [...ctx.manager.get(tool.session.id).shells.values()][0];
+  assert.equal(bound.pid, Number(stripAnsi(tool.client.output).match(/SHELL-STARTED bgrun (\d+)/)[1]), 'bound to its own process');
+  assert.equal((await shellsNow(tool.session.id)).length, 1, 'still shown while its own process runs');
+  await waitFor(() => stripAnsi(tool.client.output).includes('SHELL-EXITED bgrun'), { label: 'exit', timeout: 20000 });
+  await waitFor(shellCountIs(tool.session.id, 0), { label: 'ended with its own process', timeout: 10000 });
   await tool.client.close();
   await call('DELETE', `/sessions/${tool.session.id}`);
 });
