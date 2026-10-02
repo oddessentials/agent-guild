@@ -26,6 +26,8 @@ const MIME = {
   '.woff2': 'font/woff2',
   '.ico': 'image/x-icon',
   '.json': 'application/json; charset=utf-8',
+  '.glb': 'model/gltf-binary',
+  '.gltf': 'model/gltf+json',
 };
 
 function vendorFiles() {

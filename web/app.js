@@ -1,3 +1,5 @@
+import { initYard } from './yard/view.js';
+
 // Agent Guild web page. A thin client of the session manager's local API:
 // it never owns sessions, so closing the page leaves them running.
 
@@ -18,6 +20,14 @@ const finePointer = window.matchMedia('(hover: hover) and (pointer: fine)');
 const coarsePointer = window.matchMedia('(pointer: coarse)');
 
 const $ = (id) => document.getElementById(id);
+let yardUi = null;
+let yardQueued = false;
+function notifyViews() {
+  if (!yardUi || yardQueued) return;
+  yardQueued = true;
+  queueMicrotask(() => { yardQueued = false; yardUi.update(); });
+}
+
 const state = {
   token: null,
   providers: [],
@@ -80,6 +90,7 @@ function toast(message, ms = 5000, action = null) {
 }
 
 function setConnection(kind, label) {
+  notifyViews();
   const el = $('connection');
   el.className = `connection ${kind}`;
   el.querySelector('.label').textContent = label;
@@ -453,6 +464,7 @@ function selectedAccount(provider) {
 
 function selectAccount(provider, id) {
   state.accounts[provider.id] = id;
+  notifyViews();
   save(ACCOUNTS_KEY, JSON.stringify(state.accounts));
 }
 
@@ -519,11 +531,9 @@ function renderReportingSetup(card, provider) {
 
 let dealt = false;
 
-function renderProviders() {
-  const list = $('providers');
-  const tpl = $('provider-template');
-  list.replaceChildren(...state.providers.map((provider) => {
-    const node = tpl.content.firstElementChild.cloneNode(true);
+// Both layouts mount these same controls with these same command handlers.
+function buildProvider(provider) {
+    const node = $('provider-template').content.firstElementChild.cloneNode(true);
     paintProviderIcon(node.querySelector('.provider-icon'), provider);
     node.querySelector('.vendor').textContent = provider.vendor;
     node.querySelector('.tool').textContent = provider.tool;
@@ -563,7 +573,12 @@ function renderProviders() {
     renderReportingSetup(node, provider);
     renderModelStats(node, provider);
     return node;
-  }));
+}
+
+function renderProviders() {
+  const list = $('providers');
+  list.replaceChildren(...state.providers.map(buildProvider));
+  notifyViews();
   if (!dealt && state.providers.length) {
     dealt = true;
     if (!reducedMotion.matches) list.classList.add('deal');
@@ -698,6 +713,7 @@ function renderUsage(card, provider) {
 async function loadUsage() {
   let usage;
   try { ({ usage } = await api('GET', '/usage')); } catch { return; }
+  notifyViews();
   state.usage = new Map(usage.map((u) => [`${u.providerId}/${u.accountId ?? 'default'}`, u]));
   for (const card of $('providers').children) {
     const provider = state.providers.find((p) => p.id === card.dataset.id);
@@ -1258,6 +1274,7 @@ function newsNote(news) {
 }
 
 function renderLatestNews() {
+  notifyViews();
   const news = state.news;
   const list = $('news-latest');
   const seen = newsSeen() ?? Infinity;
@@ -1668,8 +1685,14 @@ function providerState(provider) {
   return parts.join(' · ');
 }
 
+function setProviderBusy(id, busy) {
+  for (const node of document.querySelectorAll('.provider[data-id], .session-card[data-provider]')) {
+    if ((node.dataset.id === id && node.classList.contains('provider')) || node.dataset.provider === id) node.classList.toggle('busy', busy);
+  }
+}
+
 async function installProvider(provider, card, { force = false } = {}) {
-  card.classList.add('busy');
+  setProviderBusy(provider.id, true);
   try {
     const { session } = await api('POST', `/providers/${provider.id}/install`, { force });
     upsertSession(session);
@@ -1677,7 +1700,7 @@ async function installProvider(provider, card, { force = false } = {}) {
   } catch (err) {
     if (err instanceof AuthError) return showAuth(err.message);
     if (err.code === 'provider_in_use') {
-      card.classList.remove('busy');
+      setProviderBusy(provider.id, false);
       const n = err.running;
       const what = `${n} ${provider.tool} session${n === 1 ? ' is' : 's are'} running`;
       if (confirm(`${what}. Updating ${provider.tool} while it runs can break ${n === 1 ? 'that session' : 'those sessions'}. Update anyway?`)) {
@@ -1687,7 +1710,7 @@ async function installProvider(provider, card, { force = false } = {}) {
     }
     toast(err.message, 8000);
   } finally {
-    card.classList.remove('busy');
+    setProviderBusy(provider.id, false);
   }
 }
 
@@ -1699,7 +1722,7 @@ async function installProvider(provider, card, { force = false } = {}) {
 async function startSession(provider, card, { resume, cwd, account = selectedAccount(provider).id } = {}) {
   const working = $('cwd').value.trim();
   save(CWD_KEY, working);
-  card?.classList.add('busy');
+  setProviderBusy(provider.id, true);
   try {
     const body = { providerId: provider.id, account, cwd: cwd || working || undefined, cols: 120, rows: 32, resume };
     let session;
@@ -1717,7 +1740,7 @@ async function startSession(provider, card, { resume, cwd, account = selectedAcc
     if (err instanceof AuthError) return showAuth(err.message);
     toast(err.message, 8000);
   } finally {
-    card?.classList.remove('busy');
+    setProviderBusy(provider.id, false);
   }
 }
 
@@ -2634,6 +2657,7 @@ function updateCard(node, s) {
 }
 
 function renderSessions() {
+  notifyViews();
   const grid = $('sessions');
   const sessions = [...state.sessions.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   for (const [id, node] of cards) {
@@ -3388,6 +3412,52 @@ const topbar = document.querySelector('.topbar');
 const publishTopbarHeight = () => document.documentElement.style.setProperty('--topbar-h', `${topbar.offsetHeight}px`);
 new ResizeObserver(publishTopbarHeight).observe(topbar);
 publishTopbarHeight();
+
+// A Yard gets public presentation state and mounts the canonical controls.
+// It has no token, transport, second command implementation, or polling loop.
+yardUi = initYard({
+  snapshot: () => ({
+    providers: state.providers,
+    sessions: [...state.sessions.values()],
+    connected: state.connected,
+    news: state.news,
+    activeId: state.activeId,
+  }),
+  openSession: openPanel,
+  openNews,
+  mountInspector(host, selection) {
+    if (!selection) { host.replaceChildren(); return; }
+    if (selection.kind === 'provider') {
+      const p = state.providers.find(p => p.id === selection.id);
+      if (!p) { host.replaceChildren(); return; }
+      const signature = JSON.stringify(p);
+      let node = host.firstElementChild;
+      if (!node || node.dataset.signature !== signature || !node.classList.contains('provider')) {
+        node = buildProvider(p);
+        node.dataset.signature = signature;
+        host.replaceChildren(node);
+      }
+      // Do not replace a focused account/benchmark control on unrelated events.
+      const contentSignature = JSON.stringify([state.accounts[p.id], usageFor(p), state.stats?.providers[p.id], state.stats?.retrievedAt]);
+      if (node.dataset.contentSignature !== contentSignature) {
+        renderAccounts(node, p);
+        renderUsage(node, p);
+        renderReportingSetup(node, p);
+        renderModelStats(node, p);
+        node.dataset.contentSignature = contentSignature;
+      }
+    } else {
+      const session = state.sessions.get(selection.id);
+      if (!session) { host.replaceChildren(); return; }
+      let node = host.firstElementChild;
+      if (!node || node.dataset.id !== session.id || !node.classList.contains('session-card')) {
+        node = buildCard(session);
+        host.replaceChildren(node);
+      }
+      updateCard(node, session);
+    }
+  },
+});
 
 state.token = readTokenFromHash() || load(TOKEN_KEY);
 boot();

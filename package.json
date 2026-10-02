@@ -31,7 +31,10 @@
     "manager": "node bin/agent-guild.mjs start",
     "stop": "node bin/agent-guild.mjs stop",
     "status": "node bin/agent-guild.mjs status",
-    "test": "node --test --test-concurrency=1"
+    "test": "node --test --test-concurrency=1",
+    "build:yard": "node scripts/build-yard.mjs",
+    "test:yard": "node --test tests/yard.test.mjs",
+    "preview:yard": "node docs/yard/preview.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
@@ -42,11 +45,23 @@
     "node-pty": "^1.2.0-beta.15",
     "ws": "^8.22.0"
   },
-  "bundleDependencies": true,
+  "bundleDependencies": [
+    "@xterm/addon-fit",
+    "@xterm/addon-serialize",
+    "@xterm/addon-web-links",
+    "@xterm/headless",
+    "@xterm/xterm",
+    "node-pty",
+    "ws"
+  ],
   "publishConfig": {
     "access": "public"
   },
   "allowScripts": {
     "node-pty@1.2.0-beta.15": true
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "three": "0.186.1"
   }
 }
