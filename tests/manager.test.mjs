@@ -1119,7 +1119,8 @@ test('turning Gemini reporting on replaces a link left by an earlier data folder
   assert.equal(JSON.parse(fs.readFileSync(record, 'utf8')).source, path.join(home, 'reporting', 'gemini'));
   assert.ok(!fs.existsSync(path.join(toolHomes.gemini, '.gemini', 'trustedFolders.json')), 'linking trusts no folder');
   assert.deepEqual(JSON.parse(fs.readFileSync(enablement, 'utf8')), { other: { overrides: ['/*'] } }, 'the dangling link\'s disabled state goes with it, as Gemini\'s uninstall would do');
-  assert.deepEqual([...new Set(fs.readFileSync(geminiCwdLog, 'utf8').trim().split('\n'))], [path.join(home, 'reporting')], 'never the folder the manager was started in');
+  const cwds = new Set(fs.readFileSync(geminiCwdLog, 'utf8').trim().split(/\r?\n/).map((dir) => fs.realpathSync.native(dir)));
+  assert.deepEqual([...cwds], [fs.realpathSync.native(path.join(home, 'reporting'))], 'never the folder the manager was started in');
   assert.equal((await call('POST', '/providers/google/reporting', { enabled: false })).status, 200);
   assert.ok(!fs.existsSync(record));
 
