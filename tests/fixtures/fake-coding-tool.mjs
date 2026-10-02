@@ -236,7 +236,7 @@ function runTool() {
     const [startEvent, startPayload, matcher] = shellEvent(true, id, input, null, name);
     await runHooks(hooks, startEvent, startPayload, matcher);
     if (mode === 'ask-yes' || mode === 'ask-no') {
-      await runHooks(hooks, 'PermissionRequest', { tool_name: name, tool_use_id: id, tool_input: input }, name);
+      await runHooks(hooks, 'PermissionRequest', { tool_name: name, tool_input: input, permission_suggestions: [] }, name);
       out(`SHELL-ASKED ${id}`);
       await new Promise((resolve) => setTimeout(resolve, Number(process.env.FAKE_PERMISSION_MS || 1500)));
       if (mode === 'ask-no') {

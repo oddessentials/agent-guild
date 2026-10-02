@@ -481,26 +481,31 @@ export class Session extends EventEmitter {
     const match = hash(report.match);
     this._reportingHeard();
 
-    if (report.shell === 'start' || report.shell === 'waiting') {
-      const known = key ? this._shellByKey(key) : null;
-      if (known) {
-        if (report.shell === 'waiting') this._awaitPermission(known);
-        return null;
+    const agentId = typeof report.agentId === 'string' ? report.agentId.slice(0, 128) : null;
+
+    if (report.shell === 'waiting') {
+      // Claude Code's PermissionRequest carries no tool_use_id: it follows the PreToolUse of the same command.
+      let pending = key ? this._shellByKey(key) : null;
+      if (!pending && match) {
+        for (const shell of this.shells.values()) {
+          if (shell.open && !shell.awaiting && shell.start === null && shell.match === match && shell.agentId === agentId) pending = shell;
+        }
       }
+      if (pending) this._awaitPermission(pending);
+      return null;
+    }
+
+    if (report.shell === 'start') {
+      if (key && this._shellByKey(key)) return null;
       if (this.shells.size >= MAX_SHELLS) {
         this.emit('warning', `ignored a shell command: ${MAX_SHELLS} are already running`);
         return null;
       }
       const shell = {
         id: `shell-${++this._shellSeq}`, key, bucket, match, exec: match && hash(report.exec), open: true, visible: false, timer: null,
-        agentId: typeof report.agentId === 'string' ? report.agentId.slice(0, 128) : null,
-        track: false, followTimer: null, pid: null, start: null, boundAt: null, misses: 0, awaiting: false,
+        agentId, track: false, followTimer: null, pid: null, start: null, boundAt: null, misses: 0, awaiting: false,
       };
       this.shells.set(shell.id, shell);
-      if (report.shell === 'waiting') {
-        this._awaitPermission(shell);
-        return null;
-      }
       this._showAfterDelay(shell);
       if (report.track === true && match) {
         shell.followTimer = setTimeout(() => {

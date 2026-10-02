@@ -3011,7 +3011,9 @@ test('shell commands map to shell reports that carry no command text', () => {
   assert.equal(hookToReports({ hook_event_name: 'AfterTool', tool_name: 'run_shell_command', tool_input: gi, tool_response: { llmContent: 'Output: done\nBackground PIDs: 9' } })[0].shell, 'end', 'finished, with a child left behind: not the command\'s own pid');
   assert.deepEqual(hookToReports({ hookEventName: 'pre_tool_use', hook_event_name: 'PreToolUse', toolName: 'run_terminal_command', toolUseId: 'g1', toolInput: { command: secret } }), [{ shell: 'start', key: 'g1', ...hashes }]);
   assert.deepEqual(hookToReports({ hook_event_name: 'PreToolUse', tool_name: 'PowerShell', tool_use_id: 'toolu_3', tool_input: { command: 'Get-ChildItem C:\\' } }), [{ shell: 'start', key: 'toolu_3', match: commandHash('Get-ChildItem C:\\') }], 'no POSIX exec hash for PowerShell');
-  assert.deepEqual(hookToReports({ hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_use_id: 'toolu_4', tool_input: { command: 'npm test' } }), [{ shell: 'waiting', key: 'toolu_4', match: commandHash('npm test') }]);
+  const [waiting] = hookToReports({ hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'npm test' }, permission_suggestions: [] });
+  assert.equal(waiting.shell, 'waiting');
+  assert.equal(waiting.match, commandHash('npm test'), 'no tool_use_id in Claude Code\'s PermissionRequest: the command hash finds the command');
   assert.deepEqual(hookToReports({ hook_event_name: 'PermissionRequest', tool_name: 'PowerShell', tool_use_id: 'toolu_5', tool_input: { command: 'x' } }), []);
   assert.deepEqual(hookToReports({ hook_event_name: 'PermissionRequest', tool_name: 'Edit', tool_use_id: 'toolu_6', tool_input: {} }), []);
   assert.deepEqual(hookToReports({ hook_event_name: 'PostToolUse', tool_name: 'PowerShell', tool_use_id: 'toolu_3', tool_input: { command: 'x' }, tool_response: { stdout: '' } }), [{ shell: 'end', key: 'toolu_3' }]);
