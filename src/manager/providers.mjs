@@ -19,6 +19,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULTS_FILE = path.resolve(here, '../../config/providers.default.json');
 const ID_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 const PLATFORM_KEYS = ['win32', 'darwin', 'linux'];
+const REPORTING_MODES = new Set(['claude', 'codex', 'gemini', 'grok']);
 const VERSION_TTL_MS = 60 * 60 * 1000;
 const FAILED_PROBE_TTL_MS = 5 * 60 * 1000;
 const PATH_REFRESH_MS = 60 * 1000;
@@ -163,6 +164,7 @@ function normalize(raw, platform, warnings) {
     versionArgs: Array.isArray(merged.versionArgs) && merged.versionArgs.length ? merged.versionArgs.map(String) : null,
     usage: normalizeUsage(merged.usage),
     history: normalizeHistory(merged.history),
+    reporting: REPORTING_MODES.has(merged.reporting) ? merged.reporting : null,
     modelPattern: merged.modelPattern ? String(merged.modelPattern) : null,
     args: Array.isArray(merged.args) ? merged.args.map(String) : [],
     resumeArgs: Array.isArray(merged.resumeArgs) ? merged.resumeArgs.map(String) : [],
@@ -251,6 +253,7 @@ export class ProviderRegistry extends EventEmitter {
     this.versions = new Map();
     this._refreshing = null;
     this._npmRegistry = null;
+    this.reportingEnabled = null;
     this.reload();
   }
 
@@ -623,7 +626,11 @@ export class ProviderRegistry extends EventEmitter {
       npmNote: provider.npmNote,
       usageSource: provider.usage === null ? null : typeof provider.usage === 'string' ? provider.usage : 'command',
       historySource: provider.history === null ? null : typeof provider.history === 'string' ? provider.history : 'command',
-      accounts: provider.accounts.map(({ id, label }) => ({ id, label })),
+      reporting: provider.reporting,
+      accounts: provider.accounts.map((account) => {
+        const reportingEnabled = this.reportingEnabled?.(provider, this.accountFor(provider, account)) ?? null;
+        return { id: account.id, label: account.label, ...(reportingEnabled === null ? {} : { reportingEnabled }) };
+      }),
       modelPattern: provider.modelPattern,
       color: provider.color,
       monogram: provider.monogram,
@@ -642,7 +649,7 @@ export class ProviderRegistry extends EventEmitter {
   }
 
   /** Spawn spec for node-pty, or throws with a user-facing message. */
-  spawnSpec(provider, extraArgs = [], resume = null) {
+  spawnSpec(provider, extraArgs = [], resume = null, leadArgs = []) {
     const resolved = this.resolve(provider);
     if (!resolved) {
       const hint = provider.install ? ` ${provider.install}` : '';
@@ -661,7 +668,7 @@ export class ProviderRegistry extends EventEmitter {
       }
       resumeArgs = provider.resumeArgs.map((arg) => arg.replaceAll('{id}', resume));
     }
-    return buildSpawnSpec(resolved, [...provider.args, ...resumeArgs, ...extraArgs], this.env, this.platform);
+    return buildSpawnSpec(resolved, [...leadArgs, ...provider.args, ...resumeArgs, ...extraArgs], this.env, this.platform);
   }
 
   async updateSpec(provider) {

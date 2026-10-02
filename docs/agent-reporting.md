@@ -16,6 +16,7 @@ Every terminal the manager starts has these environment variables:
 | `AGENT_GUILD_PROVIDER` | The provider id, for example `anthropic` |
 | `AGENT_GUILD_URL` | The manager's base URL |
 | `AGENT_GUILD_REPORT_TOKEN` | A token that can only report agents for this session |
+| `AGENT_GUILD_REPORT_FILE` | An owner-only file holding the same token, removed when the session ends |
 | `AGENT_GUILD_NODE` | The manager's Node.js binary, which the launcher below runs the reporter with |
 
 There are three ways to report.
@@ -49,12 +50,24 @@ and `SubagentStop`, or Gemini CLI's `invoke_agent` tool call on `BeforeTool`
 and `AfterTool`), and the main model when the event names it (`model`,
 `modelId`, Gemini CLI's `llm_request.model`, or `to_model` on Claude Code's
 `PostModelSwitch`), and the tool's own session id (`session_id`) from the
-event that opens a session: `SessionStart` in Claude Code, Codex CLI and
-Grok Build, and `BeforeAgent` in Gemini CLI, which has no start event. The
+event that opens a session: `SessionStart`, or `BeforeAgent` in Gemini CLI
+versions without it. `SessionStart` also tells the manager the hooks run. The
 four tools spell these fields differently; all spellings are accepted. An
 event that fires inside a sub-agent never sets the main model or the
 session id. Each sub-agent appears on the card for as long as it runs,
 labelled with its agent type, for example `Explore` or `Plan`.
+
+Agent Guild supplies these hooks itself, for each session only, without
+changing the tool's settings: Claude Code loads them as a plugin
+(`--plugin-dir`), and Codex CLI takes them, already trusted, as `-c`
+overrides, after Agent Guild has checked that the installed Codex accepts
+them. Gemini CLI cannot take hooks for one session, so its card has an
+**Agent reporting** switch that links an Agent Guild extension with
+`gemini extensions link`; its hooks do nothing in sessions started outside
+Agent Guild. Grok Build gets them with `--plugin-dir` once `grok --help`
+lists that option; the versions released so far do not. To report from a
+tool Agent Guild does not supply, or from Grok Build today, add the hooks
+yourself:
 
 | Tool | Put the hooks in | Example |
 | --- | --- | --- |
@@ -87,7 +100,9 @@ container, where neither the command nor the manager is reachable; on Linux,
 a Grok Build sandbox profile that restricts child networking blocks the
 connection. Gemini CLI's environment-variable redaction (off by default)
 removes `AGENT_GUILD_REPORT_TOKEN` because of its name; the reporter then
-says so on stderr, which Gemini CLI shows.
+reads the token from `AGENT_GUILD_REPORT_FILE`. Its strict mode, when
+`GITHUB_SHA` or `SURFACE=Github` is set, removes every Agent Guild variable,
+so the card shows that the session is not reporting.
 
 Gemini CLI also fires `BeforeModel` for a sub-agent's own requests, with the
 sub-agent's model and nothing to tell them apart. A sub-agent reported from a

@@ -16,6 +16,7 @@ import { createManagerServer } from './server.mjs';
 import { SelfUpdate } from './self-update.mjs';
 import { resolveBaseEnv, pathReader } from './shell-env.mjs';
 import { writeReportShims } from './report-shims.mjs';
+import { SessionHooks } from './session-hooks.mjs';
 import { launcherPath, spawnManager } from './launch.mjs';
 import {
   DEFAULT_HOST,
@@ -62,7 +63,12 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
   let api;
   const selfUpdate = new SelfUpdate({ pkg: PACKAGE_NAME, version, packageFile, registry });
   const github = new GitHub({ dir: paths.github, registry, ...githubOptions });
-  const manager = new SessionManager({ registry, baseEnv, getApiUrl: () => api.url, sessionDefaults, shimDir, selfUpdate, github });
+  const sessionHooks = new SessionHooks({ registry, dir: paths.reporting, version, shimDir });
+  registry.reportingEnabled = (provider, account) => sessionHooks.enabled(provider, account);
+  sessionHooks.warm();
+  const manager = new SessionManager({
+    registry, baseEnv, getApiUrl: () => api.url, sessionDefaults, shimDir, selfUpdate, github, sessionHooks, reportTokenDir: paths.reportTokens,
+  });
   const usage = new UsageMonitor({ registry, env: baseEnv });
   const history = new SessionHistory({ registry, env: baseEnv });
   const modelStats = new ModelStats({ registry });
@@ -71,7 +77,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
   let closing = null;
 
   const refreshVersions = () => {
-    registry.refreshVersions().catch(() => {});
+    registry.refreshVersions().then(() => sessionHooks.warm(), () => {});
     selfUpdate.refresh().catch(() => {});
   };
   const versionTimer = setInterval(refreshVersions, VERSION_REFRESH_MS);
@@ -141,6 +147,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
     throw err;
   }
 
+  manager.sweepReportTokens();
   writeRuntimeFile({
     pid: process.pid,
     host,
