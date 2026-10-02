@@ -595,13 +595,36 @@ export class Session extends EventEmitter {
 
   syncShellProcesses(procs) {
     const byPid = new Map(procs.map((p) => [p.pid, p]));
-    const taken = new Set();
-    for (const shell of this.shells.values()) if (shell.start !== null) taken.add(`${shell.pid}:${shell.start}`);
+    const children = new Map();
+    for (const p of procs) {
+      if (!children.has(p.ppid)) children.set(p.ppid, []);
+      children.get(p.ppid).push(p);
+    }
+    const owned = new Set();
+    const own = (root) => {
+      const stack = [root];
+      while (stack.length) {
+        const p = stack.pop();
+        if (owned.has(p.pid)) continue;
+        owned.add(p.pid);
+        stack.push(...(children.get(p.pid) || []));
+      }
+    };
+    for (const shell of this.shells.values()) {
+      const bound = shell.start !== null && byPid.get(shell.pid);
+      if (bound && bound.start === shell.start) own(bound);
+    }
     let candidates = null;
     const candidatesOf = (p) => {
       candidates ??= new Map();
       if (!candidates.has(p)) candidates.set(p, commandCandidates(p.args()));
       return candidates.get(p);
+    };
+    const commandsMatching = (hash) => {
+      if (!hash) return [];
+      const hits = procs.filter((p) => !owned.has(p.pid) && candidatesOf(p).has(hash));
+      const hitPids = new Set(hits.map((p) => p.pid));
+      return hits.filter((p) => !hitPids.has(p.ppid));
     };
     for (const shell of [...this.shells.values()]) {
       if (!shell.track) continue;
@@ -615,12 +638,16 @@ export class Session extends EventEmitter {
       if (shell.pid !== null) {
         found = byPid.get(shell.pid);
       } else {
-        const hits = procs.filter((p) => !taken.has(`${p.pid}:${p.start}`) && (candidatesOf(p).has(shell.match) || candidatesOf(p).has(shell.exec)));
-        const hitPids = new Set(hits.map((p) => p.pid));
-        const commands = hits.filter((p) => !hitPids.has(p.ppid));
+        // The command as given first; the program a shell replaced itself with only when that finds nothing.
+        let field = 'match';
+        let commands = commandsMatching(shell.match);
+        if (commands.length === 0) {
+          field = 'exec';
+          commands = commandsMatching(shell.exec);
+        }
         let alike = 0;
         for (const other of this.shells.values()) {
-          if (other.track && other.start === null && other.pid === null && other.match === shell.match && other.exec === shell.exec) alike++;
+          if (other.track && other.start === null && other.pid === null && other[field] === shell[field]) alike++;
         }
         // Another run of the same command (in the foreground, say) could be either: wait until it is the only one.
         ambiguous = commands.length > alike;
@@ -631,7 +658,7 @@ export class Session extends EventEmitter {
         shell.pid = found.pid;
         shell.start = found.start;
         shell.boundAt = Date.now();
-        taken.add(`${found.pid}:${found.start}`);
+        own(found);
         if (shell.awaiting) {
           shell.awaiting = false;
           shell.visible = true;

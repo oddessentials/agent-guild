@@ -1357,6 +1357,34 @@ test('a Codex CLI command still running when its turn ends is followed, not drop
   await call('DELETE', `/sessions/${tool.session.id}`);
 });
 
+test('a command is never bound to a process inside a command already bound', { skip: win && 'bash -lc is the POSIX form' }, async () => {
+  const tool = await startTool('openai');
+  tool.client.input('prompt');
+  await waitFor(reportingIs(tool.session.id, 'active'), { label: 'hooks', timeout: 15000 });
+  await runShells(tool, ['shell a 20000 exec sleep 10 && sleep 10'], 'SHELL-STARTED a');
+  const pidA = Number(stripAnsi(tool.client.output).match(/SHELL-STARTED a (\d+)/)[1]);
+  await runShells(tool, ['shell-denied b sleep 10 && sleep 10'], 'SHELL-DENIED b');
+  const session = ctx.manager.get(tool.session.id);
+  await waitFor(() => session.shells.size === 1, { label: 'b, whose command never ran, ends', timeout: 7000 });
+  const [left] = session.shells.values();
+  assert.equal(left.key, 'a');
+  assert.equal(left.pid, pidA, 'a is bound to its own shell, and b never to the sleep running inside it');
+  await tool.client.close();
+  await call('DELETE', `/sessions/${tool.session.id}`);
+});
+
+test('commands with different wrappers around the same program are each bound to their own', { skip: win && 'bash -lc is the POSIX form' }, async () => {
+  const tool = await startTool('anthropic');
+  await waitFor(reportingIs(tool.session.id, 'active'), { label: 'hooks', timeout: 15000 });
+  await runShells(tool, ['shell x 9000 bg-exec cd /tmp && sleep 8 > /dev/null', 'shell y 9000 bg-exec cd / && sleep 8 > /dev/null'], 'SHELL-STARTED y');
+  const pidOf = (id) => Number(stripAnsi(tool.client.output).match(new RegExp(`SHELL-STARTED ${id} (\\d+)`))[1]);
+  await waitFor(boundShells(tool.session.id, 2), { label: 'both bound', timeout: bindTimeout });
+  const bound = Object.fromEntries([...ctx.manager.get(tool.session.id).shells.values()].map((sh) => [sh.key, sh.pid]));
+  assert.deepEqual(bound, { x: pidOf('x'), y: pidOf('y') }, 'each to its own shell, though both run sleep 8');
+  await tool.client.close();
+  await call('DELETE', `/sessions/${tool.session.id}`);
+});
+
 test('a Codex CLI command is found after its shell replaces itself with it', { skip: win && 'bash -lc is the POSIX form' }, async () => {
   const tool = await startTool('openai');
   tool.client.input('prompt');

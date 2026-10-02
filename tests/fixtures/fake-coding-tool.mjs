@@ -17,13 +17,14 @@
 //   subagent <id> <type>   a sub-agent starts; Gemini: an invoke_agent call starts
 //   subagent-done <id> <type>
 //   subagent-done-rewritten <id> <type>   Gemini: the end, with input a BeforeTool hook rewrote
-//   shell <id> <ms> [fg|bg|exec|ps|ask-yes|ask-no|ask-rewrite|bg-rewrite] [command...]
+//   shell <id> <ms> [fg|bg|exec|bg-exec|ps|ask-yes|ask-no|ask-rewrite|bg-rewrite] [command...]
 //                          runs a shell command for <ms> as the tool would: its hooks, and a
 //                          process whose command line has the tool's own form (Claude Code's
 //                          eval script, Codex CLI's sandbox wrapper and -lc). Claude Code and
 //                          Gemini CLI return a bg command's call at once; Codex CLI never
 //                          reports the end of one that outlives its 1 s yield; exec runs the
-//                          command itself with bash -lc, which replaces itself with it; ps runs
+//                          command itself with bash -lc, which replaces itself with it, as
+//                          bg-exec does in the background; ps runs
 //                          it as Claude Code's PowerShell tool; ask-yes and ask-no show a
 //                          permission dialog for a while, then run the command or not;
 //                          the -rewrite modes run a command a PreToolUse hook rewrote
@@ -232,7 +233,7 @@ function runTool() {
     return [start ? 'PreToolUse' : 'PostToolUse', { tool_name: name, tool_use_id: id, tool_input: input, ...(tool === 'codex' ? { turn_id: 'turn-1' } : {}), ...(response ? { tool_response: response } : {}) }, name];
   };
   const runShell = async (id, ms, mode, command) => {
-    const background = mode === 'bg' || mode === 'bg-rewrite';
+    const background = mode === 'bg' || mode === 'bg-rewrite' || mode === 'bg-exec';
     const announced = tool === 'gemini' ? { command, description: 'test', is_background: background }
       : { command, ...(background && tool === 'claude' ? { run_in_background: true } : {}) };
     const name = mode === 'ps' ? 'PowerShell' : toolName;
@@ -249,7 +250,7 @@ function runTool() {
         return;
       }
     }
-    const child = mode === 'exec'
+    const child = mode === 'exec' || mode === 'bg-exec'
       ? spawn('bash', ['-lc', command], { stdio: 'ignore' })
       : spawn(process.execPath, ['-e', shellSleep, ...shellArgv(command)], { env: { ...process.env, FAKE_SHELL_MS: String(ms) }, stdio: 'ignore', windowsHide: true });
     out(`SHELL-STARTED ${id} ${child.pid}`);
