@@ -1205,6 +1205,9 @@ test('a session shows each shell command from its start until its end, whatever 
   assert.deepEqual(keys(), ['main', 's3'], 'a sub-agent\'s end takes its commands, but not one that outlives it');
   report({ shell: 'end', task: 'ts3' });
   report({ shell: 'end', key: 'main' });
+  report({ shell: 'start', key: 'h1', agentId: 'hook-helper' });
+  session.reportAgent({ agentId: 'hook-helper', status: 'done' });
+  assert.equal(session.shells.size, 0, 'so does the end of one never seen starting');
 
   report({ shell: 'start', key: 'x1', match: m(6) });
   report({ shell: 'start', key: 'x2', match: m(6) });

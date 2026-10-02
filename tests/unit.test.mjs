@@ -2915,7 +2915,8 @@ test('every reporting bundle runs the reporter, Gemini\'s by full path in the sh
   assert.equal(claude.PreToolUse[0].matcher, 'Bash|PowerShell', 'only shell commands pay for the tool hooks');
   assert.equal(claude.PermissionRequest[0].matcher, 'Bash|PowerShell');
   assert.equal(claude.PostToolUse[0].matcher, 'Bash|PowerShell|TaskStop', 'TaskStop ends a background command');
-  assert.deepEqual(Object.keys(claude).filter((event) => claude[event][0].hooks[0].async !== true), ['PreToolUse'], 'only PreToolUse holds Claude Code up');
+  assert.equal(claude.PostToolUseFailure[0].matcher, 'Bash|PowerShell', 'a TaskStop that failed stopped nothing');
+  assert.deepEqual(Object.keys(claude).filter((event) => claude[event][0].hooks[0].async !== true), ['SubagentStart', 'PreToolUse'], 'only a start holds Claude Code up, so it reaches the manager before its end');
   assert.equal(claude.SessionStart[0].matcher, undefined);
   assert.equal(JSON.parse(unix.grok['hooks/hooks.json']).hooks.PreToolUse[0].matcher, 'run_terminal_command');
   assert.ok(commands(unix.claude).every((c) => c === REPORT_COMMAND));
@@ -2995,6 +2996,7 @@ test('shell commands map to shell reports that carry no command text', () => {
   assert.deepEqual(hookToReports({ hook_event_name: 'PermissionRequest', tool_name: 'Edit', tool_input: {} }), []);
   assert.deepEqual(hookToReports({ hook_event_name: 'PostToolUse', tool_name: 'TaskStop', tool_use_id: 'toolu_4', tool_input: { task_id: 'b1' }, tool_response: {} }),
     [{ shell: 'end', task: 'b1' }, { agentId: 'hook-b1', status: 'done' }], 'a stopped task is a background command or a sub-agent');
+  assert.deepEqual(hookToReports({ hook_event_name: 'PostToolUseFailure', tool_name: 'TaskStop', tool_use_id: 'toolu_5', tool_input: { task_id: 'b1' }, error: 'No task found with ID: b1' }), [], 'a TaskStop that failed stopped nothing');
 
   const tasks = [
     { id: 'b1', type: 'shell', status: 'running', description: 'dev server', command: secret },

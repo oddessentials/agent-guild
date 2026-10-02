@@ -407,6 +407,7 @@ export class Session extends EventEmitter {
       const working = [...this.agents.values()].filter((agent) => agent.foreground && agent.status === 'working');
       return working.length === 1 ? this.reportAgent({ agentId: working[0].id, status: 'done' }, source) : null;
     }
+    if (status === 'done') this._endForegroundShells(id);
     // A first report that already says done would only flash an icon:
     // Claude Code's internal helpers (prompt suggestions, side questions)
     // stop without ever having started here.
@@ -414,7 +415,6 @@ export class Session extends EventEmitter {
     // A repeated done (Grok Build ends a sub-agent's session after its
     // turn) must not restart the linger.
     if (existing?.status === 'done' && status === 'done') return existing;
-    if (status === 'done') this._endForegroundShells(id);
     if (!existing && this.agents.size >= MAX_AGENTS && !this._evictDoneAgent()) {
       throw badRequest(`too many agents (max ${MAX_AGENTS})`);
     }

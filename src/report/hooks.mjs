@@ -146,7 +146,7 @@ export function hookToReports(input) {
   const toolName = text(input.tool_name, input.toolName);
   const toolEvent = TOOL_START_EVENTS.has(event) || TOOL_END_EVENTS.has(event);
   if ((toolEvent || event === 'PermissionRequest') && SHELL_TOOLS.has(toolName)) reports.push(shellReport(event, input, subagentId));
-  if (TOOL_END_EVENTS.has(event) && toolName === 'TaskStop') {
+  if (event === 'PostToolUse' && toolName === 'TaskStop') {
     const toolInput = input.tool_input || input.toolInput || {};
     const task = text(toolInput.task_id, toolInput.shell_id);
     if (task) reports.push({ shell: 'end', task: task.slice(0, 128) }, { agentId: `hook-${task}`, status: 'done' });

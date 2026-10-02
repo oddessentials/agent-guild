@@ -16,14 +16,15 @@ const groups = (events, extra) => Object.fromEntries(events.map((event) => [even
 const shellEvents = (events, matcher) => Object.fromEntries(events.map((event) => [event, { group: { matcher } }]));
 
 const CLAUDE_EVENTS = ['SessionStart', 'UserPromptSubmit', 'SubagentStart', 'SubagentStop', 'PostModelSwitch', 'PreToolUse', 'PermissionRequest', 'PostToolUse', 'PostToolUseFailure', 'Stop'];
-const CLAUDE_MATCHERS = { PreToolUse: 'Bash|PowerShell', PermissionRequest: 'Bash|PowerShell', PostToolUse: 'Bash|PowerShell|TaskStop', PostToolUseFailure: 'Bash|PowerShell|TaskStop' };
+const CLAUDE_MATCHERS = { PreToolUse: 'Bash|PowerShell', PermissionRequest: 'Bash|PowerShell', PostToolUse: 'Bash|PowerShell|TaskStop', PostToolUseFailure: 'Bash|PowerShell' };
+const CLAUDE_BLOCKING = new Set(['SubagentStart', 'PreToolUse']);
 export const CODEX_EVENTS = ['SessionStart', 'UserPromptSubmit', 'SubagentStart', 'SubagentStop', 'PreToolUse', 'PermissionRequest', 'PostToolUse', 'Stop', 'Interrupt', 'SessionEnd'];
 const CODEX_MATCHERS = { PermissionRequest: 'Bash', PostToolUse: 'Bash' };
 
-// Only PreToolUse holds Claude Code up, so a command's start reaches the manager before its permission request and its end.
+// Only the start of a sub-agent or a command holds Claude Code up, so the start reaches the manager before its end.
 const claudeHooks = () => Object.fromEntries(CLAUDE_EVENTS.map((event) => [event, [{
   ...(CLAUDE_MATCHERS[event] ? { matcher: CLAUDE_MATCHERS[event] } : {}),
-  hooks: [handler(event === 'PreToolUse' ? {} : { async: true })],
+  hooks: [handler(CLAUDE_BLOCKING.has(event) ? {} : { async: true })],
 }]]));
 const GROK_EVENTS = ['SessionStart', 'SubagentStart', 'SubagentStop', 'StopCancelled', 'SessionEnd', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Stop'];
 
