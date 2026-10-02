@@ -8,6 +8,7 @@
   <img src="https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-e8c47c" alt="Windows, macOS and Linux">
   <img src="https://img.shields.io/node/v/@oddessentials/agent-guild?color=4cc38a" alt="Node.js version">
   <a href="LICENSE"><img src="https://img.shields.io/github/license/oddessentials/agent-guild?color=a67cf6" alt="MIT license"></a>
+  <a href="https://www.youtube.com/watch?v=ziT62WtXQ1M"><img src="https://img.shields.io/badge/trailer-watch%20on%20YouTube-e5534b?logo=youtube&logoColor=white" alt="Watch the Agent Guild trailer on YouTube"></a>
 </p>
 
 **Agent Guild** runs Claude Code, Codex CLI, Gemini CLI, Grok Build and your
@@ -15,6 +16,8 @@ own shell side by side, in real terminals, from one local web page. Each
 session is a card that shows what the tool is doing, which model it runs and
 which helper agents it has summoned. Close the page whenever you like; the
 sessions keep working.
+
+See it in action in the [Agent Guild trailer](https://www.youtube.com/watch?v=ziT62WtXQ1M).
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/images/overview-light.webp">
