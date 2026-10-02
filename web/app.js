@@ -168,7 +168,8 @@ function revealChange(control, change) {
   root.setProperty('--reveal-x', `${Math.round(x)}px`);
   root.setProperty('--reveal-y', `${Math.round(y)}px`);
   root.setProperty('--reveal-r', `${Math.ceil(Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y)))}px`);
-  document.startViewTransition(change);
+  // The browser skips the animation (still applying the change) when the page is hidden or another transition starts.
+  document.startViewTransition(change).ready.catch(() => {});
 }
 
 function toggleTheme(event) {
