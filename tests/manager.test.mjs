@@ -1170,8 +1170,8 @@ test('Claude Code shell commands show while they run: not the brief ones, and no
   await waitFor(shellCountIs(tool.session.id, 1), { label: 'the running command' });
   await waitForText(tool.client, tool.session.id, 'SHELL-DONE long', 'long command end');
   await waitFor(shellCountIs(tool.session.id, 0), { label: 'prompt removal', timeout: 1000 });
-  tool.client.input('shell bg1 8000 bg npm run dev SECRET-MARKER');
-  tool.client.input('shell bg2 12000 bg npm run dev SECRET-MARKER');
+  tool.client.input('shell bg1 3500 bg npm run dev SECRET-MARKER');
+  tool.client.input('shell bg2 6000 bg npm run dev SECRET-MARKER');
   await waitFor(shellCountIs(tool.session.id, 2), { label: 'two background commands', timeout: 15000 });
   await waitFor(boundShells(tool.session.id, 2), { label: 'each bound to its own process', timeout: bindTimeout });
   const managed = ctx.manager.get(tool.session.id);
@@ -1203,7 +1203,7 @@ test('a Claude Code command waiting for permission shows only once it runs, and 
   await runShells(tool, ['turn-end'], 'TURN-ENDED');
   await waitFor(() => ctx.manager.get(tool.session.id).shells.size === 0, { label: 'the refused command is gone' });
 
-  tool.client.input('shell approved 4000 ask-yes npm run build');
+  tool.client.input('shell approved 2500 ask-yes npm run build');
   await runShells(tool, [], 'SHELL-STARTED approved');
   assert.deepEqual(watch.seen.filter((ids) => ids.length), [], 'still nothing before the command started');
   await waitFor(shellCountIs(tool.session.id, 1), { label: 'shown once its process runs', timeout: bindTimeout });
@@ -1211,7 +1211,7 @@ test('a Claude Code command waiting for permission shows only once it runs, and 
   await waitFor(shellCountIs(tool.session.id, 0), { label: 'gone when it ends', timeout: 2000 });
 
   const before = watch.seen.length;
-  tool.client.input('shell rewritten 4000 ask-rewrite npm test');
+  tool.client.input('shell rewritten 2500 ask-rewrite npm test');
   await runShells(tool, [], 'SHELL-STARTED rewritten');
   assert.deepEqual(watch.seen.slice(before).filter((ids) => ids.length), [], 'a command a PreToolUse hook rewrote is hidden while it waits too');
   await waitFor(boundShells(tool.session.id, 1), { label: 'bound to the rewritten command', timeout: bindTimeout });
@@ -1257,7 +1257,7 @@ test('a permission request that matches no command and could be any of several l
 test('a followed command is not bound to an identical command\'s process while both run', async () => {
   const tool = await startTool('anthropic');
   await waitFor(reportingIs(tool.session.id, 'active'), { label: 'hooks', timeout: 15000 });
-  await runShells(tool, ['shell fgrun 3000 fg npm test', 'shell bgrun 9000 bg npm test'], 'SHELL-STARTED bgrun');
+  await runShells(tool, ['shell fgrun 1500 fg npm test', 'shell bgrun 5000 bg npm test'], 'SHELL-STARTED bgrun');
   await waitFor(shellCountIs(tool.session.id, 2), { label: 'both shown' });
   await waitForText(tool.client, tool.session.id, 'SHELL-DONE fgrun', 'the foreground one ends');
   await waitFor(boundShells(tool.session.id, 1), { label: 'bound once its own process is the only one', timeout: bindTimeout });
@@ -1273,7 +1273,7 @@ test('a followed command is not bound to an identical command\'s process while b
 test('a Claude Code background command a PreToolUse hook rewrote ends with the rewritten command\'s process', async () => {
   const tool = await startTool('anthropic');
   await waitFor(reportingIs(tool.session.id, 'active'), { label: 'hooks', timeout: 15000 });
-  tool.client.input('shell rebg 5000 bg-rewrite npm test');
+  tool.client.input('shell rebg 3000 bg-rewrite npm test');
   await waitFor(boundShells(tool.session.id, 1), { label: 'bound to the rewritten command', timeout: bindTimeout });
   await waitFor(() => stripAnsi(tool.client.output).includes('SHELL-EXITED rebg'), { label: 'exit', timeout: 20000 });
   await waitFor(shellCountIs(tool.session.id, 0), { label: 'ended with its process', timeout: 10000 });
@@ -1326,7 +1326,7 @@ test('Codex CLI commands are followed through their process when Codex never rep
   await new Promise((r) => setTimeout(r, 1200));
   clearInterval(poll);
   assert.ok(!followed, 'a command Codex ends itself is not followed through the process list');
-  tool.client.input('shell long 8000 fg cargo build SECRET-MARKER');
+  tool.client.input('shell long 5000 fg cargo build SECRET-MARKER');
   await waitFor(shellCountIs(tool.session.id, 1), { label: 'the long command', timeout: 15000 });
   await waitFor(boundShells(tool.session.id, 1), { label: 'bound through the sandbox wrapper', timeout: bindTimeout });
   await waitFor(() => stripAnsi(tool.client.output).includes('SHELL-EXITED long'), { label: 'long exit', timeout: 20000 });
@@ -1346,7 +1346,7 @@ test('a Codex CLI command still running when its turn ends is followed, not drop
   const tool = await startTool('openai');
   tool.client.input('prompt');
   await waitFor(reportingIs(tool.session.id, 'active'), { label: 'hooks', timeout: 15000 });
-  tool.client.input('shell held 4000 fg cargo build');
+  tool.client.input('shell held 3000 fg cargo build');
   await waitFor(shellCountIs(tool.session.id, 1), { label: 'shown', timeout: 15000 });
   await runShells(tool, ['turn-end'], 'TURN-ENDED');
   assert.equal((await sessionNow(tool.session.id)).shells.length, 1, 'the command still runs');
@@ -1421,14 +1421,14 @@ test('identical Gemini CLI commands each get their own familiar, and a backgroun
   t.after(() => call('POST', '/providers/google/reporting', { enabled: false }));
   const tool = await startTool('google');
   await waitFor(reportingIs(tool.session.id, 'active'), { label: 'hooks', timeout: 15000 });
-  tool.client.input('shell a 2500 fg npm test');
-  tool.client.input('shell b 4000 fg npm test');
+  tool.client.input('shell a 1500 fg npm test');
+  tool.client.input('shell b 3000 fg npm test');
   await waitFor(shellCountIs(tool.session.id, 2), { label: 'two identical commands' });
   await waitForText(tool.client, tool.session.id, 'SHELL-DONE a', 'first end');
   await waitFor(shellCountIs(tool.session.id, 1), { label: 'one left', timeout: 1000 });
   await waitForText(tool.client, tool.session.id, 'SHELL-DONE b', 'second end');
   await waitFor(shellCountIs(tool.session.id, 0), { label: 'none left', timeout: 1000 });
-  tool.client.input('shell server 8000 bg python -m http.server');
+  tool.client.input('shell server 4000 bg python -m http.server');
   await waitFor(shellCountIs(tool.session.id, 1), { label: 'background command', timeout: 15000 });
   await waitFor(boundShells(tool.session.id, 1), { label: 'bound to the pid Gemini named', timeout: bindTimeout });
   await waitFor(() => stripAnsi(tool.client.output).includes('SHELL-EXITED server'), { label: 'server exit', timeout: 20000 });
@@ -1443,18 +1443,18 @@ test('a Gemini CLI call whose input a BeforeTool hook rewrote still ends, unless
   const tool = await startTool('google');
   await waitFor(reportingIs(tool.session.id, 'active'), { label: 'hooks', timeout: 15000 });
 
-  tool.client.input('shell fgr 2000 fg-rewrite npm test');
+  tool.client.input('shell fgr 1200 fg-rewrite npm test');
   await waitFor(shellCountIs(tool.session.id, 1), { label: 'shown' });
   await waitForText(tool.client, tool.session.id, 'SHELL-DONE fgr', 'end');
   await waitFor(shellCountIs(tool.session.id, 0), { label: 'ended by its rewritten AfterTool', timeout: 1000 });
 
-  tool.client.input('shell bgr 6000 bg-rewrite npm start');
+  tool.client.input('shell bgr 3000 bg-rewrite npm start');
   await waitFor(boundShells(tool.session.id, 1), { label: 'bound to the pid its rewritten AfterTool named', timeout: bindTimeout });
   await waitFor(() => stripAnsi(tool.client.output).includes('SHELL-EXITED bgr'), { label: 'exit', timeout: 20000 });
   await waitFor(shellCountIs(tool.session.id, 0), { label: 'ended with its pid', timeout: 10000 });
 
-  tool.client.input('shell one 2500 fg-rewrite make a');
-  tool.client.input('shell two 6000 fg make b');
+  tool.client.input('shell one 1500 fg-rewrite make a');
+  tool.client.input('shell two 3500 fg make b');
   await waitFor(shellCountIs(tool.session.id, 2), { label: 'both shown' });
   await waitForText(tool.client, tool.session.id, 'SHELL-DONE one', 'first end');
   await new Promise((r) => setTimeout(r, 300));

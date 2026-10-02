@@ -244,7 +244,7 @@ function runTool() {
     if (mode.startsWith('ask-')) {
       await runHooks(hooks, 'PermissionRequest', { tool_name: name, tool_input: input, permission_suggestions: [] }, name);
       out(`SHELL-ASKED ${id}`);
-      await new Promise((resolve) => setTimeout(resolve, Number(process.env.FAKE_PERMISSION_MS || 1500)));
+      await new Promise((resolve) => setTimeout(resolve, Number(process.env.FAKE_PERMISSION_MS || 1000)));
       if (mode === 'ask-no') {
         out(`SHELL-REJECTED ${id}`);
         return;
