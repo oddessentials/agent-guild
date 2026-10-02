@@ -12,6 +12,7 @@ import { paths } from '../src/manager/config.mjs';
 import { classifyInstall, expandHome, helpDescribes, platformDependency, listInstallations, knownLaunchers, shellCommand } from '../src/manager/install-channels.mjs';
 import { hookToReports, claudeStatuslineToReport, formatStatusLine } from '../src/report/hooks.mjs';
 import { shimContents, writeReportShims, prependPath, fileUrl, SHIM_NAME, LOADER_NAME } from '../src/manager/report-shims.mjs';
+import { bundleFiles, codexHookArgs, codexTrustArgs, codexHooksFrom, geminiCommand, geminiLinked, helpLists, REPORT_COMMAND } from '../src/manager/session-hooks.mjs';
 import { execFileSync } from 'node:child_process';
 import { parseVersion, compareVersions, probeVersion, diagnosticLine, latestVersion } from '../src/manager/versions.mjs';
 import { SelfUpdate, isDevelopmentBuild } from '../src/manager/self-update.mjs';
@@ -1928,25 +1929,25 @@ test('the agent-guild-report launchers run the reporter from any hook shell', ()
 });
 
 test('hook events and the Claude Code status line report the model', () => {
-  assert.deepEqual(hookToReports({ hook_event_name: 'SessionStart', source: 'startup', model: 'claude-opus-5' }), [{ model: 'claude-opus-5' }]);
-  assert.deepEqual(hookToReports({ hook_event_name: 'SessionStart', source: 'startup' }), []);
+  assert.deepEqual(hookToReports({ hook_event_name: 'SessionStart', source: 'startup', model: 'claude-opus-5' }), [{ model: 'claude-opus-5' }, { hello: true }]);
+  assert.deepEqual(hookToReports({ hook_event_name: 'SessionStart', source: 'startup' }), [{ hello: true }], 'the session start announces the hooks');
   assert.deepEqual(hookToReports({ hook_event_name: 'PostModelSwitch', from_model: 'a', to_model: 'claude-sonnet-5' }), [{ model: 'claude-sonnet-5' }]);
   assert.deepEqual(hookToReports({ hook_event_name: 'UserPromptSubmit', prompt: 'hi' }), [{ finishForeground: true }]);
   // Codex CLI names the model on every event; Gemini CLI inside BeforeModel's request; Grok Build as modelId.
   assert.deepEqual(hookToReports({ hook_event_name: 'UserPromptSubmit', model: 'gpt-5-codex', prompt: 'hi' }), [{ finishForeground: true }, { model: 'gpt-5-codex' }]);
   assert.deepEqual(hookToReports({ hook_event_name: 'BeforeModel', llm_request: { model: 'gemini-2.5-pro', messages: [] } }), [{ model: 'gemini-2.5-pro' }]);
-  assert.deepEqual(hookToReports({ hookEventName: 'session_start', hook_event_name: 'SessionStart', modelId: 'grok-build' }), [{ model: 'grok-build' }]);
+  assert.deepEqual(hookToReports({ hookEventName: 'session_start', hook_event_name: 'SessionStart', modelId: 'grok-build' }), [{ model: 'grok-build' }, { hello: true }]);
   // Turn events that fire inside a sub-agent name it, and its model is not the session's.
   assert.ok(!hookToReports({ hook_event_name: 'UserPromptSubmit', agent_id: 'c1', agent_type: 'explorer', model: 'gpt-5-codex-mini', prompt: 'x' }).some((r) => r.model));
   assert.deepEqual(hookToReports({ hook_event_name: 'Stop', agent_id: 'a1', agent_type: 'Explore', model: 'claude-haiku-4-5' }), []);
   assert.deepEqual(hookToReports({ hookEventName: 'user_prompt_submit', hook_event_name: 'UserPromptSubmit', subagentType: 'reviewer', modelId: 'grok-build' }), []);
   assert.deepEqual(hookToReports({ hook_event_name: 'UserPromptSubmit', agent_type: 'security-reviewer', model: 'claude-opus-5' }), [{ finishForeground: true }, { model: 'claude-opus-5' }], 'a session started with --agent is still the main session');
   // Grok Build's real SessionStart carries no model: the card uses the screen scan.
-  assert.deepEqual(hookToReports({ hookEventName: 'session_start', hook_event_name: 'SessionStart', sessionId: 's', cwd: '/w', source: 'new' }), [{ toolSessionId: 's' }]);
+  assert.deepEqual(hookToReports({ hookEventName: 'session_start', hook_event_name: 'SessionStart', sessionId: 's', cwd: '/w', source: 'new' }), [{ hello: true }, { toolSessionId: 's' }]);
 
   // The tool's own session id comes with the event that opens the session, and only for the main session.
   assert.deepEqual(hookToReports({ hook_event_name: 'SessionStart', session_id: '550e8400-e29b-41d4-a716-446655440000', source: 'resume', model: 'claude-opus-5' }),
-    [{ model: 'claude-opus-5' }, { toolSessionId: '550e8400-e29b-41d4-a716-446655440000' }]);
+    [{ model: 'claude-opus-5' }, { hello: true }, { toolSessionId: '550e8400-e29b-41d4-a716-446655440000' }]);
   assert.deepEqual(hookToReports({ hook_event_name: 'SessionStart', session_id: 'child', agent_id: 'c1', agent_type: 'explorer' }), [], 'a sub-agent\'s session is not the tool session');
   assert.deepEqual(hookToReports({ hook_event_name: 'UserPromptSubmit', session_id: 's', prompt: 'hi' }), [{ finishForeground: true }], 'later events do not repeat the id');
 
@@ -2900,4 +2901,62 @@ test('the launcher path names the double-click file for the platform only when t
   assert.equal(launcherPath('win32', bare), null);
   assert.equal(launcherPath('darwin', bare), null);
   fs.rmSync(bare, { recursive: true, force: true });
+});
+
+test('every reporting bundle runs the reporter, Gemini\'s by full path in the shell it uses', () => {
+  const unix = bundleFiles('1.2.3', { shimDir: '/data/agent guild/bin', platform: 'linux' });
+  const commands = (files) => [...JSON.stringify(JSON.parse(files['hooks/hooks.json'])).matchAll(/"command":"((?:[^"\\]|\\.)*)"/g)].map((m) => JSON.parse(`"${m[1]}"`));
+  assert.deepEqual(Object.keys(JSON.parse(unix.claude['hooks/hooks.json']).hooks), ['SessionStart', 'SubagentStart', 'SubagentStop', 'PostModelSwitch']);
+  assert.ok(commands(unix.claude).every((c) => c === REPORT_COMMAND));
+  assert.ok(commands(unix.grok).every((c) => c === REPORT_COMMAND));
+  assert.equal(JSON.parse(unix.claude['.claude-plugin/plugin.json']).name, 'agent-guild');
+  assert.equal(JSON.parse(unix.grok['.grok-plugin/plugin.json']).name, 'agent-guild');
+  assert.equal(JSON.parse(unix.gemini['gemini-extension.json']).version, '1.2.3');
+  const gemini = JSON.parse(unix.gemini['hooks/hooks.json']).hooks;
+  assert.equal(gemini.BeforeTool[0].matcher, 'invoke_agent');
+  assert.ok(gemini.SessionStart, 'the session start announces the hooks');
+  assert.ok(commands(unix.gemini).every((c) => c === "'/data/agent guild/bin/agent-guild-report' --hook"));
+  assert.equal(geminiCommand("/o'neil/bin", 'linux'), `'/o'\\''neil/bin/agent-guild-report' --hook`);
+  assert.equal(geminiCommand("C:\\Users\\o'neil\\bin", 'win32'), "& 'C:\\Users\\o''neil\\bin\\agent-guild-report.cmd' --hook");
+  assert.equal(geminiCommand(null, 'linux'), REPORT_COMMAND);
+});
+
+test('Codex hook overrides avoid double quotes, and trust only the handlers Codex lists as ours', () => {
+  const args = codexHookArgs();
+  assert.deepEqual(args.filter((a, i) => i % 2 === 0), ['-c', '-c', '-c', '-c']);
+  assert.deepEqual(args.filter((a, i) => i % 2 === 1).map((a) => a.split('=')[0]), ['hooks.SessionStart', 'hooks.UserPromptSubmit', 'hooks.SubagentStart', 'hooks.SubagentStop']);
+  assert.ok(args.every((a) => !a.includes('"')), 'nothing for cmd.exe or argv parsing to escape');
+  for (const a of args.filter((x, i) => i % 2 === 1)) assert.equal(buildSpawnSpec('C:\\npm\\codex.cmd', [a], {}, 'win32').args.includes(`"${a}"`), true);
+
+  const hook = (eventName, extra = {}) => ({
+    key: `/<session-flags>/config.toml:${eventName}:0:0`, eventName, command: REPORT_COMMAND, source: 'sessionFlags', enabled: true,
+    currentHash: `sha256:${eventName}`, trustStatus: 'untrusted', ...extra,
+  });
+  const all = [hook('sessionStart'), hook('userPromptSubmit'), hook('subagentStart'), hook('subagentStop')];
+  const listed = codexHooksFrom({ data: [{ hooks: [...all, hook('subagentStart', { source: 'user', key: 'user-key', command: 'mine' })] }] });
+  assert.deepEqual(listed.map((h) => h.key), all.map((h) => h.key), 'the user\'s own hooks are never trusted by us');
+  assert.equal(codexHooksFrom({ data: [{ hooks: all.slice(1) }] }), null, 'a missing handler means Codex did not load ours');
+  assert.equal(codexHooksFrom({ data: [{ hooks: [...all.slice(1), hook('sessionStart', { enabled: false })] }] }), null);
+  const [, state] = codexTrustArgs(listed);
+  assert.equal(state, `hooks.state={'/<session-flags>/config.toml:sessionStart:0:0'={trusted_hash='sha256:sessionStart'},'/<session-flags>/config.toml:userPromptSubmit:0:0'={trusted_hash='sha256:userPromptSubmit'},'/<session-flags>/config.toml:subagentStart:0:0'={trusted_hash='sha256:subagentStart'},'/<session-flags>/config.toml:subagentStop:0:0'={trusted_hash='sha256:subagentStop'}}`);
+  assert.equal(codexTrustArgs([{ key: "it's", hash: 'h' }]), null, 'a key that cannot be quoted is not trusted');
+});
+
+test('the plugin flag counts only when the command itself lists it', () => {
+  assert.ok(helpLists('Options:\n  --plugin-dir <path>   Load a plugin\n', '--plugin-dir'));
+  assert.ok(!helpLists('Commands:\n  agent   Run with --plugin-dir support\n', '--plugin-dir'));
+  assert.ok(!helpLists("error: unexpected argument '--plugin-dir' found", '--plugin-dir'));
+});
+
+test('Gemini counts as set up only with our extension linked to our folder', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-gemini-'));
+  const record = path.join(dir, '.gemini', 'extensions', 'agent-guild', '.gemini-extension-install.json');
+  const bundle = path.join(dir, 'bundle');
+  assert.equal(geminiLinked(dir, bundle), false);
+  fs.mkdirSync(path.dirname(record), { recursive: true });
+  fs.writeFileSync(record, JSON.stringify({ source: path.join(dir, 'elsewhere'), type: 'link' }));
+  assert.equal(geminiLinked(dir, bundle), false, 'another extension of the same name');
+  fs.writeFileSync(record, JSON.stringify({ source: bundle, type: 'link' }));
+  assert.equal(geminiLinked(dir, bundle), true);
+  fs.rmSync(dir, { recursive: true, force: true });
 });

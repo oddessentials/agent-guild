@@ -224,6 +224,8 @@ main { max-width: 1200px; margin: 0 auto; padding: 26px 16px 56px; display: grid
   .tier-d { --tier: #94a3b8; --tier-ink: #d4dbe4; }
 }
 .provider-links { display: flex; gap: 14px; font-size: 0.78rem; }
+.reporting-row { display: flex; align-items: center; gap: 10px; font-size: 0.78rem; color: var(--muted); }
+.reporting-row .btn { padding: 2px 10px; font-size: 0.75rem; white-space: nowrap; }
 .console-link { color: var(--accent); text-decoration: none; }
 .console-link:hover { text-decoration: underline; }
 .console-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 3px; }
@@ -284,7 +286,8 @@ main { max-width: 1200px; margin: 0 auto; padding: 26px 16px 56px; display: grid
 .agents-row { display: flex; align-items: center; gap: 10px; min-height: 30px; }
 .agents-label { font-size: 0.75rem; color: var(--muted); }
 .agents { display: flex; flex-wrap: wrap; gap: 6px; }
-.agents:empty::after { content: "none reported"; font-size: 0.75rem; color: var(--muted); }
+.agents:empty::after { content: attr(data-empty); font-size: 0.75rem; color: var(--muted); }
+.agents.reporting-attention:empty::after { color: var(--warn); }
 .agent {
   --c: #64748b;
   width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; position: relative;

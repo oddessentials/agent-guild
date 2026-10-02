@@ -207,7 +207,7 @@ export function createManagerServer({
     // Agent, model and tool-session reports may authenticate with the
     // per-session report token that the manager injects into each tool's
     // environment.
-    const reportMatch = route.match(/^\/sessions\/([a-f0-9]+)\/(agents|model|tool-session)$/);
+    const reportMatch = route.match(/^\/sessions\/([a-f0-9]+)\/(agents|model|tool-session|reporting)$/);
     if (reportMatch && method === 'POST') {
       const [, id, kind] = reportMatch;
       const body = await readJsonBody(req);
@@ -217,6 +217,7 @@ export function createManagerServer({
       };
       if (kind === 'agents') return sendJson(res, 200, { agent: manager.reportAgent(id, body, auth) });
       if (kind === 'model') return sendJson(res, 200, { model: manager.reportModel(id, body, auth) });
+      if (kind === 'reporting') return sendJson(res, 200, { reporting: manager.reportHello(id, auth) });
       return sendJson(res, 200, { toolSessionId: manager.reportToolSession(id, body, auth) });
     }
 
@@ -269,6 +270,17 @@ export function createManagerServer({
       const account = registry.account(provider, url.searchParams.get('account'));
       return sendJson(res, 200, { history: await history.list(provider, account, { limit: url.searchParams.get('limit') }) });
     }
+    const reportingMatch = route.match(/^\/providers\/([a-z0-9][a-z0-9_-]{0,31})\/reporting$/);
+    if (reportingMatch && method === 'POST' && manager.sessionHooks) {
+      const provider = registry.get(reportingMatch[1]);
+      if (!provider) throw new HttpError(404, `unknown provider "${reportingMatch[1]}"`, 'unknown_provider');
+      const body = await readJsonBody(req);
+      if (typeof body.enabled !== 'boolean') throw new HttpError(400, 'enabled must be true or false', 'bad_request');
+      const account = registry.account(provider, body.account ?? null);
+      await manager.sessionHooks.setEnabled(provider, account, body.enabled);
+      registry.emit('updated');
+      return sendJson(res, 200, { provider: registry.describe(provider) });
+    }
     const installMatch = route.match(/^\/providers\/([a-z0-9][a-z0-9_-]{0,31})\/install$/);
     if (installMatch && method === 'POST') {
       const body = await readJsonBody(req);
@@ -280,7 +292,7 @@ export function createManagerServer({
     }
     if (route === '/sessions' && method === 'POST') {
       const body = await readJsonBody(req);
-      const session = manager.create(body);
+      const session = await manager.create(body);
       return sendJson(res, 201, { session: session.toJSON() });
     }
     if (route === '/shutdown' && method === 'POST') {
@@ -452,7 +464,7 @@ export function createManagerServer({
       if (isBinary) return;
       let msg;
       try { msg = JSON.parse(raw.toString('utf8')); } catch { return; }
-      if (msg.type === 'input' && typeof msg.data === 'string') session.write(msg.data);
+      if (msg.type === 'input' && typeof msg.data === 'string') session.input(msg.data);
       else if (msg.type === 'resize') session.resize(msg.cols, msg.rows);
     });
   }

@@ -6,7 +6,6 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { fileURLToPath } from 'node:url';
 import { Session, newId, clampDimension, cleanName } from './session.mjs';
 import { prependPath } from './report-shims.mjs';
 import { CHANNEL_LABELS } from './install-channels.mjs';
@@ -14,7 +13,17 @@ import { SELF_PROVIDER } from './self-update.mjs';
 import { GITHUB_PROVIDER, dropsFromCloneEnv, parseRepo } from './github.mjs';
 
 export const MAX_SESSIONS = 32;
-const examplesDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../examples');
+
+/**
+ * Hook files earlier versions copied into new account folders, by provider
+ * reporting mode: where the manager now supplies the same hooks to every
+ * session, an untouched copy (byte for byte one that was shipped) would
+ * report each agent twice, so it is removed. Edited copies are kept.
+ */
+const SEEDED_HOOKS = {
+  claude: ['621dad43ee64184a371626803bf9fa4fad80eb88c74e83d0768cc9ef1a67bb55'],
+  codex: ['59d1cfb54cda5fd81add1edee7cf0cac56e4b2afec4c26ff207b675eeaaf70ce'],
+};
 
 function httpError(status, message, code) {
   return Object.assign(new Error(message), { status, code });
@@ -52,8 +61,10 @@ export class SessionManager extends EventEmitter {
    * @param {string|null} [opts.shimDir]  folder with the agent-guild-report launchers, put first on PATH
    * @param {import('./self-update.mjs').SelfUpdate|null} [opts.selfUpdate]  the manager's own upgrade
    * @param {import('./github.mjs').GitHub|null} [opts.github]
+   * @param {import('./session-hooks.mjs').SessionHooks|null} [opts.sessionHooks]  the reporting hooks each tool's sessions get
+   * @param {string|null} [opts.reportTokenDir]  where each session's report token file is written
    */
-  constructor({ registry, baseEnv, getApiUrl, sessionDefaults = {}, shimDir = null, selfUpdate = null, github = null }) {
+  constructor({ registry, baseEnv, getApiUrl, sessionDefaults = {}, shimDir = null, selfUpdate = null, github = null, sessionHooks = null, reportTokenDir = null }) {
     super();
     this.registry = registry;
     this.baseEnv = baseEnv;
@@ -62,6 +73,12 @@ export class SessionManager extends EventEmitter {
     this.shimDir = shimDir;
     this.selfUpdate = selfUpdate;
     this.github = github;
+    this.sessionHooks = sessionHooks;
+    this.reportTokenDir = reportTokenDir;
+    if (reportTokenDir) {
+      // No session outlives the manager that started it.
+      try { fs.rmSync(reportTokenDir, { recursive: true, force: true }); } catch { /* recreated per session */ }
+    }
     this.sessions = new Map();
     /** Removed sessions whose process has not exited yet. */
     this.exiting = new Set();
@@ -91,7 +108,7 @@ export class SessionManager extends EventEmitter {
     return dir;
   }
 
-  create({ providerId, cwd, cols, rows, name, args, resume, account } = {}) {
+  async create({ providerId, cwd, cols, rows, name, args, resume, account } = {}) {
     const provider = this.registry.get(String(providerId || ''));
     if (!provider) throw httpError(404, `unknown provider "${providerId}"`, 'unknown_provider');
     if (args !== undefined && (!Array.isArray(args) || args.some((a) => typeof a !== 'string'))) {
@@ -101,10 +118,11 @@ export class SessionManager extends EventEmitter {
     const resumeId = cleanResumeId(resume);
     const workDir = this.resolveCwd(cwd);
     const signIn = this.registry.account(provider, account);
-    const spawnSpec = this.registry.spawnSpec(provider, args || [], resumeId);
+    const hooks = this.sessionHooks ? await this.sessionHooks.launch(provider, signIn) : { args: [], reporting: null };
+    const spawnSpec = this.registry.spawnSpec(provider, args || [], resumeId, hooks.args);
     this.prepareAccount(provider, signIn);
     const sessionName = cleanName(name) || (provider.accounts.length > 1 ? `${provider.tool} · ${signIn.label}` : null);
-    const session = this._spawn({ provider, spawnSpec, cwd: workDir, cols, rows, name: sessionName, resume: resumeId, account: signIn });
+    const session = this._spawn({ provider, spawnSpec, cwd: workDir, cols, rows, name: sessionName, resume: resumeId, account: signIn, reporting: hooks.reporting });
     const model = modelFromArgs([...provider.args, ...(args || [])]);
     if (model) session.setModel({ name: model }, 'args');
     return session;
@@ -114,19 +132,16 @@ export class SessionManager extends EventEmitter {
     if (!account.dir) return;
     try {
       fs.mkdirSync(account.dir, { recursive: true, mode: 0o700 });
-      if (!provider.hooks) return;
-      const target = path.join(account.dir, ...provider.hooks.path.split('/'));
-      const example = path.join(examplesDir, provider.hooks.example);
-      if (fs.existsSync(target)) return;
-      if (!fs.existsSync(example)) {
-        console.warn(`[accounts] no hooks example ${example} for ${provider.tool}; ${target} was not written`);
-        return;
-      }
-      fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
-      fs.copyFileSync(example, target, fs.constants.COPYFILE_EXCL);
     } catch (err) {
       throw httpError(500, `could not prepare the ${account.label} account folder ${account.dir}: ${err.message}`, 'account_unavailable');
     }
+    const seeded = SEEDED_HOOKS[provider.reporting];
+    if (!seeded || !provider.hooks) return;
+    const target = path.join(account.dir, ...provider.hooks.path.split('/'));
+    try {
+      const hash = crypto.createHash('sha256').update(fs.readFileSync(target)).digest('hex');
+      if (seeded.includes(hash)) fs.unlinkSync(target);
+    } catch { /* absent or unreadable: nothing of ours to remove */ }
   }
 
   /**
@@ -229,7 +244,7 @@ export class SessionManager extends EventEmitter {
 
   _spawn({
     provider, description = this.registry.describe(provider), spawnSpec, cwd, cols, rows, name, resume = null, task = null, installKind = null, account = null,
-    extraEnv = null, dropEnv = null, clone = null,
+    extraEnv = null, dropEnv = null, clone = null, reporting = null,
   }) {
     if (this.closing) throw httpError(503, 'the session manager is stopping', 'manager_stopping');
     if (this.sessions.size >= MAX_SESSIONS) {
@@ -237,6 +252,7 @@ export class SessionManager extends EventEmitter {
     }
     const id = newId();
     const reportToken = crypto.randomBytes(16).toString('hex');
+    const reportFile = this._writeReportToken(id, reportToken);
 
     // The tool's hooks run `agent-guild-report` by name, so the launchers
     // go first on PATH, after any provider PATH override.
@@ -247,6 +263,7 @@ export class SessionManager extends EventEmitter {
       AGENT_GUILD_PROVIDER: provider.id,
       AGENT_GUILD_URL: this.getApiUrl(),
       AGENT_GUILD_REPORT_TOKEN: reportToken,
+      AGENT_GUILD_REPORT_FILE: reportFile,
       AGENT_GUILD_NODE: process.execPath,
     }]), this.shimDir);
     // The tool runs in its own terminal, not in the terminal or multiplexer
@@ -274,10 +291,13 @@ export class SessionManager extends EventEmitter {
         task,
         account: account ? { id: account.id, label: account.label } : null,
         clone,
+        reporting,
       });
     } catch (err) {
+      this._removeReportToken(reportFile);
       throw httpError(500, `could not start ${provider.tool}: ${err.message}`, 'spawn_failed');
     }
+    session.exited.then(() => this._removeReportToken(reportFile));
 
     session.on('changed', () => {
       if (this.sessions.has(id)) this.emit('event', { type: 'session.updated', session: session.toJSON() });
@@ -297,6 +317,28 @@ export class SessionManager extends EventEmitter {
     const session = this.get(id);
     session.kill();
     return session;
+  }
+
+  /**
+   * The session's report token in an owner-only file, for hooks that run
+   * with a filtered environment: Gemini CLI can remove every variable whose
+   * name looks secret, which AGENT_GUILD_REPORT_FILE does not.
+   */
+  _writeReportToken(id, token) {
+    if (!this.reportTokenDir) return null;
+    try {
+      fs.mkdirSync(this.reportTokenDir, { recursive: true, mode: 0o700 });
+      const file = path.join(this.reportTokenDir, id);
+      fs.writeFileSync(file, token, { mode: 0o600, flag: 'wx' });
+      return file;
+    } catch (err) {
+      console.warn(`[manager] could not write the report token file for session ${id}: ${err.message}`);
+      return null;
+    }
+  }
+
+  _removeReportToken(file) {
+    if (file) fs.rm(file, { force: true }, () => {});
   }
 
   /** Remove a session from the list, ending its process if still running. */
@@ -323,6 +365,10 @@ export class SessionManager extends EventEmitter {
 
   reportToolSession(id, report, auth) {
     return this._reportingSession(id, auth).reportToolSession(report);
+  }
+
+  reportHello(id, auth) {
+    return this._reportingSession(id, auth).reportHello();
   }
 
   _reportingSession(id, { reportToken, trusted = false } = {}) {

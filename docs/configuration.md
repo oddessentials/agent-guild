@@ -64,7 +64,8 @@ by `GET /api/v1/info`.
 | `accounts` | Further sign-ins of the tool. See [Accounts](#accounts). Needs `homeVar`. |
 | `homeVar` | The environment variable that moves the tool's home folder, e.g. `CLAUDE_CONFIG_DIR`. Set for Claude Code, Codex CLI, Gemini CLI and Grok Build by default. |
 | `accountEnv` | Further variables set for every account other than the default, with `{dir}` standing for the account's folder. By default Claude Code's secure-storage folder follows the account, and Gemini CLI keeps the account's sign-in in a file rather than the shared OS keychain. |
-| `hooks` | `{ "path", "example" }`: the hooks file inside the home folder and the file in `examples/` copied there for a new account. |
+| `reporting` | How sessions get the agent reporting hooks: `"claude"`, `"codex"`, `"gemini"` or `"grok"` (see [agent-reporting.md](agent-reporting.md)), or unset for none. |
+| `hooks` | `{ "path", "example" }`: the hooks file inside the home folder that earlier versions copied from `examples/` into a new account. An untouched copy is removed where Agent Guild now supplies the hooks with each session. |
 | `color`, `monogram`, `icon` | Icon appearance. `icon` is a URL path; you can also drop `<id>.svg` into `web/icons/`. |
 | `install`, `docs` | Help shown when the tool is not installed. |
 | `usageUrl`, `billingUrl` | `https://` links to the vendor's usage and billing pages, shown on the card. The defaults point at the subscription pages; set your API console instead, or `null` to hide a link. Google's usage link opens AI Studio, which counts API-key usage only, not the Gemini CLI sign-in quota the card's meters show. |
@@ -94,7 +95,6 @@ home folder, so a personal and a work subscription can run side by side:
   folder.
 * The tool signs in from inside the first session of a new account. While
   the usage check finds no sign-in, the card's button reads **Sign in**.
-* The provider's reporting hooks are copied into the folder on first use.
 * An entry with id `default` renames the tool's own sign-in.
 
 ## Environment variables

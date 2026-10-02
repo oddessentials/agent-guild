@@ -98,7 +98,9 @@ whether `GET /usage` reports the provider. `historySource` is `claude`,
 `GET /providers/:id/history` can list the tool's earlier sessions.
 `accounts` lists the sign-ins the tool can run under: `default` is the
 tool's own, and each further one has its own home folder, so it keeps its
-own sign-in and usage. `POST /sessions` takes an account id.
+own sign-in and usage. `POST /sessions` takes an account id. For a tool
+whose agent reporting is turned on per account (`reporting` is `gemini`),
+each account also has `reportingEnabled`.
 `usageUrl` and `billingUrl` are `https://` links to the vendor's usage and
 billing pages, or null when none is configured. A usage snapshot's `plan` is
 the subscription tier.
@@ -198,6 +200,7 @@ that has never run lists no sessions and no error.
   "attachedClients": 1,
   "model": { "name": "claude-opus-4-5", "displayName": "Opus 4.5", "source": "report" },
   "toolSessionId": "581893e5-a93d-5e49-968b-1c1c277d3255",
+  "reporting": { "state": "active", "reason": null },
   "agents": [ /* Agent */ ]
 }
 ```
@@ -235,6 +238,13 @@ that has never run lists no sessions and no error.
   hooks (see [agent-reporting.md](agent-reporting.md)), or null. It names
   the session in `GET /providers/:id/history` and resumes it later; it stays
   after the session exits.
+* `reporting` says whether the tool's agent reporting hooks work, or is null
+  for a tool Agent Guild supplies no hooks to. `state` is `pending` until the
+  hooks announce themselves, `active` once any hook report arrives,
+  `unavailable` when none has arrived some time after the first prompt or
+  the tool refused the hooks, `setup_required` when the user has to turn
+  reporting on first (Gemini CLI), and `unsupported` when the installed tool
+  cannot take hooks for one session. `reason` explains the last three.
 
 ### Upgrade
 
@@ -350,6 +360,7 @@ All paths are under `/api/v1`.
 | POST | `/upgrade` | | `201 { session }`: a session with `task` `upgrade` running the Upgrade `command`. 400 `not_updatable` when no newer release is known, it is already installed on disk, the manager is a development build, or version checks are off. 409 `npm_unavailable` without npm on PATH. 409 `upgrade_in_progress` while one is running. Sessions keep running; the new version is used after the manager restarts. |
 | GET | `/providers` | | `{ providers: Provider[] }` |
 | POST | `/providers/reload` | | Re-reads `providers.json`. |
+| POST | `/providers/:id/reporting` | `{ enabled, account? }` | `{ provider }`: turns agent reporting on or off for one account of a tool that needs it, by running the tool's own `extensions link` or `extensions uninstall`. 400 `not_applicable` for any other tool, 502 `reporting_setup_failed` when the tool's command fails. |
 | POST | `/providers/:id/install` | `{ force? }` | `201 { session }`: a session running `npm install -g <package>@<version>`, or `updateCommand` when the tool is installed. 400 `not_updatable` when an installed tool has no `updateCommand`. 503 `release_unresolved` or 409 `release_incomplete` when the release cannot be read or its platform build is not published; nothing is run. 409 `install_in_progress` while one is already running. 409 `provider_in_use` (with `running`, the session count) while the provider's sessions are running, unless `force` is true. |
 | GET | `/usage` | | `{ usage: Usage[] }`, one per account of every provider with a `usageSource`. |
 | GET | `/model-stats` | | Benchmarks for the models of every provider with a `modelPattern`, from OpenRouter's public model list (Artificial Analysis and Design Arena results), cached for 6 hours. `{ retrievedAt, stale, error, stats, pool, providers, models, sessions }`: `stats` describes each benchmark; `providers[id]` is `{ featured, models }`, a provider's model ids newest first; `models[id]` holds a model's name, context and price, and in `stats`, per benchmark, its `value`, `rank`, `level` (0-100, its standing among the models of all configured tools) and `tier` (S 90+, A 75+, B 50+, C 25+, D below); `sessions[id]` is the model id a session's reported model matched, or null. |
@@ -373,6 +384,7 @@ All paths are under `/api/v1`.
 | POST | `/sessions/:id/agents` | Agent report | `{ agent }`, or `{ agent: null }` after a removal, for a `done` report about an agent that was never reported, or for `{ finishForeground: true }`, which marks every foreground agent still working as done. |
 | POST | `/sessions/:id/model` | `{ model, displayName? }` | `{ model }`. Sets the session's model with source `report`, unless a foreground agent is working; then the current model is returned unchanged. |
 | POST | `/sessions/:id/tool-session` | `{ toolSessionId }` | `{ toolSessionId }`. Records the id the tool gave its own session: one printable line of at most 200 characters. 409 once the session has exited. |
+| POST | `/sessions/:id/reporting` | | `{ reporting }`: the tool's hooks announce themselves, which makes `reporting.state` `active`. |
 | POST | `/shutdown` | `{ force?, restart? }` | `202 { ok, running, restart }`: stops the manager and every session. 409 `sessions_running` (with `running`, the session count) while any session is running, unless `force` is true. From the 202 on, `POST /sessions` and `POST /providers/:id/install` answer 503 `manager_stopping`. Events clients get `manager.stopping` first and `manager.stopped` last, after the sessions have ended and before the API closes. With `restart` true, the manager then starts a new manager from the package on disk, on the same port and with the same token, before it exits; the new one runs whatever version is installed, so this is how an upgrade's `pendingVersion` is put to use. Clients reconnect to it as to any manager; its `hello` is the new source of truth. |
 
 `cwd` defaults to the user's home folder and must be an existing folder. A
@@ -383,8 +395,8 @@ when the provider has none). `account` is one of the provider's account ids
 (404 `unknown_account` otherwise) and defaults to `default`; the account's
 home folder is created before its first session.
 
-`POST /sessions/:id/agents`, `POST /sessions/:id/model` and
-`POST /sessions/:id/tool-session` also accept the
+`POST /sessions/:id/agents`, `POST /sessions/:id/model`,
+`POST /sessions/:id/tool-session` and `POST /sessions/:id/reporting` also accept the
 per-session report token instead of the API token, in an
 `X-Agent-Guild-Report-Token` header. The manager gives that token only to the
 processes inside that session. Without the API token, an unknown session id

@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 // Report an agent, or the model in use, inside an Agent Guild session.
 //
-// The session manager injects AGENT_GUILD_URL, AGENT_GUILD_SESSION_ID and
-// AGENT_GUILD_REPORT_TOKEN into every terminal it starts. Outside such a
-// terminal this command does nothing and exits 0, so hooks that call it are
-// harmless when the tool runs elsewhere.
+// The session manager injects AGENT_GUILD_URL, AGENT_GUILD_SESSION_ID,
+// AGENT_GUILD_REPORT_TOKEN and AGENT_GUILD_REPORT_FILE (a file holding the
+// same token) into every terminal it starts. Outside such a terminal this
+// command does nothing and exits 0, so hooks that call it are harmless when
+// the tool runs elsewhere.
 //
 //   agent-guild-report <agent-id> [--name N] [--status working|waiting|idle|done]
 //                      [--detail TEXT] [--kind KIND] [--remove]
@@ -16,14 +17,30 @@
 //                      (reads Claude Code status line JSON on stdin; prints a
 //                       status line, or the JSON itself with --passthrough)
 
+import fs from 'node:fs';
 import { hookToReports, claudeStatuslineToReport, formatStatusLine } from '../src/report/hooks.mjs';
 
 const env = process.env;
-const inSession = env.AGENT_GUILD_URL && env.AGENT_GUILD_SESSION_ID && env.AGENT_GUILD_REPORT_TOKEN;
-// Gemini CLI's optional environment redaction removes every variable whose
-// name contains TOKEN before it runs a hook. Say so instead of staying silent.
-if (!inSession && env.AGENT_GUILD_SESSION_ID && !env.AGENT_GUILD_REPORT_TOKEN) {
-  console.error('agent-guild-report: AGENT_GUILD_REPORT_TOKEN is missing from the environment; the tool may be redacting variables named *TOKEN*');
+
+/**
+ * Gemini CLI's optional environment redaction removes every variable whose
+ * name looks secret, AGENT_GUILD_REPORT_TOKEN included, before it runs a
+ * hook; the token file's path survives it.
+ */
+function reportToken() {
+  if (env.AGENT_GUILD_REPORT_TOKEN) return env.AGENT_GUILD_REPORT_TOKEN;
+  if (!env.AGENT_GUILD_REPORT_FILE) return null;
+  try {
+    return fs.readFileSync(env.AGENT_GUILD_REPORT_FILE, 'utf8').trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+const token = env.AGENT_GUILD_URL && env.AGENT_GUILD_SESSION_ID ? reportToken() : null;
+const inSession = Boolean(token);
+if (!inSession && env.AGENT_GUILD_SESSION_ID) {
+  console.error('agent-guild-report: the session report token is missing; the tool may have removed AGENT_GUILD_REPORT_TOKEN and AGENT_GUILD_REPORT_FILE from the environment, or the session has ended');
 }
 
 const USAGE = `Usage: agent-guild-report <agent-id> [--name N] [--status working|waiting|idle|done] [--detail TEXT] [--kind KIND] [--remove]
@@ -63,13 +80,14 @@ function readStdin() {
 
 async function send(report) {
   const kind = report.agentId !== undefined || report.finishForeground === true ? 'agents'
+    : report.hello === true ? 'reporting'
     : report.toolSessionId !== undefined ? 'tool-session' : 'model';
   const url = `${env.AGENT_GUILD_URL}/api/v1/sessions/${env.AGENT_GUILD_SESSION_ID}/${kind}`;
   const res = await fetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-Agent-Guild-Report-Token': env.AGENT_GUILD_REPORT_TOKEN,
+      'X-Agent-Guild-Report-Token': token,
     },
     body: JSON.stringify(report),
     signal: AbortSignal.timeout(3000),

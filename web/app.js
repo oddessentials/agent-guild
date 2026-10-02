@@ -314,6 +314,24 @@ function paintProviderIcon(el, provider) {
 
 const FAMILIARS = ['flame', 'leaf', 'night', 'aether'];
 
+const REPORTING_TEXT = {
+  pending: 'waiting for hooks',
+  unavailable: 'not reporting',
+  setup_required: 'reporting off',
+  unsupported: 'not supported',
+};
+
+/** What an empty agents row says, from whether the tool's reporting hooks are working. */
+function paintReporting(container, s) {
+  const reporting = s.status === 'running' ? s.reporting : null;
+  container.dataset.empty = REPORTING_TEXT[reporting?.state] || 'none reported';
+  container.classList.toggle('reporting-attention', ['unavailable', 'setup_required', 'unsupported'].includes(reporting?.state));
+  const tip = reporting?.state === 'pending'
+    ? `Agent Guild added its reporting hooks to this ${s.provider.tool} session. They report once ${s.provider.tool} starts its session${s.provider.id === 'openai' ? ', with the first prompt' : ''}.`
+    : reporting?.reason || '';
+  container.closest('.agents-row')?.setAttribute('title', tip);
+}
+
 function renderAgents(container, agents) {
   const known = container.dataset.rendered ? new Set([...container.children].map((el) => el.dataset.agent)) : null;
   container.dataset.rendered = 'true';
@@ -391,6 +409,7 @@ function renderAccounts(card, provider) {
         selectAccount(provider, account.id);
         renderAccounts(card, provider);
         renderUsage(card, provider);
+        renderReportingSetup(card, provider);
       });
       return chip;
     }));
@@ -402,6 +421,34 @@ function renderAccounts(card, provider) {
     chip.textContent = account.label;
     chip.title = `Start new ${provider.tool} sessions as the ${account.label} account`;
   });
+}
+
+/** The per-account switch for a tool whose reporting hooks the user turns on once (Gemini CLI). */
+function renderReportingSetup(card, provider) {
+  const row = card.querySelector('.reporting-row');
+  const account = selectedAccount(provider);
+  row.hidden = !provider.available || typeof account.reportingEnabled !== 'boolean';
+  if (row.hidden) return;
+  const on = account.reportingEnabled;
+  const whose = (provider.accounts || []).length > 1 ? ` for the ${account.label} account` : '';
+  row.querySelector('.reporting-text').textContent = `Agent reporting ${on ? 'on' : 'off'}`;
+  const button = row.querySelector('.reporting-toggle');
+  button.textContent = on ? 'Turn off' : 'Turn on';
+  button.title = on
+    ? `Remove the Agent Guild extension from ${provider.tool}${whose}. New sessions stop reporting sub-agents.`
+    : `Link the Agent Guild extension into ${provider.tool}${whose} with "${provider.command} extensions link", so new sessions show their sub-agents. It does nothing in sessions started outside Agent Guild.`;
+  button.onclick = async () => {
+    button.disabled = true;
+    try {
+      await api('POST', `/providers/${provider.id}/reporting`, { account: account.id, enabled: !on });
+      toast(on ? `Agent reporting is off for ${provider.tool}${whose}.` : `Agent reporting is on for ${provider.tool}${whose}. It applies to new sessions.`);
+    } catch (err) {
+      if (err instanceof AuthError) return showAuth(err.message);
+      toast(err.message, 10000);
+    } finally {
+      button.disabled = false;
+    }
+  };
 }
 
 let dealt = false;
@@ -447,6 +494,7 @@ function renderProviders() {
     renderConsoleLinks(node, provider);
     renderAccounts(node, provider);
     renderUsage(node, provider);
+    renderReportingSetup(node, provider);
     renderModelStats(node, provider);
     return node;
   }));
@@ -2500,6 +2548,7 @@ function updateCard(node, s) {
   cwd.textContent = `\u200E${s.cwd}`;
   cwd.title = s.cwd;
   renderAgents(node.querySelector('.agents'), s.agents);
+  paintReporting(node.querySelector('.agents'), s);
   node.classList.toggle('exited', s.status === 'exited');
   node.querySelector('.stop').hidden = s.status !== 'running';
   node.querySelector('.remove').hidden = s.status === 'running';

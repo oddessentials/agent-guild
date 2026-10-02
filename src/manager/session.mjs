@@ -19,6 +19,7 @@ const MODEL_SOURCE_RANK = { args: 0, screen: 1, report: 2 };
 const SCREEN_SCAN_DELAY_MS = 400;
 const SCREEN_SCAN_MAX_DELAY_MS = 2000;
 const MAX_TOOL_SESSION_ID = 200;
+const REPORTING_STATES = new Set(['pending', 'active', 'unavailable', 'setup_required', 'unsupported']);
 
 /**
  * Colours reported to programs that query them (OSC 10/11/12), matching the
@@ -63,6 +64,8 @@ export class Session extends EventEmitter {
    * @param {number} [opts.activityIdleMs]
    * @param {number} [opts.doneAgentLingerMs]
    * @param {number} [opts.killGraceMs]  time between hang-up and force kill
+   * @param {{state: string, reason: string|null}|null} [opts.reporting]  whether the tool's reporting hooks are set up
+   * @param {number} [opts.reportingTimeoutMs]  how long after the first prompt a pending tool may stay silent
    */
   constructor(opts) {
     super();
@@ -81,6 +84,9 @@ export class Session extends EventEmitter {
     this.activityIdleMs = opts.activityIdleMs ?? 2500;
     this.doneAgentLingerMs = opts.doneAgentLingerMs ?? 15000;
     this.killGraceMs = opts.killGraceMs ?? 4000;
+    this.reportingTimeoutMs = opts.reportingTimeoutMs ?? 30000;
+    this.reporting = REPORTING_STATES.has(opts.reporting?.state) ? { state: opts.reporting.state, reason: opts.reporting.reason ?? null } : null;
+    this._reportingTimer = null;
     this.createdAt = new Date().toISOString();
     this.exitedAt = null;
     this.status = 'running';
@@ -190,6 +196,7 @@ export class Session extends EventEmitter {
     clearTimeout(this._activityTimer);
     clearTimeout(this._killTimer);
     clearTimeout(this._scanTimer);
+    clearTimeout(this._reportingTimer);
     this._clearAgents();
     // Let the headless terminal finish parsing before announcing the exit so
     // any client attaching afterwards still sees the final screen.
@@ -260,6 +267,25 @@ export class Session extends EventEmitter {
     try { this.pty.write(data); } catch { /* process is exiting */ }
   }
 
+  /** Keystrokes from a client. */
+  input(data) {
+    this.write(data);
+    // Codex CLI runs its SessionStart hooks with the first turn, and a
+    // workspace-trust prompt holds Claude Code's back, so silence only
+    // counts once something has been submitted.
+    if (this.reporting?.state === 'pending' && !this._reportingTimer && typeof data === 'string' && /[\r\n]/.test(data)) {
+      this._reportingTimer = setTimeout(() => {
+        if (this.reporting?.state !== 'pending' || this.status !== 'running') return;
+        this.reporting = {
+          state: 'unavailable',
+          reason: `${this.provider.tool} has not run Agent Guild's reporting hooks. Hooks may be turned off, restricted by an administrator, or not trusted for this folder.`,
+        };
+        this._changed();
+      }, this.reportingTimeoutMs);
+      this._reportingTimer.unref?.();
+    }
+  }
+
   _reply(data) {
     this.write(data);
   }
@@ -317,6 +343,7 @@ export class Session extends EventEmitter {
     this.disposed = true;
     clearTimeout(this._activityTimer);
     clearTimeout(this._scanTimer);
+    clearTimeout(this._reportingTimer);
     for (const t of this._agentTimers.values()) clearTimeout(t);
     this.subscribers.clear();
     this.term.dispose();
@@ -339,6 +366,7 @@ export class Session extends EventEmitter {
   reportAgent(report, source = 'api') {
     if (!report || typeof report !== 'object') throw badRequest('agent report must be an object');
     if (this.status !== 'running') throw Object.assign(new Error('session has exited'), { status: 409 });
+    if (source === 'api') this._reportingHeard();
     if (report.finishForeground === true && report.agentId === undefined) {
       // The tool is between turns, so no foreground agent can still be
       // running; one that is never got its end event.
@@ -425,8 +453,8 @@ export class Session extends EventEmitter {
       const isAgent = report && typeof report === 'object' &&
         ((report.agentId ?? report.agent ?? report.id) !== undefined || report.finishForeground === true);
       if (isAgent) this.reportAgent(report, 'terminal');
-      else if (report?.toolSessionId !== undefined) this.reportToolSession(report);
-      else this.reportModel(report);
+      else if (report?.toolSessionId !== undefined) this.reportToolSession(report, 'terminal');
+      else this.reportModel(report, 'terminal');
     } catch (err) {
       this.emit('warning', `ignored in-band report: ${err.message}`);
     }
@@ -446,9 +474,10 @@ export class Session extends EventEmitter {
     this._changed();
   }
 
-  reportModel(report) {
+  reportModel(report, source = 'api') {
     if (!report || typeof report !== 'object') throw badRequest('model report must be an object');
     if (this.status !== 'running') throw Object.assign(new Error('session has exited'), { status: 409 });
+    if (source === 'api') this._reportingHeard();
     const name = String(report.model ?? '').trim().slice(0, 120);
     if (!name) throw badRequest('model is required');
     const displayName = report.displayName === undefined || report.displayName === null ? null : String(report.displayName).trim().slice(0, 80) || null;
@@ -460,9 +489,10 @@ export class Session extends EventEmitter {
     return this.model;
   }
 
-  reportToolSession(report) {
+  reportToolSession(report, source = 'api') {
     if (!report || typeof report !== 'object') throw badRequest('tool session report must be an object');
     if (this.status !== 'running') throw Object.assign(new Error('session has exited'), { status: 409 });
+    if (source === 'api') this._reportingHeard();
     const id = String(report.toolSessionId ?? '').trim();
     if (!id || id.length > MAX_TOOL_SESSION_ID || /\p{Cc}/u.test(id)) throw badRequest(`toolSessionId must be a printable id of at most ${MAX_TOOL_SESSION_ID} characters`);
     if (this.toolSessionId !== id) {
@@ -470,6 +500,21 @@ export class Session extends EventEmitter {
       this._changed();
     }
     return this.toolSessionId;
+  }
+
+  /** The tool's reporting hooks announced themselves when the session started. */
+  reportHello() {
+    if (this.status !== 'running') throw Object.assign(new Error('session has exited'), { status: 409 });
+    this._reportingHeard();
+    return this.reporting;
+  }
+
+  /** A hook got through, so reporting works whatever was expected before. */
+  _reportingHeard() {
+    clearTimeout(this._reportingTimer);
+    if (!this.reporting || this.reporting.state === 'active') return;
+    this.reporting = { state: 'active', reason: null };
+    this._changed();
   }
 
   _foregroundAgentWorking() {
@@ -539,6 +584,7 @@ export class Session extends EventEmitter {
       attachedClients: this.subscribers.size,
       model: this.model,
       toolSessionId: this.toolSessionId,
+      reporting: this.reporting,
       agents: [...this.agents.values()],
     };
   }
