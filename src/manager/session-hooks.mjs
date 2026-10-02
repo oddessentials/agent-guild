@@ -185,18 +185,36 @@ export function helpLists(text, flag) {
   return new RegExp(`^\\s+(?:-\\w, )?${flag.replace(/[-]/g, '\\-')}\\b`, 'm').test(text);
 }
 
-/** Where `agy plugin install` copies the plugin. */
-export function antigravityPluginDir(env = {}, platform = process.platform) {
-  const home = (platform === 'win32' ? env.USERPROFILE : env.HOME) || os.homedir();
-  return path.join(home, '.gemini', 'config', 'plugins', PLUGIN_NAME);
+const geminiHome = (env, platform) => path.join((platform === 'win32' ? env.USERPROFILE : env.HOME) || os.homedir(), '.gemini');
+
+/** Where `agy plugin install` may copy the plugin: the shared config folder, as Antigravity CLI 1.2 does, or the CLI's own folder its docs name. */
+export function antigravityPluginDirs(env = {}, platform = process.platform) {
+  const home = geminiHome(env, platform);
+  return [path.join(home, 'config', 'plugins', PLUGIN_NAME), path.join(home, 'antigravity-cli', 'plugins', PLUGIN_NAME)];
+}
+
+/** The shared Antigravity settings, where `agy plugin disable` turns a plugin off. */
+export function antigravityConfigFile(env = {}, platform = process.platform) {
+  return path.join(geminiHome(env, platform), 'config', 'config.json');
+}
+
+/** True unless the settings turn the plugin off or cannot be read; no settings file means every plugin is on. */
+export function antigravityPluginEnabled(configFile) {
+  let config;
+  try {
+    config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+  } catch (err) {
+    return err.code === 'ENOENT';
+  }
+  if (!config || typeof config !== 'object') return false;
+  return config.plugins?.[PLUGIN_NAME]?.enabled !== false;
 }
 
 function readOr(file, fallback) {
   try { return fs.readFileSync(file, 'utf8'); } catch { return fallback; }
 }
 
-/** "current" when the installed copy matches the bundle, "stale" when it is an older one of ours, "other" or null. */
-export function antigravityInstalled(pluginDir, bundle) {
+function installedAt(pluginDir, bundle) {
   const manifest = readOr(path.join(pluginDir, 'plugin.json'), null);
   if (manifest === null) return null;
   let description = null;
@@ -206,6 +224,12 @@ export function antigravityInstalled(pluginDir, bundle) {
   try { names = fs.readdirSync(bundle); } catch { return 'stale'; }
   const same = names.every((name) => readOr(path.join(pluginDir, name), null) === readOr(path.join(bundle, name), ''));
   return same ? 'current' : 'stale';
+}
+
+/** "current" when an installed copy matches the bundle, "stale" when ours are older, "other" when only another plugin has the name, or null. */
+export function antigravityInstalled(pluginDirs, bundle) {
+  const states = pluginDirs.map((dir) => installedAt(dir, bundle));
+  return ['current', 'stale', 'other'].find((state) => states.includes(state)) ?? null;
 }
 
 const pending = (tool, when) => ({ state: 'pending', reason: `Agent Guild added its reporting hooks to this ${tool} session. They report once ${tool} ${when}.` });
@@ -290,11 +314,15 @@ export class SessionHooks {
 
   enabled(provider) {
     if (provider.reporting !== 'antigravity' || !this.bundles) return null;
-    return antigravityInstalled(this._pluginDir(provider), this.bundles.antigravity) === 'current';
+    return this._installed(provider) === 'current' && this._pluginEnabled(provider);
   }
 
-  _pluginDir(provider) {
-    return antigravityPluginDir({ ...this.registry.env, ...provider.env }, this.registry.platform);
+  _installed(provider) {
+    return antigravityInstalled(antigravityPluginDirs({ ...this.registry.env, ...provider.env }, this.registry.platform), this.bundles.antigravity);
+  }
+
+  _pluginEnabled(provider) {
+    return antigravityPluginEnabled(antigravityConfigFile({ ...this.registry.env, ...provider.env }, this.registry.platform));
   }
 
   async setEnabled(provider, enabled) {
@@ -302,8 +330,8 @@ export class SessionHooks {
     if (!this.bundles) throw Object.assign(new Error('Agent Guild could not write its reporting hooks'), { status: 500, code: 'reporting_unavailable' });
     const resolved = this.registry.resolve(provider);
     if (!resolved) throw Object.assign(new Error(`${provider.tool} is not installed`), { status: 409, code: 'provider_unavailable' });
-    const installed = antigravityInstalled(this._pluginDir(provider), this.bundles.antigravity);
-    if (enabled ? installed === 'current' : !installed) return enabled;
+    const installed = this._installed(provider);
+    if (enabled ? installed === 'current' && this._pluginEnabled(provider) : !installed) return enabled;
     if (installed === 'other') {
       if (!enabled) return false;
       throw Object.assign(new Error(`${provider.tool} already has another plugin named "${PLUGIN_NAME}". Remove it with "${provider.command} plugin uninstall ${PLUGIN_NAME}" to turn on agent reporting.`), { status: 409, code: 'plugin_conflict' });
@@ -317,11 +345,12 @@ export class SessionHooks {
         throw Object.assign(new Error(`${provider.tool} could not ${what} the Agent Guild plugin: ${detail}`), { status: 502, code: 'reporting_setup_failed' });
       }
     };
-    if (installed) await run(['plugin', 'uninstall', PLUGIN_NAME], 'remove');
-    if (enabled) await run(['plugin', 'install', this.bundles.antigravity], 'install');
+    if (installed && (!enabled || installed === 'stale')) await run(['plugin', 'uninstall', PLUGIN_NAME], 'remove');
+    if (enabled && installed !== 'current') await run(['plugin', 'install', this.bundles.antigravity], 'install');
+    if (enabled && !this._pluginEnabled(provider)) await run(['plugin', 'enable', PLUGIN_NAME], 'turn on');
     const now = this.enabled(provider);
     if (now !== enabled) {
-      throw Object.assign(new Error(`${provider.tool} reported success, but the Agent Guild plugin is ${now ? 'still installed' : 'not installed'}`), { status: 502, code: 'reporting_setup_failed' });
+      throw Object.assign(new Error(`${provider.tool} reported success, but the Agent Guild plugin is ${now ? 'still on' : 'not on'}`), { status: 502, code: 'reporting_setup_failed' });
     }
     return now;
   }

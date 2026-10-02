@@ -70,7 +70,8 @@ too, each a conversation of its own that starts with its parent's message
 rather than the user's request; those are not reported. It has no events
 for a sub-agent starting or stopping, and its only event before a tool runs
 must also decide whether the tool may run, so Agent Guild leaves it alone. The hook does nothing in sessions started
-outside Agent Guild. Grok Build gets them with `--plugin-dir` once `grok --help`
+outside Agent Guild. A plugin turned off with `agy plugin disable` shows as
+reporting off on the card, and turning it on there turns the plugin back on. Grok Build gets them with `--plugin-dir` once `grok --help`
 lists that option; the versions released so far do not. To report from a
 tool Agent Guild does not supply, or from Grok Build today, add the hooks
 yourself:

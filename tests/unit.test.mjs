@@ -12,7 +12,7 @@ import { paths } from '../src/manager/config.mjs';
 import { classifyInstall, expandHome, helpDescribes, platformDependency, listInstallations, knownLaunchers, shellCommand, updateHelpAccepted } from '../src/manager/install-channels.mjs';
 import { hookToReports, claudeStatuslineToReport, formatStatusLine } from '../src/report/hooks.mjs';
 import { shimContents, writeReportShims, prependPath, fileUrl, SHIM_NAME, LOADER_NAME } from '../src/manager/report-shims.mjs';
-import { bundleFiles, codexHookArgs, codexTrustArgs, codexHooksFrom, antigravityInstalled, antigravityPluginDir, helpLists, REPORT_COMMAND } from '../src/manager/session-hooks.mjs';
+import { bundleFiles, codexHookArgs, codexTrustArgs, codexHooksFrom, antigravityInstalled, antigravityPluginDirs, antigravityConfigFile, antigravityPluginEnabled, helpLists, REPORT_COMMAND } from '../src/manager/session-hooks.mjs';
 import { execFileSync } from 'node:child_process';
 import { parseVersion, compareVersions, probeVersion, diagnosticLine, latestVersion } from '../src/manager/versions.mjs';
 import { SelfUpdate, isDevelopmentBuild } from '../src/manager/self-update.mjs';
@@ -2819,27 +2819,50 @@ test('the plugin flag counts only when the command itself lists it', () => {
   assert.ok(!helpLists("error: unexpected argument '--plugin-dir' found", '--plugin-dir'));
 });
 
-test('Antigravity reporting counts as on only with the current copy of our own plugin', () => {
+test('Antigravity reporting counts as on only with the current copy of our own plugin, turned on', () => {
   const dir = tempDir();
   const bundle = path.join(dir, 'bundle');
   fs.mkdirSync(bundle);
   for (const [name, text] of Object.entries(bundleFiles('1.0.0', { platform: 'linux' }).antigravity)) fs.writeFileSync(path.join(bundle, name), text);
   const installed = path.join(dir, 'installed');
-  assert.equal(antigravityInstalled(installed, bundle), null);
+  const documented = path.join(dir, 'documented');
+  const dirs = [installed, documented];
+  assert.equal(antigravityInstalled(dirs, bundle), null);
   fs.mkdirSync(installed);
   fs.writeFileSync(path.join(installed, 'plugin.json'), JSON.stringify({ name: 'agent-guild', description: 'Not ours' }));
-  assert.equal(antigravityInstalled(installed, bundle), 'other');
+  assert.equal(antigravityInstalled(dirs, bundle), 'other');
+  fs.cpSync(bundle, documented, { recursive: true });
+  assert.equal(antigravityInstalled(dirs, bundle), 'current', 'ours in either folder counts');
+  fs.rmSync(documented, { recursive: true });
   fs.cpSync(bundle, installed, { recursive: true });
-  assert.equal(antigravityInstalled(installed, bundle), 'current');
+  assert.equal(antigravityInstalled(dirs, bundle), 'current');
   fs.writeFileSync(path.join(installed, 'hooks.json'), '{}');
-  assert.equal(antigravityInstalled(installed, bundle), 'stale');
+  assert.equal(antigravityInstalled(dirs, bundle), 'stale');
   fs.rmSync(path.join(installed, 'hooks.json'));
-  assert.equal(antigravityInstalled(installed, bundle), 'stale', 'a missing file is not current');
-  assert.equal(antigravityInstalled(installed, path.join(dir, 'gone')), 'stale', 'nor is anything once the bundle is gone');
+  assert.equal(antigravityInstalled(dirs, bundle), 'stale', 'a missing file is not current');
+  assert.equal(antigravityInstalled(dirs, path.join(dir, 'gone')), 'stale', 'nor is anything once the bundle is gone');
 
-  assert.equal(antigravityPluginDir({ USERPROFILE: 'C:\\Users\\a', HOME: '/ignored' }, 'win32'), path.join('C:\\Users\\a', '.gemini', 'config', 'plugins', 'agent-guild'));
-  assert.equal(antigravityPluginDir({ HOME: '/home/a', USERPROFILE: 'C:\\ignored' }, 'linux'), path.join('/home/a', '.gemini', 'config', 'plugins', 'agent-guild'));
-  assert.equal(antigravityPluginDir({}, 'linux'), path.join(os.homedir(), '.gemini', 'config', 'plugins', 'agent-guild'));
+  const config = path.join(dir, 'config.json');
+  assert.equal(antigravityPluginEnabled(config), true, 'without settings every plugin is on');
+  const settings = (value) => fs.writeFileSync(config, typeof value === 'string' ? value : JSON.stringify(value));
+  settings({ userSettings: {} });
+  assert.equal(antigravityPluginEnabled(config), true);
+  settings({ plugins: { 'agent-guild': { enabled: true }, other: { enabled: false } } });
+  assert.equal(antigravityPluginEnabled(config), true, 'another plugin turned off is not ours');
+  settings({ plugins: { 'agent-guild': { enabled: false } } });
+  assert.equal(antigravityPluginEnabled(config), false, 'agy plugin disable');
+  settings('{"plugins": {');
+  assert.equal(antigravityPluginEnabled(config), false, 'settings that cannot be read say nothing for sure');
+  settings('null');
+  assert.equal(antigravityPluginEnabled(config), false);
+  assert.equal(antigravityPluginEnabled(dir), false, 'nor can a folder in its place');
+
+  assert.deepEqual(antigravityPluginDirs({ USERPROFILE: 'C:\\Users\\a', HOME: '/ignored' }, 'win32'),
+    [path.join('C:\\Users\\a', '.gemini', 'config', 'plugins', 'agent-guild'), path.join('C:\\Users\\a', '.gemini', 'antigravity-cli', 'plugins', 'agent-guild')]);
+  assert.deepEqual(antigravityPluginDirs({ HOME: '/home/a', USERPROFILE: 'C:\\ignored' }, 'linux'),
+    [path.join('/home/a', '.gemini', 'config', 'plugins', 'agent-guild'), path.join('/home/a', '.gemini', 'antigravity-cli', 'plugins', 'agent-guild')]);
+  assert.equal(antigravityConfigFile({ USERPROFILE: 'C:\\Users\\a' }, 'win32'), path.join('C:\\Users\\a', '.gemini', 'config', 'config.json'));
+  assert.equal(antigravityConfigFile({}, 'linux'), path.join(os.homedir(), '.gemini', 'config', 'config.json'));
 });
 
 test('shell commands map to shell reports that carry no command text', () => {

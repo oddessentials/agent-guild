@@ -1150,6 +1150,49 @@ test('turning Antigravity reporting on refreshes an older copy of its plugin, an
   assert.equal(JSON.parse(fs.readFileSync(path.join(installed, 'plugin.json'), 'utf8')).description, 'Not ours', 'someone else\'s plugin is never removed');
 });
 
+test('an Antigravity plugin turned off in Antigravity shows reporting off, and turning reporting on turns it back on', async (t) => {
+  const installed = path.join(toolHomes.agy, '.gemini', 'config', 'plugins', 'agent-guild');
+  const config = path.join(toolHomes.agy, '.gemini', 'config', 'config.json');
+  t.after(async () => {
+    await call('POST', '/providers/google/reporting', { enabled: false });
+    fs.rmSync(installed, { recursive: true, force: true });
+    fs.rmSync(config, { force: true });
+  });
+  const google = async () => (await call('GET', '/providers')).body.providers.find((p) => p.id === 'google');
+  const turnedOff = { plugins: { 'agent-guild': { enabled: false } }, userSettings: { theme: 'dark' } };
+  assert.equal((await call('POST', '/providers/google/reporting', { enabled: true })).status, 200);
+  writeFile(config, JSON.stringify(turnedOff));
+  const kept = path.join(installed, 'kept.txt');
+  writeFile(kept, 'x');
+  assert.equal((await google()).reportingEnabled, false, 'agy plugin disable leaves the files as they were');
+  const off = await startTool('google');
+  assert.equal(off.session.reporting.state, 'setup_required');
+  await waitForText(off.client, off.session.id, 'FAKE-AGY READY hooks=0', 'Antigravity loads no hooks from a plugin turned off');
+  await off.client.close();
+  await call('DELETE', `/sessions/${off.session.id}`);
+
+  const on = await call('POST', '/providers/google/reporting', { enabled: true });
+  assert.equal(on.status, 200, JSON.stringify(on.body));
+  assert.equal(on.body.provider.reportingEnabled, true);
+  assert.ok(fs.existsSync(kept), 'turned back on with agy plugin enable, not installed again');
+  assert.deepEqual(JSON.parse(fs.readFileSync(config, 'utf8')), { ...turnedOff, plugins: { 'agent-guild': { enabled: true } } }, 'the rest of the settings untouched');
+  const tool = await startTool('google');
+  assert.equal(tool.session.reporting.state, 'pending');
+  await waitForText(tool.client, tool.session.id, 'FAKE-AGY READY hooks=1', 'the hook loaded again');
+  tool.client.input('prompt');
+  await waitFor(async () => (await sessionNow(tool.session.id)).toolSessionId, { label: 'the conversation reported', timeout: 15000 });
+  await tool.client.close();
+  await call('DELETE', `/sessions/${tool.session.id}`);
+
+  writeFile(config, '{"plugins": {');
+  assert.equal((await google()).reportingEnabled, false, 'settings that cannot be read are no proof the plugin is on');
+
+  writeFile(config, JSON.stringify(turnedOff));
+  assert.equal((await call('POST', '/providers/google/reporting', { enabled: false })).status, 200);
+  assert.ok(!fs.existsSync(installed), 'turning reporting off removes a plugin turned off too');
+  assert.deepEqual(JSON.parse(fs.readFileSync(config, 'utf8')).plugins, {}, 'and Antigravity forgets its setting');
+});
+
 function watchShells(id) {
   const seen = [];
   let leaked = false;

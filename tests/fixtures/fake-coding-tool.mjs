@@ -7,7 +7,8 @@
 //   claude  --plugin-dir <dir> (hooks/hooks.json), and $CLAUDE_CONFIG_DIR/settings.json
 //   codex   -c hooks.<Event>=[...] (run only when hooks.state trusts them by key and hash),
 //           and $CODEX_HOME/hooks.json; `app-server` answers initialize and hooks/list
-//   agy     plugins installed with `plugin install` under ~/.gemini/config/plugins; hooks run in
+//   agy     plugins installed with `plugin install` under ~/.gemini/config/plugins, unless
+//           `plugin disable` turned them off in ~/.gemini/config/config.json; hooks run in
 //           the plugin's folder (on Windows through cmd /C, which gets a quoted path wrong), take
 //           no event name, and must print a JSON object
 //   grok    --plugin-dir <dir>, accepted only when FAKE_GROK_PLUGIN_DIR=1, and $GROK_HOME/hooks/*.json
@@ -73,9 +74,20 @@ if (tool === 'grok' && argv.includes('--plugin-dir') && process.env.FAKE_GROK_PL
 }
 
 const agyPlugins = () => path.join(os.homedir(), '.gemini', 'config', 'plugins');
+const agyConfig = () => path.join(os.homedir(), '.gemini', 'config', 'config.json');
+const agyEnablement = (name, enabled) => {
+  const config = readJson(agyConfig()) || {};
+  config.plugins = { ...config.plugins };
+  if (enabled === null) delete config.plugins[name];
+  else config.plugins[name] = { enabled };
+  fs.mkdirSync(path.dirname(agyConfig()), { recursive: true });
+  fs.writeFileSync(agyConfig(), JSON.stringify(config, null, 2));
+};
 
 if (tool === 'agy' && argv[0] === 'plugin') {
-  if (argv[1] === 'install') {
+  if (argv[1] === 'enable' || argv[1] === 'disable') {
+    agyEnablement(argv[2], argv[1] === 'enable');
+  } else if (argv[1] === 'install') {
     const name = readJson(path.join(argv[2], 'plugin.json'))?.name;
     if (!name) {
       process.stderr.write(`Error: missing plugin.json in ${argv[2]}\n`);
@@ -85,6 +97,7 @@ if (tool === 'agy' && argv[0] === 'plugin') {
     out(`  [ok]    ${name}`);
   } else if (argv[1] === 'uninstall') {
     fs.rmSync(path.join(agyPlugins(), argv[2]), { recursive: true, force: true });
+    if (readJson(agyConfig())) agyEnablement(argv[2], null);
     out(`Uninstalled plugin "${argv[2]}"`);
   }
   process.exit(0);
@@ -163,7 +176,8 @@ function discover() {
   }
   if (tool === 'agy') {
     const root = agyPlugins();
-    return (fs.existsSync(root) ? fs.readdirSync(root) : []).flatMap((name) => {
+    const disabled = (name) => readJson(agyConfig())?.plugins?.[name]?.enabled === false;
+    return (fs.existsSync(root) ? fs.readdirSync(root) : []).filter((name) => !disabled(name)).flatMap((name) => {
       const cwd = path.join(root, name);
       return Object.values(readJson(path.join(cwd, 'hooks.json')) || {}).flatMap((named) => Object.entries(named)
         .flatMap(([event, entries]) => entries.flatMap((entry) => (entry.hooks || [entry]).map((h) => ({ event, matcher: entry.hooks ? entry.matcher : undefined, command: h.command, cwd })))));
