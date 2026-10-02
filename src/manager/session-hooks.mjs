@@ -187,10 +187,9 @@ export function helpLists(text, flag) {
 
 const geminiHome = (env, platform) => path.join((platform === 'win32' ? env.USERPROFILE : env.HOME) || os.homedir(), '.gemini');
 
-/** Where `agy plugin install` may copy the plugin: the shared config folder, as Antigravity CLI 1.2 does, or the CLI's own folder its docs name. */
-export function antigravityPluginDirs(env = {}, platform = process.platform) {
-  const home = geminiHome(env, platform);
-  return [path.join(home, 'config', 'plugins', PLUGIN_NAME), path.join(home, 'antigravity-cli', 'plugins', PLUGIN_NAME)];
+/** Where `agy plugin install` copies the plugin and where Antigravity CLI loads it from. */
+export function antigravityPluginDir(env = {}, platform = process.platform) {
+  return path.join(geminiHome(env, platform), 'config', 'plugins', PLUGIN_NAME);
 }
 
 /** The shared Antigravity settings, where `agy plugin disable` turns a plugin off. */
@@ -214,7 +213,8 @@ function readOr(file, fallback) {
   try { return fs.readFileSync(file, 'utf8'); } catch { return fallback; }
 }
 
-function installedAt(pluginDir, bundle) {
+/** "current" when the installed copy matches the bundle, "stale" when it is an older one of ours, "other" or null. */
+export function antigravityInstalled(pluginDir, bundle) {
   const manifest = readOr(path.join(pluginDir, 'plugin.json'), null);
   if (manifest === null) return null;
   let description = null;
@@ -224,12 +224,6 @@ function installedAt(pluginDir, bundle) {
   try { names = fs.readdirSync(bundle); } catch { return 'stale'; }
   const same = names.every((name) => readOr(path.join(pluginDir, name), null) === readOr(path.join(bundle, name), ''));
   return same ? 'current' : 'stale';
-}
-
-/** "current" when an installed copy matches the bundle, "stale" when ours are older, "other" when only another plugin has the name, or null. */
-export function antigravityInstalled(pluginDirs, bundle) {
-  const states = pluginDirs.map((dir) => installedAt(dir, bundle));
-  return ['current', 'stale', 'other'].find((state) => states.includes(state)) ?? null;
 }
 
 const pending = (tool, when) => ({ state: 'pending', reason: `Agent Guild added its reporting hooks to this ${tool} session. They report once ${tool} ${when}.` });
@@ -318,7 +312,7 @@ export class SessionHooks {
   }
 
   _installed(provider) {
-    return antigravityInstalled(antigravityPluginDirs({ ...this.registry.env, ...provider.env }, this.registry.platform), this.bundles.antigravity);
+    return antigravityInstalled(antigravityPluginDir({ ...this.registry.env, ...provider.env }, this.registry.platform), this.bundles.antigravity);
   }
 
   _pluginEnabled(provider) {

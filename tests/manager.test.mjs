@@ -1193,6 +1193,27 @@ test('an Antigravity plugin turned off in Antigravity shows reporting off, and t
   assert.deepEqual(JSON.parse(fs.readFileSync(config, 'utf8')).plugins, {}, 'and Antigravity forgets its setting');
 });
 
+test('only the folder Antigravity CLI loads plugins from counts, and a copy elsewhere never decides what is removed', async (t) => {
+  const plugins = path.join(toolHomes.agy, '.gemini', 'config', 'plugins', 'agent-guild');
+  const elsewhere = path.join(toolHomes.agy, '.gemini', 'antigravity-cli', 'plugins', 'agent-guild');
+  t.after(() => {
+    fs.rmSync(plugins, { recursive: true, force: true });
+    fs.rmSync(path.join(toolHomes.agy, '.gemini', 'antigravity-cli', 'plugins'), { recursive: true, force: true });
+  });
+  const bundle = path.join(home, 'reporting', 'antigravity');
+  const google = async () => (await call('GET', '/providers')).body.providers.find((p) => p.id === 'google');
+  fs.cpSync(bundle, elsewhere, { recursive: true });
+  assert.equal((await google()).reportingEnabled, false, 'a current copy Antigravity does not load reports nothing');
+
+  writeFile(path.join(elsewhere, 'hooks.json'), '{}\n');
+  writeFile(path.join(plugins, 'plugin.json'), JSON.stringify({ name: 'agent-guild', description: 'Not ours' }));
+  const res = await call('POST', '/providers/google/reporting', { enabled: true });
+  assert.equal(res.status, 409, 'an older copy of ours elsewhere does not hide the other plugin');
+  assert.equal(res.body.error.code, 'plugin_conflict');
+  assert.equal((await call('POST', '/providers/google/reporting', { enabled: false })).status, 200);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(plugins, 'plugin.json'), 'utf8')).description, 'Not ours', 'the other plugin is never removed');
+});
+
 function watchShells(id) {
   const seen = [];
   let leaked = false;
