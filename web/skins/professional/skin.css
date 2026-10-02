@@ -21,7 +21,7 @@
   --focus: #2563eb;
   --shadow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 1px 3px rgba(16, 24, 40, 0.04);
   --radius: 8px;
-  --font-display: "Inter", "Segoe UI Variable Display", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-display: "Segoe UI Variable Display", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 
   --page-art: url("page-light.svg");
   --empty-art: url("ui/empty-state-light.svg");
@@ -103,13 +103,13 @@
   }
   .card-art::before { content: ""; position: absolute; inset: 0; background: var(--idle) center / cover no-repeat; }
 
-  .provider { padding-top: 124px; }
-  .provider .card-art { inset: 0 0 auto 0; height: 106px; border-bottom: 1px solid var(--border); }
+  .provider { padding-top: 90px; }
+  .provider .card-art { inset: 0 0 auto 0; height: 72px; border-bottom: 1px solid var(--border); }
   .provider.unavailable .card-art { background: var(--art-locked-bg); }
   .provider.unavailable .card-art::before { background-image: var(--locked); }
   .provider.unavailable::after {
     content: ""; position: absolute; inset: 0; pointer-events: none;
-    background: url("ui/lock.svg") right 12px top 12px / 28px 28px no-repeat;
+    background: url("ui/lock.svg") right 10px top 10px / 24px 24px no-repeat;
   }
 
   .session-card { min-height: 164px; padding-left: 108px; }
@@ -138,11 +138,12 @@
   body:has(#terminal-panel:not([hidden])) main .card-aura::before { animation-play-state: paused; }
 
   .level-badge {
-    position: absolute; left: 22px; bottom: 12px; z-index: 1; width: 48px; height: 22px;
-    display: grid; place-items: center; border-radius: 6px;
+    position: absolute; left: 12px; bottom: 12px; z-index: 1; width: 68px; height: 22px;
+    display: flex; align-items: center; justify-content: center; gap: 0.3em; border-radius: 6px;
     background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow);
     color: var(--text); font-size: 0.72rem; font-weight: 600; font-variant-numeric: tabular-nums;
   }
+  .level-badge::before { content: "Lv"; color: var(--muted); font-weight: 500; }
   .level-badge:empty { display: none; }
   .level-badge.level-up { animation: professional-pop 0.6s var(--ease); }
 
@@ -198,7 +199,7 @@
   @media (max-width: 640px) {
     .session-card { padding-left: 92px; }
     .session-card .card-art, .session-card .card-aura { width: 76px; }
-    .level-badge { left: 14px; }
+    .level-badge { left: 10px; width: 56px; }
   }
 
   @media (prefers-reduced-motion: reduce) {
