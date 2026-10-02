@@ -464,6 +464,12 @@ function selectedAccount(provider) {
 
 function selectAccount(provider, id) {
   state.accounts[provider.id] = id;
+  for (const card of document.querySelectorAll('.provider[data-id]')) {
+    if (card.dataset.id !== provider.id) continue;
+    renderAccounts(card, provider);
+    renderUsage(card, provider);
+    renderReportingSetup(card, provider);
+  }
   notifyViews();
   save(ACCOUNTS_KEY, JSON.stringify(state.accounts));
 }
@@ -543,6 +549,7 @@ function buildProvider(provider) {
     stateLine.classList.toggle('update-available', provider.updateAvailable || checkFailed || Boolean(installNote(provider)));
     stateLine.title = [provider.resolvedPath, provider.updateCommand && `Update: ${provider.updateCommand}`].filter(Boolean).join('\n');
     node.dataset.id = provider.id;
+    node.classList.toggle('busy', busyProviders.has(provider.id));
     node.classList.toggle('unavailable', !provider.available);
     node.setAttribute('aria-label', `${provider.vendor} ${provider.tool}, ${!provider.available ? 'not installed' : checkFailed ? 'version check failed' : 'ready'}`);
     const start = node.querySelector('.new');
@@ -1685,13 +1692,16 @@ function providerState(provider) {
   return parts.join(' · ');
 }
 
+const busyProviders = new Set();
 function setProviderBusy(id, busy) {
+  if (busy) busyProviders.add(id); else busyProviders.delete(id);
   for (const node of document.querySelectorAll('.provider[data-id], .session-card[data-provider]')) {
     if ((node.dataset.id === id && node.classList.contains('provider')) || node.dataset.provider === id) node.classList.toggle('busy', busy);
   }
 }
 
 async function installProvider(provider, card, { force = false } = {}) {
+  if (busyProviders.has(provider.id)) return;
   setProviderBusy(provider.id, true);
   try {
     const { session } = await api('POST', `/providers/${provider.id}/install`, { force });
@@ -1704,7 +1714,7 @@ async function installProvider(provider, card, { force = false } = {}) {
       const n = err.running;
       const what = `${n} ${provider.tool} session${n === 1 ? ' is' : 's are'} running`;
       if (confirm(`${what}. Updating ${provider.tool} while it runs can break ${n === 1 ? 'that session' : 'those sessions'}. Update anyway?`)) {
-        return installProvider(provider, card, { force: true });
+        return await installProvider(provider, card, { force: true });
       }
       return;
     }
@@ -1720,6 +1730,7 @@ async function installProvider(provider, card, { force = false } = {}) {
  * when that folder is gone, the working folder is used instead.
  */
 async function startSession(provider, card, { resume, cwd, account = selectedAccount(provider).id } = {}) {
+  if (busyProviders.has(provider.id)) return;
   const working = $('cwd').value.trim();
   save(CWD_KEY, working);
   setProviderBusy(provider.id, true);
@@ -2614,6 +2625,7 @@ function sessionLevel(s) {
 
 function updateCard(node, s) {
   node.dataset.provider = s.provider.id;
+  node.classList.toggle('busy', busyProviders.has(s.provider.id));
   paintProviderIcon(node.querySelector('.provider-icon'), s.provider);
   const level = sessionLevel(s);
   const badge = node.querySelector('.level-badge');

@@ -41,6 +41,14 @@ compiler and no WSL are needed.
 
 ## Features
 
+**An interactive Yard beside Cards.** Switch to **Yard** for a miniature 3D
+base with animated sessions and their reported helpers. Select a building
+or character to use the same provider and session controls; double-click
+a session to open its terminal. Guild, Orbital, Grove and Professional each
+have their own world. The roster stays usable if graphics are unavailable,
+and the view follows your reduced-motion preference. See the
+[Yard implementation and art guide](docs/yard/README.md).
+
 **Every major coding CLI, one place.** Claude Code, Codex CLI, Antigravity CLI,
 Grok Build and a plain shell each get a card. A tool that is missing shows
 **Install**, which runs the install in a session you can watch, or the

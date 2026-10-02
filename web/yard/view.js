@@ -54,12 +54,17 @@ export function initYard(controller) {
         candidate = new YardRenderer($('yard-stage'), $('yard-labels'), {
           select: next => select(next),
           open: id => controller.openSession(id),
-          error: () => failScene(),
+          error: () => { candidate?.dispose(); failScene(); },
         });
-        await candidate.setWorld(root.dataset.skin, root.dataset.theme);
-        if (disposed) { candidate.dispose(); return; }
+        // Appearance can change while the first world is loading.
+        let skin, theme;
+        do {
+          skin = root.dataset.skin; theme = root.dataset.theme;
+          await candidate.setWorld(skin, theme);
+        } while (!disposed && (skin !== root.dataset.skin || theme !== root.dataset.theme));
+        if (disposed || candidate.disposed) { candidate.dispose(); return; }
         renderer = candidate;
-        lastSkin = root.dataset.skin; lastTheme = root.dataset.theme;
+        lastSkin = skin; lastTheme = theme;
         renderer.setReducedMotion(motion.matches);
         renderer.update(snapshot.providers, snapshot.sessions);
         renderer.select(selected);
@@ -164,14 +169,22 @@ export function initYard(controller) {
     else if (event.key.startsWith('Arrow')) { renderer?.pan(event.key); event.preventDefault(); }
   });
   const visibility = () => { update(); renderer?.setActive(sceneVisible()); };
+  const motionChange = () => renderer?.setReducedMotion(motion.matches);
+  const pageHide = () => renderer?.setActive(false);
   const observer = new MutationObserver(visibility);
   observer.observe(root,{attributes:true,attributeFilter:['data-skin','data-theme']});
   observer.observe($('app'),{attributes:true,attributeFilter:['hidden']});
   observer.observe($('terminal-panel'),{attributes:true,attributeFilter:['hidden']});
   document.addEventListener('visibilitychange',visibility);
-  motion.addEventListener('change',() => renderer?.setReducedMotion(motion.matches));
-  window.addEventListener('pagehide',() => { renderer?.setActive(false); });
+  motion.addEventListener('change',motionChange);
+  window.addEventListener('pagehide',pageHide);
   window.addEventListener('pageshow',visibility);
   setView(view,{remember:false});
-  return { update, select, setView, dispose() { disposed=true; observer.disconnect(); renderer?.dispose(); document.removeEventListener('visibilitychange',visibility); } };
+  return { update, select, setView, dispose() {
+    disposed=true; observer.disconnect(); renderer?.dispose();
+    document.removeEventListener('visibilitychange',visibility);
+    motion.removeEventListener('change',motionChange);
+    window.removeEventListener('pagehide',pageHide);
+    window.removeEventListener('pageshow',visibility);
+  } };
 }

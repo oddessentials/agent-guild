@@ -66,8 +66,8 @@ export async function startFixture({port=0}={}) {
     {id:'history-1',title:'Explore the architecture',cwd:'E:\\projects\\example',updatedAt:now()},
     {id:'history-missing',title:'A moved project',cwd:'missing',updatedAt:now()}]};}};
   const modelStats={snapshot:async(sessions)=>({
-    retrievedAt:now(),stale:false,error:null,stats:[],pool:{},providers:Object.fromEntries(providers.filter(p=>p.id!=='shell').map(p=>[p.id,{featured:p.id+'/fixture',models:[p.id+'/fixture']}])),
-    models:Object.fromEntries(providers.filter(p=>p.id!=='shell').map(p=>[p.id+'/fixture',{id:p.id+'/fixture',name:'Preview model',context:200000,createdAt:'2026-09-01',price:{input:1,output:3},stats:{}}])),
+    retrievedAt:now(),stale:false,error:null,stats:[],pool:{tools:providers.filter(p=>p.id!=='shell').map(p=>p.tool)},providers:Object.fromEntries(providers.filter(p=>p.id!=='shell').map(p=>[p.id,{featured:p.id+'/fixture',models:[p.id+'/fixture']}])),
+    models:Object.fromEntries(providers.filter(p=>p.id!=='shell').map(p=>[p.id+'/fixture',{id:p.id+'/fixture',name:'Preview model',context:200000,input:['text'],reasoning:[],created:'2026-09-01',price:{input:1,output:3},stats:{}}])),
     sessions:Object.fromEntries(sessions.map(s=>[s.id,s.provider.id+'/fixture'])),
   })};
   const news=Object.assign(new EventEmitter(),{snapshot:()=>({refreshedAt:now(),refreshing:false,sources:[],items:[{id:'preview-news',title:'Welcome to your Guild Yard — every session has a place.',url:'https://example.com',source:'Preview',sourceId:'preview',category:'news',publishedAt:now()}]})});
@@ -79,7 +79,7 @@ export async function startFixture({port=0}={}) {
     async startSignIn(){calls.push(['github-sign-in']);githubState.signIn={status:'pending',userCode:'DEMO-ONLY',verificationUri:'https://example.com',expiresAt:new Date(Date.now()+600000).toISOString()};this.emit('updated');},
     cancelSignIn(){calls.push(['github-cancel']);githubState.signIn=null;this.emit('updated');},
     signOut(id){calls.push(['github-sign-out',id]);githubState.accounts=githubState.accounts.filter(a=>String(a.id)!==String(id));this.emit('updated');},
-    async repos(id,{parent}){calls.push(['repos',id,parent]);return {accountId:42,owners:[{login:'preview',type:'user'}],parent, fetchedAt:now(),truncated:false,repos:[{fullName:'preview/demo',owner:'preview',name:'demo',description:'An isolated preview repository',private:true,language:'JavaScript',pushedAt:now(),url:'https://example.com',target:(parent||'E:\\projects')+'\\demo',local:'absent'}]};},
+    async repos(id,{parent}){calls.push(['repos',id,parent]);return {accountId:42,owners:['preview'],parent, fetchedAt:now(),truncated:false,repos:[{fullName:'preview/demo',owner:'preview',name:'demo',description:'An isolated preview repository',private:true,language:'JavaScript',pushedAt:now(),url:'https://example.com',target:(parent||'E:\\projects')+'\\demo',local:'absent'}]};},
     async createRepo(id,body){calls.push(['create-repo',id,body]);return {fullName:body.owner+'/'+body.name,name:body.name,owner:body.owner,url:'https://example.com'};},
     async setupSsh(id){calls.push(['ssh',id]);return githubState.accounts[0];},
   });
