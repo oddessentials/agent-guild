@@ -8,7 +8,8 @@ import { resolveCommand, resolveAllCommands, buildSpawnSpec, quoteForCmd } from 
 import { mergePathLists, parsePathFromEnvOutput, weavePaths, parseRegValue, expandWindowsVars, readWindowsPath, trimPathExt } from '../src/manager/shell-env.mjs';
 import { mergeEnv, cleanResumeId, modelFromArgs, SessionManager } from '../src/manager/session-manager.mjs';
 import { loadProviders, ProviderRegistry } from '../src/manager/providers.mjs';
-import { detectShells } from '../src/manager/shells.mjs';
+import { detectShells, tmuxNewSession, tmuxSupported } from '../src/manager/shells.mjs';
+import { herdrAgentReports, herdrSocket } from '../src/manager/herdr.mjs';
 import { paths } from '../src/manager/config.mjs';
 import { classifyInstall, expandHome, homeRelative, helpDescribes, platformDependency, listInstallations, knownLaunchers, updateHelpAccepted, uninstallPlan } from '../src/manager/install-channels.mjs';
 import { runPlan, encodePlan, RUNNER } from '../src/manager/uninstall.mjs';
@@ -1960,7 +1961,7 @@ test('loadProviders survives a broken user file', () => {
   assert.equal(warnings.length, 1);
 });
 
-function fakeShells(files, { env = {}, platform = 'linux' } = {}) {
+function fakeShells(files, { env = {}, platform = 'linux', version = () => 'tmux 3.4\n' } = {}) {
   const has = (file) => files.includes(file);
   const p = platform === 'win32' ? path.win32 : path.posix;
   const dirs = platform === 'win32' ? ['C:\\Windows\\System32', 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0'] : ['/usr/local/bin', '/usr/bin', '/bin'];
@@ -1971,7 +1972,7 @@ function fakeShells(files, { env = {}, platform = 'linux' } = {}) {
     for (const dir of [...(env.EXTRA_PATH || []), ...dirs]) for (const name of names) if (has(p.join(dir, name))) return p.join(dir, name);
     return null;
   };
-  const found = detectShells(env, platform, { exists: has, resolve });
+  const found = detectShells(env, platform, { exists: has, resolve, version });
   return { ...found, summary: found.shells.map((s) => `${s.id}=${s.path}`) };
 }
 
@@ -1996,14 +1997,18 @@ test('the Shell card offers the installed shells and the login shell as the defa
   assert.deepEqual(fakeShells([], { env: { SHELL: '/opt/gone/zsh' } }), { shells: [], defaultId: null, summary: [] });
 });
 
-test('the Shell card offers tmux and herdr after the shells on macOS and Linux, never as the default', () => {
+test('the Shell card offers tmux 3.2 or later and herdr after the shells, never as the default', () => {
   const linux = fakeShells(['/usr/bin/bash', '/usr/bin/zsh', '/usr/bin/tmux', '/home/me/.local/bin/herdr'], { env: { SHELL: '/usr/bin/zsh', EXTRA_PATH: ['/home/me/.local/bin'] } });
   assert.deepEqual(linux.summary, ['bash=/usr/bin/bash', 'zsh=/usr/bin/zsh', 'tmux=/usr/bin/tmux', 'herdr=/home/me/.local/bin/herdr']);
   assert.equal(linux.defaultId, 'zsh');
   const [tmux, herdr] = linux.shells.slice(2);
-  assert.deepEqual([tmux.args, tmux.multiplexer], [['-u', 'new-session', '-s', '{name}'], { attach: 'tmux attach -t {name}' }]);
+  assert.deepEqual([tmux.args, tmux.multiplexer], [['-u', 'attach-session', '-t', '={name}'], { attach: 'tmux attach -t {name}' }]);
   assert.deepEqual([herdr.args, herdr.multiplexer], [[], { attach: 'herdr' }]);
   assert.ok(linux.shells.slice(0, 2).every((s) => !s.multiplexer));
+  for (const [version, offered] of [['tmux 2.7\n', false], ['tmux 3.1c\n', false], ['tmux 3.2a\n', true], ['tmux 3.4\n', true], ['tmux next-3.6\n', true], ['tmux master\n', true], ['', false]]) {
+    assert.equal(fakeShells(['/usr/bin/bash', '/usr/bin/tmux'], { version: () => version }).shells.some((s) => s.id === 'tmux'), offered, version.trim() || 'a tmux that does not run');
+  }
+  assert.equal(tmuxSupported('tmux 10.0\n'), true);
 
   const mac = fakeShells(['/bin/zsh', '/usr/local/bin/tmux'], { platform: 'darwin' });
   assert.deepEqual([mac.summary, mac.defaultId], [['zsh=/bin/zsh', 'tmux=/usr/local/bin/tmux'], 'zsh']);
@@ -2014,7 +2019,41 @@ test('the Shell card offers tmux and herdr after the shells on macOS and Linux, 
 
   const sys = 'C:\\Windows\\System32';
   const win = fakeShells([`${sys}\\cmd.exe`, `${sys}\\WindowsPowerShell\\v1.0\\powershell.exe`, `${sys}\\tmux.exe`, `${sys}\\herdr.exe`], { platform: 'win32' });
-  assert.equal(win.shells.some((s) => s.multiplexer || ['tmux', 'herdr'].includes(s.id)), false, 'none on Windows');
+  assert.deepEqual([win.shells.map((s) => s.id), win.defaultId], [['powershell', 'cmd', 'herdr'], 'powershell'], 'herdr on Windows, never tmux');
+  assert.deepEqual(win.shells[2].multiplexer, { attach: 'herdr' });
+});
+
+test('a tmux card\'s own session is made from commands on stdin, every value quoted', () => {
+  const commands = tmuxNewSession({ name: 'guild-abc123', cwd: "/work/it's here", cols: 100, rows: 30, env: { AGENT_GUILD_REPORT_TOKEN: 'tok', PATH: '/a b:/c' }, args: ['htop', '-d', '5'] });
+  assert.equal(commands, "new-session -d -s 'guild-abc123' -x 100 -y 30 -c '/work/it'\\''s here' -e 'AGENT_GUILD_REPORT_TOKEN=tok' -e 'PATH=/a b:/c' 'htop' '-d' '5'\n");
+  assert.throws(() => tmuxNewSession({ name: 'guild-abc123', cwd: '/work/a\nb', cols: 1, rows: 1, env: {} }), { code: 'bad_cwd', status: 400 });
+});
+
+test('a herdr card shows herdr\'s agents, one per pane, from the herdr session its client attaches to', () => {
+  assert.deepEqual(herdrAgentReports([
+    { agent: 'claude', agent_status: 'working', pane_id: 'w1:p1', cwd: '/work/a' },
+    { agent: 'codex', agent_status: 'blocked', pane_id: 'w1:p2' },
+    { agent: 'pi', agent_status: 'done', pane_id: 'w2:p1' },
+    { agent: 'grok', agent_status: 'unknown', pane_id: 'w2:p2' },
+    { agent_status: 'working', pane_id: 'w3:p1' },
+    null,
+  ]), [
+    { agentId: 'herdr:w1:p1', name: 'claude', kind: 'agent', status: 'working', detail: '/work/a' },
+    { agentId: 'herdr:w1:p2', name: 'codex', kind: 'agent', status: 'waiting', detail: '' },
+    { agentId: 'herdr:w2:p1', name: 'pi', kind: 'agent', status: 'idle', detail: '' },
+    { agentId: 'herdr:w2:p2', name: 'grok', kind: 'agent', status: 'idle', detail: '' },
+  ]);
+  assert.deepEqual(herdrAgentReports(undefined), []);
+  const listing = { sessions: [
+    { default: true, name: 'default', running: true, socket_path: '/home/me/.config/herdr/herdr.sock' },
+    { default: false, name: 'work', running: true, socket_path: '/home/me/.config/herdr/sessions/work/herdr.sock' },
+    { default: false, name: 'later', running: false, socket_path: '/home/me/.config/herdr/sessions/later/herdr.sock' },
+  ] };
+  assert.equal(herdrSocket(listing, {}, 'linux'), '/home/me/.config/herdr/herdr.sock');
+  assert.equal(herdrSocket(listing, { HERDR_SESSION: 'work' }, 'darwin'), '/home/me/.config/herdr/sessions/work/herdr.sock');
+  assert.equal(herdrSocket(listing, { HERDR_SESSION: 'later' }, 'linux'), null, 'a server that is not running yet');
+  const windows = { sessions: [{ default: true, name: 'default', running: true, socket_path: 'C:\\Users\\me\\AppData\\Roaming\\herdr\\herdr.sock' }] };
+  assert.equal(herdrSocket(windows, {}, 'win32'), '\\\\.\\pipe\\C:\\Users\\me\\AppData\\Roaming\\herdr\\herdr.sock', 'herdr\'s pipe is named after its socket path');
 });
 
 test('the Shell card defaults to PowerShell 7 on Windows and finds Git Bash', () => {
@@ -2361,29 +2400,41 @@ test('a Shell session is named after its shell and gets its environment', async 
   await assert.rejects(manager.create({ providerId: 'shell', shell: 7, cwd: os.tmpdir() }), { code: 'bad_shell', status: 400 });
 });
 
-test('a Shell session in a multiplexer gets a name of its own and none of Agent Guild\'s identity', async (t) => {
+test('a tmux card gets a tmux session of its own with its identity, and a client without it', { skip: process.platform === 'win32' }, async (t) => {
+  // A stand-in tmux that records how it was run and what it read.
+  const dir = tempDir();
+  const log = path.join(dir, 'tmux');
+  const fakeTmux = path.join(dir, 'fake-tmux');
+  fs.writeFileSync(fakeTmux, `#!/bin/sh\nprintf '%s\\n' "$*" > "${log}.args"\ncat > "${log}.stdin"\nprintf '%s\\n' "\${AGENT_GUILD_REPORT_TOKEN:-none}" > "${log}.token"\n`, { mode: 0o755 });
   const bash = { id: 'bash', label: 'bash', path: '/bin/bash', args: [], env: {} };
-  const tmux = { id: 'tmux', label: 'tmux', path: '/usr/bin/tmux', args: ['-u', 'new-session', '-s', '{name}'], env: {}, multiplexer: { attach: 'tmux attach -t {name}' } };
+  const tmux = { id: 'tmux', label: 'tmux', path: fakeTmux, args: ['-u', 'attach-session', '-t', '={name}'], env: {}, multiplexer: { attach: 'tmux attach -t {name}' } };
   const registry = {
-    env: {}, platform: 'linux',
-    get: (id) => ({ id, tool: 'Shell', args: ['--own'], accounts: [{ id: 'default' }] }),
+    env: {}, platform: process.platform,
+    get: (id) => ({ id, tool: 'Shell', args: ['--own'], resumeArgs: [], accounts: [{ id: 'default' }] }),
     account: () => ({ id: 'default', label: 'Default' }),
     shellFor: (provider, id) => [bash, tmux].find((s) => s.id === (id ?? 'bash')),
     shellsFor: () => ({ shells: [bash, tmux], defaultId: 'bash' }),
     spawnSpec: ProviderRegistry.prototype.spawnSpec,
   };
-  const manager = new SessionManager({ registry, baseEnv: {}, getApiUrl: () => '' });
-  t.mock.method(manager, '_spawn', (options) => ({ ...options, setModel() {} }));
-  const first = await manager.create({ providerId: 'shell', shell: 'tmux', cwd: os.tmpdir() });
-  const name = first.spawnSpec.args[3];
+  const manager = new SessionManager({ registry, baseEnv: { PATH: process.env.PATH }, getApiUrl: () => 'http://127.0.0.1:1' });
+  t.mock.method(manager, '_spawn', (options) => ({ ...options, setModel() {}, on() {}, once() {} }));
+  const session = await manager.create({ providerId: 'shell', shell: 'tmux', cwd: dir, cols: 90, rows: 25, args: ['htop'] });
+  const name = session.spawnSpec.args[3].slice(1);
   assert.match(name, /^guild-[0-9a-f]{6}$/);
-  assert.deepEqual(first.spawnSpec, { file: '/usr/bin/tmux', args: ['-u', 'new-session', '-s', name] }, 'the provider\'s own args are for its default shell only');
-  assert.deepEqual([first.name, first.multiplexer], ['Shell · tmux', { label: 'tmux', attach: `tmux attach -t ${name}` }]);
-  assert.deepEqual(['AGENT_GUILD_REPORT_TOKEN', 'AGENT_GUILD_SESSION_ID', 'PATH'].map(first.dropEnv), [true, true, false]);
-  const second = await manager.create({ providerId: 'shell', shell: 'tmux', cwd: os.tmpdir() });
-  assert.notEqual(second.spawnSpec.args[3], name, 'every session gets its own name');
-  assert.deepEqual(tmux.args, ['-u', 'new-session', '-s', '{name}'], 'the detected recipe stays as it was');
-  const plain = await manager.create({ providerId: 'shell', cwd: os.tmpdir() });
+  assert.deepEqual(session.spawnSpec, { file: fakeTmux, args: ['-u', 'attach-session', '-t', `=${name}`] }, 'the card\'s client attaches; the provider\'s own args are for its default shell');
+  assert.deepEqual([session.name, session.multiplexer], ['Shell · tmux', { label: 'tmux', attach: `tmux attach -t ${name}`, reattachable: false }]);
+  assert.equal(fs.readFileSync(`${log}.args`, 'utf8'), '-u start-server ; source-file -\n');
+  const made = fs.readFileSync(`${log}.stdin`, 'utf8');
+  assert.match(made, new RegExp(`^new-session -d -s '${name}' -x 90 -y 25 -c '${dir.replaceAll('\\', '\\\\')}' `));
+  assert.ok(made.includes(` -e 'AGENT_GUILD_SESSION_ID=${session.id}' `) && made.includes(` -e 'AGENT_GUILD_REPORT_TOKEN=${session.reportToken}' `), 'the card\'s identity is the tmux session\'s own');
+  assert.match(made, / -e 'PATH=[^']+' /, 'PATH reaches it too, so agent-guild-report is found as in a shell');
+  assert.ok(made.endsWith(" 'htop'\n"), 'request args are the command it runs');
+  assert.equal(fs.readFileSync(`${log}.token`, 'utf8'), 'none\n', 'the tmux server it may start never gets the token');
+  assert.deepEqual(['AGENT_GUILD_REPORT_TOKEN', 'AGENT_GUILD_SESSION_ID', 'PATH'].map(session.dropEnv), [true, true, false]);
+  const second = await manager.create({ providerId: 'shell', shell: 'tmux', cwd: dir });
+  assert.notEqual(second.spawnSpec.args[3], session.spawnSpec.args[3], 'every card gets its own tmux session');
+  assert.deepEqual(tmux.args, ['-u', 'attach-session', '-t', '={name}'], 'the detected recipe stays as it was');
+  const plain = await manager.create({ providerId: 'shell', cwd: dir });
   assert.deepEqual([plain.spawnSpec, plain.multiplexer, plain.dropEnv], [{ file: '/bin/bash', args: ['--own'] }, undefined, undefined]);
 });
 
