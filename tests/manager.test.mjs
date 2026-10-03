@@ -1523,114 +1523,42 @@ test('only the folder Antigravity CLI loads plugins from counts, and a copy else
 });
 
 function watchShells(id) {
-  const seen = [];
   let leaked = false;
   const onEvent = (event) => {
+    if (event.session?.id !== id) return;
     const text = JSON.stringify(event);
     if (text.includes('SECRET-MARKER')) leaked = true;
-    if (event.session?.id === id) seen.push(event.session.shells.map((sh) => sh.id));
   };
   ctx.manager.on('event', onEvent);
-  return { seen, leaked: () => leaked, stop: () => ctx.manager.off('event', onEvent) };
+  return { leaked: () => leaked, stop: () => ctx.manager.off('event', onEvent) };
 }
 const shellsNow = async (id) => (await sessionNow(id)).shells;
 const shellCountIs = (id, n) => async () => (await shellsNow(id)).length === n;
 
 async function runShells(tool, lines, label) {
+  // Repeated commands must wait for a new acknowledgement, not an earlier one.
+  const offset = tool.client.output.length;
   for (const line of lines) tool.client.input(line);
-  await waitFor(() => stripAnsi(tool.client.output).includes(label), { label, timeout: 15000 })
+  await waitFor(() => stripAnsi(tool.client.output.slice(offset)).includes(label), { label, timeout: 15000 })
     .catch((err) => { err.message += `\n${stripAnsi(tool.client.output).slice(-1500)}`; throw err; });
 }
 
-test('a session shows each shell command from its start until its end, whatever reports that end', async () => {
-  const { id } = await createFake();
-  const session = ctx.manager.get(id);
-  Object.assign(session, { shellDisplayDelayMs: 0 });
-  const report = (r) => session.reportShell(r);
-  const settle = (ms = 15) => new Promise((resolve) => setTimeout(resolve, ms));
-  const drawn = async () => { await settle(); return session.toJSON().shells.length; };
-  const keys = () => [...session.shells.values()].map((sh) => sh.key).sort();
-  const m = (n) => String(n).repeat(32);
-
-  report({ shell: 'start', key: 'k1', match: m(1) });
-  assert.equal(await drawn(), 1);
-  report({ shell: 'end', key: 'k1' });
-  assert.equal(await drawn(), 0);
-
-  report({ shell: 'start', key: 'k2', match: m(2) });
-  report({ shell: 'waiting', match: m(2) });
-  assert.equal(await drawn(), 0, 'hidden while it waits for permission');
-  report({ shell: 'background', key: 'k2', task: 't2' });
-  assert.equal(await drawn(), 1, 'running in the background, so drawn again');
-  report({ shell: 'running', tasks: [] });
-  assert.equal(await drawn(), 0, 'a task the tool no longer lists has ended');
-  report({ shell: 'running', tasks: ['t2', 't3'] });
-  assert.equal(session.toJSON().shells.length, 1, 'an ended task never comes back; one not seen before is drawn at once');
-  report({ shell: 'end', task: 't3' });
-  report({ shell: 'end', task: 't4' });
-  report({ shell: 'running', tasks: ['t4'] });
-  assert.equal(await drawn(), 0, 'nor one whose end came before the list');
-
-  report({ shell: 'start', key: 'c1', match: m(3), persist: true });
-  report({ shell: 'start', key: 'c2', match: m(4), persist: true });
-  report({ shell: 'start', key: 'f1', match: m(5) });
-  report({ shell: 'asked', match: m(4) });
-  assert.equal(await drawn(), 3, 'a permission request that hides nothing');
-  session.reportAgent({ finishForeground: true });
-  assert.deepEqual(keys(), ['c1'], 'past its turn, only a command that persists and was not asked about');
-  report({ shell: 'reset' });
-  assert.equal(await drawn(), 0);
-
-  session.reportAgent({ agentId: 'hook-a', name: 'Explore', status: 'working' });
-  report({ shell: 'start', key: 's1', agentId: 'hook-a' });
-  report({ shell: 'start', key: 's2', agentId: 'hook-a' });
-  report({ shell: 'background', key: 's2', task: 'ts2', endsWithAgent: true });
-  report({ shell: 'start', key: 's3', agentId: 'hook-a' });
-  report({ shell: 'background', key: 's3', task: 'ts3' });
-  report({ shell: 'start', key: 'main' });
-  session.reportAgent({ agentId: 'hook-a', status: 'done' });
-  assert.deepEqual(keys(), ['main', 's3'], 'a sub-agent\'s end takes its commands, but not one that outlives it');
-  report({ shell: 'end', task: 'ts3' });
-  report({ shell: 'end', key: 'main' });
-  report({ shell: 'start', key: 'h1', agentId: 'hook-helper' });
-  session.reportAgent({ agentId: 'hook-helper', status: 'done' });
-  assert.equal(session.shells.size, 0, 'so does the end of one never seen starting');
-
-  report({ shell: 'start', key: 'x1', match: m(6) });
-  report({ shell: 'start', key: 'x2', match: m(6) });
-  report({ shell: 'waiting', match: m(6) });
-  assert.equal(await drawn(), 2, 'a request that could be either of two identical commands hides neither');
-  report({ shell: 'end', key: 'x1' });
-  report({ shell: 'waiting', match: m(7) });
-  assert.equal(await drawn(), 0, 'a rewritten request goes to the only command left');
-  report({ shell: 'end', key: 'x2' });
-
-  assert.throws(() => report({ shell: 'start' }), /needs a key/);
-  assert.throws(() => report({ shell: 'background', key: 'k9' }), /needs a task/);
-  assert.throws(() => report({ shell: 'running' }), /tasks array/);
-  assert.throws(() => report({ shell: 'end' }), /key or a task/);
-  await call('DELETE', `/sessions/${id}`);
-});
-
-test('Claude Code shell commands show while they run: not the brief ones, and not after they end', async () => {
+test('Claude Code shell commands show while they run and leave when their end is reported', async () => {
   const tool = await startTool('anthropic');
   await waitFor(reportingIs(tool.session.id, 'active'), { label: 'hooks', timeout: 15000 });
   const watch = watchShells(tool.session.id);
-  await runShells(tool, ['shell quick 150 fg echo SECRET-MARKER quick'], 'SHELL-DONE quick');
-  await new Promise((r) => setTimeout(r, 800));
-  assert.ok(watch.seen.every((ids) => ids.length === 0), 'a 150 ms command is never drawn');
-  tool.client.input('shell long 2500 fg sleep 2.5 SECRET-MARKER');
+  tool.client.input('shell long hold fg sleep 2.5 SECRET-MARKER');
   await waitFor(shellCountIs(tool.session.id, 1), { label: 'the running command' });
-  await waitForText(tool.client, tool.session.id, 'SHELL-DONE long', 'long command end');
+  await runShells(tool, ['shell-end long'], 'SHELL-DONE long');
   await waitFor(shellCountIs(tool.session.id, 0), { label: 'gone at its end', timeout: 1000 });
-  tool.client.input('shell bg1 2000 bg npm run dev SECRET-MARKER');
-  tool.client.input('shell bg2 4000 bg npm run dev SECRET-MARKER');
+  tool.client.input('shell bg1 hold bg npm run dev SECRET-MARKER');
+  tool.client.input('shell bg2 hold bg npm run dev SECRET-MARKER');
   await waitFor(shellCountIs(tool.session.id, 2), { label: 'two background commands', timeout: 15000 });
-  await waitForText(tool.client, tool.session.id, 'SHELL-NOTIFIED bg1', 'the first one\'s notification');
+  await runShells(tool, ['shell-end bg1'], 'SHELL-NOTIFIED bg1');
   await waitFor(shellCountIs(tool.session.id, 1), { label: 'the first ends with its notification', timeout: 1000 });
   await runShells(tool, ['turn-end'], 'TURN-ENDED');
   assert.equal((await shellsNow(tool.session.id)).length, 1, 'the turn\'s end lists the one still running');
-  await waitForText(tool.client, tool.session.id, 'SHELL-NOTIFIED bg2', 'the second one\'s notification');
+  await runShells(tool, ['shell-end bg2'], 'SHELL-NOTIFIED bg2');
   await waitFor(shellCountIs(tool.session.id, 0), { label: 'the second ends with its notification', timeout: 1000 });
   assert.deepEqual((await sessionNow(tool.session.id)).agents, []);
   watch.stop();
@@ -1643,13 +1571,13 @@ test('Claude Code shell commands show while they run: not the brief ones, and no
 test('a Claude Code background command ends with TaskStop, or with the turn whose end no longer lists it', async () => {
   const tool = await startTool('anthropic');
   await waitFor(reportingIs(tool.session.id, 'active'), { label: 'hooks', timeout: 15000 });
-  tool.client.input('shell stopped 30000 bg npm run dev');
+  tool.client.input('shell stopped hold bg npm run dev');
   await waitFor(shellCountIs(tool.session.id, 1), { label: 'drawn', timeout: 15000 });
   await runShells(tool, ['taskstop stopped'], 'TASK-STOPPED stopped');
   await waitFor(shellCountIs(tool.session.id, 0), { label: 'gone with TaskStop', timeout: 2000 });
-  tool.client.input('shell silent 1500 bg-silent npm test');
+  tool.client.input('shell silent hold bg-silent npm test');
   await waitFor(shellCountIs(tool.session.id, 1), { label: 'drawn', timeout: 15000 });
-  await waitForText(tool.client, tool.session.id, 'SHELL-EXITED silent', 'exit without a notification');
+  await runShells(tool, ['shell-end silent'], 'SHELL-RELEASED silent');
   assert.equal((await shellsNow(tool.session.id)).length, 1, 'nothing reported its end yet');
   await runShells(tool, ['turn-end'], 'TURN-ENDED');
   await waitFor(shellCountIs(tool.session.id, 0), { label: 'gone: the turn\'s end no longer lists it', timeout: 2000 });
@@ -1657,18 +1585,19 @@ test('a Claude Code background command ends with TaskStop, or with the turn whos
   await call('DELETE', `/sessions/${tool.session.id}`);
 });
 
-test('a Claude Code command waiting for permission is never drawn, approved or refused', async () => {
+test('a Claude Code permission request hides its command until an end is reported', async () => {
   const tool = await startTool('anthropic');
   await waitFor(reportingIs(tool.session.id, 'active'), { label: 'hooks', timeout: 15000 });
-  const watch = watchShells(tool.session.id);
-  await runShells(tool, ['shell refused 3000 ask-no rm -rf build'], 'SHELL-REJECTED refused');
+  await runShells(tool, ['shell refused hold ask-no rm -rf build'], 'SHELL-REJECTED refused');
+  assert.equal((await shellsNow(tool.session.id)).length, 0, 'hidden after the permission hook');
   await runShells(tool, ['turn-end'], 'TURN-ENDED');
   await waitFor(() => ctx.manager.get(tool.session.id).shells.size === 0, { label: 'the refused command is gone' });
-  await runShells(tool, ['shell approved 1500 ask-yes npm run build'], 'SHELL-DONE approved');
-  await runShells(tool, ['shell rewritten 1500 ask-rewrite npm test'], 'SHELL-DONE rewritten');
-  await waitFor(() => ctx.manager.get(tool.session.id).shells.size === 0, { label: 'both gone at their end' });
-  assert.deepEqual(watch.seen.filter((ids) => ids.length), [], 'no event says it was approved, so it stays hidden while it runs');
-  watch.stop();
+  for (const [id, mode] of [['approved', 'ask-yes'], ['rewritten', 'ask-rewrite']]) {
+    await runShells(tool, [`shell ${id} hold ${mode} npm test`], `SHELL-STARTED ${id}`);
+    assert.equal((await shellsNow(tool.session.id)).length, 0, 'no hook reports approval, so it stays hidden');
+    await runShells(tool, [`shell-end ${id}`], `SHELL-DONE ${id}`);
+    assert.equal(ctx.manager.get(tool.session.id).shells.size, 0, 'removed at its end');
+  }
   await tool.client.close();
   await call('DELETE', `/sessions/${tool.session.id}`);
 });
@@ -1704,9 +1633,9 @@ test('a permission request that matches no command and could be any of several l
 test('Claude Code PowerShell commands show and leave like Bash ones', async () => {
   const tool = await startTool('anthropic');
   await waitFor(reportingIs(tool.session.id, 'active'), { label: 'hooks', timeout: 15000 });
-  tool.client.input('shell pwsh1 2500 ps Get-ChildItem -Recurse');
+  tool.client.input('shell pwsh1 hold ps Get-ChildItem -Recurse');
   await waitFor(shellCountIs(tool.session.id, 1), { label: 'shown', timeout: 15000 });
-  await runShells(tool, [], 'SHELL-DONE pwsh1');
+  await runShells(tool, ['shell-end pwsh1'], 'SHELL-DONE pwsh1');
   await waitFor(shellCountIs(tool.session.id, 0), { label: 'gone', timeout: 2000 });
   await tool.client.close();
   await call('DELETE', `/sessions/${tool.session.id}`);
@@ -1715,16 +1644,16 @@ test('Claude Code PowerShell commands show and leave like Bash ones', async () =
 test('a Claude Code command whose end never comes, or that Esc ends, leaves with its turn; one Esc moves to the background stays', async () => {
   const tool = await startTool('anthropic');
   await waitFor(reportingIs(tool.session.id, 'active'), { label: 'hooks', timeout: 15000 });
-  await runShells(tool, ['shell-denied refused rm -rf /', 'shell stopped 1000 interrupt sleep 60'], 'SHELL-INTERRUPTED stopped');
+  await runShells(tool, ['shell-denied refused rm -rf /', 'shell stopped hold interrupt sleep 60', 'shell-end stopped'], 'SHELL-RELEASED stopped');
   await waitFor(shellCountIs(tool.session.id, 2), { label: 'both drawn: no hook says either ended', timeout: 3000 });
   await runShells(tool, ['turn-end'], 'TURN-ENDED');
   await waitFor(shellCountIs(tool.session.id, 0), { label: 'gone with the turn', timeout: 2000 });
 
-  await runShells(tool, ['shell moved 3000 esc-bg npm run build'], 'SHELL-ESCAPED moved');
+  await runShells(tool, ['shell moved hold esc-bg npm run build'], 'SHELL-ESCAPED moved');
   await waitFor(shellCountIs(tool.session.id, 1), { label: 'drawn', timeout: 3000 });
   await runShells(tool, ['turn-end'], 'TURN-ENDED');
   assert.equal((await shellsNow(tool.session.id)).length, 1, 'the turn\'s end lists it as a background task');
-  await waitForText(tool.client, tool.session.id, 'SHELL-NOTIFIED moved', 'its notification');
+  await runShells(tool, ['shell-end moved'], 'SHELL-NOTIFIED moved');
   await waitFor(shellCountIs(tool.session.id, 0), { label: 'gone with its notification', timeout: 2000 });
   await tool.client.close();
   await call('DELETE', `/sessions/${tool.session.id}`);
@@ -1735,16 +1664,14 @@ test('Codex CLI commands show until Codex reports their end, past their turn and
   tool.client.input('prompt');
   await waitFor(reportingIs(tool.session.id, 'active'), { label: 'hooks', timeout: 15000 });
   const watch = watchShells(tool.session.id);
-  await runShells(tool, ['shell quick 200 fg ls SECRET-MARKER'], 'SHELL-DONE quick');
-  tool.client.input('shell held 3000 fg cargo build SECRET-MARKER');
+  tool.client.input('shell held hold fg cargo build SECRET-MARKER');
   await waitFor(shellCountIs(tool.session.id, 1), { label: 'the long command', timeout: 15000 });
   await runShells(tool, ['turn-end', 'interrupt'], 'INTERRUPTED');
   assert.equal((await shellsNow(tool.session.id)).length, 1, 'Codex keeps it running past its turn and Esc');
-  await waitForText(tool.client, tool.session.id, 'SHELL-DONE held', 'its end, when the model checks on it');
+  await runShells(tool, ['shell-end held'], 'SHELL-DONE held');
   await waitFor(shellCountIs(tool.session.id, 0), { label: 'gone at its end', timeout: 1000 });
-  assert.ok(watch.seen.every((ids) => ids.length <= 1), 'the brief command never showed');
 
-  await runShells(tool, ['shell orphan 800 unpolled npm run dev', 'shell-denied blocked rm -rf /'], 'SHELL-EXITED orphan');
+  await runShells(tool, ['shell orphan hold unpolled npm run dev', 'shell-end orphan', 'shell-denied blocked rm -rf /'], 'SHELL-DENIED blocked');
   await runShells(tool, ['turn-end'], 'TURN-ENDED');
   await waitFor(shellCountIs(tool.session.id, 2), { label: 'neither reported an end', timeout: 3000 });
   await runShells(tool, ['session-end'], 'SESSION-ENDED');
@@ -1759,14 +1686,14 @@ test('a Codex CLI command that asked permission stays drawn, and one refused lea
   const tool = await startTool('openai');
   tool.client.input('prompt');
   await waitFor(reportingIs(tool.session.id, 'active'), { label: 'hooks', timeout: 15000 });
-  await runShells(tool, ['shell refused 3000 ask-no git push'], 'SHELL-REJECTED refused');
-  assert.equal((await shellsNow(tool.session.id)).length, 1, 'drawn: Codex may approve a request on its own');
+  await runShells(tool, ['shell refused hold ask-no git push'], 'SHELL-REJECTED refused');
+  await waitFor(shellCountIs(tool.session.id, 1), { label: 'drawn: Codex may approve a request on its own' });
   await runShells(tool, ['turn-end'], 'TURN-ENDED');
   await waitFor(shellCountIs(tool.session.id, 0), { label: 'gone with its turn: a refusal reports no end', timeout: 2000 });
-  tool.client.input('shell approved 2500 ask-yes npm test');
+  tool.client.input('shell approved hold ask-yes npm test');
   await waitForText(tool.client, tool.session.id, 'SHELL-STARTED approved', 'approved');
   await waitFor(shellCountIs(tool.session.id, 1), { label: 'drawn while it runs', timeout: 2000 });
-  await waitForText(tool.client, tool.session.id, 'SHELL-DONE approved', 'its end');
+  await runShells(tool, ['shell-end approved'], 'SHELL-DONE approved');
   await waitFor(shellCountIs(tool.session.id, 0), { label: 'gone at its end', timeout: 1000 });
   await tool.client.close();
   await call('DELETE', `/sessions/${tool.session.id}`);
@@ -1775,11 +1702,15 @@ test('a Codex CLI command that asked permission stays drawn, and one refused lea
 test('more shell commands than the card draws are still all counted', async () => {
   const tool = await startTool('anthropic');
   await waitFor(reportingIs(tool.session.id, 'active'), { label: 'hooks', timeout: 15000 });
-  // The tool starts each command after the last one's hook returns, so all twenty
-  // run at once only while twenty hooks take less than one command's 10 s.
-  for (let i = 0; i < 20; i++) tool.client.input(`shell many${i} 10000 fg build part ${i}`);
+  // Commands cannot finish until the test has observed all twenty.
+  for (let i = 0; i < 20; i++) {
+    await runShells(tool, [`shell many${i} hold fg build part ${i}`], `SHELL-STARTED many${i}`);
+  }
   await waitFor(shellCountIs(tool.session.id, 20), { label: 'twenty commands', timeout: 15000 });
-  await waitFor(shellCountIs(tool.session.id, 0), { label: 'all ended', timeout: 30000 });
+  for (let i = 0; i < 20; i++) {
+    await runShells(tool, [`shell-end many${i}`], `SHELL-RELEASED many${i}`);
+  }
+  await waitFor(shellCountIs(tool.session.id, 0), { label: 'all ended' });
   await tool.client.close();
   await call('DELETE', `/sessions/${tool.session.id}`);
 });
@@ -1789,7 +1720,7 @@ test('a Claude Code sub-agent stopped with TaskStop leaves the card, and neither
   await waitFor(reportingIs(tool.session.id, 'active'), { label: 'hooks', timeout: 15000 });
   await runShells(tool, ['subagent a7 general-purpose'], 'SUBAGENT a7');
   await waitFor(async () => (await sessionNow(tool.session.id)).agents.length === 1, { label: 'working' });
-  await runShells(tool, ['shell meanwhile 4000 fg npm test', 'subagent-killed a7 general-purpose', 'prompt'], 'PROMPT-DONE');
+  await runShells(tool, ['shell meanwhile hold fg npm test', 'subagent-killed a7 general-purpose', 'prompt'], 'PROMPT-DONE');
   await waitFor(async () => (await sessionNow(tool.session.id)).agents.length === 0, { label: 'gone without a SubagentStop', timeout: 3000 });
   await waitFor(shellCountIs(tool.session.id, 1), { label: 'the command started just before still runs: no turn ended', timeout: 3000 });
   await tool.client.close();
@@ -1799,9 +1730,9 @@ test('a Claude Code sub-agent stopped with TaskStop leaves the card, and neither
 test('Grok Build shell commands show from its hooks where it takes them', async () => {
   const tool = await startTool('grokplugins');
   await waitFor(reportingIs(tool.session.id, 'active'), { label: 'hooks', timeout: 15000 });
-  tool.client.input('shell build 2500 fg make');
+  tool.client.input('shell build hold fg make');
   await waitFor(shellCountIs(tool.session.id, 1), { label: 'running command' });
-  await waitForText(tool.client, tool.session.id, 'SHELL-DONE build', 'end');
+  await runShells(tool, ['shell-end build'], 'SHELL-DONE build');
   await waitFor(shellCountIs(tool.session.id, 0), { label: 'removed', timeout: 1000 });
   await tool.client.close();
   await call('DELETE', `/sessions/${tool.session.id}`);

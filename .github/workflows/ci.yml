@@ -37,7 +37,9 @@ jobs:
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y tmux
       - run: npm test
-        timeout-minutes: 5
+        # Real PTYs and hook processes vary with runner load. Windows already
+        # takes nearly five minutes without any failed assertions.
+        timeout-minutes: 10
 
   plan:
     name: Release plan
