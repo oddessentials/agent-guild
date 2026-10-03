@@ -306,8 +306,9 @@ export function createManagerServer({
       return sendJson(res, 201, { session: session.toJSON() });
     }
     if (route === '/shutdown' && method === 'POST') {
-      // Stopping the manager ends every session, so a client must say
-      // `force` while any is running. The same guard serves every front end.
+      // Stopping the manager ends every session but the tmux and herdr ones,
+      // so a client must say `force` while any of those is running. The same
+      // guard serves every front end.
       const body = await readJsonBody(req);
       const running = manager.runningCount();
       if (running > 0 && body.force !== true) {
@@ -328,7 +329,7 @@ export function createManagerServer({
       return undefined;
     }
 
-    const sessionMatch = route.match(/^\/sessions\/([a-f0-9]+)(\/stop)?$/);
+    const sessionMatch = route.match(/^\/sessions\/([a-f0-9]+)(\/stop|\/reattach)?$/);
     if (sessionMatch) {
       const [, id, action] = sessionMatch;
       if (!action && method === 'GET') return sendJson(res, 200, { session: manager.get(id).toJSON() });
@@ -347,6 +348,9 @@ export function createManagerServer({
       }
       if (action === '/stop' && method === 'POST') {
         return sendJson(res, 200, { session: manager.stop(id).toJSON() });
+      }
+      if (action === '/reattach' && method === 'POST') {
+        return sendJson(res, 200, { session: (await manager.reattach(id)).toJSON() });
       }
     }
     throw new HttpError(404, `no route for ${method} ${url.pathname}`, 'not_found');

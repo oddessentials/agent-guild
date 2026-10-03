@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
+import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
 import { execFile } from 'node:child_process';
@@ -16,9 +17,14 @@ const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-test-'));
 process.env.AGENT_GUILD_HOME = home;
 process.env.AGENT_GUILD_PORT = '0';
 process.env.AGENT_GUILD_SKIP_SHELL_ENV = '1';
-// As if the manager were started from a tmux shell; the tools must not inherit it.
+// As if the manager were started from a tmux shell in a herdr pane; the tools must not inherit either.
 process.env.TMUX = '/tmp/tmux-0/default,1,0';
 process.env.TERM_PROGRAM = 'tmux';
+process.env.HERDR_ENV = '1';
+process.env.HERDR_PANE_ID = 'w1:p1';
+// A tmux server of the tests' own, never one the user runs.
+process.env.TMUX_TMPDIR = path.join(home, 'tmux');
+fs.mkdirSync(process.env.TMUX_TMPDIR);
 
 // A stand-in npm so install sessions never touch the real global prefix. Not
 // the manager's launcher folder (<home>/bin), so that folder reaches the
@@ -42,6 +48,11 @@ const gitTools = path.join(here, 'fixtures', 'fake-git-tools.mjs');
 for (const name of ['ssh', 'ssh-keygen', 'git']) {
   writeScript(path.join(bin, name), { win: `"${process.execPath}" "${gitTools}" ${name} %*`, sh: `exec "${process.execPath}" "${gitTools}" ${name} "$@"` });
 }
+// A stand-in herdr. The test that opens a herdr card answers herdr's socket API itself, on this socket
+// (a named pipe on Windows, where herdr's pipe is named after its socket path).
+const fakeHerdr = path.join(here, 'fixtures', 'fake-herdr.mjs');
+writeScript(path.join(bin, 'herdr'), { win: `"${process.execPath}" "${fakeHerdr}" %*`, sh: `exec "${process.execPath}" "${fakeHerdr}" "$@"` });
+process.env.FAKE_HERDR_SOCKET = win ? `agent-guild-test-herdr-${process.pid}` : path.join(home, 'herdr.sock');
 process.env.FAKE_GIT_TOOLS_LOG = path.join(home, 'git-tools.log');
 process.env.FAKE_GIT_TOOLS_STATE = path.join(home, 'git-tools.json');
 // Inherited settings a clone must not pick up.
@@ -185,6 +196,8 @@ fs.writeFileSync(path.join(home, 'providers.json'), JSON.stringify({
 }));
 
 const { startManager } = await import('../src/manager/main.mjs');
+const { SessionManager } = await import('../src/manager/session-manager.mjs');
+const { multiplexerStore } = await import('../src/manager/config.mjs');
 
 // The manager runs as a released version, from package files an upgrade can replace.
 const packageFile = path.join(home, 'package.json');
@@ -712,7 +725,7 @@ test('a copy installed by npm is uninstalled by the npm that owns it', async () 
   const client = terminal(body.session.id);
   await client.opened;
   await waitForText(client, body.session.id, 'FAKE-NPM-OWNER uninstall -g --prefix', 'npm output');
-  assert.ok(screenText(body.session.id).includes('fake-tool-pkg'));
+  await waitForText(client, body.session.id, 'fake-tool-pkg', 'the package it uninstalls');
   const exit = await waitFor(() => client.messages.find((m) => m.type === 'exit'), { label: 'uninstall exit' });
   assert.equal(exit.exitCode, 0);
   await client.close();
@@ -831,6 +844,147 @@ test('an explicitly selected shell runs in a real terminal through the API', asy
   assert.equal((await call('GET', `/sessions/${session.id}`)).body.session.exitCode, 0);
 });
 
+test('a tmux card reports what runs in its tmux session, and Stop, Reattach and Remove keep that session', async (t) => {
+  if (!(await findProvider('shell')).shells?.some((s) => s.id === 'tmux')) return t.skip('tmux 3.2 or later is not installed');
+  const env = { ...process.env };
+  delete env.TMUX; // the outer tmux this file pretends to run in
+  const tmux = (...args) => new Promise((resolve) => execFile('tmux', args, { env }, (err, stdout) => resolve(err ? null : stdout)));
+  t.after(() => tmux('kill-server'));
+  const { status, body } = await call('POST', '/sessions', { providerId: 'shell', shell: 'tmux', cwd: home });
+  assert.equal(status, 201, JSON.stringify(body));
+  const { session } = body;
+  assert.equal(session.name, 'Shell · tmux');
+  assert.match(session.multiplexer.attach, /^tmux attach -t guild-[0-9a-f]{6}$/);
+  const name = session.multiplexer.attach.split(' ').pop();
+  const client = terminal(session.id);
+  t.after(() => client.close());
+  await client.opened;
+  client.input(`printf 'MUX:%s:%s\\n' "$AGENT_GUILD_SESSION_ID" '→λ'`);
+  await waitForText(client, session.id, `MUX:${session.id}:→λ`, 'the card\'s identity inside its tmux session, with UTF-8 intact');
+  client.input("agent-guild-report helper-1 --name 'Inside tmux'");
+  await waitFor(agentIs(session.id, 'Inside tmux', 'working'), { label: 'a report from inside tmux, as from a shell' });
+  assert.ok(!(await tmux('show-environment', '-g')).includes('AGENT_GUILD_'), 'the tmux server itself never gets the card\'s identity');
+
+  assert.equal((await call('POST', `/sessions/${session.id}/stop`)).status, 200);
+  const closed = await waitFor(async () => {
+    const s = await sessionNow(session.id);
+    return s.status === 'exited' && s.multiplexer.reattachable && s;
+  }, { label: 'the card closes while tmux keeps its session' });
+  assert.deepEqual(closed.agents, []);
+  const again = await call('POST', `/sessions/${session.id}/reattach`);
+  assert.equal(again.status, 200, JSON.stringify(again.body));
+  assert.deepEqual([again.body.session.id, again.body.session.status], [session.id, 'running'], 'the same card runs again');
+  assert.ok(Date.parse(again.body.session.startedAt) > Date.parse(closed.exitedAt), 'as a new run');
+  client.input("agent-guild-report helper-2 --name 'After reattach'");
+  await waitFor(agentIs(session.id, 'After reattach', 'working'), { label: 'the card\'s token still works inside tmux' });
+
+  await call('DELETE', `/sessions/${session.id}`);
+  assert.notEqual(await tmux('has-session', '-t', `=${name}`), null, 'tmux still runs the session');
+});
+
+test('a restarted manager brings a tmux card back closed, with its own id and token, ready to reattach', async (t) => {
+  if (!(await findProvider('shell')).shells?.some((s) => s.id === 'tmux')) return t.skip('tmux 3.2 or later is not installed');
+  const env = { ...process.env };
+  delete env.TMUX; // the outer tmux this file pretends to run in
+  t.after(() => new Promise((resolve) => execFile('tmux', ['kill-server'], { env }, () => resolve())));
+  const folder = fs.mkdtempSync(path.join(home, 'project-'));
+  const { session } = (await call('POST', '/sessions', { providerId: 'shell', shell: 'tmux', cwd: folder, name: 'Kept across restarts' })).body;
+  const client = terminal(session.id);
+  t.after(() => client.close());
+  await client.opened;
+  client.input('echo BEFORE-THE-RESTART');
+  await waitForText(client, session.id, 'BEFORE-THE-RESTART', 'output in tmux');
+  const token = ctx.manager.get(session.id).reportToken;
+  assert.ok(multiplexerStore.load().some((card) => card.id === session.id && card.reportToken === token), 'the card is kept in the data folder');
+
+  // The manager stops: its client ends and tmux keeps the session. The next manager starts on the same data folder.
+  await call('POST', `/sessions/${session.id}/stop`);
+  await waitFor(async () => (await sessionNow(session.id)).status === 'exited', { label: 'the client ends' });
+  fs.rmSync(folder, { recursive: true }); // and its folder is gone by the time the manager starts again
+  const next = new SessionManager({ registry: ctx.registry, baseEnv: ctx.manager.baseEnv, getApiUrl: () => base, store: multiplexerStore });
+  t.after(() => next.shutdown());
+  await next.restore();
+  const back = next.get(session.id);
+  assert.deepEqual([back.status, back.name, back.reportToken, back.createdAt, back.cwd, back.multiplexer.reattachable], ['exited', 'Kept across restarts', token, session.createdAt, folder, true]);
+  await next.reattach(session.id);
+  const screen = () => { const b = back.term.buffer.active; let text = ''; for (let i = 0; i < b.length; i++) text += `${b.getLine(i)?.translateToString(true) ?? ''}\n`; return text; };
+  await waitFor(() => back.status === 'running' && screen().includes('BEFORE-THE-RESTART'), { label: 'the reattached card shows the tmux session as it was' });
+  next.remove(session.id);
+  assert.ok(!multiplexerStore.load().some((card) => card.id === session.id), 'a removed card is forgotten');
+  await call('DELETE', `/sessions/${session.id}`);
+});
+
+test('a herdr card shows the agents herdr sees, and follows their state as herdr reports it', async (t) => {
+  // As much of herdr's socket API as the card uses: agent.list, and events.subscribe.
+  let agents = [{ agent: 'claude', agent_status: 'working', pane_id: 'w1:p1', cwd: home }];
+  const subscriptions = [];
+  const server = net.createServer((socket) => {
+    let buffer = '';
+    socket.setEncoding('utf8');
+    socket.on('error', () => {});
+    socket.on('data', (chunk) => {
+      buffer += chunk;
+      for (let end = buffer.indexOf('\n'); end !== -1; end = buffer.indexOf('\n')) {
+        const msg = JSON.parse(buffer.slice(0, end));
+        buffer = buffer.slice(end + 1);
+        if (msg.method === 'agent.list') socket.end(`${JSON.stringify({ id: msg.id, result: { type: 'agent_list', agents } })}\n`);
+        if (msg.method === 'events.subscribe') {
+          const subscription = { socket, entries: msg.params.subscriptions, closed: false };
+          subscriptions.push(subscription);
+          socket.on('close', () => { subscription.closed = true; });
+          socket.write(`${JSON.stringify({ id: msg.id, result: { type: 'subscription_started' } })}\n`);
+        }
+      }
+    });
+  });
+  await new Promise((resolve) => server.listen(win ? `\\\\.\\pipe\\${process.env.FAKE_HERDR_SOCKET}` : process.env.FAKE_HERDR_SOCKET, resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const push = (event, data) => subscriptions.filter((s) => !s.closed).at(-1).socket.write(`${JSON.stringify({ event, data })}\n`);
+
+  const tool = await startTool('shell', { shell: 'herdr' });
+  t.after(() => tool.client.close());
+  assert.deepEqual([tool.session.name, tool.session.multiplexer], ['Shell · herdr', { label: 'herdr', attach: 'herdr', reattachable: false }]);
+  const claude = await waitFor(agentIs(tool.session.id, 'claude', 'working'), { label: 'herdr\'s agent on the card' });
+  assert.deepEqual([claude.id, claude.kind, claude.detail, claude.source], ['herdr:w1:p1', 'agent', home, 'herdr']);
+  // herdr reports a pane's state changes only to a subscription that names the pane.
+  await waitFor(() => subscriptions.some((s) => !s.closed && s.entries.some((e) => e.type === 'pane.agent_status_changed' && e.pane_id === 'w1:p1')), { label: 'a subscription for the agent\'s pane' });
+  agents = [{ ...agents[0], agent_status: 'blocked' }];
+  push('pane_agent_status_changed', { pane_id: 'w1:p1', agent_status: 'blocked' });
+  await waitFor(agentIs(tool.session.id, 'claude', 'waiting'), { label: 'a blocked agent shows as waiting' });
+  agents = [];
+  push('pane_agent_detected', { pane_id: 'w1:p1', agent: 'claude', released: true });
+  await waitFor(async () => (await sessionNow(tool.session.id)).agents.length === 0, { label: 'a released agent leaves the card' });
+
+  await call('POST', `/sessions/${tool.session.id}/stop`);
+  const closed = await waitFor(async () => {
+    const s = await sessionNow(tool.session.id);
+    return s.status === 'exited' && s.multiplexer.reattachable && s;
+  }, { label: 'the card closes, ready to reattach' });
+  assert.equal(closed.multiplexer.attach, 'herdr');
+  await waitFor(() => subscriptions.every((s) => s.closed), { label: 'the card stops listening to herdr' });
+  await call('DELETE', `/sessions/${tool.session.id}`);
+});
+
+test('stopping a tmux or herdr card ends only its client, so the multiplexer\'s own server keeps running', async (t) => {
+  // herdr's client starts herdr's server, and on Windows that server is the client's child.
+  const pidFile = path.join(home, 'multiplexer-server.pid');
+  const session = ctx.manager._spawn({
+    provider: ctx.manager.registry.get('shell'),
+    spawnSpec: { file: process.execPath, args: [path.join(here, 'fixtures', 'fake-multiplexer.mjs'), pidFile] },
+    cwd: home, name: 'Fake multiplexer', multiplexer: { label: 'fake', attach: 'fake', reattachable: false },
+  });
+  const client = terminal(session.id);
+  t.after(() => client.close());
+  await client.opened;
+  await waitForText(client, session.id, 'FAKE-MULTIPLEXER READY', 'the client starts its server');
+  const server = Number(fs.readFileSync(pidFile, 'utf8'));
+  t.after(() => { try { process.kill(server); } catch { /* already gone */ } });
+  await call('POST', `/sessions/${session.id}/stop`);
+  await waitFor(async () => (await sessionNow(session.id)).status === 'exited', { label: 'the client ends' });
+  assert.doesNotThrow(() => process.kill(server, 0), 'the server outlives its client');
+  await call('DELETE', `/sessions/${session.id}`);
+});
+
 test('a session runs under the account picked, in that account\'s own home folder', async () => {
   const { body: listed } = await call('GET', '/providers');
   assert.deepEqual(listed.providers.find((p) => p.id === 'multi').accounts, [{ id: 'default', label: 'Default' }, { id: 'work', label: 'Work' }, { id: 'kept', label: 'Kept' }]);
@@ -899,7 +1053,7 @@ test('a session runs, streams output, accepts input and resizes', async () => {
   client.input('env');
   await waitFor(() => client.output.includes('ENV:'), { label: 'env' });
   await waitForText(client, session.id, '|term_program=', 'env line');
-  assert.ok(client.output.includes(`ENV:${session.id}|fake|${base}|${path.join(home, 'bin')}|tmux=|term_program=|home=\r`), client.output);
+  assert.ok(client.output.includes(`ENV:${session.id}|fake|${base}|${path.join(home, 'bin')}|tmux=|term_program=|herdr=|home=\r`), client.output);
 
   client.send({ type: 'resize', cols: 101, rows: 33 });
   await waitFor(async () => (await call('GET', `/sessions/${session.id}`)).body.session.cols === 101, { label: 'resize' });
@@ -1178,6 +1332,47 @@ test('Grok Build reports sub-agents through --plugin-dir where it accepts it, an
   await followSubagent(tool, 'grok-1', 'reviewer');
   await tool.client.close();
   await call('DELETE', `/sessions/${tool.session.id}`);
+});
+
+// The page relies on this: it ignores a reply that shows a session running once it has seen it exit.
+test('once a session has exited nothing shows it running again, whichever tool it ran', async () => {
+  const events = new Client(`${base.replace('http', 'ws')}/api/v1/events?token=${token}`);
+  await events.opened;
+  // Each tool is stopped with a sub-agent its own hooks reported still working.
+  const working = async (tool, prompt, type) => {
+    if (prompt) tool.client.input('prompt');
+    await waitFor(reportingIs(tool.session.id, 'active'), { label: `${tool.session.provider.id} hooks`, timeout: 15000 });
+    tool.client.input(`subagent exit-${type} ${type}`);
+    await waitFor(agentIs(tool.session.id, type, 'working'), { label: `${type} working`, timeout: 15000 });
+  };
+  const runs = {
+    anthropic: (tool) => working(tool, false, 'Explore'),
+    openai: (tool) => working(tool, true, 'explorer'),
+    grokplugins: (tool) => working(tool, false, 'reviewer'),
+    google: async () => {},
+    shell: async () => {},
+  };
+  for (const [providerId, during] of Object.entries(runs)) {
+    const tool = await startTool(providerId);
+    await during(tool);
+    await call('POST', `/sessions/${tool.session.id}/stop`);
+    await waitFor(async () => (await sessionNow(tool.session.id)).status === 'exited', { label: `${providerId} exits`, timeout: 15000 });
+    const late = await fetch(`${base}/api/v1/sessions/${tool.session.id}/agents`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Agent-Guild-Report-Token': ctx.manager.get(tool.session.id).reportToken },
+      body: JSON.stringify({ agentId: 'late', status: 'working' }),
+    });
+    assert.equal(late.status, 409, `${providerId}: a report after the exit is refused`);
+    // Events arrive in order: once this rename shows, everything sent before it has arrived.
+    await call('PATCH', `/sessions/${tool.session.id}`, { name: `${providerId} ended` });
+    await waitFor(() => events.messages.some((m) => m.session?.id === tool.session.id && m.session.name === `${providerId} ended`), { label: `${providerId} rename` });
+    const statuses = events.messages.filter((m) => m.session?.id === tool.session.id).map((m) => m.session.status);
+    assert.ok(statuses.includes('exited'), `${providerId}: the exit is announced`);
+    assert.deepEqual(statuses.slice(statuses.indexOf('exited')).filter((s) => s !== 'exited'), [], `${providerId}: nothing after the exit says running`);
+    await tool.client.close();
+    await call('DELETE', `/sessions/${tool.session.id}`);
+  }
+  await events.close();
 });
 
 test('a tool whose hooks are turned off keeps running and shows that it is not reporting', async () => {

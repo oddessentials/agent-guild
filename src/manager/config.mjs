@@ -48,6 +48,8 @@ export const paths = {
   /** Launchers for agent-guild-report, put first on every session's PATH. */
   get shims() { return path.join(dataDir(), 'bin'); },
   get reporting() { return path.join(dataDir(), 'reporting'); },
+  /** The tmux and herdr cards a restarted manager brings back, report tokens included. */
+  get multiplexers() { return path.join(dataDir(), 'multiplexers.json'); },
 };
 
 function writePrivate(file, contents) {
@@ -71,6 +73,25 @@ export function loadOrCreateToken() {
   writePrivate(paths.token, token + '\n');
   return token;
 }
+
+/** Where the manager keeps its tmux and herdr cards, readable only by the user since they hold report tokens. */
+export const multiplexerStore = {
+  load() {
+    try {
+      const { cards } = JSON.parse(fs.readFileSync(paths.multiplexers, 'utf8'));
+      return Array.isArray(cards) ? cards : [];
+    } catch {
+      return [];
+    }
+  },
+  save(cards) {
+    ensureDataDir();
+    // Written aside and renamed, so a crash never leaves half a file.
+    const next = `${paths.multiplexers}.${process.pid}.tmp`;
+    writePrivate(next, JSON.stringify({ cards }, null, 2) + '\n');
+    fs.renameSync(next, paths.multiplexers);
+  },
+};
 
 export function writeRuntimeFile(info) {
   ensureDataDir();

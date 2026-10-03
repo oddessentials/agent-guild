@@ -669,7 +669,7 @@ export class ProviderRegistry extends EventEmitter {
       reporting: provider.reporting,
       reportingEnabled: this.reportingEnabled?.(provider) ?? null,
       accounts: provider.accounts.map((account) => ({ id: account.id, label: account.label })),
-      shells: shells?.shells.map((shell) => ({ id: shell.id, label: shell.label, path: shell.path })) ?? null,
+      shells: shells?.shells.map((shell) => ({ id: shell.id, label: shell.label, path: shell.path, multiplexer: Boolean(shell.multiplexer) })) ?? null,
       defaultShell: shells?.defaultId ?? null,
       modelPattern: provider.modelPattern,
       color: provider.color,

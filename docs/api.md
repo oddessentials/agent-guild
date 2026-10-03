@@ -111,10 +111,23 @@ whether `GET /usage` reports the provider. `historySource` is `claude`,
 tool's own, and each further one has its own home folder, so it keeps its
 own sign-in and usage. `POST /sessions` takes an account id.
 `shells` is null except for the `@shell` provider, where it lists the
-installed shells, each `{ id, label, path }`, and `defaultShell` is the id of
+installed shells, each `{ id, label, path, multiplexer }`, and `defaultShell` is the id of
 the one a session runs unless `POST /sessions` names another in `shell`.
 Omit `shell` or send `null` to use the default. Provider `args` apply only to
 the default shell; request `args` apply to whichever shell is selected.
+`multiplexer` is true for tmux 3.2 or later on macOS and Linux and for
+herdr, listed after the shells when installed and never the default. A
+session in one runs the multiplexer's client: stopping or removing it, or
+stopping the manager, leaves the multiplexer running its session, and
+`POST /sessions/:id/reattach` attaches it again. Until such a session is
+removed, the manager keeps it in `multiplexers.json` in its data folder,
+report token included; when it starts again it lists each one the
+multiplexer still has as exited, with its own `id`, `name`, `createdAt` and
+report token, ready to reattach. A tmux session gets a tmux session of its
+own, made with the session's `AGENT_GUILD_` variables and PATH, so what
+runs there reports to it as from a shell; its request `args` are that tmux
+session's command. A herdr session's agents are the ones herdr reports in
+its panes; its request `args` are added to `herdr`.
 For a tool whose agent reporting has to be turned on (`reporting` is `antigravity`),
 `reportingEnabled` says whether it is.
 `usageUrl`, `billingUrl` and `cloudUrl` are `https://` links to the vendor's
@@ -202,6 +215,7 @@ that has never run lists no sessions and no error.
   "task": null,
   "account": { "id": "default", "label": "Default" },
   "clone": null,
+  "multiplexer": null,
   "pid": 3518,
   "status": "running",
   "exitCode": null,
@@ -209,6 +223,7 @@ that has never run lists no sessions and no error.
   "activity": "active",
   "lastOutputAt": "2026-09-30T03:12:01.120Z",
   "createdAt": "2026-09-30T03:10:44.001Z",
+  "startedAt": "2026-09-30T03:10:44.001Z",
   "exitedAt": null,
   "cols": 120,
   "rows": 32,
@@ -242,6 +257,19 @@ that has never run lists no sessions and no error.
 * `clone` is `{ repo, path, accountId }` for a clone session: the
   repository as owner/name, the folder it is cloned into and the GitHub
   account id. Null otherwise.
+* `multiplexer` is `{ label, attach, reattachable }` for a Shell session in
+  tmux or herdr: the multiplexer's name, the command that reattaches its
+  session from a terminal, such as `tmux attach -t guild-3f9a2c`, and
+  whether the exited session can be reattached because the multiplexer
+  still has its session. Null otherwise. Stopping or removing the session
+  ends only the multiplexer's client, so its `exitCode` says nothing about
+  the session inside. The client gets none of the `AGENT_GUILD_` variables:
+  the multiplexer's server outlives it and passes its environment on to
+  every session it starts later.
+* `startedAt` is when the session's current process started: `createdAt`,
+  or later once a tmux or herdr session is reattached. A session update with
+  a `startedAt` no later than an `exitedAt` already seen comes from before
+  that exit.
 * `account` is the provider account the tool runs under, or null for an
   install or upgrade session.
 * `model` is the main model the tool is using, or null while unknown.
@@ -361,7 +389,10 @@ Claude Code sub-agent. See [agent-reporting.md](agent-reporting.md).
 ```
 
 `status` is one of `working`, `waiting`, `idle` or `done`. An agent reported
-as `done` stays visible for about 15 seconds and is then removed. A session
+as `done` stays visible for about 15 seconds and is then removed. `source`
+is `api` for a report over HTTP, `terminal` for one written to the terminal,
+and `herdr` for an agent in a herdr session's panes, whose status follows
+herdr: working, blocked as `waiting`, anything else `idle`. A session
 holds at most 64 agents; a new one displaces the done agent that has
 lingered longest. All agents are cleared when their session exits.
 
@@ -397,13 +428,14 @@ All paths are under `/api/v1`.
 | GET | `/sessions/:id` | | `{ session }` |
 | PATCH | `/sessions/:id` | `{ name }` | `{ session }`. `name` must be a non-empty string; it is trimmed to 80 characters. |
 | POST | `/sessions/:id/stop` | | Ends the process. The session stays listed as exited. |
+| POST | `/sessions/:id/reattach` | | `{ session }`: runs an exited tmux or herdr session's multiplexer client again, keeping the session's id, report token and screen. 400 `not_reattachable` for any other session, 409 `session_running` while it runs, 409 `multiplexer_session_gone` while `multiplexer.reattachable` is false or once the multiplexer no longer has its session. The client starts in the session's `cwd`, or in the home folder once that folder is gone. |
 | DELETE | `/sessions/:id` | | Ends the process if needed and removes the session. |
 | POST | `/sessions/:id/agents` | Agent report | `{ agent }`, or `{ agent: null }` after a removal, for a `done` report about an agent that was never reported, or for `{ finishForeground: true }`, which ends the commands of the turn that just ended. |
 | POST | `/sessions/:id/model` | `{ model, displayName? }` | `{ model }`. Sets the session's model with source `report`. |
 | POST | `/sessions/:id/tool-session` | `{ toolSessionId }` | `{ toolSessionId }`. Records the id the tool gave its own session: one printable line of at most 200 characters. 409 once the session has exited. |
 | POST | `/sessions/:id/reporting` | | `{ reporting }`: the tool's hooks announce themselves, which makes `reporting.state` `active`. |
 | POST | `/sessions/:id/shells` | `{ shell, key \| task, match?, agentId?, persist?, endsWithAgent?, tasks? }` | `{ ok }`. `shell` is `start`, `end`, `background` (with the tool's `task` id), `waiting` (a permission request, which hides the command), `asked` (one that ends the command with its turn), `running` (`tasks` lists the background tasks still running; any other ends) or `reset` (every command ends). `key` is the tool's call id. `match` is a hash of the command, which pairs a permission request with it; `persist` keeps a command past the end of its turn, and `endsWithAgent` ends a background one with its sub-agent. |
-| POST | `/shutdown` | `{ force?, restart? }` | `202 { ok, running, restart }`: stops the manager and every session. 409 `sessions_running` (with `running`, the session count) while any session is running, unless `force` is true. From the 202 on, `POST /sessions` and `POST /providers/:id/install` answer 503 `manager_stopping`. Events clients get `manager.stopping` first and `manager.stopped` last, after the sessions have ended and before the API closes. With `restart` true, the manager then starts a new manager from the package on disk, on the same port and with the same token, before it exits; the new one runs whatever version is installed, so this is how an upgrade's `pendingVersion` is put to use. Clients reconnect to it as to any manager; its `hello` is the new source of truth. |
+| POST | `/shutdown` | `{ force?, restart? }` | `202 { ok, running, restart }`: stops the manager and every session, detaching tmux and herdr sessions rather than ending them. 409 `sessions_running` (with `running`, the count of sessions it would end) while any session other than a tmux or herdr one is running, unless `force` is true. From the 202 on, `POST /sessions` and `POST /providers/:id/install` answer 503 `manager_stopping`. Events clients get `manager.stopping` first and `manager.stopped` last, after the sessions have ended and before the API closes. With `restart` true, the manager then starts a new manager from the package on disk, on the same port and with the same token, before it exits; the new one runs whatever version is installed, so this is how an upgrade's `pendingVersion` is put to use. Clients reconnect to it as to any manager; its `hello` is the new source of truth. |
 
 `cwd` defaults to the user's home folder and must be an existing folder. A
 leading `~` is expanded. `args` are appended to the provider's configured

@@ -62,6 +62,8 @@ export class Session extends EventEmitter {
    * @param {string|null} [opts.task]    "install" for a package install, "upgrade" for the manager's own, "clone" for a GitHub clone, else null
    * @param {{id: string, label: string}|null} [opts.account]  the tool sign-in the session runs under
    * @param {{repo: string, path: string, accountId: number}|null} [opts.clone]  what a clone session clones, and where
+   * @param {{label: string, attach: string, reattachable: boolean}|null} [opts.multiplexer]  the multiplexer a Shell session runs in, and the command that reattaches it
+   * @param {string} [opts.createdAt]  when the card was first made; a restored tmux or herdr card keeps its own. With no spawnSpec, the session is such a card, closed
    * @param {string} opts.reportToken
    * @param {number} [opts.scrollback]
    * @param {number} [opts.activityIdleMs]
@@ -77,6 +79,7 @@ export class Session extends EventEmitter {
     this.task = opts.task ?? null;
     this.account = opts.account ?? null;
     this.clone = opts.clone ?? null;
+    this.multiplexer = opts.multiplexer ?? null;
     this.cwd = opts.cwd;
     this.cols = opts.cols;
     this.rows = opts.rows;
@@ -92,7 +95,9 @@ export class Session extends EventEmitter {
     this.shells = new Map();
     this._shellSeq = 0;
     this._endedTasks = new Set();
-    this.createdAt = new Date().toISOString();
+    this.createdAt = opts.createdAt ?? new Date().toISOString();
+    /** When the current process started; later than createdAt once a multiplexer session is reattached. */
+    this.startedAt = this.createdAt;
     this.exitedAt = null;
     this.status = 'running';
     this.exitCode = null;
@@ -144,21 +149,50 @@ export class Session extends EventEmitter {
     }
 
     this.disposed = false;
+    this.env = opts.env;
+    if (!opts.spawnSpec) {
+      // A tmux or herdr card brought back after the manager restarted: its
+      // multiplexer still runs the session, and the card is closed until reattached.
+      this.status = 'exited';
+      this.exitedAt = new Date().toISOString();
+      this.activity = 'quiet';
+      this._resolveExited();
+      const label = this.multiplexer?.label ?? 'The multiplexer';
+      this.term.write(`\x1b[2m[Agent Guild restarted. ${label} still runs this session; Reattach it from its card.]\x1b[0m\r\n`);
+      return;
+    }
     try {
-      this.pty = pty.spawn(opts.spawnSpec.file, opts.spawnSpec.args, {
-        name: 'xterm-256color',
-        cols: this.cols,
-        rows: this.rows,
-        cwd: this.cwd,
-        env: opts.env,
-        useConpty: true,
-      });
+      this._start(opts.spawnSpec);
     } catch (err) {
       this.term.dispose();
       throw err;
     }
-    this.pty.onData((data) => this._onData(data));
-    this.pty.onExit(({ exitCode, signal }) => this._onExit(exitCode, signal));
+  }
+
+  _start(spawnSpec, cwd = this.cwd) {
+    const proc = pty.spawn(spawnSpec.file, spawnSpec.args, {
+      name: 'xterm-256color',
+      cols: this.cols,
+      rows: this.rows,
+      cwd,
+      env: this.env,
+      useConpty: true,
+    });
+    this.pty = proc;
+    proc.onData((data) => { if (this.pty === proc) this._onData(data); });
+    proc.onExit(({ exitCode, signal }) => { if (this.pty === proc) this._onExit(exitCode, signal); });
+  }
+
+  /**
+   * Run a new process in an exited session, keeping its id, report token and
+   * screen: a multiplexer's client attaching to its session again, in `cwd`.
+   */
+  reattach(spawnSpec, { cwd = this.cwd } = {}) {
+    if (this.disposed || this.status !== 'exited') throw Object.assign(new Error('only an exited session can be reattached'), { status: 409 });
+    this._start(spawnSpec, cwd);
+    Object.assign(this, { status: 'running', exitCode: null, signal: null, exitedAt: null, activity: 'quiet', startedAt: new Date().toISOString() });
+    this.exited = new Promise((resolve) => { this._resolveExited = resolve; });
+    this._changed();
   }
 
   /**
@@ -307,9 +341,11 @@ export class Session extends EventEmitter {
 
   /**
    * End the process. On macOS and Linux: hang-up first, force after a grace
-   * period. On Windows: end the whole process tree at once. node-pty's own
-   * Windows kill first asks a helper process for the console's process list,
-   * and when that helper fails it waits a fixed five seconds.
+   * period. On Windows: end the whole process tree at once, except for a
+   * multiplexer's client, whose server is its child there and must outlive
+   * it. node-pty's own Windows kill first asks a helper process for the
+   * console's process list, and when that helper fails it waits a fixed
+   * five seconds.
    */
   kill({ graceMs = this.killGraceMs } = {}) {
     if (this.status !== 'running') return;
@@ -330,7 +366,7 @@ export class Session extends EventEmitter {
     };
     const pid = this.pty.pid;
     if (!pid) return fallback();
-    killWindowsTree(pid, (err) => { if (err) fallback(); });
+    killWindowsTree(pid, (err) => { if (err) fallback(); }, { tree: !this.multiplexer });
   }
 
   /**
@@ -682,6 +718,7 @@ export class Session extends EventEmitter {
       task: this.task,
       account: this.account,
       clone: this.clone,
+      multiplexer: this.multiplexer,
       pid: this.pid,
       status: this.status,
       exitCode: this.exitCode,
@@ -689,6 +726,7 @@ export class Session extends EventEmitter {
       activity: this.activity,
       lastOutputAt: this.lastOutputAt ? new Date(this.lastOutputAt).toISOString() : null,
       createdAt: this.createdAt,
+      startedAt: this.startedAt,
       exitedAt: this.exitedAt,
       cols: this.cols,
       rows: this.rows,

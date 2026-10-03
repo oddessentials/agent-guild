@@ -73,8 +73,8 @@
 | --- | --- |
 | Close or reload the page | None. Reopening reconnects and redraws. |
 | An unexpected error inside the manager | Logged to `manager.log`; sessions keep running. |
-| `agent-guild stop`, the page's **Stop manager** button, or quitting the manager | All sessions end. The button asks first while any session is running; the manager enforces that for every client. |
-| `agent-guild restart` or the page's **Restart manager** button | All sessions end, with the same guard. The manager then starts a new manager from the package on disk and exits; clients reconnect to the new one. An upgrade's files are picked up this way. |
+| `agent-guild stop`, the page's **Stop manager** button, or quitting the manager | All sessions end, except tmux and herdr ones, which are detached; the next manager brings their cards back closed, ready to reattach. The button asks first while any session it would end is running; the manager enforces that for every client. |
+| `agent-guild restart` or the page's **Restart manager** button | As for a stop, with the same guard. The manager then starts a new manager from the package on disk and exits; clients reconnect to the new one. An upgrade's files are picked up this way. |
 | Computer restart or logout | All sessions end. Nothing is restored. |
 
 ## Toward a game interface

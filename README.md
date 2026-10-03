@@ -67,6 +67,17 @@ Prompt are also offered when found. On macOS and Linux it follows your login
 shell. Pick the default chip to clear a saved choice and follow the default
 again. The choice applies to new sessions.
 
+**Work inside tmux or herdr.** When installed, the Shell card also offers
+tmux (3.2 or later, on macOS and Linux) and herdr. A tmux card runs a tmux
+session of its own, with your own configuration, and tools in it report to
+the card as they would in a shell. A herdr card opens your herdr session and
+shows the agents herdr sees in its panes, working, blocked or idle. Stopping
+or closing either card only detaches it, as closing a terminal window would:
+the session keeps running, **Reattach** on the card brings it back, and the
+card names the command that reattaches it from a terminal. Stopping or
+restarting the manager detaches them the same way, and the cards come back,
+closed and ready to reattach, when it starts again.
+
 <img src="docs/images/terminal.webp" alt="An open Claude Code session with its helper agents shown in the header">
 
 **Agents and models at work.** Helper agents that a tool starts appear on its
@@ -254,7 +265,9 @@ npm test
 
 ## Current limits
 
-* Sessions end when the manager stops or the computer restarts.
+* Sessions end when the manager stops or the computer restarts, except a
+  Shell session in tmux or herdr, which keeps running in it while the
+  manager is stopped.
 * Antigravity CLI and Grok Build have no usage meter.
 * Antigravity CLI has one account per computer user: it keeps its sign-in in
   the system keychain and has no setting for another home folder.
