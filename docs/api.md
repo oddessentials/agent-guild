@@ -433,7 +433,7 @@ This socket pushes changes to every session. It is server-to-client only.
 
 | Message | Meaning |
 | --- | --- |
-| `{ type: "hello", version, pid, launcher, upgrade, sessions }` | Sent first. The manager's version and pid, its `launcher` path (as in `/info`), the full session list and the manager's Upgrade object. |
+| `{ type: "hello", version, pid, startedAt, launcher, upgrade, sessions }` | Sent first. The manager's version, pid and start timestamp (together identifying this manager lifetime), its `launcher` path (as in `/info`), the full session list and the manager's Upgrade object. |
 | `{ type: "session.created", session }` | A session was started by any client. |
 | `{ type: "session.updated", session }` | Status, activity, agents, name or size changed. |
 | `{ type: "session.removed", sessionId }` | A session was removed. |

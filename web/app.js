@@ -1,7 +1,7 @@
 // Agent Guild web page. A thin client of the session manager's local API:
 // it never owns sessions, so closing the page leaves them running.
 
-import { SOUNDS, idleWatcher, playOnce, stopWatcher, updateWatcher } from './alerts.js';
+import { SOUNDS, MAX_ALERT_AGE_MS, playOnce, rearmSound, managerLossWatcher, stopWatcher, updateWatcher } from './alerts.js';
 
 const TOKEN_KEY = 'agentGuild.token';
 const CWD_KEY = 'agentGuild.cwd';
@@ -39,6 +39,8 @@ const state = {
   activeId: null,
   eventsSocket: null,
   eventsRetry: 0,
+  pageAway: false,
+  managerUnavailable: false,
   /** True while the events socket is open. */
   connected: false,
   /** The manager's own version check, from `hello` and `manager.upgrade`. */
@@ -212,43 +214,75 @@ function changeSkin(input) {
 // ---- sound ----------------------------------------------------------------
 
 const audio = {};
-const idleAlerts = idleWatcher({ chime: (id) => alertSound('idle', `idle.${id}`) });
 const stopAlert = stopWatcher();
 const updateAlert = updateWatcher();
+const managerLoss = managerLossWatcher({
+  async reachable(signal) {
+    const res = await fetch('/api/v1/health', { cache: 'no-store', signal });
+    const health = await res.json();
+    return res.ok && health.ok === true && health.name === 'agent-guild';
+  },
+  unavailable(at, fresh) {
+    state.managerUnavailable = true;
+    showManagerUnavailable();
+    alertSound('stopped', `unavailable.${state.managerInstance}`, at, fresh, [`stopped.${state.managerInstance}`]);
+  },
+});
 
 function soundOn() {
   return load(SOUND_KEY) === 'on';
 }
 
+/** Keep the tiny clips ready while the manager can still serve them. */
+function prepareSounds() {
+  if (!soundOn()) return;
+  for (const [name, file] of Object.entries(SOUNDS)) {
+    audio[name] ??= new Audio(file);
+    audio[name].preload = 'auto';
+    if (audio[name].error) audio[name].load();
+  }
+}
+
 /** Plays a sound when sounds are on. Browsers allow it once the user has clicked or typed on the page. */
 function playSound(name) {
-  if (!soundOn()) return;
+  if (!soundOn()) return Promise.resolve(false);
   audio[name] ??= new Audio(SOUNDS[name]);
   audio[name].currentTime = 0;
-  audio[name].play().catch(() => {});
+  return audio[name].play().then(() => true);
 }
 
 /** Plays an alert in one open page only; `key` names the event. */
-function alertSound(name, key) {
-  if (soundOn()) playOnce(key, () => playSound(name));
+function alertSound(name, key, at = Date.now(), fresh = () => true, related = []) {
+  if (soundOn()) playOnce(key, () => playSound(name), {
+    fresh: () => !state.pageAway && soundOn() && fresh() && Date.now() - at <= MAX_ALERT_AGE_MS,
+    related,
+  });
 }
 
 function changeSound(input) {
   save(SOUND_KEY, input.checked ? 'on' : null);
-  playSound('idle');
+  prepareSounds();
+  playSound('update').catch(() => {});
 }
 
-/** A hello from the manager: watch its sessions from here on. */
-function managerConnected() {
-  stopAlert.connected();
-  idleAlerts.clear();
-  for (const s of state.sessions.values()) idleAlerts.update(s);
+/** A hello identifies this manager lifetime, independent of connections. */
+function managerConnected(msg) {
+  prepareSounds();
+  state.managerInstance = msg.startedAt && msg.pid ? `${msg.pid}.${msg.startedAt}` : null;
+  stopAlert.connected(state.managerInstance);
+  state.managerUnavailable = false;
+  if (state.managerInstance) managerLoss.connected();
+  else managerLoss.cancel();
+  if (state.managerInstance) rearmSound(`unavailable.${state.managerInstance}`);
 }
 
-/** The manager stopped, is restarting or went away. */
+/** A confirmed manager stop; a browser socket closing never calls this. */
 function managerGone() {
-  idleAlerts.clear();
-  if (stopAlert.stopped()) alertSound('stopped', 'stopped');
+  managerLoss.cancel();
+  state.managerUnavailable = false;
+  const instance = stopAlert.stopped();
+  if (instance) alertSound('stopped', `stopped.${instance}`, Date.now(),
+    () => state.managerInstance === instance && !state.connected, [`unavailable.${instance}`]);
 }
 
 /** Places the open menu under its button, right-aligned with it and kept on screen. */
@@ -314,10 +348,10 @@ function renderUpgrade() {
   note.title = title;
 }
 
-function setUpgrade(upgrade) {
+function setUpgrade(upgrade, baseline = false) {
   const before = state.upgrade;
   state.upgrade = upgrade || null;
-  if (updateAlert(state.upgrade)) alertSound('update', `update.${state.upgrade.latestVersion}`);
+  if (updateAlert(state.upgrade, baseline)) alertSound('update', `update.${state.upgrade.latestVersion}`);
   renderUpgrade();
   renderVersion();
   if ($('changelog').open) renderChangelog();
@@ -2804,14 +2838,12 @@ function guardLeaving() {
 
 function upsertSession(session) {
   state.sessions.set(session.id, session);
-  idleAlerts.update(session);
   renderSessions();
   noticeClone(session);
 }
 
 function dropSession(id) {
   state.sessions.delete(id);
-  idleAlerts.forget(id);
   const view = state.views.get(id);
   if (view) { view.dispose(); state.views.delete(id); }
   if (state.activeId === id) closePanel();
@@ -3117,7 +3149,6 @@ class TerminalView {
     this.term.attachCustomKeyEventHandler((e) => this.handleKey(e));
     suppressQueryReplies(this.term);
     this.term.onData((data) => {
-      idleAlerts.input(this.id);
       this.send({ type: 'input', data });
     });
     this.opened = false;
@@ -3375,7 +3406,7 @@ function leaveStopping() {
 function restartGaveUp() {
   if (!state.stopping || !state.restarting) return;
   state.restarting = false;
-  setConnection('down', 'Session manager stopped');
+  setConnection('down', state.stopRemaining === null ? 'Manager unavailable' : 'Session manager stopped');
   showStopped('stopped', 'The session manager did not come back',
     `Nothing answered within ${Math.round(RESTART_WAIT_MS / 1000)} seconds of the restart. Check manager.log in the Agent Guild data folder, then start it yourself.`);
 }
@@ -3437,14 +3468,26 @@ function showManagerStopped() {
 
 // ---- events ---------------------------------------------------------------
 
+function showManagerUnavailable() {
+  setConnection('down', 'Manager unavailable. Trying to reconnect…');
+  if (state.stopping) {
+    clearTimeout(restartTimer);
+    showStopped('stopped', 'Manager unavailable', 'The manager stopped responding before confirming shutdown. Sessions may still be running. This page will reconnect automatically.');
+  }
+}
+
 function connectEvents() {
+  if (state.pageAway) return;
   const ws = new WebSocket(wsUrl('/events'));
   state.eventsSocket = ws;
   ws.onopen = () => {
+    if (state.pageAway || state.eventsSocket !== ws) return;
+    managerLoss.cancel();
     state.eventsRetry = 0;
     setConnection('ok', 'Connected to session manager');
   };
   ws.onmessage = (event) => {
+    if (state.pageAway || state.eventsSocket !== ws) return;
     const msg = JSON.parse(event.data);
     if (msg.type === 'hello') {
       // The manager is back after a stop or restart; the page picks up where it was.
@@ -3457,10 +3500,10 @@ function connectEvents() {
       setConnection('ok', 'Connected to session manager');
       state.sessions = new Map(msg.sessions.map((s) => [s.id, s]));
       for (const id of [...state.views.keys()]) if (!state.sessions.has(id)) dropSession(id);
-      managerConnected();
+      managerConnected(msg);
       renderSessions();
       sessionsShown = true;
-      setUpgrade(msg.upgrade);
+      setUpgrade(msg.upgrade, true);
       loadNews();
       // A changelog.updated sent while the socket was down is lost; catch up the open panel.
       if ($('changelog').open) loadChangelog();
@@ -3492,17 +3535,21 @@ function connectEvents() {
     }
   };
   ws.onclose = () => {
-    managerGone();
-    if (state.stopping) {
+    if (state.pageAway || state.eventsSocket !== ws) return;
+    if (state.managerUnavailable) {
+      showManagerUnavailable();
+    } else if (state.stopping && state.stopRemaining !== null) {
       showManagerStopped();
     } else {
-      setConnection('down', 'Session manager not reachable. Run "agent-guild open" to start it.');
+      setConnection('down', 'Connection interrupted. Trying to reconnect…');
     }
+    managerLoss.disconnected();
     // Keep trying: after a stop, a relaunched manager brings the page back by itself.
     const delay = Math.min(5000, 500 * 2 ** state.eventsRetry++);
     setTimeout(async () => {
+      if (state.pageAway || state.eventsSocket !== ws) return;
       try { await loadProviders(); } catch (err) { if (err instanceof AuthError) return showAuth(err.message); }
-      connectEvents();
+      if (!state.pageAway && state.eventsSocket === ws) connectEvents();
     }, delay);
   };
 }
@@ -3530,6 +3577,7 @@ let statsInterval;
 let newsTimer;
 
 function showAuth(message = '') {
+  managerLoss.cancel();
   closeModels();
   closeNews();
   closeChangelog();
@@ -3665,6 +3713,16 @@ $('news').addEventListener('close', () => {
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && state.connected && Date.now() - newsLoadedAt > 60000) loadNews();
 });
+addEventListener('pagehide', () => {
+  state.pageAway = true;
+  managerLoss.cancel();
+  state.eventsSocket?.close();
+});
+addEventListener('pageshow', (event) => {
+  if (!event.persisted) return;
+  state.pageAway = false;
+  connectEvents();
+});
 $('version').addEventListener('click', openChangelog);
 $('changelog-close').addEventListener('click', closeChangelog);
 $('changelog').addEventListener('click', (e) => { if (e.target === $('changelog')) closeChangelog(); });
@@ -3683,7 +3741,7 @@ $('changelog-restart').addEventListener('click', () => {
 });
 addEventListener('storage', (e) => {
   if (e.key === CHANGELOG_SEEN_KEY) renderVersion();
-  else if (e.key === SOUND_KEY) $('sound').checked = soundOn();
+  else if (e.key === SOUND_KEY) { $('sound').checked = soundOn(); prepareSounds(); }
   // Another tab reordered the cards.
   else if (e.key === SESSION_ORDER_KEY && !drag) arrange(parseOrder(e.newValue));
 });

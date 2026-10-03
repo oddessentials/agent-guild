@@ -1,118 +1,155 @@
-// When the page plays an alert sound: a session has finished its work and
-// sits idle, the session manager stops, or a new Agent Guild version is out.
-// Sounds are off until the user turns them on.
-
+// Sounds follow manager availability and new releases, never session activity.
 export const SOUNDS = {
-  idle: 'sounds/session-idle.wav',
   stopped: 'sounds/manager-stopped.wav',
   update: 'sounds/update-available.wav',
 };
 
-/** How long a session must have produced output, after the last key typed into it here, for its going quiet to count. */
-export const MIN_WORK_MS = 8000;
-/** How long it must then stay idle, so a pause between two steps does not sound. */
-export const SETTLE_MS = 1500;
+export const MAX_ALERT_AGE_MS = 10000;
+export const RECOVERY_WAIT_MS = 2000;
+export const HEALTH_TIMEOUT_MS = 1000;
+const PLAYED_KEY = 'agentGuild.playedSounds';
 
-/** How long the page that played an alert keeps other open pages from playing the same one. */
-export const SHARED_MS = 5000;
-
-/**
- * Every open page watches the same sessions, so each alert takes a lock named
- * after it: the page that gets it plays and holds it a while, and the others
- * skip. Without Web Locks every page plays.
+/** Queue eligible pages, allowing another page to try if playback fails.
+ * Record only successful playback, under the same cross-tab lock. A bounded
+ * ledger prevents delayed tabs from replaying the event after lock release.
+ * Without shared coordination, stay silent rather than multiply alerts.
  */
-export function playOnce(key, play, { locks = globalThis.navigator?.locks, holdMs = SHARED_MS, wait = setTimeout } = {}) {
-  if (!locks) return play();
-  locks.request(`agentGuild.sound.${key}`, { ifAvailable: true }, (lock) => {
-    if (!lock) return null;
-    play();
-    return new Promise((resolve) => wait(resolve, holdMs));
-  }).catch(() => {});
+export async function playOnce(key, play, { locks = globalThis.navigator?.locks, storage, fresh = () => true, related = [] } = {}) {
+  if (!locks) return false;
+  try {
+    storage ??= globalThis.localStorage;
+    if (!storage) return false;
+    return await locks.request('agentGuild.sound', async () => {
+      if (!fresh()) return false;
+      let played = JSON.parse(storage.getItem(PLAYED_KEY) || '[]');
+      if (!Array.isArray(played)) played = [];
+      if (played.includes(key) || related.some((other) => played.includes(other))) return false;
+      // Check storage is writable before making a sound.
+      storage.setItem(PLAYED_KEY, JSON.stringify(played.slice(-127)));
+      try {
+        if (await play() === false) return false;
+      } catch { return false; }
+      storage.setItem(PLAYED_KEY, JSON.stringify([...played.slice(-127), key]));
+      return true;
+    });
+  } catch { return false; }
 }
 
-/** A running session with a quiet terminal, no working agent and no shell command. */
-export function sessionIdle(s) {
-  return s.status === 'running' && s.activity !== 'active'
-    && !(s.agents || []).some((a) => a.status === 'working') && !(s.shells || []).length;
+/** A live connection rearms an availability alert for a later outage. */
+export async function rearmSound(key, { locks = globalThis.navigator?.locks, storage } = {}) {
+  if (!locks) return;
+  try {
+    storage ??= globalThis.localStorage;
+    if (!storage) return;
+    await locks.request('agentGuild.sound', () => {
+      const played = JSON.parse(storage.getItem(PLAYED_KEY) || '[]');
+      if (Array.isArray(played) && played.includes(key)) {
+        storage.setItem(PLAYED_KEY, JSON.stringify(played.filter((item) => item !== key)));
+      }
+    });
+  } catch { /* Optional sound coordination may be unavailable. */ }
 }
 
-/**
- * Calls `chime(id)` once each time a session finishes a stretch of work and
- * settles idle. Output that only echoes what was typed here does not count,
- * and typing into a session cancels its pending alert.
+/** Two bounded health checks, only after losing a previously live connection.
+ * Reconnect, shutdown and page departure cancel both requests and timers.
+ * The callback's freshness check also cancels playback waiting on another tab.
  */
-export function idleWatcher({ chime, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout, minWorkMs = MIN_WORK_MS, settleMs = SETTLE_MS }) {
-  const watched = new Map();
-  const cancel = (w) => {
-    clearTimer(w.timer);
-    w.timer = null;
+export function managerLossWatcher({ reachable, unavailable, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout }) {
+  let live = false;
+  let pending = null;
+  const cancel = () => {
+    pending?.abort();
+    pending = null;
+    live = false;
   };
-  const entry = (id) => {
-    if (!watched.has(id)) watched.set(id, { activeSince: null, lastInput: 0, armed: false, timer: null });
-    return watched.get(id);
-  };
-  const forget = (id) => {
-    const w = watched.get(id);
-    if (w) cancel(w);
-    watched.delete(id);
-  };
-
-  function update(s) {
-    if (s.status !== 'running') return forget(s.id);
-    const w = entry(s.id);
-    if (s.activity === 'active') {
-      w.activeSince ??= now();
-      return cancel(w);
+  const check = async (signal) => {
+    const request = new AbortController();
+    const abort = () => request.abort();
+    signal.addEventListener('abort', abort, { once: true });
+    const timer = setTimer(abort, HEALTH_TIMEOUT_MS);
+    try { return await reachable(request.signal); }
+    catch { return false; }
+    finally {
+      clearTimer(timer);
+      signal.removeEventListener('abort', abort);
     }
-    if (w.activeSince !== null) {
-      if (now() - Math.max(w.activeSince, w.lastInput) >= minWorkMs) w.armed = true;
-      w.activeSince = null;
-    }
-    if (!w.armed || !sessionIdle(s)) return cancel(w);
-    if (w.timer) return;
-    w.timer = setTimer(() => {
-      w.timer = null;
-      w.armed = false;
-      chime(s.id);
-    }, settleMs);
-  }
-
-  function input(id) {
-    const w = entry(id);
-    w.lastInput = now();
-    w.armed = false;
-    cancel(w);
-  }
-
-  function clear() {
-    for (const id of [...watched.keys()]) forget(id);
-  }
-
-  return { update, input, forget, clear };
-}
-
-/** True once per connection to the manager: when it stops, restarts or goes away. */
-export function stopWatcher() {
-  let connected = false;
+  };
+  const wait = (signal) => new Promise((resolve) => {
+    const done = () => {
+      clearTimer(timer);
+      signal.removeEventListener('abort', done);
+      resolve();
+    };
+    const timer = setTimer(done, RECOVERY_WAIT_MS);
+    signal.addEventListener('abort', done, { once: true });
+  });
   return {
-    connected() { connected = true; },
-    stopped() {
-      const was = connected;
-      connected = false;
-      return was;
+    connected() { cancel(); live = true; },
+    cancel,
+    async disconnected() {
+      if (!live) return;
+      live = false;
+      const controller = new AbortController();
+      pending = controller;
+      const at = now();
+      const fresh = () => pending === controller && !controller.signal.aborted && now() - at <= MAX_ALERT_AGE_MS;
+      if (await check(controller.signal) || !fresh()) return;
+      await wait(controller.signal);
+      if (!fresh() || await check(controller.signal) || !fresh()) return;
+      unavailable(at, fresh);
     },
   };
 }
 
-/** True when the manager reports a newer version than any this page has seen. The first report sets the baseline. */
+/** Reconnecting establishes a baseline; only a live stop event alerts. */
+export function stopWatcher() {
+  let instance = null;
+  let stopped = false;
+  return {
+    connected(next) {
+      if (next !== instance) stopped = false;
+      instance = next;
+    },
+    stopped() {
+      if (!instance || stopped) return null;
+      stopped = true;
+      return instance;
+    },
+  };
+}
+
+// Published releases use semantic versions, including numerically ordered
+// prerelease identifiers. Build metadata does not affect precedence.
+function versionParts(value) {
+  return typeof value === 'string' ? value.match(/^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/) : null;
+}
+function newer(a, b) {
+  const av = versionParts(a), bv = versionParts(b);
+  for (let i = 1; i <= 3; i++) if (+av[i] !== +bv[i]) return +av[i] > +bv[i];
+  if (!av[4] || !bv[4]) return Boolean(bv[4]) && !av[4];
+  const ap = av[4].split('.'), bp = bv[4].split('.');
+  for (let i = 0; i < Math.max(ap.length, bp.length); i++) {
+    if (ap[i] === bp[i]) continue;
+    if (ap[i] === undefined || bp[i] === undefined) return bp[i] === undefined;
+    const an = /^\d+$/.test(ap[i]), bn = /^\d+$/.test(bp[i]);
+    if (an && bn) return +ap[i] > +bp[i];
+    if (an !== bn) return bn;
+    return ap[i] > bp[i];
+  }
+  return false;
+}
+
+/** The first successful version report is a baseline, even after nulls.
+ * Reconnect snapshots also advance it silently. Never alert on a rollback.
+ */
 export function updateWatcher() {
-  let seen;
-  return (upgrade) => {
-    const version = upgrade?.available ? upgrade.latestVersion || null : null;
-    const first = seen === undefined;
-    if (first) seen = null;
-    if (!version || version === seen) return false;
+  let seen = null;
+  return (upgrade, baseline = false) => {
+    const version = upgrade?.latestVersion;
+    if (!versionParts(version)) return false;
+    if (!seen) { seen = version; return false; }
+    if (!newer(version, seen)) return false;
     seen = version;
-    return !first;
+    return !baseline && upgrade.available === true;
   };
 }

@@ -358,7 +358,7 @@ test('the web page and xterm assets are served', async () => {
   assert.equal((await fetch(`${base}/skins/guild/page.avif`)).headers.get('content-type'), 'image/avif');
   assert.equal((await fetch(`${base}/skins/professional/page.svg`)).headers.get('content-type'), 'image/svg+xml');
   assert.equal((await fetch(`${base}/skins/orbital/fonts/exo2.woff2`)).headers.get('content-type'), 'font/woff2');
-  assert.equal((await fetch(`${base}/sounds/session-idle.wav`)).headers.get('content-type'), 'audio/wav');
+  assert.equal((await fetch(`${base}/sounds/update-available.wav`)).headers.get('content-type'), 'audio/wav');
   assert.equal((await fetch(`${base}/alerts.js`)).status, 200);
   assert.equal((await fetch(`${base}/skins/gnomeland/fonts/almendra-bold.woff2`)).headers.get('content-type'), 'font/woff2');
 });

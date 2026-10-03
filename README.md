@@ -121,9 +121,22 @@ of gentle nature spirits; **Gnomeland** is a lantern-lit village of gnome
 builders, engineers with a little magic. The page
 follows your system's light or dark setting until you pick one. See
 [docs/SKINS.md](docs/SKINS.md) to make another. **Alert sounds**, off until
-you turn them on in the same menu, chime when a session has finished its work
-and sits idle, when the session manager stops or restarts, and when a new
-version is out.
+you turn them on in the same menu, chime when the session manager confirms
+a stop or restart, remains unavailable after a brief recovery check, or a
+new version is discovered after the initial version check. Session activity
+and assistant responses have no sounds:
+the providers do not yet offer consistently reliable completion signals.
+
+Sounds play in one eligible tab per browser and origin after browser playback
+permission (usually a click or keypress). They require Web Locks and writable
+local storage. Opening or reconnecting a page does not replay old alerts,
+even when a different manager has taken over. Closing a browser does not
+stop the manager. After an unexpected disconnect, an already connected page
+checks the local health endpoint twice, two seconds apart, with a one-second
+timeout per request. If both fail, it shows “Manager unavailable” and alerts
+once; it cannot confirm whether the process exited or sessions ended.
+A successful health check, reconnection, or closing the page cancels the alert.
+There is no added polling while connected and no additional monitoring process.
 
 ## Commands
 
