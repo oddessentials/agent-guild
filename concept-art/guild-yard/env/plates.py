@@ -52,8 +52,10 @@ def render(world):
     scene = bpy.context.scene
     out = ROOT / 'web/yard/assets' / world
     out.mkdir(parents=True, exist_ok=True)
-    for old in out.glob('*.webp'):
-        old.unlink()
+    # Only this script's tiles; the world's surface textures live alongside.
+    for name, *_ in layers():
+        for old in out.glob(f'{name}-*.webp'):
+            old.unlink()
     manifest = {'camera': view()['camera'], 'layers': []}
     for name, density, right, up in layers():
         layer = {'name': name, 'density': density, 'tiles': []}

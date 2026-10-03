@@ -19,7 +19,7 @@ OUT = ROOT / '.cache/yard-env'
 PAINTED = Path(__file__).resolve().parent / 'textures'
 HDRI = 'kloofendal_48d_partly_cloudy_puresky'
 TEXTURES = {
-    'forest': 'forest_ground_04', 'shore': 'brown_mud_rocks_01', 'path': 'forest_ground_06', 'courtyard': 'cobblestone_floor_08', 'kerb': 'castle_wall_slates',
+    'forest': 'forest_ground_04', 'shore': 'brown_mud_rocks_01', 'path': 'forest_ground_06', 'gravel': 'gravel_floor', 'courtyard': 'cobblestone_floor_08', 'kerb': 'castle_wall_slates',
 }
 # Model, target height in metres (None keeps Poly Haven's real size), and
 # whether the .blend holds variants to pick between rather than one model.
@@ -35,7 +35,7 @@ MODELS = {
 SURFACES = {
     'wall': ('castle_wall_varriation', 2.5, ['stone', 'stoneLight'], False),
     'plinth': ('castle_wall_slates', 2.5, ['stoneDark', 'edge'], False),
-    'roof': ('grey_roof_tiles_02', 1.5, ['amber', 'blue', 'emerald', 'violet', 'cyan'], True),
+    'roof': ('grey_roof_tiles_02', 1.5, ['amber', 'blue', 'emerald', 'violet', 'cyan', 'iron'], True),
     'wood': ('dark_wooden_planks', 2, ['wood', 'woodLight'], False),
 }
 COURTYARD_RADIUS = 13.7
@@ -216,6 +216,19 @@ def painted(nodes, links, name, scale, coord):
     pick.inputs['From Min'].default_value, pick.inputs['From Max'].default_value = .42, .58
     links.new(noise(30, 1), pick.inputs['Value'])
     color = mix(nodes, links, 'RGBA', pick.outputs['Result'], sample(scale, 0), sample(scale * 2.3, .9))
+    dry = nodes.new('ShaderNodeMapRange')
+    dry.inputs['From Min'].default_value, dry.inputs['From Max'].default_value = .5, .7
+    dry.inputs['To Max'].default_value = .45
+    links.new(noise(90, 3), dry.inputs['Value'])
+    straw = nodes.new('ShaderNodeMix')
+    straw.data_type, straw.blend_type = 'RGBA', 'MULTIPLY'
+    links.new(dry.outputs['Result'], straw.inputs['Factor'])
+    links.new(color, straw.inputs[6])
+    straw.inputs[7].default_value = (1.1, .95, .55, 1)
+    calm = nodes.new('ShaderNodeHueSaturation')
+    calm.inputs['Saturation'].default_value = .82
+    links.new(straw.outputs[2], calm.inputs['Color'])
+    color = calm.outputs['Color']
     shade = nodes.new('ShaderNodeMapRange')
     shade.inputs['To Min'].default_value, shade.inputs['To Max'].default_value = .62, .92
     links.new(noise(55, 2), shade.inputs['Value'])
@@ -263,6 +276,17 @@ def ground_material():
         attr = nodes.new('ShaderNodeAttribute')
         attr.attribute_name = name
         top = surface(nodes, links, TEXTURES[{'woods': 'forest'}.get(name, name)], scale, coord)
+        if name == 'path':
+            gravel = surface(nodes, links, TEXTURES['gravel'], 1.6, coord)
+            grit = nodes.new('ShaderNodeTexNoise')
+            grit.inputs['Scale'].default_value = .4
+            links.new(coord, grit.inputs['Vector'])
+            top = tuple(mix(nodes, links, kind, grit.outputs['Fac'], a, b)
+                        for kind, a, b in zip(('RGBA', 'FLOAT', 'VECTOR'), top, gravel))
+            dull = nodes.new('ShaderNodeHueSaturation')
+            dull.inputs['Saturation'].default_value, dull.inputs['Value'].default_value = .55, .92
+            links.new(top[0], dull.inputs['Color'])
+            top = (dull.outputs['Color'], top[1], top[2])
         layers = [tuple(mix(nodes, links, kind, attr.outputs['Fac'], low, high)
                         for kind, low, high in zip(('RGBA', 'FLOAT', 'VECTOR'), layers[0], top))]
     color, rough, normal = layers[0]
@@ -284,11 +308,33 @@ def textured(name, asset, scale):
     return m
 
 def water_material():
+    """Dark and reflective where deep; clear over the lakebed in the shallows."""
     import bpy
     m = bpy.data.materials.new('water')
     nodes, links = m.node_tree.nodes, m.node_tree.links
     bsdf = nodes['Principled BSDF']
-    bsdf.inputs['Base Color'].default_value = (.012, .028, .03, 1)
+    depth = nodes.new('ShaderNodeAttribute')
+    depth.attribute_name = 'depth'
+    deep = nodes.new('ShaderNodeMapRange')
+    deep.inputs['From Min'].default_value, deep.inputs['From Max'].default_value = 0, 1.6
+    links.new(depth.outputs['Fac'], deep.inputs['Value'])
+    tint = nodes.new('ShaderNodeMix')
+    tint.data_type = 'RGBA'
+    links.new(deep.outputs['Result'], tint.inputs['Factor'])
+    tint.inputs[6].default_value = (.07, .09, .06, 1)
+    tint.inputs[7].default_value = (.008, .022, .026, 1)
+    links.new(tint.outputs[2], bsdf.inputs['Base Color'])
+    clear = nodes.new('ShaderNodeBsdfTransparent')
+    clear.inputs['Color'].default_value = (.62, .7, .6, 1)
+    shallow = nodes.new('ShaderNodeMapRange')
+    shallow.inputs['From Min'].default_value, shallow.inputs['From Max'].default_value = 0, .7
+    shallow.inputs['To Min'].default_value, shallow.inputs['To Max'].default_value = .7, 0
+    links.new(depth.outputs['Fac'], shallow.inputs['Value'])
+    blend = nodes.new('ShaderNodeMixShader')
+    links.new(shallow.outputs['Result'], blend.inputs['Fac'])
+    links.new(bsdf.outputs['BSDF'], blend.inputs[1])
+    links.new(clear.outputs['BSDF'], blend.inputs[2])
+    links.new(blend.outputs['Shader'], nodes['Material Output'].inputs['Surface'])
     bsdf.inputs['Roughness'].default_value = .02
     bsdf.inputs['IOR'].default_value = 1.33
     ripples = nodes.new('ShaderNodeTexNoise')
@@ -324,13 +370,26 @@ def terrain():
     return obj
 
 def water():
-    import bpy
+    """The lake surface, carrying the depth beneath each point for the shader."""
+    import bpy, bmesh
     ca, cb, ra, rb = LAKE
     x, y = to_ground(ca, cb)
-    bpy.ops.mesh.primitive_plane_add(size=1, location=(x, y, WATER_LEVEL))
-    obj = bpy.context.object
-    obj.scale = (ra * 3, ra * 3, 1)
+    size = max(ra, rb) * 2.6
+    bm = bmesh.new()
+    bmesh.ops.create_grid(bm, x_segments=int(size), y_segments=int(size), size=size / 2)
+    mesh = bpy.data.meshes.new('water')
+    bm.to_mesh(mesh)
+    bm.free()
+    depths = []
+    for v in mesh.vertices:
+        v.co.x += x
+        v.co.y += y
+        v.co.z = WATER_LEVEL
+        depths.append(max(0, WATER_LEVEL - height(v.co.x, v.co.y)))
+    mesh.attributes.new('depth', 'FLOAT', 'POINT').data.foreach_set('value', depths)
+    obj = bpy.data.objects.new('water', mesh)
     obj.data.materials.append(water_material())
+    bpy.context.scene.collection.objects.link(obj)
 
 def courtyard():
     import bpy
@@ -436,21 +495,121 @@ def walls(rocks):
     sizes = {c: max(max(o.dimensions) for o in c.objects) for c in rocks}
     for line in WALLS:
         for (a0, b0), (a1, b1) in zip(line, line[1:]):
-            steps = int(math.hypot(a1 - a0, b1 - b0) / .42)
+            steps = int(math.hypot(a1 - a0, b1 - b0) / .36)
             for i in range(steps):
                 t = i / steps
                 a, b = a0 + (a1 - a0) * t, b0 + (b1 - b0) * t
                 x, y = to_ground(a + rng.uniform(-.12, .12), b + rng.uniform(-.12, .12))
                 if live_distance(x, y) < 3:
                     continue
-                for layer in range(2):
+                for layer in range(3):
                     c = rng.choice(rocks)
                     inst = bpy.data.objects.new('wall', None)
                     inst.instance_type, inst.instance_collection = 'COLLECTION', c
-                    inst.location = (x, y, height(x, y) + layer * .32 - .08)
+                    inst.location = (x, y, height(x, y) + layer * .3 - .1)
                     inst.rotation_euler = (rng.uniform(-.2, .2), rng.uniform(-.2, .2), rng.uniform(0, math.tau))
-                    inst.scale = (rng.uniform(.65, .95) / sizes[c],) * 3
+                    inst.scale = (rng.uniform(.75, 1.1) * (1 - layer * .15) / sizes[c],) * 3
                     bpy.context.scene.collection.objects.link(inst)
+
+def reeds():
+    """Reed clumps: tapered blades leaning out from a base, in three variants."""
+    import bpy
+    m = bpy.data.materials.new('reed')
+    bsdf = m.node_tree.nodes['Principled BSDF']
+    bsdf.inputs['Base Color'].default_value = (.12, .15, .05, 1)
+    bsdf.inputs['Roughness'].default_value = .55
+    bsdf.inputs['Subsurface Weight'].default_value = .15
+    variants = []
+    for k in range(3):
+        rng = random.Random(300 + k)
+        verts, faces = [], []
+        for _ in range(55):
+            r, a = rng.uniform(0, .45), rng.uniform(0, math.tau)
+            bx, by = r * math.cos(a), r * math.sin(a)
+            tall, lean, width = rng.uniform(.9, 1.9), rng.uniform(.05, .35), rng.uniform(.018, .03)
+            facing = rng.uniform(0, math.tau)
+            fx, fy = math.cos(facing) * width, math.sin(facing) * width
+            start = len(verts)
+            for j in range(4):
+                t = j / 3
+                w = 1 - t * .9
+                cx, cy = bx + math.cos(a) * lean * t * t, by + math.sin(a) * lean * t * t
+                verts += [(cx - fx * w, cy - fy * w, tall * t), (cx + fx * w, cy + fy * w, tall * t)]
+            faces += [(start + 2 * j, start + 2 * j + 1, start + 2 * j + 3, start + 2 * j + 2) for j in range(3)]
+        mesh = bpy.data.meshes.new(f'reeds_{k}')
+        mesh.from_pydata(verts, [], faces)
+        mesh.materials.append(m)
+        obj = bpy.data.objects.new(f'reeds_{k}', mesh)
+        c = bpy.data.collections.new(f'reeds_{k}')
+        c.objects.link(obj)
+        variants.append(c)
+    return variants
+
+PIER = ((-42, -6), (-56, -2))   # shore end and lake end, screen frame
+
+def pier():
+    """A wooden pier from the gate path's end out over the lake."""
+    import bpy
+    path = polyhaven.model('modular_wooden_pier')
+    with bpy.data.libraries.load(str(path)) as (src, dst):
+        dst.objects = [n for n in src.objects if n.endswith('section_02')]
+    section = dst.objects[0]
+    deck = max(c[2] for c in section.bound_box)
+    (a0, b0), (a1, b1) = PIER
+    (x0, y0), (x1, y1) = to_ground(a0, b0), to_ground(a1, b1)
+    length, step = math.hypot(x1 - x0, y1 - y0), 2.9
+    heading = math.atan2(y1 - y0, x1 - x0) - math.pi / 2
+    for i in range(int(length / step) + 1):
+        t = i * step / length
+        obj = section.copy()
+        obj.location = (x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, WATER_LEVEL + .55 - deck)
+        obj.rotation_euler = (0, 0, heading)
+        bpy.context.scene.collection.objects.link(obj)
+
+def cloud_shadows():
+    """Soft cloud shadows over the outer landscape, never over the live area:
+    a hidden layer above the ground that only casts shadow."""
+    import bpy
+    from mathutils import Vector
+    sun = to_blender(SUN).normalized()
+    lift = 24
+    # A point on the layer shades the ground this far away from the sun.
+    shift = Vector((-sun.x, -sun.y)) * lift / sun.z
+    bpy.ops.mesh.primitive_plane_add(size=520, location=(-shift.x, -shift.y, lift))
+    layer = bpy.context.object
+    layer.visible_camera = layer.visible_glossy = layer.visible_diffuse = False
+    m = bpy.data.materials.new('clouds')
+    nodes, links = m.node_tree.nodes, m.node_tree.links
+    nodes.remove(nodes['Principled BSDF'])
+    coord = nodes.new('ShaderNodeTexCoord')
+    noise = nodes.new('ShaderNodeTexNoise')
+    noise.inputs['Scale'].default_value = 5
+    noise.inputs['Detail'].default_value = 4
+    links.new(coord.outputs['Generated'], noise.inputs['Vector'])
+    cover = nodes.new('ShaderNodeMapRange')
+    cover.inputs['From Min'].default_value, cover.inputs['From Max'].default_value = .46, .6
+    links.new(noise.outputs['Fac'], cover.inputs['Value'])
+    # Clear within 60 m of the live area, fading in beyond.
+    distance = nodes.new('ShaderNodeVectorMath')
+    distance.operation = 'LENGTH'
+    links.new(coord.outputs['Object'], distance.inputs[0])
+    edge = nodes.new('ShaderNodeMapRange')
+    edge.inputs['From Min'].default_value, edge.inputs['From Max'].default_value = 60, 95
+    links.new(distance.outputs['Value'], edge.inputs['Value'])
+    density = nodes.new('ShaderNodeMath')
+    density.operation = 'MULTIPLY'
+    links.new(cover.outputs['Result'], density.inputs[0])
+    links.new(edge.outputs['Result'], density.inputs[1])
+    strength = nodes.new('ShaderNodeMath')
+    strength.operation = 'MULTIPLY'
+    strength.inputs[1].default_value = .8
+    links.new(density.outputs['Value'], strength.inputs[0])
+    shade = nodes.new('ShaderNodeMixShader')
+    links.new(strength.outputs['Value'], shade.inputs['Fac'])
+    links.new(nodes.new('ShaderNodeBsdfTransparent').outputs['BSDF'], shade.inputs[1])
+    links.new(nodes.new('ShaderNodeBsdfDiffuse').outputs['BSDF'], shade.inputs[2])
+    links.new(shade.outputs['Shader'], nodes['Material Output'].inputs['Surface'])
+    layer.data.materials.append(m)
 
 def lights():
     import bpy
@@ -493,7 +652,9 @@ def build(with_halls=True):
     scatter('rocks', v['rock_moss_set_01'] + v['rock_moss_set_02'], 'clear', .002, 6, (.5, 1.2), 18)
     scatter('copses', [s['island_tree_01'], s['island_tree_02'], s['island_tree_03'], s['tree_small_02']], 'copse', .03, 4, (.7, 1.1), 20)
     scatter('thickets', [s['shrub_01'], s['shrub_02'], s['shrub_04']], 'copse', .12, 1.4, (.8, 1.5), 21)
-    scatter('reeds', [s['shrub_02'], s['shrub_04']], 'reeds', .25, 1.1, (.6, 1.1), 22)
+    scatter('reeds', reeds(), 'reeds', .5, .8, (.8, 1.2), 22)
+    pier()
+    cloud_shadows()
     walls(v['rock_moss_set_01'] + v['rock_moss_set_02'])
     if with_halls:
         halls()

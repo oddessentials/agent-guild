@@ -231,7 +231,12 @@ export class YardRenderer {
     const light=theme==='light';
     // Plates carry their own daylight; dark theme dims them toward dusk.
     this.plateTint.set(light?0xffffff:0x9aa3b8);
-    this.world?.traverse(node=>{if(node.userData.plate)node.material.color.copy(this.plateTint);});
+    this.world?.traverse(node=>{
+      if(node.userData.plate)node.material.color.copy(this.plateTint);
+      // Lit windows and magic read as glow at night, not as paint by day.
+      else for(const m of (Array.isArray(node.material)?node.material:node.material?[node.material]:[]))
+        if(m.name==='window'||m.name==='magic')m.emissiveIntensity=light?.35:1.4;
+    });
     this.renderer.toneMappingExposure=light?1.65:1.12;
     this.hemi.color.set(skin==='grove'?0xccebd6:skin==='orbital'?0xa7c9ff:0xc4dced);
     this.hemi.intensity=(light?3.2:1.8)*(WORLDS[skin]?.plates?.35:1);

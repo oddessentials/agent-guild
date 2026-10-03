@@ -73,6 +73,13 @@ the screen, so composition maps directly to what the Yard shows. Nothing
 tall stands where it would cover live halls or characters on screen
 (`tall_clear`); the play area is level so live models stand on y = 0.
 
+The lake surface carries the depth beneath it, so it is clear over the
+lakebed in the shallows and dark and reflective where deep. Reed clumps are
+generated blades; the pier is Poly Haven's modular section repeated. Cloud
+shadows come from a hidden layer that only casts shadow, cleared within
+60 m of the courtyard so the plate never darkens ground the live halls stand
+on while they stay in sunlight.
+
 Sources are Poly Haven CC0 assets (models, textures and the
 `kloofendal_48d_partly_cloudy_puresky` sky), listed in `env/guild_env.py`
 and pinned in `env/polyhaven.lock.json`. Poly Haven has no lush meadow seen

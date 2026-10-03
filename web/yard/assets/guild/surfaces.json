@@ -30,7 +30,8 @@
     "blue",
     "emerald",
     "violet",
-    "cyan"
+    "cyan",
+    "iron"
    ],
    "tint": true,
    "color": "guild/roof-color.webp",
