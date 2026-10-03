@@ -159,8 +159,10 @@ export class SessionManager extends EventEmitter {
       const env = Object.fromEntries(Object.entries(own).filter(([key]) => mux.dropEnv(key) || key.toUpperCase() === 'PATH'));
       const cols = clampDimension(options.cols, 120, 2, 1000);
       const rows = clampDimension(options.rows, 32, 1, 500);
+      // Outside the try: a folder or argument tmux cannot take is the request's fault, refused before tmux runs.
+      const input = tmuxNewSession({ name: muxName, cwd: options.cwd, cols, rows, env, args });
       try {
-        await mux.run(['-u', 'start-server', ';', 'source-file', '-'], { cwd: options.cwd, input: tmuxNewSession({ name: muxName, cwd: options.cwd, cols, rows, env, args }) });
+        await mux.run(['-u', 'start-server', ';', 'source-file', '-'], { cwd: options.cwd, input });
       } catch (err) {
         throw httpError(500, `tmux could not make a session: ${(err.stderr || err.message).trim()}`, 'spawn_failed');
       }
@@ -419,8 +421,11 @@ export class SessionManager extends EventEmitter {
     return n;
   }
 
-  /** Sessions whose process is still running, install sessions included. */
-  /** The running sessions stopping the manager ends: a tmux or herdr session is only detached, and its card comes back. */
+  /**
+   * Sessions whose process is still running, install sessions included,
+   * except tmux and herdr ones: stopping the manager only detaches those,
+   * and their cards come back.
+   */
   runningCount() {
     let n = 0;
     for (const s of this.sessions.values()) if (s.status === 'running' && !s.multiplexer) n++;

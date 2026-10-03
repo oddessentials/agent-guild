@@ -117,10 +117,10 @@ export function detectShells(env = process.env, platform = process.platform, { e
   return platform === 'win32' ? windowsShells(env, resolve, exists, version) : unixShells(env, platform, resolve, version);
 }
 
-/** Quote one word for tmux's command parser: nothing inside single quotes is expanded. */
-function tmuxQuote(value) {
+/** Quote one word for tmux's command parser: nothing inside single quotes is expanded. `code` names the field a line break came from. */
+function tmuxQuote(value, code = 'bad_request') {
   const text = String(value);
-  if (/[\r\n]/.test(text)) throw Object.assign(new Error('tmux cannot take a value with a line break'), { status: 400, code: 'bad_cwd' });
+  if (/[\r\n]/.test(text)) throw Object.assign(new Error('tmux cannot take a value with a line break'), { status: 400, code });
   return `'${text.replaceAll("'", "'\\''")}'`;
 }
 
@@ -131,8 +131,8 @@ function tmuxQuote(value) {
  * report token off the command line, where other users could read it.
  */
 export function tmuxNewSession({ name, cwd, cols, rows, env, args = [] }) {
-  const words = ['new-session', '-d', '-s', tmuxQuote(name), '-x', String(cols), '-y', String(rows), '-c', tmuxQuote(cwd)];
+  const words = ['new-session', '-d', '-s', tmuxQuote(name), '-x', String(cols), '-y', String(rows), '-c', tmuxQuote(cwd, 'bad_cwd')];
   for (const [key, value] of Object.entries(env)) words.push('-e', tmuxQuote(`${key}=${value}`));
-  for (const arg of args) words.push(tmuxQuote(arg));
+  for (const arg of args) words.push(tmuxQuote(arg, 'bad_args'));
   return `${words.join(' ')}\n`;
 }

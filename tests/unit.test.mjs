@@ -2028,6 +2028,7 @@ test('a tmux card\'s own session is made from commands on stdin, every value quo
   const commands = tmuxNewSession({ name: 'guild-abc123', cwd: "/work/it's here", cols: 100, rows: 30, env: { AGENT_GUILD_REPORT_TOKEN: 'tok', PATH: '/a b:/c' }, args: ['htop', '-d', '5'] });
   assert.equal(commands, "new-session -d -s 'guild-abc123' -x 100 -y 30 -c '/work/it'\\''s here' -e 'AGENT_GUILD_REPORT_TOKEN=tok' -e 'PATH=/a b:/c' 'htop' '-d' '5'\n");
   assert.throws(() => tmuxNewSession({ name: 'guild-abc123', cwd: '/work/a\nb', cols: 1, rows: 1, env: {} }), { code: 'bad_cwd', status: 400 });
+  assert.throws(() => tmuxNewSession({ name: 'guild-abc123', cwd: '/work', cols: 1, rows: 1, env: {}, args: ['a\rb'] }), { code: 'bad_args', status: 400 });
 });
 
 test('a herdr card shows herdr\'s agents, one per pane, from the herdr session its client attaches to', () => {
@@ -2437,6 +2438,13 @@ test('a tmux card gets a tmux session of its own with its identity, and a client
   assert.deepEqual(tmux.args, ['-u', 'attach-session', '-t', '={name}'], 'the detected recipe stays as it was');
   const plain = await manager.create({ providerId: 'shell', cwd: dir });
   assert.deepEqual([plain.spawnSpec, plain.multiplexer, plain.dropEnv], [{ file: '/bin/bash', args: ['--own'] }, undefined, undefined]);
+  // A line break cannot reach tmux's command parser: the request is refused, and tmux never runs.
+  fs.rmSync(`${log}.args`);
+  const broken = path.join(dir, 'a\nb');
+  fs.mkdirSync(broken);
+  await assert.rejects(manager.create({ providerId: 'shell', shell: 'tmux', cwd: broken }), { status: 400, code: 'bad_cwd' });
+  await assert.rejects(manager.create({ providerId: 'shell', shell: 'tmux', cwd: dir, args: ['two\nlines'] }), { status: 400, code: 'bad_args' });
+  assert.equal(fs.existsSync(`${log}.args`), false, 'tmux never ran');
 });
 
 test('tmux cards are kept across restarts, and come back closed with their own identity while tmux has their session', { skip: process.platform === 'win32' }, async (t) => {
