@@ -4,6 +4,7 @@ node_modules/
 Thumbs.db
 tmp/
 .cache/
+docs/.pages/
 __pycache__/
 *.blend1
 

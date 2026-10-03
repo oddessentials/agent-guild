@@ -34,6 +34,10 @@ agent-guild
 The page opens in your browser. Pick a provider, press **New**, and you are
 in a live terminal.
 
+Want to look around first? The [interactive web demo](https://oddessentials.github.io/agent-guild/)
+uses simulated sessions and usage data in your browser; it never runs commands
+or connects to a local session manager.
+
 **You need** Node.js 22 or newer on Windows 10 1809+, macOS 11+ or Linux
 (x64 or arm64), and each coding tool you want to use, signed in on its own.
 Agent Guild installs the tools for you but never handles your sign-in. No
