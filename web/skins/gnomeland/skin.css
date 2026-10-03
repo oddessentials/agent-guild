@@ -181,7 +181,7 @@
     display: grid; place-items: center; position: absolute; left: 10px; bottom: 10px; z-index: 3;
     width: 52px; height: 52px; padding-top: 2px;
     background: url("ui/level.svg") center / contain no-repeat;
-    font: 700 1.05rem var(--font-display); color: #fbe3a6; font-variant-numeric: tabular-nums;
+    font-weight: 800; font-size: 1rem; color: #fbe3a6; font-variant-numeric: tabular-nums;
     text-shadow: 0 0 6px rgba(240, 184, 74, 0.8), 0 1px 2px #000;
     filter: drop-shadow(0 2px 3px rgba(20, 10, 0, 0.45));
   }
