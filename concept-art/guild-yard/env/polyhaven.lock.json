@@ -1,6 +1,8 @@
 {
  "https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/kloofendal_48d_partly_cloudy_puresky_1k.hdr": "c69498687e876bf68d2a8b8a62234eb9",
+ "https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/qwantani_dusk_2_puresky_1k.hdr": "d400530e33f683654e70b4a087b6fe8d",
  "https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/4k/kloofendal_48d_partly_cloudy_puresky_4k.hdr": "816340c969d2e60d659051d13ac3c4dc",
+ "https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/4k/qwantani_dusk_2_puresky_4k.hdr": "a37e1a2ff49dea91e8be7a83f219557e",
  "https://dl.polyhaven.org/file/ph-assets/Models/blend/1k/Barrel_01/Barrel_01_1k.blend": "555f344342d3e4eb6818b6bfd48fb751",
  "https://dl.polyhaven.org/file/ph-assets/Models/blend/1k/Lantern_01/Lantern_01_1k.blend": "b75ec7bd564f62bbe883eab1efe3a27a",
  "https://dl.polyhaven.org/file/ph-assets/Models/blend/1k/boulder_01/boulder_01_1k.blend": "8841af39e9ee00855f47187c86f30fda",
@@ -225,6 +227,9 @@
  "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/cobblestone_floor_08/cobblestone_floor_08_diff_2k.jpg": "56404e8a3cdf04c8697dbbc7f9ddd65c",
  "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/cobblestone_floor_08/cobblestone_floor_08_nor_gl_2k.jpg": "3d1c34ed083de54949e8375d69033b0b",
  "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/cobblestone_floor_08/cobblestone_floor_08_rough_2k.jpg": "caae39f3ea47e2c09ca897d8dffa00ea",
+ "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/dark_wooden_planks/dark_wooden_planks_diff_2k.jpg": "e6ae2fe585184c16343c56b833eddbf8",
+ "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/dark_wooden_planks/dark_wooden_planks_nor_gl_2k.jpg": "c7b2e77045b0983cd7c9c408c0361a59",
+ "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/dark_wooden_planks/dark_wooden_planks_rough_2k.jpg": "9999def4fb6e250016bb21e2d4625a55",
  "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/forest_ground_04/forest_ground_04_diff_2k.jpg": "f6ce9c8af4316c2627a4b3fbab8ad944",
  "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/forest_ground_04/forest_ground_04_nor_gl_2k.jpg": "5fa9256955e7bfa40a0269b4965ce646",
  "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/forest_ground_04/forest_ground_04_rough_2k.jpg": "81daa9a1d8b35dd9ffdff3aa7a74fbd9",

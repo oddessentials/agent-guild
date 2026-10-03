@@ -73,6 +73,12 @@ the screen, so composition maps directly to what the Yard shows. Nothing
 tall stands where it would cover live halls or characters on screen
 (`tall_clear`); the play area is level so live models stand on y = 0.
 
+Each theme is a separate render of the same scene: late morning under
+`kloofendal_48d_partly_cloudy_puresky`, and dusk under
+`qwantani_dusk_2_puresky` with a low warm sun from the same side and the
+lantern posts along the paths lit. The suns come from `SUN` in `model.mjs`,
+which the live halls also use, so their shadows fall the same way.
+
 The lake surface carries the depth beneath it, so it is clear over the
 lakebed in the shallows and dark and reflective where deep. Reed clumps are
 generated blades; the pier is Poly Haven's modular section repeated. Cloud

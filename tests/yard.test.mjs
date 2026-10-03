@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, statSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
-import { sessionPose, familiarPose, layoutSessions, providerPositions, WORLDS, CAMERA, minZoom, clampPan, viewBasis, plateExtent } from '../web/yard/model.mjs';
+import { sessionPose, familiarPose, layoutSessions, providerPositions, WORLDS, CAMERA, SUN, minZoom, clampPan, viewBasis, plateExtent } from '../web/yard/model.mjs';
 import { Matrix4, Vector3 } from 'three';
 const providers=['anthropic','openai','google','xai','shell'].map(id=>({id}));
 const session=(id,provider='anthropic')=>({id,provider:{id:provider},createdAt:'2026-01-01T00:00:00Z'});
@@ -99,24 +99,30 @@ test('plated worlds match the live camera, cover every view, and stay within bud
  for(const [skin,world] of Object.entries(WORLDS).filter(([,w])=>w.plates)){
   const plates=JSON.parse(readFileSync(new URL(skin+'/plates.json',assets),'utf8'));
   assert.deepEqual(plates.camera,CAMERA,'plates were rendered for the current camera');
+  assert.deepEqual(plates.sun,SUN,'plates were rendered for the current suns');
+  assert.deepEqual(Object.keys(plates.themes).sort(),['dark','light']);
   let bytes=statSync(new URL(world.asset+'.glb',assets)).size;
-  for(const layer of plates.layers)for(const tile of layer.tiles){
-   const file=readFileSync(new URL(tile.file,assets));bytes+=file.length;
-   const [w,h]=webpSize(file);
-   assert.deepEqual([w,h],[tile.width,tile.height],tile.file);
-   assert.ok(w<=4096&&h<=4096,tile.file+' fits every GPU texture limit');
+  const extent=plateExtent();
+  for(const [theme,layers] of Object.entries(plates.themes)){
+   for(const layer of layers)for(const tile of layer.tiles){
+    const file=readFileSync(new URL(tile.file,assets));bytes+=file.length;
+    const [w,h]=webpSize(file);
+    assert.deepEqual([w,h],[tile.width,tile.height],tile.file);
+    assert.ok(w<=4096&&h<=4096,tile.file+' fits every GPU texture limit');
+   }
+   const [base]=layers;
+   const span=(axis,i)=>i?Math.max(...base.tiles.map(t=>t[axis][1])):Math.min(...base.tiles.map(t=>t[axis][0]));
+   assert.ok(span('right',0)<=extent.right[0]&&span('right',1)>=extent.right[1],`${theme} base layer spans every view horizontally`);
+   assert.ok(span('up',0)<=extent.up[0]&&span('up',1)>=extent.up[1],`${theme} base layer spans every view vertically`);
   }
-  const [base]=plates.layers,extent=plateExtent();
-  const span=(axis,i)=>i?Math.max(...base.tiles.map(t=>t[axis][1])):Math.min(...base.tiles.map(t=>t[axis][0]));
-  assert.ok(span('right',0)<=extent.right[0]&&span('right',1)>=extent.right[1],'base layer spans every view horizontally');
-  assert.ok(span('up',0)<=extent.up[0]&&span('up',1)>=extent.up[1],'base layer spans every view vertically');
   const {sky,surfaces}=JSON.parse(readFileSync(new URL(skin+'/surfaces.json',assets),'utf8'));
   const materials=new Set(glb(world.asset).materials.map(m=>m.name));
-  bytes+=statSync(new URL(sky,assets)).size;
+  assert.deepEqual(Object.keys(sky).sort(),['dark','light']);
+  for(const file of Object.values(sky))bytes+=statSync(new URL(file,assets)).size;
   for(const [name,surface] of Object.entries(surfaces)){
    for(const material of surface.materials)assert.ok(materials.has(material),`${name} textures ${material}, which ${world.asset}.glb must contain`);
    for(const key of ['color','normal','rough'])bytes+=readFileSync(new URL(surface[key],assets)).length;
   }
-  assert.ok(bytes<=9*MiB,`${skin} world is ${(bytes/MiB).toFixed(2)} MiB`);
+  assert.ok(bytes<=20*MiB,`${skin} world is ${(bytes/MiB).toFixed(2)} MiB`);
  }
 });

@@ -124,11 +124,14 @@ is orthographic and never rotates, the plates line up with the live halls
 and characters at every pan and zoom. The camera and pan bounds live in
 `web/yard/model.mjs`; the Blender scripts read them from there, and the
 tests fail if the plates were rendered for a different camera. Three tile
-layers (whole extent, default zoom, close to the courtyard) cover any stage
+layers (whole extent, default zoom, close to the courtyard), rendered once
+for each theme (late morning for light, dusk with lit lanterns for dark),
+cover any stage
 up to a 4:1 aspect; wider stages zoom in rather than see past them. The
 live halls take Poly Haven stone, slate and timber sets by material name,
-and light from a small copy of the plates' sky, with the same AgX tone
-curve the plates were rendered with. No
+and light from small copies of the plates' skies, with the same sun and AgX
+tone curve each theme was rendered with. The suns live in `model.mjs`
+beside the camera. No
 other downloaded model packs or third-party game art are included. The
 project license applies to the authored sources; Three.js retains its
 accompanying MIT notice at `web/yard/vendor/LICENSE.three`.
@@ -185,7 +188,7 @@ They also cover overlapping New/Resume requests, duplicate submission across
 views, independent install requests and model recovery without retry loops.
 Asset tests verify the shipped GLBs contain anchors, skinning and clips.
 
-The existing release gate remains 25 MiB packed. Run `npm pack` and
+The release gate is 32 MiB packed. Run `npm pack` and
 `node tests/package/check-tarball.mjs <archive>` after asset changes. Pack on
 Linux/macOS for release: Windows npm archives do not preserve executable
 mode bits on node-pty's macOS spawn helpers, which the gate correctly rejects.

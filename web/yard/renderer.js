@@ -1,5 +1,5 @@
 import * as T from './vendor/engine.js';
-import { WORLDS, PROVIDER_ORDER, CAMERA, minZoom, clampPan, viewBasis, providerPositions, layoutSessions, sessionPose, familiarPose, hash } from './model.mjs';
+import { WORLDS, PROVIDER_ORDER, CAMERA, SUN, minZoom, clampPan, viewBasis, providerPositions, layoutSessions, sessionPose, familiarPose, hash } from './model.mjs';
 
 const ASSETS = new URL('./assets/', import.meta.url);
 const vector = new T.Vector3();
@@ -25,9 +25,11 @@ function disposeTree(root) {
   for(const g of geometries) g.dispose();
   for(const m of materials) { for(const v of Object.values(m)) if(v?.isTexture) v.dispose(); m.dispose(); }
 }
+const themeKey=theme=>theme==='light'?'light':'dark';
 function disposeWorld(root) {
+  if(root)root.userData.disposed=true;
   disposeTree(root);
-  root?.userData.environment?.dispose();
+  for(const environment of Object.values(root?.userData.environments||{}))environment.dispose();
 }
 export class YardRenderer {
   constructor(host,labels,{select,open,error=noop}) {
@@ -35,7 +37,6 @@ export class YardRenderer {
     this.scene=new T.Scene();this.units=new Map();this.halls=new Map();this.slots=new Map();this.cache=new Map();
     this.loadingManager=new T.LoadingManager();
     this.providers=[];this.sessions=[];this.selected=null;this.world=null;this.skin=null;this.request=0;this.worldRequest=0;
-    this.plateTint=new T.Color(0xffffff);
     this.active=false;this.reduced=false;this.disposed=false;this.frame=0;this.lastTime=0;this.dirty=true;
     this.renderer=new T.WebGLRenderer({antialias:true,alpha:true,powerPreference:'low-power'});
     this.renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));
@@ -96,7 +97,7 @@ export class YardRenderer {
     try {
       loaded=await new T.GLTFLoader(this.loadingManager).loadAsync(new URL(skin+'.glb',ASSETS).href);
       if(this.disposed||request!==this.worldRequest){disposeWorld(loaded.scene);return;}
-      if(WORLDS[skin].plates)await Promise.all([this.surfaceWorld(loaded.scene,skin),this.plateWorld(loaded.scene,skin,request)]);
+      if(WORLDS[skin].plates)await Promise.all([this.surfaceWorld(loaded.scene,skin),this.plateWorld(loaded.scene,skin)]);
       else await this.textureWorld(loaded.scene, skin);
     } catch(err) {
       disposeWorld(loaded?.scene);
@@ -110,7 +111,6 @@ export class YardRenderer {
     this.halls.clear();
     if(this.world){this.scene.remove(this.world);disposeWorld(this.world);}
     this.world=loaded.scene;this.skin=skin;this.scene.add(this.world);
-    this.scene.environment=this.world.userData.environment||null;
     // Plated worlds match the AgX curve their plates were rendered with.
     this.renderer.toneMapping=WORLDS[skin].plates?T.AgXToneMapping:T.ACESFilmicToneMapping;
     this.light(skin,this.theme);
@@ -145,43 +145,68 @@ export class YardRenderer {
     });
   }
   // Pre-rendered surroundings drawn behind everything, from the same view
-  // direction as the camera, so they line up at any pan or zoom. The base
-  // layer gates the load; sharper layers follow without blocking it.
-  async plateWorld(world,skin,request) {
+  // direction as the camera, so they line up at any pan or zoom. Each theme
+  // has its own set: the current theme's base layer gates the load, and its
+  // sharper layers and the other theme follow without blocking it.
+  async plateWorld(world,skin) {
     const response=await fetch(new URL(skin+'/plates.json',ASSETS));
     if(!response.ok)throw new Error('The Yard plates could not be loaded.');
-    const {layers}=await response.json();
-    const {right,up,forward}=viewBasis(),axes=[right,up,forward].map(v=>new T.Vector3(...v));
-    const rotation=new T.Matrix4().makeBasis(axes[0],axes[1],axes[2].clone().negate());
-    const offset=new T.Vector3(...CAMERA.offset),depth=CAMERA.far*.75+axes[2].dot(offset);
-    const loader=new T.TextureLoader(this.loadingManager);
-    const layer=async(entry,order)=>{
-      const meshes=await Promise.all(entry.tiles.map(async tile=>{
-        const texture=await loader.loadAsync(new URL(tile.file,ASSETS).href);
-        texture.colorSpace=T.SRGBColorSpace;texture.generateMipmaps=true;
-        texture.anisotropy=Math.min(4,this.renderer.capabilities.getMaxAnisotropy());
-        const [r0,r1]=tile.right,[u0,u1]=tile.up;
-        const mesh=new T.Mesh(new T.PlaneGeometry(r1-r0,u1-u0),
-          new T.MeshBasicMaterial({map:texture,depthTest:false,depthWrite:false,toneMapped:false}));
-        mesh.applyMatrix4(rotation);
-        mesh.position.copy(axes[0]).multiplyScalar((r0+r1)/2).addScaledVector(axes[1],(u0+u1)/2).addScaledVector(axes[2],depth);
-        mesh.renderOrder=-100+order;mesh.frustumCulled=false;mesh.userData.plate=true;
-        mesh.material.color.copy(this.plateTint);
-        return mesh;
-      }));
-      return meshes;
-    };
-    const [base,...sharper]=layers;
-    for(const mesh of await layer(base,0))world.add(mesh);
+    world.userData.plates={themes:(await response.json()).themes,groups:{}};
+    await this.plateTheme(world,themeKey(this.theme));
     // Live halls and characters cast onto the plate's ground.
     const catcher=new T.Mesh(new T.PlaneGeometry(400,400),new T.ShadowMaterial({opacity:.3,depthWrite:false}));
     catcher.rotation.x=-Math.PI/2;catcher.position.y=.01;catcher.receiveShadow=true;catcher.renderOrder=-50;
     world.add(catcher);
-    sharper.forEach((entry,i)=>layer(entry,i+1).then(meshes=>{
-      if(this.disposed||request!==this.worldRequest||this.world!==world){for(const mesh of meshes)disposeTree(mesh);return;}
-      for(const mesh of meshes){mesh.material.color.copy(this.plateTint);world.add(mesh);}
-      this.dirty=true;this.drawOnce();
-    }).catch(noop));
+  }
+  plateTheme(world,theme) {
+    const plates=world.userData.plates;
+    if(plates.groups[theme])return plates.groups[theme].ready;
+    const group=new T.Group();group.visible=false;world.add(group);
+    const [base,...sharper]=plates.themes[theme];
+    // Layers that arrive after their world is gone are released, not added.
+    const keep=meshes=>{
+      if(this.disposed||world.userData.disposed){for(const mesh of meshes)disposeTree(mesh);return false;}
+      group.add(...meshes);return true;
+    };
+    const ready=this.plateLayer(base,0).then(meshes=>{
+      if(!keep(meshes))return;
+      sharper.forEach((entry,i)=>this.plateLayer(entry,i+1).then(meshes=>{
+        if(keep(meshes)){this.dirty=true;this.drawOnce();}
+      }).catch(noop));
+    });
+    plates.groups[theme]={group,ready};
+    return ready;
+  }
+  async plateLayer(entry,order) {
+    const {right,up,forward}=viewBasis(),axes=[right,up,forward].map(v=>new T.Vector3(...v));
+    const rotation=new T.Matrix4().makeBasis(axes[0],axes[1],axes[2].clone().negate());
+    const depth=CAMERA.far*.75+axes[2].dot(new T.Vector3(...CAMERA.offset));
+    const loader=new T.TextureLoader(this.loadingManager);
+    return Promise.all(entry.tiles.map(async tile=>{
+      const texture=await loader.loadAsync(new URL(tile.file,ASSETS).href);
+      texture.colorSpace=T.SRGBColorSpace;
+      texture.anisotropy=Math.min(4,this.renderer.capabilities.getMaxAnisotropy());
+      const [r0,r1]=tile.right,[u0,u1]=tile.up;
+      const mesh=new T.Mesh(new T.PlaneGeometry(r1-r0,u1-u0),
+        new T.MeshBasicMaterial({map:texture,depthTest:false,depthWrite:false,toneMapped:false}));
+      mesh.applyMatrix4(rotation);
+      mesh.position.copy(axes[0]).multiplyScalar((r0+r1)/2).addScaledVector(axes[1],(u0+u1)/2).addScaledVector(axes[2],depth);
+      mesh.renderOrder=-100+order;mesh.frustumCulled=false;mesh.userData.plate=true;
+      return mesh;
+    }));
+  }
+  // Show the theme's plates once loaded; until then the other theme stays up.
+  showPlates(theme) {
+    const plates=this.world?.userData.plates;
+    if(!plates)return;
+    const want=plates.groups[theme];
+    if(!want){this.plateTheme(this.world,theme).then(()=>this.showPlates(themeKey(this.theme))).catch(noop);return;}
+    if(!want.group.children.length)return;
+    for(const [key,{group}] of Object.entries(plates.groups))group.visible=key===theme;
+    // Load the other theme quietly so a later switch is immediate.
+    const other=theme==='light'?'dark':'light';
+    if(!plates.groups[other])this.plateTheme(this.world,other).catch(noop);
+    this.dirty=true;this.drawOnce();
   }
   // Live halls in plated worlds take scanned material sets by material name,
   // and light from a small copy of the plates' sky.
@@ -197,7 +222,7 @@ export class YardRenderer {
       texture.anisotropy=Math.min(8,this.renderer.capabilities.getMaxAnisotropy());
       return texture;
     };
-    let environment;
+    const environments={};
     try {
       const sets=await Promise.all(Object.values(surfaces).map(async s=>{
         // Hall UVs are 0.7 per metre (build.py).
@@ -205,10 +230,13 @@ export class YardRenderer {
         const [map,normalMap,roughnessMap]=await Promise.all([load(s.color,true,repeat),load(s.normal,false,repeat),load(s.rough,false,repeat)]);
         return {...s,map,normalMap,roughnessMap};
       }));
-      const equirect=await new T.HDRLoader(this.loadingManager).loadAsync(new URL(sky,ASSETS).href);
       const pmrem=new T.PMREMGenerator(this.renderer);
-      environment=pmrem.fromEquirectangular(equirect).texture;
-      equirect.dispose();pmrem.dispose();
+      try {
+        for(const [theme,file] of Object.entries(sky)) {
+          const equirect=await new T.HDRLoader(this.loadingManager).loadAsync(new URL(file,ASSETS).href);
+          environments[theme]=pmrem.fromEquirectangular(equirect).texture;equirect.dispose();
+        }
+      } finally { pmrem.dispose(); }
       const touched=new Set();
       world.traverse(node=>{
         for(const m of (Array.isArray(node.material)?node.material:node.material?[node.material]:[])){
@@ -221,29 +249,32 @@ export class YardRenderer {
         }
       });
     } catch(err) {
-      for(const texture of textures)texture.dispose();environment?.dispose();
+      for(const texture of textures)texture.dispose();
+      for(const environment of Object.values(environments))environment.dispose();
       throw err;
     }
-    world.userData.environment=environment;
+    world.userData.environments=environments;
   }
   light(skin,theme) {
     this.theme=theme;
     const light=theme==='light';
-    // Plates carry their own daylight; dark theme dims them toward dusk.
-    this.plateTint.set(light?0xffffff:0x9aa3b8);
+    const plated=Boolean(WORLDS[skin]?.plates),key=themeKey(theme);
     this.world?.traverse(node=>{
-      if(node.userData.plate)node.material.color.copy(this.plateTint);
       // Lit windows and magic read as glow at night, not as paint by day.
-      else for(const m of (Array.isArray(node.material)?node.material:node.material?[node.material]:[]))
+      for(const m of (Array.isArray(node.material)?node.material:node.material?[node.material]:[]))
         if(m.name==='window'||m.name==='magic')m.emissiveIntensity=light?.35:1.4;
     });
+    // Plated worlds use the sun, sky and plates their theme was rendered with.
+    this.sun.position.set(...(plated?SUN[key]:SUN.light));
+    this.scene.environment=this.world?.userData.environments?.[key]||null;
+    if(this.world&&this.skin===skin)this.showPlates(key);
     this.renderer.toneMappingExposure=light?1.65:1.12;
     this.hemi.color.set(skin==='grove'?0xccebd6:skin==='orbital'?0xa7c9ff:0xc4dced);
     this.hemi.intensity=(light?3.2:1.8)*(WORLDS[skin]?.plates?.35:1);
     // Blender and three.js place an equirectangular sky half a turn apart.
     this.scene.environmentRotation.y=Math.PI;this.scene.environmentIntensity=light?1.25:.7;
-    this.sun.color.set(skin==='orbital'?0xc5d8ff:0xffe0ad);
-    this.sun.intensity=light?4.0:2.7;
+    this.sun.color.set(plated&&!light?0xff9a5c:skin==='orbital'?0xc5d8ff:0xffe0ad);
+    this.sun.intensity=light?4.0:plated?3.2:2.7;
     this.dirty=true;
   }
   resize() {

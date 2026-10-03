@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[3]
 @cache
 def view():
     script = ("import('./web/yard/model.mjs').then(m=>console.log(JSON.stringify("
-              "{camera:m.CAMERA,basis:m.viewBasis(),extent:m.plateExtent()})))")
+              "{camera:m.CAMERA,sun:m.SUN,basis:m.viewBasis(),extent:m.plateExtent()})))")
     out = subprocess.run(['node', '-e', script], cwd=ROOT, capture_output=True, text=True, check=True)
     return json.loads(out.stdout)
 

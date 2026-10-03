@@ -17,7 +17,8 @@ from camera import ROOT, view, to_blender, ortho_camera
 OUT = ROOT / '.cache/yard-env'
 # Generated with local-image-studio where Poly Haven has no match; see ART.md.
 PAINTED = Path(__file__).resolve().parent / 'textures'
-HDRI = 'kloofendal_48d_partly_cloudy_puresky'
+# Sky per theme: late morning for light, dusk for dark.
+SKIES = {'light': 'kloofendal_48d_partly_cloudy_puresky', 'dark': 'qwantani_dusk_2_puresky'}
 TEXTURES = {
     'forest': 'forest_ground_04', 'shore': 'brown_mud_rocks_01', 'path': 'forest_ground_06', 'gravel': 'gravel_floor', 'courtyard': 'cobblestone_floor_08', 'kerb': 'castle_wall_slates',
 }
@@ -40,10 +41,11 @@ SURFACES = {
 }
 COURTYARD_RADIUS = 13.7
 WATER_LEVEL = -.5
-SUN = (-12, 25, 15)  # renderer.js sun, glTF coordinates
 
 def fetch_all():
-    polyhaven.hdri(HDRI)
+    for sky in SKIES.values():
+        polyhaven.hdri(sky)
+    polyhaven.model('Lantern_01')
     for asset in TEXTURES.values():
         polyhaven.texture(asset)
     for asset in MODELS:
@@ -566,15 +568,19 @@ def pier():
         obj.rotation_euler = (0, 0, heading)
         bpy.context.scene.collection.objects.link(obj)
 
+def sun(theme):
+    """The theme's sun position in Blender coordinates, from model.mjs."""
+    return to_blender(view()['sun'][theme])
+
 def cloud_shadows():
     """Soft cloud shadows over the outer landscape, never over the live area:
     a hidden layer above the ground that only casts shadow."""
     import bpy
     from mathutils import Vector
-    sun = to_blender(SUN).normalized()
+    light = sun('light').normalized()
     lift = 24
     # A point on the layer shades the ground this far away from the sun.
-    shift = Vector((-sun.x, -sun.y)) * lift / sun.z
+    shift = Vector((-light.x, -light.y)) * lift / light.z
     bpy.ops.mesh.primitive_plane_add(size=520, location=(-shift.x, -shift.y, lift))
     layer = bpy.context.object
     layer.visible_camera = layer.visible_glossy = layer.visible_diffuse = False
@@ -611,20 +617,68 @@ def cloud_shadows():
     links.new(shade.outputs['Shader'], nodes['Material Output'].inputs['Surface'])
     layer.data.materials.append(m)
 
-def lights():
+def lights(theme):
     import bpy
+    dusk = theme == 'dark'
     world = bpy.data.worlds.new('sky')
     bpy.context.scene.world = world
     env = world.node_tree.nodes.new('ShaderNodeTexEnvironment')
-    env.image = bpy.data.images.load(str(polyhaven.hdri(HDRI)))
+    env.image = bpy.data.images.load(str(polyhaven.hdri(SKIES[theme])))
     world.node_tree.links.new(env.outputs['Color'], world.node_tree.nodes['Background'].inputs['Color'])
-    world.node_tree.nodes['Background'].inputs['Strength'].default_value = .9
-    sun = bpy.data.objects.new('sun', bpy.data.lights.new('sun', 'SUN'))
-    sun.data.energy = 3.4
-    sun.data.angle = math.radians(1.2)
-    sun.data.color = (1, .94, .84)
-    sun.rotation_euler = to_blender(SUN).to_track_quat('Z', 'Y').to_euler()
-    bpy.context.scene.collection.objects.link(sun)
+    world.node_tree.nodes['Background'].inputs['Strength'].default_value = .5 if dusk else .9
+    lamp = bpy.data.objects.new('sun', bpy.data.lights.new('sun', 'SUN'))
+    lamp.data.energy = 3.4 if dusk else 3.4
+    lamp.data.angle = math.radians(2.5 if dusk else 1.2)
+    lamp.data.color = (1, .56, .3) if dusk else (1, .94, .84)
+    lamp.rotation_euler = sun(theme).to_track_quat('Z', 'Y').to_euler()
+    bpy.context.scene.collection.objects.link(lamp)
+
+def lanterns(theme):
+    """Lantern posts along the paths and at the pier, lit at dusk. They stand
+    in both themes so the plates differ only in light."""
+    import bpy
+    path = polyhaven.model('Lantern_01')
+    with bpy.data.libraries.load(str(path)) as (src, dst):
+        dst.objects = list(src.objects)
+    head = bpy.data.collections.new('lantern')
+    for o in dst.objects:
+        head.objects.link(o)
+        if theme == 'dark' and o.name.endswith('glass'):
+            glow = bpy.data.materials.new('lantern_glow')
+            bsdf = glow.node_tree.nodes['Principled BSDF']
+            bsdf.inputs['Emission Color'].default_value = (1, .62, .3, 1)
+            bsdf.inputs['Emission Strength'].default_value = 40
+            o.data.materials[0] = glow
+    post = textured('post', 'dark_wooden_planks', .6)
+    spots = []
+    for line in PATHS:
+        for (a0, b0), (a1, b1) in zip(line, line[1:]):
+            length = math.hypot(a1 - a0, b1 - b0)
+            na, nb = -(b1 - b0) / length, (a1 - a0) / length
+            for i in range(int(length / 12)):
+                t = (i + .5) * 12 / length
+                side = 1.7 if (len(spots) % 2) else -1.7
+                spots.append((a0 + (a1 - a0) * t + na * side, b0 + (b1 - b0) * t + nb * side))
+    spots.append(PIER[1])
+    for a, b in spots:
+        x, y = to_ground(a, b)
+        on_pier = (a, b) == PIER[1]
+        if live_distance(x, y) < 3 or not tall_clear(a, b, 3) or (lake_shape(a, b) < 1.05 and not on_pier):
+            continue
+        base = WATER_LEVEL + .55 if on_pier else height(x, y)
+        bpy.ops.mesh.primitive_cube_add(size=1, location=(x, y, base + 1.15))
+        pole = bpy.context.object
+        pole.scale = (.09, .09, 2.3)
+        pole.data.materials.append(post)
+        inst = bpy.data.objects.new('lantern', None)
+        inst.instance_type, inst.instance_collection = 'COLLECTION', head
+        inst.location, inst.scale = (x, y, base + 2.3), (2, 2, 2)
+        bpy.context.scene.collection.objects.link(inst)
+        if theme == 'dark':
+            bulb = bpy.data.objects.new('lantern_light', bpy.data.lights.new('lantern_light', 'POINT'))
+            bulb.data.energy, bulb.data.color, bulb.data.shadow_soft_size = 320, (1, .6, .3), .12
+            bulb.location = (x, y, base + 2.6)
+            bpy.context.scene.collection.objects.link(bulb)
 
 def halls():
     import bpy
@@ -633,10 +687,10 @@ def halls():
         if obj.name.startswith('courtyard'):
             bpy.data.objects.remove(obj)
 
-def build(with_halls=True):
+def build(with_halls=True, theme='light'):
     import bpy
     bpy.ops.wm.read_factory_settings(use_empty=True)
-    lights()
+    lights(theme)
     terrain()
     water()
     courtyard()
@@ -654,7 +708,9 @@ def build(with_halls=True):
     scatter('thickets', [s['shrub_01'], s['shrub_02'], s['shrub_04']], 'copse', .12, 1.4, (.8, 1.5), 21)
     scatter('reeds', reeds(), 'reeds', .5, .8, (.8, 1.2), 22)
     pier()
-    cloud_shadows()
+    lanterns(theme)
+    if theme == 'light':
+        cloud_shadows()
     walls(v['rock_moss_set_01'] + v['rock_moss_set_02'])
     if with_halls:
         halls()
@@ -675,9 +731,9 @@ def render_settings(scene, width, height, samples):
     scene.view_settings.view_transform = 'AgX'
     scene.view_settings.look = 'AgX - Medium High Contrast'
 
-def preview():
+def preview(theme):
     import bpy
-    build()
+    build(theme=theme)
     scene = bpy.context.scene
     OUT.mkdir(parents=True, exist_ok=True)
     v = view()
@@ -688,9 +744,9 @@ def preview():
         h = cam['height'] / zoom
         ortho_camera(scene, name, center, h * aspect, h)
         render_settings(scene, width, round(width / aspect), 128)
-        scene.render.filepath = str(OUT / (name + '.png'))
+        scene.render.filepath = str(OUT / f'{name}-{theme}.png')
         bpy.ops.render.render(write_still=True)
         print('YARD_ENV_PREVIEW', scene.render.filepath, flush=True)
 
 if __name__ == '__main__' and '--preview' in sys.argv:
-    preview()
+    preview('dark' if '--dark' in sys.argv else 'light')

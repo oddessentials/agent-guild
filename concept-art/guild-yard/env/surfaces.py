@@ -22,7 +22,7 @@ def export(world):
     env = importlib.import_module(world + '_env')
     out = ROOT / 'web/yard/assets' / world
     out.mkdir(parents=True, exist_ok=True)
-    manifest = {'sky': f'{world}/sky.hdr', 'surfaces': {}}
+    manifest = {'sky': {theme: f'{world}/sky-{theme}.hdr' for theme in env.SKIES}, 'surfaces': {}}
     for name, (asset, metres, materials, tint) in env.SURFACES.items():
         files = polyhaven.texture(asset, '1k')
         entry = {'metres': metres, 'materials': materials, 'tint': tint}
@@ -40,10 +40,11 @@ def export(world):
             img.save(quality=QUALITY)
             entry[key] = file
         manifest['surfaces'][name] = entry
-    sky = bpy.data.images.load(str(polyhaven.hdri(env.HDRI, '1k')))
-    sky.scale(512, 256)
-    sky.filepath_raw, sky.file_format = str(out / 'sky.hdr'), 'HDR'
-    sky.save()
+    for theme, asset in env.SKIES.items():
+        sky = bpy.data.images.load(str(polyhaven.hdri(asset, '1k')))
+        sky.scale(512, 256)
+        sky.filepath_raw, sky.file_format = str(ROOT / 'web/yard/assets' / manifest['sky'][theme]), 'HDR'
+        sky.save()
     (out / 'surfaces.json').write_text(json.dumps(manifest, indent=1) + '\n', encoding='utf-8', newline='\n')
     print('YARD_SURFACES', world, flush=True)
 

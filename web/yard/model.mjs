@@ -15,6 +15,10 @@ export const CAMERA = {
   maxAspect: 4,
   pan: { minX: -20, maxX: 20, minZ: -16, maxZ: 30 },
 };
+// Sun positions (relative to the target) for each theme. Plated worlds are
+// rendered with these, and the live scene lights its models to match:
+// late morning for light, a low warm dusk sun from the same side for dark.
+export const SUN = { light: [-12, 25, 15], dark: [-12, 3.4, 15] };
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 export function minZoom(aspect) {
   return Math.max(CAMERA.zoom.min, CAMERA.zoom.min * aspect / CAMERA.maxAspect);

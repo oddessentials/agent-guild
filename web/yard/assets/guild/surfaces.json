@@ -1,5 +1,8 @@
 {
- "sky": "guild/sky.hdr",
+ "sky": {
+  "light": "guild/sky-light.hdr",
+  "dark": "guild/sky-dark.hdr"
+ },
  "surfaces": {
   "wall": {
    "metres": 2.5,

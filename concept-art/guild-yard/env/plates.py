@@ -5,8 +5,9 @@
 Each layer covers a rectangle of the view plane (model.mjs `viewBasis`) at a
 fixed density, split into tiles no larger than MAX_TILE pixels. Base covers
 every permitted view; detail covers what the default zoom can reach; close
-covers where live halls and characters stand, for zooming in. plates.json
-records the camera they were rendered for, so a stale render fails the tests.
+covers where live halls and characters stand, for zooming in. Each theme
+(light, dark) has its own set. plates.json records the camera and suns they
+were rendered for, so a stale render fails the tests.
 """
 import json, math, sys
 from pathlib import Path
@@ -48,29 +49,30 @@ def tiles(right, up, density):
 def render(world):
     import bpy, importlib
     env = importlib.import_module(world + '_env')
-    env.build(with_halls=False)
-    scene = bpy.context.scene
     out = ROOT / 'web/yard/assets' / world
     out.mkdir(parents=True, exist_ok=True)
-    # Only this script's tiles; the world's surface textures live alongside.
-    for name, *_ in layers():
-        for old in out.glob(f'{name}-*.webp'):
+    manifest = {'camera': view()['camera'], 'sun': view()['sun'], 'themes': {}}
+    for theme in ('light', 'dark'):
+        env.build(with_halls=False, theme=theme)
+        scene = bpy.context.scene
+        # Only this script's tiles; the world's surface textures live alongside.
+        for old in out.glob(f'{theme}-*.webp'):
             old.unlink()
-    manifest = {'camera': view()['camera'], 'layers': []}
-    for name, density, right, up in layers():
-        layer = {'name': name, 'density': density, 'tiles': []}
-        for col, row, w, h, r, u in tiles(right, up, density):
-            ortho_camera(scene, f'{name}-{col}-{row}', ((r[0] + r[1]) / 2, (u[0] + u[1]) / 2), r[1] - r[0], u[1] - u[0])
-            env.render_settings(scene, w, h, SAMPLES)
-            scene.render.image_settings.file_format = 'WEBP'
-            scene.render.image_settings.quality = QUALITY
-            scene.render.image_settings.color_mode = 'RGB'
-            file = f'{name}-{col}-{row}.webp'
-            scene.render.filepath = str(out / file)
-            bpy.ops.render.render(write_still=True)
-            layer['tiles'].append({'file': f'{world}/{file}', 'right': r, 'up': u, 'width': w, 'height': h})
-            print('YARD_PLATE', file, w, h, flush=True)
-        manifest['layers'].append(layer)
+        manifest['themes'][theme] = []
+        for name, density, right, up in layers():
+            layer = {'name': name, 'density': density, 'tiles': []}
+            for col, row, w, h, r, u in tiles(right, up, density):
+                ortho_camera(scene, f'{name}-{col}-{row}', ((r[0] + r[1]) / 2, (u[0] + u[1]) / 2), r[1] - r[0], u[1] - u[0])
+                env.render_settings(scene, w, h, SAMPLES)
+                scene.render.image_settings.file_format = 'WEBP'
+                scene.render.image_settings.quality = QUALITY
+                scene.render.image_settings.color_mode = 'RGB'
+                file = f'{theme}-{name}-{col}-{row}.webp'
+                scene.render.filepath = str(out / file)
+                bpy.ops.render.render(write_still=True)
+                layer['tiles'].append({'file': f'{world}/{file}', 'right': r, 'up': u, 'width': w, 'height': h})
+                print('YARD_PLATE', file, w, h, flush=True)
+            manifest['themes'][theme].append(layer)
     (out / 'plates.json').write_text(json.dumps(manifest, indent=1) + '\n', encoding='utf-8', newline='\n')
 
 if __name__ == '__main__':
