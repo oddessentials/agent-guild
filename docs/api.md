@@ -428,7 +428,7 @@ All paths are under `/api/v1`.
 | GET | `/sessions/:id` | | `{ session }` |
 | PATCH | `/sessions/:id` | `{ name }` | `{ session }`. `name` must be a non-empty string; it is trimmed to 80 characters. |
 | POST | `/sessions/:id/stop` | | Ends the process. The session stays listed as exited. |
-| POST | `/sessions/:id/reattach` | | `{ session }`: runs an exited tmux or herdr session's multiplexer client again, keeping the session's id, report token and screen. 400 `not_reattachable` for any other session, 409 `session_running` while it runs, 409 `multiplexer_session_gone` once the multiplexer no longer has its session. |
+| POST | `/sessions/:id/reattach` | | `{ session }`: runs an exited tmux or herdr session's multiplexer client again, keeping the session's id, report token and screen. 400 `not_reattachable` for any other session, 409 `session_running` while it runs, 409 `multiplexer_session_gone` while `multiplexer.reattachable` is false or once the multiplexer no longer has its session. The client starts in the session's `cwd`, or in the home folder once that folder is gone. |
 | DELETE | `/sessions/:id` | | Ends the process if needed and removes the session. |
 | POST | `/sessions/:id/agents` | Agent report | `{ agent }`, or `{ agent: null }` after a removal, for a `done` report about an agent that was never reported, or for `{ finishForeground: true }`, which ends the commands of the turn that just ended. |
 | POST | `/sessions/:id/model` | `{ model, displayName? }` | `{ model }`. Sets the session's model with source `report`. |

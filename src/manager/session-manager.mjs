@@ -24,6 +24,10 @@ function httpError(status, message, code) {
   return Object.assign(new Error(message), { status, code });
 }
 
+function isFolder(dir) {
+  try { return fs.statSync(dir).isDirectory(); } catch { return false; }
+}
+
 /**
  * Layer environment objects. On Windows, variable names are
  * case-insensitive, so a later "PATH" must replace an inherited "Path"
@@ -244,7 +248,7 @@ export class SessionManager extends EventEmitter {
     if (!(await mux.alive()) || this.closing) return;
     const spawnSpec = this.registry.spawnSpec(provider, [], null, [], mux.named);
     const session = this._spawn({
-      provider, spawnSpec: null, cwd: typeof card.cwd === 'string' && fs.existsSync(card.cwd) ? card.cwd : os.homedir(), name: card.name, account,
+      provider, spawnSpec: null, cwd: typeof card.cwd === 'string' ? card.cwd : os.homedir(), name: card.name, account,
       id: card.id, reportToken: card.reportToken, dropEnv: mux.dropEnv, extraEnv: shell.env,
       createdAt: typeof card.createdAt === 'string' && !Number.isNaN(Date.parse(card.createdAt)) ? card.createdAt : undefined,
       multiplexer: { label: shell.label, attach: shell.multiplexer.attach.replaceAll('{name}', card.muxName), reattachable: true },
@@ -259,6 +263,8 @@ export class SessionManager extends EventEmitter {
     if (!mux) throw httpError(400, `${session.name} is not in tmux or herdr`, 'not_reattachable');
     if (this.closing) throw httpError(503, 'the session manager is stopping', 'manager_stopping');
     if (session.status === 'running') throw httpError(409, `${session.name} is still attached`, 'session_running');
+    // As the page offers it: only once the manager has found, after the client closed or at a restart, that the multiplexer still has the session.
+    if (!session.multiplexer.reattachable) throw httpError(409, `${session.multiplexer.label} no longer has the session ${session.name} ran in`, 'multiplexer_session_gone');
     const alive = await mux.alive();
     if (this.sessions.get(id) !== session || session.status === 'running') throw httpError(409, `${session.name} changed meanwhile`, 'session_running');
     if (!alive) {
@@ -267,7 +273,8 @@ export class SessionManager extends EventEmitter {
       throw httpError(409, `${session.multiplexer.label} no longer has the session ${session.name} ran in`, 'multiplexer_session_gone');
     }
     try {
-      session.reattach(mux.spawnSpec);
+      // The client can run anywhere, and the card's folder may be gone by now.
+      session.reattach(mux.spawnSpec, { cwd: isFolder(session.cwd) ? session.cwd : os.homedir() });
     } catch (err) {
       throw httpError(500, `could not attach to ${session.multiplexer.label}: ${err.message}`, 'spawn_failed');
     }

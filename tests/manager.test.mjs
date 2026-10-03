@@ -887,7 +887,8 @@ test('a restarted manager brings a tmux card back closed, with its own id and to
   const env = { ...process.env };
   delete env.TMUX; // the outer tmux this file pretends to run in
   t.after(() => new Promise((resolve) => execFile('tmux', ['kill-server'], { env }, () => resolve())));
-  const { session } = (await call('POST', '/sessions', { providerId: 'shell', shell: 'tmux', cwd: home, name: 'Kept across restarts' })).body;
+  const folder = fs.mkdtempSync(path.join(home, 'project-'));
+  const { session } = (await call('POST', '/sessions', { providerId: 'shell', shell: 'tmux', cwd: folder, name: 'Kept across restarts' })).body;
   const client = terminal(session.id);
   t.after(() => client.close());
   await client.opened;
@@ -899,11 +900,12 @@ test('a restarted manager brings a tmux card back closed, with its own id and to
   // The manager stops: its client ends and tmux keeps the session. The next manager starts on the same data folder.
   await call('POST', `/sessions/${session.id}/stop`);
   await waitFor(async () => (await sessionNow(session.id)).status === 'exited', { label: 'the client ends' });
+  fs.rmSync(folder, { recursive: true }); // and its folder is gone by the time the manager starts again
   const next = new SessionManager({ registry: ctx.registry, baseEnv: ctx.manager.baseEnv, getApiUrl: () => base, store: multiplexerStore });
   t.after(() => next.shutdown());
   await next.restore();
   const back = next.get(session.id);
-  assert.deepEqual([back.status, back.name, back.reportToken, back.createdAt, back.multiplexer.reattachable], ['exited', 'Kept across restarts', token, session.createdAt, true]);
+  assert.deepEqual([back.status, back.name, back.reportToken, back.createdAt, back.cwd, back.multiplexer.reattachable], ['exited', 'Kept across restarts', token, session.createdAt, folder, true]);
   await next.reattach(session.id);
   const screen = () => { const b = back.term.buffer.active; let text = ''; for (let i = 0; i < b.length; i++) text += `${b.getLine(i)?.translateToString(true) ?? ''}\n`; return text; };
   await waitFor(() => back.status === 'running' && screen().includes('BEFORE-THE-RESTART'), { label: 'the reattached card shows the tmux session as it was' });

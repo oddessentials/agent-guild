@@ -2445,7 +2445,9 @@ test('tmux cards are kept across restarts, and come back closed with their own i
   const alive = path.join(dir, 'alive');
   fs.writeFileSync(alive, '');
   const fakeTmux = path.join(dir, 'fake-tmux');
-  fs.writeFileSync(fakeTmux, '#!/bin/sh\nif [ "$1" = has-session ]; then grep -qx -- "${3#=}" "$TMUX_ALIVE"; else cat > /dev/null; fi\n', { mode: 0o755 });
+  fs.writeFileSync(fakeTmux, '#!/bin/sh\nif [ "$1" = has-session ]; then grep -qx -- "${3#=}" "$TMUX_ALIVE"; elif [ "$2" = attach-session ]; then pwd; exec cat > /dev/null; else cat > /dev/null; fi\n', { mode: 0o755 });
+  const project = path.join(dir, 'project');
+  fs.mkdirSync(project);
   const bash = { id: 'bash', label: 'bash', path: '/bin/bash', args: [], env: {} };
   const tmux = { id: 'tmux', label: 'tmux', path: fakeTmux, args: ['-u', 'attach-session', '-t', '={name}'], env: {}, multiplexer: { attach: 'tmux attach -t {name}' } };
   const provider = { id: 'shell', tool: 'Shell', args: [], resumeArgs: [], accounts: [{ id: 'default' }], env: {} };
@@ -2463,8 +2465,8 @@ test('tmux cards are kept across restarts, and come back closed with their own i
   const baseEnv = { PATH: process.env.PATH, TMUX_ALIVE: alive };
   const first = new SessionManager({ registry, baseEnv, getApiUrl: () => 'http://127.0.0.1:1', store });
   t.mock.method(first, '_spawn', (options) => Object.assign(new EventEmitter(), options, { createdAt: '2026-10-03T09:00:00.000Z', setModel() {} }));
-  const kept = await first.create({ providerId: 'shell', shell: 'tmux', cwd: dir, name: 'Kept' });
-  await first.create({ providerId: 'shell', shell: 'tmux', cwd: dir, name: 'Gone' });
+  const kept = await first.create({ providerId: 'shell', shell: 'tmux', cwd: project, name: 'Kept' });
+  await first.create({ providerId: 'shell', shell: 'tmux', cwd: project, name: 'Gone' });
   assert.deepEqual(saved.map((card) => card.name), ['Kept', 'Gone']);
   assert.deepEqual(Object.keys(saved[0]).sort(), ['account', 'createdAt', 'cwd', 'id', 'muxName', 'name', 'provider', 'reportToken', 'shell']);
   kept.name = 'Kept, renamed';
@@ -2483,10 +2485,28 @@ test('tmux cards are kept across restarts, and come back closed with their own i
   t.after(() => next.shutdown());
   await next.restore();
   assert.deepEqual(next.list().map((s) => [s.id, s.name, s.status, s.createdAt, s.cwd, s.multiplexer]), [
-    [kept.id, 'Kept, renamed', 'exited', '2026-10-03T09:00:00.000Z', dir, { label: 'tmux', attach: `tmux attach -t ${saved[0].muxName}`, reattachable: true }],
+    [kept.id, 'Kept, renamed', 'exited', '2026-10-03T09:00:00.000Z', project, { label: 'tmux', attach: `tmux attach -t ${saved[0].muxName}`, reattachable: true }],
   ]);
   assert.equal(next.get(kept.id).reportToken, kept.reportToken, 'with its own report token, which tools inside still hold');
   assert.deepEqual(saved.map((card) => card.id), [kept.id], 'a card whose session is gone is forgotten');
+  // Reattach waits until the manager has found tmux still has the session, as the page does.
+  const back = next.get(kept.id);
+  back.multiplexer.reattachable = false; // as while it is still asking tmux after the client closed
+  await assert.rejects(next.reattach(kept.id), { status: 409, code: 'multiplexer_session_gone' });
+  back.multiplexer.reattachable = true;
+  // The card's folder is gone by now: its client starts in the home folder, and the card still shows where it ran.
+  fs.rmSync(project, { recursive: true });
+  await next.reattach(kept.id);
+  const home = fs.realpathSync(os.homedir());
+  const shown = await new Promise((resolve) => {
+    let text = '';
+    back.attach((msg) => {
+      if (msg.type === 'snapshot' || msg.type === 'data') text += msg.data;
+      if (msg.type === 'exit' || text.includes(home)) resolve(text);
+    });
+  });
+  assert.ok(shown.includes(home), shown);
+  assert.deepEqual([back.status, back.cwd], ['running', project]);
   next.remove(kept.id);
   assert.deepEqual(saved, [], 'a removed card is forgotten');
 });

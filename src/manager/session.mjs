@@ -169,12 +169,12 @@ export class Session extends EventEmitter {
     }
   }
 
-  _start(spawnSpec) {
+  _start(spawnSpec, cwd = this.cwd) {
     const proc = pty.spawn(spawnSpec.file, spawnSpec.args, {
       name: 'xterm-256color',
       cols: this.cols,
       rows: this.rows,
-      cwd: this.cwd,
+      cwd,
       env: this.env,
       useConpty: true,
     });
@@ -185,11 +185,11 @@ export class Session extends EventEmitter {
 
   /**
    * Run a new process in an exited session, keeping its id, report token and
-   * screen: a multiplexer's client attaching to its session again.
+   * screen: a multiplexer's client attaching to its session again, in `cwd`.
    */
-  reattach(spawnSpec) {
+  reattach(spawnSpec, { cwd = this.cwd } = {}) {
     if (this.disposed || this.status !== 'exited') throw Object.assign(new Error('only an exited session can be reattached'), { status: 409 });
-    this._start(spawnSpec);
+    this._start(spawnSpec, cwd);
     Object.assign(this, { status: 'running', exitCode: null, signal: null, exitedAt: null, activity: 'quiet', startedAt: new Date().toISOString() });
     this.exited = new Promise((resolve) => { this._resolveExited = resolve; });
     this._changed();
