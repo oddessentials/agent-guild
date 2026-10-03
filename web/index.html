@@ -41,6 +41,7 @@
           <label class="choice" title="Plays when the session manager stops, remains unavailable after a brief recovery check, or a new Agent Guild update is discovered. Click or type on this page to allow playback."><input id="sound" type="checkbox" name="sound"><span class="sound-alerts">Alert sounds</span></label>
         </fieldset>
       </div>
+      <button id="notes-open" class="btn notes-open" type="button" aria-haspopup="dialog">Notes</button>
       <button id="restart-manager" class="btn restart-manager" type="button" hidden>Restart manager</button>
       <button id="stop-manager" class="btn danger stop-manager" type="button" hidden title="Stop the session manager. This ends every session.">Stop manager</button>
     </div>
@@ -177,6 +178,19 @@
       <p id="changelog-note" class="news-empty" hidden></p>
     </div>
     <p id="changelog-status" class="news-status" hidden></p>
+  </dialog>
+
+  <dialog id="notes" class="news-panel notes-panel" aria-labelledby="notes-title">
+    <div class="news-bar">
+      <div class="news-heading">
+        <h2 id="notes-title">Notes</h2>
+        <p id="notes-sub" class="sub" aria-live="polite">Saved in this browser as you type</p>
+      </div>
+      <button id="notes-close" class="btn" type="button">Close</button>
+    </div>
+    <div class="news-body">
+      <textarea id="notes-text" class="notes-text" aria-labelledby="notes-title" aria-describedby="notes-sub" autocomplete="off" placeholder="Prompts, commands, to-dos: anything you want to keep at hand"></textarea>
+    </div>
   </dialog>
 
   <dialog id="history" class="models history" aria-labelledby="history-title">

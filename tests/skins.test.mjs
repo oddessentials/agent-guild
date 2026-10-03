@@ -77,6 +77,12 @@ for (const { id } of list) {
     assert.deepEqual(names.filter((n) => !n.startsWith(`${id}-`)), []);
   });
 
+  test(`skin "${id}": the notes field is styled with the working-folder field`, () => {
+    const css = readFileSync(file, 'utf8').replace(/\/\*[^]*?\*\//g, '');
+    const lists = [...css.matchAll(/([^{};]+)\{/g)].map((m) => m[1].split(',').map((s) => s.replace(/\s+/g, ' ').trim()));
+    for (const list of lists.filter((l) => l.includes('.cwd input'))) assert.ok(list.includes('.notes-text'), list.join(', '));
+  });
+
   test(`skin "${id}": every relative url() points to a file`, () => {
     const css = readFileSync(file, 'utf8');
     const urls = [...css.matchAll(/url\(\s*["']?([^"')]+)["']?\s*\)/g)].map((m) => m[1]).filter((u) => !/^(data:|\/|#|https?:)/.test(u));

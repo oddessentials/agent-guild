@@ -27,6 +27,7 @@ Copy the closer one to start a new skin.
    * Nest every rule inside `:where(:root[data-skin="<id>"])`, `:where(:root[data-skin="<id>"][data-theme="dark"])` or `:where(:root[data-skin="<id>"][data-theme="light"])`. `:where()` keeps each rule's specificity equal to the base rule it overrides.
    * Define the tokens listed in `tests/skins.test.mjs`.
    * Start every `@keyframes` name with `<id>-`.
+   * Style `.notes-text` in every rule that styles `.cwd input`, so the notes field matches the other fields.
    * Reference art by URLs relative to `skin.css`.
 4. Put the art's sources or generator in `concept-art/`.
 5. Run `npm test`. `tests/skins.test.mjs` checks steps 1–3 and that every referenced file exists.
