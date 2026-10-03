@@ -236,14 +236,16 @@ function removalFor(channel, env, platform) {
   return remove.length > 0 ? { remove, links: ownedPaths(channel.links, env, platform) } : null;
 }
 
-export function uninstallPlan(install, provider, env, platform) {
+export function uninstallPlan(install, provider, env, platform, fsx = defaultFsx) {
   const channels = provider.channels || {};
   const plan = (run, removal = null, launcher = null) => ({ run, remove: removal?.remove || [], links: removal?.links || [], launcher });
   switch (install.channel) {
     case 'npm': {
       if (!install.update) return null;
       const run = { file: install.update.file, args: ['uninstall', '-g', '--prefix', install.prefix, provider.package] };
-      return plan(run, channels.native?.sharedWithNpm ? removalFor(channels.native, env, platform) : null);
+      const removal = channels.native?.sharedWithNpm ? removalFor(channels.native, env, platform) : null;
+      const launcher = removal ? knownLaunchers({ provider, command: provider.command, env, platform, fsx })[0] : null;
+      return plan(run, removal, launcher);
     }
     case 'brew':
       return install.brewFile ? plan({ file: install.brewFile, args: install.cask ? ['uninstall', '--cask', install.token] : ['uninstall', install.token] }) : null;
@@ -282,7 +284,10 @@ export function listInstallations({
   const add = (file, isOnPath) => {
     const install = classifyInstall({ resolvedPath: file, provider, env, platform, fsx, npmOnPath, wingetOnPath });
     const key = installationKey(install, provider, platform, fsx);
-    if (!installs.has(key)) installs.set(key, { ...install, key, onPath: isOnPath, uninstall: uninstallPlan(install, provider, env, platform) });
+    const existing = installs.get(key);
+    if (!existing) installs.set(key, { ...install, key, onPath: isOnPath, uninstall: uninstallPlan(install, provider, env, platform, fsx) });
+    // A shared native copy also needs its npm owner removed, whichever comes first on PATH.
+    else if (install.channel === 'npm' && !existing.uninstall?.run) existing.uninstall = uninstallPlan(install, provider, env, platform, fsx);
   };
   for (const file of onPath) add(file, true);
   for (const file of known) add(file, false);

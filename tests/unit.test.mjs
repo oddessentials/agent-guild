@@ -678,16 +678,16 @@ test('installations are counted once however many entry points they have', () =>
   }) });
   assert.deepEqual(channelsOf(both), ['native', 'npm'], 'a native build and an npm install are two installations');
 
-  const grok = { tool: 'Grok Build', package: '@xai-official/grok', channels: { native: { paths: ['~/.grok/bin'], update: ['update'], remove: ['~/.grok/bin', '~/.grok/downloads'], links: ['~/.local/bin/grok'], sharedWithNpm: true } } };
+  const grok = { tool: 'Grok Build', command: 'grok', package: '@xai-official/grok', channels: { native: { paths: ['~/.grok/bin'], update: ['update'], remove: ['~/.grok/bin', '~/.grok/downloads'], links: ['~/.local/bin/grok'], sharedWithNpm: true } } };
   const grokPkg = `${nvm}/lib/node_modules/@xai-official/grok`;
   const shared = listInstallations({ ...mac, provider: grok, onPath: [`${nvm}/bin/grok`, '/Users/a/.grok/bin/grok'], fsx: fsx({
-    files: [`${grokPkg}/package.json`, `${nvm}/bin/npm`], links: { [`${nvm}/bin/grok`]: `${grokPkg}/bin/grok-native` },
+    files: [`${grokPkg}/package.json`, `${nvm}/bin/npm`, '/Users/a/.grok/bin/grok'], links: { [`${nvm}/bin/grok`]: `${grokPkg}/bin/grok-native` },
   }) });
   assert.deepEqual(channelsOf(shared), ['npm'], 'an npm wrapper over the native location is one installation');
   assert.equal(runOf(shared[0]), `${nvm}/bin/npm uninstall -g --prefix ${nvm} @xai-official/grok`);
   assert.deepEqual(shared[0].uninstall.remove, ['/Users/a/.grok/bin', '/Users/a/.grok/downloads'], 'the native files npm placed go too');
   assert.deepEqual(shared[0].uninstall.links, ['/Users/a/.local/bin/grok']);
-  assert.equal(shared[0].uninstall.launcher, null, 'npm removes its own launcher');
+  assert.equal(shared[0].uninstall.launcher, '/Users/a/.grok/bin/grok', 'the native launcher is kept after npm removes its wrapper');
 
   const cask = '/opt/homebrew/Caskroom/claude-code/2.1.285/claude';
   const intel = '/usr/local/Caskroom/claude-code/2.1.285/claude';
@@ -719,6 +719,36 @@ test('installations are counted once however many entry points they have', () =>
     ['native', false, ['/Users/a/.local/bin/claude', '/Users/a/.local/share/claude']],
     ['legacy', false, ['/Users/a/.claude/local']],
   ]);
+});
+
+test('shared npm and native copies have the same uninstall plan in either PATH order', () => {
+  const provider = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'config/providers.default.json'), 'utf8')).providers.find((p) => p.id === 'xai');
+  for (const platform of ['darwin', 'win32']) {
+    const m = platform === 'win32' ? path.win32 : path.posix;
+    const home = platform === 'win32' ? 'C:\\Users\\a' : '/Users/a';
+    const env = { HOME: home, USERPROFILE: home };
+    const prefix = m.join(home, 'npm');
+    const wrapper = m.join(prefix, platform === 'win32' ? 'grok.cmd' : 'bin/grok');
+    const native = m.join(home, '.grok/bin', platform === 'win32' ? 'grok.exe' : 'grok');
+    const manifest = m.join(prefix, platform === 'win32' ? '' : 'lib', 'node_modules/@xai-official/grok/package.json');
+    const npm = m.join(prefix, platform === 'win32' ? 'npm.cmd' : 'bin/npm');
+    const files = new Set([wrapper, native, manifest, npm]);
+    const fsx = { exists: (p) => files.has(p), isFile: (p) => files.has(p), isLink: () => false, realpath: (p) => p, readText: () => 'node_modules/@xai-official/grok' };
+    const opts = { provider, env, platform, fsx };
+    const [npmFirst] = listInstallations({ ...opts, onPath: [wrapper, native] });
+    const [nativeFirst] = listInstallations({ ...opts, onPath: [native, wrapper] });
+    assert.deepEqual(nativeFirst.uninstall, npmFirst.uninstall, platform);
+    assert.deepEqual(nativeFirst.uninstall.run, { file: npm, args: ['uninstall', '-g', '--prefix', prefix, provider.package] });
+    assert.equal(nativeFirst.uninstall.launcher, native);
+    assert.equal(nativeFirst.channel, 'native');
+    assert.equal(nativeFirst.resolvedPath, native);
+    assert.equal(nativeFirst.onPath, true);
+    assert.deepEqual(listInstallations({ ...opts, onPath: [wrapper], known: [native] })[0].uninstall, npmFirst.uninstall);
+    files.delete(npm);
+    for (const onPath of [[wrapper, native], [native, wrapper]]) {
+      assert.equal(listInstallations({ ...opts, onPath })[0].uninstall, null, 'missing npm must not fall back to deleting only the native files');
+    }
+  }
 });
 
 test('ownership follows where a tool is really installed, and removal runs that installer', () => {
@@ -1005,6 +1035,79 @@ test('an uninstall that fails at any step leaves the copy findable and launchabl
       assert.equal(runPlan(plan, { log: quiet }), 0, `${name}, failing at deletion ${failAt}: a retry succeeds`);
       assert.ok([...plan.remove, ...plan.links].every(gone), `${name}, failing at deletion ${failAt}: a retry removes everything`);
     }
+  }
+});
+
+test('shared npm cleanup remains discoverable and retryable after failure at each deletion', () => {
+  const provider = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'config/providers.default.json'), 'utf8')).providers.find((p) => p.id === 'xai');
+  const win = process.platform === 'win32';
+  const quiet = () => {};
+  const prepare = () => {
+    const home = tempDir();
+    const env = { HOME: home, USERPROFILE: home };
+    const prefix = path.join(home, 'npm');
+    const wrapper = path.join(prefix, win ? 'grok.cmd' : 'bin/grok');
+    const manifest = path.join(prefix, win ? '' : 'lib', 'node_modules/@xai-official/grok/package.json');
+    const native = path.join(home, '.grok/bin', win ? 'grok.exe' : 'grok');
+    const settings = path.join(home, '.grok/config.toml');
+    for (const file of [wrapper, manifest, native, settings, path.join(home, '.grok/bin/agent'), path.join(home, '.grok/downloads/grok-1.0.46'), path.join(home, '.grok/completions/bash/grok.bash')]) {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, file === wrapper ? 'node_modules/@xai-official/grok' : 'fixture');
+    }
+    const discover = () => listInstallations({
+      provider, env, npmOnPath: process.execPath,
+      onPath: fs.existsSync(wrapper) ? [wrapper] : [],
+      known: knownLaunchers({ provider, command: provider.command, env }),
+    });
+    const [copy] = discover();
+    assert.equal(copy.channel, 'npm');
+    assert.deepEqual(copy.uninstall.run, { file: process.execPath, args: ['uninstall', '-g', '--prefix', prefix, provider.package] });
+    assert.equal(copy.uninstall.launcher, native);
+    // Stand in for npm by removing its wrapper and package manifest in a child process.
+    const plan = { ...copy.uninstall, run: {
+      file: process.execPath,
+      args: ['-e', 'const fs = require("node:fs"); for (const file of process.argv.slice(1)) fs.unlinkSync(file);', wrapper, manifest],
+    } };
+    return { plan, discover, wrapper, manifest, native, settings };
+  };
+  const gone = (p) => fs.lstatSync(p, { throwIfNoEntry: false }) === undefined;
+  const holdsFiles = (p) => {
+    const stat = fs.lstatSync(p, { throwIfNoEntry: false });
+    if (!stat) return false;
+    return stat.isDirectory() ? fs.readdirSync(p).some((n) => holdsFiles(path.join(p, n))) : true;
+  };
+  const clean = prepare();
+  let deletions = 0;
+  assert.equal(runPlan(clean.plan, { log: quiet, rm: (p) => {
+    deletions++;
+    fs.rmSync(p, { recursive: true, force: true });
+  } }), 0);
+  assert.ok(clean.plan.remove.every(gone));
+  assert.deepEqual(clean.discover(), []);
+  assert.equal(fs.readFileSync(clean.settings, 'utf8'), 'fixture');
+
+  for (let failAt = 0; failAt < deletions; failAt++) {
+    const { plan, discover, wrapper, manifest, native, settings } = prepare();
+    let calls = 0;
+    assert.equal(runPlan(plan, { log: quiet, rm: (p) => {
+      assert.ok(gone(wrapper) && gone(manifest), 'npm cleanup completes before native deletion starts');
+      if (calls++ === failAt) throw Object.assign(new Error('locked'), { code: 'EBUSY' });
+      fs.rmSync(p, { recursive: true, force: true });
+    } }), 1, `failure at deletion ${failAt}`);
+    assert.equal(calls, failAt + 1);
+    const copies = discover();
+    if (plan.remove.some(holdsFiles)) {
+      assert.equal(copies.length, 1, `deletion ${failAt}: files left behind must remain discoverable`);
+      assert.equal(copies[0].resolvedPath, native);
+      assert.equal(copies[0].channel, 'native');
+      assert.equal(copies[0].onPath, false, 'the native launcher is found even when only the npm wrapper was on PATH');
+      assert.equal(copies[0].uninstall.run, null, 'the retry no longer needs npm');
+      assert.equal(runPlan(copies[0].uninstall, { log: quiet }), 0, `deletion ${failAt}: a freshly discovered plan completes cleanup`);
+      assert.ok(plan.remove.every(gone));
+    } else {
+      assert.deepEqual(copies, [], 'only empty directories can remain once the launcher is gone');
+    }
+    assert.equal(fs.readFileSync(settings, 'utf8'), 'fixture');
   }
 });
 
@@ -2018,6 +2121,51 @@ test('provider env values are normalised to strings', () => {
   const { providers } = loadProviders({ userFile, platform: 'linux' });
   assert.deepEqual(providers[0].env, { A: '1', B: 'true', D: 'd' });
 });
+
+for (const task of [null, 'install']) {
+  test(`closing ${task === 'install' ? 'an installer' : 'a tool'} session keeps its provider guarded until the process exits`, async (t) => {
+    const provider = { id: 'tool', tool: 'Tool' };
+    const registry = {
+      get: (id) => ({ ...provider, id }),
+      resolve: () => null,
+      installSpec: async () => ({}),
+      uninstallSpec: () => ({ spec: {}, channel: 'native' }),
+    };
+    const manager = new SessionManager({ registry, baseEnv: {}, getApiUrl: () => '' });
+    t.mock.method(manager, '_spawn', (options) => options);
+    let exit;
+    const session = {
+      provider, task, status: 'running',
+      exited: new Promise((resolve) => { exit = resolve; }),
+      _broadcast() {}, dispose: t.mock.fn(),
+    };
+    manager.sessions.set('closing', session);
+    const blocked = task === 'install' ? { code: 'install_in_progress' } : { code: 'provider_in_use', running: 1 };
+    const assertBlocked = async (options) => {
+      await assert.rejects(manager.install(provider.id, options), blocked);
+      assert.throws(() => manager.uninstall(provider.id, 'copy', options), blocked);
+    };
+    await assertBlocked();
+    manager.remove('closing');
+    assert.equal(session.dispose.mock.callCount(), 1, 'closing requests process termination');
+    assert.equal(manager.sessions.size, 0, 'the session is no longer visible');
+    await assertBlocked();
+
+    if (task === 'install') {
+      await assertBlocked({ force: true });
+    } else {
+      assert.equal((await manager.install(provider.id, { force: true })).installKind, 'install');
+      assert.equal(manager.uninstall(provider.id, 'copy', { force: true }).installKind, 'uninstall');
+    }
+    assert.equal((await manager.install('other')).installKind, 'install', 'another provider is unaffected');
+    assert.equal(manager.uninstall('other', 'copy').installKind, 'uninstall');
+
+    exit();
+    await session.exited;
+    assert.equal((await manager.install(provider.id)).installKind, 'install', 'exit releases the guard');
+    assert.equal(manager.uninstall(provider.id, 'copy').installKind, 'uninstall');
+  });
+}
 
 test('shutdown reports the processes that did not confirm exiting in time', async () => {
   const fakeSession = (exited) => ({ status: 'running', exited, dispose() {} });

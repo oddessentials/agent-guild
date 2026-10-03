@@ -179,7 +179,7 @@ export class SessionManager extends EventEmitter {
 
   installsRunningFor(providerId) {
     let n = 0;
-    for (const s of this.sessions.values()) if (s.status === 'running' && s.task === 'install' && s.provider.id === providerId) n++;
+    for (const s of [...this.sessions.values(), ...this.exiting]) if (s.status === 'running' && s.task === 'install' && s.provider.id === providerId) n++;
     return n;
   }
 
@@ -228,7 +228,7 @@ export class SessionManager extends EventEmitter {
 
   runningFor(providerId) {
     let n = 0;
-    for (const s of this.sessions.values()) if (s.status === 'running' && s.task === null && s.provider.id === providerId) n++;
+    for (const s of [...this.sessions.values(), ...this.exiting]) if (s.status === 'running' && s.task === null && s.provider.id === providerId) n++;
     return n;
   }
 

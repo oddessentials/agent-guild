@@ -512,7 +512,9 @@ test('a provider can be installed or updated from a visible npm session', async 
   assert.equal(forced.body.session.name, 'Update Native Tool (native)');
   await waitFor(async () => (await call('GET', `/sessions/${forced.body.session.id}`)).body.session.status === 'exited', { label: 'update exit' });
   await call('DELETE', `/sessions/${forced.body.session.id}`);
+  const runningExit = ctx.manager.get(running.id).exited;
   await call('DELETE', `/sessions/${running.id}`);
+  await runningExit;
   await events.close();
 });
 
