@@ -197,10 +197,10 @@ def main():
     # The mask leaves out the asteroid the robot sits on, in the lower third.
     empty = source("ui/empty-state", args.masks, solid_below=0.66)
     encode(shrink(empty.crop(empty.getbbox()), 420), WEB / "ui" / "empty-state", avif=60)
-    # The generator leaves a dark seam down the left edge.
-    encode(Image.open(PACK / "backgrounds" / "page.png").convert("RGB").crop((8, 0, 1912, 1088)), WEB / "page", avif=80, webp=85)
-    light = Image.open(PACK / "backgrounds" / "page-light.png").convert("RGB").crop((8, 0, 1912, 1088))
-    encode(Image.blend(light, Image.new("RGB", light.size, (238, 242, 250)), 0.3), WEB / "page-light", avif=88, webp=90)
+    # The backgrounds are upscaled 2x (3840x2176) so ultrawide screens stay sharp.
+    encode(Image.open(PACK / "backgrounds" / "page.png").convert("RGB"), WEB / "page", avif=62, webp=80)
+    light = Image.open(PACK / "backgrounds" / "page-light.png").convert("RGB")
+    encode(Image.blend(light, Image.new("RGB", light.size, (238, 242, 250)), 0.3), WEB / "page-light", avif=62, webp=80)
 
     write("ui/level.svg", LEVEL)
     write("ui/lock.svg", LOCK)
