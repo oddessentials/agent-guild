@@ -83,8 +83,9 @@ export function resolveAllCommands(command, env = process.env, platform = proces
   return hits;
 }
 
-export function killWindowsTree(pid, done = () => {}) {
-  execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, timeout: 5000 }, (err) => done(err));
+/** End a Windows process and, unless `tree` is false, every process it started. */
+export function killWindowsTree(pid, done = () => {}, { tree = true } = {}) {
+  execFile('taskkill', ['/PID', String(pid), ...(tree ? ['/T'] : []), '/F'], { windowsHide: true, timeout: 5000 }, (err) => done(err));
 }
 
 /** Quote one argument for a cmd.exe command line. */
@@ -121,10 +122,11 @@ export function buildSpawnSpec(resolvedPath, args = [], env = process.env, platf
 }
 
 /**
- * Run a spawn spec to completion without a terminal. Resolves with its
- * output; rejects with the error carrying stdout and stderr.
+ * Run a spawn spec to completion without a terminal, with `input` on its
+ * stdin. Resolves with its output; rejects with the error carrying stdout
+ * and stderr.
  */
-export function runSpec(spec, { env, timeoutMs = 15000, cwd } = {}) {
+export function runSpec(spec, { env, timeoutMs = 15000, cwd, input } = {}) {
   return new Promise((resolve, reject) => {
     const opts = { env, cwd, timeout: timeoutMs, windowsHide: true, maxBuffer: 1024 * 1024 };
     let args = spec.args;
@@ -133,10 +135,11 @@ export function runSpec(spec, { env, timeoutMs = 15000, cwd } = {}) {
       args = [args];
     }
     try {
-      execFile(spec.file, args, opts, (err, stdout, stderr) => {
+      const child = execFile(spec.file, args, opts, (err, stdout, stderr) => {
         if (err) reject(Object.assign(err, { stdout, stderr }));
         else resolve({ stdout, stderr });
       });
+      if (input !== undefined) child.stdin.end(input);
     } catch (err) {
       reject(err);
     }

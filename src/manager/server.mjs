@@ -327,7 +327,7 @@ export function createManagerServer({
       return undefined;
     }
 
-    const sessionMatch = route.match(/^\/sessions\/([a-f0-9]+)(\/stop)?$/);
+    const sessionMatch = route.match(/^\/sessions\/([a-f0-9]+)(\/stop|\/reattach)?$/);
     if (sessionMatch) {
       const [, id, action] = sessionMatch;
       if (!action && method === 'GET') return sendJson(res, 200, { session: manager.get(id).toJSON() });
@@ -346,6 +346,9 @@ export function createManagerServer({
       }
       if (action === '/stop' && method === 'POST') {
         return sendJson(res, 200, { session: manager.stop(id).toJSON() });
+      }
+      if (action === '/reattach' && method === 'POST') {
+        return sendJson(res, 200, { session: (await manager.reattach(id)).toJSON() });
       }
     }
     throw new HttpError(404, `no route for ${method} ${url.pathname}`, 'not_found');

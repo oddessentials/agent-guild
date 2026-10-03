@@ -95,6 +95,8 @@ export class Session extends EventEmitter {
     this._shellSeq = 0;
     this._endedTasks = new Set();
     this.createdAt = new Date().toISOString();
+    /** When the current process started; later than createdAt once a multiplexer session is reattached. */
+    this.startedAt = this.createdAt;
     this.exitedAt = null;
     this.status = 'running';
     this.exitCode = null;
@@ -146,21 +148,39 @@ export class Session extends EventEmitter {
     }
 
     this.disposed = false;
+    this.env = opts.env;
     try {
-      this.pty = pty.spawn(opts.spawnSpec.file, opts.spawnSpec.args, {
-        name: 'xterm-256color',
-        cols: this.cols,
-        rows: this.rows,
-        cwd: this.cwd,
-        env: opts.env,
-        useConpty: true,
-      });
+      this._start(opts.spawnSpec);
     } catch (err) {
       this.term.dispose();
       throw err;
     }
-    this.pty.onData((data) => this._onData(data));
-    this.pty.onExit(({ exitCode, signal }) => this._onExit(exitCode, signal));
+  }
+
+  _start(spawnSpec) {
+    const proc = pty.spawn(spawnSpec.file, spawnSpec.args, {
+      name: 'xterm-256color',
+      cols: this.cols,
+      rows: this.rows,
+      cwd: this.cwd,
+      env: this.env,
+      useConpty: true,
+    });
+    this.pty = proc;
+    proc.onData((data) => { if (this.pty === proc) this._onData(data); });
+    proc.onExit(({ exitCode, signal }) => { if (this.pty === proc) this._onExit(exitCode, signal); });
+  }
+
+  /**
+   * Run a new process in an exited session, keeping its id, report token and
+   * screen: a multiplexer's client attaching to its session again.
+   */
+  reattach(spawnSpec) {
+    if (this.disposed || this.status !== 'exited') throw Object.assign(new Error('only an exited session can be reattached'), { status: 409 });
+    this._start(spawnSpec);
+    Object.assign(this, { status: 'running', exitCode: null, signal: null, exitedAt: null, activity: 'quiet', startedAt: new Date().toISOString() });
+    this.exited = new Promise((resolve) => { this._resolveExited = resolve; });
+    this._changed();
   }
 
   /**
@@ -309,9 +329,11 @@ export class Session extends EventEmitter {
 
   /**
    * End the process. On macOS and Linux: hang-up first, force after a grace
-   * period. On Windows: end the whole process tree at once. node-pty's own
-   * Windows kill first asks a helper process for the console's process list,
-   * and when that helper fails it waits a fixed five seconds.
+   * period. On Windows: end the whole process tree at once, except for a
+   * multiplexer's client, whose server is its child there and must outlive
+   * it. node-pty's own Windows kill first asks a helper process for the
+   * console's process list, and when that helper fails it waits a fixed
+   * five seconds.
    */
   kill({ graceMs = this.killGraceMs } = {}) {
     if (this.status !== 'running') return;
@@ -332,7 +354,7 @@ export class Session extends EventEmitter {
     };
     const pid = this.pty.pid;
     if (!pid) return fallback();
-    killWindowsTree(pid, (err) => { if (err) fallback(); });
+    killWindowsTree(pid, (err) => { if (err) fallback(); }, { tree: !this.multiplexer });
   }
 
   /**
@@ -692,6 +714,7 @@ export class Session extends EventEmitter {
       activity: this.activity,
       lastOutputAt: this.lastOutputAt ? new Date(this.lastOutputAt).toISOString() : null,
       createdAt: this.createdAt,
+      startedAt: this.startedAt,
       exitedAt: this.exitedAt,
       cols: this.cols,
       rows: this.rows,

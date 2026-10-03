@@ -3,6 +3,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { resolveCommand } from './command-resolver.mjs';
 
 const UNIX_SHELLS = [
@@ -12,19 +13,32 @@ const UNIX_SHELLS = [
   { id: 'pwsh', label: 'PowerShell' },
 ];
 
-// Terminal multiplexers, offered after the shells on macOS and Linux. Each
-// starts the way a new terminal window would start it, and a session only
-// ever ends its client: the multiplexer's own session keeps running after
-// the card stops, so it can be reattached. {name} is the session's own name.
+// Terminal multiplexers, offered after the shells. A session only ever ends
+// its client: the multiplexer's own session keeps running after the card
+// stops, so the card can attach to it again. {name} is that session's name.
+// A tmux card attaches to a tmux session made for it first (tmuxNewSession),
+// so the card's identity reaches that session only; that needs tmux 3.2.
 // tmux gets -u because the page's terminal is always UTF-8, whatever locale
 // the manager inherited; without it tmux draws other characters as "_".
-const MULTIPLEXERS = [
-  { id: 'tmux', label: 'tmux', args: ['-u', 'new-session', '-s', '{name}'], attach: 'tmux attach -t {name}' },
-  { id: 'herdr', label: 'herdr', args: [], attach: 'herdr' },
-];
+// A herdr card attaches to herdr's own persistent session; herdr runs on
+// Windows too, tmux does not.
+const TMUX = { id: 'tmux', label: 'tmux', args: ['-u', 'attach-session', '-t', '={name}'], multiplexer: { attach: 'tmux attach -t {name}' } };
+const HERDR = { id: 'herdr', label: 'herdr', args: [], multiplexer: { attach: 'herdr' } };
 
 function isFile(file) {
   try { return fs.statSync(file).isFile(); } catch { return false; }
+}
+
+/** The output of `<file> -V`, or '' when it cannot run. */
+function readVersion(file) {
+  try { return execFileSync(file, ['-V'], { encoding: 'utf8', timeout: 5000, windowsHide: true }); } catch { return ''; }
+}
+
+/** Whether `tmux -V` names 3.2 or later. A build without a number (master, a BSD's own) counts as recent. */
+export function tmuxSupported(versionText) {
+  if (!/^tmux /.test(versionText)) return false;
+  const [, major, minor] = versionText.match(/(\d+)\.(\d+)/) ?? [];
+  return major === undefined || Number(major) > 3 || (Number(major) === 3 && Number(minor) >= 2);
 }
 
 function envValue(env, name) {
@@ -56,7 +70,16 @@ export function fallbackShell(env, platform) {
   return env.SHELL || (platform === 'darwin' ? '/bin/zsh' : '/bin/bash');
 }
 
-function windowsShells(env, resolve, exists) {
+/** Add the installed multiplexers after the shells, unless a shell already has their id. */
+function withMultiplexers(shells, candidates, resolve, version) {
+  for (const { id, label, args, multiplexer } of candidates) {
+    const found = !shells.some((shell) => shell.id === id) && resolve(id);
+    if (found && (id !== 'tmux' || tmuxSupported(version(found)))) shells.push({ id, label, path: found, args, env: {}, multiplexer });
+  }
+  return shells;
+}
+
+function windowsShells(env, resolve, exists, version) {
   const installed = ['ProgramFiles', 'ProgramW6432'].map((name) => envValue(env, name)).filter(Boolean).map((base) => path.win32.join(base, 'PowerShell', '7', 'pwsh.exe'));
   const pwsh = resolve('pwsh') || installed.find(exists) || null;
   const gitBash = findGitBash(env, resolve, exists);
@@ -67,10 +90,11 @@ function windowsShells(env, resolve, exists) {
     // CHERE_INVOKING keeps a login bash in the session's folder instead of moving to HOME.
     gitBash && { id: 'git-bash', label: 'Git Bash', path: gitBash, args: ['--login', '-i'], env: { CHERE_INVOKING: '1' } },
   ].filter((shell) => shell?.path);
-  return { shells, defaultId: shells[0]?.id ?? null };
+  const defaultId = shells[0]?.id ?? null;
+  return { shells: withMultiplexers(shells, [HERDR], resolve, version), defaultId };
 }
 
-function unixShells(env, platform, resolve) {
+function unixShells(env, platform, resolve, version) {
   const name = (file) => path.posix.basename(file);
   const own = resolve(env.SHELL || '') || resolve(fallbackShell({}, platform));
   const shells = [];
@@ -84,15 +108,31 @@ function unixShells(env, platform, resolve) {
     shells.unshift({ id: defaultId, label: name(own), path: own, args: [], env: {} });
   }
   defaultId ??= shells[0]?.id ?? null;
-  for (const { id, label, args, attach } of MULTIPLEXERS) {
-    const found = !shells.some((shell) => shell.id === id) && resolve(id);
-    if (found) shells.push({ id, label, path: found, args, env: {}, multiplexer: { attach } });
-  }
-  return { shells, defaultId };
+  return { shells: withMultiplexers(shells, [TMUX, HERDR], resolve, version), defaultId };
 }
 
-/** The installed shells, as { id, label, path, args, env }, and the id of the default one. */
-export function detectShells(env = process.env, platform = process.platform, { exists = isFile, resolve: resolveWith = resolveCommand } = {}) {
+/** The installed shells, as { id, label, path, args, env, multiplexer? }, and the id of the default one. */
+export function detectShells(env = process.env, platform = process.platform, { exists = isFile, resolve: resolveWith = resolveCommand, version = readVersion } = {}) {
   const resolve = (command) => resolveWith(command, env, platform);
-  return platform === 'win32' ? windowsShells(env, resolve, exists) : unixShells(env, platform, resolve);
+  return platform === 'win32' ? windowsShells(env, resolve, exists, version) : unixShells(env, platform, resolve, version);
+}
+
+/** Quote one word for tmux's command parser: nothing inside single quotes is expanded. */
+function tmuxQuote(value) {
+  const text = String(value);
+  if (/[\r\n]/.test(text)) throw Object.assign(new Error('tmux cannot take a value with a line break'), { status: 400, code: 'bad_cwd' });
+  return `'${text.replaceAll("'", "'\\''")}'`;
+}
+
+/**
+ * The tmux commands, read from stdin, that make a card's own tmux session:
+ * detached, `cols` by `rows`, in `cwd`, with `env` as that session's own
+ * environment and `args`, if any, as its command. Stdin keeps the card's
+ * report token off the command line, where other users could read it.
+ */
+export function tmuxNewSession({ name, cwd, cols, rows, env, args = [] }) {
+  const words = ['new-session', '-d', '-s', tmuxQuote(name), '-x', String(cols), '-y', String(rows), '-c', tmuxQuote(cwd)];
+  for (const [key, value] of Object.entries(env)) words.push('-e', tmuxQuote(`${key}=${value}`));
+  for (const arg of args) words.push(tmuxQuote(arg));
+  return `${words.join(' ')}\n`;
 }

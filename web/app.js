@@ -2656,8 +2656,24 @@ function resumable(s) {
     && !runningOn(s.provider.id, s.account?.id ?? 'default', id));
 }
 
+/** A stopped tmux or herdr card whose multiplexer still has its session. */
+function reattachable(s) {
+  return Boolean(s.status === 'exited' && s.multiplexer?.reattachable);
+}
+
+async function reattachSession(id) {
+  try {
+    upsertSession((await api('POST', `/sessions/${id}/reattach`)).session);
+    openPanel(id);
+  } catch (err) {
+    if (err instanceof AuthError) return showAuth(err.message);
+    toast(err.message, 8000);
+  }
+}
+
 function resumeCard(id) {
   const s = state.sessions.get(id);
+  if (s && reattachable(s)) return reattachSession(id);
   if (!s || !resumable(s)) return;
   const provider = state.providers.find((p) => p.id === s.provider.id);
   const account = provider.accounts?.find((a) => a.id === s.account?.id)?.id;
@@ -2711,8 +2727,11 @@ function updateCard(node, s) {
   useButton.hidden = !clonedPath(s);
   useButton.title = clonedPath(s) ? `Make ${s.clone.path} the working folder, so new sessions start there` : '';
   const resume = node.querySelector('.resume');
-  resume.hidden = !resumable(s);
-  resume.title = `Start ${s.provider.tool} again on this session${id ? ` (${id})` : ''} in ${s.cwd}`;
+  resume.hidden = !resumable(s) && !reattachable(s);
+  resume.textContent = s.multiplexer ? 'Reattach' : 'Resume';
+  resume.title = s.multiplexer
+    ? `Attach this card to its ${s.multiplexer.label} session again, as ${s.multiplexer.attach} would`
+    : `Start ${s.provider.tool} again on this session${id ? ` (${id})` : ''} in ${s.cwd}`;
   const modelLabel = s.model ? `, model ${modelText(s)}` : '';
   const accountName = accountLabel(s) ? `, ${accountLabel(s)} account` : '';
   const shellCount = (s.shells || []).length;
@@ -2764,9 +2783,11 @@ function guardLeaving() {
 }
 
 function upsertSession(session) {
-  // An exit is final. A reply sent before it, such as Stop's, can arrive after the
-  // exit was announced and must not show the session running again.
-  if (state.sessions.get(session.id)?.status === 'exited' && session.status !== 'exited') return;
+  // An exit is final for the process it ended. A reply sent before it, such as Stop's, can
+  // arrive after the exit was announced and must not show the session running again; a
+  // reattached tmux or herdr session runs a newer process, started after that exit.
+  const known = state.sessions.get(session.id);
+  if (known?.status === 'exited' && session.status !== 'exited' && !(Date.parse(session.startedAt) > Date.parse(known.exitedAt))) return;
   state.sessions.set(session.id, session);
   renderSessions();
   noticeClone(session);
@@ -2783,7 +2804,7 @@ function dropSession(id) {
 /** What happens to a running session when it is stopped, for the confirmation. */
 function stopNote(s) {
   const mux = s.multiplexer;
-  return mux ? `${mux.label} keeps running it. Reattach in a terminal with: ${mux.attach}` : `The ${s.provider.tool} process will be ended.`;
+  return mux ? `${mux.label} keeps running it. Reattach it from its card, or in a terminal with: ${mux.attach}` : `The ${s.provider.tool} process will be ended.`;
 }
 
 async function stopSession(id) {
