@@ -16,9 +16,14 @@ const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-test-'));
 process.env.AGENT_GUILD_HOME = home;
 process.env.AGENT_GUILD_PORT = '0';
 process.env.AGENT_GUILD_SKIP_SHELL_ENV = '1';
-// As if the manager were started from a tmux shell; the tools must not inherit it.
+// As if the manager were started from a tmux shell in a herdr pane; the tools must not inherit either.
 process.env.TMUX = '/tmp/tmux-0/default,1,0';
 process.env.TERM_PROGRAM = 'tmux';
+process.env.HERDR_ENV = '1';
+process.env.HERDR_PANE_ID = 'w1:p1';
+// A tmux server of the tests' own, never one the user runs.
+process.env.TMUX_TMPDIR = path.join(home, 'tmux');
+fs.mkdirSync(process.env.TMUX_TMPDIR);
 
 // A stand-in npm so install sessions never touch the real global prefix. Not
 // the manager's launcher folder (<home>/bin), so that folder reaches the
@@ -829,6 +834,29 @@ test('an explicitly selected shell runs in a real terminal through the API', asy
   assert.equal((await call('GET', `/sessions/${session.id}`)).body.session.exitCode, 0);
 });
 
+test('a Shell session in tmux runs inside it, and stopping or removing its card leaves tmux running it', async (t) => {
+  if (!(await findProvider('shell')).shells?.some((s) => s.id === 'tmux')) return t.skip('tmux is not installed');
+  const env = { ...process.env };
+  delete env.TMUX; // the outer tmux this file pretends to run in
+  const tmux = (...args) => new Promise((resolve) => execFile('tmux', args, { env }, (err, stdout) => resolve(err ? null : stdout)));
+  t.after(() => tmux('kill-server'));
+  const { status, body } = await call('POST', '/sessions', { providerId: 'shell', shell: 'tmux', cwd: home });
+  assert.equal(status, 201, JSON.stringify(body));
+  const { session } = body;
+  assert.equal(session.name, 'Shell · tmux');
+  assert.match(session.multiplexer.attach, /^tmux attach -t guild-[0-9a-f]{6}$/);
+  const name = session.multiplexer.attach.split(' ').pop();
+  const client = terminal(session.id);
+  t.after(() => client.close());
+  await client.opened;
+  client.input(`printf 'MUX:%s:%s\\n' "\${AGENT_GUILD_REPORT_TOKEN:-none}" '→λ'`);
+  await waitForText(client, session.id, 'MUX:none:→λ', 'output from inside tmux: no report token, and UTF-8 intact');
+  assert.equal((await call('POST', `/sessions/${session.id}/stop`)).status, 200);
+  await waitFor(async () => (await sessionNow(session.id)).status === 'exited', { label: 'the tmux client ends' });
+  await call('DELETE', `/sessions/${session.id}`);
+  assert.notEqual(await tmux('has-session', '-t', `=${name}`), null, 'tmux still runs the session');
+});
+
 test('a session runs under the account picked, in that account\'s own home folder', async () => {
   const { body: listed } = await call('GET', '/providers');
   assert.deepEqual(listed.providers.find((p) => p.id === 'multi').accounts, [{ id: 'default', label: 'Default' }, { id: 'work', label: 'Work' }, { id: 'kept', label: 'Kept' }]);
@@ -897,7 +925,7 @@ test('a session runs, streams output, accepts input and resizes', async () => {
   client.input('env');
   await waitFor(() => client.output.includes('ENV:'), { label: 'env' });
   await waitForText(client, session.id, '|term_program=', 'env line');
-  assert.ok(client.output.includes(`ENV:${session.id}|fake|${base}|${path.join(home, 'bin')}|tmux=|term_program=|home=\r`), client.output);
+  assert.ok(client.output.includes(`ENV:${session.id}|fake|${base}|${path.join(home, 'bin')}|tmux=|term_program=|herdr=|home=\r`), client.output);
 
   client.send({ type: 'resize', cols: 101, rows: 33 });
   await waitFor(async () => (await call('GET', `/sessions/${session.id}`)).body.session.cols === 101, { label: 'resize' });
@@ -1176,6 +1204,47 @@ test('Grok Build reports sub-agents through --plugin-dir where it accepts it, an
   await followSubagent(tool, 'grok-1', 'reviewer');
   await tool.client.close();
   await call('DELETE', `/sessions/${tool.session.id}`);
+});
+
+// The page relies on this: it ignores a reply that shows a session running once it has seen it exit.
+test('once a session has exited nothing shows it running again, whichever tool it ran', async () => {
+  const events = new Client(`${base.replace('http', 'ws')}/api/v1/events?token=${token}`);
+  await events.opened;
+  // Each tool is stopped with a sub-agent its own hooks reported still working.
+  const working = async (tool, prompt, type) => {
+    if (prompt) tool.client.input('prompt');
+    await waitFor(reportingIs(tool.session.id, 'active'), { label: `${tool.session.provider.id} hooks`, timeout: 15000 });
+    tool.client.input(`subagent exit-${type} ${type}`);
+    await waitFor(agentIs(tool.session.id, type, 'working'), { label: `${type} working`, timeout: 15000 });
+  };
+  const runs = {
+    anthropic: (tool) => working(tool, false, 'Explore'),
+    openai: (tool) => working(tool, true, 'explorer'),
+    grokplugins: (tool) => working(tool, false, 'reviewer'),
+    google: async () => {},
+    shell: async () => {},
+  };
+  for (const [providerId, during] of Object.entries(runs)) {
+    const tool = await startTool(providerId);
+    await during(tool);
+    await call('POST', `/sessions/${tool.session.id}/stop`);
+    await waitFor(async () => (await sessionNow(tool.session.id)).status === 'exited', { label: `${providerId} exits`, timeout: 15000 });
+    const late = await fetch(`${base}/api/v1/sessions/${tool.session.id}/agents`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Agent-Guild-Report-Token': ctx.manager.get(tool.session.id).reportToken },
+      body: JSON.stringify({ agentId: 'late', status: 'working' }),
+    });
+    assert.equal(late.status, 409, `${providerId}: a report after the exit is refused`);
+    // Events arrive in order: once this rename shows, everything sent before it has arrived.
+    await call('PATCH', `/sessions/${tool.session.id}`, { name: `${providerId} ended` });
+    await waitFor(() => events.messages.some((m) => m.session?.id === tool.session.id && m.session.name === `${providerId} ended`), { label: `${providerId} rename` });
+    const statuses = events.messages.filter((m) => m.session?.id === tool.session.id).map((m) => m.session.status);
+    assert.ok(statuses.includes('exited'), `${providerId}: the exit is announced`);
+    assert.deepEqual(statuses.slice(statuses.indexOf('exited')).filter((s) => s !== 'exited'), [], `${providerId}: nothing after the exit says running`);
+    await tool.client.close();
+    await call('DELETE', `/sessions/${tool.session.id}`);
+  }
+  await events.close();
 });
 
 test('a tool whose hooks are turned off keeps running and shows that it is not reporting', async () => {

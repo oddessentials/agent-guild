@@ -1996,6 +1996,27 @@ test('the Shell card offers the installed shells and the login shell as the defa
   assert.deepEqual(fakeShells([], { env: { SHELL: '/opt/gone/zsh' } }), { shells: [], defaultId: null, summary: [] });
 });
 
+test('the Shell card offers tmux and herdr after the shells on macOS and Linux, never as the default', () => {
+  const linux = fakeShells(['/usr/bin/bash', '/usr/bin/zsh', '/usr/bin/tmux', '/home/me/.local/bin/herdr'], { env: { SHELL: '/usr/bin/zsh', EXTRA_PATH: ['/home/me/.local/bin'] } });
+  assert.deepEqual(linux.summary, ['bash=/usr/bin/bash', 'zsh=/usr/bin/zsh', 'tmux=/usr/bin/tmux', 'herdr=/home/me/.local/bin/herdr']);
+  assert.equal(linux.defaultId, 'zsh');
+  const [tmux, herdr] = linux.shells.slice(2);
+  assert.deepEqual([tmux.args, tmux.multiplexer], [['-u', 'new-session', '-s', '{name}'], { attach: 'tmux attach -t {name}' }]);
+  assert.deepEqual([herdr.args, herdr.multiplexer], [[], { attach: 'herdr' }]);
+  assert.ok(linux.shells.slice(0, 2).every((s) => !s.multiplexer));
+
+  const mac = fakeShells(['/bin/zsh', '/usr/local/bin/tmux'], { platform: 'darwin' });
+  assert.deepEqual([mac.summary, mac.defaultId], [['zsh=/bin/zsh', 'tmux=/usr/local/bin/tmux'], 'zsh']);
+  assert.equal(fakeShells(['/usr/bin/tmux'], { env: { SHELL: '/opt/gone/zsh' } }).defaultId, null, 'a multiplexer alone is no default');
+  const loginTmux = fakeShells(['/usr/bin/tmux', '/usr/bin/bash'], { env: { SHELL: '/usr/bin/tmux' } });
+  assert.deepEqual(loginTmux.summary, ['tmux=/usr/bin/tmux', 'bash=/usr/bin/bash'], 'a login shell that is tmux is listed once, as the login shell');
+  assert.equal(loginTmux.shells[0].multiplexer, undefined);
+
+  const sys = 'C:\\Windows\\System32';
+  const win = fakeShells([`${sys}\\cmd.exe`, `${sys}\\WindowsPowerShell\\v1.0\\powershell.exe`, `${sys}\\tmux.exe`, `${sys}\\herdr.exe`], { platform: 'win32' });
+  assert.equal(win.shells.some((s) => s.multiplexer || ['tmux', 'herdr'].includes(s.id)), false, 'none on Windows');
+});
+
 test('the Shell card defaults to PowerShell 7 on Windows and finds Git Bash', () => {
   const sys = 'C:\\Windows\\System32';
   const base = [`${sys}\\cmd.exe`, `${sys}\\WindowsPowerShell\\v1.0\\powershell.exe`];
@@ -2338,6 +2359,32 @@ test('a Shell session is named after its shell and gets its environment', async 
   shells = [cmd];
   assert.equal((await manager.create({ providerId: 'shell', cwd: os.tmpdir() })).name, null, 'no name when there is no choice');
   await assert.rejects(manager.create({ providerId: 'shell', shell: 7, cwd: os.tmpdir() }), { code: 'bad_shell', status: 400 });
+});
+
+test('a Shell session in a multiplexer gets a name of its own and none of Agent Guild\'s identity', async (t) => {
+  const bash = { id: 'bash', label: 'bash', path: '/bin/bash', args: [], env: {} };
+  const tmux = { id: 'tmux', label: 'tmux', path: '/usr/bin/tmux', args: ['-u', 'new-session', '-s', '{name}'], env: {}, multiplexer: { attach: 'tmux attach -t {name}' } };
+  const registry = {
+    env: {}, platform: 'linux',
+    get: (id) => ({ id, tool: 'Shell', args: ['--own'], accounts: [{ id: 'default' }] }),
+    account: () => ({ id: 'default', label: 'Default' }),
+    shellFor: (provider, id) => [bash, tmux].find((s) => s.id === (id ?? 'bash')),
+    shellsFor: () => ({ shells: [bash, tmux], defaultId: 'bash' }),
+    spawnSpec: ProviderRegistry.prototype.spawnSpec,
+  };
+  const manager = new SessionManager({ registry, baseEnv: {}, getApiUrl: () => '' });
+  t.mock.method(manager, '_spawn', (options) => ({ ...options, setModel() {} }));
+  const first = await manager.create({ providerId: 'shell', shell: 'tmux', cwd: os.tmpdir() });
+  const name = first.spawnSpec.args[3];
+  assert.match(name, /^guild-[0-9a-f]{6}$/);
+  assert.deepEqual(first.spawnSpec, { file: '/usr/bin/tmux', args: ['-u', 'new-session', '-s', name] }, 'the provider\'s own args are for its default shell only');
+  assert.deepEqual([first.name, first.multiplexer], ['Shell · tmux', { label: 'tmux', attach: `tmux attach -t ${name}` }]);
+  assert.deepEqual(['AGENT_GUILD_REPORT_TOKEN', 'AGENT_GUILD_SESSION_ID', 'PATH'].map(first.dropEnv), [true, true, false]);
+  const second = await manager.create({ providerId: 'shell', shell: 'tmux', cwd: os.tmpdir() });
+  assert.notEqual(second.spawnSpec.args[3], name, 'every session gets its own name');
+  assert.deepEqual(tmux.args, ['-u', 'new-session', '-s', '{name}'], 'the detected recipe stays as it was');
+  const plain = await manager.create({ providerId: 'shell', cwd: os.tmpdir() });
+  assert.deepEqual([plain.spawnSpec, plain.multiplexer, plain.dropEnv], [{ file: '/bin/bash', args: ['--own'] }, undefined, undefined]);
 });
 
 test('shutdown reports the processes that did not confirm exiting in time', async () => {

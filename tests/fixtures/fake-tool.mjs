@@ -4,7 +4,7 @@
 //   model <name>       emits an in-band model report (OSC 7777)
 //   session <id>       emits an in-band tool session id report (OSC 7777)
 //   args               prints the arguments that followed the script path
-//   env                prints the Agent Guild variables, the first PATH entry, TMUX and FAKE_TOOL_HOME
+//   env                prints the Agent Guild variables, the first PATH entry, TMUX, herdr's pane markers and FAKE_TOOL_HOME
 //   hook <shell> <json> runs `agent-guild-report --hook` through sh, cmd or
 //                      powershell, as the coding tools run their hooks, with
 //                      this environment and <json> on stdin; prints
@@ -89,7 +89,7 @@ function handle(line) {
   else if (cmd === 'env') {
     const pathKey = Object.keys(process.env).find((k) => k.toUpperCase() === 'PATH');
     const first = (process.env[pathKey] || '').split(path.delimiter)[0];
-    out(`ENV:${process.env.AGENT_GUILD_SESSION_ID}|${process.env.AGENT_GUILD_PROVIDER}|${process.env.AGENT_GUILD_URL}|${first}|tmux=${process.env.TMUX ?? ''}|term_program=${process.env.TERM_PROGRAM ?? ''}|home=${process.env.FAKE_TOOL_HOME ?? ''}`);
+    out(`ENV:${process.env.AGENT_GUILD_SESSION_ID}|${process.env.AGENT_GUILD_PROVIDER}|${process.env.AGENT_GUILD_URL}|${first}|tmux=${process.env.TMUX ?? ''}|term_program=${process.env.TERM_PROGRAM ?? ''}|herdr=${process.env.HERDR_ENV ?? ''}${process.env.HERDR_PANE_ID ?? ''}|home=${process.env.FAKE_TOOL_HOME ?? ''}`);
   } else if (cmd === 'hook') {
     const [file, args] = hookSpawn(rest[0]);
     const child = spawn(file, args, {
