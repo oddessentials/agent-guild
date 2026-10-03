@@ -1,6 +1,7 @@
 # Generates the Grove props and backgrounds from props.json with the local image studio.
+# A prop with "upscale" is then upscaled by that factor with SeedVR2, into raw/<name>-up/.
 #   python source/props.py [name ...]
-import json, shutil, subprocess, sys
+import glob, json, shutil, subprocess, sys
 from pathlib import Path
 
 G = "E:/projects/local-image-studio/scripts/gen.py"
@@ -16,3 +17,9 @@ for name, spec in P.items():
     r = subprocess.run([sys.executable, G, prompt, "--workflow", spec["workflow"], "--seed", str(spec["seed"]),
                         "--width", str(spec["w"]), "--height", str(spec["h"]), "--out", str(out)], capture_output=True, text=True)
     print(name, (r.stdout.strip().splitlines() or [r.stderr[-300:]])[-1], flush=True)
+    if "upscale" in spec:
+        up = RAW / (out.name + "-up")
+        shutil.rmtree(up, ignore_errors=True)
+        r = subprocess.run([sys.executable, G, "--workflow", "seedvr2-upscale", "--input", glob.glob(str(out / "*.png"))[0],
+                            "--scale", str(spec["upscale"]), "--out", str(up)], capture_output=True, text=True)
+        print(name, "upscaled", (r.stdout.strip().splitlines() or [r.stderr[-300:]])[-1], flush=True)
