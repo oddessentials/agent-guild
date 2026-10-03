@@ -1,5 +1,6 @@
 """Authored miniature worlds and rigged cast for Agent Guild.
 Run: blender --background --factory-startup --python concept-art/guild-yard/build.py
+Rebuild only some worlds: ... build.py -- --only guild
 Coordinates are metres; Blender Z-up exports to glTF Y-up. No downloaded models.
 """
 import bpy, math, random, json, sys
@@ -11,6 +12,11 @@ SOURCE = Path(__file__).resolve().parent
 OUT.mkdir(parents=True,exist_ok=True)
 random.seed(714)
 PI=math.pi
+ARGS=sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else []
+ONLY=ARGS[ARGS.index('--only')+1].split(',') if '--only' in ARGS else None
+# Worlds whose ground and surroundings are pre-rendered plates (env/); their
+# glTF carries only the live halls.
+PLATED={'guild'}
 PALETTE={
  'stone':'777966','stoneLight':'a2a08b','stoneDark':'434b42','edge':'bcb08b',
  'paver0':'777966','paver1':'898777','paver2':'686e61','paver3':'969281',
@@ -339,7 +345,11 @@ def other_hall(index,skin):
 
 def environment(skin):
  clear();random.seed(714)
- s=Sculpt();floor_world(s,skin);s.object('courtyard')
+ s=Sculpt()
+ if skin in PLATED:
+  bpy.context.collection.objects.link(bpy.data.objects.new('courtyard',None))
+ else:
+  floor_world(s,skin);s.object('courtyard')
  for i,(id,x,y) in enumerate([('anthropic',-7,5),('openai',0,7),('google',7,5),('xai',-8,-3),('shell',8,-3)]):
   sculpt=guild_hall(i) if skin=='guild' else other_hall(i,skin)
   obj=sculpt.object('hall_'+id);obj.location=(x,y,0)
@@ -465,7 +475,10 @@ def familiar(index,robot=False):
  s.cone((0,.26,.94),.16,0,.55,color,12,bone='body',rot=(PI/3,0,0))
  mesh=s.object('familiar');rig=armature();s.bind(mesh,rig);animate(rig)
  export(('drone_' if robot else 'familiar_')+str(index))
-for skin in ['guild','orbital','grove','professional']:environment(skin)
+for skin in ['guild','orbital','grove','professional']:
+ if ONLY is None or skin in ONLY:environment(skin)
+if ONLY is not None:
+ print('Guild worlds rebuilt:',','.join(ONLY),flush=True);sys.exit(0)
 for skin in ['guild','orbital','grove']:
  for i in range(5):hero(i,skin)
 for i in range(4):familiar(i);familiar(i,True)

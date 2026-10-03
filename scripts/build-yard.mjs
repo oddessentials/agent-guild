@@ -7,10 +7,10 @@ await build({
   absWorkingDir:fileURLToPath(root),
   // Export the renderer's surface so unused Three.js APIs can be removed.
   stdin: { contents: `export {
-  ACESFilmicToneMapping, AnimationMixer, BoxGeometry, DirectionalLight,
+  ACESFilmicToneMapping, AnimationMixer, BoxGeometry, Color, DirectionalLight,
   DoubleSide, Group, HemisphereLight, LoadingManager, MOUSE, MathUtils,
-  Mesh, MeshBasicMaterial, MeshStandardMaterial, OrthographicCamera,
-  PCFSoftShadowMap, Raycaster, RepeatWrapping, RingGeometry, SRGBColorSpace,
+  Matrix4, Mesh, MeshBasicMaterial, MeshStandardMaterial, OrthographicCamera,
+  PCFSoftShadowMap, PlaneGeometry, Raycaster, RepeatWrapping, RingGeometry, SRGBColorSpace, ShadowMaterial,
   Scene, TOUCH, TextureLoader, Vector2, Vector3, WebGLRenderer,
 } from 'three';
 export { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';

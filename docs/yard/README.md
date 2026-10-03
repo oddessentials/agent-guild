@@ -116,19 +116,36 @@ set; live sessions currently enter in their reported working/resting pose.
 The raster backdrop, limestone and oak textures were generated with the
 built-in image generation tool. Originals and the full prompt briefs are
 recorded in the [art source notes](../../concept-art/guild-yard/ART.md).
-No downloaded model packs or third-party game art are included. The project
-license applies to the authored sources; Three.js retains its accompanying
-MIT notice at `web/yard/vendor/LICENSE.three`.
+Guild's surroundings are pre-rendered environment plates: a lakeside
+meadow, orchard and forested hills built in Blender from
+[Poly Haven](https://polyhaven.com/license) CC0 models, textures and sky,
+then path-traced from the Yard's own camera direction. Because the camera
+is orthographic and never rotates, the plates line up with the live halls
+and characters at every pan and zoom. The camera and pan bounds live in
+`web/yard/model.mjs`; the Blender scripts read them from there, and the
+tests fail if the plates were rendered for a different camera. Three tile
+layers (whole extent, default zoom, close to the courtyard) cover any stage
+up to a 4:1 aspect; wider stages zoom in rather than see past them. No
+other downloaded model packs or third-party game art are included. The
+project license applies to the authored sources; Three.js retains its
+accompanying MIT notice at `web/yard/vendor/LICENSE.three`.
 
 From the repository root:
 
 ```sh
 npm ci
 blender --background --factory-startup --python concept-art/guild-yard/build.py
+blender --background --factory-startup --python concept-art/guild-yard/env/plates.py -- guild
 npm run optimize:yard
 npm run build:yard
 npm run test:yard
 ```
+
+`build.py -- --only guild` rebuilds one world, and `optimize:yard guild`
+optimizes only its model. Plate rendering needs a Cycles-capable GPU and
+downloads its Poly Haven sources into `.cache/polyhaven`, pinned by the
+checksums in `env/polyhaven.lock.json`. Change the camera in `model.mjs`
+only together with a plate re-render.
 
 The optimization step welds duplicate vertices, deduplicates data and uses
 [glTF Transform quantization](https://gltf-transform.dev/functions/quantize)
@@ -141,7 +158,7 @@ installed package users do not build assets or need Blender.
 
 ```sh
 npm run preview:yard
-node docs/yard/capture.mjs --all
+node docs/yard/capture.mjs --all   # --wide: 21:9 and 32:9 at each zoom
 npm test
 ```
 

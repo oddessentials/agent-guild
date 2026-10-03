@@ -64,6 +64,31 @@ seams, nails, objects, borders or text. Even flat lighting without baked
 highlights or cast shadows. Restrained painterly realistic detail for
 fantasy timber architecture, tileable on all edges.
 
+## Guild environment plates
+
+`env/guild_env.py` assembles the lakeside estate in Blender and
+`env/plates.py` renders it, with Cycles, into the tiles under
+`web/yard/assets/guild/`. Layout is written in a ground frame aligned with
+the screen, so composition maps directly to what the Yard shows. Nothing
+tall stands where it would cover live halls or characters on screen
+(`tall_clear`); the play area is level so live models stand on y = 0.
+
+Sources are Poly Haven CC0 assets (models, textures and the
+`kloofendal_48d_partly_cloudy_puresky` sky), listed in `env/guild_env.py`
+and pinned in `env/polyhaven.lock.json`. Poly Haven has no lush meadow seen
+from above, so `env/textures/meadow.jpg` was generated locally with
+local-image-studio (`hidream-o1`, seed 502, 2048 px) from this brief:
+
+Seamless tileable texture, straight top-down orthographic photograph of a
+lush healthy green summer meadow: dense short grass with clover, small
+scattered white and yellow wildflowers, subtle natural variation in green
+tones, soft overcast even lighting with no cast shadows, no horizon, no
+perspective, uniform detail across the whole image, high resolution
+scanned PBR albedo.
+
+The build makes it wrap by cross-fading each axis with a half-rolled copy,
+and blends two scales of it by noise so repeats do not show.
+
 ## Review and iteration
 
 Review art inside the application in both light and dark mode and at

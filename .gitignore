@@ -20,3 +20,4 @@ concept-art/grove-skin/raw/
 
 .cache/
 *.blend1
+__pycache__/

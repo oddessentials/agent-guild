@@ -23,5 +23,19 @@ try{
   await browser.send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
   await pause(300);await browser.shot('.cache/yard-mobile.png');
  }
+ if(process.argv.includes('--all')||process.argv.includes('--wide')) {
+  // Ultrawide stages at the default, closest and widest zoom.
+  for(const [width,height] of [[2560,1080],[5120,1440]]) {
+   await browser.send('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});
+   await browser.evaluate("document.documentElement.dataset.skin='guild'");
+   await browser.wait("document.querySelector('#yard-stage').dataset.world==='guild'");
+   await browser.click('#yard-fit');await pause(1200);
+   await browser.shot(`.cache/yard-guild-${width}x${height}.png`);
+   for(const [name,button] of [['min','#yard-zoom-out'],['max','#yard-zoom-in']]) {
+    for(let i=0;i<14;i++)await browser.click(button);
+    await pause(900);await browser.shot(`.cache/yard-guild-${width}x${height}-${name}.png`);
+   }
+  }
+ }
  console.log(JSON.stringify({errors:browser.errors,failed:await browser.evaluate("document.getElementById('yard-failure').hidden===false"),labels:await browser.evaluate("document.querySelectorAll('.yard-label').length")}));
 }finally{await browser.close();await fixture.close();}

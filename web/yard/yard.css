@@ -11,7 +11,7 @@
 #yard { --yard-line:color-mix(in srgb,var(--gold) 27%, transparent); display:grid; grid-template-columns:minmax(0,1fr) 334px; min-height:650px; height:calc(100dvh - var(--topbar-h,60px) - 75px); margin:0; background:var(--bg); }
 .yard-main { min-width:0; min-height:0; display:flex; flex-direction:column; position:relative; isolation:isolate; }
 .yard-main::before { content:""; position:absolute; inset:0; background:linear-gradient(0deg,var(--bg),transparent 45%),url("./assets/backdrop.webp") center/cover; z-index:-1; opacity:.75; pointer-events:none; }
-.yard-heading { display:flex; align-items:center; justify-content:space-between; gap:20px; padding:24px 28px 2px; position:absolute; inset:0 0 auto; z-index:2; pointer-events:none; }
+.yard-heading { display:flex; align-items:center; justify-content:space-between; gap:20px; padding:24px 28px 34px; position:absolute; inset:0 0 auto; z-index:2; pointer-events:none; background:linear-gradient(180deg,color-mix(in srgb,var(--bg) 78%,transparent),transparent); }
 .yard-eyebrow { margin:0 0 6px; font-size:9px; font-weight:650; letter-spacing:.22em; color:var(--gold); }
 #yard-title { font-size:clamp(22px,2.2vw,34px); letter-spacing:.015em; text-shadow:0 2px 14px var(--bg); }
 #yard-subtitle { margin:6px 0 0; font-size:12px; color:var(--muted); }

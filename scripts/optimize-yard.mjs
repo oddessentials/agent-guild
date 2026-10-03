@@ -8,7 +8,9 @@ import { dedup, weld, quantize } from '@gltf-transform/functions';
 const directory=new URL('../web/yard/assets/',import.meta.url);
 const io=new NodeIO().registerExtensions(ALL_EXTENSIONS);
 let before=0,after=0;
-for(const name of (await readdir(directory)).filter(name=>name.endsWith('.glb')).sort()) {
+// Optional names (e.g. `guild`) limit the pass to those models.
+const only=process.argv.slice(2).map(name=>name+'.glb');
+for(const name of (await readdir(directory)).filter(name=>name.endsWith('.glb')&&(!only.length||only.includes(name))).sort()) {
   const file=fileURLToPath(new URL(name,directory));
   before+=(await stat(file)).size;
   const document=await io.read(file);

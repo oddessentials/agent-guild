@@ -1,5 +1,5 @@
 import * as T from './vendor/engine.js';
-import { WORLDS, PROVIDER_ORDER, providerPositions, layoutSessions, sessionPose, familiarPose, hash } from './model.mjs';
+import { WORLDS, PROVIDER_ORDER, CAMERA, minZoom, clampPan, viewBasis, providerPositions, layoutSessions, sessionPose, familiarPose, hash } from './model.mjs';
 
 const ASSETS = new URL('./assets/', import.meta.url);
 const vector = new T.Vector3();
@@ -31,6 +31,7 @@ export class YardRenderer {
     this.scene=new T.Scene();this.units=new Map();this.halls=new Map();this.slots=new Map();this.cache=new Map();
     this.loadingManager=new T.LoadingManager();
     this.providers=[];this.sessions=[];this.selected=null;this.world=null;this.skin=null;this.request=0;this.worldRequest=0;
+    this.plateTint=new T.Color(0xffffff);
     this.active=false;this.reduced=false;this.disposed=false;this.frame=0;this.lastTime=0;this.dirty=true;
     this.renderer=new T.WebGLRenderer({antialias:true,alpha:true,powerPreference:'low-power'});
     this.renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));
@@ -43,13 +44,13 @@ export class YardRenderer {
     this.contextLost=e=>{e.preventDefault();this.onError();};
     this.canvas.addEventListener('webglcontextlost',this.contextLost);
     host.prepend(this.canvas);
-    this.camera=new T.OrthographicCamera(-20,20,15,-15,.1,160);
+    this.camera=new T.OrthographicCamera(-20,20,15,-15,CAMERA.near,CAMERA.far);
     this.controls=new T.OrbitControls(this.camera,this.canvas);
     this.controls.enableRotate=false;this.controls.enableDamping=false;
-    this.controls.screenSpacePanning=false;this.controls.minZoom=.6;this.controls.maxZoom=3.8;
+    this.controls.screenSpacePanning=false;this.controls.minZoom=CAMERA.zoom.min;this.controls.maxZoom=CAMERA.zoom.max;
     this.controls.mouseButtons={LEFT:T.MOUSE.PAN,MIDDLE:T.MOUSE.DOLLY,RIGHT:T.MOUSE.PAN};
     this.controls.touches={ONE:T.TOUCH.PAN,TWO:T.TOUCH.DOLLY_PAN};
-    this.controls.addEventListener('change',()=>{this.dirty=true;this.drawOnce();});
+    this.controls.addEventListener('change',()=>{this.bound();this.dirty=true;this.drawOnce();});
     this.hemi=new T.HemisphereLight(0xc5dfed,0x495741,3.0);this.scene.add(this.hemi);
     this.sun=new T.DirectionalLight(0xffe4bc,4);this.sun.position.set(-12,25,15);this.sun.castShadow=true;
     this.sun.shadow.mapSize.set(2048,2048);
@@ -92,6 +93,7 @@ export class YardRenderer {
       loaded=await new T.GLTFLoader(this.loadingManager).loadAsync(new URL(skin+'.glb',ASSETS).href);
       if(this.disposed||request!==this.worldRequest){disposeTree(loaded.scene);return;}
       await this.textureWorld(loaded.scene, skin);
+      if(WORLDS[skin].plates)await this.plateWorld(loaded.scene, skin, request);
     } catch(err) {
       disposeTree(loaded?.scene);
       if(!this.disposed&&request===this.worldRequest)throw err;
@@ -105,7 +107,7 @@ export class YardRenderer {
     if(this.world){this.scene.remove(this.world);disposeTree(this.world);}
     this.world=loaded.scene;this.skin=skin;this.scene.add(this.world);
     this.host.dataset.world=skin;
-    this.world.traverse(node=>{if(node.isMesh){node.castShadow=true;node.receiveShadow=true;}});
+    this.world.traverse(node=>{if(node.isMesh&&!node.userData.plate&&!node.material.isShadowMaterial){node.castShadow=true;node.receiveShadow=true;}});
     this.update(this.providers,this.sessions);
     this.dirty=true;this.drawOnce();
   }
@@ -134,8 +136,50 @@ export class YardRenderer {
       }
     });
   }
+  // Pre-rendered surroundings drawn behind everything, from the same view
+  // direction as the camera, so they line up at any pan or zoom. The base
+  // layer gates the load; sharper layers follow without blocking it.
+  async plateWorld(world,skin,request) {
+    const response=await fetch(new URL(skin+'/plates.json',ASSETS));
+    if(!response.ok)throw new Error('The Yard plates could not be loaded.');
+    const {layers}=await response.json();
+    const {right,up,forward}=viewBasis(),axes=[right,up,forward].map(v=>new T.Vector3(...v));
+    const rotation=new T.Matrix4().makeBasis(axes[0],axes[1],axes[2].clone().negate());
+    const offset=new T.Vector3(...CAMERA.offset),depth=CAMERA.far*.75+axes[2].dot(offset);
+    const loader=new T.TextureLoader(this.loadingManager);
+    const layer=async(entry,order)=>{
+      const meshes=await Promise.all(entry.tiles.map(async tile=>{
+        const texture=await loader.loadAsync(new URL(tile.file,ASSETS).href);
+        texture.colorSpace=T.SRGBColorSpace;texture.generateMipmaps=true;
+        texture.anisotropy=Math.min(4,this.renderer.capabilities.getMaxAnisotropy());
+        const [r0,r1]=tile.right,[u0,u1]=tile.up;
+        const mesh=new T.Mesh(new T.PlaneGeometry(r1-r0,u1-u0),
+          new T.MeshBasicMaterial({map:texture,depthTest:false,depthWrite:false,toneMapped:false}));
+        mesh.applyMatrix4(rotation);
+        mesh.position.copy(axes[0]).multiplyScalar((r0+r1)/2).addScaledVector(axes[1],(u0+u1)/2).addScaledVector(axes[2],depth);
+        mesh.renderOrder=-100+order;mesh.frustumCulled=false;mesh.userData.plate=true;
+        mesh.material.color.copy(this.plateTint);
+        return mesh;
+      }));
+      return meshes;
+    };
+    const [base,...sharper]=layers;
+    for(const mesh of await layer(base,0))world.add(mesh);
+    // Live halls and characters cast onto the plate's ground.
+    const catcher=new T.Mesh(new T.PlaneGeometry(400,400),new T.ShadowMaterial({opacity:.3,depthWrite:false}));
+    catcher.rotation.x=-Math.PI/2;catcher.position.y=.01;catcher.receiveShadow=true;catcher.renderOrder=-50;
+    world.add(catcher);
+    sharper.forEach((entry,i)=>layer(entry,i+1).then(meshes=>{
+      if(this.disposed||request!==this.worldRequest||this.world!==world){for(const mesh of meshes)disposeTree(mesh);return;}
+      for(const mesh of meshes){mesh.material.color.copy(this.plateTint);world.add(mesh);}
+      this.dirty=true;this.drawOnce();
+    }).catch(noop));
+  }
   light(skin,theme) {
     const light=theme==='light';
+    // Plates carry their own daylight; dark theme dims them toward dusk.
+    this.plateTint.set(light?0xffffff:0x9aa3b8);
+    this.world?.traverse(node=>{if(node.userData.plate)node.material.color.copy(this.plateTint);});
     this.renderer.toneMappingExposure=light?1.65:1.12;
     this.hemi.color.set(skin==='grove'?0xccebd6:skin==='orbital'?0xa7c9ff:0xc4dced);
     this.hemi.intensity=light?3.2:1.8;
@@ -148,33 +192,43 @@ export class YardRenderer {
     const w=this.host.clientWidth,h=this.host.clientHeight;
     if(!w||!h)return;
     this.renderer.setSize(w,h,false);
-    const half=15;
+    const half=CAMERA.height/2;
     this.camera.left=-half*w/h;this.camera.right=half*w/h;
-    this.camera.top=half;this.camera.bottom=-half;this.camera.updateProjectionMatrix();
+    this.camera.top=half;this.camera.bottom=-half;
+    this.controls.minZoom=minZoom(w/h);
+    this.camera.zoom=T.MathUtils.clamp(this.camera.zoom,this.controls.minZoom,this.controls.maxZoom);
+    this.camera.updateProjectionMatrix();
     this.dirty=true;this.drawOnce();
   }
   overview() {
-    this.camera.position.set(19,25,31);
-    this.camera.zoom=1.02;
-    this.controls.target.set(0,1,0);
+    this.controls.target.set(...CAMERA.target);
+    this.camera.position.set(...CAMERA.offset).add(this.controls.target);
+    this.camera.zoom=Math.max(CAMERA.zoom.overview,this.controls.minZoom);
     this.camera.lookAt(this.controls.target);this.camera.updateProjectionMatrix();this.controls.update();this.dirty=true;this.drawOnce();
   }
+  // Keep the view over the environment plates by translating camera and target together.
+  bound() {
+    const target=this.controls.target,{x,z}=clampPan(target);
+    if(x===target.x&&z===target.z)return;
+    const move=vector.set(x-target.x,0,z-target.z);
+    target.add(move);this.camera.position.add(move);
+  }
   zoom(factor) {
-    this.camera.zoom=T.MathUtils.clamp(this.camera.zoom*factor,.6,3.8);
+    this.camera.zoom=T.MathUtils.clamp(this.camera.zoom*factor,this.controls.minZoom,this.controls.maxZoom);
     this.camera.updateProjectionMatrix();this.dirty=true;this.drawOnce();
   }
   pan(key) {
     const delta={ArrowLeft:[-1,0,0],ArrowRight:[1,0,0],ArrowUp:[0,0,-1],ArrowDown:[0,0,1]}[key];
     if(!delta)return;
     const move=new T.Vector3(...delta).multiplyScalar(1.3/this.camera.zoom);
-    this.camera.position.add(move);this.controls.target.add(move);this.controls.update();this.dirty=true;this.drawOnce();
+    this.camera.position.add(move);this.controls.target.add(move);this.bound();this.controls.update();this.dirty=true;this.drawOnce();
   }
   focus(selection) {
     const item=selection?.kind==='provider'?this.halls.get(selection.id):this.units.get(selection?.id);
     if(!item)return;
     const target=item.root.position.clone();target.y=1;
     const move=target.clone().sub(this.controls.target);
-    this.camera.position.add(move);this.controls.target.copy(target);this.camera.zoom=1.7;
+    this.camera.position.add(move);this.controls.target.copy(target);this.bound();this.camera.zoom=Math.max(CAMERA.zoom.focus,this.controls.minZoom);
     this.camera.updateProjectionMatrix();this.controls.update();this.dirty=true;this.drawOnce();
   }
   label(kind,id) {
