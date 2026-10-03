@@ -117,9 +117,10 @@ def main():
     quantize(crest.resize((round(crest.width * 160 / crest.height), 160), Image.LANCZOS), BRAND / "crest.png")
     favicon(PACK / "ui" / "guild-crest.png", BRAND / "favicon.png")
     encode(shrink(masked(PACK / "ui" / "empty-state.png", PACK / "ui" / "empty-state-mask.png"), 420), WEB / "ui" / "empty-state", avif=60)
-    encode(Image.open(PACK / "backgrounds" / "page.png").convert("RGB"), WEB / "page", avif=80, webp=85)
+    # The backgrounds are upscaled 2x (3840x2176) so ultrawide screens stay sharp.
+    encode(Image.open(PACK / "backgrounds" / "page.png").convert("RGB"), WEB / "page", avif=62, webp=80)
     light = Image.open(PACK / "backgrounds" / "page-light.png").convert("RGB")
-    encode(Image.blend(light, Image.new("RGB", light.size, (243, 238, 227)), 0.25), WEB / "page-light", avif=90, webp=90)
+    encode(Image.blend(light, Image.new("RGB", light.size, (243, 238, 227)), 0.25), WEB / "page-light", avif=62, webp=80)
 
     if shutil.which("oxipng"):
         subprocess.run(["oxipng", "-o", "4", "--strip", "safe", "-q", "-r", str(WEB), str(BRAND)], check=True)

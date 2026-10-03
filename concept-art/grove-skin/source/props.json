@@ -52,18 +52,20 @@
     "prompt": "A soft out-of-focus background of a calm sunlit mossy forest glade in the early morning, soft sage green, pale jade and warm cream tones, gentle round bokeh of sunlight through leaves, a faint morning mist, velvety moss-covered stones at the bottom, airy and gentle overall, painterly cinematic depth of field, no animals, no people, no text."
   },
   "backgrounds/page": {
-    "seed": 931,
+    "seed": 934,
     "w": 1920,
     "h": 1088,
-    "workflow": "hidream-o1",
+    "workflow": "qwen-image",
+    "upscale": 2,
     "style": "",
     "prompt": "A serene moonlit Japanese moss garden beside a still mountain lake at night, cinematic wide panorama, a deep indigo night sky full of soft stars and a faint milky way, a full moon low on the right behind thin silver clouds, distant misty layered mountains and a soft waterfall on the left, the lake reflecting the moon, soft glowing fireflies over velvety moss-covered stones and a small stone lantern glowing warmly at the lower left, Japanese maples and pines framing the edges, very dark and calm overall with the centre mostly quiet night sky and water, painterly stylized 3D, no people, no text."
   },
   "backgrounds/page-light": {
-    "seed": 932,
+    "seed": 934,
     "w": 1920,
     "h": 1088,
-    "workflow": "hidream-o1",
+    "workflow": "qwen-image",
+    "upscale": 2,
     "style": "",
     "prompt": "A serene misty mountain valley at dawn seen from a Japanese moss garden, cinematic wide panorama, a soft pastel sky in pale peach, cream and powder blue with gentle wispy clouds, layered misty blue-green mountains in the distance, a tall graceful waterfall falling into a calm clear pond on the left, terraced emerald moss gardens with smooth river stones, cherry and maple trees softly framing the edges, airy, high-key and very light overall with the centre mostly soft pale sky and mist, painterly stylized 3D, no people, no text."
   }

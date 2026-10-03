@@ -1,4 +1,4 @@
-# Generates the Grove props and backgrounds from props.json with the local image studio.
+# Generates the Guild props and backgrounds from props.json with the local image studio.
 # A prop with "upscale" is then upscaled by that factor with SeedVR2, into raw/<name>-up/.
 #   python source/props.py [name ...]
 import glob, json, shutil, subprocess, sys
@@ -14,7 +14,7 @@ for name, spec in P.items():
     out = RAW / name.replace("/", "-")
     shutil.rmtree(out, ignore_errors=True)
     prompt = (spec["prompt"] + " " + spec.get("style", P["_style"])).strip()
-    r = subprocess.run([sys.executable, G, prompt, "--workflow", spec["workflow"], "--seed", str(spec["seed"]),
+    r = subprocess.run([sys.executable, G, prompt, "--workflow", spec.get("workflow", "hidream-o1"), "--seed", str(spec["seed"]),
                         "--width", str(spec["w"]), "--height", str(spec["h"]), "--out", str(out)], capture_output=True, text=True)
     print(name, (r.stdout.strip().splitlines() or [r.stderr[-300:]])[-1], flush=True)
     if "upscale" in spec:

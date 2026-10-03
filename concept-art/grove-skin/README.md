@@ -15,8 +15,8 @@ Idle is calm, working is awake and glowing, and locked is the same spirit turned
 | Step | Command | Writes |
 | --- | --- | --- |
 | Spirits | `python source/edits.py [provider[:state] ...]` | `raw/<provider>-<state>/`: the idle spirit from `characters.json` (`qwen-image`), then its working and locked states edited from it (`qwen-edit`), so all three are the same figure in the same framing |
-| Props | `python source/props.py [name ...]` | `raw/<name>/`: familiars and the empty-state garden (`qwen-image`), card backdrops and page backgrounds (`hidream-o1`) from `props.json` |
+| Props | `python source/props.py [name ...]` | `raw/<name>/`: familiars and the empty-state garden (`qwen-image`), card backdrops (`hidream-o1`) and the page backgrounds (`qwen-image`) from `props.json`; the backgrounds are then upscaled 2x with SeedVR2 into `raw/<name>-up/` |
 | Level stone | `blender -b -P source/stone.py -- ui/stone.png` | `ui/stone.png` |
 | Web art | `python source/build.py [--masks]` | `web/skins/grove/`: cut-outs, icons, familiars, backdrops, backgrounds and the SVG badges |
 
-`raw/` is not committed. Copy the picks into `characters/<provider>/<state>.png`, `familiars/`, `ui/` and `backgrounds/` before building; `--masks` recomputes the `*-mask.png` cut-out masks with BiRefNet.
+`raw/` is not committed. Copy the picks into `characters/<provider>/<state>.png`, `familiars/`, `ui/` and `backgrounds/` (the `-up` versions) before building; `--masks` recomputes the `*-mask.png` cut-out masks with BiRefNet.

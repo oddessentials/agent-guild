@@ -172,10 +172,10 @@ def main():
     # Card backdrops behind the spirits, and the page backgrounds.
     for name in ("card", "card-light"):
         encode(Image.open(PACK / "backgrounds" / f"{name}.png").convert("RGB").resize((640, 640), Image.LANCZOS), WEB / "ui" / name, avif=60)
-    # The generator leaves a blocky seam along the top edge.
-    encode(Image.open(PACK / "backgrounds" / "page.png").convert("RGB").crop((0, 32, 1920, 1088)), WEB / "page", avif=80, webp=85)
-    light = Image.open(PACK / "backgrounds" / "page-light.png").convert("RGB").crop((0, 32, 1920, 1088))
-    encode(Image.blend(light, Image.new("RGB", light.size, (244, 242, 234)), 0.22), WEB / "page-light", avif=88, webp=90)
+    # The backgrounds are upscaled 2x (3840x2176) so ultrawide screens stay sharp.
+    encode(Image.open(PACK / "backgrounds" / "page.png").convert("RGB"), WEB / "page", avif=62, webp=80)
+    light = Image.open(PACK / "backgrounds" / "page-light.png").convert("RGB")
+    encode(Image.blend(light, Image.new("RGB", light.size, (244, 242, 234)), 0.22), WEB / "page-light", avif=62, webp=80)
 
     write("ui/sprig.svg", SPRIG)
     write("ui/lock.svg", LOCK)
