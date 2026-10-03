@@ -746,7 +746,9 @@ test('shared npm and native copies have the same uninstall plan in either PATH o
     assert.deepEqual(listInstallations({ ...opts, onPath: [wrapper], known: [native] })[0].uninstall, npmFirst.uninstall);
     files.delete(npm);
     for (const onPath of [[wrapper, native], [native, wrapper]]) {
-      assert.equal(listInstallations({ ...opts, onPath })[0].uninstall, null, 'missing npm must not fall back to deleting only the native files');
+      const [copy] = listInstallations({ ...opts, onPath });
+      assert.equal(copy.uninstall, null, 'missing npm must not fall back to deleting only the native files');
+      assert.equal(copy.guidance, `Installed by npm under ${prefix}, but npm was not found.`, 'the copy says why it cannot be removed');
     }
   }
 });
@@ -884,7 +886,7 @@ test('an uninstall only deletes paths inside the home folder, never a tool home 
   const planFor = (remove, links = []) => uninstallPlan(native, { channels: { native: { remove, links } } }, env, 'darwin');
   assert.equal(planFor(['~', '~/.codex', '/etc/codex/bin', 'relative/bin', '/Users/a/../b/bin', '/Users/ab/bin/x']), null);
   assert.deepEqual(planFor(['~/.codex', '~/.codex/packages/standalone', '~/.local/bin/../bin/codex'], ['~/.local/bin/codex', '/usr/local/bin/codex']), {
-    run: null, remove: ['/Users/a/.codex/packages/standalone', '/Users/a/.local/bin/codex'], links: ['/Users/a/.local/bin/codex'], launcher: '/Users/a/.local/bin/codex',
+    run: null, remove: ['/Users/a/.codex/packages/standalone', '/Users/a/.local/bin/codex'], links: ['/Users/a/.local/bin/codex', '/usr/local/bin/codex'], launcher: '/Users/a/.local/bin/codex',
   });
   assert.equal(homeRelative('/Users/a/.local/bin/claude', env, 'darwin'), '~/.local/bin/claude');
   assert.equal(homeRelative('/Users/ab/bin/claude', env, 'darwin'), '/Users/ab/bin/claude');
@@ -920,6 +922,41 @@ test('an uninstall plan removes its own files and keeps links that lead elsewher
   assert.equal(fs.readFileSync(path.join(binDir, 'agent'), 'utf8'), 'someone else', 'a file named in links is kept unless it is a link');
   assert.ok(lines.some((l) => l.startsWith(`Kept ${path.join(binDir, 'foreign')}`)));
   assert.ok(!lines.some((l) => l.includes('never-there')));
+});
+
+test('only links may lie outside home, and Grok\'s /usr/local/bin links are among them', () => {
+  const provider = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'config/providers.default.json'), 'utf8')).providers.find((p) => p.id === 'xai');
+  const native = { channel: 'native', resolvedPath: '/Users/a/.grok/bin/grok' };
+  const mac = uninstallPlan(native, provider, { HOME: '/Users/a' }, 'darwin');
+  assert.deepEqual(mac.remove, ['/Users/a/.grok/bin', '/Users/a/.grok/downloads', '/Users/a/.grok/completions']);
+  assert.deepEqual(mac.links, ['/Users/a/.local/bin/grok', '/Users/a/.local/bin/agent', '/usr/local/bin/grok', '/usr/local/bin/agent']);
+  const win = uninstallPlan({ channel: 'native', resolvedPath: 'C:\\Users\\a\\.grok\\bin\\grok.exe' }, provider, { USERPROFILE: 'C:\\Users\\a' }, 'win32');
+  assert.deepEqual(win.links, ['C:\\Users\\a\\.local\\bin\\grok', 'C:\\Users\\a\\.local\\bin\\agent'], 'a rootless path names no place on Windows');
+
+  const outside = { channels: { native: { remove: ['/usr/local/bin/tool', '~/.tool/bin'], links: ['/usr/local/bin/tool', 'relative/tool'] } } };
+  const plan = uninstallPlan({ channel: 'native', resolvedPath: '/Users/a/.tool/bin/tool' }, outside, { HOME: '/Users/a' }, 'darwin');
+  assert.deepEqual(plan.remove, ['/Users/a/.tool/bin'], 'remove never leaves home');
+  assert.deepEqual(plan.links, ['/usr/local/bin/tool']);
+});
+
+test('a launcher linked from outside home goes with its copy, and other links there stay', { skip: process.platform === 'win32' && 'symlinks need privileges on Windows' }, () => {
+  const home = tempDir();
+  const system = tempDir();
+  const bin = path.join(home, '.grok', 'bin');
+  fs.mkdirSync(bin, { recursive: true });
+  fs.writeFileSync(path.join(bin, 'grok'), 'binary');
+  fs.writeFileSync(path.join(home, '.grok', 'config.toml'), 'settings');
+  fs.symlinkSync(path.join(bin, 'grok'), path.join(system, 'grok'));
+  fs.symlinkSync('/usr/bin/env', path.join(system, 'agent'));
+  const lines = [];
+  const code = runPlan({
+    remove: [bin], links: [path.join(system, 'grok'), path.join(system, 'agent')], launcher: path.join(system, 'grok'),
+  }, { log: (line) => lines.push(line) });
+  assert.equal(code, 0, lines.join('\n'));
+  assert.equal(fs.lstatSync(path.join(system, 'grok'), { throwIfNoEntry: false }), undefined, 'no dangling link is left to block a reinstall');
+  assert.equal(fs.existsSync(bin), false);
+  assert.equal(fs.readlinkSync(path.join(system, 'agent')), '/usr/bin/env', 'a link to another program is kept');
+  assert.equal(fs.readFileSync(path.join(home, '.grok', 'config.toml'), 'utf8'), 'settings');
 });
 
 test('an uninstall plan stops before deleting anything when its command fails', () => {
@@ -2166,6 +2203,34 @@ for (const task of [null, 'install']) {
     assert.equal(manager.uninstall(provider.id, 'copy').installKind, 'uninstall');
   });
 }
+
+test('a tool session cannot start while that tool is installed, updated or removed', async (t) => {
+  const provider = { id: 'tool', tool: 'Tool', args: [], accounts: [] };
+  const registry = {
+    get: (id) => ({ ...provider, id }),
+    account: () => ({ id: 'default', label: 'Default' }),
+    spawnSpec: () => ({}),
+    uninstallSpec: () => ({ spec: {}, channel: 'native' }),
+  };
+  const manager = new SessionManager({ registry, baseEnv: {}, getApiUrl: () => '' });
+  t.mock.method(manager, '_spawn', (options) => {
+    if (options.task === 'install') manager.sessions.set('removal', { provider: options.provider, task: 'install', status: 'running' });
+    return { ...options, setModel() {} };
+  });
+  // The uninstall starts while the session waits for its launch hooks.
+  manager.sessionHooks = { launch: async () => { manager.uninstall('tool', 'copy'); return { args: [], reporting: null }; } };
+  await assert.rejects(manager.create({ providerId: 'tool', cwd: os.tmpdir() }), { code: 'install_in_progress', status: 409 });
+  assert.equal(manager._spawn.mock.calls.filter((c) => !c.arguments[0].task).length, 0, 'no tool process was started');
+
+  manager.sessionHooks = null;
+  await assert.rejects(manager.create({ providerId: 'tool', cwd: os.tmpdir() }), { code: 'install_in_progress' });
+  assert.equal((await manager.create({ providerId: 'other', cwd: os.tmpdir() })).provider.id, 'other', 'another tool is unaffected');
+  manager.sessions.get('removal').status = 'exited';
+  assert.equal((await manager.create({ providerId: 'tool', cwd: os.tmpdir() })).provider.id, 'tool', 'the tool starts once the removal ends');
+
+  manager.installing.add('tool');
+  await assert.rejects(manager.create({ providerId: 'tool', cwd: os.tmpdir() }), { code: 'install_in_progress' }, 'an install still resolving its release counts');
+});
 
 test('shutdown reports the processes that did not confirm exiting in time', async () => {
   const fakeSession = (exited) => ({ status: 'running', exited, dispose() {} });

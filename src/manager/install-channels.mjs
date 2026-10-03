@@ -231,9 +231,18 @@ function ownedPaths(entries, env, platform) {
     .map((p) => m.normalize(p));
 }
 
+// Links may sit outside home, e.g. /usr/local/bin: the runner deletes one only
+// when it is a symlink into the removed paths, which stay inside home.
+function linkPaths(entries, env, platform) {
+  const m = pathModule(platform);
+  return (entries || []).map((entry) => expandHome(entry, env, platform))
+    .filter((p) => (platform === 'win32' ? /^(?:[a-z]:[\\/]|[\\/]{2})/i.test(p) : m.isAbsolute(p)))
+    .map((p) => m.normalize(p));
+}
+
 function removalFor(channel, env, platform) {
   const remove = ownedPaths(channel?.remove, env, platform);
-  return remove.length > 0 ? { remove, links: ownedPaths(channel.links, env, platform) } : null;
+  return remove.length > 0 ? { remove, links: linkPaths(channel.links, env, platform) } : null;
 }
 
 export function uninstallPlan(install, provider, env, platform, fsx = defaultFsx) {
@@ -287,7 +296,10 @@ export function listInstallations({
     const existing = installs.get(key);
     if (!existing) installs.set(key, { ...install, key, onPath: isOnPath, uninstall: uninstallPlan(install, provider, env, platform, fsx) });
     // A shared native copy also needs its npm owner removed, whichever comes first on PATH.
-    else if (install.channel === 'npm' && !existing.uninstall?.run) existing.uninstall = uninstallPlan(install, provider, env, platform, fsx);
+    else if (install.channel === 'npm' && !existing.uninstall?.run) {
+      existing.uninstall = uninstallPlan(install, provider, env, platform, fsx);
+      if (!existing.uninstall) existing.guidance = install.guidance;
+    }
   };
   for (const file of onPath) add(file, true);
   for (const file of known) add(file, false);

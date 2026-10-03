@@ -227,6 +227,12 @@ export function loadProviders({ userFile, platform = process.platform } = {}) {
   return { providers, warnings };
 }
 
+// Why a copy cannot be removed here. An unrecognised copy's own guidance is about updating it.
+function removalGuidance(provider, install, where) {
+  if (install.channel !== 'unknown' && install.guidance) return install.guidance;
+  return `Agent Guild does not know how ${provider.tool} at ${where} was installed. Remove it the way you installed it.`;
+}
+
 export class ProviderRegistry extends EventEmitter {
   /**
    * @param {object} opts
@@ -606,6 +612,7 @@ export class ProviderRegistry extends EventEmitter {
           command: install.uninstall.run ? formatCommand(install.uninstall.run.file, install.uninstall.run.args) : null,
           remove: install.uninstall.remove.map(shown),
         },
+        uninstallGuidance: install.uninstall ? null : removalGuidance(provider, install, shown(install.resolvedPath)),
       };
     });
     const inUse = installs.find((i) => i.active)?.version;
@@ -695,7 +702,7 @@ export class ProviderRegistry extends EventEmitter {
     const install = this.listInstalls(provider).find((i) => i.resolvedPath === copyPath);
     if (!install) throw refusal(404, 'unknown_copy', `${provider.tool} has no copy at ${copyPath}`);
     if (!install.uninstall) {
-      throw refusal(400, 'not_removable', install.guidance || `Agent Guild does not know how ${provider.tool} at ${copyPath} was installed. Remove it the way you installed it.`);
+      throw refusal(400, 'not_removable', removalGuidance(provider, install, copyPath));
     }
     return {
       spec: buildSpawnSpec(process.execPath, [RUNNER, encodePlan(install.uninstall)], this.env, this.platform),

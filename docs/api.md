@@ -93,9 +93,14 @@ skips the lookup). Both are null until the first check finishes; a
 `updateAvailable` is true when the latest version is newer, and
 `POST /providers/:id/install` performs the update when `updateCommand` is not null.
 
-`installs` lists every copy of the tool that was found, each with its `path`
-and `uninstall`: null when Agent Guild cannot remove that copy, otherwise the
-`command` it runs (or null) and the paths it deletes (`remove`).
+`installs` lists every copy of the tool that was found, each
+`{ path, displayPath, channel, version, versionStatus, active, newer, onPath, uninstall, uninstallGuidance }`.
+`path` is the copy's launcher and `displayPath` the same path with the home
+folder shown as `~`. `channel` is `npm`, `native`, `brew`, `winget`, `legacy`
+or `unknown`. `active` marks the copy that runs, `newer` a copy newer than
+that one, and `onPath` whether its folder is on PATH. `uninstall` is null
+when Agent Guild cannot remove that copy, otherwise the `command` it runs (or null) and the paths it deletes
+(`remove`); `uninstallGuidance` then says why and how to remove it instead.
 `POST /providers/:id/uninstall` removes one copy.
 
 `usageSource` is `claude`, `codex`, `command` or null, and says
@@ -383,7 +388,7 @@ All paths are under `/api/v1`.
 | POST | `/github/accounts/:id/ssh` | | `{ account }`: makes the account's SSH key if it has none, adds it to the account, and checks that GitHub signs it in as this account. A failure is reported in `account.ssh.error`. |
 | POST | `/github/clone` | `{ account, repo, parent }` | `201 { session }`: a session with `task` `clone` running `git clone` for `repo` (owner/name) into `<parent>/<name>` over SSH with the account's key. 409 `ssh_not_ready`, `git_unavailable`, `clone_exists` or `folder_conflict` (both with `target`), or `clone_in_progress`. |
 | GET | `/sessions` | | `{ sessions: Session[] }` |
-| POST | `/sessions` | `{ providerId, account?, cwd?, cols?, rows?, name?, args?, resume? }` | `201 { session }` |
+| POST | `/sessions` | `{ providerId, account?, cwd?, cols?, rows?, name?, args?, resume? }` | `201 { session }`. 409 `install_in_progress` while the provider's tool is being installed, updated or uninstalled. |
 | GET | `/sessions/:id` | | `{ session }` |
 | PATCH | `/sessions/:id` | `{ name }` | `{ session }`. `name` must be a non-empty string; it is trimmed to 80 characters. |
 | POST | `/sessions/:id/stop` | | Ends the process. The session stays listed as exited. |

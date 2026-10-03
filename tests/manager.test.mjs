@@ -667,12 +667,17 @@ test('a copy of a tool can be uninstalled from a visible session', async () => {
   assert.equal((await call('POST', '/providers/gonetool/uninstall', {})).body.error.code, 'bad_request');
   assert.equal((await call('POST', '/providers/gonetool/uninstall', { path: path.join(home, 'nowhere') })).body.error.code, 'unknown_copy');
   const unknownCopy = (await findProvider('nativetool')).installs.find((i) => i.channel === 'unknown');
-  assert.equal((await call('POST', '/providers/nativetool/uninstall', { path: unknownCopy.path })).body.error.code, 'not_removable');
+  const notRemovable = (await call('POST', '/providers/nativetool/uninstall', { path: unknownCopy.path })).body.error;
+  assert.equal(notRemovable.code, 'not_removable');
+  assert.match(notRemovable.message, /^Agent Guild does not know how Native Tool at .+ was installed\. Remove it the way you installed it\.$/);
+  assert.match(unknownCopy.uninstallGuidance, /^Agent Guild does not know how Native Tool at .+ was installed\./, 'the card says why');
+  assert.equal(copy.uninstallGuidance, null);
 
   const running = (await call('POST', '/sessions', { providerId: 'gonetool', cwd: home, cols: 90, rows: 20 })).body.session;
   const refused = await call('POST', '/providers/gonetool/uninstall', { path: copy.path });
   assert.equal(refused.status, 409);
   assert.equal(refused.body.error.code, 'provider_in_use');
+  assert.equal((await call('POST', '/providers/gonetool/uninstall', {})).body.error.code, 'bad_request', 'a missing path is named first');
   await call('POST', `/sessions/${running.id}/stop`);
   await waitFor(async () => (await call('GET', `/sessions/${running.id}`)).body.session.status === 'exited', { label: 'tool exit' });
   await call('DELETE', `/sessions/${running.id}`);

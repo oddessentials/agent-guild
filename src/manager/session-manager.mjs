@@ -104,6 +104,10 @@ export class SessionManager extends EventEmitter {
     const workDir = this.resolveCwd(cwd);
     const signIn = this.registry.account(provider, account);
     const hooks = this.sessionHooks ? await this.sessionHooks.launch(provider) : { args: [], reporting: null };
+    // Checked after the await, so an install that started meanwhile is seen.
+    if (this.installing.has(provider.id) || this.installsRunningFor(provider.id) > 0) {
+      throw httpError(409, `${provider.tool} is being installed, updated or removed; start it once that finishes`, 'install_in_progress');
+    }
     const spawnSpec = this.registry.spawnSpec(provider, args || [], resumeId, hooks.args);
     this.prepareAccount(provider, signIn, { hooksSupplied: hooks.args.length > 0 });
     const sessionName = cleanName(name) || (provider.accounts.length > 1 ? `${provider.tool} · ${signIn.label}` : null);
@@ -150,8 +154,8 @@ export class SessionManager extends EventEmitter {
   }
 
   uninstall(providerId, copyPath, { force = false } = {}) {
-    const { provider, guard } = this._installGuard(providerId, force, 'removing the tool now may break them');
     if (typeof copyPath !== 'string' || !copyPath) throw httpError(400, 'path must name the copy to remove', 'bad_request');
+    const { provider, guard } = this._installGuard(providerId, force, 'removing the tool now may break them');
     const { spec, channel } = this.registry.uninstallSpec(provider, copyPath);
     guard();
     const name = `Uninstall ${provider.tool} (${CHANNEL_LABELS[channel]})`;

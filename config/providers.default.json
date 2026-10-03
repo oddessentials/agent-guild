@@ -122,7 +122,7 @@
       "install": "curl -fsSL https://x.ai/cli/install.sh | bash",
       "npmNote": "npm installs the native grok binary into ~/.grok/bin.",
       "channels": {
-        "native": { "paths": ["~/.grok/bin", "~/.grok/downloads"], "update": ["update"], "remove": ["~/.grok/bin", "~/.grok/downloads", "~/.grok/completions"], "links": ["~/.local/bin/grok", "~/.local/bin/agent"], "sharedWithNpm": true },
+        "native": { "paths": ["~/.grok/bin", "~/.grok/downloads"], "update": ["update"], "remove": ["~/.grok/bin", "~/.grok/downloads", "~/.grok/completions"], "links": ["~/.local/bin/grok", "~/.local/bin/agent", "/usr/local/bin/grok", "/usr/local/bin/agent"], "sharedWithNpm": true },
         "brew": { "names": ["grok-build"] }
       },
       "docs": "https://docs.x.ai/build/overview",

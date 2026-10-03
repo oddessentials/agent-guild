@@ -615,7 +615,7 @@ function renderCopies(box, provider, card) {
       button.addEventListener('click', () => uninstallCopy(provider, card, install));
       head.append(button);
     } else {
-      item.append(line('copy-remove', 'Remove this copy the way you installed it.'));
+      item.append(line('copy-remove', install.uninstallGuidance));
     }
     return item;
   }));
