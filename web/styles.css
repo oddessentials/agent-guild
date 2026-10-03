@@ -27,6 +27,7 @@
   --icon-chevron:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 5.5l6.5 6.5L9 18.5'/%3E%3C/svg%3E");
   --icon-github: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z'/%3E%3C/svg%3E");
   --icon-info: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpath d='M12 10.8v6.2' stroke-width='2.4'/%3E%3Ccircle cx='12' cy='7.3' r='1.2' fill='black' stroke='none'/%3E%3C/svg%3E");
+  --icon-grip: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='black'%3E%3Ccircle cx='9' cy='5.5' r='1.9'/%3E%3Ccircle cx='15' cy='5.5' r='1.9'/%3E%3Ccircle cx='9' cy='12' r='1.9'/%3E%3Ccircle cx='15' cy='12' r='1.9'/%3E%3Ccircle cx='9' cy='18.5' r='1.9'/%3E%3Ccircle cx='15' cy='18.5' r='1.9'/%3E%3C/svg%3E");
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   font-size: 15px;
   color-scheme: light;
@@ -262,6 +263,41 @@ main { max-width: 1200px; margin: 0 auto; padding: 26px 16px 56px; display: grid
   background: currentColor; box-shadow: 0 0 6px currentColor; animation: pulse 1.2s ease-in-out infinite;
 }
 .status-pill.exited { color: var(--danger); }
+
+/* Reordering. The grip ends the name line without making it taller; its hit area grows for a finger. */
+.name-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.name-row .name { flex: 1; min-width: 0; }
+.drag-handle {
+  position: relative; flex: none; align-self: stretch; display: grid; place-items: center; width: 24px; margin-right: -4px; padding: 0;
+  border: 0; border-radius: 6px; background: none; color: var(--muted); font: inherit; cursor: grab; opacity: 0.6;
+  touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent;
+  transition: opacity 0.15s, color 0.15s, background-color 0.15s;
+}
+.drag-handle::before { content: ""; width: 16px; height: 16px; background: currentColor; mask: var(--icon-grip) center / contain no-repeat; }
+/* Grown up and sideways, never down over the id chip on the line below. */
+.drag-handle::after { content: ""; position: absolute; inset: -20px -10px 0; }
+.session-card:hover .drag-handle, .session-card:focus-within .drag-handle { opacity: 1; }
+.drag-handle:hover { color: var(--text); background: color-mix(in srgb, var(--text) 9%, transparent); }
+.drag-handle:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; opacity: 1; }
+@media (hover: none) { .drag-handle { opacity: 0.85; } }
+/* While a card is carried, the grid's own outline marks the place it will land. */
+.session-grid { position: relative; }
+.session-grid::before {
+  content: ""; position: absolute; left: 0; top: 0; width: var(--slot-w, 0); height: var(--slot-h, 0); translate: var(--slot-x, 0) var(--slot-y, 0);
+  border: 2px dashed color-mix(in srgb, var(--accent) 60%, transparent); border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent) 9%, transparent); opacity: 0; pointer-events: none; transition: opacity 0.2s var(--ease);
+}
+.session-grid.reordering::before { opacity: 1; transition: opacity 0.2s var(--ease), translate 0.24s var(--ease); }
+.session-grid > .session-card.dragging, .session-grid > .session-card.settling { z-index: 4; transform: none; }
+.session-grid > .session-card.dragging {
+  scale: 1.03; cursor: grabbing;
+  box-shadow: 0 24px 48px -14px rgb(0 0 0 / 0.5), 0 0 0 1.5px color-mix(in srgb, var(--accent) 60%, transparent);
+  transition: scale 0.18s var(--ease), box-shadow 0.18s var(--ease);
+}
+.session-grid > .session-card.settling { transition: scale 0.24s var(--ease), box-shadow 0.24s var(--ease); }
+.session-grid > .session-card.dragging .drag-handle { opacity: 1; color: var(--text); cursor: grabbing; }
+:root.reordering, :root.reordering * { cursor: grabbing; user-select: none; -webkit-user-select: none; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
 .agents-row { display: flex; align-items: center; gap: 10px; min-height: 30px; }
 .agents-label { font-size: 0.75rem; color: var(--muted); }
@@ -637,6 +673,8 @@ a.news-link:visited { color: var(--muted); }
   .model-name::before, .provider .copies summary::before, .appearance::after, .btn, .models, .news-panel, .models::backdrop, .news-panel::backdrop { transition: none; }
   .github-waiting::before, body:has(#app[hidden]):has(#auth[hidden]):has(#stopped[hidden])::after { animation: none; }
   .btn:active:not(:disabled) { transform: none; }
+  .drag-handle, .session-grid::before, .session-grid.reordering::before,
+  .session-grid > .session-card.dragging, .session-grid > .session-card.settling { transition: none; }
 }
 
 @media (max-width: 640px) {

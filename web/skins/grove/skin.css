@@ -147,6 +147,8 @@
   .session-card .card-top > .provider-icon { display: none; }
   .session-card .card-top { flex-wrap: wrap; gap: 6px 8px; }
   .session-card .card-title { flex-basis: 100%; }
+  /* The reorder grip steps out from under the corner sprig. */
+  .session-card .drag-handle { margin-right: 24px; }
 
   /* Working: ripples spread across still water beneath the spirit while fireflies rise around it. */
   .card-aura { position: absolute; z-index: -1; overflow: hidden; pointer-events: none; opacity: 0; transition: opacity 0.9s var(--ease); }

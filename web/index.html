@@ -62,6 +62,7 @@
         <h2 id="sessions-heading">Sessions <span id="session-count" class="count"></span></h2>
       </div>
       <div id="sessions" class="session-grid" role="list"></div>
+      <p id="reorder-status" class="visually-hidden" aria-live="polite"></p>
       <p id="empty" class="empty">No sessions yet. Pick a provider above to start one. Sessions keep running when you close this page.</p>
     </section>
 
@@ -346,7 +347,10 @@
       <div class="card-top">
         <span class="provider-icon"></span>
         <div class="card-title">
-          <div class="name"></div>
+          <div class="name-row">
+            <div class="name"></div>
+            <button class="drag-handle" type="button" title="Drag to move this card, or use the arrow keys"></button>
+          </div>
           <div class="meta"><span class="meta-text"></span><button class="session-id" type="button" hidden></button></div>
         </div>
         <button class="model-pill" type="button"></button>
