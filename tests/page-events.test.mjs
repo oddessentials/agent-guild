@@ -11,10 +11,11 @@ assert.ok(connectSource, 'connectEvents is present in app.js');
 
 function connect({ changelogOpen, githubOpen = false }) {
   const calls = [];
+  const alerts = [];
   const sockets = [];
   const noop = () => {};
   const context = {
-    state: { stopping: false, views: new Map() },
+    state: { stopping: false, views: new Map(), eventsRetry: 0 },
     sessionsShown: false,
     WebSocket: class { constructor() { sockets.push(this); } },
     $: (id) => ({ open: (id === 'changelog' && changelogOpen) || (id === 'github' && githubOpen) }),
@@ -28,10 +29,15 @@ function connect({ changelogOpen, githubOpen = false }) {
     renderSessions: noop,
     dropSession: noop,
     leaveStopping: noop,
+    enterStopping: noop,
+    showManagerStopped: noop,
+    setTimeout: noop,
+    managerConnected: () => alerts.push('connected'),
+    managerGone: () => alerts.push('gone'),
   };
   runInNewContext(`(${connectSource})()`, context);
   const hello = { type: 'hello', version: '1.2.3', pid: 1, sessions: [], upgrade: null };
-  return { calls, send: (msg) => sockets[0].onmessage({ data: JSON.stringify(msg) }), hello };
+  return { calls, alerts, send: (msg) => sockets[0].onmessage({ data: JSON.stringify(msg) }), close: () => sockets[0].onclose(), hello };
 }
 
 test('a reconnect catches the open What\'s new panel up on a changelog.updated it missed', () => {
@@ -51,4 +57,13 @@ test('a reconnect and a github.updated reload the open GitHub panel', () => {
   page.send(page.hello);
   page.send({ type: 'github.updated' });
   assert.deepEqual(page.calls, ['news', 'github', 'github']);
+});
+
+test('a hello starts watching for alerts; a stop and the socket closing both report the manager gone', () => {
+  const page = connect({ changelogOpen: false });
+  page.send(page.hello);
+  assert.deepEqual(page.alerts, ['connected']);
+  page.send({ type: 'manager.stopped', restart: true, remaining: 0 });
+  page.close();
+  assert.deepEqual(page.alerts, ['connected', 'gone', 'gone']);
 });
