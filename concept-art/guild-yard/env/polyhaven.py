@@ -40,7 +40,7 @@ def _download(url, md5, path, lock):
     return path
 
 def _save(lock):
-    LOCK.write_text(json.dumps(dict(sorted(lock.items())), indent=1) + '\n')
+    LOCK.write_text(json.dumps(dict(sorted(lock.items())), indent=1) + '\n', newline='\n')
 
 def hdri(asset, res='4k'):
     entry = json.loads(_get(f'{API}/files/{asset}'))['hdri'][res]['hdr']

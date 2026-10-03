@@ -69,7 +69,7 @@ def render(world):
             layer['tiles'].append({'file': f'{world}/{file}', 'right': r, 'up': u, 'width': w, 'height': h})
             print('YARD_PLATE', file, w, h, flush=True)
         manifest['layers'].append(layer)
-    (out / 'plates.json').write_text(json.dumps(manifest, indent=1) + '\n', encoding='utf-8')
+    (out / 'plates.json').write_text(json.dumps(manifest, indent=1) + '\n', encoding='utf-8', newline='\n')
 
 if __name__ == '__main__':
     args = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []

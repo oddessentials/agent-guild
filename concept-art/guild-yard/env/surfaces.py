@@ -44,7 +44,7 @@ def export(world):
     sky.scale(512, 256)
     sky.filepath_raw, sky.file_format = str(out / 'sky.hdr'), 'HDR'
     sky.save()
-    (out / 'surfaces.json').write_text(json.dumps(manifest, indent=1) + '\n', encoding='utf-8')
+    (out / 'surfaces.json').write_text(json.dumps(manifest, indent=1) + '\n', encoding='utf-8', newline='\n')
     print('YARD_SURFACES', world, flush=True)
 
 if __name__ == '__main__':
