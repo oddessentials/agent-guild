@@ -36,19 +36,21 @@
     "prompt": "A tiny cute chibi robot, clearly a machine and not a human: a round glossy white robot body, a big round dark glass dome head with two glowing cyan lens eyes and a little antenna, sitting alone on a small floating asteroid, holding a little glowing lantern, looking up hopefully, a tiny round helper drone hovering beside it, a few twinkling stars around."
   },
   "backgrounds/page": {
-    "seed": 901,
+    "seed": 922,
     "w": 1920,
     "h": 1088,
     "workflow": "qwen-image",
+    "upscale": 2,
     "style": "",
-    "prompt": "Deep space panorama, cinematic and photoreal, a calm very dark sky with sparse small crisp stars, a soft faint violet and deep blue nebula haze in the upper left, the curved horizon of a huge dark night-side planet along the bottom of the frame with a thin glowing blue atmospheric rim and faint golden city lights, a small distant moon in the upper right, mostly empty dark space in the center, no spacecraft, no text."
+    "prompt": "Deep space panorama from low orbit, cinematic and photoreal like an astronaut photograph from the ISS, the curved horizon of a huge night-side Earth-like planet along the bottom of the frame, intricate webs of warm golden city lights tracing coastlines and rivers, thin luminous green and teal aurora ribbons dancing just above the limb, a thin glowing cobalt atmospheric rim, above it a crisp Milky Way band with detailed dust lanes and a soft violet and blue nebula in the upper left, thousands of tiny sharp stars, a small crescent moon in the upper right. Mostly empty dark space in the centre of the frame, ultra detailed, razor sharp, no spacecraft, no people, no text."
   },
   "backgrounds/page-light": {
-    "seed": 902,
+    "seed": 923,
     "w": 1920,
     "h": 1088,
     "workflow": "qwen-image",
+    "upscale": 2,
     "style": "",
-    "prompt": "Bright luminous view from high orbit, cinematic and photoreal, the gently curved horizon of a sunlit planet along the bottom of the frame with soft white cloud bands over pale turquoise ocean, a wide glowing pale-blue atmosphere fading upward into a soft powder-blue and pale lavender sky, a pale moon in the upper right, airy, high-key and very light overall, mostly empty pale sky in the center, no spacecraft, no text."
+    "prompt": "Bright luminous view from high orbit, cinematic and photoreal like an astronaut photograph, the gently curved horizon of a sunlit Earth-like planet along the bottom of the frame, intricate swirling white cloud formations and a cyclone over a vivid turquoise and sapphire ocean, a sandy coastline and green islands, a wide glowing layered pale-blue atmosphere fading upward into a soft powder-blue and pale lavender sky, a soft warm sun glow at the upper left, a pale detailed moon in the upper right, airy, high-key and very light overall. Mostly open pale sky in the centre of the frame, ultra detailed, razor sharp, no spacecraft, no people, no text."
   }
 }
