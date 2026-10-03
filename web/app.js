@@ -16,6 +16,7 @@ const GITHUB_ACCOUNT_KEY = 'agentGuild.githubAccount';
 const CLONE_PARENT_KEY = 'agentGuild.cloneParent';
 const SESSION_ORDER_KEY = 'agentGuild.sessionOrder';
 const SOUND_KEY = 'agentGuild.sound';
+const NOTES_KEY = 'agentGuild.notes';
 const RELEASES_URL = 'https://github.com/oddessentials/agent-guild/releases';
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -63,7 +64,7 @@ const state = {
 // ---- storage (may be unavailable, e.g. blocked site data) -----------------
 
 function load(key) { try { return localStorage.getItem(key); } catch { return null; } }
-function save(key, value) { try { value === null ? localStorage.removeItem(key) : localStorage.setItem(key, value); } catch { /* ignore */ } }
+function save(key, value) { try { value === null ? localStorage.removeItem(key) : localStorage.setItem(key, value); return true; } catch { return false; } }
 
 // ---- helpers --------------------------------------------------------------
 
@@ -292,6 +293,72 @@ function placeAppearanceMenu() {
   const box = $('appearance').getBoundingClientRect();
   menu.style.top = `${Math.round(box.bottom + 6)}px`;
   menu.style.right = `${Math.max(8, Math.round(innerWidth - box.right))}px`;
+}
+
+// ---- notes ----------------------------------------------------------------
+
+const NOTES_SAVED = 'Saved in this browser as you type';
+const NOTES_UNSAVED = 'Not saved: the browser’s storage for this page is full or turned off. Copy what you need before you close the page.';
+/** `unsaved`: the browser refused the text in the panel. `pressedOutside`: the last press on the panel was on its backdrop. */
+const notesView = { unsaved: false, pressedOutside: false };
+
+/** Shows the saved notes, keeping the caret where it was. Text the browser refused is never replaced. */
+function refreshNotes() {
+  if (notesView.unsaved) return;
+  const text = load(NOTES_KEY) ?? '';
+  const area = $('notes-text');
+  if (area.value === text) return;
+  const { selectionStart, selectionEnd } = area;
+  area.value = text;
+  area.setSelectionRange(Math.min(selectionStart, text.length), Math.min(selectionEnd, text.length));
+}
+
+/** Saves the notes on every change; emptying them removes the saved copy. */
+function saveNotes() {
+  notesView.unsaved = !save(NOTES_KEY, $('notes-text').value || null);
+  renderNotesStatus();
+  guardLeaving();
+}
+
+/** The line under the title is a live region, so it changes only when the state does. */
+function renderNotesStatus() {
+  const sub = $('notes-sub');
+  const text = notesView.unsaved ? NOTES_UNSAVED : NOTES_SAVED;
+  if (sub.textContent === text) return;
+  sub.textContent = text;
+  sub.classList.toggle('warn', notesView.unsaved);
+}
+
+/** Another tab saved the notes, or cleared this page's storage. */
+function notesStored(e) {
+  if (e.key === NOTES_KEY || e.key === null) refreshNotes();
+}
+
+function openNotes() {
+  hideTip();
+  refreshNotes();
+  const dialog = $('notes');
+  if (!dialog.open) dialog.showModal();
+  // On a touch screen, focus stays on Close: the keyboard would cover the notes before the user asks to type.
+  if (!coarsePointer.matches) $('notes-text').focus();
+}
+
+function closeNotes() {
+  if ($('notes').open) $('notes').close();
+}
+
+/** Never into a terminal: a second Escape there would interrupt the coding tool. */
+function notesClosed() {
+  $('notes-open').focus();
+}
+
+function notesPressed(e) {
+  notesView.pressedOutside = e.target === e.currentTarget;
+}
+
+/** A click on the backdrop closes the notes, but not the click that ends a selection dragged out of them. */
+function notesClicked(e) {
+  if (e.target === e.currentTarget && notesView.pressedOutside) closeNotes();
 }
 
 // ---- upgrading the manager ------------------------------------------------
@@ -2858,7 +2925,9 @@ function confirmLeaving(event) {
 
 function guardLeaving() {
   const running = state.connected && [...state.sessions.values()].some((s) => s.status === 'running');
-  if (running) addEventListener('beforeunload', confirmLeaving);
+  // Notes the browser refused are lost with the page.
+  const unsaved = notesView.unsaved && $('notes-text').value !== '';
+  if (running || unsaved) addEventListener('beforeunload', confirmLeaving);
   else removeEventListener('beforeunload', confirmLeaving);
 }
 
@@ -3761,6 +3830,13 @@ document.addEventListener('keydown', (e) => {
 }, true);
 addEventListener('scroll', () => { if (tipFor) hideTip(); }, true);
 addEventListener('resize', () => { if (tipFor) hideTip(); });
+$('notes-open').addEventListener('click', openNotes);
+$('notes-close').addEventListener('click', closeNotes);
+$('notes').addEventListener('pointerdown', notesPressed);
+$('notes').addEventListener('click', notesClicked);
+$('notes').addEventListener('close', notesClosed);
+$('notes-text').addEventListener('input', saveNotes);
+addEventListener('storage', notesStored);
 $('news-all').addEventListener('click', openNews);
 $('news-close').addEventListener('click', closeNews);
 $('news-fresh').addEventListener('click', showFreshNews);
@@ -3896,6 +3972,7 @@ $('panel-stop').addEventListener('click', () => {
   else removeSession(s.id);
 });
 $('cwd').value = load(CWD_KEY) || '';
+refreshNotes();
 try { state.accounts = JSON.parse(load(ACCOUNTS_KEY)) || {}; } catch { state.accounts = {}; }
 try { state.shellPicks = JSON.parse(load(SHELLS_KEY)) || {}; } catch { state.shellPicks = {}; }
 githubView.accountId = Number(load(GITHUB_ACCOUNT_KEY)) || null;
