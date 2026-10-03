@@ -88,6 +88,12 @@ function toast(message, ms = 5000, action = null) {
   toastTimer = setTimeout(() => { el.hidden = true; }, ms);
 }
 
+/**
+ * Handles a click, but not the second click of a double-click, which lands on whatever the first one
+ * opened or uncovered: Close over Notes, or Stop manager under a panel's Close.
+ */
+const firstClick = (run) => (e) => { if (e.detail < 2) run(); };
+
 function setConnection(kind, label) {
   const el = $('connection');
   el.className = `connection ${kind}`;
@@ -313,7 +319,9 @@ const notesView = { saved: '', status: 'saved', shown: 'saved', pressedOutside: 
 
 /** Shows notes another tab saved since this page last read or wrote them. Saved notes win over text this page could not save. */
 function refreshNotes() {
-  const text = load(NOTES_KEY) ?? '';
+  let text;
+  // Unlike load(), a read that fails is not taken for empty notes.
+  try { text = localStorage.getItem(NOTES_KEY) ?? ''; } catch { return; }
   if (text === notesView.saved) return;
   notesView.saved = text;
   notesView.status = 'saved';
@@ -368,24 +376,22 @@ function notesClosed() {
   $('notes-open').focus();
 }
 
-/** The second click of a double-click lands on what the first one opened or uncovered, such as Close over Notes. */
-const firstClick = (run) => (e) => { if (e.detail < 2) run(); };
-/** Nor may that second press take the focus from the notes. */
-const keepFocus = (e) => { if (e.detail > 1) e.preventDefault(); };
+/** The second press of a double-click on Notes lands in the panel, where it must not take the focus from the text. */
+const keepFocus = (e) => { if (e.detail > 1 && e.target !== $('notes-text')) e.preventDefault(); };
 
 /** Whether a press or click on the panel was on its backdrop, outside the sheet. */
-function onNotesBackdrop(e) {
+function isOutsideNotes(e) {
   const box = e.currentTarget.getBoundingClientRect();
   return e.target === e.currentTarget && (e.clientX < box.left || e.clientX >= box.right || e.clientY < box.top || e.clientY >= box.bottom);
 }
 
 function notesPressed(e) {
-  notesView.pressedOutside = onNotesBackdrop(e);
+  notesView.pressedOutside = isOutsideNotes(e);
 }
 
 /** Only a press and a release both outside close the notes: a drag into or out of them selects text. */
 function notesClicked(e) {
-  if (notesView.pressedOutside && onNotesBackdrop(e)) closeNotes();
+  if (notesView.pressedOutside && isOutsideNotes(e)) closeNotes();
 }
 
 // ---- upgrading the manager ------------------------------------------------
@@ -3859,7 +3865,7 @@ addEventListener('scroll', () => { if (tipFor) hideTip(); }, true);
 addEventListener('resize', () => { if (tipFor) hideTip(); });
 $('notes-open').addEventListener('click', firstClick(openNotes));
 $('notes-close').addEventListener('click', firstClick(closeNotes));
-$('notes-close').addEventListener('mousedown', keepFocus);
+$('notes').addEventListener('mousedown', keepFocus);
 $('notes').addEventListener('pointerdown', notesPressed);
 $('notes').addEventListener('click', notesClicked);
 $('notes').addEventListener('close', notesClosed);
@@ -3949,8 +3955,8 @@ $('models-more').addEventListener('click', () => {
   renderModels();
   $('models-list').children[before]?.querySelector('.model-toggle')?.focus();
 });
-$('stop-manager').addEventListener('click', () => stopManager());
-$('restart-manager').addEventListener('click', () => stopManager({ restart: true }));
+$('stop-manager').addEventListener('click', firstClick(() => stopManager()));
+$('restart-manager').addEventListener('click', firstClick(() => stopManager({ restart: true })));
 $('copy-command').addEventListener('click', copyCommand);
 $('upgrade').addEventListener('click', upgradeManager);
 $('appearance-menu').addEventListener('change', (e) => {

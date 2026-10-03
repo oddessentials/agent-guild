@@ -20,7 +20,7 @@ const source = [
   found(/^function save\(.*$/m, 'save'),
   limitLine, statusBlock, line('notesView'), line('firstClick'), line('keepFocus'),
   ...['refreshNotes', 'saveNotes', 'renderNotesStatus', 'notesStored', 'openNotes', 'closeNotes', 'notesClosed',
-    'onNotesBackdrop', 'notesPressed', 'notesClicked', 'guardLeaving', 'confirmLeaving'].map(fn),
+    'isOutsideNotes', 'notesPressed', 'notesClicked', 'guardLeaving', 'confirmLeaving'].map(fn),
   'globalThis.firstClick = firstClick;',
   'globalThis.keepFocus = keepFocus;',
 ].join('\n');
@@ -33,7 +33,8 @@ const SHEET = { left: 900, right: 1360, top: 0, bottom: 860 };
 /** One open page. `storage` is shared between pages to stand for other tabs or a reload. */
 function page({ storage = new Map(), blocked = false, full = false } = {}) {
   const calls = [];
-  const quota = { full };
+  // `full`: writes throw as at the quota. `readsFail`: reads throw, as when site data is blocked mid-visit.
+  const quota = { full, readsFail: false, setItems: 0 };
   const listeners = new Map();
   const element = (id, fields = {}) => ({ id, focus: () => calls.push(`focus ${id}`), ...fields });
   // `translated`: a translator rewrites the line, so its text no longer reads back as written.
@@ -74,8 +75,12 @@ function page({ storage = new Map(), blocked = false, full = false } = {}) {
   // Blocked site data: the page cannot reach localStorage at all.
   if (!blocked) {
     sandbox.localStorage = {
-      getItem: (key) => storage.get(key) ?? null,
+      getItem: (key) => {
+        if (quota.readsFail) throw Object.assign(new Error('Access is denied for this document.'), { name: 'SecurityError' });
+        return storage.get(key) ?? null;
+      },
       setItem: (key, value) => {
+        quota.setItems++;
         if (quota.full) throw Object.assign(new Error('The quota has been exceeded.'), { name: 'QuotaExceededError' });
         storage.set(key, String(value));
       },
@@ -155,6 +160,9 @@ test('notes over the limit are not saved, so every other setting keeps room in s
   assert.equal(tab.storage.get(KEY).length, LIMIT, 'one character more is not');
   assert.equal(tab.sub.text, STATUS.long);
   assert.ok(tab.guarded());
+  tab.openNotes();
+  assert.equal(tab.area.value.length, LIMIT + 1, 'the text over the limit stays in the panel');
+  assert.equal(tab.sub.text, STATUS.long);
   tab.type('x'.repeat(LIMIT - 1));
   assert.equal(tab.storage.get(KEY).length, LIMIT - 1);
   assert.equal(tab.sub.text, STATUS.saved);
@@ -215,13 +223,24 @@ test('opening shows notes another tab saved, even with no storage event to say s
   assert.equal(tab.sub.writes, 0);
 });
 
-test('opening with empty notes and working storage writes nothing', () => {
+test('opening with empty notes changes nothing in working storage', () => {
   const storage = new Map();
   const tab = page({ storage });
   tab.openNotes();
   assert.equal(storage.size, 0);
+  assert.equal(tab.quota.setItems, 0, 'only a removal of the missing key, which changes nothing');
   assert.equal(tab.sub.text, STATUS.saved);
   assert.equal(tab.sub.writes, 0);
+});
+
+test('a read that fails after good ones is not taken for emptied notes', () => {
+  const tab = page({ storage: new Map([[KEY, 'kept']]) });
+  tab.refreshNotes();
+  tab.quota.readsFail = true;
+  tab.refreshNotes();
+  tab.openNotes();
+  assert.equal(tab.area.value, 'kept');
+  assert.equal(tab.guarded(), false);
 });
 
 test('text that could not be saved stays, until another tab saves newer notes, which win', () => {
@@ -263,13 +282,15 @@ test('only the first click of a double-click counts, so Notes cannot open and at
   const click = tab.firstClick(() => runs.push('run'));
   for (const detail of [1, 2, 3, 0]) click({ detail });
   assert.equal(runs.length, 2, 'a click, and a keyboard press (detail 0), but not the second or third click');
-  // Nor may the second press move the focus from the notes onto Close.
-  const kept = [1, 2, 3].map((detail) => {
-    let prevented = false;
-    tab.keepFocus({ detail, preventDefault: () => { prevented = true; } });
-    return prevented;
-  });
-  assert.deepEqual(kept, [false, true, true]);
+  // Nor may the second press, landing on Close or the heading, move the focus from the text,
+  // though in the text itself it still selects a word.
+  const prevented = (detail, target) => {
+    let stopped = false;
+    tab.keepFocus({ detail, target, preventDefault: () => { stopped = true; } });
+    return stopped;
+  };
+  assert.deepEqual([1, 2, 3].map((detail) => prevented(detail, tab.elements['notes-close'])), [false, true, true]);
+  assert.equal(prevented(2, tab.area), false);
 });
 
 test('only a press and a release both outside the sheet close the notes', () => {
@@ -282,6 +303,9 @@ test('only a press and a release both outside the sheet close the notes', () => 
   tab.notesPressed(at(300));
   tab.notesClicked(at(1000));
   assert.equal(tab.dialog.open, true, 'a drag from the backdrop into the sheet');
+  tab.notesPressed(at(1000));
+  tab.notesClicked(at(300));
+  assert.equal(tab.dialog.open, true, 'a press on the sheet itself, such as its edge, released outside');
   tab.notesPressed(at(300));
   tab.notesClicked({ target: tab.elements['notes-close'], currentTarget: tab.dialog, clientX: 0, clientY: 0 });
   assert.equal(tab.dialog.open, true, 'a click on a control in the sheet, such as one from the keyboard');
@@ -294,7 +318,10 @@ test('the page wires the notes up and has their controls', () => {
   for (const wiring of [
     "$('notes-open').addEventListener('click', firstClick(openNotes));",
     "$('notes-close').addEventListener('click', firstClick(closeNotes));",
-    "$('notes-close').addEventListener('mousedown', keepFocus);",
+    "$('notes').addEventListener('mousedown', keepFocus);",
+    // Close lies over Stop manager: the second click of a double-click on it must not stop the manager.
+    "$('stop-manager').addEventListener('click', firstClick(() => stopManager()));",
+    "$('restart-manager').addEventListener('click', firstClick(() => stopManager({ restart: true })));",
     "$('notes').addEventListener('pointerdown', notesPressed);",
     "$('notes').addEventListener('click', notesClicked);",
     "$('notes').addEventListener('close', notesClosed);",
