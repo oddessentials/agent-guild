@@ -2796,7 +2796,8 @@ async function stopSession(id) {
 async function removeSession(id) {
   const s = state.sessions.get(id);
   if (!s) return;
-  if (s.status === 'running' && !confirm(`"${s.name}" is still running. ${s.multiplexer ? 'Detach' : 'End'} it and remove it? ${stopNote(s)}`)) return;
+  const question = s.multiplexer ? `Detach it and remove it? ${stopNote(s)}` : 'End it and remove it?';
+  if (s.status === 'running' && !confirm(`"${s.name}" is still running. ${question}`)) return;
   try { await api('DELETE', `/sessions/${id}`); dropSession(id); } catch (err) { toast(err.message); }
 }
 
