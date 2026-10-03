@@ -30,7 +30,8 @@ test('the Pages builder makes a portable, complete site without changing web/', 
   assert.throws(() => execFileSync(process.execPath, [path.join(demo, 'check.mjs'), out], { stdio: 'pipe' }), /origin-root url\(\)/);
 });
 
-test('the demo runtime handles initial API calls and opens event and terminal sockets', async () => {
+test('the demo runtime handles initial API calls and opens event and terminal sockets', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   const runtime = fs.readFileSync(path.join(demo, 'demo-runtime.js'), 'utf8');
   const elements = [];
   const storage = new Map();
@@ -62,7 +63,7 @@ test('the demo runtime handles initial API calls and opens event and terminal so
   const events = [];
   const socket = new context.WebSocket('wss://example.test/api/v1/events?token=demo');
   socket.onmessage = ({ data }) => events.push(JSON.parse(data));
-  await new Promise((resolve) => setTimeout(resolve, 40));
+  t.mock.timers.tick(40);
   assert.equal(events[0].type, 'hello');
   assert.equal(events[0].version, '2.3.4');
   assert.ok(events[0].sessions.length >= 4);
@@ -70,7 +71,7 @@ test('the demo runtime handles initial API calls and opens event and terminal so
   const terminal = [];
   const term = new context.WebSocket(`wss://example.test/api/v1/sessions/${events[0].sessions[0].id}/terminal?token=demo`);
   term.onmessage = ({ data }) => terminal.push(JSON.parse(data));
-  await new Promise((resolve) => setTimeout(resolve, 40));
+  t.mock.timers.tick(40);
   assert.equal(terminal[0].type, 'snapshot');
   assert.match(terminal[0].data, /interactive demo/i);
 });
@@ -105,21 +106,23 @@ test('the demo answers model stats in the manager\'s shape', async () => {
   assert.deepEqual(body.sessions, {});
 });
 
-test('demo events arrive after the request that caused them returns', async () => {
+test('demo events arrive after the request that caused them returns', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   const { context, call } = loadDemo();
   const events = [];
   const socket = new context.WebSocket('wss://example.test/api/v1/events');
   socket.onmessage = ({ data }) => events.push(JSON.parse(data).type);
-  await new Promise((resolve) => setTimeout(resolve, 40));
+  t.mock.timers.tick(40);
   events.length = 0;
   const made = await call('POST', '/sessions', { providerId: 'shell', cwd: '/work/demo' });
   assert.equal(made.status, 201);
   assert.deepEqual(events, [], 'a handler that throws cannot fail the request');
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  t.mock.timers.tick(0);
   assert.deepEqual(events, ['session.created']);
 });
 
-test('the demo lists removable copies and simulates uninstalling one', async () => {
+test('the demo lists removable copies and simulates uninstalling one', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   const { context, call } = loadDemo();
   const { providers } = (await call('GET', '/providers')).body;
   for (const p of providers.filter((item) => item.id !== 'shell')) {
@@ -148,7 +151,7 @@ test('the demo lists removable copies and simulates uninstalling one', async () 
   const terminal = [];
   const term = new context.WebSocket(`wss://example.test/api/v1/sessions/${started.body.session.id}/terminal`);
   term.onmessage = ({ data }) => terminal.push(JSON.parse(data));
-  await new Promise((resolve) => setTimeout(resolve, 1600));
+  t.mock.timers.tick(1600);
   assert.match(terminal[0].data, /Removed \/Users\/demo\/\.grok\/bin/);
   const updated = events.find((e) => e.type === 'providers.updated').providers.find((p) => p.id === 'xai');
   assert.deepEqual(updated.installs, []);
@@ -158,7 +161,7 @@ test('the demo lists removable copies and simulates uninstalling one', async () 
 
   const forced = await call('POST', '/providers/anthropic/uninstall', { path: claude.installs[0].path, force: true });
   assert.equal(forced.status, 201);
-  await new Promise((resolve) => setTimeout(resolve, 1600));
+  t.mock.timers.tick(1600);
   const left = (await call('GET', '/providers')).body.providers.find((p) => p.id === 'anthropic');
   assert.equal(left.installs.length, 1);
   assert.ok(left.installs[0].active, 'the remaining copy is the one in use');

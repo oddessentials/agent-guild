@@ -19,16 +19,17 @@
 //   subagent <id> <type>   a sub-agent starts
 //   subagent-done <id> <type>
 //   subagent-killed <id> <type>           Claude Code's TaskStop: a task notification, no SubagentStop
-//   shell <id> <ms> [fg|bg|bg-silent|ps|interrupt|esc-bg|unpolled|ask-yes|ask-no|ask-rewrite] [command...]
-//                          runs a shell command for <ms> with the tool's hooks. Claude Code
+//   shell <id> hold [fg|bg|bg-silent|ps|interrupt|esc-bg|unpolled|ask-yes|ask-no|ask-rewrite] [command...]
+//                          holds a real child until shell-end, with the tool's hooks. Claude Code
 //                          returns a bg command's call at once and notifies its
 //                          end as a prompt, except for bg-silent; Codex CLI reports a command's
 //                          end when it ends, except for unpolled, which the model never checks on
 //                          again; ps runs it as Claude Code's PowerShell tool; ask-yes and ask-no
-//                          ask permission for a while, then run the command or not; ask-rewrite
-//                          runs a command a hook rewrote; interrupt is Esc after <ms>, which
-//                          kills the command and fires no hook; esc-bg is Esc after 300 ms, which
+//                          ask permission, then run the command or not; ask-rewrite
+//                          runs a command a hook rewrote; interrupt makes shell-end act as Esc,
+//                          which kills the command and fires no hook; esc-bg is Esc, which
 //                          moves the command to the background, also with no hook
+//   shell-end <id>         releases the child and waits for its exit hooks to finish
 //   shell-denied <id> [command...]
 //                          a start event with no process and no end event
 //   permit <command...>    a permission request for a command, with no tool_use_id
@@ -238,7 +239,8 @@ function runTool() {
   };
   if (tool !== 'codex' && tool !== 'agy') sessionStart();
 
-  const shellSleep = 'setTimeout(() => {}, Number(process.env.FAKE_SHELL_MS))';
+  // EOF also releases the child if the fixture is killed during test cleanup.
+  const shellHold = 'process.stdin.resume(); process.stdin.on("end", () => process.exit(0));';
   const running = new Map();
   // Claude Code's background tasks still running, by task id, as its Stop lists them.
   const tasks = new Map();
@@ -249,7 +251,7 @@ function runTool() {
     return [start ? 'PreToolUse' : 'PostToolUse', { tool_name: name, tool_use_id: id, tool_input: input, ...codexTurn, ...(response ? { tool_response: response } : {}) }, name];
   };
   const notification = (task, id, status) => `<task-notification>\n<task-id>${task}</task-id>\n<tool-use-id>${id}</tool-use-id>\n<output-file>/tmp/tasks/${task}.output</output-file>\n<status>${status}</status>\n<summary>Background command "test" ${status} (exit code 0)</summary>\n</task-notification>`;
-  const runShell = async (id, ms, mode, command) => {
+  const runShell = async (id, mode, command) => {
     const background = mode === 'bg' || mode === 'bg-silent';
     const name = mode === 'ps' ? 'PowerShell' : toolName;
     const announced = { command, ...(background && tool === 'claude' ? { run_in_background: true } : {}) };
@@ -259,23 +261,26 @@ function runTool() {
     if (mode.startsWith('ask-')) {
       await runHooks(hooks, 'PermissionRequest', { tool_name: name, tool_input: input, permission_suggestions: [], ...codexTurn }, name);
       out(`SHELL-ASKED ${id}`);
-      await new Promise((resolve) => setTimeout(resolve, Number(process.env.FAKE_PERMISSION_MS || 1000)));
       if (mode === 'ask-no') {
         out(`SHELL-REJECTED ${id}`);
         return;
       }
     }
-    const child = spawn(process.execPath, ['-e', shellSleep], { env: { ...process.env, FAKE_SHELL_MS: String(mode === 'interrupt' ? 60000 : ms) }, stdio: 'ignore', windowsHide: true });
+    const child = spawn(process.execPath, ['-e', shellHold], { stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true });
     out(`SHELL-STARTED ${id} ${child.pid}`);
     running.set(id, child);
     const task = `bg-${id}`;
-    if (mode === 'interrupt') setTimeout(() => { child.silent = true; out(`SHELL-INTERRUPTED ${id}`); child.kill(); }, ms);
-    if (mode === 'esc-bg') setTimeout(() => { tasks.set(task, child); out(`SHELL-ESCAPED ${id}`); }, 300);
+    child.silent = mode === 'interrupt';
+    if (mode === 'esc-bg') { tasks.set(task, child); out(`SHELL-ESCAPED ${id}`); }
     const end = (response) => {
       const [event, payload] = shellEvent(false, id, input, response, name);
       return runHooks(hooks, event, payload, matcher);
     };
-    child.on('exit', async () => {
+    const exited = new Promise((resolve, reject) => {
+      child.once('exit', resolve);
+      child.once('error', reject);
+    });
+    child.finished = exited.then(async () => {
       running.delete(id);
       tasks.delete(task);
       out(`SHELL-EXITED ${id}`);
@@ -298,7 +303,16 @@ function runTool() {
     const [cmd, id, type, ...rest] = line.trim().split(/\s+/);
     if (cmd === 'shell') {
       const [mode = 'fg', ...words] = rest;
-      return runShell(id, Number(type), mode, words.length ? words.join(' ') : `sleep-for ${id}`);
+      if (type !== 'hold') throw new Error('fixture shells must be explicitly released with shell-end');
+      return runShell(id, mode, words.length ? words.join(' ') : `held-command ${id}`);
+    }
+    if (cmd === 'shell-end') {
+      const child = running.get(id);
+      if (!child) throw new Error(`no running shell ${id}`);
+      child.stdin.end();
+      await child.finished;
+      out(`SHELL-RELEASED ${id}`);
+      return;
     }
     if (cmd === 'shell-denied') {
       const [event, payload, matcher] = shellEvent(true, id, { command: [type, ...rest].join(' ') || `denied ${id}` });
