@@ -14,9 +14,7 @@ a raster plate and limits the scene to eight sessions per group. Those
 implementation choices were not carried over. No fork backend or provider
 configuration was imported.
 
-This branch was rebased onto the original project's merged Antigravity
-upgrade (`82bd7d6`). The original project remains authoritative for every
-feature and API. The only manager change adds glTF MIME types to static
+The original project remains authoritative for every feature and API. The only manager change adds glTF MIME types to static
 serving; authentication, routes and the content security policy are unchanged.
 
 ## Shared behavior
