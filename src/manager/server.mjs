@@ -25,6 +25,7 @@ const MIME = {
   '.webp': 'image/webp',
   '.woff2': 'font/woff2',
   '.ico': 'image/x-icon',
+  '.wav': 'audio/wav',
   '.json': 'application/json; charset=utf-8',
 };
 
@@ -454,7 +455,7 @@ export function createManagerServer({
 
   function handleEvents(ws) {
     eventClients.add(ws);
-    safeSend(ws, { type: 'hello', version, pid: process.pid, launcher, upgrade: upgradeInfo(), sessions: manager.list() });
+    safeSend(ws, { type: 'hello', version, pid: process.pid, startedAt, launcher, upgrade: upgradeInfo(), sessions: manager.list() });
     ws.on('close', () => eventClients.delete(ws));
     ws.on('message', () => { /* events socket is server -> client only */ });
   }
