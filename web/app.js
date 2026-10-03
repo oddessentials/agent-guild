@@ -15,6 +15,7 @@ const RELEASES_URL = 'https://github.com/oddessentials/agent-guild/releases';
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 const finePointer = window.matchMedia('(hover: hover) and (pointer: fine)');
+const coarsePointer = window.matchMedia('(pointer: coarse)');
 
 const $ = (id) => document.getElementById(id);
 const state = {
@@ -2747,7 +2748,7 @@ class TerminalView {
     this.term = new window.Terminal({
       cursorBlink: true,
       fontFamily: 'ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace',
-      fontSize: 13,
+      fontSize: coarsePointer.matches ? 14 : 13,
       scrollback: 5000,
       macOptionIsMeta: true,
       theme: TERMINAL_THEME,
@@ -2828,10 +2829,49 @@ class TerminalView {
 
   mount(host) {
     host.replaceChildren(this.el);
-    if (!this.opened) { this.term.open(this.el); this.opened = true; }
+    if (!this.opened) { this.term.open(this.el); this.enableTouchScroll(); this.opened = true; }
     this.resizeObserver.observe(host);
     this.refit();
     this.term.focus();
+  }
+
+  /**
+   * xterm.js 6 scrolls only for the mouse wheel, so a one-finger drag would
+   * scroll the page behind the panel instead. Turn the drag into scrolling.
+   * Full-screen programs and programs that read the mouse get a wheel event,
+   * which xterm turns into arrow keys or mouse reports as it does for a real
+   * wheel. Scrollback uses scrollLines, because xterm's scrollback reads the
+   * legacy wheelDeltaY that a constructed WheelEvent leaves at 0.
+   */
+  enableTouchScroll() {
+    let lastY = null;
+    let pending = 0;
+    this.el.addEventListener('touchstart', (e) => {
+      lastY = e.touches.length === 1 ? e.touches[0].clientY : null;
+      pending = 0;
+    }, { passive: true });
+    this.el.addEventListener('touchmove', (e) => {
+      if (lastY === null || e.touches.length !== 1) return;
+      e.preventDefault();
+      const touch = e.touches[0];
+      const delta = lastY - touch.clientY;
+      lastY = touch.clientY;
+      if (this.term.buffer.active.type === 'alternate' || this.term.modes.mouseTrackingMode !== 'none') {
+        const target = this.el.querySelector('.xterm-screen') || this.el;
+        target.dispatchEvent(new WheelEvent('wheel', {
+          deltaY: delta, deltaMode: WheelEvent.DOM_DELTA_PIXEL,
+          clientX: touch.clientX, clientY: touch.clientY, bubbles: true, cancelable: true,
+        }));
+        return;
+      }
+      pending += delta;
+      const lineHeight = this.el.querySelector('.xterm-rows')?.firstElementChild?.offsetHeight || 17;
+      const lines = Math.trunc(pending / lineHeight);
+      if (lines) { this.term.scrollLines(lines); pending -= lines * lineHeight; }
+    }, { passive: false });
+    const end = () => { lastY = null; };
+    this.el.addEventListener('touchend', end);
+    this.el.addEventListener('touchcancel', end);
   }
 
   unmount() {
