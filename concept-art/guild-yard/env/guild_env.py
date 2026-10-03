@@ -30,6 +30,14 @@ MODELS = {
     'fern_02': (None, True), 'rock_moss_set_01': (None, True), 'rock_moss_set_02': (None, True),
     'boulder_01': (None, False), 'stone_01': (None, False), 'modular_wooden_pier': (None, True),
 }
+# Live hall materials by name: Poly Haven set, metres per repeat, and whether
+# the palette colour tints it (provider roofs) or the texture shows as is.
+SURFACES = {
+    'wall': ('castle_wall_varriation', 2.5, ['stone', 'stoneLight'], False),
+    'plinth': ('castle_wall_slates', 2.5, ['stoneDark', 'edge'], False),
+    'roof': ('grey_roof_tiles_02', 1.5, ['amber', 'blue', 'emerald', 'violet', 'cyan'], True),
+    'wood': ('dark_wooden_planks', 2, ['wood', 'woodLight'], False),
+}
 COURTYARD_RADIUS = 13.7
 WATER_LEVEL = -.5
 SUN = (-12, 25, 15)  # renderer.js sun, glTF coordinates

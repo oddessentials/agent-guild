@@ -1,0 +1,52 @@
+{
+ "sky": "guild/sky.hdr",
+ "surfaces": {
+  "wall": {
+   "metres": 2.5,
+   "materials": [
+    "stone",
+    "stoneLight"
+   ],
+   "tint": false,
+   "color": "guild/wall-color.webp",
+   "normal": "guild/wall-normal.webp",
+   "rough": "guild/wall-rough.webp"
+  },
+  "plinth": {
+   "metres": 2.5,
+   "materials": [
+    "stoneDark",
+    "edge"
+   ],
+   "tint": false,
+   "color": "guild/plinth-color.webp",
+   "normal": "guild/plinth-normal.webp",
+   "rough": "guild/plinth-rough.webp"
+  },
+  "roof": {
+   "metres": 1.5,
+   "materials": [
+    "amber",
+    "blue",
+    "emerald",
+    "violet",
+    "cyan"
+   ],
+   "tint": true,
+   "color": "guild/roof-color.webp",
+   "normal": "guild/roof-normal.webp",
+   "rough": "guild/roof-rough.webp"
+  },
+  "wood": {
+   "metres": 2,
+   "materials": [
+    "wood",
+    "woodLight"
+   ],
+   "tint": false,
+   "color": "guild/wood-color.webp",
+   "normal": "guild/wood-normal.webp",
+   "rough": "guild/wood-rough.webp"
+  }
+ }
+}

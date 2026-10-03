@@ -89,6 +89,11 @@ scanned PBR albedo.
 The build makes it wrap by cross-fading each axis with a half-rolled copy,
 and blends two scales of it by noise so repeats do not show.
 
+`env/surfaces.py` exports the live halls' materials: the Poly Haven sets in
+`SURFACES` (by exact material name) at 512 px, and a 512 × 256 copy of the
+sky for image-based lighting. Provider roofs keep their palette colour as a
+tint over grey slate, so each hall stays recognisable.
+
 ## Review and iteration
 
 Review art inside the application in both light and dark mode and at

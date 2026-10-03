@@ -110,6 +110,13 @@ test('plated worlds match the live camera, cover every view, and stay within bud
   const span=(axis,i)=>i?Math.max(...base.tiles.map(t=>t[axis][1])):Math.min(...base.tiles.map(t=>t[axis][0]));
   assert.ok(span('right',0)<=extent.right[0]&&span('right',1)>=extent.right[1],'base layer spans every view horizontally');
   assert.ok(span('up',0)<=extent.up[0]&&span('up',1)>=extent.up[1],'base layer spans every view vertically');
-  assert.ok(bytes<=8*MiB,`${skin} world is ${(bytes/MiB).toFixed(2)} MiB`);
+  const {sky,surfaces}=JSON.parse(readFileSync(new URL(skin+'/surfaces.json',assets),'utf8'));
+  const materials=new Set(glb(world.asset).materials.map(m=>m.name));
+  bytes+=statSync(new URL(sky,assets)).size;
+  for(const [name,surface] of Object.entries(surfaces)){
+   for(const material of surface.materials)assert.ok(materials.has(material),`${name} textures ${material}, which ${world.asset}.glb must contain`);
+   for(const key of ['color','normal','rough'])bytes+=readFileSync(new URL(surface[key],assets)).length;
+  }
+  assert.ok(bytes<=9*MiB,`${skin} world is ${(bytes/MiB).toFixed(2)} MiB`);
  }
 });

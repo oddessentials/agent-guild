@@ -25,6 +25,10 @@ function disposeTree(root) {
   for(const g of geometries) g.dispose();
   for(const m of materials) { for(const v of Object.values(m)) if(v?.isTexture) v.dispose(); m.dispose(); }
 }
+function disposeWorld(root) {
+  disposeTree(root);
+  root?.userData.environment?.dispose();
+}
 export class YardRenderer {
   constructor(host,labels,{select,open,error=noop}) {
     this.host=host;this.labels=labels;this.onSelect=select;this.onOpen=open;this.onError=error;
@@ -91,21 +95,25 @@ export class YardRenderer {
     let loaded;
     try {
       loaded=await new T.GLTFLoader(this.loadingManager).loadAsync(new URL(skin+'.glb',ASSETS).href);
-      if(this.disposed||request!==this.worldRequest){disposeTree(loaded.scene);return;}
-      await this.textureWorld(loaded.scene, skin);
-      if(WORLDS[skin].plates)await this.plateWorld(loaded.scene, skin, request);
+      if(this.disposed||request!==this.worldRequest){disposeWorld(loaded.scene);return;}
+      if(WORLDS[skin].plates)await Promise.all([this.surfaceWorld(loaded.scene,skin),this.plateWorld(loaded.scene,skin,request)]);
+      else await this.textureWorld(loaded.scene, skin);
     } catch(err) {
-      disposeTree(loaded?.scene);
+      disposeWorld(loaded?.scene);
       if(!this.disposed&&request===this.worldRequest)throw err;
       return;
     }
-    if(this.disposed||request!==this.worldRequest){disposeTree(loaded.scene);return;}
+    if(this.disposed||request!==this.worldRequest){disposeWorld(loaded.scene);return;}
     this.request++;
     this.clearUnits();
     for(const item of this.halls.values())item.label.remove();
     this.halls.clear();
-    if(this.world){this.scene.remove(this.world);disposeTree(this.world);}
+    if(this.world){this.scene.remove(this.world);disposeWorld(this.world);}
     this.world=loaded.scene;this.skin=skin;this.scene.add(this.world);
+    this.scene.environment=this.world.userData.environment||null;
+    // Plated worlds match the AgX curve their plates were rendered with.
+    this.renderer.toneMapping=WORLDS[skin].plates?T.AgXToneMapping:T.ACESFilmicToneMapping;
+    this.light(skin,this.theme);
     this.host.dataset.world=skin;
     this.world.traverse(node=>{if(node.isMesh&&!node.userData.plate&&!node.material.isShadowMaterial){node.castShadow=true;node.receiveShadow=true;}});
     this.update(this.providers,this.sessions);
@@ -175,14 +183,60 @@ export class YardRenderer {
       this.dirty=true;this.drawOnce();
     }).catch(noop));
   }
+  // Live halls in plated worlds take scanned material sets by material name,
+  // and light from a small copy of the plates' sky.
+  async surfaceWorld(world,skin) {
+    const response=await fetch(new URL(skin+'/surfaces.json',ASSETS));
+    if(!response.ok)throw new Error('The Yard surfaces could not be loaded.');
+    const {sky,surfaces}=await response.json();
+    const loader=new T.TextureLoader(this.loadingManager),textures=[];
+    const load=async(file,color,repeat)=>{
+      const texture=await loader.loadAsync(new URL(file,ASSETS).href);textures.push(texture);
+      texture.flipY=false;texture.wrapS=texture.wrapT=T.RepeatWrapping;texture.repeat.set(repeat,repeat);
+      texture.colorSpace=color?T.SRGBColorSpace:T.NoColorSpace;
+      texture.anisotropy=Math.min(8,this.renderer.capabilities.getMaxAnisotropy());
+      return texture;
+    };
+    let environment;
+    try {
+      const sets=await Promise.all(Object.values(surfaces).map(async s=>{
+        // Hall UVs are 0.7 per metre (build.py).
+        const repeat=1/(s.metres*.7);
+        const [map,normalMap,roughnessMap]=await Promise.all([load(s.color,true,repeat),load(s.normal,false,repeat),load(s.rough,false,repeat)]);
+        return {...s,map,normalMap,roughnessMap};
+      }));
+      const equirect=await new T.HDRLoader(this.loadingManager).loadAsync(new URL(sky,ASSETS).href);
+      const pmrem=new T.PMREMGenerator(this.renderer);
+      environment=pmrem.fromEquirectangular(equirect).texture;
+      equirect.dispose();pmrem.dispose();
+      const touched=new Set();
+      world.traverse(node=>{
+        for(const m of (Array.isArray(node.material)?node.material:node.material?[node.material]:[])){
+          if(touched.has(m))continue;touched.add(m);
+          const set=sets.find(s=>s.materials.includes(m.name));
+          if(!set)continue;
+          Object.assign(m,{map:set.map,normalMap:set.normalMap,roughnessMap:set.roughnessMap,roughness:1});
+          if(set.tint)m.color.multiplyScalar(2.1);else m.color.set(0xffffff);
+          m.needsUpdate=true;
+        }
+      });
+    } catch(err) {
+      for(const texture of textures)texture.dispose();environment?.dispose();
+      throw err;
+    }
+    world.userData.environment=environment;
+  }
   light(skin,theme) {
+    this.theme=theme;
     const light=theme==='light';
     // Plates carry their own daylight; dark theme dims them toward dusk.
     this.plateTint.set(light?0xffffff:0x9aa3b8);
     this.world?.traverse(node=>{if(node.userData.plate)node.material.color.copy(this.plateTint);});
     this.renderer.toneMappingExposure=light?1.65:1.12;
     this.hemi.color.set(skin==='grove'?0xccebd6:skin==='orbital'?0xa7c9ff:0xc4dced);
-    this.hemi.intensity=light?3.2:1.8;
+    this.hemi.intensity=(light?3.2:1.8)*(WORLDS[skin]?.plates?.35:1);
+    // Blender and three.js place an equirectangular sky half a turn apart.
+    this.scene.environmentRotation.y=Math.PI;this.scene.environmentIntensity=light?1.25:.7;
     this.sun.color.set(skin==='orbital'?0xc5d8ff:0xffe0ad);
     this.sun.intensity=light?4.0:2.7;
     this.dirty=true;
@@ -460,7 +514,7 @@ export class YardRenderer {
     this.loadingManager.abort();
     this.resizeObserver.disconnect();this.controls.dispose();this.clearUnits();
     for(const item of this.halls.values())item.label.remove();this.halls.clear();
-    disposeTree(this.world);
+    disposeWorld(this.world);
     for(const entry of this.cache.values())entry.then(a=>disposeTree(a.scene)).catch(noop);this.cache.clear();
     this.sun.shadow.map?.dispose();
     this.canvas.removeEventListener('webglcontextlost',this.contextLost);

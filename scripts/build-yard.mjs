@@ -7,13 +7,14 @@ await build({
   absWorkingDir:fileURLToPath(root),
   // Export the renderer's surface so unused Three.js APIs can be removed.
   stdin: { contents: `export {
-  ACESFilmicToneMapping, AnimationMixer, BoxGeometry, Color, DirectionalLight,
+  ACESFilmicToneMapping, AgXToneMapping, AnimationMixer, BoxGeometry, Color, DirectionalLight,
   DoubleSide, Group, HemisphereLight, LoadingManager, MOUSE, MathUtils,
-  Matrix4, Mesh, MeshBasicMaterial, MeshStandardMaterial, OrthographicCamera,
-  PCFSoftShadowMap, PlaneGeometry, Raycaster, RepeatWrapping, RingGeometry, SRGBColorSpace, ShadowMaterial,
+  Matrix4, Mesh, MeshBasicMaterial, NoColorSpace, MeshStandardMaterial, OrthographicCamera,
+  EquirectangularReflectionMapping, PCFSoftShadowMap, PMREMGenerator, PlaneGeometry, Raycaster, RepeatWrapping, RingGeometry, SRGBColorSpace, ShadowMaterial,
   Scene, TOUCH, TextureLoader, Vector2, Vector3, WebGLRenderer,
 } from 'three';
 export { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+export { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
 export { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 export { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js';`, resolveDir:fileURLToPath(root), sourcefile: 'yard-engine.js' },
   outfile: 'web/yard/vendor/engine.js', bundle:true, format:'esm', minify:true,

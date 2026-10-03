@@ -125,7 +125,10 @@ and characters at every pan and zoom. The camera and pan bounds live in
 `web/yard/model.mjs`; the Blender scripts read them from there, and the
 tests fail if the plates were rendered for a different camera. Three tile
 layers (whole extent, default zoom, close to the courtyard) cover any stage
-up to a 4:1 aspect; wider stages zoom in rather than see past them. No
+up to a 4:1 aspect; wider stages zoom in rather than see past them. The
+live halls take Poly Haven stone, slate and timber sets by material name,
+and light from a small copy of the plates' sky, with the same AgX tone
+curve the plates were rendered with. No
 other downloaded model packs or third-party game art are included. The
 project license applies to the authored sources; Three.js retains its
 accompanying MIT notice at `web/yard/vendor/LICENSE.three`.
@@ -136,6 +139,7 @@ From the repository root:
 npm ci
 blender --background --factory-startup --python concept-art/guild-yard/build.py
 blender --background --factory-startup --python concept-art/guild-yard/env/plates.py -- guild
+blender --background --factory-startup --python concept-art/guild-yard/env/surfaces.py -- guild
 npm run optimize:yard
 npm run build:yard
 npm run test:yard
