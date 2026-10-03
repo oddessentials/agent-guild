@@ -2853,9 +2853,12 @@ function slideFrom(node, was) {
 
 /** Lays the cards out in a new order, sliding each one from its old place. */
 function arrange(order) {
+  const focused = $('sessions').contains(document.activeElement) ? document.activeElement : null;
   const was = new Map([...cards.values()].map((node) => [node, node.getBoundingClientRect()]));
   sessionOrder = order;
   renderSessions();
+  // Moving a card can take keyboard focus with it, as when another tab reorders the cards.
+  if (focused?.isConnected && document.activeElement !== focused) focused.focus({ preventScroll: true });
   for (const [node, rect] of was) if (node !== drag?.node) slideFrom(node, rect);
 }
 
@@ -2870,8 +2873,6 @@ function moveByKey(e, id) {
   if (from === -1 || to < 0 || to >= ids.length || to === from) return;
   arrange(moveId(ids, id, to));
   saveOrder();
-  // Moving the card can take focus with it; keep it on the grip for the next key.
-  cards.get(id)?.querySelector('.drag-handle').focus();
   announceOrder(id);
 }
 
@@ -2926,8 +2927,9 @@ function follow() {
 function retarget() {
   const { node, grid } = drag;
   const origin = grid.getBoundingClientRect();
-  const x = drag.x - origin.left;
-  const y = drag.y - origin.top;
+  // The middle of the carried card, not the grip at its corner, picks the place, the same in every direction.
+  const x = drag.x - drag.grabX - origin.left + node.offsetWidth / 2;
+  const y = drag.y - drag.grabY - origin.top + node.offsetHeight / 2;
   const over = (n) => {
     const box = layoutBox(n);
     return x >= box.left && x < box.right && y >= box.top && y < box.bottom;
@@ -2981,7 +2983,8 @@ function releaseDrag() {
   const ended = drag;
   drag = null;
   cancelAnimationFrame(ended.frame);
-  if (ended.grid.hasPointerCapture(ended.pointerId)) ended.grid.releasePointerCapture(ended.pointerId);
+  // The grid keeps the pointer until the button comes up, which ends the capture: a drag cancelled with
+  // Escape or by leaving the window must not end in a click that opens the card under the pointer.
   ended.node.style.translate = '';
   ended.node.classList.remove('dragging');
   ended.grid.classList.remove('reordering');

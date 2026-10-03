@@ -63,6 +63,7 @@
       </div>
       <div id="sessions" class="session-grid" role="list"></div>
       <p id="reorder-status" class="visually-hidden" aria-live="polite"></p>
+      <p id="reorder-help" hidden>Drag to move the card, or press the arrow keys, Home or End.</p>
       <p id="empty" class="empty">No sessions yet. Pick a provider above to start one. Sessions keep running when you close this page.</p>
     </section>
 
@@ -349,7 +350,7 @@
         <div class="card-title">
           <div class="name-row">
             <div class="name"></div>
-            <button class="drag-handle" type="button" title="Drag to move this card, or use the arrow keys"></button>
+            <button class="drag-handle" type="button" title="Drag to move this card, or use the arrow keys" aria-describedby="reorder-help"></button>
           </div>
           <div class="meta"><span class="meta-text"></span><button class="session-id" type="button" hidden></button></div>
         </div>

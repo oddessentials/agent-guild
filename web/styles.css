@@ -269,7 +269,7 @@ main { max-width: 1200px; margin: 0 auto; padding: 26px 16px 56px; display: grid
 .name-row .name { flex: 1; min-width: 0; }
 .drag-handle {
   position: relative; flex: none; align-self: stretch; display: grid; place-items: center; width: 24px; margin-right: -4px; padding: 0;
-  border: 0; border-radius: 6px; background: none; color: var(--muted); font: inherit; cursor: grab; opacity: 0.6;
+  border: 0; border-radius: 6px; background: none; color: var(--muted); font: inherit; cursor: grab; opacity: 0.85;
   touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent;
   transition: opacity 0.15s, color 0.15s, background-color 0.15s;
 }
@@ -279,7 +279,6 @@ main { max-width: 1200px; margin: 0 auto; padding: 26px 16px 56px; display: grid
 .session-card:hover .drag-handle, .session-card:focus-within .drag-handle { opacity: 1; }
 .drag-handle:hover { color: var(--text); background: color-mix(in srgb, var(--text) 9%, transparent); }
 .drag-handle:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; opacity: 1; }
-@media (hover: none) { .drag-handle { opacity: 0.85; } }
 /* While a card is carried, the grid's own outline marks the place it will land. */
 .session-grid { position: relative; }
 .session-grid::before {
