@@ -725,7 +725,7 @@ test('a copy installed by npm is uninstalled by the npm that owns it', async () 
   const client = terminal(body.session.id);
   await client.opened;
   await waitForText(client, body.session.id, 'FAKE-NPM-OWNER uninstall -g --prefix', 'npm output');
-  assert.ok(screenText(body.session.id).includes('fake-tool-pkg'));
+  await waitForText(client, body.session.id, 'fake-tool-pkg', 'the package it uninstalls');
   const exit = await waitFor(() => client.messages.find((m) => m.type === 'exit'), { label: 'uninstall exit' });
   assert.equal(exit.exitCode, 0);
   await client.close();
