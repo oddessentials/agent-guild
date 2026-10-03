@@ -2319,17 +2319,21 @@ test('a Shell session is named after its shell and gets its environment', async 
   const cmd = { id: 'cmd', label: 'Command Prompt', path: 'cmd.exe', args: [], env: {} };
   let shells = [cmd, bash];
   const registry = {
-    get: (id) => ({ id, tool: 'Shell', args: [], accounts: [{ id: 'default' }] }),
+    env: {}, platform: 'win32',
+    get: (id) => ({ id, tool: 'Shell', args: ['--own'], accounts: [{ id: 'default' }] }),
     account: () => ({ id: 'default', label: 'Default' }),
     shellFor: (provider, id) => shells.find((s) => s.id === (id ?? 'cmd')),
     shellsFor: () => ({ shells, defaultId: 'cmd' }),
-    spawnSpec: (provider, args, resume, lead, shell) => ({ file: shell.path, args: shell.args }),
+    spawnSpec: ProviderRegistry.prototype.spawnSpec,
   };
   const manager = new SessionManager({ registry, baseEnv: {}, getApiUrl: () => '' });
   t.mock.method(manager, '_spawn', (options) => ({ ...options, setModel() {} }));
-  const session = await manager.create({ providerId: 'shell', shell: 'git-bash', cwd: os.tmpdir() });
+  const session = await manager.create({ providerId: 'shell', shell: 'git-bash', cwd: os.tmpdir(), args: ['-c', 'pwd'] });
   assert.deepEqual([session.name, session.spawnSpec.file, session.extraEnv], ['Shell · Git Bash', 'bash.exe', { CHERE_INVOKING: '1' }]);
-  assert.equal((await manager.create({ providerId: 'shell', cwd: os.tmpdir() })).name, 'Shell · Command Prompt');
+  assert.deepEqual(session.spawnSpec.args, ['--login', '-i', '-c', 'pwd']);
+  const defaultSession = await manager.create({ providerId: 'shell', cwd: os.tmpdir() });
+  assert.equal(defaultSession.name, 'Shell · Command Prompt');
+  assert.deepEqual(defaultSession.spawnSpec, { file: 'cmd.exe', args: ['--own'] });
   assert.equal((await manager.create({ providerId: 'shell', cwd: os.tmpdir(), name: 'Mine' })).name, 'Mine');
   shells = [cmd];
   assert.equal((await manager.create({ providerId: 'shell', cwd: os.tmpdir() })).name, null, 'no name when there is no choice');

@@ -113,8 +113,9 @@ own sign-in and usage. `POST /sessions` takes an account id.
 `shells` is null except for the `@shell` provider, where it lists the
 installed shells, each `{ id, label, path }`, and `defaultShell` is the id of
 the one a session runs unless `POST /sessions` names another in `shell`.
-For a tool
-whose agent reporting has to be turned on (`reporting` is `antigravity`),
+Omit `shell` or send `null` to use the default. Provider `args` apply only to
+the default shell; request `args` apply to whichever shell is selected.
+For a tool whose agent reporting has to be turned on (`reporting` is `antigravity`),
 `reportingEnabled` says whether it is.
 `usageUrl`, `billingUrl` and `cloudUrl` are `https://` links to the vendor's
 usage and billing pages and web app, or null when none is configured. A usage snapshot's `plan` is

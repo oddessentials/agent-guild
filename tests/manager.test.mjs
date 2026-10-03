@@ -798,6 +798,37 @@ test('session creation validates its input', async () => {
   assert.equal((await call('POST', '/sessions', { providerId: 'fake', args: 'x' })).status, 400);
 });
 
+test('session creation rejects invalid shell selections through the API', async () => {
+  for (const shell of [7, false, [], {}]) {
+    const result = await call('POST', '/sessions', { providerId: 'shell', shell, cwd: home });
+    assert.equal(result.status, 400);
+    assert.equal(result.body.error.code, 'bad_shell');
+  }
+  for (const shell of ['', 'not-installed', process.execPath]) {
+    const result = await call('POST', '/sessions', { providerId: 'shell', shell, cwd: home });
+    assert.equal(result.status, 409);
+    assert.equal(result.body.error.code, 'shell_unavailable');
+  }
+  const otherTool = await call('POST', '/sessions', { providerId: 'fake', shell: 'bash', cwd: home });
+  assert.equal(otherTool.status, 400);
+  assert.equal(otherTool.body.error.code, 'bad_shell');
+});
+
+test('an explicitly selected shell runs in a real terminal through the API', async (t) => {
+  const shell = win ? 'cmd' : 'bash';
+  const args = win ? ['/d', '/c', 'echo AGENT-GUILD-SHELL-PICK'] : ['--noprofile', '--norc', '-c', "printf 'AGENT-GUILD-SHELL-PICK\\n'"];
+  const { status, body } = await call('POST', '/sessions', { providerId: 'shell', shell, args, cwd: home });
+  assert.equal(status, 201, JSON.stringify(body));
+  const { session } = body;
+  t.after(() => call('DELETE', `/sessions/${session.id}`));
+  const client = terminal(session.id);
+  t.after(() => client.close());
+  await client.opened;
+  await waitForText(client, session.id, 'AGENT-GUILD-SHELL-PICK', 'selected shell output');
+  await waitFor(async () => (await call('GET', `/sessions/${session.id}`)).body.session.status === 'exited', { label: 'selected shell exit' });
+  assert.equal((await call('GET', `/sessions/${session.id}`)).body.session.exitCode, 0);
+});
+
 test('a session runs under the account picked, in that account\'s own home folder', async () => {
   const { body: listed } = await call('GET', '/providers');
   assert.deepEqual(listed.providers.find((p) => p.id === 'multi').accounts, [{ id: 'default', label: 'Default' }, { id: 'work', label: 'Work' }, { id: 'kept', label: 'Kept' }]);
