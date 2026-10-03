@@ -29,6 +29,7 @@
       "docs": "https://code.claude.com/docs/en/setup",
       "usageUrl": "https://claude.ai/settings/usage",
       "billingUrl": "https://claude.ai/settings/billing",
+      "cloudUrl": "https://claude.ai/code",
       "win32": {
         "install": "irm https://claude.ai/install.ps1 | iex",
         "channels": {
@@ -65,6 +66,7 @@
       "docs": "https://github.com/openai/codex",
       "usageUrl": "https://chatgpt.com/codex/settings/usage",
       "billingUrl": "https://chatgpt.com/#settings/Billing",
+      "cloudUrl": "https://chatgpt.com/codex",
       "win32": {
         "install": "powershell -ExecutionPolicy ByPass -c \"irm https://chatgpt.com/codex/install.ps1 | iex\"",
         "channels": {
@@ -92,6 +94,7 @@
       },
       "docs": "https://antigravity.google/docs/cli/install",
       "billingUrl": "https://one.google.com/settings",
+      "cloudUrl": "https://gemini.google.com/",
       "win32": {
         "install": "irm https://antigravity.google/cli/install.ps1 | iex",
         "channels": {
@@ -123,6 +126,7 @@
       "docs": "https://docs.x.ai/build/overview",
       "usageUrl": "https://grok.com/?_s=usage",
       "billingUrl": "https://grok.com/?_s=billing",
+      "cloudUrl": "https://grok.com/",
       "win32": {
         "install": "irm https://x.ai/cli/install.ps1 | iex"
       }

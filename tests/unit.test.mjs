@@ -1591,12 +1591,13 @@ test('a history command prints JSON, and the monitor reads each account\'s own f
   assert.deepEqual((await unreadable.list(anthropic)).sessions, [], 'a tool never run has no sessions and no error');
 });
 
-test('console links are https URLs that users can override per platform or turn off', () => {
+test('console and cloud links are https URLs that users can override per platform or turn off', () => {
   const defaults = loadProviders({ platform: 'linux' });
   assert.deepEqual(defaults.warnings, []);
   for (const provider of defaults.providers.filter((p) => p.id !== 'shell')) {
     if (provider.id !== 'google') assert.match(provider.usageUrl, /^https:\/\//, `${provider.id} usageUrl`);
     assert.match(provider.billingUrl, /^https:\/\//, `${provider.id} billingUrl`);
+    assert.match(provider.cloudUrl, /^https:\/\//, `${provider.id} cloudUrl`);
   }
   const google = defaults.providers.find((p) => p.id === 'google');
   assert.equal(google.usageUrl, null, 'Antigravity CLI shows its quota only inside the tool');
@@ -1604,26 +1605,30 @@ test('console links are https URLs that users can override per platform or turn 
   const shell = defaults.providers.find((p) => p.id === 'shell');
   assert.equal(shell.usageUrl, null);
   assert.equal(shell.billingUrl, null);
+  assert.equal(shell.cloudUrl, null);
 
   const dir = tempDir();
   const userFile = path.join(dir, 'providers.json');
   fs.writeFileSync(userFile, JSON.stringify({
     providers: [
-      { id: 'anthropic', usageUrl: 'https://platform.claude.com/usage', billingUrl: null, darwin: { usageUrl: 'https://example.com/mac' } },
-      { id: 'openai', usageUrl: 'javascript:alert(1)', billingUrl: 'http://example.com/billing' },
-      { id: 'google', usageUrl: 'not a url', billingUrl: '' },
+      { id: 'anthropic', usageUrl: 'https://platform.claude.com/usage', billingUrl: null, cloudUrl: null, darwin: { usageUrl: 'https://example.com/mac' } },
+      { id: 'openai', usageUrl: 'javascript:alert(1)', billingUrl: 'http://example.com/billing', cloudUrl: 'javascript:alert(1)' },
+      { id: 'google', usageUrl: 'not a url', billingUrl: '', cloudUrl: 'https://example.com/cloud' },
     ],
   }));
   const linux = loadProviders({ userFile, platform: 'linux' });
   const byId = Object.fromEntries(linux.providers.map((p) => [p.id, p]));
   assert.equal(byId.anthropic.usageUrl, 'https://platform.claude.com/usage');
   assert.equal(byId.anthropic.billingUrl, null);
+  assert.equal(byId.anthropic.cloudUrl, null);
   assert.equal(byId.openai.usageUrl, null);
   assert.equal(byId.openai.billingUrl, null);
+  assert.equal(byId.openai.cloudUrl, null);
   assert.equal(byId.google.usageUrl, null);
   assert.equal(byId.google.billingUrl, null);
+  assert.equal(byId.google.cloudUrl, 'https://example.com/cloud');
   assert.equal(byId.xai.usageUrl, loadProviders({ platform: 'linux' }).providers.find((p) => p.id === 'xai').usageUrl);
-  assert.equal(linux.warnings.length, 3);
+  assert.equal(linux.warnings.length, 4);
   assert.ok(linux.warnings.every((w) => /must be an https:\/\/ URL/.test(w)));
   assert.equal(loadProviders({ userFile, platform: 'darwin' }).providers[0].usageUrl, 'https://example.com/mac');
 });

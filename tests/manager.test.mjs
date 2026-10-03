@@ -432,8 +432,10 @@ test('providers report availability', async () => {
   const anthropic = body.providers.find((p) => p.id === 'anthropic');
   assert.match(anthropic.usageUrl, /^https:\/\//);
   assert.match(anthropic.billingUrl, /^https:\/\//);
+  assert.match(anthropic.cloudUrl, /^https:\/\//);
   assert.equal(fake.usageUrl, null);
   assert.equal(fake.billingUrl, null);
+  assert.equal(fake.cloudUrl, null);
 });
 
 test('usage meters come from the provider usage source', async () => {

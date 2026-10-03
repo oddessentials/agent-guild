@@ -557,7 +557,7 @@ function renderProviders() {
     update.addEventListener('click', () => installProvider(provider, node));
     renderHint(hint, provider);
     renderCopies(node.querySelector('.copies'), provider);
-    renderConsoleLinks(node, provider);
+    renderVendorLinks(node, provider);
     renderAccounts(node, provider);
     renderUsage(node, provider);
     renderReportingSetup(node, provider);
@@ -627,19 +627,22 @@ function renderHint(hint, provider) {
   hint.append(' ', link);
 }
 
-function renderConsoleLinks(card, provider) {
-  let any = false;
-  for (const [selector, url, what] of [['.usage-link', provider.usageUrl, 'usage'], ['.billing-link', provider.billingUrl, 'billing']]) {
-    const link = card.querySelector(selector);
-    const href = httpsHref(url);
-    link.hidden = !href;
-    if (!href) { link.removeAttribute('href'); continue; }
-    any = true;
-    link.href = href;
-    link.title = `${provider.vendor} ${what} console: ${href}`;
-    link.setAttribute('aria-label', `${provider.vendor} ${what} console (opens in a new tab)`);
-  }
-  card.querySelector('.provider-links').hidden = !any;
+function renderVendorLinks(card, provider) {
+  const usage = setVendorLink(card.querySelector('.usage-link'), provider.usageUrl, `${provider.vendor} usage console`);
+  const billing = setVendorLink(card.querySelector('.billing-link'), provider.billingUrl, `${provider.vendor} billing console`);
+  card.querySelector('.provider-links').hidden = !usage && !billing;
+  setVendorLink(card.querySelector('.cloud-link'), provider.cloudUrl, `${provider.vendor} web app`);
+}
+
+/** Point a link at an https URL, or hide it. Returns whether it is shown. */
+function setVendorLink(link, url, label) {
+  const href = httpsHref(url);
+  link.hidden = !href;
+  if (!href) { link.removeAttribute('href'); return false; }
+  link.href = href;
+  link.title = `${label}: ${href}`;
+  link.setAttribute('aria-label', `${label} (opens in a new tab)`);
+  return true;
 }
 
 function renderTier(card, provider, usage) {

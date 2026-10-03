@@ -47,7 +47,7 @@ Grok Build and a plain shell each get a card. A tool that is missing shows
 vendor's install command for a tool not published on npm. An installed
 tool shows its version and offers **Update** when a newer one is out, using
 the same installer that put it there: npm, Homebrew, WinGet or the vendor's
-own.
+own. The cloud icon on each card opens the vendor's web app.
 
 **Real terminals that outlive the page.** Every session is a full interactive
 terminal: type instructions, answer prompts, watch output. Run as many as you

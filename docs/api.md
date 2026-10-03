@@ -72,6 +72,7 @@ Errors use one shape:
   "docs": "https://docs.anthropic.com/en/docs/claude-code",
   "usageUrl": "https://claude.ai/settings/usage",
   "billingUrl": "https://claude.ai/settings/billing",
+  "cloudUrl": "https://claude.ai/code",
   "available": true,
   "resolvedPath": "/usr/local/bin/claude"
 }
@@ -101,8 +102,8 @@ tool's own, and each further one has its own home folder, so it keeps its
 own sign-in and usage. `POST /sessions` takes an account id. For a tool
 whose agent reporting has to be turned on (`reporting` is `antigravity`),
 `reportingEnabled` says whether it is.
-`usageUrl` and `billingUrl` are `https://` links to the vendor's usage and
-billing pages, or null when none is configured. A usage snapshot's `plan` is
+`usageUrl`, `billingUrl` and `cloudUrl` are `https://` links to the vendor's
+usage and billing pages and web app, or null when none is configured. A usage snapshot's `plan` is
 the subscription tier.
 
 ### Usage
