@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -2436,6 +2437,66 @@ test('a tmux card gets a tmux session of its own with its identity, and a client
   assert.deepEqual(tmux.args, ['-u', 'attach-session', '-t', '={name}'], 'the detected recipe stays as it was');
   const plain = await manager.create({ providerId: 'shell', cwd: dir });
   assert.deepEqual([plain.spawnSpec, plain.multiplexer, plain.dropEnv], [{ file: '/bin/bash', args: ['--own'] }, undefined, undefined]);
+});
+
+test('tmux cards are kept across restarts, and come back closed with their own identity while tmux has their session', { skip: process.platform === 'win32' }, async (t) => {
+  // A stand-in tmux: has-session succeeds for the names listed in TMUX_ALIVE.
+  const dir = tempDir();
+  const alive = path.join(dir, 'alive');
+  fs.writeFileSync(alive, '');
+  const fakeTmux = path.join(dir, 'fake-tmux');
+  fs.writeFileSync(fakeTmux, '#!/bin/sh\nif [ "$1" = has-session ]; then grep -qx -- "${3#=}" "$TMUX_ALIVE"; else cat > /dev/null; fi\n', { mode: 0o755 });
+  const bash = { id: 'bash', label: 'bash', path: '/bin/bash', args: [], env: {} };
+  const tmux = { id: 'tmux', label: 'tmux', path: fakeTmux, args: ['-u', 'attach-session', '-t', '={name}'], env: {}, multiplexer: { attach: 'tmux attach -t {name}' } };
+  const provider = { id: 'shell', tool: 'Shell', args: [], resumeArgs: [], accounts: [{ id: 'default' }], env: {} };
+  const registry = {
+    env: {}, platform: process.platform,
+    get: (id) => (id === 'shell' ? provider : null),
+    describe: () => ({ id: 'shell', vendor: 'Local', tool: 'Shell' }),
+    account: () => ({ id: 'default', label: 'Default', env: {} }),
+    shellFor: (p, id) => [bash, tmux].find((s) => s.id === (id ?? 'bash')),
+    shellsFor: () => ({ shells: [bash, tmux], defaultId: 'bash' }),
+    spawnSpec: ProviderRegistry.prototype.spawnSpec,
+  };
+  let saved = [];
+  const store = { load: () => structuredClone(saved), save: (cards) => { saved = structuredClone(cards); } };
+  const baseEnv = { PATH: process.env.PATH, TMUX_ALIVE: alive };
+  const first = new SessionManager({ registry, baseEnv, getApiUrl: () => 'http://127.0.0.1:1', store });
+  t.mock.method(first, '_spawn', (options) => Object.assign(new EventEmitter(), options, { createdAt: '2026-10-03T09:00:00.000Z', setModel() {} }));
+  const kept = await first.create({ providerId: 'shell', shell: 'tmux', cwd: dir, name: 'Kept' });
+  await first.create({ providerId: 'shell', shell: 'tmux', cwd: dir, name: 'Gone' });
+  assert.deepEqual(saved.map((card) => card.name), ['Kept', 'Gone']);
+  assert.deepEqual(Object.keys(saved[0]).sort(), ['account', 'createdAt', 'cwd', 'id', 'muxName', 'name', 'provider', 'reportToken', 'shell']);
+  kept.name = 'Kept, renamed';
+  kept.emit('changed');
+  assert.equal(saved[0].name, 'Kept, renamed', 'a rename is kept');
+  fs.writeFileSync(alive, `${saved[0].muxName}\n`); // tmux still has the first card's session, not the second's
+
+  // A manager stopped while it asks tmux about the cards leaves them all for the next one.
+  const stopping = new SessionManager({ registry, baseEnv, getApiUrl: () => 'http://127.0.0.1:1', store });
+  const restoring = stopping.restore();
+  await stopping.shutdown();
+  await restoring;
+  assert.deepEqual([stopping.list(), saved.map((card) => card.name)], [[], ['Kept, renamed', 'Gone']]);
+
+  const next = new SessionManager({ registry, baseEnv, getApiUrl: () => 'http://127.0.0.1:1', store });
+  t.after(() => next.shutdown());
+  await next.restore();
+  assert.deepEqual(next.list().map((s) => [s.id, s.name, s.status, s.createdAt, s.cwd, s.multiplexer]), [
+    [kept.id, 'Kept, renamed', 'exited', '2026-10-03T09:00:00.000Z', dir, { label: 'tmux', attach: `tmux attach -t ${saved[0].muxName}`, reattachable: true }],
+  ]);
+  assert.equal(next.get(kept.id).reportToken, kept.reportToken, 'with its own report token, which tools inside still hold');
+  assert.deepEqual(saved.map((card) => card.id), [kept.id], 'a card whose session is gone is forgotten');
+  next.remove(kept.id);
+  assert.deepEqual(saved, [], 'a removed card is forgotten');
+});
+
+test('stopping the manager asks first only for the sessions it ends, not the tmux and herdr ones it detaches', () => {
+  const manager = new SessionManager({ registry: null, baseEnv: {}, getApiUrl: () => '' });
+  manager.sessions.set('a', { status: 'running', multiplexer: null });
+  manager.sessions.set('b', { status: 'running', multiplexer: { label: 'tmux', attach: 'tmux attach -t guild-3f9a2c', reattachable: false } });
+  manager.sessions.set('c', { status: 'exited', multiplexer: null });
+  assert.equal(manager.runningCount(), 1);
 });
 
 test('shutdown reports the processes that did not confirm exiting in time', async () => {

@@ -62,7 +62,8 @@ export class Session extends EventEmitter {
    * @param {string|null} [opts.task]    "install" for a package install, "upgrade" for the manager's own, "clone" for a GitHub clone, else null
    * @param {{id: string, label: string}|null} [opts.account]  the tool sign-in the session runs under
    * @param {{repo: string, path: string, accountId: number}|null} [opts.clone]  what a clone session clones, and where
-   * @param {{label: string, attach: string}|null} [opts.multiplexer]  the multiplexer a Shell session runs in, and the command that reattaches it
+   * @param {{label: string, attach: string, reattachable: boolean}|null} [opts.multiplexer]  the multiplexer a Shell session runs in, and the command that reattaches it
+   * @param {string} [opts.createdAt]  when the card was first made; a restored tmux or herdr card keeps its own. With no spawnSpec, the session is such a card, closed
    * @param {string} opts.reportToken
    * @param {number} [opts.scrollback]
    * @param {number} [opts.activityIdleMs]
@@ -94,7 +95,7 @@ export class Session extends EventEmitter {
     this.shells = new Map();
     this._shellSeq = 0;
     this._endedTasks = new Set();
-    this.createdAt = new Date().toISOString();
+    this.createdAt = opts.createdAt ?? new Date().toISOString();
     /** When the current process started; later than createdAt once a multiplexer session is reattached. */
     this.startedAt = this.createdAt;
     this.exitedAt = null;
@@ -149,6 +150,17 @@ export class Session extends EventEmitter {
 
     this.disposed = false;
     this.env = opts.env;
+    if (!opts.spawnSpec) {
+      // A tmux or herdr card brought back after the manager restarted: its
+      // multiplexer still runs the session, and the card is closed until reattached.
+      this.status = 'exited';
+      this.exitedAt = new Date().toISOString();
+      this.activity = 'quiet';
+      this._resolveExited();
+      const label = this.multiplexer?.label ?? 'The multiplexer';
+      this.term.write(`\x1b[2m[Agent Guild restarted. ${label} still runs this session; Reattach it from its card.]\x1b[0m\r\n`);
+      return;
+    }
     try {
       this._start(opts.spawnSpec);
     } catch (err) {

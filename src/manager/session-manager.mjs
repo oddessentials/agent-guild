@@ -10,7 +10,7 @@ import { Session, newId, clampDimension, cleanName } from './session.mjs';
 import { prependPath } from './report-shims.mjs';
 import { buildSpawnSpec, runSpec } from './command-resolver.mjs';
 import { tmuxNewSession } from './shells.mjs';
-import { HerdrAgents, herdrAgentReports } from './herdr.mjs';
+import { HerdrAgents, herdrAgentReports, herdrSocket } from './herdr.mjs';
 import { CHANNEL_LABELS } from './install-channels.mjs';
 import { SELF_PROVIDER } from './self-update.mjs';
 import { GITHUB_PROVIDER, dropsFromCloneEnv, parseRepo } from './github.mjs';
@@ -57,7 +57,7 @@ export class SessionManager extends EventEmitter {
    * @param {import('./self-update.mjs').SelfUpdate|null} [opts.selfUpdate]  the manager's own upgrade
    * @param {import('./github.mjs').GitHub|null} [opts.github]
    */
-  constructor({ registry, baseEnv, getApiUrl, sessionDefaults = {}, shimDir = null, selfUpdate = null, github = null, sessionHooks = null }) {
+  constructor({ registry, baseEnv, getApiUrl, sessionDefaults = {}, shimDir = null, selfUpdate = null, github = null, sessionHooks = null, store = null }) {
     super();
     this.registry = registry;
     this.baseEnv = baseEnv;
@@ -77,6 +77,9 @@ export class SessionManager extends EventEmitter {
     this.multiplexers = new Map();
     /** Session id → the watcher that shows a running herdr card the agents herdr sees. */
     this.watchers = new Map();
+    /** Keeps the tmux and herdr cards across restarts: { load(), save(cards) }, or null. */
+    this.store = store;
+    this.restoring = false;
   }
 
   list() {
@@ -139,47 +142,114 @@ export class SessionManager extends EventEmitter {
    * card as they would in a shell. A herdr card shows the agents herdr sees.
    */
   async _startMultiplexer(options, shell, args) {
-    const { provider } = options;
+    const { provider, account } = options;
     const id = newId();
     const reportToken = crypto.randomBytes(16).toString('hex');
     // A name of its own, so the card can say how to reattach it.
     const muxName = `guild-${newId(3)}`;
-    const named = { ...shell, args: shell.args.map((arg) => arg.replaceAll('{name}', muxName)) };
-    const dropEnv = (key) => key.startsWith('AGENT_GUILD_');
-    const clientEnv = this._sessionEnv({ id, reportToken, provider, account: options.account, extraEnv: shell.env, dropEnv });
-    const run = (cmdArgs, extra = {}) => runSpec(buildSpawnSpec(shell.path, cmdArgs, clientEnv, this.registry.platform), { env: clientEnv, ...extra });
-    const spawnSpec = this.registry.spawnSpec(provider, shell.id === 'tmux' ? [] : args, options.resume, [], named);
-    let alive = async () => true;
+    const mux = this._multiplexer({ provider, account, shell, id, reportToken, muxName });
+    const spawnSpec = this.registry.spawnSpec(provider, shell.id === 'tmux' ? [] : args, options.resume, [], mux.named);
     if (shell.id === 'tmux') {
       this._assertCanSpawn();
-      const own = this._sessionEnv({ id, reportToken, provider, account: options.account, extraEnv: shell.env });
-      const env = Object.fromEntries(Object.entries(own).filter(([key]) => dropEnv(key) || key.toUpperCase() === 'PATH'));
+      const own = this._sessionEnv({ id, reportToken, provider, account, extraEnv: shell.env });
+      const env = Object.fromEntries(Object.entries(own).filter(([key]) => mux.dropEnv(key) || key.toUpperCase() === 'PATH'));
       const cols = clampDimension(options.cols, 120, 2, 1000);
       const rows = clampDimension(options.rows, 32, 1, 500);
       try {
-        await run(['-u', 'start-server', ';', 'source-file', '-'], { cwd: options.cwd, input: tmuxNewSession({ name: muxName, cwd: options.cwd, cols, rows, env, args }) });
+        await mux.run(['-u', 'start-server', ';', 'source-file', '-'], { cwd: options.cwd, input: tmuxNewSession({ name: muxName, cwd: options.cwd, cols, rows, env, args }) });
       } catch (err) {
         throw httpError(500, `tmux could not make a session: ${(err.stderr || err.message).trim()}`, 'spawn_failed');
       }
-      alive = () => run(['has-session', '-t', `=${muxName}`]).then(() => true, () => false);
     }
     let session;
     try {
       session = this._spawn({
-        ...options, id, reportToken, spawnSpec, dropEnv,
+        ...options, id, reportToken, spawnSpec, dropEnv: mux.dropEnv,
         multiplexer: { label: shell.label, attach: shell.multiplexer.attach.replaceAll('{name}', muxName), reattachable: false },
       });
     } catch (err) {
-      if (shell.id === 'tmux') run(['kill-session', '-t', `=${muxName}`]).catch(() => {});
+      if (shell.id === 'tmux') mux.run(['kill-session', '-t', `=${muxName}`]).catch(() => {});
       throw err;
     }
-    this.multiplexers.set(id, { spawnSpec, alive, herdr: shell.id === 'herdr' ? { path: shell.path, env: clientEnv } : null });
-    session.on('exit', async () => {
-      session.multiplexer.reattachable = await alive();
-      session._changed();
-    });
+    this._track(session, { spawnSpec, mux, shell, card: { id, reportToken, provider: provider.id, account: account.id, shell: shell.id, muxName, name: session.name, cwd: session.cwd, createdAt: session.createdAt } });
     this._watchHerdr(session);
     return session;
+  }
+
+  /** How to run a card's tmux or herdr client, and tell whether the multiplexer still has the card's session. */
+  _multiplexer({ provider, account, shell, id, reportToken, muxName }) {
+    const named = { ...shell, args: shell.args.map((arg) => arg.replaceAll('{name}', muxName)) };
+    const dropEnv = (key) => key.startsWith('AGENT_GUILD_');
+    const clientEnv = this._sessionEnv({ id, reportToken, provider, account, extraEnv: shell.env, dropEnv });
+    const run = (args, extra = {}) => runSpec(buildSpawnSpec(shell.path, args, clientEnv, this.registry.platform), { env: clientEnv, ...extra });
+    // tmux keeps the card's own session by name; a herdr card's session is herdr's, there while its server runs.
+    const alive = shell.id === 'tmux'
+      ? () => run(['has-session', '-t', `=${muxName}`]).then(() => true, () => false)
+      : () => run(['session', 'list', '--json']).then(({ stdout }) => herdrSocket(JSON.parse(stdout), clientEnv, this.registry.platform) !== null, () => false);
+    return { named, dropEnv, clientEnv, run, alive };
+  }
+
+  /** Keep a tmux or herdr card for Reattach, here and, through the store, across restarts. */
+  _track(session, { spawnSpec, mux, shell, card }) {
+    this.multiplexers.set(session.id, { spawnSpec, alive: mux.alive, herdr: shell.id === 'herdr' ? { path: shell.path, env: mux.clientEnv } : null, card });
+    this._saveCards();
+    session.on('exit', async () => {
+      session.multiplexer.reattachable = await mux.alive();
+      session._changed();
+    });
+    session.on('changed', () => {
+      if (card.name === session.name) return;
+      card.name = session.name;
+      this._saveCards();
+    });
+  }
+
+  _saveCards() {
+    // A stopping manager leaves the file as it is, for the next one to bring the cards back.
+    if (!this.store || this.restoring || this.closing) return;
+    try {
+      this.store.save([...this.multiplexers.values()].map(({ card }) => card));
+    } catch (err) {
+      console.warn(`[sessions] could not save the tmux and herdr cards: ${err.message}`);
+    }
+  }
+
+  /**
+   * Bring back the tmux and herdr cards the previous manager had, closed and
+   * ready to reattach, with their own ids and report tokens so whatever runs
+   * inside reports to them again. A card whose session is gone stays gone.
+   */
+  async restore() {
+    this.restoring = true;
+    try {
+      // All at once, so a multiplexer slow to answer holds up the start once, not once a card.
+      await Promise.all((this.store?.load() ?? []).map((card) => this._restoreCard(card).catch((err) => {
+        console.warn(`[sessions] did not bring back the card ${card?.name ?? card?.id}: ${err.message}`);
+      })));
+    } finally {
+      this.restoring = false;
+    }
+    this._saveCards();
+  }
+
+  async _restoreCard(card) {
+    if (typeof card?.id !== 'string' || !/^[a-f0-9]{1,32}$/.test(card.id) || this.sessions.has(card.id)) return;
+    if (typeof card.reportToken !== 'string' || !/^[a-f0-9]{32}$/.test(card.reportToken)) return;
+    if (typeof card.muxName !== 'string' || !/^guild-[0-9a-f]{6}$/.test(card.muxName)) return;
+    const provider = this.registry.get(String(card.provider));
+    const shell = provider && this.registry.shellsFor(provider)?.shells.find((s) => s.id === card.shell && s.multiplexer);
+    if (!shell) return;
+    const account = this.registry.account(provider, card.account);
+    const mux = this._multiplexer({ provider, account, shell, id: card.id, reportToken: card.reportToken, muxName: card.muxName });
+    if (!(await mux.alive()) || this.closing) return;
+    const spawnSpec = this.registry.spawnSpec(provider, [], null, [], mux.named);
+    const session = this._spawn({
+      provider, spawnSpec: null, cwd: typeof card.cwd === 'string' && fs.existsSync(card.cwd) ? card.cwd : os.homedir(), name: card.name, account,
+      id: card.id, reportToken: card.reportToken, dropEnv: mux.dropEnv, extraEnv: shell.env,
+      createdAt: typeof card.createdAt === 'string' && !Number.isNaN(Date.parse(card.createdAt)) ? card.createdAt : undefined,
+      multiplexer: { label: shell.label, attach: shell.multiplexer.attach.replaceAll('{name}', card.muxName), reattachable: true },
+    });
+    this._track(session, { spawnSpec, mux, shell, card: { ...card, name: session.name, cwd: session.cwd, createdAt: session.createdAt } });
   }
 
   /** Attach a stopped tmux or herdr session's card to its multiplexer session again, keeping its id and report token. */
@@ -343,9 +413,10 @@ export class SessionManager extends EventEmitter {
   }
 
   /** Sessions whose process is still running, install sessions included. */
+  /** The running sessions stopping the manager ends: a tmux or herdr session is only detached, and its card comes back. */
   runningCount() {
     let n = 0;
-    for (const s of this.sessions.values()) if (s.status === 'running') n++;
+    for (const s of this.sessions.values()) if (s.status === 'running' && !s.multiplexer) n++;
     return n;
   }
 
@@ -387,7 +458,7 @@ export class SessionManager extends EventEmitter {
   _spawn({
     provider, description = this.registry.describe(provider), spawnSpec, cwd, cols, rows, name, resume = null, task = null, installKind = null, installPath = null, account = null,
     extraEnv = null, dropEnv = null, clone = null, reporting = null, multiplexer = null,
-    id = newId(), reportToken = crypto.randomBytes(16).toString('hex'),
+    id = newId(), reportToken = crypto.randomBytes(16).toString('hex'), createdAt,
   }) {
     this._assertCanSpawn();
     const env = this._sessionEnv({ id, reportToken, provider, account, extraEnv, dropEnv });
@@ -411,6 +482,7 @@ export class SessionManager extends EventEmitter {
         clone,
         reporting,
         multiplexer,
+        createdAt,
       });
     } catch (err) {
       throw httpError(500, `could not start ${provider.tool}: ${err.message}`, 'spawn_failed');
@@ -440,7 +512,7 @@ export class SessionManager extends EventEmitter {
   remove(id) {
     const session = this.get(id);
     this.sessions.delete(id);
-    this.multiplexers.delete(id);
+    if (this.multiplexers.delete(id)) this._saveCards();
     this.watchers.get(id)?.stop();
     this.watchers.delete(id);
     session._broadcast({ type: 'removed' });

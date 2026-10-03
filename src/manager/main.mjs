@@ -25,6 +25,7 @@ import {
   VERSION,
   ensureDataDir,
   loadOrCreateToken,
+  multiplexerStore,
   paths,
   removeRuntimeFile,
   resolvePort,
@@ -67,7 +68,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
   registry.reportingEnabled = (provider) => sessionHooks.enabled(provider);
   sessionHooks.warm();
   const manager = new SessionManager({
-    registry, baseEnv, getApiUrl: () => api.url, sessionDefaults, shimDir, selfUpdate, github, sessionHooks,
+    registry, baseEnv, getApiUrl: () => api.url, sessionDefaults, shimDir, selfUpdate, github, sessionHooks, store: multiplexerStore,
   });
   const usage = new UsageMonitor({ registry, env: baseEnv });
   const history = new SessionHistory({ registry, env: baseEnv });
@@ -146,6 +147,10 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
     }
     throw err;
   }
+  // tmux and herdr cards come back closed, ready to reattach, before the
+  // runtime file announces this manager; after listening, since a card's
+  // environment names the API's URL.
+  await manager.restore();
 
   writeRuntimeFile({
     pid: process.pid,

@@ -196,6 +196,8 @@ fs.writeFileSync(path.join(home, 'providers.json'), JSON.stringify({
 }));
 
 const { startManager } = await import('../src/manager/main.mjs');
+const { SessionManager } = await import('../src/manager/session-manager.mjs');
+const { multiplexerStore } = await import('../src/manager/config.mjs');
 
 // The manager runs as a released version, from package files an upgrade can replace.
 const packageFile = path.join(home, 'package.json');
@@ -876,6 +878,36 @@ test('a tmux card reports what runs in its tmux session, and Stop, Reattach and 
 
   await call('DELETE', `/sessions/${session.id}`);
   assert.notEqual(await tmux('has-session', '-t', `=${name}`), null, 'tmux still runs the session');
+});
+
+test('a restarted manager brings a tmux card back closed, with its own id and token, ready to reattach', async (t) => {
+  if (!(await findProvider('shell')).shells?.some((s) => s.id === 'tmux')) return t.skip('tmux 3.2 or later is not installed');
+  const env = { ...process.env };
+  delete env.TMUX; // the outer tmux this file pretends to run in
+  t.after(() => new Promise((resolve) => execFile('tmux', ['kill-server'], { env }, () => resolve())));
+  const { session } = (await call('POST', '/sessions', { providerId: 'shell', shell: 'tmux', cwd: home, name: 'Kept across restarts' })).body;
+  const client = terminal(session.id);
+  t.after(() => client.close());
+  await client.opened;
+  client.input('echo BEFORE-THE-RESTART');
+  await waitForText(client, session.id, 'BEFORE-THE-RESTART', 'output in tmux');
+  const token = ctx.manager.get(session.id).reportToken;
+  assert.ok(multiplexerStore.load().some((card) => card.id === session.id && card.reportToken === token), 'the card is kept in the data folder');
+
+  // The manager stops: its client ends and tmux keeps the session. The next manager starts on the same data folder.
+  await call('POST', `/sessions/${session.id}/stop`);
+  await waitFor(async () => (await sessionNow(session.id)).status === 'exited', { label: 'the client ends' });
+  const next = new SessionManager({ registry: ctx.registry, baseEnv: ctx.manager.baseEnv, getApiUrl: () => base, store: multiplexerStore });
+  t.after(() => next.shutdown());
+  await next.restore();
+  const back = next.get(session.id);
+  assert.deepEqual([back.status, back.name, back.reportToken, back.createdAt, back.multiplexer.reattachable], ['exited', 'Kept across restarts', token, session.createdAt, true]);
+  await next.reattach(session.id);
+  const screen = () => { const b = back.term.buffer.active; let text = ''; for (let i = 0; i < b.length; i++) text += `${b.getLine(i)?.translateToString(true) ?? ''}\n`; return text; };
+  await waitFor(() => back.status === 'running' && screen().includes('BEFORE-THE-RESTART'), { label: 'the reattached card shows the tmux session as it was' });
+  next.remove(session.id);
+  assert.ok(!multiplexerStore.load().some((card) => card.id === session.id), 'a removed card is forgotten');
+  await call('DELETE', `/sessions/${session.id}`);
 });
 
 test('a herdr card shows the agents herdr sees, and follows their state as herdr reports it', async (t) => {

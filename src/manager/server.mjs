@@ -305,8 +305,9 @@ export function createManagerServer({
       return sendJson(res, 201, { session: session.toJSON() });
     }
     if (route === '/shutdown' && method === 'POST') {
-      // Stopping the manager ends every session, so a client must say
-      // `force` while any is running. The same guard serves every front end.
+      // Stopping the manager ends every session but the tmux and herdr ones,
+      // so a client must say `force` while any of those is running. The same
+      // guard serves every front end.
       const body = await readJsonBody(req);
       const running = manager.runningCount();
       if (running > 0 && body.force !== true) {
