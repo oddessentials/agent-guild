@@ -7,7 +7,8 @@ import { fileURLToPath } from 'node:url';
 import { resolveCommand, resolveAllCommands, buildSpawnSpec, quoteForCmd } from '../src/manager/command-resolver.mjs';
 import { mergePathLists, parsePathFromEnvOutput, weavePaths, parseRegValue, expandWindowsVars, readWindowsPath, trimPathExt } from '../src/manager/shell-env.mjs';
 import { mergeEnv, cleanResumeId, modelFromArgs, SessionManager } from '../src/manager/session-manager.mjs';
-import { loadProviders, defaultShell, ProviderRegistry } from '../src/manager/providers.mjs';
+import { loadProviders, ProviderRegistry } from '../src/manager/providers.mjs';
+import { detectShells } from '../src/manager/shells.mjs';
 import { paths } from '../src/manager/config.mjs';
 import { classifyInstall, expandHome, homeRelative, helpDescribes, platformDependency, listInstallations, knownLaunchers, updateHelpAccepted, uninstallPlan } from '../src/manager/install-channels.mjs';
 import { runPlan, encodePlan, RUNNER } from '../src/manager/uninstall.mjs';
@@ -1959,10 +1960,89 @@ test('loadProviders survives a broken user file', () => {
   assert.equal(warnings.length, 1);
 });
 
-test('defaultShell picks a platform shell', () => {
-  assert.equal(defaultShell({}, 'win32'), 'powershell.exe');
-  assert.equal(defaultShell({}, 'darwin'), '/bin/zsh');
-  assert.equal(defaultShell({ SHELL: '/usr/bin/fish' }, 'linux'), '/usr/bin/fish');
+function fakeShells(files, { env = {}, platform = 'linux' } = {}) {
+  const has = (file) => files.includes(file);
+  const p = platform === 'win32' ? path.win32 : path.posix;
+  const dirs = platform === 'win32' ? ['C:\\Windows\\System32', 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0'] : ['/usr/local/bin', '/usr/bin', '/bin'];
+  const resolve = (command) => {
+    if (!command) return null;
+    if (p.isAbsolute(command)) return has(command) ? command : null;
+    const names = platform === 'win32' && !p.extname(command) ? [`${command}.exe`] : [command];
+    for (const dir of [...(env.EXTRA_PATH || []), ...dirs]) for (const name of names) if (has(p.join(dir, name))) return p.join(dir, name);
+    return null;
+  };
+  const found = detectShells(env, platform, { exists: has, resolve });
+  return { ...found, summary: found.shells.map((s) => `${s.id}=${s.path}`) };
+}
+
+test('the Shell card offers the installed shells and the login shell as the default on macOS and Linux', () => {
+  const linux = fakeShells(['/usr/local/bin/bash', '/usr/bin/bash', '/usr/bin/zsh', '/usr/bin/fish'], { env: { SHELL: '/usr/local/bin/bash' } });
+  assert.deepEqual(linux.summary, ['bash=/usr/local/bin/bash', 'zsh=/usr/bin/zsh', 'fish=/usr/bin/fish']);
+  assert.equal(linux.defaultId, 'bash');
+  assert.deepEqual(linux.shells[0].args, []);
+
+  const mac = fakeShells(['/bin/zsh', '/bin/bash', '/usr/local/bin/pwsh'], { platform: 'darwin' });
+  assert.deepEqual(mac.summary, ['bash=/bin/bash', 'zsh=/bin/zsh', 'pwsh=/usr/local/bin/pwsh']);
+  assert.equal(mac.defaultId, 'zsh', 'zsh without $SHELL');
+  assert.equal(mac.shells.find((s) => s.id === 'pwsh').label, 'PowerShell');
+
+  const other = fakeShells(['/usr/bin/nu', '/usr/bin/bash'], { env: { SHELL: '/usr/bin/nu' } });
+  assert.deepEqual(other.summary, ['nu=/usr/bin/nu', 'bash=/usr/bin/bash'], 'a login shell outside the list comes first');
+  assert.equal(other.defaultId, 'nu');
+
+  const broken = fakeShells(['/bin/bash', '/usr/bin/fish'], { env: { SHELL: '/opt/gone/zsh' } });
+  assert.equal(broken.defaultId, 'bash', 'a missing $SHELL falls back to the platform shell');
+  assert.equal(fakeShells(['/usr/bin/fish'], { env: { SHELL: '/opt/gone/zsh' } }).defaultId, 'fish', 'then to any installed shell');
+  assert.deepEqual(fakeShells([], { env: { SHELL: '/opt/gone/zsh' } }), { shells: [], defaultId: null, summary: [] });
+});
+
+test('the Shell card defaults to PowerShell 7 on Windows and finds Git Bash', () => {
+  const sys = 'C:\\Windows\\System32';
+  const base = [`${sys}\\cmd.exe`, `${sys}\\WindowsPowerShell\\v1.0\\powershell.exe`];
+  const plain = fakeShells(base, { platform: 'win32' });
+  assert.deepEqual(plain.summary, [`powershell=${base[1]}`, `cmd=${base[0]}`]);
+  assert.equal(plain.defaultId, 'powershell', 'Windows PowerShell when PowerShell 7 is missing');
+
+  const pf = 'C:\\Program Files';
+  assert.equal(fakeShells([...base, `${pf}\\PowerShell\\7\\pwsh.exe`], { platform: 'win32', env: { ProgramW6432: pf } }).defaultId, 'pwsh', 'PowerShell 7 off PATH');
+  const full = fakeShells([...base, `${pf}\\PowerShell\\7\\pwsh.exe`, `${pf}\\Git\\bin\\bash.exe`, `${pf}\\Git\\cmd\\git.exe`], { platform: 'win32', env: { ProgramFiles: pf } });
+  assert.deepEqual(full.summary.map((s) => s.split('=')[0]), ['pwsh', 'powershell', 'cmd', 'git-bash']);
+  assert.equal(full.defaultId, 'pwsh');
+  assert.deepEqual(full.shells.map((s) => s.label), ['PowerShell', 'Windows PowerShell', 'Command Prompt', 'Git Bash']);
+  const gitBash = full.shells.find((s) => s.id === 'git-bash');
+  assert.deepEqual([gitBash.args, gitBash.env], [['--login', '-i'], { CHERE_INVOKING: '1' }]);
+
+  const fromGit = fakeShells([...base, 'D:\\Tools\\Git\\cmd\\git.exe', 'D:\\Tools\\Git\\bin\\bash.exe', `${sys}\\bash.exe`], { platform: 'win32', env: { EXTRA_PATH: ['D:\\Tools\\Git\\cmd'] } });
+  assert.equal(fromGit.shells.find((s) => s.id === 'git-bash')?.path, 'D:\\Tools\\Git\\bin\\bash.exe', 'Git Bash next to git on PATH, never WSL\'s bash.exe');
+  const msys = fakeShells([...base, 'C:\\msys64\\usr\\bin\\git.exe', 'C:\\msys64\\usr\\bin\\bash.exe'], { platform: 'win32', env: { EXTRA_PATH: ['C:\\msys64\\usr\\bin'] } });
+  assert.equal(msys.shells.some((s) => s.id === 'git-bash'), false, 'another bash is not called Git Bash');
+});
+
+test('a Shell session runs the shell it is asked for, and other tools refuse one', () => {
+  const dir = tempDir();
+  const win = process.platform === 'win32';
+  const names = win ? ['pwsh.exe', 'cmd.exe'] : ['bash', 'zsh'];
+  for (const name of names) fs.writeFileSync(path.join(dir, name), '', { mode: 0o755 });
+  const env = { PATH: dir, PATHEXT: '.EXE', SHELL: win ? undefined : path.join(dir, 'zsh') };
+  const userFile = path.join(dir, 'providers.json');
+  fs.writeFileSync(userFile, JSON.stringify({ providers: [{ id: 'anthropic', command: process.execPath }, { id: 'shell', args: ['--own'] }] }));
+  const registry = new ProviderRegistry({ userFile, env, platform: process.platform });
+  const shell = registry.get('shell');
+  const [first, second] = win ? ['pwsh', 'cmd'] : ['bash', 'zsh'];
+  const card = registry.describe(shell);
+  assert.deepEqual(card.shells.map((s) => s.id), [first, second]);
+  assert.equal(card.defaultShell, win ? 'pwsh' : 'zsh');
+  assert.equal(card.resolvedPath, path.join(dir, names[win ? 0 : 1]));
+  assert.equal(registry.shellFor(shell).id, card.defaultShell);
+  const picked = registry.shellFor(shell, first);
+  assert.equal(registry.spawnSpec(shell, [], null, [], picked).file, path.join(dir, names[0]));
+  assert.deepEqual(registry.spawnSpec(shell, [], null, [], picked).args, [], 'the provider\'s args are for its default shell only');
+  assert.deepEqual(registry.spawnSpec(shell, [], null, [], registry.shellFor(shell)).args, ['--own']);
+  assert.throws(() => registry.shellFor(shell, 'fish'), { code: 'shell_unavailable', status: 409 });
+  const anthropic = registry.get('anthropic');
+  assert.equal(registry.shellFor(anthropic), null);
+  assert.throws(() => registry.shellFor(anthropic, first), { code: 'bad_shell', status: 400 });
+  assert.equal(registry.describe(anthropic).shells, null);
 });
 
 test('hook events map to agent reports for every tool\'s spelling', () => {
@@ -2209,6 +2289,7 @@ test('a tool session cannot start while that tool is installed, updated or remov
   const registry = {
     get: (id) => ({ ...provider, id }),
     account: () => ({ id: 'default', label: 'Default' }),
+    shellFor: () => null,
     spawnSpec: () => ({}),
     uninstallSpec: () => ({ spec: {}, channel: 'native' }),
   };
@@ -2230,6 +2311,28 @@ test('a tool session cannot start while that tool is installed, updated or remov
 
   manager.installing.add('tool');
   await assert.rejects(manager.create({ providerId: 'tool', cwd: os.tmpdir() }), { code: 'install_in_progress' }, 'an install still resolving its release counts');
+});
+
+test('a Shell session is named after its shell and gets its environment', async (t) => {
+  const bash = { id: 'git-bash', label: 'Git Bash', path: 'bash.exe', args: ['--login', '-i'], env: { CHERE_INVOKING: '1' } };
+  const cmd = { id: 'cmd', label: 'Command Prompt', path: 'cmd.exe', args: [], env: {} };
+  let shells = [cmd, bash];
+  const registry = {
+    get: (id) => ({ id, tool: 'Shell', args: [], accounts: [{ id: 'default' }] }),
+    account: () => ({ id: 'default', label: 'Default' }),
+    shellFor: (provider, id) => shells.find((s) => s.id === (id ?? 'cmd')),
+    shellsFor: () => ({ shells, defaultId: 'cmd' }),
+    spawnSpec: (provider, args, resume, lead, shell) => ({ file: shell.path, args: shell.args }),
+  };
+  const manager = new SessionManager({ registry, baseEnv: {}, getApiUrl: () => '' });
+  t.mock.method(manager, '_spawn', (options) => ({ ...options, setModel() {} }));
+  const session = await manager.create({ providerId: 'shell', shell: 'git-bash', cwd: os.tmpdir() });
+  assert.deepEqual([session.name, session.spawnSpec.file, session.extraEnv], ['Shell · Git Bash', 'bash.exe', { CHERE_INVOKING: '1' }]);
+  assert.equal((await manager.create({ providerId: 'shell', cwd: os.tmpdir() })).name, 'Shell · Command Prompt');
+  assert.equal((await manager.create({ providerId: 'shell', cwd: os.tmpdir(), name: 'Mine' })).name, 'Mine');
+  shells = [cmd];
+  assert.equal((await manager.create({ providerId: 'shell', cwd: os.tmpdir() })).name, null, 'no name when there is no choice');
+  await assert.rejects(manager.create({ providerId: 'shell', shell: 7, cwd: os.tmpdir() }), { code: 'bad_shell', status: 400 });
 });
 
 test('shutdown reports the processes that did not confirm exiting in time', async () => {

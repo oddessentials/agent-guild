@@ -109,7 +109,11 @@ whether `GET /usage` reports the provider. `historySource` is `claude`,
 `GET /providers/:id/history` can list the tool's earlier sessions.
 `accounts` lists the sign-ins the tool can run under: `default` is the
 tool's own, and each further one has its own home folder, so it keeps its
-own sign-in and usage. `POST /sessions` takes an account id. For a tool
+own sign-in and usage. `POST /sessions` takes an account id.
+`shells` is null except for the `@shell` provider, where it lists the
+installed shells, each `{ id, label, path }`, and `defaultShell` is the id of
+the one a session runs unless `POST /sessions` names another in `shell`.
+For a tool
 whose agent reporting has to be turned on (`reporting` is `antigravity`),
 `reportingEnabled` says whether it is.
 `usageUrl`, `billingUrl` and `cloudUrl` are `https://` links to the vendor's
@@ -388,7 +392,7 @@ All paths are under `/api/v1`.
 | POST | `/github/accounts/:id/ssh` | | `{ account }`: makes the account's SSH key if it has none, adds it to the account, and checks that GitHub signs it in as this account. A failure is reported in `account.ssh.error`. |
 | POST | `/github/clone` | `{ account, repo, parent }` | `201 { session }`: a session with `task` `clone` running `git clone` for `repo` (owner/name) into `<parent>/<name>` over SSH with the account's key. 409 `ssh_not_ready`, `git_unavailable`, `clone_exists` or `folder_conflict` (both with `target`), or `clone_in_progress`. |
 | GET | `/sessions` | | `{ sessions: Session[] }` |
-| POST | `/sessions` | `{ providerId, account?, cwd?, cols?, rows?, name?, args?, resume? }` | `201 { session }`. 409 `install_in_progress` while the provider's tool is being installed, updated or uninstalled. |
+| POST | `/sessions` | `{ providerId, account?, shell?, cwd?, cols?, rows?, name?, args?, resume? }` | `201 { session }`. 409 `install_in_progress` while the provider's tool is being installed, updated or uninstalled. 409 `shell_unavailable` when `shell` is not one of the provider's `shells`; 400 `bad_shell` when the provider has none or `shell` is not a string. |
 | GET | `/sessions/:id` | | `{ session }` |
 | PATCH | `/sessions/:id` | `{ name }` | `{ session }`. `name` must be a non-empty string; it is trimmed to 80 characters. |
 | POST | `/sessions/:id/stop` | | Ends the process. The session stays listed as exited. |
