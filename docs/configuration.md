@@ -51,7 +51,7 @@ by `GET /api/v1/info`.
 | --- | --- |
 | `id` | Lowercase identifier. |
 | `vendor`, `tool` | Names shown on the card. |
-| `command`, `args` | What to run. `command` is looked up on PATH. `@shell` means the user's default shell. |
+| `command`, `args` | What to run. `command` is looked up on PATH. `@shell` offers installed shells and uses the default unless another is selected. For `@shell`, provider `args` apply only to the default shell. |
 | `package` | The tool's npm package, e.g. `@openai/codex`. Enables the **Install** button and the version check. |
 | `npmNote` | A sentence added to the **Install** button's tooltip, e.g. what npm installs. |
 | `channels` | How an installed copy is recognised, so **Update** runs that installation's own updater. A copy installed by npm needs no entry. `brew.names` lists the tool's own Homebrew formula or cask names, e.g. `{ "brew": { "names": ["claude-code"] } }`, and `winget.id` is its WinGet package id. A provider you add must set these for its Homebrew or WinGet copy to get **Update** and **Uninstall** buttons; without them that copy shows as an unknown install with guidance only. `native.paths` are the launcher and folders the vendor's own installer uses, and `native.update` the arguments that make the tool update itself, e.g. `["update"]`. `native.remove` and `legacy.remove` are the paths **Uninstall** deletes; each must lie inside the home folder and below its top level, so a tool's home folder such as `~/.codex` is never deleted. `native.links` are launchers deleted only when they link into those paths; unlike `remove`, they may lie outside the home folder, e.g. `/usr/local/bin/grok`. `brew.autoUpdates: true` marks a cask that updates itself: its copy can be uninstalled but gets no **Update**. |

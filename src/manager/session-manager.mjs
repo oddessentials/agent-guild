@@ -93,25 +93,31 @@ export class SessionManager extends EventEmitter {
     return dir;
   }
 
-  async create({ providerId, cwd, cols, rows, name, args, resume, account } = {}) {
+  async create({ providerId, cwd, cols, rows, name, args, resume, account, shell } = {}) {
     const provider = this.registry.get(String(providerId || ''));
     if (!provider) throw httpError(404, `unknown provider "${providerId}"`, 'unknown_provider');
     if (args !== undefined && (!Array.isArray(args) || args.some((a) => typeof a !== 'string'))) {
       throw httpError(400, 'args must be an array of strings', 'bad_args');
     }
     if (account !== undefined && account !== null && typeof account !== 'string') throw httpError(400, 'account must be a string', 'bad_account');
+    if (shell !== undefined && shell !== null && typeof shell !== 'string') throw httpError(400, 'shell must be a string', 'bad_shell');
     const resumeId = cleanResumeId(resume);
     const workDir = this.resolveCwd(cwd);
     const signIn = this.registry.account(provider, account);
+    const runShell = this.registry.shellFor(provider, shell);
     const hooks = this.sessionHooks ? await this.sessionHooks.launch(provider) : { args: [], reporting: null };
     // Checked after the await, so an install that started meanwhile is seen.
     if (this.installing.has(provider.id) || this.installsRunningFor(provider.id) > 0) {
       throw httpError(409, `${provider.tool} is being installed, updated or removed; start it once that finishes`, 'install_in_progress');
     }
-    const spawnSpec = this.registry.spawnSpec(provider, args || [], resumeId, hooks.args);
+    const spawnSpec = this.registry.spawnSpec(provider, args || [], resumeId, hooks.args, runShell);
     this.prepareAccount(provider, signIn, { hooksSupplied: hooks.args.length > 0 });
-    const sessionName = cleanName(name) || (provider.accounts.length > 1 ? `${provider.tool} · ${signIn.label}` : null);
-    const session = this._spawn({ provider, spawnSpec, cwd: workDir, cols, rows, name: sessionName, resume: resumeId, account: signIn, reporting: hooks.reporting });
+    const sessionName = cleanName(name)
+      || (provider.accounts.length > 1 ? `${provider.tool} · ${signIn.label}` : null)
+      || (runShell && this.registry.shellsFor(provider).shells.length > 1 ? `${provider.tool} · ${runShell.label}` : null);
+    const session = this._spawn({
+      provider, spawnSpec, cwd: workDir, cols, rows, name: sessionName, resume: resumeId, account: signIn, reporting: hooks.reporting, extraEnv: runShell?.env,
+    });
     const model = modelFromArgs([...provider.args, ...(args || [])]);
     if (model) session.setModel({ name: model }, 'args');
     return session;

@@ -4,6 +4,7 @@
 const TOKEN_KEY = 'agentGuild.token';
 const CWD_KEY = 'agentGuild.cwd';
 const ACCOUNTS_KEY = 'agentGuild.accounts';
+const SHELLS_KEY = 'agentGuild.shells';
 const THEME_KEY = 'agentGuild.theme';
 const SKIN_KEY = 'agentGuild.skin';
 const NEWS_SEEN_KEY = 'agentGuild.newsSeen';
@@ -23,6 +24,7 @@ const state = {
   providers: [],
   usage: new Map(),
   accounts: {},
+  shellPicks: {},
   stats: null,
   statsFor: new Map(),
   news: null,
@@ -456,6 +458,51 @@ function selectAccount(provider, id) {
   save(ACCOUNTS_KEY, JSON.stringify(state.accounts));
 }
 
+/** The shell the user picked for the provider, or null to start its default. */
+function pickedShell(provider) {
+  return provider.shells?.find((s) => s.id === state.shellPicks[provider.id] && s.id !== provider.defaultShell) ?? null;
+}
+
+function selectedShell(provider) {
+  return pickedShell(provider) ?? provider.shells?.find((s) => s.id === provider.defaultShell) ?? null;
+}
+
+function selectShell(provider, id) {
+  if (id === provider.defaultShell) delete state.shellPicks[provider.id];
+  else state.shellPicks[provider.id] = id;
+  save(SHELLS_KEY, JSON.stringify(state.shellPicks));
+}
+
+function renderShells(card, provider) {
+  const host = card.querySelector('.shells');
+  const shells = provider.shells || [];
+  host.hidden = !provider.available || shells.length < 2;
+  if (host.hidden) return host.replaceChildren();
+  const selected = selectedShell(provider)?.id;
+  const same = host.children.length === shells.length && shells.every((s, i) => host.children[i].dataset.shell === s.id);
+  if (!same) {
+    host.replaceChildren(...shells.map((shell) => {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'account-chip';
+      chip.setAttribute('role', 'tab');
+      chip.dataset.shell = shell.id;
+      chip.addEventListener('click', () => {
+        selectShell(provider, shell.id);
+        renderShells(card, provider);
+        renderUsage(card, provider);
+      });
+      return chip;
+    }));
+  }
+  shells.forEach((shell, i) => {
+    const chip = host.children[i];
+    chip.setAttribute('aria-selected', String(shell.id === selected));
+    chip.textContent = shell.label;
+    chip.title = `Start new sessions in ${shell.label}${shell.id === provider.defaultShell ? ', used unless you pick another' : ''}\n${shell.path}`;
+  });
+}
+
 function usageFor(provider, account = selectedAccount(provider)) {
   return state.usage.get(`${provider.id}/${account.id}`);
 }
@@ -559,6 +606,7 @@ function renderProviders() {
     renderCopies(node.querySelector('.copies'), provider, node);
     renderVendorLinks(node, provider);
     renderAccounts(node, provider);
+    renderShells(node, provider);
     renderUsage(node, provider);
     renderReportingSetup(node, provider);
     renderModelStats(node, provider);
@@ -685,7 +733,7 @@ function renderUsage(card, provider) {
   start.textContent = unsigned ? 'Sign in' : 'New';
   start.title = unsigned
     ? `Start a ${provider.tool} session and sign in as the ${account.label} account`
-    : `Start a new ${provider.tool} session${provider.accounts?.length > 1 ? ` as the ${account.label} account` : ''}`;
+    : `Start a new ${provider.tool} session${provider.accounts?.length > 1 ? ` as the ${account.label} account` : ''}${provider.shells?.length > 1 ? ` in ${selectedShell(provider)?.label}` : ''}`;
   if (!provider.available || !provider.usageSource || !usage) return host.replaceChildren();
   if (usage.error || usage.windows.length === 0) {
     const note = document.createElement('div');
@@ -1728,7 +1776,7 @@ async function startSession(provider, card, { resume, cwd, account = selectedAcc
   save(CWD_KEY, working);
   card?.classList.add('busy');
   try {
-    const body = { providerId: provider.id, account, cwd: cwd || working || undefined, cols: 120, rows: 32, resume };
+    const body = { providerId: provider.id, account, shell: pickedShell(provider)?.id, cwd: cwd || working || undefined, cols: 120, rows: 32, resume };
     let session;
     try {
       ({ session } = await api('POST', '/sessions', body));
@@ -3403,8 +3451,10 @@ $('panel-stop').addEventListener('click', () => {
 });
 $('cwd').value = load(CWD_KEY) || '';
 try { state.accounts = JSON.parse(load(ACCOUNTS_KEY)) || {}; } catch { state.accounts = {}; }
+try { state.shellPicks = JSON.parse(load(SHELLS_KEY)) || {}; } catch { state.shellPicks = {}; }
 githubView.accountId = Number(load(GITHUB_ACCOUNT_KEY)) || null;
 if (typeof state.accounts !== 'object' || Array.isArray(state.accounts)) state.accounts = {};
+if (typeof state.shellPicks !== 'object' || Array.isArray(state.shellPicks)) state.shellPicks = {};
 setInterval(renderSessions, 30000);
 setInterval(tickNews, 30000);
 setInterval(() => { if ($('github').open && state.github) renderGitHub(); }, 30000);

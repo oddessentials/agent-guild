@@ -58,6 +58,13 @@ terminal: type instructions, answer prompts, watch output. Run as many as you
 like. A local session manager owns them, so you can close or reload the page
 and come back to the same screens.
 
+**Pick your shell.** The Shell card offers the shells installed on your
+computer and remembers your choice in this browser. On Windows it defaults
+to PowerShell 7 when installed, then Windows PowerShell; Git Bash and Command
+Prompt are also offered when found. On macOS and Linux it follows your login
+shell. Pick the default chip to clear a saved choice and follow the default
+again. The choice applies to new sessions.
+
 <img src="docs/images/terminal.webp" alt="An open Claude Code session with its helper agents shown in the header">
 
 **Agents and models at work.** Helper agents that a tool starts appear on its

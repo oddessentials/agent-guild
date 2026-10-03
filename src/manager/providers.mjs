@@ -13,6 +13,7 @@ import { resolveCommand, resolveAllCommands, pathKey, buildSpawnSpec, runSpec } 
 import { compareVersions, probeVersion, fetchManifest, latestVersion, DEFAULT_NPM_REGISTRY } from './versions.mjs';
 import { CHANNEL_LABELS, classifyInstall, expandHome, formatCommand, homeRelative, knownLaunchers, listInstallations, platformDependency, updateHelpAccepted } from './install-channels.mjs';
 import { weavePaths } from './shell-env.mjs';
+import { detectShells, fallbackShell } from './shells.mjs';
 import { RUNNER, encodePlan } from './uninstall.mjs';
 import { paths } from './config.mjs';
 
@@ -32,11 +33,6 @@ function fileMtime(file) {
 
 function refusal(status, code, message) {
   return Object.assign(new Error(message), { status, code });
-}
-
-export function defaultShell(env = process.env, platform = process.platform) {
-  if (platform === 'win32') return 'powershell.exe';
-  return env.SHELL || (platform === 'darwin' ? '/bin/zsh' : '/bin/bash');
 }
 
 function readJson(file) {
@@ -259,6 +255,7 @@ export class ProviderRegistry extends EventEmitter {
     this._pathReadAt = 0;
     this._pathPending = null;
     this._installs = new Map();
+    this._shells = new Map();
     this.versions = new Map();
     this._refreshing = null;
     this._npmRegistry = null;
@@ -272,6 +269,7 @@ export class ProviderRegistry extends EventEmitter {
     this.warnings = warnings;
     this._npmRegistry = null;
     this._installs.clear();
+    this._shells.clear();
     for (const w of warnings) console.warn(`[providers] ${w}`);
     this.emit('updated');
   }
@@ -335,6 +333,7 @@ export class ProviderRegistry extends EventEmitter {
     if (next === (this.env[key] || '')) return false;
     this.env[key] = next;
     this._installs.clear();
+    this._shells.clear();
     return true;
   }
 
@@ -568,8 +567,32 @@ export class ProviderRegistry extends EventEmitter {
     return this.accountFor(provider, found);
   }
 
+  /** The shells the provider can start, or null when it is not the `@shell` provider. */
+  shellsFor(provider) {
+    if (provider.command !== '@shell') return null;
+    const cached = this._shells.get(provider.id);
+    if (cached && Date.now() - cached.at < INSTALLS_TTL_MS) return cached.found;
+    const found = detectShells({ ...this.env, ...provider.env }, this.platform);
+    this._shells.set(provider.id, { found, at: Date.now() });
+    return found;
+  }
+
+  /** The shell a session of the provider runs: the one named by `id`, else the default. Null for other providers. */
+  shellFor(provider, id = null) {
+    const found = this.shellsFor(provider);
+    if (!found) {
+      if (id == null) return null;
+      throw refusal(400, 'bad_shell', `${provider.tool} does not start a shell`);
+    }
+    const wanted = id ?? found.defaultId;
+    const shell = found.shells.find((s) => s.id === wanted) ?? null;
+    if (!shell && wanted !== null) throw refusal(409, 'shell_unavailable', `The shell "${wanted}" was not found on this computer`);
+    return shell;
+  }
+
   commandFor(provider) {
-    return provider.command === '@shell' ? defaultShell(this.env, this.platform) : provider.command;
+    if (provider.command !== '@shell') return provider.command;
+    return this.shellFor(provider)?.path ?? fallbackShell(this.env, this.platform);
   }
 
   resolve(provider) {
@@ -597,6 +620,7 @@ export class ProviderRegistry extends EventEmitter {
     const channel = this.channelFor(provider, resolvedPath);
     const update = this.updateFor(provider, channel);
     const shown = (file) => homeRelative(file, { ...this.env, ...provider.env }, this.platform);
+    const shells = this.shellsFor(provider);
     const installs = this.installsFor(provider, resolvedPath).map((install) => {
       const active = install.resolvedPath === resolvedPath;
       const copy = active ? { version: installed, status: versions?.versionStatus ?? null } : versions?.copies?.[install.resolvedPath];
@@ -645,6 +669,8 @@ export class ProviderRegistry extends EventEmitter {
       reporting: provider.reporting,
       reportingEnabled: this.reportingEnabled?.(provider) ?? null,
       accounts: provider.accounts.map((account) => ({ id: account.id, label: account.label })),
+      shells: shells?.shells.map((shell) => ({ id: shell.id, label: shell.label, path: shell.path })) ?? null,
+      defaultShell: shells?.defaultId ?? null,
       modelPattern: provider.modelPattern,
       color: provider.color,
       monogram: provider.monogram,
@@ -664,8 +690,8 @@ export class ProviderRegistry extends EventEmitter {
   }
 
   /** Spawn spec for node-pty, or throws with a user-facing message. */
-  spawnSpec(provider, extraArgs = [], resume = null, leadArgs = []) {
-    const resolved = this.resolve(provider);
+  spawnSpec(provider, extraArgs = [], resume = null, leadArgs = [], shell = null) {
+    const resolved = shell ? shell.path : this.resolve(provider);
     if (!resolved) {
       const hint = provider.install ? ` ${provider.install}` : '';
       const err = new Error(`${provider.tool} ("${this.commandFor(provider)}") was not found on PATH.${hint}`);
@@ -683,7 +709,9 @@ export class ProviderRegistry extends EventEmitter {
       }
       resumeArgs = provider.resumeArgs.map((arg) => arg.replaceAll('{id}', resume));
     }
-    return buildSpawnSpec(resolved, [...leadArgs, ...provider.args, ...resumeArgs, ...extraArgs], this.env, this.platform);
+    // The provider's own args were written for its default shell, not for one picked instead.
+    const args = shell && shell.id !== this.shellsFor(provider).defaultId ? [] : provider.args;
+    return buildSpawnSpec(resolved, [...(shell?.args ?? []), ...leadArgs, ...args, ...resumeArgs, ...extraArgs], this.env, this.platform);
   }
 
   async updateSpec(provider) {
