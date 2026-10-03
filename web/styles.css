@@ -354,6 +354,14 @@ body:has(#app[hidden]):has(#auth[hidden]):has(#stopped[hidden])::after {
 .panel-actions { display: flex; gap: 8px; }
 .terminal-host { flex: 1; min-height: 0; padding: 8px 4px 4px 10px; }
 .terminal-host > div { height: 100%; }
+@media (pointer: coarse) {
+  /* A drag on the panel would otherwise scroll the page behind it. */
+  body:has(#terminal-panel:not([hidden])) { overflow: hidden; }
+}
+@media (pointer: coarse) and (max-width: 900px) {
+  /* Tablets in portrait are wider than the phone layout but still want the whole width. */
+  .terminal-panel { inset: var(--topbar-h, 56px) 0 0; border-radius: 0; }
+}
 
 .models {
   width: min(880px, calc(100vw - 32px)); max-height: calc(100vh - 48px); padding: 0; overflow: hidden;
