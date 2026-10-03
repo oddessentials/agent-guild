@@ -1,0 +1,56 @@
+{
+  "_style": "Highly detailed storybook fantasy illustration, rich painterly digital painting with fine texture and crisp detail, a little gnome-built workshop helper with a touch of magic, charming but crafted and believable, warm soft key light with a subtle colored rim light, single subject isolated and centered filling most of the frame, on a pure flat black background, no floor, no shadow, no text, no letters, no logos, no border.",
+  "familiars/flame": {
+    "seed": 611,
+    "w": 1024,
+    "h": 1024,
+    "workflow": "qwen-image",
+    "prompt": "A small clockwork brass salamander automaton with riveted copper plates and a glowing ember furnace heart behind a little grated chest window, warm orange flames flickering from its tail, bright amber glass eyes, crouched and alert."
+  },
+  "familiars/leaf": {
+    "seed": 612,
+    "w": 1024,
+    "h": 1024,
+    "workflow": "qwen-image",
+    "prompt": "A small hedgehog workshop helper whose spines are made of tiny fresh green leaves and moss, wearing a tiny leather tool belt with a miniature wrench, a little sprouting seedling growing on its back glowing soft emerald green, bright curious eyes."
+  },
+  "familiars/night": {
+    "seed": 613,
+    "w": 1024,
+    "h": 1024,
+    "workflow": "qwen-image",
+    "prompt": "A small clockwork owl automaton made of dark bronze and deep violet enamel feathers, big round glowing lavender lens eyes, tiny visible brass gears in its chest, perched with folded wings, a few faint violet sparkles."
+  },
+  "familiars/aether": {
+    "seed": 614,
+    "w": 1024,
+    "h": 1024,
+    "workflow": "qwen-image",
+    "prompt": "A small floating brass lantern drone, a glass lantern with a glowing sky-blue magic crystal inside, tiny spinning brass propeller blades on top, a small brass cog and a ring of soft sky-blue light orbiting it, hovering."
+  },
+  "ui/empty-state": {
+    "seed": 811,
+    "w": 1024,
+    "h": 1024,
+    "workflow": "qwen-image",
+    "prompt": "A single gnome builder with a grey beard and a tall pointed moss-green hat, a leather apron and tool belt, sitting alone on a small stack of cut stone blocks beside a wooden toolbox, a rolled blueprint across his knees, holding up a small glowing brass lantern and looking up hopefully, a tiny clockwork brass owl perched on the toolbox, a few fireflies drifting around, the stones and toolbox fully visible."
+  },
+  "backgrounds/page": {
+    "seed": 911,
+    "w": 1920,
+    "h": 1088,
+    "workflow": "qwen-image",
+    "style": "",
+    "prompt": "Cinematic storybook fantasy digital painting, richly detailed, a gnome builders' village at night seen from a mossy stone path, small stone-and-timber cottages with tall pointed slate roofs and warm glowing windows standing at the far left and far right edges, timber scaffolding, ladders, workbenches, barrels and lanterns along the bottom of the frame, a calm dark lake and misty mountains in the distance at the center, a deep calm night sky with soft stars and a faint milky way above, a small moon in the upper right, fireflies, the center of the frame calm, dark and uncluttered, low contrast in the middle, no characters, no text.",
+    "upscale": 2
+  },
+  "backgrounds/page-light": {
+    "seed": 912,
+    "w": 1920,
+    "h": 1088,
+    "workflow": "qwen-image",
+    "style": "",
+    "prompt": "Cinematic storybook fantasy digital painting, richly detailed, a gnome builders' village at a soft hazy sunrise seen from a mossy cobblestone path, small stone-and-timber cottages with tall pointed slate roofs standing at the far left and far right edges, timber scaffolding, ladders, workbenches, barrels of cut stones and wildflowers along the bottom of the frame, a calm misty lake with a distant waterfall and pale hazy mountains at the center, a wide soft pale peach and cream sky, airy, high-key, light and pastel overall, the center of the frame calm, pale and uncluttered, low contrast in the middle, no characters, no text.",
+    "upscale": 2
+  }
+}

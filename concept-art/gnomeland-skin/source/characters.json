@@ -1,0 +1,40 @@
+{
+  "_style": "Highly detailed storybook fantasy illustration, rich painterly digital painting with fine texture and crisp detail, a characterful grown-up gnome builder with a big weathered nose, ruddy cheeks, small pointed ears and a tall pointed gnome hat, stout sturdy gnome proportions, a seasoned craftsman with a little magic, dignified and charming, not cute, not childish, warm soft key light with a subtle colored rim light, full body standing, centered, filling the frame from the hat tip to the boots, isolated on a pure flat black background, no floor, no shadow, no scenery, no text, no letters, no logos, no border.",
+  "anthropic": {
+    "seed": 51,
+    "w": 1056,
+    "h": 1408,
+    "prompt": "An old master builder gnome, a rune-smith, with a long flowing white beard, a tall pointed burnt-orange hat with a curled tip and a band of fine gold rune stitching, a burnt-orange work coat embroidered with gold runes under a worn leather apron and a tool belt with chisels and a folding rule, a rune-etched mason's hammer hanging at his hip, standing calm with both open palms raised at his sides, a few softly glowing amber rune glyphs floating around him."
+  },
+  "openai": {
+    "seed": 52,
+    "w": 1056,
+    "h": 1408,
+    "prompt": "A stout gnome forge-engineer with a bushy brown beard, wearing heavy blackened-steel work armor with thin glowing emerald-green seams and riveted plates, a tall pointed conical black steel helm with welding goggles pushed up on its brim, his eyes glowing emerald green, thick leather gauntlets, a short dark fur-trimmed work cape, a huge riveted forge hammer resting over his shoulder, standing at rest with his free arm on his belt."
+  },
+  "google": {
+    "seed": 53,
+    "w": 1056,
+    "h": 1408,
+    "prompt": "A gnome levitation engineer with a neat silver beard and round brass spectacles, a tall pointed sapphire-blue hat embroidered with fine silver stars, a sapphire-blue engineer's coat with brass buttons and a leather tool harness, holding a brass gauge-staff topped with a glowing blue-white four-pointed star crystal, a few small cut stone blocks and a brass cog floating weightlessly around him in soft blue light, calm and focused.",
+    "edit_seeds": {
+      "working": 9
+    }
+  },
+  "xai": {
+    "seed": 58,
+    "w": 1056,
+    "h": 1408,
+    "prompt": "A young sharp-eyed gnome tinkerer-electrician with messy black hair and glowing electric-cyan eyes, a sly confident smile, a very tall narrow pointed black leather gnome hat with no brim and a curled tip, brass goggles strapped around the base of the hat, a glossy black leather long coat with a high collar covered in bright glowing electric-cyan circuit-trace patterns on the lapels, sleeves and hem, a tool belt with pliers and coiled copper wire, confident relaxed stance with hands in his coat pockets."
+  },
+  "shell": {
+    "seed": 55,
+    "w": 1056,
+    "h": 1408,
+    "prompt": "A faceless spectral hooded gnome, the ghost of the workshop, made entirely of translucent glowing violet light and smoke, a very tall pointed gnome hood with a curled tip, the hood opening is an empty pitch-black void with no face, no eyes, no nose and no skin, a single glowing bright violet '>' chevron symbol floating inside the dark void of the hood, a faint spectral tool belt with a ghostly wrench and lantern at its waist, its short robed body dissolving into wispy violet light tendrils below the waist, hovering calmly.",
+    "locked": "Turn this exact same faceless hooded ghost into an old weathered grey stone and ceramic garden statue of a hooded figure: the very tall pointed hood with the curled tip carved in cracked grey stone, the hood opening a hollow dark empty cavity with nothing inside it, no face, no eyes, no nose, no beard, no skin, the violet glow and the chevron completely gone, its robe and wisps frozen into dusty cracked grey stone with thin cobwebs, a heavy iron chain wrapped around it fastened with one large rusty iron padlock on its chest. Same pose and silhouette, dormant. Keep the exact same art style, painterly rendering, camera framing, scale and the pure flat black background.",
+    "edit_seeds": {
+      "locked": 9
+    }
+  }
+}

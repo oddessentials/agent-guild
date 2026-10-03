@@ -7,8 +7,8 @@ import path from 'node:path';
 const args = process.argv.slice(2);
 const versionAt = args.indexOf('--version');
 const expectedVersion = versionAt === -1 ? null : args[versionAt + 1];
-const prefixArg = args.find((arg, i) => !arg.startsWith('--') && i !== versionAt + 1);
-if (!prefixArg) {
+const prefixArg = args.find((arg, i) => !arg.startsWith('--') && (versionAt === -1 || i !== versionAt + 1));
+if (!prefixArg || (versionAt !== -1 && !expectedVersion)) {
   console.error('Usage: node tests/package/smoke.mjs <global prefix> [--version X.Y.Z]');
   process.exit(2);
 }
@@ -100,7 +100,7 @@ try {
   check(health.ok === true && health.name === 'agent-guild', 'the manager answers', `version ${health.version}`);
   if (expectedVersion !== null) check(health.version === expectedVersion, 'the manager is the expected version', expectedVersion);
 
-  const assets = ['/', '/app.js', '/theme.js', '/styles.css', '/skins/guild/skin.css', '/skins/guild/page.avif', '/skins/professional/skin.css', '/skins/orbital/skin.css', '/vendor/xterm/xterm.js', '/vendor/xterm/xterm.css',
+  const assets = ['/', '/app.js', '/theme.js', '/styles.css', '/skins/guild/skin.css', '/skins/guild/page.avif', '/skins/professional/skin.css', '/skins/orbital/skin.css', '/skins/gnomeland/skin.css', '/vendor/xterm/xterm.js', '/vendor/xterm/xterm.css',
     '/vendor/xterm/addon-fit.js', '/vendor/xterm/addon-web-links.js'];
   for (const asset of assets) {
     const res = await fetch(`${base}${asset}`);
