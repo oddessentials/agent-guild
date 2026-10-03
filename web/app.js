@@ -500,7 +500,9 @@ function renderShells(card, provider) {
     const chip = host.children[i];
     chip.setAttribute('aria-selected', String(shell.id === selected));
     chip.textContent = shell.label;
-    chip.title = `Start new sessions in ${shell.label}${shell.id === provider.defaultShell ? ', used unless you pick another' : ''}\n${shell.path}`;
+    chip.title = shell.multiplexer
+      ? `Start new sessions inside ${shell.label}. Stopping or closing one detaches it; it keeps running in ${shell.label}.\n${shell.path}`
+      : `Start new sessions in ${shell.label}${shell.id === provider.defaultShell ? ', used unless you pick another' : ''}\n${shell.path}`;
   });
 }
 
@@ -2609,6 +2611,8 @@ function accountLabel(s) {
 
 function statusText(s) {
   if (s.status === 'exited') {
+    // A multiplexer's client exits 1 when detached by Stop: its exit code tells the user nothing.
+    if (s.multiplexer) return 'Closed';
     if (s.signal) return `Exited (${s.signal})`;
     return s.exitCode === 0 || s.exitCode === null ? 'Exited' : `Exited (${s.exitCode})`;
   }
@@ -2698,7 +2702,10 @@ function updateCard(node, s) {
   renderAgents(node.querySelector('.agents'), s.agents, s.shells || []);
   paintReporting(node.querySelector('.agents-row'), s);
   node.classList.toggle('exited', s.status === 'exited');
-  node.querySelector('.stop').hidden = s.status !== 'running';
+  const stop = node.querySelector('.stop');
+  stop.hidden = s.status !== 'running';
+  stop.textContent = s.multiplexer ? 'Detach' : 'Stop';
+  stop.title = s.multiplexer ? `Detach from ${s.multiplexer.label}; it keeps running. Reattach with: ${s.multiplexer.attach}` : '';
   node.querySelector('.remove').hidden = s.status === 'running';
   const useButton = node.querySelector('.use-folder');
   useButton.hidden = !clonedPath(s);
@@ -2757,6 +2764,9 @@ function guardLeaving() {
 }
 
 function upsertSession(session) {
+  // An exit is final. A reply sent before it, such as Stop's, can arrive after the
+  // exit was announced and must not show the session running again.
+  if (state.sessions.get(session.id)?.status === 'exited' && session.status !== 'exited') return;
   state.sessions.set(session.id, session);
   renderSessions();
   noticeClone(session);
@@ -2770,17 +2780,23 @@ function dropSession(id) {
   renderSessions();
 }
 
+/** What happens to a running session when it is stopped, for the confirmation. */
+function stopNote(s) {
+  const mux = s.multiplexer;
+  return mux ? `${mux.label} keeps running it. Reattach in a terminal with: ${mux.attach}` : `The ${s.provider.tool} process will be ended.`;
+}
+
 async function stopSession(id) {
   const s = state.sessions.get(id);
   if (!s || s.status !== 'running') return;
-  if (!confirm(`Stop "${s.name}"? The ${s.provider.tool} process will be ended.`)) return;
+  if (!confirm(`${s.multiplexer ? 'Detach' : 'Stop'} "${s.name}"? ${stopNote(s)}`)) return;
   try { upsertSession((await api('POST', `/sessions/${id}/stop`)).session); } catch (err) { toast(err.message); }
 }
 
 async function removeSession(id) {
   const s = state.sessions.get(id);
   if (!s) return;
-  if (s.status === 'running' && !confirm(`"${s.name}" is still running. End it and remove it?`)) return;
+  if (s.status === 'running' && !confirm(`"${s.name}" is still running. ${s.multiplexer ? 'Detach' : 'End'} it and remove it? ${stopNote(s)}`)) return;
   try { await api('DELETE', `/sessions/${id}`); dropSession(id); } catch (err) { toast(err.message); }
 }
 
@@ -3051,6 +3067,17 @@ function suppressQueryReplies(term) {
   }
 }
 
+/** The text an OSC 52 sequence ("c;<base64>") asks to copy, or null for a clipboard query or anything unreadable. */
+function osc52Text(data) {
+  const payload = data.slice(data.indexOf(';') + 1);
+  if (!data.includes(';') || !payload || payload === '?' || payload.length > 4 * 1024 * 1024) return null;
+  try {
+    return new TextDecoder().decode(Uint8Array.from(atob(payload), (c) => c.charCodeAt(0)));
+  } catch {
+    return null;
+  }
+}
+
 class TerminalView {
   constructor(sessionId) {
     this.id = sessionId;
@@ -3061,6 +3088,8 @@ class TerminalView {
       fontSize: coarsePointer.matches ? 14 : 13,
       scrollback: 5000,
       macOptionIsMeta: true,
+      // Option-drag selects text even while a program reads the mouse, as Shift-drag does elsewhere.
+      macOptionClickForcesSelection: true,
       theme: TERMINAL_THEME,
     });
     this.fit = new window.FitAddon.FitAddon();
@@ -3068,6 +3097,13 @@ class TerminalView {
     this.term.loadAddon(new window.WebLinksAddon.WebLinksAddon((_e, uri) => window.open(uri, '_blank', 'noopener,noreferrer')));
     this.term.attachCustomKeyEventHandler((e) => this.handleKey(e));
     suppressQueryReplies(this.term);
+    // Programs copy with OSC 52: tmux's copy mode, and herdr where it cannot reach the
+    // system clipboard itself. Only the open terminal may write it; nothing reads it.
+    this.term.parser.registerOscHandler(52, (data) => {
+      const text = osc52Text(data);
+      if (text !== null && state.activeId === this.id) navigator.clipboard?.writeText(text).catch(() => {});
+      return true;
+    });
     this.term.onData((data) => this.send({ type: 'input', data }));
     this.opened = false;
     this.disposed = false;
@@ -3238,7 +3274,7 @@ function updatePanel() {
   $('panel-sub').title = modelTitle(s);
   renderAgents($('panel-agents'), s.agents, s.shells || []);
   const stop = $('panel-stop');
-  stop.textContent = s.status === 'running' ? 'Stop' : 'Remove';
+  stop.textContent = s.status !== 'running' ? 'Remove' : s.multiplexer ? 'Detach' : 'Stop';
 }
 
 // ---- stopping the manager -------------------------------------------------

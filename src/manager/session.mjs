@@ -62,6 +62,7 @@ export class Session extends EventEmitter {
    * @param {string|null} [opts.task]    "install" for a package install, "upgrade" for the manager's own, "clone" for a GitHub clone, else null
    * @param {{id: string, label: string}|null} [opts.account]  the tool sign-in the session runs under
    * @param {{repo: string, path: string, accountId: number}|null} [opts.clone]  what a clone session clones, and where
+   * @param {{label: string, attach: string}|null} [opts.multiplexer]  the multiplexer a Shell session runs in, and the command that reattaches it
    * @param {string} opts.reportToken
    * @param {number} [opts.scrollback]
    * @param {number} [opts.activityIdleMs]
@@ -77,6 +78,7 @@ export class Session extends EventEmitter {
     this.task = opts.task ?? null;
     this.account = opts.account ?? null;
     this.clone = opts.clone ?? null;
+    this.multiplexer = opts.multiplexer ?? null;
     this.cwd = opts.cwd;
     this.cols = opts.cols;
     this.rows = opts.rows;
@@ -682,6 +684,7 @@ export class Session extends EventEmitter {
       task: this.task,
       account: this.account,
       clone: this.clone,
+      multiplexer: this.multiplexer,
       pid: this.pid,
       status: this.status,
       exitCode: this.exitCode,

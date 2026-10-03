@@ -110,13 +110,22 @@ export class SessionManager extends EventEmitter {
     if (this.installing.has(provider.id) || this.installsRunningFor(provider.id) > 0) {
       throw httpError(409, `${provider.tool} is being installed, updated or removed; start it once that finishes`, 'install_in_progress');
     }
-    const spawnSpec = this.registry.spawnSpec(provider, args || [], resumeId, hooks.args, runShell);
+    // A multiplexer session gets a name of its own, so its card can say how to reattach it.
+    const muxName = runShell?.multiplexer ? `guild-${newId(3)}` : null;
+    const launch = muxName ? { ...runShell, args: runShell.args.map((arg) => arg.replaceAll('{name}', muxName)) } : runShell;
+    const spawnSpec = this.registry.spawnSpec(provider, args || [], resumeId, hooks.args, launch);
     this.prepareAccount(provider, signIn, { hooksSupplied: hooks.args.length > 0 });
     const sessionName = cleanName(name)
       || (provider.accounts.length > 1 ? `${provider.tool} · ${signIn.label}` : null)
       || (runShell && this.registry.shellsFor(provider).shells.length > 1 ? `${provider.tool} · ${runShell.label}` : null);
     const session = this._spawn({
       provider, spawnSpec, cwd: workDir, cols, rows, name: sessionName, resume: resumeId, account: signIn, reporting: hooks.reporting, extraEnv: runShell?.env,
+      // The multiplexer's server outlives this session and hands its environment to sessions started
+      // later, outside Agent Guild too, so it must not keep this session's identity and report token.
+      ...(muxName && {
+        multiplexer: { label: runShell.label, attach: runShell.multiplexer.attach.replaceAll('{name}', muxName) },
+        dropEnv: (key) => key.startsWith('AGENT_GUILD_'),
+      }),
     });
     const model = modelFromArgs([...provider.args, ...(args || [])]);
     if (model) session.setModel({ name: model }, 'args');
@@ -251,7 +260,7 @@ export class SessionManager extends EventEmitter {
 
   _spawn({
     provider, description = this.registry.describe(provider), spawnSpec, cwd, cols, rows, name, resume = null, task = null, installKind = null, installPath = null, account = null,
-    extraEnv = null, dropEnv = null, clone = null, reporting = null,
+    extraEnv = null, dropEnv = null, clone = null, reporting = null, multiplexer = null,
   }) {
     if (this.closing) throw httpError(503, 'the session manager is stopping', 'manager_stopping');
     if (this.sessions.size >= MAX_SESSIONS) {
@@ -274,9 +283,13 @@ export class SessionManager extends EventEmitter {
     }]), this.shimDir);
     // The tool runs in its own terminal, not in the terminal or multiplexer
     // the manager was started from: Claude Code would otherwise open
-    // agent-team panes in that tmux window, outside the page, and tools
-    // would tune their output to a terminal program that is not there.
-    for (const key of ['TMUX', 'TMUX_PANE', 'STY', 'TERM_PROGRAM', 'TERM_PROGRAM_VERSION', 'ZELLIJ', 'ZELLIJ_SESSION_NAME', 'ZELLIJ_PANE_ID']) delete env[key];
+    // agent-team panes in that tmux window, outside the page, tools would
+    // tune their output to a terminal program that is not there, and herdr
+    // would refuse to start, taking itself to be nested in a herdr pane.
+    for (const key of [
+      'TMUX', 'TMUX_PANE', 'STY', 'TERM_PROGRAM', 'TERM_PROGRAM_VERSION', 'ZELLIJ', 'ZELLIJ_SESSION_NAME', 'ZELLIJ_PANE_ID',
+      'HERDR_ENV', 'HERDR_PANE_ID', 'HERDR_TAB_ID', 'HERDR_WORKSPACE_ID', 'HERDR_SOCKET_PATH', 'HERDR_BIN_PATH',
+    ]) delete env[key];
     if (dropEnv) for (const key of Object.keys(env)) if (dropEnv(key)) delete env[key];
     if (extraEnv) env = mergeEnv([env, extraEnv]);
 
@@ -298,6 +311,7 @@ export class SessionManager extends EventEmitter {
         account: account ? { id: account.id, label: account.label } : null,
         clone,
         reporting,
+        multiplexer,
       });
     } catch (err) {
       throw httpError(500, `could not start ${provider.tool}: ${err.message}`, 'spawn_failed');

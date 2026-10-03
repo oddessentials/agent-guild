@@ -12,6 +12,17 @@ const UNIX_SHELLS = [
   { id: 'pwsh', label: 'PowerShell' },
 ];
 
+// Terminal multiplexers, offered after the shells on macOS and Linux. Each
+// starts the way a new terminal window would start it, and a session only
+// ever ends its client: the multiplexer's own session keeps running after
+// the card stops, so it can be reattached. {name} is the session's own name.
+// tmux gets -u because the page's terminal is always UTF-8, whatever locale
+// the manager inherited; without it tmux draws other characters as "_".
+const MULTIPLEXERS = [
+  { id: 'tmux', label: 'tmux', args: ['-u', 'new-session', '-s', '{name}'], attach: 'tmux attach -t {name}' },
+  { id: 'herdr', label: 'herdr', args: [], attach: 'herdr' },
+];
+
 function isFile(file) {
   try { return fs.statSync(file).isFile(); } catch { return false; }
 }
@@ -72,7 +83,12 @@ function unixShells(env, platform, resolve) {
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/.test(defaultId)) defaultId = 'login';
     shells.unshift({ id: defaultId, label: name(own), path: own, args: [], env: {} });
   }
-  return { shells, defaultId: defaultId ?? shells[0]?.id ?? null };
+  defaultId ??= shells[0]?.id ?? null;
+  for (const { id, label, args, attach } of MULTIPLEXERS) {
+    const found = !shells.some((shell) => shell.id === id) && resolve(id);
+    if (found) shells.push({ id, label, path: found, args, env: {}, multiplexer: { attach } });
+  }
+  return { shells, defaultId };
 }
 
 /** The installed shells, as { id, label, path, args, env }, and the id of the default one. */
