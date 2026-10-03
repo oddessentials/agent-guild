@@ -54,5 +54,18 @@ index = index.replace(
 if (!index.includes('./demo-runtime.js')) throw new Error('could not insert the demo runtime before app.js');
 fs.writeFileSync(indexFile, index);
 
+// Stylesheets name fonts and images from the origin root too; a project page lives below it.
+const stylesheets = (folder) => fs.readdirSync(folder, { withFileTypes: true }).flatMap((entry) => {
+  const file = path.join(folder, entry.name);
+  if (entry.isDirectory()) return stylesheets(file);
+  return entry.name.endsWith('.css') ? [file] : [];
+});
+for (const file of stylesheets(out)) {
+  const root = path.relative(path.dirname(file), out).split(path.sep).join('/') || '.';
+  const css = fs.readFileSync(file, 'utf8');
+  const relative = css.replace(/url\(\s*(["']?)\/(?!\/)/g, `url($1${root}/`);
+  if (relative !== css) fs.writeFileSync(file, relative);
+}
+
 console.log(`Built Agent Guild ${version} Pages demo at ${out}`);
 

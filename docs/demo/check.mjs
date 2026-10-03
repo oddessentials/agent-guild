@@ -29,6 +29,9 @@ const walk = (folder) => {
     else {
       const body = fs.readFileSync(file);
       bytes += body.length;
+      if (entry.name.endsWith('.css') && /url\(\s*["']?\/(?!\/)/.test(body.toString('utf8'))) {
+        problems.push(`${path.relative(dir, file)} contains an origin-root url()`);
+      }
       if (/BEGIN (?:RSA |OPENSSH )?PRIVATE KEY/.test(body.toString('utf8'))) {
         problems.push(`possible credential material in ${path.relative(dir, file)}`);
       }

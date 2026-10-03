@@ -6,6 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
+import { describeCatalog } from '../src/manager/model-stats.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const demo = path.join(repo, 'docs', 'demo');
@@ -21,6 +22,12 @@ test('the Pages builder makes a portable, complete site without changing web/', 
   assert.doesNotMatch(index, /\b(?:src|href)=["']\//);
   assert.ok(index.indexOf('./demo-runtime.js') < index.indexOf('./app.js'));
   assert.match(fs.readFileSync(path.join(out, 'demo-config.js'), 'utf8'), /1\.2\.3/);
+  const styles = fs.readFileSync(path.join(out, 'styles.css'), 'utf8');
+  assert.doesNotMatch(styles, /url\(\s*["']?\/(?!\/)/, 'fonts and images resolve below the project path');
+  assert.match(styles, /url\("\.\/fonts\/cinzel\.woff2"\)/);
+
+  fs.appendFileSync(path.join(out, 'styles.css'), '\n.x { background: url(/brand/crest.png); }\n');
+  assert.throws(() => execFileSync(process.execPath, [path.join(demo, 'check.mjs'), out], { stdio: 'pipe' }), /origin-root url\(\)/);
 });
 
 test('the demo runtime handles initial API calls and opens event and terminal sockets', async () => {
@@ -68,7 +75,7 @@ test('the demo runtime handles initial API calls and opens event and terminal so
   assert.match(terminal[0].data, /interactive demo/i);
 });
 
-test('the demo lists removable copies and simulates uninstalling one', async () => {
+function loadDemo() {
   const runtime = fs.readFileSync(path.join(demo, 'demo-runtime.js'), 'utf8');
   class Response {
     constructor(body, init = {}) { this.body = body; this.status = init.status || 200; this.ok = this.status < 400; }
@@ -87,7 +94,33 @@ test('the demo lists removable copies and simulates uninstalling one', async () 
     const res = await context.fetch(`/api/v1${route}`, { method, body: body && JSON.stringify(body) });
     return { status: res.status, body: await res.json() };
   };
+  return { context, call };
+}
 
+test('the demo answers model stats in the manager\'s shape', async () => {
+  const { call } = loadDemo();
+  const { body } = await call('GET', '/model-stats');
+  const real = describeCatalog({ index: null, retrievedAt: null, stale: false, error: null }, []);
+  assert.deepEqual(Object.keys(body).sort(), Object.keys(real).sort());
+  assert.deepEqual(body.sessions, {});
+});
+
+test('demo events arrive after the request that caused them returns', async () => {
+  const { context, call } = loadDemo();
+  const events = [];
+  const socket = new context.WebSocket('wss://example.test/api/v1/events');
+  socket.onmessage = ({ data }) => events.push(JSON.parse(data).type);
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  events.length = 0;
+  const made = await call('POST', '/sessions', { providerId: 'shell', cwd: '/work/demo' });
+  assert.equal(made.status, 201);
+  assert.deepEqual(events, [], 'a handler that throws cannot fail the request');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(events, ['session.created']);
+});
+
+test('the demo lists removable copies and simulates uninstalling one', async () => {
+  const { context, call } = loadDemo();
   const { providers } = (await call('GET', '/providers')).body;
   for (const p of providers.filter((item) => item.id !== 'shell')) {
     assert.ok(p.installs.length > 0 && p.installs.every((i) => i.uninstall && i.displayPath), `${p.id} shows an Uninstall button`);
@@ -138,4 +171,14 @@ test('the release workflow gates Pages on the release and grants deployment-only
   assert.match(workflow, /pages-deploy:[\s\S]*pages: write[\s\S]*id-token: write/);
   assert.match(workflow, /environment:[\s\S]*name: github-pages/);
   assert.match(workflow, /--source "\$RUNNER_TEMP\/released\/package\/web"/);
+});
+
+test('every workflow action is pinned to a commit', () => {
+  const folder = path.join(repo, '.github', 'workflows');
+  for (const name of fs.readdirSync(folder)) {
+    const uses = [...fs.readFileSync(path.join(folder, name), 'utf8').matchAll(/uses:\s*(\S+)/g)].map((m) => m[1]);
+    for (const action of uses.filter((u) => !u.startsWith('./'))) {
+      assert.match(action, /@[0-9a-f]{40}$/, `${name}: ${action}`);
+    }
+  }
 });

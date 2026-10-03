@@ -102,8 +102,11 @@
     return Promise.resolve(new Response(JSON.stringify(body), { status: status || 200, headers: { 'Content-Type': 'application/json' } }));
   }
   function error(message, code, status) { return json({ error: { message: message, code: code } }, status || 400); }
+  // Events arrive after the request that caused them returns, as from the manager,
+  // so a page handler that throws never fails the request itself.
   function announce(message) {
-    eventSockets.forEach(function (socket) { socket.emit({ data: JSON.stringify(message) }); });
+    var data = JSON.stringify(message);
+    setTimeout(function () { eventSockets.forEach(function (socket) { socket.emit({ data: data }); }); }, 0);
   }
 
   var realFetch = window.fetch.bind(window);
@@ -120,7 +123,7 @@
       { providerId: 'anthropic', accountId: 'work', signedIn: true, plan: 'team', windows: [{ label: '5 hours', usedPercent: 18, resetsAt: new Date(now + 3 * 3600000).toISOString() }] },
       { providerId: 'openai', accountId: 'default', signedIn: true, plan: 'plus', windows: [{ label: 'Weekly', usedPercent: 43, resetsAt: new Date(now + 3 * 86400000).toISOString() }] },
     ] });
-    if (route === '/model-stats' && method === 'GET') return json({ providers: {}, models: {}, retrievedAt: new Date(now).toISOString(), stale: false, error: null });
+    if (route === '/model-stats' && method === 'GET') return json({ retrievedAt: new Date(now).toISOString(), stale: false, error: null, stats: [], pool: null, providers: {}, models: {}, sessions: {} });
     if (route === '/news' && method === 'GET') return json({ refreshing: false, updatedAt: new Date(now).toISOString(), items: [
       { id: 'demo-news', title: 'Agent Guild interactive demo', url: 'https://github.com/oddessentials/agent-guild', source: 'Agent Guild', kind: 'news', publishedAt: new Date(now - 3600000).toISOString(), summary: 'Explore the interface with simulated local sessions.' },
     ], sources: [] });
