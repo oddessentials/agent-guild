@@ -28,6 +28,8 @@ const fill=(b,selector,value)=>b.evaluate(`document.querySelector(${q(selector)}
 const closeTerminal=b=>b.click('#panel-close');
 const terminalReady=b=>b.wait("!document.querySelector('#terminal-panel').hidden && document.querySelector('#terminal-host .xterm')");
 const ready=b=>b.wait("document.querySelector('#yard-stage').dataset.ready==='true'");
+// Pending controls use aria-disabled so they keep focus; either form blocks.
+const blocked=selector=>`(e=>e.disabled||e.getAttribute('aria-disabled')==='true')(document.querySelector(${q(selector)}))`;
 
 function holdRequests(t, manager, method) {
   const original=manager[method].bind(manager),pending=[];
@@ -48,7 +50,7 @@ test('New pending state follows the account and folder across views, independent
   const {f,b}=await setup(t);
   const pending=holdRequests(t,f.manager,'create'),installs=holdRequests(t,f.manager,'install');
   const card='#providers [data-id="anthropic"]';
-  const disabled=selector=>b.evaluate(`document.querySelector(${q(selector)}).disabled`);
+  const disabled=selector=>b.evaluate(blocked(selector));
   await fill(b,'#cwd','project-a');
   await b.click(card+' .new');await until(()=>pending.length===1);
   await b.evaluate(`document.querySelector('${card} .new').dispatchEvent(new Event('click'))`);
@@ -88,7 +90,7 @@ test('New pending state follows the account and folder across views, independent
   assert.equal(await disabled(card+' .new'),true,'install completion does not clear New');
   assert.equal(await disabled(card+' .update'),false);
   pending[3].finish(Object.assign(new Error('Fixture start failed'),{status:400,code:'fixture_failure'}));
-  await b.wait(`!document.querySelector('${card} .new').disabled`);
+  await b.wait('!'+blocked(card+' .new'));
   await b.click(card+' .new');await until(()=>pending.length===5);
   pending[0].finish();await terminalReady(b);await closeTerminal(b);
   assert.equal(await disabled(card+' .new'),true);
@@ -110,7 +112,7 @@ test('Resume shares one pending action across cards, Yard and history without bl
   const history='#history-list [data-id="history-1"] .history-resume';
   const missing='#history-list [data-id="history-missing"] .history-resume';
   const manual='#history-form button[type="submit"]';
-  const disabled=selector=>b.evaluate(`document.querySelector(${q(selector)}).disabled`);
+  const disabled=selector=>b.evaluate(blocked(selector));
   await fill(b,'#cwd','fallback');
   await b.click(card+' .new');await until(()=>pending.length===1);
   await b.wait(`!document.querySelector(${q(resume)}).hidden`);
@@ -127,7 +129,7 @@ test('Resume shares one pending action across cards, Yard and history without bl
   await b.evaluate(`document.querySelector(${q(history)}).dispatchEvent(new Event('click'))`);
   await pause(100);assert.equal(pending.length,2,'manual id and history cannot duplicate a card Resume');
   await b.click('#history-close');await b.click(inspector+' [data-account="work"]');
-  await b.click(inspector+' .existing');await b.wait(`document.querySelector(${q(history)}) && !document.querySelector(${q(history)}).disabled`);
+  await b.click(inspector+' .existing');await b.wait(`document.querySelector(${q(history)}) && !${blocked(history)}`);
   await b.click(history);await until(()=>pending.length===3);
   await b.click('#history-close');await b.click(inspector+' [data-account="default"]');
   await b.click(inspector+' .existing');await b.wait(`document.querySelector(${q(missing)})`);
@@ -137,7 +139,7 @@ test('Resume shares one pending action across cards, Yard and history without bl
   assert.equal(await disabled(history),true,'Work completion leaves Personal pending');
   assert.equal(await disabled(missing),true,'one conversation cannot clear another');
   pending[1].finish(Object.assign(new Error('Fixture resume failed'),{status:400,code:'fixture_failure'}));
-  await b.wait(`!document.querySelector(${q(history)}).disabled`);
+  await b.wait('!'+blocked(history));
   assert.equal(await b.evaluate("document.querySelector('#history').open"),true);
   assert.equal(await disabled(resume),false,'failed Resume can be tried again');
   await fill(b,'#history-id','history-1');assert.equal(await disabled(manual),false);
@@ -153,6 +155,59 @@ test('Resume shares one pending action across cards, Yard and history without bl
   assert.equal(await disabled(resume),false);
   assert.equal(await b.evaluate(`document.querySelector(${q(resume)}).hidden`),true,'the resumed conversation now has a running session');
   assert.equal(pending.length,6);
+  assert.deepEqual(b.errors,[]);
+});
+
+test('pending New and Resume keep keyboard focus, ignore presses and recover focus after failure',options,async t=>{
+  const {f,b}=await setup(t);
+  await b.send('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'no-preference'}]});
+  const pending=holdRequests(t,f.manager,'create');
+  const stopped=[...f.data.values()][0];stopped.toolSessionId='history-1';f.manager.stop(stopped.id);
+  const card='#providers [data-id="anthropic"]',resume=`#sessions [data-id="${stopped.id}"] .resume`;
+  const history='#history-list [data-id="history-1"] .history-resume';
+  const failure=()=>Object.assign(new Error('Fixture start failed'),{status:400,code:'fixture_failure'});
+  const focused=selector=>b.evaluate(`document.activeElement===document.querySelector(${q(selector)})`);
+  const text=selector=>b.evaluate(`document.querySelector(${q(selector)}).textContent`);
+  async function enter() {
+    await b.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13,text:'\r'});
+    await b.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});
+  }
+  async function press(selector,{release=true}={}) {
+    const {x,y}=await b.evaluate(`(()=>{const e=document.querySelector(${q(selector)});e.scrollIntoView({block:'center'});const r=e.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()`);
+    await b.send('Input.dispatchMouseEvent',{type:'mouseMoved',x,y});
+    await b.send('Input.dispatchMouseEvent',{type:'mousePressed',x,y,button:'left',clickCount:1});
+    await pause(250);
+    const transform=await b.evaluate(`getComputedStyle(document.querySelector(${q(selector)})).transform`);
+    // Releasing elsewhere presses without clicking.
+    if(!release)await b.send('Input.dispatchMouseEvent',{type:'mouseMoved',x:1,y:1});
+    await b.send('Input.dispatchMouseEvent',{type:'mouseReleased',...(release?{x,y}:{x:1,y:1}),button:'left',clickCount:1});
+    return transform;
+  }
+  async function keepsFocus(selector,label,pendingLabel,index) {
+    await b.evaluate(`document.querySelector(${q(selector)}).focus()`);
+    await enter();await until(()=>pending.length===index+1);
+    assert.equal(await focused(selector),true,'pending control keeps focus');
+    assert.equal(await text(selector),pendingLabel);
+    await enter();await pause(100);
+    assert.equal(pending.length,index+1,'Enter on a pending control is ignored');
+    pending[index].finish(failure());
+    await b.wait('!'+blocked(selector));
+    assert.equal(await focused(selector),true,'focus stays on the control after failure');
+    assert.equal(await text(selector),label);
+  }
+
+  assert.notEqual(await press(card+' .existing',{release:false}),'none','an enabled button still presses down');
+  await keepsFocus(card+' .new','New','Starting…',0);
+  await b.click(card+' .new');await until(()=>pending.length===2);
+  assert.equal(await press(card+' .new'),'none','a pending button does not press down');
+  await pause(100);assert.equal(pending.length,2,'clicking a pending control is ignored');
+  pending[1].finish(failure());await b.wait('!'+blocked(card+' .new'));
+
+  await b.wait(`!document.querySelector(${q(resume)}).hidden`);
+  await keepsFocus(resume,'Resume','Resuming…',2);
+  await b.click(card+' .existing');await b.wait(`document.querySelector(${q(history)})`);
+  await keepsFocus(history,'Resume','Resuming…',3);
+  assert.equal(await b.evaluate("document.querySelector('#history').open"),true);
   assert.deepEqual(b.errors,[]);
 });
 

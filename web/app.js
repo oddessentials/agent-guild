@@ -1703,8 +1703,10 @@ function sessionActionKey(providerId, account, resume, cwd = $('cwd').value.trim
   return JSON.stringify([providerId, account, resume ? 'resume' : 'new', resume || cwd || '']);
 }
 
+// aria-disabled, not disabled: a native disabled button drops keyboard focus,
+// so a failed request would strand the user. Every handler guards re-entry.
 function paintPending(button, busy, label, pendingLabel) {
-  button.disabled = busy;
+  button.setAttribute('aria-disabled', String(busy));
   button.setAttribute('aria-busy', String(busy));
   if (label !== undefined) button.textContent = busy ? pendingLabel : label;
 }
