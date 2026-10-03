@@ -337,13 +337,14 @@ main { max-width: 1200px; margin: 0 auto; padding: 26px 16px 56px; display: grid
 .btn.danger { color: var(--danger); }
 .btn.danger:hover { border-color: var(--danger); }
 .btn:disabled { opacity: 0.6; cursor: progress; }
-.stop-manager, .restart-manager, .appearance, .upgrade { white-space: nowrap; }
-.appearance::before, .appearance-menu .choice > span::before {
+.stop-manager, .restart-manager, .appearance, .notes-open, .upgrade { white-space: nowrap; }
+.appearance::before, .notes-open::before, .appearance-menu .choice > span::before {
   content: ""; display: inline-block; width: 1em; height: 1em; margin-right: 0.4em; vertical-align: -0.15em;
   background: currentColor; mask: var(--icon-sun) center / contain no-repeat;
 }
 :root[data-theme="dark"] .appearance::before, .appearance-menu .choice > .mode-dark::before { mask-image: var(--icon-moon); }
 .appearance-menu .choice > .sound-alerts::before { mask-image: var(--icon-sound); }
+.notes-open::before { mask-image: var(--icon-notes); }
 .appearance::after { margin-left: 0.45em; transform: rotate(90deg); transition: transform 0.15s var(--ease); }
 .appearance:has(+ :popover-open)::after { transform: rotate(-90deg); }
 .appearance-menu {
@@ -549,11 +550,6 @@ a.news-link:visited { color: var(--muted); }
 .changelog-changes code { font-size: 0.8rem; padding: 0 4px; border-radius: 4px; background: var(--surface-2); }
 
 /* Notes: the News side sheet, holding one text field that skins style with their other fields. */
-.notes-open { white-space: nowrap; }
-.notes-open::before {
-  content: ""; display: inline-block; width: 1em; height: 1em; margin-right: 0.4em; vertical-align: -0.15em;
-  background: currentColor; mask: var(--icon-notes) center / contain no-repeat;
-}
 .notes-panel .news-body { display: flex; flex-direction: column; padding-top: 12px; }
 .notes-text {
   flex: 1; min-height: 8em; margin: 0; padding: 10px 12px; resize: none;

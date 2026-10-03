@@ -125,9 +125,9 @@ vX.Y.Z** switches over when you are ready. The version badge opens
 <img src="docs/images/whats-new.webp" alt="The What's new panel listing the release notes of each version">
 
 **Keep notes at hand.** **Notes** in the top bar opens a notepad for prompts,
-commands and to-dos, even while a terminal is open. It saves as you type and
-keeps the notes in this browser, never on the manager; every tab of the page
-shows the same notes.
+commands and to-dos, even while a terminal is open. It saves up to 100,000
+characters as you type and keeps them in this browser, never on the manager;
+every tab of the page shows the same notes.
 
 **Appearance.** The Appearance menu in the top bar picks a skin and light or
 dark mode, without a reload. **Guild** is the default fantasy look;
