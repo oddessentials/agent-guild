@@ -16,6 +16,7 @@ const GITHUB_ACCOUNT_KEY = 'agentGuild.githubAccount';
 const CLONE_PARENT_KEY = 'agentGuild.cloneParent';
 const SESSION_ORDER_KEY = 'agentGuild.sessionOrder';
 const SOUND_KEY = 'agentGuild.sound';
+const VOICE_KEY = 'agentGuild.voice';
 const RELEASES_URL = 'https://github.com/oddessentials/agent-guild/releases';
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -290,8 +291,15 @@ function placeAppearanceMenu() {
   const menu = $('appearance-menu');
   if (!menu.matches(':popover-open')) return;
   const box = $('appearance').getBoundingClientRect();
-  menu.style.top = `${Math.round(box.bottom + 6)}px`;
+  const top = Math.round(box.bottom + 6);
+  menu.style.top = `${top}px`;
+  menu.style.maxHeight = `${innerHeight - top - 8}px`;
+  menu.style.left = 'auto';
   menu.style.right = `${Math.max(8, Math.round(innerWidth - box.right))}px`;
+  if (menu.getBoundingClientRect().left < 8) {
+    menu.style.right = 'auto';
+    menu.style.left = `${Math.max(8, Math.round(box.left))}px`;
+  }
 }
 
 // ---- upgrading the manager ------------------------------------------------
@@ -3358,6 +3366,7 @@ class TerminalView {
 
 function openPanel(id) {
   if (!state.sessions.has(id)) return;
+  if (dictation && dictation.id !== id) stopDictation();
   if (state.activeId && state.activeId !== id) state.views.get(state.activeId)?.unmount();
   state.activeId = id;
   let view = state.views.get(id);
@@ -3368,6 +3377,7 @@ function openPanel(id) {
 }
 
 function closePanel() {
+  stopDictation();
   if (state.activeId) state.views.get(state.activeId)?.unmount();
   state.activeId = null;
   $('terminal-panel').hidden = true;
@@ -3384,6 +3394,90 @@ function updatePanel() {
   renderAgents($('panel-agents'), s.agents, s.shells || []);
   const stop = $('panel-stop');
   stop.textContent = s.status !== 'running' ? 'Remove' : s.multiplexer ? 'Detach' : 'Stop';
+}
+
+// ---- voice input ----------------------------------------------------------
+
+const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+let dictation = null;
+
+function voiceOn() {
+  return Boolean(Recognition) && load(VOICE_KEY) === 'on';
+}
+
+function renderVoice() {
+  $('voice-choice').hidden = !Recognition;
+  $('voice').checked = voiceOn();
+  $('panel-voice').hidden = !voiceOn();
+  $('panel-voice').setAttribute('aria-pressed', String(Boolean(dictation)));
+  if (!voiceOn()) stopDictation();
+}
+
+function changeVoice(input) {
+  save(VOICE_KEY, input.checked ? 'on' : null);
+  renderVoice();
+}
+
+/** Dictated words as terminal input: one line of text, no control characters, so nothing is ever submitted. */
+function dictatedText(text, first) {
+  const clean = text.replace(/[\x00-\x1f\x7f-\x9f]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return clean && (first ? clean : ` ${clean}`);
+}
+
+async function startDictation() {
+  const id = state.activeId;
+  if (!voiceOn() || !id || dictation) return;
+  const rec = new Recognition();
+  const lang = navigator.language || 'en-US';
+  rec.lang = lang;
+  rec.continuous = true;
+  rec.interimResults = true;
+  try {
+    if (await Recognition.available?.({ langs: [lang], processLocally: true }) === 'available') rec.processLocally = true;
+  } catch { /* cloud recognition */ }
+  if (dictation || state.activeId !== id) return;
+  const current = { rec, id, first: true };
+  dictation = current;
+  const preview = $('voice-preview');
+  rec.onresult = (e) => {
+    if (dictation !== current) return;
+    let interim = '';
+    for (let i = e.resultIndex; i < e.results.length; i += 1) {
+      const result = e.results[i];
+      if (!result.isFinal) { interim += result[0].transcript; continue; }
+      const text = dictatedText(result[0].transcript, current.first);
+      if (!text) continue;
+      state.views.get(id)?.term.paste(text);
+      current.first = false;
+    }
+    preview.textContent = interim.trim();
+    preview.hidden = !preview.textContent;
+  };
+  rec.onerror = (e) => {
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') toast('Voice input needs permission to use the microphone.');
+    else if (e.error === 'network') toast('Voice input could not reach the speech service. Check your connection.');
+    else if (e.error === 'audio-capture') toast('No microphone was found.');
+    else if (e.error === 'language-not-supported') toast(`Voice input does not support ${lang}.`);
+  };
+  rec.onend = () => { if (dictation === current) stopDictation(); };
+  try {
+    rec.start();
+  } catch {
+    dictation = null;
+    toast('Voice input could not start.');
+  }
+  renderVoice();
+  state.views.get(id)?.term.focus();
+}
+
+function stopDictation() {
+  const current = dictation;
+  if (!current) return;
+  dictation = null;
+  try { current.rec.abort(); } catch { /* already ended */ }
+  $('voice-preview').hidden = true;
+  $('voice-preview').textContent = '';
+  $('panel-voice').setAttribute('aria-pressed', 'false');
 }
 
 // ---- stopping the manager -------------------------------------------------
@@ -3692,6 +3786,13 @@ $('auth-form').addEventListener('submit', (e) => {
   boot();
 });
 $('panel-close').addEventListener('click', closePanel);
+$('panel-voice').addEventListener('click', () => {
+  if (dictation) {
+    const { id } = dictation;
+    stopDictation();
+    state.views.get(id)?.term.focus();
+  } else startDictation();
+});
 $('models-close').addEventListener('click', closeModels);
 $('history-close').addEventListener('click', closeHistory);
 $('history').addEventListener('click', (e) => { if (e.target === $('history')) closeHistory(); });
@@ -3805,6 +3906,7 @@ $('changelog-restart').addEventListener('click', () => {
 addEventListener('storage', (e) => {
   if (e.key === CHANGELOG_SEEN_KEY) renderVersion();
   else if (e.key === SOUND_KEY) { $('sound').checked = soundOn(); prepareSounds(); }
+  else if (e.key === VOICE_KEY) renderVoice();
   // Another tab reordered the cards.
   else if (e.key === SESSION_ORDER_KEY && !drag) arrange(parseOrder(e.newValue));
 });
@@ -3851,6 +3953,7 @@ $('appearance-menu').addEventListener('change', (e) => {
   if (e.target.name === 'skin') changeSkin(e.target);
   else if (e.target.name === 'theme') changeTheme(e.target);
   else if (e.target.name === 'sound') changeSound(e.target);
+  else if (e.target.name === 'voice') changeVoice(e.target);
 });
 $('appearance-menu').addEventListener('toggle', (e) => {
   if (e.newState !== 'open') return;
@@ -3885,6 +3988,7 @@ $('providers').addEventListener('pointerout', (e) => {
 applyTheme(currentTheme());
 renderSkinChoices();
 $('sound').checked = soundOn();
+renderVoice();
 // Follow the system setting until the user picks a theme.
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
   if (!load(THEME_KEY)) applyTheme(e.matches ? 'dark' : 'light');

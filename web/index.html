@@ -40,6 +40,11 @@
           <legend>Sound</legend>
           <label class="choice" title="Plays when the session manager stops, remains unavailable after a brief recovery check, or a new Agent Guild update is discovered. Click or type on this page to allow playback."><input id="sound" type="checkbox" name="sound"><span class="sound-alerts">Alert sounds</span></label>
         </fieldset>
+        <fieldset id="voice-choice" hidden>
+          <legend>Voice</legend>
+          <label class="choice"><input id="voice" type="checkbox" name="voice"><span class="voice-input">Voice input</span></label>
+          <p class="voice-note">Adds a Dictate button to terminals. Your browser may send the audio to its maker, such as Google or Microsoft, to turn it into text. Nothing is heard until you press Dictate, and Enter is never pressed for you.</p>
+        </fieldset>
       </div>
       <button id="restart-manager" class="btn restart-manager" type="button" hidden>Restart manager</button>
       <button id="stop-manager" class="btn danger stop-manager" type="button" hidden title="Stop the session manager. This ends every session.">Stop manager</button>
@@ -118,11 +123,13 @@
         <div id="panel-agents" class="agents"></div>
       </div>
       <div class="panel-actions">
+        <button id="panel-voice" class="btn voice" type="button" hidden aria-pressed="false" title="Speak into this terminal. Review the text, then press Enter yourself.">Dictate</button>
         <button id="panel-stop" class="btn danger" type="button">Stop</button>
         <button id="panel-close" class="btn" type="button" title="Hide the terminal. The session keeps running.">Hide</button>
       </div>
     </div>
     <div id="terminal-host" class="terminal-host"></div>
+    <div id="voice-preview" class="voice-preview" hidden aria-live="polite"></div>
   </div>
 
   <dialog id="models" class="models" aria-labelledby="models-title">
