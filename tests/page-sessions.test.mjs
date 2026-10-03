@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 
 const app = readFileSync(new URL('../web/app.js', import.meta.url), 'utf8');
-const source = ['upsertSession', 'statusText', 'stopNote', 'stopSession', 'removeSession', 'reattachable', 'reattachSession', 'resumeCard', 'osc52Text'].map((name) => {
+const source = ['upsertSession', 'statusText', 'stopNote', 'stopSession', 'removeSession', 'reattachable', 'reattachSession', 'resumeCard', 'osc52Text', 'exitLine'].map((name) => {
   const found = app.match(new RegExp(`(?:async )?function ${name}\\([^]*?\\n\\}`))?.[0];
   assert.ok(found, `${name} is present in app.js`);
   return found;
@@ -66,7 +66,7 @@ test('a multiplexer session detaches instead of ending, says how to reattach, an
   assert.deepEqual(confirms, [
     'Detach "Shell · tmux"? tmux keeps running it. Reattach it from its card, or in a terminal with: tmux attach -t guild-abc123',
     'Stop "Shell · bash"? The Shell process will be ended.',
-    '"Shell · tmux" is still running. Detach it and remove it? tmux keeps running it. Reattach it from its card, or in a terminal with: tmux attach -t guild-abc123',
+    '"Shell · tmux" is still running. Detach it and remove it? tmux keeps running it. Reattach it in a terminal with: tmux attach -t guild-abc123',
     '"Shell · bash" is still running. End it and remove it?',
   ]);
   assert.equal(context.statusText(exited(tmux)), 'Closed', 'a detached client\'s exit code means nothing to the user');
@@ -95,4 +95,12 @@ test('OSC 52 copies text and never answers a clipboard query', () => {
   for (const data of ['c;?', '?', 'c;', 'c;not base64!', 'no-separator', `c;${'A'.repeat(4 * 1024 * 1024 + 4)}`]) {
     assert.equal(context.osc52Text(data), null, data.slice(0, 20));
   }
+});
+
+test('a closed tmux or herdr panel says closed, not an exit code that means nothing to the user', () => {
+  const { context } = page();
+  assert.equal(context.exitLine(exited(tmux), { exitCode: 1, signal: null }), '[closed]', 'tmux\'s client exits 1 when detached');
+  assert.equal(context.exitLine(exited(tmux, { exitCode: null }), { exitCode: null, signal: null }), '[closed]', 'a card brought back after a restart ran nothing yet');
+  assert.equal(context.exitLine(exited(plain), { exitCode: 1, signal: null }), '[process exited with code 1]', 'other sessions as before');
+  assert.equal(context.exitLine(exited(plain), { exitCode: null, signal: 'SIGKILL' }), '[process exited with signal SIGKILL]');
 });

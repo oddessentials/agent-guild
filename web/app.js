@@ -2897,7 +2897,8 @@ async function stopSession(id) {
 async function removeSession(id) {
   const s = state.sessions.get(id);
   if (!s) return;
-  const question = s.multiplexer ? `Detach it and remove it? ${stopNote(s)}` : 'End it and remove it?';
+  // The card goes, so only the terminal can reattach it.
+  const question = s.multiplexer ? `Detach it and remove it? ${s.multiplexer.label} keeps running it. Reattach it in a terminal with: ${s.multiplexer.attach}` : 'End it and remove it?';
   if (s.status === 'running' && !confirm(`"${s.name}" is still running. ${question}`)) return;
   try { await api('DELETE', `/sessions/${id}`); dropSession(id); } catch (err) { toast(err.message); }
 }
@@ -3180,6 +3181,12 @@ function osc52Text(data) {
   }
 }
 
+/** The line a terminal shows when its process ends. A tmux or herdr client's exit code says nothing about the session it showed. */
+function exitLine(s, { exitCode, signal }) {
+  if (s?.multiplexer) return '[closed]';
+  return `[process exited with ${signal ? `signal ${signal}` : `code ${exitCode ?? 0}`}]`;
+}
+
 class TerminalView {
   constructor(sessionId) {
     this.id = sessionId;
@@ -3256,11 +3263,9 @@ class TerminalView {
       case 'data':
         this.term.write(msg.data);
         break;
-      case 'exit': {
-        const how = msg.signal ? `signal ${msg.signal}` : `code ${msg.exitCode ?? 0}`;
-        this.term.write(`\r\n\x1b[2m[process exited with ${how}]\x1b[0m\r\n`);
+      case 'exit':
+        this.term.write(`\r\n\x1b[2m${exitLine(state.sessions.get(this.id), msg)}\x1b[0m\r\n`);
         break;
-      }
       default:
         break;
     }
