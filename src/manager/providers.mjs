@@ -11,8 +11,9 @@ import { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { resolveCommand, resolveAllCommands, pathKey, buildSpawnSpec, runSpec } from './command-resolver.mjs';
 import { compareVersions, probeVersion, fetchManifest, latestVersion, DEFAULT_NPM_REGISTRY } from './versions.mjs';
-import { CHANNEL_LABELS, classifyInstall, expandHome, formatCommand, knownLaunchers, listInstallations, platformDependency, updateHelpAccepted } from './install-channels.mjs';
+import { CHANNEL_LABELS, classifyInstall, expandHome, formatCommand, homeRelative, knownLaunchers, listInstallations, platformDependency, updateHelpAccepted } from './install-channels.mjs';
 import { weavePaths } from './shell-env.mjs';
+import { RUNNER, encodePlan } from './uninstall.mjs';
 import { paths } from './config.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -81,17 +82,18 @@ function normalizeChannels(raw) {
     out.native = {
       paths: stringList(raw.native.paths),
       update: stringList(raw.native.update),
-      uninstall: raw.native.uninstall ? String(raw.native.uninstall) : null,
+      remove: stringList(raw.native.remove),
+      links: stringList(raw.native.links),
       sharedWithNpm: raw.native.sharedWithNpm === true,
     };
   }
-  if (raw.brew && typeof raw.brew === 'object') out.brew = { names: stringList(raw.brew.names) };
+  if (raw.brew && typeof raw.brew === 'object') out.brew = { names: stringList(raw.brew.names), autoUpdates: raw.brew.autoUpdates === true };
   if (raw.winget && typeof raw.winget === 'object' && raw.winget.id) out.winget = { id: String(raw.winget.id) };
   if (raw.legacy && typeof raw.legacy === 'object') {
     out.legacy = {
       paths: stringList(raw.legacy.paths),
       guidance: raw.legacy.guidance ? String(raw.legacy.guidance) : null,
-      uninstall: raw.legacy.uninstall ? String(raw.legacy.uninstall) : null,
+      remove: stringList(raw.legacy.remove),
     };
   }
   return out;
@@ -408,7 +410,7 @@ export class ProviderRegistry extends EventEmitter {
     if (changed) this.emit('updated');
   }
 
-  async finishInstall(id, { exitCode = null, kind = 'update' } = {}) {
+  async finishInstall(id, { exitCode = null, kind = 'update', path: removed = null } = {}) {
     const provider = this.get(id);
     if (!provider) return;
     const before = this.versions.get(id)?.installed ?? null;
@@ -418,6 +420,7 @@ export class ProviderRegistry extends EventEmitter {
     if (!entry) return;
     let outcome;
     if (exitCode !== 0) outcome = 'failed';
+    else if (kind === 'uninstall') outcome = this.installsFor(provider).some((i) => i.resolvedPath === removed) ? 'remaining' : 'removed';
     else if (kind === 'install') outcome = this.resolve(provider) ? 'installed' : 'missing';
     else if (entry.installed === null) outcome = 'done';
     else outcome = entry.installed !== before ? 'updated' : 'unchanged';
@@ -509,13 +512,13 @@ export class ProviderRegistry extends EventEmitter {
   installWarnings(provider, installs) {
     const label = (i) => [CHANNEL_LABELS[i.channel], i.version && `v${i.version}`].filter(Boolean).join(' ');
     const active = installs.find((i) => i.active);
-    if (!active) return installs.map((i) => `A copy of ${provider.tool} exists at ${i.path}, but its folder is not on PATH.`);
+    if (!active) return installs.map((i) => `A copy of ${provider.tool} exists at ${i.displayPath}, but its folder is not on PATH.`);
     const warnings = [];
     if (installs.length > 1) {
-      warnings.push(`${installs.length} copies of ${provider.tool} are installed. The one in use is ${label(active)} at ${active.path}.`);
+      warnings.push(`${installs.length} copies of ${provider.tool} are installed. The one in use is ${label(active)} at ${active.displayPath}.`);
     }
     const newer = installs.find((i) => i.newer);
-    if (newer) warnings.push(`An older copy comes first on PATH: ${label(active)} is in use while ${label(newer)} is installed at ${newer.path}.`);
+    if (newer) warnings.push(`An older copy comes first on PATH: ${label(active)} is in use while ${label(newer)} is installed at ${newer.displayPath}.`);
     return warnings;
   }
 
@@ -587,17 +590,22 @@ export class ProviderRegistry extends EventEmitter {
     const latest = versions?.latest ?? null;
     const channel = this.channelFor(provider, resolvedPath);
     const update = this.updateFor(provider, channel);
+    const shown = (file) => homeRelative(file, { ...this.env, ...provider.env }, this.platform);
     const installs = this.installsFor(provider, resolvedPath).map((install) => {
       const active = install.resolvedPath === resolvedPath;
       const copy = active ? { version: installed, status: versions?.versionStatus ?? null } : versions?.copies?.[install.resolvedPath];
       return {
         path: install.resolvedPath,
+        displayPath: shown(install.resolvedPath),
         channel: install.channel,
         version: copy?.version ?? null,
         versionStatus: copy?.status ?? null,
         active,
         onPath: install.onPath,
-        removeCommand: install.removeCommand,
+        uninstall: install.uninstall && {
+          command: install.uninstall.run ? formatCommand(install.uninstall.run.file, install.uninstall.run.args) : null,
+          remove: install.uninstall.remove.map(shown),
+        },
       };
     });
     const inUse = installs.find((i) => i.active)?.version;
@@ -681,6 +689,18 @@ export class ProviderRegistry extends EventEmitter {
       ? this.npmArgs(channel.update, await this.resolveRelease(provider, update.file))
       : update.args;
     return { spec: buildSpawnSpec(update.file, args, this.env, this.platform), channel: channel.channel };
+  }
+
+  uninstallSpec(provider, copyPath) {
+    const install = this.listInstalls(provider).find((i) => i.resolvedPath === copyPath);
+    if (!install) throw refusal(404, 'unknown_copy', `${provider.tool} has no copy at ${copyPath}`);
+    if (!install.uninstall) {
+      throw refusal(400, 'not_removable', install.guidance || `Agent Guild does not know how ${provider.tool} at ${copyPath} was installed. Remove it the way you installed it.`);
+    }
+    return {
+      spec: buildSpawnSpec(process.execPath, [RUNNER, encodePlan(install.uninstall)], this.env, this.platform),
+      channel: install.channel,
+    };
   }
 
   async installSpec(provider) {

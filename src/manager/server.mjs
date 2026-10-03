@@ -290,6 +290,12 @@ export function createManagerServer({
       const session = await manager.install(installMatch[1], { force: body.force === true });
       return sendJson(res, 201, { session: session.toJSON() });
     }
+    const uninstallMatch = route.match(/^\/providers\/([a-z0-9][a-z0-9_-]{0,31})\/uninstall$/);
+    if (uninstallMatch && method === 'POST') {
+      const body = await readJsonBody(req);
+      const session = manager.uninstall(uninstallMatch[1], body.path, { force: body.force === true });
+      return sendJson(res, 201, { session: session.toJSON() });
+    }
     if (route === '/sessions' && method === 'GET') {
       return sendJson(res, 200, { sessions: manager.list() });
     }

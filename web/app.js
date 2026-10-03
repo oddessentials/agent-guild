@@ -556,7 +556,7 @@ function renderProviders() {
     update.title = provider.updateCommand ? `Run "${provider.updateCommand}" in a session` : '';
     update.addEventListener('click', () => installProvider(provider, node));
     renderHint(hint, provider);
-    renderCopies(node.querySelector('.copies'), provider);
+    renderCopies(node.querySelector('.copies'), provider, node);
     renderVendorLinks(node, provider);
     renderAccounts(node, provider);
     renderUsage(node, provider);
@@ -572,16 +572,17 @@ function renderProviders() {
 
 const openCopies = new Set();
 
-function renderCopies(box, provider) {
+function renderCopies(box, provider, card) {
   const installs = provider.installs || [];
   const warnings = provider.warnings || [];
-  box.hidden = warnings.length === 0;
+  box.hidden = warnings.length === 0 && !installs.some((i) => i.uninstall);
   if (box.hidden) return;
+  box.classList.toggle('warned', warnings.length > 0);
   const inUse = installs.some((i) => i.active);
   const older = installs.some((i) => i.newer);
   box.querySelector('summary').textContent = !inUse
     ? 'A copy exists off PATH'
-    : `${installs.length} copies installed${older ? ' · older copy in use' : ''}`;
+    : installs.length === 1 ? 'Installation' : `${installs.length} copies installed${older ? ' · older copy in use' : ''}`;
   box.open = openCopies.has(provider.id);
   box.addEventListener('toggle', () => (box.open ? openCopies.add(provider.id) : openCopies.delete(provider.id)));
   const line = (className, ...content) => {
@@ -596,14 +597,25 @@ function renderCopies(box, provider) {
     return item;
   }), ...installs.map((install) => {
     const item = document.createElement('li');
-    const name = [CHANNEL_LABELS[install.channel] || install.channel, install.version && `v${install.version}`, install.active ? 'in use' : 'not in use'];
-    item.append(line('copy-name', name.filter(Boolean).join(' · ')), line('copy-path', install.path));
-    if (install.removeCommand) {
-      const code = document.createElement('code');
-      code.textContent = install.removeCommand;
-      item.append(line('copy-remove', 'To remove it: ', code));
+    const channel = CHANNEL_LABELS[install.channel] || install.channel;
+    const name = [channel, install.version && `v${install.version}`, installs.length > 1 && (install.active ? 'in use' : 'not in use')];
+    const head = line('copy-head', line('copy-name', name.filter(Boolean).join(' · ')));
+    const where = line('copy-path', install.displayPath);
+    where.title = install.path;
+    item.append(head, where);
+    if (install.uninstall) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'btn danger copy-uninstall';
+      button.textContent = 'Uninstall';
+      button.setAttribute('aria-label', `Uninstall the ${channel} copy of ${provider.tool} at ${install.displayPath}`);
+      button.title = install.uninstall.command
+        ? [`Runs ${install.uninstall.command}`, ...install.uninstall.remove.map((p) => `then deletes ${p}`)].join('\n')
+        : ['Deletes', ...install.uninstall.remove].join('\n');
+      button.addEventListener('click', () => uninstallCopy(provider, card, install));
+      head.append(button);
     } else {
-      item.append(line('copy-remove', 'No removal command is known for this copy.'));
+      item.append(line('copy-remove', 'Remove this copy the way you installed it.'));
     }
     return item;
   }));
@@ -1643,9 +1655,10 @@ function installNote(provider) {
   const last = provider.lastInstall;
   if (!last) return '';
   if (last.outcome === 'failed') {
-    const what = last.kind === 'install' ? 'Install' : 'Update';
+    const what = { install: 'Install', uninstall: 'Uninstall' }[last.kind] || 'Update';
     return last.exitCode === null ? `${what} failed` : `${what} failed (exit ${last.exitCode})`;
   }
+  if (last.kind === 'uninstall') return last.outcome === 'remaining' ? 'Uninstalled copy is still present' : '';
   if (last.verification === 'failed') return `Installation completed, but ${provider.tool} verification failed`;
   if (last.outcome === 'missing') return 'Installed, but not found on PATH';
   if (last.outcome === 'unchanged') return 'No version change after update';
@@ -1671,10 +1684,20 @@ function providerState(provider) {
   return parts.join(' · ');
 }
 
-async function installProvider(provider, card, { force = false } = {}) {
+function uninstallCopy(provider, card, install) {
+  const what = install.uninstall.command
+    ? [`Runs: ${install.uninstall.command}`, ...install.uninstall.remove.map((p) => `Then deletes: ${p}`)]
+    : install.uninstall.remove.map((p) => `Deletes: ${p}`);
+  if (!confirm([`Uninstall ${provider.tool} from ${install.displayPath}?`, '', ...what, '', 'Your sign-in, settings and history are kept.'].join('\n'))) return;
+  return installProvider(provider, card, { path: install.path });
+}
+
+async function installProvider(provider, card, { force = false, path = null } = {}) {
   card.classList.add('busy');
   try {
-    const { session } = await api('POST', `/providers/${provider.id}/install`, { force });
+    const { session } = path
+      ? await api('POST', `/providers/${provider.id}/uninstall`, { path, force })
+      : await api('POST', `/providers/${provider.id}/install`, { force });
     upsertSession(session);
     openPanel(session.id);
   } catch (err) {
@@ -1683,8 +1706,9 @@ async function installProvider(provider, card, { force = false } = {}) {
       card.classList.remove('busy');
       const n = err.running;
       const what = `${n} ${provider.tool} session${n === 1 ? ' is' : 's are'} running`;
-      if (confirm(`${what}. Updating ${provider.tool} while it runs can break ${n === 1 ? 'that session' : 'those sessions'}. Update anyway?`)) {
-        return installProvider(provider, card, { force: true });
+      const [doing, verb] = path ? ['Removing', 'Uninstall'] : ['Updating', 'Update'];
+      if (confirm(`${what}. ${doing} ${provider.tool} while it runs can break ${n === 1 ? 'that session' : 'those sessions'}. ${verb} anyway?`)) {
+        return installProvider(provider, card, { force: true, path });
       }
       return;
     }
