@@ -225,9 +225,9 @@ def main():
     empty = source("ui/empty-state", args.masks, solid_below=0.55)
     encode(shrink(empty.crop(empty.getbbox()), 420), WEB / "ui" / "empty-state", avif=60)
     # The backgrounds are upscaled 2x (3840x2176) so ultrawide screens stay sharp.
-    encode(Image.open(PACK / "backgrounds" / "page.png").convert("RGB"), WEB / "page", avif=50, webp=70)
+    encode(Image.open(PACK / "backgrounds" / "page.png").convert("RGB"), WEB / "page", avif=62, webp=80)
     light = Image.open(PACK / "backgrounds" / "page-light.png").convert("RGB")
-    encode(Image.blend(light, Image.new("RGB", light.size, (246, 240, 228)), 0.28), WEB / "page-light", avif=50, webp=70)
+    encode(Image.blend(light, Image.new("RGB", light.size, (246, 240, 228)), 0.28), WEB / "page-light", avif=62, webp=80)
 
     write("ui/level.svg", LEVEL)
     write("ui/lock.svg", LOCK)
