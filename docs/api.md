@@ -115,11 +115,15 @@ installed shells, each `{ id, label, path, multiplexer }`, and `defaultShell` is
 the one a session runs unless `POST /sessions` names another in `shell`.
 Omit `shell` or send `null` to use the default. Provider `args` apply only to
 the default shell; request `args` apply to whichever shell is selected.
-`multiplexer` is true for tmux and herdr, listed after the shells on macOS
-and Linux when installed and never the default. A session in one runs the
-multiplexer's client: stopping or removing it leaves the multiplexer
-running its session. Its request `args` are added to the multiplexer's
-command; for tmux, that is the command its new session runs.
+`multiplexer` is true for tmux 3.2 or later on macOS and Linux and for
+herdr, listed after the shells when installed and never the default. A
+session in one runs the multiplexer's client: stopping or removing it leaves
+the multiplexer running its session, and `POST /sessions/:id/reattach`
+attaches it again. A tmux session gets a tmux session of its own, made with
+the session's `AGENT_GUILD_` variables and PATH, so what runs there reports
+to it as from a shell; its request `args` are that tmux session's command.
+A herdr session's agents are the ones herdr reports in its panes; its
+request `args` are added to `herdr`.
 For a tool whose agent reporting has to be turned on (`reporting` is `antigravity`),
 `reportingEnabled` says whether it is.
 `usageUrl`, `billingUrl` and `cloudUrl` are `https://` links to the vendor's
@@ -215,6 +219,7 @@ that has never run lists no sessions and no error.
   "activity": "active",
   "lastOutputAt": "2026-09-30T03:12:01.120Z",
   "createdAt": "2026-09-30T03:10:44.001Z",
+  "startedAt": "2026-09-30T03:10:44.001Z",
   "exitedAt": null,
   "cols": 120,
   "rows": 32,
@@ -248,13 +253,19 @@ that has never run lists no sessions and no error.
 * `clone` is `{ repo, path, accountId }` for a clone session: the
   repository as owner/name, the folder it is cloned into and the GitHub
   account id. Null otherwise.
-* `multiplexer` is `{ label, attach }` for a Shell session started in tmux
-  or herdr: the multiplexer's name and the command that reattaches its
-  session from a terminal, such as `tmux attach -t guild-3f9a2c`. Null
-  otherwise. Stopping or removing the session ends only the multiplexer's
-  client, so its `exitCode` says nothing about the session inside. The
-  manager gives the multiplexer none of the `AGENT_GUILD_` variables, since
-  its server outlives the session and passes its environment on.
+* `multiplexer` is `{ label, attach, reattachable }` for a Shell session in
+  tmux or herdr: the multiplexer's name, the command that reattaches its
+  session from a terminal, such as `tmux attach -t guild-3f9a2c`, and
+  whether the exited session can be reattached because the multiplexer
+  still has its session. Null otherwise. Stopping or removing the session
+  ends only the multiplexer's client, so its `exitCode` says nothing about
+  the session inside. The client gets none of the `AGENT_GUILD_` variables:
+  the multiplexer's server outlives it and passes its environment on to
+  every session it starts later.
+* `startedAt` is when the session's current process started: `createdAt`,
+  or later once a tmux or herdr session is reattached. A session update with
+  a `startedAt` no later than an `exitedAt` already seen comes from before
+  that exit.
 * `account` is the provider account the tool runs under, or null for an
   install or upgrade session.
 * `model` is the main model the tool is using, or null while unknown.
@@ -374,7 +385,10 @@ Claude Code sub-agent. See [agent-reporting.md](agent-reporting.md).
 ```
 
 `status` is one of `working`, `waiting`, `idle` or `done`. An agent reported
-as `done` stays visible for about 15 seconds and is then removed. A session
+as `done` stays visible for about 15 seconds and is then removed. `source`
+is `api` for a report over HTTP, `terminal` for one written to the terminal,
+and `herdr` for an agent in a herdr session's panes, whose status follows
+herdr: working, blocked as `waiting`, anything else `idle`. A session
 holds at most 64 agents; a new one displaces the done agent that has
 lingered longest. All agents are cleared when their session exits.
 
@@ -410,6 +424,7 @@ All paths are under `/api/v1`.
 | GET | `/sessions/:id` | | `{ session }` |
 | PATCH | `/sessions/:id` | `{ name }` | `{ session }`. `name` must be a non-empty string; it is trimmed to 80 characters. |
 | POST | `/sessions/:id/stop` | | Ends the process. The session stays listed as exited. |
+| POST | `/sessions/:id/reattach` | | `{ session }`: runs an exited tmux or herdr session's multiplexer client again, keeping the session's id, report token and screen. 400 `not_reattachable` for any other session, 409 `session_running` while it runs, 409 `multiplexer_session_gone` once the multiplexer no longer has its session. |
 | DELETE | `/sessions/:id` | | Ends the process if needed and removes the session. |
 | POST | `/sessions/:id/agents` | Agent report | `{ agent }`, or `{ agent: null }` after a removal, for a `done` report about an agent that was never reported, or for `{ finishForeground: true }`, which ends the commands of the turn that just ended. |
 | POST | `/sessions/:id/model` | `{ model, displayName? }` | `{ model }`. Sets the session's model with source `report`. |

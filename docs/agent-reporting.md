@@ -19,6 +19,11 @@ Every terminal the manager starts has these environment variables:
 | `AGENT_GUILD_REPORT_TOKEN` | A token that can only report agents for this session |
 | `AGENT_GUILD_NODE` | The manager's Node.js binary, which the launcher below runs the reporter with |
 
+A Shell card in tmux gives these to its own tmux session, not to the tmux
+server, so whatever runs in that session reports to the card as from a
+shell, and no other tmux session sees the token. A herdr card has none: it
+shows the agents herdr itself sees in its panes instead.
+
 There are three ways to report.
 
 ## 1. The `agent-guild-report` command

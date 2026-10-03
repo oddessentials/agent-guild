@@ -65,11 +65,16 @@ computer and remembers your choice in this browser. On Windows it defaults
 to PowerShell 7 when installed, then Windows PowerShell; Git Bash and Command
 Prompt are also offered when found. On macOS and Linux it follows your login
 shell. Pick the default chip to clear a saved choice and follow the default
-again. The choice applies to new sessions. On macOS and Linux the card also
-offers tmux and herdr when installed: a new session then starts inside the
-multiplexer, with your own configuration. Stopping or closing that session
-only detaches it, as closing a terminal window would, so it keeps running
-there, and the card names the command that reattaches it.
+again. The choice applies to new sessions.
+
+**Work inside tmux or herdr.** When installed, the Shell card also offers
+tmux (3.2 or later, on macOS and Linux) and herdr. A tmux card runs a tmux
+session of its own, with your own configuration, and tools in it report to
+the card as they would in a shell. A herdr card opens your herdr session and
+shows the agents herdr sees in its panes, working, blocked or idle. Stopping
+or closing either card only detaches it, as closing a terminal window would:
+the session keeps running, **Reattach** on the card brings it back, and the
+card names the command that reattaches it from a terminal.
 
 <img src="docs/images/terminal.webp" alt="An open Claude Code session with its helper agents shown in the header">
 
@@ -243,9 +248,9 @@ npm test
 ## Current limits
 
 * Sessions end when the manager stops or the computer restarts. A Shell
-  session started in tmux or herdr keeps running in it when the manager
-  stops.
-* tmux and herdr are offered on macOS and Linux only.
+  session in tmux or herdr keeps running in it when the manager stops; its
+  card does not come back, so reattach it from a terminal with the command
+  the card named.
 * Antigravity CLI and Grok Build have no usage meter.
 * Antigravity CLI has one account per computer user: it keeps its sign-in in
   the system keychain and has no setting for another home folder.
