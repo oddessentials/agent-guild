@@ -7,8 +7,8 @@ import path from 'node:path';
 const args = process.argv.slice(2);
 const versionAt = args.indexOf('--version');
 const expectedVersion = versionAt === -1 ? null : args[versionAt + 1];
-const prefixArg = args.find((arg, i) => !arg.startsWith('--') && i !== versionAt + 1);
-if (!prefixArg) {
+const prefixArg = args.find((arg, i) => !arg.startsWith('--') && (versionAt === -1 || i !== versionAt + 1));
+if (!prefixArg || (versionAt !== -1 && !expectedVersion)) {
   console.error('Usage: node tests/package/smoke.mjs <global prefix> [--version X.Y.Z]');
   process.exit(2);
 }
