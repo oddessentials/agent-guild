@@ -5,6 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { commandUsage } from '../src/manager/usage.mjs';
@@ -15,6 +16,20 @@ import { OSC_AGENT_CODE, OSC_AGENT_PREFIX } from '../src/manager/session.mjs';
 const capture = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'docs', 'capture');
 const demo = (name) => path.join(capture, name);
 const node = process.execPath;
+
+test('every element the capture clicks is still in the page', () => {
+  const script = fs.readFileSync(demo('capture.mjs'), 'utf8');
+  const page = fs.readFileSync(path.join(capture, '..', '..', 'web', 'index.html'), 'utf8');
+  const selectors = [...script.matchAll(/\bclick\('([^']+)'\)/g)].map((m) => m[1]);
+  assert.ok(selectors.length > 5, 'the capture clicks through the page');
+  for (const selector of selectors) {
+    for (const [, id] of selector.matchAll(/#([\w-]+)/g)) assert.ok(page.includes(`id="${id}"`), `${selector}: #${id}`);
+    for (const [, name] of selector.matchAll(/\.([\w-]+)/g)) assert.match(page, new RegExp(`class="(?:[^"]* )?${name}(?: [^"]*)?"`), `${selector}: .${name}`);
+    for (const [, attr, value] of selector.matchAll(/\[([\w-]+)="([^"]*)"\]/g)) {
+      if (!attr.startsWith('data-')) assert.ok(page.includes(`${attr}="${value}"`), `${selector}: [${attr}="${value}"]`);
+    }
+  }
+});
 
 test('demo usage reports a plan and windows per provider and account', async () => {
   const personal = await commandUsage({ command: node, args: [demo('demo-usage.mjs'), 'anthropic'] }, process.env);

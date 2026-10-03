@@ -1470,9 +1470,11 @@ test('a Codex CLI command that asked permission stays drawn, and one refused lea
 test('more shell commands than the card draws are still all counted', async () => {
   const tool = await startTool('anthropic');
   await waitFor(reportingIs(tool.session.id, 'active'), { label: 'hooks', timeout: 15000 });
-  for (let i = 0; i < 20; i++) tool.client.input(`shell many${i} 4000 fg build part ${i}`);
+  // The tool starts each command after the last one's hook returns, so all twenty
+  // run at once only while twenty hooks take less than one command's 10 s.
+  for (let i = 0; i < 20; i++) tool.client.input(`shell many${i} 10000 fg build part ${i}`);
   await waitFor(shellCountIs(tool.session.id, 20), { label: 'twenty commands', timeout: 15000 });
-  await waitFor(shellCountIs(tool.session.id, 0), { label: 'all ended', timeout: 15000 });
+  await waitFor(shellCountIs(tool.session.id, 0), { label: 'all ended', timeout: 30000 });
   await tool.client.close();
   await call('DELETE', `/sessions/${tool.session.id}`);
 });

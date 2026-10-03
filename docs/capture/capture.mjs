@@ -327,10 +327,10 @@ async function takeShots(send, { url, token, sessions }) {
 
   // The overviews stop above the news, whose headlines change every day.
   await shot('overview-dark', { fullPage: true, stop: 'section.news' });
-  await click('#theme-toggle');
+  await click('#appearance-menu input[name="theme"][value="light"]');
   await sleep(2000);
   await shot('overview-light', { fullPage: true, stop: 'section.news' });
-  await click('#theme-toggle');
+  await click('#appearance-menu input[name="theme"][value="dark"]');
   await sleep(2000);
 
   await click('.provider[data-id="anthropic"] .model-stats > :first-child');
