@@ -3,6 +3,9 @@ node_modules/
 .DS_Store
 Thumbs.db
 tmp/
+.cache/
+__pycache__/
+*.blend1
 
 concept-art/beta-screens-poc/
 concept-art/default-art-design-v1/*

@@ -182,6 +182,7 @@ function normalize(raw, platform, warnings) {
     docs: String(merged.docs || ''),
     usageUrl: httpsUrl(merged.usageUrl, 'usageUrl', merged.id, warnings),
     billingUrl: httpsUrl(merged.billingUrl, 'billingUrl', merged.id, warnings),
+    cloudUrl: httpsUrl(merged.cloudUrl, 'cloudUrl', merged.id, warnings),
     enabled: merged.enabled !== false,
   };
 }
@@ -637,6 +638,7 @@ export class ProviderRegistry extends EventEmitter {
       docs: provider.docs,
       usageUrl: provider.usageUrl,
       billingUrl: provider.billingUrl,
+      cloudUrl: provider.cloudUrl,
       available: Boolean(resolvedPath),
       resolvedPath,
     };

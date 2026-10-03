@@ -69,6 +69,7 @@ by `GET /api/v1/info`.
 | `color`, `monogram`, `icon` | Icon appearance. `icon` is a URL path; you can also drop `<id>.svg` into `web/icons/`. |
 | `install`, `docs` | Help shown when the tool is not installed. |
 | `usageUrl`, `billingUrl` | `https://` links to the vendor's usage and billing pages, shown on the card. The defaults point at the subscription pages; set your API console instead, or `null` to hide a link. |
+| `cloudUrl` | `https://` link to the vendor's web app, shown as a cloud icon on the card. `null` hides it. |
 
 ## Accounts
 
