@@ -12,6 +12,18 @@
     provider('xai', 'xAI', 'Grok Build', '#111827', 'X', false),
     provider('shell', 'Local', 'Shell', '#64748b', '>', false),
   ];
+  var home = '/Users/demo';
+  var labels = { npm: 'npm', native: 'native', brew: 'Homebrew' };
+  var copies = {
+    anthropic: [
+      copy('native', home + '/.local/bin/claude', true, null, [home + '/.local/bin/claude', home + '/.local/share/claude']),
+      copy('npm', home + '/.npm-global/bin/claude', false, home + '/.npm-global/bin/npm uninstall -g --prefix ' + home + '/.npm-global @anthropic-ai/claude-code', []),
+    ],
+    openai: [copy('brew', '/opt/homebrew/bin/codex', true, '/opt/homebrew/bin/brew uninstall --cask codex', [])],
+    google: [copy('native', home + '/.local/bin/agy', true, null, [home + '/.local/bin/agy'])],
+    xai: [copy('native', home + '/.grok/bin/grok', true, null, [home + '/.grok/bin', home + '/.grok/downloads', home + '/.grok/completions'])],
+  };
+  providers.forEach(syncInstalls);
 
   function provider(id, vendor, tool, color, monogram, metered) {
     return {
@@ -26,6 +38,39 @@
       modelPattern: null, install: null, docs: null, usageUrl: null, billingUrl: null, cloudUrl: null,
       available: true, resolvedPath: '/demo/bin/' + id,
     };
+  }
+
+  function shown(file) { return file.indexOf(home + '/') === 0 ? '~' + file.slice(home.length) : file; }
+
+  function copy(channel, file, active, command, remove) {
+    return {
+      path: file, displayPath: shown(file), channel: channel, version: '1.0.0', versionStatus: 'ok', active: active, onPath: true,
+      uninstall: { command: command, remove: remove.map(shown) }, remove: remove,
+    };
+  }
+
+  // Mirrors the manager: the copy list, its warning, and whether the tool is still found.
+  function syncInstalls(p) {
+    var list = copies[p.id] || [];
+    if (list.length > 0 && !list.some(function (c) { return c.active; })) list[0].active = true;
+    var active = list.find(function (c) { return c.active; });
+    p.installs = list.map(function (c) {
+      return { path: c.path, displayPath: c.displayPath, channel: c.channel, version: c.version, versionStatus: c.versionStatus, active: c.active, onPath: c.onPath, uninstall: c.uninstall };
+    });
+    p.warnings = list.length > 1 ? [list.length + ' copies of ' + p.tool + ' are installed. The one in use is ' + labels[active.channel] + ' v' + active.version + ' at ' + active.displayPath + '.'] : [];
+    if (p.id === 'shell') return;
+    p.available = Boolean(active);
+    p.installChannel = active ? active.channel : null;
+    p.resolvedPath = active ? active.path : null;
+    p.installedVersion = active ? active.version : null;
+    p.versionStatus = active ? 'ok' : null;
+  }
+
+  function uninstallTranscript(c) {
+    var lines = c.uninstall.command ? ['> ' + c.uninstall.command, 'removed 1 package in 1s'] : [];
+    c.remove.forEach(function (file) { lines.push('Removed ' + file); });
+    return '\u001b[1;36mAgent Guild interactive demo\u001b[0m\r\n\r\n' + lines.join('\r\n') +
+      '\r\n\r\n\u001b[2m[demo only — nothing was removed from your computer]\u001b[0m\r\n';
   }
 
   function session(id, providerId, name, folder, model, agents) {
@@ -50,6 +95,7 @@
     session('5he11004'.replace('h', 'b'), 'shell', 'Storefront dev server', 'storefront', null, []),
   ];
   var eventSockets = [];
+  var transcripts = {};
 
   function clone(value) { return JSON.parse(JSON.stringify(value)); }
   function json(body, status) {
@@ -88,16 +134,49 @@
       sessions.push(made); announce({ type: 'session.created', session: clone(made) });
       return json({ session: clone(made) }, 201);
     }
+    var removal = route.match(/^\/providers\/([^/]+)\/uninstall$/);
+    if (removal && method === 'POST') return uninstall(removal[1], body);
     var match = route.match(/^\/sessions\/([a-f0-9]+)(?:\/(stop))?$/);
     if (match) {
       var at = sessions.findIndex(function (item) { return item.id === match[1]; });
       if (at < 0) return error('demo session not found', 'not_found', 404);
       if (method === 'PATCH') { sessions[at].name = String(body.name || sessions[at].name); announce({ type: 'session.updated', session: clone(sessions[at]) }); return json({ session: clone(sessions[at]) }); }
       if (method === 'POST' && match[2] === 'stop') { sessions[at].status = 'exited'; sessions[at].activity = 'quiet'; sessions[at].exitedAt = new Date().toISOString(); announce({ type: 'session.updated', session: clone(sessions[at]) }); return json({ session: clone(sessions[at]) }); }
-      if (method === 'DELETE') { sessions.splice(at, 1); announce({ type: 'session.removed', id: match[1] }); return json({}); }
+      if (method === 'DELETE') { sessions.splice(at, 1); announce({ type: 'session.removed', sessionId: match[1] }); return json({}); }
     }
     return error('This action is unavailable in the simulated demo.', 'demo_only', 409);
   };
+
+  function uninstall(providerId, body) {
+    var p = providers.find(function (item) { return item.id === providerId; });
+    if (!p) return error('unknown provider "' + providerId + '"', 'unknown_provider', 404);
+    if (typeof body.path !== 'string' || !body.path) return error('path must name the copy to remove', 'bad_request');
+    var list = copies[p.id] || [];
+    var c = list.find(function (item) { return item.path === body.path; });
+    if (!c) return error(p.tool + ' has no copy at ' + body.path, 'unknown_copy', 404);
+    var mine = function (s) { return s.status === 'running' && s.provider.id === p.id; };
+    if (sessions.some(function (s) { return mine(s) && s.task === 'install'; })) {
+      return error(p.tool + ' is already being installed, updated or removed', 'install_in_progress', 409);
+    }
+    var running = sessions.filter(function (s) { return mine(s) && s.task === null; }).length;
+    if (running > 0 && body.force !== true) {
+      return json({ error: { message: running + ' ' + p.tool + ' session(s) are running; removing the tool now may break them', code: 'provider_in_use', running: running } }, 409);
+    }
+    var id = Math.random().toString(16).slice(2, 10).padEnd(8, '0');
+    var made = session(id, p.id, 'Uninstall ' + p.tool + ' (' + labels[c.channel] + ')', 'demo', null, []);
+    made.cwd = home; made.task = 'install'; made.reporting = null; made.toolSessionId = null;
+    transcripts[id] = uninstallTranscript(c);
+    sessions.push(made); announce({ type: 'session.created', session: clone(made) });
+    setTimeout(function () {
+      made.status = 'exited'; made.exitCode = 0; made.activity = 'quiet'; made.exitedAt = new Date().toISOString();
+      list.splice(list.indexOf(c), 1);
+      syncInstalls(p);
+      p.lastInstall = { kind: 'uninstall', outcome: 'removed', exitCode: 0, at: Date.now() };
+      announce({ type: 'session.updated', session: clone(made) });
+      announce({ type: 'providers.updated', providers: clone(providers) });
+    }, 1500);
+    return json({ session: clone(made) }, 201);
+  }
 
   function DemoWebSocket(url) {
     this.url = String(url); this.readyState = DemoWebSocket.CONNECTING; this.listeners = {};
@@ -111,7 +190,7 @@
         var match = self.url.match(/\/sessions\/([a-f0-9]+)\/terminal/);
         var current = match && sessions.find(function (item) { return item.id === match[1]; });
         if (!current) return self.close(4404, 'session not found');
-        var text = '\u001b[1;36mAgent Guild interactive demo\u001b[0m\r\n\r\n' +
+        var text = transcripts[current.id] || '\u001b[1;36mAgent Guild interactive demo\u001b[0m\r\n\r\n' +
           '$ ' + current.name + '\r\n' +
           '\u001b[32m✓\u001b[0m Simulated session ready in ' + current.cwd + '\r\n' +
           '\u001b[2mNo command is running; input is echoed locally for demonstration.\u001b[0m\r\n\r\n> ';
