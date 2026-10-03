@@ -56,7 +56,9 @@ own. The cloud icon on each card opens the vendor's web app.
 **Real terminals that outlive the page.** Every session is a full interactive
 terminal: type instructions, answer prompts, watch output. Run as many as you
 like. A local session manager owns them, so you can close or reload the page
-and come back to the same screens.
+and come back to the same screens. Drag a session card by its grip, with a
+mouse or a finger, to put the cards in the order you want; this browser
+remembers it, and new sessions join at the end.
 
 **Pick your shell.** The Shell card offers the shells installed on your
 computer and remembers your choice in this browser. On Windows it defaults

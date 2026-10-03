@@ -12,6 +12,7 @@ const NEWS_FILTER_KEY = 'agentGuild.newsFilter';
 const CHANGELOG_SEEN_KEY = 'agentGuild.changelogSeen';
 const GITHUB_ACCOUNT_KEY = 'agentGuild.githubAccount';
 const CLONE_PARENT_KEY = 'agentGuild.cloneParent';
+const SESSION_ORDER_KEY = 'agentGuild.sessionOrder';
 const RELEASES_URL = 'https://github.com/oddessentials/agent-guild/releases';
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -2585,6 +2586,8 @@ function useFolder(dir) {
 
 const cards = new Map();
 let sessionsShown = false;
+/** Session ids in the order the user arranged the cards, kept in this browser. */
+let sessionOrder = parseOrder(load(SESSION_ORDER_KEY));
 
 const MODEL_SOURCES = { report: 'reported by the tool', screen: 'seen on the tool\'s screen', args: 'from the --model argument' };
 
@@ -2632,6 +2635,7 @@ function buildCard(session) {
     if (id) copyId(id);
   });
   node.querySelector('.model-pill').addEventListener('click', () => openSessionModel(session.id));
+  node.querySelector('.drag-handle').addEventListener('keydown', (e) => moveByKey(e, session.id));
   // Skins name their own keyframes, so the one-shot classes clear on any animation they run.
   node.addEventListener('animationend', (e) => {
     if (e.target.classList.contains('level-up')) e.target.classList.remove('level-up');
@@ -2673,6 +2677,7 @@ function updateCard(node, s) {
   badge.textContent = level;
   badge.title = `Level ${level}`;
   node.querySelector('.name').textContent = s.name;
+  node.querySelector('.drag-handle').setAttribute('aria-label', `Move ${s.name}`);
   const id = toolSessionId(s);
   const resumed = s.resume && s.resume !== id ? ` · resumed ${s.resume}` : s.resume ? ' · resumed' : '';
   node.querySelector('.meta-text').textContent = [s.provider.vendor, s.provider.tool, accountLabel(s), `started ${relativeTime(s.createdAt)}${resumed}`].filter(Boolean).join(' · ');
@@ -2710,9 +2715,12 @@ function updateCard(node, s) {
 
 function renderSessions() {
   const grid = $('sessions');
-  const sessions = [...state.sessions.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const sessions = orderSessions(state.sessions.values(), sessionOrder);
   for (const [id, node] of cards) {
-    if (!state.sessions.has(id)) { node.remove(); cards.delete(id); }
+    if (state.sessions.has(id)) continue;
+    if (drag?.id === id) releaseDrag();
+    node.remove();
+    cards.delete(id);
   }
   sessions.forEach((s, index) => {
     let node = cards.get(s.id);
@@ -2722,6 +2730,8 @@ function renderSessions() {
       if (sessionsShown) node.classList.add('enter');
     }
     updateCard(node, s);
+    // With one card there is nothing to reorder.
+    node.querySelector('.drag-handle').hidden = sessions.length < 2;
     // Move a card only when it is out of place: re-inserting a node drops
     // keyboard focus and can swallow a click that is in progress.
     if (grid.children[index] !== node) grid.insertBefore(node, grid.children[index] || null);
@@ -2780,6 +2790,231 @@ async function renameSession(id) {
   const name = prompt('Session name', s.name);
   if (name === null || !name.trim()) return;
   try { upsertSession((await api('PATCH', `/sessions/${id}`, { name })).session); } catch (err) { toast(err.message); }
+}
+
+// ---- reordering session cards ---------------------------------------------
+
+/** The saved card order: session ids. Anything unreadable counts as no order. */
+function parseOrder(raw) {
+  try {
+    const ids = JSON.parse(raw);
+    return Array.isArray(ids) ? ids.filter((id) => typeof id === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Sessions in the user's order. Any the order does not name, such as new ones, follow oldest first. */
+function orderSessions(sessions, order) {
+  const rank = new Map(order.map((id, index) => [id, index]));
+  const at = (s) => rank.get(s.id) ?? Infinity;
+  return [...sessions].sort((a, b) => (at(a) - at(b)) || a.createdAt.localeCompare(b.createdAt));
+}
+
+/** The ids with one of them moved to a new index. */
+function moveId(ids, id, index) {
+  const rest = ids.filter((other) => other !== id);
+  rest.splice(Math.max(0, Math.min(index, rest.length)), 0, id);
+  return rest;
+}
+
+const shownIds = () => orderSessions(state.sessions.values(), sessionOrder).map((s) => s.id);
+const sameOrder = (a, b) => a.length === b.length && a.every((id, i) => id === b[i]);
+const REORDER_EASE = 'cubic-bezier(0.2, 0.8, 0.2, 1)';
+/** How close to the top or bottom of the window a carried card scrolls the page. */
+const SCROLL_EDGE = 72;
+
+/** The card being carried, or null. */
+let drag = null;
+
+function saveOrder() {
+  sessionOrder = shownIds();
+  save(SESSION_ORDER_KEY, JSON.stringify(sessionOrder));
+}
+
+function announceOrder(id) {
+  const ids = shownIds();
+  const s = state.sessions.get(id);
+  if (s) $('reorder-status').textContent = `${s.name} moved to position ${ids.indexOf(id) + 1} of ${ids.length}.`;
+}
+
+/** Plays a card's move from where it was drawn to where it now sits. Returns the animation, if any. */
+function slideFrom(node, was) {
+  for (const animation of node.getAnimations()) if (animation.id === 'reorder') animation.cancel();
+  if (reducedMotion.matches) return null;
+  const now = node.getBoundingClientRect();
+  const dx = was.left + was.width / 2 - (now.left + now.width / 2);
+  const dy = was.top + was.height / 2 - (now.top + now.height / 2);
+  if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return null;
+  const slide = node.animate([{ translate: `${dx}px ${dy}px` }, { translate: '0 0' }], { duration: 260, easing: REORDER_EASE });
+  slide.id = 'reorder';
+  return slide;
+}
+
+/** Lays the cards out in a new order, sliding each one from its old place. */
+function arrange(order) {
+  const focused = $('sessions').contains(document.activeElement) ? document.activeElement : null;
+  const was = new Map([...cards.values()].map((node) => [node, node.getBoundingClientRect()]));
+  sessionOrder = order;
+  renderSessions();
+  // Moving a card can take keyboard focus with it, as when another tab reorders the cards.
+  if (focused?.isConnected && document.activeElement !== focused) focused.focus({ preventScroll: true });
+  for (const [node, rect] of was) if (node !== drag?.node) slideFrom(node, rect);
+}
+
+function moveByKey(e, id) {
+  if (drag || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+  const step = { ArrowUp: -1, ArrowLeft: -1, ArrowDown: 1, ArrowRight: 1 }[e.key];
+  if (!step && e.key !== 'Home' && e.key !== 'End') return;
+  e.preventDefault();
+  const ids = shownIds();
+  const from = ids.indexOf(id);
+  const to = e.key === 'Home' ? 0 : e.key === 'End' ? ids.length - 1 : from + step;
+  if (from === -1 || to < 0 || to >= ids.length || to === from) return;
+  arrange(moveId(ids, id, to));
+  saveOrder();
+  announceOrder(id);
+}
+
+/** A card's place in the grid, ignoring the transforms that animate it. */
+function layoutBox(node) {
+  return { left: node.offsetLeft, top: node.offsetTop, right: node.offsetLeft + node.offsetWidth, bottom: node.offsetTop + node.offsetHeight };
+}
+
+function startDrag(e, handle) {
+  const node = handle.closest('.session-card');
+  const grid = $('sessions');
+  if (drag || !node || !e.isPrimary || (e.pointerType === 'mouse' && e.button !== 0)) return;
+  e.preventDefault();
+  // Where on the card, as drawn, it was picked up: it may still be sliding into place.
+  const seen = node.getBoundingClientRect();
+  drag = {
+    id: node.dataset.id, node, grid, pointerId: e.pointerId,
+    before: sessionOrder, start: shownIds(),
+    grabX: e.clientX - seen.left, grabY: e.clientY - seen.top,
+    x: e.clientX, y: e.clientY,
+    // The card just stepped over; it is not a target again until the pointer leaves it.
+    passed: null, frame: 0,
+  };
+  // The grid is never moved, so it keeps the pointer while the cards inside it are.
+  try { grid.setPointerCapture(e.pointerId); } catch { /* the pointer is already gone */ }
+  // A card picked up again while it settles would otherwise be held in place by that animation.
+  for (const animation of node.getAnimations()) if (animation.id === 'reorder') animation.cancel();
+  node.classList.remove('settling');
+  // The card lifts around the point it was picked up by, which stays under the pointer.
+  node.style.transformOrigin = `${drag.grabX}px ${drag.grabY}px`;
+  node.classList.add('dragging');
+  follow();
+  grid.getBoundingClientRect(); // the outline appears where the card is, rather than gliding in
+  grid.classList.add('reordering');
+  document.documentElement.classList.add('reordering');
+  if (e.pointerType !== 'mouse' && navigator.userActivation?.hasBeenActive) navigator.vibrate?.(8);
+}
+
+/** Puts the carried card under the pointer and the outline where it will land. */
+function follow() {
+  const { node, grid } = drag;
+  const origin = grid.getBoundingClientRect();
+  const box = layoutBox(node);
+  node.style.translate = `${drag.x - drag.grabX - origin.left - box.left}px ${drag.y - drag.grabY - origin.top - box.top}px`;
+  grid.style.setProperty('--slot-x', `${box.left}px`);
+  grid.style.setProperty('--slot-y', `${box.top}px`);
+  grid.style.setProperty('--slot-w', `${box.right - box.left}px`);
+  grid.style.setProperty('--slot-h', `${box.bottom - box.top}px`);
+}
+
+/** Moves the carried card to the place the pointer is over, if that is another card's. */
+function retarget() {
+  const { node, grid } = drag;
+  const origin = grid.getBoundingClientRect();
+  // The middle of the carried card, not the grip at its corner, picks the place, the same in every direction.
+  const x = drag.x - drag.grabX - origin.left + node.offsetWidth / 2;
+  const y = drag.y - drag.grabY - origin.top + node.offsetHeight / 2;
+  const over = (n) => {
+    const box = layoutBox(n);
+    return x >= box.left && x < box.right && y >= box.top && y < box.bottom;
+  };
+  if (drag.passed && !(drag.passed.isConnected && over(drag.passed))) drag.passed = null;
+  const shown = [...grid.children];
+  let target = shown.find((n) => n !== node && n !== drag.passed && over(n));
+  // Past the last card, beside it or below it, is the last place.
+  const last = shown.at(-1);
+  if (!target && last !== node && last !== drag.passed) {
+    const box = layoutBox(last);
+    if (y >= box.bottom || (y >= box.top && x >= box.right)) target = last;
+  }
+  if (!target) return;
+  const next = moveId(shownIds(), drag.id, shown.indexOf(target));
+  if (sameOrder(next, shownIds())) return;
+  arrange(next);
+  drag.passed = target;
+}
+
+/** Scrolls the page while the pointer is near its top or bottom edge. Returns whether it moved. */
+function autoScroll() {
+  const top = topbar.getBoundingClientRect().bottom;
+  const bottom = window.innerHeight;
+  let pull = 0;
+  if (drag.y < top + SCROLL_EDGE) pull = -(top + SCROLL_EDGE - drag.y) / SCROLL_EDGE;
+  else if (drag.y > bottom - SCROLL_EDGE) pull = (drag.y - bottom + SCROLL_EDGE) / SCROLL_EDGE;
+  const step = Math.round(Math.max(-1, Math.min(1, pull)) * 18);
+  if (!step) return false;
+  const was = window.scrollY;
+  window.scrollBy(0, step);
+  return window.scrollY !== was;
+}
+
+function scheduleDragFrame() {
+  if (drag && !drag.frame) drag.frame = requestAnimationFrame(dragFrame);
+}
+
+function dragFrame() {
+  drag.frame = 0;
+  const scrolled = autoScroll();
+  retarget();
+  if (!drag) return;
+  follow();
+  if (scrolled) drag.frame = requestAnimationFrame(dragFrame);
+}
+
+/** Lets go of the carried card without touching the order, as when its session is removed. */
+function releaseDrag() {
+  if (!drag) return null;
+  const ended = drag;
+  drag = null;
+  cancelAnimationFrame(ended.frame);
+  // The grid keeps the pointer until the button comes up, which ends the capture: a drag cancelled with
+  // Escape or by leaving the window must not end in a click that opens the card under the pointer.
+  ended.node.style.translate = '';
+  ended.node.classList.remove('dragging');
+  ended.grid.classList.remove('reordering');
+  document.documentElement.classList.remove('reordering');
+  return ended;
+}
+
+/** Drops the carried card where it is, or with `keep` false puts every card back. */
+function endDrag(keep) {
+  if (!drag) return;
+  const { node } = drag;
+  const was = node.getBoundingClientRect();
+  const ended = releaseDrag();
+  if (!keep) arrange(ended.before);
+  // Compare only the sessions there before and after: one created or removed meanwhile is no move.
+  const now = shownIds().filter((id) => ended.start.includes(id));
+  const moved = !sameOrder(now, ended.start.filter((id) => now.includes(id)));
+  if (keep && moved) {
+    saveOrder();
+    announceOrder(ended.id);
+  }
+  node.classList.add('settling');
+  const settle = slideFrom(node, was);
+  const done = () => {
+    if (node.classList.contains('dragging')) return; // picked up again
+    node.classList.remove('settling');
+    node.style.transformOrigin = '';
+  };
+  if (settle) settle.finished.then(done, done);
+  else done();
 }
 
 // ---- terminal views -------------------------------------------------------
@@ -3392,7 +3627,40 @@ $('changelog-restart').addEventListener('click', () => {
   closeChangelog();
   stopManager({ restart: true });
 });
-addEventListener('storage', (e) => { if (e.key === CHANGELOG_SEEN_KEY) renderVersion(); });
+addEventListener('storage', (e) => {
+  if (e.key === CHANGELOG_SEEN_KEY) renderVersion();
+  // Another tab reordered the cards.
+  else if (e.key === SESSION_ORDER_KEY && !drag) arrange(parseOrder(e.newValue));
+});
+$('sessions').addEventListener('pointerdown', (e) => {
+  const handle = e.target.closest?.('.drag-handle');
+  if (handle) startDrag(e, handle);
+});
+$('sessions').addEventListener('pointermove', (e) => {
+  if (drag?.pointerId !== e.pointerId) return;
+  // A mouse released outside the window sends no pointerup.
+  if (e.pointerType === 'mouse' && !(e.buttons & 1)) return endDrag(true);
+  drag.x = e.clientX;
+  drag.y = e.clientY;
+  scheduleDragFrame();
+});
+$('sessions').addEventListener('pointerup', (e) => { if (drag?.pointerId === e.pointerId) endDrag(true); });
+$('sessions').addEventListener('pointercancel', (e) => { if (drag?.pointerId === e.pointerId) endDrag(false); });
+// The loss from the last drop can arrive after a quick new pickup, which holds the capture again.
+$('sessions').addEventListener('lostpointercapture', (e) => {
+  if (drag?.pointerId === e.pointerId && !drag.grid.hasPointerCapture(e.pointerId)) endDrag(true);
+});
+// A long press on the grip would open the context menu on a touch screen.
+$('sessions').addEventListener('contextmenu', (e) => { if (e.target.closest?.('.drag-handle')) e.preventDefault(); });
+// The page can move under a carried card without the pointer moving.
+addEventListener('scroll', scheduleDragFrame, { passive: true });
+addEventListener('resize', scheduleDragFrame);
+document.addEventListener('keydown', (e) => {
+  if (!drag || e.key !== 'Escape') return;
+  e.preventDefault();
+  endDrag(false);
+});
+addEventListener('blur', () => endDrag(false));
 $('models-more').addEventListener('click', () => {
   const before = $('models-list').childElementCount;
   modelsView.all = true;
