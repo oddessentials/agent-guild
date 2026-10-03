@@ -203,6 +203,7 @@ test('the page wires the notes up and has their controls', () => {
     "$('notes').addEventListener('close', notesClosed);",
     "$('notes-text').addEventListener('input', saveNotes);",
     "addEventListener('storage', notesStored);",
+    "addEventListener('pageshow', refreshNotes);",
     'refreshNotes();',
   ]) assert.ok(app.includes(`\n${line}\n`), line);
 

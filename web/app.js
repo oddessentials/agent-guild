@@ -3837,6 +3837,8 @@ $('notes').addEventListener('click', notesClicked);
 $('notes').addEventListener('close', notesClosed);
 $('notes-text').addEventListener('input', saveNotes);
 addEventListener('storage', notesStored);
+// A page back from the back/forward cache may have missed another tab's notes.
+addEventListener('pageshow', refreshNotes);
 $('news-all').addEventListener('click', openNews);
 $('news-close').addEventListener('click', closeNews);
 $('news-fresh').addEventListener('click', showFreshNews);
