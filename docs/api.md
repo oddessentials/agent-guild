@@ -117,13 +117,17 @@ Omit `shell` or send `null` to use the default. Provider `args` apply only to
 the default shell; request `args` apply to whichever shell is selected.
 `multiplexer` is true for tmux 3.2 or later on macOS and Linux and for
 herdr, listed after the shells when installed and never the default. A
-session in one runs the multiplexer's client: stopping or removing it leaves
-the multiplexer running its session, and `POST /sessions/:id/reattach`
-attaches it again. A tmux session gets a tmux session of its own, made with
-the session's `AGENT_GUILD_` variables and PATH, so what runs there reports
-to it as from a shell; its request `args` are that tmux session's command.
-A herdr session's agents are the ones herdr reports in its panes; its
-request `args` are added to `herdr`.
+session in one runs the multiplexer's client: stopping or removing it, or
+stopping the manager, leaves the multiplexer running its session, and
+`POST /sessions/:id/reattach` attaches it again. Until such a session is
+removed, the manager keeps it in `multiplexers.json` in its data folder,
+report token included; when it starts again it lists each one the
+multiplexer still has as exited, with its own `id`, `name`, `createdAt` and
+report token, ready to reattach. A tmux session gets a tmux session of its
+own, made with the session's `AGENT_GUILD_` variables and PATH, so what
+runs there reports to it as from a shell; its request `args` are that tmux
+session's command. A herdr session's agents are the ones herdr reports in
+its panes; its request `args` are added to `herdr`.
 For a tool whose agent reporting has to be turned on (`reporting` is `antigravity`),
 `reportingEnabled` says whether it is.
 `usageUrl`, `billingUrl` and `cloudUrl` are `https://` links to the vendor's
@@ -431,7 +435,7 @@ All paths are under `/api/v1`.
 | POST | `/sessions/:id/tool-session` | `{ toolSessionId }` | `{ toolSessionId }`. Records the id the tool gave its own session: one printable line of at most 200 characters. 409 once the session has exited. |
 | POST | `/sessions/:id/reporting` | | `{ reporting }`: the tool's hooks announce themselves, which makes `reporting.state` `active`. |
 | POST | `/sessions/:id/shells` | `{ shell, key \| task, match?, agentId?, persist?, endsWithAgent?, tasks? }` | `{ ok }`. `shell` is `start`, `end`, `background` (with the tool's `task` id), `waiting` (a permission request, which hides the command), `asked` (one that ends the command with its turn), `running` (`tasks` lists the background tasks still running; any other ends) or `reset` (every command ends). `key` is the tool's call id. `match` is a hash of the command, which pairs a permission request with it; `persist` keeps a command past the end of its turn, and `endsWithAgent` ends a background one with its sub-agent. |
-| POST | `/shutdown` | `{ force?, restart? }` | `202 { ok, running, restart }`: stops the manager and every session. 409 `sessions_running` (with `running`, the session count) while any session is running, unless `force` is true. From the 202 on, `POST /sessions` and `POST /providers/:id/install` answer 503 `manager_stopping`. Events clients get `manager.stopping` first and `manager.stopped` last, after the sessions have ended and before the API closes. With `restart` true, the manager then starts a new manager from the package on disk, on the same port and with the same token, before it exits; the new one runs whatever version is installed, so this is how an upgrade's `pendingVersion` is put to use. Clients reconnect to it as to any manager; its `hello` is the new source of truth. |
+| POST | `/shutdown` | `{ force?, restart? }` | `202 { ok, running, restart }`: stops the manager and every session, detaching tmux and herdr sessions rather than ending them. 409 `sessions_running` (with `running`, the count of sessions it would end) while any session other than a tmux or herdr one is running, unless `force` is true. From the 202 on, `POST /sessions` and `POST /providers/:id/install` answer 503 `manager_stopping`. Events clients get `manager.stopping` first and `manager.stopped` last, after the sessions have ended and before the API closes. With `restart` true, the manager then starts a new manager from the package on disk, on the same port and with the same token, before it exits; the new one runs whatever version is installed, so this is how an upgrade's `pendingVersion` is put to use. Clients reconnect to it as to any manager; its `hello` is the new source of truth. |
 
 `cwd` defaults to the user's home folder and must be an existing folder. A
 leading `~` is expanded. `args` are appended to the provider's configured
