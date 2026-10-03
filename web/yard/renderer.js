@@ -4,6 +4,12 @@ import { WORLDS, PROVIDER_ORDER, providerPositions, layoutSessions, sessionPose,
 const ASSETS = new URL('./assets/', import.meta.url);
 const vector = new T.Vector3();
 const noop = () => {};
+function helpersFor(session) {
+  return [
+    ...(session.agents||[]).map(a=>({id:a.id,name:a.name,pose:familiarPose(a),shell:false})),
+    ...(session.shells||[]).map(s=>({id:s.id,name:'Shell command',pose:'working',shell:true})),
+  ];
+}
 function disposeSkeletons(root) {
   const skeletons=new Set();
   root?.traverse(node=>{if(node.skeleton)skeletons.add(node.skeleton);});
@@ -66,7 +72,13 @@ export class YardRenderer {
     this.overview();this.resize();
   }
   async asset(name) {
-    if(!this.cache.has(name)) this.cache.set(name,new T.GLTFLoader(this.loadingManager).loadAsync(new URL(name+'.glb',ASSETS).href));
+    if(!this.cache.has(name)) {
+      const pending=new T.GLTFLoader(this.loadingManager).loadAsync(new URL(name+'.glb',ASSETS).href).catch(err=>{
+        if(this.cache.get(name)===pending)this.cache.delete(name);
+        throw err;
+      });
+      this.cache.set(name,pending);
+    }
     return this.cache.get(name);
   }
   async setWorld(skin,theme) {
@@ -215,21 +227,29 @@ export class YardRenderer {
         ring.rotation.x=-Math.PI/2;ring.position.y=.19;root.add(ring);
         unit={root,ring,label:this.label('session',session.id),mixers:[],helpers:[],pose:null,revision:0,loaded:false};
         this.units.set(session.id,unit);this.scene.add(root);
-        this.loadUnit(unit,session);
       }
       const slot=this.slots.get(session.id);unit.root.position.set(slot.x,.17,slot.z);
       unit.session=session;
+      // Only visible state transitions grant another load opportunity. Routine
+      // snapshots, telemetry and animation frames must not retry failed assets.
+      const loadState=JSON.stringify([sessionPose(session),helpersFor(session)]);
+      if(unit.loadState!==loadState){
+        unit.loadState=loadState;
+        this.loadUnit(unit,session);
+        if(unit.loaded)this.helpers(unit,session);
+      }
       unit.label.children[0].textContent=session.name;
       const helpers=(session.agents?.length||0)+(session.shells?.length||0);
       unit.label.children[1].textContent=(sessionPose(session)==='working'?'Working':sessionPose(session)==='exited'?'Exited':'Running')+(helpers?' · '+helpers+' helpers':'');
       unit.label.dataset.status=sessionPose(session);
       unit.label.style.setProperty('--unit-color',session.provider.color||'#d0ba82');
       unit.label.setAttribute('aria-label',session.name+', '+unit.label.children[1].textContent);
-      if(unit.loaded) { this.pose(unit,sessionPose(session));this.helpers(unit,session); }
+      if(unit.loaded)this.pose(unit,sessionPose(session));
     }
     this.select(this.selected);this.dirty=true;this.drawOnce();
   }
   async loadUnit(unit,session) {
+    if(unit.loaded||unit.loading)return;
     const generation=this.request;
     if(this.skin==='professional') {
       const material=new T.MeshStandardMaterial({color:session.provider.color||0x70868e,roughness:.5});
@@ -237,6 +257,7 @@ export class YardRenderer {
     }
     const prefix=this.skin==='orbital'?'robot_':this.skin==='grove'?'spirit_':'hero_';
     const index=Math.max(0,PROVIDER_ORDER.indexOf(session.provider.id));
+    unit.loading=true;
     try {
       const asset=await this.asset(prefix+index);
       if(this.disposed||generation!==this.request||!unit.root.parent)return;
@@ -244,11 +265,14 @@ export class YardRenderer {
       model.rotation.y=-.3;
       model.traverse(n=>{if(n.isMesh){n.castShadow=true;n.receiveShadow=true;}});
       unit.root.add(model);unit.model=model;unit.loaded=true;
+      unit.label.title='';
       const mixer=new T.AnimationMixer(model);unit.mixers.push(mixer);
       unit.animations=new Map(asset.animations.map(clip=>[clip.name,mixer.clipAction(clip)]));
       this.pose(unit,sessionPose(unit.session||session));
       this.helpers(unit,unit.session||session);this.dirty=true;this.drawOnce();
-    } catch(err){if(!this.disposed){console.warn('Yard character unavailable:',err.message);unit.label.title='Character art unavailable. Session controls remain available.';}}
+    } catch(err){
+      if(!this.disposed&&generation===this.request&&unit.root.parent){console.warn('Yard character unavailable:',err.message);unit.label.title='Character art unavailable. Session controls remain available.';}
+    } finally {unit.loading=false;}
   }
   pose(unit,pose) {
     if(unit.pose===pose)return;
@@ -266,8 +290,8 @@ export class YardRenderer {
     unit.root.visible=true;
   }
   async helpers(unit,session) {
-    const agents=[...(session.agents||[]).map(a=>({...a,pose:familiarPose(a)})),...(session.shells||[]).map(s=>({id:s.id,name:'Shell command',pose:'working',shell:true}))];
-    const signature=JSON.stringify(agents.map(a=>[a.id,a.pose]));
+    const agents=helpersFor(session);
+    const signature=JSON.stringify(agents);
     if(unit.helperSignature===signature)return;
     unit.helperSignature=signature;
     const rev=++unit.revision,generation=this.request;
@@ -290,7 +314,11 @@ export class YardRenderer {
         mixer.update(.3+(hash(agent.id)%40)/10);
         unit.helpers.push({model,mixer,angle,pose:agent.pose});
         this.dirty=true;this.drawOnce();
-      } catch {}
+      } catch {
+        // The next state transition can rebuild this incomplete squad. Routine
+        // unchanged updates do not call helpers(), so failure cannot loop.
+        if(!this.disposed&&generation===this.request&&rev===unit.revision&&unit.root.parent)unit.helperSignature=null;
+      }
     }));
   }
   select(selection) {

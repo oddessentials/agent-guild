@@ -29,6 +29,198 @@ const closeTerminal=b=>b.click('#panel-close');
 const terminalReady=b=>b.wait("!document.querySelector('#terminal-panel').hidden && document.querySelector('#terminal-host .xterm')");
 const ready=b=>b.wait("document.querySelector('#yard-stage').dataset.ready==='true'");
 
+function holdRequests(t, manager, method) {
+  const original=manager[method].bind(manager),pending=[];
+  manager[method]=(...args)=>new Promise((resolve,reject)=>{
+    let settled=false;
+    const finish=error=>{
+      if(settled)return;settled=true;
+      if(error)return reject(error);
+      try{resolve(original(...args));}catch(err){reject(err);}
+    };
+    pending.push({args,finish});
+  });
+  t.after(()=>pending.forEach(p=>p.finish(new Error('Fixture closed'))));
+  return pending;
+}
+
+test('New pending state follows the account and folder across views, independently of install/update',options,async t=>{
+  const {f,b}=await setup(t);
+  const pending=holdRequests(t,f.manager,'create'),installs=holdRequests(t,f.manager,'install');
+  const card='#providers [data-id="anthropic"]';
+  const disabled=selector=>b.evaluate(`document.querySelector(${q(selector)}).disabled`);
+  await fill(b,'#cwd','project-a');
+  await b.click(card+' .new');await until(()=>pending.length===1);
+  await b.evaluate(`document.querySelector('${card} .new').dispatchEvent(new Event('click'))`);
+  assert.equal(await disabled(card+' .new'),true);
+  await b.click('#view-yard');await ready(b);await b.click(provider('anthropic'));
+  assert.equal(await disabled(inspector+' .new'),true,'newly mounted Yard control shares the pending action');
+  assert.equal(await b.evaluate(`document.querySelector('${inspector} .new').textContent`),'Starting…');
+  assert.equal(await disabled(inspector+' .existing'),false);
+  assert.equal(await disabled(inspector+' .update'),false);
+  await b.evaluate(`document.querySelector('${inspector} .new').dispatchEvent(new Event('click'))`);
+  await pause(100);assert.equal(pending.length,1,'duplicate submissions through either view are blocked');
+
+  await b.click(inspector+' [data-account="work"]');
+  assert.equal(await disabled(inspector+' .new'),false);
+  await b.click(inspector+' .new');await until(()=>pending.length===2);
+  await fill(b,'#cwd','project-b');
+  assert.equal(await disabled(inspector+' .new'),false);
+  await b.click(inspector+' .new');await until(()=>pending.length===3);
+  await fill(b,'#cwd','project-a');
+  assert.equal(await disabled(inspector+' .new'),true);
+  pending[1].finish();await terminalReady(b);await closeTerminal(b);
+  assert.equal(await disabled(inspector+' .new'),false);
+  await b.click('#view-cards');await b.click(card+' [data-account="default"]');
+  assert.equal(await disabled(card+' .new'),true,'finishing Work did not clear Personal');
+  await b.click(card+' [data-account="work"]');await fill(b,'#cwd','project-b');
+  assert.equal(await disabled(card+' .new'),true,'finishing project A did not clear project B');
+
+  await b.click(card+' .update');await until(()=>installs.length===1);
+  installs[0].finish(Object.assign(new Error('Provider is in use'),{code:'provider_in_use',status:409,running:2}));
+  await until(()=>installs.length===2);
+  assert.deepEqual(installs.map(p=>p.args[1]),[{force:false},{force:true}]);
+  assert.equal(await disabled(card+' .update'),true);
+  await fill(b,'#cwd','project-c');
+  assert.equal(await disabled(card+' .new'),false,'install has no shared New/Resume pending flag');
+  await b.click(card+' .new');await until(()=>pending.length===4);
+  installs[1].finish();await terminalReady(b);await closeTerminal(b);
+  assert.equal(await disabled(card+' .new'),true,'install completion does not clear New');
+  assert.equal(await disabled(card+' .update'),false);
+  pending[3].finish(Object.assign(new Error('Fixture start failed'),{status:400,code:'fixture_failure'}));
+  await b.wait(`!document.querySelector('${card} .new').disabled`);
+  await b.click(card+' .new');await until(()=>pending.length===5);
+  pending[0].finish();await terminalReady(b);await closeTerminal(b);
+  assert.equal(await disabled(card+' .new'),true);
+  pending[2].finish();await terminalReady(b);await closeTerminal(b);
+  assert.equal(await disabled(card+' .new'),true);
+  pending[4].finish();await terminalReady(b);await closeTerminal(b);
+  assert.equal(await disabled(card+' .new'),false);
+  assert.deepEqual(pending.map(p=>[p.args[0].account,p.args[0].cwd]),[
+    ['default','project-a'],['work','project-a'],['work','project-b'],['work','project-c'],['work','project-c'],
+  ]);
+  assert.deepEqual(b.errors,[]);
+});
+
+test('Resume shares one pending action across cards, Yard and history without blocking other conversations',options,async t=>{
+  const {f,b}=await setup(t);
+  const pending=holdRequests(t,f.manager,'create');
+  const stopped=[...f.data.values()][0];stopped.toolSessionId='history-1';f.manager.stop(stopped.id);
+  const card='#providers [data-id="anthropic"]',resume=`#sessions [data-id="${stopped.id}"] .resume`;
+  const history='#history-list [data-id="history-1"] .history-resume';
+  const missing='#history-list [data-id="history-missing"] .history-resume';
+  const manual='#history-form button[type="submit"]';
+  const disabled=selector=>b.evaluate(`document.querySelector(${q(selector)}).disabled`);
+  await fill(b,'#cwd','fallback');
+  await b.click(card+' .new');await until(()=>pending.length===1);
+  await b.wait(`!document.querySelector(${q(resume)}).hidden`);
+  assert.equal(await disabled(resume),false,'New does not block Resume for the same provider');
+  await b.click(resume);await until(()=>pending.length===2);
+  await b.click('#view-yard');await ready(b);await b.click(session(stopped.id));
+  assert.equal(await disabled(inspector+' .resume'),true);
+  assert.equal(await b.evaluate(`document.querySelector('${inspector} .resume').textContent`),'Resuming…');
+  await b.click(provider('anthropic'));await b.click(inspector+' .existing');await b.wait(`document.querySelector(${q(history)})`);
+  assert.equal(await disabled(history),true);
+  assert.equal(await disabled(missing),false);
+  await fill(b,'#history-id','history-1');assert.equal(await disabled(manual),true);
+  await b.evaluate("document.querySelector('#history-form').dispatchEvent(new Event('submit',{cancelable:true}))");
+  await b.evaluate(`document.querySelector(${q(history)}).dispatchEvent(new Event('click'))`);
+  await pause(100);assert.equal(pending.length,2,'manual id and history cannot duplicate a card Resume');
+  await b.click('#history-close');await b.click(inspector+' [data-account="work"]');
+  await b.click(inspector+' .existing');await b.wait(`document.querySelector(${q(history)}) && !document.querySelector(${q(history)}).disabled`);
+  await b.click(history);await until(()=>pending.length===3);
+  await b.click('#history-close');await b.click(inspector+' [data-account="default"]');
+  await b.click(inspector+' .existing');await b.wait(`document.querySelector(${q(missing)})`);
+  await b.click(missing);await until(()=>pending.length===4);
+  pending[2].finish();await terminalReady(b);await closeTerminal(b);
+  await b.click(inspector+' .existing');await b.wait("document.querySelector('#history').open");
+  assert.equal(await disabled(history),true,'Work completion leaves Personal pending');
+  assert.equal(await disabled(missing),true,'one conversation cannot clear another');
+  pending[1].finish(Object.assign(new Error('Fixture resume failed'),{status:400,code:'fixture_failure'}));
+  await b.wait(`!document.querySelector(${q(history)}).disabled`);
+  assert.equal(await b.evaluate("document.querySelector('#history').open"),true);
+  assert.equal(await disabled(resume),false,'failed Resume can be tried again');
+  await fill(b,'#history-id','history-1');assert.equal(await disabled(manual),false);
+  await b.click(manual);await until(()=>pending.length===5);
+  pending[3].finish();await until(()=>pending.length===6);
+  assert.deepEqual(pending.slice(3).filter(p=>p.args[0].resume==='history-missing').map(p=>p.args[0].cwd),['missing','fallback']);
+  assert.equal(await disabled(missing),true,'missing-folder fallback keeps the original Resume pending');
+  pending[5].finish();await terminalReady(b);await closeTerminal(b);
+  assert.equal(await disabled(resume),true);
+  pending[0].finish();await terminalReady(b);await closeTerminal(b);
+  assert.equal(await disabled(resume),true,'New completion leaves Resume pending');
+  pending[4].finish();await terminalReady(b);await closeTerminal(b);
+  assert.equal(await disabled(resume),false);
+  assert.equal(await b.evaluate(`document.querySelector(${q(resume)}).hidden`),true,'the resumed conversation now has a running session');
+  assert.equal(pending.length,6);
+  assert.deepEqual(b.errors,[]);
+});
+
+test('failed character and helper downloads recover on state changes without retrying unchanged updates',options,async t=>{
+  const {f,b}=await setup(t,{source:`
+    const originalFetch=window.fetch;
+    window.__assetAttempts={};window.__assetFailures={hero_0:2,familiar_0:1};
+    window.__holdNextFailure={hero_0:true,familiar_0:true};window.__heldFailures={};
+    window.fetch=(...args)=>{
+      const match=String(args[0]?.url||args[0]).match(/\\/((?:hero|familiar)_\\d)\\.glb$/);
+      if(match){
+        const name=match[1];window.__assetAttempts[name]=(window.__assetAttempts[name]||0)+1;
+        if(window.__assetFailures[name]>0){
+          window.__assetFailures[name]--;
+          const error=new TypeError('Fixture download interrupted');
+          if(window.__holdNextFailure[name]){
+            delete window.__holdNextFailure[name];
+            return new Promise((resolve,reject)=>{window.__heldFailures[name]=()=>reject(error);});
+          }
+          return Promise.reject(error);
+        }
+      }
+      return originalFetch(...args);
+    };`});
+  const sessions=[...f.data.values()].slice(0,2).map(s=>({...s,agents:[],shells:[]}));
+  sessions[0].agents=[{id:'helper',name:'D',status:'working'},{id:'peer',name:'E',status:'working'}];
+  await b.evaluate(`(async()=>{
+    const {YardRenderer}=await import('/yard/renderer.js');
+    const host=document.createElement('div'),labels=document.createElement('div');
+    host.style.cssText='position:fixed;width:900px;height:700px;top:0;left:0';host.append(labels);document.body.append(host);
+    window.__renderer=new YardRenderer(host,labels,{select(){},open(){}});
+    window.__sessions=${q(sessions)};window.__providers=${q(f.providers)};
+    await __renderer.setWorld('guild','dark');__renderer.update(__providers,__sessions);__renderer.setActive(true);
+    window.__unit=__renderer.units.get(__sessions[0].id);
+  })()`);
+  await b.wait('__heldFailures.hero_0');
+  await b.evaluate("__sessions[0].activity='quiet';__renderer.update(__providers,__sessions);__heldFailures.hero_0()");
+  await b.wait("__unit.label.title.includes('unavailable') && !__unit.loading && !__renderer.cache.has('hero_0')");
+  const unchanged=()=>b.evaluate(`(async()=>{
+    for(let i=0;i<20;i++){
+      __sessions=__sessions.map(s=>({...s,lastOutputAt:new Date().toISOString(),name:s.name+' '}));
+      __renderer.update(__providers,__sessions);await new Promise(requestAnimationFrame);
+    }
+  })()`);
+  await unchanged();
+  assert.equal(await b.evaluate('__assetAttempts.hero_0'),1,'a shared failed request waits for a fresh transition, even after a state change during loading');
+  await b.evaluate("__sessions[0].activity='active';__renderer.update(__providers,__sessions)");
+  await b.wait("__assetAttempts.hero_0===2 && !__unit.loading && !__renderer.cache.has('hero_0')");
+  await unchanged();
+  assert.equal(await b.evaluate('__assetAttempts.hero_0'),2,'a second failure also waits for another state transition');
+  await b.evaluate("__sessions[0].activity='quiet';__renderer.update(__providers,__sessions)");
+  await b.wait('__unit.loaded && __unit.helpers.length===1 && __heldFailures.familiar_0');
+  await b.evaluate("__sessions[0].activity='active';__renderer.update(__providers,__sessions);__heldFailures.familiar_0()");
+  await b.wait("__unit.loaded && __unit.helpers.length===1 && !__renderer.cache.has('familiar_0')");
+  assert.equal(await b.evaluate('__unit.label.title'),'','recovered character clears its failure message');
+  assert.equal(await b.evaluate('__renderer.units.get(__sessions[0].id)===__unit'),true,'existing character recovers in place');
+  await unchanged();
+  assert.deepEqual(await b.evaluate('__assetAttempts'),{hero_0:3,familiar_0:1,familiar_1:1},'a failed helper cannot retry on every update or render frame');
+  await b.evaluate("__sessions[0].agents[0].status='waiting';__sessions[1].activity='quiet';__renderer.update(__providers,__sessions)");
+  await b.wait('__unit.helpers.length===2 && __renderer.units.get(__sessions[1].id).loaded');
+  assert.deepEqual(await b.evaluate('__assetAttempts'),{hero_0:3,familiar_0:2,familiar_1:1},'helper state retries a missing familiar; successful model assets stay cached');
+  await b.evaluate("(async()=>{await __renderer.setWorld('orbital','dark');await __renderer.setWorld('guild','dark');})()");
+  await b.wait('[...__renderer.units.values()].every(u=>u.loaded) && __renderer.units.get(__sessions[0].id).helpers.length===2');
+  assert.deepEqual(await b.evaluate('__assetAttempts'),{hero_0:3,familiar_0:2,familiar_1:1});
+  await b.evaluate('__renderer.dispose()');
+  assert.deepEqual(b.errors,[]);
+});
+
 test('Cards and Yard use the same actions, accounts, dialogs and terminal',options,async t=>{
   const {f,b}=await setup(t);
   await b.wait("document.querySelector('#providers .usage .meter')");

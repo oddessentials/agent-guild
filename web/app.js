@@ -470,6 +470,7 @@ function selectAccount(provider, id) {
     renderUsage(card, provider);
     renderReportingSetup(card, provider);
   }
+  refreshPendingActions();
   notifyViews();
   save(ACCOUNTS_KEY, JSON.stringify(state.accounts));
 }
@@ -549,14 +550,13 @@ function buildProvider(provider) {
     stateLine.classList.toggle('update-available', provider.updateAvailable || checkFailed || Boolean(installNote(provider)));
     stateLine.title = [provider.resolvedPath, provider.updateCommand && `Update: ${provider.updateCommand}`].filter(Boolean).join('\n');
     node.dataset.id = provider.id;
-    node.classList.toggle('busy', busyProviders.has(provider.id));
     node.classList.toggle('unavailable', !provider.available);
     node.setAttribute('aria-label', `${provider.vendor} ${provider.tool}, ${!provider.available ? 'not installed' : checkFailed ? 'version check failed' : 'ready'}`);
     const start = node.querySelector('.new');
     const existing = node.querySelector('.existing');
     const hint = node.querySelector('.hint');
     start.hidden = !provider.available;
-    start.addEventListener('click', () => startSession(provider, node));
+    start.addEventListener('click', () => startSession(provider));
     existing.hidden = !provider.available || !provider.resumable;
     existing.title = provider.historySource
       ? `Resume one of ${provider.tool}'s own earlier sessions`
@@ -565,13 +565,13 @@ function buildProvider(provider) {
     const install = node.querySelector('.install');
     install.hidden = provider.available || !provider.installable;
     install.title = `Install ${provider.tool} using npm.${provider.npmNote ? ` ${provider.npmNote}` : ''}`;
-    install.addEventListener('click', () => installProvider(provider, node));
+    install.addEventListener('click', () => installProvider(provider));
     const update = node.querySelector('.update');
     update.hidden = !(provider.available && provider.updateCommand && (provider.updateAvailable || checkFailed));
     if (provider.installChannel !== 'npm') update.textContent = 'Update';
     else update.textContent = checkFailed ? 'Reinstall' : `Update to ${provider.latestVersion}`;
     update.title = provider.updateCommand ? `Run "${provider.updateCommand}" in a session` : '';
-    update.addEventListener('click', () => installProvider(provider, node));
+    update.addEventListener('click', () => installProvider(provider));
     renderHint(hint, provider);
     renderCopies(node.querySelector('.copies'), provider);
     renderConsoleLinks(node, provider);
@@ -579,6 +579,7 @@ function buildProvider(provider) {
     renderUsage(node, provider);
     renderReportingSetup(node, provider);
     renderModelStats(node, provider);
+    renderProviderPending(node, provider);
     return node;
 }
 
@@ -1692,35 +1693,73 @@ function providerState(provider) {
   return parts.join(' · ');
 }
 
-const busyProviders = new Set();
-function setProviderBusy(id, busy) {
-  if (busy) busyProviders.add(id); else busyProviders.delete(id);
-  for (const node of document.querySelectorAll('.provider[data-id], .session-card[data-provider]')) {
-    if ((node.dataset.id === id && node.classList.contains('provider')) || node.dataset.provider === id) node.classList.toggle('busy', busy);
-  }
+const pendingSessionActions = new Set();
+// Install/update requests have their own guard; the manager owns install safety.
+const pendingInstalls = new Set();
+
+function sessionActionKey(providerId, account, resume, cwd = $('cwd').value.trim()) {
+  // A conversation is the same Resume action even when reached through a
+  // different control or the missing-folder fallback. New also depends on cwd.
+  return JSON.stringify([providerId, account, resume ? 'resume' : 'new', resume || cwd || '']);
 }
 
-async function installProvider(provider, card, { force = false } = {}) {
-  if (busyProviders.has(provider.id)) return;
-  setProviderBusy(provider.id, true);
+function paintPending(button, busy, label, pendingLabel) {
+  button.disabled = busy;
+  button.setAttribute('aria-busy', String(busy));
+  if (label !== undefined) button.textContent = busy ? pendingLabel : label;
+}
+
+function renderProviderPending(node, provider) {
+  const key = sessionActionKey(provider.id, selectedAccount(provider).id);
+  paintPending(node.querySelector('.new'), pendingSessionActions.has(key), 'New', 'Starting…');
+  for (const button of node.querySelectorAll('.install, .update')) paintPending(button, pendingInstalls.has(provider.id));
+}
+
+function resumeAccount(provider, session) {
+  return provider.accounts?.find((a) => a.id === session.account?.id)?.id ?? selectedAccount(provider).id;
+}
+
+function renderResumePending(node, session) {
+  const provider = state.providers.find((p) => p.id === session.provider.id);
+  const key = provider && sessionActionKey(provider.id, resumeAccount(provider, session), toolSessionId(session));
+  paintPending(node.querySelector('.resume'), pendingSessionActions.has(key), 'Resume', 'Resuming…');
+}
+
+function refreshPendingActions() {
+  for (const node of document.querySelectorAll('.provider[data-id]')) {
+    const provider = state.providers.find((p) => p.id === node.dataset.id);
+    if (provider) renderProviderPending(node, provider);
+  }
+  for (const node of document.querySelectorAll('.session-card[data-id]')) {
+    const session = state.sessions.get(node.dataset.id);
+    if (session) renderResumePending(node, session);
+  }
+  if ($('history').open) renderHistory();
+}
+
+async function installProvider(provider) {
+  if (pendingInstalls.has(provider.id)) return;
+  pendingInstalls.add(provider.id);
+  refreshPendingActions();
   try {
-    const { session } = await api('POST', `/providers/${provider.id}/install`, { force });
+    let session;
+    try {
+      ({ session } = await api('POST', `/providers/${provider.id}/install`, { force: false }));
+    } catch (err) {
+      if (err.code !== 'provider_in_use') throw err;
+      const n = err.running;
+      const what = `${n} ${provider.tool} session${n === 1 ? ' is' : 's are'} running`;
+      if (!confirm(`${what}. Updating ${provider.tool} while it runs can break ${n === 1 ? 'that session' : 'those sessions'}. Update anyway?`)) return;
+      ({ session } = await api('POST', `/providers/${provider.id}/install`, { force: true }));
+    }
     upsertSession(session);
     openPanel(session.id);
   } catch (err) {
     if (err instanceof AuthError) return showAuth(err.message);
-    if (err.code === 'provider_in_use') {
-      setProviderBusy(provider.id, false);
-      const n = err.running;
-      const what = `${n} ${provider.tool} session${n === 1 ? ' is' : 's are'} running`;
-      if (confirm(`${what}. Updating ${provider.tool} while it runs can break ${n === 1 ? 'that session' : 'those sessions'}. Update anyway?`)) {
-        return await installProvider(provider, card, { force: true });
-      }
-      return;
-    }
     toast(err.message, 8000);
   } finally {
-    setProviderBusy(provider.id, false);
+    pendingInstalls.delete(provider.id);
+    refreshPendingActions();
   }
 }
 
@@ -1729,11 +1768,13 @@ async function installProvider(provider, card, { force = false } = {}) {
  * names, since Claude Code only finds a session from there;
  * when that folder is gone, the working folder is used instead.
  */
-async function startSession(provider, card, { resume, cwd, account = selectedAccount(provider).id } = {}) {
-  if (busyProviders.has(provider.id)) return;
+async function startSession(provider, { resume, cwd, account = selectedAccount(provider).id } = {}) {
   const working = $('cwd').value.trim();
+  const key = sessionActionKey(provider.id, account, resume, cwd || working);
+  if (pendingSessionActions.has(key)) return;
   save(CWD_KEY, working);
-  setProviderBusy(provider.id, true);
+  pendingSessionActions.add(key);
+  refreshPendingActions();
   try {
     const body = { providerId: provider.id, account, cwd: cwd || working || undefined, cols: 120, rows: 32, resume };
     let session;
@@ -1751,7 +1792,8 @@ async function startSession(provider, card, { resume, cwd, account = selectedAcc
     if (err instanceof AuthError) return showAuth(err.message);
     toast(err.message, 8000);
   } finally {
-    setProviderBusy(provider.id, false);
+    pendingSessionActions.delete(key);
+    refreshPendingActions();
   }
 }
 
@@ -1851,7 +1893,7 @@ function resumeFromHistory(provider, id, cwd) {
   if (running) {
     closeHistory({ focusOpener: false });
     openPanel(running.id);
-  } else startSession(provider, null, { resume: id, cwd: cwd || undefined, account: historyView.accountId });
+  } else startSession(provider, { resume: id, cwd: cwd || undefined, account: historyView.accountId });
 }
 
 function buildHistoryRow(id) {
@@ -1879,7 +1921,8 @@ function updateHistoryRow(node, provider, entry) {
   meta.textContent = [entry.cwd && folderName(entry.cwd), when, running && `open in Agent Guild as ${running.name}`].filter(Boolean).join(' · ');
   meta.title = [entry.cwd, entry.startedAt && `started ${new Date(entry.startedAt).toLocaleString()}`].filter(Boolean).join('\n');
   const action = node.querySelector('.history-resume');
-  action.textContent = running ? 'Open' : 'Resume';
+  const key = sessionActionKey(provider.id, historyView.accountId, entry.id);
+  paintPending(action, pendingSessionActions.has(key), running ? 'Open' : 'Resume', 'Resuming…');
   action.title = running
     ? `This session is running in Agent Guild as "${running.name}". Open it instead of resuming it twice.`
     : `Resume this ${provider.tool} session${entry.cwd ? ` in ${entry.cwd}` : ''}`;
@@ -1922,6 +1965,7 @@ function renderHistory() {
   }
   $('history-sub').textContent = parts.join(' · ');
   renderHistoryRows(provider, shown);
+  renderHistorySubmit();
   let note = '';
   if (!provider.historySource) note = `Agent Guild cannot list ${provider.tool}'s sessions. Enter the id of one to resume it.`;
   else if (historyView.loading && !snapshot) note = `Reading ${provider.tool}'s sessions…`;
@@ -1932,6 +1976,15 @@ function renderHistory() {
   $('history-note').hidden = !note;
   $('history-filter').disabled = !provider.historySource;
   here.parentElement.hidden = !provider.historySource;
+}
+
+function renderHistorySubmit() {
+  const provider = historyProvider();
+  if (!provider) return;
+  const id = $('history-id').value.trim();
+  const key = id && sessionActionKey(provider.id, historyView.accountId, id);
+  const running = id && runningOn(provider.id, historyView.accountId, id);
+  paintPending($('history-form').querySelector('button[type="submit"]'), pendingSessionActions.has(key), running ? 'Open' : 'Resume', 'Resuming…');
 }
 
 /** Closing to open a session leaves focus with the terminal; otherwise it returns to the opener. */
@@ -2536,6 +2589,7 @@ function noticeClone(s) {
 function useFolder(dir) {
   $('cwd').value = dir;
   save(CWD_KEY, dir);
+  refreshPendingActions();
   if ($('github').open) renderGitHub();
   toast(`New sessions start in ${dir}.`, 4000);
 }
@@ -2611,8 +2665,7 @@ function resumeCard(id) {
   const s = state.sessions.get(id);
   if (!s || !resumable(s)) return;
   const provider = state.providers.find((p) => p.id === s.provider.id);
-  const account = provider.accounts?.find((a) => a.id === s.account?.id)?.id;
-  startSession(provider, cards.get(id), { resume: toolSessionId(s), cwd: s.cwd, account });
+  startSession(provider, { resume: toolSessionId(s), cwd: s.cwd, account: resumeAccount(provider, s) });
 }
 
 function sessionLevel(s) {
@@ -2625,7 +2678,6 @@ function sessionLevel(s) {
 
 function updateCard(node, s) {
   node.dataset.provider = s.provider.id;
-  node.classList.toggle('busy', busyProviders.has(s.provider.id));
   paintProviderIcon(node.querySelector('.provider-icon'), s.provider);
   const level = sessionLevel(s);
   const badge = node.querySelector('.level-badge');
@@ -2661,6 +2713,7 @@ function updateCard(node, s) {
   const resume = node.querySelector('.resume');
   resume.hidden = !resumable(s);
   resume.title = `Start ${s.provider.tool} again on this session${id ? ` (${id})` : ''} in ${s.cwd}`;
+  renderResumePending(node, s);
   const modelLabel = s.model ? `, model ${modelText(s)}` : '';
   const accountName = accountLabel(s) ? `, ${accountLabel(s)} account` : '';
   const shellCount = (s.shells || []).length;
@@ -3265,6 +3318,8 @@ $('history').addEventListener('close', () => {
   historyOpener = null;
 });
 $('history-filter').addEventListener('input', renderHistory);
+$('history-id').addEventListener('input', renderHistorySubmit);
+$('cwd').addEventListener('input', refreshPendingActions);
 $('github-open').addEventListener('click', openGitHub);
 $('github-close').addEventListener('click', () => closeGitHub());
 $('github').addEventListener('click', (e) => { if (e.target === $('github')) closeGitHub(); });
@@ -3458,6 +3513,7 @@ yardUi = initYard({
         renderModelStats(node, p);
         node.dataset.contentSignature = contentSignature;
       }
+      renderProviderPending(node, p);
     } else {
       const session = state.sessions.get(selection.id);
       if (!session) { host.replaceChildren(); return; }

@@ -212,7 +212,6 @@ main { max-width: 1200px; margin: 0 auto; padding: 26px 16px 56px; display: grid
 .provider .copies li span { display: block; }
 .provider .copies .copy-name { color: var(--text); }
 .provider .copies code { font-family: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace; color: var(--text); }
-.provider.busy { opacity: 0.6; pointer-events: none; }
 
 .provider-icon {
   --c: #64748b;

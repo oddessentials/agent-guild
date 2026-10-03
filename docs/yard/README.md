@@ -24,8 +24,15 @@ serving; authentication, routes and the content security policy are unchanged.
 `web/app.js` owns state and all commands. Its `initYard` adapter supplies a
 public presentation snapshot, the existing terminal/news openers, and an
 inspector built with the same `buildProvider`, `buildCard` and `updateCard`
-functions as Cards. Account selection and pending provider actions stay in
+functions as Cards. Account selection and pending actions stay in
 shared state. There is no Yard API client, event socket or polling loop.
+
+New is pending for one provider, account and working folder. Resume is
+pending for one provider, account and conversation, including its controls
+in history and both layouts. The matching buttons show Starting/Resuming
+and block duplicates until that request finishes; unrelated actions remain
+available. Install/update has a separate request guard and retains the
+manager's existing safety checks and confirmation.
 
 | Feature | Shared entry point |
 | --- | --- |
@@ -41,6 +48,12 @@ shared state. There is no Yard API client, event socket or polling loop.
 `web/yard/view.js` handles selection, the searchable roster and the view
 preference. `renderer.js` handles geometry, camera and animations;
 `model.mjs` contains presentation-only placements and state mappings.
+
+Failed character/helper downloads are evicted from the asset cache.
+Existing objects can retry when their working/resting/exited state or
+helper appearance changes; rebuilding a world also provides a fresh load
+opportunity. Unchanged snapshots, telemetry and animation frames never
+trigger another attempt. Successful assets and in-flight loads stay shared.
 
 ## Worlds and animation
 
@@ -149,6 +162,8 @@ preservation, accounts/usage, benchmarks, history including missing folders
 and already-running conversations, session actions, GitHub clone/create,
 upgrade, stop/restart, authentication, graphics failure/retry, all skins,
 40 sessions, reduced motion, mobile overflow, reconnect and skin-load races.
+They also cover overlapping New/Resume requests, duplicate submission across
+views, independent install requests and model recovery without retry loops.
 Asset tests verify the shipped GLBs contain anchors, skinning and clips.
 
 The existing release gate remains 25 MiB packed. Run `npm pack` and
