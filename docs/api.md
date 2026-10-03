@@ -111,10 +111,15 @@ whether `GET /usage` reports the provider. `historySource` is `claude`,
 tool's own, and each further one has its own home folder, so it keeps its
 own sign-in and usage. `POST /sessions` takes an account id.
 `shells` is null except for the `@shell` provider, where it lists the
-installed shells, each `{ id, label, path }`, and `defaultShell` is the id of
+installed shells, each `{ id, label, path, multiplexer }`, and `defaultShell` is the id of
 the one a session runs unless `POST /sessions` names another in `shell`.
 Omit `shell` or send `null` to use the default. Provider `args` apply only to
 the default shell; request `args` apply to whichever shell is selected.
+`multiplexer` is true for tmux and herdr, listed after the shells on macOS
+and Linux when installed and never the default. A session in one runs the
+multiplexer's client: stopping or removing it leaves the multiplexer
+running its session. Its request `args` are added to the multiplexer's
+command; for tmux, that is the command its new session runs.
 For a tool whose agent reporting has to be turned on (`reporting` is `antigravity`),
 `reportingEnabled` says whether it is.
 `usageUrl`, `billingUrl` and `cloudUrl` are `https://` links to the vendor's
@@ -202,6 +207,7 @@ that has never run lists no sessions and no error.
   "task": null,
   "account": { "id": "default", "label": "Default" },
   "clone": null,
+  "multiplexer": null,
   "pid": 3518,
   "status": "running",
   "exitCode": null,
@@ -242,6 +248,13 @@ that has never run lists no sessions and no error.
 * `clone` is `{ repo, path, accountId }` for a clone session: the
   repository as owner/name, the folder it is cloned into and the GitHub
   account id. Null otherwise.
+* `multiplexer` is `{ label, attach }` for a Shell session started in tmux
+  or herdr: the multiplexer's name and the command that reattaches its
+  session from a terminal, such as `tmux attach -t guild-3f9a2c`. Null
+  otherwise. Stopping or removing the session ends only the multiplexer's
+  client, so its `exitCode` says nothing about the session inside. The
+  manager gives the multiplexer none of the `AGENT_GUILD_` variables, since
+  its server outlives the session and passes its environment on.
 * `account` is the provider account the tool runs under, or null for an
   install or upgrade session.
 * `model` is the main model the tool is using, or null while unknown.

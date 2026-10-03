@@ -65,7 +65,11 @@ computer and remembers your choice in this browser. On Windows it defaults
 to PowerShell 7 when installed, then Windows PowerShell; Git Bash and Command
 Prompt are also offered when found. On macOS and Linux it follows your login
 shell. Pick the default chip to clear a saved choice and follow the default
-again. The choice applies to new sessions.
+again. The choice applies to new sessions. On macOS and Linux the card also
+offers tmux and herdr when installed: a new session then starts inside the
+multiplexer, with your own configuration. Stopping or closing that session
+only detaches it, as closing a terminal window would, so it keeps running
+there, and the card names the command that reattaches it.
 
 <img src="docs/images/terminal.webp" alt="An open Claude Code session with its helper agents shown in the header">
 
@@ -238,7 +242,10 @@ npm test
 
 ## Current limits
 
-* Sessions end when the manager stops or the computer restarts.
+* Sessions end when the manager stops or the computer restarts. A Shell
+  session started in tmux or herdr keeps running in it when the manager
+  stops.
+* tmux and herdr are offered on macOS and Linux only.
 * Antigravity CLI and Grok Build have no usage meter.
 * Antigravity CLI has one account per computer user: it keeps its sign-in in
   the system keychain and has no setting for another home folder.
