@@ -79,6 +79,9 @@ The engine and GLBs load only after an authenticated app displays Yard.
 The engine is bundled locally, and all assets use same-origin URLs. There
 is no CDN, runtime compiler, WASM decoder or Unreal runtime. WebGL2 failure
 leaves the roster and inspector available, with Retry and Cards controls.
+World loads time out after 30 seconds. Failed or disposed scenes cancel
+pending model requests and release their graphics context, so Retry can
+start a fresh scene even when initialization was interrupted.
 
 Rendering pauses while Cards, a terminal, an authentication screen or a
 stopped-manager screen is shown, and while the document is hidden. Reduced
@@ -137,6 +140,9 @@ It never starts coding tools, accesses personal accounts, clones a repository
 or stops a real manager. Browser captures and test profiles live in ignored
 `.cache/` directories. Set `CHROME_PATH` if Chrome/Edge is not in a standard
 location. Browser tests explicitly skip when no browser binary is available.
+CI permits [Chromium's software WebGL fallback](https://chromium.googlesource.com/chromium/src/+/main/docs/gpu/swiftshader.md)
+only in these disposable fixture profiles. Set `YARD_SOFTWARE_GL=1` to force
+that path locally; this never changes the user's normal browser settings.
 
 The Yard tests cover request parity between Cards and Yard, terminal/socket
 preservation, accounts/usage, benchmarks, history including missing folders

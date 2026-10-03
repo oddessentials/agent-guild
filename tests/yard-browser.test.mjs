@@ -157,6 +157,73 @@ test('the latest skin wins during initial loading and an interrupted world switc
   assert.deepEqual(b.errors,[]);
 });
 
+test('a context lost during initialization cancels the load and Retry starts a fresh scene',options,async t=>{
+  const {b}=await setup(t,{yard:true,source:`
+    const originalFetch=window.fetch;
+    window.__pendingWorld=false;window.__abortedWorld=false;
+    window.fetch=(...args)=>{
+      const request=args[0];
+      if(!window.__pendingWorld && String(request?.url||request).endsWith('/guild.glb')) {
+        window.__pendingWorld=true;
+        return new Promise((resolve,reject)=>{
+          const signal=request.signal||args[1]?.signal;
+          signal.addEventListener('abort',()=>{window.__abortedWorld=true;reject(new DOMException('Aborted','AbortError'));},{once:true});
+        });
+      }
+      return originalFetch(...args);
+    };`});
+  await b.wait('window.__pendingWorld');
+  await b.evaluate("document.querySelector('#yard-stage canvas').dispatchEvent(new Event('webglcontextlost',{cancelable:true}))");
+  await b.wait("document.querySelector('#yard-failure').hidden===false");
+  assert.equal(await b.evaluate('window.__abortedWorld'),true,'the obsolete world request is aborted');
+  await b.click('#yard-retry');await ready(b);
+  assert.equal(await b.evaluate("document.querySelectorAll('#yard-stage canvas').length"),1);
+  assert.deepEqual(b.errors,[]);
+});
+
+test('roster filtering and selection removal preserve keyboard access',options,async t=>{
+  const {f,b}=await setup(t,{yard:true});await ready(b);
+  await fill(b,'#yard-filter','not-a-session-name');
+  await b.wait("document.querySelector('#yard-no-results')?.hidden===false");
+  await fill(b,'#yard-filter','');
+  const id=[...f.data.keys()][0];
+  await b.click(session(id));
+  await b.evaluate(`document.querySelector('${inspector} .open').focus()`);
+  f.manager.remove(id);
+  await b.wait("document.activeElement.id==='yard-filter'");
+  const next=[...f.data.keys()][0];
+  await b.click(session(next));
+  await b.evaluate("document.querySelector('#yard-stage').focus()");
+  await b.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});
+  await b.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});
+  await terminalReady(b);
+  assert.equal(await b.evaluate("document.querySelector('#panel-title').textContent"),f.data.get(next).name);
+  assert.deepEqual(b.errors,[]);
+});
+
+test('a stalled world times out, aborts its request and can be retried',options,async t=>{
+  const {b}=await setup(t,{yard:true,source:`
+    const originalTimeout=window.setTimeout,originalFetch=window.fetch;
+    window.__stallWorld=true;window.__abortedWorld=false;
+    window.setTimeout=(callback,delay,...args)=>originalTimeout(callback,window.__stallWorld && delay===30000?100:delay,...args);
+    window.fetch=(...args)=>{
+      const request=args[0];
+      if(window.__stallWorld && String(request?.url||request).endsWith('.glb')) {
+        return new Promise((resolve,reject)=>{
+          const signal=request.signal||args[1]?.signal;
+          signal.addEventListener('abort',()=>{window.__abortedWorld=true;reject(new DOMException('Aborted','AbortError'));},{once:true});
+        });
+      }
+      return originalFetch(...args);
+    };`});
+  await b.wait("document.querySelector('#yard-failure').hidden===false");
+  assert.equal(await b.evaluate('window.__abortedWorld'),true);
+  await b.click(provider('anthropic'));
+  assert.equal(await b.evaluate(`document.querySelector('${inspector} .new').hidden`),false);
+  await b.evaluate('window.__stallWorld=false');await b.click('#yard-retry');await ready(b);
+  assert.deepEqual(b.errors,[]);
+});
+
 test('auth, graphics failure, retry, manager restart and stopped screen remain usable',options,async t=>{
   const {f,b}=await setup(t,{yard:true,auth:false,source:`
     const getContext=HTMLCanvasElement.prototype.getContext;

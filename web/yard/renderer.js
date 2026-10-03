@@ -23,6 +23,7 @@ export class YardRenderer {
   constructor(host,labels,{select,open,error=noop}) {
     this.host=host;this.labels=labels;this.onSelect=select;this.onOpen=open;this.onError=error;
     this.scene=new T.Scene();this.units=new Map();this.halls=new Map();this.slots=new Map();this.cache=new Map();
+    this.loadingManager=new T.LoadingManager();
     this.providers=[];this.sessions=[];this.selected=null;this.world=null;this.skin=null;this.request=0;this.worldRequest=0;
     this.active=false;this.reduced=false;this.disposed=false;this.frame=0;this.lastTime=0;this.dirty=true;
     this.renderer=new T.WebGLRenderer({antialias:true,alpha:true,powerPreference:'low-power'});
@@ -65,17 +66,18 @@ export class YardRenderer {
     this.overview();this.resize();
   }
   async asset(name) {
-    if(!this.cache.has(name)) this.cache.set(name,new T.GLTFLoader().loadAsync(new URL(name+'.glb',ASSETS).href));
+    if(!this.cache.has(name)) this.cache.set(name,new T.GLTFLoader(this.loadingManager).loadAsync(new URL(name+'.glb',ASSETS).href));
     return this.cache.get(name);
   }
   async setWorld(skin,theme) {
+    if(this.disposed)return;
     skin=WORLDS[skin]?skin:'guild';
     const request=++this.worldRequest;
     this.light(skin,theme);
     if(this.skin===skin&&this.world){this.drawOnce();return;}
     let loaded;
     try {
-      loaded=await new T.GLTFLoader().loadAsync(new URL(skin+'.glb',ASSETS).href);
+      loaded=await new T.GLTFLoader(this.loadingManager).loadAsync(new URL(skin+'.glb',ASSETS).href);
       if(this.disposed||request!==this.worldRequest){disposeTree(loaded.scene);return;}
       await this.textureWorld(loaded.scene, skin);
     } catch(err) {
@@ -97,7 +99,7 @@ export class YardRenderer {
   }
   async textureWorld(world,skin) {
     if(skin!=='guild'&&skin!=='grove')return;
-    const loader=new T.TextureLoader();
+    const loader=new T.TextureLoader(this.loadingManager);
     const results=await Promise.allSettled(['stone','wood'].map(async name=>{
       const texture=await loader.loadAsync(new URL(name+'.webp',ASSETS).href);
       texture.wrapS=texture.wrapT=T.RepeatWrapping;texture.colorSpace=T.SRGBColorSpace;
@@ -246,7 +248,7 @@ export class YardRenderer {
       unit.animations=new Map(asset.animations.map(clip=>[clip.name,mixer.clipAction(clip)]));
       this.pose(unit,sessionPose(unit.session||session));
       this.helpers(unit,unit.session||session);this.dirty=true;this.drawOnce();
-    } catch(err){console.warn('Yard character unavailable:',err.message);unit.label.title='Character art unavailable. Session controls remain available.';}
+    } catch(err){if(!this.disposed){console.warn('Yard character unavailable:',err.message);unit.label.title='Character art unavailable. Session controls remain available.';}}
   }
   pose(unit,pose) {
     if(unit.pose===pose)return;
@@ -373,6 +375,7 @@ export class YardRenderer {
   dispose() {
     if(this.disposed)return;
     this.disposed=true;this.request++;this.worldRequest++;cancelAnimationFrame(this.frame);
+    this.loadingManager.abort();
     this.resizeObserver.disconnect();this.controls.dispose();this.clearUnits();
     for(const item of this.halls.values())item.label.remove();this.halls.clear();
     disposeTree(this.world);
@@ -381,6 +384,6 @@ export class YardRenderer {
     this.canvas.removeEventListener('webglcontextlost',this.contextLost);
     this.canvas.removeEventListener('pointerdown',this.onPointerDown);
     this.canvas.removeEventListener('click',this.onClick);this.canvas.removeEventListener('dblclick',this.onDouble);
-    this.renderer.dispose();this.canvas.remove();
+    this.renderer.dispose();this.renderer.forceContextLoss();this.canvas.remove();
   }
 }

@@ -12,11 +12,14 @@ export async function until(fn,ms=20000) {
   while(Date.now()-start<ms){const result=await fn();if(result)return result;await pause(100);}
   throw new Error('Browser condition timed out');
 }
-export async function openBrowser({width=1440,height=1000}={}) {
+export async function openBrowser({width=1440,height=1000,software=process.env.YARD_SOFTWARE_GL==='1'}={}) {
   const binary=browserBinary;if(!binary)throw new Error('Set CHROME_PATH to Chrome or Edge.');
   const cache=path.join(root,'.cache');await fs.mkdir(cache,{recursive:true});
   const profile=await fs.mkdtemp(path.join(cache,'yard-browser-'));
-  const chrome=spawn(binary,['--headless=new','--remote-debugging-port=0','--user-data-dir='+profile,'--no-first-run','--no-default-browser-check','--force-color-profile=srgb','--window-size='+width+','+height,'about:blank'],{stdio:'ignore',windowsHide:true});
+  // CI may have no GPU. This opt-in is confined to a disposable browser
+  // profile serving our trusted local fixtures; normal app browsers are untouched.
+  const graphics=software?['--use-gl=angle','--use-angle=swiftshader-webgl','--enable-unsafe-swiftshader']:process.env.CI?['--enable-unsafe-swiftshader']:[];
+  const chrome=spawn(binary,['--headless=new',...graphics,'--remote-debugging-port=0','--user-data-dir='+profile,'--no-first-run','--no-default-browser-check','--force-color-profile=srgb','--window-size='+width+','+height,'about:blank'],{stdio:'ignore',windowsHide:true});
   let launchError;chrome.on('error',e=>{launchError=e;});
   let port;
   try {

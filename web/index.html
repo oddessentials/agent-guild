@@ -64,7 +64,7 @@
     <section id="yard" hidden aria-label="Yard">
       <div class="yard-main">
         <div class="yard-heading"><div><p class="yard-eyebrow">AGENT GUILD · YOUR WORK, ALIVE</p><h2 id="yard-title">The Guild Yard</h2><p id="yard-subtitle"></p></div><span id="yard-summary" class="yard-summary" role="status"></span></div>
-        <div id="yard-stage" class="yard-stage" tabindex="0" aria-label="Interactive yard. Select a provider or session using the roster, or select it in the scene. Drag to pan; scroll to zoom." aria-describedby="yard-help">
+        <div id="yard-stage" class="yard-stage" role="region" tabindex="0" aria-label="Interactive yard. Select a provider or session using the roster, or select it in the scene. Drag to pan; scroll to zoom." aria-describedby="yard-help">
           <div id="yard-labels" class="yard-labels"></div>
           <p id="yard-loading" class="yard-loading" role="status">Preparing your yard…</p>
           <div id="yard-failure" class="yard-failure" hidden role="status"><strong>The 3D view is unavailable</strong><p>You can still use every action in the roster and inspector.</p><button id="yard-retry" class="btn" type="button">Retry 3D</button><button id="yard-cards" class="btn" type="button">Show Cards</button></div>
@@ -76,10 +76,11 @@
       <aside class="yard-sidebar" aria-label="Yard roster and inspector">
         <div class="yard-roster-heading"><h3>Roster</h3><span id="yard-roster-count"></span></div>
         <label class="yard-search"><span class="sr-only">Filter providers and sessions</span><input id="yard-filter" type="search" placeholder="Find a provider or session…" autocomplete="off"></label>
-        <div id="yard-roster" class="yard-roster" aria-label="Providers and sessions"></div>
+        <div id="yard-roster" class="yard-roster" role="group" aria-label="Providers and sessions"></div>
+        <p id="yard-no-results" class="yard-no-results" role="status" hidden></p>
         <div class="yard-inspector-heading"><h3>Inspector</h3><button id="yard-deselect" class="btn" type="button" hidden aria-label="Clear selection">×</button></div>
         <div id="yard-welcome" class="yard-welcome"><img src="/brand/crest.png" alt=""><h3>A place for your next idea</h3><p>Select a provider to start working, or a character to return to its session.</p><p>Everything you know from Cards is here.</p></div>
-        <div id="yard-inspector" class="yard-inspector"></div>
+        <div id="yard-inspector" class="yard-inspector" role="list" aria-label="Selected item"></div>
       </aside>
     </section>
 

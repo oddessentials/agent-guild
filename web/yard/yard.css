@@ -19,6 +19,7 @@
 .yard-stage { flex:1; min-height:400px; position:relative; overflow:hidden; outline-offset:-3px; }
 .yard-stage canvas { display:block; position:absolute; inset:0; width:100%; height:100%; cursor:grab; touch-action:none; }
 .yard-stage canvas:active { cursor:grabbing; }
+.yard-stage:focus-visible,.yard-row:focus-visible,.yard-label:focus-visible,.yard-search input:focus-visible { outline:2px solid var(--focus); outline-offset:-2px; }
 .yard-labels { position:absolute; inset:0; overflow:hidden; pointer-events:none; z-index:1; }
 .yard-label { position:absolute; top:0; left:0; transform:translate(-50%,-100%); pointer-events:auto; display:flex; flex-direction:column; align-items:center; gap:3px; border:0; border-radius:4px; padding:5px 9px; color:#f8ecd4; background:linear-gradient(180deg,rgba(13,20,22,.85),rgba(13,20,22,.6)); box-shadow:0 2px 12px #0005; cursor:pointer; font:inherit; max-width:180px; text-shadow:0 1px 3px #000; border-bottom:2px solid var(--unit-color,#ac9362); }
 .yard-label .label-name { font-size:11px; font-weight:600; white-space:nowrap; text-overflow:ellipsis; overflow:hidden; max-width:100%; }
@@ -45,6 +46,7 @@
 .yard-roster-heading > span { color:var(--muted); font-size:10px; }
 .yard-search { padding:0 16px 12px; }
 .yard-search input { width:100%; padding:8px 10px; font-size:12px; }
+.yard-no-results { margin:0; padding:0 20px 16px; font-size:12px; color:var(--muted); }
 .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
 .yard-roster { max-height:40%; min-height:130px; overflow-y:auto; padding:0 10px 10px; flex-shrink:0; }
 .yard-row { display:flex; gap:10px; align-items:center; width:100%; padding:9px 10px; background:transparent; border:1px solid transparent; border-radius:5px; color:var(--text); text-align:left; cursor:pointer; font-family:inherit; }
@@ -101,4 +103,5 @@
 
 .yard-row[data-key^="provider:"] { padding-top:6px; padding-bottom:6px; }
 .yard-row[data-key^="provider:"] .yard-row-sub { display:none; }
+.yard-row[data-status="locked"] .yard-row-sub { display:block; }
 .yard-search input { color:var(--text); background:var(--surface-2); border:1px solid var(--border); border-radius:var(--radius); }
