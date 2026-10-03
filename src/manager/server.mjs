@@ -25,6 +25,7 @@ const MIME = {
   '.webp': 'image/webp',
   '.woff2': 'font/woff2',
   '.ico': 'image/x-icon',
+  '.wav': 'audio/wav',
   '.json': 'application/json; charset=utf-8',
 };
 

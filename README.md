@@ -118,7 +118,10 @@ puts a crew of little robots in deep space; **Grove** is a calm moss garden
 of gentle nature spirits; **Gnomeland** is a lantern-lit village of gnome
 builders, engineers with a little magic. The page
 follows your system's light or dark setting until you pick one. See
-[docs/SKINS.md](docs/SKINS.md) to make another.
+[docs/SKINS.md](docs/SKINS.md) to make another. **Alert sounds**, off until
+you turn them on in the same menu, chime when a session has finished its work
+and sits idle, when the session manager stops or restarts, and when a new
+version is out.
 
 ## Commands
 

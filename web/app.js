@@ -1,6 +1,8 @@
 // Agent Guild web page. A thin client of the session manager's local API:
 // it never owns sessions, so closing the page leaves them running.
 
+import { SOUNDS, idleWatcher, playOnce, stopWatcher, updateWatcher } from './alerts.js';
+
 const TOKEN_KEY = 'agentGuild.token';
 const CWD_KEY = 'agentGuild.cwd';
 const ACCOUNTS_KEY = 'agentGuild.accounts';
@@ -12,6 +14,7 @@ const NEWS_FILTER_KEY = 'agentGuild.newsFilter';
 const CHANGELOG_SEEN_KEY = 'agentGuild.changelogSeen';
 const GITHUB_ACCOUNT_KEY = 'agentGuild.githubAccount';
 const CLONE_PARENT_KEY = 'agentGuild.cloneParent';
+const SOUND_KEY = 'agentGuild.sound';
 const RELEASES_URL = 'https://github.com/oddessentials/agent-guild/releases';
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -205,6 +208,48 @@ function changeSkin(input) {
   revealChange(input.closest('label'), () => { document.documentElement.dataset.skin = skin; });
 }
 
+// ---- sound ----------------------------------------------------------------
+
+const audio = {};
+const idleAlerts = idleWatcher({ chime: (id) => alertSound('idle', `idle.${id}`) });
+const stopAlert = stopWatcher();
+const updateAlert = updateWatcher();
+
+function soundOn() {
+  return load(SOUND_KEY) === 'on';
+}
+
+/** Plays a sound when sounds are on. Browsers allow it once the user has clicked or typed on the page. */
+function playSound(name) {
+  if (!soundOn()) return;
+  audio[name] ??= new Audio(SOUNDS[name]);
+  audio[name].currentTime = 0;
+  audio[name].play().catch(() => {});
+}
+
+/** Plays an alert in one open page only; `key` names the event. */
+function alertSound(name, key) {
+  if (soundOn()) playOnce(key, () => playSound(name));
+}
+
+function changeSound(input) {
+  save(SOUND_KEY, input.checked ? 'on' : null);
+  playSound('idle');
+}
+
+/** A hello from the manager: watch its sessions from here on. */
+function managerConnected() {
+  stopAlert.connected();
+  idleAlerts.clear();
+  for (const s of state.sessions.values()) idleAlerts.update(s);
+}
+
+/** The manager stopped, is restarting or went away. */
+function managerGone() {
+  idleAlerts.clear();
+  if (stopAlert.stopped()) alertSound('stopped', 'stopped');
+}
+
 /** Places the open menu under its button, right-aligned with it and kept on screen. */
 function placeAppearanceMenu() {
   const menu = $('appearance-menu');
@@ -271,6 +316,7 @@ function renderUpgrade() {
 function setUpgrade(upgrade) {
   const before = state.upgrade;
   state.upgrade = upgrade || null;
+  if (updateAlert(state.upgrade)) alertSound('update', `update.${state.upgrade.latestVersion}`);
   renderUpgrade();
   renderVersion();
   if ($('changelog').open) renderChangelog();
@@ -2748,12 +2794,14 @@ function guardLeaving() {
 
 function upsertSession(session) {
   state.sessions.set(session.id, session);
+  idleAlerts.update(session);
   renderSessions();
   noticeClone(session);
 }
 
 function dropSession(id) {
   state.sessions.delete(id);
+  idleAlerts.forget(id);
   const view = state.views.get(id);
   if (view) { view.dispose(); state.views.delete(id); }
   if (state.activeId === id) closePanel();
@@ -2833,7 +2881,10 @@ class TerminalView {
     this.term.loadAddon(new window.WebLinksAddon.WebLinksAddon((_e, uri) => window.open(uri, '_blank', 'noopener,noreferrer')));
     this.term.attachCustomKeyEventHandler((e) => this.handleKey(e));
     suppressQueryReplies(this.term);
-    this.term.onData((data) => this.send({ type: 'input', data }));
+    this.term.onData((data) => {
+      idleAlerts.input(this.id);
+      this.send({ type: 'input', data });
+    });
     this.opened = false;
     this.disposed = false;
     this.retry = 0;
@@ -3171,6 +3222,7 @@ function connectEvents() {
       setConnection('ok', 'Connected to session manager');
       state.sessions = new Map(msg.sessions.map((s) => [s.id, s]));
       for (const id of [...state.views.keys()]) if (!state.sessions.has(id)) dropSession(id);
+      managerConnected();
       renderSessions();
       sessionsShown = true;
       setUpgrade(msg.upgrade);
@@ -3192,6 +3244,7 @@ function connectEvents() {
       enterStopping(0, msg.restart === true);
       state.stopRemaining = Number(msg.remaining) || 0;
       showManagerStopped();
+      managerGone();
     } else if (msg.type === 'session.created' || msg.type === 'session.updated') {
       upsertSession(msg.session);
     } else if (msg.type === 'session.removed') {
@@ -3204,6 +3257,7 @@ function connectEvents() {
     }
   };
   ws.onclose = () => {
+    managerGone();
     if (state.stopping) {
       showManagerStopped();
     } else {
@@ -3392,7 +3446,10 @@ $('changelog-restart').addEventListener('click', () => {
   closeChangelog();
   stopManager({ restart: true });
 });
-addEventListener('storage', (e) => { if (e.key === CHANGELOG_SEEN_KEY) renderVersion(); });
+addEventListener('storage', (e) => {
+  if (e.key === CHANGELOG_SEEN_KEY) renderVersion();
+  else if (e.key === SOUND_KEY) $('sound').checked = soundOn();
+});
 $('models-more').addEventListener('click', () => {
   const before = $('models-list').childElementCount;
   modelsView.all = true;
@@ -3406,6 +3463,7 @@ $('upgrade').addEventListener('click', upgradeManager);
 $('appearance-menu').addEventListener('change', (e) => {
   if (e.target.name === 'skin') changeSkin(e.target);
   else if (e.target.name === 'theme') changeTheme(e.target);
+  else if (e.target.name === 'sound') changeSound(e.target);
 });
 $('appearance-menu').addEventListener('toggle', (e) => {
   if (e.newState !== 'open') return;
@@ -3439,6 +3497,7 @@ $('providers').addEventListener('pointerout', (e) => {
 });
 applyTheme(currentTheme());
 renderSkinChoices();
+$('sound').checked = soundOn();
 // Follow the system setting until the user picks a theme.
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
   if (!load(THEME_KEY)) applyTheme(e.matches ? 'dark' : 'light');
