@@ -106,7 +106,7 @@
 
   body::before {
     content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
-    background: var(--page-art) center bottom / cover no-repeat;
+    background: var(--page-veil), var(--page-art) center bottom / cover no-repeat;
   }
 
   .provider, .session-card {
@@ -268,6 +268,7 @@
   --glint: rgba(255, 238, 200, 0.1);
   --empty-shadow: rgba(0, 0, 0, 0.55);
   --page-art: image-set(url("page.avif") type("image/avif"), url("page.webp") type("image/webp"));
+  --page-veil: none;
 
   body { background: #0b0c10; }
   .topbar { background: rgba(12, 13, 17, 0.88); backdrop-filter: blur(6px); }
@@ -395,6 +396,7 @@
 
 :where(:root[data-skin="guild"][data-theme="light"]) {
   --page-art: image-set(url("page-light.avif") type("image/avif"), url("page-light.webp") type("image/webp"));
+  --page-veil: linear-gradient(rgba(243, 238, 227, 0.6), rgba(243, 238, 227, 0.36) 45%, rgba(243, 238, 227, 0.42));
   --glint: rgba(255, 244, 214, 0.26);
   --empty-shadow: rgba(70, 48, 12, 0.28);
   --card-shadow: inset 0 1px 0 #fff, 0 1px 2px rgba(70, 48, 12, 0.08), 0 10px 26px rgba(70, 48, 12, 0.1);
