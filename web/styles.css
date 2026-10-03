@@ -209,14 +209,17 @@ main { max-width: 1200px; margin: 0 auto; padding: 26px 16px 56px; display: grid
 .provider-actions { margin-top: auto; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .provider .hint { font-size: 0.78rem; color: var(--muted); overflow-wrap: anywhere; }
 .provider .copies { font-size: 0.78rem; color: var(--muted); overflow-wrap: anywhere; }
-.provider .copies summary { cursor: pointer; color: var(--warn); list-style: none; }
+.provider .copies summary { cursor: pointer; list-style: none; }
+.provider .copies.warned summary { color: var(--warn); }
 .provider .copies summary::-webkit-details-marker { display: none; }
 .provider .copies summary::before { margin: 0 0.3em 0 0; transition: transform 0.15s var(--ease); }
 .provider .copies[open] summary::before { transform: rotate(90deg); }
 .provider .copies ul { margin: 6px 0 0; padding: 0; list-style: none; display: grid; gap: 8px; }
 .provider .copies li span { display: block; }
-.provider .copies .copy-name { color: var(--text); }
-.provider .copies code { font-family: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace; color: var(--text); }
+.provider .copies .copy-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 24px; }
+.provider .copies .copy-name { color: var(--text); min-width: 0; }
+.provider .copies .copy-path { font-family: var(--font-mono); font-size: 0.72rem; }
+.provider .copies .copy-uninstall { flex: none; padding: 2px 10px; font-size: 0.75rem; }
 .provider.busy { opacity: 0.6; pointer-events: none; }
 
 .provider-icon {

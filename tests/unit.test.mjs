@@ -9,7 +9,8 @@ import { mergePathLists, parsePathFromEnvOutput, weavePaths, parseRegValue, expa
 import { mergeEnv, cleanResumeId, modelFromArgs, SessionManager } from '../src/manager/session-manager.mjs';
 import { loadProviders, defaultShell, ProviderRegistry } from '../src/manager/providers.mjs';
 import { paths } from '../src/manager/config.mjs';
-import { classifyInstall, expandHome, helpDescribes, platformDependency, listInstallations, knownLaunchers, shellCommand, updateHelpAccepted } from '../src/manager/install-channels.mjs';
+import { classifyInstall, expandHome, homeRelative, helpDescribes, platformDependency, listInstallations, knownLaunchers, updateHelpAccepted, uninstallPlan } from '../src/manager/install-channels.mjs';
+import { runPlan, encodePlan, RUNNER } from '../src/manager/uninstall.mjs';
 import { hookToReports, claudeStatuslineToReport, formatStatusLine } from '../src/report/hooks.mjs';
 import { shimContents, writeReportShims, prependPath, fileUrl, SHIM_NAME, LOADER_NAME } from '../src/manager/report-shims.mjs';
 import { bundleFiles, codexHookArgs, codexTrustArgs, codexHooksFrom, antigravityInstalled, antigravityPluginDir, antigravityConfigFile, antigravityPluginEnabled, helpLists, REPORT_COMMAND } from '../src/manager/session-hooks.mjs';
@@ -127,7 +128,8 @@ test('loadProviders merges user overrides, platform keys and disabled entries', 
     ['Antigravity CLI', 'agy', null, null, 'antigravity', 'antigravity', null, 1],
   );
   assert.deepEqual(google.resumeArgs, ['--conversation', '{id}']);
-  assert.deepEqual(Object.keys(google.channels), ['native'], 'agy updates itself, so no WinGet or Homebrew copy is updated over it');
+  assert.deepEqual(Object.keys(google.channels), ['native', 'brew']);
+  assert.deepEqual(google.channels.brew, { names: ['antigravity-cli'], autoUpdates: true }, 'agy updates itself, so no Homebrew copy is updated over it');
   assert.deepEqual(google.channels.native.paths, ['~/.local/bin/agy']);
 
   const win = loadProviders({ userFile, platform: 'win32' });
@@ -616,15 +618,17 @@ test('every copy of a command on PATH is found, one per folder', () => {
   assert.deepEqual(resolveAllCommands('missing', { PATH: '/a:/c' }, 'linux', onPosix), []);
 });
 
+const runOf = (install) => install.uninstall?.run && [install.uninstall.run.file, ...install.uninstall.run.args].join(' ');
+
 test('installations are counted once however many entry points they have', () => {
   const claude = {
     tool: 'Claude Code',
     package: '@anthropic-ai/claude-code',
     channels: {
-      native: { paths: ['~/.local/bin/claude', '~/.local/share/claude'], update: ['update'], uninstall: 'remove-native', sharedWithNpm: false },
+      native: { paths: ['~/.local/bin/claude', '~/.local/share/claude'], update: ['update'], remove: ['~/.local/bin/claude', '~/.local/share/claude'], links: [], sharedWithNpm: false },
       brew: { names: ['claude-code', 'claude-code@latest'] },
       winget: { id: 'Anthropic.ClaudeCode' },
-      legacy: { paths: ['~/.claude/local'], guidance: null, uninstall: 'remove-legacy' },
+      legacy: { paths: ['~/.claude/local'], guidance: null, remove: ['~/.claude/local'] },
     },
   };
   const fsx = ({ files = [], links = {}, texts = {} } = {}) => ({
@@ -648,14 +652,16 @@ test('installations are counted once however many entry points they have', () =>
   }) });
   assert.deepEqual(channelsOf(junction), ['npm'], 'one npm prefix reached through two PATH entries is one installation');
   assert.equal(junction[0].resolvedPath, `${current}\\claude.cmd`);
-  assert.equal(junction[0].removeCommand, `${current}\\npm.cmd uninstall -g --prefix ${current} '@anthropic-ai/claude-code'`);
+  assert.equal(runOf(junction[0]), `${current}\\npm.cmd uninstall -g --prefix ${current} @anthropic-ai/claude-code`);
 
   const versions = '/Users/a/.local/share/claude/versions/2.1.286';
   const linked = listInstallations({ ...mac, onPath: ['/Users/a/.local/bin/claude', '/usr/local/bin/claude'], fsx: fsx({
     links: { '/Users/a/.local/bin/claude': versions, '/usr/local/bin/claude': versions },
   }) });
   assert.deepEqual(channelsOf(linked), ['native'], 'a second link to the native build is the same installation');
-  assert.equal(linked[0].removeCommand, 'remove-native');
+  assert.deepEqual(linked[0].uninstall, {
+    run: null, remove: ['/Users/a/.local/bin/claude', '/Users/a/.local/share/claude'], links: [], launcher: '/Users/a/.local/bin/claude',
+  }, 'the launcher found on PATH is removed last');
 
   const nvm = '/Users/a/.nvm/versions/node/v22';
   const nvmPkg = `${nvm}/lib/node_modules/@anthropic-ai/claude-code`;
@@ -664,19 +670,24 @@ test('installations are counted once however many entry points they have', () =>
   assert.deepEqual(channelsOf(npmLinked), ['npm'], 'a link elsewhere into the npm package is the same installation');
   const viaLink = listInstallations({ ...mac, onPath: ['/usr/local/bin/claude'], fsx: fsx(npmFiles) });
   assert.equal(viaLink[0].channel, 'npm');
-  assert.equal(viaLink[0].removeCommand, `${nvm}/bin/npm uninstall -g --prefix ${nvm} @anthropic-ai/claude-code`);
+  assert.equal(runOf(viaLink[0]), `${nvm}/bin/npm uninstall -g --prefix ${nvm} @anthropic-ai/claude-code`);
+  assert.deepEqual(viaLink[0].uninstall.remove, [], 'npm removes its own copy of a tool that does not share the native folder');
 
   const both = listInstallations({ ...mac, onPath: ['/Users/a/.local/bin/claude', `${nvm}/bin/claude`], fsx: fsx({
     files: npmFiles.files, links: { ...npmFiles.links, '/Users/a/.local/bin/claude': versions },
   }) });
   assert.deepEqual(channelsOf(both), ['native', 'npm'], 'a native build and an npm install are two installations');
 
-  const grok = { tool: 'Grok Build', package: '@xai-official/grok', channels: { native: { paths: ['~/.grok/bin'], update: ['update'], uninstall: null, sharedWithNpm: true } } };
+  const grok = { tool: 'Grok Build', command: 'grok', package: '@xai-official/grok', channels: { native: { paths: ['~/.grok/bin'], update: ['update'], remove: ['~/.grok/bin', '~/.grok/downloads'], links: ['~/.local/bin/grok'], sharedWithNpm: true } } };
   const grokPkg = `${nvm}/lib/node_modules/@xai-official/grok`;
   const shared = listInstallations({ ...mac, provider: grok, onPath: [`${nvm}/bin/grok`, '/Users/a/.grok/bin/grok'], fsx: fsx({
-    files: [`${grokPkg}/package.json`, `${nvm}/bin/npm`], links: { [`${nvm}/bin/grok`]: `${grokPkg}/bin/grok-native` },
+    files: [`${grokPkg}/package.json`, `${nvm}/bin/npm`, '/Users/a/.grok/bin/grok'], links: { [`${nvm}/bin/grok`]: `${grokPkg}/bin/grok-native` },
   }) });
   assert.deepEqual(channelsOf(shared), ['npm'], 'an npm wrapper over the native location is one installation');
+  assert.equal(runOf(shared[0]), `${nvm}/bin/npm uninstall -g --prefix ${nvm} @xai-official/grok`);
+  assert.deepEqual(shared[0].uninstall.remove, ['/Users/a/.grok/bin', '/Users/a/.grok/downloads'], 'the native files npm placed go too');
+  assert.deepEqual(shared[0].uninstall.links, ['/Users/a/.local/bin/grok']);
+  assert.equal(shared[0].uninstall.launcher, '/Users/a/.grok/bin/grok', 'the native launcher is kept after npm removes its wrapper');
 
   const cask = '/opt/homebrew/Caskroom/claude-code/2.1.285/claude';
   const intel = '/usr/local/Caskroom/claude-code/2.1.285/claude';
@@ -684,7 +695,7 @@ test('installations are counted once however many entry points they have', () =>
     files: ['/opt/homebrew/bin/brew', '/usr/local/bin/brew'], links: { '/opt/homebrew/bin/claude': cask, '/usr/local/bin/claude': intel },
   }) });
   assert.deepEqual(channelsOf(brews), ['brew', 'brew'], 'a link and its Caskroom file are one installation; another Homebrew is another');
-  assert.deepEqual(brews.map((i) => i.removeCommand), ['/opt/homebrew/bin/brew uninstall --cask claude-code', '/usr/local/bin/brew uninstall --cask claude-code']);
+  assert.deepEqual(brews.map(runOf), ['/opt/homebrew/bin/brew uninstall --cask claude-code', '/usr/local/bin/brew uninstall --cask claude-code']);
 
   const packages = 'C:\\Users\\a\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Anthropic.ClaudeCode_Microsoft.Winget.Source_8wekyb3d8bbwe\\claude.exe';
   const link = 'C:\\Users\\a\\AppData\\Local\\Microsoft\\WinGet\\Links\\claude.exe';
@@ -692,21 +703,57 @@ test('installations are counted once however many entry points they have', () =>
     files: ['C:\\Users\\a\\.local\\bin\\claude.exe'], links: { [link]: packages },
   }) });
   assert.deepEqual(channelsOf(acceptance), ['native', 'winget']);
-  assert.equal(acceptance[1].removeCommand, 'winget uninstall --id Anthropic.ClaudeCode --exact');
+  assert.equal(runOf(acceptance[1]), 'C:\\WindowsApps\\winget.exe uninstall --id Anthropic.ClaudeCode --exact');
+  assert.deepEqual(acceptance[0].uninstall.remove, ['C:\\Users\\a\\.local\\bin\\claude', 'C:\\Users\\a\\.local\\share\\claude']);
 
   const unknown = listInstallations({ ...mac, onPath: ['/opt/a/claude', '/opt/b/claude', '/opt/c/claude'], fsx: fsx({ links: { '/opt/c/claude': '/opt/a/claude' } }) });
   assert.deepEqual(channelsOf(unknown), ['unknown', 'unknown'], 'two links to one unrecognised file count once');
-  assert.deepEqual(unknown.map((i) => i.removeCommand), [null, null], 'no removal command without confirmed ownership');
+  assert.deepEqual(unknown.map((i) => i.uninstall), [null, null], 'nothing is removed without confirmed ownership');
 
   const offPath = fsx({ files: ['/Users/a/.local/bin/claude', '/Users/a/.claude/local/claude', '/Users/a/.local/share/claude/versions/2.1.286'] });
   assert.deepEqual(knownLaunchers({ provider: claude, command: 'claude', env: mac.env, platform: 'darwin', fsx: offPath }), ['/Users/a/.local/bin/claude', '/Users/a/.claude/local/claude'], 'kept versions are not launchers');
   assert.deepEqual(knownLaunchers({ provider: claude, command: '/abs/claude', env: mac.env, platform: 'darwin', fsx: offPath }), []);
   assert.deepEqual(knownLaunchers({ provider: claude, command: 'claude', env: windows.env, platform: 'win32', fsx: fsx({ files: ['C:\\Users\\a\\.local\\bin\\claude.exe'] }) }), ['C:\\Users\\a\\.local\\bin\\claude.exe']);
   const found = listInstallations({ ...mac, onPath: [], known: ['/Users/a/.local/bin/claude', '/Users/a/.claude/local/claude'], fsx: offPath });
-  assert.deepEqual(found.map((i) => [i.channel, i.onPath, i.removeCommand]), [['native', false, 'remove-native'], ['legacy', false, 'remove-legacy']]);
+  assert.deepEqual(found.map((i) => [i.channel, i.onPath, i.uninstall.remove]), [
+    ['native', false, ['/Users/a/.local/bin/claude', '/Users/a/.local/share/claude']],
+    ['legacy', false, ['/Users/a/.claude/local']],
+  ]);
 });
 
-test('ownership follows where a tool is really installed, and removal commands suit the shell', () => {
+test('shared npm and native copies have the same uninstall plan in either PATH order', () => {
+  const provider = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'config/providers.default.json'), 'utf8')).providers.find((p) => p.id === 'xai');
+  for (const platform of ['darwin', 'win32']) {
+    const m = platform === 'win32' ? path.win32 : path.posix;
+    const home = platform === 'win32' ? 'C:\\Users\\a' : '/Users/a';
+    const env = { HOME: home, USERPROFILE: home };
+    const prefix = m.join(home, 'npm');
+    const wrapper = m.join(prefix, platform === 'win32' ? 'grok.cmd' : 'bin/grok');
+    const native = m.join(home, '.grok/bin', platform === 'win32' ? 'grok.exe' : 'grok');
+    const manifest = m.join(prefix, platform === 'win32' ? '' : 'lib', 'node_modules/@xai-official/grok/package.json');
+    const npm = m.join(prefix, platform === 'win32' ? 'npm.cmd' : 'bin/npm');
+    const files = new Set([wrapper, native, manifest, npm]);
+    const fsx = { exists: (p) => files.has(p), isFile: (p) => files.has(p), isLink: () => false, realpath: (p) => p, readText: () => 'node_modules/@xai-official/grok' };
+    const opts = { provider, env, platform, fsx };
+    const [npmFirst] = listInstallations({ ...opts, onPath: [wrapper, native] });
+    const [nativeFirst] = listInstallations({ ...opts, onPath: [native, wrapper] });
+    assert.deepEqual(nativeFirst.uninstall, npmFirst.uninstall, platform);
+    assert.deepEqual(nativeFirst.uninstall.run, { file: npm, args: ['uninstall', '-g', '--prefix', prefix, provider.package] });
+    assert.equal(nativeFirst.uninstall.launcher, native);
+    assert.equal(nativeFirst.channel, 'native');
+    assert.equal(nativeFirst.resolvedPath, native);
+    assert.equal(nativeFirst.onPath, true);
+    assert.deepEqual(listInstallations({ ...opts, onPath: [wrapper], known: [native] })[0].uninstall, npmFirst.uninstall);
+    files.delete(npm);
+    for (const onPath of [[wrapper, native], [native, wrapper]]) {
+      const [copy] = listInstallations({ ...opts, onPath });
+      assert.equal(copy.uninstall, null, 'missing npm must not fall back to deleting only the native files');
+      assert.equal(copy.guidance, `Installed by npm under ${prefix}, but npm was not found.`, 'the copy says why it cannot be removed');
+    }
+  }
+});
+
+test('ownership follows where a tool is really installed, and removal runs that installer', () => {
   const fsx = ({ files = [], links = {}, texts = {} } = {}) => ({
     exists: (f) => files.includes(f),
     isFile: (f) => files.includes(f) || Object.hasOwn(links, f),
@@ -718,7 +765,7 @@ test('ownership follows where a tool is really installed, and removal commands s
     tool: 'Claude Code',
     package: '@anthropic-ai/claude-code',
     channels: {
-      native: { paths: ['~/.local/bin/claude', '~/.local/share/claude'], update: ['update'], uninstall: 'remove-native', sharedWithNpm: false },
+      native: { paths: ['~/.local/bin/claude', '~/.local/share/claude'], update: ['update'], remove: ['~/.local/bin/claude', '~/.local/share/claude'], links: [], sharedWithNpm: false },
       brew: { names: ['claude-code', 'claude-code@latest'] },
     },
   };
@@ -734,7 +781,15 @@ test('ownership follows where a tool is really installed, and removal commands s
   assert.equal(formula.length, 1);
   assert.equal(formula[0].channel, 'brew', 'the package tree inside a Cellar is not an npm prefix');
   assert.equal(commandOf(formula[0]), '/opt/homebrew/bin/brew upgrade example-cli');
-  assert.equal(formula[0].removeCommand, '/opt/homebrew/bin/brew uninstall example-cli');
+  assert.equal(runOf(formula[0]), '/opt/homebrew/bin/brew uninstall example-cli');
+
+  const agy = { tool: 'Antigravity CLI', channels: { native: { paths: ['~/.local/bin/agy'], update: ['update'], remove: ['~/.local/bin/agy'], links: [] }, brew: { names: ['antigravity-cli'], autoUpdates: true } } };
+  const selfUpdating = listInstallations({ ...mac, provider: agy, onPath: ['/opt/homebrew/bin/agy'], fsx: fsx({
+    files: ['/opt/homebrew/bin/brew'], links: { '/opt/homebrew/bin/agy': '/opt/homebrew/Caskroom/antigravity-cli/1.2.16/antigravity' },
+  }) });
+  assert.equal(selfUpdating[0].channel, 'brew');
+  assert.equal(selfUpdating[0].update, null, 'Homebrew does not upgrade a cask that updates itself');
+  assert.equal(runOf(selfUpdating[0]), '/opt/homebrew/bin/brew uninstall --cask antigravity-cli', 'but it still removes it');
 
   const cask = '/opt/homebrew/Caskroom/claude-code/2.1.285/claude';
   const aliasToBrew = listInstallations({ ...mac, onPath: ['/opt/homebrew/bin/claude', '/Users/a/.local/bin/claude'], fsx: fsx({
@@ -744,7 +799,7 @@ test('ownership follows where a tool is really installed, and removal commands s
   assert.equal(aliasToBrew.length, 1, 'one Homebrew installation reached through two launchers');
   assert.equal(aliasToBrew[0].channel, 'brew');
   assert.equal(commandOf(aliasToBrew[0]), '/opt/homebrew/bin/brew upgrade --cask claude-code');
-  assert.equal(aliasToBrew[0].removeCommand, '/opt/homebrew/bin/brew uninstall --cask claude-code');
+  assert.equal(runOf(aliasToBrew[0]), '/opt/homebrew/bin/brew uninstall --cask claude-code');
 
   const alsoNpm = listInstallations({ ...mac, onPath: ['/opt/homebrew/bin/claude'], fsx: fsx({
     files: ['/opt/homebrew/bin/brew', '/opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/package.json'],
@@ -776,7 +831,7 @@ test('ownership follows where a tool is really installed, and removal commands s
   const aliasIntoKeg = listInstallations({ ...mac, onPath: ['/Users/a/.local/bin/claude'], fsx: fsx(kegLayout) });
   assert.equal(aliasIntoKeg[0].channel, 'npm', 'a link into a package under a Homebrew Node keg is npm-owned, not the Node formula');
   assert.equal(commandOf(aliasIntoKeg[0]), `${kegReal}/bin/npm install -g --prefix ${kegReal}`);
-  assert.equal(aliasIntoKeg[0].removeCommand, `${kegReal}/bin/npm uninstall -g --prefix ${kegReal} @anthropic-ai/claude-code`);
+  assert.equal(runOf(aliasIntoKeg[0]), `${kegReal}/bin/npm uninstall -g --prefix ${kegReal} @anthropic-ai/claude-code`);
   const aliasAndLauncher = listInstallations({ ...mac, onPath: ['/Users/a/.local/bin/claude', `${keg}/bin/claude`], fsx: fsx(kegLayout) });
   assert.deepEqual(aliasAndLauncher.map((i) => i.channel), ['npm'], 'the alias and the npm launcher are one installation');
 
@@ -785,7 +840,7 @@ test('ownership follows where a tool is really installed, and removal commands s
   }) });
   assert.equal(foreign[0].channel, 'unknown', "a file in another formula's keg is not attributed to that formula");
   assert.equal(foreign[0].update, null);
-  assert.equal(foreign[0].removeCommand, null);
+  assert.equal(foreign[0].uninstall, null);
 
   const elsewhere = '/opt/tools/claude/claude';
   const aliasFirst = listInstallations({ ...mac, onPath: ['/Users/a/.local/bin/claude', '/opt/tools/bin/claude'], fsx: fsx({
@@ -794,7 +849,7 @@ test('ownership follows where a tool is really installed, and removal commands s
   assert.equal(aliasFirst.length, 1);
   assert.equal(aliasFirst[0].channel, 'unknown', 'a link at the native launcher path does not make its target a native install');
   assert.equal(aliasFirst[0].update, null);
-  assert.equal(aliasFirst[0].removeCommand, null);
+  assert.equal(aliasFirst[0].uninstall, null);
   const aliasSecond = listInstallations({ ...mac, onPath: ['/opt/tools/bin/claude'], known: ['/Users/a/.local/bin/claude'], fsx: fsx({
     links: { '/Users/a/.local/bin/claude': elsewhere, '/opt/tools/bin/claude': elsewhere },
   }) });
@@ -819,16 +874,278 @@ test('ownership follows where a tool is really installed, and removal commands s
       texts: { [shim]: '"%dp0%\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe" %*' },
     }),
   });
-  assert.equal(spaced[0].removeCommand, "& 'C:\\Program Files\\nodejs\\npm.cmd' uninstall -g --prefix 'C:\\Users\\First Last\\AppData\\Roaming\\npm' '@anthropic-ai/claude-code'");
+  assert.deepEqual(spaced[0].uninstall.run, {
+    file: 'C:\\Program Files\\nodejs\\npm.cmd', args: ['uninstall', '-g', '--prefix', 'C:\\Users\\First Last\\AppData\\Roaming\\npm', '@anthropic-ai/claude-code'],
+  });
 
-  assert.equal(shellCommand('C:\\nodejs\\npm.cmd', ['uninstall', '-g', '--prefix', 'C:\\nodejs', 'pkg'], 'win32'), 'C:\\nodejs\\npm.cmd uninstall -g --prefix C:\\nodejs pkg');
-  assert.equal(shellCommand("C:\\Users\\O'Brien\\npm.cmd", ['uninstall'], 'win32'), "& 'C:\\Users\\O''Brien\\npm.cmd' uninstall");
-  assert.equal(shellCommand('winget', ['uninstall', '--id', 'Anthropic.ClaudeCode', '--exact'], 'win32'), 'winget uninstall --id Anthropic.ClaudeCode --exact');
-  assert.equal(
-    shellCommand('/Users/First Last/.nvm/bin/npm', ['uninstall', '-g', '--prefix', '/Users/First Last/.nvm', '@anthropic-ai/claude-code'], 'darwin'),
-    "'/Users/First Last/.nvm/bin/npm' uninstall -g --prefix '/Users/First Last/.nvm' @anthropic-ai/claude-code",
-  );
-  assert.equal(shellCommand("/Users/o'brien/bin/brew", ['uninstall', '--cask', 'claude-code@latest'], 'darwin'), "'/Users/o'\\''brien/bin/brew' uninstall --cask claude-code@latest");
+});
+
+test('an uninstall only deletes paths inside the home folder, never a tool home itself', () => {
+  const native = { channel: 'native', resolvedPath: '/Users/a/.local/bin/codex' };
+  const env = { HOME: '/Users/a' };
+  const planFor = (remove, links = []) => uninstallPlan(native, { channels: { native: { remove, links } } }, env, 'darwin');
+  assert.equal(planFor(['~', '~/.codex', '/etc/codex/bin', 'relative/bin', '/Users/a/../b/bin', '/Users/ab/bin/x']), null);
+  assert.deepEqual(planFor(['~/.codex', '~/.codex/packages/standalone', '~/.local/bin/../bin/codex'], ['~/.local/bin/codex', '/usr/local/bin/codex']), {
+    run: null, remove: ['/Users/a/.codex/packages/standalone', '/Users/a/.local/bin/codex'], links: ['/Users/a/.local/bin/codex', '/usr/local/bin/codex'], launcher: '/Users/a/.local/bin/codex',
+  });
+  assert.equal(homeRelative('/Users/a/.local/bin/claude', env, 'darwin'), '~/.local/bin/claude');
+  assert.equal(homeRelative('/Users/ab/bin/claude', env, 'darwin'), '/Users/ab/bin/claude');
+  assert.equal(homeRelative('C:\\USERS\\A\\.grok\\bin\\grok.exe', { USERPROFILE: 'C:\\Users\\a' }, 'win32'), '~\\.grok\\bin\\grok.exe');
+  const windows = uninstallPlan(native, { channels: { native: { remove: ['~/AppData/Local/agy', 'C:\\Users\\A\\.grok\\bin', 'D:\\Users\\a\\x\\y'] } } }, { USERPROFILE: 'C:\\Users\\a' }, 'win32');
+  assert.deepEqual(windows.remove, ['C:\\Users\\a\\AppData\\Local\\agy', 'C:\\Users\\A\\.grok\\bin']);
+  assert.equal(uninstallPlan({ channel: 'unknown' }, { channels: {} }, env, 'darwin'), null);
+  assert.equal(uninstallPlan({ channel: 'brew', update: null }, { channels: {} }, env, 'darwin'), null, 'no brew, nothing to run');
+});
+
+test('an uninstall plan removes its own files and keeps links that lead elsewhere', { skip: process.platform === 'win32' && 'symlinks need privileges on Windows' }, () => {
+  const home = tempDir();
+  const share = path.join(home, '.local', 'share', 'tool');
+  const binDir = path.join(home, '.local', 'bin');
+  fs.mkdirSync(path.join(share, 'versions'), { recursive: true });
+  fs.mkdirSync(binDir, { recursive: true });
+  fs.writeFileSync(path.join(share, 'versions', '1.0.0'), 'binary');
+  fs.symlinkSync(path.join(share, 'versions', '1.0.0'), path.join(binDir, 'tool'));
+  fs.symlinkSync('/usr/bin/env', path.join(binDir, 'foreign'));
+  fs.writeFileSync(path.join(binDir, 'agent'), 'someone else');
+  fs.symlinkSync(path.join(share, 'versions', '1.0.0'), path.join(binDir, 'helper'));
+  const lines = [];
+  const code = runPlan({
+    remove: [path.join(binDir, 'tool'), path.join(binDir, 'foreign'), share, path.join(home, 'never-there')],
+    links: [path.join(binDir, 'agent'), path.join(binDir, 'helper')],
+  }, { log: (line) => lines.push(line) });
+  assert.equal(code, 0, lines.join('\n'));
+  assert.equal(fs.existsSync(share), false);
+  assert.equal(fs.existsSync(path.join(binDir, 'tool')), false);
+  assert.equal(fs.existsSync(path.join(binDir, 'helper')), false);
+  assert.equal(fs.lstatSync(path.join(binDir, 'helper'), { throwIfNoEntry: false }), undefined, 'a link into the installation goes even after its target');
+  assert.equal(fs.readlinkSync(path.join(binDir, 'foreign')), '/usr/bin/env');
+  assert.equal(fs.readFileSync(path.join(binDir, 'agent'), 'utf8'), 'someone else', 'a file named in links is kept unless it is a link');
+  assert.ok(lines.some((l) => l.startsWith(`Kept ${path.join(binDir, 'foreign')}`)));
+  assert.ok(!lines.some((l) => l.includes('never-there')));
+});
+
+test('only links may lie outside home, and Grok\'s /usr/local/bin links are among them', () => {
+  const provider = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'config/providers.default.json'), 'utf8')).providers.find((p) => p.id === 'xai');
+  const native = { channel: 'native', resolvedPath: '/Users/a/.grok/bin/grok' };
+  const mac = uninstallPlan(native, provider, { HOME: '/Users/a' }, 'darwin');
+  assert.deepEqual(mac.remove, ['/Users/a/.grok/bin', '/Users/a/.grok/downloads', '/Users/a/.grok/completions']);
+  assert.deepEqual(mac.links, ['/Users/a/.local/bin/grok', '/Users/a/.local/bin/agent', '/usr/local/bin/grok', '/usr/local/bin/agent']);
+  const win = uninstallPlan({ channel: 'native', resolvedPath: 'C:\\Users\\a\\.grok\\bin\\grok.exe' }, provider, { USERPROFILE: 'C:\\Users\\a' }, 'win32');
+  assert.deepEqual(win.links, ['C:\\Users\\a\\.local\\bin\\grok', 'C:\\Users\\a\\.local\\bin\\agent'], 'a rootless path names no place on Windows');
+
+  const outside = { channels: { native: { remove: ['/usr/local/bin/tool', '~/.tool/bin'], links: ['/usr/local/bin/tool', 'relative/tool'] } } };
+  const plan = uninstallPlan({ channel: 'native', resolvedPath: '/Users/a/.tool/bin/tool' }, outside, { HOME: '/Users/a' }, 'darwin');
+  assert.deepEqual(plan.remove, ['/Users/a/.tool/bin'], 'remove never leaves home');
+  assert.deepEqual(plan.links, ['/usr/local/bin/tool']);
+});
+
+test('a launcher linked from outside home goes with its copy, and other links there stay', { skip: process.platform === 'win32' && 'symlinks need privileges on Windows' }, () => {
+  const home = tempDir();
+  const system = tempDir();
+  const bin = path.join(home, '.grok', 'bin');
+  fs.mkdirSync(bin, { recursive: true });
+  fs.writeFileSync(path.join(bin, 'grok'), 'binary');
+  fs.writeFileSync(path.join(home, '.grok', 'config.toml'), 'settings');
+  fs.symlinkSync(path.join(bin, 'grok'), path.join(system, 'grok'));
+  fs.symlinkSync('/usr/bin/env', path.join(system, 'agent'));
+  const lines = [];
+  const code = runPlan({
+    remove: [bin], links: [path.join(system, 'grok'), path.join(system, 'agent')], launcher: path.join(system, 'grok'),
+  }, { log: (line) => lines.push(line) });
+  assert.equal(code, 0, lines.join('\n'));
+  assert.equal(fs.lstatSync(path.join(system, 'grok'), { throwIfNoEntry: false }), undefined, 'no dangling link is left to block a reinstall');
+  assert.equal(fs.existsSync(bin), false);
+  assert.equal(fs.readlinkSync(path.join(system, 'agent')), '/usr/bin/env', 'a link to another program is kept');
+  assert.equal(fs.readFileSync(path.join(home, '.grok', 'config.toml'), 'utf8'), 'settings');
+});
+
+test('an uninstall plan stops before deleting anything when its command fails', () => {
+  const home = tempDir();
+  const keep = path.join(home, 'keep', 'bin');
+  fs.mkdirSync(keep, { recursive: true });
+  const lines = [];
+  const code = runPlan({ run: { file: process.execPath, args: ['-e', 'process.exit(3)'] }, remove: [keep] }, { log: (line) => lines.push(line) });
+  assert.equal(code, 3);
+  assert.ok(fs.existsSync(keep));
+  assert.ok(lines[0].startsWith('> '));
+
+  const out = execFileSync(process.execPath, [RUNNER, encodePlan({ remove: [keep] })], { encoding: 'utf8' });
+  assert.equal(out.trim(), `Removed ${keep}`);
+  assert.equal(fs.existsSync(keep), false);
+});
+
+test('an uninstall that fails at any step leaves the copy findable and launchable, and a retry finishes it', () => {
+  const posix = process.platform !== 'win32';
+  const file = (home, rel) => {
+    fs.mkdirSync(path.dirname(path.join(home, rel)), { recursive: true });
+    fs.writeFileSync(path.join(home, rel), rel);
+  };
+  const link = (home, rel, to) => {
+    fs.mkdirSync(path.dirname(path.join(home, rel)), { recursive: true });
+    fs.symlinkSync(path.join(home, to), path.join(home, rel));
+  };
+  const layouts = {
+    'Claude Code on Windows': (h) => {
+      file(h, '.local/bin/claude.exe');
+      file(h, '.local/share/claude/versions/2.1.300');
+      return { remove: ['.local/bin/claude.exe', '.local/share/claude'], launcher: '.local/bin/claude.exe' };
+    },
+    'Antigravity CLI on Windows': (h) => {
+      for (const rel of ['agy/bin/agy.exe', 'agy/bin/helper.dll', 'agy/state.json']) file(h, rel);
+      return { remove: ['agy'], launcher: 'agy/bin/agy.exe' };
+    },
+    'Grok Build': (h) => {
+      for (const rel of ['.grok/bin/grok', '.grok/bin/agent', '.grok/downloads/grok-1.0.46', '.grok/completions/bash/grok.bash']) file(h, rel);
+      return { remove: ['.grok/bin', '.grok/downloads', '.grok/completions'], launcher: '.grok/bin/grok' };
+    },
+    ...(posix && {
+      'Claude Code on macOS and Linux': (h) => {
+        file(h, '.local/share/claude/versions/2.1.299');
+        file(h, '.local/share/claude/versions/2.1.300');
+        link(h, '.local/bin/claude', '.local/share/claude/versions/2.1.300');
+        return { remove: ['.local/bin/claude', '.local/share/claude'], launcher: '.local/bin/claude' };
+      },
+      'Codex CLI on macOS and Linux': (h) => {
+        for (const rel of ['bin/codex', 'bin/host', 'bin/rg']) file(h, `.codex/packages/standalone/releases/0.160.0/${rel}`);
+        file(h, '.codex/packages/standalone/releases/0.159.0/bin/codex');
+        link(h, '.codex/packages/standalone/current', '.codex/packages/standalone/releases/0.160.0');
+        link(h, '.local/bin/codex', '.codex/packages/standalone/current/bin/codex');
+        link(h, '.local/bin/codex-code-mode-host', '.codex/packages/standalone/current/bin/host');
+        return { remove: ['.local/bin/codex', '.local/bin/codex-code-mode-host', '.codex/packages/standalone'], launcher: '.local/bin/codex' };
+      },
+      'Codex CLI behind a folder link, as its Windows junction': (h) => {
+        file(h, '.codex/packages/standalone/releases/0.160.0/bin/codex');
+        file(h, '.codex/packages/standalone/releases/0.160.0/bin/host');
+        link(h, '.codex/packages/standalone/current', '.codex/packages/standalone/releases/0.160.0');
+        link(h, 'Programs/Codex/bin', '.codex/packages/standalone/current/bin');
+        return { remove: ['Programs/Codex/bin', '.codex/packages/standalone'], launcher: 'Programs/Codex/bin/codex' };
+      },
+      'Grok Build found through its links': (h) => {
+        for (const rel of ['.grok/bin/grok', '.grok/bin/agent', '.grok/downloads/grok-1.0.46']) file(h, rel);
+        link(h, '.local/bin/grok', '.grok/bin/grok');
+        link(h, '.local/bin/agent', '.grok/bin/agent');
+        return { remove: ['.grok/bin', '.grok/downloads'], links: ['.local/bin/grok', '.local/bin/agent'], launcher: '.local/bin/grok' };
+      },
+    }),
+  };
+  const build = (layout) => {
+    const home = tempDir();
+    const spec = layout(home);
+    const abs = (rel) => path.join(home, rel);
+    return { remove: spec.remove.map(abs), links: (spec.links || []).map(abs), launcher: abs(spec.launcher) };
+  };
+  const gone = (p) => fs.lstatSync(p, { throwIfNoEntry: false }) === undefined;
+  const quiet = () => {};
+
+  const holdsFiles = (p) => {
+    const stat = fs.lstatSync(p, { throwIfNoEntry: false });
+    if (!stat || stat.isSymbolicLink()) return false;
+    return stat.isDirectory() ? fs.readdirSync(p).some((n) => holdsFiles(path.join(p, n))) : true;
+  };
+
+  for (const [name, layout] of Object.entries(layouts)) {
+    const deletions = [];
+    let launcherGoneAt = -1;
+    const clean = build(layout);
+    const rmClean = (p) => {
+      if (launcherGoneAt !== -1) assert.ok(!holdsFiles(p), `${name}: after the launcher stops working, ${p} holds no files`);
+      deletions.push(p);
+      fs.rmSync(p, { recursive: true, force: true });
+      if (launcherGoneAt === -1 && !fs.existsSync(clean.launcher)) launcherGoneAt = deletions.length - 1;
+    };
+    assert.equal(runPlan(clean, { log: quiet, rm: rmClean }), 0, name);
+    assert.ok([...clean.remove, ...clean.links].every(gone), `${name}: a clean run removes everything`);
+    assert.ok(launcherGoneAt > 0, `${name}: other files go before the launcher stops working`);
+
+    for (let failAt = 0; failAt < deletions.length; failAt++) {
+      const plan = build(layout);
+      let calls = 0;
+      const rm = (p) => {
+        if (calls++ === failAt) throw Object.assign(new Error('resource busy or locked'), { code: 'EBUSY' });
+        fs.rmSync(p, { recursive: true, force: true });
+      };
+      const lines = [];
+      assert.equal(runPlan(plan, { log: (l) => lines.push(l), rm }), 1, `${name}, failing at deletion ${failAt}`);
+      assert.equal(calls, failAt + 1, `${name}, failing at deletion ${failAt}: nothing is deleted after a failure`);
+      assert.match(lines.at(-1), /^Could not remove .+: it is in use\. Stopped there\./, lines.join('\n'));
+      if (failAt <= launcherGoneAt) assert.ok(fs.existsSync(plan.launcher), `${name}, failing at deletion ${failAt}: the launcher still works`);
+      assert.equal(runPlan(plan, { log: quiet }), 0, `${name}, failing at deletion ${failAt}: a retry succeeds`);
+      assert.ok([...plan.remove, ...plan.links].every(gone), `${name}, failing at deletion ${failAt}: a retry removes everything`);
+    }
+  }
+});
+
+test('shared npm cleanup remains discoverable and retryable after failure at each deletion', () => {
+  const provider = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'config/providers.default.json'), 'utf8')).providers.find((p) => p.id === 'xai');
+  const win = process.platform === 'win32';
+  const quiet = () => {};
+  const prepare = () => {
+    const home = tempDir();
+    const env = { HOME: home, USERPROFILE: home };
+    const prefix = path.join(home, 'npm');
+    const wrapper = path.join(prefix, win ? 'grok.cmd' : 'bin/grok');
+    const manifest = path.join(prefix, win ? '' : 'lib', 'node_modules/@xai-official/grok/package.json');
+    const native = path.join(home, '.grok/bin', win ? 'grok.exe' : 'grok');
+    const settings = path.join(home, '.grok/config.toml');
+    for (const file of [wrapper, manifest, native, settings, path.join(home, '.grok/bin/agent'), path.join(home, '.grok/downloads/grok-1.0.46'), path.join(home, '.grok/completions/bash/grok.bash')]) {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, file === wrapper ? 'node_modules/@xai-official/grok' : 'fixture');
+    }
+    const discover = () => listInstallations({
+      provider, env, npmOnPath: process.execPath,
+      onPath: fs.existsSync(wrapper) ? [wrapper] : [],
+      known: knownLaunchers({ provider, command: provider.command, env }),
+    });
+    const [copy] = discover();
+    assert.equal(copy.channel, 'npm');
+    assert.deepEqual(copy.uninstall.run, { file: process.execPath, args: ['uninstall', '-g', '--prefix', prefix, provider.package] });
+    assert.equal(copy.uninstall.launcher, native);
+    // Stand in for npm by removing its wrapper and package manifest in a child process.
+    const plan = { ...copy.uninstall, run: {
+      file: process.execPath,
+      args: ['-e', 'const fs = require("node:fs"); for (const file of process.argv.slice(1)) fs.unlinkSync(file);', wrapper, manifest],
+    } };
+    return { plan, discover, wrapper, manifest, native, settings };
+  };
+  const gone = (p) => fs.lstatSync(p, { throwIfNoEntry: false }) === undefined;
+  const holdsFiles = (p) => {
+    const stat = fs.lstatSync(p, { throwIfNoEntry: false });
+    if (!stat) return false;
+    return stat.isDirectory() ? fs.readdirSync(p).some((n) => holdsFiles(path.join(p, n))) : true;
+  };
+  const clean = prepare();
+  let deletions = 0;
+  assert.equal(runPlan(clean.plan, { log: quiet, rm: (p) => {
+    deletions++;
+    fs.rmSync(p, { recursive: true, force: true });
+  } }), 0);
+  assert.ok(clean.plan.remove.every(gone));
+  assert.deepEqual(clean.discover(), []);
+  assert.equal(fs.readFileSync(clean.settings, 'utf8'), 'fixture');
+
+  for (let failAt = 0; failAt < deletions; failAt++) {
+    const { plan, discover, wrapper, manifest, native, settings } = prepare();
+    let calls = 0;
+    assert.equal(runPlan(plan, { log: quiet, rm: (p) => {
+      assert.ok(gone(wrapper) && gone(manifest), 'npm cleanup completes before native deletion starts');
+      if (calls++ === failAt) throw Object.assign(new Error('locked'), { code: 'EBUSY' });
+      fs.rmSync(p, { recursive: true, force: true });
+    } }), 1, `failure at deletion ${failAt}`);
+    assert.equal(calls, failAt + 1);
+    const copies = discover();
+    if (plan.remove.some(holdsFiles)) {
+      assert.equal(copies.length, 1, `deletion ${failAt}: files left behind must remain discoverable`);
+      assert.equal(copies[0].resolvedPath, native);
+      assert.equal(copies[0].channel, 'native');
+      assert.equal(copies[0].onPath, false, 'the native launcher is found even when only the npm wrapper was on PATH');
+      assert.equal(copies[0].uninstall.run, null, 'the retry no longer needs npm');
+      assert.equal(runPlan(copies[0].uninstall, { log: quiet }), 0, `deletion ${failAt}: a freshly discovered plan completes cleanup`);
+      assert.ok(plan.remove.every(gone));
+    } else {
+      assert.deepEqual(copies, [], 'only empty directories can remain once the launcher is gone');
+    }
+    assert.equal(fs.readFileSync(settings, 'utf8'), 'fixture');
+  }
 });
 
 test('other copies of a tool are reported with their versions, and wrappers of one copy are not', async () => {
@@ -859,7 +1176,7 @@ test('other copies of a tool are reported with their versions, and wrappers of o
   }
   const userFile = path.join(root, 'providers.json');
   fs.writeFileSync(userFile, JSON.stringify({ providers: [
-    { id: 'dup', tool: 'Dup Tool', command: 'dup', package: 'dup-pkg', versionArgs: ['--version'], channels: { native: { paths: [path.join(dirA, 'dup')], update: ['update'], uninstall: 'remove-native' } } },
+    { id: 'dup', tool: 'Dup Tool', command: 'dup', package: 'dup-pkg', versionArgs: ['--version'], channels: { native: { paths: [path.join(dirA, 'dup')], update: ['update'], remove: [path.join(dirA, 'dup')] } } },
   ] }));
   const base = { PATHEXT: '.EXE;.CMD', ComSpec: process.env.ComSpec, SystemRoot: process.env.SystemRoot, HOME: root, USERPROFILE: root };
   const registryFor = (dirs) => new ProviderRegistry({ userFile, env: { ...base, PATH: dirs.join(path.delimiter) }, checkUpdates: false });
@@ -873,8 +1190,8 @@ test('other copies of a tool are reported with their versions, and wrappers of o
   const olderFirst = registryFor([dirA, wrappers, dirB]);
   await olderFirst.refreshVersions();
   const shadowed = olderFirst.describe(olderFirst.get('dup'));
-  assert.deepEqual(shadowed.installs.map((i) => [i.path, i.channel, i.version, i.active, i.newer, i.removeCommand]), [
-    [copyA, 'native', '1.0.0', true, false, 'remove-native'],
+  assert.deepEqual(shadowed.installs.map((i) => [i.path, i.channel, i.version, i.active, i.newer, i.uninstall]), [
+    [copyA, 'native', '1.0.0', true, false, { command: null, remove: [path.join('~', 'a', 'dup')] }],
     [copyB, 'unknown', '2.0.0', false, true, null],
   ]);
   assert.equal(shadowed.installedVersion, '1.0.0');
@@ -1840,6 +2157,79 @@ test('provider env values are normalised to strings', () => {
   fs.writeFileSync(userFile, JSON.stringify({ providers: [{ id: 'anthropic', env: { A: 1, B: true, C: { x: 1 }, D: 'd' } }] }));
   const { providers } = loadProviders({ userFile, platform: 'linux' });
   assert.deepEqual(providers[0].env, { A: '1', B: 'true', D: 'd' });
+});
+
+for (const task of [null, 'install']) {
+  test(`closing ${task === 'install' ? 'an installer' : 'a tool'} session keeps its provider guarded until the process exits`, async (t) => {
+    const provider = { id: 'tool', tool: 'Tool' };
+    const registry = {
+      get: (id) => ({ ...provider, id }),
+      resolve: () => null,
+      installSpec: async () => ({}),
+      uninstallSpec: () => ({ spec: {}, channel: 'native' }),
+    };
+    const manager = new SessionManager({ registry, baseEnv: {}, getApiUrl: () => '' });
+    t.mock.method(manager, '_spawn', (options) => options);
+    let exit;
+    const session = {
+      provider, task, status: 'running',
+      exited: new Promise((resolve) => { exit = resolve; }),
+      _broadcast() {}, dispose: t.mock.fn(),
+    };
+    manager.sessions.set('closing', session);
+    const blocked = task === 'install' ? { code: 'install_in_progress' } : { code: 'provider_in_use', running: 1 };
+    const assertBlocked = async (options) => {
+      await assert.rejects(manager.install(provider.id, options), blocked);
+      assert.throws(() => manager.uninstall(provider.id, 'copy', options), blocked);
+    };
+    await assertBlocked();
+    manager.remove('closing');
+    assert.equal(session.dispose.mock.callCount(), 1, 'closing requests process termination');
+    assert.equal(manager.sessions.size, 0, 'the session is no longer visible');
+    await assertBlocked();
+
+    if (task === 'install') {
+      await assertBlocked({ force: true });
+    } else {
+      assert.equal((await manager.install(provider.id, { force: true })).installKind, 'install');
+      assert.equal(manager.uninstall(provider.id, 'copy', { force: true }).installKind, 'uninstall');
+    }
+    assert.equal((await manager.install('other')).installKind, 'install', 'another provider is unaffected');
+    assert.equal(manager.uninstall('other', 'copy').installKind, 'uninstall');
+
+    exit();
+    await session.exited;
+    assert.equal((await manager.install(provider.id)).installKind, 'install', 'exit releases the guard');
+    assert.equal(manager.uninstall(provider.id, 'copy').installKind, 'uninstall');
+  });
+}
+
+test('a tool session cannot start while that tool is installed, updated or removed', async (t) => {
+  const provider = { id: 'tool', tool: 'Tool', args: [], accounts: [] };
+  const registry = {
+    get: (id) => ({ ...provider, id }),
+    account: () => ({ id: 'default', label: 'Default' }),
+    spawnSpec: () => ({}),
+    uninstallSpec: () => ({ spec: {}, channel: 'native' }),
+  };
+  const manager = new SessionManager({ registry, baseEnv: {}, getApiUrl: () => '' });
+  t.mock.method(manager, '_spawn', (options) => {
+    if (options.task === 'install') manager.sessions.set('removal', { provider: options.provider, task: 'install', status: 'running' });
+    return { ...options, setModel() {} };
+  });
+  // The uninstall starts while the session waits for its launch hooks.
+  manager.sessionHooks = { launch: async () => { manager.uninstall('tool', 'copy'); return { args: [], reporting: null }; } };
+  await assert.rejects(manager.create({ providerId: 'tool', cwd: os.tmpdir() }), { code: 'install_in_progress', status: 409 });
+  assert.equal(manager._spawn.mock.calls.filter((c) => !c.arguments[0].task).length, 0, 'no tool process was started');
+
+  manager.sessionHooks = null;
+  await assert.rejects(manager.create({ providerId: 'tool', cwd: os.tmpdir() }), { code: 'install_in_progress' });
+  assert.equal((await manager.create({ providerId: 'other', cwd: os.tmpdir() })).provider.id, 'other', 'another tool is unaffected');
+  manager.sessions.get('removal').status = 'exited';
+  assert.equal((await manager.create({ providerId: 'tool', cwd: os.tmpdir() })).provider.id, 'tool', 'the tool starts once the removal ends');
+
+  manager.installing.add('tool');
+  await assert.rejects(manager.create({ providerId: 'tool', cwd: os.tmpdir() }), { code: 'install_in_progress' }, 'an install still resolving its release counts');
 });
 
 test('shutdown reports the processes that did not confirm exiting in time', async () => {

@@ -83,6 +83,11 @@ writeScript(path.join(secondDir, 'fake-native'), {
   win: `set "FAKE_TOOL_VERSION_FILE=${secondVersion}"\r\n${runFixture.win}`,
   sh: `FAKE_TOOL_VERSION_FILE="${secondVersion}" ${runFixture.sh}`,
 });
+const goneDir = path.join(home, 'gone', 'bin');
+fs.mkdirSync(goneDir, { recursive: true });
+writeScript(path.join(goneDir, 'fake-gone'), runFixture);
+const goneLink = path.join(home, 'gone', 'elsewhere');
+if (!win) fs.symlinkSync(path.join(nativeDir, 'fake-native'), goneLink);
 const linkDir = path.join(home, 'links');
 fs.mkdirSync(linkDir);
 if (win) fs.writeFileSync(path.join(npmBinDir, 'fake-npmtool.ps1'), '& "$PSScriptRoot\\fake-npmtool.cmd" @args\r\n');
@@ -133,7 +138,7 @@ function snapshot(dir) {
 }
 const homesBefore = Object.fromEntries(Object.entries(toolHomes).map(([name, dir]) => [name, snapshot(dir)]));
 
-process.env.PATH = [toolsDir, bin, npmBinDir, nativeDir, secondDir, linkDir, process.env.PATH].join(path.delimiter);
+process.env.PATH = [toolsDir, bin, npmBinDir, nativeDir, secondDir, linkDir, goneDir, process.env.PATH].join(path.delimiter);
 
 const racyBuild = `racy-pkg-${process.platform}-${process.arch}`;
 const registryRequests = [];
@@ -158,6 +163,7 @@ fs.writeFileSync(path.join(home, 'providers.json'), JSON.stringify({
     { id: 'missing', vendor: 'Nobody', tool: 'Missing Tool', command: 'definitely-not-installed-agent-guild', install: 'npm i -g nothing', package: 'nothing' },
     { id: 'nativetool', vendor: 'Test', tool: 'Native Tool', command: 'fake-native', package: 'fake-tool-pkg', versionArgs: ['--version'], env: { FAKE_TOOL_VERSION_FILE: path.join(home, 'native-version-1.txt') }, channels: { native: { paths: [path.join(nativeDir, 'fake-native')], update: ['update'] } } },
     { id: 'nativetool2', vendor: 'Test', tool: 'Native Tool Two', command: 'fake-native', package: 'fake-tool-pkg', versionArgs: ['--version'], env: { FAKE_TOOL_VERSION_FILE: path.join(home, 'native-version-2.txt'), FAKE_TOOL_UPDATE_TO: '2.0.0' }, channels: { native: { paths: [path.join(nativeDir, 'fake-native')], update: ['update'] } } },
+    { id: 'gonetool', vendor: 'Test', tool: 'Gone Tool', command: 'fake-gone', versionArgs: ['--version'], env: { HOME: home, USERPROFILE: home }, channels: { native: { paths: [goneDir], update: [], remove: [goneDir], links: [goneLink] } } },
     { id: 'npmtool', vendor: 'Test', tool: 'Npm Tool', command: 'fake-npmtool', package: 'fake-tool-pkg', versionArgs: ['--version'] },
     { id: 'breaktool', vendor: 'Test', tool: 'Break Tool', command: 'fake-npmtool', package: 'fake-tool-pkg', versionArgs: ['--version'], env: { FAKE_TOOL_VERSION_FILE: path.join(home, 'break-version.txt'), FAKE_TOOL_BREAK_FILE: breakFlag, FAKE_NPM_BREAKS: '1' } },
     { id: 'oddtool', vendor: 'Test', tool: 'Odd Tool', command: 'fake-native', versionArgs: ['--version'], env: { FAKE_TOOL_VERSION_TEXT: 'fake-tool nightly build' } },
@@ -506,7 +512,9 @@ test('a provider can be installed or updated from a visible npm session', async 
   assert.equal(forced.body.session.name, 'Update Native Tool (native)');
   await waitFor(async () => (await call('GET', `/sessions/${forced.body.session.id}`)).body.session.status === 'exited', { label: 'update exit' });
   await call('DELETE', `/sessions/${forced.body.session.id}`);
+  const runningExit = ctx.manager.get(running.id).exited;
   await call('DELETE', `/sessions/${running.id}`);
+  await runningExit;
   await events.close();
 });
 
@@ -632,18 +640,87 @@ test('other copies of a tool are listed, wrappers of one copy are not', async ()
     ['unknown', '0.9.0', false, true, false],
   ]);
   assert.ok(native.installs[1].path.startsWith(secondDir));
-  assert.equal(native.installs[1].removeCommand, null, 'no removal command without confirmed ownership');
+  assert.equal(native.installs[1].uninstall, null, 'nothing is removed without confirmed ownership');
   assert.equal(native.warnings.length, 1);
   assert.match(native.warnings[0], /^2 copies of Native Tool are installed\. The one in use is native v1\.2\.3 at /);
 
   const npmtool = await findProvider('npmtool');
   assert.equal(npmtool.installs.length, 1, 'several entry points of one installation are one installation');
   assert.equal(npmtool.installs[0].channel, 'npm');
-  assert.ok(npmtool.installs[0].removeCommand.includes('uninstall -g --prefix'));
-  assert.ok(npmtool.installs[0].removeCommand.includes(npmPrefix));
-  assert.ok(npmtool.installs[0].removeCommand.endsWith('fake-tool-pkg'));
+  assert.ok(npmtool.installs[0].uninstall.command.includes('uninstall -g --prefix'));
+  assert.ok(npmtool.installs[0].uninstall.command.includes(npmPrefix));
+  assert.ok(npmtool.installs[0].uninstall.command.endsWith('fake-tool-pkg'));
+  assert.deepEqual(npmtool.installs[0].uninstall.remove, []);
   assert.deepEqual(npmtool.warnings, []);
   assert.deepEqual((await findProvider('missing')).installs, []);
+});
+
+test('a copy of a tool can be uninstalled from a visible session', async () => {
+  const gone = await waitFor(async () => {
+    const p = await findProvider('gonetool');
+    return p.installs.length === 1 ? p : null;
+  }, { label: 'gone tool copy' });
+  const copy = gone.installs[0];
+  assert.deepEqual(copy.uninstall, { command: null, remove: [path.join('~', 'gone', 'bin')] });
+  assert.equal(copy.displayPath, path.join('~', 'gone', 'bin', path.basename(copy.path)));
+
+  assert.equal((await call('POST', '/providers/gonetool/uninstall', {})).body.error.code, 'bad_request');
+  assert.equal((await call('POST', '/providers/gonetool/uninstall', { path: path.join(home, 'nowhere') })).body.error.code, 'unknown_copy');
+  const unknownCopy = (await findProvider('nativetool')).installs.find((i) => i.channel === 'unknown');
+  const notRemovable = (await call('POST', '/providers/nativetool/uninstall', { path: unknownCopy.path })).body.error;
+  assert.equal(notRemovable.code, 'not_removable');
+  assert.match(notRemovable.message, /^Agent Guild does not know how Native Tool at .+ was installed\. Remove it the way you installed it\.$/);
+  assert.match(unknownCopy.uninstallGuidance, /^Agent Guild does not know how Native Tool at .+ was installed\./, 'the card says why');
+  assert.equal(copy.uninstallGuidance, null);
+
+  const running = (await call('POST', '/sessions', { providerId: 'gonetool', cwd: home, cols: 90, rows: 20 })).body.session;
+  const refused = await call('POST', '/providers/gonetool/uninstall', { path: copy.path });
+  assert.equal(refused.status, 409);
+  assert.equal(refused.body.error.code, 'provider_in_use');
+  assert.equal((await call('POST', '/providers/gonetool/uninstall', {})).body.error.code, 'bad_request', 'a missing path is named first');
+  await call('POST', `/sessions/${running.id}/stop`);
+  await waitFor(async () => (await call('GET', `/sessions/${running.id}`)).body.session.status === 'exited', { label: 'tool exit' });
+  await call('DELETE', `/sessions/${running.id}`);
+
+  const { status, body } = await call('POST', '/providers/gonetool/uninstall', { path: copy.path });
+  assert.equal(status, 201, JSON.stringify(body));
+  assert.equal(body.session.name, 'Uninstall Gone Tool (native)');
+  const client = terminal(body.session.id);
+  await client.opened;
+  await waitForText(client, body.session.id, `Removed ${goneDir}`, 'removal output');
+  await waitFor(() => client.messages.find((m) => m.type === 'exit'), { label: 'uninstall exit' });
+  await client.close();
+  assert.equal(fs.existsSync(goneDir), false);
+  if (!win) assert.equal(fs.readlinkSync(goneLink), path.join(nativeDir, 'fake-native'), 'a link that leads outside the installation is kept');
+  const after = await waitFor(async () => {
+    const p = await findProvider('gonetool');
+    return p.lastInstall?.kind === 'uninstall' ? p : null;
+  }, { label: 'uninstall outcome' });
+  assert.equal(after.available, false);
+  assert.equal(after.lastInstall.outcome, 'removed');
+  assert.deepEqual(after.installs, []);
+  await call('DELETE', `/sessions/${body.session.id}`);
+});
+
+test('a copy installed by npm is uninstalled by the npm that owns it', async () => {
+  const copy = (await findProvider('npmtool')).installs[0];
+  const { status, body } = await call('POST', '/providers/npmtool/uninstall', { path: copy.path });
+  assert.equal(status, 201, JSON.stringify(body));
+  assert.equal(body.session.name, 'Uninstall Npm Tool (npm)');
+  const client = terminal(body.session.id);
+  await client.opened;
+  await waitForText(client, body.session.id, 'FAKE-NPM-OWNER uninstall -g --prefix', 'npm output');
+  assert.ok(screenText(body.session.id).includes('fake-tool-pkg'));
+  const exit = await waitFor(() => client.messages.find((m) => m.type === 'exit'), { label: 'uninstall exit' });
+  assert.equal(exit.exitCode, 0);
+  await client.close();
+  const after = await waitFor(async () => {
+    const p = await findProvider('npmtool');
+    return p.lastInstall?.kind === 'uninstall' ? p : null;
+  }, { label: 'uninstall outcome' });
+  assert.equal(after.lastInstall.outcome, 'remaining', 'the stand-in npm removed nothing, so the copy is still found');
+  assert.equal(after.installs.length, 1);
+  await call('DELETE', `/sessions/${body.session.id}`);
 });
 
 test('an existing tool session can be resumed by id', async () => {

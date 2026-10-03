@@ -21,10 +21,10 @@
       "install": "curl -fsSL https://claude.ai/install.sh | bash",
       "npmNote": "npm installs the same native build as Anthropic's installer.",
       "channels": {
-        "native": { "paths": ["~/.local/bin/claude", "~/.local/share/claude"], "update": ["update"], "uninstall": "rm -f ~/.local/bin/claude && rm -rf ~/.local/share/claude" },
+        "native": { "paths": ["~/.local/bin/claude", "~/.local/share/claude"], "update": ["update"], "remove": ["~/.local/bin/claude", "~/.local/share/claude"] },
         "brew": { "names": ["claude-code", "claude-code@latest"] },
         "winget": { "id": "Anthropic.ClaudeCode" },
-        "legacy": { "paths": ["~/.claude/local"], "guidance": "This copy comes from an older Claude Code installer. Remove ~/.claude/local and reinstall with the current installer.", "uninstall": "rm -rf ~/.claude/local" }
+        "legacy": { "paths": ["~/.claude/local"], "guidance": "This copy comes from an older Claude Code installer. Remove ~/.claude/local and reinstall with the current installer.", "remove": ["~/.claude/local"] }
       },
       "docs": "https://code.claude.com/docs/en/setup",
       "usageUrl": "https://claude.ai/settings/usage",
@@ -33,9 +33,9 @@
       "win32": {
         "install": "irm https://claude.ai/install.ps1 | iex",
         "channels": {
-          "native": { "paths": ["~/.local/bin/claude", "~/.local/share/claude"], "update": ["update"], "uninstall": "Remove-Item -Path \"$env:USERPROFILE\\.local\\bin\\claude.exe\" -Force; Remove-Item -Path \"$env:USERPROFILE\\.local\\share\\claude\" -Recurse -Force" },
+          "native": { "paths": ["~/.local/bin/claude", "~/.local/share/claude"], "update": ["update"], "remove": ["~/.local/bin/claude.exe", "~/.local/share/claude"] },
           "winget": { "id": "Anthropic.ClaudeCode" },
-          "legacy": { "paths": ["~/.claude/local"], "guidance": "This copy comes from an older Claude Code installer. Remove ~/.claude/local and reinstall with the current installer.", "uninstall": "Remove-Item -Recurse -Force \"$env:USERPROFILE\\.claude\\local\"" }
+          "legacy": { "paths": ["~/.claude/local"], "guidance": "This copy comes from an older Claude Code installer. Remove ~/.claude/local and reinstall with the current installer.", "remove": ["~/.claude/local"] }
         }
       }
     },
@@ -59,7 +59,7 @@
       "install": "curl -fsSL https://chatgpt.com/codex/install.sh | sh",
       "npmNote": "npm installs the native Codex binary.",
       "channels": {
-        "native": { "paths": ["~/.local/bin/codex", "~/.codex/packages/standalone"], "update": ["update"] },
+        "native": { "paths": ["~/.local/bin/codex", "~/.codex/packages/standalone"], "update": ["update"], "remove": ["~/.local/bin/codex", "~/.local/bin/codex-code-mode-host", "~/.codex/packages/standalone"] },
         "brew": { "names": ["codex"] },
         "winget": { "id": "OpenAI.Codex" }
       },
@@ -70,7 +70,7 @@
       "win32": {
         "install": "powershell -ExecutionPolicy ByPass -c \"irm https://chatgpt.com/codex/install.ps1 | iex\"",
         "channels": {
-          "native": { "paths": ["~/AppData/Local/Programs/OpenAI/Codex/bin", "~/.codex/packages/standalone"], "update": ["update"] },
+          "native": { "paths": ["~/AppData/Local/Programs/OpenAI/Codex/bin", "~/.codex/packages/standalone"], "update": ["update"], "remove": ["~/AppData/Local/Programs/OpenAI/Codex/bin", "~/.codex/packages/standalone"] },
           "winget": { "id": "OpenAI.Codex" }
         }
       }
@@ -90,7 +90,8 @@
       "monogram": "G",
       "install": "curl -fsSL https://antigravity.google/cli/install.sh | bash",
       "channels": {
-        "native": { "paths": ["~/.local/bin/agy"], "update": ["update"], "uninstall": "rm -f ~/.local/bin/agy" }
+        "native": { "paths": ["~/.local/bin/agy"], "update": ["update"], "remove": ["~/.local/bin/agy"] },
+        "brew": { "names": ["antigravity-cli"], "autoUpdates": true }
       },
       "docs": "https://antigravity.google/docs/cli/install",
       "billingUrl": "https://one.google.com/settings",
@@ -98,7 +99,7 @@
       "win32": {
         "install": "irm https://antigravity.google/cli/install.ps1 | iex",
         "channels": {
-          "native": { "paths": ["~/AppData/Local/agy/bin"], "update": ["update"], "uninstall": "Remove-Item -Path \"$env:LOCALAPPDATA\\agy\" -Recurse -Force" }
+          "native": { "paths": ["~/AppData/Local/agy/bin"], "update": ["update"], "remove": ["~/AppData/Local/agy"] }
         }
       }
     },
@@ -121,7 +122,8 @@
       "install": "curl -fsSL https://x.ai/cli/install.sh | bash",
       "npmNote": "npm installs the native grok binary into ~/.grok/bin.",
       "channels": {
-        "native": { "paths": ["~/.grok/bin", "~/.grok/downloads"], "update": ["update"], "sharedWithNpm": true }
+        "native": { "paths": ["~/.grok/bin", "~/.grok/downloads"], "update": ["update"], "remove": ["~/.grok/bin", "~/.grok/downloads", "~/.grok/completions"], "links": ["~/.local/bin/grok", "~/.local/bin/agent", "/usr/local/bin/grok", "/usr/local/bin/agent"], "sharedWithNpm": true },
+        "brew": { "names": ["grok-build"] }
       },
       "docs": "https://docs.x.ai/build/overview",
       "usageUrl": "https://grok.com/?_s=usage",

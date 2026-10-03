@@ -40,8 +40,8 @@
   the login shell's PATH, because apps started from Finder or the Dock do not
   get it. On Windows it runs `.cmd` and `.ps1` shims through `cmd.exe` or
   PowerShell, because ConPTY can only start real executables. It also checks
-  each tool's installed and latest versions, and builds the `npm install -g`
-  session that installs a tool.
+  each tool's installed and latest versions, and builds the sessions that
+  install, update and uninstall a tool.
 * **Usage monitor** (`usage.mjs`). Reads each tool's own sign-in and asks the
   vendor's usage endpoint for the remaining rate-limit windows. Tokens stay
   in the manager.

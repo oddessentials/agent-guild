@@ -93,6 +93,16 @@ skips the lookup). Both are null until the first check finishes; a
 `updateAvailable` is true when the latest version is newer, and
 `POST /providers/:id/install` performs the update when `updateCommand` is not null.
 
+`installs` lists every copy of the tool that was found, each
+`{ path, displayPath, channel, version, versionStatus, active, newer, onPath, uninstall, uninstallGuidance }`.
+`path` is the copy's launcher and `displayPath` the same path with the home
+folder shown as `~`. `channel` is `npm`, `native`, `brew`, `winget`, `legacy`
+or `unknown`. `active` marks the copy that runs, `newer` a copy newer than
+that one, and `onPath` whether its folder is on PATH. `uninstall` is null
+when Agent Guild cannot remove that copy, otherwise the `command` it runs (or null) and the paths it deletes
+(`remove`); `uninstallGuidance` then says why and how to remove it instead.
+`POST /providers/:id/uninstall` removes one copy.
+
 `usageSource` is `claude`, `codex`, `command` or null, and says
 whether `GET /usage` reports the provider. `historySource` is `claude`,
 `codex`, `antigravity`, `grok`, `command` or null, and says whether
@@ -218,7 +228,7 @@ that has never run lists no sessions and no error.
 * `activity` is `active` while the terminal is producing output and `quiet`
   after a short pause.
 * `resume` is the id of the tool's own session that was resumed, or null.
-* `task` is `install` for a session that runs npm to install or update the
+* `task` is `install` for a session that installs, updates or uninstalls the
   provider's tool, `upgrade` for the session that runs npm to upgrade the
   manager itself (its `provider` is a stand-in with id `agent-guild`),
   `clone` for a session that runs `git clone` for a GitHub repository (its
@@ -363,6 +373,7 @@ All paths are under `/api/v1`.
 | POST | `/providers/reload` | | Re-reads `providers.json`. |
 | POST | `/providers/:id/reporting` | `{ enabled }` | `{ provider }`: turns agent reporting on or off for a tool that needs it, by running the tool's own `plugin install`, `plugin enable` or `plugin uninstall`. An older copy of the Agent Guild plugin is replaced, and one turned off in the tool is turned back on. 400 `not_applicable` for any other tool, 409 `plugin_conflict` when another plugin has the same name, 502 `reporting_setup_failed` when the tool's command fails. |
 | POST | `/providers/:id/install` | `{ force? }` | `201 { session }`: a session running `npm install -g <package>@<version>`, or `updateCommand` when the tool is installed. 400 `not_updatable` when an installed tool has no `updateCommand`. 503 `release_unresolved` or 409 `release_incomplete` when the release cannot be read or its platform build is not published; nothing is run. 409 `install_in_progress` while one is already running. 409 `provider_in_use` (with `running`, the session count) while the provider's sessions are running, unless `force` is true. |
+| POST | `/providers/:id/uninstall` | `{ path, force? }` | `201 { session }`: a session that removes the copy at `path`, one of the provider's `installs`. It runs that copy's package manager, or deletes the paths its installer created, the launcher last, so a copy that fails partway with files left is still listed and can be uninstalled again. 400 `bad_request` without `path`, 404 `unknown_copy` when no copy is at `path`, 400 `not_removable` when its `uninstall` is null. 409 `install_in_progress` and `provider_in_use` as for `install`. |
 | GET | `/usage` | | `{ usage: Usage[] }`, one per account of every provider with a `usageSource`. |
 | GET | `/model-stats` | | Benchmarks for the models of every provider with a `modelPattern`, from OpenRouter's public model list (Artificial Analysis and Design Arena results), cached for 6 hours. `{ retrievedAt, stale, error, stats, pool, providers, models, sessions }`: `stats` describes each benchmark; `providers[id]` is `{ featured, models }`, a provider's model ids newest first; `models[id]` holds a model's name, context and price, and in `stats`, per benchmark, its `value`, `rank`, `level` (0-100, its standing among the models of all configured tools) and `tier` (S 90+, A 75+, B 50+, C 25+, D below); `sessions[id]` is the model id a session's reported model matched, or null. |
 | GET | `/news` | | `{ refreshedAt, refreshing, sources, items }`. `items` are the last 30 days of the built-in feeds, newest first, each `{ id, title, url, discussion, summary, source, sourceId, category, publishedAt }` with `category` `news`, `releases` or `research`. A coding tool's own release feed is included only while that tool is installed. `sources` lists each feed with its `error` and the time it last answered. Feeds that are due are re-read in the background; a `news.updated` event follows. |
@@ -377,7 +388,7 @@ All paths are under `/api/v1`.
 | POST | `/github/accounts/:id/ssh` | | `{ account }`: makes the account's SSH key if it has none, adds it to the account, and checks that GitHub signs it in as this account. A failure is reported in `account.ssh.error`. |
 | POST | `/github/clone` | `{ account, repo, parent }` | `201 { session }`: a session with `task` `clone` running `git clone` for `repo` (owner/name) into `<parent>/<name>` over SSH with the account's key. 409 `ssh_not_ready`, `git_unavailable`, `clone_exists` or `folder_conflict` (both with `target`), or `clone_in_progress`. |
 | GET | `/sessions` | | `{ sessions: Session[] }` |
-| POST | `/sessions` | `{ providerId, account?, cwd?, cols?, rows?, name?, args?, resume? }` | `201 { session }` |
+| POST | `/sessions` | `{ providerId, account?, cwd?, cols?, rows?, name?, args?, resume? }` | `201 { session }`. 409 `install_in_progress` while the provider's tool is being installed, updated or uninstalled. |
 | GET | `/sessions/:id` | | `{ session }` |
 | PATCH | `/sessions/:id` | `{ name }` | `{ session }`. `name` must be a non-empty string; it is trimmed to 80 characters. |
 | POST | `/sessions/:id/stop` | | Ends the process. The session stays listed as exited. |

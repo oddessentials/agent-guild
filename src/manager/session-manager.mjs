@@ -104,6 +104,10 @@ export class SessionManager extends EventEmitter {
     const workDir = this.resolveCwd(cwd);
     const signIn = this.registry.account(provider, account);
     const hooks = this.sessionHooks ? await this.sessionHooks.launch(provider) : { args: [], reporting: null };
+    // Checked after the await, so an install that started meanwhile is seen.
+    if (this.installing.has(provider.id) || this.installsRunningFor(provider.id) > 0) {
+      throw httpError(409, `${provider.tool} is being installed, updated or removed; start it once that finishes`, 'install_in_progress');
+    }
     const spawnSpec = this.registry.spawnSpec(provider, args || [], resumeId, hooks.args);
     this.prepareAccount(provider, signIn, { hooksSupplied: hooks.args.length > 0 });
     const sessionName = cleanName(name) || (provider.accounts.length > 1 ? `${provider.tool} · ${signIn.label}` : null);
@@ -132,21 +136,7 @@ export class SessionManager extends EventEmitter {
    * set, because replacing a tool under a running process can break it.
    */
   async install(providerId, { force = false } = {}) {
-    const provider = this.registry.get(String(providerId || ''));
-    if (!provider) throw httpError(404, `unknown provider "${providerId}"`, 'unknown_provider');
-    if (this.closing) throw httpError(503, 'the session manager is stopping', 'manager_stopping');
-    const guard = () => {
-      const running = this.runningFor(provider.id);
-      if (running > 0 && !force) {
-        const err = httpError(409, `${running} ${provider.tool} session(s) are running; updating the tool now may break them`, 'provider_in_use');
-        err.running = running;
-        throw err;
-      }
-    };
-    guard();
-    if (this.installing.has(provider.id) || this.installsRunningFor(provider.id) > 0) {
-      throw httpError(409, `${provider.tool} is already being installed or updated`, 'install_in_progress');
-    }
+    const { provider, guard } = this._installGuard(providerId, force, 'updating the tool now may break them');
     this.installing.add(provider.id);
     try {
       if (this.registry.resolve(provider)) {
@@ -163,9 +153,37 @@ export class SessionManager extends EventEmitter {
     }
   }
 
+  uninstall(providerId, copyPath, { force = false } = {}) {
+    if (typeof copyPath !== 'string' || !copyPath) throw httpError(400, 'path must name the copy to remove', 'bad_request');
+    const { provider, guard } = this._installGuard(providerId, force, 'removing the tool now may break them');
+    const { spec, channel } = this.registry.uninstallSpec(provider, copyPath);
+    guard();
+    const name = `Uninstall ${provider.tool} (${CHANNEL_LABELS[channel]})`;
+    return this._spawn({ provider, spawnSpec: spec, cwd: os.homedir(), name, task: 'install', installKind: 'uninstall', installPath: copyPath });
+  }
+
+  _installGuard(providerId, force, risk) {
+    const provider = this.registry.get(String(providerId || ''));
+    if (!provider) throw httpError(404, `unknown provider "${providerId}"`, 'unknown_provider');
+    if (this.closing) throw httpError(503, 'the session manager is stopping', 'manager_stopping');
+    const guard = () => {
+      const running = this.runningFor(provider.id);
+      if (running > 0 && !force) {
+        const err = httpError(409, `${running} ${provider.tool} session(s) are running; ${risk}`, 'provider_in_use');
+        err.running = running;
+        throw err;
+      }
+    };
+    guard();
+    if (this.installing.has(provider.id) || this.installsRunningFor(provider.id) > 0) {
+      throw httpError(409, `${provider.tool} is already being installed, updated or removed`, 'install_in_progress');
+    }
+    return { provider, guard };
+  }
+
   installsRunningFor(providerId) {
     let n = 0;
-    for (const s of this.sessions.values()) if (s.status === 'running' && s.task === 'install' && s.provider.id === providerId) n++;
+    for (const s of [...this.sessions.values(), ...this.exiting]) if (s.status === 'running' && s.task === 'install' && s.provider.id === providerId) n++;
     return n;
   }
 
@@ -214,7 +232,7 @@ export class SessionManager extends EventEmitter {
 
   runningFor(providerId) {
     let n = 0;
-    for (const s of this.sessions.values()) if (s.status === 'running' && s.task === null && s.provider.id === providerId) n++;
+    for (const s of [...this.sessions.values(), ...this.exiting]) if (s.status === 'running' && s.task === null && s.provider.id === providerId) n++;
     return n;
   }
 
@@ -226,7 +244,7 @@ export class SessionManager extends EventEmitter {
   }
 
   _spawn({
-    provider, description = this.registry.describe(provider), spawnSpec, cwd, cols, rows, name, resume = null, task = null, installKind = null, account = null,
+    provider, description = this.registry.describe(provider), spawnSpec, cwd, cols, rows, name, resume = null, task = null, installKind = null, installPath = null, account = null,
     extraEnv = null, dropEnv = null, clone = null, reporting = null,
   }) {
     if (this.closing) throw httpError(503, 'the session manager is stopping', 'manager_stopping');
@@ -285,7 +303,7 @@ export class SessionManager extends EventEmitter {
     session.on('warning', (msg) => console.warn(`[session ${id}] ${msg}`));
     if (task === 'install') {
       session.on('exit', () => {
-        this.registry.finishInstall(provider.id, { exitCode: session.exitCode, kind: installKind }).catch(() => {});
+        this.registry.finishInstall(provider.id, { exitCode: session.exitCode, kind: installKind, path: installPath }).catch(() => {});
       });
     }
     this.sessions.set(id, session);

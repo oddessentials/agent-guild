@@ -35,6 +35,12 @@ export function homeDir(env, platform) {
   return (platform === 'win32' ? env.USERPROFILE : env.HOME) || os.homedir();
 }
 
+export function homeRelative(p, env, platform) {
+  const m = pathModule(platform);
+  const home = homeDir(env, platform);
+  return isInside(p, home, platform) ? `~${m.sep}${m.relative(home, p)}` : p;
+}
+
 export function expandHome(p, env, platform) {
   const m = pathModule(platform);
   if (p === '~') return homeDir(env, platform);
@@ -150,17 +156,6 @@ export function formatCommand(file, args) {
   return [file, ...args].map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(' ');
 }
 
-function shellQuote(arg, platform) {
-  if (platform === 'win32') return /^[\w\\/.:=+-]+$/.test(arg) ? arg : `'${arg.replace(/'/g, "''")}'`;
-  return /^[\w/.:=,+@%-]+$/.test(arg) ? arg : `'${arg.replace(/'/g, "'\\''")}'`;
-}
-
-export function shellCommand(file, args, platform) {
-  const command = shellQuote(file, platform);
-  const line = [command, ...args.map((arg) => shellQuote(arg, platform))].join(' ');
-  return platform === 'win32' && command !== file ? `& ${line}` : line;
-}
-
 export function classifyInstall({
   resolvedPath, provider, env = process.env, platform = process.platform, fsx = defaultFsx, npmOnPath = null, wingetOnPath = null,
 }) {
@@ -180,8 +175,9 @@ export function classifyInstall({
 
   const brew = brewOwner({ realPath, names: channels.brew?.names || [], platform, fsx });
   if (brew) {
-    const owned = { brewPrefix: brew.prefix, token: brew.token, cask: brew.cask };
+    const owned = { brewPrefix: brew.prefix, token: brew.token, cask: brew.cask, brewFile: brew.brew };
     if (!brew.brew) return result('brew', { ...owned, guidance: `Installed by Homebrew under ${brew.prefix}, but brew was not found at ${brew.prefix}/bin/brew.` });
+    if (channels.brew.autoUpdates) return result('brew', { ...owned, guidance: `${provider.tool} updates itself; Homebrew does not upgrade it.` });
     return result('brew', { ...owned, update: { file: brew.brew, args: brew.cask ? ['upgrade', '--cask', brew.token] : ['upgrade', brew.token] } });
   }
 
@@ -227,18 +223,48 @@ export function installationKey(install, provider, platform, fsx = defaultFsx) {
   }
 }
 
-export function removalCommand(install, provider, platform) {
+function ownedPaths(entries, env, platform) {
+  const m = pathModule(platform);
+  const home = homeDir(env, platform);
+  return (entries || []).map((entry) => expandHome(entry, env, platform))
+    .filter((p) => m.isAbsolute(p) && isInside(p, home, platform) && m.relative(home, p).split(/[\\/]+/).length >= 2)
+    .map((p) => m.normalize(p));
+}
+
+// Links may sit outside home, e.g. /usr/local/bin: the runner deletes one only
+// when it is a symlink into the removed paths, which stay inside home.
+function linkPaths(entries, env, platform) {
+  const m = pathModule(platform);
+  return (entries || []).map((entry) => expandHome(entry, env, platform))
+    .filter((p) => (platform === 'win32' ? /^(?:[a-z]:[\\/]|[\\/]{2})/i.test(p) : m.isAbsolute(p)))
+    .map((p) => m.normalize(p));
+}
+
+function removalFor(channel, env, platform) {
+  const remove = ownedPaths(channel?.remove, env, platform);
+  return remove.length > 0 ? { remove, links: linkPaths(channel.links, env, platform) } : null;
+}
+
+export function uninstallPlan(install, provider, env, platform, fsx = defaultFsx) {
+  const channels = provider.channels || {};
+  const plan = (run, removal = null, launcher = null) => ({ run, remove: removal?.remove || [], links: removal?.links || [], launcher });
   switch (install.channel) {
-    case 'npm':
-      return install.update ? shellCommand(install.update.file, ['uninstall', '-g', '--prefix', install.prefix, provider.package], platform) : null;
+    case 'npm': {
+      if (!install.update) return null;
+      const run = { file: install.update.file, args: ['uninstall', '-g', '--prefix', install.prefix, provider.package] };
+      const removal = channels.native?.sharedWithNpm ? removalFor(channels.native, env, platform) : null;
+      const launcher = removal ? knownLaunchers({ provider, command: provider.command, env, platform, fsx })[0] : null;
+      return plan(run, removal, launcher);
+    }
     case 'brew':
-      return install.update ? shellCommand(install.update.file, install.cask ? ['uninstall', '--cask', install.token] : ['uninstall', install.token], platform) : null;
+      return install.brewFile ? plan({ file: install.brewFile, args: install.cask ? ['uninstall', '--cask', install.token] : ['uninstall', install.token] }) : null;
     case 'winget':
-      return shellCommand('winget', ['uninstall', '--id', install.wingetId, '--exact'], platform);
+      return install.update ? plan({ file: install.update.file, args: ['uninstall', '--id', install.wingetId, '--exact'] }) : null;
     case 'native':
-      return provider.channels?.native?.uninstall || null;
-    case 'legacy':
-      return provider.channels?.legacy?.uninstall || null;
+    case 'legacy': {
+      const removal = removalFor(channels[install.channel], env, platform);
+      return removal ? plan(null, removal, install.resolvedPath) : null;
+    }
     default:
       return null;
   }
@@ -267,7 +293,13 @@ export function listInstallations({
   const add = (file, isOnPath) => {
     const install = classifyInstall({ resolvedPath: file, provider, env, platform, fsx, npmOnPath, wingetOnPath });
     const key = installationKey(install, provider, platform, fsx);
-    if (!installs.has(key)) installs.set(key, { ...install, key, onPath: isOnPath, removeCommand: removalCommand(install, provider, platform) });
+    const existing = installs.get(key);
+    if (!existing) installs.set(key, { ...install, key, onPath: isOnPath, uninstall: uninstallPlan(install, provider, env, platform, fsx) });
+    // A shared native copy also needs its npm owner removed, whichever comes first on PATH.
+    else if (install.channel === 'npm' && !existing.uninstall?.run) {
+      existing.uninstall = uninstallPlan(install, provider, env, platform, fsx);
+      if (!existing.uninstall) existing.guidance = install.guidance;
+    }
   };
   for (const file of onPath) add(file, true);
   for (const file of known) add(file, false);
