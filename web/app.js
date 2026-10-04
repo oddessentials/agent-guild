@@ -3272,6 +3272,7 @@ class TerminalView {
         this.term.write(msg.data);
         break;
       case 'exit':
+        if (dictation?.id === this.id) stopDictation();
         this.term.write(`\r\n\x1b[2m${exitLine(state.sessions.get(this.id), msg)}\x1b[0m\r\n`);
         break;
       default:
@@ -3381,9 +3382,11 @@ function closePanel() {
   if (state.activeId) state.views.get(state.activeId)?.unmount();
   state.activeId = null;
   $('terminal-panel').hidden = true;
+  renderVoice();
 }
 
 function updatePanel() {
+  renderVoice();
   const s = state.sessions.get(state.activeId);
   if (!s) return;
   paintProviderIcon($('panel-icon'), s.provider);
@@ -3399,6 +3402,7 @@ function updatePanel() {
 // ---- voice input ----------------------------------------------------------
 
 const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+const VOICE_RETRY_DELAYS = [250, 500, 1000];
 let dictation = null;
 
 function voiceOn() {
@@ -3406,11 +3410,11 @@ function voiceOn() {
 }
 
 function renderVoice() {
+  if (dictation) keepDictating(dictation);
   $('voice-choice').hidden = !Recognition;
   $('voice').checked = voiceOn();
-  $('panel-voice').hidden = !voiceOn();
+  $('panel-voice').hidden = !voiceOn() || state.sessions.get(state.activeId)?.status !== 'running';
   $('panel-voice').setAttribute('aria-pressed', String(Boolean(dictation)));
-  if (!voiceOn()) stopDictation();
 }
 
 function changeVoice(input) {
@@ -3424,57 +3428,123 @@ function dictatedText(text, first) {
   return clean && (first ? clean : ` ${clean}`);
 }
 
+function canDictate(current) {
+  const session = state.sessions.get(current.id);
+  return voiceOn() && state.activeId === current.id && session?.status === 'running'
+    && session.startedAt === current.startedAt && state.views.has(current.id)
+    && !state.pageAway && !state.stopping && document.visibilityState === 'visible'
+    && !$('app').hidden && !$('terminal-panel').hidden;
+}
+
+/** Every async continuation belongs to one explicit click and one run of the session. */
+function keepDictating(current) {
+  if (dictation !== current) return false;
+  if (canDictate(current)) return true;
+  stopDictation();
+  return false;
+}
+
 async function startDictation() {
   const id = state.activeId;
-  if (!voiceOn() || !id || dictation) return;
-  const rec = new Recognition();
-  const lang = navigator.language || 'en-US';
-  rec.lang = lang;
-  rec.continuous = true;
-  rec.interimResults = true;
-  try {
-    if (await Recognition.available?.({ langs: [lang], processLocally: true }) === 'available') rec.processLocally = true;
-  } catch { /* cloud recognition */ }
-  if (dictation || state.activeId !== id) return;
-  const current = { rec, id, first: true };
+  const session = state.sessions.get(id);
+  if (!session || dictation) return;
+  const current = {
+    id, startedAt: session.startedAt, lang: navigator.language || 'en-US',
+    android: /Android/i.test(navigator.userAgent || ''), processLocally: false,
+    rec: null, timer: null, first: true, emptyRetries: 0,
+  };
+  if (!canDictate(current)) return;
+  // Register before awaiting availability so another click or leaving the terminal cancels startup too.
   dictation = current;
+  renderVoice();
+  state.views.get(id)?.term.focus();
+  try {
+    // Browsers without this API start in the click handler, without an unnecessary await.
+    if (typeof Recognition.available === 'function') {
+      current.processLocally = await Recognition.available({ langs: [current.lang], processLocally: true }) === 'available';
+    }
+  } catch { /* cloud recognition */ }
+  listenForDictation(current);
+}
+
+function listenForDictation(current) {
+  if (!keepDictating(current)) return;
+  let rec;
+  try {
+    rec = new Recognition();
+    current.rec = rec;
+    rec.lang = current.lang;
+    rec.continuous = !current.android;
+    rec.interimResults = true;
+    if (current.processLocally) rec.processLocally = true;
+  } catch {
+    stopDictation();
+    toast('Voice input could not start.');
+    return;
+  }
+  // A new recognizer per Android phrase avoids cumulative transcripts from continuous mode.
+  let committed = 0;
+  let heard = false;
   const preview = $('voice-preview');
   rec.onresult = (e) => {
-    if (dictation !== current) return;
+    if (current.rec !== rec || !keepDictating(current)) return;
     let interim = '';
-    for (let i = e.resultIndex; i < e.results.length; i += 1) {
+    for (let i = Math.max(e.resultIndex, committed); i < e.results.length; i += 1) {
       const result = e.results[i];
       if (!result.isFinal) { interim += result[0].transcript; continue; }
+      committed = i + 1;
       const text = dictatedText(result[0].transcript, current.first);
       if (!text) continue;
-      state.views.get(id)?.term.paste(text);
+      state.views.get(current.id)?.term.paste(text);
       current.first = false;
+      current.emptyRetries = 0;
+      heard = true;
     }
     preview.textContent = interim.trim();
     preview.hidden = !preview.textContent;
   };
   rec.onerror = (e) => {
+    if (current.rec !== rec || !keepDictating(current)) return;
+    if (current.android && e.error === 'no-speech') return; // bounded retry after end
+    stopDictation();
     if (e.error === 'not-allowed' || e.error === 'service-not-allowed') toast('Voice input needs permission to use the microphone.');
     else if (e.error === 'network') toast('Voice input could not reach the speech service. Check your connection.');
     else if (e.error === 'audio-capture') toast('No microphone was found.');
-    else if (e.error === 'language-not-supported') toast(`Voice input does not support ${lang}.`);
+    else if (e.error === 'language-not-supported') toast(`Voice input does not support ${current.lang}.`);
+    else if (e.error !== 'aborted' && e.error !== 'no-speech') toast('Voice input stopped. Press Dictate to try again.');
   };
-  rec.onend = () => { if (dictation === current) stopDictation(); };
+  rec.onend = () => {
+    if (current.rec !== rec || !keepDictating(current)) return;
+    current.rec = null;
+    preview.hidden = true;
+    preview.textContent = '';
+    if (!current.android) return stopDictation();
+    if (!heard && current.emptyRetries >= VOICE_RETRY_DELAYS.length) {
+      stopDictation();
+      toast('Voice input stopped after repeated silence. Press Dictate to try again.');
+      return;
+    }
+    const delay = heard ? VOICE_RETRY_DELAYS[0] : VOICE_RETRY_DELAYS[current.emptyRetries++];
+    current.timer = setTimeout(() => {
+      current.timer = null;
+      listenForDictation(current);
+    }, delay);
+  };
   try {
     rec.start();
   } catch {
-    dictation = null;
+    if (current.rec !== rec || !keepDictating(current)) return;
+    stopDictation();
     toast('Voice input could not start.');
   }
-  renderVoice();
-  state.views.get(id)?.term.focus();
 }
 
 function stopDictation() {
   const current = dictation;
   if (!current) return;
   dictation = null;
-  try { current.rec.abort(); } catch { /* already ended */ }
+  clearTimeout(current.timer);
+  try { current.rec?.abort(); } catch { /* already ended */ }
   $('voice-preview').hidden = true;
   $('voice-preview').textContent = '';
   $('panel-voice').setAttribute('aria-pressed', 'false');
@@ -3735,6 +3805,7 @@ let newsTimer;
 
 function showAuth(message = '') {
   managerLoss.cancel();
+  closePanel();
   closeModels();
   closeNews();
   closeChangelog();
@@ -3875,10 +3946,12 @@ $('news').addEventListener('close', () => {
   newsView.opener = null;
 });
 document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') stopDictation();
   if (document.visibilityState === 'visible' && state.connected && Date.now() - newsLoadedAt > 60000) loadNews();
 });
 addEventListener('pagehide', () => {
   state.pageAway = true;
+  stopDictation();
   managerLoss.cancel();
   state.eventsSocket?.close();
 });
