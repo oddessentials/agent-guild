@@ -25,8 +25,31 @@ export async function startFakeGitHub({ user = { id: 4242, login: 'octo-cat', na
       { full_name: 'acme/api', private: true, fork: true, archived: false, description: null, language: null, pushed_at: '2026-06-01T00:00:00Z' },
     ],
     requests: [],
+    bodies: [],
     created: [],
     orgs: ['acme'],
+    rateLimited: false,
+    issuesDisabled: [],
+    truncated: false,
+    issues: {
+      'octo-cat/agent-guild': [
+        { number: 4, title: 'Dock is too narrow', state: 'open', body: 'Steps', user: { login: 'octo-cat' }, comments: 2, updated_at: '2026-10-01T00:00:00Z', html_url: 'https://github.com/octo-cat/agent-guild/issues/4' },
+        { number: 5, title: 'A pull request', state: 'open', pull_request: { url: 'x' }, user: { login: 'octo-cat' } },
+        { number: 3, title: 'Old bug', state: 'closed', body: null, user: { login: 'ada' }, updated_at: '2026-09-01T00:00:00Z', html_url: 'https://evil.test/octo-cat/agent-guild/issues/3' },
+        { title: 'nameless' },
+      ],
+    },
+    runs: {
+      'octo-cat/agent-guild': [
+        { id: 11, name: 'CI', display_title: 'Fix the gate', head_branch: 'main', event: 'push', status: 'in_progress', conclusion: null, run_number: 12, updated_at: '2026-10-02T00:00:00Z', html_url: 'https://github.com/octo-cat/agent-guild/actions/runs/11' },
+        { id: 10, name: 'CI', display_title: 'Earlier', head_branch: 'main', event: 'push', status: 'completed', conclusion: 'failure', run_number: 11, html_url: 'javascript:alert(1)' },
+      ],
+    },
+    pulls: {
+      'octo-cat/agent-guild': [
+        { number: 8, title: 'Add viewer', draft: true, state: 'open', user: { login: 'ada' }, head: { ref: 'viewer' }, base: { ref: 'main' }, updated_at: '2026-10-02T00:00:00Z', html_url: 'https://github.com/octo-cat/agent-guild/pull/8' },
+      ],
+    },
   };
   const withOwner = (repo) => {
     const owner = repo.full_name.split('/')[0];
@@ -103,6 +126,44 @@ export async function startFakeGitHub({ user = { id: 4242, login: 'octo-cat', na
       const repo = { full_name: fullName, private: body.private, fork: false, archived: false, description: body.description ?? null, language: null, pushed_at: new Date().toISOString() };
       state.repos.unshift(repo);
       return json(201, withOwner(repo), scoped);
+    }
+    const inRepo = /^\/repos\/([^/]+)\/([^/]+)\/(issues|actions\/runs|pulls)(?:\/(\d+))?$/.exec(url.pathname);
+    if (inRepo) {
+      const fullName = `${inRepo[1]}/${inRepo[2]}`.toLowerCase();
+      if (state.rateLimited) return json(403, { message: 'API rate limit exceeded' }, { 'X-RateLimit-Remaining': '0' });
+      if (!state.repos.some((r) => r.full_name.toLowerCase() === fullName)) return json(404, { message: 'Not Found' });
+      const [, , , kind, number] = inRepo;
+      const more = state.truncated ? { Link: `<${base}${url.pathname}?page=2>; rel="next"` } : {};
+      if (kind === 'actions/runs' && req.method === 'GET') {
+        const runs = state.runs[fullName] ?? [];
+        return json(200, { total_count: runs.length, workflow_runs: runs }, { ...scoped, ...more });
+      }
+      if (kind === 'pulls' && req.method === 'GET') {
+        return json(200, (state.pulls[fullName] ?? []).filter((p) => url.searchParams.get('state') === 'all' || p.state === url.searchParams.get('state')), { ...scoped, ...more });
+      }
+      if (kind === 'issues') {
+        if (state.issuesDisabled.includes(fullName)) return json(410, { message: 'Issues are disabled for this repo' });
+        const list = (state.issues[fullName] ??= []);
+        if (req.method === 'GET' && !number) {
+          const wanted = url.searchParams.get('state') || 'open';
+          return json(200, list.filter((i) => wanted === 'all' || (i.state ?? 'open') === wanted), { ...scoped, ...more });
+        }
+        const body = raw ? JSON.parse(raw) : {};
+        state.bodies.push({ method: req.method, path: url.pathname, body });
+        if (req.method === 'POST' && !number) {
+          if (!body.title) return json(422, { message: 'Validation Failed' });
+          const made = { number: Math.max(0, ...list.map((i) => i.number ?? 0)) + 1, state: 'open', comments: 0, user: { login: state.user.login }, updated_at: new Date().toISOString(), ...body };
+          made.html_url = `https://github.com/${inRepo[1]}/${inRepo[2]}/issues/${made.number}`;
+          list.unshift(made);
+          return json(201, made, scoped);
+        }
+        if (req.method === 'PATCH' && number) {
+          const found = list.find((i) => i.number === Number(number));
+          if (!found) return json(404, { message: 'Not Found' });
+          Object.assign(found, body, { updated_at: new Date().toISOString() });
+          return json(200, found, scoped);
+        }
+      }
     }
     if (url.pathname === '/user/keys') {
       if (!/public_key/.test(state.scopes)) return json(404, { message: 'Not Found' });

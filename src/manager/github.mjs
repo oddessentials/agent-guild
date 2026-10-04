@@ -101,6 +101,34 @@ export function localState(target, fullName) {
   }
 }
 
+/** The GitHub repository (lowercase owner/name) that `dir`, or the Git work tree holding it, has as its origin. */
+export function folderOrigin(dir) {
+  for (let current = path.resolve(dir); ; current = path.dirname(current)) {
+    const dotGit = path.join(current, '.git');
+    let stat = null;
+    try { stat = fs.statSync(dotGit); } catch { /* look further up */ }
+    if (stat) {
+      try {
+        return remoteRepo(originUrl(fs.readFileSync(path.join(commonGitDir(dotGit, stat), 'config'), 'utf8')));
+      } catch {
+        return null;
+      }
+    }
+    if (path.dirname(current) === current) return null;
+  }
+}
+
+/** A worktree's .git is a file naming its own Git folder, whose `commondir` names the folder holding the shared config. */
+function commonGitDir(dotGit, stat) {
+  if (stat.isDirectory()) return dotGit;
+  const named = /^gitdir:\s*(.+?)\s*$/m.exec(fs.readFileSync(dotGit, 'utf8'));
+  if (!named) throw new Error('no gitdir');
+  const gitDir = path.resolve(path.dirname(dotGit), named[1]);
+  let common = null;
+  try { common = fs.readFileSync(path.join(gitDir, 'commondir'), 'utf8').trim(); } catch { /* not a worktree */ }
+  return common ? path.resolve(gitDir, common) : gitDir;
+}
+
 /** Quote one word for the POSIX shell Git runs core.sshCommand with (Git for Windows ships one too). */
 export function shellQuote(word) {
   return `'${String(word).replaceAll('\'', '\'\\\'\'')}'`;
@@ -395,7 +423,7 @@ export class GitHub extends EventEmitter {
     if (!res.ok) {
       const body = await res.json().catch(() => null);
       const limited = (res.status === 403 || res.status === 429) && res.headers.get('x-ratelimit-remaining') === '0';
-      throw refusal(502, 'github_error', limited ? 'GitHub API rate limit exceeded; try again later' : `GitHub answered HTTP ${res.status}${body?.message ? `: ${body.message}` : ''}`, { github: res.status });
+      throw refusal(502, 'github_error', limited ? 'GitHub API rate limit exceeded; try again later' : `GitHub answered HTTP ${res.status}${body?.message ? `: ${body.message}` : ''}`, { github: res.status, limited });
     }
     return { body: await res.json(), res };
   }
@@ -611,6 +639,33 @@ export class GitHub extends EventEmitter {
         return { ...repo, target, local: target ? localState(target, repo.fullName) : null };
       }),
     };
+  }
+
+  /** Every signed-in account's repositories in one list. One account's failure does not hide the others'. */
+  async allRepos({ refresh = false } = {}) {
+    const settled = await Promise.all(this.accounts.map(async (account) => {
+      try {
+        return { account, page: await this.repos(account.id, { refresh }) };
+      } catch (err) {
+        return { account, err };
+      }
+    }));
+    const repos = [];
+    const errors = [];
+    let truncated = false;
+    let oldest = null;
+    for (const { account, page, err } of settled) {
+      if (err) {
+        errors.push({ accountId: account.id, login: account.login, code: err.code || 'github_error', message: err.status ? err.message : 'Could not list repositories' });
+        continue;
+      }
+      truncated ||= page.truncated;
+      const at = Date.parse(page.fetchedAt);
+      if (oldest === null || at < oldest) oldest = at;
+      for (const { target, local, ...repo } of page.repos) repos.push({ accountId: account.id, login: account.login, ...repo });
+    }
+    repos.sort((a, b) => (Date.parse(b.pushedAt) || 0) - (Date.parse(a.pushedAt) || 0) || a.fullName.localeCompare(b.fullName) || a.accountId - b.accountId);
+    return { repos, truncated, errors, fetchedAt: oldest === null ? null : new Date(oldest).toISOString() };
   }
 
   async _loadRepos(account) {

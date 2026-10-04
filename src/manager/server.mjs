@@ -7,6 +7,8 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { WebSocketServer } from 'ws';
 import { timingSafeEqualString } from './session-manager.mjs';
+import { folderOrigin } from './github.mjs';
+import { createViews } from './github-views.mjs';
 
 const require = createRequire(import.meta.url);
 const API = '/api/v1';
@@ -362,6 +364,8 @@ export function createManagerServer({
     throw new HttpError(404, `no route for ${method} ${url.pathname}`, 'not_found');
   }
 
+  const views = github ? createViews(github) : null;
+
   async function handleGitHub(req, res, url, route, method) {
     const snapshot = () => ({ github: github.snapshot() });
     if (route === '/github' && method === 'GET') return sendJson(res, 200, snapshot());
@@ -377,6 +381,30 @@ export function createManagerServer({
       const body = await readJsonBody(req);
       const session = manager.clone({ account: body.account, repo: body.repo, parent: body.parent });
       return sendJson(res, 201, { session: session.toJSON() });
+    }
+    if (route === '/github/repos' && method === 'GET') {
+      return sendJson(res, 200, await github.allRepos({ refresh: url.searchParams.get('refresh') === '1' }));
+    }
+    if (route === '/github/origin' && method === 'GET') {
+      const folder = manager.resolveCwd(url.searchParams.get('cwd'));
+      return sendJson(res, 200, { folder, repo: folderOrigin(folder) });
+    }
+    const view = route.match(/^\/github\/accounts\/([^/]+)\/repos\/([^/]+)\/([^/]+)\/(issues|actions|pulls)(?:\/([^/]+))?$/);
+    if (view) {
+      let parts;
+      try { parts = view.map((part) => (part === undefined ? part : decodeURIComponent(part))); } catch { throw new HttpError(400, 'repo must be a GitHub repository written as owner/name', 'bad_repo'); }
+      const [, id, owner, name, kind, number] = parts;
+      if (kind === 'issues' && number === undefined && method === 'GET') {
+        return sendJson(res, 200, await views.issues(id, owner, name, { state: url.searchParams.get('state') || 'open' }));
+      }
+      if (kind === 'issues' && number === undefined && method === 'POST') {
+        return sendJson(res, 201, { issue: await views.createIssue(id, owner, name, await readJsonBody(req)) });
+      }
+      if (kind === 'issues' && number !== undefined && method === 'PATCH') {
+        return sendJson(res, 200, { issue: await views.updateIssue(id, owner, name, number, await readJsonBody(req)) });
+      }
+      if (kind === 'actions' && number === undefined && method === 'GET') return sendJson(res, 200, await views.actions(id, owner, name));
+      if (kind === 'pulls' && number === undefined && method === 'GET') return sendJson(res, 200, await views.pulls(id, owner, name));
     }
     const match = route.match(/^\/github\/accounts\/([^/]+)(\/repos|\/ssh)?$/);
     if (match) {
