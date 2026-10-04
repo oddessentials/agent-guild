@@ -7,7 +7,7 @@ import path from 'node:path';
 
 const dir = path.resolve(process.argv[2] || 'docs/.pages');
 const required = [
-  '.nojekyll', 'index.html', 'app.js', 'theme.js', 'styles.css', 'demo-config.js', 'demo-runtime.js',
+  '.nojekyll', 'index.html', 'app.js', 'terminal-copy.js', 'theme.js', 'styles.css', 'demo-config.js', 'demo-runtime.js',
   'vendor/xterm/xterm.js', 'vendor/xterm/xterm.css', 'vendor/xterm/addon-fit.js', 'vendor/xterm/addon-web-links.js',
 ];
 const problems = [];
