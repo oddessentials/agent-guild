@@ -180,9 +180,10 @@ function normalize(raw, platform, warnings) {
     npmNote: merged.npmNote ? String(merged.npmNote) : null,
     channels: normalizeChannels(merged.channels),
     multiplexers: Array.isArray(merged.multiplexers) ? merged.multiplexers
-      .filter((m) => m && ['tmux', 'herdr'].includes(m.id) && m.enabled !== false)
-      .map((m) => {
-        const entry = { ...m, ...m[platform] };
+      .filter((m) => m && typeof m === 'object' && !Array.isArray(m))
+      .map((m) => ({ ...m, ...m[platform] }))
+      .filter((m) => ['tmux', 'herdr'].includes(m.id) && m.enabled !== false)
+      .map((entry) => {
         return {
           id: entry.id, tool: String(entry.tool || entry.id), docs: String(entry.docs || ''),
           versionArgs: entry.id === 'tmux' ? ['-V'] : ['--version'],

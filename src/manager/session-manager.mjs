@@ -189,7 +189,13 @@ export class SessionManager extends EventEmitter {
       if (shell.id === 'tmux') mux.run(['kill-session', '-t', `=${muxName}`]).catch(() => {});
       throw err;
     }
-    this._track(session, { spawnSpec, mux, shell, card: { id, reportToken, provider: provider.id, account: account.id, shell: shell.id, muxName, name: session.name, cwd: session.cwd, createdAt: session.createdAt } });
+    this._track(session, { spawnSpec, mux, shell, card: {
+      id, reportToken, provider: provider.id, account: account.id, shell: shell.id,
+      muxName, name: session.name, cwd: session.cwd, createdAt: session.createdAt,
+      // Herdr's request arguments belong to its client and must survive rebinding.
+      // Tmux's request arguments belong to the already-running inner session.
+      ...(shell.id === 'herdr' ? { args: [...args] } : {}),
+    } });
     this._watchHerdr(session);
     return session;
   }
@@ -247,7 +253,7 @@ export class SessionManager extends EventEmitter {
     try {
       // All at once, so a multiplexer slow to answer holds up the start once, not once a card.
       await Promise.all((this.store?.load() ?? []).map((card) => this._withMultiplexerStart(card?.provider, card?.shell, () => this._restoreCard(card)).catch((err) => {
-        if (err.code === 'install_in_progress') this.pendingCards.set(card.id, card);
+        if (['too_many_sessions', 'install_in_progress'].includes(err.code)) this.pendingCards.set(card.id, card);
         console.warn(`[sessions] did not bring back the card ${card?.name ?? card?.id}: ${err.message}`);
       })));
     } finally {
@@ -262,6 +268,7 @@ export class SessionManager extends EventEmitter {
     if (typeof card.muxName !== 'string' || !/^guild-[0-9a-f]{6}$/.test(card.muxName)) return;
     const provider = this.registry.get(String(card.provider));
     if (!provider || !['tmux', 'herdr'].includes(card.shell)) return;
+    if (card.shell === 'herdr' && card.args !== undefined && (!Array.isArray(card.args) || card.args.some((arg) => typeof arg !== 'string'))) return;
     const shells = this.registry.shellsFor(provider)?.shells || [];
     const shell = shells.find((s) => s.id === card.shell && s.multiplexer);
     if (!shell) {
@@ -278,7 +285,7 @@ export class SessionManager extends EventEmitter {
       if (!this.closing) this.pendingCards.delete(card.id);
       return;
     }
-    const spawnSpec = this.registry.spawnSpec(provider, [], null, [], mux.named);
+    const spawnSpec = this.registry.spawnSpec(provider, shell.id === 'herdr' ? card.args ?? [] : [], null, [], mux.named);
     const session = this._spawn({
       provider, spawnSpec: null, cwd: typeof card.cwd === 'string' ? card.cwd : os.homedir(), name: card.name, account,
       id: card.id, reportToken: card.reportToken, dropEnv: mux.dropEnv, extraEnv: shell.env,
@@ -300,7 +307,7 @@ export class SessionManager extends EventEmitter {
     const shell = provider && this.registry.shellsFor(provider)?.shells.find((s) => s.id === mux.card.shell && s.multiplexer);
     if (!shell) return false;
     const fresh = this._multiplexer({ provider, account: this.registry.account(provider, mux.card.account), shell, id: mux.card.id, reportToken: mux.card.reportToken, muxName: mux.card.muxName });
-    mux.spawnSpec = this.registry.spawnSpec(provider, [], null, [], fresh.named);
+    mux.spawnSpec = this.registry.spawnSpec(provider, shell.id === 'herdr' ? mux.card.args ?? [] : [], null, [], fresh.named);
     mux.alive = fresh.alive;
     mux.shellPath = shell.path;
     mux.card.shellPath = shell.path;

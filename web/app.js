@@ -933,7 +933,7 @@ function renderMultiplexers(card, provider) {
     note.className = 'multiplexer-note';
     note.textContent = [
       tool.busy ? 'Installation operation in progress…' : tool.guidance,
-      tool.pendingCards ? `${tool.pendingCards} detached ${tool.tool} card(s) are waiting for a usable installation.` : '',
+      tool.pendingCards ? `${tool.pendingCards} detached ${tool.tool} card(s) are waiting to be restored. Check the installation or remove finished cards, then Refresh.` : '',
       installNote(tool),
     ].filter(Boolean).join(' ');
     if (note.textContent) row.append(note);

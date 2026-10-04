@@ -127,7 +127,9 @@ report token, ready to reattach. A tmux session gets a tmux session of its
 own, made with the session's `AGENT_GUILD_` variables and PATH, so what
 runs there reports to it as from a shell; its request `args` are that tmux
 session's command. A herdr session's agents are the ones herdr reports in
-its panes; its request `args` are added to `herdr`.
+its panes; its request `args` are added to `herdr` and kept for reattachment,
+including across manager restarts. Older saved cards without arguments
+continue to use the default herdr invocation.
 For a tool whose agent reporting has to be turned on (`reporting` is `antigravity`),
 `reportingEnabled` says whether it is.
 `usageUrl`, `billingUrl` and `cloudUrl` are `https://` links to the vendor's
@@ -174,6 +176,8 @@ read. `force` never bypasses that check. Unknown copies return `unknown_copy`
 `not_removable` (400).
 
 Operation results and pending-card counts arrive through `providers.updated`.
+Saved cards also remain pending when the session limit is reached. Remove
+finished cards and use **Refresh** to retry restoration.
 Saved cards whose tool is missing remain persisted, without exposing their
 report tokens, and retry restoration after installation or discovery.
 

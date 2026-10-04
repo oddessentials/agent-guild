@@ -77,6 +77,8 @@ by `GET /api/v1/info`.
 The built-in Shell provider has a `multiplexers` array naming `tmux` and
 `herdr`, with documentation links and Homebrew names in `channels.brew.names`.
 Entries can override those fields under `win32`, `darwin` or `linux`.
+The final platform entry must name a supported ID; `enabled: false` hides
+that entry's management controls.
 Replace the array with `[]` to hide management controls; shell discovery
 and existing sessions continue to work. These are the two supported IDs;
 this field does not define arbitrary installers.

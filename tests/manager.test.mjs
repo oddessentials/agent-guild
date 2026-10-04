@@ -310,6 +310,24 @@ async function waitForText(client, sessionId, text, label) {
   }
 }
 
+/** Wait for the complete result in the stream that the query assertions read. */
+async function waitForQueryResult(client, label) {
+  try {
+    return await waitFor(() => {
+      const text = stripAnsi(client.output);
+      const match = text.match(/REPLIES:\d+:(\[[^\r\n]*\])/);
+      if (!match) return false;
+      // A PTY/WebSocket can split the result, including inside its JSON.
+      // Wait for any complete result; the caller still checks the exact count.
+      JSON.parse(match[1]);
+      return text;
+    }, { label });
+  } catch (err) {
+    err.message += `\n--- stream tail ---\n${JSON.stringify(client.output.slice(-600))}`;
+    throw err;
+  }
+}
+
 const terminal = (id) => new Client(`${base.replace('http', 'ws')}/api/v1/sessions/${id}/terminal?token=${token}`);
 
 const findProvider = async (id) => (await call('GET', '/providers')).body.providers.find((p) => p.id === id);
@@ -2087,8 +2105,8 @@ test('the manager answers terminal queries exactly once, with or without clients
   const b = terminal(session.id);
   await Promise.all([a.opened, b.opened]);
   a.input('query cpr');
-  await waitForText(a, session.id, 'REPLIES:', 'cpr replies with clients');
-  assert.match(stripAnsi(a.output), /REPLIES:1:/);
+  const reply = await waitForQueryResult(a, 'cpr replies with clients');
+  assert.match(reply, /REPLIES:1:/);
   await Promise.all([a.close(), b.close()]);
 
   // No client at all: the manager still answers.
@@ -2104,8 +2122,7 @@ test('background colour queries get the page theme colour', async () => {
   const client = terminal(session.id);
   await client.opened;
   client.input('query bg');
-  await waitForText(client, session.id, 'REPLIES:', 'bg replies');
-  const text = stripAnsi(client.output);
+  const text = await waitForQueryResult(client, 'bg replies');
   if (process.platform === 'win32') {
     // ConPTY's console host sits between the program and the manager and may
     // handle this query itself. Whatever it does, there must be no duplicate.

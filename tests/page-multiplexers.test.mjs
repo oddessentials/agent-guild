@@ -63,6 +63,7 @@ test('the multiplexer panel shows missing tools, guidance and pending cards, and
   assert.equal(p.host.hidden, false);
   assert.equal(p.card.findAll((n) => n.tag === 'button' && !n.className.includes('multiplexer-refresh')).length, 1);
   assert.match(p.card.findAll((n) => n.className === 'multiplexer-note')[1].textContent, /2 detached herdr/);
+  assert.match(p.card.findAll((n) => n.className === 'multiplexer-note')[1].textContent, /remove finished cards, then Refresh/);
   p.host.open = true; p.host.toggle();
   p.render();
   assert.equal(p.host.open, true);

@@ -3,11 +3,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { EventEmitter } from 'node:events';
+import { EventEmitter, once } from 'node:events';
 import { execFileSync } from 'node:child_process';
+import pty from 'node-pty';
 import { MultiplexerRegistry, distroCandidate, nativeHerdrEnv } from '../src/manager/multiplexers.mjs';
 import { loadProviders, ProviderRegistry } from '../src/manager/providers.mjs';
-import { SessionManager } from '../src/manager/session-manager.mjs';
+import { SessionManager, MAX_SESSIONS } from '../src/manager/session-manager.mjs';
 import { parseTmuxVersion, compareTmuxVersions, parseVersion } from '../src/manager/versions.mjs';
 import { herdrLayout, reconcileHerdrPath, ownsPathEntry, WINDOWS_PATH_FILTER } from '../src/manager/multiplexer-paths.mjs';
 import { weavePaths } from '../src/manager/shell-env.mjs';
@@ -47,6 +48,41 @@ function fixture(platform = 'linux', options = {}) {
   const describe = (id) => mux.describe(provider).find((m) => m.id === id);
   return { mux, registry, provider, env, files, links, outputs, calls, fetches, commands, add, describe };
 }
+
+test('multiplexer platform overrides are merged before supported IDs and enabled state are validated', (t) => {
+  const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'guild-mux-config-')));
+  assert.equal(path.dirname(dir), fs.realpathSync.native(os.tmpdir()));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const userFile = path.join(dir, 'providers.json');
+  for (const platform of ['win32', 'darwin', 'linux']) {
+    for (const [entry, expectedIds] of [
+      [{ id: 'tmux', [platform]: { id: 'other' } }, []],
+      [{ id: 'herdr', [platform]: { enabled: false } }, []],
+      [{ id: 'herdr', enabled: false, [platform]: { enabled: true } }, ['herdr']],
+      [{ id: 'other', [platform]: { id: 'tmux' } }, ['tmux']],
+      [{ id: 'tmux', enabled: false }, []],
+      [null, []], [false, []], [[], []],
+    ]) {
+      fs.writeFileSync(userFile, JSON.stringify({ providers: [{ id: 'shell', multiplexers: [entry] }] }));
+      const provider = loadProviders({ userFile, platform }).providers.find((p) => p.id === 'shell');
+      assert.deepEqual(provider.multiplexers.map((m) => m.id), expectedIds, JSON.stringify({ platform, entry }));
+      const mux = new MultiplexerRegistry({ platform });
+      assert.deepEqual(mux.describe(provider).map((m) => m.id), expectedIds);
+      for (const id of ['tmux', 'herdr', 'other'].filter((id) => !expectedIds.includes(id))) {
+        assert.throws(() => mux.get(provider, id), { code: 'unknown_multiplexer' });
+      }
+    }
+    fs.writeFileSync(userFile, JSON.stringify({ providers: [{ id: 'shell', multiplexers: [{
+      id: 'herdr', channels: { brew: { names: ['base'] } },
+      [platform]: { channels: { brew: { names: ['platform'] } } },
+    }] }] }));
+    const provider = loadProviders({ userFile, platform }).providers.find((p) => p.id === 'shell');
+    assert.deepEqual(provider.multiplexers[0].channels.brew.names, ['platform']);
+    const otherPlatform = platform === 'win32' ? 'linux' : 'win32';
+    const other = loadProviders({ userFile, platform: otherPlatform }).providers.find((p) => p.id === 'shell');
+    assert.deepEqual(other.multiplexers[0].channels.brew.names, ['base']);
+  }
+});
 
 test('tmux and distro versions preserve patch ordering without changing provider semver', () => {
   for (const [raw, expected] of [['tmux 3.4\n', '3.4'], ['3.7c', '3.7c'], ['1:3.5_a-2', '3.5a'], ['3.2-1ubuntu1', '3.2'], ['(none)', null], ['master', null]]) assert.equal(parseTmuxVersion(raw), expected);
@@ -211,23 +247,71 @@ Remove-OwnedPathEntries 'C:\keep;;"c:\HERDR\current\";C:\herdr\releases\v1;C:\he
   assert.equal(output, 'C:\\keep;;C:\\herdr\\releases\\v1\\extra;%SystemRoot%\\System32;');
 });
 
-test('native removal preserves settings, is retryable, and never edits PATH after a file-removal failure', (t) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'guild-mux-removal-'));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+function removalFixture(t) {
+  // The success/failure fixtures need ordinary owned paths. macOS may expose
+  // its temporary directory through /var; linked parents are tested separately.
+  const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'guild-mux-removal-')));
+  assert.equal(path.dirname(dir), fs.realpathSync.native(os.tmpdir()));
+  t.after(() => {
+    assert.equal(fs.realpathSync.native(dir), dir);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
   const executable = path.join(dir, 'bin', 'herdr');
   fs.mkdirSync(path.dirname(executable));
   fs.writeFileSync(executable, 'binary');
   const settings = path.join(dir, 'settings');
   fs.writeFileSync(settings, 'keep');
   const plan = { remove: [executable], strict: true };
-  let cleaned = false;
-  assert.equal(runPlan({ ...plan, pathEntries: {} }, { platform: 'win32', log() {}, rm: () => { throw Object.assign(new Error('locked'), { code: 'EBUSY' }); }, cleanPath: () => { cleaned = true; } }), 1);
-  assert.equal(cleaned, false);
-  assert.equal(runPlan(plan, { log() {} }), 0);
-  assert.equal(runPlan(plan, { log() {} }), 0);
+  const lines = [];
+  return { dir, executable, settings, plan, lines, log: (line) => lines.push(line) };
+}
+
+test('native removal deletes the owned executable, preserves settings, and is repeatable', (t) => {
+  const { executable, settings, plan, lines, log } = removalFixture(t);
+  assert.equal(runPlan(plan, { log }), 0, lines.join('\n'));
+  assert.equal(fs.existsSync(executable), false);
+  assert.equal(runPlan(plan, { log }), 0, lines.join('\n'));
   assert.equal(fs.readFileSync(settings, 'utf8'), 'keep');
   fs.writeFileSync(executable, 'reinstalled');
   assert.equal(fs.readFileSync(executable, 'utf8'), 'reinstalled');
+});
+
+test('native removal reaches an injected file failure and leaves PATH untouched until a successful retry', (t) => {
+  const { executable, settings, plan, lines, log } = removalFixture(t);
+  const removeCalls = [], pathCalls = [];
+  const withPath = { ...plan, pathEntries: {} };
+  const options = { platform: 'win32', log, cleanPath: (rules) => pathCalls.push(rules) };
+  const code = runPlan(withPath, {
+    ...options,
+    rm: (file) => { removeCalls.push(file); throw Object.assign(new Error('locked'), { code: 'EBUSY' }); },
+  });
+  assert.equal(code, 1, lines.join('\n'));
+  assert.deepEqual(removeCalls, [executable], lines.join('\n'));
+  assert.equal(pathCalls.length, 0);
+  assert.equal(fs.readFileSync(executable, 'utf8'), 'binary');
+  assert.equal(fs.readFileSync(settings, 'utf8'), 'keep');
+  assert.match(lines.join('\n'), /it is in use/);
+  assert.equal(runPlan(withPath, options), 0, lines.join('\n'));
+  assert.equal(fs.existsSync(executable), false);
+  assert.deepEqual(pathCalls, [withPath.pathEntries]);
+  assert.equal(fs.readFileSync(settings, 'utf8'), 'keep');
+});
+
+test('native removal refuses a linked parent before any deletion or PATH change', (t) => {
+  const { dir, executable, settings, lines, log } = removalFixture(t);
+  const alias = path.join(dir, 'alias');
+  fs.symlinkSync(path.dirname(executable), alias, process.platform === 'win32' ? 'junction' : 'dir');
+  const removeCalls = [], pathCalls = [];
+  const code = runPlan({ remove: [path.join(alias, 'herdr')], strict: true, pathEntries: {} }, {
+    platform: 'win32', log, rm: (file) => removeCalls.push(file), cleanPath: (rules) => pathCalls.push(rules),
+  });
+  assert.equal(code, 1, lines.join('\n'));
+  assert.equal(removeCalls.length, 0);
+  assert.equal(pathCalls.length, 0);
+  assert.match(lines.join('\n'), /parent is a link/);
+  assert.equal(fs.readFileSync(executable, 'utf8'), 'binary');
+  assert.equal(fs.readFileSync(settings, 'utf8'), 'keep');
+  assert.equal(fs.lstatSync(alias).isSymbolicLink(), true);
 });
 
 test('forced refresh invalidates shells even when PATH stays identical', async (t) => {
@@ -352,6 +436,120 @@ test('missing multiplexer cards survive every save, recover once discovered, and
   await manager._restorePending();
   assert.equal(manager.pendingCards.size, 0);
   assert.equal(saved.length, 1);
+});
+
+// Keep the real session, capacity checks, command builder, and JSON card round
+// trip. Only the external multiplexer probes/watchers are replaced.
+function savedCardsFixture(t, { cards = [], platform = 'linux' } = {}) {
+  const f = fixture(platform);
+  const shell = {
+    id: 'herdr', label: 'herdr', path: platform === 'win32' ? 'C:\\old\\herdr.exe' : '/old/herdr',
+    args: [], env: {}, multiplexer: { attach: 'herdr' },
+  };
+  let saved = JSON.parse(JSON.stringify(cards));
+  const store = { load: () => JSON.parse(JSON.stringify(saved)), save: (value) => { saved = JSON.parse(JSON.stringify(value)); } };
+  f.registry.shellsFor = () => ({ defaultId: 'plain', shells: [shell] });
+  f.registry.shellFor = () => shell;
+  f.registry.account = () => ({ id: 'default', label: 'Default', env: {} });
+  f.registry.describe = () => ({ id: 'shell', tool: 'Shell' });
+  f.registry.spawnSpec = ProviderRegistry.prototype.spawnSpec;
+  const manager = new SessionManager({ registry: f.registry, baseEnv: {}, getApiUrl: () => '', store });
+  const multiplexer = manager._multiplexer.bind(manager);
+  t.mock.method(manager, '_multiplexer', (options) => ({ ...multiplexer(options), alive: async () => true }));
+  t.mock.method(manager, '_watchHerdr', () => {});
+  t.after(() => manager.shutdown());
+  return { ...f, manager, shell, get saved() { return store.load(); } };
+}
+
+test('capacity-blocked saved cards survive startup, repeated saves and restart, then recover once on refresh', async (t) => {
+  const cards = Array.from({ length: MAX_SESSIONS + 1 }, (_, i) => ({
+    id: (i + 1).toString(16).padStart(6, '0'), reportToken: (i + 1).toString(16).padStart(32, '0'),
+    muxName: 'guild-' + (i + 1).toString(16).padStart(6, '0'), provider: 'shell', shell: 'herdr',
+    account: 'default', name: 'Saved ' + i,
+  }));
+  const identities = (values) => values.map(({ id, reportToken }) => [id, reportToken]).sort();
+  const f = savedCardsFixture(t, { cards });
+  await f.manager.restore();
+  assert.equal(f.manager.sessions.size, MAX_SESSIONS);
+  assert.equal(f.manager.pendingCards.size, 1);
+  f.manager._saveCards();
+  assert.deepEqual(identities(f.saved), identities(cards));
+  await f.manager.shutdown();
+
+  const next = savedCardsFixture(t, { cards: f.saved });
+  await next.manager.restore();
+  assert.equal(next.manager.pendingCards.size, 1);
+  assert.deepEqual(identities(next.saved), identities(cards));
+  await next.manager._restorePending();
+  assert.equal(next.manager.pendingCards.size, 1, 'a full manager keeps the card on retry too');
+  const pending = [...next.manager.pendingCards.values()][0];
+  const removed = [...next.manager.sessions.keys()][0];
+  next.manager.remove(removed);
+  next.registry.emit('updated');
+  next.registry.emit('updated');
+  await next.manager.pendingRestore;
+  assert.equal(next.manager.pendingCards.size, 0);
+  assert.equal(next.manager.sessions.size, MAX_SESSIONS);
+  assert.equal(next.manager.get(pending.id).reportToken, pending.reportToken);
+  assert.deepEqual(identities(next.saved), identities(cards.filter((card) => card.id !== removed)));
+});
+
+test('saved herdr cards accept legacy arguments and reject malformed argument lists before probing or launching', async (t) => {
+  const card = { id: 'abcdef', reportToken: 'a'.repeat(32), muxName: 'guild-abcdef', provider: 'shell', shell: 'herdr' };
+  for (const args of [undefined, [], null, '--session work', ['ok', 42], { value: 'work' }]) {
+    const valid = args === undefined || Array.isArray(args) && args.length === 0;
+    const f = savedCardsFixture(t, { cards: [{ ...card, ...(args === undefined ? {} : { args }) }] });
+    await f.manager.restore();
+    assert.equal(f.manager.sessions.size, valid ? 1 : 0, JSON.stringify(args));
+    assert.equal(f.manager._multiplexer.mock.calls.length, valid ? 1 : 0, 'invalid input never reaches the multiplexer');
+    if (valid) {
+      assert.deepEqual(f.manager.multiplexers.get(card.id).spawnSpec.args, []);
+      f.manager._rebindMultiplexer(f.manager.multiplexers.get(card.id));
+      assert.deepEqual(f.manager.multiplexers.get(card.id).spawnSpec.args, []);
+    }
+  }
+});
+
+test('herdr request arguments survive exit checks, repeated reattach, executable replacement and pending restore', async (t) => {
+  for (const platform of ['win32', 'darwin', 'linux']) {
+    await t.test(platform, async (t) => {
+      const launches = [];
+      t.mock.method(pty, 'spawn', (file, args) => {
+        launches.push({ file, args: [...args] });
+        let onExit;
+        return { pid: 0, onData() {}, onExit(fn) { onExit = fn; }, write() {}, resize() {}, kill() { onExit({ exitCode: 0 }); } };
+      });
+      const f = savedCardsFixture(t, { platform });
+      const args = ['--session', 'work space', 'quoted"value', "single'quote", ''];
+      const expected = [...args];
+      const session = await f.manager.create({ providerId: 'shell', shell: 'herdr', args, cwd: process.cwd() });
+      assert.deepEqual(launches.at(-1), { file: f.shell.path, args: expected });
+      args.push('caller mutation');
+      f.shell.path = platform === 'win32' ? 'C:\\new release\\herdr.exe' : '/new release/herdr';
+      for (let i = 0; i < 2; i++) {
+        const exited = once(session, 'exit');
+        f.manager.stop(session.id);
+        await exited;
+        // Also covers the explicit recheck after an update completes.
+        await f.manager._checkMultiplexer(session, f.manager.multiplexers.get(session.id));
+        await f.manager.reattach(session.id);
+        assert.deepEqual(launches.at(-1), { file: f.shell.path, args: expected });
+      }
+      await f.manager.shutdown();
+
+      const next = savedCardsFixture(t, { cards: f.saved, platform });
+      next.registry.shellsFor = () => ({ defaultId: 'plain', shells: [] });
+      await next.manager.restore();
+      assert.equal(next.manager.pendingCards.size, 1);
+      next.registry.shellsFor = () => ({ defaultId: 'plain', shells: [next.shell] });
+      next.shell.path = f.shell.path;
+      next.registry.emit('updated');
+      await next.manager.pendingRestore;
+      await next.manager.reattach(session.id);
+      assert.deepEqual(launches.at(-1), { file: next.shell.path, args: expected });
+      assert.equal(next.manager.get(session.id).reportToken, session.reportToken);
+    });
+  }
 });
 
 test('multiplexer API authenticates, validates, preserves conflict details and launches a real operation terminal', async (t) => {
