@@ -10,6 +10,7 @@
     { id: 'orbital', name: 'Orbital' },
     { id: 'grove', name: 'Grove' },
     { id: 'gnomeland', name: 'Gnomeland' },
+    { id: 'goblinville', name: 'Goblinville' },
   ];
   window.agentGuildSkins = skins;
 

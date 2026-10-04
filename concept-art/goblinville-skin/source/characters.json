@@ -1,0 +1,45 @@
+{
+  "_style": "Highly detailed storybook steampunk illustration, rich painterly digital painting with fine texture and crisp detail, an appealing grown-up builder of a smoky steam-powered goblin town, a seasoned engineer in riveted brass, copper, leather and soot, with expressive intelligent eyes, dignified, charming and full of personality, not cute, not childish, not grotesque, not scary, warm soft key light with a subtle colored rim light, full body standing, centered, filling the frame from the top of the head to the feet, isolated on a pure flat black background, no floor, no shadow, no scenery, no text, no letters, no logos, no border.",
+  "anthropic": {
+    "seed": 71,
+    "w": 1056,
+    "h": 1408,
+    "prompt": "A massive broad-shouldered old ogre master builder, a huge hulking frame with a barrel chest and enormous hands, warm olive-tan skin, a heavy underbite with two short worn tusks, a long braided grey beard, small brass-rimmed spectacles, a riveted copper hard hat, a burnt-orange quilted work coat over a heavy leather apron, a brass-plated right gauntlet engraved with softly glowing amber runes, a tool belt hung with wrenches, rivets and a brass folding rule, a long rolled blueprint tucked under one arm, standing calm and steady, a few softly glowing amber rune glyphs drifting near the gauntlet.",
+    "locked": "Turn this exact same massive old ogre builder into an old weathered cast-bronze statue of himself, a cold monument standing in a disused works: dull bronze with streaks of green verdigris patina, soot, dust and thin cobwebs, every glow switched off, the runes on his gauntlet dark, his eyes closed and asleep. Keep his two big tusks jutting up from his underbite, his small round spectacles, his hard hat, braided beard, gauntlet, tool belt and rolled blueprint, all cast in the same bronze. A heavy iron chain wrapped around him fastened with one large rusty iron padlock on his chest. Same pose and silhouette, dormant. Keep the exact same art style, painterly rendering, camera framing, scale and the pure flat black background."
+  },
+  "openai": {
+    "seed": 72,
+    "w": 1056,
+    "h": 1408,
+    "prompt": "A broad proud orc boilermaker and foundry engineer with grey-green skin, a strong jaw with two short clean tusks, a neat black topknot and a braided black beard, wearing heavy blackened-steel work armor with riveted plates and thin glowing emerald-green seams, small emerald pressure gauges on his chest plate, welding goggles with emerald lenses pushed up on his brow, his eyes glowing emerald green, thick leather gauntlets, a short dark fur-trimmed work cape, a huge riveted steam-powered forge hammer with copper pipes resting over his shoulder, standing at rest with his free hand on his belt."
+  },
+  "google": {
+    "seed": 173,
+    "w": 1056,
+    "h": 1408,
+    "prompt": "A towering gangly old mountain troll lift-engineer, very tall and long-limbed with long arms and big knobbly hands, smooth blue-grey stone-like skin, a long drooping nose, long pointed ears, small lower tusks, a shaggy mane of silver-white hair and a long silver beard braided with brass beads, a deep sapphire-blue long engineer's coat with brass buttons and a leather harness, a compact brass levitation engine strapped to his back with a glowing blue-white crystal core and small spinning brass rings, holding one single long brass control rod tipped with a glowing blue-white four-pointed star crystal in one hand, his other hand open, two small cut stone blocks floating weightlessly beside him in soft blue light, calm and serene.",
+    "edit_seeds": {
+      "working": 21,
+      "locked": 11
+    }
+  },
+  "xai": {
+    "seed": 74,
+    "w": 1056,
+    "h": 1408,
+    "prompt": "A young sharp-eyed goblin electrician with green skin, long pointed ears pierced with small copper rings, glowing ice-blue electric-cyan eyes, a sly confident grin, messy black hair with brass goggles strapped around his head, a glossy black leather long coat with a high collar covered in bright glowing ice-blue electric-cyan circuit-trace patterns of pure cyan light with no green in it on the lapels, sleeves and hem, a brass coil gauntlet on one arm with small glass vacuum tubes, a tool belt with pliers and coiled copper wire, confident relaxed stance with his free hand in his coat pocket.",
+    "edit_seeds": {
+      "working": 11
+    }
+  },
+  "shell": {
+    "seed": 75,
+    "w": 1056,
+    "h": 1408,
+    "prompt": "A faceless hooded goblin automaton, the night watchman of the works, a small slender figure in a deep violet hooded cloak with two long pointed goblin ears rising from the sides of the hood, the hood opening is an empty pitch-black void with no face, no eyes, no nose and no skin, a single glowing bright violet '>' chevron symbol floating inside the dark void of the hood, thin wisps of glowing violet steam curling from vents on its shoulders, brass-jointed gloved hands holding a small brass lantern with a violet flame, a leather satchel of tools at its waist, standing calmly.",
+    "locked": "Turn this exact same faceless hooded automaton into an old weathered cast-bronze statue of a hooded figure: the deep hood with the two long pointed ears cast in dull bronze with streaks of green verdigris patina, the hood opening a hollow dark empty cavity with nothing inside it, no face, no eyes, no nose, no skin, the violet glow, the steam and the chevron completely gone, the lantern cold and dark, dust and thin cobwebs, a heavy iron chain wrapped around it fastened with one large rusty iron padlock on its chest. Same pose and silhouette, dormant. Keep the exact same art style, painterly rendering, camera framing, scale and the pure flat black background.",
+    "edit_seeds": {
+      "working": 21
+    }
+  }
+}
