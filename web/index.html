@@ -170,7 +170,21 @@
         <div id="github-chips" class="github-chips" role="tablist" aria-label="GitHub accounts"></div>
         <button id="github-add" class="btn github-add" type="button">Add account</button>
       </div>
-      <div class="models-body">
+      <div id="github-picker" class="github-picker" hidden>
+        <div class="github-combo">
+          <input id="github-repo" type="text" role="combobox" aria-label="Repository" aria-autocomplete="list" aria-expanded="false" aria-controls="github-repo-list" placeholder="Search repositories" spellcheck="false" autocomplete="off">
+          <ul id="github-repo-list" class="github-repo-list" role="listbox" aria-label="Repositories" hidden></ul>
+        </div>
+        <button id="github-repo-reload" class="btn" type="button" title="Load the repositories of every account again">Reload</button>
+      </div>
+      <p id="github-picker-note" class="github-picker-note" hidden></p>
+      <div id="github-views" class="github-views" role="tablist" aria-label="GitHub views" hidden>
+        <button id="github-view-repos" class="github-view" type="button" role="tab" aria-controls="github-repos" aria-selected="true" data-view="repos" aria-label="Repositories"><span class="long">Repositories</span><span class="short" aria-hidden="true">Repos</span></button>
+        <button id="github-view-issues" class="github-view" type="button" role="tab" aria-controls="github-issues" aria-selected="false" data-view="issues" tabindex="-1">Issues</button>
+        <button id="github-view-actions" class="github-view" type="button" role="tab" aria-controls="github-runs" aria-selected="false" data-view="actions" tabindex="-1" aria-label="Actions">Actions<span id="github-running" class="github-running" hidden></span></button>
+        <button id="github-view-pulls" class="github-view" type="button" role="tab" aria-controls="github-pulls" aria-selected="false" data-view="pulls" tabindex="-1" aria-label="Pull requests"><span class="long">Pull requests</span><span class="short" aria-hidden="true">PRs</span></button>
+      </div>
+      <div id="github-repos" class="models-body github-body" role="tabpanel" aria-labelledby="github-view-repos">
         <section id="github-card" class="github-card" aria-live="polite" hidden></section>
         <div id="github-status" class="github-status" hidden></div>
         <div id="github-tools" class="history-tools github-tools" hidden>
@@ -199,7 +213,10 @@
         <div id="github-list" class="history-list" role="list"></div>
         <p id="github-note" class="models-note" hidden></p>
       </div>
-      <div class="history-form github-form">
+      <div id="github-issues" class="models-body github-body" role="tabpanel" aria-labelledby="github-view-issues" hidden></div>
+      <div id="github-runs" class="models-body github-body" role="tabpanel" aria-labelledby="github-view-actions" hidden></div>
+      <div id="github-pulls" class="models-body github-body" role="tabpanel" aria-labelledby="github-view-pulls" hidden></div>
+      <div id="github-clone-into" class="history-form github-form">
         <label for="github-parent">Clone into</label>
         <input id="github-parent" type="text" placeholder="Folder that holds your clones" spellcheck="false" autocomplete="off">
       </div>

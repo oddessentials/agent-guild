@@ -69,11 +69,11 @@ test('a reconnect and a github.updated reload the open GitHub panel', () => {
   assert.deepEqual(page.calls, ['panes', 'news', 'github', 'github']);
 });
 
-test('the first hello brings back the GitHub panel left open last time, and a reconnect does not', () => {
+test('the first hello brings back the GitHub panel left open last time before the terminals under it, and a reconnect does not', () => {
   const page = connect({ changelogOpen: false, docked: 'github' });
   page.send(page.hello);
   page.send(page.hello);
-  assert.deepEqual(page.calls, ['panes', 'restore github', 'news', 'panes', 'news']);
+  assert.deepEqual(page.calls, ['restore github', 'panes', 'news', 'panes', 'news']);
 });
 
 test('only an explicit stop reports a manager stop', () => {

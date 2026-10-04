@@ -473,6 +473,10 @@ body:has(#app[hidden]):has(#auth[hidden]):has(#stopped[hidden])::after {
 .splitter:hover::after, .splitter.dragging::after, .splitter:focus-visible::after { background: color-mix(in srgb, var(--accent) 55%, transparent); }
 .splitter:focus-visible { outline: none; }
 .pane-splitter { background: rgba(255, 255, 255, 0.06); }
+@media (pointer: coarse) {
+  .pane-splitter::before { content: ""; position: absolute; inset: 0 -10px; }
+  .terminal-panes[data-split="rows"] .pane-splitter::before { inset: -10px 0; }
+}
 .terminal-panes[data-split="columns"] .pane-splitter { cursor: col-resize; }
 .terminal-panes[data-split="rows"] .pane-splitter { cursor: row-resize; }
 :root.resizing, :root.resizing * { user-select: none; -webkit-user-select: none; }
@@ -770,6 +774,86 @@ a.news-link:visited { color: var(--muted); }
 .github-options label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
 .github-options label:has(input:disabled) { opacity: 0.6; cursor: default; }
 .github .models-note { display: grid; gap: 4px; font-size: 0.85rem; }
+.dock .github-accounts { padding: 10px 14px 0; }
+.dock .history-form { padding: 10px 14px; }
+.dock .models-body { margin: 0; padding: 10px 14px 14px; }
+.github-picker { display: flex; align-items: center; gap: 8px; padding: 10px 14px 0; }
+.github-combo { position: relative; flex: 1; min-width: 0; }
+.github-combo input {
+  width: 100%; padding: 7px 10px; border-radius: var(--radius); border: 1px solid var(--border);
+  background: var(--surface); color: var(--text); font: inherit; font-size: 0.9rem; font-weight: 600;
+}
+.github-combo input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.github-combo input::placeholder { font-weight: 400; }
+.github-repo-list {
+  position: absolute; z-index: 5; left: 0; right: 0; top: calc(100% + 4px); max-height: min(26rem, 60dvh); overflow: auto;
+  margin: 0; padding: 4px; list-style: none; background: var(--surface); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+}
+.github-option { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: calc(var(--radius) - 2px); cursor: pointer; }
+.github-option[aria-selected="true"] { background: color-mix(in srgb, var(--accent) 14%, var(--surface)); }
+.github-option:hover { background: var(--surface-2); }
+.github-option[aria-selected="true"]:hover { background: color-mix(in srgb, var(--accent) 18%, var(--surface)); }
+.github-option .badge { flex: none; }
+.github-option-text { flex: 1; min-width: 0; display: grid; }
+.github-option-name { font-weight: 600; overflow-wrap: anywhere; }
+.github-option-meta { color: var(--muted); font-size: 0.75rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.github-option mark { background: none; color: inherit; font-weight: 800; text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 2px; }
+.github-option-empty { padding: 8px; color: var(--muted); }
+.github-picker-note { display: grid; gap: 2px; margin: 0; padding: 6px 14px 0; color: var(--muted); font-size: 0.78rem; overflow-wrap: anywhere; }
+.github-picker-note.warn { color: var(--warn); }
+.github-views { display: flex; gap: 2px; margin: 10px 14px 0; border-bottom: 1px solid var(--border); container-type: inline-size; }
+.github-view {
+  position: relative; flex: 1 1 auto; min-width: 0; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 7px 8px; margin-bottom: -1px; border: 1px solid transparent; border-radius: var(--radius) var(--radius) 0 0;
+  background: none; color: var(--muted); font: inherit; font-size: 0.85rem; font-weight: 600; white-space: nowrap; cursor: pointer;
+}
+.github-view:hover { color: var(--text); }
+.github-view[aria-selected="true"] { color: var(--heading); background: var(--surface-2); border-color: var(--border); border-bottom-color: var(--surface-2); }
+.github-view:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.github-view .short { display: none; }
+@container (max-width: 340px) {
+  .github-view .long { display: none; }
+  .github-view .short { display: inline; }
+}
+.github-running { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 25%, transparent); animation: pulse 1.4s ease-in-out infinite; }
+.github-body[hidden] { display: none; }
+.github-view-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding-bottom: 6px; }
+.github-view-tools .btn { padding: 4px 10px; font-size: 0.8rem; }
+.github-spacer { flex: 1 1 0; }
+.github-segment { display: inline-flex; }
+.github-segment .btn { border-radius: 0; }
+.github-segment .btn:first-child { border-radius: var(--radius) 0 0 var(--radius); }
+.github-segment .btn:last-child { border-radius: 0 var(--radius) var(--radius) 0; margin-left: -1px; }
+.github-segment .btn[aria-pressed="true"] { position: relative; background: var(--accent-fill); border-color: var(--accent-fill); color: var(--accent-text); }
+a.btn.github-out { text-decoration: none; white-space: nowrap; }
+a.btn.github-out::after {
+  content: ""; display: inline-block; width: 0.8em; height: 0.8em; margin-left: 0.3em; vertical-align: -0.05em;
+  background: currentColor; mask: var(--icon-external) center / contain no-repeat;
+}
+.github-view-note { margin: 10px 0; color: var(--muted); font-size: 0.85rem; }
+.github-body .github-error { margin: 10px 0; font-size: 0.85rem; overflow-wrap: anywhere; }
+.github-record { grid-template-columns: minmax(0, 1fr) auto; }
+.github-record .history-title { white-space: normal; overflow-wrap: anywhere; }
+.github-record-title { color: inherit; text-decoration: none; }
+.github-record-title:hover { text-decoration: underline; }
+.github-record-title:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; border-radius: 2px; }
+.github-record .btn { padding: 3px 10px; font-size: 0.8rem; }
+.github-running-note { margin: 4px 0 6px; padding: 6px 10px; border-radius: var(--radius); background: var(--surface-2); font-size: 0.85rem; }
+.github-running-note.on { color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, var(--surface)); }
+.badge.run { --badge: var(--warn); }
+.badge.ok { --badge: var(--ok); }
+.badge.bad { --badge: var(--danger); }
+.badge.run, .badge.ok, .badge.bad { color: color-mix(in srgb, var(--badge) 72%, #000); border-color: color-mix(in srgb, var(--badge) 45%, transparent); }
+:where(:root[data-theme="dark"]) {
+  .badge.run, .badge.ok, .badge.bad { color: var(--badge); }
+}
+.github-issue-form .github-fields { grid-template-columns: minmax(0, 1fr); }
+.github-issue-body { min-height: 10em; resize: vertical; padding: 8px 10px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface); color: var(--text); font: inherit; font-size: 0.9rem; line-height: 1.5; }
+.github-issue-body:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+@media (pointer: coarse) {
+  .github-combo input, .github-issue-body, .github-issue-form input { font-size: 16px; }
+}
 .toast .toast-action { margin-left: 12px; padding: 2px 10px; background: transparent; box-shadow: none; color: inherit; border-color: currentColor; }
 
 .dock {
@@ -782,6 +866,11 @@ a.news-link:visited { color: var(--muted); }
 .dock-splitter { position: absolute; left: -5px; top: 0; bottom: 0; width: 10px; cursor: col-resize; }
 .dock-splitter::after { left: 4px; right: 4px; }
 :root.dock-full .dock-splitter { display: none; }
+@media (pointer: coarse) {
+  /* Wider to touch, drawn the same. */
+  .dock-splitter { left: -14px; width: 28px; }
+  .dock-splitter::after { left: 13px; right: 13px; }
+}
 .dock-bar { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
 .dock-tabs { flex: 1; display: flex; gap: 4px; min-width: 0; }
 .dock-tab {
@@ -823,7 +912,7 @@ a.news-link:visited { color: var(--muted); }
 @media (prefers-reduced-motion: reduce) {
   .status-pill.active::before, .agent.working::after, .model-detail .stat-fill, .toast:not([hidden]), .tip:not([hidden]), .menu:popover-open { animation: none; }
   .model-name::before, .provider .copies summary::before, .menu-button::after, .btn, .models, .news-panel, .models::backdrop, .news-panel::backdrop { transition: none; }
-  .github-waiting::before, body:has(#app[hidden]):has(#auth[hidden]):has(#stopped[hidden])::after { animation: none; }
+  .github-waiting::before, .github-running, body:has(#app[hidden]):has(#auth[hidden]):has(#stopped[hidden])::after { animation: none; }
   .btn:active:not(:disabled) { transform: none; }
   .btn.voice[aria-pressed="true"]::before { animation: none; }
   .drag-handle, .session-grid::before, .session-grid.reordering::before,

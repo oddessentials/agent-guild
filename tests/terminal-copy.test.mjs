@@ -92,7 +92,7 @@ test('switch, Hide, session removal and page departure dismiss sensitive copy te
     state: { panes: ['a'], focusedPane: 0, activeId: 'a', sessions: new Map([['a', {}], ['b', {}]]), views: new Map([['a', view], ['b', view]]) },
     terminalCopy: { close: () => closed++ },
     $: () => ({}), dictation: null, stopDictation: noop, updatePanel: noop, renderVoice: noop, renderSessions: noop,
-    layoutPanes: noop, savePanes: noop, closeMenu: noop, dockMakesWayForTerminal: noop, document: { activeElement: null },
+    layoutPanes: noop, savePanes: noop, closeMenu: noop, dockMakesWayForTerminal: noop, followTerminal: noop, document: { activeElement: null },
     paneNodes: [0, 1].map(() => ({ contains: () => false })),
     managerLoss: { cancel: noop }, addEventListener: (name, fn) => listeners.set(name, fn),
   };

@@ -157,12 +157,19 @@ commands and to-dos in the side panel, next to your terminals. It saves up to
 100,000 characters as you type and keeps them in this browser, never on the
 manager; every tab of the page shows the same notes.
 
-**GitHub beside your work.** **GitHub** in the top bar opens the side panel
-to sign in to one or more GitHub accounts, list and create repositories, and
-clone them over SSH with a key Agent Guild keeps for each account. On a wide
-window the side panel makes room for itself; on a smaller one it lies over the
-cards, and over the terminals when they would get too narrow. Drag its edge
-to resize it. Escape or **Close** puts it away.
+**GitHub beside your work.** **GitHub** in the top bar opens the side panel.
+Sign in to one or more GitHub accounts, then search the repositories of all
+of them from the box at its top; it starts on the repository the focused
+terminal's folder is a clone of. **Issues** lists, opens, edits and closes
+issues. **Actions** shows the latest workflow runs and whether one is still
+going, refreshing while it is on screen. **Pull requests** lists the open
+ones. **Repositories** lists and creates repositories and clones them over SSH
+with a key Agent Guild keeps for each account. On a wide window the side panel
+makes room for itself; on a smaller one it lies over the cards, and over the
+terminals when they would get too narrow. Drag its edge to resize it. Escape
+or **Close** puts it away.
+
+<img src="docs/images/workspace.webp" alt="Two terminals side by side with the GitHub panel showing the workflow runs of the focused terminal's repository">
 
 **Settings.** The Settings menu in the top bar picks a skin and light or
 dark mode, without a reload. On a narrow window the top bar's buttons gather
@@ -271,7 +278,7 @@ or prompts:
 | GitHub's releases API | What's new | Hourly |
 | herdr.dev and formulae.brew.sh | Multiplexer version checks | At most hourly, or on Refresh or a requested operation; disabled by `AGENT_GUILD_NO_UPDATE_CHECK=1` |
 | herdr.dev, GitHub release downloads, and the selected package manager's repositories | Multiplexer installation and updates | When you request the operation |
-| GitHub (sign-in, API, avatars and SSH) | Signing in to GitHub, listing your repositories, adding your SSH key and cloning | When you use the GitHub panel |
+| GitHub (sign-in, API, avatars and SSH) | Signing in to GitHub, listing your repositories, issues, workflow runs and pull requests, editing issues, adding your SSH key and cloning | When you use the GitHub panel; while its Actions tab shows, every few seconds during a run and every 30 seconds otherwise |
 
 ## Other front ends
 

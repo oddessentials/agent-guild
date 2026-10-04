@@ -132,15 +132,7 @@
       { id: 'demo-news', title: 'Agent Guild interactive demo', url: 'https://github.com/oddessentials/agent-guild', source: 'Agent Guild', kind: 'news', publishedAt: new Date(now - 3600000).toISOString(), summary: 'Explore the interface with simulated local sessions.' },
     ], sources: [] });
     if (route === '/changelog' && method === 'GET') return json({ refreshing: false, releases: [], okAt: new Date(now).toISOString(), error: null });
-    if (route === '/github' && method === 'GET') return json({ github: {
-      scopes: ['repo', 'write:public_key'],
-      appUrl: 'https://github.com/settings/connections/applications/Ov23lif6qqYKtXZTb130',
-      keysUrl: 'https://github.com/settings/keys',
-      newKeyUrl: 'https://github.com/settings/ssh/new',
-      tools: { git: false, ssh: false, sshKeygen: false },
-      signIn: null,
-      accounts: [],
-    } });
+    if (route.indexOf('/github') === 0) return githubRoute(route, method, body, url.searchParams);
     if (/^\/providers\/[^/]+\/history$/.test(route) && method === 'GET') return json({ history: [] });
     if (route === '/sessions' && method === 'POST') {
       var id = Math.random().toString(16).slice(2, 10).padEnd(8, '0');
@@ -163,6 +155,140 @@
     }
     return error('This action is unavailable in the simulated demo.', 'demo_only', 409);
   };
+
+  // A signed-in GitHub account whose repositories hold the demo sessions' folders.
+  var githubAccount = {
+    id: 1001, login: 'demo-dev', name: 'Demo Developer', avatar: null, scopes: ['repo', 'write:public_key'], needsSignIn: false,
+    addedAt: new Date(now - 30 * 86400000).toISOString(),
+    ssh: { status: 'ready', key: home + '/.config/agent-guild/github/keys/agent-guild-github-1001', publicKey: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDemoKeyOnly agent-guild github demo-dev (1001)', verifiedAt: new Date(now - 86400000).toISOString(), settingUp: false, error: null },
+  };
+  function ago(minutes) { return new Date(now - minutes * 60000).toISOString(); }
+  function githubRepo(fullName, description, language, pushed, extra) {
+    var parts = fullName.split('/');
+    return Object.assign({
+      fullName: fullName, owner: parts[0], ownerType: parts[0] === 'acme' ? 'Organization' : 'User', name: parts[1],
+      private: parts[0] === 'acme', fork: false, archived: false, description: description, language: language,
+      pushedAt: ago(pushed), url: 'https://github.com/' + fullName,
+    }, extra || {});
+  }
+  var githubRepos = [
+    githubRepo('acme/storefront', 'Online shop with wallet checkout', 'TypeScript', 12),
+    githubRepo('acme/api-gateway', 'Rate limits and routing for public APIs', 'Go', 50),
+    githubRepo('acme/docs-site', 'Product documentation', 'MDX', 300),
+    githubRepo('demo-dev/dotfiles', 'Shell and editor setup', 'Shell', 2000),
+    githubRepo('demo-dev/old-prototype', 'First sketch of the shop', 'JavaScript', 90000, { archived: true }),
+  ];
+  var origins = { '/work/storefront': 'acme/storefront', '/work/api-gateway': 'acme/api-gateway', '/work/docs-site': 'acme/docs-site' };
+  function issue(number, title, state, user, minutes, comments, text) {
+    return { number: number, title: title, body: text || '', state: state, user: user, comments: comments, updatedAt: ago(minutes), url: '' };
+  }
+  function run(id, name, title, branch, event, status, conclusion, number, minutes) {
+    return { id: id, name: name, title: title, branch: branch, event: event, status: status, conclusion: conclusion, runNumber: number, updatedAt: ago(minutes), url: '' };
+  }
+  function pull(number, title, draft, user, head, minutes) {
+    return { number: number, title: title, draft: draft, user: user, head: head, base: 'main', updatedAt: ago(minutes), url: '' };
+  }
+  var repoViews = {
+    'acme/storefront': {
+      issues: [
+        issue(42, 'Wallet payment fails for saved cards', 'open', 'demo-dev', 25, 3, 'Saved cards get a 402 from the wallet provider.'),
+        issue(39, 'Checkout button overlaps the cart total on phones', 'open', 'priya', 180, 1),
+        issue(35, 'Add order confirmation emails', 'open', 'sam', 1440, 5),
+        issue(31, 'Coupon codes are case sensitive', 'closed', 'demo-dev', 4320, 2),
+      ],
+      runs: [
+        run(9003, 'CI', 'Retry wallet payments once', 'wallet-payments', 'pull_request', 'in_progress', null, 214, 2),
+        run(9002, 'CI', 'Tidy the cart layout', 'main', 'push', 'completed', 'success', 213, 95),
+        run(9001, 'Deploy preview', 'Tidy the cart layout', 'main', 'push', 'completed', 'failure', 88, 100),
+      ],
+      pulls: [
+        pull(43, 'Retry wallet payments once before failing', false, 'demo-dev', 'wallet-payments', 3),
+        pull(40, 'New checkout layout', true, 'priya', 'checkout-layout', 600),
+      ],
+    },
+    'acme/api-gateway': {
+      issues: [issue(12, 'Per-key rate limits', 'open', 'demo-dev', 60, 4)],
+      runs: [run(7001, 'CI', 'Sliding window limiter', 'rate-limits', 'push', 'completed', 'success', 57, 40)],
+      pulls: [pull(13, 'Sliding window rate limiter', false, 'demo-dev', 'rate-limits', 45)],
+    },
+  };
+  Object.keys(repoViews).forEach(function (name) {
+    var v = repoViews[name];
+    v.issues.forEach(function (i) { i.url = 'https://github.com/' + name + '/issues/' + i.number; });
+    v.runs.forEach(function (r) { r.url = 'https://github.com/' + name + '/actions/runs/' + r.id; });
+    v.pulls.forEach(function (p) { p.url = 'https://github.com/' + name + '/pull/' + p.number; });
+  });
+
+  function githubSnapshot() {
+    return {
+      scopes: ['repo', 'write:public_key'],
+      appUrl: 'https://github.com/settings/connections/applications/Ov23lif6qqYKtXZTb130',
+      keysUrl: 'https://github.com/settings/keys',
+      newKeyUrl: 'https://github.com/settings/ssh/new',
+      tools: { git: true, ssh: true, sshKeygen: true },
+      signIn: null,
+      accounts: [clone(githubAccount)],
+    };
+  }
+
+  function githubRoute(route, method, body, params) {
+    if (route === '/github' && method === 'GET') return json({ github: githubSnapshot() });
+    if (route === '/github/repos' && method === 'GET') {
+      return json({ repos: githubRepos.map(function (r) { return Object.assign({ accountId: githubAccount.id, login: githubAccount.login }, r); }), truncated: false, errors: [], fetchedAt: new Date(now).toISOString() });
+    }
+    if (route === '/github/origin' && method === 'GET') {
+      var folder = params.get('cwd') || home;
+      return json({ folder: folder, repo: origins[folder] || null });
+    }
+    if (route === '/github/accounts/' + githubAccount.id + '/repos' && method === 'GET') {
+      var parent = params.get('parent') || null;
+      return json({ repos: {
+        accountId: githubAccount.id, fetchedAt: new Date(now).toISOString(), truncated: false, owners: [githubAccount.login, 'acme'], parent: parent,
+        repos: githubRepos.map(function (r) {
+          var target = parent ? parent.replace(/[\\/]+$/, '') + '/' + r.name : null;
+          return Object.assign({}, r, { target: target, local: target ? (origins['/work/' + r.name] && parent === '/work' ? 'cloned' : 'absent') : null });
+        }),
+      } });
+    }
+    var view = route.match(/^\/github\/accounts\/(\d+)\/repos\/([^/]+)\/([^/]+)\/(issues|actions|pulls)(?:\/(\d+))?$/);
+    if (view) {
+      if (Number(view[1]) !== githubAccount.id) return error('no GitHub account with id "' + view[1] + '" is signed in', 'unknown_account', 404);
+      var fullName = decodeURIComponent(view[2]) + '/' + decodeURIComponent(view[3]);
+      if (!githubRepos.some(function (r) { return r.fullName === fullName; })) return error('GitHub could not find ' + fullName + ' for @' + githubAccount.login, 'not_found', 404);
+      var data = repoViews[fullName] || (repoViews[fullName] = { issues: [], runs: [], pulls: [] });
+      var web = 'https://github.com/' + fullName;
+      if (view[4] === 'actions' && !view[5] && method === 'GET') {
+        return json({ runs: clone(data.runs), running: data.runs.some(function (r) { return r.status !== 'completed'; }), truncated: false, url: web + '/actions' });
+      }
+      if (view[4] === 'pulls' && !view[5] && method === 'GET') return json({ pulls: clone(data.pulls), truncated: false, url: web + '/pulls' });
+      if (view[4] === 'issues' && !view[5] && method === 'GET') {
+        var wanted = params.get('state') || 'open';
+        if (['open', 'closed', 'all'].indexOf(wanted) < 0) return error('state must be open, closed or all', 'bad_state');
+        return json({ issues: clone(data.issues.filter(function (i) { return wanted === 'all' || i.state === wanted; })), truncated: false, url: web + '/issues' });
+      }
+      var title = typeof body.title === 'string' ? body.title.trim().slice(0, 256) : undefined;
+      if (view[4] === 'issues' && !view[5] && method === 'POST') {
+        if (!title) return error('title must be a non-empty string', 'bad_title');
+        var number = data.issues.reduce(function (n, i) { return Math.max(n, i.number); }, 0) + 1;
+        var made = issue(number, title, 'open', githubAccount.login, 0, 0, String(body.body || '').slice(0, 48000));
+        made.url = web + '/issues/' + number;
+        data.issues.unshift(made);
+        return json({ issue: clone(made) }, 201);
+      }
+      if (view[4] === 'issues' && view[5] && method === 'PATCH') {
+        var found = data.issues.find(function (i) { return i.number === Number(view[5]); });
+        if (!found) return error('GitHub could not find ' + fullName + ' for @' + githubAccount.login, 'not_found', 404);
+        if (body.title !== undefined && !title) return error('title must be a non-empty string', 'bad_title');
+        if (body.state !== undefined && body.state !== 'open' && body.state !== 'closed') return error('state must be open or closed', 'bad_state');
+        if (title) found.title = title;
+        if (typeof body.body === 'string') found.body = body.body.slice(0, 48000);
+        if (body.state) found.state = body.state;
+        found.updatedAt = new Date().toISOString();
+        return json({ issue: clone(found) });
+      }
+    }
+    return error('This action is unavailable in the simulated demo.', 'demo_only', 409);
+  }
 
   function manageMultiplexer(toolId, kind, body) {
     var tool = providers[4].multiplexers.find(function (m) { return m.id === toolId; });

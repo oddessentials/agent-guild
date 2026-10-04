@@ -94,9 +94,9 @@ function page({ android = false, available, supported = true, enabled = true, pr
     paintProviderIcon: noop, toolSessionId: noop, accountLabel: noop, modelText: noop, statusText: noop, modelTitle: noop, renderAgents: noop,
     renderSessions: () => context.updatePanel(), noticeClone: noop, exitLine: () => '[exited]',
     managerLoss: { cancel: noop }, closeModels: noop, closeNews: noop, closeChangelog: noop, closeHistory: noop, closeGitHub: noop,
-    terminalCopy: { close: noop }, layoutPanes: noop, renderPaneLabels: noop, savePanes: noop, closeMenu: noop, dockMakesWayForTerminal: noop,
+    terminalCopy: { close: noop }, layoutPanes: noop, renderPaneLabels: noop, savePanes: noop, closeMenu: noop, dockMakesWayForTerminal: noop, followTerminal: noop,
     paneNodes: [0, 1].map(() => ({ contains: () => false })),
-    setConnection: noop, showStopped: noop, restartTimer: null, newsLoadedAt: 0, loadNews: noop, connectEvents: noop,
+    setConnection: noop, showStopped: noop, restartTimer: null, newsLoadedAt: 0, loadNews: noop, connectEvents: noop, dockShows: () => false, githubShownView: () => 'repos', loadView: noop, scheduleRuns: noop,
   };
   runInNewContext(`${voiceSource}\n${panelSource}\n${listenerSource}\nglobalThis.terminalMessage = ({${terminalMessageSource}}).onMessage;`, context);
   context.renderVoice();
