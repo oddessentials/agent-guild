@@ -35,14 +35,15 @@ function launcher({ exitCode = 0, error, stay = false } = {}) {
 }
 
 function folders(t) {
-  const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'guild-open-folder-'));
+  // Match promises.realpath in the opener, including Windows short-name expansion.
+  const root = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'guild-open-folder-'));
   t.after(() => {
-    assert.equal(path.dirname(root), fs.realpathSync(os.tmpdir()));
+    assert.equal(path.dirname(root), fs.realpathSync.native(os.tmpdir()));
     fs.rmSync(root, { recursive: true, force: true });
   });
   const dir = path.join(root, "Project & notes, 100% $value '中'");
   fs.mkdirSync(dir);
-  return { root, dir: fs.realpathSync(dir) };
+  return { root, dir: fs.realpathSync.native(dir) };
 }
 
 test('native folder targets use system utilities and detect WSL separately from desktop Linux', () => {
@@ -102,7 +103,7 @@ test('Finder is targeted explicitly and application packages are revealed withou
   const app = path.join(root, 'Example.APP');
   fs.mkdirSync(app);
   await opener.open(app);
-  assert.deepEqual(fake.calls[1].args, ['-R', fs.realpathSync(app)]);
+  assert.deepEqual(fake.calls[1].args, ['-R', fs.realpathSync.native(app)]);
 });
 
 test('blank, tilde and relative paths match session folder resolution', async (t) => {
@@ -110,7 +111,7 @@ test('blank, tilde and relative paths match session folder resolution', async (t
   const fake = launcher();
   const opener = createFolderOpener({ resolveCwd, ...windows, ...fake, cooldownMs: 0 });
   for (const input of [undefined, '', '   ', '~']) await opener.open(input);
-  for (const call of fake.calls) assert.equal(call.options.cwd, fs.realpathSync(os.homedir()));
+  for (const call of fake.calls) assert.equal(call.options.cwd, fs.realpathSync.native(os.homedir()));
   await opener.open(path.relative(process.cwd(), dir));
   assert.equal(fake.calls.at(-1).options.cwd, dir);
 });
