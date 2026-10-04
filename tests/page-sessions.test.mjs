@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
+import { isSessionWorking } from '../web/activity-favicon.js';
 
 const app = readFileSync(new URL('../web/app.js', import.meta.url), 'utf8');
 const source = ['upsertSession', 'statusText', 'stopNote', 'stopSession', 'removeSession', 'reattachable', 'reattachSession', 'resumeCard', 'osc52Text', 'exitLine'].map((name) => {
@@ -21,6 +22,7 @@ function page({ onApi = () => ({}) } = {}) {
   const requests = [];
   const opened = [];
   const context = {
+    isSessionWorking,
     state: { sessions: new Map() },
     renderSessions() {}, noticeClone() {}, dropSession() {},
     openPanel: (id) => opened.push(id),

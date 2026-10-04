@@ -164,6 +164,12 @@ new version is discovered after the initial version check. Session activity
 and assistant responses have no sounds:
 the providers do not yet offer consistently reliable completion signals.
 
+The browser tab icon adds a rotating green ring whenever any session card says
+**Working**, including Shell and task cards. It mirrors the cards' terminal
+activity, not assistant completion. The ring remains visible with reduced
+motion or when the browser pauses animation. During a connection interruption,
+it reflects the last card state until the page reconnects.
+
 Sounds play in one eligible tab per browser and origin after browser playback
 permission (usually a click or keypress). They require Web Locks and writable
 local storage. Opening or reconnecting a page does not replay old alerts,

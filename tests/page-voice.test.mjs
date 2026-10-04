@@ -95,6 +95,7 @@ function page({ android = false, available, supported = true, enabled = true, pr
     renderSessions: () => context.updatePanel(), noticeClone: noop, exitLine: () => '[exited]',
     managerLoss: { cancel: noop }, closeModels: noop, closeNews: noop, closeChangelog: noop, closeHistory: noop, closeGitHub: noop,
     terminalCopy: { close: noop },
+    activityFavicon: { setPaused: noop },
     setConnection: noop, showStopped: noop, restartTimer: null, newsLoadedAt: 0, loadNews: noop, connectEvents: noop,
   };
   runInNewContext(`${voiceSource}\n${panelSource}\n${listenerSource}\nglobalThis.terminalMessage = ({${terminalMessageSource}}).onMessage;`, context);

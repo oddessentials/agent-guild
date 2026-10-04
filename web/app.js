@@ -3,6 +3,7 @@
 
 import { SOUNDS, MAX_ALERT_AGE_MS, playOnce, rearmSound, managerLossWatcher, stopWatcher, updateWatcher } from './alerts.js';
 import { TerminalCopy } from './terminal-copy.js';
+import { createActivityFavicon, isSessionWorking } from './activity-favicon.js';
 
 const TOKEN_KEY = 'agentGuild.token';
 const CWD_KEY = 'agentGuild.cwd';
@@ -24,6 +25,7 @@ const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 const finePointer = window.matchMedia('(hover: hover) and (pointer: fine)');
 const coarsePointer = window.matchMedia('(pointer: coarse)');
+const activityFavicon = createActivityFavicon({ link: document.querySelector('link[rel="icon"]'), reducedMotion });
 
 const $ = (id) => document.getElementById(id);
 const state = {
@@ -2960,7 +2962,7 @@ function statusText(s) {
     if (s.signal) return `Exited (${s.signal})`;
     return s.exitCode === 0 || s.exitCode === null ? 'Exited' : `Exited (${s.exitCode})`;
   }
-  return s.activity === 'active' ? 'Working' : 'Running';
+  return isSessionWorking(s) ? 'Working' : 'Running';
 }
 
 function buildCard(session) {
@@ -3048,7 +3050,7 @@ function updateCard(node, s) {
   paintIdButton(node.querySelector('.session-id'), id);
   const pill = node.querySelector('.status-pill');
   pill.textContent = statusText(s);
-  pill.className = `status-pill ${s.status === 'exited' ? 'exited' : s.activity}`;
+  pill.className = `status-pill ${s.status === 'exited' ? 'exited' : isSessionWorking(s) ? 'active' : 'quiet'}`;
   const model = node.querySelector('.model-pill');
   model.hidden = !s.model;
   model.textContent = modelText(s);
@@ -3086,6 +3088,7 @@ function updateCard(node, s) {
 function renderSessions() {
   const grid = $('sessions');
   const sessions = orderSessions(state.sessions.values(), sessionOrder);
+  activityFavicon.setWorking(sessions.some(isSessionWorking));
   for (const [id, node] of cards) {
     if (state.sessions.has(id)) continue;
     if (drag?.id === id) releaseDrag();
@@ -4231,6 +4234,7 @@ document.addEventListener('visibilitychange', () => {
 });
 addEventListener('pagehide', () => {
   state.pageAway = true;
+  activityFavicon.setPaused(true);
   terminalCopy.close();
   stopDictation();
   managerLoss.cancel();
@@ -4239,6 +4243,7 @@ addEventListener('pagehide', () => {
 addEventListener('pageshow', (event) => {
   if (!event.persisted) return;
   state.pageAway = false;
+  activityFavicon.setPaused(false);
   connectEvents();
 });
 $('version').addEventListener('click', openChangelog);
