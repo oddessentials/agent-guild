@@ -16,7 +16,7 @@ test('dictated text is a single line that never submits', () => {
 });
 
 const voiceSource = app.slice(app.indexOf('const Recognition ='), app.indexOf('// ---- stopping the manager'));
-const panelSource = ['openPanel', 'closePanel', 'updatePanel', 'upsertSession', 'dropSession', 'showAuth', 'enterStopping'].map((name) => {
+const panelSource = ['openPanel', 'focusPane', 'closePane', 'closePanel', 'updatePanel', 'upsertSession', 'dropSession', 'showAuth', 'enterStopping'].map((name) => {
   const found = app.match(new RegExp(`function ${name}\\([^]*?\\n\\}`))?.[0];
   assert.ok(found, `${name} is present`);
   return found;
@@ -87,15 +87,17 @@ function page({ android = false, available, supported = true, enabled = true, pr
     $: node, VOICE_KEY: 'voice', SOUND_KEY: 'sound', CHANGELOG_SEEN_KEY: 'changelog',
     load: (key) => storage.get(key),
     save: (key, value) => value === null ? storage.delete(key) : storage.set(key, value),
-    state: { activeId: 'a', sessions: new Map(['a', 'b'].map((id) => [id, session(id)])), views: new Map(['a', 'b'].map((id) => [id, view(id)])), connected: false },
+    state: { panes: ['a'], focusedPane: 0, activeId: 'a', sessions: new Map(['a', 'b'].map((id) => [id, session(id)])), views: new Map(['a', 'b'].map((id) => [id, view(id)])), connected: false },
     setTimeout: (callback, delay) => { const id = ++nextTimer; timers.set(id, { callback, delay }); return id; },
     clearTimeout: (id) => timers.delete(id),
     toast: (message) => messages.push(message),
     paintProviderIcon: noop, toolSessionId: noop, accountLabel: noop, modelText: noop, statusText: noop, modelTitle: noop, renderAgents: noop,
     renderSessions: () => context.updatePanel(), noticeClone: noop, exitLine: () => '[exited]',
     managerLoss: { cancel: noop }, closeModels: noop, closeNews: noop, closeChangelog: noop, closeHistory: noop, closeGitHub: noop,
-    terminalCopy: { close: noop },
-    setConnection: noop, showStopped: noop, restartTimer: null, newsLoadedAt: 0, loadNews: noop, connectEvents: noop,
+    terminalCopy: { close: noop }, layoutPanes: noop, renderPaneLabels: noop, savePanes: noop, closeMenu: noop, dockMakesWayForTerminal: noop, followTerminal: noop,
+    paneNodes: [0, 1].map(() => ({ contains: () => false })),
+    activityFavicon: { setPaused: noop },
+    setConnection: noop, showStopped: noop, restartTimer: null, newsLoadedAt: 0, loadNews: noop, connectEvents: noop, dockShows: () => false, githubShownView: () => 'repos', loadView: noop, scheduleRuns: noop,
   };
   runInNewContext(`${voiceSource}\n${panelSource}\n${listenerSource}\nglobalThis.terminalMessage = ({${terminalMessageSource}}).onMessage;`, context);
   context.renderVoice();

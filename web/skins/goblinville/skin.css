@@ -50,7 +50,7 @@
     background: var(--page-veil), var(--page-art) center bottom / cover no-repeat;
   }
   /* Text that sits on the town itself gets a halo of the page colour. */
-  .section-head h2, .cwd > span, .empty { text-shadow: 0 0 2px var(--bg), 0 0 8px var(--bg), 0 0 16px var(--bg); }
+  .section-head h2, .cwd > label, .empty { text-shadow: 0 0 2px var(--bg), 0 0 8px var(--bg), 0 0 16px var(--bg); }
   h2 { font-weight: 400; letter-spacing: 0.03em; font-size: 1.22rem; }
 
   .topbar { background: var(--panel); backdrop-filter: blur(12px) saturate(1.1); border-bottom: 1px solid transparent; border-image: var(--rule) 1; }
@@ -251,7 +251,7 @@
   .btn.danger:hover { border-color: var(--danger); box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 14%, transparent); }
   .cwd input, .auth input, .history-tools input[type="search"], .history-form input, .github-fields input, .github-fields select, .notes-text { background: var(--panel-strong); }
 
-  .models, .news-panel, .auth, .news-latest, .appearance-menu { background: var(--panel-strong); backdrop-filter: blur(16px); }
+  .models, .news-panel, .dock, .auth, .news-latest, .menu:popover-open { background: var(--panel-strong); backdrop-filter: blur(16px); }
   .models, .news-panel { box-shadow: var(--dialog-shadow); }
   .model-columns, .news-day { background: transparent; backdrop-filter: blur(16px); }
   .models::backdrop, .news-panel::backdrop { background: rgba(18, 26, 20, 0.42); backdrop-filter: blur(2px); }

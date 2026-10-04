@@ -1,0 +1,129 @@
+// Real UI, API, event/terminal sockets and PTY through an HTTPS reverse proxy.
+// Run: node tests/browser/proxy.mjs (CHROME_PATH may name Chrome/Edge).
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import http from 'node:http';
+import https from 'node:https';
+import net from 'node:net';
+import os from 'node:os';
+import path from 'node:path';
+import { once } from 'node:events';
+import { fileURLToPath } from 'node:url';
+import { until, withPage } from './chrome.mjs';
+
+const fixture = fileURLToPath(new URL('../fixtures/fake-tool.mjs', import.meta.url));
+const home = fs.mkdtempSync(path.join(os.tmpdir(), 'guild-proxy-test-'));
+const savedEnv = { ...process.env }, nativeFetch = globalThis.fetch;
+let ctx;
+const sockets = new Set(), upgrades = [];
+// These public test fixtures confer no trust. Only this disposable browser
+// ignores their self-signed certificate; CSP and request validation stay on.
+const proxy = https.createServer({
+  key: fs.readFileSync(new URL('../fixtures/proxy-test-key.pem', import.meta.url)),
+  cert: fs.readFileSync(new URL('../fixtures/proxy-test-cert.pem', import.meta.url)),
+}, (req, res) => {
+  const upstream = http.request(`${ctx.api.url}${req.url}`, { method: req.method, headers: req.headers }, (reply) => {
+    res.writeHead(reply.statusCode, reply.headers);
+    reply.pipe(res);
+  });
+  upstream.on('error', () => { res.writeHead(502); res.end(); });
+  req.pipe(upstream);
+});
+const track = (socket) => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)); return socket; };
+proxy.on('connection', track);
+proxy.on('upgrade', (req, socket, head) => {
+  upgrades.push({ path: new URL(req.url, 'https://localhost').pathname, host: req.headers.host, origin: req.headers.origin });
+  const upstream = track(net.connect(ctx.api.port, '127.0.0.1', () => {
+    upstream.write(`${req.method} ${req.url} HTTP/${req.httpVersion}\r\n${req.rawHeaders.reduce((lines, value, i) => lines + value + (i % 2 ? '\r\n' : ': '), '')}\r\n`);
+    if (head.length) upstream.write(head);
+    socket.pipe(upstream).pipe(socket);
+  }));
+  socket.on('error', () => upstream.destroy());
+  upstream.on('error', () => socket.destroy());
+  socket.on('close', () => upstream.destroy());
+});
+
+try {
+  proxy.listen(0, '127.0.0.1');
+  await once(proxy, 'listening');
+  const authority = `guild.example.ts.net:${proxy.address().port}`, origin = `https://${authority}`;
+  Object.assign(process.env, {
+    AGENT_GUILD_HOME: home, AGENT_GUILD_PORT: '0', AGENT_GUILD_NO_UPDATE_CHECK: '1', AGENT_GUILD_SKIP_SHELL_ENV: '1',
+    AGENT_GUILD_ALLOWED_HOSTS: authority, AGENT_GUILD_ALLOWED_ORIGINS: origin,
+  });
+  fs.writeFileSync(path.join(home, 'providers.json'), JSON.stringify({ providers: [
+    ...['anthropic', 'openai', 'google', 'xai', 'shell'].map((id) => ({ id, enabled: false })),
+    { id: 'fake', vendor: 'Test', tool: 'Fake Tool', command: process.execPath, args: [fixture], versionArgs: [fixture, '--version'] },
+  ] }));
+  // The test needs no external feeds, provider accounts or network services.
+  globalThis.fetch = (url, ...args) => {
+    if (!['127.0.0.1', 'localhost'].includes(new URL(url).hostname)) throw new Error('External fetch disabled in proxy test');
+    return nativeFetch(url, ...args);
+  };
+  const { startManager } = await import('../../src/manager/main.mjs');
+  ctx = await startManager({ sessionDefaults: { killGraceMs: 500 } });
+  assert.equal(ctx.api.server.address().address, '127.0.0.1');
+
+  const checks = await withPage({ name: 'proxy', chromeArgs: [
+    '--host-resolver-rules=MAP guild.example.ts.net 127.0.0.1', '--no-proxy-server',
+  ] }, async ({ send, evaluate, pass, errors }) => {
+    await send('Security.setIgnoreCertificateErrors', { ignore: true });
+    await send('Page.addScriptToEvaluateOnNewDocument', { source: `
+      window.cspViolations=[];
+      document.addEventListener('securitypolicyviolation', e => cspViolations.push(e.effectiveDirective));
+    ` });
+    await send('Page.navigate', { url: origin });
+    await until('remote sign-in', () => evaluate(`document.querySelector('#auth')?.checkVisibility()`));
+    assert.equal(await evaluate('location.origin'), origin);
+    pass('HTTPS proxy serves the real UI while the manager remains on loopback');
+
+    const signIn = (token) => evaluate(`{
+      document.querySelector('#auth-token').value=${JSON.stringify(token)};
+      document.querySelector('#auth-form').requestSubmit();
+    }`);
+    await signIn('wrong-token');
+    await until('invalid token feedback', () => evaluate(`document.querySelector('#auth-error').textContent.includes('rejected')`));
+    assert.equal(await evaluate(`document.querySelector('#auth').checkVisibility()`), true);
+    pass('proxy access still requires the manager token');
+    await signIn(ctx.token);
+    await until('live events', () => evaluate(`document.querySelector('#connection')?.classList.contains('ok')`));
+    pass('authenticated event WebSocket connects over HTTPS');
+
+    // Starting on the manager side proves the card arrives through live events.
+    const session = await ctx.manager.create({ providerId: 'fake', cwd: home, name: 'Proxy test' });
+    await until('session event renders', () => evaluate(`document.querySelector('#sessions .session-card .name')?.textContent==='Proxy test'`));
+    await evaluate(`document.querySelector('#sessions .session-card .open').click()`);
+    await until('terminal output', () => evaluate(`document.querySelector('.xterm-screen')?.textContent.includes('FAKE-TOOL READY')`));
+    await evaluate(`document.querySelector('.xterm-helper-textarea').focus()`);
+    await send('Input.insertText', { text: 'echo proxy-input' });
+    await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' });
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+    await until('terminal round trip', () => evaluate(`document.querySelector('.xterm-screen')?.textContent.includes('ECHO:proxy-input')`));
+    pass('terminal WebSocket carries keyboard input and real PTY output');
+
+    const renamed = await evaluate(`fetch('/api/v1/sessions/${session.id}', {
+      method:'PATCH', headers:{Authorization:${JSON.stringify(`Bearer ${ctx.token}`)},'Content-Type':'application/json'},
+      body:JSON.stringify({name:'Proxy renamed'})
+    }).then(r=>r.status)`);
+    assert.equal(renamed, 200);
+    await until('rename event', () => evaluate(`document.querySelector('#sessions .session-card .name')?.textContent==='Proxy renamed'`));
+    pass('authenticated API writes and their live updates work through the proxy');
+    assert.ok(upgrades.some((entry) => entry.path === '/api/v1/events'));
+    assert.ok(upgrades.some((entry) => entry.path === `/api/v1/sessions/${session.id}/terminal`));
+    assert.ok(upgrades.every((entry) => entry.host === authority && entry.origin === origin));
+    assert.deepEqual(await evaluate('cspViolations'), []);
+    assert.deepEqual(errors, []);
+    pass('both socket paths preserve the configured Host and Origin without CSP violations');
+  });
+  console.log(`${checks} HTTPS proxy checks passed`);
+} finally {
+  for (const socket of sockets) socket.destroy();
+  await new Promise((resolve) => proxy.close(resolve));
+  await ctx?.shutdown('proxy test finished');
+  globalThis.fetch = nativeFetch;
+  for (const key of Object.keys(process.env)) if (!(key in savedEnv)) delete process.env[key];
+  Object.assign(process.env, savedEnv);
+  fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  // As in manager.test.mjs, ConPTY can retain a handle after all PTYs exit.
+  if (process.platform === 'win32') setTimeout(() => process.exit(), 3000).unref();
+}

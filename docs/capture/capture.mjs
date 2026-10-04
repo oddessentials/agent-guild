@@ -5,6 +5,8 @@
 // built-in providers are pointed at demo-tool.mjs, demo-usage.mjs and
 // demo-history.mjs, so the shots need no coding tool, sign-in or account
 // data; benchmarks, news and releases are fetched live, as the app does.
+// GitHub is demo-github.mjs, signed in with one made-up account, and each
+// session folder is given a Git origin there unless it already has a .git.
 // The page is driven in headless Chrome through the DevTools protocol, so
 // nothing beyond the project's own dependencies is installed.
 //
@@ -29,6 +31,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { DEMO_ACCOUNT, DEMO_REPOS, startDemoGitHub } from './demo-github.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, '../..');
@@ -141,6 +144,10 @@ async function demoProviders() {
 async function startDemoManager() {
   const home = tempDir('agent-guild-capture-');
   fs.writeFileSync(path.join(home, 'providers.json'), JSON.stringify({ providers: await demoProviders() }, null, 2));
+  const github = await startDemoGitHub();
+  cleanups.push(github.close);
+  fs.mkdirSync(path.join(home, 'github'));
+  fs.writeFileSync(path.join(home, 'github', 'accounts.json'), JSON.stringify({ accounts: [DEMO_ACCOUNT] }));
   Object.assign(process.env, {
     AGENT_GUILD_HOME: home,
     AGENT_GUILD_PORT: String(port),
@@ -148,7 +155,7 @@ async function startDemoManager() {
     AGENT_GUILD_SKIP_SHELL_ENV: '1',
   });
   const { startManager } = await import(pathToFileURL(path.join(repo, 'src', 'manager', 'main.mjs')));
-  const { api, token, shutdown } = await startManager({ port, version });
+  const { api, token, shutdown } = await startManager({ port, version, github: { apiUrl: github.url } });
   cleanups.push(() => shutdown('capture done'));
   console.log(`[capture] demo manager ${version} at ${api.url}`);
 
@@ -327,10 +334,10 @@ async function takeShots(send, { url, token, sessions }) {
 
   // The overviews stop above the news, whose headlines change every day.
   await shot('overview-dark', { fullPage: true, stop: 'section.news' });
-  await click('#appearance-menu input[name="theme"][value="light"]');
+  await click('#settings-menu input[name="theme"][value="light"]');
   await sleep(2000);
   await shot('overview-light', { fullPage: true, stop: 'section.news' });
-  await click('#appearance-menu input[name="theme"][value="dark"]');
+  await click('#settings-menu input[name="theme"][value="dark"]');
   await sleep(2000);
 
   await click('.provider[data-id="anthropic"] .model-stats > :first-child');
@@ -364,9 +371,22 @@ async function takeShots(send, { url, token, sessions }) {
   // The panel fills the window; a shorter one leaves less empty terminal.
   await viewport(720);
   await click('#sessions .session-card .open');
-  await waitFor('the terminal', `document.querySelector('#terminal-host .xterm-rows')?.textContent.trim().length > 40`);
+  await waitFor('the terminal', `document.querySelector('.terminal-pane.focused .xterm-rows')?.textContent.trim().length > 40`);
   await sleep(2500);
   await shot('terminal');
+
+  // Two terminals side by side, with the GitHub panel on the focused one's repository.
+  await viewport(900, 1600);
+  await evaluate(`document.querySelectorAll('#sessions .session-card .open')[2].dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }))`);
+  await waitFor('two terminals', `document.querySelectorAll('.terminal-pane:not([hidden]) .xterm-rows').length === 2`);
+  await evaluate(`document.querySelector('.terminal-pane[data-pane="0"] .terminal-host').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))`);
+  await click('#github-toggle');
+  await waitFor('the picked repository', `document.querySelector('#github-repo').value === 'acme/storefront'`);
+  await click('#github-view-actions');
+  await waitFor('the workflow runs', `document.querySelectorAll('#github-runs .history-row').length > 3`);
+  await sleep(2500);
+  await shot('workspace', { height: 900, width: 1600 });
+  await click('#dock-close');
   await click('#panel-close');
   await sleep(600);
 
@@ -382,7 +402,14 @@ async function takeShots(send, { url, token, sessions }) {
 
 const inHome = !path.relative(os.homedir(), root).startsWith('..') && !path.isAbsolute(path.relative(os.homedir(), root));
 if (inHome) console.warn(`[capture] warning: the cards will show ${root}, which is inside your home folder; pass --root to choose a neutral path`);
-for (const folder of FOLDERS) fs.mkdirSync(path.join(root, folder), { recursive: true });
+for (const folder of FOLDERS) {
+  fs.mkdirSync(path.join(root, folder), { recursive: true });
+  const repo = DEMO_REPOS.find((fullName) => fullName.endsWith(`/${folder}`));
+  if (repo && !fs.existsSync(path.join(root, folder, '.git'))) {
+    fs.mkdirSync(path.join(root, folder, '.git'));
+    fs.writeFileSync(path.join(root, folder, '.git', 'config'), `[remote "origin"]\n\turl = git@github.com:${repo}.git\n`);
+  }
+}
 
 let interrupted = false;
 process.on('SIGINT', () => {

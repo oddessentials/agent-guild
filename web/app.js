@@ -3,6 +3,9 @@
 
 import { SOUNDS, MAX_ALERT_AGE_MS, playOnce, rearmSound, managerLossWatcher, stopWatcher, updateWatcher } from './alerts.js';
 import { TerminalCopy } from './terminal-copy.js';
+import { topbarInline, dockMode, clampDockWidth, stageBesideDock, splitMode, clampRatio, bindSplitter, DOCK_MIN, SPLIT_RATIO_MIN } from './layout.js';
+import { highlightParts, rankRepos, recentFirst, remember, repoForOrigin, repoKey } from './repo-search.js';
+import { createActivityFavicon, isSessionWorking } from './activity-favicon.js';
 
 const TOKEN_KEY = 'agentGuild.token';
 const CWD_KEY = 'agentGuild.cwd';
@@ -15,15 +18,23 @@ const NEWS_FILTER_KEY = 'agentGuild.newsFilter';
 const CHANGELOG_SEEN_KEY = 'agentGuild.changelogSeen';
 const GITHUB_ACCOUNT_KEY = 'agentGuild.githubAccount';
 const CLONE_PARENT_KEY = 'agentGuild.cloneParent';
+const GITHUB_REPO_KEY = 'agentGuild.githubRepo';
+const GITHUB_RECENT_KEY = 'agentGuild.githubRecent';
+const GITHUB_VIEW_KEY = 'agentGuild.githubView';
 const SESSION_ORDER_KEY = 'agentGuild.sessionOrder';
 const SOUND_KEY = 'agentGuild.sound';
 const VOICE_KEY = 'agentGuild.voice';
 const NOTES_KEY = 'agentGuild.notes';
+const DOCK_KEY = 'agentGuild.dock';
+const DOCK_WIDTH_KEY = 'agentGuild.dockWidth';
+const PANES_KEY = 'agentGuild.panes';
+const SPLIT_RATIO_KEY = 'agentGuild.splitRatio';
 const RELEASES_URL = 'https://github.com/oddessentials/agent-guild/releases';
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 const finePointer = window.matchMedia('(hover: hover) and (pointer: fine)');
 const coarsePointer = window.matchMedia('(pointer: coarse)');
+const activityFavicon = createActivityFavicon({ link: document.querySelector('link[rel="icon"]'), reducedMotion });
 
 const $ = (id) => document.getElementById(id);
 const state = {
@@ -39,6 +50,8 @@ const state = {
   github: null,
   sessions: new Map(),
   views: new Map(),
+  panes: [],
+  focusedPane: 0,
   activeId: null,
   eventsSocket: null,
   eventsRetry: 0,
@@ -46,6 +59,10 @@ const state = {
   managerUnavailable: false,
   /** True while the events socket is open. */
   connected: false,
+  folderOpener: null,
+  folderOpening: false,
+  folderPicker: null,
+  folderPicking: false,
   /** The manager's own version check, from `hello` and `manager.upgrade`. */
   upgrade: null,
   /** The running manager's version and pid, from `hello`. */
@@ -92,7 +109,7 @@ function toast(message, ms = 5000, action = null) {
 
 /**
  * Handles a click, but not the second click of a double-click, which lands on whatever the first one
- * opened or uncovered: Close over Notes, or Stop manager under a panel's Close.
+ * opened, closed or uncovered.
  */
 const firstClick = (run) => (e) => { if (e.detail < 2) run(); };
 
@@ -100,8 +117,12 @@ function setConnection(kind, label) {
   const el = $('connection');
   el.className = `connection ${kind}`;
   el.querySelector('.label').textContent = label;
+  el.title = label;
   // The manager can only be stopped, restarted or upgraded while the page can reach it.
   state.connected = kind === 'ok';
+  $('manager').hidden = !state.connected;
+  if (!state.connected) closeMenu($('manager-menu'));
+  renderFolderTools();
   $('stop-manager').hidden = !state.connected;
   $('restart-manager').hidden = !state.connected || !state.restartable;
   renderUpgrade();
@@ -164,7 +185,7 @@ function unreadRelease() {
 /** theme.js applied the saved or system theme before the first paint; this keeps the menu in step. */
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
-  document.querySelector(`#appearance-menu input[name="theme"][value="${theme}"]`).checked = true;
+  document.querySelector(`#settings-menu input[name="theme"][value="${theme}"]`).checked = true;
 }
 
 function currentTheme() {
@@ -294,11 +315,10 @@ function managerGone() {
     () => state.managerInstance === instance && !state.connected, [`unavailable.${instance}`]);
 }
 
-/** Places the open menu under its button, right-aligned with it and kept on screen. */
-function placeAppearanceMenu() {
-  const menu = $('appearance-menu');
-  if (!menu.matches(':popover-open')) return;
-  const box = $('appearance').getBoundingClientRect();
+/** Places an open menu under its button, right-aligned with it and kept on screen. */
+function placeMenu(menu, button) {
+  if (!menu.matches(':popover-open') || !button) return;
+  const box = button.getBoundingClientRect();
   const top = Math.round(box.bottom + 6);
   menu.style.top = `${top}px`;
   menu.style.maxHeight = `${innerHeight - top - 8}px`;
@@ -308,6 +328,29 @@ function placeAppearanceMenu() {
     menu.style.right = 'auto';
     menu.style.left = `${Math.max(8, Math.round(box.left))}px`;
   }
+}
+
+function closeMenu(menu) {
+  if (menu.matches(':popover-open')) menu.hidePopover();
+}
+
+function menuItems(menu) {
+  return [...menu.querySelectorAll('.menu-item')].filter((item) => !item.hidden && !item.disabled);
+}
+
+/** Arrow keys, Home and End move between the items; Tab leaves the menu and closes it. */
+function moveInMenu(e) {
+  if (e.key === 'Tab') return closeMenu(e.currentTarget);
+  const items = menuItems(e.currentTarget);
+  const at = items.indexOf(document.activeElement);
+  const next = e.key === 'ArrowDown' ? items[(at + 1) % items.length]
+    : e.key === 'ArrowUp' ? items[(at - 1 + items.length) % items.length]
+    : e.key === 'Home' ? items[0]
+    : e.key === 'End' ? items[items.length - 1]
+    : null;
+  if (!next) return;
+  e.preventDefault();
+  next.focus();
 }
 
 // ---- notes ----------------------------------------------------------------
@@ -322,9 +365,8 @@ const NOTES_STATUS = {
 /**
  * `saved`: the notes as this page last read or wrote them in storage. `status`: whether the text in the
  * panel is saved, too `long` or `refused`; `shown`: the status the line under the title shows.
- * `pressedOutside`: the last press on the panel was on its backdrop.
  */
-const notesView = { saved: '', status: 'saved', shown: 'saved', pressedOutside: false };
+const notesView = { saved: '', status: 'saved', shown: 'saved' };
 
 /** Shows notes another tab saved since this page last read or wrote them. Saved notes win over text this page could not save. */
 function refreshNotes() {
@@ -366,41 +408,91 @@ function notesStored(e) {
   if (e.key === NOTES_KEY || e.key === null) refreshNotes();
 }
 
-function openNotes() {
+function openNotes({ focus = true } = {}) {
   hideTip();
   refreshNotes();
   // Saving an empty note changes nothing, but shows at once when the browser keeps nothing.
   if (notesView.status === 'saved' && !$('notes-text').value) saveNotes();
-  const dialog = $('notes');
-  if (!dialog.open) dialog.showModal();
-  $('notes-text').focus();
+  showDock('notes');
+  if (focus) $('notes-text').focus();
 }
 
-function closeNotes() {
-  if ($('notes').open) $('notes').close();
+function toggleNotes() {
+  if (dockShows('notes')) closeDock();
+  else openNotes();
 }
 
-/** Focus goes back to the Notes button in every browser, never to the page itself. */
-function notesClosed() {
-  $('notes-open').focus();
+// ---- dock -----------------------------------------------------------------
+
+const DOCK_PANELS = ['github', 'notes'];
+const dockView = { panel: null, opener: null, width: clampDockWidth(Number.parseFloat(load(DOCK_WIDTH_KEY)), innerWidth) };
+
+function dockShows(panel) {
+  return dockView.panel === panel;
 }
 
-/** The second press of a double-click on Notes lands in the panel, where it must not take the focus from the text. */
-const keepFocus = (e) => { if (e.detail > 1 && e.target !== $('notes-text')) e.preventDefault(); };
-
-/** Whether a press or click on the panel was on its backdrop, outside the sheet. */
-function isOutsideNotes(e) {
-  const box = e.currentTarget.getBoundingClientRect();
-  return e.target === e.currentTarget && (e.clientX < box.left || e.clientX >= box.right || e.clientY < box.top || e.clientY >= box.bottom);
+function applyDockLayout() {
+  const root = document.documentElement;
+  const mode = dockMode(innerWidth);
+  const width = clampDockWidth(dockView.width, innerWidth);
+  root.classList.toggle('dock-push', mode === 'push');
+  root.classList.toggle('dock-full', mode === 'full');
+  root.style.setProperty('--dock-w', `${width}px`);
+  root.style.setProperty('--dock-space', dockView.panel && mode === 'push' ? `${width}px` : '0px');
+  root.style.setProperty('--dock-stage-space', dockView.panel && stageBesideDock(innerWidth, width) ? `${width}px` : '0px');
+  const splitter = $('dock-splitter');
+  splitter.setAttribute('aria-valuemin', String(DOCK_MIN));
+  splitter.setAttribute('aria-valuemax', String(clampDockWidth(Infinity, innerWidth)));
+  splitter.setAttribute('aria-valuenow', String(width));
 }
 
-function notesPressed(e) {
-  notesView.pressedOutside = isOutsideNotes(e);
+function renderDock() {
+  $('dock').hidden = !dockView.panel;
+  for (const name of DOCK_PANELS) {
+    const shown = dockView.panel === name;
+    $(name).hidden = !shown;
+    $(`${name}-title`).setAttribute('aria-selected', String(shown));
+    $(`${name}-title`).tabIndex = shown || !dockView.panel ? 0 : -1;
+  }
+  $('github-toggle').setAttribute('aria-pressed', String(dockShows('github')));
+  $('notes-open').setAttribute('aria-pressed', String(dockShows('notes')));
+  applyDockLayout();
+  scheduleRuns();
 }
 
-/** Only a press and a release both outside close the notes: a drag into or out of them selects text. */
-function notesClicked(e) {
-  if (notesView.pressedOutside && isOutsideNotes(e)) closeNotes();
+function showDock(panel) {
+  if (!dockView.panel) dockView.opener = document.activeElement;
+  dockView.panel = panel;
+  save(DOCK_KEY, panel);
+  if ($('topbar-menu').matches(':popover-open')) $('topbar-menu').hidePopover();
+  renderDock();
+}
+
+function closeDock({ focusOpener = true } = {}) {
+  if (!dockView.panel) return;
+  const hadFocus = $('dock').contains(document.activeElement);
+  const fallback = dockShows('github') ? $('github-toggle') : $('notes-open');
+  dockView.panel = null;
+  save(DOCK_KEY, null);
+  renderDock();
+  if (focusOpener && hadFocus) {
+    [dockView.opener, fallback, $('menu-toggle')].find((el) => el?.isConnected && el.checkVisibility?.())?.focus();
+  }
+  dockView.opener = null;
+}
+
+function dockMakesWayForTerminal() {
+  if (dockView.panel && !stageBesideDock(innerWidth, clampDockWidth(dockView.width, innerWidth))) closeDock({ focusOpener: false });
+}
+
+function moveDockTab(e) {
+  const tabs = DOCK_PANELS.map((name) => $(`${name}-title`));
+  const at = tabs.indexOf(e.target);
+  if (at === -1 || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
+  e.preventDefault();
+  const next = tabs[(at + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
+  next.click();
+  next.focus();
 }
 
 // ---- upgrading the manager ------------------------------------------------
@@ -420,6 +512,7 @@ function renderUpgrade() {
   const restart = $('restart-manager');
   const pending = u?.pendingVersion;
   restart.classList.toggle('pending', Boolean(pending));
+  $('manager').classList.toggle('pending', Boolean(pending) && state.restartable);
   restart.textContent = pending ? `Restart to use v${pending}` : 'Restart manager';
   restart.title = pending
     ? `Agent Guild ${pending} is installed, but this manager is still ${u.version}. Restarting ends every session and starts the new version; this page reconnects by itself.`
@@ -629,6 +722,60 @@ async function api(method, path, body) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw Object.assign(new Error(data?.error?.message || `Request failed (HTTP ${res.status})`), data?.error);
   return data;
+}
+
+function renderFolderTools() {
+  const paint = (id, feature, busy, label, text) => {
+    const button = $(id);
+    button.disabled = !state.connected || !feature?.available || busy;
+    button.setAttribute('aria-label', label);
+    button.setAttribute('aria-busy', String(busy));
+    button.title = !state.connected ? text.offline
+      : busy ? text.busy
+        : !feature?.available ? feature?.reason || text.missing
+          : label;
+  };
+  paint('cwd-pick', state.folderPicker, state.folderPicking, 'Choose a folder…', {
+    offline: 'Connect to the session manager to choose folders',
+    busy: 'Choosing a folder…',
+    missing: 'Choosing folders is unavailable with this manager',
+  });
+  paint('cwd-open', state.folderOpener, state.folderOpening, `Open working folder in ${state.folderOpener?.label || 'file manager'}`, {
+    offline: 'Connect to the session manager to open folders',
+    busy: 'Opening working folder…',
+    missing: 'Opening folders is unavailable with this manager',
+  });
+}
+
+async function pickWorkingFolder() {
+  if (!state.connected || !state.folderPicker?.available || state.folderPicking) return;
+  state.folderPicking = true;
+  renderFolderTools();
+  try {
+    const { path } = await api('POST', '/pick-folder', { cwd: $('cwd').value.trim() });
+    if (path) useFolder(path);
+  } catch (err) {
+    if (err instanceof AuthError) showAuth(err.message);
+    else toast(err.message || 'Could not choose a folder.');
+  } finally {
+    state.folderPicking = false;
+    renderFolderTools();
+  }
+}
+
+async function openWorkingFolder() {
+  if (!state.connected || !state.folderOpener?.available || state.folderOpening) return;
+  state.folderOpening = true;
+  renderFolderTools();
+  try {
+    await api('POST', '/open-folder', { cwd: $('cwd').value.trim() });
+  } catch (err) {
+    if (err instanceof AuthError) showAuth(err.message);
+    else toast(err.message || 'Could not open the working folder.');
+  } finally {
+    state.folderOpening = false;
+    renderFolderTools();
+  }
 }
 
 function wsUrl(path) {
@@ -2308,10 +2455,10 @@ function resumeById(event) {
 // ---- GitHub ---------------------------------------------------------------
 
 const GITHUB_SCOPES = {
-  repo: 'Read and write access to all your repositories, private ones included. GitHub offers apps no read-only choice; Agent Guild only lists them.',
+  repo: 'Read and write access to your repositories, private ones included, so you can browse repositories and create or edit issues.',
   'write:public_key': 'Add the SSH key Agent Guild creates for this account.',
 };
-const githubView = { accountId: null, repos: null, reposFor: null, loading: null, error: null, parentError: null, opener: null, card: null, started: new Set(), announced: new Set() };
+const githubView = { accountId: null, repos: null, reposFor: null, loading: null, error: null, parentError: null, card: null, started: new Set(), announced: new Set() };
 let githubLoading = null;
 
 function el(tag, className, ...children) {
@@ -2385,7 +2532,8 @@ function setGitHub(github) {
       ? `You are already signed in as @${account.login}; that sign-in was renewed. To add another account, switch to it on github.com first.`
       : `Signed in to GitHub as @${account.login}.`, done.again ? 10000 : 4000);
   }
-  if (!$('github').open) return;
+  if (!dockShows('github')) return;
+  ensureAllRepos();
   renderGitHub();
   ensureRepos();
 }
@@ -2479,39 +2627,42 @@ async function signOutGitHub(account) {
   }
 }
 
-function openGitHub() {
-  const dialog = $('github');
+function openGitHub({ focus = true } = {}) {
   $('github-parent').value = load(CLONE_PARENT_KEY) ?? $('cwd').value.trim();
   $('github-filter').value = '';
   githubView.card = null;
-  if (!dialog.open) {
-    githubView.opener = document.activeElement;
-    dialog.showModal();
-  }
+  githubPick.followed = null;
+  githubPick.origins.clear();
+  showDock('github');
   renderGitHub();
   if (githubAccount() && !githubAccount().needsSignIn) loadRepos();
   loadGitHub();
-  ($('github-card').querySelector('.btn.primary') ?? $('github-close')).focus();
+  if (githubPick.repo) {
+    loadView('actions');
+    if (githubShownView() === 'issues' || githubShownView() === 'pulls') loadView(githubShownView());
+  }
+  followTerminal();
+  if (focus) ($('github-card').querySelector('.btn.primary') ?? $('dock-close')).focus();
 }
 
 function closeGitHub({ focusOpener = true } = {}) {
-  if (!$('github').open) return;
-  if (!focusOpener) githubView.opener = false;
-  $('github').close();
+  if (dockShows('github')) closeDock({ focusOpener });
+}
+
+function toggleGitHub() {
+  if (dockShows('github')) closeDock();
+  else openGitHub();
 }
 
 function renderGitHub() {
   const github = state.github;
   const account = githubAccount();
   const repos = githubView.repos?.accountId === account?.id ? githubView.repos : null;
-  const sub = !github ? 'Loading…'
-    : !account ? 'Clone your repositories over SSH'
-    : [`@${account.login}`, account.name, repos && `${repos.repos.length} ${repos.repos.length === 1 ? 'repository' : 'repositories'}`].filter(Boolean).join(' · ');
-  $('github-sub').textContent = sub;
   renderGitHubChips(github);
   renderGitHubCard(github, account);
   renderGitHubStatus(github, account);
   renderGitHubRepos(github, account, repos);
+  renderGitHubViews();
 }
 
 function githubAvatar(account) {
@@ -2528,7 +2679,6 @@ function githubAvatar(account) {
 
 function renderGitHubChips(github) {
   const accounts = github?.accounts ?? [];
-  $('github-accounts').hidden = accounts.length === 0;
   const host = $('github-chips');
   const focused = document.activeElement?.closest?.('#github-chips .account-chip')?.dataset.account;
   host.replaceChildren(...accounts.map((account) => {
@@ -2702,7 +2852,6 @@ function buildRepoRow(fullName) {
 function repoAction(repo, control) {
   const running = runningClone(repo.target);
   if (running) {
-    closeGitHub({ focusOpener: false });
     openPanel(running.id);
   } else if (repo.local === 'cloned') {
     useFolder(repo.target);
@@ -2743,7 +2892,6 @@ function updateRepoRow(node, repo, blocker) {
 function renderGitHubRepos(github, account, repos) {
   const ready = Boolean(github && account && !account.needsSignIn);
   $('github-tools').hidden = !ready;
-  $('github-parent').closest('.github-form').hidden = !ready;
   const list = $('github-list');
   const filter = $('github-filter').value.trim().toLowerCase();
   const shown = ready && repos ? repos.repos.filter((repo) => !filter || `${repo.fullName}\n${repo.description ?? ''}`.toLowerCase().includes(filter)) : [];
@@ -2778,7 +2926,6 @@ async function startClone(account, fullName) {
   const { session } = await api('POST', '/github/clone', { account: account.id, repo: fullName, parent: cloneParent() });
   githubView.started.add(session.id);
   upsertSession(session);
-  closeGitHub({ focusOpener: false });
   openPanel(session.id);
 }
 
@@ -2884,7 +3031,8 @@ function noticeClone(s) {
   if (s.task !== 'clone' || s.status !== 'exited' || githubView.announced.has(s.id)) return;
   githubView.announced.add(s.id);
   githubView.reposFor = null;
-  if ($('github').open) loadRepos();
+  githubPick.origins.clear();
+  if (dockShows('github')) loadRepos();
   if (!githubView.started.has(s.id)) return;
   if (clonedPath(s)) toast(`Cloned ${s.clone.repo} into ${s.clone.path}.`, 12000, { label: 'Use folder', run: () => useFolder(s.clone.path) });
   else toast(`Cloning ${s.clone?.repo ?? 'the repository'} did not finish. Its session shows why.`, 8000);
@@ -2893,8 +3041,639 @@ function noticeClone(s) {
 function useFolder(dir) {
   $('cwd').value = dir;
   save(CWD_KEY, dir);
-  if ($('github').open) renderGitHub();
+  if (dockShows('github')) renderGitHub();
   toast(`New sessions start in ${dir}.`, 4000);
+}
+
+// ---- GitHub repository views ------------------------------------------------
+
+const GITHUB_VIEWS = ['repos', 'issues', 'actions', 'pulls'];
+const RUNS_POLL_MS = 6000;
+const RUNS_IDLE_POLL_MS = 30000;
+const BODY_LIMIT = 48000;
+const GITHUB_REQUEST_LIMIT = 64 * 1024;
+const PICKER_LIMIT = 200;
+/**
+ * `list`: every account's repositories from /github/repos; `repo`: the picked one. `data[view]` is
+ * `{ stamp, value, error, loading }` for the picked repository. `followed`: the session whose folder last picked the repository.
+ */
+const githubPick = {
+  list: null, listFor: null, loadingFor: null, error: null,
+  repo: null, query: '', active: 0, open: false, recent: [],
+  view: 'repos', issueState: 'open', editing: null, data: {}, followed: null, origins: new Map(),
+};
+let runsTimer = 0;
+let reposRequest = null;
+
+function usableGitHubAccounts() {
+  return (state.github?.accounts ?? []).filter((a) => !a.needsSignIn);
+}
+
+function githubAccountsStamp() {
+  return usableGitHubAccounts().map((a) => a.id).join(',');
+}
+
+/** The view on screen: Repositories while no account can be used or a sign-in needs the card. */
+function githubShownView() {
+  const signIn = state.github?.signIn;
+  if (!usableGitHubAccounts().length || (signIn && signIn.status !== 'done')) return 'repos';
+  return githubPick.view;
+}
+
+function repoPath(repo) {
+  return `/github/accounts/${repo.accountId}/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}`;
+}
+
+function issueAccountError(repo) {
+  const account = state.github?.accounts.find((a) => a.id === repo.accountId);
+  return account && !account.needsSignIn ? null
+    : `Sign in as @${account?.login ?? repo.login} in Repositories to change issues in ${repo.fullName}.`;
+}
+
+function ensureAllRepos() {
+  const stamp = githubAccountsStamp();
+  if (!stamp) {
+    reposRequest = null;
+    Object.assign(githubPick, { list: null, listFor: null, loadingFor: null });
+    return;
+  }
+  if (githubPick.listFor !== stamp && githubPick.loadingFor !== stamp) loadAllRepos();
+}
+
+async function loadAllRepos({ refresh = false } = {}) {
+  const stamp = githubAccountsStamp();
+  const request = reposRequest = {};
+  githubPick.loadingFor = stamp;
+  renderGitHubViews();
+  let list = null;
+  let error = null;
+  try {
+    list = await api('GET', `/github/repos${refresh ? '?refresh=1' : ''}`);
+  } catch (err) {
+    if (err instanceof AuthError) return showAuth(err.message);
+    error = err.message;
+  }
+  if (reposRequest !== request || githubAccountsStamp() !== stamp) return;
+  Object.assign(githubPick, { loadingFor: null, error, listFor: stamp });
+  if (list) githubPick.list = list;
+  restorePick();
+  renderGitHubViews();
+  followTerminal();
+}
+
+/** Keeps the picked repository in step with the list, or picks the one from the last visit. */
+function restorePick() {
+  const repos = githubPick.list?.repos ?? [];
+  const wanted = githubPick.repo ? repoKey(githubPick.repo) : load(GITHUB_REPO_KEY);
+  const found = repos.find((repo) => repoKey(repo) === wanted) ?? null;
+  if (found) pickRepo(found);
+  // A failed or expired account must not discard its draft or switch its identity.
+  else if (githubPick.repo && githubPick.list && !githubPick.editing && !issueAccountError(githubPick.repo)
+    && !githubPick.list.errors?.some((error) => error.accountId === githubPick.repo.accountId)) {
+    Object.assign(githubPick, { repo: null, data: {} });
+  }
+}
+
+function pickRepo(repo, { chosen = false } = {}) {
+  const same = githubPick.repo && repoKey(githubPick.repo) === repoKey(repo);
+  githubPick.repo = repo;
+  save(GITHUB_REPO_KEY, repoKey(repo));
+  if (chosen) {
+    githubPick.recent = remember(githubPick.recent, repo);
+    save(GITHUB_RECENT_KEY, JSON.stringify(githubPick.recent));
+  }
+  if (!same) Object.assign(githubPick, { data: {}, editing: null });
+  if ((!same || chosen) && githubView.accountId !== repo.accountId && state.github?.accounts.some((a) => a.id === repo.accountId)) {
+    selectGitHubAccount(repo.accountId);
+    githubView.card = null;
+    if (dockShows('github')) {
+      renderGitHub();
+      ensureRepos();
+    }
+  }
+  if (same) return renderGitHubViews();
+  renderGitHubViews();
+  if (!dockShows('github')) return;
+  loadView('actions');
+  if (githubShownView() === 'issues' || githubShownView() === 'pulls') loadView(githubShownView());
+}
+
+/** Picks the repository whose clone holds the focused terminal's folder, once for each terminal focused. */
+async function followTerminal() {
+  const s = state.sessions.get(state.activeId);
+  if (!s?.cwd || !dockShows('github') || !githubPick.list || githubPick.followed === s.id) return;
+  githubPick.followed = s.id;
+  let origin = githubPick.origins.get(s.cwd);
+  if (origin === undefined) {
+    try {
+      origin = (await api('GET', `/github/origin?cwd=${encodeURIComponent(s.cwd)}`)).repo;
+    } catch (err) {
+      if (err instanceof AuthError) return showAuth(err.message);
+      origin = null;
+    }
+    githubPick.origins.set(s.cwd, origin);
+  }
+  const repo = repoForOrigin(githubPick.list?.repos ?? [], origin, githubPick.recent);
+  if (repo && state.activeId === s.id && githubPick.followed === s.id) pickRepo(repo);
+}
+
+async function loadView(view) {
+  const repo = githubPick.repo;
+  if (!repo || view === 'repos') return;
+  const query = view === 'issues' ? `?state=${githubPick.issueState}` : '';
+  const key = repoKey(repo);
+  const stamp = `${key}${query}`;
+  const before = githubPick.data[view];
+  const request = { key, stamp, value: before?.stamp === stamp ? before.value : null, error: null, loading: true };
+  githubPick.data[view] = request;
+  renderGitHubViews();
+  let value = null;
+  let error = null;
+  try {
+    value = await api('GET', `${repoPath(repo)}/${view}${query}`);
+  } catch (err) {
+    if (err instanceof AuthError) return showAuth(err.message);
+    error = err.message;
+  }
+  const slot = githubPick.data[view];
+  if (slot !== request) return;
+  githubPick.data[view] = { key, stamp, value: value ?? slot.value, error, loading: false };
+  renderGitHubViews();
+  if (view === 'actions') scheduleRuns();
+}
+
+function viewData(view) {
+  const slot = githubPick.data[view];
+  const repo = githubPick.repo;
+  return slot && repo && slot.key === repoKey(repo) ? slot : null;
+}
+
+/** Runs are polled only while their tab is on screen in a visible page, faster while one is going. */
+function scheduleRuns() {
+  clearTimeout(runsTimer);
+  if (!dockShows('github') || githubShownView() !== 'actions' || !githubPick.repo || document.visibilityState !== 'visible') return;
+  runsTimer = setTimeout(() => loadView('actions'), viewData('actions')?.value?.running ? RUNS_POLL_MS : RUNS_IDLE_POLL_MS);
+}
+
+function switchGitHubView(view, { focus = false } = {}) {
+  if (!GITHUB_VIEWS.includes(view)) return;
+  githubPick.view = view;
+  save(GITHUB_VIEW_KEY, view);
+  renderGitHubViews();
+  if (focus) $(`github-view-${view}`).focus();
+  if (view === 'repos') ensureRepos();
+  else loadView(view);
+  scheduleRuns();
+}
+
+function moveGitHubView(e) {
+  const at = GITHUB_VIEWS.indexOf(e.target.dataset?.view);
+  if (at === -1) return;
+  const next = e.key === 'ArrowRight' ? (at + 1) % GITHUB_VIEWS.length
+    : e.key === 'ArrowLeft' ? (at - 1 + GITHUB_VIEWS.length) % GITHUB_VIEWS.length
+    : e.key === 'Home' ? 0 : e.key === 'End' ? GITHUB_VIEWS.length - 1 : -1;
+  if (next === -1) return;
+  e.preventDefault();
+  switchGitHubView(GITHUB_VIEWS[next], { focus: true });
+}
+
+// The picker: a combobox over every account's repositories.
+
+function pickerOptions() {
+  const accounts = new Set(usableGitHubAccounts().map((a) => a.id));
+  const repos = (githubPick.list?.repos ?? []).filter((repo) => accounts.has(repo.accountId));
+  const ranked = rankRepos(repos, githubPick.query);
+  const options = githubPick.query.trim() ? ranked : recentFirst(ranked, githubPick.recent);
+  return { options: options.slice(0, PICKER_LIMIT), truncated: options.length > PICKER_LIMIT };
+}
+
+function setPickerOpen(open) {
+  githubPick.open = open;
+  const input = $('github-repo');
+  input.setAttribute('aria-expanded', String(open));
+  $('github-repo-list').hidden = !open;
+  if (!open) input.removeAttribute('aria-activedescendant');
+  else renderPickerList();
+}
+
+function highlighted(text, query) {
+  return highlightParts(text, query).map((part) => (part.match ? el('mark', null, part.text) : part.text));
+}
+
+function renderPickerList() {
+  if (!githubPick.open) return;
+  const list = $('github-repo-list');
+  const input = $('github-repo');
+  const { options, truncated } = pickerOptions();
+  githubPick.active = Math.min(githubPick.active, Math.max(0, options.length - 1));
+  const accounts = new Map((state.github?.accounts ?? []).map((a) => [a.id, a]));
+  const several = accounts.size > 1;
+  const items = options.map((repo, index) => {
+    const account = accounts.get(repo.accountId);
+    const meta = [several && `@${repo.login}`, repo.description, repo.language, repo.pushedAt && `pushed ${relativeTime(repo.pushedAt)}`].filter(Boolean).join(' · ');
+    const item = el('li', 'github-option',
+      account ? githubAvatar(account) : null,
+      el('span', 'github-option-text', el('span', 'github-option-name', ...highlighted(repo.fullName, githubPick.query)), meta && el('span', 'github-option-meta', meta)),
+      repo.private ? badge('', 'Private', 'Only people with access can see it') : null,
+      repo.archived ? badge('', 'Archived', 'Read-only on GitHub') : null);
+    item.id = `github-repo-option-${index}`;
+    item.setAttribute('role', 'option');
+    item.setAttribute('aria-selected', String(index === githubPick.active));
+    item.addEventListener('pointerdown', (e) => e.preventDefault());
+    item.addEventListener('click', () => choosePickerRepo(repo));
+    return item;
+  });
+  if (!items.length) {
+    const empty = el('li', 'github-option-empty', githubPick.list ? 'No repository matches.' : 'Loading repositories…');
+    empty.setAttribute('role', 'presentation');
+    items.push(empty);
+  }
+  if (truncated) {
+    const hint = el('li', 'github-option-empty', `Showing ${PICKER_LIMIT} matches; refine your search.`);
+    hint.setAttribute('role', 'presentation');
+    items.push(hint);
+  }
+  list.replaceChildren(...items);
+  const active = items[githubPick.active];
+  if (active?.id) {
+    input.setAttribute('aria-activedescendant', active.id);
+    active.scrollIntoView({ block: 'nearest' });
+  } else input.removeAttribute('aria-activedescendant');
+}
+
+function choosePickerRepo(repo) {
+  githubPick.query = '';
+  githubPick.followed = state.activeId;
+  setPickerOpen(false);
+  pickRepo(repo, { chosen: true });
+  $('github-repo').value = repo.fullName;
+}
+
+function pickerKey(e) {
+  const { options } = pickerOptions();
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    if (!githubPick.open) {
+      githubPick.active = 0;
+      return setPickerOpen(true);
+    }
+    if (!options.length) return;
+    githubPick.active = (githubPick.active + (e.key === 'ArrowDown' ? 1 : options.length - 1)) % options.length;
+    renderPickerList();
+  } else if (e.key === 'Enter' && githubPick.open) {
+    e.preventDefault();
+    if (options[githubPick.active]) choosePickerRepo(options[githubPick.active]);
+  } else if (e.key === 'Escape' && (githubPick.open || githubPick.query)) {
+    e.preventDefault();
+    githubPick.query = '';
+    setPickerOpen(false);
+    e.target.value = githubPick.repo?.fullName ?? '';
+    e.target.select();
+  }
+}
+
+// Rendering the views.
+
+function renderPickerNote() {
+  const note = $('github-picker-note');
+  const lines = [];
+  if (githubPick.loadingFor && !githubPick.list) lines.push('Loading repositories…');
+  if (githubPick.error) lines.push(`Repositories could not be loaded: ${githubPick.error}`);
+  for (const failed of githubPick.list?.errors ?? []) lines.push(`@${failed.login}: ${failed.message}`);
+  if (githubPick.list?.truncated) lines.push('An account has more repositories than the 1,000 most recently pushed shown here.');
+  if (githubPick.list && !githubPick.repo && !lines.length) lines.push(githubPick.list.repos.length ? 'Pick a repository to see its issues, Actions runs and pull requests.' : 'Your accounts have no repositories yet.');
+  note.replaceChildren(...lines.map((line) => el('span', null, line)));
+  note.hidden = !lines.length;
+  note.classList.toggle('warn', Boolean(githubPick.error || githubPick.list?.errors?.length));
+}
+
+function renderGitHubViews() {
+  const usable = usableGitHubAccounts().length > 0;
+  const shown = githubShownView();
+  const account = githubAccount();
+  const repo = githubPick.repo;
+  const repos = githubView.repos?.accountId === account?.id ? githubView.repos : null;
+  $('github-accounts').hidden = shown !== 'repos' || !state.github?.accounts.length;
+  $('github-sub').textContent = shown !== 'repos'
+    ? (repo ? `${repo.fullName} · Acting as @${state.github?.accounts.find((a) => a.id === repo.accountId)?.login ?? repo.login}` : 'Repositories from all your accounts')
+    : !state.github ? 'Loading…' : !account ? 'Sign in to browse your repositories'
+      : [`@${account.login}`, account.name, repos && `${repos.repos.length} ${repos.repos.length === 1 ? 'repository' : 'repositories'}`].filter(Boolean).join(' · ');
+  $('github-picker').hidden = !usable;
+  $('github-views').hidden = !usable;
+  const input = $('github-repo');
+  if (document.activeElement !== input) input.value = githubPick.repo?.fullName ?? '';
+  $('github-repo-reload').disabled = Boolean(githubPick.loadingFor);
+  if (usable) renderPickerNote();
+  else $('github-picker-note').hidden = true;
+  for (const view of GITHUB_VIEWS) {
+    const tab = $(`github-view-${view}`);
+    tab.setAttribute('aria-selected', String(view === shown));
+    tab.tabIndex = view === shown ? 0 : -1;
+  }
+  $('github-repos').hidden = shown !== 'repos';
+  $('github-issues').hidden = shown !== 'issues';
+  $('github-runs').hidden = shown !== 'actions';
+  $('github-pulls').hidden = shown !== 'pulls';
+  const ready = Boolean(state.github && githubAccount() && !githubAccount().needsSignIn);
+  $('github-clone-into').hidden = !ready || shown !== 'repos';
+  const running = Boolean(viewData('actions')?.value?.running);
+  $('github-running').hidden = !running;
+  $('github-view-actions').setAttribute('aria-label', running ? 'Actions, a workflow is running' : 'Actions');
+  renderPickerList();
+  if (shown === 'issues') renderIssues();
+  else if (shown === 'actions') renderRuns();
+  else if (shown === 'pulls') renderPulls();
+}
+
+/** Rebuilds a panel and puts the focus back on the control with the same `data-key`. */
+function redraw(panel, children) {
+  const key = panel.contains(document.activeElement) ? document.activeElement.dataset.key : null;
+  panel.replaceChildren(...children.filter(Boolean));
+  if (key) panel.querySelector(`[data-key="${CSS.escape(key)}"]`)?.focus({ preventScroll: true });
+}
+
+function keyed(node, key) {
+  node.dataset.key = key;
+  return node;
+}
+
+function viewTools(view, ...controls) {
+  const slot = viewData(view);
+  const refresh = keyed(button(slot?.loading ? 'Refreshing…' : 'Refresh', () => loadView(view)), 'refresh');
+  refresh.disabled = Boolean(slot?.loading);
+  const href = slot?.value?.url ?? `https://github.com/${githubPick.repo.fullName}/${view === 'pulls' ? 'pulls' : view}`;
+  const open = keyed(externalLink('GitHub', href, 'btn github-out'), 'out');
+  open.title = `Open ${githubPick.repo.fullName} on GitHub`;
+  return el('div', 'github-view-tools', ...controls, el('span', 'github-spacer'), refresh, open);
+}
+
+function viewStatus(view, empty) {
+  const slot = viewData(view);
+  if (slot?.error) {
+    const line = el('p', 'github-error', slot.error);
+    line.setAttribute('role', 'alert');
+    return line;
+  }
+  if (!slot?.value) return el('p', 'github-view-note', 'Loading…');
+  if (empty) return el('p', 'github-view-note', empty);
+  return null;
+}
+
+function noRepoNote(what) {
+  return el('p', 'github-view-note', githubPick.list ? `Pick a repository above to see its ${what}.` : 'Loading repositories…');
+}
+
+function recordRow(key, title, meta, side, href) {
+  const head = href ? keyed(externalLink(title, href, 'github-record-title'), `${key}:title`) : title;
+  return el('article', 'history-row github-record', el('div', 'history-main', el('div', 'history-title', head), el('div', 'history-meta', meta)), side);
+}
+
+function renderIssues() {
+  const panel = $('github-issues');
+  const repo = githubPick.repo;
+  if (!repo) return redraw(panel, [noRepoNote('issues')]);
+  if (githubPick.editing !== null) return renderIssueEditor(panel, repo);
+  const slot = viewData('issues');
+  const blocked = issueAccountError(repo);
+  const issues = slot?.value?.issues ?? [];
+  const filter = el('div', 'github-segment', ...['open', 'closed'].map((value) => {
+    const choice = keyed(button(value === 'open' ? 'Open' : 'Closed', () => {
+      if (githubPick.issueState === value) return;
+      githubPick.issueState = value;
+      loadView('issues');
+    }), `state:${value}`);
+    choice.setAttribute('aria-pressed', String(githubPick.issueState === value));
+    return choice;
+  }));
+  filter.setAttribute('role', 'group');
+  filter.setAttribute('aria-label', 'Show issues');
+  const create = keyed(button('New issue', () => editIssue('new'), 'btn primary'), 'new');
+  create.disabled = Boolean(blocked);
+  const rows = issues.map((issue) => {
+    const edit = keyed(button('Edit', () => editIssue(issue.number)), `edit:${issue.number}`);
+    edit.disabled = Boolean(blocked);
+    edit.setAttribute('aria-label', `Edit #${issue.number} ${issue.title}`);
+    const meta = [issue.user, issue.updatedAt && `updated ${relativeTime(issue.updatedAt)}`, issue.comments && `${issue.comments} comment${issue.comments === 1 ? '' : 's'}`].filter(Boolean).join(' · ');
+    return recordRow(`issue:${issue.number}`, `#${issue.number} ${issue.title}`, meta, edit, issue.url);
+  });
+  redraw(panel, [
+    viewTools('issues', filter, create),
+    blocked && el('p', 'github-error', blocked),
+    viewStatus('issues', slot?.value && !issues.length ? `No ${githubPick.issueState} issues.` : null),
+    rows.length ? el('div', 'history-list', ...rows) : null,
+    slot?.value?.truncated ? el('p', 'github-view-note', 'Showing the 30 most recently updated.') : null,
+  ]);
+}
+
+function editIssue(target) {
+  if (!githubPick.repo || issueAccountError(githubPick.repo)) return;
+  githubPick.editing = { target };
+  renderGitHubViews();
+  $('github-issues').querySelector('input')?.focus();
+}
+
+function leaveIssueEditor() {
+  if (githubPick.editing?.pending) return;
+  githubPick.editing = null;
+  renderGitHubViews();
+  $('github-issues').querySelector('[data-key="new"]')?.focus();
+}
+
+function issuePayloadError(payload) {
+  if (payload.title !== undefined) {
+    if (!payload.title.trim()) return 'Enter a title for the issue.';
+    if (payload.title.trim().length > 256) return 'Keep the title to 256 characters or fewer.';
+  }
+  if (payload.body?.length > BODY_LIMIT) return 'Keep the description to 48,000 characters or fewer, or edit it on GitHub.';
+  if (new TextEncoder().encode(JSON.stringify(payload)).length > GITHUB_REQUEST_LIMIT) {
+    return 'This issue is too large to send here. Shorten the description or edit it on GitHub.';
+  }
+  return null;
+}
+
+function renderIssueEditor(panel, repo) {
+  const editor = githubPick.editing;
+  if (editor.form && panel.contains(editor.form)) return editor.update();
+  const issue = editor.target === 'new' ? null : viewData('issues')?.value?.issues.find((i) => i.number === editor.target) ?? null;
+  if (editor.target !== 'new' && !issue) {
+    githubPick.editing = null;
+    return renderIssues();
+  }
+  const key = repoKey(repo);
+  const title = el('input');
+  Object.assign(title, { type: 'text', required: true, value: issue?.title ?? '', spellcheck: true, autocomplete: 'off' });
+  const body = el('textarea', 'github-issue-body');
+  Object.assign(body, { value: issue?.body ?? '', placeholder: 'Describe the issue (Markdown)' });
+  // Compare the browser's initialized values: textareas normalize CRLF to LF.
+  const initial = { title: title.value, body: body.value };
+  const longBody = Boolean(issue && issuePayloadError({ body: initial.body }));
+  const context = el('p', 'github-small');
+  const accountError = el('p', 'github-error');
+  accountError.setAttribute('role', 'alert');
+  const error = el('p', 'github-error');
+  error.setAttribute('role', 'alert');
+  error.hidden = true;
+  const form = el('form', 'github-card github-issue-form',
+    el('h3', null, issue ? `Edit #${issue.number} in ${repo.fullName}` : `New issue in ${repo.fullName}`),
+    context,
+    el('div', 'github-fields', el('label', 'wide', el('span', null, 'Title'), title), el('label', 'wide', el('span', null, 'Description'), body)),
+    longBody && el('p', 'github-small', 'This description is too long to edit here. Title and state changes keep it intact. ', externalLink('Edit on GitHub', issue.url)),
+    accountError, error);
+  form.noValidate = true;
+  editor.form = form;
+  const changes = () => {
+    const payload = {};
+    if (!issue || title.value !== initial.title) payload.title = title.value;
+    if (!issue || (!longBody && body.value !== initial.body)) payload.body = body.value;
+    return payload;
+  };
+  const dirty = () => title.value !== initial.title || (!longBody && body.value !== initial.body);
+  const current = () => githubPick.editing === editor && githubPick.repo && repoKey(githubPick.repo) === key;
+  const visible = () => dockShows('github') && githubShownView() === 'issues';
+  const fail = (message) => {
+    error.textContent = message;
+    error.hidden = false;
+  };
+  const send = async (control, nextState) => {
+    if (editor.pending || !current()) return;
+    const payload = changes();
+    if (nextState) payload.state = nextState;
+    if (!Object.keys(payload).length) return;
+    const invalid = issueAccountError(repo) || issuePayloadError(payload);
+    if (invalid) return fail(invalid);
+    const login = state.github.accounts.find((a) => a.id === repo.accountId).login;
+    const ownedFocus = form.contains(document.activeElement);
+    editor.pending = true;
+    editor.update();
+    const pendingFocus = document.activeElement;
+    const mayFocus = () => visible() && (form.contains(document.activeElement) || (ownedFocus && document.activeElement === pendingFocus));
+    error.hidden = true;
+    try {
+      const result = issue
+        ? await api('PATCH', `${repoPath(repo)}/issues/${issue.number}`, payload)
+        : await api('POST', `${repoPath(repo)}/issues`, payload);
+      const verb = nextState === 'closed' ? 'Closed' : nextState === 'open' ? 'Reopened' : issue ? 'Saved' : 'Created';
+      toast(`${verb} #${result.issue.number} in ${repo.fullName} as @${login}.`, 4000);
+      if (!current()) return;
+      const focus = mayFocus();
+      githubPick.editing = null;
+      if (!issue) githubPick.issueState = 'open';
+      delete githubPick.data.issues;
+      if (!visible()) return;
+      // A new editor may open while the refresh is pending. Focus only the list we drew.
+      renderGitHubViews();
+      const newButton = panel.querySelector('[data-key="new"]');
+      const refreshFocus = document.activeElement;
+      await loadView('issues');
+      if (focus && visible() && !githubPick.editing && githubPick.repo && repoKey(githubPick.repo) === key
+        && (document.activeElement === refreshFocus || document.activeElement === newButton)) {
+        panel.querySelector('[data-key="new"]')?.focus();
+      }
+    } catch (err) {
+      if (err instanceof AuthError) return showAuth(err.message);
+      const message = err.code === 'too_large' ? 'This issue is too large to send here. Shorten the description or edit it on GitHub.' : err.message;
+      if (current()) {
+        fail(message);
+        const focus = mayFocus();
+        editor.pending = false;
+        editor.update();
+        if (focus) control.focus();
+      } else toast(`${repo.fullName} · @${login}: ${message}`, 8000);
+    } finally {
+      editor.pending = false;
+      if (current()) editor.update();
+    }
+  };
+  const submit = el('button', 'btn primary', issue ? 'Save' : 'Create issue');
+  submit.type = 'submit';
+  const actions = el('div', 'github-actions', submit);
+  let toggle;
+  const closing = issue?.state === 'open';
+  if (issue) {
+    toggle = button('', () => send(toggle, closing ? 'closed' : 'open'), closing ? 'btn danger' : 'btn');
+    actions.append(toggle);
+  }
+  actions.append(button('Cancel', leaveIssueEditor));
+  if (issue) actions.append(externalLink('Open on GitHub', issue.url, 'btn github-out'));
+  form.append(actions);
+  editor.update = () => {
+    const blocked = issueAccountError(repo);
+    context.textContent = `Acting as @${state.github?.accounts.find((a) => a.id === repo.accountId)?.login ?? repo.login}`;
+    if (accountError.textContent !== (blocked ?? '')) accountError.textContent = blocked ?? '';
+    accountError.hidden = !blocked;
+    for (const b of form.querySelectorAll('button')) b.disabled = Boolean(editor.pending);
+    submit.disabled = Boolean(editor.pending || blocked || (issue && !dirty()));
+    submit.textContent = editor.pending ? 'Saving…' : issue ? 'Save' : 'Create issue';
+    title.readOnly = Boolean(editor.pending);
+    body.readOnly = Boolean(editor.pending || longBody);
+    form.setAttribute('aria-busy', String(Boolean(editor.pending)));
+    if (toggle) {
+      toggle.disabled = Boolean(editor.pending || blocked);
+      toggle.textContent = dirty() ? (closing ? 'Save and close' : 'Save and reopen') : closing ? 'Close issue' : 'Reopen issue';
+    }
+  };
+  form.addEventListener('input', () => {
+    error.hidden = true;
+    editor.update();
+  });
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    send(submit);
+  });
+  form.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    e.preventDefault();
+    if (!editor.pending && !dirty()) leaveIssueEditor();
+  });
+  editor.update();
+  panel.replaceChildren(form);
+}
+
+function runTone(run) {
+  if (run.status !== 'completed') return 'run';
+  if (run.conclusion === 'success' || run.conclusion === 'skipped' || run.conclusion === 'neutral') return 'ok';
+  if (run.conclusion === 'failure' || run.conclusion === 'timed_out' || run.conclusion === 'startup_failure') return 'bad';
+  return '';
+}
+
+function runLabel(run) {
+  return String(run.status === 'completed' && run.conclusion ? run.conclusion : run.status).replaceAll('_', ' ');
+}
+
+function renderRuns() {
+  const panel = $('github-runs');
+  if (!githubPick.repo) return redraw(panel, [noRepoNote('Actions runs')]);
+  const slot = viewData('actions');
+  const runs = slot?.value?.runs ?? [];
+  const banner = slot?.value ? el('p', `github-running-note${slot.value.running ? ' on' : ''}`, slot.value.running ? 'A workflow is running. This list refreshes every few seconds.' : 'No workflow is running.') : null;
+  const rows = runs.map((run) => {
+    const meta = [run.name !== run.title && run.name, run.branch && `on ${run.branch}`, run.event, run.runNumber && `#${run.runNumber}`, run.updatedAt && relativeTime(run.updatedAt)].filter(Boolean).join(' · ');
+    return recordRow(`run:${run.id}`, run.title, meta, badge(runTone(run), runLabel(run), `Status: ${runLabel(run)}`), run.url);
+  });
+  redraw(panel, [
+    viewTools('actions'),
+    banner,
+    viewStatus('actions', slot?.value && !runs.length ? 'No workflow runs yet.' : null),
+    rows.length ? el('div', 'history-list', ...rows) : null,
+    slot?.value?.truncated ? el('p', 'github-view-note', 'Showing the 30 latest runs.') : null,
+  ]);
+}
+
+function renderPulls() {
+  const panel = $('github-pulls');
+  if (!githubPick.repo) return redraw(panel, [noRepoNote('pull requests')]);
+  const slot = viewData('pulls');
+  const pulls = slot?.value?.pulls ?? [];
+  const rows = pulls.map((pull) => {
+    const meta = [pull.user, pull.head && pull.base && `${pull.head} → ${pull.base}`, pull.updatedAt && `updated ${relativeTime(pull.updatedAt)}`].filter(Boolean).join(' · ');
+    return recordRow(`pull:${pull.number}`, `#${pull.number} ${pull.title}`, meta, pull.draft ? badge('', 'Draft', 'Not ready for review') : null, pull.url);
+  });
+  redraw(panel, [
+    viewTools('pulls'),
+    viewStatus('pulls', slot?.value && !pulls.length ? 'No open pull requests.' : null),
+    rows.length ? el('div', 'history-list', ...rows) : null,
+    slot?.value?.truncated ? el('p', 'github-view-note', 'Showing the 30 most recently updated.') : null,
+  ]);
 }
 
 // ---- session cards --------------------------------------------------------
@@ -2929,15 +3708,15 @@ function statusText(s) {
     if (s.signal) return `Exited (${s.signal})`;
     return s.exitCode === 0 || s.exitCode === null ? 'Exited' : `Exited (${s.exitCode})`;
   }
-  return s.activity === 'active' ? 'Working' : 'Running';
+  return isSessionWorking(s) ? 'Working' : 'Running';
 }
 
 function buildCard(session) {
   const node = $('session-template').content.firstElementChild.cloneNode(true);
   node.dataset.id = session.id;
-  const open = () => openPanel(session.id);
-  node.addEventListener('click', (e) => { if (!e.target.closest('button')) open(); });
-  node.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target === node) open(); });
+  const open = (e) => openPanel(session.id, { beside: e.ctrlKey || e.metaKey });
+  node.addEventListener('click', (e) => { if (!e.target.closest('button')) open(e); });
+  node.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target === node) open(e); });
   node.querySelector('.open').addEventListener('click', open);
   node.querySelector('.stop').addEventListener('click', () => stopSession(session.id));
   node.querySelector('.remove').addEventListener('click', () => removeSession(session.id));
@@ -3017,7 +3796,7 @@ function updateCard(node, s) {
   paintIdButton(node.querySelector('.session-id'), id);
   const pill = node.querySelector('.status-pill');
   pill.textContent = statusText(s);
-  pill.className = `status-pill ${s.status === 'exited' ? 'exited' : s.activity}`;
+  pill.className = `status-pill ${s.status === 'exited' ? 'exited' : isSessionWorking(s) ? 'active' : 'quiet'}`;
   const model = node.querySelector('.model-pill');
   model.hidden = !s.model;
   model.textContent = modelText(s);
@@ -3055,6 +3834,7 @@ function updateCard(node, s) {
 function renderSessions() {
   const grid = $('sessions');
   const sessions = orderSessions(state.sessions.values(), sessionOrder);
+  activityFavicon.setWorking(sessions.some(isSessionWorking));
   for (const [id, node] of cards) {
     if (state.sessions.has(id)) continue;
     if (drag?.id === id) releaseDrag();
@@ -3111,8 +3891,9 @@ function upsertSession(session) {
 function dropSession(id) {
   state.sessions.delete(id);
   const view = state.views.get(id);
+  const pane = state.panes.indexOf(id);
+  if (pane !== -1) closePane(pane, { focusTerminal: paneNodes[pane].contains(document.activeElement) });
   if (view) { view.dispose(); state.views.delete(id); }
-  if (state.activeId === id) closePanel();
   renderSessions();
 }
 
@@ -3513,17 +4294,17 @@ class TerminalView {
 
   sendSize() {
     const { cols, rows } = this.term;
-    if (!this.el.isConnected || (cols === this.sent.cols && rows === this.sent.rows)) return;
+    if (terminalSizesHeld || !this.el.isConnected || (cols === this.sent.cols && rows === this.sent.rows)) return;
     this.sent = { cols, rows };
     this.send({ type: 'resize', cols, rows });
   }
 
-  mount(host) {
+  mount(host, { focus = true } = {}) {
     host.replaceChildren(this.el);
     if (!this.opened) { this.term.open(this.el); this.enableTouchScroll(); this.opened = true; }
     this.resizeObserver.observe(host);
     this.refit();
-    this.term.focus();
+    if (focus) this.term.focus();
   }
 
   /**
@@ -3601,26 +4382,162 @@ const terminalCopy = new TerminalCopy({
   },
 });
 
-function openPanel(id) {
+const paneNodes = [...document.querySelectorAll('.terminal-pane')];
+const sessionMenu = { mode: 'switch', invoker: null };
+let terminalSizesHeld = false;
+let panesRestored = false;
+let splitRatio = clampRatio(Number.parseFloat(load(SPLIT_RATIO_KEY)));
+
+/**
+ * `beside`: into the other pane instead of the focused one. Two panes never show the same session, whose terminal has one size.
+ * `restoring`: brought back from the last visit, under a dock that was also brought back and stays on top.
+ */
+function openPanel(id, { beside = false, restoring = false } = {}) {
   if (!state.sessions.has(id)) return;
+  let index = state.panes.indexOf(id);
+  if (index === -1) {
+    index = !state.panes.length ? 0 : !beside ? state.focusedPane : state.panes.length < 2 ? 1 : 1 - state.focusedPane;
+    const replaced = state.panes[index];
+    if (replaced) state.views.get(replaced)?.unmount();
+    state.panes[index] = id;
+    if (!state.views.has(id)) state.views.set(id, new TerminalView(id));
+  }
+  $('terminal-panel').hidden = false;
+  if (!restoring) dockMakesWayForTerminal();
+  focusPane(index, { focusTerminal: !restoring || !dockView.panel });
+}
+
+function focusPane(index, { focusTerminal = true } = {}) {
+  const id = state.panes[index];
+  if (!id) return;
   if (state.activeId !== id) terminalCopy.close();
   if (dictation && dictation.id !== id) stopDictation();
-  if (state.activeId && state.activeId !== id) state.views.get(state.activeId)?.unmount();
+  state.focusedPane = index;
   state.activeId = id;
-  let view = state.views.get(id);
-  if (!view) { view = new TerminalView(id); state.views.set(id, view); }
-  $('terminal-panel').hidden = false;
+  layoutPanes();
   updatePanel();
-  view.mount($('terminal-host'));
+  if (focusTerminal) state.views.get(id)?.term.focus();
+  savePanes();
+  followTerminal();
+}
+
+function closePane(index, { focusTerminal = true } = {}) {
+  const id = state.panes[index];
+  if (!id) return;
+  if (state.panes.length < 2) return closePanel();
+  state.views.get(id)?.unmount();
+  state.panes.splice(index, 1);
+  focusPane(0, { focusTerminal });
 }
 
 function closePanel() {
   terminalCopy.close();
   stopDictation();
-  if (state.activeId) state.views.get(state.activeId)?.unmount();
+  for (const id of state.panes) state.views.get(id)?.unmount();
+  state.panes = [];
+  state.focusedPane = 0;
   state.activeId = null;
   $('terminal-panel').hidden = true;
+  closeMenu($('panel-sessions'));
   renderVoice();
+  savePanes();
+}
+
+function stageSplit() {
+  const box = $('terminal-panel').getBoundingClientRect();
+  return splitMode(box.width, box.height);
+}
+
+function layoutPanes() {
+  if ($('terminal-panel').hidden) return;
+  const split = state.panes.length === 2 ? stageSplit() : null;
+  const panes = $('terminal-panes');
+  if (split) panes.dataset.split = split;
+  else delete panes.dataset.split;
+  panes.style.setProperty('--ratio', String(splitRatio));
+  const splitter = $('pane-splitter');
+  splitter.hidden = !split;
+  splitter.setAttribute('aria-orientation', split === 'rows' ? 'horizontal' : 'vertical');
+  splitter.setAttribute('aria-valuemin', String(Math.round(SPLIT_RATIO_MIN * 100)));
+  splitter.setAttribute('aria-valuemax', String(Math.round((1 - SPLIT_RATIO_MIN) * 100)));
+  splitter.setAttribute('aria-valuenow', String(Math.round(splitRatio * 100)));
+  paneNodes.forEach((pane, index) => {
+    const id = state.panes[index];
+    const shown = Boolean(id) && (split !== null || index === state.focusedPane);
+    pane.hidden = !shown;
+    pane.classList.toggle('focused', index === state.focusedPane);
+    const view = id ? state.views.get(id) : null;
+    const host = pane.querySelector('.terminal-host');
+    if (shown && view && view.el.parentNode !== host) view.mount(host, { focus: false });
+    else if (!shown && view && view.el.parentNode === host) view.unmount();
+  });
+  renderPaneLabels();
+}
+
+function renderPaneLabels() {
+  const split = $('terminal-panes').dataset.split;
+  paneNodes.forEach((pane, index) => {
+    const s = state.sessions.get(state.panes[index]);
+    pane.querySelector('.pane-name').textContent = s ? `${s.name} · ${statusText(s)}` : '';
+    pane.setAttribute('aria-label', s ? s.name : '');
+  });
+  const others = [...state.sessions.keys()].some((id) => !state.panes.includes(id));
+  $('panel-split').hidden = state.panes.length !== 1 || !others || stageSplit() === null;
+  const swap = $('panel-swap');
+  const other = state.panes.length === 2 && !split ? state.sessions.get(state.panes[1 - state.focusedPane]) : null;
+  swap.hidden = !other;
+  swap.textContent = other ? `Show ${other.name}` : '';
+  swap.title = other ? `Switch to ${other.name}, the other open terminal` : '';
+}
+
+/** The button the session menu opened from, or the switcher once that button is gone, as Split is after a split. */
+function sessionInvoker() {
+  return sessionMenu.invoker?.checkVisibility?.() ? sessionMenu.invoker : $('panel-switch');
+}
+
+function renderSessionMenu() {
+  const menu = $('panel-sessions');
+  const beside = sessionMenu.mode === 'beside';
+  const sessions = orderSessions(state.sessions.values(), sessionOrder).filter((s) => !beside || !state.panes.includes(s.id));
+  const items = sessions.map((s) => {
+    const item = el('button', 'menu-item', s.name, el('span', 'menu-note', [statusText(s), folderName(s.cwd)].filter(Boolean).join(' · ')));
+    item.type = 'button';
+    item.setAttribute('role', 'menuitem');
+    if (s.id === state.activeId) item.setAttribute('aria-current', 'true');
+    item.addEventListener('click', () => {
+      closeMenu(menu);
+      openPanel(s.id, { beside });
+    });
+    return item;
+  });
+  menu.replaceChildren(...(items.length ? items : [el('p', 'menu-empty', 'No other sessions')]));
+}
+
+function holdTerminalSizes() {
+  terminalSizesHeld = true;
+  document.documentElement.classList.add('resizing');
+}
+
+function releaseTerminalSizes() {
+  terminalSizesHeld = false;
+  document.documentElement.classList.remove('resizing');
+  for (const id of state.panes) state.views.get(id)?.refit();
+}
+
+function savePanes() {
+  save(PANES_KEY, state.panes.length ? JSON.stringify({ panes: state.panes, focused: state.focusedPane }) : null);
+}
+
+function restorePanes() {
+  if (panesRestored) return;
+  panesRestored = true;
+  let saved;
+  try { saved = JSON.parse(load(PANES_KEY)); } catch { return; }
+  const ids = Array.isArray(saved?.panes) ? saved.panes.filter((id) => typeof id === 'string' && state.sessions.has(id)).slice(0, 2) : [];
+  if (!ids.length || state.panes.length) return;
+  openPanel(ids[0], { restoring: true });
+  if (ids[1]) openPanel(ids[1], { beside: true, restoring: true });
+  if (saved.focused === 0 && ids[1]) focusPane(0, { focusTerminal: !dockView.panel });
 }
 
 function updatePanel() {
@@ -3635,6 +4552,7 @@ function updatePanel() {
   renderAgents($('panel-agents'), s.agents, s.shells || []);
   const stop = $('panel-stop');
   stop.textContent = s.status !== 'running' ? 'Remove' : s.multiplexer ? 'Detach' : 'Stop';
+  renderPaneLabels();
 }
 
 // ---- voice input ----------------------------------------------------------
@@ -3961,22 +4879,26 @@ function connectEvents() {
       state.pid = msg.pid || null;
       state.restartable = typeof msg.pid === 'number';
       state.launcher = typeof msg.launcher === 'string' ? msg.launcher : null;
+      state.folderOpener = msg.folderOpener || null;
+      state.folderPicker = msg.folderPicker || null;
       renderVersion();
       setConnection('ok', 'Connected to session manager');
       state.sessions = new Map(msg.sessions.map((s) => [s.id, s]));
       for (const id of [...state.views.keys()]) if (!state.sessions.has(id)) dropSession(id);
       managerConnected(msg);
       renderSessions();
+      if (!sessionsShown && load(DOCK_KEY) === 'github' && !dockView.panel) openGitHub({ focus: false });
+      restorePanes();
       sessionsShown = true;
       setUpgrade(msg.upgrade, true);
       loadNews();
       // A changelog.updated sent while the socket was down is lost; catch up the open panel.
       if ($('changelog').open) loadChangelog();
-      if ($('github').open) loadGitHub();
+      if (dockShows('github')) loadGitHub();
     } else if (msg.type === 'news.updated') {
       loadNews();
     } else if (msg.type === 'github.updated') {
-      if ($('github').open) loadGitHub();
+      if (dockShows('github')) loadGitHub();
     } else if (msg.type === 'changelog.updated') {
       if ($('changelog').open) loadChangelog();
     } else if (msg.type === 'manager.upgrade') {
@@ -4076,6 +4998,7 @@ async function boot() {
   }
   save(TOKEN_KEY, state.token);
   $('app').hidden = false;
+  if (load(DOCK_KEY) === 'notes' && !dockView.panel) openNotes({ focus: false });
   connectEvents();
   loadUsage();
   clearInterval(usageTimer);
@@ -4095,6 +5018,32 @@ $('auth-form').addEventListener('submit', (e) => {
   boot();
 });
 $('panel-close').addEventListener('click', closePanel);
+paneNodes.forEach((pane, index) => {
+  pane.querySelector('.pane-close').addEventListener('click', () => closePane(index));
+  pane.addEventListener('focusin', () => { if (state.focusedPane !== index) focusPane(index, { focusTerminal: false }); });
+  pane.addEventListener('pointerdown', () => { if (state.focusedPane !== index) focusPane(index, { focusTerminal: false }); });
+});
+const splitAxis = () => ($('terminal-panes').dataset.split === 'rows' ? 'y' : 'x');
+const setSplitRatio = (ratio) => {
+  splitRatio = clampRatio(ratio);
+  layoutPanes();
+};
+bindSplitter($('pane-splitter'), {
+  axis: splitAxis,
+  start: () => splitRatio,
+  move: (delta, from) => {
+    holdTerminalSizes();
+    const box = $('terminal-panes').getBoundingClientRect();
+    setSplitRatio(from + delta / Math.max(1, (splitAxis() === 'x' ? box.width : box.height) - 8));
+  },
+  end: () => {
+    save(SPLIT_RATIO_KEY, String(splitRatio));
+    releaseTerminalSizes();
+  },
+  home: () => setSplitRatio(SPLIT_RATIO_MIN),
+  endKey: () => setSplitRatio(1 - SPLIT_RATIO_MIN),
+});
+new ResizeObserver(layoutPanes).observe($('terminal-panel'));
 $('panel-voice').addEventListener('click', () => {
   if (dictation) {
     const { id } = dictation;
@@ -4114,12 +5063,30 @@ $('history').addEventListener('close', () => {
   historyOpener = null;
 });
 $('history-filter').addEventListener('input', renderHistory);
-$('github-open').addEventListener('click', openGitHub);
-$('github-close').addEventListener('click', () => closeGitHub());
-$('github').addEventListener('click', (e) => { if (e.target === $('github')) closeGitHub(); });
-$('github').addEventListener('close', () => {
-  if (githubView.opener !== false) (githubView.opener?.isConnected && !githubView.opener.closest('[hidden]') ? githubView.opener : $('github-open')).focus();
-  githubView.opener = null;
+$('github-open').addEventListener('click', () => openGitHub());
+$('github-toggle').addEventListener('click', firstClick(toggleGitHub));
+$('github-title').addEventListener('click', () => { if (!dockShows('github')) openGitHub(); });
+$('notes-title').addEventListener('click', () => { if (!dockShows('notes')) openNotes(); });
+$('dock').querySelector('.dock-tabs').addEventListener('keydown', moveDockTab);
+$('dock-close').addEventListener('click', () => closeDock());
+$('dock').addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || e.defaultPrevented || (e.target.type === 'search' && e.target.value)) return;
+  e.preventDefault();
+  closeDock();
+});
+bindSplitter($('dock-splitter'), {
+  start: () => clampDockWidth(dockView.width, innerWidth),
+  move: (delta, from) => {
+    holdTerminalSizes();
+    dockView.width = clampDockWidth(from - delta, innerWidth);
+    applyDockLayout();
+  },
+  end: () => {
+    save(DOCK_WIDTH_KEY, String(dockView.width));
+    releaseTerminalSizes();
+  },
+  home: () => { dockView.width = DOCK_MIN; applyDockLayout(); },
+  endKey: () => { dockView.width = clampDockWidth(Infinity, innerWidth); applyDockLayout(); },
 });
 $('github-add').addEventListener('click', startGitHubSignIn);
 $('github-filter').addEventListener('input', () => renderGitHub());
@@ -4134,6 +5101,37 @@ $('github-create').addEventListener('input', () => {
   $('github-create-error').hidden = true;
   renderCreate();
 });
+const openPicker = (e) => {
+  if (githubPick.open) return;
+  githubPick.query = '';
+  githubPick.active = 0;
+  setPickerOpen(true);
+  e.target.select();
+};
+$('github-repo').addEventListener('focus', openPicker);
+$('github-repo').addEventListener('click', openPicker);
+// Releasing a press would put the caret where it was let go; the press that opens the list keeps the name selected.
+let pickerPressOpens = false;
+$('github-repo').addEventListener('mousedown', () => { pickerPressOpens = !githubPick.open; });
+$('github-repo').addEventListener('mouseup', (e) => { if (pickerPressOpens) e.preventDefault(); });
+$('github-repo').addEventListener('input', (e) => {
+  githubPick.query = e.target.value;
+  githubPick.active = 0;
+  if (githubPick.open) renderPickerList();
+  else setPickerOpen(true);
+});
+$('github-repo').addEventListener('keydown', pickerKey);
+$('github-repo').addEventListener('blur', (e) => {
+  setPickerOpen(false);
+  githubPick.query = '';
+  e.target.value = githubPick.repo?.fullName ?? '';
+});
+$('github-repo-reload').addEventListener('click', () => loadAllRepos({ refresh: true }));
+$('github-views').addEventListener('click', (e) => {
+  const view = e.target.closest?.('[data-view]')?.dataset.view;
+  if (view) switchGitHubView(view);
+});
+$('github-views').addEventListener('keydown', moveGitHubView);
 $('github-parent').addEventListener('change', () => {
   save(CLONE_PARENT_KEY, cloneParent());
   loadRepos();
@@ -4171,12 +5169,7 @@ document.addEventListener('keydown', (e) => {
 }, true);
 addEventListener('scroll', () => { if (tipFor) hideTip(); }, true);
 addEventListener('resize', () => { if (tipFor) hideTip(); });
-$('notes-open').addEventListener('click', firstClick(openNotes));
-$('notes-close').addEventListener('click', firstClick(closeNotes));
-$('notes').addEventListener('mousedown', keepFocus);
-$('notes').addEventListener('pointerdown', notesPressed);
-$('notes').addEventListener('click', notesClicked);
-$('notes').addEventListener('close', notesClosed);
+$('notes-open').addEventListener('click', firstClick(toggleNotes));
 $('notes-text').addEventListener('input', saveNotes);
 addEventListener('storage', notesStored);
 // On load, and again for a page back from the back/forward cache, which may have missed another tab's notes.
@@ -4196,9 +5189,12 @@ $('news').addEventListener('close', () => {
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') stopDictation();
   if (document.visibilityState === 'visible' && state.connected && Date.now() - newsLoadedAt > 60000) loadNews();
+  if (document.visibilityState === 'visible' && dockShows('github') && githubShownView() === 'actions') loadView('actions');
+  else scheduleRuns();
 });
 addEventListener('pagehide', () => {
   state.pageAway = true;
+  activityFavicon.setPaused(true);
   terminalCopy.close();
   stopDictation();
   managerLoss.cancel();
@@ -4207,6 +5203,7 @@ addEventListener('pagehide', () => {
 addEventListener('pageshow', (event) => {
   if (!event.persisted) return;
   state.pageAway = false;
+  activityFavicon.setPaused(false);
   connectEvents();
 });
 $('version').addEventListener('click', openChangelog);
@@ -4267,22 +5264,61 @@ $('models-more').addEventListener('click', () => {
   renderModels();
   $('models-list').children[before]?.querySelector('.model-toggle')?.focus();
 });
-$('stop-manager').addEventListener('click', firstClick(() => stopManager()));
-$('restart-manager').addEventListener('click', firstClick(() => stopManager({ restart: true })));
+$('stop-manager').addEventListener('click', firstClick(() => { closeMenu($('manager-menu')); stopManager(); }));
+$('restart-manager').addEventListener('click', firstClick(() => { closeMenu($('manager-menu')); stopManager({ restart: true }); }));
 $('copy-command').addEventListener('click', copyCommand);
 $('upgrade').addEventListener('click', upgradeManager);
-$('appearance-menu').addEventListener('change', (e) => {
+$('settings-menu').addEventListener('change', (e) => {
   if (e.target.name === 'skin') changeSkin(e.target);
   else if (e.target.name === 'theme') changeTheme(e.target);
   else if (e.target.name === 'sound') changeSound(e.target);
   else if (e.target.name === 'voice') changeVoice(e.target);
 });
-$('appearance-menu').addEventListener('toggle', (e) => {
-  if (e.newState !== 'open') return;
-  placeAppearanceMenu();
-  e.currentTarget.querySelector('input:checked')?.focus();
+/**
+ * Runs `opened` once a menu shows and `closed` once it hides. Chrome skips the toggle event of a menu
+ * that closes and opens again within a task, so this follows beforetoggle, which always fires.
+ */
+function onMenu(menu, opened, closed = () => {}) {
+  menu.addEventListener('beforetoggle', (e) => {
+    const opening = e.newState === 'open';
+    requestAnimationFrame(() => {
+      if (menu.matches(':popover-open') === opening) (opening ? opened : closed)(menu);
+    });
+  });
+}
+/** A menu closed with its focus inside, or with nothing focused after it, hands the focus back to its button. */
+function returnFocus(menu, invoker) {
+  const at = document.activeElement;
+  if ((!at || at === document.body || menu.contains(at)) && invoker?.checkVisibility?.()) invoker.focus();
+}
+onMenu($('settings-menu'), (menu) => {
+  placeMenu(menu, $('settings'));
+  menu.querySelector('input:checked')?.focus();
+}, (menu) => returnFocus(menu, $('settings')));
+onMenu($('manager-menu'), (menu) => {
+  placeMenu(menu, $('manager'));
+  menuItems(menu)[0]?.focus();
+}, (menu) => returnFocus(menu, $('manager')));
+$('panel-sessions').addEventListener('beforetoggle', (e) => { if (e.newState === 'open') renderSessionMenu(); });
+onMenu($('panel-sessions'), (menu) => {
+  placeMenu(menu, sessionInvoker());
+  (menu.querySelector('.menu-item[aria-current="true"]') ?? menuItems(menu)[0])?.focus();
+}, (menu) => returnFocus(menu, sessionInvoker()));
+for (const menu of [$('manager-menu'), $('panel-sessions')]) menu.addEventListener('keydown', moveInMenu);
+// Recorded only on the click that opens the menu: a click that closes it leaves what the open menu showed.
+const sessionMenuFrom = (mode, invoker) => () => {
+  if (!$('panel-sessions').matches(':popover-open')) Object.assign(sessionMenu, { mode, invoker });
+};
+$('panel-switch').addEventListener('click', sessionMenuFrom('switch', $('panel-switch')));
+$('panel-split').addEventListener('click', sessionMenuFrom('beside', $('panel-split')));
+$('panel-swap').addEventListener('click', () => focusPane(1 - state.focusedPane));
+window.addEventListener('resize', () => {
+  if (topbarInline(innerWidth)) closeMenu($('topbar-menu'));
+  applyDockLayout();
+  placeMenu($('settings-menu'), $('settings'));
+  placeMenu($('manager-menu'), $('manager'));
+  placeMenu($('panel-sessions'), sessionInvoker());
 });
-window.addEventListener('resize', placeAppearanceMenu);
 $('providers').addEventListener('animationend', (e) => {
   if (e.target === e.currentTarget.lastElementChild) e.currentTarget.classList.remove('deal');
 });
@@ -4322,21 +5358,27 @@ $('panel-stop').addEventListener('click', () => {
   else removeSession(s.id);
 });
 $('cwd').value = load(CWD_KEY) || '';
+$('cwd-pick').addEventListener('click', firstClick(pickWorkingFolder));
+$('cwd-open').addEventListener('click', firstClick(openWorkingFolder));
 try { state.accounts = JSON.parse(load(ACCOUNTS_KEY)) || {}; } catch { state.accounts = {}; }
 try { state.shellPicks = JSON.parse(load(SHELLS_KEY)) || {}; } catch { state.shellPicks = {}; }
 githubView.accountId = Number(load(GITHUB_ACCOUNT_KEY)) || null;
+try { githubPick.recent = JSON.parse(load(GITHUB_RECENT_KEY)) || []; } catch { githubPick.recent = []; }
+if (!Array.isArray(githubPick.recent)) githubPick.recent = [];
+if (GITHUB_VIEWS.includes(load(GITHUB_VIEW_KEY))) githubPick.view = load(GITHUB_VIEW_KEY);
 if (typeof state.accounts !== 'object' || Array.isArray(state.accounts)) state.accounts = {};
 if (typeof state.shellPicks !== 'object' || Array.isArray(state.shellPicks)) state.shellPicks = {};
 setInterval(renderSessions, 30000);
 setInterval(tickNews, 30000);
-setInterval(() => { if ($('github').open && state.github) renderGitHub(); }, 30000);
+setInterval(() => { if (dockShows('github') && state.github) renderGitHub(); }, 30000);
 
-// The terminal panel sits below the top bar, which wraps onto two rows on
-// narrow screens; publish its height so the panel never covers its controls.
+// The terminal panel and the dock sit below the top bar; publish where it ends so they never cover its controls.
 const topbar = document.querySelector('.topbar');
-const publishTopbarHeight = () => document.documentElement.style.setProperty('--topbar-h', `${topbar.offsetHeight}px`);
+const publishTopbarHeight = () => document.documentElement.style.setProperty('--topbar-h', `${Math.max(0, Math.round(topbar.getBoundingClientRect().bottom))}px`);
 new ResizeObserver(publishTopbarHeight).observe(topbar);
+addEventListener('scroll', publishTopbarHeight, { passive: true });
 publishTopbarHeight();
+applyDockLayout();
 
 state.token = readTokenFromHash() || load(TOKEN_KEY);
 boot();

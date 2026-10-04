@@ -143,8 +143,63 @@ home folder, so a personal and a work subscription can run side by side:
 | `AGENT_GUILD_HOME` | Data folder (see above). |
 | `AGENT_GUILD_NPM_REGISTRY` | npm registry for version checks and installs. Defaults to the registry in npm's global configuration, the one `npm install -g` uses. |
 | `AGENT_GUILD_NO_UPDATE_CHECK` | `1` skips version checks, for the tools and for Agent Guild itself. Otherwise they run about once an hour. |
+| `AGENT_GUILD_ALLOWED_HOSTS` | Extra comma-separated Host values accepted by HTTP and WebSocket requests, e.g. `guild.example.ts.net` or `guild.example.ts.net:8443`. See [Reverse proxies](#reverse-proxies). |
 | `AGENT_GUILD_ALLOWED_ORIGINS` | Extra comma-separated origins allowed to call the API, e.g. a UI dev server. |
 | `AGENT_GUILD_SKIP_SHELL_ENV` | `1` skips reading the login shell's PATH on macOS and Linux. |
 
 The variables the manager sets inside every session are listed in
 [agent-reporting.md](agent-reporting.md).
+
+## Reverse proxies
+
+To open the UI from another device through a reverse proxy such as
+[Tailscale Serve](https://tailscale.com/docs/reference/tailscale-cli/serve),
+configure both the public **Host** and the browser's **Origin**. The manager
+continues listening on `127.0.0.1`; the proxy forwards HTTP and WebSocket
+traffic to it.
+
+For example, in PowerShell on the manager machine, replace the placeholder
+`guild.example.ts.net` with the HTTPS hostname shown by Tailscale Serve:
+
+```powershell
+$env:AGENT_GUILD_ALLOWED_HOSTS = 'guild.example.ts.net'
+$env:AGENT_GUILD_ALLOWED_ORIGINS = 'https://guild.example.ts.net'
+agent-guild open --no-browser
+tailscale serve --bg http://127.0.0.1:47821
+```
+
+These settings are read at manager startup. If it is already running, use
+`agent-guild stop` before starting it from the configured shell; stopping
+ends ordinary terminal sessions. `agent-guild restart` inherits the running
+manager's environment, so it does not pick up variables newly set in your
+shell. Set the variables in the environment used to launch the manager for
+future starts as well. If you changed `AGENT_GUILD_PORT`, use that port in
+the proxy target.
+
+Open `https://guild.example.ts.net/` on another device and enter the manager's
+existing access token. `agent-guild url` on the manager machine prints a
+local URL containing `#token=...`; use that token in the remote page's token
+field, or replace just the URL's scheme and authority with the proxy's
+HTTPS address, preserving the token fragment. The same token is required
+for protected API requests and WebSocket connections through the proxy.
+
+Working paths and tools still belong to the manager machine. Native folder
+dialogs and file-manager windows open there; from another device, enter the
+working folder's path in the UI instead.
+
+Host entries are exact, case-insensitive hostnames or IP literals, optionally
+followed by a port. IPv6 literals use brackets. Whitespace around entries
+and duplicate entries are ignored; schemes, paths, credentials, wildcards
+and invalid ports cause startup to fail with a configuration error. A bare
+hostname does not allow arbitrary ports or subdomains. For an HTTPS proxy
+on port 8443, set Host to `guild.example.ts.net:8443` and Origin to
+`https://guild.example.ts.net:8443`. For standard HTTPS, omit the default
+port, as browsers do. Origin entries include the scheme and have no trailing
+slash.
+
+The proxy should preserve the browser's Host and Origin headers and support
+WebSocket upgrades. `Forwarded`, `X-Forwarded-Host` and Tailscale identity
+headers do not grant access or replace API authentication. The page's CSP
+permits WebSocket connections to the explicitly configured hosts. Leaving
+both settings unset retains the existing loopback-only Host and Origin
+allowlists.

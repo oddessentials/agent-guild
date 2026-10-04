@@ -7,7 +7,10 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import os from 'node:os';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { GitHub } from '../src/manager/github.mjs';
+import { createViews } from '../src/manager/github-views.mjs';
 import { commandUsage } from '../src/manager/usage.mjs';
 import { commandHistory } from '../src/manager/session-history.mjs';
 import { parseVersion } from '../src/manager/versions.mjs';
@@ -74,4 +77,30 @@ test('the demo tool prints its version and reports its model and agents', () => 
     { agentId: 'test-writer', name: 'Test writer', status: 'waiting' },
   ]);
   assert.match(output, /npm run dev/);
+});
+
+test('the capture\'s GitHub signs in its account and fills every view of the panel', async (t) => {
+  const { DEMO_ACCOUNT, DEMO_REPOS, startDemoGitHub } = await import(pathToFileURL(demo('demo-github.mjs')));
+  const github = await startDemoGitHub();
+  t.after(github.close);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-capture-github-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(dir, 'accounts.json'), JSON.stringify({ accounts: [DEMO_ACCOUNT] }));
+  const hub = new GitHub({ dir, registry: { env: { PATH: '' }, platform: process.platform }, apiUrl: github.url });
+  const all = await hub.allRepos();
+  assert.deepEqual(all.errors, []);
+  assert.deepEqual(all.repos.map((r) => r.fullName).sort(), [...DEMO_REPOS].sort());
+  const views = createViews(hub);
+  const [owner, name] = DEMO_REPOS[0].split('/');
+  assert.ok((await views.issues(DEMO_ACCOUNT.id, owner, name)).issues.length >= 3);
+  const actions = await views.actions(DEMO_ACCOUNT.id, owner, name);
+  assert.ok(actions.runs.length >= 3 && actions.running);
+  assert.ok((await views.pulls(DEMO_ACCOUNT.id, owner, name)).pulls.length >= 1);
+});
+
+test('every file the banner draws from exists', () => {
+  const html = fs.readFileSync(demo('banner.html'), 'utf8');
+  const files = [...html.matchAll(/(?:src="|url\(")(\.\.\/[^"]+)"/g)].map((m) => m[1]);
+  assert.ok(files.length > 5);
+  for (const file of files) assert.ok(fs.existsSync(path.join(capture, file)), file);
 });

@@ -2267,6 +2267,58 @@ test('a GitHub account signs in, sets up SSH and clones over it in a visible ses
   assert.equal(again.body.error.code, 'clone_exists');
   assert.equal(again.body.error.target, path.join(parent, 'agent-guild'));
 
+  const origin = await call('GET', `/github/origin?cwd=${encodeURIComponent(path.join(parent, 'agent-guild'))}`);
+  assert.deepEqual(origin.body, { folder: path.join(parent, 'agent-guild'), repo: 'octo-cat/agent-guild' });
+  assert.equal((await call('GET', `/github/origin?cwd=${encodeURIComponent(parent)}`)).body.repo, null);
+  assert.equal((await call('GET', '/github/origin?cwd=%2Fno%2Fsuch%2Ffolder')).body.error.code, 'bad_cwd');
+
+  const combined = await call('GET', '/github/repos');
+  assert.deepEqual(combined.body.repos.map((r) => [r.accountId, r.login, r.fullName]), [[4242, 'octo-cat', 'octo-cat/agent-guild'], [4242, 'octo-cat', 'acme/api'], [4242, 'octo-cat', 'octo-cat/old-tool']]);
+  assert.deepEqual(combined.body.errors, []);
+  assert.ok(!('target' in combined.body.repos[0]) && !('local' in combined.body.repos[0]));
+
+  const repoPath = '/github/accounts/4242/repos/octo-cat/agent-guild';
+  const issues = await call('GET', `${repoPath}/issues`);
+  assert.equal(issues.status, 200);
+  assert.deepEqual(issues.body.issues.map((i) => i.number), [4]);
+  assert.equal(issues.body.url, 'https://github.com/octo-cat/agent-guild/issues');
+  assert.deepEqual((await call('GET', `${repoPath}/issues?state=closed`)).body.issues.map((i) => [i.number, i.url]), [[3, 'https://github.com/octo-cat/agent-guild/issues/3']]);
+  assert.equal((await call('GET', `${repoPath}/issues?state=sideways`)).body.error.code, 'bad_state');
+  const opened = await call('POST', `${repoPath}/issues`, { title: '  Split terminals  ', body: 'Please' });
+  assert.equal(opened.status, 201);
+  assert.equal(opened.body.issue.title, 'Split terminals');
+  assert.deepEqual(fakeGitHub.state.bodies.at(-1), { method: 'POST', path: '/repos/octo-cat/agent-guild/issues', body: { title: 'Split terminals', body: 'Please' } });
+  const closed = await call('PATCH', `${repoPath}/issues/${opened.body.issue.number}`, { state: 'closed' });
+  assert.equal(closed.body.issue.state, 'closed');
+  assert.equal((await call('POST', `${repoPath}/issues`, { title: ' ' })).body.error.code, 'bad_title');
+  assert.equal((await call('PATCH', `${repoPath}/issues/abc`, { state: 'closed' })).body.error.code, 'bad_issue');
+  assert.equal((await call('PATCH', `${repoPath}/issues/999`, { state: 'closed' })).status, 404);
+  const longIssue = fakeGitHub.state.issues['octo-cat/agent-guild'].find((i) => i.number === 4);
+  longIssue.body = 'x'.repeat(50000);
+  assert.equal((await call('GET', `${repoPath}/issues`)).body.issues.find((i) => i.number === 4).body.length, 50000);
+  assert.equal((await call('PATCH', `${repoPath}/issues/4`, { title: 'Title only' })).body.issue.body.length, 50000);
+  const beforeInvalid = fakeGitHub.state.bodies.length;
+  for (const [payload, status, code] of [
+    [{ title: 'x'.repeat(257) }, 400, 'bad_title'],
+    [{ body: 'x'.repeat(48001) }, 400, 'bad_body'],
+    [{ body: '漢'.repeat(24000) }, 413, 'too_large'],
+    [{ body: '\\'.repeat(40000) }, 413, 'too_large'],
+  ]) {
+    const rejected = await call('PATCH', `${repoPath}/issues/4`, payload);
+    assert.deepEqual([rejected.status, rejected.body.error.code], [status, code]);
+  }
+  assert.equal(fakeGitHub.state.bodies.length, beforeInvalid, 'invalid issue requests never reach GitHub');
+  assert.equal(longIssue.body.length, 50000);
+  const actions = await call('GET', `${repoPath}/actions`);
+  assert.equal(actions.body.running, true);
+  assert.equal(actions.body.runs[1].url, 'https://github.com/octo-cat/agent-guild/actions/runs/10');
+  assert.deepEqual((await call('GET', `${repoPath}/pulls`)).body.pulls.map((p) => [p.number, p.draft, p.head, p.base]), [[8, true, 'viewer', 'main']]);
+  assert.equal((await call('GET', '/github/accounts/4242/repos/octo-cat/agent-guild.git/issues')).body.error.code, 'bad_repo');
+  assert.equal((await call('GET', '/github/accounts/4242/repos/octo-cat/%E0/issues')).body.error.code, 'bad_repo');
+  assert.equal((await call('GET', '/github/accounts/4242/repos/octo-cat/missing/pulls')).status, 404);
+  assert.equal((await call('GET', '/github/accounts/1/repos/octo-cat/agent-guild/issues')).body.error.code, 'unknown_account');
+  assert.equal((await call('DELETE', `${repoPath}/pulls`)).status, 404);
+
   const created = await call('POST', '/github/accounts/4242/repos', { owner: 'octo-cat', name: 'new-thing', private: true, readme: true });
   assert.equal(created.status, 201, JSON.stringify(created.body));
   assert.equal(created.body.repo.fullName, 'octo-cat/new-thing');

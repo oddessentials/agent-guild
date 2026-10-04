@@ -29,27 +29,34 @@
       </div>
       <span id="upgrade-note" class="upgrade-note" hidden></span>
       <button id="upgrade" class="btn upgrade" type="button" hidden></button>
-      <button id="appearance" class="btn appearance" type="button" popovertarget="appearance-menu" aria-haspopup="dialog">Appearance</button>
-      <div id="appearance-menu" class="appearance-menu" popover role="dialog" aria-label="Appearance">
-        <fieldset id="skin-choices"><legend>Skin</legend></fieldset>
-        <fieldset>
-          <legend>Mode</legend>
-          <label class="choice"><input type="radio" name="theme" value="light"><span class="mode-light">Light</span></label>
-          <label class="choice"><input type="radio" name="theme" value="dark"><span class="mode-dark">Dark</span></label>
-        </fieldset>
-        <fieldset>
-          <legend>Sound</legend>
-          <label class="choice" title="Plays when the session manager stops, remains unavailable after a brief recovery check, or a new Agent Guild update is discovered. Click or type on this page to allow playback."><input id="sound" type="checkbox" name="sound"><span class="sound-alerts">Alert sounds</span></label>
-        </fieldset>
-        <fieldset id="voice-choice" hidden>
-          <legend>Voice</legend>
-          <label class="choice"><input id="voice" type="checkbox" name="voice"><span class="voice-input">Voice input</span></label>
-          <p class="voice-note">Adds a Dictate button to terminals. Your browser may send the audio to its maker, such as Google or Microsoft, to turn it into text. Nothing is heard until you press Dictate, and Enter is never pressed for you.</p>
-        </fieldset>
+      <button id="menu-toggle" class="btn menu-toggle" type="button" popovertarget="topbar-menu" aria-label="Menu" title="Menu"></button>
+      <div id="topbar-menu" class="topbar-menu menu" popover>
+        <button id="github-toggle" class="btn github-toggle" type="button" aria-controls="dock" aria-pressed="false">GitHub</button>
+        <button id="notes-open" class="btn notes-open" type="button" aria-controls="dock" aria-pressed="false">Notes</button>
+        <button id="settings" class="btn settings menu-button" type="button" popovertarget="settings-menu" aria-haspopup="dialog">Settings</button>
+        <div id="settings-menu" class="settings-menu menu" popover role="dialog" aria-label="Settings">
+          <fieldset id="skin-choices"><legend>Skin</legend></fieldset>
+          <fieldset>
+            <legend>Mode</legend>
+            <label class="choice"><input type="radio" name="theme" value="light"><span class="mode-light">Light</span></label>
+            <label class="choice"><input type="radio" name="theme" value="dark"><span class="mode-dark">Dark</span></label>
+          </fieldset>
+          <fieldset>
+            <legend>Sound</legend>
+            <label class="choice" title="Plays when the session manager stops, remains unavailable after a brief recovery check, or a new Agent Guild update is discovered. Click or type on this page to allow playback."><input id="sound" type="checkbox" name="sound"><span class="sound-alerts">Alert sounds</span></label>
+          </fieldset>
+          <fieldset id="voice-choice" hidden>
+            <legend>Voice</legend>
+            <label class="choice"><input id="voice" type="checkbox" name="voice"><span class="voice-input">Voice input</span></label>
+            <p class="voice-note">Adds a Dictate button to terminals. Your browser may send the audio to its maker, such as Google or Microsoft, to turn it into text. Nothing is heard until you press Dictate, and Enter is never pressed for you.</p>
+          </fieldset>
+        </div>
+        <button id="manager" class="btn manager menu-button" type="button" popovertarget="manager-menu" aria-haspopup="menu" hidden>Manager</button>
+        <div id="manager-menu" class="manager-menu menu" popover role="menu" aria-label="Session manager">
+          <button id="restart-manager" class="menu-item restart-manager" type="button" role="menuitem" hidden>Restart manager</button>
+          <button id="stop-manager" class="menu-item danger stop-manager" type="button" role="menuitem" title="Stop the session manager. This ends every session.">Stop manager</button>
+        </div>
       </div>
-      <button id="notes-open" class="btn notes-open" type="button" aria-haspopup="dialog">Notes</button>
-      <button id="restart-manager" class="btn restart-manager" type="button" hidden>Restart manager</button>
-      <button id="stop-manager" class="btn danger stop-manager" type="button" hidden title="Stop the session manager. This ends every session.">Stop manager</button>
     </div>
   </header>
 
@@ -58,10 +65,25 @@
       <div class="section-head">
         <h2 id="launch-heading">Start a session</h2>
         <div class="launch-tools">
-          <label class="cwd">
-            <span>Working folder</span>
-            <input id="cwd" type="text" spellcheck="false" autocomplete="off" placeholder="Home folder">
-          </label>
+          <div class="cwd">
+            <label for="cwd">Working folder</label>
+            <div class="cwd-field">
+              <input id="cwd" type="text" spellcheck="false" autocomplete="off" placeholder="Home folder">
+              <div class="cwd-tools">
+                <button id="cwd-pick" class="cwd-tool" type="button" aria-label="Choose a folder…" title="Connect to the session manager to choose folders" disabled>
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                    <path d="M3.5 9V6.5A1.5 1.5 0 0 1 5 5h4l2 2h7.5A1.5 1.5 0 0 1 20 8.5V10"/>
+                    <path d="M3.5 10.5H21l-2.5 8H5.5z"/>
+                  </svg>
+                </button>
+                <button id="cwd-open" class="cwd-tool" type="button" aria-label="Open working folder in file manager" title="Connect to the session manager to open folders" disabled>
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                    <path d="M7 17L17 7M9 7h8v8"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
           <button id="github-open" class="btn github-open" type="button" aria-haspopup="dialog">Clone from GitHub…</button>
         </div>
       </div>
@@ -118,22 +140,109 @@
     <div class="panel-bar">
       <div class="panel-title">
         <span id="panel-icon" class="provider-icon small"></span>
-        <div>
-          <div id="panel-title" class="title"></div>
-          <div id="panel-sub" class="sub"></div>
-        </div>
+        <button id="panel-switch" class="panel-switch" type="button" popovertarget="panel-sessions" aria-haspopup="menu" title="Show another session here">
+          <span id="panel-title" class="title"></span>
+          <span id="panel-sub" class="sub"></span>
+        </button>
         <div id="panel-agents" class="agents"></div>
       </div>
       <div class="panel-actions">
+        <button id="panel-split" class="btn split" type="button" popovertarget="panel-sessions" aria-haspopup="menu" title="Show a second session beside this one" hidden>Split</button>
+        <button id="panel-swap" class="btn swap" type="button" hidden></button>
         <button id="panel-voice" class="btn voice" type="button" hidden aria-pressed="false" title="Speak into this terminal. Review the text, then press Enter yourself.">Dictate</button>
         <button id="panel-copy" class="btn" type="button" hidden aria-haspopup="dialog" title="Select and copy terminal text">Copy…</button>
         <button id="panel-stop" class="btn danger" type="button">Stop</button>
-        <button id="panel-close" class="btn" type="button" title="Hide the terminal. The session keeps running.">Hide</button>
+        <button id="panel-close" class="btn" type="button" title="Hide the terminals. The sessions keep running.">Hide</button>
       </div>
     </div>
-    <div id="terminal-host" class="terminal-host"></div>
+    <div id="panel-sessions" class="session-menu menu" popover role="menu" aria-label="Sessions"></div>
+    <div id="terminal-panes" class="terminal-panes">
+      <section class="terminal-pane" data-pane="0">
+        <div class="pane-head"><span class="pane-name"></span><button class="pane-close" type="button" aria-label="Close this terminal" title="Close this terminal. The session keeps running."></button></div>
+        <div class="terminal-host"></div>
+      </section>
+      <div id="pane-splitter" class="splitter pane-splitter" role="separator" tabindex="0" aria-label="Resize the terminals" hidden></div>
+      <section class="terminal-pane" data-pane="1" hidden>
+        <div class="pane-head"><span class="pane-name"></span><button class="pane-close" type="button" aria-label="Close this terminal" title="Close this terminal. The session keeps running."></button></div>
+        <div class="terminal-host"></div>
+      </section>
+    </div>
     <div id="voice-preview" class="voice-preview" hidden aria-live="polite"></div>
   </div>
+
+  <aside id="dock" class="dock" aria-label="Side panel" hidden>
+    <div id="dock-splitter" class="splitter dock-splitter" role="separator" aria-orientation="vertical" tabindex="0" aria-label="Resize the side panel"></div>
+    <div class="dock-bar">
+      <div class="dock-tabs" role="tablist" aria-label="Side panel">
+        <button id="github-title" class="dock-tab github-tab" type="button" role="tab" aria-controls="github" aria-selected="false">GitHub</button>
+        <button id="notes-title" class="dock-tab notes-tab" type="button" role="tab" aria-controls="notes" aria-selected="false">Notes</button>
+      </div>
+      <button id="dock-close" class="btn" type="button">Close</button>
+    </div>
+    <section id="github" class="dock-panel github" role="tabpanel" aria-labelledby="github-title" hidden>
+      <p id="github-sub" class="dock-sub sub"></p>
+      <div id="github-accounts" class="github-accounts" hidden>
+        <div id="github-chips" class="github-chips" role="tablist" aria-label="Repository management accounts"></div>
+        <button id="github-add" class="btn github-add" type="button">Add account</button>
+      </div>
+      <div id="github-picker" class="github-picker" hidden>
+        <div class="github-combo">
+          <input id="github-repo" type="text" role="combobox" aria-label="Repository" aria-autocomplete="list" aria-expanded="false" aria-controls="github-repo-list" placeholder="Search repositories" spellcheck="false" autocomplete="off">
+          <ul id="github-repo-list" class="github-repo-list" role="listbox" aria-label="Repositories" hidden></ul>
+        </div>
+        <button id="github-repo-reload" class="btn" type="button" title="Load the repositories of every account again">Reload</button>
+      </div>
+      <p id="github-picker-note" class="github-picker-note" hidden></p>
+      <div id="github-views" class="github-views" role="tablist" aria-label="GitHub views" hidden>
+        <button id="github-view-repos" class="github-view" type="button" role="tab" aria-controls="github-repos" aria-selected="true" data-view="repos" aria-label="Repositories"><span class="long">Repositories</span><span class="short" aria-hidden="true">Repos</span></button>
+        <button id="github-view-issues" class="github-view" type="button" role="tab" aria-controls="github-issues" aria-selected="false" data-view="issues" tabindex="-1">Issues</button>
+        <button id="github-view-actions" class="github-view" type="button" role="tab" aria-controls="github-runs" aria-selected="false" data-view="actions" tabindex="-1" aria-label="Actions">Actions<span id="github-running" class="github-running" hidden></span></button>
+        <button id="github-view-pulls" class="github-view" type="button" role="tab" aria-controls="github-pulls" aria-selected="false" data-view="pulls" tabindex="-1" aria-label="Pull requests"><span class="long">Pull requests</span><span class="short" aria-hidden="true">PRs</span></button>
+      </div>
+      <div id="github-repos" class="models-body github-body" role="tabpanel" aria-labelledby="github-view-repos">
+        <section id="github-card" class="github-card" aria-live="polite" hidden></section>
+        <div id="github-status" class="github-status" hidden></div>
+        <div id="github-tools" class="history-tools github-tools" hidden>
+          <input id="github-filter" type="search" placeholder="Filter repositories" aria-label="Filter repositories" spellcheck="false" autocomplete="off">
+          <button id="github-refresh" class="btn" type="button">Refresh</button>
+          <button id="github-new" class="btn" type="button" aria-expanded="false" aria-controls="github-create">New repository</button>
+        </div>
+        <form id="github-create" class="github-card github-create" hidden>
+          <h3>New repository</h3>
+          <div class="github-fields">
+            <label><span>Owner</span><select id="github-create-owner"></select></label>
+            <label><span>Name</span><input id="github-create-name" type="text" required maxlength="100" pattern="[A-Za-z0-9._\-]+" spellcheck="false" autocomplete="off" placeholder="my-project"></label>
+            <label class="wide"><span>Description</span><input id="github-create-description" type="text" maxlength="350" autocomplete="off" placeholder="Optional"></label>
+          </div>
+          <div class="github-options">
+            <label><input id="github-create-private" type="checkbox" checked> Private</label>
+            <label><input id="github-create-readme" type="checkbox" checked> Start with a README</label>
+            <label><input id="github-create-clone" type="checkbox" checked> <span id="github-create-clone-label">Clone it</span></label>
+          </div>
+          <p id="github-create-error" class="github-error" role="alert" hidden></p>
+          <div class="github-actions">
+            <button id="github-create-submit" class="btn primary" type="submit">Create repository</button>
+            <button id="github-create-cancel" class="btn" type="button">Cancel</button>
+          </div>
+        </form>
+        <div id="github-list" class="history-list" role="list"></div>
+        <p id="github-note" class="models-note" hidden></p>
+      </div>
+      <div id="github-issues" class="models-body github-body" role="tabpanel" aria-labelledby="github-view-issues" hidden></div>
+      <div id="github-runs" class="models-body github-body" role="tabpanel" aria-labelledby="github-view-actions" hidden></div>
+      <div id="github-pulls" class="models-body github-body" role="tabpanel" aria-labelledby="github-view-pulls" hidden></div>
+      <div id="github-clone-into" class="history-form github-form">
+        <label for="github-parent">Clone into</label>
+        <input id="github-parent" type="text" placeholder="Folder that holds your clones" spellcheck="false" autocomplete="off">
+      </div>
+    </section>
+    <section id="notes" class="dock-panel notes-panel" role="tabpanel" aria-labelledby="notes-title" hidden>
+      <p id="notes-sub" class="dock-sub sub" aria-live="polite">Saved in this browser as you type</p>
+      <div class="dock-body">
+        <textarea id="notes-text" class="notes-text" aria-labelledby="notes-title" aria-describedby="notes-sub" autocomplete="off" placeholder="Prompts, commands, to-dos: anything you want to keep at hand"></textarea>
+      </div>
+    </section>
+  </aside>
 
   <dialog id="terminal-copy" class="terminal-copy" aria-labelledby="terminal-copy-title">
     <div class="terminal-copy-bar">
@@ -204,19 +313,6 @@
     <p id="changelog-status" class="news-status" hidden></p>
   </dialog>
 
-  <dialog id="notes" class="news-panel notes-panel" aria-labelledby="notes-title">
-    <div class="news-bar">
-      <div class="news-heading">
-        <h2 id="notes-title">Notes</h2>
-        <p id="notes-sub" class="sub" aria-live="polite">Saved in this browser as you type</p>
-      </div>
-      <button id="notes-close" class="btn" type="button">Close</button>
-    </div>
-    <div class="news-body">
-      <textarea id="notes-text" class="notes-text" aria-labelledby="notes-title" aria-describedby="notes-sub" autocomplete="off" placeholder="Prompts, commands, to-dos: anything you want to keep at hand"></textarea>
-    </div>
-  </dialog>
-
   <dialog id="history" class="models history" aria-labelledby="history-title">
     <div class="models-bar">
       <span id="history-icon" class="provider-icon small"></span>
@@ -239,54 +335,6 @@
       <input id="history-id" type="text" placeholder="Session id or name" spellcheck="false" autocomplete="off">
       <button type="submit" class="btn">Resume</button>
     </form>
-  </dialog>
-
-  <dialog id="github" class="models history github" aria-labelledby="github-title">
-    <div class="models-bar">
-      <span class="github-mark" aria-hidden="true"></span>
-      <div class="models-heading">
-        <h2 id="github-title">GitHub</h2>
-        <p id="github-sub" class="sub"></p>
-      </div>
-      <button id="github-close" class="btn" type="button">Close</button>
-    </div>
-    <div id="github-accounts" class="github-accounts" hidden>
-      <div id="github-chips" class="github-chips" role="tablist" aria-label="GitHub accounts"></div>
-      <button id="github-add" class="btn github-add" type="button">Add account</button>
-    </div>
-    <div class="models-body">
-      <section id="github-card" class="github-card" aria-live="polite" hidden></section>
-      <div id="github-status" class="github-status" hidden></div>
-      <div id="github-tools" class="history-tools github-tools" hidden>
-        <input id="github-filter" type="search" placeholder="Filter repositories" aria-label="Filter repositories" spellcheck="false" autocomplete="off">
-        <button id="github-refresh" class="btn" type="button">Refresh</button>
-        <button id="github-new" class="btn" type="button" aria-expanded="false" aria-controls="github-create">New repository</button>
-      </div>
-      <form id="github-create" class="github-card github-create" hidden>
-        <h3>New repository</h3>
-        <div class="github-fields">
-          <label><span>Owner</span><select id="github-create-owner"></select></label>
-          <label><span>Name</span><input id="github-create-name" type="text" required maxlength="100" pattern="[A-Za-z0-9._\-]+" spellcheck="false" autocomplete="off" placeholder="my-project"></label>
-          <label class="wide"><span>Description</span><input id="github-create-description" type="text" maxlength="350" autocomplete="off" placeholder="Optional"></label>
-        </div>
-        <div class="github-options">
-          <label><input id="github-create-private" type="checkbox" checked> Private</label>
-          <label><input id="github-create-readme" type="checkbox" checked> Start with a README</label>
-          <label><input id="github-create-clone" type="checkbox" checked> <span id="github-create-clone-label">Clone it</span></label>
-        </div>
-        <p id="github-create-error" class="github-error" role="alert" hidden></p>
-        <div class="github-actions">
-          <button id="github-create-submit" class="btn primary" type="submit">Create repository</button>
-          <button id="github-create-cancel" class="btn" type="button">Cancel</button>
-        </div>
-      </form>
-      <div id="github-list" class="history-list" role="list"></div>
-      <p id="github-note" class="models-note" hidden></p>
-    </div>
-    <div class="history-form github-form">
-      <label for="github-parent">Clone into</label>
-      <input id="github-parent" type="text" placeholder="Folder that holds your clones" spellcheck="false" autocomplete="off">
-    </div>
   </dialog>
 
   <div id="tip" class="tip" aria-hidden="true" hidden><strong id="tip-title"></strong><span id="tip-source"></span><p id="tip-text"></p></div>

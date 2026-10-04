@@ -1,4 +1,20 @@
-# Terminal copying
+# Browser checks
+
+The GitHub panel's account selection, issue editing, delayed requests and repository
+picker also have a browser regression check: `node tests/browser/github.mjs`.
+It uses simulated GitHub responses and never contacts GitHub. Set `CHROME_PATH`
+to Chrome or Edge on Windows, as with the checks below.
+
+## HTTPS reverse proxy
+
+`node tests/browser/proxy.mjs` starts an isolated manager, a real test PTY and
+an HTTPS proxy on loopback. Chrome resolves `guild.example.ts.net` to that
+proxy and checks authentication, API writes, events, terminal input/output
+and CSP. It uses the public test key and certificate in `tests/fixtures`;
+certificate errors are ignored only in this disposable browser. It does not
+change the machine's trust store, contact Tailscale or use existing accounts.
+
+## Terminal copying
 
 `npm test` covers buffer text and application lifecycle. Run the integrated
 page in Chrome with:

@@ -33,7 +33,7 @@
     "status": "node bin/agent-guild.mjs status",
     "demo:build": "node docs/demo/build.mjs",
     "demo:check": "node docs/demo/check.mjs",
-    "test": "node --test --test-concurrency=1"
+    "test": "node --test --test-concurrency=1 \"tests/*.test.mjs\""
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",

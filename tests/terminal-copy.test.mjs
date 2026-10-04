@@ -76,7 +76,7 @@ test('a captured value survives output and reflow without keeping mutable buffer
 
 // Exercise the app's actual lifecycle entry points, including the BFCache path.
 const app = fs.readFileSync(new URL('../web/app.js', import.meta.url), 'utf8');
-const functions = ['openPanel', 'closePanel', 'dropSession'].map((name) => {
+const functions = ['openPanel', 'focusPane', 'closePane', 'closePanel', 'dropSession'].map((name) => {
   const source = app.match(new RegExp(`function ${name}\\([^]*?\\n\\}`))?.[0];
   assert.ok(source, name);
   return source;
@@ -87,11 +87,13 @@ test('switch, Hide, session removal and page departure dismiss sensitive copy te
   let closed = 0;
   const listeners = new Map();
   const noop = () => {};
-  const view = { mount: noop, unmount: noop, dispose: noop };
+  const view = { mount: noop, unmount: noop, dispose: noop, term: { focus: noop } };
   const context = {
-    state: { activeId: 'a', sessions: new Map([['a', {}], ['b', {}]]), views: new Map([['a', view], ['b', view]]) },
-    terminalCopy: { close: () => closed++ },
+    state: { panes: ['a'], focusedPane: 0, activeId: 'a', sessions: new Map([['a', {}], ['b', {}]]), views: new Map([['a', view], ['b', view]]) },
+    terminalCopy: { close: () => closed++ }, activityFavicon: { setPaused: noop },
     $: () => ({}), dictation: null, stopDictation: noop, updatePanel: noop, renderVoice: noop, renderSessions: noop,
+    layoutPanes: noop, savePanes: noop, closeMenu: noop, dockMakesWayForTerminal: noop, followTerminal: noop, document: { activeElement: null },
+    paneNodes: [0, 1].map(() => ({ contains: () => false })),
     managerLoss: { cancel: noop }, addEventListener: (name, fn) => listeners.set(name, fn),
   };
   vm.runInNewContext(functions + '\n' + pagehide, context);
@@ -99,11 +101,16 @@ test('switch, Hide, session removal and page departure dismiss sensitive copy te
   assert.equal(closed, 0, 'reselecting the same card leaves its snapshot alone');
   context.openPanel('b');
   assert.equal(closed, 1);
+  context.openPanel('a', { beside: true });
+  assert.equal(closed, 2, 'a terminal opened beside takes the focus');
+  context.openPanel('b');
+  assert.equal(closed, 3, 'focusing the other pane switches the terminal the copy belongs to');
   context.closePanel();
-  assert.equal(closed, 2);
-  context.state.activeId = 'b';
-  context.dropSession('b');
-  assert.equal(closed, 3);
-  listeners.get('pagehide')();
   assert.equal(closed, 4);
+  context.openPanel('b');
+  closed = 0;
+  context.dropSession('b');
+  assert.equal(closed, 1);
+  listeners.get('pagehide')();
+  assert.equal(closed, 2);
 });

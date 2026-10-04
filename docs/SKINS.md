@@ -1,7 +1,7 @@
 # Skins
 
 A skin is the page's art and design styling, in a light and a dark variant.
-The Appearance menu in the top bar switches skin and variant in place. A skin
+The Settings menu in the top bar switches skin and variant in place. A skin
 changes how the page looks and nothing else: layout, controls, labels and
 behaviour stay the same.
 
@@ -66,7 +66,7 @@ element ends. Run an animation on each, and none under
 
 ## Acceptance checklist
 
-* The skin appears in the Appearance menu, and selecting it restyles the page without a reload.
+* The skin appears in the Settings menu, and selecting it restyles the page without a reload.
 * After a reload the page opens in the selected skin with no flash of another skin.
 * Light and dark both fill every slot.
 * The logo, favicon, splash, terminal and interface icons look the same in every skin.

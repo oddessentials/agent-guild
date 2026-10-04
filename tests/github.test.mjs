@@ -7,8 +7,9 @@ import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
   GitHub, GITHUB_HOST_KEYS, GITHUB_SCOPES, parseRepo, remoteRepo, originUrl, localState, shellQuote, sshCommand, sshArgs,
-  nextLink, cleanRepo, dropsFromCloneEnv, parseScopes, gitConfig,
+  nextLink, cleanRepo, dropsFromCloneEnv, parseScopes, gitConfig, folderOrigin,
 } from '../src/manager/github.mjs';
+import { createViews, githubUrl } from '../src/manager/github-views.mjs';
 import { startFakeGitHub } from './fixtures/fake-github.mjs';
 
 const fixture = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-git-tools.mjs');
@@ -456,4 +457,222 @@ test('an approved sign-in that finishes after a newer one for the same user keep
   fs.writeFileSync(file, JSON.stringify(stored));
   const reloaded = new GitHub({ dir: path.join(ctx.root, 'data', 'github'), registry: { env: {}, platform: process.platform } });
   assert.deepEqual(reloaded.accounts.map((a) => a.token.access), ['y'], 'duplicates written by an older version collapse to one');
+});
+
+test('a folder\'s origin is read from its work tree, a parent of it or a linked worktree', () => {
+  const root = tempDir();
+  const repo = path.join(root, 'guild');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+  fs.mkdirSync(path.join(repo, 'web', 'skins'), { recursive: true });
+  fs.writeFileSync(path.join(repo, '.git', 'config'), '[remote "origin"]\n\turl = https://github.com/Octo-Cat/Agent-Guild.git\n');
+  assert.equal(folderOrigin(repo), 'octo-cat/agent-guild');
+  assert.equal(folderOrigin(path.join(repo, 'web', 'skins')), 'octo-cat/agent-guild');
+
+  const tree = path.join(root, 'guild-feature');
+  fs.mkdirSync(path.join(repo, '.git', 'worktrees', 'guild-feature'), { recursive: true });
+  fs.writeFileSync(path.join(repo, '.git', 'worktrees', 'guild-feature', 'commondir'), '../..\n');
+  fs.mkdirSync(tree);
+  fs.writeFileSync(path.join(tree, '.git'), `gitdir: ${path.join(repo, '.git', 'worktrees', 'guild-feature')}\n`);
+  assert.equal(folderOrigin(tree), 'octo-cat/agent-guild');
+
+  const other = path.join(root, 'elsewhere');
+  fs.mkdirSync(path.join(other, '.git'), { recursive: true });
+  fs.writeFileSync(path.join(other, '.git', 'config'), '[remote "origin"]\n\turl = git@gitlab.com:o/r.git\n');
+  assert.equal(folderOrigin(other), null, 'not on GitHub');
+  const broken = path.join(root, 'broken');
+  fs.mkdirSync(broken);
+  fs.writeFileSync(path.join(broken, '.git'), 'nonsense');
+  assert.equal(folderOrigin(broken), null);
+  assert.equal(folderOrigin(path.join(root, 'nowhere-at-all')), null);
+});
+
+test('links to GitHub stay on github.com', () => {
+  assert.equal(githubUrl('https://github.com/octo/repo/issues/1', 'fallback'), 'https://github.com/octo/repo/issues/1');
+  for (const bad of ['http://github.com/octo/repo', 'https://evil.test/github.com', 'https://github.com.evil.test/x', 'javascript:alert(1)', null]) {
+    assert.equal(githubUrl(bad, 'fallback'), 'fallback', String(bad));
+  }
+});
+
+test('issues leave out pull requests, and creating and editing send only checked fields', async () => {
+  const ctx = await setup();
+  const account = await signIn(ctx);
+  const views = createViews(ctx.hub);
+  ctx.github.state.truncated = true;
+  const listed = await views.issues(account.id, 'octo-cat', 'agent-guild');
+  assert.deepEqual(listed.issues, [{
+    number: 4, title: 'Dock is too narrow', body: 'Steps', state: 'open', user: 'octo-cat', comments: 2,
+    updatedAt: '2026-10-01T00:00:00.000Z', url: 'https://github.com/octo-cat/agent-guild/issues/4',
+  }]);
+  assert.equal(listed.truncated, true);
+  assert.equal(listed.url, 'https://github.com/octo-cat/agent-guild/issues');
+  ctx.github.state.truncated = false;
+  const closed = await views.issues(account.id, 'octo-cat', 'agent-guild', { state: 'closed' });
+  assert.deepEqual(closed.issues.map((i) => [i.number, i.body, i.url]), [[3, '', 'https://github.com/octo-cat/agent-guild/issues/3']], 'a link off github.com is replaced');
+  assert.equal(closed.truncated, false);
+  assert.equal((await views.issues(account.id, 'octo-cat', 'agent-guild', { state: 'all' })).issues.length, 2);
+  await assert.rejects(views.issues(account.id, 'octo-cat', 'agent-guild', { state: 'nope' }), { code: 'bad_state', status: 400 });
+  for (const [owner, name] of [['octo-cat', 'agent-guild.git'], ['octo-cat', '..'], ['-x', 'y'], ['octo-cat', 'a/b'], [undefined, 'x']]) {
+    await assert.rejects(views.issues(account.id, owner, name), { code: 'bad_repo' }, `${owner}/${name}`);
+  }
+  await assert.rejects(views.issues(999, 'octo-cat', 'agent-guild'), { code: 'unknown_account', status: 404 });
+
+  const made = await views.createIssue(account.id, 'octo-cat', 'agent-guild', { title: '  New  ', body: 'text', state: 'closed', labels: ['x'] });
+  assert.equal(made.title, 'New');
+  assert.equal(made.state, 'open');
+  assert.deepEqual(ctx.github.state.bodies.at(-1).body, { title: 'New', body: 'text' });
+  await views.createIssue(account.id, 'octo-cat', 'agent-guild', { title: 'No body' });
+  assert.deepEqual(ctx.github.state.bodies.at(-1).body, { title: 'No body', body: '' });
+  await assert.rejects(views.createIssue(account.id, 'octo-cat', 'agent-guild', { title: '   ' }), { code: 'bad_title' });
+  await assert.rejects(views.createIssue(account.id, 'octo-cat', 'agent-guild', { title: 'x', body: 5 }), { code: 'bad_body' });
+  const beforeInvalid = ctx.github.state.bodies.length;
+  await assert.rejects(views.createIssue(account.id, 'octo-cat', 'agent-guild', { title: 'x'.repeat(257) }), { code: 'bad_title' });
+  await assert.rejects(views.createIssue(account.id, 'octo-cat', 'agent-guild', { title: 'x', body: 'y'.repeat(48001) }), { code: 'bad_body' });
+  assert.equal(ctx.github.state.bodies.length, beforeInvalid, 'invalid content never reaches GitHub');
+
+  const edited = await views.updateIssue(account.id, 'octo-cat', 'agent-guild', 4, { title: 'Dock width', state: 'closed', comments: 99 });
+  assert.equal(edited.state, 'closed');
+  assert.equal(edited.title, 'Dock width');
+  assert.deepEqual(ctx.github.state.bodies.at(-1), { method: 'PATCH', path: '/repos/octo-cat/agent-guild/issues/4', body: { title: 'Dock width', state: 'closed' } });
+  await views.updateIssue(account.id, 'octo-cat', 'agent-guild', '4', { state: 'open' });
+  for (const number of [0, -1, 1.5, 'abc', '4/../5', null]) {
+    await assert.rejects(views.updateIssue(account.id, 'octo-cat', 'agent-guild', number, { state: 'open' }), { code: 'bad_issue' }, String(number));
+  }
+  await assert.rejects(views.updateIssue(account.id, 'octo-cat', 'agent-guild', 4, {}), { code: 'bad_request' });
+  await assert.rejects(views.updateIssue(account.id, 'octo-cat', 'agent-guild', 4, { state: 'merged' }), { code: 'bad_state' });
+  await assert.rejects(views.updateIssue(account.id, 'octo-cat', 'agent-guild', 404, { state: 'closed' }), { code: 'not_found', status: 404 });
+});
+
+test('issue edits preserve omitted content and reject oversized changes without mutating GitHub', async () => {
+  const ctx = await setup();
+  const account = await signIn(ctx);
+  const views = createViews(ctx.hub);
+  const original = ctx.github.state.issues['octo-cat/agent-guild'].find((i) => i.number === 4);
+  original.body = 'x'.repeat(50000);
+  assert.equal((await views.issues(account.id, 'octo-cat', 'agent-guild')).issues[0].body, original.body);
+  const update = (patch) => views.updateIssue(account.id, 'octo-cat', 'agent-guild', 4, patch);
+  assert.equal((await update({ title: 'Renamed' })).body.length, 50000);
+  assert.deepEqual(ctx.github.state.bodies.at(-1).body, { title: 'Renamed' });
+  for (const state of ['closed', 'open']) assert.equal((await update({ state })).body.length, 50000);
+  const before = ctx.github.state.bodies.length;
+  await assert.rejects(update({ title: 'x'.repeat(257), state: 'closed' }), { code: 'bad_title' });
+  await assert.rejects(update({ body: 'x'.repeat(48001), state: 'closed' }), { code: 'bad_body' });
+  assert.equal(ctx.github.state.bodies.length, before);
+  assert.equal(original.body.length, 50000);
+  assert.equal(original.state, 'open', 'a rejected edit cannot partially close the issue');
+  const boundary = await update({ title: 'x'.repeat(256), body: 'y'.repeat(48000) });
+  assert.equal(boundary.title.length, 256);
+  assert.equal(boundary.body.length, 48000);
+  const unicode = 'Hello 漢字 👋\r\n"quoted"\\path';
+  assert.equal((await update({ body: unicode })).body, unicode);
+  assert.deepEqual(ctx.github.state.bodies.at(-1).body, { body: unicode });
+  assert.equal((await update({ body: '' })).body, '', 'an explicit empty string clears the body');
+  assert.equal((await update({ body: null })).body, '', 'null follows the create-body convention');
+});
+
+test('a missing repository, turned-off issues and the rate limit are answered as themselves', async () => {
+  const ctx = await setup();
+  const account = await signIn(ctx);
+  const views = createViews(ctx.hub);
+  await assert.rejects(views.pulls(account.id, 'octo-cat', 'gone'), { code: 'not_found', status: 404, message: /octo-cat\/gone/ });
+  ctx.github.state.issuesDisabled.push('octo-cat/agent-guild');
+  await assert.rejects(views.issues(account.id, 'octo-cat', 'agent-guild'), { code: 'issues_disabled', status: 404 });
+  assert.equal((await views.pulls(account.id, 'octo-cat', 'agent-guild')).pulls.length, 1, 'only issues are off');
+  ctx.github.state.rateLimited = true;
+  for (const view of ['issues', 'actions', 'pulls']) {
+    await assert.rejects(views[view](account.id, 'octo-cat', 'agent-guild'), { code: 'rate_limited', status: 429, message: /rate limit/ }, view);
+  }
+  await assert.rejects(views.createIssue(account.id, 'octo-cat', 'agent-guild', { title: 'x' }), { code: 'rate_limited' });
+  assert.equal(ctx.hub.snapshot().accounts[0].needsSignIn, false, 'a rate limit is not a refused sign-in');
+});
+
+test('Actions say a workflow is running only for an unfinished run, and pull requests are the open ones', async () => {
+  const ctx = await setup();
+  const account = await signIn(ctx);
+  const views = createViews(ctx.hub);
+  const live = await views.actions(account.id, 'octo-cat', 'agent-guild');
+  assert.equal(live.running, true);
+  assert.deepEqual(live.runs[0], {
+    id: 11, name: 'CI', title: 'Fix the gate', branch: 'main', event: 'push', status: 'in_progress', conclusion: null, runNumber: 12,
+    updatedAt: '2026-10-02T00:00:00.000Z', url: 'https://github.com/octo-cat/agent-guild/actions/runs/11',
+  });
+  assert.equal(live.runs[1].url, 'https://github.com/octo-cat/agent-guild/actions/runs/10');
+  assert.equal(live.url, 'https://github.com/octo-cat/agent-guild/actions');
+  for (const status of ['queued', 'waiting', 'requested', 'pending']) {
+    ctx.github.state.runs['octo-cat/agent-guild'] = [{ id: 1, status }];
+    assert.equal((await views.actions(account.id, 'octo-cat', 'agent-guild')).running, true, status);
+  }
+  ctx.github.state.runs['octo-cat/agent-guild'] = [
+    { id: 3, status: 'completed', conclusion: 'success' },
+    { id: 4, status: 'completed', conclusion: 'cancelled', display_title: 'Stopped' },
+    { id: 0, status: 'in_progress' },
+    { status: 'in_progress' },
+  ];
+  const quiet = await views.actions(account.id, 'octo-cat', 'agent-guild');
+  assert.equal(quiet.running, false, 'a run without a valid id is dropped');
+  assert.deepEqual(quiet.runs.map((r) => [r.id, r.name, r.title]), [[3, 'Workflow', 'Workflow run'], [4, 'Stopped', 'Stopped']]);
+  ctx.github.state.runs['octo-cat/agent-guild'] = undefined;
+  assert.deepEqual((await views.actions(account.id, 'octo-cat', 'agent-guild')).runs, []);
+
+  ctx.github.state.pulls['octo-cat/agent-guild'].push({ number: 9, title: 'Merged', state: 'closed', user: null }, { number: 10, title: '  ', state: 'open' });
+  const pulls = await views.pulls(account.id, 'octo-cat', 'agent-guild');
+  assert.deepEqual(pulls.pulls, [{ number: 8, title: 'Add viewer', draft: true, user: 'ada', head: 'viewer', base: 'main', updatedAt: '2026-10-02T00:00:00.000Z', url: 'https://github.com/octo-cat/agent-guild/pull/8' }]);
+  assert.ok(ctx.github.state.requests.includes('GET /repos/octo-cat/agent-guild/pulls'));
+  assert.equal(pulls.url, 'https://github.com/octo-cat/agent-guild/pulls');
+});
+
+test('a token refused or expiring in the middle of the views is refreshed once and the request goes through', async () => {
+  const ctx = await setup();
+  const account = await signIn(ctx);
+  const views = createViews(ctx.hub);
+  ctx.github.state.access = 'rotated-elsewhere';
+  ctx.github.state.refresh = 'refresh-1';
+  assert.equal((await views.issues(account.id, 'octo-cat', 'agent-guild')).issues.length, 1);
+  assert.equal(ctx.github.state.refreshes, 1);
+
+  account.token.expiresAt = new Date(Date.now() - 1000).toISOString();
+  ctx.github.state.refreshDelayMs = 150;
+  const [issues, actions, pulls, edited] = await Promise.all([
+    views.issues(account.id, 'octo-cat', 'agent-guild'),
+    views.actions(account.id, 'octo-cat', 'agent-guild'),
+    views.pulls(account.id, 'octo-cat', 'agent-guild'),
+    views.updateIssue(account.id, 'octo-cat', 'agent-guild', 4, { title: 'Renamed' }),
+  ]);
+  assert.equal(ctx.github.state.refreshes, 2, 'one refresh for all four');
+  assert.equal(issues.issues.length, 1);
+  assert.equal(actions.runs.length, 2);
+  assert.equal(pulls.pulls.length, 1);
+  assert.equal(edited.title, 'Renamed');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(ctx.root, 'data', 'github', 'accounts.json'), 'utf8')).accounts[0].token.access, ctx.github.state.access);
+
+  ctx.github.state.access = 'revoked';
+  ctx.github.state.refresh = 'unknown';
+  await assert.rejects(views.pulls(account.id, 'octo-cat', 'agent-guild'), { code: 'github_sign_in' });
+  assert.equal(ctx.hub.snapshot().accounts[0].needsSignIn, true);
+});
+
+test('the combined repository list keeps every account\'s repositories when another account fails', async () => {
+  const ctx = await setup();
+  assert.deepEqual(await ctx.hub.allRepos(), { repos: [], truncated: false, errors: [], fetchedAt: null });
+  const first = await signIn(ctx);
+  ctx.github.state.user = { id: 7, login: 'work-me', name: 'Work' };
+  const second = await signIn(ctx);
+  // The second sign-in replaced the fake's only token pair, so GitHub refuses the first account's.
+  const parent = tempDir();
+  await ctx.hub.repos(second.id, { parent });
+  const all = await ctx.hub.allRepos();
+  assert.deepEqual(all.repos.map((r) => [r.accountId, r.login, r.fullName]), [[7, 'work-me', 'octo-cat/agent-guild'], [7, 'work-me', 'acme/api'], [7, 'work-me', 'octo-cat/old-tool']]);
+  assert.ok(all.repos.every((r) => !('target' in r) && !('local' in r) && !('avatar' in r)));
+  assert.deepEqual(all.errors, [{ accountId: first.id, login: 'octo-cat', code: 'github_sign_in', message: 'GitHub no longer accepts the sign-in for @octo-cat (bad_refresh_token). Sign in again.' }]);
+  assert.equal(all.truncated, false);
+  assert.ok(Date.parse(all.fetchedAt) <= Date.now());
+
+  // Both accounts can see the same repository: it is listed once for each.
+  const work = ctx.hub.accounts.find((a) => a.id === 7);
+  Object.assign(ctx.hub.accounts.find((a) => a.id === first.id), { needsSignIn: false, token: { ...work.token } });
+  const both = await ctx.hub.allRepos({ refresh: true });
+  assert.deepEqual(both.errors, []);
+  assert.deepEqual(both.repos.filter((r) => r.fullName === 'acme/api').map((r) => r.accountId), [7, 4242]);
+  const requests = ctx.github.state.requests.length;
+  await ctx.hub.allRepos();
+  assert.equal(ctx.github.state.requests.length, requests, 'cached per account');
 });

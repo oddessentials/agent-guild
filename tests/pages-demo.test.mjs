@@ -7,6 +7,8 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
 import { describeCatalog } from '../src/manager/model-stats.mjs';
+import { GitHub } from '../src/manager/github.mjs';
+import { createViews } from '../src/manager/github-views.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const demo = path.join(repo, 'docs', 'demo');
@@ -40,7 +42,7 @@ test('the demo runtime handles initial API calls and opens event and terminal so
     async json() { return JSON.parse(this.body); }
   }
   const context = {
-    Response, URL, setTimeout, clearTimeout,
+    Response, URL, TextEncoder, setTimeout, clearTimeout,
     location: { href: 'https://example.test/agent-guild/', pathname: '/agent-guild/' },
     fetch: () => { throw new Error('demo API escaped to the network'); },
     localStorage: { setItem: (key, value) => storage.set(key, value) },
@@ -83,7 +85,7 @@ function loadDemo() {
     async json() { return JSON.parse(this.body); }
   }
   const context = {
-    Response, URL, setTimeout, clearTimeout,
+    Response, URL, TextEncoder, setTimeout, clearTimeout,
     location: { href: 'https://example.test/agent-guild/', pathname: '/agent-guild/' },
     fetch: () => { throw new Error('demo API escaped to the network'); },
     localStorage: { setItem() {} },
@@ -122,6 +124,118 @@ test('the demo answers model stats in the manager\'s shape', async () => {
   const real = describeCatalog({ index: null, retrievedAt: null, stale: false, error: null }, []);
   assert.deepEqual(Object.keys(body).sort(), Object.keys(real).sort());
   assert.deepEqual(body.sessions, {});
+});
+
+/** The real GitHub and its views, signed in with one account, against canned GitHub answers. */
+function realGitHub(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-github-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(dir, 'accounts.json'), JSON.stringify({ accounts: [{ id: 7, login: 'octo', name: 'Octo', avatar: null, scopes: ['repo'], addedAt: '2026-01-01T00:00:00.000Z', ssh: { verifiedAt: null }, token: { access: 'x', expiresAt: null, refresh: null } }] }));
+  const answers = {
+    '/user/repos': [{ full_name: 'octo/demo', owner: { type: 'User' }, private: true, pushed_at: '2026-01-01T00:00:00Z' }],
+    '/repos/octo/demo/issues': [{ number: 1, title: 'Bug', state: 'open', user: { login: 'octo' }, html_url: 'https://github.com/octo/demo/issues/1' }],
+    '/repos/octo/demo/actions/runs': { workflow_runs: [{ id: 2, name: 'CI', status: 'queued' }] },
+    '/repos/octo/demo/pulls': [{ number: 3, title: 'Change', user: { login: 'octo' }, head: { ref: 'x' }, base: { ref: 'main' } }],
+  };
+  const fetchImpl = async (url, init = {}) => {
+    const route = new URL(url).pathname;
+    const body = init.method === 'POST' || init.method === 'PATCH' ? { number: 1, title: 'Bug', state: 'open' } : answers[route];
+    return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+  const github = new GitHub({ dir, registry: { env: { PATH: '' }, platform: process.platform }, fetchImpl });
+  return { github, views: createViews(github) };
+}
+
+const keys = (value) => Object.keys(value).sort();
+
+test('the demo answers GitHub in the manager\'s shapes, signed in with repositories, issues, runs and pull requests', async (t) => {
+  const { github, views } = realGitHub(t);
+  const { call } = loadDemo();
+  const real = github.snapshot();
+  const demo = (await call('GET', '/github')).body.github;
+  assert.deepEqual(keys(demo), keys(real));
+  assert.deepEqual(keys(demo.tools), keys(real.tools));
+  assert.deepEqual(demo.scopes, real.scopes);
+  assert.equal(demo.appUrl.replace(/[^/]+$/, ''), real.appUrl.replace(/[^/]+$/, ''));
+  assert.equal(demo.accounts.length, 1);
+  assert.deepEqual(keys(demo.accounts[0]), keys(real.accounts[0]));
+  assert.deepEqual(keys(demo.accounts[0].ssh), keys(real.accounts[0].ssh));
+
+  const all = await github.allRepos();
+  const demoAll = (await call('GET', '/github/repos')).body;
+  assert.deepEqual(keys(demoAll), keys(all));
+  assert.ok(demoAll.repos.length >= 3);
+  for (const repo of demoAll.repos) assert.deepEqual(keys(repo), keys(all.repos[0]), repo.fullName);
+  const account = demoAll.repos[0].accountId;
+
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-parent-'));
+  t.after(() => fs.rmSync(parent, { recursive: true, force: true }));
+  const listed = await github.repos(7, { parent });
+  const demoListed = (await call('GET', `/github/accounts/${account}/repos?parent=%2Fwork`)).body.repos;
+  assert.deepEqual(keys(demoListed), keys(listed));
+  for (const repo of demoListed.repos) assert.deepEqual(keys(repo), keys(listed.repos[0]), repo.fullName);
+
+  const origin = (await call('GET', '/github/origin?cwd=%2Fwork%2Fstorefront')).body;
+  assert.deepEqual(origin, { folder: '/work/storefront', repo: 'acme/storefront' });
+  const sessions = await new Promise((resolve) => {
+    const { context } = loadDemo();
+    const socket = new context.WebSocket('wss://example.test/api/v1/events');
+    socket.onmessage = ({ data }) => resolve(JSON.parse(data).sessions);
+  });
+  for (const s of sessions.filter((item) => item.provider.id !== 'shell')) {
+    assert.ok((await call('GET', `/github/origin?cwd=${encodeURIComponent(s.cwd)}`)).body.repo, `${s.name} sits in a demo repository`);
+  }
+
+  const base = `/github/accounts/${account}/repos/acme/storefront`;
+  const pairs = [
+    [await views.issues(7, 'octo', 'demo'), (await call('GET', `${base}/issues`)).body, 'issues'],
+    [await views.actions(7, 'octo', 'demo'), (await call('GET', `${base}/actions`)).body, 'runs'],
+    [await views.pulls(7, 'octo', 'demo'), (await call('GET', `${base}/pulls`)).body, 'pulls'],
+  ];
+  for (const [expected, answered, list] of pairs) {
+    assert.deepEqual(keys(answered), keys(expected), list);
+    assert.ok(answered[list].length > 0, list);
+    for (const item of answered[list]) assert.deepEqual(keys(item), keys(expected[list][0]), `${list} ${item.number ?? item.id}`);
+  }
+  assert.equal((await call('GET', `${base}/actions`)).body.running, true, 'a run is going, so the panel shows it');
+
+  const madeReal = await views.createIssue(7, 'octo', 'demo', { title: 'x' });
+  const made = await call('POST', `${base}/issues`, { title: '  From the demo  ', body: 'Hi' });
+  assert.equal(made.status, 201);
+  assert.deepEqual(keys(made.body.issue), keys(madeReal));
+  assert.equal(made.body.issue.title, 'From the demo');
+  const closed = await call('PATCH', `${base}/issues/${made.body.issue.number}`, { state: 'closed' });
+  assert.equal(closed.body.issue.state, 'closed');
+  assert.ok((await call('GET', `${base}/issues?state=closed`)).body.issues.some((i) => i.number === made.body.issue.number));
+  assert.equal((await call('POST', `${base}/issues`, { title: ' ' })).body.error.code, 'bad_title');
+  assert.equal((await call('GET', `/github/accounts/${account}/repos/acme/missing/pulls`)).status, 404);
+  assert.equal((await call('POST', '/github/clone', { account, repo: 'acme/storefront', parent: '/work' })).body.error.code, 'demo_only');
+});
+
+test('demo issue validation preserves omitted fields and refuses oversized writes atomically', async () => {
+  const { call } = loadDemo();
+  const base = '/github/accounts/1001/repos/acme/storefront/issues';
+  const content = '漢字 👋\r\n"quoted"\\path';
+  const made = (await call('POST', base, { title: 'x'.repeat(256), body: content })).body.issue;
+  const target = `${base}/${made.number}`;
+  assert.equal((await call('PATCH', target, { title: 'Renamed' })).body.issue.body, content);
+  for (const state of ['closed', 'open']) assert.equal((await call('PATCH', target, { state })).body.issue.body, content);
+  for (const method of ['POST', 'PATCH']) {
+    const route = method === 'POST' ? base : target;
+    for (const [body, code] of [
+      [{ title: 'x'.repeat(257), state: 'closed' }, 'bad_title'],
+      [{ title: 'x', body: 'x'.repeat(48001), state: 'closed' }, 'bad_body'],
+      [{ title: 'x', body: 42 }, 'bad_body'],
+      [{ title: 'x', body: '漢'.repeat(24000) }, 'too_large'],
+      [{ title: 'x', body: '\\'.repeat(40000) }, 'too_large'],
+    ]) assert.equal((await call(method, route, body)).body.error.code, code);
+  }
+  const kept = (await call('GET', base)).body.issues.find((i) => i.number === made.number);
+  assert.deepEqual([kept.title, kept.body, kept.state], ['Renamed', content, 'open']);
+  assert.equal((await call('PATCH', target, {})).body.error.code, 'bad_request');
+  assert.equal((await call('PATCH', target, { body: 'x'.repeat(48000) })).body.issue.body.length, 48000);
+  assert.equal((await call('PATCH', target, { body: '' })).body.issue.body, '');
+  assert.equal((await call('PATCH', target, { body: null })).body.issue.body, '');
 });
 
 test('demo events arrive after the request that caused them returns', async (t) => {

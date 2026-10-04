@@ -34,10 +34,15 @@ WebSocket clients that cannot set headers, such as browsers, pass
 `?token=<token>` in the URL instead.
 
 The manager also rejects requests whose `Host` header is not a loopback name
-for its port, and browser requests whose `Origin` is not the manager's own
-page. That blocks DNS-rebinding and cross-site attacks. Native clients that
-send no `Origin` header are unaffected. `AGENT_GUILD_ALLOWED_ORIGINS` adds
-extra comma-separated origins, for example a UI dev server.
+for its port or explicitly configured in `AGENT_GUILD_ALLOWED_HOSTS`, and
+browser requests whose `Origin` is not the manager's own page or listed in
+`AGENT_GUILD_ALLOWED_ORIGINS`. That blocks DNS-rebinding and cross-site
+attacks. Native clients that send no `Origin` header still need an accepted
+Host and the API token. Both settings are comma-separated; Host values have
+no scheme, whereas Origin values include it. They are checked independently
+for HTTP and WebSocket requests, without trusting forwarded headers.
+See [reverse proxy setup](configuration.md#reverse-proxies) for a Tailscale
+Serve example. The default loopback behavior is unchanged.
 
 Errors use one shape:
 
@@ -417,6 +422,27 @@ once GitHub refuses the account's token and its refresh. `ssh.status` is
 account). `ssh.error` is `{ code, message, manual }`, with `manual` true when
 the user must add `publicKey` on GitHub themselves.
 
+### Repository views
+
+Issues, workflow runs and open pull requests of one repository, read with one
+signed-in account. Each list holds the 30 most recently updated items;
+`truncated` is true when GitHub has more. Every `url` is a github.com page.
+
+```json
+{ "issues": [{ "number": 4, "title": "Dock is too narrow", "body": "Steps", "state": "open", "user": "octo-cat", "comments": 2, "updatedAt": "2026-10-01T00:00:00.000Z", "url": "https://github.com/octo-cat/agent-guild/issues/4" }],
+  "truncated": false, "url": "https://github.com/octo-cat/agent-guild/issues" }
+{ "runs": [{ "id": 11, "name": "CI", "title": "Fix the gate", "branch": "main", "event": "push", "status": "in_progress", "conclusion": null, "runNumber": 12, "updatedAt": "2026-10-02T00:00:00.000Z", "url": "https://github.com/octo-cat/agent-guild/actions/runs/11" }],
+  "running": true, "truncated": false, "url": "https://github.com/octo-cat/agent-guild/actions" }
+{ "pulls": [{ "number": 8, "title": "Add viewer", "draft": true, "user": "ada", "head": "viewer", "base": "main", "updatedAt": "2026-10-02T00:00:00.000Z", "url": "https://github.com/octo-cat/agent-guild/pull/8" }],
+  "truncated": false, "url": "https://github.com/octo-cat/agent-guild/pulls" }
+```
+
+Issues leave out pull requests. `running` is true while any listed run is
+`queued`, `in_progress`, `waiting`, `requested` or `pending`. Errors: 400
+`bad_repo`, 404 `unknown_account`, 404 `not_found` (GitHub has no such
+repository or issue for the account), 404 `issues_disabled`, 403 `forbidden`,
+400 `github_rejected`, 429 `rate_limited`, 409 `github_sign_in`.
+
 ### Agent
 
 An agent is a worker that the coding tool reports inside a session, such as a
@@ -468,6 +494,13 @@ All paths are under `/api/v1`.
 | DELETE | `/github/accounts/:id` | | `{ github }`: forgets the account's sign-in. Its key stays in the data folder and on GitHub. |
 | GET | `/github/accounts/:id/repos?parent=&refresh=1` | | `{ repos: { accountId, fetchedAt, truncated, owners, parent, repos } }`: the account's repositories, most recently pushed first, each `{ fullName, owner, ownerType, name, private, fork, archived, description, language, pushedAt, url, target, local }`. `owners` is the account's login, then the organizations among the repositories' owners: where a new repository can be created. With `parent` (a folder; 400 `bad_cwd` when it does not exist), `target` is `<parent>/<name>` and `local` is `absent`, `cloned` (a Git repository whose origin is this repository) or `conflict`. Cached for 5 minutes unless `refresh=1`. |
 | POST | `/github/accounts/:id/repos` | `{ owner, name, description?, private?, readme? }` | `201 { repo }`: creates a repository under the account or the organization `owner`, private unless `private` is false, with a README unless `readme` is false. 409 `repo_exists`, 403 `repo_forbidden` when GitHub refuses the owner. |
+| GET | `/github/repos?refresh=1` | | `{ repos, truncated, errors, fetchedAt }`: every signed-in account's repositories in one list, most recently pushed first, each a repository as above without `target` and `local`, plus `accountId` and `login`. A repository two accounts can see is listed for each. An account that fails adds `{ accountId, login, code, message }` to `errors` and leaves the others' repositories in place. `fetchedAt` is the oldest account list's time, null without accounts. |
+| GET | `/github/origin?cwd=` | | `{ folder, repo }`: `repo` is the lowercase `owner/name` of the GitHub origin of the Git work tree holding `cwd`, worktrees included, else null. 400 `bad_cwd` when the folder does not exist. |
+| GET | `/github/accounts/:id/repos/:owner/:name/issues?state=` | | Repository issues (see Repository views). `state` is `open` (default), `closed` or `all`; 400 `bad_state` otherwise. |
+| POST | `/github/accounts/:id/repos/:owner/:name/issues` | `{ title, body? }` | `201 { issue }`. 400 `bad_title` for an empty title, `bad_body` when `body` is not a string. The title is cut to 256 characters, the body to 48,000. |
+| PATCH | `/github/accounts/:id/repos/:owner/:name/issues/:number` | `{ title?, body?, state? }` | `{ issue }`. `state` is `open` or `closed`. 400 `bad_issue`, `bad_state`, or `bad_request` when nothing is given. |
+| GET | `/github/accounts/:id/repos/:owner/:name/actions` | | Workflow runs (see Repository views). |
+| GET | `/github/accounts/:id/repos/:owner/:name/pulls` | | Open pull requests (see Repository views). |
 | POST | `/github/accounts/:id/ssh` | | `{ account }`: makes the account's SSH key if it has none, adds it to the account, and checks that GitHub signs it in as this account. A failure is reported in `account.ssh.error`. |
 | POST | `/github/clone` | `{ account, repo, parent }` | `201 { session }`: a session with `task` `clone` running `git clone` for `repo` (owner/name) into `<parent>/<name>` over SSH with the account's key. 409 `ssh_not_ready`, `git_unavailable`, `clone_exists` or `folder_conflict` (both with `target`), or `clone_in_progress`. |
 | GET | `/sessions` | | `{ sessions: Session[] }` |
