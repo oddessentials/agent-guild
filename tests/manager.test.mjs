@@ -392,6 +392,7 @@ test('the web page and xterm assets are served', async () => {
   assert.equal((await fetch(`${base}/sounds/update-available.wav`)).headers.get('content-type'), 'audio/wav');
   assert.equal((await fetch(`${base}/alerts.js`)).status, 200);
   assert.equal((await fetch(`${base}/skins/gnomeland/fonts/almendra-bold.woff2`)).headers.get('content-type'), 'font/woff2');
+  assert.equal((await fetch(`${base}/skins/goblinville/fonts/germania-one.woff2`)).headers.get('content-type'), 'font/woff2');
 });
 
 test('static files revalidate with their ETag instead of downloading again', async () => {

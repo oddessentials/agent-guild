@@ -5,7 +5,7 @@ The Appearance menu in the top bar switches skin and variant in place. A skin
 changes how the page looks and nothing else: layout, controls, labels and
 behaviour stay the same.
 
-The skins are `web/skins/guild/` (the default), `web/skins/professional/`, `web/skins/orbital/`, `web/skins/grove/` and `web/skins/gnomeland/`.
+The skins are `web/skins/guild/` (the default), `web/skins/professional/`, `web/skins/orbital/`, `web/skins/grove/`, `web/skins/gnomeland/` and `web/skins/goblinville/`.
 Copy the closer one to start a new skin.
 
 ## What a skin never changes

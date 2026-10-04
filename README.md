@@ -154,7 +154,8 @@ dark mode, without a reload. **Guild** is the default fantasy look;
 **Professional** is a plain business look with no characters; **Orbital**
 puts a crew of little robots in deep space; **Grove** is a calm moss garden
 of gentle nature spirits; **Gnomeland** is a lantern-lit village of gnome
-builders, engineers with a little magic. The page
+builders, engineers with a little magic; **Goblinville** is a steam-powered
+town of goblin, orc, ogre and troll builders on stilts over a bog. The page
 follows your system's light or dark setting until you pick one. See
 [docs/SKINS.md](docs/SKINS.md) to make another. **Alert sounds**, off until
 you turn them on in the same menu, chime when the session manager confirms

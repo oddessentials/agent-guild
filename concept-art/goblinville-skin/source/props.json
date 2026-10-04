@@ -1,0 +1,57 @@
+{
+  "_style": "Highly detailed storybook steampunk illustration, rich painterly digital painting with fine texture and crisp detail, a little familiar kept by the goblin builders of a steam-powered town, part creature and part brass contraption, charming but crafted and believable, not grotesque, warm soft key light with a subtle colored rim light, single subject isolated and centered filling most of the frame, on a pure flat black background, no floor, no shadow, no text, no letters, no logos, no border.",
+  "familiars/flame": {
+    "seed": 621,
+    "w": 1024,
+    "h": 1024,
+    "workflow": "qwen-image",
+    "prompt": "A small ember newt with glossy charcoal-black skin cracked with glowing orange ember veins, a tiny riveted copper boiler strapped to its back puffing a wisp of steam from a little chimney, small warm orange flames flickering along its curled tail, bright amber eyes, crouched and alert."
+  },
+  "familiars/leaf": {
+    "seed": 622,
+    "w": 1024,
+    "h": 1024,
+    "workflow": "qwen-image",
+    "prompt": "A small plump bog toad with mossy green skin and tiny ferns sprouting on its back, little round brass goggles pushed up on its head, a tiny leather tool strap across its chest with a miniature wrench, bright golden curious eyes, a soft emerald glow."
+  },
+  "familiars/night": {
+    "seed": 623,
+    "w": 1024,
+    "h": 1024,
+    "workflow": "qwen-image",
+    "prompt": "A small fluffy bat with velvety deep violet fur, big round glowing lavender eyes, large pointed ears, its wings stretched over a fine frame of riveted brass struts and folded around it like a cloak, sitting upright, a few faint violet sparkles."
+  },
+  "familiars/aether": {
+    "seed": 624,
+    "w": 1024,
+    "h": 1024,
+    "workflow": "qwen-image",
+    "prompt": "A small floating brass messenger drone, a round riveted brass body with a glass porthole showing a glowing sky-blue crystal core, two tiny spinning brass propellers on top, a small glass vial of sky-blue light hanging beneath it, soft sky-blue motes drifting around it, hovering."
+  },
+  "ui/empty-state": {
+    "seed": 821,
+    "w": 1024,
+    "h": 1024,
+    "workflow": "qwen-image",
+    "style": "Highly detailed storybook steampunk illustration, rich painterly digital painting with fine texture and crisp detail, charming and believable, not cute, not grotesque, warm soft key light with a subtle colored rim light, single scene isolated and centered filling most of the frame, on a pure flat black background, no floor, no shadow, no text, no letters, no logos, no border.",
+    "prompt": "A single small grown-up goblin builder with green skin and long pointed ears, wearing a patched moss-green work coat, brass goggles on his forehead and a leather tool belt, sitting alone on a wooden crate beside a small brass-wheeled handcart of tools, a rolled blueprint across his knees, holding up a small glowing brass lantern and looking up hopefully, a tiny brass-goggled toad sitting on the cart, a few fireflies drifting around, the crate and cart fully visible."
+  },
+  "backgrounds/page": {
+    "seed": 921,
+    "w": 1920,
+    "h": 1088,
+    "workflow": "qwen-image",
+    "style": "",
+    "prompt": "Cinematic storybook steampunk digital painting, richly detailed, a crooked goblin builders' town at night built on stilts and boardwalks over a misty bog, ramshackle riveted iron-and-timber workshops with tall copper chimneys and pipes, small cranes, a water tower and round windows glowing warm amber, strings of lanterns, standing at the far left and far right edges, rickety boardwalks, barrels, crates, gears and copper pipes along the bottom of the frame, faint wisps of steam, calm dark still water reflecting the lights and distant misty hills at the center, a deep calm night sky with soft stars above, a large moon in the upper right, the center of the frame calm, dark and uncluttered, low contrast in the middle, no characters, no text.",
+    "upscale": 2
+  },
+  "backgrounds/page-light": {
+    "seed": 922,
+    "w": 1920,
+    "h": 1088,
+    "workflow": "qwen-image",
+    "style": "",
+    "prompt": "Cinematic storybook steampunk digital painting, richly detailed, a crooked goblin builders' town on a soft hazy morning, built on stilts and boardwalks over a misty bog, ramshackle riveted iron-and-timber workshops with tall copper chimneys and pipes, small cranes, a water tower and striped awnings standing at the far left and far right edges, rickety boardwalks, barrels, crates, gears, copper pipes, reeds and wildflowers along the bottom of the frame, soft white steam drifting, calm misty water and pale hazy hills at the center, a wide soft pale mint, sage and cream sky, airy, high-key, light and pastel overall, the center of the frame calm, pale and uncluttered, low contrast in the middle, no characters, no text.",
+    "upscale": 2
+  }
+}
