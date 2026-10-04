@@ -256,7 +256,9 @@ Any other tool or script can report agents and its model too. See
 
 ## Security and privacy
 
-* The manager listens on `127.0.0.1` only.
+* The manager listens on `127.0.0.1` only. To use its UI through a reverse
+  proxy such as Tailscale Serve, configure explicit
+  [allowed hosts and origins](docs/configuration.md#reverse-proxies).
 * Every API call needs a random per-user token, stored in the data folder
   with owner-only permissions. Anyone who can run programs as your user can
   read it, as with any local developer tool.
@@ -307,6 +309,9 @@ npm test
   coding tool in `tests/fixtures`. CI runs them on Windows, macOS and Linux
   with Node.js 22, 24 and 26, and installs the packed package on x64 and
   arm64.
+* `node tests/browser/proxy.mjs` checks the real UI and terminal through a
+  local HTTPS proxy with an isolated manager and test certificates. Set
+  `CHROME_PATH` to Chrome or Edge if it is not in a standard location.
 * In a checkout, `launchers/AgentGuild.cmd` (Windows) and
   `launchers/AgentGuild.command` (macOS) start Agent Guild with a
   double-click.

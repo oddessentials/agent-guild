@@ -22,7 +22,7 @@ export async function until(label, check) {
   throw new Error(`Timed out: ${label}`);
 }
 
-export async function withPage({ name, instrumentation = '', headers = () => ({}) }, run) {
+export async function withPage({ name, instrumentation = '', headers = () => ({}), chromeArgs = [] }, run) {
   const chromePath = [process.env.CHROME_PATH, '/usr/bin/google-chrome', '/usr/bin/chromium',
     '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'].find((file) => file && fs.existsSync(file));
   assert.ok(chromePath, 'Chrome is required; set CHROME_PATH to its executable');
@@ -46,7 +46,7 @@ export async function withPage({ name, instrumentation = '', headers = () => ({}
   const origin = `http://127.0.0.1:${server.address().port}`;
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), `guild-${name}-browser-`));
   const chrome = spawn(chromePath, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`,
-    '--no-first-run', '--no-default-browser-check', ...(process.env.CHROME_NO_SANDBOX === '1' ? ['--no-sandbox'] : []), 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
+    '--no-first-run', '--no-default-browser-check', ...(process.env.CHROME_NO_SANDBOX === '1' ? ['--no-sandbox'] : []), ...chromeArgs, 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
   let diagnostics = '', socket;
   chrome.stderr.on('data', (data) => { diagnostics = (diagnostics + data).slice(-3000); });
   let startupError;

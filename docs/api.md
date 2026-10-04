@@ -34,10 +34,15 @@ WebSocket clients that cannot set headers, such as browsers, pass
 `?token=<token>` in the URL instead.
 
 The manager also rejects requests whose `Host` header is not a loopback name
-for its port, and browser requests whose `Origin` is not the manager's own
-page. That blocks DNS-rebinding and cross-site attacks. Native clients that
-send no `Origin` header are unaffected. `AGENT_GUILD_ALLOWED_ORIGINS` adds
-extra comma-separated origins, for example a UI dev server.
+for its port or explicitly configured in `AGENT_GUILD_ALLOWED_HOSTS`, and
+browser requests whose `Origin` is not the manager's own page or listed in
+`AGENT_GUILD_ALLOWED_ORIGINS`. That blocks DNS-rebinding and cross-site
+attacks. Native clients that send no `Origin` header still need an accepted
+Host and the API token. Both settings are comma-separated; Host values have
+no scheme, whereas Origin values include it. They are checked independently
+for HTTP and WebSocket requests, without trusting forwarded headers.
+See [reverse proxy setup](configuration.md#reverse-proxies) for a Tailscale
+Serve example. The default loopback behavior is unchanged.
 
 Errors use one shape:
 

@@ -4,6 +4,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import { isIP } from 'node:net';
 import { createRequire } from 'node:module';
 import { WebSocketServer } from 'ws';
 import { timingSafeEqualString } from './session-manager.mjs';
@@ -61,15 +62,19 @@ class HttpError extends Error {
   }
 }
 
-function sendJson(res, status, body) {
-  const payload = JSON.stringify(body);
-  res.writeHead(status, {
-    ...SECURITY_HEADERS,
-    'Content-Type': 'application/json; charset=utf-8',
-    'Cache-Control': 'no-store',
-    'Content-Length': Buffer.byteLength(payload),
-  });
-  res.end(payload);
+/** Exact Host authorities, also safe to include as CSP WebSocket sources. */
+export function parseAllowedHosts(value = '') {
+  const entries = value.split(',').map((entry) => entry.trim().toLowerCase()).filter(Boolean);
+  for (const entry of entries) {
+    const match = /^(\[[0-9a-f:.]+\]|[a-z0-9.-]+)(?::([1-9]\d{0,4}))?$/.exec(entry);
+    const name = match?.[1];
+    const validName = name?.startsWith('[') ? isIP(name.slice(1, -1)) === 6
+      : name && name.length <= 253 && name.split('.').every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label));
+    if (!validName || (match[2] && Number(match[2]) > 65535)) {
+      throw new Error(`Invalid AGENT_GUILD_ALLOWED_HOSTS entry ${JSON.stringify(entry)}. Use a hostname with an optional port, such as guild.example.ts.net or guild.example.ts.net:8443; URLs and wildcards are not allowed.`);
+    }
+  }
+  return [...new Set(entries)];
 }
 
 function readJsonBody(req) {
@@ -119,6 +124,7 @@ export function createManagerServer({
   webDir,
   version = '0.0.0',
   selfUpdate = null,
+  extraHosts = [],
   extraOrigins = [],
   folderOpener = createFolderOpener({ resolveCwd: (cwd) => manager.resolveCwd(cwd) }),
   folderPicker = createFolderPicker({ resolveCwd: (cwd) => manager.resolveCwd(cwd) }),
@@ -127,12 +133,19 @@ export function createManagerServer({
   /** @type {(opts: { restart: boolean }) => void} */
   onShutdownRequest = () => {},
 }) {
+  const proxyHosts = parseAllowedHosts(extraHosts.join(','));
+  const socketSources = proxyHosts.flatMap((authority) => [`ws://${authority}`, `wss://${authority}`]);
+  const securityHeaders = {
+    ...SECURITY_HEADERS,
+    'Content-Security-Policy': SECURITY_HEADERS['Content-Security-Policy'].replace(
+      "connect-src 'self'", ["connect-src 'self'", ...socketSources].join(' ')),
+  };
   const upgradeInfo = () => (selfUpdate ? selfUpdate.describe() : null);
   const startedAt = new Date().toISOString();
   const vendor = vendorFiles();
   let boundPort = port;
 
-  const allowedHosts = () => new Set([`127.0.0.1:${boundPort}`, `localhost:${boundPort}`, `[::1]:${boundPort}`]);
+  const allowedHosts = () => new Set([`127.0.0.1:${boundPort}`, `localhost:${boundPort}`, `[::1]:${boundPort}`, ...proxyHosts]);
   const allowedOrigins = () =>
     new Set([`http://127.0.0.1:${boundPort}`, `http://localhost:${boundPort}`, `http://[::1]:${boundPort}`, ...extraOrigins]);
 
@@ -160,13 +173,24 @@ export function createManagerServer({
     }
   }
 
+  function sendJson(res, status, body) {
+    const payload = JSON.stringify(body);
+    res.writeHead(status, {
+      ...securityHeaders,
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'Content-Length': Buffer.byteLength(payload),
+    });
+    res.end(payload);
+  }
+
   function serveFile(req, res, file, { cache = false } = {}) {
     const notFound = () => sendJson(res, 404, { error: { code: 'not_found', message: 'not found' } });
     fs.stat(file, (statErr, stat) => {
       if (statErr || !stat.isFile()) return notFound();
       const etag = `W/"${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}"`;
       const headers = {
-        ...SECURITY_HEADERS,
+        ...securityHeaders,
         'Content-Type': MIME[path.extname(file).toLowerCase()] || 'application/octet-stream',
         'Cache-Control': cache ? 'public, max-age=3600' : 'no-cache',
         ETag: etag,

@@ -12,7 +12,7 @@ import { ModelStats } from './model-stats.mjs';
 import { NewsFeed } from './news.mjs';
 import { Changelog } from './changelog.mjs';
 import { GitHub } from './github.mjs';
-import { createManagerServer } from './server.mjs';
+import { createManagerServer, parseAllowedHosts } from './server.mjs';
 import { SelfUpdate } from './self-update.mjs';
 import { resolveBaseEnv, pathReader } from './shell-env.mjs';
 import { writeReportShims } from './report-shims.mjs';
@@ -39,6 +39,8 @@ const VERSION_REFRESH_MS = 60 * 60 * 1000;
 
 /** `version`, `packageFile` and `github` (GitHub's URLs and client id) stand in for the real ones in tests. */
 export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, sessionDefaults, version = VERSION, packageFile = PACKAGE_FILE, github: githubOptions = {} } = {}) {
+  // Validate before creating files, processes or timers, so a typo fails startup cleanly.
+  const extraHosts = parseAllowedHosts(process.env.AGENT_GUILD_ALLOWED_HOSTS);
   ensureDataDir();
   const token = loadOrCreateToken();
   const baseEnv = resolveBaseEnv();
@@ -133,6 +135,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
     webDir,
     version,
     selfUpdate,
+    extraHosts,
     extraOrigins,
     launcher: launcherPath(),
     onShutdownRequest: ({ restart = false } = {}) => shutdown('requested via API', { restart }).then(() => process.exit(0)),
