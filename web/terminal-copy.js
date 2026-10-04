@@ -5,14 +5,21 @@ export function captureTerminalText(term) {
   const buffer = term.buffer.active;
   const lines = [];
   let viewportLine = 0;
+  let viewportPrefix = '';
   for (let y = 0; y < buffer.length; y++) {
     const line = buffer.getLine(y);
-    const text = line.translateToString(true, 0, term.cols).replace(/\u00a0/g, ' ');
-    if (line.isWrapped && lines.length) lines[lines.length - 1] += text;
+    const text = line.translateToString(true, 0, term.cols);
+    const wrapped = line.isWrapped && lines.length > 0;
+    if (y === buffer.viewportY) {
+      viewportLine = wrapped ? lines.length - 1 : lines.length;
+      // The visible row can begin inside a joined line. Keep its actual text
+      // prefix: terminal cells and JavaScript character counts differ for Unicode.
+      viewportPrefix = wrapped ? lines[lines.length - 1] : '';
+    }
+    if (wrapped) lines[lines.length - 1] += text;
     else lines.push(text);
-    if (y === buffer.viewportY) viewportLine = lines.length - 1;
   }
-  return { text: lines.join('\n'), viewportLine };
+  return { text: lines.join('\n'), viewportLine, viewportPrefix };
 }
 
 export class TerminalCopy {
@@ -54,9 +61,14 @@ export class TerminalCopy {
     this.dialog.showModal();
     this.text.focus({ preventScroll: true });
     this.text.setSelectionRange(0, 0);
-    const lineHeight = parseFloat(getComputedStyle(this.text).lineHeight);
-    this.text.scrollTop = snapshot.viewportLine * lineHeight;
+    const style = getComputedStyle(this.text);
+    this.text.scrollTop = snapshot.viewportLine * parseFloat(style.lineHeight);
     this.text.scrollLeft = 0;
+    if (snapshot.viewportPrefix) {
+      const measure = document.createElement('canvas').getContext('2d');
+      measure.font = style.font;
+      this.text.scrollLeft = measure.measureText(snapshot.viewportPrefix).width;
+    }
   }
 
   selectionChanged() {

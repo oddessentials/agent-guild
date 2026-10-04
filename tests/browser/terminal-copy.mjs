@@ -135,23 +135,23 @@ try {
   await until('touch action visible', () => evaluate('!document.querySelector("#panel-copy").hidden'));
   pass('touch capability exposes Copy without UA sniffing');
   await send('Browser.setPermission', { permission: { name: 'clipboard-read' }, setting: 'granted', origin });
-  await write('FIRST\r\n  quoted text 中🙂\r\n\x1b[31mRED\x1b[0m <literal>', true);
+  await write('FIRST\r\n  quoted\u00a0text 中🙂\r\n\x1b[31mRED\x1b[0m <literal>', true);
   await layoutReady();
   const geometry = await evaluate(`(()=>{const t=${current};const r=document.querySelector('#terminal-host').getBoundingClientRect();return [t.cols,t.rows,r.width,r.height]})()`);
   await evaluate('testMessages.length=0');
   await tap('#panel-copy');
   await until('copy sheet', () => evaluate(`${sheet}.open`));
   const frozen = await evaluate(`${area}.value`);
-  assert.match(frozen, /FIRST\n  quoted text 中🙂\nRED <literal>/);
+  assert.match(frozen, /FIRST\n  quoted\u00a0text 中🙂\nRED <literal>/);
   assert.equal(await evaluate(`${area}.readOnly`), true);
   assert.equal(await evaluate(`getComputedStyle(${area}).userSelect`), 'text');
-  await select('quoted text 中🙂');
+  await select('quoted\u00a0text 中🙂');
   await tap('#terminal-copy [data-copy]');
   await until('copied status', () => evaluate(`${status}.textContent === 'Copied'`));
-  assert.equal(await evaluate('navigator.clipboard.readText()'), 'quoted text 中🙂');
+  assert.equal(await evaluate('navigator.clipboard.readText()'), 'quoted\u00a0text 中🙂');
   assert.deepEqual(await evaluate('testMessages'), []);
   assert.deepEqual(await evaluate(`(()=>{const t=${current};const r=document.querySelector('#terminal-host').getBoundingClientRect();return [t.cols,t.rows,r.width,r.height]})()`), geometry);
-  pass('trusted touch Copy writes exact selected Unicode text without terminal input or resize');
+  pass('trusted touch Copy preserves Unicode and nonbreaking spaces without terminal input or resize');
   await select('FIRST');
   assert.notEqual(await evaluate(`${status}.textContent`), 'Copied', 'a different selection is not labelled copied');
   await write('\r\nNEW OUTPUT');
@@ -230,16 +230,49 @@ try {
   for (const [width, height] of [[600, 960], [800, 600], [360, 740]]) {
     await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: true });
     await layoutReady();
+    const anchor = await evaluate(`new Promise(resolve=>{
+      const t=${current};
+      const chunk=${JSON.stringify(width === 800 ? '中🙂e\u0301\u00a0' : 'abcdefghijklmnopqrstuvwxyz')};
+      const text=chunk.repeat(Math.ceil(t.cols*(t.rows+8)/chunk.length));
+      t.reset();
+      t.write(text,()=>{
+        t.scrollLines(-2);
+        const b=t.buffer.active;
+        const prefix=Array.from({length:b.viewportY},(_,y)=>b.getLine(y).translateToString(true,0,t.cols)).join('');
+        resolve({text,prefix});
+      });
+    })`);
+    assert.ok(anchor.prefix.length > 0, 'the viewport starts within a wrapped line');
     const bounds = await evaluate(`(()=>{const r=document.querySelector('#terminal-host').getBoundingClientRect();return [r.width,r.height]})()`);
     await evaluate('testMessages.length=0');
     await tap('#panel-copy');
+    await layoutReady();
+    const position = await evaluate(`(()=>{
+      const a=${area}, measure=document.createElement('span');
+      measure.style.cssText='position:fixed;visibility:hidden;white-space:pre';
+      measure.style.font=getComputedStyle(a).font;
+      measure.textContent=${JSON.stringify(anchor.prefix)};
+      document.body.append(measure);
+      const expected=Math.min(measure.getBoundingClientRect().width,a.scrollWidth-a.clientWidth);
+      measure.remove();
+      return {actual:a.scrollLeft,expected,text:a.value,selected:a.selectionEnd-a.selectionStart};
+    })()`);
+    assert.equal(position.text, anchor.text);
+    assert.equal(position.selected, 0, 'opening does not select or copy text');
+    assert.ok(Math.abs(position.actual - position.expected) <= 2, JSON.stringify(position));
     const layout = await evaluate(`(()=>{const d=${sheet}.getBoundingClientRect();const a=${area}.getBoundingClientRect();const f=${sheet}.querySelector('.terminal-copy-footer').getBoundingClientRect();const h=document.querySelector('#terminal-host').getBoundingClientRect();return {inside:d.left>=0&&d.top>=0&&d.right<=innerWidth&&d.bottom<=innerHeight,textVisible:a.height>100,footerInside:f.bottom<=d.bottom,host:[h.width,h.height]}})()`);
     assert.equal(layout.inside && layout.textVisible && layout.footerInside, true, JSON.stringify(layout));
     assert.deepEqual(layout.host, bounds);
     assert.deepEqual(await evaluate('testMessages'), []);
     await tap('#terminal-copy [data-done]');
+    await evaluate(`${current}.scrollToTop()`);
+    await tap('#panel-copy');
+    await layoutReady();
+    assert.equal(await evaluate(`${area}.scrollLeft`), 0, 'reopening at the top does not keep the old horizontal offset');
+    await tap('#terminal-copy [data-done]');
   }
   pass('portrait, landscape and narrow layouts keep controls visible without resizing the live terminal');
+  pass('wrapped ASCII and Unicode output opens at the live viewport, including after reopening');
 
   await send('Emulation.setTouchEmulationEnabled', { enabled: false });
   await send('Emulation.setDeviceMetricsOverride', { width: 1024, height: 768, deviceScaleFactor: 1, mobile: false });

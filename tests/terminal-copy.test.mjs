@@ -27,7 +27,7 @@ test('soft wraps preserve spaces and do not add newlines or wide-character paddi
 
 test('hard breaks, blank lines and explicit trailing spaces survive copying', async (t) => {
   const term = await terminal(t, 'a  \r\n\r\n  b\u00a0c');
-  assert.equal(captureTerminalText(term).text, 'a  \n\n  b c');
+  assert.equal(captureTerminalText(term).text, 'a  \n\n  b\u00a0c');
 });
 
 test('copy captures only the active alternate screen, then the normal screen on return', async (t) => {
@@ -45,7 +45,24 @@ test('capture respects retained scrollback and maps the visible row through soft
   assert.equal(copy.text, 'two\nthree\nfour\nfive\nsix');
   assert.equal(copy.viewportLine, 2);
   const wrapped = await terminal(t, '0123456789\r\ntwo\r\nthree', { cols: 5 });
-  assert.deepEqual(captureTerminalText(wrapped), { text: '0123456789\ntwo\nthree', viewportLine: 0 });
+  assert.deepEqual(captureTerminalText(wrapped), { text: '0123456789\ntwo\nthree', viewportLine: 0, viewportPrefix: '01234' });
+});
+
+test('wrapped viewport positions retain the exact prefix, including Unicode and trimmed scrollback', async (t) => {
+  for (const [output, options, text, prefix] of [
+    ['abcdefghijklmnopqrstuvwxyz', {}, 'abcdefghijklmnopqrstuvwxyz', 'abcdefghijklmno'],
+    ['abcdefghijklmnopqrstuvwxyz', { scrollback: 1 }, 'klmnopqrstuvwxyz', 'klmno'],
+    ['中🙂ae\u0301b\u00a0中klmnopqrstuvwxy', {}, '中🙂ae\u0301b\u00a0中klmnopqrstuvwxy', '中🙂ae\u0301b\u00a0中k'],
+    ['abcd中!1234567890', {}, 'abcd中!1234567890', 'abcd'],
+  ]) {
+    const term = await terminal(t, output, { cols: 5, rows: 3, ...options });
+    const snapshot = captureTerminalText(term);
+    assert.deepEqual(snapshot, { text, viewportLine: 0, viewportPrefix: prefix });
+    term.scrollToTop();
+    assert.equal(captureTerminalText(term).viewportPrefix, '', 'scrolling back uses the beginning of retained text');
+    term.resize(10, 3);
+    assert.equal(snapshot.viewportPrefix, prefix, 'the original snapshot is unaffected by reflow');
+  }
 });
 
 test('a captured value survives output and reflow without keeping mutable buffer lines', async (t) => {
