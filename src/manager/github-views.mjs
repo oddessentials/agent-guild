@@ -84,13 +84,15 @@ function cleanPull(raw, fullName) {
 
 function checkTitle(title) {
   if (typeof title !== 'string' || !title.trim()) throw refusal(400, 'bad_title', 'title must be a non-empty string');
-  return title.trim().slice(0, 256);
+  if (title.trim().length > 256) throw refusal(400, 'bad_title', 'Keep the title to 256 characters or fewer.');
+  return title.trim();
 }
 
 function checkBody(body) {
   if (body === undefined || body === null) return '';
   if (typeof body !== 'string') throw refusal(400, 'bad_body', 'body must be a string');
-  return body.slice(0, 48000);
+  if (body.length > 48000) throw refusal(400, 'bad_body', 'Keep the description to 48,000 characters or fewer, or edit it on GitHub.');
+  return body;
 }
 
 export function createViews(github) {

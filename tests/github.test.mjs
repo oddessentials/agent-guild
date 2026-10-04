@@ -524,9 +524,10 @@ test('issues leave out pull requests, and creating and editing send only checked
   assert.deepEqual(ctx.github.state.bodies.at(-1).body, { title: 'No body', body: '' });
   await assert.rejects(views.createIssue(account.id, 'octo-cat', 'agent-guild', { title: '   ' }), { code: 'bad_title' });
   await assert.rejects(views.createIssue(account.id, 'octo-cat', 'agent-guild', { title: 'x', body: 5 }), { code: 'bad_body' });
-  const long = await views.createIssue(account.id, 'octo-cat', 'agent-guild', { title: 'x'.repeat(300), body: 'y'.repeat(50000) });
-  assert.equal(long.title.length, 256);
-  assert.equal(ctx.github.state.bodies.at(-1).body.body.length, 48000);
+  const beforeInvalid = ctx.github.state.bodies.length;
+  await assert.rejects(views.createIssue(account.id, 'octo-cat', 'agent-guild', { title: 'x'.repeat(257) }), { code: 'bad_title' });
+  await assert.rejects(views.createIssue(account.id, 'octo-cat', 'agent-guild', { title: 'x', body: 'y'.repeat(48001) }), { code: 'bad_body' });
+  assert.equal(ctx.github.state.bodies.length, beforeInvalid, 'invalid content never reaches GitHub');
 
   const edited = await views.updateIssue(account.id, 'octo-cat', 'agent-guild', 4, { title: 'Dock width', state: 'closed', comments: 99 });
   assert.equal(edited.state, 'closed');
@@ -539,6 +540,33 @@ test('issues leave out pull requests, and creating and editing send only checked
   await assert.rejects(views.updateIssue(account.id, 'octo-cat', 'agent-guild', 4, {}), { code: 'bad_request' });
   await assert.rejects(views.updateIssue(account.id, 'octo-cat', 'agent-guild', 4, { state: 'merged' }), { code: 'bad_state' });
   await assert.rejects(views.updateIssue(account.id, 'octo-cat', 'agent-guild', 404, { state: 'closed' }), { code: 'not_found', status: 404 });
+});
+
+test('issue edits preserve omitted content and reject oversized changes without mutating GitHub', async () => {
+  const ctx = await setup();
+  const account = await signIn(ctx);
+  const views = createViews(ctx.hub);
+  const original = ctx.github.state.issues['octo-cat/agent-guild'].find((i) => i.number === 4);
+  original.body = 'x'.repeat(50000);
+  assert.equal((await views.issues(account.id, 'octo-cat', 'agent-guild')).issues[0].body, original.body);
+  const update = (patch) => views.updateIssue(account.id, 'octo-cat', 'agent-guild', 4, patch);
+  assert.equal((await update({ title: 'Renamed' })).body.length, 50000);
+  assert.deepEqual(ctx.github.state.bodies.at(-1).body, { title: 'Renamed' });
+  for (const state of ['closed', 'open']) assert.equal((await update({ state })).body.length, 50000);
+  const before = ctx.github.state.bodies.length;
+  await assert.rejects(update({ title: 'x'.repeat(257), state: 'closed' }), { code: 'bad_title' });
+  await assert.rejects(update({ body: 'x'.repeat(48001), state: 'closed' }), { code: 'bad_body' });
+  assert.equal(ctx.github.state.bodies.length, before);
+  assert.equal(original.body.length, 50000);
+  assert.equal(original.state, 'open', 'a rejected edit cannot partially close the issue');
+  const boundary = await update({ title: 'x'.repeat(256), body: 'y'.repeat(48000) });
+  assert.equal(boundary.title.length, 256);
+  assert.equal(boundary.body.length, 48000);
+  const unicode = 'Hello 漢字 👋\r\n"quoted"\\path';
+  assert.equal((await update({ body: unicode })).body, unicode);
+  assert.deepEqual(ctx.github.state.bodies.at(-1).body, { body: unicode });
+  assert.equal((await update({ body: '' })).body, '', 'an explicit empty string clears the body');
+  assert.equal((await update({ body: null })).body, '', 'null follows the create-body convention');
 });
 
 test('a missing repository, turned-off issues and the rate limit are answered as themselves', async () => {

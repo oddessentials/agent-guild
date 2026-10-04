@@ -1,4 +1,11 @@
-# Terminal copying
+# Browser checks
+
+The GitHub panel's account selection, issue editing, delayed requests and repository
+picker also have a browser regression check: `node tests/browser/github.mjs`.
+It uses simulated GitHub responses and never contacts GitHub. Set `CHROME_PATH`
+to Chrome or Edge on Windows, as with the checks below.
+
+## Terminal copying
 
 `npm test` covers buffer text and application lifecycle. Run the integrated
 page in Chrome with:

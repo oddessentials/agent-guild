@@ -2455,7 +2455,7 @@ function resumeById(event) {
 // ---- GitHub ---------------------------------------------------------------
 
 const GITHUB_SCOPES = {
-  repo: 'Read and write access to all your repositories, private ones included. GitHub offers apps no read-only choice; Agent Guild only lists them.',
+  repo: 'Read and write access to your repositories, private ones included, so you can browse repositories and create or edit issues.',
   'write:public_key': 'Add the SSH key Agent Guild creates for this account.',
 };
 const githubView = { accountId: null, repos: null, reposFor: null, loading: null, error: null, parentError: null, card: null, started: new Set(), announced: new Set() };
@@ -2658,10 +2658,6 @@ function renderGitHub() {
   const github = state.github;
   const account = githubAccount();
   const repos = githubView.repos?.accountId === account?.id ? githubView.repos : null;
-  const sub = !github ? 'Loading…'
-    : !account ? 'Clone your repositories over SSH'
-    : [`@${account.login}`, account.name, repos && `${repos.repos.length} ${repos.repos.length === 1 ? 'repository' : 'repositories'}`].filter(Boolean).join(' · ');
-  $('github-sub').textContent = sub;
   renderGitHubChips(github);
   renderGitHubCard(github, account);
   renderGitHubStatus(github, account);
@@ -2683,7 +2679,6 @@ function githubAvatar(account) {
 
 function renderGitHubChips(github) {
   const accounts = github?.accounts ?? [];
-  $('github-accounts').hidden = accounts.length === 0;
   const host = $('github-chips');
   const focused = document.activeElement?.closest?.('#github-chips .account-chip')?.dataset.account;
   host.replaceChildren(...accounts.map((account) => {
@@ -3056,6 +3051,8 @@ const GITHUB_VIEWS = ['repos', 'issues', 'actions', 'pulls'];
 const RUNS_POLL_MS = 6000;
 const RUNS_IDLE_POLL_MS = 30000;
 const BODY_LIMIT = 48000;
+const GITHUB_REQUEST_LIMIT = 64 * 1024;
+const PICKER_LIMIT = 200;
 /**
  * `list`: every account's repositories from /github/repos; `repo`: the picked one. `data[view]` is
  * `{ stamp, value, error, loading }` for the picked repository. `followed`: the session whose folder last picked the repository.
@@ -3066,6 +3063,7 @@ const githubPick = {
   view: 'repos', issueState: 'open', editing: null, data: {}, followed: null, origins: new Map(),
 };
 let runsTimer = 0;
+let reposRequest = null;
 
 function usableGitHubAccounts() {
   return (state.github?.accounts ?? []).filter((a) => !a.needsSignIn);
@@ -3086,10 +3084,17 @@ function repoPath(repo) {
   return `/github/accounts/${repo.accountId}/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}`;
 }
 
+function issueAccountError(repo) {
+  const account = state.github?.accounts.find((a) => a.id === repo.accountId);
+  return account && !account.needsSignIn ? null
+    : `Sign in as @${account?.login ?? repo.login} in Repositories to change issues in ${repo.fullName}.`;
+}
+
 function ensureAllRepos() {
   const stamp = githubAccountsStamp();
   if (!stamp) {
-    if (githubPick.list) Object.assign(githubPick, { list: null, listFor: null, repo: null, data: {} });
+    reposRequest = null;
+    Object.assign(githubPick, { list: null, listFor: null, loadingFor: null });
     return;
   }
   if (githubPick.listFor !== stamp && githubPick.loadingFor !== stamp) loadAllRepos();
@@ -3097,6 +3102,7 @@ function ensureAllRepos() {
 
 async function loadAllRepos({ refresh = false } = {}) {
   const stamp = githubAccountsStamp();
+  const request = reposRequest = {};
   githubPick.loadingFor = stamp;
   renderGitHubViews();
   let list = null;
@@ -3107,7 +3113,7 @@ async function loadAllRepos({ refresh = false } = {}) {
     if (err instanceof AuthError) return showAuth(err.message);
     error = err.message;
   }
-  if (githubPick.loadingFor !== stamp) return;
+  if (reposRequest !== request || githubAccountsStamp() !== stamp) return;
   Object.assign(githubPick, { loadingFor: null, error, listFor: stamp });
   if (list) githubPick.list = list;
   restorePick();
@@ -3121,7 +3127,11 @@ function restorePick() {
   const wanted = githubPick.repo ? repoKey(githubPick.repo) : load(GITHUB_REPO_KEY);
   const found = repos.find((repo) => repoKey(repo) === wanted) ?? null;
   if (found) pickRepo(found);
-  else if (githubPick.repo && githubPick.list) Object.assign(githubPick, { repo: null, data: {}, editing: null });
+  // A failed or expired account must not discard its draft or switch its identity.
+  else if (githubPick.repo && githubPick.list && !githubPick.editing && !issueAccountError(githubPick.repo)
+    && !githubPick.list.errors?.some((error) => error.accountId === githubPick.repo.accountId)) {
+    Object.assign(githubPick, { repo: null, data: {} });
+  }
 }
 
 function pickRepo(repo, { chosen = false } = {}) {
@@ -3132,7 +3142,8 @@ function pickRepo(repo, { chosen = false } = {}) {
     githubPick.recent = remember(githubPick.recent, repo);
     save(GITHUB_RECENT_KEY, JSON.stringify(githubPick.recent));
   }
-  if (githubView.accountId !== repo.accountId && state.github?.accounts.some((a) => a.id === repo.accountId)) {
+  if (!same) Object.assign(githubPick, { data: {}, editing: null });
+  if ((!same || chosen) && githubView.accountId !== repo.accountId && state.github?.accounts.some((a) => a.id === repo.accountId)) {
     selectGitHubAccount(repo.accountId);
     githubView.card = null;
     if (dockShows('github')) {
@@ -3141,7 +3152,6 @@ function pickRepo(repo, { chosen = false } = {}) {
     }
   }
   if (same) return renderGitHubViews();
-  Object.assign(githubPick, { data: {}, editing: null });
   renderGitHubViews();
   if (!dockShows('github')) return;
   loadView('actions');
@@ -3174,7 +3184,8 @@ async function loadView(view) {
   const key = repoKey(repo);
   const stamp = `${key}${query}`;
   const before = githubPick.data[view];
-  githubPick.data[view] = { key, stamp, value: before?.stamp === stamp ? before.value : null, error: null, loading: true };
+  const request = { key, stamp, value: before?.stamp === stamp ? before.value : null, error: null, loading: true };
+  githubPick.data[view] = request;
   renderGitHubViews();
   let value = null;
   let error = null;
@@ -3185,7 +3196,7 @@ async function loadView(view) {
     error = err.message;
   }
   const slot = githubPick.data[view];
-  if (slot?.stamp !== stamp) return;
+  if (slot !== request) return;
   githubPick.data[view] = { key, stamp, value: value ?? slot.value, error, loading: false };
   renderGitHubViews();
   if (view === 'actions') scheduleRuns();
@@ -3229,9 +3240,11 @@ function moveGitHubView(e) {
 // The picker: a combobox over every account's repositories.
 
 function pickerOptions() {
-  const repos = githubPick.list?.repos ?? [];
+  const accounts = new Set(usableGitHubAccounts().map((a) => a.id));
+  const repos = (githubPick.list?.repos ?? []).filter((repo) => accounts.has(repo.accountId));
   const ranked = rankRepos(repos, githubPick.query);
-  return githubPick.query.trim() ? ranked : recentFirst(ranked, githubPick.recent);
+  const options = githubPick.query.trim() ? ranked : recentFirst(ranked, githubPick.recent);
+  return { options: options.slice(0, PICKER_LIMIT), truncated: options.length > PICKER_LIMIT };
 }
 
 function setPickerOpen(open) {
@@ -3251,11 +3264,11 @@ function renderPickerList() {
   if (!githubPick.open) return;
   const list = $('github-repo-list');
   const input = $('github-repo');
-  const options = pickerOptions();
+  const { options, truncated } = pickerOptions();
   githubPick.active = Math.min(githubPick.active, Math.max(0, options.length - 1));
   const accounts = new Map((state.github?.accounts ?? []).map((a) => [a.id, a]));
   const several = accounts.size > 1;
-  const items = options.slice(0, 200).map((repo, index) => {
+  const items = options.map((repo, index) => {
     const account = accounts.get(repo.accountId);
     const meta = [several && `@${repo.login}`, repo.description, repo.language, repo.pushedAt && `pushed ${relativeTime(repo.pushedAt)}`].filter(Boolean).join(' · ');
     const item = el('li', 'github-option',
@@ -3275,6 +3288,11 @@ function renderPickerList() {
     empty.setAttribute('role', 'presentation');
     items.push(empty);
   }
+  if (truncated) {
+    const hint = el('li', 'github-option-empty', `Showing ${PICKER_LIMIT} matches; refine your search.`);
+    hint.setAttribute('role', 'presentation');
+    items.push(hint);
+  }
   list.replaceChildren(...items);
   const active = items[githubPick.active];
   if (active?.id) {
@@ -3292,7 +3310,7 @@ function choosePickerRepo(repo) {
 }
 
 function pickerKey(e) {
-  const options = pickerOptions();
+  const { options } = pickerOptions();
   if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
     e.preventDefault();
     if (!githubPick.open) {
@@ -3332,6 +3350,14 @@ function renderPickerNote() {
 function renderGitHubViews() {
   const usable = usableGitHubAccounts().length > 0;
   const shown = githubShownView();
+  const account = githubAccount();
+  const repo = githubPick.repo;
+  const repos = githubView.repos?.accountId === account?.id ? githubView.repos : null;
+  $('github-accounts').hidden = shown !== 'repos' || !state.github?.accounts.length;
+  $('github-sub').textContent = shown !== 'repos'
+    ? (repo ? `${repo.fullName} · Acting as @${state.github?.accounts.find((a) => a.id === repo.accountId)?.login ?? repo.login}` : 'Repositories from all your accounts')
+    : !state.github ? 'Loading…' : !account ? 'Sign in to browse your repositories'
+      : [`@${account.login}`, account.name, repos && `${repos.repos.length} ${repos.repos.length === 1 ? 'repository' : 'repositories'}`].filter(Boolean).join(' · ');
   $('github-picker').hidden = !usable;
   $('github-views').hidden = !usable;
   const input = $('github-repo');
@@ -3407,8 +3433,8 @@ function renderIssues() {
   const repo = githubPick.repo;
   if (!repo) return redraw(panel, [noRepoNote('issues')]);
   if (githubPick.editing !== null) return renderIssueEditor(panel, repo);
-  delete panel.dataset.editing;
   const slot = viewData('issues');
+  const blocked = issueAccountError(repo);
   const issues = slot?.value?.issues ?? [];
   const filter = el('div', 'github-segment', ...['open', 'closed'].map((value) => {
     const choice = keyed(button(value === 'open' ? 'Open' : 'Closed', () => {
@@ -3422,14 +3448,17 @@ function renderIssues() {
   filter.setAttribute('role', 'group');
   filter.setAttribute('aria-label', 'Show issues');
   const create = keyed(button('New issue', () => editIssue('new'), 'btn primary'), 'new');
+  create.disabled = Boolean(blocked);
   const rows = issues.map((issue) => {
     const edit = keyed(button('Edit', () => editIssue(issue.number)), `edit:${issue.number}`);
+    edit.disabled = Boolean(blocked);
     edit.setAttribute('aria-label', `Edit #${issue.number} ${issue.title}`);
     const meta = [issue.user, issue.updatedAt && `updated ${relativeTime(issue.updatedAt)}`, issue.comments && `${issue.comments} comment${issue.comments === 1 ? '' : 's'}`].filter(Boolean).join(' · ');
     return recordRow(`issue:${issue.number}`, `#${issue.number} ${issue.title}`, meta, edit, issue.url);
   });
   redraw(panel, [
     viewTools('issues', filter, create),
+    blocked && el('p', 'github-error', blocked),
     viewStatus('issues', slot?.value && !issues.length ? `No ${githubPick.issueState} issues.` : null),
     rows.length ? el('div', 'history-list', ...rows) : null,
     slot?.value?.truncated ? el('p', 'github-view-note', 'Showing the 30 most recently updated.') : null,
@@ -3437,79 +3466,166 @@ function renderIssues() {
 }
 
 function editIssue(target) {
-  githubPick.editing = target;
+  if (!githubPick.repo || issueAccountError(githubPick.repo)) return;
+  githubPick.editing = { target };
   renderGitHubViews();
   $('github-issues').querySelector('input')?.focus();
 }
 
 function leaveIssueEditor() {
+  if (githubPick.editing?.pending) return;
   githubPick.editing = null;
   renderGitHubViews();
   $('github-issues').querySelector('[data-key="new"]')?.focus();
 }
 
+function issuePayloadError(payload) {
+  if (payload.title !== undefined) {
+    if (!payload.title.trim()) return 'Enter a title for the issue.';
+    if (payload.title.trim().length > 256) return 'Keep the title to 256 characters or fewer.';
+  }
+  if (payload.body?.length > BODY_LIMIT) return 'Keep the description to 48,000 characters or fewer, or edit it on GitHub.';
+  if (new TextEncoder().encode(JSON.stringify(payload)).length > GITHUB_REQUEST_LIMIT) {
+    return 'This issue is too large to send here. Shorten the description or edit it on GitHub.';
+  }
+  return null;
+}
+
 function renderIssueEditor(panel, repo) {
-  const issue = githubPick.editing === 'new' ? null : viewData('issues')?.value?.issues.find((i) => i.number === githubPick.editing) ?? null;
-  const drawn = `${repoKey(repo)}:${githubPick.editing}`;
-  if (panel.dataset.editing === drawn) return;
-  if (githubPick.editing !== 'new' && !issue) {
+  const editor = githubPick.editing;
+  if (editor.form && panel.contains(editor.form)) return editor.update();
+  const issue = editor.target === 'new' ? null : viewData('issues')?.value?.issues.find((i) => i.number === editor.target) ?? null;
+  if (editor.target !== 'new' && !issue) {
     githubPick.editing = null;
     return renderIssues();
   }
-  panel.dataset.editing = drawn;
+  const key = repoKey(repo);
   const title = el('input');
-  Object.assign(title, { type: 'text', required: true, maxLength: 256, value: issue?.title ?? '', spellcheck: true, autocomplete: 'off' });
+  Object.assign(title, { type: 'text', required: true, value: issue?.title ?? '', spellcheck: true, autocomplete: 'off' });
   const body = el('textarea', 'github-issue-body');
-  Object.assign(body, { maxLength: BODY_LIMIT, value: issue?.body ?? '', placeholder: 'Describe the issue (Markdown)' });
+  Object.assign(body, { value: issue?.body ?? '', placeholder: 'Describe the issue (Markdown)' });
+  // Compare the browser's initialized values: textareas normalize CRLF to LF.
+  const initial = { title: title.value, body: body.value };
+  const longBody = Boolean(issue && issuePayloadError({ body: initial.body }));
+  const context = el('p', 'github-small');
+  const accountError = el('p', 'github-error');
+  accountError.setAttribute('role', 'alert');
   const error = el('p', 'github-error');
   error.setAttribute('role', 'alert');
   error.hidden = true;
   const form = el('form', 'github-card github-issue-form',
-    el('h3', null, issue ? `Edit #${issue.number}` : `New issue in ${repo.fullName}`),
+    el('h3', null, issue ? `Edit #${issue.number} in ${repo.fullName}` : `New issue in ${repo.fullName}`),
+    context,
     el('div', 'github-fields', el('label', 'wide', el('span', null, 'Title'), title), el('label', 'wide', el('span', null, 'Description'), body)),
-    error);
-  const dirty = () => title.value !== (issue?.title ?? '') || body.value !== (issue?.body ?? '');
-  const send = async (control, payload, done) => {
-    for (const b of form.querySelectorAll('button')) b.disabled = true;
+    longBody && el('p', 'github-small', 'This description is too long to edit here. Title and state changes keep it intact. ', externalLink('Edit on GitHub', issue.url)),
+    accountError, error);
+  form.noValidate = true;
+  editor.form = form;
+  const changes = () => {
+    const payload = {};
+    if (!issue || title.value !== initial.title) payload.title = title.value;
+    if (!issue || (!longBody && body.value !== initial.body)) payload.body = body.value;
+    return payload;
+  };
+  const dirty = () => title.value !== initial.title || (!longBody && body.value !== initial.body);
+  const current = () => githubPick.editing === editor && githubPick.repo && repoKey(githubPick.repo) === key;
+  const visible = () => dockShows('github') && githubShownView() === 'issues';
+  const fail = (message) => {
+    error.textContent = message;
+    error.hidden = false;
+  };
+  const send = async (control, nextState) => {
+    if (editor.pending || !current()) return;
+    const payload = changes();
+    if (nextState) payload.state = nextState;
+    if (!Object.keys(payload).length) return;
+    const invalid = issueAccountError(repo) || issuePayloadError(payload);
+    if (invalid) return fail(invalid);
+    const login = state.github.accounts.find((a) => a.id === repo.accountId).login;
+    const ownedFocus = form.contains(document.activeElement);
+    editor.pending = true;
+    editor.update();
+    const pendingFocus = document.activeElement;
+    const mayFocus = () => visible() && (form.contains(document.activeElement) || (ownedFocus && document.activeElement === pendingFocus));
     error.hidden = true;
     try {
       const result = issue
         ? await api('PATCH', `${repoPath(repo)}/issues/${issue.number}`, payload)
         : await api('POST', `${repoPath(repo)}/issues`, payload);
+      const verb = nextState === 'closed' ? 'Closed' : nextState === 'open' ? 'Reopened' : issue ? 'Saved' : 'Created';
+      toast(`${verb} #${result.issue.number} in ${repo.fullName} as @${login}.`, 4000);
+      if (!current()) return;
+      const focus = mayFocus();
       githubPick.editing = null;
-      toast(done(result.issue), 4000);
       if (!issue) githubPick.issueState = 'open';
+      delete githubPick.data.issues;
+      if (!visible()) return;
+      // A new editor may open while the refresh is pending. Focus only the list we drew.
+      renderGitHubViews();
+      const newButton = panel.querySelector('[data-key="new"]');
+      const refreshFocus = document.activeElement;
       await loadView('issues');
-      $('github-issues').querySelector('[data-key="new"]')?.focus();
+      if (focus && visible() && !githubPick.editing && githubPick.repo && repoKey(githubPick.repo) === key
+        && (document.activeElement === refreshFocus || document.activeElement === newButton)) {
+        panel.querySelector('[data-key="new"]')?.focus();
+      }
     } catch (err) {
       if (err instanceof AuthError) return showAuth(err.message);
-      error.textContent = err.message;
-      error.hidden = false;
-      for (const b of form.querySelectorAll('button')) b.disabled = false;
-      control.focus();
+      const message = err.code === 'too_large' ? 'This issue is too large to send here. Shorten the description or edit it on GitHub.' : err.message;
+      if (current()) {
+        fail(message);
+        const focus = mayFocus();
+        editor.pending = false;
+        editor.update();
+        if (focus) control.focus();
+      } else toast(`${repo.fullName} · @${login}: ${message}`, 8000);
+    } finally {
+      editor.pending = false;
+      if (current()) editor.update();
     }
   };
   const submit = el('button', 'btn primary', issue ? 'Save' : 'Create issue');
   submit.type = 'submit';
   const actions = el('div', 'github-actions', submit);
+  let toggle;
+  const closing = issue?.state === 'open';
   if (issue) {
-    const closing = issue.state === 'open';
-    const toggle = button(closing ? 'Close issue' : 'Reopen issue', () => send(toggle, { state: closing ? 'closed' : 'open' }, (i) => `${closing ? 'Closed' : 'Reopened'} #${i.number}.`), closing ? 'btn danger' : 'btn');
+    toggle = button('', () => send(toggle, closing ? 'closed' : 'open'), closing ? 'btn danger' : 'btn');
     actions.append(toggle);
   }
   actions.append(button('Cancel', leaveIssueEditor));
   if (issue) actions.append(externalLink('Open on GitHub', issue.url, 'btn github-out'));
   form.append(actions);
+  editor.update = () => {
+    const blocked = issueAccountError(repo);
+    context.textContent = `Acting as @${state.github?.accounts.find((a) => a.id === repo.accountId)?.login ?? repo.login}`;
+    if (accountError.textContent !== (blocked ?? '')) accountError.textContent = blocked ?? '';
+    accountError.hidden = !blocked;
+    for (const b of form.querySelectorAll('button')) b.disabled = Boolean(editor.pending);
+    submit.disabled = Boolean(editor.pending || blocked || (issue && !dirty()));
+    submit.textContent = editor.pending ? 'Saving…' : issue ? 'Save' : 'Create issue';
+    title.readOnly = Boolean(editor.pending);
+    body.readOnly = Boolean(editor.pending || longBody);
+    form.setAttribute('aria-busy', String(Boolean(editor.pending)));
+    if (toggle) {
+      toggle.disabled = Boolean(editor.pending || blocked);
+      toggle.textContent = dirty() ? (closing ? 'Save and close' : 'Save and reopen') : closing ? 'Close issue' : 'Reopen issue';
+    }
+  };
+  form.addEventListener('input', () => {
+    error.hidden = true;
+    editor.update();
+  });
   form.addEventListener('submit', (e) => {
     e.preventDefault();
-    const payload = { title: title.value, body: body.value };
-    send(submit, payload, (i) => (issue ? `Saved #${i.number}.` : `Created #${i.number} in ${repo.fullName}.`));
+    send(submit);
   });
   form.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
     e.preventDefault();
-    if (!dirty()) leaveIssueEditor();
+    if (!editor.pending && !dirty()) leaveIssueEditor();
   });
+  editor.update();
   panel.replaceChildren(form);
 }
 

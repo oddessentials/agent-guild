@@ -42,7 +42,7 @@ test('the demo runtime handles initial API calls and opens event and terminal so
     async json() { return JSON.parse(this.body); }
   }
   const context = {
-    Response, URL, setTimeout, clearTimeout,
+    Response, URL, TextEncoder, setTimeout, clearTimeout,
     location: { href: 'https://example.test/agent-guild/', pathname: '/agent-guild/' },
     fetch: () => { throw new Error('demo API escaped to the network'); },
     localStorage: { setItem: (key, value) => storage.set(key, value) },
@@ -85,7 +85,7 @@ function loadDemo() {
     async json() { return JSON.parse(this.body); }
   }
   const context = {
-    Response, URL, setTimeout, clearTimeout,
+    Response, URL, TextEncoder, setTimeout, clearTimeout,
     location: { href: 'https://example.test/agent-guild/', pathname: '/agent-guild/' },
     fetch: () => { throw new Error('demo API escaped to the network'); },
     localStorage: { setItem() {} },
@@ -210,6 +210,32 @@ test('the demo answers GitHub in the manager\'s shapes, signed in with repositor
   assert.equal((await call('POST', `${base}/issues`, { title: ' ' })).body.error.code, 'bad_title');
   assert.equal((await call('GET', `/github/accounts/${account}/repos/acme/missing/pulls`)).status, 404);
   assert.equal((await call('POST', '/github/clone', { account, repo: 'acme/storefront', parent: '/work' })).body.error.code, 'demo_only');
+});
+
+test('demo issue validation preserves omitted fields and refuses oversized writes atomically', async () => {
+  const { call } = loadDemo();
+  const base = '/github/accounts/1001/repos/acme/storefront/issues';
+  const content = '漢字 👋\r\n"quoted"\\path';
+  const made = (await call('POST', base, { title: 'x'.repeat(256), body: content })).body.issue;
+  const target = `${base}/${made.number}`;
+  assert.equal((await call('PATCH', target, { title: 'Renamed' })).body.issue.body, content);
+  for (const state of ['closed', 'open']) assert.equal((await call('PATCH', target, { state })).body.issue.body, content);
+  for (const method of ['POST', 'PATCH']) {
+    const route = method === 'POST' ? base : target;
+    for (const [body, code] of [
+      [{ title: 'x'.repeat(257), state: 'closed' }, 'bad_title'],
+      [{ title: 'x', body: 'x'.repeat(48001), state: 'closed' }, 'bad_body'],
+      [{ title: 'x', body: 42 }, 'bad_body'],
+      [{ title: 'x', body: '漢'.repeat(24000) }, 'too_large'],
+      [{ title: 'x', body: '\\'.repeat(40000) }, 'too_large'],
+    ]) assert.equal((await call(method, route, body)).body.error.code, code);
+  }
+  const kept = (await call('GET', base)).body.issues.find((i) => i.number === made.number);
+  assert.deepEqual([kept.title, kept.body, kept.state], ['Renamed', content, 'open']);
+  assert.equal((await call('PATCH', target, {})).body.error.code, 'bad_request');
+  assert.equal((await call('PATCH', target, { body: 'x'.repeat(48000) })).body.issue.body.length, 48000);
+  assert.equal((await call('PATCH', target, { body: '' })).body.issue.body, '');
+  assert.equal((await call('PATCH', target, { body: null })).body.issue.body, '');
 });
 
 test('demo events arrive after the request that caused them returns', async (t) => {

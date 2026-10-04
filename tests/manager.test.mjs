@@ -2293,6 +2293,22 @@ test('a GitHub account signs in, sets up SSH and clones over it in a visible ses
   assert.equal((await call('POST', `${repoPath}/issues`, { title: ' ' })).body.error.code, 'bad_title');
   assert.equal((await call('PATCH', `${repoPath}/issues/abc`, { state: 'closed' })).body.error.code, 'bad_issue');
   assert.equal((await call('PATCH', `${repoPath}/issues/999`, { state: 'closed' })).status, 404);
+  const longIssue = fakeGitHub.state.issues['octo-cat/agent-guild'].find((i) => i.number === 4);
+  longIssue.body = 'x'.repeat(50000);
+  assert.equal((await call('GET', `${repoPath}/issues`)).body.issues.find((i) => i.number === 4).body.length, 50000);
+  assert.equal((await call('PATCH', `${repoPath}/issues/4`, { title: 'Title only' })).body.issue.body.length, 50000);
+  const beforeInvalid = fakeGitHub.state.bodies.length;
+  for (const [payload, status, code] of [
+    [{ title: 'x'.repeat(257) }, 400, 'bad_title'],
+    [{ body: 'x'.repeat(48001) }, 400, 'bad_body'],
+    [{ body: '漢'.repeat(24000) }, 413, 'too_large'],
+    [{ body: '\\'.repeat(40000) }, 413, 'too_large'],
+  ]) {
+    const rejected = await call('PATCH', `${repoPath}/issues/4`, payload);
+    assert.deepEqual([rejected.status, rejected.body.error.code], [status, code]);
+  }
+  assert.equal(fakeGitHub.state.bodies.length, beforeInvalid, 'invalid issue requests never reach GitHub');
+  assert.equal(longIssue.body.length, 50000);
   const actions = await call('GET', `${repoPath}/actions`);
   assert.equal(actions.body.running, true);
   assert.equal(actions.body.runs[1].url, 'https://github.com/octo-cat/agent-guild/actions/runs/10');

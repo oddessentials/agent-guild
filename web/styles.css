@@ -871,6 +871,7 @@ a.btn.github-out::after {
   .badge.run, .badge.ok, .badge.bad { color: var(--badge); }
 }
 .github-issue-form .github-fields { grid-template-columns: minmax(0, 1fr); }
+.github-issue-form h3, .github-issue-form .github-small, .github .dock-sub { overflow-wrap: anywhere; }
 .github-issue-body { min-height: 10em; resize: vertical; padding: 8px 10px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface); color: var(--text); font: inherit; font-size: 0.9rem; line-height: 1.5; }
 .github-issue-body:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 @media (pointer: coarse) {

@@ -266,11 +266,18 @@
         if (['open', 'closed', 'all'].indexOf(wanted) < 0) return error('state must be open, closed or all', 'bad_state');
         return json({ issues: clone(data.issues.filter(function (i) { return wanted === 'all' || i.state === wanted; })), truncated: false, url: web + '/issues' });
       }
-      var title = typeof body.title === 'string' ? body.title.trim().slice(0, 256) : undefined;
+      var title = typeof body.title === 'string' ? body.title.trim() : undefined;
+      if (view[4] === 'issues' && (method === 'POST' || method === 'PATCH')) {
+        if (new TextEncoder().encode(JSON.stringify(body)).length > 64 * 1024) return error('request body too large', 'too_large', 413);
+        if ((method === 'POST' || body.title !== undefined) && !title) return error('title must be a non-empty string', 'bad_title');
+        if (title && title.length > 256) return error('Keep the title to 256 characters or fewer.', 'bad_title');
+        if (body.body != null && typeof body.body !== 'string') return error('body must be a string', 'bad_body');
+        if (body.body && body.body.length > 48000) return error('Keep the description to 48,000 characters or fewer, or edit it on GitHub.', 'bad_body');
+      }
       if (view[4] === 'issues' && !view[5] && method === 'POST') {
         if (!title) return error('title must be a non-empty string', 'bad_title');
         var number = data.issues.reduce(function (n, i) { return Math.max(n, i.number); }, 0) + 1;
-        var made = issue(number, title, 'open', githubAccount.login, 0, 0, String(body.body || '').slice(0, 48000));
+        var made = issue(number, title, 'open', githubAccount.login, 0, 0, body.body || '');
         made.url = web + '/issues/' + number;
         data.issues.unshift(made);
         return json({ issue: clone(made) }, 201);
@@ -280,8 +287,9 @@
         if (!found) return error('GitHub could not find ' + fullName + ' for @' + githubAccount.login, 'not_found', 404);
         if (body.title !== undefined && !title) return error('title must be a non-empty string', 'bad_title');
         if (body.state !== undefined && body.state !== 'open' && body.state !== 'closed') return error('state must be open or closed', 'bad_state');
+        if (body.title === undefined && body.body === undefined && body.state === undefined) return error('nothing to update', 'bad_request');
         if (title) found.title = title;
-        if (typeof body.body === 'string') found.body = body.body.slice(0, 48000);
+        if (body.body !== undefined) found.body = body.body || '';
         if (body.state) found.state = body.state;
         found.updatedAt = new Date().toISOString();
         return json({ issue: clone(found) });

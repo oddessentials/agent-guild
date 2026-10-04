@@ -50,6 +50,11 @@ jobs:
         env:
           CHROME_NO_SANDBOX: '1'
         timeout-minutes: 2
+      - if: runner.os == 'Linux' && matrix.node == 24
+        run: node tests/browser/github.mjs
+        env:
+          CHROME_NO_SANDBOX: '1'
+        timeout-minutes: 2
 
   plan:
     name: Release plan
