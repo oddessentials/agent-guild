@@ -132,7 +132,15 @@
       { id: 'demo-news', title: 'Agent Guild interactive demo', url: 'https://github.com/oddessentials/agent-guild', source: 'Agent Guild', kind: 'news', publishedAt: new Date(now - 3600000).toISOString(), summary: 'Explore the interface with simulated local sessions.' },
     ], sources: [] });
     if (route === '/changelog' && method === 'GET') return json({ refreshing: false, releases: [], okAt: new Date(now).toISOString(), error: null });
-    if (route === '/github' && method === 'GET') return json({ github: { accounts: [], signIn: null, git: { available: false }, ssh: { available: false } } });
+    if (route === '/github' && method === 'GET') return json({ github: {
+      scopes: ['repo', 'write:public_key'],
+      appUrl: 'https://github.com/settings/connections/applications/Ov23lif6qqYKtXZTb130',
+      keysUrl: 'https://github.com/settings/keys',
+      newKeyUrl: 'https://github.com/settings/ssh/new',
+      tools: { git: false, ssh: false, sshKeygen: false },
+      signIn: null,
+      accounts: [],
+    } });
     if (/^\/providers\/[^/]+\/history$/.test(route) && method === 'GET') return json({ history: [] });
     if (route === '/sessions' && method === 'POST') {
       var id = Math.random().toString(16).slice(2, 10).padEnd(8, '0');

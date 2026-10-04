@@ -18,17 +18,13 @@ const source = [
   // One line each: the pattern for longer functions would run on into the next one.
   found(/^function load\(.*$/m, 'load'),
   found(/^function save\(.*$/m, 'save'),
-  limitLine, statusBlock, line('notesView'), line('firstClick'), line('keepFocus'),
-  ...['refreshNotes', 'saveNotes', 'renderNotesStatus', 'notesStored', 'openNotes', 'closeNotes', 'notesClosed',
-    'isOutsideNotes', 'notesPressed', 'notesClicked', 'guardLeaving', 'confirmLeaving'].map(fn),
+  limitLine, statusBlock, line('notesView'), line('firstClick'),
+  ...['refreshNotes', 'saveNotes', 'renderNotesStatus', 'notesStored', 'openNotes', 'toggleNotes', 'guardLeaving', 'confirmLeaving'].map(fn),
   'globalThis.firstClick = firstClick;',
-  'globalThis.keepFocus = keepFocus;',
 ].join('\n');
 const LIMIT = runInNewContext(`${limitLine}; NOTES_LIMIT`);
 const STATUS = runInNewContext(`${limitLine}\n${statusBlock}; NOTES_STATUS`);
 const KEY = 'agentGuild.notes';
-/** The side sheet, at the right of a 1360 x 860 window. */
-const SHEET = { left: 900, right: 1360, top: 0, bottom: 860 };
 
 /** One open page. `storage` is shared between pages to stand for other tabs or a reload. */
 function page({ storage = new Map(), blocked = false, full = false } = {}) {
@@ -49,15 +45,9 @@ function page({ storage = new Map(), blocked = false, full = false } = {}) {
     set value(next) { text = String(next); this.selectionStart = this.selectionEnd = text.length; },
     setSelectionRange(start, end) { this.selectionStart = Math.min(start, text.length); this.selectionEnd = Math.min(end, text.length); },
   };
+  const dock = { panel: null };
   const elements = {
-    notes: element('notes', {
-      open: false,
-      showModal() { this.open = true; calls.push('showModal'); },
-      close() { this.open = false; calls.push('close'); },
-      getBoundingClientRect: () => SHEET,
-    }),
     'notes-open': element('notes-open'),
-    'notes-close': element('notes-close'),
     'notes-text': area,
     'notes-sub': {
       get textContent() { return sub.translated ? `Übersetzt: ${sub.text}` : sub.text; },
@@ -69,6 +59,9 @@ function page({ storage = new Map(), blocked = false, full = false } = {}) {
     $: (id) => elements[id],
     state: { connected: false, sessions: new Map() },
     hideTip: () => calls.push('hideTip'),
+    dockShows: (panel) => dock.panel === panel,
+    showDock: (panel) => { dock.panel = panel; calls.push(`showDock ${panel}`); },
+    closeDock: () => { dock.panel = null; calls.push('closeDock'); },
     addEventListener: (type, listener) => listeners.set(type, (listeners.get(type) ?? new Set()).add(listener)),
     removeEventListener: (type, listener) => listeners.get(type)?.delete(listener),
   };
@@ -89,7 +82,7 @@ function page({ storage = new Map(), blocked = false, full = false } = {}) {
   }
   runInNewContext(source, sandbox);
   return {
-    ...sandbox, calls, storage, quota, sub, area, elements, dialog: elements.notes,
+    ...sandbox, calls, storage, quota, sub, area, elements, dock,
     /** The user edits the text: the input event saves it. */
     type(next) { area.value = next; sandbox.saveNotes(); },
     guarded: () => Boolean(listeners.get('beforeunload')?.has(sandbox.confirmLeaving)),
@@ -145,8 +138,8 @@ test('reopening keeps the caret where it was', () => {
   tab.openNotes();
   tab.type('first line\nsecond line');
   tab.area.setSelectionRange(5, 5);
-  tab.closeNotes();
-  tab.openNotes();
+  tab.toggleNotes();
+  tab.toggleNotes();
   assert.deepEqual([tab.area.selectionStart, tab.area.selectionEnd], [5, 5]);
 });
 
@@ -263,17 +256,23 @@ test('text that could not be saved stays, until another tab saves newer notes, w
   assert.equal(storage.get(KEY), 'kept, and an edit saved in another tab!', 'the next save builds on them');
 });
 
-test('opening focuses the text and hides a tip; closing focuses the Notes button', () => {
+test('the Notes button opens the notes in the side panel with the text focused, and closes them again', () => {
   const tab = page();
-  tab.openNotes();
-  assert.deepEqual(tab.calls, ['hideTip', 'showModal', 'focus notes-text']);
-  tab.openNotes();
-  assert.equal(tab.calls.filter((call) => call === 'showModal').length, 1, 'an open panel is not opened again');
-  tab.closeNotes();
-  tab.notesClosed();
-  assert.deepEqual(tab.calls.slice(-2), ['close', 'focus notes-open']);
-  tab.closeNotes();
-  assert.equal(tab.calls.filter((call) => call === 'close').length, 1, 'a closed panel is not closed again');
+  tab.toggleNotes();
+  assert.deepEqual(tab.calls, ['hideTip', 'showDock notes', 'focus notes-text']);
+  assert.equal(tab.dock.panel, 'notes');
+  tab.toggleNotes();
+  assert.equal(tab.calls.at(-1), 'closeDock');
+  assert.equal(tab.dock.panel, null);
+  tab.dock.panel = 'github';
+  tab.toggleNotes();
+  assert.equal(tab.dock.panel, 'notes', 'from the GitHub panel it switches to the notes');
+});
+
+test('notes brought back after a reload do not take the focus', () => {
+  const tab = page();
+  tab.openNotes({ focus: false });
+  assert.deepEqual(tab.calls, ['hideTip', 'showDock notes']);
 });
 
 test('only the first click of a double-click counts, so Notes cannot open and at once close', () => {
@@ -282,60 +281,24 @@ test('only the first click of a double-click counts, so Notes cannot open and at
   const click = tab.firstClick(() => runs.push('run'));
   for (const detail of [1, 2, 3, 0]) click({ detail });
   assert.equal(runs.length, 2, 'a click, and a keyboard press (detail 0), but not the second or third click');
-  // Nor may the second press, landing on Close or the heading, move the focus from the text,
-  // though in the text itself it still selects a word.
-  const prevented = (detail, target) => {
-    let stopped = false;
-    tab.keepFocus({ detail, target, preventDefault: () => { stopped = true; } });
-    return stopped;
-  };
-  assert.deepEqual([1, 2, 3].map((detail) => prevented(detail, tab.elements['notes-close'])), [false, true, true]);
-  assert.equal(prevented(2, tab.area), false);
-});
-
-test('only a press and a release both outside the sheet close the notes', () => {
-  const tab = page();
-  tab.openNotes();
-  const at = (clientX, target = tab.dialog) => ({ target, currentTarget: tab.dialog, clientX, clientY: 400 });
-  tab.notesPressed(at(1000, tab.area));
-  tab.notesClicked(at(300));
-  assert.equal(tab.dialog.open, true, 'a text selection dragged out of the sheet');
-  tab.notesPressed(at(300));
-  tab.notesClicked(at(1000));
-  assert.equal(tab.dialog.open, true, 'a drag from the backdrop into the sheet');
-  tab.notesPressed(at(1000));
-  tab.notesClicked(at(300));
-  assert.equal(tab.dialog.open, true, 'a press on the sheet itself, such as its edge, released outside');
-  tab.notesPressed(at(300));
-  tab.notesClicked({ target: tab.elements['notes-close'], currentTarget: tab.dialog, clientX: 0, clientY: 0 });
-  assert.equal(tab.dialog.open, true, 'a click on a control in the sheet, such as one from the keyboard');
-  tab.notesPressed(at(300));
-  tab.notesClicked(at(300));
-  assert.equal(tab.dialog.open, false);
 });
 
 test('the page wires the notes up and has their controls', () => {
   for (const wiring of [
-    "$('notes-open').addEventListener('click', firstClick(openNotes));",
-    "$('notes-close').addEventListener('click', firstClick(closeNotes));",
-    "$('notes').addEventListener('mousedown', keepFocus);",
-    // Close lies over Stop manager: the second click of a double-click on it must not stop the manager.
-    "$('stop-manager').addEventListener('click', firstClick(() => stopManager()));",
-    "$('restart-manager').addEventListener('click', firstClick(() => stopManager({ restart: true })));",
-    "$('notes').addEventListener('pointerdown', notesPressed);",
-    "$('notes').addEventListener('click', notesClicked);",
-    "$('notes').addEventListener('close', notesClosed);",
+    "$('notes-open').addEventListener('click', firstClick(toggleNotes));",
+    "$('stop-manager').addEventListener('click', firstClick(() => { closeMenu($('manager-menu')); stopManager(); }));",
+    "$('restart-manager').addEventListener('click', firstClick(() => { closeMenu($('manager-menu')); stopManager({ restart: true }); }));",
     "$('notes-text').addEventListener('input', saveNotes);",
     "addEventListener('storage', notesStored);",
     "addEventListener('pageshow', refreshNotes);",
   ]) assert.ok(app.includes(`\n${wiring}\n`), wiring);
 
   const topbar = html.slice(html.indexOf('<header class="topbar">'), html.indexOf('</header>'));
-  assert.match(topbar, /<button id="notes-open" class="btn notes-open" type="button" aria-haspopup="dialog">Notes<\/button>/);
-  // `.appearance:has(+ :popover-open)` turns the chevron, so nothing may come between the button and its menu.
-  assert.match(topbar, />Appearance<\/button>\s*<div id="appearance-menu"[^>]*>[^]*?<\/div>\s*<button id="notes-open"/,
-    'Notes comes right after the Appearance menu, which comes right after its button');
-  assert.match(html, /<dialog id="notes" class="news-panel notes-panel" aria-labelledby="notes-title">/);
+  assert.match(topbar, /<button id="notes-open" class="btn notes-open" type="button" aria-controls="dock" aria-pressed="false">Notes<\/button>/);
+  // `.menu-button:has(+ :popover-open)` turns the chevron, so nothing may come between a button and its menu.
+  assert.match(topbar, />Settings<\/button>\s*<div id="settings-menu"/, 'the Settings menu comes right after its button');
+  assert.match(topbar, />Manager<\/button>\s*<div id="manager-menu"/, 'the Manager menu comes right after its button');
+  assert.match(html, /<section id="notes" class="dock-panel notes-panel" role="tabpanel" aria-labelledby="notes-title" hidden>/);
   assert.match(html, /<textarea id="notes-text" class="notes-text" aria-labelledby="notes-title" aria-describedby="notes-sub" autocomplete="off"/);
-  assert.ok(html.includes(`<p id="notes-sub" class="sub" aria-live="polite">${STATUS.saved}</p>`), 'the status line starts as the page writes it');
+  assert.ok(html.includes(`<p id="notes-sub" class="dock-sub sub" aria-live="polite">${STATUS.saved}</p>`), 'the status line starts as the page writes it');
 });

@@ -60,6 +60,14 @@ and come back to the same screens. Drag a session card by its grip, with a
 mouse or a finger, to put the cards in the order you want; this browser
 remembers it, and new sessions join at the end.
 
+**Two terminals at once.** **Split** in the terminal's header, or Ctrl+click
+(⌘-click on a Mac) on a card's **Open**, shows a second session beside the
+first, or above it on a tall, narrow window. Click a terminal to work in it;
+drag the divider, or focus it and use the arrow keys, to resize them. The
+session name in the header switches the focused terminal to another session.
+On a phone one terminal shows at a time, with a button to switch to the
+other. This browser reopens the terminals you had open after a reload.
+
 On a touchscreen, **Copy…** opens a still copy of the terminal text. Touch and
 hold to select, then use **Copy selection** or the browser's Copy menu. **Done**
 returns to the live terminal; the session keeps running while you copy. The
@@ -145,12 +153,20 @@ vX.Y.Z** switches over when you are ready. The version badge opens
 <img src="docs/images/whats-new.webp" alt="The What's new panel listing the release notes of each version">
 
 **Keep notes at hand.** **Notes** in the top bar opens a notepad for prompts,
-commands and to-dos, even while a terminal is open. It saves up to 100,000
-characters as you type and keeps them in this browser, never on the manager;
-every tab of the page shows the same notes.
+commands and to-dos in the side panel, next to your terminals. It saves up to
+100,000 characters as you type and keeps them in this browser, never on the
+manager; every tab of the page shows the same notes.
 
-**Appearance.** The Appearance menu in the top bar picks a skin and light or
-dark mode, without a reload. **Guild** is the default fantasy look;
+**GitHub beside your work.** **GitHub** in the top bar opens the side panel
+to sign in to one or more GitHub accounts, list and create repositories, and
+clone them over SSH with a key Agent Guild keeps for each account. On a wide
+window the side panel makes room for itself; on a smaller one it lies over the
+cards, and over the terminals when they would get too narrow. Drag its edge
+to resize it. Escape or **Close** puts it away.
+
+**Settings.** The Settings menu in the top bar picks a skin and light or
+dark mode, without a reload. On a narrow window the top bar's buttons gather
+under its menu button. **Guild** is the default fantasy look;
 **Professional** is a plain business look with no characters; **Orbital**
 puts a crew of little robots in deep space; **Grove** is a calm moss garden
 of gentle nature spirits; **Gnomeland** is a lantern-lit village of gnome
@@ -186,8 +202,8 @@ There is no added polling while connected and no additional monitoring process.
 | `agent-guild url` | Print the page URL with its access token. |
 | `agent-guild start` | Run the manager in the foreground, for debugging. |
 
-The page's **Restart manager** and **Stop manager** buttons do the same as
-`restart` and `stop`, but ask first while sessions are running. The page also
+**Restart manager** and **Stop manager** in the page's **Manager** menu do the
+same as `restart` and `stop`, but ask first while sessions are running. The page also
 asks before you close it with sessions running. Sessions end when the manager
 stops or the computer restarts.
 
@@ -255,7 +271,7 @@ or prompts:
 | GitHub's releases API | What's new | Hourly |
 | herdr.dev and formulae.brew.sh | Multiplexer version checks | At most hourly, or on Refresh or a requested operation; disabled by `AGENT_GUILD_NO_UPDATE_CHECK=1` |
 | herdr.dev, GitHub release downloads, and the selected package manager's repositories | Multiplexer installation and updates | When you request the operation |
-| GitHub (sign-in, API, avatars and SSH) | Signing in to GitHub, listing your repositories, adding your SSH key and cloning | When you use **Clone from GitHub…** |
+| GitHub (sign-in, API, avatars and SSH) | Signing in to GitHub, listing your repositories, adding your SSH key and cloning | When you use the GitHub panel |
 
 ## Other front ends
 

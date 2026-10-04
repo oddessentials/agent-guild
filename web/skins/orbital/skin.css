@@ -248,7 +248,7 @@
   .btn.danger:hover { border-color: var(--danger); box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 14%, transparent); }
   .cwd input, .auth input, .history-tools input[type="search"], .history-form input, .github-fields input, .github-fields select, .notes-text { background: var(--glass-strong); }
 
-  .models, .news-panel, .auth, .news-latest, .appearance-menu { background: var(--glass-strong); backdrop-filter: blur(16px); }
+  .models, .news-panel, .dock, .auth, .news-latest, .menu:popover-open { background: var(--glass-strong); backdrop-filter: blur(16px); }
   .models, .news-panel { box-shadow: var(--dialog-shadow); }
   .model-columns, .news-day { background: transparent; backdrop-filter: blur(16px); }
   .models::backdrop, .news-panel::backdrop { background: rgba(10, 16, 40, 0.38); backdrop-filter: blur(2px); }

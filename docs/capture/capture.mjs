@@ -327,10 +327,10 @@ async function takeShots(send, { url, token, sessions }) {
 
   // The overviews stop above the news, whose headlines change every day.
   await shot('overview-dark', { fullPage: true, stop: 'section.news' });
-  await click('#appearance-menu input[name="theme"][value="light"]');
+  await click('#settings-menu input[name="theme"][value="light"]');
   await sleep(2000);
   await shot('overview-light', { fullPage: true, stop: 'section.news' });
-  await click('#appearance-menu input[name="theme"][value="dark"]');
+  await click('#settings-menu input[name="theme"][value="dark"]');
   await sleep(2000);
 
   await click('.provider[data-id="anthropic"] .model-stats > :first-child');
@@ -364,7 +364,7 @@ async function takeShots(send, { url, token, sessions }) {
   // The panel fills the window; a shorter one leaves less empty terminal.
   await viewport(720);
   await click('#sessions .session-card .open');
-  await waitFor('the terminal', `document.querySelector('#terminal-host .xterm-rows')?.textContent.trim().length > 40`);
+  await waitFor('the terminal', `document.querySelector('.terminal-pane.focused .xterm-rows')?.textContent.trim().length > 40`);
   await sleep(2500);
   await shot('terminal');
   await click('#panel-close');

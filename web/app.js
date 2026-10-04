@@ -3,6 +3,7 @@
 
 import { SOUNDS, MAX_ALERT_AGE_MS, playOnce, rearmSound, managerLossWatcher, stopWatcher, updateWatcher } from './alerts.js';
 import { TerminalCopy } from './terminal-copy.js';
+import { topbarInline, dockMode, clampDockWidth, stageBesideDock, splitMode, clampRatio, bindSplitter, DOCK_MIN, SPLIT_RATIO_MIN } from './layout.js';
 
 const TOKEN_KEY = 'agentGuild.token';
 const CWD_KEY = 'agentGuild.cwd';
@@ -19,6 +20,10 @@ const SESSION_ORDER_KEY = 'agentGuild.sessionOrder';
 const SOUND_KEY = 'agentGuild.sound';
 const VOICE_KEY = 'agentGuild.voice';
 const NOTES_KEY = 'agentGuild.notes';
+const DOCK_KEY = 'agentGuild.dock';
+const DOCK_WIDTH_KEY = 'agentGuild.dockWidth';
+const PANES_KEY = 'agentGuild.panes';
+const SPLIT_RATIO_KEY = 'agentGuild.splitRatio';
 const RELEASES_URL = 'https://github.com/oddessentials/agent-guild/releases';
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -39,6 +44,8 @@ const state = {
   github: null,
   sessions: new Map(),
   views: new Map(),
+  panes: [],
+  focusedPane: 0,
   activeId: null,
   eventsSocket: null,
   eventsRetry: 0,
@@ -92,7 +99,7 @@ function toast(message, ms = 5000, action = null) {
 
 /**
  * Handles a click, but not the second click of a double-click, which lands on whatever the first one
- * opened or uncovered: Close over Notes, or Stop manager under a panel's Close.
+ * opened, closed or uncovered.
  */
 const firstClick = (run) => (e) => { if (e.detail < 2) run(); };
 
@@ -100,8 +107,11 @@ function setConnection(kind, label) {
   const el = $('connection');
   el.className = `connection ${kind}`;
   el.querySelector('.label').textContent = label;
+  el.title = label;
   // The manager can only be stopped, restarted or upgraded while the page can reach it.
   state.connected = kind === 'ok';
+  $('manager').hidden = !state.connected;
+  if (!state.connected) closeMenu($('manager-menu'));
   $('stop-manager').hidden = !state.connected;
   $('restart-manager').hidden = !state.connected || !state.restartable;
   renderUpgrade();
@@ -164,7 +174,7 @@ function unreadRelease() {
 /** theme.js applied the saved or system theme before the first paint; this keeps the menu in step. */
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
-  document.querySelector(`#appearance-menu input[name="theme"][value="${theme}"]`).checked = true;
+  document.querySelector(`#settings-menu input[name="theme"][value="${theme}"]`).checked = true;
 }
 
 function currentTheme() {
@@ -294,11 +304,10 @@ function managerGone() {
     () => state.managerInstance === instance && !state.connected, [`unavailable.${instance}`]);
 }
 
-/** Places the open menu under its button, right-aligned with it and kept on screen. */
-function placeAppearanceMenu() {
-  const menu = $('appearance-menu');
-  if (!menu.matches(':popover-open')) return;
-  const box = $('appearance').getBoundingClientRect();
+/** Places an open menu under its button, right-aligned with it and kept on screen. */
+function placeMenu(menu, button) {
+  if (!menu.matches(':popover-open') || !button) return;
+  const box = button.getBoundingClientRect();
   const top = Math.round(box.bottom + 6);
   menu.style.top = `${top}px`;
   menu.style.maxHeight = `${innerHeight - top - 8}px`;
@@ -308,6 +317,27 @@ function placeAppearanceMenu() {
     menu.style.right = 'auto';
     menu.style.left = `${Math.max(8, Math.round(box.left))}px`;
   }
+}
+
+function closeMenu(menu) {
+  if (menu.matches(':popover-open')) menu.hidePopover();
+}
+
+function menuItems(menu) {
+  return [...menu.querySelectorAll('.menu-item')].filter((item) => !item.hidden && !item.disabled);
+}
+
+function moveInMenu(e) {
+  const items = menuItems(e.currentTarget);
+  const at = items.indexOf(document.activeElement);
+  const next = e.key === 'ArrowDown' ? items[(at + 1) % items.length]
+    : e.key === 'ArrowUp' ? items[(at - 1 + items.length) % items.length]
+    : e.key === 'Home' ? items[0]
+    : e.key === 'End' ? items[items.length - 1]
+    : null;
+  if (!next) return;
+  e.preventDefault();
+  next.focus();
 }
 
 // ---- notes ----------------------------------------------------------------
@@ -322,9 +352,8 @@ const NOTES_STATUS = {
 /**
  * `saved`: the notes as this page last read or wrote them in storage. `status`: whether the text in the
  * panel is saved, too `long` or `refused`; `shown`: the status the line under the title shows.
- * `pressedOutside`: the last press on the panel was on its backdrop.
  */
-const notesView = { saved: '', status: 'saved', shown: 'saved', pressedOutside: false };
+const notesView = { saved: '', status: 'saved', shown: 'saved' };
 
 /** Shows notes another tab saved since this page last read or wrote them. Saved notes win over text this page could not save. */
 function refreshNotes() {
@@ -366,41 +395,90 @@ function notesStored(e) {
   if (e.key === NOTES_KEY || e.key === null) refreshNotes();
 }
 
-function openNotes() {
+function openNotes({ focus = true } = {}) {
   hideTip();
   refreshNotes();
   // Saving an empty note changes nothing, but shows at once when the browser keeps nothing.
   if (notesView.status === 'saved' && !$('notes-text').value) saveNotes();
-  const dialog = $('notes');
-  if (!dialog.open) dialog.showModal();
-  $('notes-text').focus();
+  showDock('notes');
+  if (focus) $('notes-text').focus();
 }
 
-function closeNotes() {
-  if ($('notes').open) $('notes').close();
+function toggleNotes() {
+  if (dockShows('notes')) closeDock();
+  else openNotes();
 }
 
-/** Focus goes back to the Notes button in every browser, never to the page itself. */
-function notesClosed() {
-  $('notes-open').focus();
+// ---- dock -----------------------------------------------------------------
+
+const DOCK_PANELS = ['github', 'notes'];
+const dockView = { panel: null, opener: null, width: clampDockWidth(Number.parseFloat(load(DOCK_WIDTH_KEY)), innerWidth) };
+
+function dockShows(panel) {
+  return dockView.panel === panel;
 }
 
-/** The second press of a double-click on Notes lands in the panel, where it must not take the focus from the text. */
-const keepFocus = (e) => { if (e.detail > 1 && e.target !== $('notes-text')) e.preventDefault(); };
-
-/** Whether a press or click on the panel was on its backdrop, outside the sheet. */
-function isOutsideNotes(e) {
-  const box = e.currentTarget.getBoundingClientRect();
-  return e.target === e.currentTarget && (e.clientX < box.left || e.clientX >= box.right || e.clientY < box.top || e.clientY >= box.bottom);
+function applyDockLayout() {
+  const root = document.documentElement;
+  const mode = dockMode(innerWidth);
+  const width = clampDockWidth(dockView.width, innerWidth);
+  root.classList.toggle('dock-push', mode === 'push');
+  root.classList.toggle('dock-full', mode === 'full');
+  root.style.setProperty('--dock-w', `${width}px`);
+  root.style.setProperty('--dock-space', dockView.panel && mode === 'push' ? `${width}px` : '0px');
+  root.style.setProperty('--dock-stage-space', dockView.panel && stageBesideDock(innerWidth, width) ? `${width}px` : '0px');
+  const splitter = $('dock-splitter');
+  splitter.setAttribute('aria-valuemin', String(DOCK_MIN));
+  splitter.setAttribute('aria-valuemax', String(clampDockWidth(Infinity, innerWidth)));
+  splitter.setAttribute('aria-valuenow', String(width));
 }
 
-function notesPressed(e) {
-  notesView.pressedOutside = isOutsideNotes(e);
+function renderDock() {
+  $('dock').hidden = !dockView.panel;
+  for (const name of DOCK_PANELS) {
+    const shown = dockView.panel === name;
+    $(name).hidden = !shown;
+    $(`${name}-title`).setAttribute('aria-selected', String(shown));
+    $(`${name}-title`).tabIndex = shown || !dockView.panel ? 0 : -1;
+  }
+  $('github-toggle').setAttribute('aria-pressed', String(dockShows('github')));
+  $('notes-open').setAttribute('aria-pressed', String(dockShows('notes')));
+  applyDockLayout();
 }
 
-/** Only a press and a release both outside close the notes: a drag into or out of them selects text. */
-function notesClicked(e) {
-  if (notesView.pressedOutside && isOutsideNotes(e)) closeNotes();
+function showDock(panel) {
+  if (!dockView.panel) dockView.opener = document.activeElement;
+  dockView.panel = panel;
+  save(DOCK_KEY, panel);
+  if ($('topbar-menu').matches(':popover-open')) $('topbar-menu').hidePopover();
+  renderDock();
+}
+
+function closeDock({ focusOpener = true } = {}) {
+  if (!dockView.panel) return;
+  const hadFocus = $('dock').contains(document.activeElement);
+  const fallback = dockShows('github') ? $('github-toggle') : $('notes-open');
+  dockView.panel = null;
+  save(DOCK_KEY, null);
+  renderDock();
+  if (focusOpener && hadFocus) {
+    [dockView.opener, fallback, $('menu-toggle')].find((el) => el?.isConnected && el.checkVisibility?.())?.focus();
+  }
+  dockView.opener = null;
+}
+
+function dockMakesWayForTerminal() {
+  if (dockView.panel && !stageBesideDock(innerWidth, clampDockWidth(dockView.width, innerWidth))) closeDock({ focusOpener: false });
+}
+
+function moveDockTab(e) {
+  const tabs = DOCK_PANELS.map((name) => $(`${name}-title`));
+  const at = tabs.indexOf(e.target);
+  if (at === -1 || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
+  e.preventDefault();
+  const next = tabs[(at + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
+  next.click();
+  next.focus();
 }
 
 // ---- upgrading the manager ------------------------------------------------
@@ -420,6 +498,7 @@ function renderUpgrade() {
   const restart = $('restart-manager');
   const pending = u?.pendingVersion;
   restart.classList.toggle('pending', Boolean(pending));
+  $('manager').classList.toggle('pending', Boolean(pending) && state.restartable);
   restart.textContent = pending ? `Restart to use v${pending}` : 'Restart manager';
   restart.title = pending
     ? `Agent Guild ${pending} is installed, but this manager is still ${u.version}. Restarting ends every session and starts the new version; this page reconnects by itself.`
@@ -2311,7 +2390,7 @@ const GITHUB_SCOPES = {
   repo: 'Read and write access to all your repositories, private ones included. GitHub offers apps no read-only choice; Agent Guild only lists them.',
   'write:public_key': 'Add the SSH key Agent Guild creates for this account.',
 };
-const githubView = { accountId: null, repos: null, reposFor: null, loading: null, error: null, parentError: null, opener: null, card: null, started: new Set(), announced: new Set() };
+const githubView = { accountId: null, repos: null, reposFor: null, loading: null, error: null, parentError: null, card: null, started: new Set(), announced: new Set() };
 let githubLoading = null;
 
 function el(tag, className, ...children) {
@@ -2385,7 +2464,7 @@ function setGitHub(github) {
       ? `You are already signed in as @${account.login}; that sign-in was renewed. To add another account, switch to it on github.com first.`
       : `Signed in to GitHub as @${account.login}.`, done.again ? 10000 : 4000);
   }
-  if (!$('github').open) return;
+  if (!dockShows('github')) return;
   renderGitHub();
   ensureRepos();
 }
@@ -2479,25 +2558,24 @@ async function signOutGitHub(account) {
   }
 }
 
-function openGitHub() {
-  const dialog = $('github');
+function openGitHub({ focus = true } = {}) {
   $('github-parent').value = load(CLONE_PARENT_KEY) ?? $('cwd').value.trim();
   $('github-filter').value = '';
   githubView.card = null;
-  if (!dialog.open) {
-    githubView.opener = document.activeElement;
-    dialog.showModal();
-  }
+  showDock('github');
   renderGitHub();
   if (githubAccount() && !githubAccount().needsSignIn) loadRepos();
   loadGitHub();
-  ($('github-card').querySelector('.btn.primary') ?? $('github-close')).focus();
+  if (focus) ($('github-card').querySelector('.btn.primary') ?? $('dock-close')).focus();
 }
 
 function closeGitHub({ focusOpener = true } = {}) {
-  if (!$('github').open) return;
-  if (!focusOpener) githubView.opener = false;
-  $('github').close();
+  if (dockShows('github')) closeDock({ focusOpener });
+}
+
+function toggleGitHub() {
+  if (dockShows('github')) closeDock();
+  else openGitHub();
 }
 
 function renderGitHub() {
@@ -2702,7 +2780,6 @@ function buildRepoRow(fullName) {
 function repoAction(repo, control) {
   const running = runningClone(repo.target);
   if (running) {
-    closeGitHub({ focusOpener: false });
     openPanel(running.id);
   } else if (repo.local === 'cloned') {
     useFolder(repo.target);
@@ -2778,7 +2855,6 @@ async function startClone(account, fullName) {
   const { session } = await api('POST', '/github/clone', { account: account.id, repo: fullName, parent: cloneParent() });
   githubView.started.add(session.id);
   upsertSession(session);
-  closeGitHub({ focusOpener: false });
   openPanel(session.id);
 }
 
@@ -2884,7 +2960,7 @@ function noticeClone(s) {
   if (s.task !== 'clone' || s.status !== 'exited' || githubView.announced.has(s.id)) return;
   githubView.announced.add(s.id);
   githubView.reposFor = null;
-  if ($('github').open) loadRepos();
+  if (dockShows('github')) loadRepos();
   if (!githubView.started.has(s.id)) return;
   if (clonedPath(s)) toast(`Cloned ${s.clone.repo} into ${s.clone.path}.`, 12000, { label: 'Use folder', run: () => useFolder(s.clone.path) });
   else toast(`Cloning ${s.clone?.repo ?? 'the repository'} did not finish. Its session shows why.`, 8000);
@@ -2893,7 +2969,7 @@ function noticeClone(s) {
 function useFolder(dir) {
   $('cwd').value = dir;
   save(CWD_KEY, dir);
-  if ($('github').open) renderGitHub();
+  if (dockShows('github')) renderGitHub();
   toast(`New sessions start in ${dir}.`, 4000);
 }
 
@@ -2935,9 +3011,9 @@ function statusText(s) {
 function buildCard(session) {
   const node = $('session-template').content.firstElementChild.cloneNode(true);
   node.dataset.id = session.id;
-  const open = () => openPanel(session.id);
-  node.addEventListener('click', (e) => { if (!e.target.closest('button')) open(); });
-  node.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target === node) open(); });
+  const open = (e) => openPanel(session.id, { beside: e.ctrlKey || e.metaKey });
+  node.addEventListener('click', (e) => { if (!e.target.closest('button')) open(e); });
+  node.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target === node) open(e); });
   node.querySelector('.open').addEventListener('click', open);
   node.querySelector('.stop').addEventListener('click', () => stopSession(session.id));
   node.querySelector('.remove').addEventListener('click', () => removeSession(session.id));
@@ -3111,8 +3187,9 @@ function upsertSession(session) {
 function dropSession(id) {
   state.sessions.delete(id);
   const view = state.views.get(id);
+  const pane = state.panes.indexOf(id);
+  if (pane !== -1) closePane(pane, { focusTerminal: paneNodes[pane].contains(document.activeElement) });
   if (view) { view.dispose(); state.views.delete(id); }
-  if (state.activeId === id) closePanel();
   renderSessions();
 }
 
@@ -3513,17 +3590,17 @@ class TerminalView {
 
   sendSize() {
     const { cols, rows } = this.term;
-    if (!this.el.isConnected || (cols === this.sent.cols && rows === this.sent.rows)) return;
+    if (terminalSizesHeld || !this.el.isConnected || (cols === this.sent.cols && rows === this.sent.rows)) return;
     this.sent = { cols, rows };
     this.send({ type: 'resize', cols, rows });
   }
 
-  mount(host) {
+  mount(host, { focus = true } = {}) {
     host.replaceChildren(this.el);
     if (!this.opened) { this.term.open(this.el); this.enableTouchScroll(); this.opened = true; }
     this.resizeObserver.observe(host);
     this.refit();
-    this.term.focus();
+    if (focus) this.term.focus();
   }
 
   /**
@@ -3601,26 +3678,153 @@ const terminalCopy = new TerminalCopy({
   },
 });
 
-function openPanel(id) {
+const paneNodes = [...document.querySelectorAll('.terminal-pane')];
+const sessionMenu = { mode: 'switch', invoker: null };
+let terminalSizesHeld = false;
+let panesRestored = false;
+let splitRatio = clampRatio(Number.parseFloat(load(SPLIT_RATIO_KEY)));
+
+/** `beside`: into the other pane instead of the focused one. Two panes never show the same session, whose terminal has one size. */
+function openPanel(id, { beside = false } = {}) {
   if (!state.sessions.has(id)) return;
+  let index = state.panes.indexOf(id);
+  if (index === -1) {
+    index = !state.panes.length ? 0 : !beside ? state.focusedPane : state.panes.length < 2 ? 1 : 1 - state.focusedPane;
+    const replaced = state.panes[index];
+    if (replaced) state.views.get(replaced)?.unmount();
+    state.panes[index] = id;
+    if (!state.views.has(id)) state.views.set(id, new TerminalView(id));
+  }
+  $('terminal-panel').hidden = false;
+  dockMakesWayForTerminal();
+  focusPane(index);
+}
+
+function focusPane(index, { focusTerminal = true } = {}) {
+  const id = state.panes[index];
+  if (!id) return;
   if (state.activeId !== id) terminalCopy.close();
   if (dictation && dictation.id !== id) stopDictation();
-  if (state.activeId && state.activeId !== id) state.views.get(state.activeId)?.unmount();
+  state.focusedPane = index;
   state.activeId = id;
-  let view = state.views.get(id);
-  if (!view) { view = new TerminalView(id); state.views.set(id, view); }
-  $('terminal-panel').hidden = false;
+  layoutPanes();
   updatePanel();
-  view.mount($('terminal-host'));
+  if (focusTerminal) state.views.get(id)?.term.focus();
+  savePanes();
+}
+
+function closePane(index, { focusTerminal = true } = {}) {
+  const id = state.panes[index];
+  if (!id) return;
+  if (state.panes.length < 2) return closePanel();
+  state.views.get(id)?.unmount();
+  state.panes.splice(index, 1);
+  focusPane(0, { focusTerminal });
 }
 
 function closePanel() {
   terminalCopy.close();
   stopDictation();
-  if (state.activeId) state.views.get(state.activeId)?.unmount();
+  for (const id of state.panes) state.views.get(id)?.unmount();
+  state.panes = [];
+  state.focusedPane = 0;
   state.activeId = null;
   $('terminal-panel').hidden = true;
+  closeMenu($('panel-sessions'));
   renderVoice();
+  savePanes();
+}
+
+function stageSplit() {
+  const box = $('terminal-panel').getBoundingClientRect();
+  return splitMode(box.width, box.height);
+}
+
+function layoutPanes() {
+  if ($('terminal-panel').hidden) return;
+  const split = state.panes.length === 2 ? stageSplit() : null;
+  const panes = $('terminal-panes');
+  if (split) panes.dataset.split = split;
+  else delete panes.dataset.split;
+  panes.style.setProperty('--ratio', String(splitRatio));
+  const splitter = $('pane-splitter');
+  splitter.hidden = !split;
+  splitter.setAttribute('aria-orientation', split === 'rows' ? 'horizontal' : 'vertical');
+  splitter.setAttribute('aria-valuemin', String(Math.round(SPLIT_RATIO_MIN * 100)));
+  splitter.setAttribute('aria-valuemax', String(Math.round((1 - SPLIT_RATIO_MIN) * 100)));
+  splitter.setAttribute('aria-valuenow', String(Math.round(splitRatio * 100)));
+  paneNodes.forEach((pane, index) => {
+    const id = state.panes[index];
+    const shown = Boolean(id) && (split !== null || index === state.focusedPane);
+    pane.hidden = !shown;
+    pane.classList.toggle('focused', index === state.focusedPane);
+    const view = id ? state.views.get(id) : null;
+    const host = pane.querySelector('.terminal-host');
+    if (shown && view && view.el.parentNode !== host) view.mount(host, { focus: false });
+    else if (!shown && view && view.el.parentNode === host) view.unmount();
+  });
+  renderPaneLabels();
+}
+
+function renderPaneLabels() {
+  const split = $('terminal-panes').dataset.split;
+  paneNodes.forEach((pane, index) => {
+    const s = state.sessions.get(state.panes[index]);
+    pane.querySelector('.pane-name').textContent = s ? `${s.name} · ${statusText(s)}` : '';
+    pane.setAttribute('aria-label', s ? s.name : '');
+  });
+  const others = [...state.sessions.keys()].some((id) => !state.panes.includes(id));
+  $('panel-split').hidden = state.panes.length !== 1 || !others || stageSplit() === null;
+  const swap = $('panel-swap');
+  const other = state.panes.length === 2 && !split ? state.sessions.get(state.panes[1 - state.focusedPane]) : null;
+  swap.hidden = !other;
+  swap.textContent = other ? `Show ${other.name}` : '';
+  swap.title = other ? `Switch to ${other.name}, the other open terminal` : '';
+}
+
+function renderSessionMenu() {
+  const menu = $('panel-sessions');
+  const beside = sessionMenu.mode === 'beside';
+  const sessions = orderSessions(state.sessions.values(), sessionOrder).filter((s) => !beside || !state.panes.includes(s.id));
+  const items = sessions.map((s) => {
+    const item = el('button', 'menu-item', s.name, el('span', 'menu-note', [statusText(s), folderName(s.cwd)].filter(Boolean).join(' · ')));
+    item.type = 'button';
+    item.setAttribute('role', 'menuitem');
+    if (s.id === state.activeId) item.setAttribute('aria-current', 'true');
+    item.addEventListener('click', () => {
+      closeMenu(menu);
+      openPanel(s.id, { beside });
+    });
+    return item;
+  });
+  menu.replaceChildren(...(items.length ? items : [el('p', 'menu-empty', 'No other sessions')]));
+}
+
+function holdTerminalSizes() {
+  terminalSizesHeld = true;
+  document.documentElement.classList.add('resizing');
+}
+
+function releaseTerminalSizes() {
+  terminalSizesHeld = false;
+  document.documentElement.classList.remove('resizing');
+  for (const id of state.panes) state.views.get(id)?.refit();
+}
+
+function savePanes() {
+  save(PANES_KEY, state.panes.length ? JSON.stringify({ panes: state.panes, focused: state.focusedPane }) : null);
+}
+
+function restorePanes() {
+  if (panesRestored) return;
+  panesRestored = true;
+  let saved;
+  try { saved = JSON.parse(load(PANES_KEY)); } catch { return; }
+  const ids = Array.isArray(saved?.panes) ? saved.panes.filter((id) => typeof id === 'string' && state.sessions.has(id)).slice(0, 2) : [];
+  if (!ids.length || state.panes.length) return;
+  openPanel(ids[0]);
+  if (ids[1]) openPanel(ids[1], { beside: true });
+  if (saved.focused === 0 && ids[1]) focusPane(0);
 }
 
 function updatePanel() {
@@ -3635,6 +3839,7 @@ function updatePanel() {
   renderAgents($('panel-agents'), s.agents, s.shells || []);
   const stop = $('panel-stop');
   stop.textContent = s.status !== 'running' ? 'Remove' : s.multiplexer ? 'Detach' : 'Stop';
+  renderPaneLabels();
 }
 
 // ---- voice input ----------------------------------------------------------
@@ -3967,16 +4172,18 @@ function connectEvents() {
       for (const id of [...state.views.keys()]) if (!state.sessions.has(id)) dropSession(id);
       managerConnected(msg);
       renderSessions();
+      restorePanes();
+      if (!sessionsShown && load(DOCK_KEY) === 'github' && !dockView.panel) openGitHub({ focus: false });
       sessionsShown = true;
       setUpgrade(msg.upgrade, true);
       loadNews();
       // A changelog.updated sent while the socket was down is lost; catch up the open panel.
       if ($('changelog').open) loadChangelog();
-      if ($('github').open) loadGitHub();
+      if (dockShows('github')) loadGitHub();
     } else if (msg.type === 'news.updated') {
       loadNews();
     } else if (msg.type === 'github.updated') {
-      if ($('github').open) loadGitHub();
+      if (dockShows('github')) loadGitHub();
     } else if (msg.type === 'changelog.updated') {
       if ($('changelog').open) loadChangelog();
     } else if (msg.type === 'manager.upgrade') {
@@ -4076,6 +4283,7 @@ async function boot() {
   }
   save(TOKEN_KEY, state.token);
   $('app').hidden = false;
+  if (load(DOCK_KEY) === 'notes' && !dockView.panel) openNotes({ focus: false });
   connectEvents();
   loadUsage();
   clearInterval(usageTimer);
@@ -4095,6 +4303,32 @@ $('auth-form').addEventListener('submit', (e) => {
   boot();
 });
 $('panel-close').addEventListener('click', closePanel);
+paneNodes.forEach((pane, index) => {
+  pane.querySelector('.pane-close').addEventListener('click', () => closePane(index));
+  pane.addEventListener('focusin', () => { if (state.focusedPane !== index) focusPane(index, { focusTerminal: false }); });
+  pane.addEventListener('pointerdown', () => { if (state.focusedPane !== index) focusPane(index, { focusTerminal: false }); });
+});
+const splitAxis = () => ($('terminal-panes').dataset.split === 'rows' ? 'y' : 'x');
+const setSplitRatio = (ratio) => {
+  splitRatio = clampRatio(ratio);
+  layoutPanes();
+};
+bindSplitter($('pane-splitter'), {
+  axis: splitAxis,
+  start: () => splitRatio,
+  move: (delta, from) => {
+    holdTerminalSizes();
+    const box = $('terminal-panes').getBoundingClientRect();
+    setSplitRatio(from + delta / Math.max(1, (splitAxis() === 'x' ? box.width : box.height) - 8));
+  },
+  end: () => {
+    save(SPLIT_RATIO_KEY, String(splitRatio));
+    releaseTerminalSizes();
+  },
+  home: () => setSplitRatio(SPLIT_RATIO_MIN),
+  endKey: () => setSplitRatio(1 - SPLIT_RATIO_MIN),
+});
+new ResizeObserver(layoutPanes).observe($('terminal-panel'));
 $('panel-voice').addEventListener('click', () => {
   if (dictation) {
     const { id } = dictation;
@@ -4114,12 +4348,30 @@ $('history').addEventListener('close', () => {
   historyOpener = null;
 });
 $('history-filter').addEventListener('input', renderHistory);
-$('github-open').addEventListener('click', openGitHub);
-$('github-close').addEventListener('click', () => closeGitHub());
-$('github').addEventListener('click', (e) => { if (e.target === $('github')) closeGitHub(); });
-$('github').addEventListener('close', () => {
-  if (githubView.opener !== false) (githubView.opener?.isConnected && !githubView.opener.closest('[hidden]') ? githubView.opener : $('github-open')).focus();
-  githubView.opener = null;
+$('github-open').addEventListener('click', () => openGitHub());
+$('github-toggle').addEventListener('click', firstClick(toggleGitHub));
+$('github-title').addEventListener('click', () => { if (!dockShows('github')) openGitHub(); });
+$('notes-title').addEventListener('click', () => { if (!dockShows('notes')) openNotes(); });
+$('dock').querySelector('.dock-tabs').addEventListener('keydown', moveDockTab);
+$('dock-close').addEventListener('click', () => closeDock());
+$('dock').addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || e.defaultPrevented || (e.target.type === 'search' && e.target.value)) return;
+  e.preventDefault();
+  closeDock();
+});
+bindSplitter($('dock-splitter'), {
+  start: () => clampDockWidth(dockView.width, innerWidth),
+  move: (delta, from) => {
+    holdTerminalSizes();
+    dockView.width = clampDockWidth(from - delta, innerWidth);
+    applyDockLayout();
+  },
+  end: () => {
+    save(DOCK_WIDTH_KEY, String(dockView.width));
+    releaseTerminalSizes();
+  },
+  home: () => { dockView.width = DOCK_MIN; applyDockLayout(); },
+  endKey: () => { dockView.width = clampDockWidth(Infinity, innerWidth); applyDockLayout(); },
 });
 $('github-add').addEventListener('click', startGitHubSignIn);
 $('github-filter').addEventListener('input', () => renderGitHub());
@@ -4171,12 +4423,7 @@ document.addEventListener('keydown', (e) => {
 }, true);
 addEventListener('scroll', () => { if (tipFor) hideTip(); }, true);
 addEventListener('resize', () => { if (tipFor) hideTip(); });
-$('notes-open').addEventListener('click', firstClick(openNotes));
-$('notes-close').addEventListener('click', firstClick(closeNotes));
-$('notes').addEventListener('mousedown', keepFocus);
-$('notes').addEventListener('pointerdown', notesPressed);
-$('notes').addEventListener('click', notesClicked);
-$('notes').addEventListener('close', notesClosed);
+$('notes-open').addEventListener('click', firstClick(toggleNotes));
 $('notes-text').addEventListener('input', saveNotes);
 addEventListener('storage', notesStored);
 // On load, and again for a page back from the back/forward cache, which may have missed another tab's notes.
@@ -4267,22 +4514,43 @@ $('models-more').addEventListener('click', () => {
   renderModels();
   $('models-list').children[before]?.querySelector('.model-toggle')?.focus();
 });
-$('stop-manager').addEventListener('click', firstClick(() => stopManager()));
-$('restart-manager').addEventListener('click', firstClick(() => stopManager({ restart: true })));
+$('stop-manager').addEventListener('click', firstClick(() => { closeMenu($('manager-menu')); stopManager(); }));
+$('restart-manager').addEventListener('click', firstClick(() => { closeMenu($('manager-menu')); stopManager({ restart: true }); }));
 $('copy-command').addEventListener('click', copyCommand);
 $('upgrade').addEventListener('click', upgradeManager);
-$('appearance-menu').addEventListener('change', (e) => {
+$('settings-menu').addEventListener('change', (e) => {
   if (e.target.name === 'skin') changeSkin(e.target);
   else if (e.target.name === 'theme') changeTheme(e.target);
   else if (e.target.name === 'sound') changeSound(e.target);
   else if (e.target.name === 'voice') changeVoice(e.target);
 });
-$('appearance-menu').addEventListener('toggle', (e) => {
+$('settings-menu').addEventListener('toggle', (e) => {
   if (e.newState !== 'open') return;
-  placeAppearanceMenu();
+  placeMenu(e.currentTarget, $('settings'));
   e.currentTarget.querySelector('input:checked')?.focus();
 });
-window.addEventListener('resize', placeAppearanceMenu);
+$('manager-menu').addEventListener('toggle', (e) => {
+  if (e.newState !== 'open') return;
+  placeMenu(e.currentTarget, $('manager'));
+  menuItems(e.currentTarget)[0]?.focus();
+});
+$('panel-sessions').addEventListener('toggle', (e) => {
+  if (e.newState !== 'open') return;
+  renderSessionMenu();
+  placeMenu(e.currentTarget, sessionMenu.invoker);
+  (e.currentTarget.querySelector('.menu-item[aria-current="true"]') ?? menuItems(e.currentTarget)[0])?.focus();
+});
+for (const menu of [$('manager-menu'), $('panel-sessions')]) menu.addEventListener('keydown', moveInMenu);
+$('panel-switch').addEventListener('click', () => { sessionMenu.mode = 'switch'; sessionMenu.invoker = $('panel-switch'); });
+$('panel-split').addEventListener('click', () => { sessionMenu.mode = 'beside'; sessionMenu.invoker = $('panel-split'); });
+$('panel-swap').addEventListener('click', () => focusPane(1 - state.focusedPane));
+window.addEventListener('resize', () => {
+  if (topbarInline(innerWidth)) closeMenu($('topbar-menu'));
+  applyDockLayout();
+  placeMenu($('settings-menu'), $('settings'));
+  placeMenu($('manager-menu'), $('manager'));
+  placeMenu($('panel-sessions'), sessionMenu.invoker);
+});
 $('providers').addEventListener('animationend', (e) => {
   if (e.target === e.currentTarget.lastElementChild) e.currentTarget.classList.remove('deal');
 });
@@ -4329,14 +4597,15 @@ if (typeof state.accounts !== 'object' || Array.isArray(state.accounts)) state.a
 if (typeof state.shellPicks !== 'object' || Array.isArray(state.shellPicks)) state.shellPicks = {};
 setInterval(renderSessions, 30000);
 setInterval(tickNews, 30000);
-setInterval(() => { if ($('github').open && state.github) renderGitHub(); }, 30000);
+setInterval(() => { if (dockShows('github') && state.github) renderGitHub(); }, 30000);
 
-// The terminal panel sits below the top bar, which wraps onto two rows on
-// narrow screens; publish its height so the panel never covers its controls.
+// The terminal panel and the dock sit below the top bar; publish where it ends so they never cover its controls.
 const topbar = document.querySelector('.topbar');
-const publishTopbarHeight = () => document.documentElement.style.setProperty('--topbar-h', `${topbar.offsetHeight}px`);
+const publishTopbarHeight = () => document.documentElement.style.setProperty('--topbar-h', `${Math.max(0, Math.round(topbar.getBoundingClientRect().bottom))}px`);
 new ResizeObserver(publishTopbarHeight).observe(topbar);
+addEventListener('scroll', publishTopbarHeight, { passive: true });
 publishTopbarHeight();
+applyDockLayout();
 
 state.token = readTokenFromHash() || load(TOKEN_KEY);
 boot();

@@ -9,7 +9,7 @@ const app = readFileSync(new URL('../web/app.js', import.meta.url), 'utf8');
 const connectSource = app.match(/function connectEvents\(\) \{[^]*?\n\}/)?.[0];
 assert.ok(connectSource, 'connectEvents is present in app.js');
 
-function connect({ changelogOpen, githubOpen = false }) {
+function connect({ changelogOpen, githubOpen = false, docked = null }) {
   const calls = [];
   const alerts = [];
   const recovery = [];
@@ -20,7 +20,13 @@ function connect({ changelogOpen, githubOpen = false }) {
     state: { stopping: false, stopRemaining: null, views: new Map(), eventsRetry: 0 },
     sessionsShown: false,
     WebSocket: class { constructor() { sockets.push(this); } },
-    $: (id) => ({ open: (id === 'changelog' && changelogOpen) || (id === 'github' && githubOpen) }),
+    $: (id) => ({ open: id === 'changelog' && changelogOpen }),
+    dockShows: (panel) => panel === 'github' && githubOpen,
+    dockView: { panel: githubOpen ? 'github' : null },
+    load: (key) => (key === 'agentGuild.dock' ? docked : null),
+    DOCK_KEY: 'agentGuild.dock',
+    openGitHub: () => calls.push('restore github'),
+    restorePanes: () => calls.push('panes'),
     wsUrl: (path) => path,
     loadChangelog: () => calls.push('changelog'),
     loadNews: () => calls.push('news'),
@@ -47,20 +53,27 @@ function connect({ changelogOpen, githubOpen = false }) {
 test('a reconnect catches the open What\'s new panel up on a changelog.updated it missed', () => {
   const page = connect({ changelogOpen: true });
   page.send(page.hello);
-  assert.deepEqual(page.calls, ['news', 'changelog']);
+  assert.deepEqual(page.calls, ['panes', 'news', 'changelog']);
 });
 
 test('a reconnect leaves the changelog alone while its panel is closed', () => {
   const page = connect({ changelogOpen: false });
   page.send(page.hello);
-  assert.deepEqual(page.calls, ['news']);
+  assert.deepEqual(page.calls, ['panes', 'news']);
 });
 
 test('a reconnect and a github.updated reload the open GitHub panel', () => {
   const page = connect({ changelogOpen: false, githubOpen: true });
   page.send(page.hello);
   page.send({ type: 'github.updated' });
-  assert.deepEqual(page.calls, ['news', 'github', 'github']);
+  assert.deepEqual(page.calls, ['panes', 'news', 'github', 'github']);
+});
+
+test('the first hello brings back the GitHub panel left open last time, and a reconnect does not', () => {
+  const page = connect({ changelogOpen: false, docked: 'github' });
+  page.send(page.hello);
+  page.send(page.hello);
+  assert.deepEqual(page.calls, ['panes', 'restore github', 'news', 'panes', 'news']);
 });
 
 test('only an explicit stop reports a manager stop', () => {

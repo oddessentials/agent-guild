@@ -7,6 +7,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
 import { describeCatalog } from '../src/manager/model-stats.mjs';
+import { GitHub } from '../src/manager/github.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const demo = path.join(repo, 'docs', 'demo');
@@ -122,6 +123,18 @@ test('the demo answers model stats in the manager\'s shape', async () => {
   const real = describeCatalog({ index: null, retrievedAt: null, stale: false, error: null }, []);
   assert.deepEqual(Object.keys(body).sort(), Object.keys(real).sort());
   assert.deepEqual(body.sessions, {});
+});
+
+test('the demo answers GitHub in the manager\'s shape, signed out', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-github-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const real = new GitHub({ dir, registry: { env: { PATH: '' }, platform: process.platform } }).snapshot();
+  const { body } = (await loadDemo().call('GET', '/github'));
+  assert.deepEqual(Object.keys(body.github).sort(), Object.keys(real).sort());
+  assert.deepEqual(Object.keys(body.github.tools).sort(), Object.keys(real.tools).sort());
+  assert.deepEqual(body.github.scopes, real.scopes);
+  assert.equal(body.github.appUrl, real.appUrl);
+  assert.deepEqual(body.github.accounts, []);
 });
 
 test('demo events arrive after the request that caused them returns', async (t) => {
