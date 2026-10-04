@@ -50,7 +50,7 @@
     background: var(--page-veil), var(--page-art) center bottom / cover no-repeat;
   }
   /* Text that sits on the town itself gets a halo of the page colour. */
-  .section-head h2, .cwd > span, .empty { text-shadow: 0 0 2px var(--bg), 0 0 8px var(--bg), 0 0 16px var(--bg); }
+  .section-head h2, .cwd > label, .empty { text-shadow: 0 0 2px var(--bg), 0 0 8px var(--bg), 0 0 16px var(--bg); }
   h2 { font-weight: 400; letter-spacing: 0.03em; font-size: 1.22rem; }
 
   .topbar { background: var(--panel); backdrop-filter: blur(12px) saturate(1.1); border-bottom: 1px solid transparent; border-image: var(--rule) 1; }

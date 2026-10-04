@@ -5,6 +5,7 @@ import { SOUNDS, MAX_ALERT_AGE_MS, playOnce, rearmSound, managerLossWatcher, sto
 import { TerminalCopy } from './terminal-copy.js';
 import { topbarInline, dockMode, clampDockWidth, stageBesideDock, splitMode, clampRatio, bindSplitter, DOCK_MIN, SPLIT_RATIO_MIN } from './layout.js';
 import { highlightParts, rankRepos, recentFirst, remember, repoForOrigin, repoKey } from './repo-search.js';
+import { createActivityFavicon, isSessionWorking } from './activity-favicon.js';
 
 const TOKEN_KEY = 'agentGuild.token';
 const CWD_KEY = 'agentGuild.cwd';
@@ -33,6 +34,7 @@ const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 const finePointer = window.matchMedia('(hover: hover) and (pointer: fine)');
 const coarsePointer = window.matchMedia('(pointer: coarse)');
+const activityFavicon = createActivityFavicon({ link: document.querySelector('link[rel="icon"]'), reducedMotion });
 
 const $ = (id) => document.getElementById(id);
 const state = {
@@ -57,6 +59,8 @@ const state = {
   managerUnavailable: false,
   /** True while the events socket is open. */
   connected: false,
+  folderOpener: null,
+  folderOpening: false,
   /** The manager's own version check, from `hello` and `manager.upgrade`. */
   upgrade: null,
   /** The running manager's version and pid, from `hello`. */
@@ -116,6 +120,7 @@ function setConnection(kind, label) {
   state.connected = kind === 'ok';
   $('manager').hidden = !state.connected;
   if (!state.connected) closeMenu($('manager-menu'));
+  renderFolderOpener();
   $('stop-manager').hidden = !state.connected;
   $('restart-manager').hidden = !state.connected || !state.restartable;
   renderUpgrade();
@@ -715,6 +720,34 @@ async function api(method, path, body) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw Object.assign(new Error(data?.error?.message || `Request failed (HTTP ${res.status})`), data?.error);
   return data;
+}
+
+function renderFolderOpener() {
+  const button = $('cwd-open');
+  const opener = state.folderOpener;
+  const label = `Open working folder in ${opener?.label || 'file manager'}`;
+  button.disabled = !state.connected || !opener?.available || state.folderOpening;
+  button.setAttribute('aria-label', label);
+  button.setAttribute('aria-busy', String(state.folderOpening));
+  button.title = !state.connected ? 'Connect to the session manager to open folders'
+    : state.folderOpening ? 'Opening working folder…'
+      : !opener?.available ? opener?.reason || 'Opening folders is unavailable with this manager'
+        : label;
+}
+
+async function openWorkingFolder() {
+  if (!state.connected || !state.folderOpener?.available || state.folderOpening) return;
+  state.folderOpening = true;
+  renderFolderOpener();
+  try {
+    await api('POST', '/open-folder', { cwd: $('cwd').value.trim() });
+  } catch (err) {
+    if (err instanceof AuthError) showAuth(err.message);
+    else toast(err.message || 'Could not open the working folder.');
+  } finally {
+    state.folderOpening = false;
+    renderFolderOpener();
+  }
 }
 
 function wsUrl(path) {
@@ -3531,7 +3564,7 @@ function statusText(s) {
     if (s.signal) return `Exited (${s.signal})`;
     return s.exitCode === 0 || s.exitCode === null ? 'Exited' : `Exited (${s.exitCode})`;
   }
-  return s.activity === 'active' ? 'Working' : 'Running';
+  return isSessionWorking(s) ? 'Working' : 'Running';
 }
 
 function buildCard(session) {
@@ -3619,7 +3652,7 @@ function updateCard(node, s) {
   paintIdButton(node.querySelector('.session-id'), id);
   const pill = node.querySelector('.status-pill');
   pill.textContent = statusText(s);
-  pill.className = `status-pill ${s.status === 'exited' ? 'exited' : s.activity}`;
+  pill.className = `status-pill ${s.status === 'exited' ? 'exited' : isSessionWorking(s) ? 'active' : 'quiet'}`;
   const model = node.querySelector('.model-pill');
   model.hidden = !s.model;
   model.textContent = modelText(s);
@@ -3657,6 +3690,7 @@ function updateCard(node, s) {
 function renderSessions() {
   const grid = $('sessions');
   const sessions = orderSessions(state.sessions.values(), sessionOrder);
+  activityFavicon.setWorking(sessions.some(isSessionWorking));
   for (const [id, node] of cards) {
     if (state.sessions.has(id)) continue;
     if (drag?.id === id) releaseDrag();
@@ -4701,6 +4735,7 @@ function connectEvents() {
       state.pid = msg.pid || null;
       state.restartable = typeof msg.pid === 'number';
       state.launcher = typeof msg.launcher === 'string' ? msg.launcher : null;
+      state.folderOpener = msg.folderOpener || null;
       renderVersion();
       setConnection('ok', 'Connected to session manager');
       state.sessions = new Map(msg.sessions.map((s) => [s.id, s]));
@@ -5014,6 +5049,7 @@ document.addEventListener('visibilitychange', () => {
 });
 addEventListener('pagehide', () => {
   state.pageAway = true;
+  activityFavicon.setPaused(true);
   terminalCopy.close();
   stopDictation();
   managerLoss.cancel();
@@ -5022,6 +5058,7 @@ addEventListener('pagehide', () => {
 addEventListener('pageshow', (event) => {
   if (!event.persisted) return;
   state.pageAway = false;
+  activityFavicon.setPaused(false);
   connectEvents();
 });
 $('version').addEventListener('click', openChangelog);
@@ -5176,6 +5213,7 @@ $('panel-stop').addEventListener('click', () => {
   else removeSession(s.id);
 });
 $('cwd').value = load(CWD_KEY) || '';
+$('cwd-open').addEventListener('click', firstClick(openWorkingFolder));
 try { state.accounts = JSON.parse(load(ACCOUNTS_KEY)) || {}; } catch { state.accounts = {}; }
 try { state.shellPicks = JSON.parse(load(SHELLS_KEY)) || {}; } catch { state.shellPicks = {}; }
 githubView.accountId = Number(load(GITHUB_ACCOUNT_KEY)) || null;
