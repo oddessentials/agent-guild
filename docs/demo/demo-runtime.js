@@ -24,6 +24,9 @@
     xai: [copy('native', home + '/.grok/bin/grok', true, null, [home + '/.grok/bin', home + '/.grok/downloads', home + '/.grok/completions'])],
   };
   providers.forEach(syncInstalls);
+  providers[4].multiplexers = ['tmux', 'herdr'].map(function (id) {
+    return { id: id, tool: id, checked: true, available: false, installable: true, installs: [], busy: false, pendingCards: 0, installCommand: 'Simulate installing ' + id };
+  });
 
   function provider(id, vendor, tool, color, monogram, metered) {
     return {
@@ -118,6 +121,7 @@
     var body = init && init.body ? JSON.parse(init.body) : {};
 
     if (route === '/providers' && method === 'GET') return json({ providers: clone(providers) });
+    if (route === '/providers/reload' && method === 'POST') return json({ providers: clone(providers), warnings: [] });
     if (route === '/usage' && method === 'GET') return json({ usage: [
       { providerId: 'anthropic', accountId: 'default', signedIn: true, plan: 'pro', windows: [{ label: '5 hours', usedPercent: 36, resetsAt: new Date(now + 2 * 3600000).toISOString() }] },
       { providerId: 'anthropic', accountId: 'work', signedIn: true, plan: 'team', windows: [{ label: '5 hours', usedPercent: 18, resetsAt: new Date(now + 3 * 3600000).toISOString() }] },
@@ -137,6 +141,8 @@
       sessions.push(made); announce({ type: 'session.created', session: clone(made) });
       return json({ session: clone(made) }, 201);
     }
+    var muxAction = route.match(/^\/providers\/shell\/multiplexers\/(tmux|herdr)\/(install|update|uninstall)$/);
+    if (muxAction && method === 'POST') return manageMultiplexer(muxAction[1], muxAction[2], body);
     var removal = route.match(/^\/providers\/([^/]+)\/uninstall$/);
     if (removal && method === 'POST') return uninstall(removal[1], body);
     var match = route.match(/^\/sessions\/([a-f0-9]+)(?:\/(stop))?$/);
@@ -149,6 +155,35 @@
     }
     return error('This action is unavailable in the simulated demo.', 'demo_only', 409);
   };
+
+  function manageMultiplexer(toolId, kind, body) {
+    var tool = providers[4].multiplexers.find(function (m) { return m.id === toolId; });
+    if (tool.busy) return error('An operation is already running.', 'install_in_progress', 409);
+    if (kind !== 'install' && !tool.installs.some(function (c) { return c.path === body.path; })) return error('Installation not found.', 'unknown_copy', 404);
+    if (kind === 'install' && !tool.installable) return error('Already installed.', 'not_installable', 400);
+    var id = Math.random().toString(16).slice(2, 10).padEnd(8, '0');
+    var made = session(id, 'shell', kind.charAt(0).toUpperCase() + kind.slice(1) + ' ' + toolId, 'demo', null, []);
+    made.task = 'install'; made.reporting = null;
+    tool.busy = true;
+    transcripts[id] = 'Simulated ' + kind + ' of ' + toolId + '\r\nNo commands are run on your computer.\r\n';
+    sessions.push(made);
+    announce({ type: 'session.created', session: clone(made) });
+    announce({ type: 'providers.updated', providers: clone(providers) });
+    setTimeout(function () {
+      tool.busy = false;
+      tool.available = kind !== 'uninstall';
+      tool.installable = !tool.available;
+      tool.installs = tool.available ? [Object.assign(copy('brew', '/opt/homebrew/bin/' + toolId, true, 'brew uninstall ' + toolId, []), {
+        version: toolId === 'herdr' ? (kind === 'install' ? '0.9.2' : '0.9.3') : (kind === 'install' ? '3.4' : '3.5'), supported: true,
+        updateCommand: 'brew upgrade ' + toolId, updateAvailable: kind === 'install',
+      })] : [];
+      tool.lastInstall = { kind: kind, outcome: kind === 'uninstall' ? 'removed' : kind === 'install' ? 'installed' : 'updated', exitCode: 0 };
+      made.status = 'exited'; made.exitCode = 0; made.activity = 'quiet';
+      announce({ type: 'session.updated', session: clone(made) });
+      announce({ type: 'providers.updated', providers: clone(providers) });
+    }, 1000);
+    return json({ session: clone(made) }, 201);
+  }
 
   function uninstall(providerId, body) {
     var p = providers.find(function (item) { return item.id === providerId; });
@@ -235,4 +270,3 @@
   style.textContent = '.demo-notice{position:relative;z-index:30;padding:.55rem 1rem;text-align:center;background:#312e81;color:#fff;font:600 14px/1.4 system-ui,sans-serif}.demo-notice a{color:#fff;text-decoration:underline}.demo-notice+header{position:sticky}';
   document.head.append(style);
 }());
-

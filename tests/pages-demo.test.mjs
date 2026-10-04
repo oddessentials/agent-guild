@@ -98,6 +98,24 @@ function loadDemo() {
   return { context, call };
 }
 
+test('the demo simulates multiplexer install, update, uninstall and reinstall without network access', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { call } = loadDemo();
+  const get = async () => (await call('GET', '/providers')).body.providers.find((p) => p.id === 'shell').multiplexers.find((m) => m.id === 'herdr');
+  for (const kind of ['install', 'update', 'uninstall', 'install']) {
+    const before = await get();
+    const response = await call('POST', '/providers/shell/multiplexers/herdr/' + kind, { path: before.installs[0]?.path });
+    assert.equal(response.status, 201);
+    assert.equal(response.body.session.task, 'install');
+    assert.equal((await get()).busy, true);
+    t.mock.timers.tick(1000);
+    const after = await get();
+    assert.equal(after.busy, false);
+    assert.equal(after.available, kind !== 'uninstall');
+    assert.equal(after.installable, kind === 'uninstall');
+  }
+});
+
 test('the demo answers model stats in the manager\'s shape', async () => {
   const { call } = loadDemo();
   const { body } = await call('GET', '/model-stats');

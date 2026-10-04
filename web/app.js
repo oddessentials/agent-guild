@@ -759,6 +759,8 @@ let dealt = false;
 
 function renderProviders() {
   const list = $('providers');
+  const focused = document.activeElement;
+  const focusKey = focused?.dataset?.muxFocus;
   const tpl = $('provider-template');
   list.replaceChildren(...state.providers.map((provider) => {
     const node = tpl.content.firstElementChild.cloneNode(true);
@@ -798,11 +800,20 @@ function renderProviders() {
     renderVendorLinks(node, provider);
     renderAccounts(node, provider);
     renderShells(node, provider);
+    renderMultiplexers(node, provider);
     renderUsage(node, provider);
     renderReportingSetup(node, provider);
     renderModelStats(node, provider);
     return node;
   }));
+  if (focusKey) {
+    const controls = [...list.querySelectorAll('[data-mux-focus]')];
+    const fallback = focusKey.split(':').slice(0, 2).join(':') + ':copies';
+    const replacement = controls.find((node) => node.dataset.muxFocus === focusKey && !node.disabled)
+      || controls.find((node) => node.dataset.muxFocus === fallback && !node.closest('[hidden]'))
+      || controls.find((node) => node.dataset.muxFocus === focusKey.split(':')[0] + ':multiplexers');
+    replacement?.focus({ preventScroll: true });
+  }
   if (!dealt && state.providers.length) {
     dealt = true;
     if (!reducedMotion.matches) list.classList.add('deal');
@@ -811,19 +822,21 @@ function renderProviders() {
 
 const openCopies = new Set();
 
-function renderCopies(box, provider, card) {
+function renderCopies(box, provider, card, actions = null) {
   const installs = provider.installs || [];
   const warnings = provider.warnings || [];
-  box.hidden = warnings.length === 0 && !installs.some((i) => i.uninstall);
+  box.hidden = actions ? installs.length === 0 : warnings.length === 0 && !installs.some((i) => i.uninstall);
   if (box.hidden) return;
   box.classList.toggle('warned', warnings.length > 0);
   const inUse = installs.some((i) => i.active);
   const older = installs.some((i) => i.newer);
-  box.querySelector('summary').textContent = !inUse
+  box.querySelector('summary').textContent = installs.every((i) => i.partial) ? 'Incomplete installation' : !inUse
     ? 'A copy exists off PATH'
     : installs.length === 1 ? 'Installation' : `${installs.length} copies installed${older ? ' · older copy in use' : ''}`;
-  box.open = openCopies.has(provider.id);
-  box.addEventListener('toggle', () => (box.open ? openCopies.add(provider.id) : openCopies.delete(provider.id)));
+  const key = actions?.key || provider.id;
+  box.open = openCopies.has(key);
+  box.addEventListener('toggle', () => (box.open ? openCopies.add(key) : openCopies.delete(key)));
+  if (actions) box.querySelector('summary').dataset.muxFocus = key + ':copies';
   const line = (className, ...content) => {
     const span = document.createElement('span');
     span.className = className;
@@ -842,6 +855,17 @@ function renderCopies(box, provider, card) {
     const where = line('copy-path', install.displayPath);
     where.title = install.path;
     item.append(head, where);
+    if (actions && install.updateCommand && (install.updateAvailable || install.versionStatus === 'failed')) {
+      const update = document.createElement('button');
+      update.type = 'button';
+      update.className = 'btn copy-update';
+      update.textContent = 'Update';
+      update.title = `Run ${install.updateCommand}`;
+      update.disabled = actions.busy;
+      update.dataset.muxFocus = key + ':update:' + install.path;
+      update.addEventListener('click', () => actions.update(install));
+      head.append(update);
+    } else if (actions && install.updateGuidance) item.append(line('copy-remove', install.updateGuidance));
     if (install.uninstall) {
       const button = document.createElement('button');
       button.type = 'button';
@@ -851,13 +875,113 @@ function renderCopies(box, provider, card) {
       button.title = install.uninstall.command
         ? [`Runs ${install.uninstall.command}`, ...install.uninstall.remove.map((p) => `then deletes ${p}`)].join('\n')
         : ['Deletes', ...install.uninstall.remove].join('\n');
-      button.addEventListener('click', () => uninstallCopy(provider, card, install));
+      if (actions) {
+        button.disabled = actions.busy;
+        button.dataset.muxFocus = key + ':uninstall:' + install.path;
+      }
+      button.addEventListener('click', () => actions ? actions.uninstall(install) : uninstallCopy(provider, card, install));
       head.append(button);
     } else {
       item.append(line('copy-remove', install.uninstallGuidance));
     }
     return item;
   }));
+}
+
+const openMultiplexers = new Set();
+
+function renderMultiplexers(card, provider) {
+  const host = card.querySelector('.multiplexers');
+  const tools = provider.multiplexers || [];
+  host.hidden = tools.length === 0;
+  if (host.hidden) return;
+  host.open = openMultiplexers.has(provider.id);
+  host.querySelector('summary').dataset.muxFocus = provider.id + ':multiplexers';
+  host.addEventListener('toggle', () => host.open ? openMultiplexers.add(provider.id) : openMultiplexers.delete(provider.id));
+  const refresh = host.querySelector('.multiplexer-refresh');
+  refresh.dataset.muxFocus = provider.id + ':refresh';
+  refresh.addEventListener('click', async () => {
+    refresh.disabled = true;
+    try {
+      const result = await api('POST', '/providers/reload', {});
+      state.providers = result.providers;
+      renderProviders();
+    } catch (err) {
+      if (err instanceof AuthError) showAuth(err.message);
+      else toast(err.message, 10000);
+    } finally { refresh.disabled = false; }
+  });
+  host.querySelector('.multiplexer-list').replaceChildren(...tools.map((tool) => {
+    const row = document.createElement('section');
+    row.className = 'multiplexer-row';
+    const title = document.createElement('strong');
+    title.textContent = tool.tool;
+    row.append(title);
+    const key = provider.id + ':' + tool.id;
+    if (tool.installable) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'btn primary';
+      button.textContent = 'Install';
+      button.disabled = tool.busy;
+      button.title = tool.installCommand || '';
+      button.dataset.muxFocus = key + ':install';
+      button.addEventListener('click', () => manageMultiplexer(provider, tool, 'install'));
+      row.append(button);
+    }
+    const note = document.createElement('p');
+    note.className = 'multiplexer-note';
+    note.textContent = [
+      tool.busy ? 'Installation operation in progress…' : tool.guidance,
+      tool.pendingCards ? `${tool.pendingCards} detached ${tool.tool} card(s) are waiting for a usable installation.` : '',
+      installNote(tool),
+    ].filter(Boolean).join(' ');
+    if (note.textContent) row.append(note);
+    const copies = document.createElement('details');
+    copies.className = 'copies';
+    copies.append(document.createElement('summary'), document.createElement('ul'));
+    row.append(copies);
+    renderCopies(copies, { ...tool, id: key, warnings: [] }, card, {
+      key, busy: tool.busy,
+      update: (copy) => manageMultiplexer(provider, tool, 'update', copy),
+      uninstall: (copy) => {
+        const plan = copy.uninstall;
+        const lines = [
+          `Uninstall ${tool.tool} from ${copy.displayPath}?`,
+          plan.command && `Runs: ${plan.command}`,
+          ...plan.remove.map((p) => `Removes: ${p}`),
+          plan.pathEntries && 'Removes only this installation’s entries from your user PATH.',
+          'Your settings and session data are kept.',
+        ].filter(Boolean);
+        if (confirm(lines.join('\n'))) return manageMultiplexer(provider, tool, 'uninstall', copy);
+      },
+    });
+    return row;
+  }));
+}
+
+async function manageMultiplexer(provider, tool, kind, copy = null, force = false) {
+  // Busy state also comes from the manager, covering other tabs and refreshes.
+  tool.busy = true;
+  renderProviders();
+  try {
+    const { session } = await api('POST', `/providers/${provider.id}/multiplexers/${tool.id}/${kind}`, { path: copy?.path, force });
+    upsertSession(session);
+    openPanel(session.id);
+  } catch (err) {
+    if (err instanceof AuthError) return showAuth(err.message);
+    if (err.code === 'multiplexer_in_use' && !force) {
+      const waiting = err.pending ? ` ${err.pending} detached cards are also waiting for the tool.` : '';
+      if (confirm(`${err.message}${waiting} Continue anyway?`)) return manageMultiplexer(provider, tool, kind, copy, true);
+    } else toast(err.message, 10000);
+  } finally {
+    // A successful operation stays busy until the manager sends fresh state.
+    try {
+      const result = await api('GET', '/providers');
+      state.providers = result.providers;
+    } catch { tool.busy = false; }
+    renderProviders();
+  }
 }
 
 function renderHint(hint, provider) {
@@ -1887,7 +2011,7 @@ function renderChangelog() {
 }
 
 const CHANNEL_LABELS = {
-  npm: 'npm', native: 'native', brew: 'Homebrew', winget: 'WinGet', legacy: 'legacy install', unknown: 'unknown install',
+  npm: 'npm', native: 'native', brew: 'Homebrew', winget: 'WinGet', system: 'system package', legacy: 'legacy install', unknown: 'unknown install',
 };
 
 function installNote(provider) {

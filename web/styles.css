@@ -736,3 +736,13 @@ a.news-link:visited { color: var(--muted); }
   .history-row .session-id { grid-row: 2; justify-self: start; }
   .history-form { flex-wrap: wrap; }
 }
+/* Installation controls share each skin's card colors and button styles. */
+.multiplexers { margin: .6rem 0; }
+.multiplexers > summary { cursor: pointer; font-size: .85rem; }
+.multiplexer-refresh { margin: .5rem 0; }
+.multiplexer-row { padding: .65rem 0; border-top: 1px solid var(--border); }
+.multiplexer-row > strong { margin-right: .6rem; }
+.multiplexer-note { font-size: .8rem; line-height: 1.5; overflow-wrap: anywhere; margin: .4rem 0; }
+.multiplexer-row .copies { margin-top: .4rem; }
+.multiplexer-row .copy-head { flex-wrap: wrap; }
+.multiplexer-row .copy-name { flex: 1 0 100%; }
