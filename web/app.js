@@ -61,6 +61,8 @@ const state = {
   connected: false,
   folderOpener: null,
   folderOpening: false,
+  folderPicker: null,
+  folderPicking: false,
   /** The manager's own version check, from `hello` and `manager.upgrade`. */
   upgrade: null,
   /** The running manager's version and pid, from `hello`. */
@@ -120,7 +122,7 @@ function setConnection(kind, label) {
   state.connected = kind === 'ok';
   $('manager').hidden = !state.connected;
   if (!state.connected) closeMenu($('manager-menu'));
-  renderFolderOpener();
+  renderFolderTools();
   $('stop-manager').hidden = !state.connected;
   $('restart-manager').hidden = !state.connected || !state.restartable;
   renderUpgrade();
@@ -722,23 +724,49 @@ async function api(method, path, body) {
   return data;
 }
 
-function renderFolderOpener() {
-  const button = $('cwd-open');
-  const opener = state.folderOpener;
-  const label = `Open working folder in ${opener?.label || 'file manager'}`;
-  button.disabled = !state.connected || !opener?.available || state.folderOpening;
-  button.setAttribute('aria-label', label);
-  button.setAttribute('aria-busy', String(state.folderOpening));
-  button.title = !state.connected ? 'Connect to the session manager to open folders'
-    : state.folderOpening ? 'Opening working folder…'
-      : !opener?.available ? opener?.reason || 'Opening folders is unavailable with this manager'
-        : label;
+function renderFolderTools() {
+  const paint = (id, feature, busy, label, text) => {
+    const button = $(id);
+    button.disabled = !state.connected || !feature?.available || busy;
+    button.setAttribute('aria-label', label);
+    button.setAttribute('aria-busy', String(busy));
+    button.title = !state.connected ? text.offline
+      : busy ? text.busy
+        : !feature?.available ? feature?.reason || text.missing
+          : label;
+  };
+  paint('cwd-pick', state.folderPicker, state.folderPicking, 'Choose a folder…', {
+    offline: 'Connect to the session manager to choose folders',
+    busy: 'Choosing a folder…',
+    missing: 'Choosing folders is unavailable with this manager',
+  });
+  paint('cwd-open', state.folderOpener, state.folderOpening, `Open working folder in ${state.folderOpener?.label || 'file manager'}`, {
+    offline: 'Connect to the session manager to open folders',
+    busy: 'Opening working folder…',
+    missing: 'Opening folders is unavailable with this manager',
+  });
+}
+
+async function pickWorkingFolder() {
+  if (!state.connected || !state.folderPicker?.available || state.folderPicking) return;
+  state.folderPicking = true;
+  renderFolderTools();
+  try {
+    const { path } = await api('POST', '/pick-folder', { cwd: $('cwd').value.trim() });
+    if (path) useFolder(path);
+  } catch (err) {
+    if (err instanceof AuthError) showAuth(err.message);
+    else toast(err.message || 'Could not choose a folder.');
+  } finally {
+    state.folderPicking = false;
+    renderFolderTools();
+  }
 }
 
 async function openWorkingFolder() {
   if (!state.connected || !state.folderOpener?.available || state.folderOpening) return;
   state.folderOpening = true;
-  renderFolderOpener();
+  renderFolderTools();
   try {
     await api('POST', '/open-folder', { cwd: $('cwd').value.trim() });
   } catch (err) {
@@ -746,7 +774,7 @@ async function openWorkingFolder() {
     else toast(err.message || 'Could not open the working folder.');
   } finally {
     state.folderOpening = false;
-    renderFolderOpener();
+    renderFolderTools();
   }
 }
 
@@ -4736,6 +4764,7 @@ function connectEvents() {
       state.restartable = typeof msg.pid === 'number';
       state.launcher = typeof msg.launcher === 'string' ? msg.launcher : null;
       state.folderOpener = msg.folderOpener || null;
+      state.folderPicker = msg.folderPicker || null;
       renderVersion();
       setConnection('ok', 'Connected to session manager');
       state.sessions = new Map(msg.sessions.map((s) => [s.id, s]));
@@ -5213,6 +5242,7 @@ $('panel-stop').addEventListener('click', () => {
   else removeSession(s.id);
 });
 $('cwd').value = load(CWD_KEY) || '';
+$('cwd-pick').addEventListener('click', firstClick(pickWorkingFolder));
 $('cwd-open').addEventListener('click', firstClick(openWorkingFolder));
 try { state.accounts = JSON.parse(load(ACCOUNTS_KEY)) || {}; } catch { state.accounts = {}; }
 try { state.shellPicks = JSON.parse(load(SHELLS_KEY)) || {}; } catch { state.shellPicks = {}; }

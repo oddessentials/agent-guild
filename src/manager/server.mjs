@@ -10,6 +10,7 @@ import { timingSafeEqualString } from './session-manager.mjs';
 import { folderOrigin } from './github.mjs';
 import { createViews } from './github-views.mjs';
 import { createFolderOpener } from './folder-opener.mjs';
+import { createFolderPicker } from './folder-picker.mjs';
 
 const require = createRequire(import.meta.url);
 const API = '/api/v1';
@@ -120,6 +121,7 @@ export function createManagerServer({
   selfUpdate = null,
   extraOrigins = [],
   folderOpener = createFolderOpener({ resolveCwd: (cwd) => manager.resolveCwd(cwd) }),
+  folderPicker = createFolderPicker({ resolveCwd: (cwd) => manager.resolveCwd(cwd) }),
   /** The double-click launcher file for this platform, or null when the package carries none. */
   launcher = null,
   /** @type {(opts: { restart: boolean }) => void} */
@@ -244,12 +246,19 @@ export function createManagerServer({
         upgrade: upgradeInfo(),
         launcher,
         folderOpener: folderOpener.describe(),
+        folderPicker: folderPicker.describe(),
       });
     }
     if (route === '/open-folder' && method === 'POST') {
       const { cwd } = await readJsonBody(req);
       await folderOpener.open(cwd);
       return sendJson(res, 200, { ok: true });
+    }
+    if (route === '/pick-folder' && method === 'POST') {
+      const { cwd } = await readJsonBody(req);
+      const gone = new AbortController();
+      res.once('close', () => gone.abort());
+      return sendJson(res, 200, { path: await folderPicker.pick(cwd, { signal: gone.signal }) });
     }
     if (route === '/upgrade' && method === 'POST') {
       const session = await manager.upgrade();
@@ -498,7 +507,7 @@ export function createManagerServer({
 
   function handleEvents(ws) {
     eventClients.add(ws);
-    safeSend(ws, { type: 'hello', version, pid: process.pid, startedAt, launcher, folderOpener: folderOpener.describe(), upgrade: upgradeInfo(), sessions: manager.list() });
+    safeSend(ws, { type: 'hello', version, pid: process.pid, startedAt, launcher, folderOpener: folderOpener.describe(), folderPicker: folderPicker.describe(), upgrade: upgradeInfo(), sessions: manager.list() });
     ws.on('close', () => eventClients.delete(ws));
     ws.on('message', () => { /* events socket is server -> client only */ });
   }
