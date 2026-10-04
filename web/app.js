@@ -17,6 +17,7 @@ const CLONE_PARENT_KEY = 'agentGuild.cloneParent';
 const SESSION_ORDER_KEY = 'agentGuild.sessionOrder';
 const SOUND_KEY = 'agentGuild.sound';
 const VOICE_KEY = 'agentGuild.voice';
+const NOTES_KEY = 'agentGuild.notes';
 const RELEASES_URL = 'https://github.com/oddessentials/agent-guild/releases';
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -64,7 +65,7 @@ const state = {
 // ---- storage (may be unavailable, e.g. blocked site data) -----------------
 
 function load(key) { try { return localStorage.getItem(key); } catch { return null; } }
-function save(key, value) { try { value === null ? localStorage.removeItem(key) : localStorage.setItem(key, value); } catch { /* ignore */ } }
+function save(key, value) { try { value === null ? localStorage.removeItem(key) : localStorage.setItem(key, value); return true; } catch { return false; } }
 
 // ---- helpers --------------------------------------------------------------
 
@@ -87,6 +88,12 @@ function toast(message, ms = 5000, action = null) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { el.hidden = true; }, ms);
 }
+
+/**
+ * Handles a click, but not the second click of a double-click, which lands on whatever the first one
+ * opened or uncovered: Close over Notes, or Stop manager under a panel's Close.
+ */
+const firstClick = (run) => (e) => { if (e.detail < 2) run(); };
 
 function setConnection(kind, label) {
   const el = $('connection');
@@ -300,6 +307,99 @@ function placeAppearanceMenu() {
     menu.style.right = 'auto';
     menu.style.left = `${Math.max(8, Math.round(box.left))}px`;
   }
+}
+
+// ---- notes ----------------------------------------------------------------
+
+/** Notes share the page's storage with every other setting, so they stay far below the browser's limit for it. */
+const NOTES_LIMIT = 100000;
+const NOTES_STATUS = {
+  saved: 'Saved in this browser as you type',
+  long: `Not saved: notes hold up to ${NOTES_LIMIT.toLocaleString('en-US')} characters. Shorten them to save.`,
+  refused: 'Not saved: the browser’s storage for this page is full or turned off. Copy what you need before you close the page.',
+};
+/**
+ * `saved`: the notes as this page last read or wrote them in storage. `status`: whether the text in the
+ * panel is saved, too `long` or `refused`; `shown`: the status the line under the title shows.
+ * `pressedOutside`: the last press on the panel was on its backdrop.
+ */
+const notesView = { saved: '', status: 'saved', shown: 'saved', pressedOutside: false };
+
+/** Shows notes another tab saved since this page last read or wrote them. Saved notes win over text this page could not save. */
+function refreshNotes() {
+  let text;
+  // Unlike load(), a read that fails is not taken for empty notes.
+  try { text = localStorage.getItem(NOTES_KEY) ?? ''; } catch { return; }
+  if (text === notesView.saved) return;
+  notesView.saved = text;
+  notesView.status = 'saved';
+  $('notes-text').value = text;
+  renderNotesStatus();
+  guardLeaving();
+}
+
+/** Saves the notes on every change; emptying them removes the saved copy. */
+function saveNotes() {
+  const text = $('notes-text').value;
+  if (text.length > NOTES_LIMIT) notesView.status = 'long';
+  else if (!save(NOTES_KEY, text || null)) notesView.status = 'refused';
+  else {
+    notesView.status = 'saved';
+    notesView.saved = text;
+  }
+  renderNotesStatus();
+  guardLeaving();
+}
+
+/** The line under the title is a live region, so it is rewritten only when the status changes. */
+function renderNotesStatus() {
+  if (notesView.shown === notesView.status) return;
+  notesView.shown = notesView.status;
+  const sub = $('notes-sub');
+  sub.textContent = NOTES_STATUS[notesView.status];
+  sub.classList.toggle('warn', notesView.status !== 'saved');
+}
+
+/** Another tab saved the notes, or cleared this page's storage. */
+function notesStored(e) {
+  if (e.key === NOTES_KEY || e.key === null) refreshNotes();
+}
+
+function openNotes() {
+  hideTip();
+  refreshNotes();
+  // Saving an empty note changes nothing, but shows at once when the browser keeps nothing.
+  if (notesView.status === 'saved' && !$('notes-text').value) saveNotes();
+  const dialog = $('notes');
+  if (!dialog.open) dialog.showModal();
+  $('notes-text').focus();
+}
+
+function closeNotes() {
+  if ($('notes').open) $('notes').close();
+}
+
+/** Focus goes back to the Notes button in every browser, never to the page itself. */
+function notesClosed() {
+  $('notes-open').focus();
+}
+
+/** The second press of a double-click on Notes lands in the panel, where it must not take the focus from the text. */
+const keepFocus = (e) => { if (e.detail > 1 && e.target !== $('notes-text')) e.preventDefault(); };
+
+/** Whether a press or click on the panel was on its backdrop, outside the sheet. */
+function isOutsideNotes(e) {
+  const box = e.currentTarget.getBoundingClientRect();
+  return e.target === e.currentTarget && (e.clientX < box.left || e.clientX >= box.right || e.clientY < box.top || e.clientY >= box.bottom);
+}
+
+function notesPressed(e) {
+  notesView.pressedOutside = isOutsideNotes(e);
+}
+
+/** Only a press and a release both outside close the notes: a drag into or out of them selects text. */
+function notesClicked(e) {
+  if (notesView.pressedOutside && isOutsideNotes(e)) closeNotes();
 }
 
 // ---- upgrading the manager ------------------------------------------------
@@ -2866,7 +2966,9 @@ function confirmLeaving(event) {
 
 function guardLeaving() {
   const running = state.connected && [...state.sessions.values()].some((s) => s.status === 'running');
-  if (running) addEventListener('beforeunload', confirmLeaving);
+  // Notes that could not be saved are lost with the page.
+  const unsaved = notesView.status !== 'saved' && $('notes-text').value !== '';
+  if (running || unsaved) addEventListener('beforeunload', confirmLeaving);
   else removeEventListener('beforeunload', confirmLeaving);
 }
 
@@ -3933,6 +4035,16 @@ document.addEventListener('keydown', (e) => {
 }, true);
 addEventListener('scroll', () => { if (tipFor) hideTip(); }, true);
 addEventListener('resize', () => { if (tipFor) hideTip(); });
+$('notes-open').addEventListener('click', firstClick(openNotes));
+$('notes-close').addEventListener('click', firstClick(closeNotes));
+$('notes').addEventListener('mousedown', keepFocus);
+$('notes').addEventListener('pointerdown', notesPressed);
+$('notes').addEventListener('click', notesClicked);
+$('notes').addEventListener('close', notesClosed);
+$('notes-text').addEventListener('input', saveNotes);
+addEventListener('storage', notesStored);
+// On load, and again for a page back from the back/forward cache, which may have missed another tab's notes.
+addEventListener('pageshow', refreshNotes);
 $('news-all').addEventListener('click', openNews);
 $('news-close').addEventListener('click', closeNews);
 $('news-fresh').addEventListener('click', showFreshNews);
@@ -4018,8 +4130,8 @@ $('models-more').addEventListener('click', () => {
   renderModels();
   $('models-list').children[before]?.querySelector('.model-toggle')?.focus();
 });
-$('stop-manager').addEventListener('click', () => stopManager());
-$('restart-manager').addEventListener('click', () => stopManager({ restart: true }));
+$('stop-manager').addEventListener('click', firstClick(() => stopManager()));
+$('restart-manager').addEventListener('click', firstClick(() => stopManager({ restart: true })));
 $('copy-command').addEventListener('click', copyCommand);
 $('upgrade').addEventListener('click', upgradeManager);
 $('appearance-menu').addEventListener('change', (e) => {
