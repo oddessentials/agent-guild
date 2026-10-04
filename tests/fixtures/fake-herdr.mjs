@@ -4,7 +4,9 @@
 // it is stopped.
 
 const args = process.argv.slice(2);
-if (args[0] === 'session' && args[1] === 'list') {
+if (args[0] === '--version') {
+  process.stdout.write('herdr 0.9.3\n');
+} else if (args[0] === 'session' && args[1] === 'list') {
   const session = { default: true, name: 'default', running: true, socket_path: process.env.FAKE_HERDR_SOCKET };
   process.stdout.write(`${JSON.stringify({ sessions: [session] })}\n`);
 } else {

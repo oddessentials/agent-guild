@@ -14,6 +14,7 @@ import { HerdrAgents, herdrAgentReports, herdrSocket } from './herdr.mjs';
 import { CHANNEL_LABELS } from './install-channels.mjs';
 import { SELF_PROVIDER } from './self-update.mjs';
 import { GITHUB_PROVIDER, dropsFromCloneEnv, parseRepo } from './github.mjs';
+import { pathIdentity } from './multiplexer-paths.mjs';
 
 export const MAX_SESSIONS = 32;
 
@@ -84,6 +85,17 @@ export class SessionManager extends EventEmitter {
     /** Keeps the tmux and herdr cards across restarts: { load(), save(cards) }, or null. */
     this.store = store;
     this.restoring = false;
+    this.pendingCards = new Map();
+    this.multiplexerOperations = new Set();
+    this.multiplexerStarts = new Map();
+    this.pendingRestore = null;
+    if (this.registry) this.registry.multiplexerState = (provider, id) => ({
+      busy: this.multiplexerOperations.has(id),
+      pendingCards: [...this.pendingCards.values()].filter((c) => c.provider === provider && c.shell === id).length,
+    });
+    this.registry?.on?.('updated', () => {
+      this._restorePending().catch((err) => console.warn('[sessions] pending cards:', err.message));
+    });
   }
 
   list() {
@@ -129,7 +141,7 @@ export class SessionManager extends EventEmitter {
       || (provider.accounts.length > 1 ? `${provider.tool} · ${signIn.label}` : null)
       || (runShell && this.registry.shellsFor(provider).shells.length > 1 ? `${provider.tool} · ${runShell.label}` : null);
     const options = { provider, cwd: workDir, cols, rows, name: sessionName, resume: resumeId, account: signIn, reporting: hooks.reporting, extraEnv: runShell?.env };
-    if (runShell?.multiplexer) return this._startMultiplexer(options, runShell, args || []);
+    if (runShell?.multiplexer) return this._withMultiplexerStart(provider.id, runShell.id, () => this._startMultiplexer(options, runShell, args || []));
     const spawnSpec = this.registry.spawnSpec(provider, args || [], resumeId, hooks.args, runShell);
     const session = this._spawn({ ...options, spawnSpec });
     const model = modelFromArgs([...provider.args, ...(args || [])]);
@@ -177,7 +189,13 @@ export class SessionManager extends EventEmitter {
       if (shell.id === 'tmux') mux.run(['kill-session', '-t', `=${muxName}`]).catch(() => {});
       throw err;
     }
-    this._track(session, { spawnSpec, mux, shell, card: { id, reportToken, provider: provider.id, account: account.id, shell: shell.id, muxName, name: session.name, cwd: session.cwd, createdAt: session.createdAt } });
+    this._track(session, { spawnSpec, mux, shell, card: {
+      id, reportToken, provider: provider.id, account: account.id, shell: shell.id,
+      muxName, name: session.name, cwd: session.cwd, createdAt: session.createdAt,
+      // Herdr's request arguments belong to its client and must survive rebinding.
+      // Tmux's request arguments belong to the already-running inner session.
+      ...(shell.id === 'herdr' ? { args: [...args] } : {}),
+    } });
     this._watchHerdr(session);
     return session;
   }
@@ -197,12 +215,17 @@ export class SessionManager extends EventEmitter {
 
   /** Keep a tmux or herdr card for Reattach, here and, through the store, across restarts. */
   _track(session, { spawnSpec, mux, shell, card }) {
-    this.multiplexers.set(session.id, { spawnSpec, alive: mux.alive, herdr: shell.id === 'herdr' ? { path: shell.path, env: mux.clientEnv } : null, card });
+    const installationKey = this.registry.multiplexers?.identityFor(this.registry.get(card.provider), shell.id, shell.path);
+    const shellPath = shell.path;
+    // Keep old stores readable. Newly known installations carry a stable key,
+    // since an update can change a Cellar or Windows release realpath.
+    card.shellPath = shellPath;
+    if (installationKey) card.installationKey = installationKey;
+    const tracked = { spawnSpec, alive: mux.alive, shellPath, checking: false, herdr: shell.id === 'herdr' ? { path: shell.path, env: mux.clientEnv } : null, card };
+    this.multiplexers.set(session.id, tracked);
+    this.pendingCards.delete(session.id);
     this._saveCards();
-    session.on('exit', async () => {
-      session.multiplexer.reattachable = await mux.alive();
-      session._changed();
-    });
+    session.on('exit', () => this._checkMultiplexer(session, tracked));
     session.on('changed', () => {
       if (card.name === session.name) return;
       card.name = session.name;
@@ -214,7 +237,7 @@ export class SessionManager extends EventEmitter {
     // A stopping manager leaves the file as it is, for the next one to bring the cards back.
     if (!this.store || this.restoring || this.closing) return;
     try {
-      this.store.save([...this.multiplexers.values()].map(({ card }) => card));
+      this.store.save([...this.multiplexers.values()].map(({ card }) => card).concat([...this.pendingCards.values()]));
     } catch (err) {
       console.warn(`[sessions] could not save the tmux and herdr cards: ${err.message}`);
     }
@@ -229,7 +252,8 @@ export class SessionManager extends EventEmitter {
     this.restoring = true;
     try {
       // All at once, so a multiplexer slow to answer holds up the start once, not once a card.
-      await Promise.all((this.store?.load() ?? []).map((card) => this._restoreCard(card).catch((err) => {
+      await Promise.all((this.store?.load() ?? []).map((card) => this._withMultiplexerStart(card?.provider, card?.shell, () => this._restoreCard(card)).catch((err) => {
+        if (['too_many_sessions', 'install_in_progress'].includes(err.code)) this.pendingCards.set(card.id, card);
         console.warn(`[sessions] did not bring back the card ${card?.name ?? card?.id}: ${err.message}`);
       })));
     } finally {
@@ -243,12 +267,25 @@ export class SessionManager extends EventEmitter {
     if (typeof card.reportToken !== 'string' || !/^[a-f0-9]{32}$/.test(card.reportToken)) return;
     if (typeof card.muxName !== 'string' || !/^guild-[0-9a-f]{6}$/.test(card.muxName)) return;
     const provider = this.registry.get(String(card.provider));
-    const shell = provider && this.registry.shellsFor(provider)?.shells.find((s) => s.id === card.shell && s.multiplexer);
-    if (!shell) return;
+    if (!provider || !['tmux', 'herdr'].includes(card.shell)) return;
+    if (card.shell === 'herdr' && card.args !== undefined && (!Array.isArray(card.args) || card.args.some((arg) => typeof arg !== 'string'))) return;
+    const shells = this.registry.shellsFor(provider)?.shells || [];
+    const shell = shells.find((s) => s.id === card.shell && s.multiplexer);
+    if (!shell) {
+      this.pendingCards.set(card.id, card);
+      return;
+    }
+    if (this.multiplexerOperations.has(card.shell)) {
+      this.pendingCards.set(card.id, card);
+      return;
+    }
     const account = this.registry.account(provider, card.account);
     const mux = this._multiplexer({ provider, account, shell, id: card.id, reportToken: card.reportToken, muxName: card.muxName });
-    if (!(await mux.alive()) || this.closing) return;
-    const spawnSpec = this.registry.spawnSpec(provider, [], null, [], mux.named);
+    if (!(await mux.alive()) || this.closing) {
+      if (!this.closing) this.pendingCards.delete(card.id);
+      return;
+    }
+    const spawnSpec = this.registry.spawnSpec(provider, shell.id === 'herdr' ? card.args ?? [] : [], null, [], mux.named);
     const session = this._spawn({
       provider, spawnSpec: null, cwd: typeof card.cwd === 'string' ? card.cwd : os.homedir(), name: card.name, account,
       id: card.id, reportToken: card.reportToken, dropEnv: mux.dropEnv, extraEnv: shell.env,
@@ -260,6 +297,43 @@ export class SessionManager extends EventEmitter {
 
   /** Attach a stopped tmux or herdr session's card to its multiplexer session again, keeping its id and report token. */
   async reattach(id) {
+    const tracked = this.multiplexers.get(id);
+    if (!tracked) return this._reattach(id);
+    return this._withMultiplexerStart(tracked.card.provider, tracked.card.shell, () => this._reattach(id));
+  }
+
+  _rebindMultiplexer(mux) {
+    const provider = this.registry.get(mux.card.provider);
+    const shell = provider && this.registry.shellsFor(provider)?.shells.find((s) => s.id === mux.card.shell && s.multiplexer);
+    if (!shell) return false;
+    const fresh = this._multiplexer({ provider, account: this.registry.account(provider, mux.card.account), shell, id: mux.card.id, reportToken: mux.card.reportToken, muxName: mux.card.muxName });
+    mux.spawnSpec = this.registry.spawnSpec(provider, shell.id === 'herdr' ? mux.card.args ?? [] : [], null, [], fresh.named);
+    mux.alive = fresh.alive;
+    mux.shellPath = shell.path;
+    mux.card.shellPath = shell.path;
+    const key = this.registry.multiplexers?.identityFor(provider, shell.id, shell.path);
+    if (key) mux.card.installationKey = key;
+    else delete mux.card.installationKey;
+    if (mux.herdr) mux.herdr = { path: shell.path, env: fresh.clientEnv };
+    this._saveCards();
+    return true;
+  }
+
+  async _checkMultiplexer(session, tracked) {
+    const sequence = tracked.checkSequence = (tracked.checkSequence || 0) + 1;
+    tracked.checking = true;
+    let alive = false;
+    try {
+      this._rebindMultiplexer(tracked);
+      alive = await tracked.alive();
+    } catch {}
+    if (tracked.checkSequence !== sequence) return;
+    session.multiplexer.reattachable = alive;
+    tracked.checking = false;
+    session._changed();
+  }
+
+  async _reattach(id) {
     const session = this.get(id);
     const mux = this.multiplexers.get(id);
     if (!mux) throw httpError(400, `${session.name} is not in tmux or herdr`, 'not_reattachable');
@@ -267,6 +341,9 @@ export class SessionManager extends EventEmitter {
     if (session.status === 'running') throw httpError(409, `${session.name} is still attached`, 'session_running');
     // As the page offers it: only once the manager has found, after the client closed or at a restart, that the multiplexer still has the session.
     if (!session.multiplexer.reattachable) throw httpError(409, `${session.multiplexer.label} no longer has the session ${session.name} ran in`, 'multiplexer_session_gone');
+    // Refresh closures as well as the spawn spec: the previous executable
+    // may have disappeared in a native or Homebrew update.
+    if (!this._rebindMultiplexer(mux)) throw httpError(409, 'Install the multiplexer and refresh this page before reattaching.', 'shell_unavailable');
     const alive = await mux.alive();
     if (this.sessions.get(id) !== session || session.status === 'running') throw httpError(409, `${session.name} changed meanwhile`, 'session_running');
     if (!alive) {
@@ -368,8 +445,121 @@ export class SessionManager extends EventEmitter {
 
   installsRunningFor(providerId) {
     let n = 0;
-    for (const s of [...this.sessions.values(), ...this.exiting]) if (s.status === 'running' && s.task === 'install' && s.provider.id === providerId) n++;
+    for (const s of [...this.sessions.values(), ...this.exiting]) if (s.status === 'running' && s.task === 'install' && !s.multiplexerInstall && s.provider.id === providerId) n++;
     return n;
+  }
+
+  async _withMultiplexerStart(providerId, id, start) {
+    // Multiple @shell providers can share the same executable.
+    const key = id;
+    if (this.multiplexerOperations.has(key)) throw httpError(409, `${id} is being installed, updated or removed; try again when it finishes.`, 'install_in_progress');
+    this.multiplexerStarts.set(key, (this.multiplexerStarts.get(key) || 0) + 1);
+    try { return await start(); }
+    finally {
+      const count = this.multiplexerStarts.get(key) - 1;
+      if (count) this.multiplexerStarts.set(key, count);
+      else this.multiplexerStarts.delete(key);
+    }
+  }
+
+  dependentsOf(providerId, id, copy = null) {
+    const platform = this.registry.platform;
+    const same = (a, b) => pathIdentity(a, platform) === pathIdentity(b, platform);
+    let running = 0;
+    for (const [sessionId, tracked] of this.multiplexers) {
+      if (tracked.card.shell !== id) continue;
+      if (copy && tracked.card.installationKey && tracked.card.installationKey !== copy.key) continue;
+      if (copy && !tracked.card.installationKey && tracked.shellPath
+        && !same(tracked.shellPath, copy.resolvedPath)
+        && !same(this.registry.multiplexers.fsx.realpath(tracked.shellPath), copy.realPath)) continue;
+      const session = this.sessions.get(sessionId);
+      if (session?.status === 'running' || session?.multiplexer?.reattachable || tracked.checking) running++;
+    }
+    const pending = [...this.pendingCards.values()].filter((c) => c.provider === providerId && c.shell === id).length;
+    return { running, pending };
+  }
+
+  async manageMultiplexer(providerId, id, kind, { path: copyPath = null, force = false } = {}) {
+    const provider = this.registry.get(providerId);
+    if (!provider) throw httpError(404, 'Unknown provider', 'unknown_provider');
+    this.registry.multiplexers.get(provider, id);
+    if (!['install', 'update', 'uninstall'].includes(kind)) throw httpError(400, 'Unknown operation', 'bad_request');
+    this._assertCanSpawn();
+    const key = id;
+    if (this.multiplexerOperations.has(key) || this.multiplexerStarts.has(key)) throw httpError(409, `${id} has another operation in progress. Try again shortly.`, 'install_in_progress');
+    this.multiplexerOperations.add(key);
+    this.registry.emit('updated');
+    let started = false;
+    try {
+      const prepared = await this.registry.multiplexers.prepare(provider, id, kind, copyPath);
+      if (id === 'herdr' && kind === 'uninstall') await this.registry.multiplexers.assertHerdrStopped(provider, prepared.copy, prepared.extraEnv);
+      // Herdr supports updates with servers and panes running, including brew.
+      // Uninstall's server check is never bypassed by force.
+      if (id === 'tmux') {
+        const { running, pending } = this.dependentsOf(providerId, id, prepared.copy);
+        if (running && !force) throw Object.assign(httpError(409, `${running} tmux card(s) depend on this installation. Changing it may prevent reattachment.`, 'multiplexer_in_use'), { running, pending });
+      }
+      this._assertCanSpawn();
+      const session = this._spawn({
+        provider, spawnSpec: prepared.spec, extraEnv: prepared.extraEnv, cwd: os.homedir(),
+        name: `${{ install: 'Install', update: 'Update', uninstall: 'Uninstall' }[kind]} ${id}`,
+        task: 'install', multiplexerInstall: { id, kind },
+      });
+      started = true;
+      // Keep the lock through refresh, and even if the installer card is removed.
+      session.exited.then(async () => {
+        try {
+          await this.registry.multiplexers.finish(provider, id, kind, prepared.copy, session.exitCode);
+          if (kind === 'update') {
+            // A detach during replacement may have probed a vanished release.
+            // Recheck closed cards once discovery has the new executable.
+            await Promise.all([...this.multiplexers].map(([cardId, tracked]) => {
+              const card = this.sessions.get(cardId);
+              return tracked.card.shell === id && card?.status === 'exited'
+                ? this._checkMultiplexer(card, tracked) : null;
+            }));
+          }
+        }
+        catch (err) { console.warn('[multiplexers] could not refresh:', err.message); }
+        finally {
+          this.multiplexerOperations.delete(key);
+          this.registry.emit('updated');
+          await this._restorePending();
+        }
+      }).catch((err) => console.warn('[multiplexers]', err.message));
+      return session;
+    } finally {
+      if (!started) {
+        this.multiplexerOperations.delete(key);
+        this.registry.emit('updated');
+      }
+    }
+  }
+
+  _restorePending() {
+    if (this.pendingRestore) {
+      this.pendingRestoreAgain = true;
+      return this.pendingRestore;
+    }
+    if (this.restoring || this.closing || !this.pendingCards.size) return Promise.resolve();
+    this.pendingRestore = (async () => {
+      const before = this.pendingCards.size;
+      do {
+        this.pendingRestoreAgain = false;
+        for (const card of [...this.pendingCards.values()]) {
+          if (this.closing) break;
+          if (this.multiplexerOperations.has(card.shell)) continue;
+          try { await this._withMultiplexerStart(card.provider, card.shell, () => this._restoreCard(card)); }
+          catch (err) {
+            // A capacity limit is temporary; never discard a recoverable card.
+            if (!['too_many_sessions', 'install_in_progress'].includes(err.code)) this.pendingCards.delete(card.id);
+          }
+        }
+      } while (this.pendingRestoreAgain && !this.closing);
+      this._saveCards();
+      if (before !== this.pendingCards.size) this.registry.emit?.('updated');
+    })().finally(() => { this.pendingRestore = null; });
+    return this.pendingRestore;
   }
 
   /**
@@ -470,7 +660,7 @@ export class SessionManager extends EventEmitter {
   _spawn({
     provider, description = this.registry.describe(provider), spawnSpec, cwd, cols, rows, name, resume = null, task = null, installKind = null, installPath = null, account = null,
     extraEnv = null, dropEnv = null, clone = null, reporting = null, multiplexer = null,
-    id = newId(), reportToken = crypto.randomBytes(16).toString('hex'), createdAt,
+    id = newId(), reportToken = crypto.randomBytes(16).toString('hex'), createdAt, multiplexerInstall = null,
   }) {
     this._assertCanSpawn();
     const env = this._sessionEnv({ id, reportToken, provider, account, extraEnv, dropEnv });
@@ -504,7 +694,8 @@ export class SessionManager extends EventEmitter {
       if (this.sessions.has(id)) this.emit('event', { type: 'session.updated', session: session.toJSON() });
     });
     session.on('warning', (msg) => console.warn(`[session ${id}] ${msg}`));
-    if (task === 'install') {
+    session.multiplexerInstall = multiplexerInstall;
+    if (task === 'install' && !multiplexerInstall) {
       session.on('exit', () => {
         this.registry.finishInstall(provider.id, { exitCode: session.exitCode, kind: installKind, path: installPath }).catch(() => {});
       });

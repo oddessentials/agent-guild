@@ -2476,7 +2476,7 @@ test('tmux cards are kept across restarts, and come back closed with their own i
   const kept = await first.create({ providerId: 'shell', shell: 'tmux', cwd: project, name: 'Kept' });
   await first.create({ providerId: 'shell', shell: 'tmux', cwd: project, name: 'Gone' });
   assert.deepEqual(saved.map((card) => card.name), ['Kept', 'Gone']);
-  assert.deepEqual(Object.keys(saved[0]).sort(), ['account', 'createdAt', 'cwd', 'id', 'muxName', 'name', 'provider', 'reportToken', 'shell']);
+  assert.deepEqual(Object.keys(saved[0]).sort(), ['account', 'createdAt', 'cwd', 'id', 'muxName', 'name', 'provider', 'reportToken', 'shell', 'shellPath']);
   kept.name = 'Kept, renamed';
   kept.emit('changed');
   assert.equal(saved[0].name, 'Kept, renamed', 'a rename is kept');
@@ -3601,4 +3601,3 @@ test('a Claude Code task notification ends the sub-agent it names, and is no tur
   assert.deepEqual(hookToReports({ hook_event_name: 'UserPromptSubmit', session_id: 's', prompt_id: 'p2', permission_mode: 'default', prompt: 'fix the <task-notification> parser' }), []);
   assert.deepEqual(hookToReports({ hook_event_name: 'UserPromptSubmit', turn_id: 't2', prompt: 'next' }), [{ finishForeground: true }]);
 });
-

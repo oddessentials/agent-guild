@@ -78,6 +78,21 @@ card names the command that reattaches it from a terminal. Stopping or
 restarting the manager detaches them the same way, and the cards come back,
 closed and ready to reattach, when it starts again.
 
+Open **Terminal multiplexers** on the Shell card to install, update or
+uninstall tmux and herdr. Operations run in a terminal so you can read their
+output and answer package-manager prompts. tmux uses Homebrew on macOS and
+Homebrew or apt, dnf, or pacman on Linux; a distribution must offer 3.2 or
+later. Update distro packages with their package manager. Native Windows
+offers herdr instead of tmux.
+
+Herdr updates leave its existing servers and panes running, including
+Homebrew updates. New starts and reattachments wait until the operation
+finishes. Uninstall requires herdr's servers to be stopped and their status
+to be verifiable. tmux asks before changing a copy that attached or detached
+cards depend on. Settings and session data are kept. If a multiplexer is
+missing when the manager starts, its saved cards wait for it and return
+when it is detected again, provided their sessions still exist.
+
 <img src="docs/images/terminal.webp" alt="An open Claude Code session with its helper agents shown in the header">
 
 **Agents and models at work.** Helper agents that a tool starts appear on its
@@ -232,6 +247,8 @@ or prompts:
 | OpenRouter's public model list | Benchmarks | Every 6 hours |
 | Public news feeds, Hacker News, arXiv and GitHub | The newsfeed | Every 30 minutes while the page is open |
 | GitHub's releases API | What's new | Hourly |
+| herdr.dev and formulae.brew.sh | Multiplexer version checks | At most hourly, or on Refresh or a requested operation; disabled by `AGENT_GUILD_NO_UPDATE_CHECK=1` |
+| herdr.dev, GitHub release downloads, and the selected package manager's repositories | Multiplexer installation and updates | When you request the operation |
 | GitHub (sign-in, API, avatars and SSH) | Signing in to GitHub, listing your repositories, adding your SSH key and cloning | When you use **Clone from GitHub…** |
 
 ## Other front ends

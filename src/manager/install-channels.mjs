@@ -7,6 +7,7 @@ export const CHANNEL_LABELS = {
   native: 'native',
   brew: 'Homebrew',
   winget: 'WinGet',
+  system: 'system package',
   legacy: 'legacy install',
   unknown: 'unknown install',
 };

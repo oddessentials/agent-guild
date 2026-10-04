@@ -10,6 +10,18 @@ export function parseVersion(text) {
   return match ? match[1] : null;
 }
 
+/** tmux uses two numbers and a patch letter; distributions add an epoch/revision. */
+export function parseTmuxVersion(text) {
+  return String(text || '').trim().match(/^(?:tmux\s+)?(?:\d+:)?(\d+\.\d+(?:_?[a-z])?)(?=$|[-+~\s])/i)?.[1]?.replace('_', '') ?? null;
+}
+
+export function compareTmuxVersions(a, b) {
+  const parts = (v) => /^(\d+)\.(\d+)([a-z]?)$/i.exec(parseTmuxVersion(v) || '');
+  const aa = parts(a), bb = parts(b);
+  if (!aa || !bb) return null;
+  return Number(aa[1]) - Number(bb[1]) || Number(aa[2]) - Number(bb[2]) || aa[3].localeCompare(bb[3]);
+}
+
 /** Semantic-version order: negative when a < b, positive when a > b. */
 export function compareVersions(a, b) {
   const [aMain, aPre] = String(a).split('-');

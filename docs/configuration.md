@@ -72,6 +72,42 @@ by `GET /api/v1/info`.
 | `usageUrl`, `billingUrl` | `https://` links to the vendor's usage and billing pages, shown on the card. The defaults point at the subscription pages; set your API console instead, or `null` to hide a link. |
 | `cloudUrl` | `https://` link to the vendor's web app, shown as a cloud icon on the card. `null` hides it. |
 
+## Terminal multiplexers
+
+The built-in Shell provider has a `multiplexers` array naming `tmux` and
+`herdr`, with documentation links and Homebrew names in `channels.brew.names`.
+Entries can override those fields under `win32`, `darwin` or `linux`.
+The final platform entry must name a supported ID; `enabled: false` hides
+that entry's management controls.
+Replace the array with `[]` to hide management controls; shell discovery
+and existing sessions continue to work. These are the two supported IDs;
+this field does not define arbitrary installers.
+
+Managed herdr installs on macOS and Linux write `~/.local/bin/herdr`.
+If that directory is absent from PATH, the row shows the installed copy.
+Add its directory to your shell configuration, then **Refresh**.
+Agent Guild does not edit shell profiles.
+
+On Windows, managed installs explicitly set `HERDR_HOME` to
+`%USERPROFILE%\.herdr` and `HERDR_INSTALL_DIR` to
+`%LOCALAPPDATA%\Programs\Herdr\bin` in the installer process. Inherited values
+cannot redirect a managed install. New installs use the stable release
+channel. Removal deletes the known standalone package and its owned bin
+junction, then removes only its user PATH entries, preserving the registry
+value type and unrelated entries.
+
+Existing custom, mise, Nix, and unrecognized copies receive guidance
+instead of management buttons. Native updates preserve the installation's
+own release channel; unknown and preview channels are not compared against
+the stable version feed. Homebrew copies use Homebrew's updater.
+
+Uninstall preserves user configuration, session data, and shared
+dependencies. Agent Guild manages the selected installation; it does not
+roll back package-manager dependency transactions. Failed or interrupted
+operations leave an outcome note and a retry or repair path. An incomplete
+herdr install whose executable cannot answer a server-status check must be
+repaired before Uninstall can safely proceed.
+
 ## Accounts
 
 Each extra account is a separate sign-in of the same tool, kept in its own

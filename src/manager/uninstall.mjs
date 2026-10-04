@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { buildSpawnSpec } from './command-resolver.mjs';
 import { formatCommand } from './install-channels.mjs';
+import { windowsPathCleanupScript } from './multiplexer-paths.mjs';
 
 export const RUNNER = fileURLToPath(import.meta.url);
 
@@ -72,9 +73,24 @@ function removeFile(file) {
 }
 
 export function runPlan(
-  { run = null, remove = [], links = [], launcher = null },
-  { env = process.env, platform = process.platform, log = console.log, rm = removeFile } = {},
+  { run = null, remove = [], links = [], launcher = null, pathEntries = null, strict = false },
+  { env = process.env, platform = process.platform, log = console.log, rm = removeFile, cleanPath = cleanWindowsPath } = {},
 ) {
+  if (strict) {
+    // An ancestor junction/symlink must not redirect deletion outside the
+    // server's allowlisted locations. The final launcher alias is handled below.
+    for (const file of [...remove, ...links]) {
+      if (!path.isAbsolute(file) || firstLink(path.dirname(file))) {
+        log(`Refused to remove ${file}: its parent is a link or the path is not absolute.`);
+        return 1;
+      }
+      const target = linkTarget(file);
+      if ((target && !within(target, remove, platform)) || (links.includes(file) && exists(file) && !target)) {
+        log(`Refused to remove ${file}: it is not an owned installation link.`);
+        return 1;
+      }
+    }
+  }
   if (run) {
     log(`> ${formatCommand(run.file, run.args)}`);
     const spec = buildSpawnSpec(run.file, run.args, env, platform);
@@ -133,6 +149,10 @@ export function runPlan(
       if (exists(file)) del(file);
       log(`Removed ${file}`);
     }
+    if (pathEntries && platform === 'win32') {
+      cleanPath(pathEntries, env);
+      log('Removed the installation’s entries from the user PATH.');
+    }
   } catch (err) {
     const code = err.code === 'ENOTDIR' && err.syscall === 'scandir' ? 'EPERM' : err.code;
     const reason = { EBUSY: 'it is in use', EPERM: 'it is in use or protected', EACCES: 'permission was denied' }[code] || err.message;
@@ -140,6 +160,13 @@ export function runPlan(
     return 1;
   }
   return 0;
+}
+
+function cleanWindowsPath(rules, env) {
+  const powershell = path.win32.join(env.SystemRoot || env.SYSTEMROOT || 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe');
+  const encoded = Buffer.from(windowsPathCleanupScript(rules), 'utf16le').toString('base64');
+  const result = spawnSync(powershell, ['-NoLogo', '-NoProfile', '-EncodedCommand', encoded], { env, encoding: 'utf8', windowsHide: true, timeout: 10000 });
+  if (result.error || result.status !== 0) throw new Error(result.error?.message || result.stderr || 'Could not update user PATH. Retry Uninstall.');
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === RUNNER) {

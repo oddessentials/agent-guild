@@ -285,6 +285,12 @@ export function createManagerServer({
       registry.emit('updated');
       return sendJson(res, 200, { provider: registry.describe(provider) });
     }
+    const multiplexerMatch = route.match(/^\/providers\/([a-z0-9][a-z0-9_-]{0,31})\/multiplexers\/([a-z0-9_-]+)\/(install|update|uninstall)$/);
+    if (multiplexerMatch && method === 'POST') {
+      const body = await readJsonBody(req);
+      const session = await manager.manageMultiplexer(multiplexerMatch[1], multiplexerMatch[2], multiplexerMatch[3], { path: body.path, force: body.force === true });
+      return sendJson(res, 201, { session: session.toJSON() });
+    }
     const installMatch = route.match(/^\/providers\/([a-z0-9][a-z0-9_-]{0,31})\/install$/);
     if (installMatch && method === 'POST') {
       const body = await readJsonBody(req);
@@ -408,6 +414,7 @@ export function createManagerServer({
       if (!res.headersSent) {
         const error = { code: err.code || 'error', message: err.message };
         if (err.running !== undefined) error.running = err.running;
+        if (err.pending !== undefined) error.pending = err.pending;
         if (err.target !== undefined) error.target = err.target;
         sendJson(res, status, { error });
       }
