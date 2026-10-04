@@ -38,6 +38,7 @@
     radial-gradient(circle, rgba(255, 222, 160, 0.55) 0 0.7px, transparent 1.5px) 17px 23px / 57px 51px,
     radial-gradient(circle, rgba(150, 230, 200, 0.4) 0 0.6px, transparent 1.3px) 9px 31px / 33px 63px;
   --page-art: image-set(url("page-light.avif") type("image/avif"), url("page-light.webp") type("image/webp"));
+  --page-veil: linear-gradient(rgba(238, 240, 230, 0.55), rgba(238, 240, 230, 0.32) 40%, rgba(238, 240, 230, 0.5));
   --empty-shadow: rgba(35, 45, 30, 0.3);
   --card-shadow: 0 1px 2px rgba(35, 45, 30, 0.08), 0 10px 26px rgba(35, 45, 30, 0.12);
   --card-hover-shadow: 0 2px 4px rgba(35, 45, 30, 0.08), 0 16px 34px color-mix(in srgb, var(--pc) 20%, rgba(35, 45, 30, 0.14));
@@ -46,8 +47,10 @@
   body { background: var(--bg); }
   body::before {
     content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
-    background: var(--page-art) center bottom / cover no-repeat;
+    background: var(--page-veil), var(--page-art) center bottom / cover no-repeat;
   }
+  /* Text that sits on the town itself gets a halo of the page colour. */
+  .section-head h2, .cwd > span, .empty { text-shadow: 0 0 2px var(--bg), 0 0 8px var(--bg), 0 0 16px var(--bg); }
   h2 { font-weight: 400; letter-spacing: 0.03em; font-size: 1.22rem; }
 
   .topbar { background: var(--panel); backdrop-filter: blur(12px) saturate(1.1); border-bottom: 1px solid transparent; border-image: var(--rule) 1; }
@@ -320,6 +323,7 @@
   --panel: rgba(13, 19, 16, 0.8);
   --panel-strong: rgba(14, 20, 17, 0.93);
   --page-art: image-set(url("page.avif") type("image/avif"), url("page.webp") type("image/webp"));
+  --page-veil: linear-gradient(rgba(7, 10, 9, 0.12), rgba(7, 10, 9, 0.12) 45%, rgba(7, 10, 9, 0.4));
   --empty-shadow: rgba(240, 140, 70, 0.22);
   --card-shadow: inset 0 1px 0 rgba(255, 210, 170, 0.06), 0 10px 30px rgba(0, 0, 0, 0.5);
   --card-hover-shadow: inset 0 1px 0 rgba(255, 210, 170, 0.08), 0 0 26px color-mix(in srgb, var(--pc) 24%, transparent);
