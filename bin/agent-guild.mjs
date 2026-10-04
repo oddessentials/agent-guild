@@ -34,8 +34,8 @@ Commands:
 Environment:
   AGENT_GUILD_PORT             Port for the local API (default 47821)
   AGENT_GUILD_HOME             Data directory (default: per-user app data folder)
-  AGENT_GUILD_ALLOWED_HOSTS    Extra accepted Host values (comma-separated)
-  AGENT_GUILD_ALLOWED_ORIGINS  Extra accepted browser origins (comma-separated)
+  AGENT_GUILD_ALLOWED_HOSTS    Host fallback until Remote access settings are saved
+  AGENT_GUILD_ALLOWED_ORIGINS  Origin fallback until Remote access settings are saved
   AGENT_GUILD_NPM_REGISTRY     npm registry for version checks and installs
   AGENT_GUILD_NO_UPDATE_CHECK  Set to 1 to skip version checks`);
 }
