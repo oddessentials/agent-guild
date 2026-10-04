@@ -9,6 +9,7 @@ const dir = path.resolve(process.argv[2] || 'docs/.pages');
 const required = [
   '.nojekyll', 'index.html', 'app.js', 'activity-favicon.js', 'terminal-copy.js', 'layout.js', 'repo-search.js', 'theme.js', 'styles.css', 'demo-config.js', 'demo-runtime.js',
   'vendor/xterm/xterm.js', 'vendor/xterm/xterm.css', 'vendor/xterm/addon-fit.js', 'vendor/xterm/addon-web-links.js',
+  'remote-access.js', 'vendor/qrcode.mjs',
 ];
 const problems = [];
 for (const file of required) if (!fs.existsSync(path.join(dir, file))) problems.push(`missing ${file}`);

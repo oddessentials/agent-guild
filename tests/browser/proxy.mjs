@@ -10,6 +10,7 @@ import path from 'node:path';
 import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { until, withPage } from './chrome.mjs';
+import { Tailscale, runTailscale } from '../../src/manager/tailscale.mjs';
 
 const fixture = fileURLToPath(new URL('../fixtures/fake-tool.mjs', import.meta.url));
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'guild-proxy-test-'));
@@ -61,12 +62,20 @@ try {
     return nativeFetch(url, ...args);
   };
   const { startManager } = await import('../../src/manager/main.mjs');
-  ctx = await startManager({ sessionDefaults: { killGraceMs: 500 } });
+  const tailFile = path.join(home, 'tailscale.json');
+  const tailFixture = fileURLToPath(new URL('../fixtures/fake-tailscale.mjs', import.meta.url));
+  fs.writeFileSync(tailFile, '{}');
+  const tailscale = new Tailscale({ env: { ...process.env, FAKE_TAILSCALE_STATE: tailFile }, find: () => process.execPath,
+    run: (exe, args, options) => runTailscale(exe, [tailFixture, ...args], options) });
+  ctx = await startManager({ sessionDefaults: { killGraceMs: 500 }, remoteAccess: { tailscale, probe: async () => ({ ok: true, checkedAt: new Date().toISOString() }) } });
+  fs.writeFileSync(tailFile, JSON.stringify({ config: {
+    TCP: { [proxy.address().port]: { HTTPS: true } }, Web: { [authority]: { Handlers: { '/': { Proxy: ctx.api.url } } } },
+  } }));
   assert.equal(ctx.api.server.address().address, '127.0.0.1');
 
   const checks = await withPage({ name: 'proxy', chromeArgs: [
     '--host-resolver-rules=MAP guild.example.ts.net 127.0.0.1', '--no-proxy-server',
-  ] }, async ({ send, evaluate, pass, errors }) => {
+  ] }, async ({ send, evaluate, layoutReady, pass, errors }) => {
     await send('Security.setIgnoreCertificateErrors', { ignore: true });
     await send('Page.addScriptToEvaluateOnNewDocument', { source: `
       window.cspViolations=[];
@@ -114,6 +123,113 @@ try {
     assert.deepEqual(await evaluate('cspViolations'), []);
     assert.deepEqual(errors, []);
     pass('both socket paths preserve the configured Host and Origin without CSP violations');
+
+    const pid = session.toJSON().pid;
+    await evaluate(`{ const menu=document.querySelector('#menu-toggle'); if (menu.checkVisibility()) menu.click(); document.querySelector('#settings').click(); }`);
+    await until('remote access available in Settings', () => evaluate(`document.querySelector('#remote-access-open').checkVisibility()`));
+    await evaluate(`document.querySelector('#remote-access-open').click()`);
+    await until('existing Tailscale route', () => evaluate(`document.querySelector('#remote-primary').textContent==='Use existing route' && !document.querySelector('#remote-primary').disabled`));
+    await evaluate(`document.querySelector('#remote-primary').click()`);
+    await until('adopted connection', () => evaluate(`document.querySelector('#remote-status-title').textContent==='Remote access enabled' && !document.querySelector('#remote-check').disabled`));
+    assert.equal(ctx.remoteAccess.snapshot().source, 'saved');
+    assert.equal(await evaluate(`document.querySelector('#remote-address').value`), origin);
+    assert.equal(session.toJSON().pid, pid);
+    pass('the settings panel adopts a matching route and saves it without restarting the PTY');
+
+    await evaluate(`document.querySelector('#remote-connect').click()`);
+    await until('share QR', () => evaluate(`!document.querySelector('#remote-qr').hidden && document.querySelector('#remote-qr-note').textContent===''`));
+    const link = await evaluate(`document.querySelector('#remote-signin').value`);
+    assert.equal(new URL(link).hash, `#token=${ctx.token}`);
+    assert.equal(new URL(link).origin, origin);
+    assert.ok(await evaluate(`document.querySelector('#remote-qr').width > 200`));
+    assert.deepEqual(await evaluate('cspViolations'), []);
+    await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+    const bounds = await evaluate(`(() => { const d=document.querySelector('#remote-access'),r=d.getBoundingClientRect(); return {left:r.left,right:r.right, width:innerWidth, overflow:d.scrollWidth>d.clientWidth}; })()`);
+    assert.ok(bounds.left >= 0 && bounds.right <= bounds.width && !bounds.overflow, JSON.stringify(bounds));
+    if (process.env.REMOTE_ACCESS_SCREENSHOT) {
+      const screenshot = await send('Page.captureScreenshot', { format: 'png' });
+      fs.writeFileSync(process.env.REMOTE_ACCESS_SCREENSHOT, Buffer.from(screenshot.data, 'base64'));
+    }
+    for (const skin of await evaluate('agentGuildSkins.map(s=>s.id)')) for (const theme of ['light', 'dark']) {
+      await evaluate(`document.documentElement.dataset.skin=${JSON.stringify(skin)}; document.documentElement.dataset.theme=${JSON.stringify(theme)}`);
+      await layoutReady();
+      assert.equal(await evaluate(`(() => { const e=document.querySelector('.remote-body'); return e.scrollWidth<=e.clientWidth; })()`), true, `${skin} ${theme}`);
+    }
+    await evaluate(`document.querySelector('#remote-close').click()`);
+    assert.equal(await evaluate(`document.querySelector('#remote-signin').value`), '');
+    assert.equal(await evaluate(`document.querySelector('#remote-qr').hidden`), true);
+    assert.ok(['settings', 'menu-toggle'].includes(await evaluate('document.activeElement.id')));
+    pass('private QR and sign-in link render under CSP, fit a phone screen, and clear when closed');
+
+    ctx.remoteAccess.change({ action: 'disable', revision: ctx.remoteAccess.snapshot().revision });
+    await ctx.remoteAccess.task;
+    await until('remote browser revoked', () => evaluate(`document.querySelector('#connection').title.includes('Remote access changed')`));
+    assert.equal(session.toJSON().pid, pid);
+    assert.equal(session.toJSON().status, 'running');
+    pass('disabling revokes the connected remote page while its terminal keeps running');
+
+    await send('Emulation.clearDeviceMetricsOverride');
+    await send('Page.navigate', { url: `${ctx.api.url}/#token=${ctx.token}` });
+    await until('local manager connected', () => evaluate(`document.querySelector('#connection')?.classList.contains('ok')`));
+    await evaluate(`document.querySelector('#remote-access-open').click()`);
+    await until('fresh enable action', () => evaluate(`document.querySelector('#remote-primary').textContent==='Enable remote access' && !document.querySelector('#remote-primary').disabled`));
+    await evaluate(`document.querySelector('#remote-primary').click()`);
+    await until('new route enabled', () => evaluate(`document.querySelector('#remote-status-title').textContent==='Remote access enabled' && !document.querySelector('#remote-check').disabled`));
+    assert.equal(ctx.remoteAccess.snapshot().url, 'https://guild.example.ts.net');
+    assert.equal(session.toJSON().pid, pid);
+    pass('a new connection chooses its address and enables from the local UI with no reload');
+
+    await evaluate(`document.querySelector('#remote-disable').click(); document.querySelector('#remote-disable-yes').click()`);
+    await until('local disable finishes', () => evaluate(`!document.querySelector('#remote-check').disabled && document.querySelector('#remote-address-row').hidden`));
+    const fakeState = JSON.parse(fs.readFileSync(tailFile));
+    fakeState.behavior = 'approval'; fakeState.https = false;
+    fs.writeFileSync(tailFile, JSON.stringify(fakeState));
+    await evaluate(`document.querySelector('#remote-primary').click()`);
+    await until('approval action', () => evaluate(`document.querySelector('#remote-help').textContent==='Open Tailscale approval' && !document.querySelector('#remote-check').disabled`));
+    assert.equal(ctx.remoteAccess.snapshot().mode, 'off');
+    fakeState.behavior = ''; fakeState.https = true;
+    fs.writeFileSync(tailFile, JSON.stringify(fakeState));
+    await evaluate(`window.dispatchEvent(new Event('focus'))`);
+    await until('approval completes automatically on return', () => evaluate(`document.querySelector('#remote-status-title').textContent==='Remote access enabled' && !document.querySelector('#remote-check').disabled`));
+    assert.equal(session.toJSON().pid, pid);
+    assert.deepEqual(await evaluate('cspViolations'), []);
+    assert.deepEqual(errors, []);
+    pass('HTTPS approval stays pending until verified and setup resumes when the user returns');
+
+    const permissionState = JSON.parse(fs.readFileSync(tailFile));
+    permissionState.behavior = 'permission';
+    fs.writeFileSync(tailFile, JSON.stringify(permissionState));
+    await evaluate(`document.querySelector('#remote-disable').click(); document.querySelector('#remote-disable-yes').click()`);
+    await until('cleanup action', () => evaluate(`document.querySelector('#remote-primary').textContent==='Retry cleanup' && !document.querySelector('#remote-primary').disabled`));
+    assert.equal(ctx.remoteAccess.snapshot().mode, 'off');
+    assert.equal(ctx.remoteAccess.snapshot().pending, 'disable');
+    permissionState.behavior = '';
+    fs.writeFileSync(tailFile, JSON.stringify(permissionState));
+    await evaluate(`document.querySelector('#remote-primary').click()`);
+    await until('cleanup finishes', () => evaluate(`document.querySelector('#remote-primary').textContent==='Enable remote access' && !document.querySelector('#remote-primary').disabled`));
+    assert.equal(ctx.remoteAccess.snapshot().pending, null);
+    pass('a failed cleanup keeps access blocked and Retry cleanup completes the correct action');
+
+    const find = tailscale.find;
+    tailscale.find = () => null;
+    await evaluate(`document.querySelector('#remote-check').click()`);
+    await until('install guidance', () => evaluate(`document.querySelector('#remote-help').textContent==='Install Tailscale' && !document.querySelector('#remote-check').disabled`));
+    assert.equal(await evaluate(`document.querySelector('#remote-help').href`), 'https://tailscale.com/download');
+    tailscale.find = find;
+    await evaluate(`document.querySelector('#remote-check').click()`);
+    await until('installed Tailscale detected', () => evaluate(`document.querySelector('#remote-primary').textContent==='Enable remote access' && !document.querySelector('#remote-primary').disabled`));
+    pass('installation guidance recovers when Tailscale becomes available without restarting the manager');
+
+    await evaluate(`document.querySelector('#remote-advanced').open=true; document.querySelector('#remote-hosts').value='draft.example.com'; document.querySelector('#remote-hosts').dispatchEvent(new Event('input'));`);
+    ctx.remoteAccess.change({ action: 'custom', revision: ctx.remoteAccess.snapshot().revision, hosts: ['saved.example.com'], origins: ['https://saved.example.com'] });
+    await ctx.remoteAccess.task;
+    await until('custom form ready', () => evaluate(`!document.querySelector('#remote-custom-save').disabled`));
+    await evaluate(`document.querySelector('#remote-custom-form').requestSubmit()`);
+    await until('stale settings explained', () => evaluate(`!document.querySelector('#remote-error').hidden && document.querySelector('#remote-error').textContent.includes('another tab') && !document.querySelector('#remote-custom-save').disabled`));
+    assert.equal(await evaluate(`document.querySelector('#remote-hosts').value`), 'saved.example.com');
+    assert.deepEqual(ctx.remoteAccess.snapshot().hosts, ['saved.example.com']);
+    assert.deepEqual(errors, []);
+    pass('a stale custom-proxy draft cannot overwrite settings saved by another tab');
   });
   console.log(`${checks} HTTPS proxy checks passed`);
 } finally {

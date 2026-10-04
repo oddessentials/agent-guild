@@ -4,7 +4,6 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-import { isIP } from 'node:net';
 import { createRequire } from 'node:module';
 import { WebSocketServer } from 'ws';
 import { timingSafeEqualString } from './session-manager.mjs';
@@ -12,6 +11,7 @@ import { folderOrigin } from './github.mjs';
 import { createViews } from './github-views.mjs';
 import { createFolderOpener } from './folder-opener.mjs';
 import { createFolderPicker } from './folder-picker.mjs';
+import { normalizeAccess } from './access-policy.mjs';
 
 const require = createRequire(import.meta.url);
 const API = '/api/v1';
@@ -41,6 +41,7 @@ function vendorFiles() {
     '/vendor/xterm/xterm.css': path.join(pkgDir('@xterm/xterm'), 'css/xterm.css'),
     '/vendor/xterm/addon-fit.js': path.join(pkgDir('@xterm/addon-fit'), 'lib/addon-fit.js'),
     '/vendor/xterm/addon-web-links.js': path.join(pkgDir('@xterm/addon-web-links'), 'lib/addon-web-links.js'),
+    '/vendor/qrcode.mjs': path.join(path.dirname(require.resolve('qrcode-generator')), 'qrcode.mjs'),
   };
 }
 
@@ -60,21 +61,6 @@ class HttpError extends Error {
     this.status = status;
     this.code = code;
   }
-}
-
-/** Exact Host authorities, also safe to include as CSP WebSocket sources. */
-export function parseAllowedHosts(value = '') {
-  const entries = value.split(',').map((entry) => entry.trim().toLowerCase()).filter(Boolean);
-  for (const entry of entries) {
-    const match = /^(\[[0-9a-f:.]+\]|[a-z0-9.-]+)(?::([1-9]\d{0,4}))?$/.exec(entry);
-    const name = match?.[1];
-    const validName = name?.startsWith('[') ? isIP(name.slice(1, -1)) === 6
-      : name && name.length <= 253 && name.split('.').every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label));
-    if (!validName || (match[2] && Number(match[2]) > 65535)) {
-      throw new Error(`Invalid AGENT_GUILD_ALLOWED_HOSTS entry ${JSON.stringify(entry)}. Use a hostname with an optional port, such as guild.example.ts.net or guild.example.ts.net:8443; URLs and wildcards are not allowed.`);
-    }
-  }
-  return [...new Set(entries)];
 }
 
 function readJsonBody(req) {
@@ -126,6 +112,7 @@ export function createManagerServer({
   selfUpdate = null,
   extraHosts = [],
   extraOrigins = [],
+  remoteAccess = null,
   folderOpener = createFolderOpener({ resolveCwd: (cwd) => manager.resolveCwd(cwd) }),
   folderPicker = createFolderPicker({ resolveCwd: (cwd) => manager.resolveCwd(cwd) }),
   /** The double-click launcher file for this platform, or null when the package carries none. */
@@ -133,21 +120,22 @@ export function createManagerServer({
   /** @type {(opts: { restart: boolean }) => void} */
   onShutdownRequest = () => {},
 }) {
-  const proxyHosts = parseAllowedHosts(extraHosts.join(','));
-  const socketSources = proxyHosts.flatMap((authority) => [`ws://${authority}`, `wss://${authority}`]);
-  const securityHeaders = {
+  let access = normalizeAccess({ hosts: extraHosts, origins: extraOrigins });
+  let policyVersion = 0;
+  const headersForAccess = () => ({
     ...SECURITY_HEADERS,
     'Content-Security-Policy': SECURITY_HEADERS['Content-Security-Policy'].replace(
-      "connect-src 'self'", ["connect-src 'self'", ...socketSources].join(' ')),
-  };
+      "connect-src 'self'", ["connect-src 'self'", ...access.hosts.flatMap((authority) => [`ws://${authority}`, `wss://${authority}`])].join(' ')),
+  });
+  let securityHeaders = headersForAccess();
   const upgradeInfo = () => (selfUpdate ? selfUpdate.describe() : null);
   const startedAt = new Date().toISOString();
   const vendor = vendorFiles();
   let boundPort = port;
 
-  const allowedHosts = () => new Set([`127.0.0.1:${boundPort}`, `localhost:${boundPort}`, `[::1]:${boundPort}`, ...proxyHosts]);
+  const allowedHosts = () => new Set([`127.0.0.1:${boundPort}`, `localhost:${boundPort}`, `[::1]:${boundPort}`, ...access.hosts]);
   const allowedOrigins = () =>
-    new Set([`http://127.0.0.1:${boundPort}`, `http://localhost:${boundPort}`, `http://[::1]:${boundPort}`, ...extraOrigins]);
+    new Set([`http://127.0.0.1:${boundPort}`, `http://localhost:${boundPort}`, `http://[::1]:${boundPort}`, ...access.origins]);
 
   /** Blocks DNS-rebinding (Host) and cross-site browser requests (Origin). */
   function checkRequestSource(req) {
@@ -188,7 +176,7 @@ export function createManagerServer({
     const notFound = () => sendJson(res, 404, { error: { code: 'not_found', message: 'not found' } });
     fs.stat(file, (statErr, stat) => {
       if (statErr || !stat.isFile()) return notFound();
-      const etag = `W/"${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}"`;
+      const etag = `W/"${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}-${policyVersion}"`;
       const headers = {
         ...securityHeaders,
         'Content-Type': MIME[path.extname(file).toLowerCase()] || 'application/octet-stream',
@@ -258,6 +246,17 @@ export function createManagerServer({
 
     requireAuth(req, url);
 
+    if (remoteAccess && route === '/remote-access' && method === 'GET') {
+      return sendJson(res, 200, { remoteAccess: remoteAccess.snapshot() });
+    }
+    if (remoteAccess && route === '/remote-access/check' && method === 'POST') {
+      return sendJson(res, 200, { remoteAccess: await remoteAccess.check() });
+    }
+    if (remoteAccess && route === '/remote-access' && method === 'PUT') {
+      const operation = remoteAccess.change(await readJsonBody(req));
+      return sendJson(res, 202, { remoteAccess: operation });
+    }
+
     if (route === '/info' && method === 'GET') {
       selfUpdate?.refresh().catch(() => {});
       return sendJson(res, 200, {
@@ -271,6 +270,7 @@ export function createManagerServer({
         launcher,
         folderOpener: folderOpener.describe(),
         folderPicker: folderPicker.describe(),
+        remoteAccess: remoteAccess ? { available: true } : null,
       });
     }
     if (route === '/open-folder' && method === 'POST') {
@@ -496,7 +496,7 @@ export function createManagerServer({
   const eventClients = new Set();
 
   const safeSend = (ws, message) => {
-    if (ws.readyState !== ws.OPEN) return;
+    if (ws.revoked || ws.readyState !== ws.OPEN) return;
     if (ws.bufferedAmount > SLOW_CLIENT_BYTES) {
       // The client can reconnect and will receive a fresh snapshot.
       ws.close(4008, 'client too slow');
@@ -528,10 +528,11 @@ export function createManagerServer({
   news?.on('updated', () => broadcast({ type: 'news.updated' }));
   changelog?.on('updated', () => broadcast({ type: 'changelog.updated' }));
   github?.on('updated', () => broadcast({ type: 'github.updated' }));
+  remoteAccess?.on('updated', () => broadcast({ type: 'remote-access.updated' }));
 
   function handleEvents(ws) {
     eventClients.add(ws);
-    safeSend(ws, { type: 'hello', version, pid: process.pid, startedAt, launcher, folderOpener: folderOpener.describe(), folderPicker: folderPicker.describe(), upgrade: upgradeInfo(), sessions: manager.list() });
+    safeSend(ws, { type: 'hello', version, pid: process.pid, startedAt, launcher, folderOpener: folderOpener.describe(), folderPicker: folderPicker.describe(), remoteAccess: remoteAccess ? { available: true } : null, upgrade: upgradeInfo(), sessions: manager.list() });
     ws.on('close', () => eventClients.delete(ws));
     ws.on('message', () => { /* events socket is server -> client only */ });
   }
@@ -549,9 +550,10 @@ export function createManagerServer({
       safeSend(ws, message);
       if (message.type === 'removed') ws.close(4410, 'session removed');
     });
+    ws.detachTerminal = detach;
     ws.on('close', detach);
     ws.on('message', (raw, isBinary) => {
-      if (isBinary) return;
+      if (isBinary || ws.revoked) return;
       let msg;
       try { msg = JSON.parse(raw.toString('utf8')); } catch { return; }
       if (msg.type === 'input' && typeof msg.data === 'string') session.input(msg.data);
@@ -575,6 +577,7 @@ export function createManagerServer({
     const termMatch = url.pathname.match(/^\/api\/v1\/sessions\/([a-f0-9]+)\/terminal$/);
     if (url.pathname !== `${API}/events` && !termMatch) return reject(404, 'Not Found');
     wss.handleUpgrade(req, socket, head, (ws) => {
+      ws.source = { headers: { host: req.headers.host, origin: req.headers.origin } };
       ws.isAlive = true;
       ws.on('pong', () => { ws.isAlive = true; });
       ws.on('error', () => {});
@@ -594,6 +597,21 @@ export function createManagerServer({
 
   return {
     server,
+    setAccessPolicy(next) {
+      access = normalizeAccess(next);
+      policyVersion++;
+      securityHeaders = headersForAccess();
+      for (const ws of wss.clients) {
+        try { checkRequestSource(ws.source); } catch {
+          ws.revoked = true;
+          ws.detachTerminal?.();
+          ws.close(4403, 'Remote access changed');
+          const timer = setTimeout(() => ws.terminate(), 500);
+          timer.unref();
+          ws.once('close', () => clearTimeout(timer));
+        }
+      }
+    },
     get port() { return boundPort; },
     get url() { return `http://127.0.0.1:${boundPort}`; },
     listen() {

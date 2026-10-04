@@ -44,6 +44,7 @@ export const paths = {
   get providers() { return path.join(dataDir(), 'providers.json'); },
   get accounts() { return path.join(dataDir(), 'accounts'); },
   get github() { return path.join(dataDir(), 'github'); },
+  get remoteAccess() { return path.join(dataDir(), 'remote-access.json'); },
   get log() { return path.join(dataDir(), 'manager.log'); },
   /** Launchers for agent-guild-report, put first on every session's PATH. */
   get shims() { return path.join(dataDir(), 'bin'); },

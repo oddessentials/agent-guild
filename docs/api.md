@@ -33,16 +33,27 @@ Authorization: Bearer <token>
 WebSocket clients that cannot set headers, such as browsers, pass
 `?token=<token>` in the URL instead.
 
-The manager also rejects requests whose `Host` header is not a loopback name
-for its port or explicitly configured in `AGENT_GUILD_ALLOWED_HOSTS`, and
-browser requests whose `Origin` is not the manager's own page or listed in
-`AGENT_GUILD_ALLOWED_ORIGINS`. That blocks DNS-rebinding and cross-site
-attacks. Native clients that send no `Origin` header still need an accepted
-Host and the API token. Both settings are comma-separated; Host values have
-no scheme, whereas Origin values include it. They are checked independently
-for HTTP and WebSocket requests, without trusting forwarded headers.
-See [reverse proxy setup](configuration.md#reverse-proxies) for a Tailscale
-Serve example. The default loopback behavior is unchanged.
+The manager rejects requests whose `Host` or browser `Origin` is outside
+its loopback and saved remote-access allowlists. The legacy
+`AGENT_GUILD_ALLOWED_HOSTS` and `AGENT_GUILD_ALLOWED_ORIGINS` variables are
+startup fallbacks until settings are saved. Host values have no scheme;
+Origin values include it. Both are checked independently for HTTP and
+WebSocket requests, without trusting forwarded headers. Native clients
+that send no `Origin` still need an accepted Host and the API token.
+See [remote access setup](configuration.md#reverse-proxies).
+
+`GET /api/v1/remote-access` returns `{ remoteAccess }` with the current
+`revision`, `mode`, `busy`, `pending`, `problem` and connection details.
+`POST /api/v1/remote-access/check` refreshes Tailscale status.
+`PUT /api/v1/remote-access` takes the current `revision` and an `action`:
+`enable` (with `adopt: true` to manage a matching existing route), `disable`,
+`custom` (with `hosts` and `origins` arrays), or `forget` (leave an inactive
+route awaiting cleanup in Tailscale). A successful submission returns 202;
+poll until `busy` is null and inspect `problem` for the outcome. Stale
+revisions and concurrent changes return 409. The `remote-access.updated`
+event signals a fresh snapshot is available. These endpoints require the
+manager token; report tokens cannot configure access. Revoked WebSockets
+close with code 4403 while their terminal processes keep running.
 
 Errors use one shape:
 

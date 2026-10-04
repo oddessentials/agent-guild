@@ -31,6 +31,7 @@ const vendor = {
   'xterm/xterm.css': '@xterm/xterm/css/xterm.css',
   'xterm/addon-fit.js': '@xterm/addon-fit/lib/addon-fit.js',
   'xterm/addon-web-links.js': '@xterm/addon-web-links/lib/addon-web-links.js',
+  'qrcode.mjs': 'qrcode-generator/dist/qrcode.mjs',
 };
 for (const [target, dependency] of Object.entries(vendor)) {
   const from = path.join(modules, ...dependency.split('/'));
@@ -68,4 +69,3 @@ for (const file of stylesheets(out)) {
 }
 
 console.log(`Built Agent Guild ${version} Pages demo at ${out}`);
-

@@ -13,6 +13,7 @@ const vendor = {
   '/vendor/xterm/xterm.css': '@xterm/xterm/css/xterm.css',
   '/vendor/xterm/addon-fit.js': '@xterm/addon-fit/lib/addon-fit.js',
   '/vendor/xterm/addon-web-links.js': '@xterm/addon-web-links/lib/addon-web-links.js',
+  '/vendor/qrcode.mjs': 'qrcode-generator/dist/qrcode.mjs',
 };
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -32,7 +33,7 @@ export async function withPage({ name, instrumentation = '', headers = () => ({}
       : route === '/demo-runtime.js' ? path.join(repo, 'docs/demo/demo-runtime.js')
         : path.resolve(web, `.${route === '/' ? '/index.html' : route}`);
     if (!file.startsWith(repo) || !fs.existsSync(file) || !fs.statSync(file).isFile()) { res.writeHead(404); res.end(); return; }
-    const types = { '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html', '.svg': 'image/svg+xml', '.json': 'application/json' };
+    const types = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.html': 'text/html', '.svg': 'image/svg+xml', '.json': 'application/json' };
     res.setHeader('Content-Type', types[path.extname(file)] || 'application/octet-stream');
     for (const [header, value] of Object.entries(headers())) res.setHeader(header, value);
     if (route === '/') {

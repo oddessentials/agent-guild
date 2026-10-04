@@ -8,7 +8,8 @@ import { spawnSync } from 'node:child_process';
 import { EventEmitter, once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
-import { createManagerServer, parseAllowedHosts } from '../src/manager/server.mjs';
+import { createManagerServer } from '../src/manager/server.mjs';
+import { parseAllowedHosts } from '../src/manager/access-policy.mjs';
 
 const proxyHost = 'guild.example.ts.net';
 const proxyOrigin = `https://${proxyHost}`;
@@ -68,7 +69,7 @@ test('allowed hosts accept exact authorities and reject URLs, wildcards and head
     'example.ts.net?x', 'example.ts.net#x', 'example.ts.net:0', 'example.ts.net:65536', 'example.ts.net:443:80',
     'example.ts.net:*', 'example.ts.net:0443', 'a..b', '-bad.example', 'bad-.example', '[::invalid]', '::1',
     'example.ts.net; script-src *', 'example.ts.net\r\nX-Injected: yes', 'example .ts.net', `${'a'.repeat(64)}.net`]) {
-    assert.throws(() => parseAllowedHosts(value), /AGENT_GUILD_ALLOWED_HOSTS/, value);
+    assert.throws(() => parseAllowedHosts(value), /Invalid allowed host/, value);
   }
 });
 
@@ -82,7 +83,7 @@ test('an invalid host setting fails startup before creating manager state', (t) 
   });
   assert.equal(result.error, undefined);
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /Invalid AGENT_GUILD_ALLOWED_HOSTS/);
+  assert.match(result.stderr, /Invalid allowed host/);
   assert.equal(fs.existsSync(home), false);
 });
 
@@ -163,4 +164,56 @@ test('both WebSocket endpoints enforce configured hosts, origins and the existin
     ws.close();
     await once(ws, 'close');
   }
+});
+
+test('live policy changes revoke both remote sockets, preserve local sockets, and refresh CSP', async (t) => {
+  const api = await server(t);
+  const before = await request(api);
+  const local = new WebSocket(`${api.url.replace('http:', 'ws:')}/api/v1/events?token=${token}`);
+  t.after(() => local.terminate());
+  await once(local, 'message');
+  api.setAccessPolicy({ hosts: [proxyHost], origins: [proxyOrigin] });
+  const page = await request(api, '/', { Host: proxyHost });
+  assert.equal(page.status, 200);
+  assert.notEqual(page.headers.etag, before.headers.etag);
+  assert.ok(page.headers['content-security-policy'].includes(`wss://${proxyHost}`));
+  const remote = [];
+  for (const route of ['/events', '/sessions/abc123/terminal']) {
+    const ws = new WebSocket(`${api.url.replace('http:', 'ws:')}/api/v1${route}?token=${token}`, { headers: { Host: proxyHost, Origin: proxyOrigin } });
+    t.after(() => ws.terminate());
+    await once(ws, 'message');
+    remote.push(ws);
+  }
+  const closed = remote.map((ws) => once(ws, 'close'));
+  api.setAccessPolicy({ hosts: [], origins: [] });
+  for (const [code] of await Promise.all(closed)) assert.equal(code, 4403);
+  assert.equal(local.readyState, WebSocket.OPEN);
+  assert.equal((await request(api, '/api/v1/health', { Host: proxyHost })).status, 403);
+  assert.ok(!(await request(api)).headers['content-security-policy'].includes(proxyHost));
+  assert.throws(() => api.setAccessPolicy({ hosts: ['*'] }));
+  assert.equal(local.readyState, WebSocket.OPEN);
+});
+
+test('revocation detaches terminal output immediately and cannot accept more input during closing', async (t) => {
+  let inputs = 0, attachments = 0;
+  const session = {
+    attach(send) {
+      attachments++;
+      send({ type: 'snapshot', data: 'ready' });
+      let attached = true;
+      return () => { if (attached) { attached = false; attachments--; } };
+    },
+    input() { inputs++; }, resize() {},
+  };
+  const manager = Object.assign(new EventEmitter(), { list: () => [], get: () => session });
+  const api = await server(t, { manager, extraHosts: [proxyHost], extraOrigins: [proxyOrigin] });
+  const remote = new WebSocket(`${api.url.replace('http:', 'ws:')}/api/v1/sessions/abc123/terminal?token=${token}`, { headers: { Host: proxyHost, Origin: proxyOrigin } });
+  t.after(() => remote.terminate());
+  await once(remote, 'message');
+  const closed = once(remote, 'close');
+  api.setAccessPolicy({ hosts: [], origins: [] });
+  assert.equal(attachments, 0);
+  remote.send(JSON.stringify({ type: 'input', data: 'should not run' }));
+  await closed;
+  assert.equal(inputs, 0);
 });

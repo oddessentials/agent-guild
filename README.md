@@ -256,9 +256,9 @@ Any other tool or script can report agents and its model too. See
 
 ## Security and privacy
 
-* The manager listens on `127.0.0.1` only. To use its UI through a reverse
-  proxy such as Tailscale Serve, configure explicit
-  [allowed hosts and origins](docs/configuration.md#reverse-proxies).
+* The manager listens on `127.0.0.1` only. **Settings → Remote access** sets
+  up a private Tailscale address without restarting your terminals. See
+  [remote access and other proxies](docs/configuration.md#reverse-proxies).
 * Every API call needs a random per-user token, stored in the data folder
   with owner-only permissions. Anyone who can run programs as your user can
   read it, as with any local developer tool.

@@ -6,6 +6,7 @@ import { TerminalCopy } from './terminal-copy.js';
 import { topbarInline, dockMode, clampDockWidth, stageBesideDock, splitMode, clampRatio, bindSplitter, DOCK_MIN, SPLIT_RATIO_MIN } from './layout.js';
 import { highlightParts, rankRepos, recentFirst, remember, repoForOrigin, repoKey } from './repo-search.js';
 import { createActivityFavicon, isSessionWorking } from './activity-favicon.js';
+import { createRemoteAccessUI } from './remote-access.js';
 
 const TOKEN_KEY = 'agentGuild.token';
 const CWD_KEY = 'agentGuild.cwd';
@@ -120,6 +121,7 @@ function setConnection(kind, label) {
   el.title = label;
   // The manager can only be stopped, restarted or upgraded while the page can reach it.
   state.connected = kind === 'ok';
+  state.remoteAccessUI?.connectionChanged();
   $('manager').hidden = !state.connected;
   if (!state.connected) closeMenu($('manager-menu'));
   renderFolderTools();
@@ -4257,13 +4259,13 @@ class TerminalView {
   }
 
   connect() {
-    if (this.disposed) return;
+    if (this.disposed || state.remoteRevoked) return;
     const ws = new WebSocket(wsUrl(`/sessions/${this.id}/terminal`));
     this.ws = ws;
     ws.onopen = () => { this.retry = 0; this.sent = { cols: 0, rows: 0 }; this.sendSize(); };
     ws.onmessage = (event) => this.onMessage(JSON.parse(event.data));
     ws.onclose = (event) => {
-      if (this.disposed || event.code === 4404 || event.code === 4410) return;
+      if (this.disposed || event.code === 4403 || event.code === 4404 || event.code === 4410) return;
       const delay = Math.min(5000, 300 * 2 ** this.retry++);
       setTimeout(() => this.connect(), delay);
     };
@@ -4860,7 +4862,7 @@ function showManagerUnavailable() {
 }
 
 function connectEvents() {
-  if (state.pageAway) return;
+  if (state.pageAway || state.remoteRevoked) return;
   const ws = new WebSocket(wsUrl('/events'));
   state.eventsSocket = ws;
   ws.onopen = () => {
@@ -4881,6 +4883,7 @@ function connectEvents() {
       state.launcher = typeof msg.launcher === 'string' ? msg.launcher : null;
       state.folderOpener = msg.folderOpener || null;
       state.folderPicker = msg.folderPicker || null;
+      state.remoteAccessUI?.setAvailable(msg.remoteAccess);
       renderVersion();
       setConnection('ok', 'Connected to session manager');
       state.sessions = new Map(msg.sessions.map((s) => [s.id, s]));
@@ -4895,6 +4898,8 @@ function connectEvents() {
       // A changelog.updated sent while the socket was down is lost; catch up the open panel.
       if ($('changelog').open) loadChangelog();
       if (dockShows('github')) loadGitHub();
+    } else if (msg.type === 'remote-access.updated') {
+      state.remoteAccessUI?.updated();
     } else if (msg.type === 'news.updated') {
       loadNews();
     } else if (msg.type === 'github.updated') {
@@ -4921,8 +4926,15 @@ function connectEvents() {
       scheduleStats();
     }
   };
-  ws.onclose = () => {
+  ws.onclose = (event) => {
     if (state.pageAway || state.eventsSocket !== ws) return;
+    if (event?.code === 4403) {
+      state.remoteRevoked = true;
+      managerLoss.cancel();
+      state.remoteAccessUI?.close();
+      setConnection('down', 'Remote access changed. Your terminals are still running. Reopen an enabled address to reconnect.');
+      return;
+    }
     if (state.managerUnavailable) {
       showManagerUnavailable();
     } else if (state.stopping && state.stopRemaining !== null) {
@@ -4964,6 +4976,7 @@ let statsInterval;
 let newsTimer;
 
 function showAuth(message = '') {
+  state.remoteAccessUI?.setAvailable(null);
   managerLoss.cancel();
   closePanel();
   closeModels();
@@ -5380,5 +5393,6 @@ addEventListener('scroll', publishTopbarHeight, { passive: true });
 publishTopbarHeight();
 applyDockLayout();
 
+state.remoteAccessUI = createRemoteAccessUI({ api, getToken: () => state.token, isConnected: () => state.connected, onAuthError: showAuth });
 state.token = readTokenFromHash() || load(TOKEN_KEY);
 boot();

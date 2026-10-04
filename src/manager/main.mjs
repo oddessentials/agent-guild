@@ -12,7 +12,8 @@ import { ModelStats } from './model-stats.mjs';
 import { NewsFeed } from './news.mjs';
 import { Changelog } from './changelog.mjs';
 import { GitHub } from './github.mjs';
-import { createManagerServer, parseAllowedHosts } from './server.mjs';
+import { createManagerServer } from './server.mjs';
+import { RemoteAccess, loadRemoteAccess } from './remote-access.mjs';
 import { SelfUpdate } from './self-update.mjs';
 import { resolveBaseEnv, pathReader } from './shell-env.mjs';
 import { writeReportShims } from './report-shims.mjs';
@@ -38,12 +39,13 @@ const rootDir = path.resolve(here, '../..');
 const VERSION_REFRESH_MS = 60 * 60 * 1000;
 
 /** `version`, `packageFile` and `github` (GitHub's URLs and client id) stand in for the real ones in tests. */
-export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, sessionDefaults, version = VERSION, packageFile = PACKAGE_FILE, github: githubOptions = {} } = {}) {
+export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, sessionDefaults, version = VERSION, packageFile = PACKAGE_FILE, github: githubOptions = {}, remoteAccess: remoteOptions = {} } = {}) {
   // Validate before creating files, processes or timers, so a typo fails startup cleanly.
-  const extraHosts = parseAllowedHosts(process.env.AGENT_GUILD_ALLOWED_HOSTS);
+  const remoteSettings = loadRemoteAccess(paths.remoteAccess);
   ensureDataDir();
   const token = loadOrCreateToken();
   const baseEnv = resolveBaseEnv();
+  const remoteAccess = new RemoteAccess({ file: paths.remoteAccess, env: baseEnv, loaded: remoteSettings, ...remoteOptions });
   const webDir = path.join(rootDir, 'web');
   // The hooks in examples/ call `agent-guild-report` by name; these shims
   // make that name resolve inside every session. Regenerated at each start
@@ -95,6 +97,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
     if (closing) return closing;
     console.log(`[manager] ${restart ? 'restarting' : 'stopping'} (${reason}); ending ${manager.sessions.size} session(s)`);
     clearInterval(versionTimer);
+    remoteAccess.close();
     github.close();
     removeRuntimeFile();
     // Sessions end before the API closes, and the last event says whether
@@ -117,9 +120,6 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
     return closing;
   };
 
-  const extraOrigins = (process.env.AGENT_GUILD_ALLOWED_ORIGINS || '')
-    .split(',').map((s) => s.trim()).filter(Boolean);
-
   api = createManagerServer({
     manager,
     registry,
@@ -135,11 +135,13 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
     webDir,
     version,
     selfUpdate,
-    extraHosts,
-    extraOrigins,
+    extraHosts: remoteSettings.config.access.hosts,
+    extraOrigins: remoteSettings.config.access.origins,
+    remoteAccess,
     launcher: launcherPath(),
     onShutdownRequest: ({ restart = false } = {}) => shutdown('requested via API', { restart }).then(() => process.exit(0)),
   });
+  remoteAccess.attach({ apply: (access) => api.setAccessPolicy(access), getTarget: () => api.url });
 
   try {
     await api.listen();
@@ -165,7 +167,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
   });
   console.log(`[manager] Agent Guild ${version} listening on ${api.url} (pid ${process.pid})`);
   refreshVersions();
-  return { api, manager, registry, token, shutdown };
+  return { api, manager, registry, token, shutdown, remoteAccess };
 }
 
 function isEntryPoint() {

@@ -35,6 +35,7 @@
         <button id="notes-open" class="btn notes-open" type="button" aria-controls="dock" aria-pressed="false">Notes</button>
         <button id="settings" class="btn settings menu-button" type="button" popovertarget="settings-menu" aria-haspopup="dialog">Settings</button>
         <div id="settings-menu" class="settings-menu menu" popover role="dialog" aria-label="Settings">
+          <button id="remote-access-open" class="btn" type="button" aria-haspopup="dialog" hidden>Remote access</button>
           <fieldset id="skin-choices"><legend>Skin</legend></fieldset>
           <fieldset>
             <legend>Mode</legend>
@@ -256,6 +257,70 @@
     <div class="terminal-copy-footer">
       <p id="terminal-copy-status" role="status"></p>
       <button class="btn primary" type="button" data-copy disabled>Copy selection</button>
+    </div>
+  </dialog>
+
+  <dialog id="remote-access" class="models remote-access" aria-labelledby="remote-access-title">
+    <div class="models-bar">
+      <div class="models-heading">
+        <h2 id="remote-access-title">Remote access</h2>
+        <p class="sub">Use Agent Guild on another device</p>
+      </div>
+      <button id="remote-close" class="btn" type="button">Close</button>
+    </div>
+    <div class="models-body remote-body">
+      <p>Access your running terminals through your Tailscale network. Your computer must be awake with Agent Guild and Tailscale running.</p>
+      <div class="remote-status" role="status" aria-live="polite" aria-atomic="true">
+        <strong id="remote-status-title">Checking connection…</strong>
+        <p id="remote-status-text"></p>
+      </div>
+      <p id="remote-error" class="remote-error" role="alert" hidden></p>
+      <div id="remote-address-row" hidden>
+        <label for="remote-address">Your remote address</label>
+        <input id="remote-address" class="remote-address" readonly spellcheck="false">
+        <div class="remote-actions">
+          <button id="remote-connect" class="btn primary" type="button" aria-expanded="false" aria-controls="remote-share">Connect another device</button>
+          <button id="remote-copy-address" class="btn" type="button">Copy address</button>
+          <a id="remote-open-address" class="btn" target="_blank" rel="noopener noreferrer">Open</a>
+        </div>
+      </div>
+      <div id="remote-share" class="remote-share" hidden>
+        <p>Connect the other device to Tailscale, then scan this code or open the sign-in link.</p>
+        <canvas id="remote-qr" role="img" aria-label="QR code to sign into Agent Guild" hidden></canvas>
+        <p id="remote-qr-note" class="sub"></p>
+        <label for="remote-signin">Anyone with this code or link can use your terminals.</label>
+        <input id="remote-signin" class="remote-address" readonly spellcheck="false" autocomplete="off">
+        <button id="remote-copy-signin" class="btn" type="button">Copy sign-in link</button>
+      </div>
+      <div class="remote-actions">
+        <button id="remote-primary" class="btn primary" type="button">Enable remote access</button>
+        <a id="remote-help" class="btn primary" target="_blank" rel="noopener noreferrer" hidden></a>
+        <button id="remote-check" class="btn" type="button">Check connection</button>
+        <button id="remote-disable" class="btn danger" type="button" hidden>Disable remote access</button>
+      </div>
+      <div id="remote-disable-confirm" class="remote-confirm" hidden>
+        <p>Disconnect remote browsers? Your terminals will keep running. Local access stays available.</p>
+        <div class="remote-actions">
+          <button id="remote-disable-yes" class="btn danger" type="button">Disable remote access</button>
+          <button id="remote-disable-no" class="btn" type="button">Keep enabled</button>
+        </div>
+      </div>
+      <details id="remote-details">
+        <summary>Connection details</summary>
+        <p id="remote-diagnostics" class="sub"></p>
+        <button id="remote-forget" class="btn" type="button" hidden>Leave the changed route in Tailscale</button>
+      </details>
+      <details id="remote-advanced">
+        <summary>Use another reverse proxy</summary>
+        <p id="remote-custom-note">Configure your proxy separately, then enter the hosts and browser origins it uses. Saving applies immediately and replaces environment settings.</p>
+        <form id="remote-custom-form">
+          <label for="remote-hosts">Allowed hosts, separated by commas</label>
+          <input id="remote-hosts" placeholder="guild.example.com" spellcheck="false" autocomplete="off" maxlength="16384">
+          <label for="remote-origins">Allowed origins, separated by commas</label>
+          <input id="remote-origins" placeholder="https://guild.example.com" spellcheck="false" autocomplete="off" maxlength="16384">
+          <button id="remote-custom-save" class="btn" type="submit">Save proxy settings</button>
+        </form>
+      </details>
     </div>
   </dialog>
 
