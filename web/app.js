@@ -46,6 +46,8 @@ const state = {
   managerUnavailable: false,
   /** True while the events socket is open. */
   connected: false,
+  folderOpener: null,
+  folderOpening: false,
   /** The manager's own version check, from `hello` and `manager.upgrade`. */
   upgrade: null,
   /** The running manager's version and pid, from `hello`. */
@@ -102,6 +104,7 @@ function setConnection(kind, label) {
   el.querySelector('.label').textContent = label;
   // The manager can only be stopped, restarted or upgraded while the page can reach it.
   state.connected = kind === 'ok';
+  renderFolderOpener();
   $('stop-manager').hidden = !state.connected;
   $('restart-manager').hidden = !state.connected || !state.restartable;
   renderUpgrade();
@@ -629,6 +632,34 @@ async function api(method, path, body) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw Object.assign(new Error(data?.error?.message || `Request failed (HTTP ${res.status})`), data?.error);
   return data;
+}
+
+function renderFolderOpener() {
+  const button = $('cwd-open');
+  const opener = state.folderOpener;
+  const label = `Open working folder in ${opener?.label || 'file manager'}`;
+  button.disabled = !state.connected || !opener?.available || state.folderOpening;
+  button.setAttribute('aria-label', label);
+  button.setAttribute('aria-busy', String(state.folderOpening));
+  button.title = !state.connected ? 'Connect to the session manager to open folders'
+    : state.folderOpening ? 'Opening working folder…'
+      : !opener?.available ? opener?.reason || 'Opening folders is unavailable with this manager'
+        : label;
+}
+
+async function openWorkingFolder() {
+  if (!state.connected || !state.folderOpener?.available || state.folderOpening) return;
+  state.folderOpening = true;
+  renderFolderOpener();
+  try {
+    await api('POST', '/open-folder', { cwd: $('cwd').value.trim() });
+  } catch (err) {
+    if (err instanceof AuthError) showAuth(err.message);
+    else toast(err.message || 'Could not open the working folder.');
+  } finally {
+    state.folderOpening = false;
+    renderFolderOpener();
+  }
 }
 
 function wsUrl(path) {
@@ -3961,6 +3992,7 @@ function connectEvents() {
       state.pid = msg.pid || null;
       state.restartable = typeof msg.pid === 'number';
       state.launcher = typeof msg.launcher === 'string' ? msg.launcher : null;
+      state.folderOpener = msg.folderOpener || null;
       renderVersion();
       setConnection('ok', 'Connected to session manager');
       state.sessions = new Map(msg.sessions.map((s) => [s.id, s]));
@@ -4322,6 +4354,7 @@ $('panel-stop').addEventListener('click', () => {
   else removeSession(s.id);
 });
 $('cwd').value = load(CWD_KEY) || '';
+$('cwd-open').addEventListener('click', firstClick(openWorkingFolder));
 try { state.accounts = JSON.parse(load(ACCOUNTS_KEY)) || {}; } catch { state.accounts = {}; }
 try { state.shellPicks = JSON.parse(load(SHELLS_KEY)) || {}; } catch { state.shellPicks = {}; }
 githubView.accountId = Number(load(GITHUB_ACCOUNT_KEY)) || null;
