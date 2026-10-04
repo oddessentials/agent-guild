@@ -134,6 +134,49 @@ For a tool whose agent reporting has to be turned on (`reporting` is `antigravit
 usage and billing pages and web app, or null when none is configured. A usage snapshot's `plan` is
 the subscription tier.
 
+### Multiplexer installations
+
+An `@shell` provider also describes `multiplexers[]`. Each entry contains
+`id` (`tmux` or `herdr`), `tool`, `docs`, `checked`, `available`,
+`installable`, `installCommand`, `guidance`, `busy`, `pendingCards`,
+`installs` and `lastInstall`. Before discovery finishes, `checked` is false.
+`available` means a usable copy is on PATH; an old, off-PATH, or partial copy
+may still appear in `installs`.
+
+Each copy has the provider-copy fields plus `key` (stable installation
+identity), `supported`, `partial`, `latestVersion`, `updateAvailable`,
+`updateCommand` and `updateGuidance`. An uninstall plan's `pathEntries` flag
+indicates that owned user PATH entries are also removed. Never construct
+commands from these display fields: submit the returned `path` to the API,
+which rediscovers and validates the installation.
+
+These authenticated routes return `201 { session }`, with `task: "install"`:
+
+| Route below `/api/v1` | Body |
+| --- | --- |
+| `POST /providers/:provider/multiplexers/:id/install` | `{ force?: boolean }` |
+| `POST /providers/:provider/multiplexers/:id/update` | `{ path: string, force?: boolean }` |
+| `POST /providers/:provider/multiplexers/:id/uninstall` | `{ path: string, force?: boolean }` |
+
+`install_in_progress` (409) blocks overlapping operations and new
+starts/reattachments for that multiplexer until the process exits and the
+inventory refreshes. Ordinary shells remain available.
+`multiplexer_in_use` (409) applies to tmux, carries `running` and `pending`
+counts, and can be retried with `force: true` after confirmation. Its
+`running` count includes detached cards that can reattach; pending cards
+are informational and never block installation.
+
+Herdr Update does not require existing servers or panes to stop.
+Herdr Uninstall refuses with `herdr_running` or `herdr_status_unknown`
+(409) when any server is running or the server listing cannot be safely
+read. `force` never bypasses that check. Unknown copies return `unknown_copy`
+(404); unsupported actions return `not_installable`, `not_updatable` or
+`not_removable` (400).
+
+Operation results and pending-card counts arrive through `providers.updated`.
+Saved cards whose tool is missing remain persisted, without exposing their
+report tokens, and retry restoration after installation or discovery.
+
 ### Usage
 
 ```json

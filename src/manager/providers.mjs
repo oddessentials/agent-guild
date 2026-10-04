@@ -16,6 +16,8 @@ import { weavePaths } from './shell-env.mjs';
 import { detectShells, fallbackShell } from './shells.mjs';
 import { RUNNER, encodePlan } from './uninstall.mjs';
 import { paths } from './config.mjs';
+import { MultiplexerRegistry } from './multiplexers.mjs';
+import { reconcileHerdrPath } from './multiplexer-paths.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULTS_FILE = path.resolve(here, '../../config/providers.default.json');
@@ -177,6 +179,16 @@ function normalize(raw, platform, warnings) {
     install: String(merged.install || ''),
     npmNote: merged.npmNote ? String(merged.npmNote) : null,
     channels: normalizeChannels(merged.channels),
+    multiplexers: Array.isArray(merged.multiplexers) ? merged.multiplexers
+      .filter((m) => m && ['tmux', 'herdr'].includes(m.id) && m.enabled !== false)
+      .map((m) => {
+        const entry = { ...m, ...m[platform] };
+        return {
+          id: entry.id, tool: String(entry.tool || entry.id), docs: String(entry.docs || ''),
+          versionArgs: entry.id === 'tmux' ? ['-V'] : ['--version'],
+          channels: normalizeChannels(entry.channels),
+        };
+      }) : [],
     docs: String(merged.docs || ''),
     usageUrl: httpsUrl(merged.usageUrl, 'usageUrl', merged.id, warnings),
     billingUrl: httpsUrl(merged.billingUrl, 'billingUrl', merged.id, warnings),
@@ -241,7 +253,7 @@ export class ProviderRegistry extends EventEmitter {
    * @param {Function} [opts.fetchImpl]
    * @param {string} [opts.accountsDir]  where accounts without a dir get their home folders
    */
-  constructor({ userFile, env, platform = process.platform, iconDir, registryUrl = null, checkUpdates = true, fetchImpl, pathReader = null, accountsDir = paths.accounts } = {}) {
+  constructor({ userFile, env, platform = process.platform, iconDir, registryUrl = null, checkUpdates = true, fetchImpl, pathReader = null, accountsDir = paths.accounts, multiplexerOptions } = {}) {
     super();
     this.userFile = userFile;
     this.accountsDir = accountsDir;
@@ -260,6 +272,8 @@ export class ProviderRegistry extends EventEmitter {
     this._refreshing = null;
     this._npmRegistry = null;
     this.reportingEnabled = null;
+    this.multiplexers = new MultiplexerRegistry(this, multiplexerOptions);
+    this.multiplexerState = null;
     this.reload();
   }
 
@@ -270,6 +284,7 @@ export class ProviderRegistry extends EventEmitter {
     this._npmRegistry = null;
     this._installs.clear();
     this._shells.clear();
+    this.multiplexers.inventory.clear();
     for (const w of warnings) console.warn(`[providers] ${w}`);
     this.emit('updated');
   }
@@ -324,9 +339,10 @@ export class ProviderRegistry extends EventEmitter {
 
   async _readPath() {
     const discovered = await Promise.resolve().then(() => this.pathReader()).catch(() => null);
-    if (!discovered) return false;
+    if (discovered === null || discovered === undefined) return false;
     const key = pathKey(this.env, this.platform);
-    const next = weavePaths(this.env[key] || '', discovered, {
+    const current = this.platform === 'win32' ? reconcileHerdrPath(this.env[key] || '', this.env) : this.env[key] || '';
+    const next = weavePaths(current, discovered, {
       delimiter: this.platform === 'win32' ? ';' : ':',
       caseInsensitive: this.platform === 'win32',
     });
@@ -341,10 +357,18 @@ export class ProviderRegistry extends EventEmitter {
     const now = Date.now();
     let changed = await this.refreshPath({ force });
     const providers = this.providers.filter((p) => !ids || ids.includes(p.id));
-    if (force) for (const provider of providers) this._installs.delete(provider.id);
+    const shellsBefore = JSON.stringify(providers.map((p) => this._shells.get(p.id)?.found ?? null));
+    // Installing into an existing PATH directory does not change PATH itself.
+    for (const provider of providers) {
+      if (force) this._installs.delete(provider.id);
+      if (force) this._shells.delete(provider.id);
+    }
     const lookups = this.checkUpdates && providers.some((p) => p.package);
     const registryUrl = lookups ? await this.npmRegistryUrl() : null;
     await Promise.all(providers.map(async (provider) => {
+      const muxChanged = await this.multiplexers.refresh(provider, { force });
+      if (muxChanged) this._shells.delete(provider.id);
+      changed ||= muxChanged;
       const entry = this.versions.get(provider.id) || {
         installed: null, versionStatus: null, versionError: null, installedPath: null, installedMtime: null, installedAt: 0,
         latest: null, latestAt: 0, probePath: null, probeMtime: null, probeAt: 0, probeOk: null, lastInstall: null, copies: {},
@@ -412,6 +436,7 @@ export class ProviderRegistry extends EventEmitter {
       }
       this.versions.set(provider.id, entry);
     }));
+    changed ||= shellsBefore !== JSON.stringify(providers.map((p) => this.shellsFor(p)));
     if (changed) this.emit('updated');
   }
 
@@ -671,6 +696,7 @@ export class ProviderRegistry extends EventEmitter {
       accounts: provider.accounts.map((account) => ({ id: account.id, label: account.label })),
       shells: shells?.shells.map((shell) => ({ id: shell.id, label: shell.label, path: shell.path, multiplexer: Boolean(shell.multiplexer) })) ?? null,
       defaultShell: shells?.defaultId ?? null,
+      multiplexers: this.multiplexers.describe(provider).map((m) => ({ ...m, ...this.multiplexerState?.(provider.id, m.id) })),
       modelPattern: provider.modelPattern,
       color: provider.color,
       monogram: provider.monogram,

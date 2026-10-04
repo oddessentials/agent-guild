@@ -138,6 +138,10 @@
       "vendor": "Local",
       "tool": "Shell",
       "command": "@shell",
+      "multiplexers": [
+        { "id": "tmux", "docs": "https://github.com/tmux/tmux/wiki/Installing", "channels": { "brew": { "names": ["tmux"] } } },
+        { "id": "herdr", "docs": "https://herdr.dev/docs/install/", "channels": { "brew": { "names": ["herdr"] } } }
+      ],
       "args": [],
       "color": "#8B5CF6",
       "monogram": ">",
