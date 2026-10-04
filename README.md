@@ -60,6 +60,11 @@ and come back to the same screens. Drag a session card by its grip, with a
 mouse or a finger, to put the cards in the order you want; this browser
 remembers it, and new sessions join at the end.
 
+On a touchscreen, **Copy…** opens a still copy of the terminal text. Touch and
+hold to select, then use **Copy selection** or the browser's Copy menu. **Done**
+returns to the live terminal; the session keeps running while you copy. The
+view includes retained scrollback, or the current screen of a full-screen tool.
+
 **Pick your shell.** The Shell card offers the shells installed on your
 computer and remembers your choice in this browser. On Windows it defaults
 to PowerShell 7 when installed, then Windows PowerShell; Git Bash and Command

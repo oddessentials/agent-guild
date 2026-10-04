@@ -418,6 +418,27 @@ body:has(#app[hidden]):has(#auth[hidden]):has(#stopped[hidden])::after {
 }
 .terminal-host { flex: 1; min-height: 0; padding: 8px 4px 4px 10px; }
 .terminal-host > div { height: 100%; }
+.terminal-copy {
+  width: min(880px, calc(100vw - 24px)); height: min(720px, calc(100dvh - 24px));
+  max-width: none; max-height: none; padding: 0; overflow: hidden;
+  color: var(--text); background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+}
+.terminal-copy[open] { display: flex; flex-direction: column; }
+.terminal-copy::backdrop { background: rgba(15, 17, 21, 0.5); }
+.terminal-copy-bar, .terminal-copy-footer { display: flex; align-items: center; gap: 12px; padding: 12px 16px; }
+.terminal-copy-heading { flex: 1; min-width: 0; }
+.terminal-copy-heading .sub { margin: 4px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 0.8rem; }
+.terminal-copy textarea {
+  flex: 1; min-height: 0; width: 100%; resize: none; margin: 0; padding: 14px 16px;
+  border: 0; border-block: 1px solid var(--border); border-radius: 0;
+  background: var(--term-bg); color: #e6e9ef; font: 14px/1.5 var(--font-mono);
+  white-space: pre; user-select: text; -webkit-user-select: text; touch-action: auto; overscroll-behavior: contain;
+}
+.terminal-copy textarea:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.terminal-copy-footer p { flex: 1; margin: 0; color: var(--muted); font-size: 0.8rem; }
+.terminal-copy .btn { min-height: 44px; flex-shrink: 0; }
+.terminal-copy .btn:disabled { cursor: default; }
 @media (pointer: coarse) {
   /* A drag on the panel would otherwise scroll the page behind it. */
   body:has(#terminal-panel:not([hidden])) { overflow: hidden; }

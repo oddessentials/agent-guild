@@ -125,6 +125,7 @@
       </div>
       <div class="panel-actions">
         <button id="panel-voice" class="btn voice" type="button" hidden aria-pressed="false" title="Speak into this terminal. Review the text, then press Enter yourself.">Dictate</button>
+        <button id="panel-copy" class="btn" type="button" hidden aria-haspopup="dialog" title="Select and copy terminal text">Copy…</button>
         <button id="panel-stop" class="btn danger" type="button">Stop</button>
         <button id="panel-close" class="btn" type="button" title="Hide the terminal. The session keeps running.">Hide</button>
       </div>
@@ -132,6 +133,21 @@
     <div id="terminal-host" class="terminal-host"></div>
     <div id="voice-preview" class="voice-preview" hidden aria-live="polite"></div>
   </div>
+
+  <dialog id="terminal-copy" class="terminal-copy" aria-labelledby="terminal-copy-title">
+    <div class="terminal-copy-bar">
+      <div class="terminal-copy-heading">
+        <h2 id="terminal-copy-title">Copy terminal text</h2>
+        <p class="sub" data-session></p>
+      </div>
+      <button class="btn" type="button" data-done>Done</button>
+    </div>
+    <textarea readonly autofocus wrap="off" spellcheck="false" inputmode="none" aria-label="Terminal text snapshot" aria-describedby="terminal-copy-status"></textarea>
+    <div class="terminal-copy-footer">
+      <p id="terminal-copy-status" role="status"></p>
+      <button class="btn primary" type="button" data-copy disabled>Copy selection</button>
+    </div>
+  </dialog>
 
   <dialog id="models" class="models" aria-labelledby="models-title">
     <div class="models-bar">

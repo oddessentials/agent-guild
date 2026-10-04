@@ -2,6 +2,7 @@
 // it never owns sessions, so closing the page leaves them running.
 
 import { SOUNDS, MAX_ALERT_AGE_MS, playOnce, rearmSound, managerLossWatcher, stopWatcher, updateWatcher } from './alerts.js';
+import { TerminalCopy } from './terminal-copy.js';
 
 const TOKEN_KEY = 'agentGuild.token';
 const CWD_KEY = 'agentGuild.cwd';
@@ -3591,8 +3592,18 @@ class TerminalView {
 
 // ---- terminal panel -------------------------------------------------------
 
+const terminalCopy = new TerminalCopy({
+  opener: $('panel-copy'), dialog: $('terminal-copy'),
+  getCurrent: () => {
+    const session = state.sessions.get(state.activeId);
+    const view = state.views.get(state.activeId);
+    return session && view ? { id: session.id, name: session.name, term: view.term } : null;
+  },
+});
+
 function openPanel(id) {
   if (!state.sessions.has(id)) return;
+  if (state.activeId !== id) terminalCopy.close();
   if (dictation && dictation.id !== id) stopDictation();
   if (state.activeId && state.activeId !== id) state.views.get(state.activeId)?.unmount();
   state.activeId = id;
@@ -3604,6 +3615,7 @@ function openPanel(id) {
 }
 
 function closePanel() {
+  terminalCopy.close();
   stopDictation();
   if (state.activeId) state.views.get(state.activeId)?.unmount();
   state.activeId = null;
@@ -4187,6 +4199,7 @@ document.addEventListener('visibilitychange', () => {
 });
 addEventListener('pagehide', () => {
   state.pageAway = true;
+  terminalCopy.close();
   stopDictation();
   managerLoss.cancel();
   state.eventsSocket?.close();
