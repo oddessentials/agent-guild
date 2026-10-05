@@ -35,6 +35,10 @@ import {
 } from '../src/manager/autostart.mjs';
 import { createManagerServer } from '../src/manager/server.mjs';
 
+// Linux entries deliberately refuse backslashes. Native Windows temporary
+// paths cannot stand in for their filesystem; the POSIX runners cover them.
+const linuxPaths = { skip: process.platform === 'win32' && 'Linux desktop entries require POSIX filesystem paths' };
+
 /** Reads an Exec value back as a desktop would: the string escapes, then the quoting, then `%%`. */
 function desktopExecArgs(value) {
   const text = value.replace(/\\(.)/g, (_, c) => (c === '\\' ? '\\' : `\\${c}`));
@@ -143,7 +147,7 @@ test('a Task Manager "Disabled" is read from the StartupApproved flags', () => {
 });
 
 for (const platform of ['linux', 'darwin']) {
-  test(`${platform}: the entry is added, kept current at start, and removed`, async (t) => {
+  test(`${platform}: the entry is added, kept current at start, and removed`, platform === 'linux' ? linuxPaths : {}, async (t) => {
     const home = tempDir(t);
     const file = platform === 'darwin'
       ? path.join(home, 'Library', 'LaunchAgents', 'com.oddessentials.agent-guild.plist')
@@ -229,7 +233,7 @@ test('macOS: lookup and enable failures are reported without leaving a newly ins
   assert.equal((await autostart.describe()).enabled, false);
 });
 
-test('linux: an entry a desktop turned off reads as off and is left alone', async (t) => {
+test('linux: an entry a desktop turned off reads as off and is left alone', linuxPaths, async (t) => {
   const home = tempDir(t);
   const file = path.join(home, '.config', 'autostart', 'agent-guild.desktop');
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -308,26 +312,28 @@ test('startup entries require a concrete valid port', () => {
   }
 });
 
-test('a failed refresh is visible and a subsequent change clears the warning', async (t) => {
-  const home = tempDir(t);
-  let port = 47821;
-  const autostart = createAutostart({ platform: 'linux', home, env: {}, release: '6.8.0', script: '/pkg/bin/agent-guild.mjs', dataDir: home, getPort: () => port });
-  await autostart.set(true);
-  port = 0;
-  await assert.rejects(autostart.refresh(), /listening/);
-  const state = await autostart.describe();
-  assert.equal(state.available, true, 'the user can still turn it off');
-  assert.equal(state.enabled, true);
-  assert.match(state.reason, /Could not update the sign-in entry/);
-  await autostart.set(false);
-  port = 51234;
-  const state2 = await autostart.set(true);
-  assert.equal(state2.enabled, true);
-  assert.equal(state2.reason, null);
-});
+for (const platform of ['win32', 'darwin', 'linux']) {
+  test(`${platform}: a failed refresh is visible and a subsequent change clears the warning`, platform === 'linux' ? linuxPaths : {}, async (t) => {
+    const home = tempDir(t);
+    let port = 47821;
+    const autostart = createAutostart({ platform, home, env: {}, release: '6.8.0', script: '/pkg/bin/agent-guild.mjs', dataDir: home, getPort: () => port, uid: 501, launchctl: fakeLaunchctl().launchctl, reg: fakeReg().reg });
+    await autostart.set(true);
+    port = 0;
+    await assert.rejects(autostart.refresh(), /listening/);
+    const state = await autostart.describe();
+    assert.equal(state.available, true, 'the user can still turn it off');
+    assert.equal(state.enabled, true);
+    assert.match(state.reason, /Could not update the sign-in entry/);
+    await autostart.set(false);
+    port = 51234;
+    const state2 = await autostart.set(true);
+    assert.equal(state2.enabled, true);
+    assert.equal(state2.reason, null);
+  });
+}
 
-test('the API saves the actual bound port in every platform entry after listening on port zero', async (t) => {
-  for (const platform of ['win32', 'darwin', 'linux']) {
+for (const platform of ['win32', 'darwin', 'linux']) {
+  test(`${platform}: the API saves the actual bound port after listening on port zero`, platform === 'linux' ? linuxPaths : {}, async (t) => {
     const home = tempDir(t);
     let api;
     const autostart = createAutostart({
@@ -355,8 +361,8 @@ test('the API saves the actual bound port in every platform entry after listenin
     if (platform === 'win32') assert.ok(saved.includes(`("AGENT_GUILD_PORT") = "${api.port}"`));
     else if (platform === 'darwin') assert.ok(saved.includes(`<string>${api.port}</string>`));
     else assert.equal(desktopExecArgs(saved.match(/^Exec=(.*)$/m)[1])[5], String(api.port));
-  }
-});
+  });
+}
 
 test('the autostart API needs the manager token and a boolean', { timeout: 10000 }, async (t) => {
   let enabled = false;
@@ -558,7 +564,7 @@ test('the launcher logs a missing Node.js and keeps its entry, and starts withou
   assert.deepEqual(JSON.parse(fs.readFileSync(ran, 'utf8')).args, ENTRY_ARGS);
 });
 
-test('linux: the entry runs a launcher in the data folder, and both go when it is turned off', async (t) => {
+test('linux: the entry runs a launcher in the data folder, and both go when it is turned off', linuxPaths, async (t) => {
   const home = tempDir(t);
   const data = path.join(home, 'data');
   const file = path.join(home, '.config', 'autostart', 'agent-guild.desktop');
@@ -577,7 +583,7 @@ test('linux: the entry runs a launcher in the data folder, and both go when it i
   assert.equal(fs.existsSync(launcher), false);
 });
 
-test('linux: a path desktops would read differently makes it unavailable instead of silently broken', async () => {
+test('linux: a path desktops would read differently makes it unavailable instead of silently broken', linuxPaths, async () => {
   for (const [field, value] of [['execPath', '/opt/$node/bin/node'], ['script', '/home/a/`x`/bin/agent-guild.mjs'], ['dataDir', '/home/a/data "x"'], ['home', '/home/a\\b']]) {
     const options = { platform: 'linux', release: '6.8.0', env: {}, home: '/home/a', execPath: '/node', script: '/pkg/bin/agent-guild.mjs', dataDir: '/home/a/data', [field]: value };
     const autostart = createAutostart(options);
@@ -611,27 +617,29 @@ test('the last sign-in reads as not run, starting, started, already running or f
   }
 });
 
-test('the description carries the last sign-in while on, and turning it on afresh or off forgets earlier ones', async (t) => {
-  const home = tempDir(t);
-  const attempt = path.join(home, SIGN_IN_ATTEMPT);
-  const autostart = createAutostart({ platform: 'linux', home, release: '6.8.0', env: { DISPLAY: ':0' }, execPath: '/node', script: '/pkg/bin/agent-guild.mjs', dataDir: home });
-  fs.writeFileSync(attempt, '');
-  recordSignIn(home, 'started');
-  assert.equal((await autostart.describe()).lastRun, null, 'off: no last run');
-  assert.equal((await autostart.set(true)).lastRun, null, 'a run from an earlier time it was on is forgotten');
-  assert.equal(fs.existsSync(attempt), false);
-  fs.writeFileSync(attempt, '');
-  recordSignIn(home, 'started');
-  const on = await autostart.describe();
-  assert.equal(on.lastRun.outcome, 'started');
-  assert.equal(on.log, path.join(home, 'manager.log'));
-  assert.equal((await autostart.set(true)).lastRun.outcome, 'started', 'turning it on again while on keeps it');
-  await autostart.refresh();
-  assert.equal((await autostart.describe()).lastRun.outcome, 'started');
-  await autostart.set(false);
-  assert.equal(fs.existsSync(attempt), false);
-  assert.equal(fs.existsSync(path.join(home, SIGN_IN_RESULT)), false);
-});
+for (const platform of ['win32', 'darwin', 'linux']) {
+  test(`${platform}: the description carries the last sign-in while on, and turning it on afresh or off forgets earlier ones`, platform === 'linux' ? linuxPaths : {}, async (t) => {
+    const home = tempDir(t);
+    const attempt = path.join(home, SIGN_IN_ATTEMPT);
+    const autostart = createAutostart({ platform, home, release: '6.8.0', env: { DISPLAY: ':0' }, execPath: '/node', script: '/pkg/bin/agent-guild.mjs', dataDir: home, uid: 501, launchctl: fakeLaunchctl().launchctl, reg: fakeReg().reg });
+    fs.writeFileSync(attempt, '');
+    recordSignIn(home, 'started');
+    assert.equal((await autostart.describe()).lastRun, null, 'off: no last run');
+    assert.equal((await autostart.set(true)).lastRun, null, 'a run from an earlier time it was on is forgotten');
+    assert.equal(fs.existsSync(attempt), false);
+    fs.writeFileSync(attempt, '');
+    recordSignIn(home, 'started');
+    const on = await autostart.describe();
+    assert.equal(on.lastRun.outcome, 'started');
+    assert.equal(on.log, path.join(home, 'manager.log'));
+    assert.equal((await autostart.set(true)).lastRun.outcome, 'started', 'turning it on again while on keeps it');
+    await autostart.refresh();
+    assert.equal((await autostart.describe()).lastRun.outcome, 'started');
+    await autostart.set(false);
+    assert.equal(fs.existsSync(attempt), false);
+    assert.equal(fs.existsSync(path.join(home, SIGN_IN_RESULT)), false);
+  });
+}
 
 const GENERATOR = ['/usr/lib/systemd/user-generators/systemd-xdg-autostart-generator', '/lib/systemd/user-generators/systemd-xdg-autostart-generator'].find((file) => fs.existsSync(file));
 

@@ -10,6 +10,7 @@ import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
 import { waitForTerminalReady } from './fixtures/terminal-ready.mjs';
+import { lastSignIn, SIGN_IN_ATTEMPT, SIGN_IN_RESULT } from '../src/manager/autostart.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const cli = path.resolve(here, '../bin/agent-guild.mjs');
@@ -154,6 +155,34 @@ test('open starts a background manager, status reports it, stop ends it', async 
   const after = await run('status');
   assert.equal(after.code, 3);
   assert.ok(!fs.existsSync(path.join(home, 'manager.json')), 'runtime file is removed on shutdown');
+});
+
+test('a sign-in launch records a new or existing manager without printing the access token', async (t) => {
+  const { base, home, run, token } = await launcher(t);
+  const attempt = path.join(home, SIGN_IN_ATTEMPT);
+  fs.writeFileSync(attempt, '');
+  const opened = await run('open', '--no-browser', '--sign-in');
+  assert.equal(opened.code, 0, opened.stderr);
+  assert.match(opened.stdout, /Session manager started/);
+  assert.doesNotMatch(opened.stdout, /#token=|Opening Agent Guild/);
+  assert.ok(!opened.stdout.includes(token()), 'sign-in output can be logged without credentials');
+  assert.equal((await lastSignIn(home)).outcome, 'started');
+  const first = await (await fetch(`${base}/api/v1/health`)).json();
+
+  fs.writeFileSync(attempt, '');
+  const again = await run('open', '--no-browser', '--sign-in');
+  assert.equal(again.code, 0, again.stderr);
+  assert.match(again.stdout, /already running/);
+  assert.ok(!again.stdout.includes(token()));
+  assert.equal((await lastSignIn(home)).outcome, 'running');
+  const second = await (await fetch(`${base}/api/v1/health`)).json();
+  assert.equal(second.pid, first.pid, 'a later sign-in reuses the running manager');
+
+  const result = fs.readFileSync(path.join(home, SIGN_IN_RESULT), 'utf8');
+  const normal = await run('open', '--no-browser');
+  assert.equal(normal.code, 0, normal.stderr);
+  assert.match(normal.stdout, /#token=/, 'an ordinary launch still prints the page URL');
+  assert.equal(fs.readFileSync(path.join(home, SIGN_IN_RESULT), 'utf8'), result, 'an ordinary launch preserves the last sign-in');
 });
 
 test('restart starts a manager when none runs, and replaces a running one on the same port and token', async (t) => {
