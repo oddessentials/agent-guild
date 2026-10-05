@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveCommand, resolveAllCommands, buildSpawnSpec, quoteForCmd } from '../src/manager/command-resolver.mjs';
-import { mergePathLists, parsePathFromEnvOutput, weavePaths, parseRegValue, expandWindowsVars, readWindowsPath, trimPathExt } from '../src/manager/shell-env.mjs';
+import { mergePathLists, parsePathFromEnvOutput, parseEnvOutput, macLocale, resolveBaseEnv, weavePaths, parseRegValue, expandWindowsVars, readWindowsPath, trimPathExt } from '../src/manager/shell-env.mjs';
 import { mergeEnv, cleanResumeId, modelFromArgs, SessionManager } from '../src/manager/session-manager.mjs';
 import { loadProviders, ProviderRegistry } from '../src/manager/providers.mjs';
 import { detectShells, tmuxNewSession, tmuxSupported } from '../src/manager/shells.mjs';
@@ -2422,6 +2422,52 @@ test('parsePathFromEnvOutput reads PATH from env output of any shell', () => {
   assert.equal(parsePathFromEnvOutput(`${START}PATH=/a:/b${END}`), '/a:/b');
   assert.equal(parsePathFromEnvOutput('no markers'), null);
   assert.equal(parsePathFromEnvOutput(`${START}HOME=/x\n${END}`), null);
+});
+
+test('parseEnvOutput reads the named, non-empty variables between the markers', () => {
+  const START = '__AGENT_GUILD_PATH_START__';
+  const END = '__AGENT_GUILD_PATH_END__';
+  const out = `banner LANG=xx\n${START}PATH=/a:/b\nLANG=en_GB.UTF-8\nLC_ALL=\nLC_CTYPE=a=b\nHOME=/x\n${END}`;
+  assert.deepEqual(parseEnvOutput(out, ['PATH', 'LC_ALL', 'LC_CTYPE', 'LANG']), { PATH: '/a:/b', LANG: 'en_GB.UTF-8', LC_CTYPE: 'a=b' });
+  assert.deepEqual(parseEnvOutput(`${START}HOME=/x${END}`, ['LANG']), {});
+  assert.equal(parseEnvOutput('no markers', ['LANG']), null);
+});
+
+test('macOS gets the region\'s UTF-8 locale, as Terminal.app gives its shells', () => {
+  const have = new Set(['en_GB.UTF-8', 'zh_CN.UTF-8']);
+  const exists = (name) => have.has(name);
+  assert.equal(macLocale({ read: () => 'en_GB\n', exists }), 'en_GB.UTF-8');
+  assert.equal(macLocale({ read: () => 'en_GB@rg=uszzzz\n', exists }), 'en_GB.UTF-8');
+  assert.equal(macLocale({ read: () => 'zh-Hans_CN', exists }), 'zh_CN.UTF-8');
+  assert.equal(macLocale({ read: () => 'fr_FR', exists }), 'en_US.UTF-8', 'a locale macOS lacks falls back');
+  assert.equal(macLocale({ read: () => null, exists }), 'en_US.UTF-8');
+  assert.equal(macLocale({ read: () => '../../etc', exists: () => true }), 'en_US.UTF-8', 'only a locale name is looked up');
+});
+
+test('a macOS manager with no locale takes Terminal.app\'s, and the login shell\'s wins there', () => {
+  const locale = () => 'en_GB.UTF-8';
+  const seen = [];
+  const shellEnv = (shell = {}) => (opts) => { seen.push(opts.env.LANG); return shell; };
+  // launchd sets no locale; the shell is asked with it already set, so /etc/zprofile keeps it.
+  const signIn = resolveBaseEnv({ platform: 'darwin', env: { SHELL: '/bin/zsh', PATH: '/usr/bin' }, shellEnv: shellEnv({ PATH: '/opt/homebrew/bin' }), locale });
+  assert.equal(signIn.LANG, 'en_GB.UTF-8');
+  assert.equal(signIn.PATH, '/opt/homebrew/bin:/usr/bin');
+  assert.deepEqual(seen, ['en_GB.UTF-8']);
+  // A locale the user already has is kept, even one that is not UTF-8.
+  for (const name of ['LANG', 'LC_ALL', 'LC_CTYPE']) {
+    const env = resolveBaseEnv({ platform: 'darwin', env: { [name]: 'C' }, shellEnv: shellEnv(), locale });
+    assert.equal(env[name], 'C');
+    assert.equal(env.LANG, name === 'LANG' ? 'C' : undefined);
+  }
+  // A locale the login shell exports wins, as it would in Terminal.
+  assert.equal(resolveBaseEnv({ platform: 'darwin', env: {}, shellEnv: shellEnv({ LANG: 'de_DE.UTF-8', LC_ALL: 'de_DE.UTF-8' }), locale }).LC_ALL, 'de_DE.UTF-8');
+  // Without the shell lookup the locale is still set.
+  assert.equal(resolveBaseEnv({ platform: 'darwin', env: { AGENT_GUILD_SKIP_SHELL_ENV: '1' }, shellEnv: () => assert.fail('asked the shell'), locale }).LANG, 'en_GB.UTF-8');
+  // Linux and Windows keep their own locale handling.
+  const linux = resolveBaseEnv({ platform: 'linux', env: { LANG: 'C' }, shellEnv: shellEnv({ LANG: 'de_DE.UTF-8' }), locale: () => assert.fail('chose a locale') });
+  assert.equal(linux.LANG, 'C');
+  assert.equal(resolveBaseEnv({ platform: 'linux', env: {}, shellEnv: shellEnv(), locale: () => assert.fail('chose a locale') }).LANG, undefined);
+  assert.equal(resolveBaseEnv({ platform: 'win32', env: {}, shellEnv: () => null, locale: () => assert.fail('chose a locale') }).LANG, undefined);
 });
 
 test('PATHEXT entries are trimmed on Windows, so a stray space cannot hide .cmd files from sessions', () => {

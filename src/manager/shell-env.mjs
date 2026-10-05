@@ -1,10 +1,16 @@
-// Recover the user's real PATH on macOS and Linux.
+// Recover the user's real PATH and locale on macOS and Linux.
 //
 // An app started from Finder, the Dock, or a login item does not inherit the
 // PATH that the user's shell profile builds (Homebrew, nvm, ~/.local/bin, ...),
 // which is exactly where CLI coding tools usually live. Like VS Code, we ask
 // the user's login shell for its PATH and merge it in.
+//
+// launchd starts a sign-in manager with no locale at all, where Terminal.app
+// would set LANG to the region's UTF-8 locale. Without one, tmux writes
+// non-ASCII characters as underscores, so a macOS manager with no locale
+// takes Terminal.app's, and there a locale the login shell exports wins.
 
+import fs from 'node:fs';
 import { execFile, spawn, spawnSync } from 'node:child_process';
 import path from 'node:path';
 
@@ -24,17 +30,31 @@ export function mergePathLists(primary, secondary, delimiter = path.delimiter) {
   return out.join(delimiter);
 }
 
-/** Pull PATH out of `env` output captured between the two markers. */
-export function parsePathFromEnvOutput(stdout) {
+/** The variables that choose a locale, in the order they take effect. */
+export const LOCALE_VARS = ['LC_ALL', 'LC_CTYPE', 'LANG'];
+
+/** The non-empty `names` in `env` output captured between the two markers, or null without the markers. */
+export function parseEnvOutput(stdout, names) {
   if (typeof stdout !== 'string') return null;
   const start = stdout.indexOf(START);
   const end = stdout.indexOf(END, start);
   if (start === -1 || end === -1) return null;
-  const line = stdout.slice(start + START.length, end).split(/\r?\n/).find((l) => l.startsWith('PATH='));
-  return line ? line.slice('PATH='.length) : null;
+  const found = {};
+  for (const line of stdout.slice(start + START.length, end).split(/\r?\n/)) {
+    const eq = line.indexOf('=');
+    const name = line.slice(0, eq);
+    if (eq > 0 && names.includes(name) && line.length > eq + 1 && !(name in found)) found[name] = line.slice(eq + 1);
+  }
+  return found;
 }
 
-export function loginShellPath({ shell = process.env.SHELL, timeoutMs = 8000 } = {}) {
+/** Pull PATH out of `env` output captured between the two markers. */
+export function parsePathFromEnvOutput(stdout) {
+  return parseEnvOutput(stdout, ['PATH'])?.PATH ?? null;
+}
+
+/** PATH and the locale variables the user's login shell exports, or null. */
+export function loginShellEnv({ shell, env = process.env, timeoutMs = 8000 } = {}) {
   if (process.platform === 'win32' || !shell) return null;
   // Read the exported PATH from `env` rather than expanding $PATH: fish, for
   // one, expands "$PATH" to a space-separated list.
@@ -42,10 +62,26 @@ export function loginShellPath({ shell = process.env.SHELL, timeoutMs = 8000 } =
     encoding: 'utf8',
     timeout: timeoutMs,
     stdio: ['ignore', 'pipe', 'ignore'],
-    env: { ...process.env, AGENT_GUILD_RESOLVING_ENV: '1' },
+    env: { ...env, AGENT_GUILD_RESOLVING_ENV: '1' },
   });
   if (result.error) return null;
-  return parsePathFromEnvOutput(result.stdout);
+  return parseEnvOutput(result.stdout, ['PATH', ...LOCALE_VARS]);
+}
+
+function readAppleLocale() {
+  const result = spawnSync('/usr/bin/defaults', ['read', '-g', 'AppleLocale'], { encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] });
+  return result.error ? null : result.stdout;
+}
+
+/**
+ * The locale Terminal.app gives its shells: the system region's UTF-8 locale,
+ * or en_US.UTF-8 when macOS has none for it. `AppleLocale` may carry a script
+ * (`zh-Hans_CN`) and options (`en_US@rg=gbzzzz`), which locale names do not.
+ */
+export function macLocale({ read = readAppleLocale, exists = (name) => fs.existsSync(path.join('/usr/share/locale', name)) } = {}) {
+  const region = String(read() || '').trim().split('@')[0].replace(/-[A-Za-z]+(?=_)/, '');
+  const name = `${region}.UTF-8`;
+  return /^[A-Za-z]+_[A-Za-z]+$/.test(region) && exists(name) ? name : 'en_US.UTF-8';
 }
 
 /**
@@ -59,11 +95,15 @@ export function trimPathExt(env, platform = process.platform) {
   return env;
 }
 
-export function resolveBaseEnv() {
-  const env = trimPathExt({ ...process.env });
-  if (process.env.AGENT_GUILD_SKIP_SHELL_ENV === '1') return env;
-  const shellPath = loginShellPath();
-  if (shellPath) env.PATH = mergePathLists(shellPath, env.PATH);
+/** `platform`, `env`, `shellEnv` and `locale` are replaceable in tests. */
+export function resolveBaseEnv({ platform = process.platform, env: source = process.env, shellEnv = loginShellEnv, locale = macLocale } = {}) {
+  const env = trimPathExt({ ...source }, platform);
+  // Set before asking the shell, so macOS's /etc/zprofile keeps it rather than putting its C.UTF-8 in its place.
+  if (platform === 'darwin' && !LOCALE_VARS.some((name) => env[name])) env.LANG = locale();
+  if (env.AGENT_GUILD_SKIP_SHELL_ENV === '1') return env;
+  const shell = shellEnv({ shell: env.SHELL, env }) || {};
+  if (shell.PATH) env.PATH = mergePathLists(shell.PATH, env.PATH);
+  if (platform === 'darwin') for (const name of LOCALE_VARS) if (shell[name]) env[name] = shell[name];
   return env;
 }
 
