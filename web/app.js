@@ -8,6 +8,7 @@ import { topbarInline, dockMode, clampDockWidth, stageBesideDock, splitMode, cla
 import { highlightParts, rankRepos, recentFirst, remember, repoForOrigin, repoKey } from './repo-search.js';
 import { createActivityFavicon, isSessionWorking } from './activity-favicon.js';
 import { createRemoteAccessUI } from './remote-access.js';
+import { createEnvironmentUI } from './environment.js';
 import { matchFolders, readRecentFolders, rememberFolder } from './folders.js';
 
 const TOKEN_KEY = 'agentGuild.token';
@@ -1392,6 +1393,7 @@ function renderProviders() {
     renderVendorLinks(node, provider);
     renderAccounts(node, provider);
     renderShells(node, provider);
+    state.environmentUI?.renderCard(node, provider);
     renderMultiplexers(node, provider);
     renderUsage(node, provider);
     renderReportingSetup(node, provider);
@@ -5379,6 +5381,7 @@ function connectEvents() {
       state.sessions = new Map(msg.sessions.map((s) => [s.id, s]));
       for (const id of [...state.views.keys()]) if (!state.sessions.has(id)) dropSession(id);
       managerConnected(msg);
+      state.environmentUI?.connected(msg.pid);
       renderSessions();
       if (!sessionsShown && load(DOCK_KEY) === 'github' && !dockView.panel) openGitHub({ focus: false });
       restorePanes();
@@ -5391,6 +5394,8 @@ function connectEvents() {
       catchUpNotes(msg.notesRevision, msg.notesUnreadable === true);
     } else if (msg.type === 'notes.updated') {
       applyServerNotes(msg.notes);
+    } else if (msg.type === 'environment.updated') {
+      state.environmentUI?.updated(msg.environment);
     } else if (msg.type === 'remote-access.updated') {
       state.remoteAccessUI?.updated();
     } else if (msg.type === 'news.updated') {
@@ -5421,6 +5426,7 @@ function connectEvents() {
   };
   ws.onclose = (event) => {
     if (state.pageAway || state.eventsSocket !== ws) return;
+    state.environmentUI?.disconnected();
     if (event?.code === 4403) {
       state.remoteRevoked = true;
       managerLoss.cancel();
@@ -5469,6 +5475,7 @@ let statsInterval;
 let newsTimer;
 
 function showAuth(message = '') {
+  state.environmentUI?.close();
   state.remoteAccessUI?.setAvailable(null);
   managerLoss.cancel();
   closePanel();
@@ -5924,5 +5931,6 @@ publishTopbarHeight();
 applyDockLayout();
 
 state.remoteAccessUI = createRemoteAccessUI({ api, getToken: () => state.token, isConnected: () => state.connected, onAuthError: showAuth });
+state.environmentUI = createEnvironmentUI({ api, onAuthError: showAuth, isAuthError: (err) => err instanceof AuthError });
 state.token = readTokenFromHash() || load(TOKEN_KEY);
 boot();

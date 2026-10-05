@@ -1,0 +1,169 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { Environment } from '../src/manager/environment.mjs';
+import { RUNTIMES, scanRuntime, detectTools, passiveExecutable, probeEnv, runProbe } from '../src/manager/environment-probe.mjs';
+
+const definition = (id) => RUNTIMES.find((row) => row.id === id);
+function scanner(files, outputs, options = {}) {
+  const calls = [];
+  return {
+    calls,
+    env: { PATH: '/manager/bin', NODE_OPTIONS: '--require unwanted.js' }, cwd: '/neutral',
+    resolve: (name) => files[name] || null,
+    inspect: (file) => ({ file }),
+    run: async (file, args, opts) => {
+      calls.push({ file, args, ...opts });
+      return outputs[file + ' ' + args.join(' ')] ?? outputs[file] ?? { code: 1, output: 'failed' };
+    },
+    ...options,
+  };
+}
+
+test('Python always prefers python; python3 is an alternate and never hides a failed primary', async () => {
+  for (const platform of ['win32', 'darwin', 'linux']) {
+    const fixture = scanner({ python: '/python', python3: '/python3' }, {
+      '/python': { code: 0, output: 'Python 3.12.4' }, '/python3': { code: 0, output: 'Python 3.14.1' },
+    }, { platform });
+    let row = await scanRuntime(definition('python'), fixture);
+    assert.equal(row.version, '3.12.4');
+    assert.equal(row.command, 'python');
+    assert.equal(row.alternatives[0].version, '3.14.1');
+    fixture.run = async (file) => file === '/python' ? { error: 'Version check timed out.' } : { code: 0, output: 'Python 3.14.1' };
+    row = await scanRuntime(definition('python'), fixture);
+    assert.equal(row.status, 'failed');
+    assert.equal(row.version, null);
+    assert.equal(row.alternatives[0].status, 'ok');
+    fixture.resolve = (name) => name === 'python3' ? '/python3' : null;
+    row = await scanRuntime(definition('python'), fixture);
+    assert.equal(row.command, 'python3');
+    assert.equal(row.version, '3.14.1');
+  }
+});
+
+test('missing commands, missing runtimes, and failed probes are distinct', async () => {
+  assert.equal((await scanRuntime(definition('node'), scanner({}, {}))).status, 'not_found');
+  for (const [id, text] of [['python', 'No runtimes installed'], ['dotnet', 'No .NET SDKs were found.'], ['rust', 'no default is configured']]) {
+    const def = definition(id);
+    const row = await scanRuntime(def, scanner({ [def.command]: '/tool' }, { '/tool': { code: 1, output: text } }));
+    assert.equal(row.status, 'unavailable', id);
+  }
+  for (const result of [{ error: 'Version check timed out.' }, { code: 1, output: 'file:///node-v24.3.2/error' }, { code: 0, output: 'unexpected 24.3.2 output' }]) {
+    const row = await scanRuntime(definition('node'), scanner({ node: '/node' }, { '/node': result }));
+    assert.equal(row.status, 'failed');
+    assert.equal(row.version, null);
+  }
+});
+
+test('runtime formats preserve channels and the SDK is separate from installed .NET runtimes', async () => {
+  for (const [id, output, version] of [
+    ['node', 'v24.1.0', '24.1.0'], ['python', 'Python 3.15.0rc1', '3.15.0rc1'],
+    ['go', 'go version go1.26rc2 linux/amd64', '1.26rc2'], ['r', 'R version 4.6.1 (2026-06-24)', '4.6.1'],
+    ['rust', 'rustc 1.94.0-nightly (abcdef 2026-01-01)', '1.94.0-nightly'],
+  ]) {
+    const def = definition(id);
+    assert.equal((await scanRuntime(def, scanner({ [def.command]: '/tool' }, { '/tool': { code: 0, output } }))).version, version);
+  }
+  const dotnet = await scanRuntime(definition('dotnet'), scanner({ dotnet: '/dotnet' }, {
+    '/dotnet --version': { code: 1, output: 'No .NET SDKs were found.' },
+    '/dotnet --list-runtimes': { code: 0, output: 'Microsoft.NETCore.App 10.0.1 [/shared]\nMicrosoft.AspNetCore.App 10.0.1 [/shared]' },
+  }));
+  assert.equal(dotnet.status, 'unavailable');
+  assert.equal(dotnet.runtimes.length, 2);
+  assert.equal(dotnet.version, null);
+});
+
+test('probes use the provided neutral directory and disable downloads without changing the manager env', async () => {
+  const fixture = scanner({ go: '/go' }, { '/go': { code: 0, output: 'go version go1.26.0 linux/amd64' } });
+  await scanRuntime(definition('go'), fixture);
+  assert.equal(fixture.calls[0].cwd, '/neutral');
+  assert.equal(fixture.calls[0].env.GOTOOLCHAIN, 'local');
+  assert.equal(fixture.calls[0].env.RUSTUP_AUTO_INSTALL, '0');
+  assert.equal(fixture.calls[0].env.PYTHON_MANAGER_AUTOMATIC_INSTALL, 'false');
+  assert.equal(fixture.calls[0].env.NODE_OPTIONS, '');
+  assert.equal(fixture.env.NODE_OPTIONS, '--require unwanted.js');
+  assert.equal(probeEnv({ node_options: 'bad' }).node_options, undefined);
+});
+
+test('passive inspection refuses script shims and Windows aliases, follows runtime links, and preserves rustup dispatch', () => {
+  const binary = Buffer.from([0x7f, 0x45, 0x4c, 0x46]);
+  const options = { platform: 'linux', realpath: (file) => file, read: () => binary };
+  assert.ok(passiveExecutable('/home/me/.asdf/shims/node', 'node', options).error);
+  assert.ok(passiveExecutable('C:/Users/me/AppData/Local/Microsoft/WindowsApps/python.exe', 'python', { ...options, platform: 'win32' }).error);
+  assert.ok(passiveExecutable('/bin/python', 'python', { ...options, read: () => Buffer.from('#!/bin/sh\ninstall-python') }).error);
+  assert.equal(passiveExecutable('/current/node', 'node', { ...options, realpath: () => '/versions/24/node' }).file, '/versions/24/node');
+  assert.equal(passiveExecutable('/cargo/bin/rustc', 'rust', { ...options, realpath: () => '/cargo/bin/rustup' }).file, '/cargo/bin/rustc');
+});
+
+test('tool discovery reads presence only and never claims activation', () => {
+  const paths = { uv: '/bin/uv', pnpm: '/bin/pnpm', vfox: '/bin/vfox', nvm: 'C:/nvm/nvm.exe' };
+  const options = { env: { HOME: '/home/test', NVM_DIR: '/custom/nvm' }, resolve: (name) => paths[name], exists: (file) => file === '/custom/nvm/nvm.sh' };
+  const tools = detectTools({ ...options, platform: 'linux' });
+  assert.deepEqual(tools.map((t) => t.id), ['nvm', 'vfox', 'uv', 'pnpm']);
+  assert.ok(tools.every((t) => t.status === 'detected' && !('active' in t)));
+  assert.equal(detectTools({ ...options, platform: 'win32' })[0].label, 'NVM for Windows');
+});
+
+test('refresh is nonblocking, coalesces requests, retains previous values, and ignores late worker messages', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const children = [], options = [];
+  const service = new Environment({ env: { PATH: '/manager', NODE_OPTIONS: 'preload' }, forkWorker: (file, args, opts) => {
+    options.push(opts); const child = new EventEmitter(); children.push(child); return child;
+  }, timeoutMs: 100 });
+  t.after(() => service.close());
+  assert.equal(service.refresh().refreshing, true);
+  service.refresh();
+  assert.equal(children.length, 1);
+  assert.equal(options[0].env.NODE_OPTIONS, undefined);
+  const row = { id: 'node', label: 'Node.js', status: 'ok', version: '24.0.0', path: '/node' };
+  children[0].emit('message', { runtime: row });
+  children[0].emit('message', { done: true });
+  assert.equal(service.snapshot().runtimes[0].version, '24.0.0');
+  service.refresh();
+  assert.equal(service.snapshot().runtimes[0].version, '24.0.0');
+  t.mock.timers.tick(100);
+  assert.equal(service.snapshot().refreshing, false);
+  assert.match(service.snapshot().error, /timed out/);
+  assert.ok(service.snapshot().runtimes.every((r) => r.status === 'failed'));
+  children[1].emit('message', { runtime: row });
+  children[1].emit('message', { done: true });
+  assert.equal(service.snapshot().runtimes[0].version, null);
+});
+
+test('real probe handles a known executable and bounds output', async () => {
+  const result = await runProbe(process.execPath, ['--version'], { env: probeEnv(process.env), cwd: os.tmpdir() });
+  assert.equal(result.code, 0);
+  assert.match(result.output, /^v\d/);
+  const noisy = await runProbe(process.execPath, ['-e', 'process.stdout.write("x".repeat(40000))'], { env: probeEnv(process.env), cwd: os.tmpdir() });
+  assert.match(noisy.error, /too much output/);
+});
+
+test('a hung probe settles at its deadline without waiting for close', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const child = Object.assign(new EventEmitter(), { stdout: new EventEmitter(), stderr: new EventEmitter() });
+  const pending = runProbe('/hung', [], { timeoutMs: 100, spawnProcess: () => child });
+  t.mock.timers.tick(100);
+  assert.match((await pending).error, /timed out/);
+  child.emit('close', 0); // a late close cannot replace the timeout result
+});
+
+test('real isolated scan reports the manager PATH Node without changing a project', async (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'guild-environment-test-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const env = { ...process.env, PATH: path.dirname(process.execPath), HOME: home, USERPROFILE: home, NVM_DIR: home };
+  delete env.Path;
+  const service = new Environment({ env });
+  t.after(() => service.close());
+  const finished = new Promise((resolve) => service.on('updated', () => { if (!service.snapshot().refreshing) resolve(); }));
+  service.refresh();
+  await finished;
+  const snapshot = service.snapshot();
+  assert.equal(snapshot.scope, 'manager');
+  assert.equal(snapshot.runtimes[0].version, process.versions.node);
+  assert.equal(snapshot.runtimes[0].status, 'ok');
+  assert.equal(snapshot.refreshing, false);
+  assert.deepEqual(fs.readdirSync(home), []);
+});

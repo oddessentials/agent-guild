@@ -152,6 +152,20 @@ main { max-width: calc(1200px + var(--dock-space, 0px)); margin: 0 auto; padding
 .account-chip.unsigned { border-style: dashed; }
 .provider .usage { display: grid; gap: 4px; }
 .provider .usage:empty { display: none; }
+.environment-summary { min-width: 0; font-size: .78rem; }
+.environment-open { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; text-align: left; }
+.environment-open:hover { text-decoration: underline; }
+.environment-open:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; border-radius: 2px; }
+.environment-values { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 3px 10px; margin: 6px 0; }
+.environment-values:empty { display: none; }
+.environment-values dt { color: var(--muted); }
+.environment-values dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.environment-note { margin: 4px 0 0; color: var(--muted); font-size: .72rem; }
+.environment-detail { font-size: .85rem; line-height: 1.5; color: var(--muted); overflow-wrap: anywhere; }
+.environment-row { padding: 12px 0; border-bottom: 1px solid var(--border); }
+.environment-row-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 14px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.environment-row p { margin: 5px 0; }
+.environment-path { display: block; margin-top: 5px; font-size: .8rem; overflow-wrap: anywhere; }
 .meter { display: grid; grid-template-columns: 5.5em 1fr auto; align-items: center; gap: 8px; font-size: 0.75rem; color: var(--muted); }
 .meter-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .meter-bar { height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
