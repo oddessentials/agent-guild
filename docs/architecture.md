@@ -77,7 +77,11 @@
   by the manager. No build step.
 * **Launcher** (`bin/agent-guild.mjs`). Starts, stops, restarts and opens.
   Starting a detached manager lives in `launch.mjs`, which the manager also
-  uses to start its successor on a restart.
+  uses to start its successor on a restart. While the Linux boot service
+  (`systemd-service.mjs`) is on, systemd starts every manager instead: the
+  launcher asks systemctl, and a supervised manager exits with code 75 for
+  systemd to start the next one, or 78 when its port is taken, which systemd
+  does not retry.
 
 ## Lifetimes
 
@@ -87,7 +91,7 @@
 | An unexpected error inside the manager | Logged to `manager.log`; sessions keep running. |
 | `agent-guild stop`, **Stop manager** in the page's **Manager** menu, or quitting the manager | All sessions end, except tmux and herdr ones, which are detached; the next manager brings their cards back closed, ready to reattach. The page asks first while any session it would end is running; the manager enforces that for every client. |
 | `agent-guild restart` or **Restart manager** in the page's **Manager** menu | As for a stop, with the same guard. The manager then starts a new manager from the package on disk and exits; clients reconnect to the new one. An upgrade's files are picked up this way. |
-| Computer restart or logout | All sessions end. Nothing is restored. |
+| Computer restart or logout | All sessions end. Nothing is restored. With **When the computer starts** on Linux, systemd starts a new manager at boot. |
 
 ## Toward a game interface
 

@@ -233,6 +233,23 @@ does not start even while **Launch at sign-in** is checked. While it is on,
 the setting says when it last ran at sign-in and whether the session manager
 started then.
 
+On Linux the setting is one choice: **Only when I start it**, **When I sign
+in** (the desktop entry above) or **When the computer starts**. The last
+runs the session manager as a systemd user service, `agent-guild.service`,
+so it is running before you connect to a machine with no desktop, and
+systemd starts it again if it fails. Only one of the two starters is on at
+a time, and changing the choice never stops the running session manager: one
+started by hand hands over to systemd at its next restart. While the service
+is on, `agent-guild open` and `agent-guild restart` start the session manager
+through systemd, `agent-guild stop` stops it until the next start, and tmux
+cards survive restarts as they do without it. To start before anyone signs
+in, systemd needs lingering, which only an administrator can always turn
+on; the setting shows the command, `sudo loginctl enable-linger <user>`,
+until it is on. It also shows what systemd reports, such as a port another
+session manager was using, and for a failure the command that shows its
+log, `journalctl --user -u agent-guild.service`. `agent-guild status` prints
+the same state, read from systemd when no session manager answers.
+
 The browser tab icon adds a rotating green ring whenever any session card says
 **Working**, including Shell and task cards. It mirrors the cards' terminal
 activity, not assistant completion. The ring remains visible with reduced
@@ -255,7 +272,7 @@ There is no added polling while connected and no additional monitoring process.
 | Command | What it does |
 | --- | --- |
 | `agent-guild` or `agent-guild open` | Start the manager if needed and open the page. `--no-browser` prints the URL instead. |
-| `agent-guild status` | Show whether the manager is running and list its sessions. |
+| `agent-guild status` | Show whether the manager is running, how it starts, and list its sessions. |
 | `agent-guild stop` | Stop the manager, ending every session. |
 | `agent-guild restart` | Stop the manager and start it again on the version installed on disk, ending every session. |
 | `agent-guild url` | Print the page URL with its access token. |
@@ -343,6 +360,14 @@ Any other tool or script can report agents and its model too. See
   when started with `AGENT_GUILD_PORT=0`. Enabled entries are updated when
   the manager starts. A macOS entry disabled through `launchctl` stays off
   until you explicitly turn **Launch at sign-in** back on.
+* **When the computer starts**, on Linux, writes
+  `~/.config/systemd/user/agent-guild.service` and enables it, which links
+  it from `default.target.wants`; the unit runs `boot.sh` from the data
+  folder, which runs `agent-guild start` in the foreground. Choosing another
+  option disables and removes both. A unit whose Agent Guild package has
+  been uninstalled or moved disables and removes itself at the next start.
+  Lingering, which lets it start before anyone signs in, is a system
+  setting that Agent Guild reads but never changes.
 
 The manager makes these outbound requests, and none of them carry your code
 or prompts:
