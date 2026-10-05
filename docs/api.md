@@ -487,7 +487,9 @@ All paths are under `/api/v1`.
 | Method | Path | Body | Result |
 | --- | --- | --- | --- |
 | GET | `/health` | | `{ ok, name, version, pid }`. No token needed. |
-| GET | `/info` | | Manager version, platform, start time, provider config warnings, `upgrade` (an Upgrade object), and `launcher`: the path of the double-click launcher for this platform when the install carries one (a checkout of the repository), else null. |
+| GET | `/info` | | Manager version, platform, start time, provider config warnings, `upgrade` (an Upgrade object), and `launcher`: the path of the double-click launcher for this platform when the install carries one (a checkout of the repository), else null. `folderOpener` is `{ available, label, reason }` for this client; it is unavailable to clients that reach the manager by any address other than its own loopback ones. |
+| GET | `/folders?path=` | | `{ path, parent, home, segments, roots, entries, truncated, note }`: the subfolders of `path` (blank or `~` for the home folder) on the manager's computer. A missing `path` lists the nearest existing folder above it and names the requested path in `note`. `entries` are `{ name, path, hidden }`, sorted by name, at most 2,000 (`truncated` says when there were more); `segments` and `roots` are `{ name, path }` for the path's parts and the drives or `/`. 409 `folder_unreadable` when the folder cannot be read. |
+| POST | `/open-folder` | `{ cwd? }` | `{ ok }`: opens the folder in the computer's file manager. 403 `local_only` from clients that reach the manager by any address other than its own loopback ones. |
 | POST | `/upgrade` | | `201 { session }`: a session with `task` `upgrade` running the Upgrade `command`. 400 `not_updatable` when no newer release is known, it is already installed on disk, the manager is a development build, or version checks are off. 409 `npm_unavailable` without npm on PATH. 409 `upgrade_in_progress` while one is running. Sessions keep running; the new version is used after the manager restarts. |
 | GET | `/providers` | | `{ providers: Provider[] }` |
 | POST | `/providers/reload` | | Re-reads `providers.json`. |
@@ -556,7 +558,7 @@ This socket pushes changes to every session. It is server-to-client only.
 
 | Message | Meaning |
 | --- | --- |
-| `{ type: "hello", version, pid, startedAt, launcher, upgrade, sessions }` | Sent first. The manager's version, pid and start timestamp (together identifying this manager lifetime), its `launcher` path (as in `/info`), the full session list and the manager's Upgrade object. |
+| `{ type: "hello", version, pid, platform, startedAt, launcher, folderOpener, upgrade, sessions }` | Sent first. The manager's version, pid, platform and start timestamp (together identifying this manager lifetime), its `launcher` path and `folderOpener` (as in `/info`), the full session list and the manager's Upgrade object. |
 | `{ type: "session.created", session }` | A session was started by any client. |
 | `{ type: "session.updated", session }` | Status, activity, agents, name or size changed. |
 | `{ type: "session.removed", sessionId }` | A session was removed. |
