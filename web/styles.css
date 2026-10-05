@@ -1062,4 +1062,5 @@ a.btn.github-out::after {
   color: var(--text); font-family: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace; font-size: 0.82rem; overflow-wrap: anywhere; cursor: pointer;
 }
 .cwd-recent-option:hover, .cwd-recent-option[aria-selected="true"] { background: color-mix(in srgb, var(--accent) 14%, transparent); }
-@media (pointer: coarse) { .cwd-recent-option { min-height: 46px; } }
+@media (pointer: coarse), (max-width: 640px) { .cwd-recent-option { min-height: 46px; } }
+.cwd-recent.above { top: auto; bottom: calc(100% + 4px); }

@@ -23,6 +23,7 @@ const GITHUB_ACCOUNT_KEY = 'agentGuild.githubAccount';
 const CLONE_PARENT_KEY = 'agentGuild.cloneParent';
 const HIDDEN_FOLDERS_KEY = 'agentGuild.showHiddenFolders';
 const RECENT_CWDS_KEY = 'agentGuild.recentCwds';
+const RECENT_CLONE_PARENTS_KEY = 'agentGuild.recentCloneParents';
 const GITHUB_REPO_KEY = 'agentGuild.githubRepo';
 const GITHUB_RECENT_KEY = 'agentGuild.githubRecent';
 const GITHUB_VIEW_KEY = 'agentGuild.githubView';
@@ -767,68 +768,78 @@ async function openWorkingFolder() {
   }
 }
 
-// ---- recent working folders -----------------------------------------------
+// ---- recent folders ---------------------------------------------------------
 
-const recentView = { open: false, typed: false, active: -1 };
+const RECENT_FIELDS = {
+  cwd: { input: 'cwd', list: 'cwd-recent', key: RECENT_CWDS_KEY, pick: (dir) => useFolder(dir) },
+  clone: { input: 'github-parent', list: 'github-parent-recent', key: RECENT_CLONE_PARENTS_KEY, pick: (dir) => setCloneParent(dir) },
+};
+const recentView = { field: null, typed: false, active: -1 };
 
-function recentCwds() {
-  return readRecentFolders(load(RECENT_CWDS_KEY));
+function recentFolders(field) {
+  return readRecentFolders(load(RECENT_FIELDS[field].key));
 }
 
-function rememberCwd(dir) {
-  if (dir) save(RECENT_CWDS_KEY, JSON.stringify(rememberFolder(recentCwds(), dir, { caseless: state.platform === 'win32' })));
+function rememberRecent(field, dir) {
+  if (dir) save(RECENT_FIELDS[field].key, JSON.stringify(rememberFolder(recentFolders(field), dir, { caseless: state.platform === 'win32' })));
 }
 
-function renderRecentCwds() {
-  const input = $('cwd'), list = $('cwd-recent');
-  const shown = recentView.open ? matchFolders(recentCwds(), recentView.typed ? input.value : '') : [];
-  recentView.active = Math.min(recentView.active, shown.length - 1);
+function renderRecent(field) {
+  const { input: inputId, list: listId } = RECENT_FIELDS[field];
+  const input = $(inputId), list = $(listId);
+  const open = recentView.field === field;
+  const shown = open ? matchFolders(recentFolders(field), recentView.typed ? input.value : '') : [];
+  if (open) recentView.active = Math.min(recentView.active, shown.length - 1);
   list.replaceChildren(...shown.map((dir, i) => {
     const option = el('li', 'cwd-recent-option', dir);
-    option.id = `cwd-recent-${i}`;
+    option.id = `${listId}-${i}`;
     option.setAttribute('role', 'option');
-    option.setAttribute('aria-selected', String(i === recentView.active));
+    option.setAttribute('aria-selected', String(open && i === recentView.active));
     option.addEventListener('pointerdown', (e) => e.preventDefault());
-    option.addEventListener('click', () => pickRecentCwd(dir));
+    option.addEventListener('click', () => pickRecent(field, dir));
     return option;
   }));
   list.hidden = !shown.length;
   input.setAttribute('aria-expanded', String(!list.hidden));
-  if (recentView.active >= 0) input.setAttribute('aria-activedescendant', `cwd-recent-${recentView.active}`);
+  if (open && recentView.active >= 0) input.setAttribute('aria-activedescendant', `${listId}-${recentView.active}`);
   else input.removeAttribute('aria-activedescendant');
 }
 
-function showRecentCwds(typed = false) {
-  Object.assign(recentView, { open: true, typed, active: -1 });
-  renderRecentCwds();
+function showRecent(field, typed = false) {
+  const previous = recentView.field;
+  Object.assign(recentView, { field, typed, active: -1 });
+  if (previous && previous !== field) renderRecent(previous);
+  renderRecent(field);
 }
 
-function hideRecentCwds() {
-  Object.assign(recentView, { open: false, active: -1 });
-  renderRecentCwds();
+function hideRecent(field) {
+  if (recentView.field !== field) return;
+  Object.assign(recentView, { field: null, active: -1 });
+  renderRecent(field);
 }
 
-function pickRecentCwd(dir) {
-  hideRecentCwds();
-  useFolder(dir);
+function pickRecent(field, dir) {
+  hideRecent(field);
+  RECENT_FIELDS[field].pick(dir);
 }
 
-function recentCwdKeys(e) {
-  const options = $('cwd-recent').hidden ? [] : [...$('cwd-recent').children];
+function recentKeys(field, e) {
+  const list = $(RECENT_FIELDS[field].list);
+  const options = list.hidden ? [] : [...list.children];
   if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
     e.preventDefault();
-    if (!recentView.open) showRecentCwds();
-    const count = $('cwd-recent').children.length;
+    if (recentView.field !== field) showRecent(field);
+    const count = list.children.length;
     if (!count) return;
     recentView.active = e.key === 'ArrowDown' ? (recentView.active + 1) % count : recentView.active <= 0 ? count - 1 : recentView.active - 1;
-    renderRecentCwds();
-    $(`cwd-recent-${recentView.active}`).scrollIntoView?.({ block: 'nearest' });
+    renderRecent(field);
+    $(`${RECENT_FIELDS[field].list}-${recentView.active}`).scrollIntoView?.({ block: 'nearest' });
   } else if (e.key === 'Enter' && recentView.active >= 0 && options[recentView.active]) {
     e.preventDefault();
-    pickRecentCwd(options[recentView.active].textContent);
+    pickRecent(field, options[recentView.active].textContent);
   } else if (e.key === 'Escape' && options.length) {
     e.preventDefault();
-    hideRecentCwds();
+    hideRecent(field);
   }
 }
 
@@ -972,11 +983,9 @@ function useBrowsedFolder() {
   if (!dir || folderView.loading) return;
   const field = folderView.field;
   $('folder-browser').close();
+  rememberRecent(field, dir);
   if (field === 'clone') setCloneParent(dir);
-  else {
-    rememberCwd(dir);
-    useFolder(dir);
-  }
+  else useFolder(dir);
 }
 
 function moveInFolders(e) {
@@ -2465,7 +2474,7 @@ async function startSession(provider, card, { resume, cwd, account = selectedAcc
       ({ session } = await api('POST', '/sessions', { ...body, cwd: working || undefined }));
     }
     upsertSession(session);
-    rememberCwd(session.cwd);
+    rememberRecent('cwd', session.cwd);
     closeHistory({ focusOpener: false });
     openPanel(session.id);
   } catch (err) {
@@ -2675,7 +2684,7 @@ const GITHUB_SCOPES = {
   repo: 'Read and write access to your repositories, private ones included, so you can browse repositories and create or edit issues.',
   'write:public_key': 'Add the SSH key Agent Guild creates for this account.',
 };
-const githubView = { accountId: null, repos: null, reposFor: null, loading: null, error: null, parentError: null, card: null, started: new Set(), announced: new Set() };
+const githubView = { accountId: null, repos: null, reposFor: null, loading: null, error: null, parentError: null, card: null, started: new Map(), announced: new Set() };
 let githubLoading = null;
 
 function el(tag, className, ...children) {
@@ -3140,8 +3149,9 @@ function renderGitHubRepos(github, account, repos) {
 }
 
 async function startClone(account, fullName) {
-  const { session } = await api('POST', '/github/clone', { account: account.id, repo: fullName, parent: cloneParent() });
-  githubView.started.add(session.id);
+  const parent = cloneParent();
+  const { session } = await api('POST', '/github/clone', { account: account.id, repo: fullName, parent });
+  githubView.started.set(session.id, parent);
   upsertSession(session);
   openPanel(session.id);
 }
@@ -3251,8 +3261,10 @@ function noticeClone(s) {
   githubPick.origins.clear();
   if (dockShows('github')) loadRepos();
   if (!githubView.started.has(s.id)) return;
-  if (clonedPath(s)) toast(`Cloned ${s.clone.repo} into ${s.clone.path}.`, 12000, { label: 'Use folder', run: () => useFolder(s.clone.path) });
-  else toast(`Cloning ${s.clone?.repo ?? 'the repository'} did not finish. Its session shows why.`, 8000);
+  if (clonedPath(s)) {
+    rememberRecent('clone', githubView.started.get(s.id));
+    toast(`Cloned ${s.clone.repo} into ${s.clone.path}.`, 12000, { label: 'Use folder', run: () => useFolder(s.clone.path) });
+  } else toast(`Cloning ${s.clone?.repo ?? 'the repository'} did not finish. Its session shows why.`, 8000);
 }
 
 function useFolder(dir) {
@@ -5634,11 +5646,13 @@ $('panel-stop').addEventListener('click', () => {
 });
 $('cwd').value = load(CWD_KEY) || '';
 $('cwd-pick').addEventListener('click', firstClick(() => chooseFolder('cwd')));
-$('cwd').addEventListener('focus', () => showRecentCwds());
-$('cwd').addEventListener('click', () => { if (!recentView.open) showRecentCwds(); });
-$('cwd').addEventListener('input', () => showRecentCwds(true));
-$('cwd').addEventListener('blur', hideRecentCwds);
-$('cwd').addEventListener('keydown', recentCwdKeys);
+for (const [field, { input }] of Object.entries(RECENT_FIELDS)) {
+  $(input).addEventListener('focus', () => showRecent(field));
+  $(input).addEventListener('click', () => { if (recentView.field !== field) showRecent(field); });
+  $(input).addEventListener('input', () => showRecent(field, true));
+  $(input).addEventListener('blur', () => hideRecent(field));
+  $(input).addEventListener('keydown', (e) => recentKeys(field, e));
+}
 $('folder-cancel').addEventListener('click', () => $('folder-browser').close());
 $('folder-browser').addEventListener('click', (e) => { if (e.target === $('folder-browser')) $('folder-browser').close(); });
 $('folder-browser').addEventListener('close', folderBrowserClosed);

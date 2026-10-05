@@ -17,12 +17,27 @@ const home = fs.mkdtempSync(path.join(os.tmpdir(), 'guild-proxy-test-'));
 const savedEnv = { ...process.env }, nativeFetch = globalThis.fetch;
 let ctx;
 const sockets = new Set(), upgrades = [];
+// A signed-in GitHub account with no repositories, so the Clone into field shows without contacting GitHub.
+let fakeGitHub = false;
+const fetchedAt = new Date().toISOString();
+const githubAnswers = {
+  '/api/v1/github': () => ({ github: { scopes: ['repo'], appUrl: '', keysUrl: '', newKeyUrl: '', tools: { git: true, ssh: true, sshKeygen: true }, signIn: null,
+    accounts: [{ id: 1001, login: 'phone-dev', name: 'Phone Dev', avatar: null, scopes: ['repo'], needsSignIn: false, addedAt: fetchedAt,
+      ssh: { status: 'ready', key: 'test-key', publicKey: 'ssh-ed25519 TEST', verifiedAt: fetchedAt, settingUp: false, error: null } }] } }),
+  '/api/v1/github/repos': () => ({ repos: [], truncated: false, errors: [], fetchedAt }),
+  '/api/v1/github/accounts/1001/repos': (url) => ({ repos: { accountId: 1001, fetchedAt, truncated: false, owners: [], parent: url.searchParams.get('parent'), repos: [] } }),
+};
 // These public test fixtures confer no trust. Only this disposable browser
 // ignores their self-signed certificate; CSP and request validation stay on.
 const proxy = https.createServer({
   key: fs.readFileSync(new URL('../fixtures/proxy-test-key.pem', import.meta.url)),
   cert: fs.readFileSync(new URL('../fixtures/proxy-test-cert.pem', import.meta.url)),
 }, (req, res) => {
+  const simulated = req.method === 'GET' && githubAnswers[new URL(req.url, 'https://localhost').pathname];
+  if (fakeGitHub && simulated) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify(simulated(new URL(req.url, 'https://localhost'))));
+  }
   const upstream = http.request(`${ctx.api.url}${req.url}`, { method: req.method, headers: req.headers }, (reply) => {
     res.writeHead(reply.statusCode, reply.headers);
     reply.pipe(res);
@@ -208,10 +223,49 @@ try {
     await evaluate(`{ const cwd=document.querySelector('#cwd'); cwd.value='zzz'; cwd.dispatchEvent(new Event('input')); }`);
     assert.equal(await evaluate(`document.querySelector('#cwd-recent').hidden`), true);
     await evaluate(`document.querySelector('#cwd').blur()`);
+
+    fakeGitHub = true;
+    await evaluate(`document.querySelector('#github-open').click()`);
+    await until('Clone into shown', () => evaluate(`document.querySelector('#github-parent').checkVisibility() && document.querySelector('#github-parent').value===${JSON.stringify(tree)}`));
+    await evaluate(`document.querySelector('#github-parent-pick').click()`);
+    await until('clone folder browser lists the new folder', () => evaluate(`document.querySelector('#folder-current').textContent===${JSON.stringify(tree)} && [...document.querySelectorAll('#folder-list .folder-row')].some(r=>r.textContent==='clones & co')`));
+    await evaluate(`[...document.querySelectorAll('#folder-list .folder-row')].find(r=>r.textContent==='clones & co').click()`);
+    await until('new folder opened for cloning', () => evaluate(`document.querySelector('#folder-current').textContent===${JSON.stringify(made)} && !document.querySelector('#folder-use').disabled`));
+    await evaluate(`document.querySelector('#folder-use').click()`);
+    assert.equal(await evaluate(`document.querySelector('#github-parent').value`), made);
+    assert.deepEqual(await evaluate(`JSON.parse(localStorage.getItem('agentGuild.recentCloneParents'))`), [made, tree]);
+    await evaluate(`document.querySelector('#github-parent').focus()`);
+    await until('recent clone folders offered', () => evaluate(`!document.querySelector('#github-parent-recent').hidden`));
+    assert.deepEqual(await evaluate(`[...document.querySelectorAll('#github-parent-recent [role=option]')].map(o=>o.textContent)`), [made, tree]);
+    assert.equal(await evaluate(`document.querySelector('#github-parent').getAttribute('aria-expanded')`), 'true');
+    await until('earlier toast gone', () => evaluate(`document.querySelector('#toast').hidden`));
+    for (const skin of await evaluate(`window.agentGuildSkins.map(s=>s.id)`)) {
+      for (const theme of ['light', 'dark']) {
+        await evaluate(`{ const root=document.documentElement; root.dataset.skin=${JSON.stringify(skin)}; root.dataset.theme=${JSON.stringify(theme)}; }`);
+        await layoutReady();
+        const placed = await evaluate(`(() => { const options=[...document.querySelectorAll('#github-parent-recent [role=option]')];
+          return options.map(o=>{ const b=o.getBoundingClientRect(); return {height:o.offsetHeight,inside:b.left>=0&&b.right<=innerWidth&&b.top>=0&&b.bottom<=innerHeight,
+            onTop:document.elementFromPoint(b.left+b.width/2,b.top+b.height/2)===o,hit:(e=>e&&(e.id||e.className))(document.elementFromPoint(b.left+b.width/2,b.top+b.height/2))}; }); })()`);
+        assert.ok(placed.length === 2 && placed.every((o) => o.height >= 44 && o.inside && o.onTop), `${skin} ${theme} ${JSON.stringify(placed)}`);
+      }
+    }
+    await evaluate(`{ const root=document.documentElement; root.dataset.skin='guild'; root.dataset.theme='light'; }`);
+    await layoutReady();
+    const second = await evaluate(`(() => { const b=document.querySelectorAll('#github-parent-recent [role=option]')[1].getBoundingClientRect(); return {x:b.left+b.width/2,y:b.top+b.height/2}; })()`);
+    await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: second.x, y: second.y, button: 'left', clickCount: 1 });
+    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: second.x, y: second.y, button: 'left', clickCount: 1 });
+    await until('recent clone folder picked', () => evaluate(`document.querySelector('#github-parent').value===${JSON.stringify(tree)} && document.querySelector('#github-parent-recent').hidden`));
+    assert.equal(await evaluate(`localStorage.getItem('agentGuild.cloneParent')`), tree);
+    assert.equal(await evaluate(`document.activeElement.id`), 'github-parent');
+    await evaluate(`{ const parent=document.querySelector('#github-parent'); parent.value='typed-only'; parent.dispatchEvent(new Event('input')); parent.dispatchEvent(new Event('change')); parent.blur(); }`);
+    assert.deepEqual(await evaluate(`JSON.parse(localStorage.getItem('agentGuild.recentCloneParents'))`), [made, tree]);
+    assert.deepEqual(await evaluate(`JSON.parse(localStorage.getItem('agentGuild.recentCwds'))`), [path.join(tree, 'beta'), path.join(tree, 'alpha')]);
+    await evaluate(`document.querySelector('#dock-close').click()`);
+    fakeGitHub = false;
     assert.deepEqual(await evaluate('cspViolations'), []);
     assert.deepEqual(errors, []);
     await send('Emulation.clearDeviceMetricsOverride');
-    pass('a remote phone browses and creates real host folders in every skin and theme, gets recent working folders, and cannot open folders on the host');
+    pass('a remote phone browses and creates real host folders in every skin and theme, gets recent working and clone folders, and cannot open folders on the host');
 
     const pid = session.toJSON().pid;
     await evaluate(`{ const menu=document.querySelector('#menu-toggle'); if (menu.checkVisibility()) menu.click(); document.querySelector('#settings').click(); }`);
