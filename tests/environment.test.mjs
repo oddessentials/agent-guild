@@ -393,21 +393,28 @@ test('a pin symlink outside the project is not read', (t) => {
   assert.equal(pin.version, null);
 });
 
-test('a project check does not use the project as its working directory', async () => {
+test('a project check does not use the project as its working directory', { timeout: 10000 }, async (t) => {
   const project = fs.mkdtempSync(path.join(os.tmpdir(), 'guild-pins-cwd-'));
+  let child, closed;
+  t.after(async () => {
+    if (child?.exitCode === null && child.signalCode === null) child.kill();
+    await closed;
+    fs.rmSync(project, { recursive: true, force: true });
+  });
   fs.writeFileSync(path.join(project, '.nvmrc'), 'lts/*\n');
-  const child = fork(new URL('../src/manager/environment-probe.mjs', import.meta.url), ['--scan-pins', project], {
+  child = fork(new URL('../src/manager/environment-probe.mjs', import.meta.url), ['--scan-pins', project], {
     execArgv: [], cwd: os.tmpdir(), stdio: ['ignore', 'ignore', 'ignore', 'ipc'], windowsHide: true,
   });
+  closed = new Promise((resolve) => child.once('close', resolve));
   const message = await new Promise((resolve, reject) => {
     child.once('message', resolve);
     child.once('error', reject);
+    child.once('exit', (code, signal) => reject(new Error(`The pin helper exited before responding: ${code}/${signal}`)));
   });
-  child.kill();
   assert.equal(message.pins[0].version, 'lts/*');
-  assert.equal(path.resolve(message.cwd), path.resolve(os.tmpdir()));
-  assert.notEqual(path.resolve(message.cwd), path.resolve(project));
-  fs.rmSync(project, { recursive: true, force: true });
+  // macOS's /var temporary path and its /private/var target are the same folder.
+  assert.equal(fs.realpathSync.native(message.cwd), fs.realpathSync.native(os.tmpdir()));
+  assert.notEqual(fs.realpathSync.native(message.cwd), fs.realpathSync.native(project));
 });
 
 test('the project helper reads pins without inheriting the manager environment', async (t) => {

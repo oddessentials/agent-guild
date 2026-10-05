@@ -79,10 +79,16 @@ export function createEnvironmentUI({
       if (!folder || folder !== projectFolder || !visibleProject || current?.cwd !== visibleProject) return null;
       return current?.scope === 'project' ? current : null;
     }
+    if (scope === 'session' && current?.sessionId !== sessionId) return null;
     return current?.scope === scope ? current : null;
   }
 
   function render() {
+    const listed = sessions();
+    if (scope === 'session' && !listed.some((session) => session.id === sessionId)) {
+      sessionId = listed[0]?.id || '';
+      current = slots.get(`session:${sessionId}`) || null;
+    }
     for (const host of document.querySelectorAll('.environment-summary:not([hidden])')) renderSummary(host);
     const data = activeSnapshot();
     const title = SCOPES.find(([id]) => id === scope)?.[2] || 'Manager environment';
@@ -93,7 +99,6 @@ export function createEnvironmentUI({
       button.ariaPressed = String(id === scope);
     }
     const folder = workingFolder();
-    const listed = sessions();
     $('environment-intro').textContent = scope === 'project'
       ? 'Configured versions in this folder. A pin is not proof the runtime is installed.'
       : scope === 'session'
@@ -116,7 +121,6 @@ export function createEnvironmentUI({
           return option;
         }));
       }
-      if (!listed.some((session) => session.id === sessionId)) sessionId = listed[0]?.id || '';
       select.value = sessionId;
     }
     const refreshing = Boolean(data?.refreshing);
@@ -182,6 +186,17 @@ export function createEnvironmentUI({
       current = snapshot;
       return true;
     }
+    if (snapshot.scope === 'session') {
+      // Each session has its own revisions. Cache background updates without
+      // changing the selected session's results or clearing its request error.
+      const key = `session:${snapshot.sessionId}`;
+      const previous = slots.get(key);
+      if (previous && snapshot.revision < previous.revision) return false;
+      slots.set(key, snapshot);
+      if (scope !== 'session' || snapshot.sessionId !== sessionId) return false;
+      current = snapshot;
+      return true;
+    }
     const previous = slots.get(snapshot.scope);
     if (previous && snapshot.revision < previous.revision) return false;
     slots.set(snapshot.scope, snapshot);
@@ -241,12 +256,12 @@ export function createEnvironmentUI({
   function choose(next) {
     if (scope === next && next !== 'session') return;
     scope = next;
-    current = slots.get(next) || null;
     error = '';
     if (next === 'session') {
       const listed = sessions();
       if (!listed.some((session) => session.id === sessionId)) sessionId = listed[0]?.id || '';
     }
+    current = slots.get(next === 'session' ? `session:${sessionId}` : next) || null;
     render();
     load(false);
   }
@@ -254,7 +269,7 @@ export function createEnvironmentUI({
   for (const [id] of SCOPES) $(`environment-scope-${id}`).addEventListener('click', () => choose(id));
   $('environment-session').addEventListener('change', () => {
     sessionId = $('environment-session').value;
-    current = null;
+    current = slots.get(`session:${sessionId}`) || null;
     load(false);
   });
   $('environment-close').addEventListener('click', () => dialog.close());

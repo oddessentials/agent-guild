@@ -27,6 +27,12 @@ const snapshot = (revision, version = '24.0.0', extra = {}) => ({
   runtimes: [{ id: 'node', label: 'Node.js', status: 'ok', version, path: '/bin/node' }],
   tools: [], ...extra,
 });
+const sessionSnapshot = (sessionId, revision, extra = {}) => ({
+  scope: 'session', sessionId, revision, availability: 'ok', refreshing: false,
+  checkedAt: '2026-10-04T12:00:00Z', spawnCwd: `/work/${sessionId}`,
+  runtimes: [{ id: 'node', label: 'Node.js', status: 'ok', version: `${revision}.0.0` }],
+  tools: [], ...extra,
+});
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
 function page(options = {}) {
@@ -61,6 +67,25 @@ function page(options = {}) {
     },
     removeOpener() { opener.isConnected = false; opener = null; },
   };
+}
+
+async function sessionPage(revision = 2, sessions = [{ id: 'aa', name: 'A' }, { id: 'bb', name: 'B' }]) {
+  const p = page({ sessions: () => sessions });
+  p.ui.connected(10);
+  p.requests[0].resolve(snapshot(2));
+  await flush();
+  p.get('environment-scope-session').click();
+  p.requests.at(-1).resolve(sessionSnapshot('aa', revision));
+  await flush();
+  return p;
+}
+
+function selectSession(p, id) {
+  const select = p.get('environment-session');
+  select.value = id;
+  select.dispatchEvent(new Event('change'));
+  assert.equal(p.requests.at(-1).route, `/environment?scope=session&id=${id}`);
+  return p.requests.at(-1);
 }
 
 test('missing languages do not make the shell card say the check failed', () => {
@@ -124,6 +149,112 @@ test('scope buttons request that scope, and an empty folder is not sent', async 
   p.get('environment-refresh').click();
   assert.deepEqual([p.requests.at(-1).method, p.requests.at(-1).body], ['POST', { scope: 'launch' }]);
   assert.equal(p.get('environment-host').textContent, 'On guild-host');
+});
+
+test('session revisions are compared only within the selected session', async () => {
+  const p = await sessionPage(4);
+  selectSession(p, 'bb').resolve(sessionSnapshot('bb', 2));
+  await flush();
+  assert.equal(p.get('environment-manager-node').textContent, 'Spawn folder: /work/bb');
+  assert.equal(p.get('environment-runtimes').children[0].children[0].children[1].textContent, '2.0.0');
+  assert.equal(p.get('environment-refresh').disabled, false);
+});
+
+test('a multiplexer result with revision one displays after an ordinary session', async () => {
+  const p = await sessionPage();
+  const detail = 'This session is tmux or herdr. Its environment is not the spawn record.';
+  selectSession(p, 'bb').resolve(sessionSnapshot('bb', 1, { availability: 'unavailable', detail, runtimes: [] }));
+  await flush();
+  assert.equal(p.get('environment-status').textContent, detail);
+  assert.equal(p.get('environment-runtimes').children.length, 0);
+  assert.equal(p.get('environment-tools-heading').hidden, true);
+});
+
+test('an update for another session cannot replace the selected results or the manager summary', async () => {
+  const p = await sessionPage();
+  selectSession(p, 'bb').resolve(sessionSnapshot('bb', 2));
+  await flush();
+  p.ui.updated(sessionSnapshot('aa', 6));
+  assert.equal(p.get('environment-session').value, 'bb');
+  assert.equal(p.get('environment-manager-node').textContent, 'Spawn folder: /work/bb');
+  assert.equal(p.get('environment-runtimes').children[0].children[0].children[1].textContent, '2.0.0');
+  assert.equal(p.get('.environment-values').children[1].textContent, '24.0.0');
+  assert.equal(p.get('.environment-note').textContent, 'Manager environment');
+});
+
+test('an update for another session cannot clear the selected request error', async () => {
+  const p = await sessionPage();
+  selectSession(p, 'bb').reject(new Error('Could not check B.'));
+  await flush();
+  p.ui.updated(sessionSnapshot('aa', 6));
+  assert.equal(p.get('environment-status').textContent, 'Could not check B.');
+});
+
+test('a session event wins over its older HTTP response', async () => {
+  const p = await sessionPage();
+  const request = selectSession(p, 'bb');
+  p.ui.updated(sessionSnapshot('bb', 4));
+  request.resolve(sessionSnapshot('bb', 1, { refreshing: true }));
+  await flush();
+  assert.equal(p.get('environment-manager-node').textContent, 'Spawn folder: /work/bb');
+  assert.equal(p.get('environment-runtimes').children[0].children[0].children[1].textContent, '4.0.0');
+  assert.equal(p.get('environment-refresh').disabled, false);
+});
+
+test('a late HTTP response for the previous session cannot replace the selection', async () => {
+  const p = await sessionPage();
+  p.get('environment-refresh').click();
+  const previous = p.requests.at(-1);
+  assert.deepEqual(previous.body, { scope: 'session', id: 'aa' });
+  selectSession(p, 'bb').resolve(sessionSnapshot('bb', 2));
+  await flush();
+  previous.resolve(sessionSnapshot('aa', 8));
+  await flush();
+  assert.equal(p.get('environment-session').value, 'bb');
+  assert.equal(p.get('environment-manager-node').textContent, 'Spawn folder: /work/bb');
+});
+
+test('returning through the dropdown or scope button uses that session\'s cached result', async () => {
+  const p = await sessionPage();
+  selectSession(p, 'bb').resolve(sessionSnapshot('bb', 2));
+  await flush();
+  p.ui.updated(sessionSnapshot('aa', 6));
+  const request = selectSession(p, 'aa');
+  assert.equal(p.get('environment-manager-node').textContent, 'Spawn folder: /work/aa');
+  assert.equal(p.get('environment-runtimes').children[0].children[0].children[1].textContent, '6.0.0');
+  request.resolve(sessionSnapshot('aa', 4));
+  await flush();
+  assert.equal(p.get('environment-runtimes').children[0].children[0].children[1].textContent, '6.0.0');
+  p.get('environment-scope-manager').click();
+  p.requests.at(-1).resolve(snapshot(2));
+  await flush();
+  p.get('environment-scope-session').click();
+  assert.equal(p.get('environment-manager-node').textContent, 'Spawn folder: /work/aa');
+  assert.equal(p.get('environment-runtimes').children[0].children[0].children[1].textContent, '6.0.0');
+});
+
+test('removing the selected session hides its results before rendering the fallback', async () => {
+  const sessions = [{ id: 'aa', name: 'A' }, { id: 'bb', name: 'B' }];
+  const p = await sessionPage(2, sessions);
+  sessions.shift();
+  p.ui.sync();
+  assert.equal(p.get('environment-session').value, 'bb');
+  assert.equal(p.get('environment-runtimes').children.length, 0);
+  assert.equal(p.get('environment-manager-node').hidden, true);
+  assert.equal(p.get('environment-status').textContent, 'Not checked yet.');
+});
+
+test('reconnecting to a new manager clears the old session revisions', async () => {
+  const p = await sessionPage(8);
+  p.ui.disconnected();
+  p.ui.connected(11);
+  p.requests.at(-1).resolve(snapshot(1));
+  await flush();
+  p.get('environment-scope-session').click();
+  p.requests.at(-1).resolve(sessionSnapshot('aa', 2));
+  await flush();
+  assert.equal(p.get('environment-manager-node').textContent, 'Spawn folder: /work/aa');
+  assert.equal(p.get('environment-runtimes').children[0].children[0].children[1].textContent, '2.0.0');
 });
 
 test('a project folder is sent with its refresh and configured pins stay off the shell card', async () => {
