@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { until, withPage } from './chrome.mjs';
+import { until, withDialogClose, withPage } from './chrome.mjs';
 
 const instrumentation = `<script>
 const demoFetch=window.fetch;
@@ -22,12 +22,8 @@ window.WebSocket=class extends DemoSocket {
 
 const checks = await withPage({ name: 'dialogs', instrumentation }, async ({ origin, send, evaluate, layoutReady, pass, errors }) => {
   const checkDialogs = async (evaluate, resize, settle, engine) => {
-    const closeDialog = (selector, button) => evaluate(`new Promise((resolve, reject) => {
-      const dialog = document.querySelector(${JSON.stringify(selector)});
-      if (!dialog.open) { reject(new Error('Expected an open dialog: ' + ${JSON.stringify(selector)})); return; }
-      dialog.addEventListener('close', () => resolve(), { once: true });
-      ${button ? `document.querySelector(${JSON.stringify(button)}).click()` : 'dialog.close()'};
-    })`);
+    const closeDialog = (selector, button) => withDialogClose(evaluate, selector, () => evaluate(
+      button ? `document.querySelector(${JSON.stringify(button)}).click()` : `document.querySelector(${JSON.stringify(selector)}).close()`));
     // Frames and animations settle geometry only, never close or refresh completion.
     const settled = async () => {
       await settle();

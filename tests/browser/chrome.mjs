@@ -23,6 +23,35 @@ export async function until(label, check) {
   throw new Error(`Timed out: ${label}`);
 }
 
+let nextDialogClose = 0;
+
+// close() changes .open synchronously, but its queued close event can still
+// restore focus or clear state. Register before the action, including trusted
+// input sent over CDP, and finish that lifecycle before the next interaction.
+export async function withDialogClose(evaluate, selector, action) {
+  const key = JSON.stringify(`__guildDialogClose${++nextDialogClose}`);
+  await evaluate(`(() => {
+    const dialog = document.querySelector(${JSON.stringify(selector)});
+    if (!dialog?.open) throw new Error('Expected an open dialog: ' + ${JSON.stringify(selector)});
+    const pending = { dialog };
+    pending.promise = new Promise(resolve => {
+      pending.listener = () => resolve();
+      dialog.addEventListener('close', pending.listener, { once: true });
+    });
+    window[${key}] = pending;
+  })()`);
+  try {
+    await action();
+    await evaluate(`window[${key}].promise`);
+  } finally {
+    await evaluate(`(() => {
+      const pending = window[${key}];
+      pending.dialog.removeEventListener('close', pending.listener);
+      delete window[${key}];
+    })()`);
+  }
+}
+
 export async function withPage({ name, instrumentation = '', headers = () => ({}), chromeArgs = [] }, run) {
   const chromePath = [process.env.CHROME_PATH, '/usr/bin/google-chrome', '/usr/bin/chromium',
     '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'].find((file) => file && fs.existsSync(file));

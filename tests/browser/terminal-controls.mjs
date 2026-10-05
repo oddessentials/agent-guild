@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { until, withPage } from './chrome.mjs';
+import { until, withDialogClose, withPage } from './chrome.mjs';
 
 const instrumentation = `<script>
 window.testTerms=[];window.testSockets=[];window.testInputs=[];window.testSnapshots=[];
@@ -122,7 +122,7 @@ const checks = await withPage({ name: 'terminal-controls', instrumentation }, as
   await layoutReady();
   assert.equal(await enabled(), false);
   await up();
-  await evaluate('document.querySelector("#terminal-copy [data-done]").click()');
+  await withDialogClose(evaluate, '#terminal-copy', () => evaluate('document.querySelector("#terminal-copy [data-done]").click()'));
   await ready();
   assert.deepEqual(await inputs(), []);
   pass('Copy cancels a pending gesture and never leaks it into terminal input');

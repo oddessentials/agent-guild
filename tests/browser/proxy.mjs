@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
-import { until, withPage } from './chrome.mjs';
+import { until, withDialogClose, withPage } from './chrome.mjs';
 import { Tailscale, runTailscale } from '../../src/manager/tailscale.mjs';
 
 const fixture = fileURLToPath(new URL('../fixtures/fake-tool.mjs', import.meta.url));
@@ -175,7 +175,7 @@ try {
     assert.deepEqual(await evaluate(`[...document.querySelectorAll('#folder-list .folder-row')].map(r=>r.textContent)`), ['.hidden', 'alpha', 'beta']);
     await evaluate(`document.querySelector('#folder-hidden').click(); document.querySelector('#folder-list .folder-row').click()`);
     await until('child folder listed', () => evaluate(`document.querySelector('#folder-current').textContent===${JSON.stringify(path.join(tree, 'alpha'))}`));
-    await evaluate(`document.querySelector('#folder-use').click()`);
+    await withDialogClose(evaluate, '#folder-browser', () => evaluate(`document.querySelector('#folder-use').click()`));
     assert.equal(await evaluate(`document.querySelector('#folder-browser').open`), false);
     assert.equal(await evaluate(`document.querySelector('#cwd').value`), path.join(tree, 'alpha'));
     await evaluate(`{ document.querySelector('#github-parent').value=${JSON.stringify(tree)}; document.querySelector('#github-parent-pick').click(); }`);
@@ -208,7 +208,7 @@ try {
     await evaluate(`document.querySelector('#folder-new-cancel').click()`);
     assert.equal(await evaluate(`document.querySelector('#folder-new').hidden`), true);
     await until('use enabled', () => evaluate(`!document.querySelector('#folder-use').disabled`));
-    await evaluate(`document.querySelector('#folder-use').click()`);
+    await withDialogClose(evaluate, '#folder-browser', () => evaluate(`document.querySelector('#folder-use').click()`));
     assert.equal(await evaluate(`localStorage.getItem('agentGuild.cloneParent')`), tree);
     await evaluate(`{ document.querySelector('#cwd').value=${JSON.stringify(path.join(tree, 'beta'))}; document.querySelector('.provider[data-id="fake"] .new').click(); }`);
     await until('session started in the typed folder', () => [...ctx.manager.sessions.values()].some((s) => s.toJSON().cwd === path.join(tree, 'beta')));
@@ -231,11 +231,12 @@ try {
     await until('clone folder browser lists the new folder', () => evaluate(`document.querySelector('#folder-current').textContent===${JSON.stringify(tree)} && [...document.querySelectorAll('#folder-list .folder-row')].some(r=>r.textContent==='clones & co')`));
     await evaluate(`[...document.querySelectorAll('#folder-list .folder-row')].find(r=>r.textContent==='clones & co').click()`);
     await until('new folder opened for cloning', () => evaluate(`document.querySelector('#folder-current').textContent===${JSON.stringify(made)} && !document.querySelector('#folder-use').disabled`));
-    await evaluate(`document.querySelector('#folder-use').click()`);
+    await withDialogClose(evaluate, '#folder-browser', () => evaluate(`document.querySelector('#folder-use').click()`));
     assert.equal(await evaluate(`document.querySelector('#github-parent').value`), made);
     assert.deepEqual(await evaluate(`JSON.parse(localStorage.getItem('agentGuild.recentCloneParents'))`), [made, tree]);
     await evaluate(`document.querySelector('#github-parent').focus()`);
-    await until('recent clone folders offered', () => evaluate(`!document.querySelector('#github-parent-recent').hidden`));
+    assert.equal(await evaluate(`document.activeElement.id`), 'github-parent');
+    assert.equal(await evaluate(`document.querySelector('#github-parent-recent').hidden`), false);
     assert.deepEqual(await evaluate(`[...document.querySelectorAll('#github-parent-recent [role=option]')].map(o=>o.textContent)`), [made, tree]);
     assert.equal(await evaluate(`document.querySelector('#github-parent').getAttribute('aria-expanded')`), 'true');
     await until('earlier toast gone', () => evaluate(`document.querySelector('#toast').hidden`));
@@ -298,10 +299,10 @@ try {
       await layoutReady();
       assert.equal(await evaluate(`(() => { const e=document.querySelector('.remote-body'); return e.scrollWidth<=e.clientWidth; })()`), true, `${skin} ${theme}`);
     }
-    await evaluate(`document.querySelector('#remote-close').click()`);
+    await withDialogClose(evaluate, '#remote-access', () => evaluate(`document.querySelector('#remote-close').click()`));
     assert.equal(await evaluate(`document.querySelector('#remote-signin').value`), '');
     assert.equal(await evaluate(`document.querySelector('#remote-qr').hidden`), true);
-    await until('focus returns to Settings', () => evaluate(`['settings', 'menu-toggle'].includes(document.activeElement.id)`));
+    assert.equal(await evaluate(`['settings', 'menu-toggle'].includes(document.activeElement.id)`), true);
     pass('private QR and sign-in link render under CSP, fit a phone screen, and clear when closed');
 
     ctx.remoteAccess.change({ action: 'disable', revision: ctx.remoteAccess.snapshot().revision });

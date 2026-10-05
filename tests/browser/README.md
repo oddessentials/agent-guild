@@ -8,6 +8,39 @@ a folder for desktop and phone screenshots. These checks use simulated GitHub
 responses and never contact GitHub. Set `CHROME_PATH`
 to Chrome or Edge on Windows, as with the checks below.
 
+## Dialog lifecycle
+
+Use `withDialogClose(evaluate, selector, action)` from `chrome.mjs` whenever a
+browser action closes a native dialog before the next interaction. It registers
+the real `close` listener before the action and awaits that event, including for
+trusted touch/keyboard input and indirect closes such as switching sessions.
+Neither `dialog.open === false` nor restored focus means that the queued close
+handler has finished. Keep animation/frame waits for geometry measurements only.
+
+The lifecycle audit covers folder selection and remote-access Close in the proxy
+check; terminal-copy Done, Escape, session switching, Hide and page departure;
+and the history, environment, model, remote-access and folder sizing checks.
+Layout and GitHub checks close docks, popovers or inline forms, not native dialogs.
+The deliberately delayed-close regression stays in the environment unit test,
+where close events are explicitly queued and released.
+
+Before pushing a browser synchronization change, run the full Linux/Node 24
+sequence in CI order (with dependencies installed and Chrome available):
+
+```sh
+set -e
+export CHROME_NO_SANDBOX=1
+node tests/browser/terminal-copy.mjs
+node tests/browser/terminal-controls.mjs
+node tests/browser/layout.mjs
+node tests/browser/github.mjs
+node tests/browser/github-branches.mjs
+node tests/browser/proxy.mjs
+npm install --prefix .cache/browser-tools --no-save --package-lock=false --ignore-scripts playwright-core@1.63.0
+node .cache/browser-tools/node_modules/playwright-core/cli.js install --with-deps webkit
+PLAYWRIGHT_MODULE=.cache/browser-tools/node_modules/playwright-core/index.mjs node tests/browser/dialogs.mjs
+```
+
 ## HTTPS reverse proxy
 
 `node tests/browser/proxy.mjs` starts an isolated manager, a real test PTY and

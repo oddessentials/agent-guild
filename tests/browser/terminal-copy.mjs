@@ -2,7 +2,7 @@
 // Run: node tests/browser/terminal-copy.mjs (CHROME_PATH may name Chrome/Edge).
 // Touch emulation cannot verify Android's native selection handles or OS menus.
 import assert from 'node:assert/strict';
-import { until, withPage } from './chrome.mjs';
+import { until, withDialogClose, withPage } from './chrome.mjs';
 
 const instrumentation = `<script>
 window.testTerms=[];window.testMessages=[];
@@ -26,6 +26,7 @@ const checks = await withPage({
     await send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point] });
     await send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   };
+  const closeSheet = (action = () => tap('#terminal-copy [data-done]')) => withDialogClose(evaluate, '#terminal-copy', action);
   const sheet = 'document.querySelector("#terminal-copy")';
   const area = `${sheet}.querySelector("textarea")`;
   const status = `${sheet}.querySelector('[role="status"]')`;
@@ -76,15 +77,17 @@ const checks = await withPage({
     const { data } = await send('Page.captureScreenshot', { format: 'png' });
     fs.writeFileSync(process.env.COPY_SCREENSHOT, Buffer.from(data, 'base64'));
   }
-  await tap('#terminal-copy [data-done]');
+  await closeSheet();
   assert.equal(await evaluate(`${area}.value`), '');
   assert.equal(await evaluate(`document.activeElement === ${current}.textarea`), true);
   assert.deepEqual(await evaluate('testMessages'), []);
   pass('Done clears text and restores terminal focus without writing to the session');
   await tap('#panel-copy');
-  await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
-  await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
-  await until('Escape closed sheet', () => evaluate(`!${sheet}.open && ${area}.value === ''`));
+  await closeSheet(async () => {
+    await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+  });
+  assert.equal(await evaluate(`!${sheet}.open && ${area}.value === ''`), true);
   pass('Escape dismisses and clears the sheet');
 
   // Real browser promise race: a previous copy must not update a newly opened sheet.
@@ -93,7 +96,7 @@ const checks = await withPage({
   await evaluate('Object.defineProperty(navigator,"clipboard",{configurable:true,value:{writeText:()=>new Promise(resolve=>{window.resolveCopy=resolve})}})');
   await tap('#terminal-copy [data-copy]');
   await until('pending copy', () => evaluate(`${status}.textContent === 'Copying…'`));
-  await tap('#terminal-copy [data-done]');
+  await closeSheet();
   await tap('#panel-copy');
   await evaluate('resolveCopy()');
   assert.equal(await evaluate(`${status}.textContent`), 'Touch and hold to select text.');
@@ -111,21 +114,21 @@ const checks = await withPage({
   await until('missing-API fallback', () => evaluate(`${status}.textContent.startsWith('Use Copy')`));
   assert.equal(await evaluate(`${area}.value.slice(${area}.selectionStart,${area}.selectionEnd)`), 'FIRST');
   pass('missing Clipboard API retains the selected text and explains native Copy');
-  await tap('#terminal-copy [data-done]');
+  await closeSheet();
 
   await tap('#panel-copy');
-  await evaluate('document.querySelectorAll("#sessions .session-card .open")[1].click()');
+  await closeSheet(() => evaluate('document.querySelectorAll("#sessions .session-card .open")[1].click()'));
   assert.equal(await evaluate(`${sheet}.open`), false);
   assert.equal(await evaluate(`${area}.value`), '');
   pass('switching sessions clears the old snapshot');
   await tap('#panel-copy');
-  await evaluate('document.querySelector("#panel-close").click()');
+  await closeSheet(() => evaluate('document.querySelector("#panel-close").click()'));
   assert.equal(await evaluate(`${sheet}.open`), false);
   assert.equal(await evaluate(`${area}.value`), '');
   pass('Hide clears the snapshot');
   await evaluate('document.querySelector("#sessions .session-card .open").click()');
   await tap('#panel-copy');
-  await evaluate('dispatchEvent(new PageTransitionEvent("pagehide",{persisted:true}))');
+  await closeSheet(() => evaluate('dispatchEvent(new PageTransitionEvent("pagehide",{persisted:true}))'));
   assert.equal(await evaluate(`${sheet}.open`), false);
   assert.equal(await evaluate(`${area}.value`), '');
   pass('page departure clears the snapshot before BFCache restoration');
@@ -141,7 +144,7 @@ const checks = await withPage({
   assert.equal(await evaluate(`document.activeElement === ${area}`), true);
   pass('browser-enforced clipboard denial retains selection and shows fallback');
 
-  await tap('#terminal-copy [data-done]');
+  await closeSheet();
   for (const [width, height] of [[600, 960], [800, 600], [360, 740]]) {
     await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: true });
     await layoutReady();
@@ -179,12 +182,12 @@ const checks = await withPage({
     assert.equal(layout.inside && layout.textVisible && layout.footerInside, true, JSON.stringify(layout));
     assert.deepEqual(layout.host, bounds);
     assert.deepEqual(await evaluate('testMessages'), []);
-    await tap('#terminal-copy [data-done]');
+    await closeSheet();
     await evaluate(`${current}.scrollToTop()`);
     await tap('#panel-copy');
     await layoutReady();
     assert.equal(await evaluate(`${area}.scrollLeft`), 0, 'reopening at the top does not keep the old horizontal offset');
-    await tap('#terminal-copy [data-done]');
+    await closeSheet();
   }
   pass('portrait, landscape and narrow layouts keep controls visible without resizing the live terminal');
   pass('wrapped ASCII and Unicode output opens at the live viewport, including after reopening');
