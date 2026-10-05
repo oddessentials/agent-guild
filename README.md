@@ -11,13 +11,12 @@
   <a href="https://www.youtube.com/watch?v=ziT62WtXQ1M"><img src="https://img.shields.io/badge/trailer-watch%20on%20YouTube-e5534b?logo=youtube&logoColor=white" alt="Watch the Agent Guild trailer on YouTube"></a>
 </p>
 
-**Agent Guild** runs Claude Code, Codex CLI, Antigravity CLI, Grok Build and your
-own shell side by side, in real terminals, from one local web page. Each
-session is a card that shows what the tool is doing, which model it runs and
-which helper agents it has summoned. Close the page whenever you like; the
-sessions keep working.
+**Agent Guild** runs Claude Code, Codex CLI, Antigravity CLI, Grok Build and
+your own shell side by side, in real terminals, from one local web page.
+Close the page whenever you like; the sessions keep running.
 
-See it in action in the [Agent Guild trailer](https://www.youtube.com/watch?v=ziT62WtXQ1M).
+[Try the demo](https://oddessentials.github.io/agent-guild/) in your browser
+(simulated, nothing installed) or [watch the trailer](https://www.youtube.com/watch?v=ziT62WtXQ1M).
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/images/overview-light.webp">
@@ -31,409 +30,146 @@ npm install -g @oddessentials/agent-guild
 agent-guild
 ```
 
-The page opens in your browser. Pick a provider, press **New**, and you are
-in a live terminal.
+The page opens in your browser. Press **New** on a tool's card to start a
+session. Sign in to each tool inside its first session, as you would in any
+terminal.
 
-Want to look around first? The [interactive web demo](https://oddessentials.github.io/agent-guild/)
-uses simulated sessions and usage data in your browser; it never runs commands
-or connects to a local session manager.
+| Requirement | |
+| --- | --- |
+| Node.js | 22 or newer |
+| Windows | 10 version 1809 or later, x64 or arm64. No WSL needed. |
+| macOS | 11 or later, Intel or Apple silicon |
+| Linux | x64 or arm64, with a desktop or over SSH |
 
-**You need** Node.js 22 or newer on Windows 10 1809+, macOS 11+ or Linux
-(x64 or arm64), and each coding tool you want to use, signed in on its own.
-Agent Guild installs the tools for you but never handles your sign-in. No
-compiler and no WSL are needed.
+No compiler is needed. A missing tool shows **Install** on its card;
+Antigravity CLI, which is not on npm, shows its install command instead.
+
+## Setup
+
+### Access token
+
+You do not create one. The first run generates it, and `agent-guild` opens
+the page with it. If a browser asks for it, open the link that
+`agent-guild url` prints. Anyone with that link can use your terminals.
+
+To replace it, stop the manager (this ends running sessions), delete
+`auth-token` from the [data folder](docs/configuration.md#data-folder), and
+start again.
+
+### Headless Linux server
+
+1. On the server:
+
+   ```sh
+   npm install -g @oddessentials/agent-guild
+   agent-guild --no-browser
+   ```
+
+   It prints `Open: http://127.0.0.1:47821/#token=…`.
+
+2. On your computer, open a tunnel and leave it open:
+
+   ```sh
+   ssh -L 47821:127.0.0.1:47821 you@server
+   ```
+
+3. Open the printed link in your browser. The local port must be `47821`;
+   any other port is refused.
+
+To start Agent Guild when the server boots, choose **Settings → Startup →
+When the computer starts** in the page, then run once on the server:
+
+```sh
+sudo loginctl enable-linger $USER
+```
+
+This needs systemd and is not offered under WSL. `agent-guild status` shows
+the result.
+
+### Remote access with Tailscale
+
+Use your terminals from a phone or another computer on your
+[Tailscale](https://tailscale.com) network.
+
+You need Tailscale 1.52 or later, signed in on both devices in the same
+tailnet, with MagicDNS on.
+
+1. In the page, choose **Settings → Remote access → Enable remote access**.
+2. If it shows **Open Tailscale approval**, approve HTTPS there, then choose
+   **Continue setup**.
+3. If it says **Tailscale needs permission**, run the command under
+   **Connection details** in a terminal allowed to manage Tailscale, then
+   choose **Continue setup**.
+4. Choose **Connect another device** and scan the QR code, or open the
+   sign-in link, on the other device.
+
+The sign-in link contains your access token. **Disable remote access** turns
+it off; sessions keep running. On a headless server, do this through the SSH
+tunnel above. For another reverse proxy, see
+[configuration](docs/configuration.md#reverse-proxies).
+
+### macOS keychain
+
+The first Claude Code usage meter may ask for access to the
+"Claude Code-credentials" keychain item. Choose **Always Allow**.
 
 ## Features
 
-**Every major coding CLI, one place.** Claude Code, Codex CLI, Antigravity CLI,
-Grok Build and a plain shell each get a card. A tool that is missing shows
-**Install**, which runs the install in a session you can watch, or the
-vendor's install command for a tool not published on npm. An installed
-tool shows its version and offers **Update** when a newer one is out, using
-the same installer that put it there: npm, Homebrew, WinGet or the vendor's
-own. The cloud icon on each card opens the vendor's web app.
-
-**Real terminals that outlive the page.** Every session is a full interactive
-terminal: type instructions, answer prompts, watch output. Run as many as you
-like. A local session manager owns them, so you can close or reload the page
-and come back to the same screens. Drag a session card by its grip, with a
-mouse or a finger, to put the cards in the order you want; this browser
-remembers it, and new sessions join at the end.
-
-**Two terminals at once.** **Split** in the terminal's header, or Ctrl+click
-(⌘-click on a Mac) on a card's **Open**, shows a second session beside the
-first, or above it on a tall, narrow window. Click a terminal to work in it;
-drag the divider, or focus it and use the arrow keys, to resize them. The
-session name in the header switches the focused terminal to another session.
-On a phone one terminal shows at a time, with a button to switch to the
-other. This browser reopens the terminals you had open after a reload.
-
-On phones and tablets, a strip below the terminal provides **← ↑ ↓ → Enter
-Esc**. Tap once to move through a prompt, confirm a choice or send Escape.
-The keys act on the focused terminal and leave the on-screen keyboard as
-it is. They are disabled while the terminal reconnects or after it exits;
-taps made while disconnected are never replayed.
-
-On a touchscreen, **Copy…** opens a still copy of the terminal text. Touch and
-hold to select, then use **Copy selection** or the browser's Copy menu. **Done**
-returns to the live terminal; the session keeps running while you copy. The
-view includes retained scrollback, or the current screen of a full-screen tool.
-
-**Pick your shell.** The Shell card offers the shells installed on your
-computer and remembers your choice in this browser. On Windows it defaults
-to PowerShell 7 when installed, then Windows PowerShell; Git Bash and Command
-Prompt are also offered when found. On macOS and Linux it follows your login
-shell. Pick the default chip to clear a saved choice and follow the default
-again. The choice applies to new sessions.
-
-**See the manager environment.** The Shell card summarizes detected Node.js,
-Python, Go, .NET SDK, R and Rust versions. **Environment details** opens on
-the manager result: resolved paths, detection results, .NET runtimes and
-detected nvm/NVM for Windows, vfox, uv and pnpm launchers. Tools are listed
-by presence; their activation is not inferred. The same dialog can show three
-other facts, each refreshed on its own: pin files in the working folder
-(configured text, not an installed version), the PATH a Guild session was
-given when it started, and the PATH a new process receives before the shell
-runs its startup files. tmux and herdr sessions have no spawn record to show.
-The card itself stays the manager summary. This describes the computer running
-Agent Guild, including when viewed remotely.
-
-Python always uses `python` when it is found on the manager's PATH; otherwise
-it uses `python3`. A broken `python` remains the primary result, with a
-different `python3` shown separately. **Not found** means no command was
-resolved, **Runtime unavailable** means a launcher was found but no runtime
-could safely be reported, and **Probe failed** means inspection or the version
-check failed. Missing optional runtimes never prevent starting a shell.
-
-Discovery runs on first viewing and again on **Refresh**, in an isolated
-helper with a neutral temporary working directory. It does not load shell
-profiles, activate tools, download runtimes or modify installations. Unknown
-script/shim launchers and Windows execution aliases are left unverified.
-Refresh checks the fact selected in the dialog and leaves the others as they
-are. The manager fact reads the manager's current environment and does not
-reload its PATH from a shell. Existing results for that fact remain visible
-during refresh. Go reports
-the local bundled toolchain with automatic switching disabled, and the Node
-version running Agent Guild is also shown in details.
-
-**Work inside tmux or herdr.** When installed, the Shell card also offers
-tmux (3.2 or later, on macOS and Linux) and herdr. A tmux card runs a tmux
-session of its own, with your own configuration, and tools in it report to
-the card as they would in a shell. A herdr card opens your herdr session and
-shows the agents herdr sees in its panes, working, blocked or idle. Stopping
-or closing either card only detaches it, as closing a terminal window would:
-the session keeps running, **Reattach** on the card brings it back, and the
-card names the command that reattaches it from a terminal. Stopping or
-restarting the manager detaches them the same way, and the cards come back,
-closed and ready to reattach, when it starts again.
-
-Open **Terminal multiplexers** on the Shell card to install, update or
-uninstall tmux and herdr. Operations run in a terminal so you can read their
-output and answer package-manager prompts. tmux uses Homebrew on macOS and
-Homebrew or apt, dnf, or pacman on Linux; a distribution must offer 3.2 or
-later. Update distro packages with their package manager. Native Windows
-offers herdr instead of tmux.
-
-Herdr updates leave its existing servers and panes running, including
-Homebrew updates. New starts and reattachments wait until the operation
-finishes. Uninstall requires herdr's servers to be stopped and their status
-to be verifiable. tmux asks before changing a copy that attached or detached
-cards depend on. Settings and session data are kept. If a multiplexer is
-missing when the manager starts, its saved cards wait for it and return
-when it is detected again, provided their sessions still exist.
-
-<img src="docs/images/terminal.webp" alt="An open Claude Code session with its helper agents shown in the header">
-
-**Agents and models at work.** Helper agents that a tool starts appear on its
-card as familiars while they run, and the card names the model in use. The
-character comes alive while the session works, and the session's level rises
-with every hour it runs.
-
-**Several subscriptions per tool.** Add a work account next to your personal
-one and switch with a chip on the card. Each account keeps its own sign-in,
-usage meters and sessions. See [Accounts](docs/configuration.md#accounts).
-
-**See what is left of your limits.** Claude Code and Codex CLI
-cards show a meter for each rate-limit window, such as 5-hour and 7-day, with
-the time until it resets. They also show your plan, Claude's extra-usage
-spend and Codex's credit balance when the account has them. Any other tool
-can supply a command that prints its usage.
-
-**Pick the right model.** Each card grades the tool's newest fully
-benchmarked model on coding, intelligence and agentic work, from S to D. Open it to compare every
-model the tool offers across 13 benchmarks: Artificial Analysis indexes and
-Design Arena results for websites, UI, game dev, data visualization, 3D, SVG,
-web apps, full stack and mobile. It also shows context size and price.
-
-<img src="docs/images/models.webp" alt="The Claude Code models dialog with benchmark tiers for each model">
-
-**Pick up where you left off.** **Existing…** lists the tool's own earlier
-sessions, newest first, read from where the tool keeps them. Filter by title,
-folder or id and resume one in its own folder, or resume any session by id.
-
-<img src="docs/images/history.webp" alt="The Claude Code session history with a filter and Resume buttons">
-
-**Agentic development news.** A newsfeed gathers about 20 sources on AI
-coding, agents and local models, including vendor blogs, Hacker News, arXiv,
-and releases of the tools you have installed. The five latest headlines
-appear on the page; **All news** opens the full feed with News, Releases and Research
-filters.
-
-<img src="docs/images/news.webp" alt="The news panel with today's items from news sources and tool releases">
-
-**Always current.** When a new Agent Guild is published, **Upgrade to
-vX.Y.Z** installs it while your sessions keep running, and **Restart to use
-vX.Y.Z** switches over when you are ready. The version badge opens
-**What's new** with the notes of every release.
-
-<img src="docs/images/whats-new.webp" alt="The What's new panel listing the release notes of each version">
-
-**Keep notes at hand.** **Notes** in the top bar opens a notepad for prompts,
-commands and to-dos in the side panel, next to your terminals. It saves up to
-100,000 characters as you type. The same notes follow every browser signed in
-to this manager, including one opened through remote access. This browser
-keeps a copy too: if the manager is unreachable, the line under the title
-says the notes are saved in this browser only, and they sync when it is back.
-
-**GitHub beside your work.** **GitHub** in the top bar opens the side panel.
-Sign in to one or more GitHub accounts, then search the repositories of all
-of them from the box at its top; it starts on the repository the focused
-terminal's folder is a clone of. **Issues** lists, opens, edits and closes
-issues. **Actions** shows the latest workflow runs and whether one is still
-going, refreshing while it is on screen. **Pull requests** lists the open
-ones. **Branches** lists every remote branch of the selected repository, with
-its default and protected branches marked. Filter by name, copy a branch name,
-or open it on GitHub. Larger lists load progressively; **Refresh** checks for
-changes while keeping your place in the list. **Repositories** lists and creates
-repositories and clones them over SSH with a key Agent Guild keeps for each account. On a wide window the side panel
-makes room for itself; on a smaller one it lies over the cards, and over the
-terminals when they would get too narrow. Drag its edge to resize it. Escape
-or **Close** puts it away.
+* Real terminals that survive closing or reloading the page
+* Two terminals side by side with **Split**
+* Install and update each tool from its card
+* Helper agents and the model in use, shown on each card
+  ([setup per tool](docs/agent-reporting.md))
+* Rate-limit meters for Claude Code and Codex CLI
+* Several accounts per tool ([accounts](docs/configuration.md#accounts))
+* Model grades and benchmarks for each tool's models
+* Resume a tool's earlier sessions with **Existing…**
+* GitHub issues, pull requests, workflow runs, branches and cloning
+* Shared notes, a news feed, six skins, light and dark mode
+* tmux and herdr sessions that keep running when the manager stops
 
 <img src="docs/images/workspace.webp" alt="Two terminals side by side with the GitHub panel showing the workflow runs of the focused terminal's repository">
-
-**Settings.** The Settings menu in the top bar picks a skin and light or
-dark mode, without a reload. On a narrow window the top bar's buttons gather
-under its menu button. **Guild** is the default fantasy look;
-**Professional** is a plain business look with no characters; **Orbital**
-puts a crew of little robots in deep space; **Grove** is a calm moss garden
-of gentle nature spirits; **Gnomeland** is a lantern-lit village of gnome
-builders, engineers with a little magic; **Goblinville** is a steam-powered
-town of goblin, orc, ogre and troll builders on stilts over a bog. The page
-follows your system's light or dark setting until you pick one. See
-[docs/SKINS.md](docs/SKINS.md) to make another. **Alert sounds**, off until
-you turn them on in the same menu, chime when the session manager confirms
-a stop or restart, remains unavailable after a brief recovery check, or a
-new version is discovered after the initial version check. Session activity
-and assistant responses have no sounds:
-the providers do not yet offer consistently reliable completion signals.
-**Launch at sign-in**, in the same menu, starts the session manager in the
-background whenever you sign in to the computer running Agent Guild; open
-the page as usual afterwards. On Windows it is an entry in Task Manager's
-Startup apps, on macOS a background item named Agent Guild under System
-Settings › General › Login Items & Extensions, and on Linux an entry named
-Agent Guild in the desktop's startup settings, so it needs a desktop session
-there: a server reached over SSH does not start it. macOS keeps its own
-switch for that item, which Agent Guild cannot read: switched off there, it
-does not start even while **Launch at sign-in** is checked. While it is on,
-the setting says when it last ran at sign-in and whether the session manager
-started then.
-
-On Linux the setting is one choice: **Only when I start it**, **When I sign
-in** (the desktop entry above) or **When the computer starts**. The last
-runs the session manager as a systemd user service, `agent-guild.service`,
-so it is running before you connect to a machine with no desktop, and
-systemd starts it again if it fails. Only one of the two starters is on at
-a time, and changing the choice never stops the running session manager: one
-started by hand hands over to systemd at its next restart. While the service
-is on, `agent-guild open` and `agent-guild restart` start the session manager
-through systemd, `agent-guild stop` stops it until the next start, and tmux
-cards survive restarts as they do without it. To start before anyone signs
-in, systemd needs lingering, which only an administrator can always turn
-on; the setting shows the command, `sudo loginctl enable-linger <user>`,
-until it is on. It also shows what systemd reports, such as a port another
-session manager was using, and for a failure the command that shows its
-log, `journalctl --user -u agent-guild.service`. `agent-guild status` prints
-the same state, read from systemd when no session manager answers.
-
-The browser tab icon adds a rotating green ring whenever any session card says
-**Working**, including Shell and task cards. It mirrors the cards' terminal
-activity, not assistant completion. The ring remains visible with reduced
-motion or when the browser pauses animation. During a connection interruption,
-it reflects the last card state until the page reconnects.
-
-Sounds play in one eligible tab per browser and origin after browser playback
-permission (usually a click or keypress). They require Web Locks and writable
-local storage. Opening or reconnecting a page does not replay old alerts,
-even when a different manager has taken over. Closing a browser does not
-stop the manager. After an unexpected disconnect, an already connected page
-checks the local health endpoint twice, two seconds apart, with a one-second
-timeout per request. If both fail, it shows “Manager unavailable” and alerts
-once; it cannot confirm whether the process exited or sessions ended.
-A successful health check, reconnection, or closing the page cancels the alert.
-There is no added polling while connected and no additional monitoring process.
 
 ## Commands
 
 | Command | What it does |
 | --- | --- |
-| `agent-guild` or `agent-guild open` | Start the manager if needed and open the page. `--no-browser` prints the URL instead. |
-| `agent-guild status` | Show whether the manager is running, how it starts, and list its sessions. |
-| `agent-guild stop` | Stop the manager, ending every session. |
-| `agent-guild restart` | Stop the manager and start it again on the version installed on disk, ending every session. |
-| `agent-guild url` | Print the page URL with its access token. |
-| `agent-guild start` | Run the manager in the foreground, for debugging. |
+| `agent-guild` | Start the manager if needed and open the page. `--no-browser` prints the link instead. |
+| `agent-guild status` | Show whether the manager is running and list its sessions. |
+| `agent-guild stop` | Stop the manager and end every session. |
+| `agent-guild restart` | Restart the manager on the installed version and end every session. |
+| `agent-guild url` | Print the page link with the access token. |
+| `agent-guild start` | Run the manager in the foreground. |
 
-**Restart manager** and **Stop manager** in the page's **Manager** menu do the
-same as `restart` and `stop`, but ask first while sessions are running. The page also
-asks before you close it with sessions running. Sessions end when the manager
-stops or the computer restarts.
+Sessions end when the manager stops or the computer restarts. tmux and herdr
+sessions survive a manager stop.
 
-## Configuration
+## Privacy
 
-Nothing needs configuring. To add a provider, change a command, sign in with
-more than one account or point usage meters at your own command, create a
-`providers.json` in the data folder:
-
-| Platform | Data folder |
-| --- | --- |
-| Windows | `%APPDATA%\AgentGuild` |
-| macOS | `~/Library/Application Support/AgentGuild` |
-| Linux | `~/.config/agent-guild` |
-
-The full reference, including every field and environment variable, is in
-[docs/configuration.md](docs/configuration.md).
-
-## Show agents and models
-
-Agents are reported by the coding tool's hooks, not guessed from its output.
-Each helper agent appears on the card while it runs. Agent Guild gives every
-Claude Code and Codex CLI session its reporting hooks for that session only,
-without changing the tool's own settings. Antigravity CLI has no such option:
-turn on **Agent reporting** on its card once, which installs an Agent Guild
-plugin into Antigravity. It reports the model and the conversation, but no
-helper agents or shell commands. Grok Build cannot take hooks for one session yet; add the hooks
-from [examples/grok-hooks.json](examples/grok-hooks.json) to see its agents.
-When a tool's hooks have not reported some time after a prompt was sent,
-because hooks are turned off, restricted by an administrator or not trusted
-for the folder, the card says so.
-
-The card also names the model, from the hooks, from `--model` or from the
-tool's screen.
-
-Any other tool or script can report agents and its model too. See
-[docs/agent-reporting.md](docs/agent-reporting.md).
-
-## Security and privacy
-
-* The manager listens on `127.0.0.1` only. **Settings → Remote access** sets
-  up a private Tailscale address without restarting your terminals. See
-  [remote access and other proxies](docs/configuration.md#reverse-proxies).
-* Every API call needs a random per-user token, stored in the data folder
-  with owner-only permissions. Anyone who can run programs as your user can
-  read it, as with any local developer tool.
-* Requests with a foreign `Host` or `Origin` header are refused, so other
-  websites cannot reach your terminals through your browser.
-* Tools inside a session get a separate token that can only report agents
-  for that session.
-* GitHub sign-ins, the SSH key Agent Guild makes for each GitHub account and
-  GitHub's SSH host keys are kept in the `github` folder of the data folder,
-  readable only by you. A clone uses only that key and those host keys; your
-  own `~/.ssh` and Git configuration are not read or changed.
-* Usage meters are fetched by the manager with each tool's own sign-in. The
-  page only receives percentages. On macOS the first lookup may ask for
-  keychain access to the "Claude Code-credentials" item; choose Always Allow.
-* **Launch at sign-in** writes outside the data folder only while it is on:
-  the `AgentGuild` value under
-  `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` on Windows, which
-  runs `autostart.js` from the data folder through `wscript.exe` so no
-  console window opens;
-  `~/Library/LaunchAgents/com.oddessentials.agent-guild.plist` on macOS,
-  which runs the `Agent Guild` script in the data folder so that macOS lists
-  it by that name; and `~/.config/autostart/agent-guild.desktop` on Linux,
-  which runs `autostart.sh` from the data folder. On Linux, a Node.js,
-  package or data folder path holding `"`, `` ` ``, `$` or `\` cannot be
-  used, because desktops read those differently in a startup entry; the
-  setting then says so. Each sign-in touches `sign-in-attempt` and records
-  its outcome in `sign-in.json` in the data folder.
-  Turning it off removes them, and an entry whose Agent Guild package has
-  been uninstalled or moved removes itself at the next sign-in. With nvm,
-  the package lives in the Node.js version's folder, so uninstalling that
-  version counts as uninstalling Agent Guild; a Homebrew Node.js upgrade
-  or a Snap Node.js refresh does not. On macOS and Linux what the entry runs at sign-in, including a
-  missing Node.js, is appended to `manager.log`.
-  The entry saves the manager's listening port, including the assigned port
-  when started with `AGENT_GUILD_PORT=0`. Enabled entries are updated when
-  the manager starts. A macOS entry disabled through `launchctl` stays off
-  until you explicitly turn **Launch at sign-in** back on.
-* **When the computer starts**, on Linux, writes
-  `~/.config/systemd/user/agent-guild.service` and enables it, which links
-  it from `default.target.wants`; the unit runs `boot.sh` from the data
-  folder, which runs `agent-guild start` in the foreground. Choosing another
-  option disables and removes both. A unit whose Agent Guild package has
-  been uninstalled or moved disables and removes itself at the next start.
-  Lingering, which lets it start before anyone signs in, is a system
-  setting that Agent Guild reads but never changes.
-
-The manager makes these outbound requests, and none of them carry your code
-or prompts:
+The manager listens on `127.0.0.1` only. Remote access goes through a private
+Tailscale route or your own reverse proxy to that address. None of these
+requests carry your code or prompts:
 
 | To | For | How often |
 | --- | --- | --- |
-| npm registry | Tool and Agent Guild version checks | About hourly; `AGENT_GUILD_NO_UPDATE_CHECK=1` turns them off |
-| Anthropic and OpenAI usage endpoints | Usage meters, with the tool's own sign-in | Every minute while the page is open |
-| OpenRouter's public model list | Benchmarks | Every 6 hours |
-| Public news feeds, Hacker News, arXiv and GitHub | The newsfeed | Every 30 minutes while the page is open |
-| GitHub's releases API | What's new | Hourly |
-| herdr.dev and formulae.brew.sh | Multiplexer version checks | At most hourly, or on Refresh or a requested operation; disabled by `AGENT_GUILD_NO_UPDATE_CHECK=1` |
-| herdr.dev, GitHub release downloads, and the selected package manager's repositories | Multiplexer installation and updates | When you request the operation |
-| GitHub (sign-in, API, avatars and SSH) | Signing in to GitHub, listing your repositories, issues, workflow runs and pull requests, editing issues, adding your SSH key and cloning | When you use the GitHub panel; while its Actions tab shows, every few seconds during a run and every 30 seconds otherwise |
+| npm registry | Version checks | Hourly |
+| Anthropic and OpenAI | Usage meters, with the tool's own sign-in | Every minute while the page is open |
+| OpenRouter | Model list for benchmarks | Every 6 hours |
+| News feeds, Hacker News, arXiv, GitHub | News feed | Every 30 minutes while the page is open |
+| GitHub releases | What's new | Hourly, more often just after a release |
+| herdr.dev, Homebrew | Multiplexer version checks | Hourly |
+| GitHub, GitHub Status | GitHub panel | When you use it |
+| Package sources | Installs and updates | When you ask |
 
-## Other front ends
+Failed news, model list and release checks retry after 10 minutes.
+`AGENT_GUILD_NO_UPDATE_CHECK=1` turns off version checks and self-upgrade.
 
-The page is one client of the manager's local API, documented in
-[docs/api.md](docs/api.md). Another interface, such as a planned Unreal Engine
-guild hall, can drive the same sessions at the same time. See
-[docs/architecture.md](docs/architecture.md).
+## More
 
-## Development
-
-```sh
-git clone https://github.com/oddessentials/agent-guild.git
-cd agent-guild
-npm install
-npm start      # open the page, starting a manager from this checkout if none runs
-npm test
-```
-
-* The tests start real managers and real pseudo-terminals, using a small fake
-  coding tool in `tests/fixtures`. CI runs them on Windows, macOS and Linux
-  with Node.js 22, 24 and 26, and installs the packed package on x64 and
-  arm64.
-* `node tests/browser/proxy.mjs` checks the real UI and terminal through a
-  local HTTPS proxy with an isolated manager and test certificates. Set
-  `CHROME_PATH` to Chrome or Edge if it is not in a standard location.
-* In a checkout, `launchers/AgentGuild.cmd` (Windows) and
-  `launchers/AgentGuild.command` (macOS) start Agent Guild with a
-  double-click.
-* `node docs/capture/capture.mjs --root <folder>` refreshes the screenshots
-  in `docs/images` from the real page, with demo sessions in place of real
-  tools. The cards show the folder's path, so pick a neutral one such as
-  `D:\code` or `/work`. It needs Chrome or Edge and leaves any running
-  manager alone. See the comment at the top of the script for options.
-* Pull request titles follow
-  [Conventional Commits](https://www.conventionalcommits.org/). Merging to
-  `main` publishes a release to npm and GitHub when it includes a `feat`,
-  `fix`, `perf` or `revert`.
-
-## Current limits
-
-* Sessions end when the manager stops or the computer restarts, except a
-  Shell session in tmux or herdr, which keeps running in it while the
-  manager is stopped.
-* Antigravity CLI and Grok Build have no usage meter.
-* Antigravity CLI has one account per computer user: it keeps its sign-in in
-  the system keychain and has no setting for another home folder.
+* [Configuration](docs/configuration.md): add tools, accounts, environment variables, reverse proxies
+* [Agent reporting](docs/agent-reporting.md): show agents from any tool
+* [Skins](docs/SKINS.md): make your own look
+* [Contributing](CONTRIBUTING.md)
 
 ## License
 
