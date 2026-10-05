@@ -434,7 +434,13 @@
       <button id="folder-up" class="btn" type="button">Up</button>
       <button id="folder-home" class="btn folder-chip" type="button">Home</button>
       <div id="folder-roots" class="folder-roots"></div>
+      <button id="folder-new-open" class="btn folder-new-open" type="button" aria-expanded="false" aria-controls="folder-new">New folder</button>
     </div>
+    <form id="folder-new" class="history-tools folder-new" hidden>
+      <input id="folder-new-name" type="text" placeholder="New folder name" aria-label="New folder name" spellcheck="false" autocomplete="off" autocapitalize="off" enterkeyhint="done">
+      <button id="folder-new-create" class="btn primary" type="submit">Create</button>
+      <button id="folder-new-cancel" class="btn" type="button">Cancel</button>
+    </form>
     <div class="history-tools">
       <input id="folder-filter" type="search" placeholder="Filter folders" aria-label="Filter folders" spellcheck="false" autocomplete="off">
       <label class="history-here"><input id="folder-hidden" type="checkbox"><span>Show hidden</span></label>

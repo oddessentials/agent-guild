@@ -165,6 +165,34 @@ try {
     assert.equal(await evaluate(`document.querySelector('#cwd').value`), path.join(tree, 'alpha'));
     await evaluate(`{ document.querySelector('#github-parent').value=${JSON.stringify(tree)}; document.querySelector('#github-parent-pick').click(); }`);
     await until('clone folder browser', () => evaluate(`document.querySelector('#folder-title').textContent==='Choose clone folder' && document.querySelector('#folder-current').textContent===${JSON.stringify(tree)} && !document.querySelector('#folder-use').disabled`));
+    await evaluate(`document.querySelector('#folder-new-open').click()`);
+    assert.equal(await evaluate(`document.activeElement.id`), 'folder-new-name');
+    const made = path.join(tree, 'clones & co');
+    for (const skin of await evaluate(`window.agentGuildSkins.map(s=>s.id)`)) {
+      for (const theme of ['light', 'dark']) {
+        await evaluate(`{ const root=document.documentElement; root.dataset.skin=${JSON.stringify(skin)}; root.dataset.theme=${JSON.stringify(theme)}; }`);
+        await layoutReady();
+        await evaluate(`Promise.all(document.querySelector('#folder-browser').getAnimations({subtree:true}).filter(a=>a.effect.getComputedTiming().iterations!==Infinity).map(a=>a.finished.catch(()=>{})))`);
+        const sized = await evaluate(`(() => { const d=document.querySelector('#folder-browser'),r=d.getBoundingClientRect();
+          const controls=['#folder-up','#folder-home','#folder-roots .btn','#folder-new-open','#folder-new-name','#folder-new-create','#folder-new-cancel','#folder-use','#folder-cancel'].map(s=>[s,document.querySelector(s)]);
+          return {left:r.left,right:r.right,width:innerWidth,overflow:d.scrollWidth>d.clientWidth,short:controls.filter(([,e])=>e.offsetHeight<44).map(([s])=>s),outside:controls.filter(([,e])=>{const b=e.getBoundingClientRect();return b.left<0||b.right>innerWidth;}).map(([s])=>s)}; })()`);
+        assert.ok(sized.left >= 0 && sized.right <= sized.width && !sized.overflow && !sized.outside.length && !sized.short.length, `${skin} ${theme} ${JSON.stringify(sized)}`);
+      }
+    }
+    await evaluate(`{ const root=document.documentElement; root.dataset.skin='guild'; root.dataset.theme='light'; }`);
+    await send('Input.insertText', { text: 'clones & co' });
+    await until('create enabled', () => evaluate(`!document.querySelector('#folder-new-create').disabled`));
+    await evaluate(`document.querySelector('#folder-new-create').click()`);
+    await until('new folder opened', () => evaluate(`document.querySelector('#folder-current').textContent===${JSON.stringify(made)} && document.querySelector('#folder-new').hidden && !document.querySelector('#folder-use').disabled`));
+    assert.ok(fs.statSync(made).isDirectory());
+    assert.equal(await evaluate(`document.querySelector('#folder-status').textContent`), 'No folders here.');
+    await evaluate(`document.querySelector('#folder-up').click()`);
+    await until('new folder listed in its parent', () => evaluate(`document.querySelector('#folder-current').textContent===${JSON.stringify(tree)} && [...document.querySelectorAll('#folder-list .folder-row')].some(r=>r.textContent==='clones & co')`));
+    await evaluate(`{ document.querySelector('#folder-new-open').click(); const name=document.querySelector('#folder-new-name'); name.value='clones & co'; name.dispatchEvent(new Event('input')); document.querySelector('#folder-new-create').click(); }`);
+    await until('duplicate refused', () => evaluate(`document.querySelector('#folder-status').classList.contains('error') && document.querySelector('#folder-status').textContent.includes('already exists') && !document.querySelector('#folder-new').hidden`));
+    await evaluate(`document.querySelector('#folder-new-cancel').click()`);
+    assert.equal(await evaluate(`document.querySelector('#folder-new').hidden`), true);
+    await until('use enabled', () => evaluate(`!document.querySelector('#folder-use').disabled`));
     await evaluate(`document.querySelector('#folder-use').click()`);
     assert.equal(await evaluate(`localStorage.getItem('agentGuild.cloneParent')`), tree);
     await evaluate(`{ document.querySelector('#cwd').value=${JSON.stringify(path.join(tree, 'beta'))}; document.querySelector('.provider[data-id="fake"] .new').click(); }`);
@@ -183,7 +211,7 @@ try {
     assert.deepEqual(await evaluate('cspViolations'), []);
     assert.deepEqual(errors, []);
     await send('Emulation.clearDeviceMetricsOverride');
-    pass('a remote phone browses real host folders for both fields, gets recent working folders, and cannot open folders on the host');
+    pass('a remote phone browses and creates real host folders in every skin and theme, gets recent working folders, and cannot open folders on the host');
 
     const pid = session.toJSON().pid;
     await evaluate(`{ const menu=document.querySelector('#menu-toggle'); if (menu.checkVisibility()) menu.click(); document.querySelector('#settings').click(); }`);

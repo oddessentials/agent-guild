@@ -854,7 +854,52 @@ function chooseFolder(field) {
   browseTo($(FOLDER_FIELDS[field].input).value.trim());
 }
 
+function showNewFolder(open) {
+  $('folder-new').hidden = !open;
+  $('folder-new-open').setAttribute('aria-expanded', String(open));
+  if (open) $('folder-new-name').value = '';
+  renderFolderBrowser();
+  (open ? $('folder-new-name') : $('folder-new-open')).focus();
+}
+
+async function createFolder(e) {
+  e?.preventDefault();
+  const parent = folderView.listing?.path;
+  const name = $('folder-new-name').value.trim();
+  if (!parent || !name || folderView.loading) return;
+  const request = ++folderView.request;
+  folderView.loading = true;
+  folderView.error = null;
+  renderFolderBrowser();
+  try {
+    const listing = await api('POST', '/folders', { path: parent, name });
+    if (request !== folderView.request) return;
+    folderView.listing = listing;
+    $('folder-filter').value = '';
+    $('folder-new').hidden = true;
+    $('folder-new-open').setAttribute('aria-expanded', 'false');
+  } catch (err) {
+    if (request !== folderView.request) return;
+    if (err instanceof AuthError) {
+      $('folder-browser').close();
+      return showAuth(err.message);
+    }
+    folderView.error = err.message || 'Could not create the folder.';
+  }
+  folderView.loading = false;
+  renderFolderBrowser();
+  if ($('folder-browser').open) ($('folder-new').hidden ? $('folder-use') : $('folder-new-name')).focus();
+}
+
+function newFolderKeys(e) {
+  if (e.key !== 'Escape') return;
+  e.preventDefault();
+  showNewFolder(false);
+}
+
 async function browseTo(dir) {
+  $('folder-new').hidden = true;
+  $('folder-new-open').setAttribute('aria-expanded', 'false');
   const request = ++folderView.request;
   folderView.loading = true;
   folderView.error = null;
@@ -908,6 +953,8 @@ function renderFolderBrowser() {
   status.classList.toggle('error', Boolean(error));
   $('folder-current').textContent = listing?.path ?? '';
   $('folder-use').disabled = loading || !listing;
+  $('folder-new-open').disabled = loading || !listing;
+  $('folder-new-create').disabled = loading || !listing || !$('folder-new-name').value.trim();
 }
 
 function folderBrowserClosed() {
@@ -5605,6 +5652,11 @@ $('folder-hidden').addEventListener('change', (e) => {
   renderFolderBrowser();
 });
 $('folder-use').addEventListener('click', useBrowsedFolder);
+$('folder-new-open').addEventListener('click', () => showNewFolder($('folder-new').hidden));
+$('folder-new-cancel').addEventListener('click', () => showNewFolder(false));
+$('folder-new').addEventListener('submit', createFolder);
+$('folder-new-name').addEventListener('input', renderFolderBrowser);
+$('folder-new-name').addEventListener('keydown', newFolderKeys);
 $('cwd-open').addEventListener('click', firstClick(openWorkingFolder));
 try { state.accounts = JSON.parse(load(ACCOUNTS_KEY)) || {}; } catch { state.accounts = {}; }
 try { state.shellPicks = JSON.parse(load(SHELLS_KEY)) || {}; } catch { state.shellPicks = {}; }

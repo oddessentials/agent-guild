@@ -133,6 +133,7 @@
     ], sources: [] });
     if (route === '/changelog' && method === 'GET') return json({ refreshing: false, releases: [], okAt: new Date(now).toISOString(), error: null });
     if (route === '/folders' && method === 'GET') return json(folderListing(url.searchParams.get('path')));
+    if (route === '/folders' && method === 'POST') return makeFolder(body);
     if (route.indexOf('/github') === 0) return githubRoute(route, method, body, url.searchParams);
     if (/^\/providers\/[^/]+\/history$/.test(route) && method === 'GET') return json({ history: [] });
     if (route === '/sessions' && method === 'POST') {
@@ -239,6 +240,18 @@
       entries: (folderTree[dir] || []).map(function (name) { return { name: name, path: (dir === '/' ? '' : dir) + '/' + name, hidden: name.charAt(0) === '.' }; }),
       truncated: false, note: dir === wanted ? null : wanted,
     };
+  }
+
+  function makeFolder(body) {
+    var parent = String(body.path || '').replace(/\/+$/, '') || '/';
+    var name = String(body.name || '').trim();
+    if (!name || name === '.' || name === '..' || /[/\\\u0000-\u001f]/.test(name)) return error('Choose a different folder name.', 'bad_name', 400);
+    if (folderListing(parent).path !== parent) return error(parent + ' no longer exists.', 'folder_missing', 409);
+    var names = folderTree[parent] || (folderTree[parent] = []);
+    if (names.indexOf(name) !== -1) return error(name + ' already exists in ' + parent + '.', 'folder_exists', 409);
+    names.push(name);
+    names.sort(function (a, b) { return a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true }); });
+    return json(folderListing((parent === '/' ? '' : parent) + '/' + name), 201);
   }
 
   function githubSnapshot() {

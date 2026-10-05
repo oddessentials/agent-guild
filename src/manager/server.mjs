@@ -287,6 +287,10 @@ export function createManagerServer({
     if (route === '/folders' && method === 'GET') {
       return sendJson(res, 200, await folderBrowser.list(url.searchParams.get('path') ?? undefined));
     }
+    if (route === '/folders' && method === 'POST') {
+      const { path: parent, name } = await readJsonBody(req);
+      return sendJson(res, 201, await folderBrowser.create(parent, name));
+    }
     if (route === '/upgrade' && method === 'POST') {
       const session = await manager.upgrade();
       return sendJson(res, 201, { session: session.toJSON() });

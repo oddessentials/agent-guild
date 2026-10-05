@@ -41,8 +41,8 @@ function page({ answers = [] } = {}) {
       node.classList.owner = node;
       return node;
     },
-    api: async (method, path) => {
-      requests.push([method, path]);
+    api: async (method, path, body) => {
+      requests.push(body === undefined ? [method, path] : [method, path, body]);
       const answer = answers.shift();
       if (answer instanceof Error) throw answer;
       return typeof answer === 'function' ? answer() : answer;
@@ -57,7 +57,7 @@ function page({ answers = [] } = {}) {
     Object,
   };
   runInNewContext(`${constant('FOLDER_FIELDS')}${constant('HIDDEN_FOLDERS_KEY')}${constant('CLONE_PARENT_KEY')}${constant('folderView')}
-${pick(['chooseFolder', 'browseTo', 'renderFolderBrowser', 'folderBrowserClosed', 'setCloneParent', 'useBrowsedFolder'])}
+${pick(['chooseFolder', 'showNewFolder', 'createFolder', 'newFolderKeys', 'browseTo', 'renderFolderBrowser', 'folderBrowserClosed', 'setCloneParent', 'useBrowsedFolder'])}
 this.folderView = folderView;`, context);
   return { context, $, requests, saved, used, auth, reloads };
 }
@@ -227,4 +227,93 @@ test('a listing requested before closing cannot replace the listing of a reopene
   finishOld(listing);
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(p.$('folder-current').textContent, '/fresh');
+});
+
+test('a new folder is created in the current folder and opened', async () => {
+  const made = { ...listing, path: '/work/space/Alpha <b> & co', parent: '/work/space', entries: [] };
+  const p = page({ answers: [listing, made] });
+  await p.context.browseTo('/work/space');
+  assert.equal(p.$('folder-new-open').disabled, false);
+  p.$('folder-new').hidden = true;
+  p.context.showNewFolder(true);
+  assert.equal(p.$('folder-new').hidden, false);
+  assert.equal(p.$('folder-new-open').attrs['aria-expanded'], 'true');
+  assert.equal(focused.at(-1), p.$('folder-new-name'));
+  assert.equal(p.$('folder-new-create').disabled, true);
+  p.$('folder-new-name').value = '  Alpha <b> & co ';
+  p.context.renderFolderBrowser();
+  assert.equal(p.$('folder-new-create').disabled, false);
+  let prevented = false;
+  await p.context.createFolder({ preventDefault: () => { prevented = true; } });
+  assert.equal(prevented, true);
+  assert.deepEqual(JSON.parse(JSON.stringify(p.requests.at(-1))), ['POST', '/folders', { path: '/work/space', name: 'Alpha <b> & co' }]);
+  assert.equal(p.$('folder-current').textContent, '/work/space/Alpha <b> & co');
+  assert.equal(p.$('folder-new').hidden, true);
+  assert.equal(p.$('folder-new-open').attrs['aria-expanded'], 'false');
+  assert.equal(p.$('folder-status').textContent, 'No folders here.');
+  assert.equal(p.$('folder-use').disabled, false);
+  p.$('folder-browser').open = true;
+  p.context.useBrowsedFolder();
+  assert.deepEqual(p.used, ['/work/space/Alpha <b> & co']);
+});
+
+test('a refused new folder keeps the form and the current folder and says why', async () => {
+  const p = page({ answers: [listing, Object.assign(new Error('beta already exists in /work/space.'), { code: 'folder_exists' })] });
+  p.$('folder-browser').open = true;
+  await p.context.browseTo('/work/space');
+  p.context.showNewFolder(true);
+  p.$('folder-new-name').value = 'beta';
+  await p.context.createFolder();
+  assert.equal(p.$('folder-status').textContent, 'beta already exists in /work/space.');
+  assert.equal(p.$('folder-status').classes.has('error'), true);
+  assert.equal(p.$('folder-new').hidden, false);
+  assert.equal(p.$('folder-current').textContent, '/work/space');
+  assert.equal(focused.at(-1), p.$('folder-new-name'));
+  p.$('folder-new-name').value = '   ';
+  const before = p.requests.length;
+  await p.context.createFolder();
+  assert.equal(p.requests.length, before);
+  let prevented = false;
+  p.context.newFolderKeys({ key: 'Escape', preventDefault: () => { prevented = true; } });
+  assert.equal(prevented, true);
+  assert.equal(p.$('folder-new').hidden, true);
+  assert.equal(focused.at(-1), p.$('folder-new-open'));
+});
+
+test('a new folder is not offered before a listing, and browsing closes the form', async () => {
+  const p = page({ answers: [() => new Promise(() => {})] });
+  p.$('folder-new').hidden = true;
+  p.context.chooseFolder('cwd');
+  assert.equal(p.$('folder-new-open').disabled, true);
+  const q = page({ answers: [listing, listing] });
+  await q.context.browseTo('/work/space');
+  q.context.showNewFolder(true);
+  q.$('folder-new-name').value = 'x';
+  await q.context.browseTo('/work');
+  assert.equal(q.$('folder-new').hidden, true);
+  assert.deepEqual(q.requests.map((r) => r[0]), ['GET', 'GET']);
+});
+
+test('a slower create answer never replaces a newer listing; a sign-in failure leaves for sign-in', async () => {
+  let finishCreate;
+  const p = page({ answers: [listing, () => new Promise((resolve) => { finishCreate = resolve; }), { ...listing, path: '/work' }] });
+  await p.context.browseTo('/work/space');
+  p.context.showNewFolder(true);
+  p.$('folder-new-name').value = 'slow';
+  const creating = p.context.createFolder();
+  assert.equal(p.$('folder-new-create').disabled, true);
+  assert.equal(p.$('folder-use').disabled, true);
+  await p.context.browseTo('/work');
+  finishCreate({ ...listing, path: '/work/space/slow' });
+  await creating;
+  assert.equal(p.$('folder-current').textContent, '/work');
+  const signedOut = page({ answers: [listing] });
+  signedOut.$('folder-browser').open = true;
+  await signedOut.context.browseTo('/work/space');
+  signedOut.context.api = async () => { throw new signedOut.context.AuthError('Token rejected'); };
+  signedOut.context.showNewFolder(true);
+  signedOut.$('folder-new-name').value = 'x';
+  await signedOut.context.createFolder();
+  assert.deepEqual(signedOut.auth, ['Token rejected']);
+  assert.equal(signedOut.$('folder-browser').open, false);
 });
