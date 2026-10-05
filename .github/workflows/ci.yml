@@ -196,14 +196,15 @@ jobs:
   required:
     name: Required checks
     if: always()
-    needs: [test, plan, pack, verify]
+    needs: [test, systemd, plan, pack, verify]
     runs-on: ubuntu-latest
     steps:
       - env:
           TEST: ${{ needs.test.result }}
+          SYSTEMD: ${{ needs.systemd.result }}
           PLAN: ${{ needs.plan.result }}
           PACK: ${{ needs.pack.result }}
           VERIFY: ${{ needs.verify.result }}
         run: |
-          echo "test: $TEST, plan: $PLAN, pack: $PACK, verify: $VERIFY"
-          [ "$TEST" = success ] && [ "$PLAN" = success ] && [ "$PACK" = success ] && [ "$VERIFY" = success ]
+          echo "test: $TEST, systemd: $SYSTEMD, plan: $PLAN, pack: $PACK, verify: $VERIFY"
+          [ "$TEST" = success ] && [ "$SYSTEMD" = success ] && [ "$PLAN" = success ] && [ "$PACK" = success ] && [ "$VERIFY" = success ]
