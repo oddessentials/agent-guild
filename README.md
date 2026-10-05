@@ -192,6 +192,11 @@ a stop or restart, remains unavailable after a brief recovery check, or a
 new version is discovered after the initial version check. Session activity
 and assistant responses have no sounds:
 the providers do not yet offer consistently reliable completion signals.
+**Launch at sign-in**, in the same menu, starts the session manager in the
+background whenever you sign in to the computer running Agent Guild; open
+the page as usual afterwards. On Windows it is an entry in Task Manager's
+Startup apps, on macOS a login item, and on Linux a desktop autostart entry,
+so it needs a desktop session there.
 
 The browser tab icon adds a rotating green ring whenever any session card says
 **Working**, including Shell and task cards. It mirrors the cards' terminal
@@ -279,6 +284,14 @@ Any other tool or script can report agents and its model too. See
 * Usage meters are fetched by the manager with each tool's own sign-in. The
   page only receives percentages. On macOS the first lookup may ask for
   keychain access to the "Claude Code-credentials" item; choose Always Allow.
+* **Launch at sign-in** writes outside the data folder only while it is on:
+  the `AgentGuild` value under
+  `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` on Windows, which
+  runs `autostart.js` from the data folder through `wscript.exe` so no
+  console window opens;
+  `~/Library/LaunchAgents/com.oddessentials.agent-guild.plist` on macOS; and
+  `~/.config/autostart/agent-guild.desktop` on Linux. Turning it off removes
+  them.
 
 The manager makes these outbound requests, and none of them carry your code
 or prompts:

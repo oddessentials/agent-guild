@@ -297,6 +297,39 @@ function alertSound(name, key, at = Date.now(), fresh = () => true, related = []
   });
 }
 
+const AUTOSTART_NOTE = 'Starts the session manager in the background when you sign in to the computer running Agent Guild. The page does not open.';
+
+/** The manager's sign-in setting; hidden when the manager has none. */
+function renderAutostart(autostart) {
+  $('autostart-choice').hidden = !autostart;
+  $('autostart').checked = Boolean(autostart?.enabled);
+  $('autostart').disabled = !autostart?.available;
+  $('autostart-note').textContent = autostart?.reason || AUTOSTART_NOTE;
+}
+
+async function loadAutostart() {
+  if (!state.connected) return;
+  try {
+    renderAutostart((await api('GET', '/autostart')).autostart);
+  } catch (err) {
+    if (err instanceof AuthError) showAuth(err.message);
+    else renderAutostart(null);
+  }
+}
+
+async function changeAutostart(input) {
+  const enabled = input.checked;
+  input.disabled = true;
+  try {
+    renderAutostart((await api('PUT', '/autostart', { enabled })).autostart);
+  } catch (err) {
+    input.checked = !enabled;
+    input.disabled = false;
+    if (err instanceof AuthError) showAuth(err.message);
+    else toast(err.message);
+  }
+}
+
 function changeSound(input) {
   save(SOUND_KEY, input.checked ? 'on' : null);
   prepareSounds();
@@ -5560,6 +5593,7 @@ $('settings-menu').addEventListener('change', (e) => {
   else if (e.target.name === 'theme') changeTheme(e.target);
   else if (e.target.name === 'sound') changeSound(e.target);
   else if (e.target.name === 'voice') changeVoice(e.target);
+  else if (e.target.name === 'autostart') changeAutostart(e.target);
 });
 /**
  * Runs `opened` once a menu shows and `closed` once it hides. Chrome skips the toggle event of a menu
@@ -5579,6 +5613,7 @@ function returnFocus(menu, invoker) {
   if ((!at || at === document.body || menu.contains(at)) && invoker?.checkVisibility?.()) invoker.focus();
 }
 onMenu($('settings-menu'), (menu) => {
+  loadAutostart();
   placeMenu(menu, $('settings'));
   menu.querySelector('input:checked')?.focus();
 }, (menu) => returnFocus(menu, $('settings')));
