@@ -31,6 +31,7 @@ const SESSION_ORDER_KEY = 'agentGuild.sessionOrder';
 const SOUND_KEY = 'agentGuild.sound';
 const VOICE_KEY = 'agentGuild.voice';
 const NOTES_KEY = 'agentGuild.notes';
+const NOTES_REV_KEY = 'agentGuild.notesRevision';
 const DOCK_KEY = 'agentGuild.dock';
 const DOCK_WIDTH_KEY = 'agentGuild.dockWidth';
 const PANES_KEY = 'agentGuild.panes';
@@ -366,37 +367,50 @@ function moveInMenu(e) {
 /** Notes share the page's storage with every other setting, so they stay far below the browser's limit for it. */
 const NOTES_LIMIT = 100000;
 const NOTES_STATUS = {
-  saved: 'Saved in this browser as you type',
+  saved: 'Saved as you type across browsers',
   long: `Not saved: notes hold up to ${NOTES_LIMIT.toLocaleString('en-US')} characters. Shorten them to save.`,
   refused: 'Not saved: the browser’s storage for this page is full or turned off. Copy what you need before you close the page.',
 };
+/** How long a burst of typing waits before one save to the manager. */
+const NOTES_PUSH_MS = 400;
+/** Browsers drop a keepalive request larger than 64 KiB, so a bigger notepad waits for the next open. */
+const NOTES_KEEPALIVE_BYTES = 60 * 1024;
 /**
  * `saved`: the notes as this page last read or wrote them in storage. `status`: whether the text in the
  * panel is saved, too `long` or `refused`; `shown`: the status the line under the title shows.
+ * `base`: the manager revision this page last saved from. `acked`: the text of that revision.
  */
-const notesView = { saved: '', status: 'saved', shown: 'saved' };
+const notesView = { saved: '', status: 'saved', shown: 'saved', base: null, acked: null, timer: 0, flight: null, queued: false, follows: 0 };
 
 /** Shows notes another tab saved since this page last read or wrote them. Saved notes win over text this page could not save. */
 function refreshNotes() {
   let text;
   // Unlike load(), a read that fails is not taken for empty notes.
   try { text = localStorage.getItem(NOTES_KEY) ?? ''; } catch { return; }
-  if (text === notesView.saved) return;
-  notesView.saved = text;
-  notesView.status = 'saved';
-  $('notes-text').value = text;
+  const revision = load(NOTES_REV_KEY);
+  if (text === notesView.saved && revision === notesView.base) return;
+  if (text !== notesView.saved) {
+    notesView.saved = text;
+    notesView.status = 'saved';
+    $('notes-text').value = text;
+  }
+  if (revision !== notesView.base) notesView.base = revision;
   renderNotesStatus();
   guardLeaving();
 }
 
-/** Saves the notes on every change; emptying them removes the saved copy. */
+/** Saves the notes on every change; emptying them removes the saved copy. This stays in the browser. */
 function saveNotes() {
   const text = $('notes-text').value;
   if (text.length > NOTES_LIMIT) notesView.status = 'long';
   else if (!save(NOTES_KEY, text || null)) notesView.status = 'refused';
   else {
     notesView.status = 'saved';
+    const changed = text !== notesView.saved;
     notesView.saved = text;
+    // A reload can tell these keystrokes have not reached the manager. The revision in memory stays, for the save.
+    // An empty panel is probed with the same text, and that must not look like a new edit.
+    if (changed && load(NOTES_REV_KEY)) save(NOTES_REV_KEY, null);
   }
   renderNotesStatus();
   guardLeaving();
@@ -413,7 +427,7 @@ function renderNotesStatus() {
 
 /** Another tab saved the notes, or cleared this page's storage. */
 function notesStored(e) {
-  if (e.key === NOTES_KEY || e.key === null) refreshNotes();
+  if (e.key === NOTES_KEY || e.key === NOTES_REV_KEY || e.key === null) refreshNotes();
 }
 
 function openNotes({ focus = true } = {}) {
@@ -428,6 +442,180 @@ function openNotes({ focus = true } = {}) {
 function toggleNotes() {
   if (dockShows('notes')) closeDock();
   else openNotes();
+}
+
+function sharedPrefix(left, right) {
+  const end = Math.min(left.length, right.length);
+  let i = 0;
+  while (i < end && left.charCodeAt(i) === right.charCodeAt(i)) i += 1;
+  return i;
+}
+
+/** Takes the manager's notes. A selection that still sits in the unchanged prefix stays put. */
+function adoptNotes(notes) {
+  const area = $('notes-text');
+  const next = notes.text;
+  if (typeof next !== 'string') return;
+  if (next !== area.value) {
+    const start = area.selectionStart;
+    const end = area.selectionEnd;
+    const previous = area.value;
+    const focused = document.activeElement === area;
+    area.value = next;
+    if (focused) {
+      const keep = sharedPrefix(previous, next);
+      if (start <= keep && end <= keep) area.setSelectionRange(start, end);
+    }
+  }
+  notesView.saved = next;
+  notesView.acked = next;
+  notesView.base = notes.revision ?? null;
+  notesView.status = 'saved';
+  save(NOTES_KEY, next || null);
+  save(NOTES_REV_KEY, notes.revision || null);
+  renderNotesStatus();
+  guardLeaving();
+}
+
+function notesPushable() {
+  const text = $('notes-text').value;
+  if (notesView.status !== 'saved' || text.length > NOTES_LIMIT) return false;
+  if (text === notesView.acked) return false;
+  if (notesView.base == null && text === '') return false;
+  return true;
+}
+
+/** `reset` is false for the one automatic follow-up, so a conflict cannot retry on its own. */
+function scheduleNotesPush(delay, reset) {
+  if (reset !== false) notesView.follows = 0;
+  if (!notesPushable()) return Promise.resolve();
+  clearTimeout(notesView.timer);
+  const wait = delay === undefined ? NOTES_PUSH_MS : delay;
+  if (wait === 0) {
+    notesView.timer = 0;
+    return pushNotes();
+  }
+  notesView.timer = setTimeout(() => { notesView.timer = 0; void pushNotes(); }, wait);
+  return Promise.resolve();
+}
+
+function flushNotes() {
+  clearTimeout(notesView.timer);
+  notesView.timer = 0;
+  if (!notesPushable()) return;
+  void sendNotes($('notes-text').value, { keepalive: true });
+}
+
+async function pushNotes() {
+  if (notesView.flight) {
+    notesView.queued = true;
+    return;
+  }
+  if (!notesPushable()) return;
+  const text = $('notes-text').value;
+  const run = sendNotes(text);
+  notesView.flight = run;
+  try {
+    await run;
+  } finally {
+    if (notesView.flight === run) notesView.flight = null;
+    if (notesView.queued) {
+      notesView.queued = false;
+      if (notesView.follows < 1) {
+        notesView.follows += 1;
+        await scheduleNotesPush(0, false);
+      }
+    }
+  }
+}
+
+async function sendNotes(text, options) {
+  const keepalive = options?.keepalive === true;
+  let payload;
+  try {
+    const json = JSON.stringify({ revision: notesView.base, text });
+    const smallEnough = !keepalive || new TextEncoder().encode(json).length <= NOTES_KEEPALIVE_BYTES;
+    payload = (await api('PUT', '/notes', { revision: notesView.base, text }, { keepalive: keepalive && smallEnough })).notes;
+  } catch (error) {
+    if (error instanceof AuthError) {
+      showAuth(error.message);
+      return;
+    }
+    if (error.code !== 'stale_notes' || !error.notes) return;
+    if ($('notes-text').value === text) {
+      adoptNotes(error.notes);
+      return;
+    }
+    notesView.base = error.notes.revision ?? null;
+    notesView.queued = true;
+    return;
+  }
+  if (!payload || typeof payload.text !== 'string') return;
+  if ($('notes-text').value === text) adoptNotes(payload);
+  else {
+    notesView.base = payload.revision ?? notesView.base;
+    notesView.queued = true;
+  }
+}
+
+/** Another browser's save. Our own echo matches the text already on screen and only adopts the revision. */
+function applyServerNotes(notes) {
+  if (!notes || typeof notes.text !== 'string') return;
+  const area = $('notes-text');
+  if (notes.text === area.value) {
+    adoptNotes(notes);
+    return;
+  }
+  if (notesView.acked !== null && area.value !== notesView.acked) {
+    notesView.base = notes.revision ?? notesView.base;
+    return;
+  }
+  adoptNotes(notes);
+}
+
+/** The manager's revision from hello. Missing means this manager cannot share notes. */
+async function catchUpNotes(revision) {
+  if (revision === undefined) return;
+  // Hello can arrive before the first read. Load this browser's copy before deciding, unless typing has started.
+  if (notesView.saved === '' && $('notes-text').value === '' && notesView.acked === null) refreshNotes();
+  const local = $('notes-text').value;
+  // No file yet. Text this browser already has is the first copy. An empty panel writes nothing.
+  if (revision === null) {
+    if (local && local !== notesView.acked) await scheduleNotesPush(0);
+    else if (!local) notesView.acked = '';
+    return;
+  }
+  if (revision === notesView.base) {
+    // The revision key is still here only while this text is the one that revision names.
+    const synced = notesView.acked === null && load(NOTES_REV_KEY) === revision && local === notesView.saved;
+    if (synced) notesView.acked = local;
+    else if (notesView.acked === null || local !== notesView.acked) await scheduleNotesPush(0);
+    return;
+  }
+  await pullNotes();
+}
+
+async function pullNotes() {
+  let notes;
+  try {
+    notes = (await api('GET', '/notes')).notes;
+  } catch (error) {
+    if (error instanceof AuthError) showAuth(error.message);
+    return;
+  }
+  if (!notes || typeof notes.text !== 'string') return;
+  const local = $('notes-text').value;
+  if (local === notes.text) {
+    adoptNotes(notes);
+    return;
+  }
+  const unsent = notesView.acked === null ? local !== '' : local !== notesView.acked;
+  if (unsent) {
+    notesView.base = notes.revision ?? null;
+    void scheduleNotesPush(0);
+    return;
+  }
+  adoptNotes(notes);
 }
 
 // ---- dock -----------------------------------------------------------------
@@ -717,9 +905,10 @@ function renderAgents(container, agents, shells = []) {
 
 class AuthError extends Error {}
 
-async function api(method, path, body) {
+async function api(method, path, body, options = {}) {
   const res = await fetch(`/api/v1${path}`, {
     method,
+    keepalive: options.keepalive === true,
     headers: {
       Authorization: `Bearer ${state.token}`,
       ...(body ? { 'Content-Type': 'application/json' } : {}),
@@ -5169,6 +5358,9 @@ function connectEvents() {
       // A changelog.updated sent while the socket was down is lost; catch up the open panel.
       if ($('changelog').open) loadChangelog();
       if (dockShows('github')) loadGitHub();
+      catchUpNotes(msg.notesRevision);
+    } else if (msg.type === 'notes.updated') {
+      applyServerNotes(msg.notes);
     } else if (msg.type === 'remote-access.updated') {
       state.remoteAccessUI?.updated();
     } else if (msg.type === 'news.updated') {
@@ -5457,7 +5649,7 @@ document.addEventListener('keydown', (e) => {
 addEventListener('scroll', () => { if (tipFor) hideTip(); }, true);
 addEventListener('resize', () => { if (tipFor) hideTip(); });
 $('notes-open').addEventListener('click', firstClick(toggleNotes));
-$('notes-text').addEventListener('input', saveNotes);
+$('notes-text').addEventListener('input', () => { saveNotes(); void scheduleNotesPush(); });
 addEventListener('storage', notesStored);
 // On load, and again for a page back from the back/forward cache, which may have missed another tab's notes.
 addEventListener('pageshow', refreshNotes);
@@ -5474,12 +5666,16 @@ $('news').addEventListener('close', () => {
   newsView.opener = null;
 });
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState !== 'visible') stopDictation();
+  if (document.visibilityState !== 'visible') {
+    stopDictation();
+    flushNotes();
+  }
   if (document.visibilityState === 'visible' && state.connected && Date.now() - newsLoadedAt > 60000) loadNews();
   if (document.visibilityState === 'visible' && dockShows('github') && githubShownView() === 'actions') loadView('actions');
   else scheduleRuns();
 });
 addEventListener('pagehide', () => {
+  flushNotes();
   state.pageAway = true;
   activityFavicon.setPaused(true);
   terminalCopy.close();

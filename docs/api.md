@@ -491,6 +491,8 @@ All paths are under `/api/v1`.
 | GET | `/folders?path=` | | `{ path, parent, home, segments, roots, entries, truncated, note }`: the subfolders of `path` (blank or `~` for the home folder) on the manager's computer. A missing `path` lists the nearest existing folder above it and names the requested path in `note`. `entries` are `{ name, path, hidden }`, sorted by name, at most 2,000 (`truncated` says when there were more); `segments` and `roots` are `{ name, path }` for the path's parts and the drives or `/`. 409 `folder_unreadable` when the folder cannot be read. |
 | POST | `/folders` | `{ path, name }` | 201 with the `GET /folders` listing of the new folder `name`, made inside the existing folder `path`. 400 `bad_name` when `name` is blank, `.` or `..`, holds a path separator or control character, or (on Windows) holds `<>:"|?*`, ends with a dot or space, or is a reserved device name; 409 `folder_exists` when something already has that name, `folder_missing` when `path` is not an existing folder, `folder_unreadable` or `folder_unwritable` when the host refuses. |
 | POST | `/open-folder` | `{ cwd? }` | `{ ok }`: opens the folder in the computer's file manager. 403 `local_only` from clients that reach the manager by any address other than its own loopback ones. |
+| GET | `/notes` | | `{ notes: { revision, text } }`. One notepad for every client of this manager. `revision` is null until the first save. `text` is at most 100,000 characters. |
+| PUT | `/notes` | `{ revision, text }` | `{ notes }` with a new `revision`. `revision` is the one this edit started from, or null to create the notepad. 409 `stale_notes` when that revision is no longer current; `error.notes` is the current notepad, so a client can retry or adopt it. 400 `notes_too_long` over 100,000 characters, 400 `bad_notes` when `text` is not a string. The body may be up to 1 MiB. A cleared notepad is stored as an empty string; it is not deleted. |
 | POST | `/upgrade` | | `201 { session }`: a session with `task` `upgrade` running the Upgrade `command`. 400 `not_updatable` when no newer release is known, it is already installed on disk, the manager is a development build, or version checks are off. 409 `npm_unavailable` without npm on PATH. 409 `upgrade_in_progress` while one is running. Sessions keep running; the new version is used after the manager restarts. |
 | GET | `/providers` | | `{ providers: Provider[] }` |
 | POST | `/providers/reload` | | Re-reads `providers.json`. |
@@ -546,8 +548,8 @@ per-session report token instead of the API token, in an
 processes inside that session. Without the API token, an unknown session id
 and a wrong report token both return 401.
 
-Request bodies are limited to 64 KB (413 above that). WebSocket messages are
-limited to 1 MB.
+Request bodies are limited to 64 KB (413 above that), except `PUT /notes`,
+which accepts 1 MiB. WebSocket messages are limited to 1 MB.
 
 ## WebSockets
 
@@ -559,7 +561,7 @@ This socket pushes changes to every session. It is server-to-client only.
 
 | Message | Meaning |
 | --- | --- |
-| `{ type: "hello", version, pid, platform, startedAt, launcher, folderOpener, upgrade, sessions }` | Sent first. The manager's version, pid, platform and start timestamp (together identifying this manager lifetime), its `launcher` path and `folderOpener` (as in `/info`), the full session list and the manager's Upgrade object. |
+| `{ type: "hello", version, pid, platform, startedAt, launcher, folderOpener, upgrade, sessions, notesRevision }` | Sent first. The manager's version, pid, platform and start timestamp (together identifying this manager lifetime), its `launcher` path and `folderOpener` (as in `/info`), the full session list and the manager's Upgrade object. `notesRevision` is the notepad's current revision, or null when notes have never been stored. It is omitted when the notes file cannot be read. |
 | `{ type: "session.created", session }` | A session was started by any client. |
 | `{ type: "session.updated", session }` | Status, activity, agents, name or size changed. |
 | `{ type: "session.removed", sessionId }` | A session was removed. |
@@ -567,6 +569,7 @@ This socket pushes changes to every session. It is server-to-client only.
 | `{ type: "news.updated" }` | A news refresh finished; fetch `/news` again. |
 | `{ type: "changelog.updated" }` | A refresh of the release list finished; fetch `/changelog` again. |
 | `{ type: "github.updated" }` | A GitHub sign-in, account or SSH setup changed; fetch `/github` again. |
+| `{ type: "notes.updated", notes }` | The notepad was saved. `notes` is `{ revision, text }`. The page that saved it already has this text. |
 | `{ type: "manager.upgrade", upgrade }` | The manager's own version check changed: a newer release was found, or an upgrade session ended. |
 | `{ type: "manager.stopping", running, restart }` | A client asked the manager to stop. `running` sessions are being ended. A client should show that the manager was stopped on purpose, not that it is unreachable. `restart` is true when a new manager will take over; a client should then say it is waiting for that one rather than tell the user how to start one. |
 | `{ type: "manager.stopped", remaining, restart }` | The last event before the socket closes. `remaining` is how many session processes had not confirmed their exit when the manager gave up waiting (about five seconds); 0 means every session has ended. `restart` is as in `manager.stopping`. A socket that closes after `manager.stopping` without this event means the manager went away before it could confirm. |

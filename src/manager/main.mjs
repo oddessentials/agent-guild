@@ -13,6 +13,7 @@ import { NewsFeed } from './news.mjs';
 import { Changelog } from './changelog.mjs';
 import { GitHub } from './github.mjs';
 import { createManagerServer } from './server.mjs';
+import { createNotesStore } from './notes.mjs';
 import { RemoteAccess, loadRemoteAccess } from './remote-access.mjs';
 import { SelfUpdate } from './self-update.mjs';
 import { resolveBaseEnv, pathReader } from './shell-env.mjs';
@@ -138,6 +139,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
     extraHosts: remoteSettings.config.access.hosts,
     extraOrigins: remoteSettings.config.access.origins,
     remoteAccess,
+    notes: createNotesStore(paths.notes),
     launcher: launcherPath(),
     onShutdownRequest: ({ restart = false } = {}) => shutdown('requested via API', { restart }).then(() => process.exit(0)),
   });
