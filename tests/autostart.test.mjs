@@ -452,3 +452,21 @@ test('Homebrew\'s Node.js is named by its opt link, which an upgrade keeps', asy
   await createAutostart({ ...options, platform: 'linux' }).set(true);
   assert.ok(fs.readFileSync(path.join(home, '.config', 'autostart', 'agent-guild.desktop'), 'utf8').includes(opt));
 });
+
+test('macOS and Linux entries are writable only by their owner, whatever the umask', { skip: process.platform === 'win32' }, async (t) => {
+  const umask = process.umask(0o002);
+  t.after(() => process.umask(umask));
+  for (const platform of ['darwin', 'linux']) {
+    const home = tempDir(t);
+    const file = platform === 'darwin'
+      ? path.join(home, 'Library', 'LaunchAgents', `${LAUNCH_AGENT_LABEL}.plist`)
+      : path.join(home, '.config', 'autostart', 'agent-guild.desktop');
+    const autostart = createAutostart({ platform, home, release: '6.8.0', env: {}, script: '/pkg/bin/agent-guild.mjs', dataDir: home, uid: 501, launchctl: fakeLaunchctl().launchctl });
+    await autostart.set(true);
+    assert.equal(fs.statSync(file).mode & 0o777, 0o644, platform);
+    // An unchanged entry left writable by others is repaired at the next start.
+    fs.chmodSync(file, 0o666);
+    await autostart.refresh();
+    assert.equal(fs.statSync(file).mode & 0o777, 0o644, platform);
+  }
+});

@@ -191,12 +191,20 @@ async function readText(file) {
   }
 }
 
-/** Writes `contents` unless the file already holds exactly that. */
+/**
+ * Writes `contents` unless the file already holds exactly that, readable by
+ * all and writable only by its owner whatever the umask: launchd skips an
+ * agent that others can write.
+ */
 async function writeIfChanged(file, contents) {
-  if ((await readText(file)) === contents) return;
+  if ((await readText(file)) === contents) {
+    if ((await fs.promises.stat(file)).mode & 0o022) await fs.promises.chmod(file, 0o644);
+    return;
+  }
   await fs.promises.mkdir(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
   await fs.promises.writeFile(tmp, contents);
+  await fs.promises.chmod(tmp, 0o644);
   await fs.promises.rename(tmp, file);
 }
 
