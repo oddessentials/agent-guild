@@ -132,6 +132,7 @@
       { id: 'demo-news', title: 'Agent Guild interactive demo', url: 'https://github.com/oddessentials/agent-guild', source: 'Agent Guild', kind: 'news', publishedAt: new Date(now - 3600000).toISOString(), summary: 'Explore the interface with simulated local sessions.' },
     ], sources: [] });
     if (route === '/changelog' && method === 'GET') return json({ refreshing: false, releases: [], okAt: new Date(now).toISOString(), error: null });
+    if (route === '/folders' && method === 'GET') return json(folderListing(url.searchParams.get('path')));
     if (route.indexOf('/github') === 0) return githubRoute(route, method, body, url.searchParams);
     if (/^\/providers\/[^/]+\/history$/.test(route) && method === 'GET') return json({ history: [] });
     if (route === '/sessions' && method === 'POST') {
@@ -218,6 +219,27 @@
     v.runs.forEach(function (r) { r.url = 'https://github.com/' + name + '/actions/runs/' + r.id; });
     v.pulls.forEach(function (p) { p.url = 'https://github.com/' + name + '/pull/' + p.number; });
   });
+
+  var folderTree = {
+    '/': ['Users', 'work'], '/Users': ['demo'], '/Users/demo': ['.config', 'Desktop', 'Documents'],
+    '/work': ['api-gateway', 'docs-site', 'storefront'],
+  };
+
+  function folderListing(asked) {
+    var wanted = !asked || !asked.trim() || asked.trim() === '~' ? home : asked.trim().replace(/\/+$/, '') || '/';
+    var known = Object.keys(folderTree).reduce(function (all, parent) {
+      return all.concat(folderTree[parent].map(function (name) { return (parent === '/' ? '' : parent) + '/' + name; }));
+    }, ['/']);
+    var dir = wanted;
+    while (known.indexOf(dir) === -1) dir = dir.slice(0, dir.lastIndexOf('/')) || '/';
+    var parts = dir.split('/').filter(Boolean);
+    var segments = [{ name: '/', path: '/' }].concat(parts.map(function (part, i) { return { name: part, path: '/' + parts.slice(0, i + 1).join('/') }; }));
+    return {
+      path: dir, parent: dir === '/' ? null : dir.slice(0, dir.lastIndexOf('/')) || '/', home: home, segments: segments, roots: [{ name: '/', path: '/' }],
+      entries: (folderTree[dir] || []).map(function (name) { return { name: name, path: (dir === '/' ? '' : dir) + '/' + name, hidden: name.charAt(0) === '.' }; }),
+      truncated: false, note: dir === wanted ? null : wanted,
+    };
+  }
 
   function githubSnapshot() {
     return {

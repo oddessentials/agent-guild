@@ -19,6 +19,7 @@ const NEWS_FILTER_KEY = 'agentGuild.newsFilter';
 const CHANGELOG_SEEN_KEY = 'agentGuild.changelogSeen';
 const GITHUB_ACCOUNT_KEY = 'agentGuild.githubAccount';
 const CLONE_PARENT_KEY = 'agentGuild.cloneParent';
+const HIDDEN_FOLDERS_KEY = 'agentGuild.showHiddenFolders';
 const GITHUB_REPO_KEY = 'agentGuild.githubRepo';
 const GITHUB_RECENT_KEY = 'agentGuild.githubRecent';
 const GITHUB_VIEW_KEY = 'agentGuild.githubView';
@@ -62,8 +63,8 @@ const state = {
   connected: false,
   folderOpener: null,
   folderOpening: false,
-  folderPicker: null,
-  folderPicking: false,
+  /** The manager's operating system, from `hello`. */
+  platform: null,
   /** The manager's own version check, from `hello` and `manager.upgrade`. */
   upgrade: null,
   /** The running manager's version and pid, from `hello`. */
@@ -737,32 +738,14 @@ function renderFolderTools() {
         : !feature?.available ? feature?.reason || text.missing
           : label;
   };
-  paint('cwd-pick', state.folderPicker, state.folderPicking, 'Choose a folder…', {
-    offline: 'Connect to the session manager to choose folders',
-    busy: 'Choosing a folder…',
-    missing: 'Choosing folders is unavailable with this manager',
-  });
+  for (const id of ['cwd-pick', 'github-parent-pick']) {
+    paint(id, { available: true }, false, 'Choose a folder…', { offline: 'Connect to the session manager to choose folders' });
+  }
   paint('cwd-open', state.folderOpener, state.folderOpening, `Open working folder in ${state.folderOpener?.label || 'file manager'}`, {
     offline: 'Connect to the session manager to open folders',
     busy: 'Opening working folder…',
     missing: 'Opening folders is unavailable with this manager',
   });
-}
-
-async function pickWorkingFolder() {
-  if (!state.connected || !state.folderPicker?.available || state.folderPicking) return;
-  state.folderPicking = true;
-  renderFolderTools();
-  try {
-    const { path } = await api('POST', '/pick-folder', { cwd: $('cwd').value.trim() });
-    if (path) useFolder(path);
-  } catch (err) {
-    if (err instanceof AuthError) showAuth(err.message);
-    else toast(err.message || 'Could not choose a folder.');
-  } finally {
-    state.folderPicking = false;
-    renderFolderTools();
-  }
 }
 
 async function openWorkingFolder() {
@@ -778,6 +761,114 @@ async function openWorkingFolder() {
     state.folderOpening = false;
     renderFolderTools();
   }
+}
+
+// ---- folder browser -------------------------------------------------------
+
+const FOLDER_FIELDS = {
+  cwd: { title: 'Choose working folder', input: 'cwd' },
+  clone: { title: 'Choose clone folder', input: 'github-parent' },
+};
+const folderView = { field: null, listing: null, loading: false, error: null, request: 0, opener: null };
+
+function chooseFolder(field) {
+  if (!state.connected) return;
+  const dialog = $('folder-browser');
+  Object.assign(folderView, { field, listing: null, loading: false, error: null });
+  $('folder-title').textContent = FOLDER_FIELDS[field].title;
+  $('folder-filter').value = '';
+  $('folder-hidden').checked = load(HIDDEN_FOLDERS_KEY) === '1';
+  if (!dialog.open) {
+    folderView.opener = document.activeElement;
+    dialog.showModal();
+  }
+  browseTo($(FOLDER_FIELDS[field].input).value.trim());
+}
+
+async function browseTo(dir) {
+  const request = ++folderView.request;
+  folderView.loading = true;
+  folderView.error = null;
+  renderFolderBrowser();
+  try {
+    const listing = await api('GET', `/folders?path=${encodeURIComponent(dir)}`);
+    if (request !== folderView.request) return;
+    folderView.listing = listing;
+    $('folder-filter').value = '';
+  } catch (err) {
+    if (request !== folderView.request) return;
+    if (err instanceof AuthError) {
+      $('folder-browser').close();
+      return showAuth(err.message);
+    }
+    folderView.error = err.message || 'Could not list this folder.';
+  }
+  folderView.loading = false;
+  renderFolderBrowser();
+  if ($('folder-browser').open) ($('folder-list').querySelector('.folder-row') ?? $('folder-use')).focus();
+}
+
+function renderFolderBrowser() {
+  const { listing, loading, error } = folderView;
+  const query = $('folder-filter').value.trim().toLowerCase();
+  const showHidden = $('folder-hidden').checked;
+  $('folder-path').replaceChildren(...(listing?.segments ?? []).map((segment, i, all) => {
+    const crumb = button(segment.name, () => browseTo(segment.path), 'folder-crumb');
+    if (i === all.length - 1) crumb.setAttribute('aria-current', 'location');
+    return crumb;
+  }));
+  $('folder-roots').replaceChildren(...(listing?.roots ?? []).map((root) => button(root.name, () => browseTo(root.path), 'btn folder-chip')));
+  $('folder-up').disabled = loading || !listing?.parent;
+  $('folder-home').disabled = loading;
+  const note = $('folder-note');
+  note.hidden = !listing?.note;
+  note.textContent = listing?.note ? `${listing.note} was not found, so this shows the nearest folder that exists.` : '';
+  const entries = (listing?.entries ?? []).filter((entry) => (showHidden || !entry.hidden) && (!query || entry.name.toLowerCase().includes(query)));
+  $('folder-list').replaceChildren(...entries.map((entry) => {
+    const row = button(entry.name, () => browseTo(entry.path), 'folder-row');
+    row.classList.toggle('hidden-folder', entry.hidden);
+    row.title = entry.path;
+    return row;
+  }));
+  const status = $('folder-status');
+  status.textContent = loading ? 'Loading folders…'
+    : error ? error
+      : !listing ? ''
+        : !entries.length ? (listing.entries.length ? 'No folders match.' : 'No folders here.')
+          : listing.truncated ? `Showing the first ${listing.entries.length.toLocaleString()} folders.` : '';
+  status.classList.toggle('error', Boolean(error));
+  $('folder-current').textContent = listing?.path ?? '';
+  $('folder-use').disabled = loading || !listing;
+}
+
+function setCloneParent(dir) {
+  $('github-parent').value = dir;
+  save(CLONE_PARENT_KEY, dir);
+  loadRepos();
+}
+
+function useBrowsedFolder() {
+  const dir = folderView.listing?.path;
+  if (!dir || folderView.loading) return;
+  const field = folderView.field;
+  $('folder-browser').close();
+  if (field === 'clone') setCloneParent(dir);
+  else useFolder(dir);
+}
+
+function moveInFolders(e) {
+  const rows = [...$('folder-list').querySelectorAll('.folder-row')];
+  const at = rows.indexOf(document.activeElement);
+  const next = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: rows.length - 1 }[e.key];
+  if (at === -1 || next === undefined) return;
+  e.preventDefault();
+  rows[Math.max(0, Math.min(rows.length - 1, next))].focus();
+}
+
+function folderBrowserKeys(e) {
+  if (e.key !== 'Backspace' || e.target.matches('input') || !folderView.listing?.parent || folderView.loading) return;
+  e.preventDefault();
+  browseTo(folderView.listing.parent);
 }
 
 function wsUrl(path) {
@@ -4882,7 +4973,7 @@ function connectEvents() {
       state.restartable = typeof msg.pid === 'number';
       state.launcher = typeof msg.launcher === 'string' ? msg.launcher : null;
       state.folderOpener = msg.folderOpener || null;
-      state.folderPicker = msg.folderPicker || null;
+      state.platform = msg.platform || null;
       state.remoteAccessUI?.setAvailable(msg.remoteAccess);
       renderVersion();
       setConnection('ok', 'Connected to session manager');
@@ -5145,10 +5236,8 @@ $('github-views').addEventListener('click', (e) => {
   if (view) switchGitHubView(view);
 });
 $('github-views').addEventListener('keydown', moveGitHubView);
-$('github-parent').addEventListener('change', () => {
-  save(CLONE_PARENT_KEY, cloneParent());
-  loadRepos();
-});
+$('github-parent').addEventListener('change', () => setCloneParent(cloneParent()));
+$('github-parent-pick').addEventListener('click', firstClick(() => chooseFolder('clone')));
 $('history-here').addEventListener('change', renderHistory);
 $('history-form').addEventListener('submit', resumeById);
 $('models').addEventListener('click', (e) => { if (e.target === $('models')) closeModels(); });
@@ -5371,7 +5460,23 @@ $('panel-stop').addEventListener('click', () => {
   else removeSession(s.id);
 });
 $('cwd').value = load(CWD_KEY) || '';
-$('cwd-pick').addEventListener('click', firstClick(pickWorkingFolder));
+$('cwd-pick').addEventListener('click', firstClick(() => chooseFolder('cwd')));
+$('folder-cancel').addEventListener('click', () => $('folder-browser').close());
+$('folder-browser').addEventListener('click', (e) => { if (e.target === $('folder-browser')) $('folder-browser').close(); });
+$('folder-browser').addEventListener('close', () => {
+  folderView.request++;
+  if (folderView.opener?.isConnected) folderView.opener.focus();
+});
+$('folder-browser').addEventListener('keydown', folderBrowserKeys);
+$('folder-list').addEventListener('keydown', moveInFolders);
+$('folder-up').addEventListener('click', () => browseTo(folderView.listing.parent));
+$('folder-home').addEventListener('click', () => browseTo('~'));
+$('folder-filter').addEventListener('input', renderFolderBrowser);
+$('folder-hidden').addEventListener('change', (e) => {
+  save(HIDDEN_FOLDERS_KEY, e.target.checked ? '1' : null);
+  renderFolderBrowser();
+});
+$('folder-use').addEventListener('click', useBrowsedFolder);
 $('cwd-open').addEventListener('click', firstClick(openWorkingFolder));
 try { state.accounts = JSON.parse(load(ACCOUNTS_KEY)) || {}; } catch { state.accounts = {}; }
 try { state.shellPicks = JSON.parse(load(SHELLS_KEY)) || {}; } catch { state.shellPicks = {}; }

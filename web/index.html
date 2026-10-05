@@ -234,7 +234,17 @@
       <div id="github-pulls" class="models-body github-body" role="tabpanel" aria-labelledby="github-view-pulls" hidden></div>
       <div id="github-clone-into" class="history-form github-form">
         <label for="github-parent">Clone into</label>
-        <input id="github-parent" type="text" placeholder="Folder that holds your clones" spellcheck="false" autocomplete="off">
+        <div class="cwd-field single">
+          <input id="github-parent" type="text" placeholder="Folder that holds your clones" spellcheck="false" autocomplete="off">
+          <div class="cwd-tools">
+            <button id="github-parent-pick" class="cwd-tool" type="button" aria-label="Choose a folder…" title="Connect to the session manager to choose folders" disabled>
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                <path d="M3.5 9V6.5A1.5 1.5 0 0 1 5 5h4l2 2h7.5A1.5 1.5 0 0 1 20 8.5V10"/>
+                <path d="M3.5 10.5H21l-2.5 8H5.5z"/>
+              </svg>
+            </button>
+          </div>
+        </div>
       </div>
     </section>
     <section id="notes" class="dock-panel notes-panel" role="tabpanel" aria-labelledby="notes-title" hidden>
@@ -400,6 +410,35 @@
       <input id="history-id" type="text" placeholder="Session id or name" spellcheck="false" autocomplete="off">
       <button type="submit" class="btn">Resume</button>
     </form>
+  </dialog>
+
+  <dialog id="folder-browser" class="models folder-browser" aria-labelledby="folder-title">
+    <div class="models-bar">
+      <div class="models-heading">
+        <h2 id="folder-title">Choose working folder</h2>
+        <p class="sub">Folders on the computer running Agent Guild</p>
+      </div>
+      <button id="folder-cancel" class="btn" type="button">Cancel</button>
+    </div>
+    <nav id="folder-path" class="history-tools folder-path" aria-label="Current folder"></nav>
+    <div class="history-tools folder-places">
+      <button id="folder-up" class="btn" type="button">Up</button>
+      <button id="folder-home" class="btn folder-chip" type="button">Home</button>
+      <div id="folder-roots" class="folder-roots"></div>
+    </div>
+    <div class="history-tools">
+      <input id="folder-filter" type="search" placeholder="Filter folders" aria-label="Filter folders" spellcheck="false" autocomplete="off">
+      <label class="history-here"><input id="folder-hidden" type="checkbox"><span>Show hidden</span></label>
+    </div>
+    <div class="models-body">
+      <p id="folder-note" class="models-note" hidden></p>
+      <div id="folder-list" class="folder-list" role="group" aria-label="Folders"></div>
+      <p id="folder-status" class="models-note" aria-live="polite"></p>
+    </div>
+    <div class="history-form folder-footer">
+      <span id="folder-current" class="folder-current"></span>
+      <button id="folder-use" class="btn primary" type="button">Use this folder</button>
+    </div>
   </dialog>
 
   <div id="tip" class="tip" aria-hidden="true" hidden><strong id="tip-title"></strong><span id="tip-source"></span><p id="tip-text"></p></div>

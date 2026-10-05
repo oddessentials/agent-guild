@@ -998,3 +998,27 @@ a.btn.github-out::after {
 .multiplexer-row .copies { margin-top: .4rem; }
 .multiplexer-row .copy-head { flex-wrap: wrap; }
 .multiplexer-row .copy-name { flex: 1 0 100%; }
+
+.cwd-field.single input { padding-right: 40px; }
+@media (pointer: coarse) { .cwd-field.single input { min-height: 46px; padding-right: 50px; } }
+.folder-browser { width: min(640px, calc(100vw - 32px)); height: min(720px, calc(100dvh - 48px)); }
+@media (max-width: 640px) { .folder-browser { width: 100vw; height: 100dvh; } }
+.folder-path { gap: 2px 0; font-family: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace; font-size: 0.82rem; }
+.folder-crumb { min-height: 32px; padding: 2px 6px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font: inherit; cursor: pointer; overflow-wrap: anywhere; text-align: left; }
+.folder-crumb:not(:first-child)::before { content: "›"; margin-right: 6px; color: var(--muted); }
+.folder-crumb:hover, .folder-crumb[aria-current] { color: var(--text); }
+.folder-crumb:focus-visible, .folder-row:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.folder-places, .folder-roots { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.folder-places .btn { min-height: 36px; }
+.folder-list { display: flex; flex-direction: column; }
+.folder-row {
+  display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 8px; border: 0; border-bottom: 1px solid var(--border);
+  background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; overflow-wrap: anywhere;
+}
+.folder-row::before { content: ""; flex: none; width: 18px; height: 14px; border: 1.6px solid var(--muted); border-radius: 2px 4px 3px 3px; }
+.folder-row:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.folder-row.hidden-folder { color: var(--muted); }
+#folder-status.error { color: var(--danger); }
+.folder-footer { justify-content: space-between; }
+.folder-current { flex: 1; min-width: 0; font-family: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace; font-size: 0.8rem; overflow-wrap: anywhere; }
+.folder-footer .btn { min-height: 42px; }
