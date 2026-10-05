@@ -160,8 +160,10 @@ vX.Y.Z** switches over when you are ready. The version badge opens
 
 **Keep notes at hand.** **Notes** in the top bar opens a notepad for prompts,
 commands and to-dos in the side panel, next to your terminals. It saves up to
-100,000 characters as you type and keeps them in this browser, never on the
-manager; every tab of the page shows the same notes.
+100,000 characters as you type. The same notes follow every browser signed in
+to this manager, including one opened through remote access. This browser
+keeps a copy too: if the manager is unreachable, the line under the title
+says the notes are saved in this browser only, and they sync when it is back.
 
 **GitHub beside your work.** **GitHub** in the top bar opens the side panel.
 Sign in to one or more GitHub accounts, then search the repositories of all

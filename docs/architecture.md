@@ -61,6 +61,9 @@
   for a newer version, and run the upgrade as a session.
 * **API server** (`server.mjs`). REST for control, one WebSocket for
   lifecycle events, one WebSocket per attached terminal. See [api.md](api.md).
+* **Notes** (`notes.mjs`). One notepad for every browser signed in to the
+  manager, kept in the data directory. The page paints from its own copy
+  first, then catches up to the manager's revision.
 * **Web page** (`web/`). Plain HTML, CSS and JavaScript with xterm.js, served
   by the manager. No build step.
 * **Launcher** (`bin/agent-guild.mjs`). Starts, stops, restarts and opens.

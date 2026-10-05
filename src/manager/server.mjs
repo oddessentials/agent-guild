@@ -12,6 +12,7 @@ import { createViews } from './github-views.mjs';
 import { createFolderOpener } from './folder-opener.mjs';
 import { createFolderBrowser } from './folder-browser.mjs';
 import { normalizeAccess } from './access-policy.mjs';
+import { NOTES_BODY_LIMIT, createNotesStore } from './notes.mjs';
 
 const require = createRequire(import.meta.url);
 const API = '/api/v1';
@@ -63,7 +64,7 @@ class HttpError extends Error {
   }
 }
 
-function readJsonBody(req) {
+function readJsonBody(req, max = MAX_BODY) {
   return new Promise((resolve, reject) => {
     let size = 0;
     const chunks = [];
@@ -71,7 +72,7 @@ function readJsonBody(req) {
     req.on('data', (chunk) => {
       if (tooLarge) return; // drain the rest so the 413 response can be read
       size += chunk.length;
-      if (size > MAX_BODY) {
+      if (size > max) {
         tooLarge = true;
         chunks.length = 0;
         reject(new HttpError(413, 'request body too large', 'too_large'));
@@ -113,6 +114,8 @@ export function createManagerServer({
   extraHosts = [],
   extraOrigins = [],
   remoteAccess = null,
+  /** In-memory when omitted, so a test server never reads the user's notes file. */
+  notes = createNotesStore(),
   folderOpener = createFolderOpener({ resolveCwd: (cwd) => manager.resolveCwd(cwd) }),
   folderBrowser = createFolderBrowser(),
   /** The double-click launcher file for this platform, or null when the package carries none. */
@@ -251,6 +254,15 @@ export function createManagerServer({
     }
 
     requireAuth(req, url);
+
+    if (route === '/notes' && method === 'GET') {
+      return sendJson(res, 200, { notes: notes.snapshot() });
+    }
+    if (route === '/notes' && method === 'PUT') {
+      const saved = notes.save(await readJsonBody(req, NOTES_BODY_LIMIT));
+      broadcast({ type: 'notes.updated', notes: saved });
+      return sendJson(res, 200, { notes: saved });
+    }
 
     if (remoteAccess && route === '/remote-access' && method === 'GET') {
       return sendJson(res, 200, { remoteAccess: remoteAccess.snapshot() });
@@ -486,12 +498,13 @@ export function createManagerServer({
       else serveStatic(req, res, url.pathname);
     } catch (err) {
       const status = err.status || 500;
-      if (status >= 500) console.error('[server]', err);
+      if (status >= 500 && !err.logged) console.error('[server]', err);
       if (!res.headersSent) {
         const error = { code: err.code || 'error', message: err.message };
         if (err.running !== undefined) error.running = err.running;
         if (err.pending !== undefined) error.pending = err.pending;
         if (err.target !== undefined) error.target = err.target;
+        if (err.notes !== undefined) error.notes = err.notes;
         sendJson(res, status, { error });
       }
     }
@@ -539,7 +552,11 @@ export function createManagerServer({
 
   function handleEvents(ws, req) {
     eventClients.add(ws);
-    safeSend(ws, { type: 'hello', version, pid: process.pid, platform: process.platform, startedAt, launcher, folderOpener: folderOpenerFor(req), remoteAccess: remoteAccess ? { available: true } : null, upgrade: upgradeInfo(), sessions: manager.list() });
+    const hello = { type: 'hello', version, pid: process.pid, platform: process.platform, startedAt, launcher, folderOpener: folderOpenerFor(req), remoteAccess: remoteAccess ? { available: true } : null, upgrade: upgradeInfo(), sessions: manager.list() };
+    const notesHello = notes.helloRevision();
+    if (notesHello.known) hello.notesRevision = notesHello.revision;
+    else hello.notesUnreadable = true;
+    safeSend(ws, hello);
     ws.on('close', () => eventClients.delete(ws));
     ws.on('message', () => { /* events socket is server -> client only */ });
   }

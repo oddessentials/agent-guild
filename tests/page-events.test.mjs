@@ -44,6 +44,7 @@ function connect({ changelogOpen, githubOpen = false, docked = null }) {
     managerConnected: () => alerts.push('connected'),
     managerGone: () => alerts.push('gone'),
     managerLoss: { disconnected: () => recovery.push('check'), cancel: () => recovery.push('cancel') },
+    catchUpNotes: noop, applyServerNotes: noop,
   };
   runInNewContext(`(${connectSource})()`, context);
   const hello = { type: 'hello', version: '1.2.3', pid: 1, sessions: [], upgrade: null };
