@@ -46,6 +46,12 @@
             <legend>Sound</legend>
             <label class="choice" title="Plays when the session manager stops, remains unavailable after a brief recovery check, or a new Agent Guild update is discovered. Click or type on this page to allow playback."><input id="sound" type="checkbox" name="sound"><span class="sound-alerts">Alert sounds</span></label>
           </fieldset>
+          <fieldset id="autostart-choice" hidden>
+            <legend>Startup</legend>
+            <label class="choice"><input id="autostart" type="checkbox" name="autostart"><span class="autostart">Launch at sign-in</span></label>
+            <p id="autostart-note" class="voice-note"></p>
+            <p id="autostart-run" class="voice-note autostart-run" role="status" hidden></p>
+          </fieldset>
           <fieldset id="voice-choice" hidden>
             <legend>Voice</legend>
             <label class="choice"><input id="voice" type="checkbox" name="voice"><span class="voice-input">Voice input</span></label>

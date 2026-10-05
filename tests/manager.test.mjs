@@ -15,6 +15,11 @@ import { startFakeGitHub } from './fixtures/fake-github.mjs';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-test-'));
 process.env.AGENT_GUILD_HOME = home;
+// A home of the tests' own: copies of coding tools installed in the developer's home must not change a result.
+const userHome = path.join(home, 'user-home');
+fs.mkdirSync(userHome);
+process.env.HOME = userHome;
+if (process.platform === 'win32') process.env.USERPROFILE = userHome;
 process.env.AGENT_GUILD_PORT = '0';
 process.env.AGENT_GUILD_SKIP_SHELL_ENV = '1';
 // As if the manager were started from a tmux shell in a herdr pane; the tools must not inherit either.
@@ -149,7 +154,24 @@ function snapshot(dir) {
 }
 const homesBefore = Object.fromEntries(Object.entries(toolHomes).map(([name, dir]) => [name, snapshot(dir)]));
 
-process.env.PATH = [toolsDir, bin, npmBinDir, nativeDir, secondDir, linkDir, goneDir, process.env.PATH].join(path.delimiter);
+// Only the system's own folders follow the tests' folders, so whatever else the machine has on PATH,
+// such as a real Claude Code or Codex, is never found. tmux is the one program taken from the inherited
+// PATH, so the tmux card tests run wherever tmux is installed.
+const systemDirs = win
+  ? ['System32', '', 'System32/Wbem', 'System32/WindowsPowerShell/v1.0'].map((dir) => path.join(process.env.SystemRoot || 'C:\\Windows', dir))
+  : ['/usr/bin', '/bin'];
+const systemTools = path.join(home, 'system-tools');
+fs.mkdirSync(systemTools);
+const inheritedTmux = win ? null : process.env.PATH.split(path.delimiter).filter(Boolean).map((dir) => path.join(dir, 'tmux')).find((file) => {
+  try {
+    fs.accessSync(file, fs.constants.X_OK);
+    return fs.statSync(file).isFile();
+  } catch {
+    return false;
+  }
+});
+if (inheritedTmux && !systemDirs.includes(path.dirname(inheritedTmux))) fs.symlinkSync(inheritedTmux, path.join(systemTools, 'tmux'));
+process.env.PATH = [toolsDir, bin, npmBinDir, nativeDir, secondDir, linkDir, goneDir, systemTools, ...systemDirs].join(path.delimiter);
 
 const racyBuild = `racy-pkg-${process.platform}-${process.arch}`;
 const registryRequests = [];
@@ -1398,8 +1420,14 @@ test('a tool whose hooks are turned off keeps running and shows that it is not r
   const tool = await startTool('claudeoff');
   await waitForText(tool.client, tool.session.id, 'FAKE-CLAUDE READY hooks=0', 'Claude with hooks off');
   assert.equal((await sessionNow(tool.session.id)).reporting.state, 'pending', 'silence before any prompt is not a failure');
+  // An empty Enter, or arrows and Enter in a menu, sends no prompt: the timeout (1.5 s here) does not start.
+  tool.client.send({ type: 'input', data: '\r' });
+  tool.client.send({ type: 'input', data: '\x1b[B\r' });
+  await new Promise((resolve) => setTimeout(resolve, 2500));
+  assert.equal((await sessionNow(tool.session.id)).reporting.state, 'pending', 'an Enter with nothing typed is not a prompt');
   tool.client.input('prompt');
   const unavailable = await waitFor(reportingIs(tool.session.id, 'unavailable'), { label: 'the reporting timeout' });
+  assert.match(unavailable.reporting.reason, /^No report from Claude Hooks Off's hooks yet\. They report once a prompt is sent/);
   assert.match(unavailable.reporting.reason, /turned off, restricted by an administrator, or not trusted/);
   assert.equal(unavailable.status, 'running');
   await tool.client.close();
@@ -1759,6 +1787,18 @@ test('Grok Build shell commands show from its hooks where it takes them', async 
 
 test('no session changed a tool\'s own home folder', () => {
   for (const [name, dir] of Object.entries(toolHomes)) assert.deepEqual(snapshot(dir), homesBefore[name], `${name} home unchanged`);
+});
+
+test('the manager only ever finds the tests\' own copies of the coding tools', async () => {
+  const roots = [home, fs.realpathSync(home)];
+  const { providers } = (await call('GET', '/providers')).body;
+  const real = providers.filter((p) => ['claude', 'codex', 'agy', 'grok'].includes(p.command));
+  assert.ok(real.length >= 4, 'every real coding tool is checked');
+  for (const provider of real) {
+    for (const install of provider.installs) {
+      assert.ok(roots.some((root) => install.path.startsWith(root + path.sep)), `${provider.id} found ${install.path}, outside the tests' own folders`);
+    }
+  }
 });
 
 test('the model comes from arguments, the screen, or an explicit report', async () => {

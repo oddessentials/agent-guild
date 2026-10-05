@@ -221,6 +221,17 @@ a stop or restart, remains unavailable after a brief recovery check, or a
 new version is discovered after the initial version check. Session activity
 and assistant responses have no sounds:
 the providers do not yet offer consistently reliable completion signals.
+**Launch at sign-in**, in the same menu, starts the session manager in the
+background whenever you sign in to the computer running Agent Guild; open
+the page as usual afterwards. On Windows it is an entry in Task Manager's
+Startup apps, on macOS a background item named Agent Guild under System
+Settings › General › Login Items & Extensions, and on Linux an entry named
+Agent Guild in the desktop's startup settings, so it needs a desktop session
+there: a server reached over SSH does not start it. macOS keeps its own
+switch for that item, which Agent Guild cannot read: switched off there, it
+does not start even while **Launch at sign-in** is checked. While it is on,
+the setting says when it last ran at sign-in and whether the session manager
+started then.
 
 The browser tab icon adds a rotating green ring whenever any session card says
 **Working**, including Shell and task cards. It mirrors the cards' terminal
@@ -280,8 +291,9 @@ turn on **Agent reporting** on its card once, which installs an Agent Guild
 plugin into Antigravity. It reports the model and the conversation, but no
 helper agents or shell commands. Grok Build cannot take hooks for one session yet; add the hooks
 from [examples/grok-hooks.json](examples/grok-hooks.json) to see its agents.
-When a tool's hooks do not run, because hooks are turned off, restricted by
-an administrator or not trusted for the folder, the card says so.
+When a tool's hooks have not reported some time after a prompt was sent,
+because hooks are turned off, restricted by an administrator or not trusted
+for the folder, the card says so.
 
 The card also names the model, from the hooks, from `--model` or from the
 tool's screen.
@@ -308,6 +320,29 @@ Any other tool or script can report agents and its model too. See
 * Usage meters are fetched by the manager with each tool's own sign-in. The
   page only receives percentages. On macOS the first lookup may ask for
   keychain access to the "Claude Code-credentials" item; choose Always Allow.
+* **Launch at sign-in** writes outside the data folder only while it is on:
+  the `AgentGuild` value under
+  `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` on Windows, which
+  runs `autostart.js` from the data folder through `wscript.exe` so no
+  console window opens;
+  `~/Library/LaunchAgents/com.oddessentials.agent-guild.plist` on macOS,
+  which runs the `Agent Guild` script in the data folder so that macOS lists
+  it by that name; and `~/.config/autostart/agent-guild.desktop` on Linux,
+  which runs `autostart.sh` from the data folder. On Linux, a Node.js,
+  package or data folder path holding `"`, `` ` ``, `$` or `\` cannot be
+  used, because desktops read those differently in a startup entry; the
+  setting then says so. Each sign-in touches `sign-in-attempt` and records
+  its outcome in `sign-in.json` in the data folder.
+  Turning it off removes them, and an entry whose Agent Guild package has
+  been uninstalled or moved removes itself at the next sign-in. With nvm,
+  the package lives in the Node.js version's folder, so uninstalling that
+  version counts as uninstalling Agent Guild; a Homebrew Node.js upgrade
+  does not. On macOS and Linux what the entry runs at sign-in, including a
+  missing Node.js, is appended to `manager.log`.
+  The entry saves the manager's listening port, including the assigned port
+  when started with `AGENT_GUILD_PORT=0`. Enabled entries are updated when
+  the manager starts. A macOS entry disabled through `launchctl` stays off
+  until you explicitly turn **Launch at sign-in** back on.
 
 The manager makes these outbound requests, and none of them carry your code
 or prompts:

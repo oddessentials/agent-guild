@@ -21,11 +21,13 @@ import { resolveBaseEnv, pathReader } from './shell-env.mjs';
 import { writeReportShims } from './report-shims.mjs';
 import { SessionHooks } from './session-hooks.mjs';
 import { launcherPath, spawnManager } from './launch.mjs';
+import { createAutostart } from './autostart.mjs';
 import {
   DEFAULT_HOST,
   PACKAGE_FILE,
   PACKAGE_NAME,
   VERSION,
+  dataDir,
   ensureDataDir,
   loadOrCreateToken,
   multiplexerStore,
@@ -40,8 +42,8 @@ const rootDir = path.resolve(here, '../..');
 
 const VERSION_REFRESH_MS = 60 * 60 * 1000;
 
-/** `version`, `packageFile` and `github` (GitHub's URLs and client id) stand in for the real ones in tests. */
-export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, sessionDefaults, version = VERSION, packageFile = PACKAGE_FILE, github: githubOptions = {}, remoteAccess: remoteOptions = {} } = {}) {
+/** `version`, `packageFile`, `github` (GitHub's URLs and client id) and `autostart` stand in for the real ones in tests. */
+export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, sessionDefaults, version = VERSION, packageFile = PACKAGE_FILE, github: githubOptions = {}, remoteAccess: remoteOptions = {}, autostart = null } = {}) {
   // Validate before creating files, processes or timers, so a typo fails startup cleanly.
   const remoteSettings = loadRemoteAccess(paths.remoteAccess);
   ensureDataDir();
@@ -82,6 +84,15 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
   const modelStats = new ModelStats({ registry });
   const news = new NewsFeed({ registry });
   const changelog = new Changelog({ latest: () => selfUpdate.latest });
+  // A sign-in entry starts a manager with the default data folder, so one
+  // kept elsewhere (as tests do) cannot be given one.
+  autostart ??= createAutostart({
+    script: path.join(rootDir, 'bin', 'agent-guild.mjs'),
+    dataDir: dataDir(),
+    log: paths.log,
+    getPort: () => api.port,
+    unavailable: process.env.AGENT_GUILD_HOME ? 'Not available while AGENT_GUILD_HOME sets the data folder.' : null,
+  });
   let closing = null;
 
   const refreshVersions = () => {
@@ -143,6 +154,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
     extraHosts: remoteSettings.config.access.hosts,
     extraOrigins: remoteSettings.config.access.origins,
     remoteAccess,
+    autostart,
     notes: createNotesStore(paths.notes),
     launcher: launcherPath(),
     onShutdownRequest: ({ restart = false } = {}) => shutdown('requested via API', { restart }).then(() => process.exit(0)),
@@ -173,6 +185,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
   });
   console.log(`[manager] Agent Guild ${version} listening on ${api.url} (pid ${process.pid})`);
   refreshVersions();
+  autostart.refresh().catch((err) => console.warn(`[manager] could not update the sign-in entry: ${err.message}`));
   return { api, manager, registry, token, shutdown, remoteAccess };
 }
 

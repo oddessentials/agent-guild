@@ -6,14 +6,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveCommand, resolveAllCommands, buildSpawnSpec, quoteForCmd } from '../src/manager/command-resolver.mjs';
-import { mergePathLists, parsePathFromEnvOutput, weavePaths, parseRegValue, expandWindowsVars, readWindowsPath, trimPathExt } from '../src/manager/shell-env.mjs';
+import { mergePathLists, parsePathFromEnvOutput, parseEnvOutput, macLocale, resolveBaseEnv, weavePaths, parseRegValue, expandWindowsVars, readWindowsPath, trimPathExt } from '../src/manager/shell-env.mjs';
 import { mergeEnv, cleanResumeId, modelFromArgs, SessionManager } from '../src/manager/session-manager.mjs';
 import { loadProviders, ProviderRegistry } from '../src/manager/providers.mjs';
 import { detectShells, tmuxNewSession, tmuxSupported } from '../src/manager/shells.mjs';
 import { herdrAgentReports, herdrSocket } from '../src/manager/herdr.mjs';
 import { paths } from '../src/manager/config.mjs';
 import { classifyInstall, expandHome, homeRelative, helpDescribes, platformDependency, listInstallations, knownLaunchers, updateHelpAccepted, uninstallPlan } from '../src/manager/install-channels.mjs';
-import { runPlan, encodePlan, RUNNER } from '../src/manager/uninstall.mjs';
+import { runPlan, encodePlan, removeFile, RUNNER } from '../src/manager/uninstall.mjs';
 import { hookToReports, claudeStatuslineToReport, formatStatusLine } from '../src/report/hooks.mjs';
 import { shimContents, writeReportShims, prependPath, fileUrl, SHIM_NAME, LOADER_NAME } from '../src/manager/report-shims.mjs';
 import { bundleFiles, codexHookArgs, codexTrustArgs, codexHooksFrom, antigravityInstalled, antigravityPluginDir, antigravityConfigFile, antigravityPluginEnabled, helpLists, REPORT_COMMAND } from '../src/manager/session-hooks.mjs';
@@ -23,8 +23,9 @@ import { SelfUpdate, isDevelopmentBuild } from '../src/manager/self-update.mjs';
 import { launcherPath, MANAGER_ENTRY, ROOT_DIR } from '../src/manager/launch.mjs';
 import {
   UsageMonitor, readClaudeCredentials, readCodexCredentials,
-  claudeKeychainService, claudeCredentialsFile, fetchClaudeUsage, fetchCodexUsage, commandUsage, toIso, windowLabel, clampPercent,
+  claudeKeychainService, claudeCredentialsFile, fetchClaudeUsage, fetchCodexUsage, commandUsage, toIso, windowLabel, clampPercent, excerpt, readStart, ERROR_BODY_LIMIT,
 } from '../src/manager/usage.mjs';
+import { Session } from '../src/manager/session.mjs';
 import {
   ModelStats, parseCatalog, indexCatalog, standing, tierFor, providerModels, modelNames, resolveModel, describeCatalog,
 } from '../src/manager/model-stats.mjs';
@@ -977,6 +978,31 @@ test('an uninstall plan stops before deleting anything when its command fails', 
   assert.equal(fs.existsSync(keep), false);
 });
 
+test('an uninstall stops instead of reporting a removal that did not happen', () => {
+  const home = tempDir();
+  const dir = path.join(home, '.tool', 'bin');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'tool'), 'binary');
+  const lines = [];
+  // What some Node releases do with a dangling link: no error, nothing deleted.
+  assert.equal(runPlan({ remove: [dir] }, { log: (line) => lines.push(line), rm: () => {} }), 1);
+  assert.ok(fs.existsSync(path.join(dir, 'tool')));
+  assert.ok(!lines.some((l) => l.startsWith('Removed')), lines.join('\n'));
+  assert.equal(lines.at(-1), `Could not remove ${dir}: it is still there. Stopped there. Close any program using it, then uninstall again.`);
+});
+
+test('a link goes as itself, even when what it pointed to is already gone', { skip: process.platform === 'win32' && 'symlinks need privileges on Windows' }, () => {
+  const home = tempDir();
+  const target = path.join(home, 'gone');
+  const link = path.join(home, 'link');
+  fs.writeFileSync(target, 'binary');
+  fs.symlinkSync(target, link);
+  fs.rmSync(target);
+  removeFile(link);
+  assert.equal(fs.lstatSync(link, { throwIfNoEntry: false }), undefined);
+  removeFile(link);
+});
+
 test('an uninstall that fails at any step leaves the copy findable and launchable, and a retry finishes it', () => {
   const posix = process.platform !== 'win32';
   const file = (home, rel) => {
@@ -1053,7 +1079,7 @@ test('an uninstall that fails at any step leaves the copy findable and launchabl
     const rmClean = (p) => {
       if (launcherGoneAt !== -1) assert.ok(!holdsFiles(p), `${name}: after the launcher stops working, ${p} holds no files`);
       deletions.push(p);
-      fs.rmSync(p, { recursive: true, force: true });
+      removeFile(p);
       if (launcherGoneAt === -1 && !fs.existsSync(clean.launcher)) launcherGoneAt = deletions.length - 1;
     };
     assert.equal(runPlan(clean, { log: quiet, rm: rmClean }), 0, name);
@@ -1065,7 +1091,7 @@ test('an uninstall that fails at any step leaves the copy findable and launchabl
       let calls = 0;
       const rm = (p) => {
         if (calls++ === failAt) throw Object.assign(new Error('resource busy or locked'), { code: 'EBUSY' });
-        fs.rmSync(p, { recursive: true, force: true });
+        removeFile(p);
       };
       const lines = [];
       assert.equal(runPlan(plan, { log: (l) => lines.push(l), rm }), 1, `${name}, failing at deletion ${failAt}`);
@@ -1535,7 +1561,7 @@ test('usage endpoints are called with the right headers and parsed into windows'
   assert.equal(clampPercent(0), 0);
   assert.equal(clampPercent(140), 100);
 
-  await assert.rejects(fetchClaudeUsage({ accessToken: 'x', fetchImpl: async () => ({ ok: false, status: 401 }) }), /sign in again/);
+  await assert.rejects(fetchClaudeUsage({ accessToken: 'x', fetchImpl: async () => ({ ok: false, status: 401 }) }), /refused the sign-in \(HTTP 401\); sign in again/);
   await assert.rejects(fetchCodexUsage({ accessToken: 'x', fetchImpl: async () => ({ ok: false, status: 429 }) }), (err) => err.rateLimited === true);
 
   assert.equal(toIso(1893456000), '2030-01-01T00:00:00.000Z');
@@ -1599,6 +1625,149 @@ test('a usage command prints JSON, and the monitor caches snapshots', async () =
   assert.equal(files.codex, path.join(dir, 'codex-home', 'auth.json'), 'the manager env applies otherwise');
   await monitor.all();
   assert.equal(fetches, 1, 'fresh snapshots are served from the cache');
+});
+
+test('a refused usage request says whether the sign-in or the network was refused, and never repeats a credential', async () => {
+  const reply = (status, body, headers = {}) => async () => new Response(body, { status, headers });
+  const cloudflare = { server: 'cloudflare', 'content-type': 'text/html; charset=UTF-8', 'cf-ray': '8f1e2d3c4b5a6978-LHR' };
+  const page = '<!DOCTYPE html><html><head><title>Just a moment...</title><script>var x = 1;</script></head><body>Checking your browser</body></html>';
+  for (const fetchUsage of [fetchClaudeUsage, fetchCodexUsage]) {
+    const blocked = await fetchUsage({ accessToken: 'x', fetchImpl: reply(403, page, cloudflare) }).catch((err) => err);
+    assert.equal(blocked.message, 'usage endpoint blocked this network (HTTP 403), not a sign-in problem; usually a VPN, proxy or exit node, and it clears by itself', 'the meaning comes first, as the card shows one line');
+    assert.doesNotMatch(blocked.message, /sign in again/, 'a network block is not blamed on the sign-in');
+    assert.deepEqual(blocked.detail, { status: 403, server: 'cloudflare', ray: '8f1e2d3c4b5a6978-LHR', body: 'Just a moment... Checking your browser' });
+    const challenged = await fetchUsage({ accessToken: 'x', fetchImpl: reply(403, '{}', { 'cf-mitigated': 'challenge', 'content-type': 'application/json' }) }).catch((err) => err);
+    assert.match(challenged.message, /blocked this network/, 'a Cloudflare challenge counts whatever the body');
+  }
+  const refused = await fetchClaudeUsage({
+    accessToken: 'x',
+    fetchImpl: reply(403, JSON.stringify({ type: 'error', error: { type: 'permission_error', message: 'OAuth token does not meet scope requirement user:profile' } }), { 'content-type': 'application/json', server: 'cloudflare' }),
+  }).catch((err) => err);
+  assert.equal(refused.message, 'usage endpoint refused access (HTTP 403: OAuth token does not meet scope requirement user:profile); if this continues, sign in again in Claude Code', "a JSON refusal from behind Cloudflare is the vendor's, with its reason");
+  const codexRefused = await fetchCodexUsage({ accessToken: 'x', fetchImpl: reply(403, JSON.stringify({ detail: 'Forbidden' })) }).catch((err) => err);
+  assert.match(codexRefused.message, /refused access \(HTTP 403: Forbidden\); if this continues, sign in again in Codex CLI$/);
+  const bare = await fetchCodexUsage({ accessToken: 'x', fetchImpl: async () => ({ ok: false, status: 403 }) }).catch((err) => err);
+  assert.equal(bare.message, 'usage endpoint refused access (HTTP 403); if this continues, sign in again in Codex CLI', 'a reply without headers or body still makes a message');
+  assert.deepEqual(bare.detail, { status: 403, server: null, ray: null, body: '' });
+  const unreadable = await fetchCodexUsage({ accessToken: 'x', fetchImpl: async () => ({ ok: false, status: 500, headers: { get() { throw new Error('gone'); } }, text: async () => { throw new Error('reset'); } }) }).catch((err) => err);
+  assert.equal(unreadable.message, 'usage endpoint answered HTTP 500');
+  const expired = await fetchClaudeUsage({ accessToken: 'x', fetchImpl: reply(401, '{"error":{"message":"invalid token"}}') }).catch((err) => err);
+  assert.equal(expired.message, 'usage endpoint refused the sign-in (HTTP 401); sign in again in Claude Code', 'a 401 is still a sign-in problem');
+
+  const jwt = 'eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.c2lnbmF0dXJl';
+  const leaky = await fetchCodexUsage({ accessToken: jwt, fetchImpl: reply(403, JSON.stringify({ error: { message: `token ${jwt} rejected` }, key: 'sk-ant-oat01-abcdefghijkl', auth: `Bearer ${jwt}` })) }).catch((err) => err);
+  for (const text of [leaky.message, leaky.detail.body]) {
+    assert.doesNotMatch(text, /eyJ|sk-ant|abcdefghijkl|c2lnbmF0dXJl/, `no credential in ${text}`);
+  }
+  assert.match(leaky.message, /HTTP 403: token \[redacted\] rejected/);
+  assert.equal(excerpt('a\n\n  b<br/>c'), 'a b c');
+  assert.equal(excerpt(`${'x'.repeat(10)} ${'y'.repeat(300)}`), 'xxxxxxxxxx [redacted]', 'a long opaque run is redacted before trimming');
+  assert.equal(excerpt('word '.repeat(100)).length, 200);
+  assert.equal(excerpt(undefined), '');
+});
+
+test('a failed usage reply is read only as far as an error needs, and its headers are kept short', async () => {
+  const kib = new Uint8Array(1024).fill(0x61);
+  let pulls = 0;
+  let cancelled = false;
+  const endless = new ReadableStream({
+    pull(controller) { pulls++; controller.enqueue(kib); },
+    cancel() { cancelled = true; },
+  });
+  const start = await readStart(new Response(endless));
+  assert.equal(start.length, ERROR_BODY_LIMIT);
+  assert.ok(pulls <= ERROR_BODY_LIMIT / 1024 + 2, `read about the limit, not the whole body (${pulls} chunks)`);
+  assert.ok(cancelled, 'the rest of the body is not downloaded');
+  assert.equal(await readStart(new Response('short')), 'short');
+  assert.equal(await readStart(new Response(null, { status: 403 })), '', 'a reply with no body');
+  assert.equal(await readStart({ text: async () => 'mock' }), 'mock', 'a test double without a stream is read whole');
+  assert.equal(await readStart({}), '');
+  // A character split across chunks is decoded whole.
+  const euro = new TextEncoder().encode('€');
+  const split = new ReadableStream({ start(c) { c.enqueue(euro.slice(0, 1)); c.enqueue(euro.slice(1)); c.close(); } });
+  assert.equal(await readStart(new Response(split)), '€');
+  const failing = new ReadableStream({ pull(c) { c.error(new Error('connection reset')); } });
+  await assert.rejects(readStart(new Response(failing)), /connection reset/);
+
+  const huge = await fetchCodexUsage({ accessToken: 'x', fetchImpl: async () => new Response(new ReadableStream({ pull(c) { c.enqueue(kib); } }), { status: 502, headers: { server: `cloudflare ${'v'.repeat(300)}`, 'cf-ray': 'r'.repeat(30) } }) }).catch((err) => err);
+  assert.equal(huge.message, 'usage endpoint answered HTTP 502', 'an endless reply still ends in an error');
+  assert.ok(huge.detail.server.length <= 80 && huge.detail.server.startsWith('cloudflare'), 'a header is capped before it reaches the log');
+  assert.equal(huge.detail.ray, 'r'.repeat(30));
+  const broken = await fetchClaudeUsage({ accessToken: 'x', fetchImpl: async () => new Response(new ReadableStream({ pull(c) { c.error(new Error('reset')); } }), { status: 403 }) }).catch((err) => err);
+  assert.equal(broken.message, 'usage endpoint refused access (HTTP 403); if this continues, sign in again in Claude Code', 'a body that fails to arrive is left out');
+  assert.equal(broken.detail.body, '');
+});
+
+test('the usage monitor logs a vendor or network failure when it starts or changes, and once when it ends', async () => {
+  const dir = tempDir();
+  const userFile = path.join(dir, 'providers.json');
+  fs.writeFileSync(userFile, JSON.stringify({ providers: [{ id: 'anthropic', accounts: [{ id: 'work' }] }, { id: 'openai', usage: null }, { id: 'xai', usage: null }, { id: 'google', usage: null }] }));
+  const registry = new ProviderRegistry({ userFile, env: { PATH: '' }, checkUpdates: false, accountsDir: path.join(dir, 'accounts') });
+  const replies = [];
+  const lines = [];
+  const monitor = new UsageMonitor({
+    registry,
+    platform: 'linux',
+    ttlMs: 0,
+    log: (line) => lines.push(line),
+    readers: { claude: async ({ file }) => {
+      if (file.includes('work')) throw Object.assign(new Error('Claude Code is not signed in'), { notSignedIn: true });
+      return { accessToken: 'secret-token' };
+    } },
+    fetchImpl: async () => {
+      const next = replies.shift();
+      if (next instanceof Error) throw next;
+      return next;
+    },
+  });
+  const blocked = () => new Response('<html>Attention Required!</html>', { status: 403, headers: { server: 'cloudflare', 'content-type': 'text/html', 'cf-ray': 'ray-1' } });
+  const ok = () => new Response(JSON.stringify({ five_hour: { utilization: 5 } }), { status: 200 });
+  const anthropic = registry.get('anthropic');
+  const check = () => monitor.snapshot(anthropic);
+
+  replies.push(blocked());
+  assert.match((await check()).error, /blocked this network/);
+  assert.deepEqual(lines, ['[usage] anthropic/default: usage endpoint blocked this network (HTTP 403), not a sign-in problem; usually a VPN, proxy or exit node, and it clears by itself (server=cloudflare cf-ray=ray-1 body="Attention Required!")']);
+  replies.push(blocked());
+  await check();
+  assert.equal(lines.length, 1, 'the same failure again is not logged again');
+  replies.push(new Response('', { status: 503 }));
+  await check();
+  assert.equal(lines.at(-1), '[usage] anthropic/default: usage endpoint answered HTTP 503', 'a different failure is, without repeating the status');
+  replies.push(Object.assign(new Error('fetch failed'), { name: 'TypeError' }));
+  await check();
+  assert.equal(lines.at(-1), '[usage] anthropic/default: usage check failed: fetch failed', 'a network failure has no response to describe');
+  replies.push(ok());
+  assert.equal((await check()).error, null);
+  assert.equal(lines.at(-1), '[usage] anthropic/default: usage lookups work again');
+  replies.push(ok());
+  await check();
+  assert.equal(lines.length, 4, 'success after success logs nothing');
+  await monitor.snapshot(anthropic, registry.account(anthropic, 'work'));
+  assert.equal(lines.length, 4, 'an account without a sign-in is not a failure to log');
+  assert.ok(lines.every((line) => !line.includes('secret-token')));
+});
+
+test('only a line with something typed on it counts as a sent prompt', () => {
+  const fake = { _typedSinceEnter: false };
+  const sends = (data) => Session.prototype._sendsTypedLine.call(fake, data);
+  assert.equal(sends('\r'), false, 'an Enter on an empty line');
+  assert.equal(sends('\x1b[B\x1b[B\r'), false, 'arrows, then Enter, in a menu');
+  assert.equal(sends('\x1bOA\r'), false, 'application-mode arrows');
+  assert.equal(sends('\x1b[I\x1b[O\x1b[<0;10;5M\x1b[<0;10;5m\r'), false, 'focus and SGR mouse reports');
+  assert.equal(sends('\x1b[M #!\r'), false, 'an X10 mouse report, whose bytes look printable');
+  assert.equal(sends('\x1b]11;rgb:0f0f/1111/1515\x07\x1bP1$r0m\x1b\\\r'), false, 'OSC and DCS strings');
+  assert.equal(sends('\x1b\r'), false, 'Alt+Enter');
+  assert.equal(sends('\x1b'), false, 'Escape on its own');
+  assert.equal(sends('hi\r'), true, 'typed text, then Enter');
+  for (const key of 'fix it') assert.equal(sends(key), false, 'text one key at a time sends nothing');
+  assert.equal(sends('\r'), true, 'until Enter');
+  assert.equal(sends('\r'), false, 'and Enter again sends an empty line');
+  assert.equal(sends('oops\x03\r'), false, 'Ctrl+C clears the line');
+  assert.equal(sends('oops\x15\r'), false, 'so does Ctrl+U');
+  assert.equal(sends('\x1b[200~line one\nline two\x1b[201~'), true, 'pasted lines count');
+  assert.equal(sends('ab\x7f\x7f'), false, 'backspaces send nothing');
+  assert.equal(sends('\r'), true, 'and cannot tell an emptied line from a typed one, so the line counts');
 });
 
 test('accounts get their own home folder and environment, the default keeps the tool\'s own', () => {
@@ -2278,6 +2447,52 @@ test('parsePathFromEnvOutput reads PATH from env output of any shell', () => {
   assert.equal(parsePathFromEnvOutput(`${START}PATH=/a:/b${END}`), '/a:/b');
   assert.equal(parsePathFromEnvOutput('no markers'), null);
   assert.equal(parsePathFromEnvOutput(`${START}HOME=/x\n${END}`), null);
+});
+
+test('parseEnvOutput reads the named, non-empty variables between the markers', () => {
+  const START = '__AGENT_GUILD_PATH_START__';
+  const END = '__AGENT_GUILD_PATH_END__';
+  const out = `banner LANG=xx\n${START}PATH=/a:/b\nLANG=en_GB.UTF-8\nLC_ALL=\nLC_CTYPE=a=b\nHOME=/x\n${END}`;
+  assert.deepEqual(parseEnvOutput(out, ['PATH', 'LC_ALL', 'LC_CTYPE', 'LANG']), { PATH: '/a:/b', LANG: 'en_GB.UTF-8', LC_CTYPE: 'a=b' });
+  assert.deepEqual(parseEnvOutput(`${START}HOME=/x${END}`, ['LANG']), {});
+  assert.equal(parseEnvOutput('no markers', ['LANG']), null);
+});
+
+test('macOS gets the region\'s UTF-8 locale, as Terminal.app gives its shells', () => {
+  const have = new Set(['en_GB.UTF-8', 'zh_CN.UTF-8']);
+  const exists = (name) => have.has(name);
+  assert.equal(macLocale({ read: () => 'en_GB\n', exists }), 'en_GB.UTF-8');
+  assert.equal(macLocale({ read: () => 'en_GB@rg=uszzzz\n', exists }), 'en_GB.UTF-8');
+  assert.equal(macLocale({ read: () => 'zh-Hans_CN', exists }), 'zh_CN.UTF-8');
+  assert.equal(macLocale({ read: () => 'fr_FR', exists }), 'en_US.UTF-8', 'a locale macOS lacks falls back');
+  assert.equal(macLocale({ read: () => null, exists }), 'en_US.UTF-8');
+  assert.equal(macLocale({ read: () => '../../etc', exists: () => true }), 'en_US.UTF-8', 'only a locale name is looked up');
+});
+
+test('a macOS manager with no locale takes Terminal.app\'s, and the login shell\'s wins there', () => {
+  const locale = () => 'en_GB.UTF-8';
+  const seen = [];
+  const shellEnv = (shell = {}) => (opts) => { seen.push(opts.env.LANG); return shell; };
+  // launchd sets no locale; the shell is asked with it already set, so /etc/zprofile keeps it.
+  const signIn = resolveBaseEnv({ platform: 'darwin', env: { SHELL: '/bin/zsh', PATH: '/usr/bin' }, shellEnv: shellEnv({ PATH: '/opt/homebrew/bin' }), locale });
+  assert.equal(signIn.LANG, 'en_GB.UTF-8');
+  assert.equal(signIn.PATH, ['/opt/homebrew/bin', '/usr/bin'].join(path.delimiter));
+  assert.deepEqual(seen, ['en_GB.UTF-8']);
+  // A locale the user already has is kept, even one that is not UTF-8.
+  for (const name of ['LANG', 'LC_ALL', 'LC_CTYPE']) {
+    const env = resolveBaseEnv({ platform: 'darwin', env: { [name]: 'C' }, shellEnv: shellEnv(), locale });
+    assert.equal(env[name], 'C');
+    assert.equal(env.LANG, name === 'LANG' ? 'C' : undefined);
+  }
+  // A locale the login shell exports wins, as it would in Terminal.
+  assert.equal(resolveBaseEnv({ platform: 'darwin', env: {}, shellEnv: shellEnv({ LANG: 'de_DE.UTF-8', LC_ALL: 'de_DE.UTF-8' }), locale }).LC_ALL, 'de_DE.UTF-8');
+  // Without the shell lookup the locale is still set.
+  assert.equal(resolveBaseEnv({ platform: 'darwin', env: { AGENT_GUILD_SKIP_SHELL_ENV: '1' }, shellEnv: () => assert.fail('asked the shell'), locale }).LANG, 'en_GB.UTF-8');
+  // Linux and Windows keep their own locale handling.
+  const linux = resolveBaseEnv({ platform: 'linux', env: { LANG: 'C' }, shellEnv: shellEnv({ LANG: 'de_DE.UTF-8' }), locale: () => assert.fail('chose a locale') });
+  assert.equal(linux.LANG, 'C');
+  assert.equal(resolveBaseEnv({ platform: 'linux', env: {}, shellEnv: shellEnv(), locale: () => assert.fail('chose a locale') }).LANG, undefined);
+  assert.equal(resolveBaseEnv({ platform: 'win32', env: {}, shellEnv: () => null, locale: () => assert.fail('chose a locale') }).LANG, undefined);
 });
 
 test('PATHEXT entries are trimmed on Windows, so a stray space cannot hide .cmd files from sessions', () => {

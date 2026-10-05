@@ -23,6 +23,10 @@ const REPORTING_STATES = new Set(['pending', 'active', 'unavailable', 'setup_req
 const SHELL_EVENTS = new Set(['start', 'waiting', 'asked', 'background', 'end', 'running', 'reset']);
 const MAX_SHELLS = 256;
 const MAX_ENDED_TASKS = 256;
+// Keys and reports a terminal sends as escape sequences: X10 mouse reports (three raw bytes after ESC [ M), other CSI
+// and SS3 sequences, OSC and DCS strings (to their end, or the next ESC, so a large paste is scanned once), and ESC
+// with one character (Alt+key). Bracketed paste markers are CSI, so pasted text is kept.
+const ESCAPE_SEQUENCE = /\x1b\[M[\s\S]{3}|\x1b\[[0-?]*[ -/]*[@-~]|\x1bO[\s\S]|\x1b[\]P][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[\s\S]?/g;
 
 /**
  * Colours reported to programs that query them (OSC 10/11/12), matching the
@@ -91,6 +95,7 @@ export class Session extends EventEmitter {
     this.reportingTimeoutMs = opts.reportingTimeoutMs ?? 30000;
     this.reporting = REPORTING_STATES.has(opts.reporting?.state) ? { state: opts.reporting.state, reason: opts.reporting.reason ?? null } : null;
     this._reportingTimer = null;
+    this._typedSinceEnter = false;
     this.shellDisplayDelayMs = opts.shellDisplayDelayMs ?? 600;
     this.shells = new Map();
     this._shellSeq = 0;
@@ -309,17 +314,37 @@ export class Session extends EventEmitter {
 
   input(data) {
     this.write(data);
-    if (this.reporting?.state === 'pending' && !this._reportingTimer && typeof data === 'string' && /[\r\n]/.test(data)) {
+    if (this.reporting?.state === 'pending' && !this._reportingTimer && typeof data === 'string' && this._sendsTypedLine(data)) {
       this._reportingTimer = setTimeout(() => {
         if (this.reporting?.state !== 'pending' || this.status !== 'running') return;
         this.reporting = {
           state: 'unavailable',
-          reason: `${this.provider.tool} has not run Agent Guild's reporting hooks yet. That is expected while it signs in or sets up; otherwise its hooks may be turned off, restricted by an administrator, or not trusted for this folder.`,
+          reason: `No report from ${this.provider.tool}'s hooks yet. They report once a prompt is sent; that can wait while ${this.provider.tool} signs in or sets up. If a prompt was sent and this stays, its hooks may be turned off, restricted by an administrator, or not trusted for this folder.`,
         };
         this._changed();
       }, this.reportingTimeoutMs);
       this._reportingTimer.unref?.();
     }
+  }
+
+  /**
+   * Whether this input sends a line with something typed on it, the way a
+   * prompt is sent. An Enter on an empty line, or after only keys that send
+   * escape sequences (arrows in a menu, focus and mouse reports), is not a
+   * prompt; nor is one after Ctrl+C or Ctrl+U, which clear the line. Text
+   * may arrive one key at a time, so what was typed carries over.
+   */
+  _sendsTypedLine(data) {
+    const keys = data.replace(ESCAPE_SEQUENCE, '');
+    let sent = false;
+    for (const ch of keys) {
+      if (ch === '\r' || ch === '\n') {
+        sent ||= this._typedSinceEnter;
+        this._typedSinceEnter = false;
+      } else if (ch === '\x03' || ch === '\x15') this._typedSinceEnter = false;
+      else if (ch >= ' ' && ch !== '\x7f') this._typedSinceEnter = true;
+    }
+    return sent;
   }
 
   _reply(data) {

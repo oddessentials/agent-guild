@@ -115,6 +115,8 @@ export function createManagerServer({
   extraHosts = [],
   extraOrigins = [],
   remoteAccess = null,
+  /** Starting the manager at sign-in, or null where it is not offered. */
+  autostart = null,
   /** In-memory when omitted, so a test server never reads the user's notes file. */
   notes = createNotesStore(),
   folderOpener = createFolderOpener({ resolveCwd: (cwd) => manager.resolveCwd(cwd) }),
@@ -274,6 +276,15 @@ export function createManagerServer({
     if (remoteAccess && route === '/remote-access' && method === 'PUT') {
       const operation = remoteAccess.change(await readJsonBody(req));
       return sendJson(res, 202, { remoteAccess: operation });
+    }
+
+    if (autostart && route === '/autostart' && method === 'GET') {
+      return sendJson(res, 200, { autostart: await autostart.describe() });
+    }
+    if (autostart && route === '/autostart' && method === 'PUT') {
+      const { enabled } = await readJsonBody(req);
+      if (typeof enabled !== 'boolean') throw new HttpError(400, 'enabled must be true or false', 'bad_request');
+      return sendJson(res, 200, { autostart: await autostart.set(enabled) });
     }
 
     if (route === '/info' && method === 'GET') {

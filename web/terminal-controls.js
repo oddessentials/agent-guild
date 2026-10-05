@@ -1,3 +1,5 @@
+import { bindVisibleViewport } from './layout.js';
+
 const ARROWS = { ArrowUp: 'A', ArrowDown: 'B', ArrowRight: 'C', ArrowLeft: 'D' };
 
 /** Use the same cursor mode as a physical keyboard, including inside full-screen tools. */
@@ -102,29 +104,9 @@ export class TerminalControls {
 
 /** Fit the touch panel to a docked keyboard without changing global page layout. */
 export function bindTerminalViewport(panel, controls) {
-  const viewport = window.visualViewport;
-  let frame;
-  const update = () => {
-    if (panel.hidden || controls.hidden) {
-      panel.style.removeProperty('--terminal-viewport-top');
-      panel.style.removeProperty('--terminal-viewport-bottom');
-      delete panel.dataset.compact;
-      return;
-    }
-    // Magnification belongs to the browser; it must not resize the shared PTY.
-    if (viewport && Math.abs(viewport.scale - 1) > 0.01) return;
-    const top = viewport?.offsetTop || 0;
-    const height = viewport?.height ?? innerHeight;
-    panel.style.setProperty('--terminal-viewport-top', `${top}px`);
-    panel.style.setProperty('--terminal-viewport-bottom', `${Math.max(0, innerHeight - top - height)}px`);
-    panel.toggleAttribute('data-compact', height < 420);
-  };
-  const schedule = () => { cancelAnimationFrame(frame); frame = requestAnimationFrame(update); };
-  viewport?.addEventListener('resize', schedule);
-  viewport?.addEventListener('scroll', schedule);
-  addEventListener('resize', schedule);
-  addEventListener('pageshow', schedule);
-  const observer = new MutationObserver(schedule);
-  for (const element of [panel, controls]) observer.observe(element, { attributes: true, attributeFilter: ['hidden'] });
-  schedule();
+  bindVisibleViewport(panel, 'terminal', {
+    shown: () => !panel.hidden && !controls.hidden,
+    watch: [panel, controls],
+    fitted: (height) => panel.toggleAttribute('data-compact', height !== null && height < 420),
+  });
 }

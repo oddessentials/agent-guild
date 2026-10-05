@@ -13,12 +13,14 @@ import { spawn } from 'node:child_process';
 import {
   DEFAULT_HOST,
   VERSION,
+  dataDir,
   loadOrCreateToken,
   paths,
   readRuntimeFile,
   resolvePort,
 } from '../src/manager/config.mjs';
 import { spawnManager } from '../src/manager/launch.mjs';
+import { recordSignIn } from '../src/manager/autostart.mjs';
 
 function usage() {
   console.log(`Usage: agent-guild [command] [--no-browser]
@@ -122,8 +124,10 @@ async function ensureManager({ port = null } = {}) {
   throw new Error(`the session manager did not start.${details ? `\n\nRecent log (${paths.log}):\n${details}` : ''}`);
 }
 
-async function cmdOpen({ browser }) {
+/** `signIn`: run by the sign-in entry, which shows the page whether a manager answered. */
+async function cmdOpen({ browser, signIn = false }) {
   const { url, started, version } = await ensureManager();
+  if (signIn) recordSignIn(dataDir(), started ? 'started' : 'running');
   const token = loadOrCreateToken();
   const target = pageUrl(url, token);
   console.log(started ? `Session manager started at ${url}` : `Session manager already running at ${url}`);
@@ -132,7 +136,8 @@ async function cmdOpen({ browser }) {
   if (browser) {
     openBrowser(target);
     console.log('Opening Agent Guild in your browser. You can close the page at any time; sessions keep running.');
-  } else {
+  } else if (!signIn) {
+    // A sign-in entry's output goes to manager.log, which needs no token.
     console.log(`Open: ${target}`);
   }
 }
@@ -248,7 +253,7 @@ async function main() {
   if (flags.has('-h') || flags.has('--help') || command === 'help') return usage();
 
   switch (command) {
-    case 'open': return cmdOpen({ browser: !flags.has('--no-browser') });
+    case 'open': return cmdOpen({ browser: !flags.has('--no-browser'), signIn: flags.has('--sign-in') });
     case 'start': {
       await import('../src/manager/main.mjs').then(async (m) => {
         process.on('uncaughtException', (err) => console.error('[manager] unexpected error:', err));

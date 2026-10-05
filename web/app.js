@@ -4,7 +4,7 @@
 import { SOUNDS, MAX_ALERT_AGE_MS, playOnce, rearmSound, managerLossWatcher, stopWatcher, updateWatcher } from './alerts.js';
 import { TerminalCopy } from './terminal-copy.js';
 import { TerminalControls, bindTerminalViewport } from './terminal-controls.js';
-import { topbarInline, dockMode, clampDockWidth, stageBesideDock, splitMode, clampRatio, bindSplitter, DOCK_MIN, SPLIT_RATIO_MIN } from './layout.js';
+import { topbarInline, dockMode, clampDockWidth, stageBesideDock, splitMode, clampRatio, bindSplitter, bindVisibleViewport, DOCK_MIN, SPLIT_RATIO_MIN } from './layout.js';
 import { highlightParts, rankRepos, recentFirst, remember, repoForOrigin, repoKey } from './repo-search.js';
 import { createActivityFavicon, isSessionWorking } from './activity-favicon.js';
 import { createRemoteAccessUI } from './remote-access.js';
@@ -297,6 +297,69 @@ function alertSound(name, key, at = Date.now(), fresh = () => true, related = []
     fresh: () => !state.pageAway && soundOn() && fresh() && Date.now() - at <= MAX_ALERT_AGE_MS,
     related,
   });
+}
+
+const AUTOSTART_NOTE = 'Starts the session manager in the background when you sign in to the computer running Agent Guild. The page does not open.';
+let autostartRequest = 0;
+let autostartChanging = false;
+
+/** What the entry did at the last sign-in it ran at, or '' while it is off. */
+function autostartRun(autostart) {
+  if (!autostart?.available || !autostart.enabled) return '';
+  const run = autostart.lastRun;
+  if (!run) return 'Has not run at a sign-in yet.';
+  const at = new Date(run.at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+  if (run.outcome === 'started') return `Last ran at sign-in on ${at} and started the session manager.`;
+  if (run.outcome === 'running') return `Last ran at sign-in on ${at}; the session manager was already running.`;
+  if (run.outcome === 'starting') return `Starting the session manager for the sign-in on ${at}…`;
+  return `Last ran at sign-in on ${at}, but the session manager did not start.${autostart.log ? ` See ${autostart.log}.` : ''}`;
+}
+
+/** The manager's sign-in setting; hidden when the manager has none. */
+function renderAutostart(autostart) {
+  $('autostart-choice').hidden = !autostart;
+  $('autostart').checked = Boolean(autostart?.enabled);
+  $('autostart').disabled = !autostart?.available;
+  $('autostart-note').textContent = autostart?.reason || autostart?.note || AUTOSTART_NOTE;
+  const run = autostartRun(autostart);
+  $('autostart-run').textContent = run;
+  $('autostart-run').hidden = !run;
+  $('autostart-run').dataset.outcome = autostart?.enabled ? autostart.lastRun?.outcome ?? 'none' : '';
+}
+
+async function loadAutostart({ afterChange = false } = {}) {
+  if (!state.connected || (autostartChanging && !afterChange)) return;
+  const request = ++autostartRequest;
+  $('autostart').disabled = true;
+  try {
+    const { autostart } = await api('GET', '/autostart');
+    if (request === autostartRequest) renderAutostart(autostart);
+  } catch (err) {
+    if (request !== autostartRequest) return;
+    if (err instanceof AuthError) showAuth(err.message);
+    else if (err.code === 'not_found') renderAutostart(null);
+    else renderAutostart({ available: false, enabled: false, reason: `Could not read the startup setting: ${err.message}` });
+  }
+}
+
+async function changeAutostart(input) {
+  if (autostartChanging) return;
+  autostartChanging = true;
+  ++autostartRequest;
+  const enabled = input.checked;
+  input.disabled = true;
+  try {
+    renderAutostart((await api('PUT', '/autostart', { enabled })).autostart);
+  } catch (err) {
+    if (err instanceof AuthError) showAuth(err.message);
+    else {
+      toast(err.message);
+      // An OS operation can partly succeed. Read back what actually happened.
+      await loadAutostart({ afterChange: true });
+    }
+  } finally {
+    autostartChanging = false;
+  }
 }
 
 function changeSound(input) {
@@ -3704,9 +3767,14 @@ async function loadBranches({ resume = false } = {}) {
       }
       for (const branch of result.branches) request.rows.set(branch.name, branch);
       request.nextPage = result.nextPage;
-      request.received = true;
-      request.value = { ...result, branches: [...request.rows.values()],
-        defaultBranch: request.defaultBranch, metadataError: request.metadataError };
+      // First loads display each page. A refresh keeps the previous list until
+      // every page arrives, so later-page rows and the reading position survive.
+      // `received` means the displayed value belongs to this listing generation.
+      if (!request.value || request.received || request.nextPage === null) {
+        request.received = true;
+        request.value = { ...result, branches: [...request.rows.values()],
+          defaultBranch: request.defaultBranch, metadataError: request.metadataError };
+      }
       renderGitHubViews();
     }
   } catch (err) {
@@ -3774,7 +3842,7 @@ function renderBranches({ preserveAnchor = true } = {}) {
   const branches = (value?.branches ?? []).filter((b) => b.name.toLocaleLowerCase().includes(query)).sort((a, b) =>
     Number(b.name === value.defaultBranch) - Number(a.name === value.defaultBranch)
       || a.name.localeCompare(b.name) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  const complete = Boolean(value && value.nextPage === null && (!slot.error || slot.received));
+  const complete = Boolean(slot?.received && value?.nextPage === null);
   const count = value?.branches.length ?? 0;
   let status = !value ? (slot?.error ? 'Branches could not be loaded.' : 'Loading branches…')
     : query ? `${branches.length} of ${count} loaded branches match.`
@@ -3879,7 +3947,17 @@ function setPickerOpen(open) {
   input.setAttribute('aria-expanded', String(open));
   $('github-repo-list').hidden = !open;
   if (!open) input.removeAttribute('aria-activedescendant');
-  else renderPickerList();
+  else {
+    fitPickerList();
+    renderPickerList();
+  }
+}
+
+// The list stays inside the visible part of the dock, so no option sits under an on-screen keyboard.
+function fitPickerList() {
+  if (!githubPick.open) return;
+  const room = $('dock').getBoundingClientRect().bottom - $('github-repo').getBoundingClientRect().bottom - 12;
+  $('github-repo-list').style.setProperty('--picker-room', `${Math.max(120, Math.floor(room))}px`);
 }
 
 function highlighted(text, query) {
@@ -5041,6 +5119,7 @@ const terminalControls = new TerminalControls({
   },
 });
 bindTerminalViewport($('terminal-panel'), $('terminal-controls'));
+bindVisibleViewport($('dock'), 'dock', { fitted: fitPickerList });
 
 const terminalCopy = new TerminalCopy({
   opener: $('panel-copy'), dialog: $('terminal-copy'),
@@ -5984,6 +6063,7 @@ $('settings-menu').addEventListener('change', (e) => {
   else if (e.target.name === 'theme') changeTheme(e.target);
   else if (e.target.name === 'sound') changeSound(e.target);
   else if (e.target.name === 'voice') changeVoice(e.target);
+  else if (e.target.name === 'autostart') changeAutostart(e.target);
 });
 /**
  * Runs `opened` once a menu shows and `closed` once it hides. Chrome skips the toggle event of a menu
@@ -6003,6 +6083,7 @@ function returnFocus(menu, invoker) {
   if ((!at || at === document.body || menu.contains(at)) && invoker?.checkVisibility?.()) invoker.focus();
 }
 onMenu($('settings-menu'), (menu) => {
+  loadAutostart();
   placeMenu(menu, $('settings'));
   menu.querySelector('input:checked')?.focus();
 }, (menu) => returnFocus(menu, $('settings')));

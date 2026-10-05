@@ -40,6 +40,28 @@ const checks = await withPage({ name: 'github-branches', instrumentation }, asyn
   const done = () => until('branches finished', () => evaluate(`!document.querySelector('#github-branches-refresh').disabled`));
   const held = () => until('held branches', () => evaluate('testBranches.held.length > 0'));
   const release = () => evaluate('testBranches.held.shift()()');
+  const anchorOffset = (name) => evaluate(`(() => {
+    const row=[...document.querySelector('#github-branches-list').children].find(e=>e.dataset.branch===${JSON.stringify(name)});
+    return row ? row.getBoundingClientRect().top-document.querySelector('#github-branches').getBoundingClientRect().top : null;
+  })()`);
+  const scrollToBranch = async (name) => {
+    await evaluate(`{
+      const panel=document.querySelector('#github-branches');
+      const row=[...document.querySelector('#github-branches-list').children].find(e=>e.dataset.branch===${JSON.stringify(name)});
+      panel.scrollTop+=row.getBoundingClientRect().top-panel.getBoundingClientRect().top+4;
+      row.querySelector('button').focus({preventScroll:true});
+    }`);
+    await layoutReady();
+    return { name, offset: await anchorOffset(name) };
+  };
+  const assertAnchor = async ({ name, offset }) => {
+    await layoutReady();
+    const actual = await anchorOffset(name);
+    assert.notEqual(actual, null, `${name} remains displayed`);
+    assert.ok(Math.abs(actual-offset) < 1, `${name} remains at ${offset}px, got ${actual}px`);
+  };
+  // Focusing an offscreen Refresh button would itself scroll the panel to the top.
+  const refreshInPlace = () => evaluate(`document.querySelector('#github-branches-refresh').click()`);
   const choose = async (query) => {
     await input('#github-repo', query);
     await until('matching repository', () => evaluate(`Boolean(document.querySelector('#github-repo-list [role=option]'))`));
@@ -71,6 +93,46 @@ const checks = await withPage({ name: 'github-branches', instrumentation }, asyn
   assert.equal(await evaluate('testBranches.requests.length'), 3);
   pass('201 branches load across all pages; alphabetical insertions preserve the visible row and focused control');
 
+  for (const action of ['refresh', 'reopen']) {
+    const anchor = await scrollToBranch('a-050'); // This row is supplied by page two.
+    await evaluate('testBranches.hold=[2,3]');
+    if (action === 'refresh') await refreshInPlace();
+    else { await click('#github-view-repos'); await click('#github-view-branches'); }
+    for (const page of [2,3]) {
+      await held();
+      assert.equal((await rows()).length, 201, `waiting for page ${page} keeps the previous list`);
+      assert.match(await status(), /Refreshing/);
+      await assertAnchor(anchor);
+      await release();
+    }
+    await done();
+    await assertAnchor(anchor);
+    if (action === 'refresh') assert.equal(await evaluate('document.activeElement.closest("[data-branch]")?.dataset.branch'), anchor.name);
+    pass(`${action} preserves a later-page reading position throughout pagination`);
+  }
+
+  await evaluate('testBranches.hold=[2]; testBranches.fail=2');
+  const failedAnchor = await scrollToBranch('a-050');
+  await refreshInPlace();
+  await held();
+  await assertAnchor(failedAnchor);
+  // The user can continue reading while the refresh is in progress.
+  const movedAnchor = await scrollToBranch('a-075');
+  await release();
+  await done();
+  assert.match(await status(), /Showing previous results/);
+  await assertAnchor(movedAnchor);
+  const requestCount = await evaluate('testBranches.requests.length');
+  await evaluate(`testBranches.hold=[2]; document.querySelector('#github-branches-retry').click()`);
+  await held();
+  assert.match(await evaluate(`testBranches.requests[${requestCount}]`), /page=2$/);
+  await assertAnchor(movedAnchor);
+  await release();
+  await done();
+  await assertAnchor(movedAnchor);
+  assert.equal(await evaluate('document.activeElement.closest("[data-branch]")?.dataset.branch'), movedAnchor.name);
+  pass('a failed later page and retry preserve the position the user chose during refresh');
+
   await input('#github-branches-filter', 'feat/name');
   assert.deepEqual(await rows(), ['feat/name#%é']);
   assert.match(await evaluate(`document.querySelector('#github-branches-list a').href`), /feat%2Fname%23%25%C3%A9$/);
@@ -91,9 +153,13 @@ const checks = await withPage({ name: 'github-branches', instrumentation }, asyn
   await held();
   await input('#github-branches-filter', 'z-0');
   await evaluate(`document.querySelector('#github-branches-filter').setSelectionRange(1,2)`);
+  assert.equal((await rows()).length, 99);
+  assert.equal(await evaluate(`document.querySelector('#github-branches').scrollTop`), 0);
   await release();
   await done();
   assert.deepEqual(await evaluate(`{const e=document.querySelector('#github-branches-filter');[document.activeElement.id,e.value,e.selectionStart,e.selectionEnd]}`), ['github-branches-filter','z-0',1,2]);
+  assert.equal((await rows()).length, 99);
+  assert.equal(await evaluate(`document.querySelector('#github-branches').scrollTop`), 0);
   await click('#github-branches-clear');
   await evaluate('testBranches.fail=1');
   await click('#github-branches-refresh');
@@ -103,8 +169,8 @@ const checks = await withPage({ name: 'github-branches', instrumentation }, asyn
   await evaluate('testBranches.pages=[[],["new-branch"]]; testBranches.fail=2');
   await click('#github-branches-retry');
   await done();
-  assert.equal((await rows()).length, 0);
-  assert.match(await status(), /incomplete/);
+  assert.equal((await rows()).length, 201);
+  assert.match(await status(), /Showing previous results/);
   await click('#github-branches-retry');
   await done();
   assert.deepEqual(await rows(), ['new-branch']);
@@ -132,6 +198,14 @@ const checks = await withPage({ name: 'github-branches', instrumentation }, asyn
 
   await evaluate('testBranches.pages=[[]]');
   await click('#github-branches-refresh');
+  await done();
+  assert.equal((await rows()).length, 0);
+  assert.match(await status(), /No remote branches yet/);
+  await evaluate('testBranches.hold=[1]');
+  await click('#github-branches-refresh');
+  await held();
+  assert.match(await status(), /Refreshing/);
+  await release();
   await done();
   assert.match(await status(), /No remote branches yet/);
   await evaluate('testBranches.pages=[["trunk","release/2026","feat/a-very-long-branch-name-with-no-spaces-"+"long".repeat(24)]]; testBranches.metadataError="Metadata unavailable"');

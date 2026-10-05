@@ -138,6 +138,47 @@ test('a later page can retry in place; failed refresh retains results and a succ
   assert.deepEqual(Array.from(p.githubPick.data.branches.value.branches, (b) => b.name), ['keep']);
 });
 
+test('a refresh keeps its displayed results through empty pages and failure, then publishes the complete retry', async () => {
+  const p = page();
+  const first = p.loadBranches();
+  p.requests[0].resolve(branchPage(['old', 'keep']));
+  await first;
+  const previous = p.githubPick.data.branches.value;
+  const refresh = p.loadBranches();
+  const updated = { name: 'keep', sha: 'b'.repeat(40), protected: true };
+  p.requests[1].resolve({ ...branchPage([], 2), branches: [updated], defaultBranch: 'keep' });
+  await turn();
+  assert.equal(p.githubPick.data.branches.value, previous, 'page one cannot replace the displayed list');
+  p.requests[2].resolve({ ...branchPage([], 3), defaultBranch: null });
+  await turn();
+  assert.equal(p.githubPick.data.branches.value, previous, 'an empty intermediate page cannot clear it');
+  p.requests[3].reject(new Error('Offline'));
+  await refresh;
+  assert.equal(p.githubPick.data.branches.value, previous);
+  assert.equal(p.githubPick.data.branches.received, false, 'the displayed results still belong to the previous listing');
+  assert.equal(p.githubPick.data.branches.error, 'Offline');
+  assert.equal(p.githubPick.data.branches.nextPage, 3);
+  const retry = p.loadBranches({ resume: true });
+  assert.match(p.requests[4].path, /page=3$/);
+  p.requests[4].resolve({ ...branchPage(['new']), defaultBranch: null });
+  await retry;
+  const current = p.githubPick.data.branches.value;
+  assert.deepEqual(Array.from(current.branches, (b) => b.name), ['keep', 'new']);
+  assert.equal(current.branches[0], updated, 'new details replace the old branch at completion');
+  assert.equal(current.defaultBranch, 'keep');
+  assert.equal(p.githubPick.data.branches.received, true);
+  assert.equal(p.githubPick.data.branches.error, null);
+  assert.equal(p.githubPick.data.branches.nextPage, null);
+
+  const empty = p.loadBranches();
+  p.requests[5].resolve(branchPage([], 2));
+  await turn();
+  assert.equal(p.githubPick.data.branches.value, current);
+  p.requests[6].resolve(branchPage([]));
+  await empty;
+  assert.equal(p.githubPick.data.branches.value.branches.length, 0, 'a completed empty listing removes old branches');
+});
+
 test('late branch pages and failures cannot populate another repository, account, or a newer refresh', async () => {
   for (const change of ['repository', 'account', 'refresh']) {
     const p = page();
@@ -181,18 +222,28 @@ test('a removed or expired account invalidates pending branches even if the same
 });
 
 test('background branches stop requesting pages, then resume at the next page when visible', async () => {
-  const p = page();
-  const first = p.loadView('branches');
-  p.visibility.shown = false;
-  p.requests[0].resolve(branchPage(['first'], 2));
-  await first;
-  assert.equal(p.requests.length, 1);
-  assert.equal(p.githubPick.data.branches.nextPage, 2);
-  p.visibility.shown = true;
-  const resumed = p.loadBranches({ resume: true });
-  const duplicate = p.loadBranches({ resume: true });
-  assert.equal(p.requests.length, 2, 'only one page request in flight per listing');
-  p.requests[1].resolve(branchPage(['second']));
-  await Promise.all([resumed, duplicate]);
-  assert.equal(p.githubPick.data.branches.value.branches.length, 2);
+  for (const refresh of [false, true]) {
+    const p = page();
+    if (refresh) {
+      const initial = p.loadBranches();
+      p.requests[0].resolve(branchPage(['previous']));
+      await initial;
+    }
+    const start = p.requests.length;
+    const first = p.loadView('branches');
+    p.visibility.shown = false;
+    p.requests[start].resolve(branchPage(['first'], 2));
+    await first;
+    assert.equal(p.requests.length, start + 1);
+    assert.equal(p.githubPick.data.branches.nextPage, 2);
+    assert.deepEqual(Array.from(p.githubPick.data.branches.value.branches, (b) => b.name), refresh ? ['previous'] : ['first']);
+    p.visibility.shown = true;
+    const resumed = p.loadBranches({ resume: true });
+    const duplicate = p.loadBranches({ resume: true });
+    assert.equal(p.requests.length, start + 2, 'only one page request in flight per listing');
+    assert.match(p.requests[start + 1].path, /page=2$/);
+    p.requests[start + 1].resolve(branchPage(['second']));
+    await Promise.all([resumed, duplicate]);
+    assert.deepEqual(Array.from(p.githubPick.data.branches.value.branches, (b) => b.name), ['first', 'second']);
+  }
 });

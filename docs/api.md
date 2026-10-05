@@ -279,6 +279,13 @@ endpoint; a `command` source runs a program that prints
 `{ plan?, windows: [{ label, usedPercent | remainingPercent, resetsAt? }] }`.
 A window whose share is not a number (missing, null or blank) is left out
 rather than shown as unused. Snapshots are cached for a minute.
+A refused request says which kind of refusal it was: HTTP 401 is a refused
+sign-in, while an HTTP 403 that Cloudflare answers is a block of the request,
+usually because of the network it came from (a VPN, proxy or exit node), and
+advises no sign-in. The manager writes the status, the `server` and `cf-ray`
+headers and a short excerpt of the reply, without credentials, to
+`manager.log` when a failure starts or changes, and notes when lookups work
+again.
 
 ### History
 
@@ -393,8 +400,9 @@ that has never run lists no sessions and no error.
 * `reporting` says whether the tool's agent reporting hooks work, or is null
   for a tool Agent Guild supplies no hooks to. `state` is `pending` until the
   hooks announce themselves, `active` once any hook report arrives,
-  `unavailable` when none has arrived some time after the first prompt or
-  the tool refused the hooks, `setup_required` when the user has to turn
+  `unavailable` when none has arrived some time after the first prompt (a
+  line typed and sent; an Enter on an empty line or after only arrow keys is
+  none) or the tool refused the hooks, `setup_required` when the user has to turn
   reporting on first (Antigravity CLI), and `unsupported` when the installed tool
   cannot take hooks for one session. `reason` explains every state but `active`.
 * `shells` lists the shell commands the tool is running for the model, as
@@ -554,6 +562,8 @@ All paths are under `/api/v1`.
 | GET | `/info` | | Manager version, platform, start time, provider config warnings, `upgrade` (an Upgrade object), and `launcher`: the path of the double-click launcher for this platform when the install carries one (a checkout of the repository), else null. `folderOpener` is `{ available, label, reason }` for this client; it is unavailable to clients that reach the manager by any address other than its own loopback ones. |
 | GET | `/folders?path=` | | `{ path, parent, home, segments, roots, entries, truncated, note }`: the subfolders of `path` (blank or `~` for the home folder) on the manager's computer. A missing `path` lists the nearest existing folder above it and names the requested path in `note`. `entries` are `{ name, path, hidden }`, sorted by name, at most 2,000 (`truncated` says when there were more); `segments` and `roots` are `{ name, path }` for the path's parts and the drives or `/`. 409 `folder_unreadable` when the folder cannot be read. |
 | POST | `/folders` | `{ path, name }` | 201 with the `GET /folders` listing of the new folder `name`, made inside the existing folder `path`. 400 `bad_name` when `name` is blank, `.` or `..`, holds a path separator or control character, or (on Windows) holds `<>:"|?*`, ends with a dot or space, or is a reserved device name; 409 `folder_exists` when something already has that name, `folder_missing` when `path` is not an existing folder, `folder_unreadable` or `folder_unwritable` when the host refuses. |
+| GET | `/autostart` | | `{ autostart: { available, enabled, reason, note?, lastRun?, log? } }`: whether the manager starts when the user signs in to its computer. `reason` says why it is unavailable (WSL, an unsupported system, a data folder set by `AGENT_GUILD_HOME`, or on Linux a path a desktop's startup entry cannot carry), else null. The entry turned off outside Agent Guild (Task Manager's Startup apps, a desktop's startup settings, `launchctl disable`) reads as off. On macOS, `note` explains that System Settings' Login Items switch for the item, which the manager cannot read, also keeps it from starting; on Linux it explains that a desktop session is needed, and warns when this manager was not started from one. While available, `lastRun` is null when off or when the entry has not run at a sign-in since it was turned on, else `{ at, outcome }`: `started` (it started the manager), `running` (a manager already answered), `starting` (it ran under 30 seconds ago and no manager has answered yet) or `failed` (none answered); `log` is the manager log, which records what a macOS or Linux entry ran. |
+| PUT | `/autostart` | `{ enabled }` | `{ autostart }` as above, after adding or removing the per-user sign-in entry, which runs `agent-guild open --no-browser --sign-in`. Turning it off, or on while it was off, forgets the last sign-in. 400 `bad_request` when `enabled` is not a boolean, 409 `autostart_unavailable`, 500 `autostart_failed` when the system refuses the change. |
 | POST | `/open-folder` | `{ cwd? }` | `{ ok }`: opens the folder in the computer's file manager. 403 `local_only` from clients that reach the manager by any address other than its own loopback ones. |
 | GET | `/notes` | | `{ notes: { revision, text } }`. One notepad for every client of this manager. `revision` is null until the first save. `text` is at most 100,000 characters. |
 | PUT | `/notes` | `{ revision, text }` | `{ notes }` with a new `revision`. `revision` is the one this edit started from, or null to create the notepad. 500 `notes_unreadable` (on GET too) while the notes file cannot be read; it is left as it is. 409 `stale_notes` when that revision is no longer current; `error.notes` is the current notepad, so a client can retry or adopt it. 400 `notes_too_long` over 100,000 characters, 400 `bad_notes` when `text` is not a string. The body may be up to 1 MiB. A cleared notepad is stored as an empty string; it is not deleted. |
