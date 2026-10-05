@@ -112,9 +112,14 @@ export const MAC_LAUNCH = [
   '',
 ].join('\n');
 
-/** The entry's command line: sh, its script, then the paths it reads. */
-export function posixCommand({ execPath, script, file, port = DEFAULT_PORT, log }) {
-  return ['/bin/sh', '-c', POSIX_LAUNCH, execPath, script, file, portString(port), log];
+/** What a macOS or Linux entry passes its script: Node.js, then the paths and port it reads. */
+function launchArgs({ execPath, script, file, port = DEFAULT_PORT, log }) {
+  return [execPath, script, file, portString(port), log];
+}
+
+/** The Linux entry's command line: sh, its script, then the arguments it reads. */
+export function posixCommand(paths) {
+  return ['/bin/sh', '-c', POSIX_LAUNCH, ...launchArgs(paths)];
 }
 
 /**
@@ -144,7 +149,7 @@ export function launchAgentPlist({ launcher, execPath, script, file, port, log }
     `  <key>Label</key><string>${LAUNCH_AGENT_LABEL}</string>`,
     '  <key>ProgramArguments</key>',
     '  <array>',
-    ...[launcher, ...posixCommand({ execPath, script, file, port, log }).slice(3)].map((arg) => `    <string>${xml(arg)}</string>`),
+    ...[launcher, ...launchArgs({ execPath, script, file, port, log })].map((arg) => `    <string>${xml(arg)}</string>`),
     '  </array>',
     '  <key>RunAtLoad</key><true/>',
     '  <key>AbandonProcessGroup</key><true/>',
