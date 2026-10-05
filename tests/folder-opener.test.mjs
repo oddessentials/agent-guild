@@ -199,4 +199,41 @@ test('the folder API requires the manager token and trusted source, and advertis
   t.after(() => ws.terminate());
   const hello = await new Promise((resolve, reject) => { ws.once('message', (data) => resolve(JSON.parse(data))); ws.once('error', reject); });
   assert.deepEqual(hello.folderOpener, folderOpener.describe());
+  assert.equal(hello.platform, process.platform);
+});
+
+test('opening folders is local-only: remote clients see it unavailable and are refused', { timeout: 10000 }, async (t) => {
+  const { dir } = folders(t);
+  const fake = launcher();
+  const folderOpener = createFolderOpener({ resolveCwd, ...windows, ...fake, cooldownMs: 0 });
+  const manager = Object.assign(new EventEmitter(), { list: () => [], resolveCwd });
+  const registry = Object.assign(new EventEmitter(), { warnings: [] });
+  const host = 'guild.example.ts.net';
+  const api = createManagerServer({ manager, registry, folderOpener, extraHosts: [host], token: 'test-manager-token', webDir: fileURLToPath(new URL('../web', import.meta.url)) });
+  await api.listen();
+  t.after(() => api.close());
+  const auth = { Authorization: 'Bearer test-manager-token' };
+  const send = (method, route, headers, body) => new Promise((resolve, reject) => {
+    const req = http.request(`${api.url}/api/v1${route}`, { method, headers: { 'Content-Type': 'application/json', ...auth, ...headers } }, (res) => {
+      let text = '';
+      res.setEncoding('utf8').on('data', (chunk) => { text += chunk; }).on('end', () => resolve({ status: res.statusCode, body: JSON.parse(text) }));
+    });
+    req.on('error', reject);
+    req.end(body === undefined ? undefined : JSON.stringify(body));
+  });
+  const reason = 'Only available on the computer running Agent Guild.';
+  const refused = await send('POST', '/open-folder', { Host: host }, { cwd: dir });
+  assert.equal(refused.status, 403);
+  assert.deepEqual(refused.body.error, { code: 'local_only', message: reason });
+  assert.equal(fake.calls.length, 0);
+  assert.deepEqual((await send('GET', '/info', { Host: host })).body.folderOpener, { ...folderOpener.describe(), available: false, reason });
+  assert.deepEqual((await send('GET', '/info', {})).body.folderOpener, folderOpener.describe());
+  for (const local of ['localhost', '127.0.0.1', '[::1]']) {
+    assert.equal((await send('POST', '/open-folder', { Host: `${local}:${api.port}` }, { cwd: dir })).status, 200);
+  }
+  assert.equal(fake.calls.length, 3);
+  const ws = new WebSocket(`${api.url.replace('http:', 'ws:')}/api/v1/events?token=test-manager-token`, { headers: { Host: host } });
+  t.after(() => ws.terminate());
+  const hello = await new Promise((resolve, reject) => { ws.once('message', (data) => resolve(JSON.parse(data))); ws.once('error', reject); });
+  assert.deepEqual(hello.folderOpener, { ...folderOpener.describe(), available: false, reason });
 });

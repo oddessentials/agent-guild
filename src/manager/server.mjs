@@ -10,7 +10,7 @@ import { timingSafeEqualString } from './session-manager.mjs';
 import { folderOrigin } from './github.mjs';
 import { createViews } from './github-views.mjs';
 import { createFolderOpener } from './folder-opener.mjs';
-import { createFolderPicker } from './folder-picker.mjs';
+import { createFolderBrowser } from './folder-browser.mjs';
 import { normalizeAccess } from './access-policy.mjs';
 
 const require = createRequire(import.meta.url);
@@ -114,7 +114,7 @@ export function createManagerServer({
   extraOrigins = [],
   remoteAccess = null,
   folderOpener = createFolderOpener({ resolveCwd: (cwd) => manager.resolveCwd(cwd) }),
-  folderPicker = createFolderPicker({ resolveCwd: (cwd) => manager.resolveCwd(cwd) }),
+  folderBrowser = createFolderBrowser(),
   /** The double-click launcher file for this platform, or null when the package carries none. */
   launcher = null,
   /** @type {(opts: { restart: boolean }) => void} */
@@ -133,7 +133,13 @@ export function createManagerServer({
   const vendor = vendorFiles();
   let boundPort = port;
 
-  const allowedHosts = () => new Set([`127.0.0.1:${boundPort}`, `localhost:${boundPort}`, `[::1]:${boundPort}`, ...access.hosts]);
+  const localHosts = () => [`127.0.0.1:${boundPort}`, `localhost:${boundPort}`, `[::1]:${boundPort}`];
+  const allowedHosts = () => new Set([...localHosts(), ...access.hosts]);
+  const isLocalClient = (req) => localHosts().includes(String(req.headers.host || '').toLowerCase());
+  const folderOpenerFor = (req) => {
+    const opener = folderOpener.describe();
+    return isLocalClient(req) ? opener : { ...opener, available: false, reason: 'Only available on the computer running Agent Guild.' };
+  };
   const allowedOrigins = () =>
     new Set([`http://127.0.0.1:${boundPort}`, `http://localhost:${boundPort}`, `http://[::1]:${boundPort}`, ...access.origins]);
 
@@ -268,21 +274,18 @@ export function createManagerServer({
         warnings: registry.warnings,
         upgrade: upgradeInfo(),
         launcher,
-        folderOpener: folderOpener.describe(),
-        folderPicker: folderPicker.describe(),
+        folderOpener: folderOpenerFor(req),
         remoteAccess: remoteAccess ? { available: true } : null,
       });
     }
     if (route === '/open-folder' && method === 'POST') {
       const { cwd } = await readJsonBody(req);
+      if (!isLocalClient(req)) throw new HttpError(403, 'Only available on the computer running Agent Guild.', 'local_only');
       await folderOpener.open(cwd);
       return sendJson(res, 200, { ok: true });
     }
-    if (route === '/pick-folder' && method === 'POST') {
-      const { cwd } = await readJsonBody(req);
-      const gone = new AbortController();
-      res.once('close', () => gone.abort());
-      return sendJson(res, 200, { path: await folderPicker.pick(cwd, { signal: gone.signal }) });
+    if (route === '/folders' && method === 'GET') {
+      return sendJson(res, 200, await folderBrowser.list(url.searchParams.get('path') ?? undefined));
     }
     if (route === '/upgrade' && method === 'POST') {
       const session = await manager.upgrade();
@@ -530,9 +533,9 @@ export function createManagerServer({
   github?.on('updated', () => broadcast({ type: 'github.updated' }));
   remoteAccess?.on('updated', () => broadcast({ type: 'remote-access.updated' }));
 
-  function handleEvents(ws) {
+  function handleEvents(ws, req) {
     eventClients.add(ws);
-    safeSend(ws, { type: 'hello', version, pid: process.pid, startedAt, launcher, folderOpener: folderOpener.describe(), folderPicker: folderPicker.describe(), remoteAccess: remoteAccess ? { available: true } : null, upgrade: upgradeInfo(), sessions: manager.list() });
+    safeSend(ws, { type: 'hello', version, pid: process.pid, platform: process.platform, startedAt, launcher, folderOpener: folderOpenerFor(req), remoteAccess: remoteAccess ? { available: true } : null, upgrade: upgradeInfo(), sessions: manager.list() });
     ws.on('close', () => eventClients.delete(ws));
     ws.on('message', () => { /* events socket is server -> client only */ });
   }
@@ -582,7 +585,7 @@ export function createManagerServer({
       ws.on('pong', () => { ws.isAlive = true; });
       ws.on('error', () => {});
       if (termMatch) handleTerminal(ws, termMatch[1]);
-      else handleEvents(ws);
+      else handleEvents(ws, req);
     });
   });
 
