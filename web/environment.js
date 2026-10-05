@@ -20,7 +20,7 @@ export function createEnvironmentUI({ api, onAuthError, isAuthError = () => fals
     const note = host.querySelector('.environment-note');
     note.textContent = error ? 'Environment check unavailable'
       : data?.refreshing ? data.checkedAt ? 'Refreshing · showing previous check' : 'Checking environment…'
-        : data?.error ? 'Some checks could not finish'
+        : data?.error ? data.error
           : !data ? 'Not checked' : !found.length ? 'No runtime versions verified' : 'Manager environment';
   }
 

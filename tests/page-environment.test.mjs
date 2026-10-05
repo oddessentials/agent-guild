@@ -60,6 +60,27 @@ function page() {
   };
 }
 
+test('missing languages do not make the shell card say the check failed', () => {
+  const p = page();
+  p.ui.connected(10);
+  p.ui.updated(snapshot(1, '24.0.0', {
+    runtimes: [
+      { id: 'node', label: 'Node.js', status: 'ok', version: '24.0.0', path: '/bin/node' },
+      { id: 'r', label: 'R', status: 'not_found', version: null, path: null },
+    ],
+  }));
+  assert.equal(p.get('.environment-note').textContent, 'Manager environment');
+  assert.equal(p.get('.environment-values').children[1].textContent, '24.0.0');
+});
+
+test('the shell card repeats a helper failure in the helper\'s own words', () => {
+  const p = page();
+  p.ui.connected(10);
+  p.ui.updated(snapshot(2, '24.0.0', { error: 'The environment check timed out.' }));
+  assert.equal(p.get('.environment-note').textContent, 'The environment check timed out.');
+  assert.equal(p.get('environment-status').textContent, 'The environment check timed out.');
+});
+
 test('the page keeps all detection states distinct', () => {
   assert.deepEqual(['not_found', 'unavailable', 'failed'].map((status) => runtimeValue({ status })), ['Not found', 'Runtime unavailable', 'Probe failed']);
 });

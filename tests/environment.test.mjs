@@ -4,8 +4,9 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { resolveCommand } from '../src/manager/command-resolver.mjs';
 import { Environment } from '../src/manager/environment.mjs';
-import { RUNTIMES, scanRuntime, detectTools, passiveExecutable, probeEnv, runProbe } from '../src/manager/environment-probe.mjs';
+import { RUNTIMES, scanRuntime, detectTools, passiveExecutable, probeEnv, runProbe, releaseScanDirectory } from '../src/manager/environment-probe.mjs';
 
 const definition = (id) => RUNTIMES.find((row) => row.id === id);
 function scanner(files, outputs, options = {}) {
@@ -88,6 +89,30 @@ test('probes use the provided neutral directory and disable downloads without ch
   assert.equal(probeEnv({ node_options: 'bad' }).node_options, undefined);
 });
 
+test('a Windows execution alias is not opened, and a later real binary still wins', async () => {
+  const checked = [];
+  const env = { PATH: 'C:\\Users\\me\\AppData\\Local\\Microsoft\\WindowsApps;C:\\Python314', PATHEXT: '.EXE' };
+  const resolve = (name, _env, platform, options) => resolveCommand(name, env, platform, {
+    ...options,
+    isExecutable(file) {
+      checked.push(file);
+      return /Python314\\python\.EXE$/i.test(file);
+    },
+  });
+  const row = await scanRuntime(definition('python'), {
+    platform: 'win32', env, cwd: '/neutral', resolve,
+    inspect: (file) => ({ file }),
+    run: async () => ({ code: 0, output: 'Python 3.14.2' }),
+  });
+  assert.equal(row.status, 'ok');
+  assert.equal(row.version, '3.14.2');
+  assert.match(row.path, /Python314\\python\.EXE$/i);
+  assert.ok(checked.every((file) => !/windowsapps/i.test(file)), checked.join(' '));
+  assert.equal(row.alternatives[0].status, 'unavailable');
+  assert.match(row.alternatives[0].path, /WindowsApps\\python3\.EXE$/i);
+  assert.match(row.alternatives[0].detail, /Windows execution alias/);
+});
+
 test('passive inspection refuses script shims and Windows aliases, follows runtime links, and preserves rustup dispatch', () => {
   const binary = Buffer.from([0x7f, 0x45, 0x4c, 0x46]);
   const options = { platform: 'linux', realpath: (file) => file, read: () => binary };
@@ -150,6 +175,95 @@ test('a hung probe settles at its deadline without waiting for close', async (t)
   child.emit('close', 0); // a late close cannot replace the timeout result
 });
 
+const immediate = () => new Promise((resolve) => setImmediate(resolve));
+
+function helper(t) {
+  const children = [];
+  const service = new Environment({ forkWorker: () => {
+    const child = new EventEmitter();
+    children.push(child);
+    return child;
+  } });
+  t.after(() => service.close());
+  return { service, children };
+}
+
+function emitRuntimes(child, row = {}) {
+  for (const runtime of RUNTIMES) {
+    child.emit('message', { runtime: {
+      id: runtime.id, label: runtime.label, status: 'not_found', version: null, path: null, command: runtime.id, ...row,
+    } });
+  }
+}
+
+test('a helper that exits after every runtime is a finished scan', async (t) => {
+  const { service, children } = helper(t);
+  service.refresh();
+  emitRuntimes(children[0]);
+  children[0].emit('exit', 1);
+  await immediate();
+  const snapshot = service.snapshot();
+  assert.equal(snapshot.error, null);
+  assert.equal(snapshot.refreshing, false);
+  assert.ok(snapshot.runtimes.every((row) => row.status === 'not_found'));
+});
+
+test('a helper that exits before every runtime is a failed scan', async (t) => {
+  const { service, children } = helper(t);
+  service.refresh();
+  children[0].emit('message', { runtime: { id: 'node', label: 'Node.js', status: 'ok', version: '24.0.0', path: '/node' } });
+  children[0].emit('exit', 1);
+  await immediate();
+  const snapshot = service.snapshot();
+  assert.match(snapshot.error, /stopped before finishing/);
+  assert.equal(snapshot.runtimes[0].status, 'ok');
+  assert.equal(snapshot.runtimes[0].version, '24.0.0');
+  assert.ok(snapshot.runtimes.slice(1).every((row) => row.status === 'failed'));
+});
+
+test('a completed helper can exit without turning the scan into a failure', async (t) => {
+  const { service, children } = helper(t);
+  service.refresh();
+  emitRuntimes(children[0]);
+  children[0].emit('message', { runtime: { id: 'node', label: 'Node.js', status: 'ok', version: '24.2.0', path: '/node' } });
+  children[0].emit('message', { done: true });
+  children[0].emit('exit', 0);
+  await immediate();
+  assert.equal(service.snapshot().error, null);
+  assert.equal(service.snapshot().runtimes[0].version, '24.2.0');
+});
+
+test('scan cleanup waits for kills and ignores a locked directory', async () => {
+  const events = [];
+  const cwd = path.join(os.tmpdir(), 'agent-guild-environment-locked');
+  await releaseScanDirectory(cwd, [Promise.resolve().then(() => events.push('reaped'))], {
+    chdir(dir) { events.push(['chdir', dir]); },
+    tmpdir: () => os.tmpdir(),
+    remove() {
+      events.push('remove');
+      throw Object.assign(new Error('busy'), { code: 'EPERM' });
+    },
+  });
+  assert.deepEqual(events, ['reaped', ['chdir', os.tmpdir()], 'remove']);
+});
+
+test('a timed-out probe releases its directory', async () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-environment-'));
+  const kills = [];
+  const result = await runProbe(process.execPath, ['-e', 'setTimeout(() => {}, 5000)'], {
+    env: process.env, cwd, timeoutMs: 100, kills,
+  });
+  assert.match(result.error, /timed out/);
+  assert.equal(kills.length, 1);
+  const previous = process.cwd();
+  try {
+    await releaseScanDirectory(cwd, kills);
+  } finally {
+    try { process.chdir(previous); } catch { /* the scan directory was removed */ }
+  }
+  assert.equal(fs.existsSync(cwd), false);
+});
+
 test('real isolated scan reports the manager PATH Node without changing a project', async (t) => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'guild-environment-test-'));
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
@@ -165,5 +279,6 @@ test('real isolated scan reports the manager PATH Node without changing a projec
   assert.equal(snapshot.runtimes[0].version, process.versions.node);
   assert.equal(snapshot.runtimes[0].status, 'ok');
   assert.equal(snapshot.refreshing, false);
+  assert.equal(snapshot.error, null);
   assert.deepEqual(fs.readdirSync(home), []);
 });

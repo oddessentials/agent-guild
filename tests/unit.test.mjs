@@ -74,6 +74,20 @@ test('resolveCommand honours PATHEXT order on Windows (simulated)', () => {
   assert.equal(resolveCommand('claude', env, 'win32', opts), 'C:\\Users\\dev\\AppData\\Roaming\\npm\\claude.ps1');
 });
 
+test('resolveCommand can skip a candidate before probing it', () => {
+  const seen = [];
+  const env = { Path: 'C:\\Users\\me\\AppData\\Local\\Microsoft\\WindowsApps;C:\\Python', PATHEXT: '.EXE' };
+  const file = resolveCommand('python', env, 'win32', {
+    onSkip: (candidate) => /windowsapps/i.test(candidate),
+    isExecutable(candidate) {
+      seen.push(candidate);
+      return candidate.startsWith('C:\\Python');
+    },
+  });
+  assert.equal(file, 'C:\\Python\\python.exe');
+  assert.deepEqual(seen, ['C:\\Python\\python.exe']);
+});
+
 test('resolveCommand finds .cmd shims on a real Windows PATH', { skip: process.platform !== 'win32' }, () => {
   const dir = tempDir();
   fs.writeFileSync(path.join(dir, 'claude.cmd'), '');
