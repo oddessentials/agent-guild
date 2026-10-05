@@ -457,6 +457,34 @@ test('Homebrew\'s Node.js is named by its opt link, which an upgrade keeps', { s
   assert.ok(fs.readFileSync(path.join(home, '.config', 'autostart', 'agent-guild.desktop'), 'utf8').includes(opt));
 });
 
+test('a snap\'s Node.js is named by its current link, which a refresh keeps', { skip: process.platform === 'win32' && 'snaps use POSIX paths and symlinks' }, async (t) => {
+  const root = tempDir(t);
+  for (const snaps of [path.join(root, 'snap'), path.join(root, 'var', 'lib', 'snapd', 'snap')]) {
+    const node = (snap, revision) => path.join(snaps, snap, revision, 'bin', 'node');
+    for (const [snap, revision] of [['node', '10234'], ['node', '10301'], ['node_22', 'x1']]) {
+      fs.mkdirSync(path.dirname(node(snap, revision)), { recursive: true });
+      fs.writeFileSync(node(snap, revision), '');
+    }
+    fs.symlinkSync('10234', path.join(snaps, 'node', 'current'));
+    fs.symlinkSync('x1', path.join(snaps, 'node_22', 'current'));
+    assert.equal(stableExecPath(node('node', '10234')), node('node', 'current'));
+    assert.equal(stableExecPath(node('node', '10301')), node('node', '10301'), 'a current link to another revision is not used');
+    assert.equal(stableExecPath(node('node_22', 'x1')), node('node_22', 'current'), 'parallel installs and local revisions');
+  }
+  const loose = path.join(root, 'snap', 'other', '7', 'bin', 'node');
+  fs.mkdirSync(path.dirname(loose), { recursive: true });
+  fs.writeFileSync(loose, '');
+  assert.equal(stableExecPath(loose), loose, 'a snap with no current link keeps its path');
+  assert.equal(stableExecPath('/home/a/.nvm/versions/node/v22.22.0/bin/node'), '/home/a/.nvm/versions/node/v22.22.0/bin/node');
+
+  const home = tempDir(t);
+  const execPath = path.join(root, 'snap', 'node', '10234', 'bin', 'node');
+  await createAutostart({ platform: 'linux', home, script: '/pkg/bin/agent-guild.mjs', dataDir: home, execPath, release: '6.8.0', env: {} }).set(true);
+  const entry = fs.readFileSync(path.join(home, '.config', 'autostart', 'agent-guild.desktop'), 'utf8');
+  assert.ok(entry.includes(path.join(root, 'snap', 'node', 'current', 'bin', 'node')));
+  assert.ok(!entry.includes('10234'));
+});
+
 test('macOS and Linux entries are writable only by their owner, whatever the umask', { skip: process.platform === 'win32' }, async (t) => {
   const umask = process.umask(0o002);
   t.after(() => process.umask(umask));

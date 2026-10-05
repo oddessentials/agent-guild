@@ -55,13 +55,15 @@ function candidateGroups(command, env, platform) {
  * Resolve `command` to an absolute path, or return null when it is not
  * installed. Commands that already contain a path separator are checked as-is.
  * `isExecutable` is injectable so tests can simulate another platform.
+ * `onSkip` drops a candidate before that check, without touching the filesystem.
  */
 export function resolveCommand(command, env = process.env, platform = process.platform, {
   isExecutable = (file) => isExecutableFile(file, platform),
+  onSkip = () => false,
 } = {}) {
   if (!command) return null;
   for (const group of candidateGroups(command, env, platform)) {
-    const hit = group.find((c) => isExecutable(c));
+    const hit = group.find((candidate) => !onSkip(candidate) && isExecutable(candidate));
     if (hit) return hit;
   }
   return null;

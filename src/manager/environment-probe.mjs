@@ -52,8 +52,8 @@ export function passiveExecutable(file, id, { platform = process.platform, env =
   if (/\/(?:shims|\.nodejs)\//.test(normalized) || /\/(?:mise|asdf|volta)(?:\.exe)?$/.test(normalized)) {
     return { error: 'A version-manager shim was found. Its runtime cannot be checked without activating the manager.' };
   }
-  if (platform === 'win32' && /\/windowsapps\//.test(normalized)) {
-    return { error: 'A Windows execution alias was found. A runtime behind this alias has not been verified.' };
+  if (platform === 'win32' && windowsAlias(normalized)) {
+    return { error: WINDOWS_ALIAS };
   }
   const head = read(real);
   const binary = head[0] === 0x4d && head[1] === 0x5a // PE
@@ -68,22 +68,43 @@ export function passiveExecutable(file, id, { platform = process.platform, env =
   return { error: 'A script launcher was found. Passive detection does not execute unrecognized wrappers.' };
 }
 
+const WINDOWS_ALIAS = 'A Windows execution alias was found. A runtime behind this alias has not been verified.';
+
+function windowsAlias(file) {
+  return /[\\/]windowsapps[\\/]/i.test(file);
+}
+
 // The helper has a second, independent overall deadline in Environment. A
 // timeout here resolves immediately, even if a descendant retains stdout.
-export function runProbe(file, args, { env, cwd, timeoutMs = TIMEOUT_MS, spawnProcess = spawn } = {}) {
+// The kill is recorded for directory cleanup and does not delay this result.
+export function runProbe(file, args, { env, cwd, timeoutMs = TIMEOUT_MS, spawnProcess = spawn, kills = null } = {}) {
   return new Promise((resolve) => {
     let child, timer, size = 0, output = '', settled = false;
     const stop = () => {
       if (!child?.pid) return;
-      if (process.platform === 'win32') killWindowsTree(child.pid);
-      else { try { child.kill('SIGKILL'); } catch { /* already gone */ } }
-      child.stdout?.destroy(); child.stderr?.destroy(); child.unref();
+      const pending = new Promise((done) => {
+        let ended = false;
+        // Keep cleanup alive after the child is unref'd, even if 'close' never arrives.
+        const backup = setTimeout(finishKill, 2000);
+        function finishKill() {
+          if (ended) return;
+          ended = true;
+          clearTimeout(backup);
+          done();
+        }
+        // 'close' waits for the process to end. Do not settle when stdio is only destroyed.
+        child.once('close', finishKill);
+        if (process.platform === 'win32') killWindowsTree(child.pid, finishKill);
+        else { try { child.kill('SIGKILL'); } catch { finishKill(); } }
+      });
+      if (Array.isArray(kills)) kills.push(pending);
+      try { child.stdout?.destroy(); child.stderr?.destroy(); child.unref(); } catch { /* the kill is already recorded */ }
     };
     const finish = (result, kill = false) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      if (kill) stop();
+      if (kill) try { stop(); } catch { /* the probe result still stands */ }
       resolve({ output, ...result });
     };
     try {
@@ -108,17 +129,28 @@ const unavailable = {
   rust: /no default is configured|toolchain .*not installed|could not choose a version|toolchain .*is not installable/i,
 };
 
-export async function scanRuntime(definition, { env, cwd, platform = process.platform, resolve = resolveCommand, inspect = passiveExecutable, run = runProbe } = {}) {
+export async function scanRuntime(definition, { env, cwd, platform = process.platform, resolve = resolveCommand, inspect = passiveExecutable, run = runProbe, kills = null } = {}) {
   const { id, label, command, args, pattern } = definition;
   const base = { id, label, status: 'not_found', version: null, path: null, command, detail: null };
   const one = async (name) => {
-    const file = resolve(name, env, platform);
-    if (!file) return { ...base, command: name };
+    // A Windows execution alias must not be inspected or spawned. A later real binary still wins.
+    let alias = null;
+    const file = resolve(name, env, platform, {
+      onSkip(candidate) {
+        if (platform !== 'win32' || !windowsAlias(candidate)) return false;
+        if (!alias || path.win32.extname(candidate).toLowerCase() === '.exe') alias = candidate;
+        return true;
+      },
+    });
+    if (!file) {
+      if (!alias) return { ...base, command: name };
+      return { ...base, command: name, path: alias, status: 'unavailable', detail: WINDOWS_ALIAS };
+    }
     const row = { ...base, command: name, path: file };
     try {
       const executable = inspect(file, id, { platform, env });
       if (executable.error) return { ...row, status: 'unavailable', detail: executable.error };
-      const result = await run(executable.file, args, { env: { ...probeEnv(env), DOTNET_CLI_HOME: cwd, DOTNET_GENERATE_ASPNET_CERTIFICATE: 'false' }, cwd });
+      const result = await run(executable.file, args, { env: { ...probeEnv(env), DOTNET_CLI_HOME: cwd, DOTNET_GENERATE_ASPNET_CERTIFICATE: 'false' }, cwd, kills });
       if (result.error) return { ...row, status: 'failed', detail: result.error };
       const version = result.code === 0 ? pattern.exec(result.output)?.[1] : null;
       if (version) return { ...row, status: 'ok', version };
@@ -139,7 +171,7 @@ export async function scanRuntime(definition, { env, cwd, platform = process.pla
     try {
       const executable = inspect(row.path, id, { platform, env });
       if (!executable.error) {
-        const result = await run(executable.file, ['--list-runtimes'], { env: { ...probeEnv(env), DOTNET_CLI_HOME: cwd }, cwd });
+        const result = await run(executable.file, ['--list-runtimes'], { env: { ...probeEnv(env), DOTNET_CLI_HOME: cwd }, cwd, kills });
         if (result.code === 0) row.runtimes = result.output.split(/\r?\n/).map((line) => line.match(/^(Microsoft\.[\w.]+) (\d+\.\d+\.\d+(?:-[\w.-]+)?) \[/))
           .filter(Boolean).map((match) => ({ name: match[1], version: match[2] }));
       }
@@ -162,10 +194,31 @@ export function detectTools({ env, platform = process.platform, resolve = resolv
   return tools;
 }
 
+// Windows cannot remove a process's current working directory, and a probe
+// killed at its deadline can still hold that directory. Cleanup must not
+// decide whether the scan succeeded.
+export async function releaseScanDirectory(cwd, kills = [], {
+  chdir = (dir) => process.chdir(dir),
+  remove = fs.rmSync,
+  tmpdir = os.tmpdir,
+} = {}) {
+  await Promise.all(kills).catch(() => {});
+  let temp = '';
+  try { temp = tmpdir(); } catch { /* removal is skipped below */ }
+  try { if (temp) chdir(temp); } catch { /* still try to remove the scan directory */ }
+  if (!cwd || !temp) return;
+  if (path.dirname(cwd) !== path.resolve(temp) || !path.basename(cwd).startsWith('agent-guild-environment-')) return;
+  try {
+    remove(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 40 });
+  } catch { /* a leftover lock must not fail the scan */ }
+}
+
 if (process.argv[2] === '--scan-environment' && process.send) {
   // A fresh temporary directory contains no project files. Manager env is
   // retained; no selected shell, project or session is inspected or changed.
   let cwd;
+  let finished = false;
+  const kills = [];
   try {
     cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-environment-'));
     process.chdir(cwd);
@@ -174,16 +227,13 @@ if (process.argv[2] === '--scan-environment' && process.send) {
     // Two batches bound concurrency while giving each runtime its own result.
     for (let i = 0; i < RUNTIMES.length; i += 3) {
       await Promise.all(RUNTIMES.slice(i, i + 3).map(async (definition) => {
-        const runtime = await scanRuntime(definition, { env, cwd });
+        const runtime = await scanRuntime(definition, { env, cwd, kills });
         process.send({ runtime });
       }));
     }
+    finished = true;
   } finally {
-    // Windows cannot remove a process's current working directory.
-    process.chdir(os.tmpdir());
-    if (cwd && path.dirname(cwd) === path.resolve(os.tmpdir()) && path.basename(cwd).startsWith('agent-guild-environment-')) {
-      fs.rmSync(cwd, { recursive: true, force: true });
-    }
+    await releaseScanDirectory(cwd, kills);
   }
-  process.send({ done: true });
+  if (finished) process.send({ done: true });
 }

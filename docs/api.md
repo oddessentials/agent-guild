@@ -162,10 +162,11 @@ a shell, working directory, provider environment or command to execute.
 
 The snapshot contains `scope: "manager"`, `platform`, a monotonically
 increasing `revision` within this manager lifetime, `refreshing`, `checkedAt`
-(ISO timestamp or null), `error` (overall check failure or null),
+(ISO timestamp or null), `error` (null, or why the helper itself did not finish),
 `managerNode: { version, path }`, `runtimes[]` and `tools[]`. Refresh retains
 the previous results while `refreshing` is true. On completion, each runtime
 has a fresh result; unfinished checks become `failed`, never a stale success.
+A missing or unverified runtime is that runtime's own status and does not set `error`.
 
 Runtimes are ordered Node.js, Python, Go, .NET SDK, R, Rust. Each has `id`,
 `label`, `status`, `version` and `path`. Resolved results also name `command`

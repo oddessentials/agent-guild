@@ -61,7 +61,11 @@ export class Environment extends EventEmitter {
         if (message?.done) finish();
       });
       run.child.once('error', () => finish('Could not start the environment check.'));
-      run.child.once('exit', () => finish('The environment check stopped before finishing.'));
+      // Let messages already queued win. Exit is a failed check only when a runtime never reported.
+      run.child.once('exit', () => setImmediate(() => {
+        if (this.run !== run) return;
+        finish(run.rows.size === RUNTIMES.length ? null : 'The environment check stopped before finishing.');
+      }));
       run.timer = setTimeout(() => finish('The environment check timed out.'), this.timeoutMs);
       run.timer.unref();
     } catch { finish('Could not start the environment check.'); }
