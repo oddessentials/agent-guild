@@ -298,6 +298,8 @@ function alertSound(name, key, at = Date.now(), fresh = () => true, related = []
 }
 
 const AUTOSTART_NOTE = 'Starts the session manager in the background when you sign in to the computer running Agent Guild. The page does not open.';
+let autostartRequest = 0;
+let autostartChanging = false;
 
 /** The manager's sign-in setting; hidden when the manager has none. */
 function renderAutostart(autostart) {
@@ -307,26 +309,38 @@ function renderAutostart(autostart) {
   $('autostart-note').textContent = autostart?.reason || AUTOSTART_NOTE;
 }
 
-async function loadAutostart() {
-  if (!state.connected) return;
+async function loadAutostart({ afterChange = false } = {}) {
+  if (!state.connected || (autostartChanging && !afterChange)) return;
+  const request = ++autostartRequest;
+  $('autostart').disabled = true;
   try {
-    renderAutostart((await api('GET', '/autostart')).autostart);
+    const { autostart } = await api('GET', '/autostart');
+    if (request === autostartRequest) renderAutostart(autostart);
   } catch (err) {
+    if (request !== autostartRequest) return;
     if (err instanceof AuthError) showAuth(err.message);
-    else renderAutostart(null);
+    else if (err.code === 'not_found') renderAutostart(null);
+    else renderAutostart({ available: false, enabled: false, reason: `Could not read the startup setting: ${err.message}` });
   }
 }
 
 async function changeAutostart(input) {
+  if (autostartChanging) return;
+  autostartChanging = true;
+  ++autostartRequest;
   const enabled = input.checked;
   input.disabled = true;
   try {
     renderAutostart((await api('PUT', '/autostart', { enabled })).autostart);
   } catch (err) {
-    input.checked = !enabled;
-    input.disabled = false;
     if (err instanceof AuthError) showAuth(err.message);
-    else toast(err.message);
+    else {
+      toast(err.message);
+      // An OS operation can partly succeed. Read back what actually happened.
+      await loadAutostart({ afterChange: true });
+    }
+  } finally {
+    autostartChanging = false;
   }
 }
 

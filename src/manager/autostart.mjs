@@ -10,8 +10,8 @@
 //   from killing the manager once the launching command exits.
 // * Linux: an XDG autostart entry, run when a desktop session starts.
 //
-// The entry itself records whether autostart is on, so a user who turns it
-// off in Task Manager or a desktop's startup settings sees it off here too.
+// The entry and the OS's enabled state record whether autostart is on, so
+// a user who turns it off outside the app sees it off here too.
 // Its paths are absolute, so a running manager rewrites an entry that is on
 // at every start: a Node.js version switch or a reinstall then takes effect
 // at the next sign-in. npm runs no script when a package is uninstalled, so
@@ -23,6 +23,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
+import { DEFAULT_PORT } from './config.mjs';
 
 export const ARGS = ['open', '--no-browser'];
 export const WINDOWS_RUN_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
@@ -32,6 +33,11 @@ export const WINDOWS_WRAPPER = 'autostart.js';
 export const LAUNCH_AGENT_LABEL = 'com.oddessentials.agent-guild';
 
 const failure = (message) => Object.assign(new Error(message), { status: 500, code: 'autostart_failed' });
+
+function portString(port) {
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw failure('The manager must be listening before saving its startup port.');
+  return String(port);
+}
 
 /** A JScript string literal: JSON's escapes, with everything outside ASCII as \u escapes so the file's code page cannot matter. */
 function jsString(value) {
@@ -44,13 +50,14 @@ function jsString(value) {
  * removal of the Run value, its Task Manager setting and this file.
  * `runKey` and `approvedKey` are replaceable in tests.
  */
-export function windowsWrapper({ execPath, script, runKey = WINDOWS_RUN_KEY, approvedKey = WINDOWS_APPROVED_KEY }) {
+export function windowsWrapper({ execPath, script, port = DEFAULT_PORT, runKey = WINDOWS_RUN_KEY, approvedKey = WINDOWS_APPROVED_KEY }) {
   const command = [execPath, script].map((p) => `"${p}"`).concat(ARGS).join(' ');
   return [
     '// Agent Guild: starts the session manager at sign-in without a console window.',
     'var files = new ActiveXObject("Scripting.FileSystemObject");',
     'var shell = new ActiveXObject("WScript.Shell");',
     `if (files.FileExists(${jsString(script)})) {`,
+    `  shell.Environment("Process")("AGENT_GUILD_PORT") = ${jsString(portString(port))};`,
     `  shell.Run(${jsString(command)}, 0, false);`,
     '} else {',
     '  // Agent Guild is no longer installed here: remove this sign-in entry.',
@@ -70,19 +77,19 @@ export function windowsRunCommand({ env, wrapper }) {
 
 /**
  * The sh script a macOS or Linux entry runs, with Node.js as $0, the
- * package script as $1 and the entry's own file as $2, so no path is
- * ever part of the script text.
+ * package script as $1, the entry's own file as $2, and the saved port as
+ * $3, so no path is ever part of the script text.
  */
-export const POSIX_LAUNCH = `if [ -f "$1" ]; then exec "$0" "$1" ${ARGS.join(' ')}; fi; rm -f "$2"`;
+export const POSIX_LAUNCH = `if [ -f "$1" ]; then AGENT_GUILD_PORT="$3" exec "$0" "$1" ${ARGS.join(' ')}; fi; rm -f "$2"`;
 
 /** The entry's command line: sh, its script, then the paths it reads. */
-export function posixCommand({ execPath, script, file }) {
-  return ['/bin/sh', '-c', POSIX_LAUNCH, execPath, script, file];
+export function posixCommand({ execPath, script, file, port = DEFAULT_PORT }) {
+  return ['/bin/sh', '-c', POSIX_LAUNCH, execPath, script, file, portString(port)];
 }
 
 const xml = (value) => value.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
-export function launchAgentPlist({ execPath, script, file }) {
+export function launchAgentPlist({ execPath, script, file, port }) {
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
@@ -91,7 +98,7 @@ export function launchAgentPlist({ execPath, script, file }) {
     `  <key>Label</key><string>${LAUNCH_AGENT_LABEL}</string>`,
     '  <key>ProgramArguments</key>',
     '  <array>',
-    ...posixCommand({ execPath, script, file }).map((arg) => `    <string>${xml(arg)}</string>`),
+    ...posixCommand({ execPath, script, file, port }).map((arg) => `    <string>${xml(arg)}</string>`),
     '  </array>',
     '  <key>RunAtLoad</key><true/>',
     '  <key>AbandonProcessGroup</key><true/>',
@@ -111,13 +118,13 @@ export function desktopArg(value) {
   return quoted.replace(/\\/g, '\\\\').replace(/%/g, '%%');
 }
 
-export function desktopEntry({ execPath, script, file }) {
+export function desktopEntry({ execPath, script, file, port }) {
   return [
     '[Desktop Entry]',
     'Type=Application',
     'Name=Agent Guild',
     'Comment=Starts the Agent Guild session manager',
-    `Exec=${posixCommand({ execPath, script, file }).map(desktopArg).join(' ')}`,
+    `Exec=${posixCommand({ execPath, script, file, port }).map(desktopArg).join(' ')}`,
     'Terminal=false',
     'NoDisplay=true',
     'X-GNOME-Autostart-enabled=true',
@@ -136,10 +143,22 @@ export function approvedDisabled(stdout) {
   return hex !== undefined && (parseInt(hex, 16) & 1) === 1;
 }
 
-function runReg(env) {
-  const reg = path.win32.join(env.SystemRoot || env.SYSTEMROOT || env.WINDIR || 'C:\\Windows', 'System32', 'reg.exe');
+/** launchctl has used both booleans and enabled/disabled in its override list. */
+export function launchAgentDisabled(stdout) {
+  const body = String(stdout).match(/^\s*disabled services = \{([\s\S]*)\}\s*$/)?.[1];
+  if (body === undefined) throw failure('Unrecognized launchd startup settings.');
+  let disabled = false;
+  for (const line of body.split('\n').filter((row) => row.trim())) {
+    const row = line.match(/^\s*"([^"]+)"\s*=>\s*(true|false|enabled|disabled)\s*$/);
+    if (!row) throw failure('Unrecognized launchd startup settings.');
+    if (row[1] === LAUNCH_AGENT_LABEL) disabled = row[2] === 'true' || row[2] === 'disabled';
+  }
+  return disabled;
+}
+
+function runCommand(command) {
   return (args) => new Promise((resolve) => {
-    execFile(reg, args, { windowsHide: true, timeout: 10000 }, (err, stdout, stderr) => {
+    execFile(command, args, { windowsHide: true, timeout: 10000 }, (err, stdout, stderr) => {
       resolve({ status: err ? (typeof err.code === 'number' ? err.code : 1) : 0, stdout, stderr: stderr || err?.message || '' });
     });
   });
@@ -167,8 +186,10 @@ async function writeIfChanged(file, contents) {
  * @param {object} opts
  * @param {string} opts.script  bin/agent-guild.mjs of the package that is running
  * @param {string} opts.dataDir  where the Windows wrapper is kept
+ * @param {() => number} [opts.getPort]  the bound port, read only when writing an entry
  * @param {string|null} [opts.unavailable]  a reason autostart cannot be offered, which turns it off here
  * @param {(args: string[]) => Promise<{ status: number, stdout: string, stderr: string }>} [opts.reg]  reg.exe, replaceable in tests
+ * @param {(args: string[]) => Promise<{ status: number, stdout: string, stderr: string }>} [opts.launchctl]  launchctl, replaceable in tests
  */
 export function createAutostart({
   platform = process.platform,
@@ -178,10 +199,14 @@ export function createAutostart({
   execPath = process.execPath,
   script,
   dataDir,
+  getPort = () => DEFAULT_PORT,
   unavailable = null,
-  reg = runReg(env),
+  reg = runCommand(path.win32.join(env.SystemRoot || env.SYSTEMROOT || env.WINDIR || 'C:\\Windows', 'System32', 'reg.exe')),
+  uid = process.getuid?.(),
+  launchctl = runCommand('/bin/launchctl'),
 }) {
-  const paths = { execPath, script };
+  const command = () => ({ execPath, script, port: getPort() });
+  let refreshError = null;
   let queue = Promise.resolve();
   /** One change or check at a time, so two clicks cannot interleave their writes. */
   const serial = (fn) => {
@@ -208,7 +233,7 @@ export function createAutostart({
         const state = await reg(['query', WINDOWS_APPROVED_KEY, '/v', WINDOWS_VALUE]);
         return !(state.status === 0 && approvedDisabled(state.stdout));
       },
-      write: () => writeIfChanged(wrapper, windowsWrapper(paths)),
+      write: () => writeIfChanged(wrapper, windowsWrapper(command())),
       async enable() {
         await this.write();
         const r = await reg(['add', WINDOWS_RUN_KEY, '/v', WINDOWS_VALUE, '/t', 'REG_SZ', '/d', windowsRunCommand({ env, wrapper }), '/f']);
@@ -224,17 +249,49 @@ export function createAutostart({
         await fs.promises.rm(wrapper, { force: true });
       },
     };
-  } else if (platform === 'darwin' || (platform === 'linux' && !(env.WSL_DISTRO_NAME || /microsoft|wsl/i.test(release)))) {
-    const file = platform === 'darwin'
-      ? path.join(home, 'Library', 'LaunchAgents', `${LAUNCH_AGENT_LABEL}.plist`)
-      : path.join(env.XDG_CONFIG_HOME || path.join(home, '.config'), 'autostart', 'agent-guild.desktop');
-    const contents = () => (platform === 'darwin' ? launchAgentPlist({ ...paths, file }) : desktopEntry({ ...paths, file }));
+  } else if (platform === 'darwin') {
+    const file = path.join(home, 'Library', 'LaunchAgents', `${LAUNCH_AGENT_LABEL}.plist`);
+    const domain = `gui/${uid}`;
+    const disabled = async () => {
+      if (!Number.isInteger(uid) || uid < 0) throw failure('Could not determine the macOS user.');
+      const r = await launchctl(['print-disabled', domain]);
+      if (r.status !== 0) throw failure(`Could not read launchd startup settings: ${r.stderr.trim()}`);
+      return launchAgentDisabled(r.stdout);
+    };
+    target = {
+      async enabled() {
+        return (await readText(file)) !== null && !(await disabled());
+      },
+      write: () => writeIfChanged(file, launchAgentPlist({ ...command(), file })),
+      async enable() {
+        const previous = await readText(file);
+        // Check the domain before writing an entry we might be unable to enable.
+        await disabled();
+        await this.write();
+        try {
+          const r = await launchctl(['enable', `${domain}/${LAUNCH_AGENT_LABEL}`]);
+          if (r.status !== 0) throw failure(`Could not enable the launchd startup setting: ${r.stderr.trim()}`);
+          if (await disabled()) throw failure('launchd did not enable the startup setting.');
+        } catch (err) {
+          try {
+            if (previous === null) await fs.promises.rm(file, { force: true });
+            else await writeIfChanged(file, previous);
+          } catch (restoreError) {
+            throw failure(`${err.message} Could not restore the previous startup entry: ${restoreError.message}`);
+          }
+          throw err;
+        }
+      },
+      disable: () => fs.promises.rm(file, { force: true }),
+    };
+  } else if (platform === 'linux' && !(env.WSL_DISTRO_NAME || /microsoft|wsl/i.test(release))) {
+    const file = path.join(env.XDG_CONFIG_HOME || path.join(home, '.config'), 'autostart', 'agent-guild.desktop');
     target = {
       async enabled() {
         const text = await readText(file);
-        return text !== null && (platform === 'darwin' || desktopEntryEnabled(text));
+        return text !== null && desktopEntryEnabled(text);
       },
-      write: () => writeIfChanged(file, contents()),
+      write: () => writeIfChanged(file, desktopEntry({ ...command(), file })),
       enable() { return this.write(); },
       disable: () => fs.promises.rm(file, { force: true }),
     };
@@ -246,7 +303,8 @@ export function createAutostart({
   const describe = async () => {
     if (!target) return { available: false, enabled: false, reason };
     try {
-      return { available: true, enabled: await target.enabled(), reason: null };
+      const enabled = await target.enabled();
+      return { available: true, enabled, reason: enabled ? refreshError : null };
     } catch (err) {
       return { available: false, enabled: false, reason: `Could not read the startup setting: ${err.message}` };
     }
@@ -259,14 +317,23 @@ export function createAutostart({
       if (!target) throw Object.assign(new Error(reason), { status: 409, code: 'autostart_unavailable' });
       try {
         await (enabled ? target.enable() : target.disable());
+        refreshError = null;
+        const state = await describe();
+        if (!state.available || state.enabled !== enabled) throw failure(state.reason || 'Could not verify the startup setting.');
+        return state;
       } catch (err) {
         throw err.code === 'autostart_failed' ? err : failure(`Could not change the startup setting: ${err.message}`);
       }
-      return describe();
     }),
-    /** Points an entry that is on at this manager's Node.js and package. */
+    /** Points an entry that is on at this manager's Node.js, package and port. */
     refresh: () => serial(async () => {
-      if (target && await target.enabled()) await target.write();
+      try {
+        if (target && await target.enabled()) await target.write();
+        refreshError = null;
+      } catch (err) {
+        refreshError = `Could not update the sign-in entry: ${err.message}`;
+        throw err;
+      }
     }),
   };
 }

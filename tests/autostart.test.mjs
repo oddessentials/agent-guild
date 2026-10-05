@@ -10,6 +10,7 @@ import {
   WINDOWS_APPROVED_KEY,
   WINDOWS_RUN_KEY,
   WINDOWS_VALUE,
+  LAUNCH_AGENT_LABEL,
   POSIX_LAUNCH,
   approvedDisabled,
   createAutostart,
@@ -17,6 +18,7 @@ import {
   desktopEntry,
   desktopEntryEnabled,
   launchAgentPlist,
+  launchAgentDisabled,
   windowsRunCommand,
   windowsWrapper,
 } from '../src/manager/autostart.mjs';
@@ -33,7 +35,7 @@ function desktopExecArgs(value) {
 }
 
 /** A module that records its arguments in `ran`, standing in for bin/agent-guild.mjs. */
-const probe = (ran) => `import fs from 'node:fs';\nfs.writeFileSync(${JSON.stringify(ran)}, JSON.stringify(process.argv.slice(2)));\n`;
+const probe = (ran) => `import fs from 'node:fs';\nfs.writeFileSync(${JSON.stringify(ran)}, JSON.stringify({ args: process.argv.slice(2), port: process.env.AGENT_GUILD_PORT }));\n`;
 
 function tempDir(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'guild-autostart-'));
@@ -64,10 +66,29 @@ function fakeReg({ failAdd = false } = {}) {
   return { reg, values, calls };
 }
 
+function fakeLaunchctl() {
+  const state = { disabled: false, failPrint: false, failEnable: false, refuseEnable: false };
+  const calls = [];
+  const launchctl = async (args) => {
+    calls.push(args);
+    const [verb, target] = args;
+    assert.equal(target, verb === 'print-disabled' ? 'gui/501' : `gui/501/${LAUNCH_AGENT_LABEL}`);
+    if (verb === 'print-disabled') return state.failPrint
+      ? { status: 1, stdout: '', stderr: 'Could not find domain' }
+      : { status: 0, stdout: `disabled services = {\n "${LAUNCH_AGENT_LABEL}" => ${state.disabled ? 'disabled' : 'enabled'}\n}`, stderr: '' };
+    assert.equal(verb, 'enable');
+    if (state.failEnable) return { status: 1, stdout: '', stderr: 'Operation not permitted' };
+    if (!state.refuseEnable) state.disabled = false;
+    return { status: 0, stdout: '', stderr: '' };
+  };
+  return { state, calls, launchctl };
+}
+
 test('the Windows wrapper runs the launcher hidden and keeps any path intact in an ASCII file', () => {
   const execPath = 'C:\\Program Files\\nodejs\\node.exe';
   const script = 'C:\\Users\\Zoë 中\\AppData\\Roaming\\npm\\node_modules\\@oddessentials\\agent-guild\\bin\\agent-guild.mjs';
-  const text = windowsWrapper({ execPath, script });
+  const text = windowsWrapper({ execPath, script, port: 51234 });
+  assert.match(text, /shell\.Environment\("Process"\)\("AGENT_GUILD_PORT"\) = "51234";/);
   assert.match(text, /^[\x00-\x7f]*$/);
   const literal = text.match(/\.Run\((".*"), 0, false\);/)[1];
   assert.equal(JSON.parse(literal), `"${execPath}" "${script}" open --no-browser`);
@@ -78,9 +99,9 @@ test('the Windows wrapper runs the launcher hidden and keeps any path intact in 
 });
 
 test('the LaunchAgent runs at load, escapes its paths and outlives the launching command', () => {
-  const text = launchAgentPlist({ execPath: '/opt/node & co/bin/node', script: '/Users/a/<guild>/bin/agent-guild.mjs', file: '/Users/a/Library/LaunchAgents/x.plist' });
+  const text = launchAgentPlist({ execPath: '/opt/node & co/bin/node', script: '/Users/a/<guild>/bin/agent-guild.mjs', file: '/Users/a/Library/LaunchAgents/x.plist', port: 51234 });
   const args = [...text.matchAll(/<string>([^<]*)<\/string>/g)].slice(1).map((m) => m[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&'));
-  assert.deepEqual(args, ['/bin/sh', '-c', POSIX_LAUNCH, '/opt/node & co/bin/node', '/Users/a/<guild>/bin/agent-guild.mjs', '/Users/a/Library/LaunchAgents/x.plist']);
+  assert.deepEqual(args, ['/bin/sh', '-c', POSIX_LAUNCH, '/opt/node & co/bin/node', '/Users/a/<guild>/bin/agent-guild.mjs', '/Users/a/Library/LaunchAgents/x.plist', '51234']);
   assert.match(text, /<key>RunAtLoad<\/key><true\/>/);
   assert.match(text, /<key>AbandonProcessGroup<\/key><true\/>/);
   assert.doesNotMatch(text, /KeepAlive/);
@@ -91,7 +112,7 @@ test('desktop entry arguments follow the quoting and string escape rules', () =>
   assert.equal(desktopArg('/a"b`c\\d'), '"/a\\\\"b\\\\`c\\\\\\\\d"');
   const paths = { execPath: '/opt/my node/bin/node', script: '/home/a/50% "guild"/bin/agent-guild.mjs', file: '/home/a/.config/autostart/agent-guild.desktop' };
   const exec = desktopEntry(paths).match(/^Exec=(.*)$/m)[1];
-  assert.deepEqual(desktopExecArgs(exec), ['/bin/sh', '-c', POSIX_LAUNCH, paths.execPath, paths.script, paths.file]);
+  assert.deepEqual(desktopExecArgs(exec), ['/bin/sh', '-c', POSIX_LAUNCH, paths.execPath, paths.script, paths.file, '47821']);
   assert.equal(desktopEntryEnabled('[Desktop Entry]\nX-GNOME-Autostart-enabled=true\n'), true);
   assert.equal(desktopEntryEnabled('[Desktop Entry]\nHidden=true\n'), false);
   assert.equal(desktopEntryEnabled('[Desktop Entry]\nX-GNOME-Autostart-enabled=false\n'), false);
@@ -111,7 +132,7 @@ for (const platform of ['linux', 'darwin']) {
     const file = platform === 'darwin'
       ? path.join(home, 'Library', 'LaunchAgents', 'com.oddessentials.agent-guild.plist')
       : path.join(home, 'xdg', 'autostart', 'agent-guild.desktop');
-    const options = { platform, home, release: '6.8.0', env: { XDG_CONFIG_HOME: path.join(home, 'xdg') }, script: '/pkg/bin/agent-guild.mjs', dataDir: home };
+    const options = { platform, home, release: '6.8.0', env: { XDG_CONFIG_HOME: path.join(home, 'xdg') }, script: '/pkg/bin/agent-guild.mjs', dataDir: home, uid: 501, launchctl: fakeLaunchctl().launchctl };
     const autostart = createAutostart({ ...options, execPath: '/old/node' });
     assert.deepEqual(await autostart.describe(), { available: true, enabled: false, reason: null });
     await autostart.refresh();
@@ -120,14 +141,75 @@ for (const platform of ['linux', 'darwin']) {
     assert.deepEqual(await autostart.set(true), { available: true, enabled: true, reason: null });
     assert.match(fs.readFileSync(file, 'utf8'), /\/old\/node/);
 
-    await createAutostart({ ...options, execPath: '/new/node' }).refresh();
+    await createAutostart({ ...options, execPath: '/new/node', getPort: () => 51234 }).refresh();
     assert.match(fs.readFileSync(file, 'utf8'), /\/new\/node/);
+    assert.match(fs.readFileSync(file, 'utf8'), /51234/);
 
     assert.deepEqual(await autostart.set(false), { available: true, enabled: false, reason: null });
     assert.equal(fs.existsSync(file), false);
     assert.deepEqual(await autostart.set(false), { available: true, enabled: false, reason: null }, 'turning off twice is fine');
   });
 }
+
+test('launchd overrides recognize both output formats and reject unknown state', () => {
+  const output = (value) => `disabled services = {\n "${LAUNCH_AGENT_LABEL}" => ${value}\n}`;
+  for (const value of ['true', 'disabled']) assert.equal(launchAgentDisabled(output(value)), true);
+  for (const value of ['false', 'enabled']) assert.equal(launchAgentDisabled(output(value)), false);
+  assert.equal(launchAgentDisabled('disabled services = {\n}'), false);
+  assert.equal(launchAgentDisabled(`disabled services = {\n "${LAUNCH_AGENT_LABEL}.other" => disabled\n}`), false);
+  for (const value of ['', 'unrecognized output', output('unknown')]) assert.throws(() => launchAgentDisabled(value));
+});
+
+test('macOS: a persistent disablement survives refresh and off/on explicitly restores startup', async (t) => {
+  const home = tempDir(t);
+  const file = path.join(home, 'Library', 'LaunchAgents', `${LAUNCH_AGENT_LABEL}.plist`);
+  const { state, calls, launchctl } = fakeLaunchctl();
+  const options = { platform: 'darwin', home, script: '/pkg/bin/agent-guild.mjs', dataDir: home, uid: 501, launchctl };
+  const autostart = createAutostart({ ...options, execPath: '/old/node' });
+  await autostart.set(true);
+  state.disabled = true;
+  calls.length = 0;
+  const before = fs.readFileSync(file, 'utf8');
+  assert.equal((await autostart.describe()).enabled, false);
+  await createAutostart({ ...options, execPath: '/new/node', getPort: () => 51234 }).refresh();
+  assert.equal(fs.readFileSync(file, 'utf8'), before);
+  assert.ok(calls.every(([verb]) => verb === 'print-disabled'), 'reading and refreshing never enable');
+  await autostart.set(false);
+  assert.equal(state.disabled, true);
+  assert.deepEqual(await autostart.set(true), { available: true, enabled: true, reason: null });
+  assert.equal(state.disabled, false);
+});
+
+test('macOS: lookup and enable failures are reported without leaving a newly installed plist', async (t) => {
+  const home = tempDir(t);
+  const file = path.join(home, 'Library', 'LaunchAgents', `${LAUNCH_AGENT_LABEL}.plist`);
+  const { state, launchctl } = fakeLaunchctl();
+  const options = { platform: 'darwin', home, execPath: '/old/node', script: '/pkg/bin/agent-guild.mjs', dataDir: home, uid: 501, launchctl };
+  const autostart = createAutostart(options);
+  state.failEnable = true;
+  await assert.rejects(autostart.set(true), /Operation not permitted/);
+  assert.equal(fs.existsSync(file), false);
+  state.failEnable = false;
+  await autostart.set(true);
+  const before = fs.readFileSync(file, 'utf8');
+  state.failPrint = true;
+  const unavailable = await autostart.describe();
+  assert.equal(unavailable.available, false);
+  assert.match(unavailable.reason, /Could not find domain/);
+  await assert.rejects(autostart.refresh(), /Could not find domain/);
+  assert.equal(fs.readFileSync(file, 'utf8'), before);
+  state.failPrint = false;
+  assert.match((await autostart.describe()).reason, /Could not update the sign-in entry/);
+  state.failEnable = true;
+  state.disabled = true;
+  await assert.rejects(createAutostart({ ...options, execPath: '/new/node' }).set(true), /Operation not permitted/);
+  assert.equal(fs.readFileSync(file, 'utf8'), before);
+  assert.equal((await autostart.describe()).enabled, false);
+  state.failEnable = false;
+  state.refuseEnable = true;
+  await assert.rejects(autostart.set(true), /startup setting/);
+  assert.equal((await autostart.describe()).enabled, false);
+});
 
 test('linux: an entry a desktop turned off reads as off and is left alone', async (t) => {
   const home = tempDir(t);
@@ -176,8 +258,9 @@ test('Windows: the Run value starts the wrapper, clears a Task Manager "Disabled
   assert.equal(values.has(`${WINDOWS_APPROVED_KEY}\0${WINDOWS_VALUE}`), false);
   assert.match(fs.readFileSync(wrapper, 'utf8'), /old\\\\node\.exe/);
 
-  await createAutostart({ ...options, execPath: 'C:\\new\\node.exe' }).refresh();
+  await createAutostart({ ...options, execPath: 'C:\\new\\node.exe', getPort: () => 51234 }).refresh();
   assert.match(fs.readFileSync(wrapper, 'utf8'), /new\\\\node\.exe/);
+  assert.match(fs.readFileSync(wrapper, 'utf8'), /"AGENT_GUILD_PORT"\) = "51234"/);
 
   // Turned off in Task Manager: off here, and a start does not rewrite it.
   values.set(`${WINDOWS_APPROVED_KEY}\0${WINDOWS_VALUE}`, { type: 'REG_BINARY', data: '03000000D2C2B1E0A73FDB01' });
@@ -196,6 +279,62 @@ test('Windows: a refused registry change is reported and leaves it off', async (
   const autostart = createAutostart({ platform: 'win32', env: { SystemRoot: 'C:\\Windows' }, home: dataDir, execPath: 'C:\\node.exe', script: 'C:\\pkg\\bin\\agent-guild.mjs', dataDir, reg });
   await assert.rejects(autostart.set(true), (err) => err.status === 500 && err.code === 'autostart_failed' && /Access is denied/.test(err.message));
   assert.equal((await autostart.describe()).enabled, false);
+});
+
+test('startup entries require a concrete valid port', () => {
+  const paths = { execPath: '/node', script: '/pkg/bin/agent-guild.mjs', file: '/entry' };
+  for (const build of [windowsWrapper, launchAgentPlist, desktopEntry]) {
+    for (const port of [0, -1, 65536, NaN, '51234']) assert.throws(() => build({ ...paths, port }), /listening/);
+    for (const port of [1, 65535]) assert.ok(build({ ...paths, port }).includes(String(port)));
+  }
+});
+
+test('a failed refresh is visible and a subsequent change clears the warning', async (t) => {
+  const home = tempDir(t);
+  let port = 47821;
+  const autostart = createAutostart({ platform: 'linux', home, env: {}, release: '6.8.0', script: '/pkg/bin/agent-guild.mjs', dataDir: home, getPort: () => port });
+  await autostart.set(true);
+  port = 0;
+  await assert.rejects(autostart.refresh(), /listening/);
+  const state = await autostart.describe();
+  assert.equal(state.available, true, 'the user can still turn it off');
+  assert.equal(state.enabled, true);
+  assert.match(state.reason, /Could not update the sign-in entry/);
+  await autostart.set(false);
+  port = 51234;
+  assert.deepEqual(await autostart.set(true), { available: true, enabled: true, reason: null });
+});
+
+test('the API saves the actual bound port in every platform entry after listening on port zero', async (t) => {
+  for (const platform of ['win32', 'darwin', 'linux']) {
+    const home = tempDir(t);
+    let api;
+    const autostart = createAutostart({
+      platform, home, env: {}, release: '6.8.0', dataDir: home, script: '/pkg/bin/agent-guild.mjs',
+      getPort: () => api.port, uid: 501, launchctl: fakeLaunchctl().launchctl, reg: fakeReg().reg,
+    });
+    assert.equal((await autostart.describe()).enabled, false, 'reading does not need a listening server');
+    api = createManagerServer({
+      manager: Object.assign(new EventEmitter(), { list: () => [] }),
+      registry: Object.assign(new EventEmitter(), { warnings: [] }),
+      autostart, port: 0, token: 'test', webDir: fileURLToPath(new URL('../web', import.meta.url)),
+    });
+    await api.listen();
+    t.after(() => api.close());
+    assert.ok(api.port > 0);
+    const res = await fetch(`${api.url}/api/v1/autostart`, {
+      method: 'PUT', headers: { Authorization: 'Bearer test', 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: true }),
+    });
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).autostart.enabled, true);
+    const file = platform === 'win32' ? path.join(home, 'autostart.js')
+      : platform === 'darwin' ? path.join(home, 'Library', 'LaunchAgents', `${LAUNCH_AGENT_LABEL}.plist`)
+        : path.join(home, '.config', 'autostart', 'agent-guild.desktop');
+    const saved = fs.readFileSync(file, 'utf8');
+    if (platform === 'win32') assert.ok(saved.includes(`("AGENT_GUILD_PORT") = "${api.port}"`));
+    else if (platform === 'darwin') assert.ok(saved.includes(`<string>${api.port}</string>`));
+    else assert.equal(desktopExecArgs(saved.match(/^Exec=(.*)$/m)[1]).at(-1), String(api.port));
+  }
 });
 
 test('the autostart API needs the manager token and a boolean', { timeout: 10000 }, async (t) => {
@@ -242,9 +381,14 @@ test('a macOS or Linux entry starts the manager while the package is there, and 
   fs.mkdirSync(path.dirname(script));
   fs.writeFileSync(script, probe(ran));
   fs.writeFileSync(entry, 'entry');
-  const run = () => execFileSync('/bin/sh', ['-c', POSIX_LAUNCH, process.execPath, script, entry]);
-  run();
-  assert.deepEqual(JSON.parse(fs.readFileSync(ran, 'utf8')), ['open', '--no-browser']);
+  const run = (env) => execFileSync('/bin/sh', ['-c', POSIX_LAUNCH, process.execPath, script, entry, '51234'], { env });
+  for (const inherited of [undefined, '47821']) {
+    const env = { ...process.env };
+    if (inherited === undefined) delete env.AGENT_GUILD_PORT;
+    else env.AGENT_GUILD_PORT = inherited;
+    run(env);
+    assert.deepEqual(JSON.parse(fs.readFileSync(ran, 'utf8')), { args: ['open', '--no-browser'], port: '51234' });
+  }
   assert.equal(fs.existsSync(entry), true);
   fs.rmSync(path.dirname(script), { recursive: true });
   fs.rmSync(ran);
@@ -265,15 +409,15 @@ test('the Windows wrapper starts the manager while the package is there, and rem
   const ran = path.join(dir, 'ran.json');
   fs.mkdirSync(path.dirname(script));
   fs.writeFileSync(script, probe(ran));
-  fs.writeFileSync(wrapper, windowsWrapper({ execPath: process.execPath, script, runKey, approvedKey }));
+  fs.writeFileSync(wrapper, windowsWrapper({ execPath: process.execPath, script, runKey, approvedKey, port: 51234 }));
   const has = (key) => { try { execFileSync(reg, ['query', key, '/v', WINDOWS_VALUE], { stdio: 'ignore' }); return true; } catch { return false; } };
   execFileSync(reg, ['add', runKey, '/v', WINDOWS_VALUE, '/t', 'REG_SZ', '/d', 'x', '/f'], { stdio: 'ignore' });
   execFileSync(reg, ['add', approvedKey, '/v', WINDOWS_VALUE, '/t', 'REG_BINARY', '/d', '03000000', '/f'], { stdio: 'ignore' });
-  const wscript = () => execFileSync(path.join(process.env.SystemRoot, 'System32', 'wscript.exe'), ['//B', '//NoLogo', wrapper]);
+  const wscript = () => execFileSync(path.join(process.env.SystemRoot, 'System32', 'wscript.exe'), ['//B', '//NoLogo', wrapper], { env: { ...process.env, AGENT_GUILD_PORT: '47821' } });
 
   wscript();
   for (let i = 0; i < 80 && !fs.existsSync(ran); i++) execFileSync(process.execPath, ['-e', 'setTimeout(() => {}, 100)']);
-  assert.deepEqual(JSON.parse(fs.readFileSync(ran, 'utf8')), ['open', '--no-browser']);
+  assert.deepEqual(JSON.parse(fs.readFileSync(ran, 'utf8')), { args: ['open', '--no-browser'], port: '51234' });
   assert.equal(has(runKey) && has(approvedKey) && fs.existsSync(wrapper), true);
 
   fs.rmSync(path.dirname(script), { recursive: true });

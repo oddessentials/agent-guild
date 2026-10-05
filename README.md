@@ -293,6 +293,10 @@ Any other tool or script can report agents and its model too. See
   `~/.config/autostart/agent-guild.desktop` on Linux. Turning it off removes
   them, and an entry whose Agent Guild package has been uninstalled or moved
   removes itself at the next sign-in.
+  The entry saves the manager's listening port, including the assigned port
+  when started with `AGENT_GUILD_PORT=0`. Enabled entries are updated when
+  the manager starts. A macOS entry disabled through `launchctl` stays off
+  until you explicitly turn **Launch at sign-in** back on.
 
 The manager makes these outbound requests, and none of them carry your code
 or prompts:
