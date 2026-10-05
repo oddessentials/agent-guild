@@ -147,8 +147,8 @@ sessions survive a manager stop.
 ## Privacy
 
 The manager listens on `127.0.0.1` only. Remote access goes through a private
-Tailscale route to that address. None of these requests carry your code or
-prompts:
+Tailscale route or your own reverse proxy to that address. None of these
+requests carry your code or prompts:
 
 | To | For | How often |
 | --- | --- | --- |

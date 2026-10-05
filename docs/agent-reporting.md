@@ -41,7 +41,7 @@ agent-guild-report --session <the tool's own session id>
 | `--kind` | Free-form category |
 | `--remove` | Remove the agent now |
 | `--model`, `--display-name` | The model in use |
-| `--session` | The tool's own session id, used by **Existing…** |
+| `--session` | The tool's own session id. The card shows it, and uses it to resume the session after it ends. |
 | `--hook` | Read a Claude Code, Codex CLI, Antigravity CLI or Grok Build hook event from stdin |
 | `--claude-statusline` | Use as Claude Code's status line command |
 
