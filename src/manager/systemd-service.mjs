@@ -169,7 +169,7 @@ export function describeStartup(state, { linger = true, user = 'USER' } = {}) {
     starting: 'Starts when the computer starts; systemd is starting it.',
     pending: 'Starts when the computer starts; this manager was started without systemd and hands over at its next restart.',
     stopped: 'Starts when the computer starts; stopped now. `agent-guild open` starts it.',
-    'port-in-use': `Starts when the computer starts; did not start${when(state.at)} because another session manager held port ${state.port ?? 'its port'}.`,
+    'port-in-use': `Starts when the computer starts; did not start${when(state.at)} because another session manager held ${state.port ? `port ${state.port}` : 'its port'}.`,
     failed: `Starts when the computer starts; stopped after failing${when(state.at)}. See: ${journalCommand()}`,
   }[state.kind];
   return linger ? text : `${text} Without lingering it waits for you to sign in; to start before anyone signs in, run: ${lingerCommand(user)}`;

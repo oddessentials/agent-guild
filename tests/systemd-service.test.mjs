@@ -101,6 +101,7 @@ test('the CLI wording names the next step, including lingering', () => {
   assert.match(describeStartup({ kind: 'stopped', at: null }), /`agent-guild open` starts it\.$/);
   assert.ok(describeStartup({ kind: 'failed', at: null, result: 'exit-code', status: 1 }).endsWith(journalCommand()));
   assert.match(describeStartup({ kind: 'port-in-use', at: null, port: 47821 }), /held port 47821\.$/);
+  assert.match(describeStartup({ kind: 'port-in-use', at: null, port: null }), /held its port\.$/);
   assert.ok(describeStartup({ kind: 'running', since: null, pid: 4 }, { linger: false, user: 'ana' }).endsWith(lingerCommand('ana')));
 });
 

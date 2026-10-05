@@ -21,7 +21,7 @@ import {
 } from '../src/manager/config.mjs';
 import { defaultBoot, serviceFor, spawnManager, startService } from '../src/manager/launch.mjs';
 import { recordSignIn } from '../src/manager/autostart.mjs';
-import { EXIT_PORT_IN_USE, describeStartup, startupState, startupSummary } from '../src/manager/systemd-service.mjs';
+import { EXIT_PORT_IN_USE, describeStartup, startupState, startupSummary, unitPort } from '../src/manager/systemd-service.mjs';
 
 function usage() {
   console.log(`Usage: agent-guild [command] [--no-browser]
@@ -232,7 +232,10 @@ async function cmdStatus() {
     // With no manager to ask, the boot service is read from systemd directly.
     const boot = defaultBoot();
     const read = boot && await boot.read().catch(() => null);
-    if (read?.enabled) console.log(describeStartup(startupState(read.show), { linger: read.linger, user: boot.user }));
+    if (read?.enabled) {
+      const port = unitPort(await boot.text().catch(() => null));
+      console.log(describeStartup(startupState(read.show, { port }), { linger: read.linger, user: boot.user }));
+    }
     process.exitCode = 3;
     return;
   }
