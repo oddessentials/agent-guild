@@ -908,6 +908,10 @@ function renderFolderBrowser() {
   $('folder-use').disabled = loading || !listing;
 }
 
+function folderBrowserClosed() {
+  if (!$('folder-browser').open && folderView.opener?.isConnected) folderView.opener.focus();
+}
+
 function setCloneParent(dir) {
   $('github-parent').value = dir;
   save(CLONE_PARENT_KEY, dir);
@@ -5539,10 +5543,7 @@ $('cwd').addEventListener('blur', hideRecentCwds);
 $('cwd').addEventListener('keydown', recentCwdKeys);
 $('folder-cancel').addEventListener('click', () => $('folder-browser').close());
 $('folder-browser').addEventListener('click', (e) => { if (e.target === $('folder-browser')) $('folder-browser').close(); });
-$('folder-browser').addEventListener('close', () => {
-  folderView.request++;
-  if (folderView.opener?.isConnected) folderView.opener.focus();
-});
+$('folder-browser').addEventListener('close', folderBrowserClosed);
 $('folder-browser').addEventListener('keydown', folderBrowserKeys);
 $('folder-list').addEventListener('keydown', moveInFolders);
 $('folder-up').addEventListener('click', () => browseTo(folderView.listing.parent));

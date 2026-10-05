@@ -57,7 +57,7 @@ function page({ answers = [] } = {}) {
     Object,
   };
   runInNewContext(`${constant('FOLDER_FIELDS')}${constant('HIDDEN_FOLDERS_KEY')}${constant('CLONE_PARENT_KEY')}${constant('folderView')}
-${pick(['chooseFolder', 'browseTo', 'renderFolderBrowser', 'setCloneParent', 'useBrowsedFolder'])}
+${pick(['chooseFolder', 'browseTo', 'renderFolderBrowser', 'folderBrowserClosed', 'setCloneParent', 'useBrowsedFolder'])}
 this.folderView = folderView;`, context);
   return { context, $, requests, saved, used, auth, reloads };
 }
@@ -196,4 +196,35 @@ test('using a browsed folder records it as recent only for the working folder', 
   await new Promise((resolve) => setImmediate(resolve));
   p.context.useBrowsedFolder();
   assert.deepEqual(remembered, ['/work/space']);
+});
+
+test('a close event that arrives after reopening neither drops the new listing nor moves focus', async () => {
+  const opener = element({ isConnected: true });
+  const p = page({ answers: [listing, { ...listing, path: '/clones', segments: [], entries: [] }] });
+  p.context.document.activeElement = opener;
+  p.context.chooseFolder('cwd');
+  await new Promise((resolve) => setImmediate(resolve));
+  p.context.useBrowsedFolder();
+  p.context.chooseFolder('clone');
+  p.context.folderBrowserClosed();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(p.$('folder-current').textContent, '/clones');
+  assert.equal(p.$('folder-use').disabled, false);
+  assert.equal(focused.includes(opener), false);
+  p.$('folder-browser').close();
+  p.context.folderBrowserClosed();
+  assert.equal(focused.at(-1), opener);
+});
+
+test('a listing requested before closing cannot replace the listing of a reopened browser', async () => {
+  let finishOld;
+  const p = page({ answers: [() => new Promise((resolve) => { finishOld = resolve; }), { ...listing, path: '/fresh' }] });
+  p.context.chooseFolder('cwd');
+  p.$('folder-browser').close();
+  p.context.folderBrowserClosed();
+  p.context.chooseFolder('clone');
+  await new Promise((resolve) => setImmediate(resolve));
+  finishOld(listing);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(p.$('folder-current').textContent, '/fresh');
 });
