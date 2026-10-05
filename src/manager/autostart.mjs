@@ -6,7 +6,9 @@
 // * Windows: a value under HKCU's Run key. It runs a JScript wrapper in the
 //   data folder through wscript.exe, which starts Node.js with no console
 //   window; running node.exe directly would flash one at every sign-in.
-// * macOS: a LaunchAgent with RunAtLoad. AbandonProcessGroup keeps launchd
+// * macOS: a LaunchAgent with RunAtLoad. It runs a script named Agent Guild
+//   in the data folder, which System Settings lists by that name; running
+//   sh directly would list it as "sh". AbandonProcessGroup keeps launchd
 //   from killing the manager once the launching command exits.
 // * Linux: an XDG autostart entry, run when a desktop session starts.
 //
@@ -33,6 +35,7 @@ export const WINDOWS_APPROVED_KEY = 'HKCU\\Software\\Microsoft\\Windows\\Current
 export const WINDOWS_VALUE = 'AgentGuild';
 export const WINDOWS_WRAPPER = 'autostart.js';
 export const LAUNCH_AGENT_LABEL = 'com.oddessentials.agent-guild';
+export const MAC_LAUNCHER = 'Agent Guild';
 
 const failure = (message) => Object.assign(new Error(message), { status: 500, code: 'autostart_failed' });
 
@@ -78,14 +81,31 @@ export function windowsRunCommand({ env, wrapper }) {
 }
 
 /**
- * The sh script a macOS or Linux entry runs, with Node.js as $0, the
+ * The sh script a macOS or Linux entry runs, with Node.js as `node`, the
  * package script as $1, the entry's own file as $2, the saved port as $3
  * and the manager log as $4, so no path is ever part of the script text.
  * Its output, a missing Node.js included, is appended to the log when the
  * log can be opened; the subshell tries first because a failed `exec`
  * redirection would end sh before it starts anything.
  */
-export const POSIX_LAUNCH = `if [ -f "$1" ]; then if (exec >>"$4") 2>/dev/null; then exec >>"$4" 2>&1; echo "--- sign-in $(date -u +%Y-%m-%dT%H:%M:%SZ) ---"; fi; AGENT_GUILD_PORT="$3" exec "$0" "$1" ${ARGS.join(' ')}; fi; rm -f "$2"`;
+const posixLaunch = (node) => `if [ -f "$1" ]; then if (exec >>"$4") 2>/dev/null; then exec >>"$4" 2>&1; echo "--- sign-in $(date -u +%Y-%m-%dT%H:%M:%SZ) ---"; fi; AGENT_GUILD_PORT="$3" exec ${node} "$1" ${ARGS.join(' ')}; fi; rm -f "$2"`;
+
+/** The Linux entry's script, with Node.js as $0. */
+export const POSIX_LAUNCH = posixLaunch('"$0"');
+
+/**
+ * The macOS launcher script, with Node.js as $1 ahead of POSIX_LAUNCH's
+ * arguments. Once the package is gone it removes itself with the LaunchAgent.
+ */
+export const MAC_LAUNCH = [
+  '#!/bin/sh',
+  '# Agent Guild: starts the session manager at sign-in. Its LaunchAgent runs',
+  '# it with Node.js, the package script, the LaunchAgent, the port and the log.',
+  'node="$1"; shift',
+  posixLaunch('"$node"'),
+  'rm -f "$0"',
+  '',
+].join('\n');
 
 /** The entry's command line: sh, its script, then the paths it reads. */
 export function posixCommand({ execPath, script, file, port = DEFAULT_PORT, log }) {
@@ -110,7 +130,7 @@ export function stableExecPath(execPath, realpath = fs.realpathSync) {
 
 const xml = (value) => value.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
-export function launchAgentPlist({ execPath, script, file, port, log }) {
+export function launchAgentPlist({ launcher, execPath, script, file, port, log }) {
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
@@ -119,7 +139,7 @@ export function launchAgentPlist({ execPath, script, file, port, log }) {
     `  <key>Label</key><string>${LAUNCH_AGENT_LABEL}</string>`,
     '  <key>ProgramArguments</key>',
     '  <array>',
-    ...posixCommand({ execPath, script, file, port, log }).map((arg) => `    <string>${xml(arg)}</string>`),
+    ...[launcher, ...posixCommand({ execPath, script, file, port, log }).slice(3)].map((arg) => `    <string>${xml(arg)}</string>`),
     '  </array>',
     '  <key>RunAtLoad</key><true/>',
     '  <key>AbandonProcessGroup</key><true/>',
@@ -195,19 +215,19 @@ async function readText(file) {
 }
 
 /**
- * Writes `contents` unless the file already holds exactly that, readable by
- * all and writable only by its owner whatever the umask: launchd skips an
- * agent that others can write.
+ * Writes `contents` unless the file already holds exactly that, with `mode`
+ * whatever the umask. The default is writable only by its owner: launchd
+ * skips an agent that others can write.
  */
-async function writeIfChanged(file, contents) {
+async function writeIfChanged(file, contents, mode = 0o644) {
   if ((await readText(file)) === contents) {
-    if ((await fs.promises.stat(file)).mode & 0o022) await fs.promises.chmod(file, 0o644);
+    if (((await fs.promises.stat(file)).mode & 0o777) !== mode) await fs.promises.chmod(file, mode);
     return;
   }
   await fs.promises.mkdir(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
   await fs.promises.writeFile(tmp, contents);
-  await fs.promises.chmod(tmp, 0o644);
+  await fs.promises.chmod(tmp, mode);
   await fs.promises.rename(tmp, file);
 }
 
@@ -283,6 +303,7 @@ export function createAutostart({
     };
   } else if (platform === 'darwin') {
     const file = path.join(home, 'Library', 'LaunchAgents', `${LAUNCH_AGENT_LABEL}.plist`);
+    const launcher = path.join(dataDir, MAC_LAUNCHER);
     const domain = `gui/${uid}`;
     const disabled = async () => {
       if (!Number.isInteger(uid) || uid < 0) throw failure('Could not determine the macOS user.');
@@ -294,7 +315,10 @@ export function createAutostart({
       async enabled() {
         return (await readText(file)) !== null && !(await disabled());
       },
-      write: () => writeIfChanged(file, launchAgentPlist({ ...command(), file })),
+      async write() {
+        await writeIfChanged(launcher, MAC_LAUNCH, 0o755);
+        await writeIfChanged(file, launchAgentPlist({ ...command(), launcher, file }));
+      },
       async enable() {
         const previous = await readText(file);
         // Check the domain before writing an entry we might be unable to enable.
@@ -306,7 +330,7 @@ export function createAutostart({
           if (await disabled()) throw failure('launchd did not enable the startup setting.');
         } catch (err) {
           try {
-            if (previous === null) await fs.promises.rm(file, { force: true });
+            if (previous === null) await this.disable();
             else await writeIfChanged(file, previous);
           } catch (restoreError) {
             throw failure(`${err.message} Could not restore the previous startup entry: ${restoreError.message}`);
@@ -314,7 +338,10 @@ export function createAutostart({
           throw err;
         }
       },
-      disable: () => fs.promises.rm(file, { force: true }),
+      async disable() {
+        await fs.promises.rm(file, { force: true });
+        await fs.promises.rm(launcher, { force: true });
+      },
     };
   } else if (platform === 'linux' && !(env.WSL_DISTRO_NAME || /microsoft|wsl/i.test(release))) {
     const file = path.join(env.XDG_CONFIG_HOME || path.join(home, '.config'), 'autostart', 'agent-guild.desktop');

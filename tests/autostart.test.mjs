@@ -11,6 +11,8 @@ import {
   WINDOWS_RUN_KEY,
   WINDOWS_VALUE,
   LAUNCH_AGENT_LABEL,
+  MAC_LAUNCH,
+  MAC_LAUNCHER,
   POSIX_LAUNCH,
   approvedDisabled,
   createAutostart,
@@ -100,9 +102,9 @@ test('the Windows wrapper runs the launcher hidden and keeps any path intact in 
 });
 
 test('the LaunchAgent runs at load, escapes its paths and outlives the launching command', () => {
-  const text = launchAgentPlist({ execPath: '/opt/node & co/bin/node', script: '/Users/a/<guild>/bin/agent-guild.mjs', file: '/Users/a/Library/LaunchAgents/x.plist', port: 51234, log: '/Users/a/.agent-guild/manager.log' });
+  const text = launchAgentPlist({ launcher: '/Users/a/.agent-guild/Agent Guild', execPath: '/opt/node & co/bin/node', script: '/Users/a/<guild>/bin/agent-guild.mjs', file: '/Users/a/Library/LaunchAgents/x.plist', port: 51234, log: '/Users/a/.agent-guild/manager.log' });
   const args = [...text.matchAll(/<string>([^<]*)<\/string>/g)].slice(1).map((m) => m[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&'));
-  assert.deepEqual(args, ['/bin/sh', '-c', POSIX_LAUNCH, '/opt/node & co/bin/node', '/Users/a/<guild>/bin/agent-guild.mjs', '/Users/a/Library/LaunchAgents/x.plist', '51234', '/Users/a/.agent-guild/manager.log']);
+  assert.deepEqual(args, ['/Users/a/.agent-guild/Agent Guild', '/opt/node & co/bin/node', '/Users/a/<guild>/bin/agent-guild.mjs', '/Users/a/Library/LaunchAgents/x.plist', '51234', '/Users/a/.agent-guild/manager.log']);
   assert.match(text, /<key>RunAtLoad<\/key><true\/>/);
   assert.match(text, /<key>AbandonProcessGroup<\/key><true\/>/);
   assert.doesNotMatch(text, /KeepAlive/);
@@ -190,6 +192,7 @@ test('macOS: lookup and enable failures are reported without leaving a newly ins
   state.failEnable = true;
   await assert.rejects(autostart.set(true), /Operation not permitted/);
   assert.equal(fs.existsSync(file), false);
+  assert.equal(fs.existsSync(path.join(home, MAC_LAUNCHER)), false, 'nor its launcher');
   state.failEnable = false;
   await autostart.set(true);
   const before = fs.readFileSync(file, 'utf8');
@@ -283,7 +286,7 @@ test('Windows: a refused registry change is reported and leaves it off', async (
 });
 
 test('startup entries require a concrete valid port', () => {
-  const paths = { execPath: '/node', script: '/pkg/bin/agent-guild.mjs', file: '/entry', log: '/manager.log' };
+  const paths = { launcher: '/Agent Guild', execPath: '/node', script: '/pkg/bin/agent-guild.mjs', file: '/entry', log: '/manager.log' };
   for (const build of [windowsWrapper, launchAgentPlist, desktopEntry]) {
     for (const port of [0, -1, 65536, NaN, '51234']) assert.throws(() => build({ ...paths, port }), /listening/);
     for (const port of [1, 65535]) assert.ok(build({ ...paths, port }).includes(String(port)));
@@ -465,10 +468,13 @@ test('macOS and Linux entries are writable only by their owner, whatever the uma
     const autostart = createAutostart({ platform, home, release: '6.8.0', env: {}, script: '/pkg/bin/agent-guild.mjs', dataDir: home, uid: 501, launchctl: fakeLaunchctl().launchctl });
     await autostart.set(true);
     assert.equal(fs.statSync(file).mode & 0o777, 0o644, platform);
+    if (platform === 'darwin') assert.equal(fs.statSync(path.join(home, MAC_LAUNCHER)).mode & 0o777, 0o755);
     // An unchanged entry left writable by others is repaired at the next start.
     fs.chmodSync(file, 0o666);
+    if (platform === 'darwin') fs.chmodSync(path.join(home, MAC_LAUNCHER), 0o644);
     await autostart.refresh();
     assert.equal(fs.statSync(file).mode & 0o777, 0o644, platform);
+    if (platform === 'darwin') assert.equal(fs.statSync(path.join(home, MAC_LAUNCHER)).mode & 0o777, 0o755);
   }
 });
 
@@ -494,4 +500,48 @@ test('a macOS or Linux entry appends what it runs to the manager log, and starts
   fs.chmodSync(log, 0o444);
   assert.equal(run(process.execPath, log), 'manager output\n');
   assert.deepEqual(JSON.parse(fs.readFileSync(ran, 'utf8')).args, ['open', '--no-browser']);
+});
+
+test('macOS: the LaunchAgent runs a launcher named Agent Guild from the data folder, and both go when it is turned off', async (t) => {
+  const home = tempDir(t);
+  const data = path.join(home, 'data');
+  const file = path.join(home, 'Library', 'LaunchAgents', `${LAUNCH_AGENT_LABEL}.plist`);
+  const launcher = path.join(data, MAC_LAUNCHER);
+  const autostart = createAutostart({ platform: 'darwin', home, execPath: '/node', script: '/pkg/bin/agent-guild.mjs', dataDir: data, uid: 501, launchctl: fakeLaunchctl().launchctl });
+  await autostart.set(true);
+  assert.equal(fs.readFileSync(launcher, 'utf8'), MAC_LAUNCH);
+  assert.ok(fs.readFileSync(file, 'utf8').includes(`<array>\n    <string>${launcher}</string>\n    <string>/node</string>`));
+  // A launcher deleted with the data folder is put back when the manager starts.
+  fs.rmSync(launcher);
+  await autostart.refresh();
+  assert.equal(fs.readFileSync(launcher, 'utf8'), MAC_LAUNCH);
+  await autostart.set(false);
+  assert.equal(fs.existsSync(file), false);
+  assert.equal(fs.existsSync(launcher), false);
+});
+
+test('the macOS launcher starts the manager while the package is there, and removes itself and its LaunchAgent once it is gone', { skip: process.platform === 'win32' && 'sh entries run on macOS and Linux' }, (t) => {
+  const dir = tempDir(t);
+  const launcher = path.join(dir, 'data $1', MAC_LAUNCHER);
+  const script = path.join(dir, 'pkg', 'agent guild "$x".mjs');
+  const entry = path.join(dir, 'agent.plist');
+  const ran = path.join(dir, 'ran.json');
+  const log = path.join(dir, 'data $1', 'manager.log');
+  fs.mkdirSync(path.dirname(launcher));
+  fs.mkdirSync(path.dirname(script));
+  fs.writeFileSync(launcher, MAC_LAUNCH, { mode: 0o755 });
+  fs.writeFileSync(script, probe(ran));
+  fs.writeFileSync(entry, 'entry');
+  const run = () => execFileSync(launcher, [process.execPath, script, entry, '51234', log], { encoding: 'utf8' });
+  run();
+  assert.deepEqual(JSON.parse(fs.readFileSync(ran, 'utf8')), { args: ['open', '--no-browser'], port: '51234' });
+  assert.match(fs.readFileSync(log, 'utf8'), /^--- sign-in [^\n]+ ---\n$/);
+  assert.equal(fs.existsSync(entry), true);
+  assert.equal(fs.existsSync(launcher), true);
+  fs.rmSync(path.dirname(script), { recursive: true });
+  fs.rmSync(ran);
+  run();
+  assert.equal(fs.existsSync(ran), false);
+  assert.equal(fs.existsSync(entry), false);
+  assert.equal(fs.existsSync(launcher), false);
 });
