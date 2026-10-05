@@ -1,35 +1,31 @@
 # Configuration
 
-Agent Guild works with no configuration. This page covers changing or adding
-providers, signing in with more than one account, and the environment
-variables the manager reads.
+Nothing needs configuring. Use this page to add or change tools, add accounts,
+or put Agent Guild behind a proxy.
 
 ## Data folder
 
-| Platform | Data folder |
+| Platform | Folder |
 | --- | --- |
 | Windows | `%APPDATA%\AgentGuild` |
 | macOS | `~/Library/Application Support/AgentGuild` |
-| Linux | `$XDG_CONFIG_HOME/agent-guild` (default `~/.config/agent-guild`) |
+| Linux | `$XDG_CONFIG_HOME/agent-guild`, by default `~/.config/agent-guild` |
 
-`AGENT_GUILD_HOME` moves it. The folder holds the access token
-(`auth-token`), the running manager's address (`manager.json`), its log
-(`manager.log`), extra accounts' home folders (`accounts/`), GitHub sign-ins
-and SSH keys (`github/`), the tmux and herdr cards the next manager brings
-back (`multiplexers.json`) and your `providers.json`.
+| File | Holds |
+| --- | --- |
+| `auth-token` | The access token |
+| `providers.json` | Your tool settings, if you create it |
+| `remote-access.json` | Remote access settings |
+| `manager.log` | The log of a manager started in the background |
+| `accounts/` | Home folders of extra accounts |
+| `github/` | GitHub sign-ins and SSH keys |
 
 ## providers.json
 
-Create `providers.json` in the data folder to change or add providers. It is
-either `{ "providers": [ … ] }` or a bare array. See
-[examples/providers.json](../examples/providers.json).
-
-Entries are merged with the built-in ones by `id`:
-
-* A new `id` adds a provider.
-* `"enabled": false` hides one.
-* Any field can be overridden for one platform under a `win32`, `darwin` or
-  `linux` key.
+Create `providers.json` in the data folder. Entries merge with the built-in
+tools by `id`; a field you set replaces the built-in value. See
+[examples/providers.json](../examples/providers.json) and the built-in tools in
+[config/providers.default.json](../config/providers.default.json).
 
 ```json
 {
@@ -41,77 +37,38 @@ Entries are merged with the built-in ones by `id`:
 }
 ```
 
-The manager reads the file when it starts, and again on
-`POST /api/v1/providers/reload`. Problems with it, such as a field of the
-wrong type or an invalid account, are written to `manager.log` and reported
-by `GET /api/v1/info`.
-
-### Fields
+The manager reads it when it starts, so run `agent-guild restart` after
+editing (this ends running sessions). Invalid values are ignored; a file that
+cannot be read is reported in `manager.log`.
 
 | Field | Meaning |
 | --- | --- |
-| `id` | Lowercase identifier. |
-| `vendor`, `tool` | Names shown on the card. |
-| `command`, `args` | What to run. `command` is looked up on PATH. `@shell` offers installed shells and uses the default unless another is selected; it also offers tmux 3.2 or later on macOS and Linux, and herdr, when installed. For `@shell`, provider `args` apply only to the default shell. |
-| `package` | The tool's npm package, e.g. `@openai/codex`. Enables the **Install** button and the version check. |
-| `npmNote` | A sentence added to the **Install** button's tooltip, e.g. what npm installs. |
-| `channels` | How an installed copy is recognised, so **Update** runs that installation's own updater. A copy installed by npm needs no entry. `brew.names` lists the tool's own Homebrew formula or cask names, e.g. `{ "brew": { "names": ["claude-code"] } }`, and `winget.id` is its WinGet package id. A provider you add must set these for its Homebrew or WinGet copy to get **Update** and **Uninstall** buttons; without them that copy shows as an unknown install with guidance only. `native.paths` are the launcher and folders the vendor's own installer uses, and `native.update` the arguments that make the tool update itself, e.g. `["update"]`. `native.remove` and `legacy.remove` are the paths **Uninstall** deletes; each must lie inside the home folder and below its top level, so a tool's home folder such as `~/.codex` is never deleted. `native.links` are launchers deleted only when they link into those paths; unlike `remove`, they may lie outside the home folder, e.g. `/usr/local/bin/grok`. `brew.autoUpdates: true` marks a cask that updates itself: its copy can be uninstalled but gets no **Update**. |
-| `versionArgs` | Arguments that make the command print its version, used instead of `args`, e.g. `["--version"]`. |
-| `usage` | Where the usage meters come from: `"claude"`, `"codex"`, `{ "command", "args" }` for a program that prints `{ "plan", "windows": [{ "label", "usedPercent", "resetsAt" }] }` (`plan` optional; `remainingPercent` may stand in for `usedPercent`), or `null` for none. |
-| `modelPattern` | Regular expression that finds the model name on the tool's screen when the tool does not report it. It also picks the tool's models from the benchmark catalog. |
-| `resumeArgs` | Arguments that resume the tool's own session, with `{id}` standing for the id, e.g. `["--resume", "{id}"]`. Without it the card has no **Existing…** button. |
-| `history` | Where the list of earlier sessions comes from: `"claude"`, `"codex"`, `"antigravity"`, `"grok"` (the tool's own session files under its home folder), `{ "command", "args" }` for a program that prints `{ "sessions": [{ "id", "title", "cwd", "startedAt", "updatedAt" }] }`, or `null` for none, in which case **Existing…** asks for an id. |
-| `env` | Extra environment variables for the tool. |
-| `accounts` | Further sign-ins of the tool. See [Accounts](#accounts). Needs `homeVar`. |
-| `homeVar` | The environment variable that moves the tool's home folder, e.g. `CLAUDE_CONFIG_DIR`. Set for Claude Code, Codex CLI and Grok Build by default. |
-| `accountEnv` | Further variables set for every account other than the default, with `{dir}` standing for the account's folder. By default Claude Code's secure-storage folder follows the account. |
-| `reporting` | How sessions get the agent reporting hooks: `"claude"`, `"codex"`, `"antigravity"` or `"grok"` (see [agent-reporting.md](agent-reporting.md)), or unset for none. |
-| `hooks` | `{ "path", "example" }`: the hooks file inside the home folder that earlier versions copied from `examples/` into a new account. An untouched Codex CLI copy is removed when the session gets the same hooks from Agent Guild; Claude Code's copy stays, since it also sets the status line. |
-| `color`, `monogram`, `icon` | Icon appearance. `icon` is a URL path; you can also drop `<id>.svg` into `web/icons/`. |
-| `install`, `docs` | Help shown when the tool is not installed. |
-| `usageUrl`, `billingUrl` | `https://` links to the vendor's usage and billing pages, shown on the card. The defaults point at the subscription pages; set your API console instead, or `null` to hide a link. |
-| `cloudUrl` | `https://` link to the vendor's web app, shown as a cloud icon on the card. `null` hides it. |
+| `id` | Lowercase letters, digits, `-` or `_`, up to 32 characters |
+| `enabled` | `false` hides the tool |
+| `vendor`, `tool` | Names shown on the card |
+| `command`, `args` | What to run; `command` is looked up on PATH |
+| `env` | Extra environment variables for the tool |
+| `package` | npm package name; enables **Install** and update checks |
+| `versionArgs` | Arguments that print the version, e.g. `["--version"]` |
+| `resumeArgs` | Arguments that resume a session, `{id}` for its id; enables **Existing…** |
+| `usage` | `{ "command", "args" }` of a program printing `{ "plan", "windows": [{ "label", "usedPercent", "resetsAt" }] }`, or `null` |
+| `history` | `{ "command", "args" }` of a program printing `{ "sessions": [{ "id", "title", "cwd", "startedAt", "updatedAt" }] }`, or `null` |
+| `modelPattern` | Regular expression that finds the model name on screen |
+| `homeVar` | Variable that moves the tool's home folder; required for `accounts` |
+| `accounts` | Extra sign-ins; see [Accounts](#accounts) |
+| `color`, `monogram`, `icon` | Card appearance; `icon` is a URL path |
+| `install`, `docs` | Shown when the tool is not installed |
+| `usageUrl`, `billingUrl`, `cloudUrl` | `https://` links on the card; `null` hides one |
+| `win32`, `darwin`, `linux` | Fields that apply on one platform only |
 
-## Terminal multiplexers
-
-The built-in Shell provider has a `multiplexers` array naming `tmux` and
-`herdr`, with documentation links and Homebrew names in `channels.brew.names`.
-Entries can override those fields under `win32`, `darwin` or `linux`.
-The final platform entry must name a supported ID; `enabled: false` hides
-that entry's management controls.
-Replace the array with `[]` to hide management controls; shell discovery
-and existing sessions continue to work. These are the two supported IDs;
-this field does not define arbitrary installers.
-
-Managed herdr installs on macOS and Linux write `~/.local/bin/herdr`.
-If that directory is absent from PATH, the row shows the installed copy.
-Add its directory to your shell configuration, then **Refresh**.
-Agent Guild does not edit shell profiles.
-
-On Windows, managed installs explicitly set `HERDR_HOME` to
-`%USERPROFILE%\.herdr` and `HERDR_INSTALL_DIR` to
-`%LOCALAPPDATA%\Programs\Herdr\bin` in the installer process. Inherited values
-cannot redirect a managed install. New installs use the stable release
-channel. Removal deletes the known standalone package and its owned bin
-junction, then removes only its user PATH entries, preserving the registry
-value type and unrelated entries.
-
-Existing custom, mise, Nix, and unrecognized copies receive guidance
-instead of management buttons. Native updates preserve the installation's
-own release channel; unknown and preview channels are not compared against
-the stable version feed. Homebrew copies use Homebrew's updater.
-
-Uninstall preserves user configuration, session data, and shared
-dependencies. Agent Guild manages the selected installation; it does not
-roll back package-manager dependency transactions. Failed or interrupted
-operations leave an outcome note and a retry or repair path. An incomplete
-herdr install whose executable cannot answer a server-status check must be
-repaired before Uninstall can safely proceed.
+Other fields in the built-in file (`channels`, `hooks`, `reporting`,
+`accountEnv`, `multiplexers`) are for the built-in tools; copy them from there
+if you need them.
 
 ## Accounts
 
-Each extra account is a separate sign-in of the same tool, kept in its own
-home folder, so a personal and a work subscription can run side by side:
+Run a personal and a work sign-in of the same tool side by side. Claude Code,
+Codex CLI and Grok Build support this.
 
 ```json
 {
@@ -127,76 +84,42 @@ home folder, so a personal and a work subscription can run side by side:
 }
 ```
 
-* The card shows one chip per account, each with its own usage meters. A new
-  session starts under the chip picked.
-* Without `dir`, the folder is `accounts/<provider>/<account>` in the data
+* Each account appears as a chip on the card, with its own sign-in, meters
+  and sessions.
+* Without `dir`, the account lives in `accounts/<tool>/<account>` in the data
   folder.
-* The tool signs in from inside the first session of a new account. While
-  the usage check finds no sign-in, the card's button reads **Sign in**.
-* An entry with id `default` renames the tool's own sign-in.
+* Sign in from the first session of a new account.
+* `default` is the tool's own sign-in; only its `label` can change.
 
 ## Environment variables
 
 | Variable | Effect |
 | --- | --- |
-| `AGENT_GUILD_PORT` | Port of the local API and page (default 47821). |
-| `AGENT_GUILD_HOME` | Data folder (see above). |
-| `AGENT_GUILD_NPM_REGISTRY` | npm registry for version checks and installs. Defaults to the registry in npm's global configuration, the one `npm install -g` uses. |
-| `AGENT_GUILD_NO_UPDATE_CHECK` | `1` skips version checks, for the tools and for Agent Guild itself. Otherwise they run about once an hour. |
-| `AGENT_GUILD_ALLOWED_HOSTS` | Legacy fallback: comma-separated accepted Host values, used only until Remote access settings are saved. |
-| `AGENT_GUILD_ALLOWED_ORIGINS` | Legacy fallback: comma-separated accepted browser origins, used only until Remote access settings are saved. |
-| `AGENT_GUILD_SKIP_SHELL_ENV` | `1` skips reading the login shell's PATH on macOS and Linux. |
+| `AGENT_GUILD_PORT` | Port of the page, default `47821` |
+| `AGENT_GUILD_HOME` | Moves the data folder. Turns off **Settings → Startup**. |
+| `AGENT_GUILD_NPM_REGISTRY` | npm registry for version checks and installs |
+| `AGENT_GUILD_NO_UPDATE_CHECK` | `1` turns off online version checks and self-upgrade |
+| `AGENT_GUILD_SKIP_SHELL_ENV` | `1` stops reading PATH from your login shell (macOS, Linux) |
+| `AGENT_GUILD_ALLOWED_HOSTS`, `AGENT_GUILD_ALLOWED_ORIGINS` | Legacy proxy allowlists, used until remote access settings are saved. An invalid value stops the manager from starting. |
 
-The variables the manager sets inside every session are listed in
+Variables set inside each session are listed in
 [agent-reporting.md](agent-reporting.md).
 
 ## Reverse proxies
 
-Open **Settings → Remote access** on the manager computer. With Tailscale
-installed and connected to your network, choose **Enable remote access**.
-Agent Guild selects a free HTTPS port and sets up private
-[Tailscale Serve](https://tailscale.com/docs/reference/tailscale-cli/serve).
-If Tailscale needs HTTPS approval or permission, the panel shows the next
-step. A matching existing route can be adopted with **Use existing route**.
-Other services and public Funnel routes are left in place.
+For Tailscale, use **Settings → Remote access**; see the
+[README](../README.md#remote-access-with-tailscale).
 
-Choose **Connect another device** to show a QR code and sign-in link, then
-open it on a device connected to your Tailscale network. The link contains
-your manager token and grants access to your terminals; share it only with
-devices you trust. The plain address still asks for that token. The
-connection check confirms reachability from the manager computer; check
-the address on your other device too.
+For another proxy, open **Settings → Remote access → Use another reverse
+proxy** and save the Host and Origin your browser uses:
 
-Settings persist in `remote-access.json` in the data folder and apply
-without a restart. Disabling blocks the saved remote address immediately,
-disconnects its clients, and removes the managed route if it still matches.
-Terminal sessions keep running. If cleanup fails or the route was changed
-outside Agent Guild, the panel offers recovery without overwriting it.
+| Field | Example |
+| --- | --- |
+| Host | `guild.example.ts.net:8443` |
+| Origin | `https://guild.example.ts.net:8443` |
 
-For another reverse proxy, expand **Use another reverse proxy** and save both
-the accepted **Host** and the browser's **Origin**. The manager stays on
-`127.0.0.1`; forward HTTP and WebSocket traffic to its current port.
-The two allowlist environment variables remain startup fallbacks for
-existing installations. Once settings are saved, including disabled access,
-the saved file takes precedence. Invalid saved settings allow local access
-only and can be replaced from the panel.
-
-Working paths and tools still belong to the manager machine. Native folder
-dialogs and file-manager windows open there; from another device, enter the
-working folder's path in the UI instead.
-
-Host entries are exact, case-insensitive hostnames or IP literals, optionally
-followed by a port. IPv6 literals use brackets. Whitespace around entries
-and duplicate entries are ignored; schemes, paths, credentials, wildcards
-and invalid ports are rejected. A bare
-hostname does not allow arbitrary ports or subdomains. For an HTTPS proxy
-on port 8443, set Host to `guild.example.ts.net:8443` and Origin to
-`https://guild.example.ts.net:8443`. For standard HTTPS, omit the default
-port, as browsers do. Origin entries include the scheme and have no trailing
-slash.
-
-The proxy should preserve the browser's Host and Origin headers and support
-WebSocket upgrades. `Forwarded`, `X-Forwarded-Host` and Tailscale identity
-headers do not grant access or replace API authentication. The page's CSP
-permits WebSocket connections to the explicitly configured hosts. With no
-saved settings or environment allowlists, only loopback access is accepted.
+* Forward HTTP and WebSocket traffic to `127.0.0.1` on the manager's port.
+* The proxy must keep the browser's `Host` and `Origin` headers.
+* Leave out the port for standard HTTPS (443). No paths, wildcards or
+  trailing slashes.
+* The page still asks for the access token.
