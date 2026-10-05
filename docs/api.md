@@ -279,6 +279,13 @@ endpoint; a `command` source runs a program that prints
 `{ plan?, windows: [{ label, usedPercent | remainingPercent, resetsAt? }] }`.
 A window whose share is not a number (missing, null or blank) is left out
 rather than shown as unused. Snapshots are cached for a minute.
+A refused request says which kind of refusal it was: HTTP 401 is a refused
+sign-in, while an HTTP 403 that Cloudflare answers is a block of the request,
+usually because of the network it came from (a VPN, proxy or exit node), and
+advises no sign-in. The manager writes the status, the `server` and `cf-ray`
+headers and a short excerpt of the reply, without credentials, to
+`manager.log` when a failure starts or changes, and notes when lookups work
+again.
 
 ### History
 
@@ -393,8 +400,9 @@ that has never run lists no sessions and no error.
 * `reporting` says whether the tool's agent reporting hooks work, or is null
   for a tool Agent Guild supplies no hooks to. `state` is `pending` until the
   hooks announce themselves, `active` once any hook report arrives,
-  `unavailable` when none has arrived some time after the first prompt or
-  the tool refused the hooks, `setup_required` when the user has to turn
+  `unavailable` when none has arrived some time after the first prompt (a
+  line typed and sent; an Enter on an empty line or after only arrow keys is
+  none) or the tool refused the hooks, `setup_required` when the user has to turn
   reporting on first (Antigravity CLI), and `unsupported` when the installed tool
   cannot take hooks for one session. `reason` explains every state but `active`.
 * `shells` lists the shell commands the tool is running for the model, as

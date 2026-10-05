@@ -280,8 +280,9 @@ turn on **Agent reporting** on its card once, which installs an Agent Guild
 plugin into Antigravity. It reports the model and the conversation, but no
 helper agents or shell commands. Grok Build cannot take hooks for one session yet; add the hooks
 from [examples/grok-hooks.json](examples/grok-hooks.json) to see its agents.
-When a tool's hooks do not run, because hooks are turned off, restricted by
-an administrator or not trusted for the folder, the card says so.
+When a tool's hooks have not reported some time after a prompt was sent,
+because hooks are turned off, restricted by an administrator or not trusted
+for the folder, the card says so.
 
 The card also names the model, from the hooks, from `--model` or from the
 tool's screen.

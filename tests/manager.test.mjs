@@ -1398,8 +1398,14 @@ test('a tool whose hooks are turned off keeps running and shows that it is not r
   const tool = await startTool('claudeoff');
   await waitForText(tool.client, tool.session.id, 'FAKE-CLAUDE READY hooks=0', 'Claude with hooks off');
   assert.equal((await sessionNow(tool.session.id)).reporting.state, 'pending', 'silence before any prompt is not a failure');
+  // An empty Enter, or arrows and Enter in a menu, sends no prompt: the timeout (1.5 s here) does not start.
+  tool.client.send({ type: 'input', data: '\r' });
+  tool.client.send({ type: 'input', data: '\x1b[B\r' });
+  await new Promise((resolve) => setTimeout(resolve, 2500));
+  assert.equal((await sessionNow(tool.session.id)).reporting.state, 'pending', 'an Enter with nothing typed is not a prompt');
   tool.client.input('prompt');
   const unavailable = await waitFor(reportingIs(tool.session.id, 'unavailable'), { label: 'the reporting timeout' });
+  assert.match(unavailable.reporting.reason, /^No report from Claude Hooks Off's hooks yet\. They report once a prompt is sent/);
   assert.match(unavailable.reporting.reason, /turned off, restricted by an administrator, or not trusted/);
   assert.equal(unavailable.status, 'running');
   await tool.client.close();

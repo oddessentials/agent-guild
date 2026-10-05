@@ -23,8 +23,9 @@ import { SelfUpdate, isDevelopmentBuild } from '../src/manager/self-update.mjs';
 import { launcherPath, MANAGER_ENTRY, ROOT_DIR } from '../src/manager/launch.mjs';
 import {
   UsageMonitor, readClaudeCredentials, readCodexCredentials,
-  claudeKeychainService, claudeCredentialsFile, fetchClaudeUsage, fetchCodexUsage, commandUsage, toIso, windowLabel, clampPercent,
+  claudeKeychainService, claudeCredentialsFile, fetchClaudeUsage, fetchCodexUsage, commandUsage, toIso, windowLabel, clampPercent, excerpt,
 } from '../src/manager/usage.mjs';
+import { Session } from '../src/manager/session.mjs';
 import {
   ModelStats, parseCatalog, indexCatalog, standing, tierFor, providerModels, modelNames, resolveModel, describeCatalog,
 } from '../src/manager/model-stats.mjs';
@@ -1535,7 +1536,7 @@ test('usage endpoints are called with the right headers and parsed into windows'
   assert.equal(clampPercent(0), 0);
   assert.equal(clampPercent(140), 100);
 
-  await assert.rejects(fetchClaudeUsage({ accessToken: 'x', fetchImpl: async () => ({ ok: false, status: 401 }) }), /sign in again/);
+  await assert.rejects(fetchClaudeUsage({ accessToken: 'x', fetchImpl: async () => ({ ok: false, status: 401 }) }), /refused the sign-in \(HTTP 401\); sign in again/);
   await assert.rejects(fetchCodexUsage({ accessToken: 'x', fetchImpl: async () => ({ ok: false, status: 429 }) }), (err) => err.rateLimited === true);
 
   assert.equal(toIso(1893456000), '2030-01-01T00:00:00.000Z');
@@ -1599,6 +1600,117 @@ test('a usage command prints JSON, and the monitor caches snapshots', async () =
   assert.equal(files.codex, path.join(dir, 'codex-home', 'auth.json'), 'the manager env applies otherwise');
   await monitor.all();
   assert.equal(fetches, 1, 'fresh snapshots are served from the cache');
+});
+
+test('a refused usage request says whether the sign-in or the network was refused, and never repeats a credential', async () => {
+  const reply = (status, body, headers = {}) => async () => new Response(body, { status, headers });
+  const cloudflare = { server: 'cloudflare', 'content-type': 'text/html; charset=UTF-8', 'cf-ray': '8f1e2d3c4b5a6978-LHR' };
+  const page = '<!DOCTYPE html><html><head><title>Just a moment...</title><script>var x = 1;</script></head><body>Checking your browser</body></html>';
+  for (const fetchUsage of [fetchClaudeUsage, fetchCodexUsage]) {
+    const blocked = await fetchUsage({ accessToken: 'x', fetchImpl: reply(403, page, cloudflare) }).catch((err) => err);
+    assert.match(blocked.message, /blocked the request before checking the sign-in \(HTTP 403\)/);
+    assert.doesNotMatch(blocked.message, /sign in again/, 'a network block is not blamed on the sign-in');
+    assert.deepEqual(blocked.detail, { status: 403, server: 'cloudflare', ray: '8f1e2d3c4b5a6978-LHR', body: 'Just a moment... Checking your browser' });
+    const challenged = await fetchUsage({ accessToken: 'x', fetchImpl: reply(403, '{}', { 'cf-mitigated': 'challenge', 'content-type': 'application/json' }) }).catch((err) => err);
+    assert.match(challenged.message, /blocked the request/, 'a Cloudflare challenge counts whatever the body');
+  }
+  const refused = await fetchClaudeUsage({
+    accessToken: 'x',
+    fetchImpl: reply(403, JSON.stringify({ type: 'error', error: { type: 'permission_error', message: 'OAuth token does not meet scope requirement user:profile' } }), { 'content-type': 'application/json', server: 'cloudflare' }),
+  }).catch((err) => err);
+  assert.equal(refused.message, 'usage endpoint refused access (HTTP 403: OAuth token does not meet scope requirement user:profile); if this continues, sign in again in Claude Code', "a JSON refusal from behind Cloudflare is the vendor's, with its reason");
+  const codexRefused = await fetchCodexUsage({ accessToken: 'x', fetchImpl: reply(403, JSON.stringify({ detail: 'Forbidden' })) }).catch((err) => err);
+  assert.match(codexRefused.message, /refused access \(HTTP 403: Forbidden\); if this continues, sign in again in Codex CLI$/);
+  const bare = await fetchCodexUsage({ accessToken: 'x', fetchImpl: async () => ({ ok: false, status: 403 }) }).catch((err) => err);
+  assert.equal(bare.message, 'usage endpoint refused access (HTTP 403); if this continues, sign in again in Codex CLI', 'a reply without headers or body still makes a message');
+  assert.deepEqual(bare.detail, { status: 403, server: null, ray: null, body: '' });
+  const unreadable = await fetchCodexUsage({ accessToken: 'x', fetchImpl: async () => ({ ok: false, status: 500, headers: { get() { throw new Error('gone'); } }, text: async () => { throw new Error('reset'); } }) }).catch((err) => err);
+  assert.equal(unreadable.message, 'usage endpoint answered HTTP 500');
+  const expired = await fetchClaudeUsage({ accessToken: 'x', fetchImpl: reply(401, '{"error":{"message":"invalid token"}}') }).catch((err) => err);
+  assert.equal(expired.message, 'usage endpoint refused the sign-in (HTTP 401); sign in again in Claude Code', 'a 401 is still a sign-in problem');
+
+  const jwt = 'eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.c2lnbmF0dXJl';
+  const leaky = await fetchCodexUsage({ accessToken: jwt, fetchImpl: reply(403, JSON.stringify({ error: { message: `token ${jwt} rejected` }, key: 'sk-ant-oat01-abcdefghijkl', auth: `Bearer ${jwt}` })) }).catch((err) => err);
+  for (const text of [leaky.message, leaky.detail.body]) {
+    assert.doesNotMatch(text, /eyJ|sk-ant|abcdefghijkl|c2lnbmF0dXJl/, `no credential in ${text}`);
+  }
+  assert.match(leaky.message, /HTTP 403: token \[redacted\] rejected/);
+  assert.equal(excerpt('a\n\n  b<br/>c'), 'a b c');
+  assert.equal(excerpt(`${'x'.repeat(10)} ${'y'.repeat(300)}`), 'xxxxxxxxxx [redacted]', 'a long opaque run is redacted before trimming');
+  assert.equal(excerpt('word '.repeat(100)).length, 200);
+  assert.equal(excerpt(undefined), '');
+});
+
+test('the usage monitor logs a vendor or network failure when it starts or changes, and once when it ends', async () => {
+  const dir = tempDir();
+  const userFile = path.join(dir, 'providers.json');
+  fs.writeFileSync(userFile, JSON.stringify({ providers: [{ id: 'anthropic', accounts: [{ id: 'work' }] }, { id: 'openai', usage: null }, { id: 'xai', usage: null }, { id: 'google', usage: null }] }));
+  const registry = new ProviderRegistry({ userFile, env: { PATH: '' }, checkUpdates: false, accountsDir: path.join(dir, 'accounts') });
+  const replies = [];
+  const lines = [];
+  const monitor = new UsageMonitor({
+    registry,
+    platform: 'linux',
+    ttlMs: 0,
+    log: (line) => lines.push(line),
+    readers: { claude: async ({ file }) => {
+      if (file.includes('work')) throw Object.assign(new Error('Claude Code is not signed in'), { notSignedIn: true });
+      return { accessToken: 'secret-token' };
+    } },
+    fetchImpl: async () => {
+      const next = replies.shift();
+      if (next instanceof Error) throw next;
+      return next;
+    },
+  });
+  const blocked = () => new Response('<html>Attention Required!</html>', { status: 403, headers: { server: 'cloudflare', 'content-type': 'text/html', 'cf-ray': 'ray-1' } });
+  const ok = () => new Response(JSON.stringify({ five_hour: { utilization: 5 } }), { status: 200 });
+  const anthropic = registry.get('anthropic');
+  const check = () => monitor.snapshot(anthropic);
+
+  replies.push(blocked());
+  assert.match((await check()).error, /blocked the request/);
+  assert.deepEqual(lines, ['[usage] anthropic/default: usage endpoint blocked the request before checking the sign-in (HTTP 403); this is usually the network, such as a VPN, proxy or exit node, and clears by itself (HTTP 403 server=cloudflare cf-ray=ray-1 body="Attention Required!")']);
+  replies.push(blocked());
+  await check();
+  assert.equal(lines.length, 1, 'the same failure again is not logged again');
+  replies.push(new Response('', { status: 503 }));
+  await check();
+  assert.equal(lines.at(-1), '[usage] anthropic/default: usage endpoint answered HTTP 503 (HTTP 503)', 'a different failure is');
+  replies.push(Object.assign(new Error('fetch failed'), { name: 'TypeError' }));
+  await check();
+  assert.equal(lines.at(-1), '[usage] anthropic/default: usage check failed: fetch failed', 'a network failure has no response to describe');
+  replies.push(ok());
+  assert.equal((await check()).error, null);
+  assert.equal(lines.at(-1), '[usage] anthropic/default: usage lookups work again');
+  replies.push(ok());
+  await check();
+  assert.equal(lines.length, 4, 'success after success logs nothing');
+  await monitor.snapshot(anthropic, registry.account(anthropic, 'work'));
+  assert.equal(lines.length, 4, 'an account without a sign-in is not a failure to log');
+  assert.ok(lines.every((line) => !line.includes('secret-token')));
+});
+
+test('only a line with something typed on it counts as a sent prompt', () => {
+  const fake = { _typedSinceEnter: false };
+  const sends = (data) => Session.prototype._sendsTypedLine.call(fake, data);
+  assert.equal(sends('\r'), false, 'an Enter on an empty line');
+  assert.equal(sends('\x1b[B\x1b[B\r'), false, 'arrows, then Enter, in a menu');
+  assert.equal(sends('\x1bOA\r'), false, 'application-mode arrows');
+  assert.equal(sends('\x1b[I\x1b[O\x1b[<0;10;5M\x1b[<0;10;5m\r'), false, 'focus and SGR mouse reports');
+  assert.equal(sends('\x1b[M #!\r'), false, 'an X10 mouse report, whose bytes look printable');
+  assert.equal(sends('\x1b]11;rgb:0f0f/1111/1515\x07\x1bP1$r0m\x1b\\\r'), false, 'OSC and DCS strings');
+  assert.equal(sends('\x1b\r'), false, 'Alt+Enter');
+  assert.equal(sends('\x1b'), false, 'Escape on its own');
+  assert.equal(sends('hi\r'), true, 'typed text, then Enter');
+  for (const key of 'fix it') assert.equal(sends(key), false, 'text one key at a time sends nothing');
+  assert.equal(sends('\r'), true, 'until Enter');
+  assert.equal(sends('\r'), false, 'and Enter again sends an empty line');
+  assert.equal(sends('oops\x03\r'), false, 'Ctrl+C clears the line');
+  assert.equal(sends('oops\x15\r'), false, 'so does Ctrl+U');
+  assert.equal(sends('\x1b[200~line one\nline two\x1b[201~'), true, 'pasted lines count');
+  assert.equal(sends('ab\x7f\x7f'), false, 'backspaces send nothing');
+  assert.equal(sends('\r'), true, 'and cannot tell an emptied line from a typed one, so the line counts');
 });
 
 test('accounts get their own home folder and environment, the default keeps the tool\'s own', () => {
