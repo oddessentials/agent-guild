@@ -308,7 +308,7 @@ function renderAutostart(autostart) {
   $('autostart-choice').hidden = !autostart;
   $('autostart').checked = Boolean(autostart?.enabled);
   $('autostart').disabled = !autostart?.available;
-  $('autostart-note').textContent = autostart?.reason || AUTOSTART_NOTE;
+  $('autostart-note').textContent = autostart?.reason || autostart?.note || AUTOSTART_NOTE;
 }
 
 async function loadAutostart({ afterChange = false } = {}) {

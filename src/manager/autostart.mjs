@@ -36,6 +36,11 @@ export const WINDOWS_VALUE = 'AgentGuild';
 export const WINDOWS_WRAPPER = 'autostart.js';
 export const LAUNCH_AGENT_LABEL = 'com.oddessentials.agent-guild';
 export const MAC_LAUNCHER = 'Agent Guild';
+/**
+ * macOS keeps its own switch for the item, which only an app signed to use
+ * SMAppService can read, so the page says where it is instead.
+ */
+export const MAC_NOTE = 'Starts the session manager in the background when you sign in to this Mac. The page does not open. macOS also lists it as Agent Guild under System Settings › General › Login Items & Extensions; switched off there, it does not start even while this is checked.';
 
 const failure = (message) => Object.assign(new Error(message), { status: 500, code: 'autostart_failed' });
 
@@ -363,7 +368,7 @@ export function createAutostart({
     if (!target) return { available: false, enabled: false, reason };
     try {
       const enabled = await target.enabled();
-      return { available: true, enabled, reason: enabled ? refreshError : null };
+      return { available: true, enabled, reason: enabled ? refreshError : null, ...(platform === 'darwin' && { note: MAC_NOTE }) };
     } catch (err) {
       return { available: false, enabled: false, reason: `Could not read the startup setting: ${err.message}` };
     }

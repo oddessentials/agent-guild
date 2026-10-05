@@ -13,6 +13,7 @@ import {
   LAUNCH_AGENT_LABEL,
   MAC_LAUNCH,
   MAC_LAUNCHER,
+  MAC_NOTE,
   POSIX_LAUNCH,
   approvedDisabled,
   createAutostart,
@@ -137,20 +138,21 @@ for (const platform of ['linux', 'darwin']) {
       : path.join(home, 'xdg', 'autostart', 'agent-guild.desktop');
     const options = { platform, home, release: '6.8.0', env: { XDG_CONFIG_HOME: path.join(home, 'xdg') }, script: '/pkg/bin/agent-guild.mjs', dataDir: home, uid: 501, launchctl: fakeLaunchctl().launchctl };
     const autostart = createAutostart({ ...options, execPath: '/old/node' });
-    assert.deepEqual(await autostart.describe(), { available: true, enabled: false, reason: null });
+    const on = (enabled) => ({ available: true, enabled, reason: null, ...(platform === 'darwin' && { note: MAC_NOTE }) });
+    assert.deepEqual(await autostart.describe(), on(false));
     await autostart.refresh();
     assert.equal(fs.existsSync(file), false, 'refresh never turns it on');
 
-    assert.deepEqual(await autostart.set(true), { available: true, enabled: true, reason: null });
+    assert.deepEqual(await autostart.set(true), on(true));
     assert.match(fs.readFileSync(file, 'utf8'), /\/old\/node/);
 
     await createAutostart({ ...options, execPath: '/new/node', getPort: () => 51234 }).refresh();
     assert.match(fs.readFileSync(file, 'utf8'), /\/new\/node/);
     assert.match(fs.readFileSync(file, 'utf8'), /51234/);
 
-    assert.deepEqual(await autostart.set(false), { available: true, enabled: false, reason: null });
+    assert.deepEqual(await autostart.set(false), on(false));
     assert.equal(fs.existsSync(file), false);
-    assert.deepEqual(await autostart.set(false), { available: true, enabled: false, reason: null }, 'turning off twice is fine');
+    assert.deepEqual(await autostart.set(false), on(false), 'turning off twice is fine');
   });
 }
 
@@ -179,7 +181,7 @@ test('macOS: a persistent disablement survives refresh and off/on explicitly res
   assert.ok(calls.every(([verb]) => verb === 'print-disabled'), 'reading and refreshing never enable');
   await autostart.set(false);
   assert.equal(state.disabled, true);
-  assert.deepEqual(await autostart.set(true), { available: true, enabled: true, reason: null });
+  assert.deepEqual(await autostart.set(true), { available: true, enabled: true, reason: null, note: MAC_NOTE });
   assert.equal(state.disabled, false);
 });
 

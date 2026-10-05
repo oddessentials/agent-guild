@@ -124,3 +124,14 @@ test('older status responses cannot overwrite a newer change or read', async () 
   assert.equal(reopened.node('autostart').disabled, false);
   assert.equal(reopened.messages.length, 0);
 });
+
+test('the note is the reason when there is one, else the manager\'s note for its system, else the default', () => {
+  const view = page(async () => ({}));
+  const note = view.node('autostart-note');
+  view.renderAutostart({ available: true, enabled: true, reason: null, note: 'macOS also lists it.' });
+  assert.equal(note.textContent, 'macOS also lists it.');
+  view.renderAutostart({ available: true, enabled: true, reason: 'Could not update the sign-in entry', note: 'macOS also lists it.' });
+  assert.equal(note.textContent, 'Could not update the sign-in entry');
+  view.renderAutostart({ available: true, enabled: false, reason: null });
+  assert.equal(note.textContent, source.match(/const AUTOSTART_NOTE = '([^']+)'/)[1]);
+});

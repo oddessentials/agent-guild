@@ -224,8 +224,11 @@ the providers do not yet offer consistently reliable completion signals.
 **Launch at sign-in**, in the same menu, starts the session manager in the
 background whenever you sign in to the computer running Agent Guild; open
 the page as usual afterwards. On Windows it is an entry in Task Manager's
-Startup apps, on macOS a login item, and on Linux a desktop autostart entry,
-so it needs a desktop session there.
+Startup apps, on macOS a background item named Agent Guild under System
+Settings › General › Login Items & Extensions, and on Linux a desktop
+autostart entry, so it needs a desktop session there. macOS keeps its own
+switch for that item, which Agent Guild cannot read: switched off there, it
+does not start even while **Launch at sign-in** is checked.
 
 The browser tab icon adds a rotating green ring whenever any session card says
 **Working**, including Shell and task cards. It mirrors the cards' terminal
@@ -319,10 +322,15 @@ Any other tool or script can report agents and its model too. See
   `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` on Windows, which
   runs `autostart.js` from the data folder through `wscript.exe` so no
   console window opens;
-  `~/Library/LaunchAgents/com.oddessentials.agent-guild.plist` on macOS; and
-  `~/.config/autostart/agent-guild.desktop` on Linux. Turning it off removes
-  them, and an entry whose Agent Guild package has been uninstalled or moved
-  removes itself at the next sign-in.
+  `~/Library/LaunchAgents/com.oddessentials.agent-guild.plist` on macOS,
+  which runs the `Agent Guild` script in the data folder so that macOS lists
+  it by that name; and `~/.config/autostart/agent-guild.desktop` on Linux.
+  Turning it off removes them, and an entry whose Agent Guild package has
+  been uninstalled or moved removes itself at the next sign-in. With nvm,
+  the package lives in the Node.js version's folder, so uninstalling that
+  version counts as uninstalling Agent Guild; a Homebrew Node.js upgrade
+  does not. On macOS and Linux what the entry runs at sign-in, including a
+  missing Node.js, is appended to `manager.log`.
   The entry saves the manager's listening port, including the assigned port
   when started with `AGENT_GUILD_PORT=0`. Enabled entries are updated when
   the manager starts. A macOS entry disabled through `launchctl` stays off
