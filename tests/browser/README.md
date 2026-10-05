@@ -14,6 +14,43 @@ and CSP. It uses the public test key and certificate in `tests/fixtures`;
 certificate errors are ignored only in this disposable browser. It does not
 change the machine's trust store, contact Tailscale or use existing accounts.
 
+## Touch terminal keys
+
+`node tests/browser/terminal-controls.mjs` checks the six touch keys with the
+real page and xterm. It covers normal/application cursor modes, retained
+focus, keyboard and assistive click activation, canceled gestures, split
+targeting, delayed snapshots, reconnects and responsive layouts in every skin.
+`CONTROLS_SCREENSHOTS=/path/to/folder` saves representative layouts. The HTTPS
+proxy check also sends all six keys through a real PTY in both cursor modes.
+
+Viewport geometry is simulated: these checks cannot certify a native mobile
+keyboard, IME or screen reader. Physical-device validation should cover iPhone
+and iPad Safari, Android Chrome and the affected tablet browser, with the
+keyboard open/closed, rotation, an attached keyboard/mouse, Copy and dictation.
+Check that each tap reaches the intended prompt once, preserves keyboard
+visibility and keeps output and controls visible. Floating keyboards are
+positioned by the OS and need not resize the browser viewport.
+
+## Safari dialog sizing
+
+`node tests/browser/dialogs.mjs` verifies a 200-row history list, filtering,
+empty states and shared dialog bodies in Chrome. It checks actual scrollable
+space and footer reachability at desktop, tablet and phone sizes.
+
+To also run WebKit (as CI does), install the test tools separately from the
+application's dependencies:
+
+```sh
+npm install --prefix .cache/browser-tools --no-save --package-lock=false --ignore-scripts playwright-core@1.63.0
+node .cache/browser-tools/node_modules/playwright-core/cli.js install webkit
+```
+
+Set `PLAYWRIGHT_MODULE` to
+`.cache/browser-tools/node_modules/playwright-core/index.mjs` and run the
+dialog check. Linux may need `install --with-deps webkit`. The WebKit pass also
+checks trusted terminal taps with and without input focus. This engine check
+does not emulate an iOS software keyboard or replace physical-device testing.
+
 ## Terminal copying
 
 `npm test` covers buffer text and application lifecycle. Run the integrated

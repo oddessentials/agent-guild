@@ -3,6 +3,7 @@
 
 import { SOUNDS, MAX_ALERT_AGE_MS, playOnce, rearmSound, managerLossWatcher, stopWatcher, updateWatcher } from './alerts.js';
 import { TerminalCopy } from './terminal-copy.js';
+import { TerminalControls, bindTerminalViewport } from './terminal-controls.js';
 import { topbarInline, dockMode, clampDockWidth, stageBesideDock, splitMode, clampRatio, bindSplitter, DOCK_MIN, SPLIT_RATIO_MIN } from './layout.js';
 import { highlightParts, rankRepos, recentFirst, remember, repoForOrigin, repoKey } from './repo-search.js';
 import { createActivityFavicon, isSessionWorking } from './activity-favicon.js';
@@ -124,6 +125,7 @@ function setConnection(kind, label) {
   el.title = label;
   // The manager can only be stopped, restarted or upgraded while the page can reach it.
   state.connected = kind === 'ok';
+  terminalControls.refresh();
   state.remoteAccessUI?.connectionChanged();
   $('manager').hidden = !state.connected;
   if (!state.connected) closeMenu($('manager-menu'));
@@ -4426,11 +4428,18 @@ class TerminalView {
 
   connect() {
     if (this.disposed || state.remoteRevoked) return;
+    this.inputReady = false;
+    this.inputSnapshot = null;
+    terminalControls.refresh();
     const ws = new WebSocket(wsUrl(`/sessions/${this.id}/terminal`));
     this.ws = ws;
     ws.onopen = () => { this.retry = 0; this.sent = { cols: 0, rows: 0 }; this.sendSize(); };
-    ws.onmessage = (event) => this.onMessage(JSON.parse(event.data));
+    ws.onmessage = (event) => { if (!this.disposed && this.ws === ws) this.onMessage(JSON.parse(event.data)); };
     ws.onclose = (event) => {
+      if (this.ws !== ws) return;
+      this.inputReady = false;
+      this.inputSnapshot = null;
+      terminalControls.refresh();
       if (this.disposed || event.code === 4403 || event.code === 4404 || event.code === 4410) return;
       const delay = Math.min(5000, 300 * 2 ** this.retry++);
       setTimeout(() => this.connect(), delay);
@@ -4440,14 +4449,31 @@ class TerminalView {
   onMessage(msg) {
     switch (msg.type) {
       case 'snapshot':
+        this.inputReady = false;
+        this.inputSnapshot = msg;
+        this.inputRun = msg.session.startedAt;
+        terminalControls.refresh();
         this.term.reset();
         this.term.resize(msg.cols, msg.rows);
-        this.term.write(msg.data, () => { this.sent = { cols: 0, rows: 0 }; this.refit(); });
+        {
+          const ws = this.ws;
+          this.term.write(msg.data, () => {
+            if (this.disposed || this.ws !== ws || ws.readyState !== WebSocket.OPEN || this.inputSnapshot !== msg) return;
+            this.inputReady = msg.session.status === 'running';
+            this.inputSnapshot = null;
+            this.sent = { cols: 0, rows: 0 };
+            this.refit();
+            terminalControls.refresh();
+          });
+        }
         break;
       case 'data':
         this.term.write(msg.data);
         break;
       case 'exit':
+        this.inputReady = false;
+        this.inputSnapshot = null;
+        terminalControls.refresh();
         if (dictation?.id === this.id) stopDictation();
         this.term.write(`\r\n\x1b[2m${exitLine(state.sessions.get(this.id), msg)}\x1b[0m\r\n`);
         break;
@@ -4532,6 +4558,9 @@ class TerminalView {
 
   dispose() {
     this.disposed = true;
+    this.inputReady = false;
+    this.inputSnapshot = null;
+    terminalControls.refresh();
     this.resizeObserver.disconnect();
     this.ws?.close();
     this.term.dispose();
@@ -4540,6 +4569,20 @@ class TerminalView {
 }
 
 // ---- terminal panel -------------------------------------------------------
+
+const terminalControls = new TerminalControls({
+  element: $('terminal-controls'), panel: $('terminal-panel'),
+  getCurrent: () => {
+    const session = state.sessions.get(state.activeId);
+    const view = state.views.get(state.activeId);
+    if (!session || session.status !== 'running' || !view?.inputReady || view.disposed
+      || session.startedAt !== view.inputRun || view.ws?.readyState !== WebSocket.OPEN
+      || !state.connected || state.pageAway || state.remoteRevoked || state.stopping
+      || $('app').hidden || $('terminal-panel').hidden || !view.el.isConnected) return null;
+    return { term: view.term, socket: view.ws, run: session.startedAt, name: session.name };
+  },
+});
+bindTerminalViewport($('terminal-panel'), $('terminal-controls'));
 
 const terminalCopy = new TerminalCopy({
   opener: $('panel-copy'), dialog: $('terminal-copy'),
@@ -4578,7 +4621,7 @@ function openPanel(id, { beside = false, restoring = false } = {}) {
 function focusPane(index, { focusTerminal = true } = {}) {
   const id = state.panes[index];
   if (!id) return;
-  if (state.activeId !== id) terminalCopy.close();
+  if (state.activeId !== id) { terminalCopy.close(); terminalControls.cancel(); }
   if (dictation && dictation.id !== id) stopDictation();
   state.focusedPane = index;
   state.activeId = id;
@@ -4599,6 +4642,7 @@ function closePane(index, { focusTerminal = true } = {}) {
 }
 
 function closePanel() {
+  terminalControls.cancel();
   terminalCopy.close();
   stopDictation();
   for (const id of state.panes) state.views.get(id)?.unmount();
@@ -4613,7 +4657,8 @@ function closePanel() {
 
 function stageSplit() {
   const box = $('terminal-panel').getBoundingClientRect();
-  return splitMode(box.width, box.height);
+  const controls = $('terminal-controls');
+  return splitMode(box.width, box.height - (controls.hidden ? 0 : controls.offsetHeight));
 }
 
 function layoutPanes() {
@@ -4709,6 +4754,7 @@ function restorePanes() {
 }
 
 function updatePanel() {
+  terminalControls.refresh();
   renderVoice();
   const s = state.sessions.get(state.activeId);
   if (!s) return;
@@ -5222,7 +5268,12 @@ bindSplitter($('pane-splitter'), {
   home: () => setSplitRatio(SPLIT_RATIO_MIN),
   endKey: () => setSplitRatio(1 - SPLIT_RATIO_MIN),
 });
-new ResizeObserver(layoutPanes).observe($('terminal-panel'));
+let terminalLayoutFrame;
+const terminalLayoutObserver = new ResizeObserver(() => {
+  cancelAnimationFrame(terminalLayoutFrame);
+  terminalLayoutFrame = requestAnimationFrame(layoutPanes);
+});
+for (const node of [$('terminal-panel'), $('terminal-controls')]) terminalLayoutObserver.observe(node);
 $('panel-voice').addEventListener('click', () => {
   if (dictation) {
     const { id } = dictation;
@@ -5570,8 +5621,13 @@ setInterval(() => { if (dockShows('github') && state.github) renderGitHub(); }, 
 // The terminal panel and the dock sit below the top bar; publish where it ends so they never cover its controls.
 const topbar = document.querySelector('.topbar');
 const publishTopbarHeight = () => document.documentElement.style.setProperty('--topbar-h', `${Math.max(0, Math.round(topbar.getBoundingClientRect().bottom))}px`);
-new ResizeObserver(publishTopbarHeight).observe(topbar);
-addEventListener('scroll', publishTopbarHeight, { passive: true });
+let topbarFrame;
+const scheduleTopbarHeight = () => {
+  cancelAnimationFrame(topbarFrame);
+  topbarFrame = requestAnimationFrame(publishTopbarHeight);
+};
+new ResizeObserver(scheduleTopbarHeight).observe(topbar);
+addEventListener('scroll', scheduleTopbarHeight, { passive: true });
 publishTopbarHeight();
 applyDockLayout();
 

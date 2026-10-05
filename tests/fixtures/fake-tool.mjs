@@ -74,6 +74,7 @@ out(`FAKE-TOOL READY cwd=${process.cwd()}`);
 
 let buffer = '';
 let collecting = null;
+let keyCapture = null;
 
 function handle(line) {
   const [cmd, ...rest] = line.trim().split(/\s+/);
@@ -107,6 +108,11 @@ function handle(line) {
     // getWindowSize() asks the console directly; .columns can be stale on Windows.
     const [cols, rows] = process.stdout.getWindowSize ? process.stdout.getWindowSize() : [process.stdout.columns, process.stdout.rows];
     out(`SIZE:${cols}x${rows}`);
+  } else if (cmd === 'keys') {
+    process.stdin.setRawMode?.(true);
+    keyCapture = { data: '', length: Number(rest[0]) || 14 };
+    process.stdout.write(rest[1] === 'application' ? '\x1b[?1h' : '\x1b[?1l');
+    out(`KEYS-READY:${rest[1] || 'normal'}`);
   } else if (cmd === 'query') {
     const kind = rest[0] || 'cpr';
     const request = kind === 'bg' ? '\x1b]11;?\x07' : '\x1b[6n';
@@ -139,6 +145,17 @@ function handle(line) {
 
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', (chunk) => {
+  if (keyCapture) {
+    keyCapture.data += chunk;
+    if (keyCapture.data.length >= keyCapture.length) {
+      const data = keyCapture.data;
+      keyCapture = null;
+      process.stdin.setRawMode?.(false);
+      process.stdout.write('\x1b[?1l');
+      out(`KEYS:${JSON.stringify([...data].map((c) => c.charCodeAt(0)))}`);
+    }
+    return;
+  }
   if (collecting !== null) {
     collecting += chunk;
     return;
