@@ -86,7 +86,7 @@ test('the capture\'s GitHub signs in its account and fills every view of the pan
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-capture-github-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   fs.writeFileSync(path.join(dir, 'accounts.json'), JSON.stringify({ accounts: [DEMO_ACCOUNT] }));
-  const hub = new GitHub({ dir, registry: { env: { PATH: '' }, platform: process.platform }, apiUrl: github.url });
+  const hub = new GitHub({ dir, registry: { env: { PATH: '' }, platform: process.platform }, apiUrl: github.url, statusUrl: github.url });
   const all = await hub.allRepos();
   assert.deepEqual(all.errors, []);
   assert.deepEqual(all.repos.map((r) => r.fullName).sort(), [...DEMO_REPOS].sort());

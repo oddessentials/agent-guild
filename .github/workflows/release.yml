@@ -55,6 +55,10 @@ jobs:
     name: CI
     needs: plan
     if: needs.plan.outputs.version != ''
+    # The CI matrices cancel the run on their first failure.
+    permissions:
+      contents: read
+      actions: write
     uses: ./.github/workflows/ci.yml
     with:
       version: ${{ needs.plan.outputs.version }}

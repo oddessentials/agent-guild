@@ -19,8 +19,9 @@ import {
   readRuntimeFile,
   resolvePort,
 } from '../src/manager/config.mjs';
-import { spawnManager } from '../src/manager/launch.mjs';
+import { defaultBoot, serviceFor, spawnManager, startService } from '../src/manager/launch.mjs';
 import { recordSignIn } from '../src/manager/autostart.mjs';
+import { EXIT_PORT_IN_USE, describeStartup, startupState, startupSummary, unitPort } from '../src/manager/systemd-service.mjs';
 
 function usage() {
   console.log(`Usage: agent-guild [command] [--no-browser]
@@ -104,6 +105,11 @@ async function ensureManager({ port = null } = {}) {
   const knownUrl = port === null ? baseUrl() : expectedUrl;
   const running = await health(knownUrl);
   if (running) return { url: knownUrl, started: false, version: running.version };
+
+  // While the boot service is on for this port, systemd is the one that starts a manager.
+  const { boot, note } = await serviceFor(listenPort);
+  if (boot) return startService({ boot, port: listenPort, url: expectedUrl, health });
+  if (note) console.log(note);
 
   const child = spawnManager({ env: { ...process.env, AGENT_GUILD_PORT: String(listenPort) } });
 
@@ -223,15 +229,26 @@ async function cmdStatus() {
   const h = await health(url);
   if (!h) {
     console.log('Session manager is not running.');
+    // With no manager to ask, the boot service is read from systemd directly.
+    const boot = defaultBoot();
+    const read = boot && await boot.read().catch(() => null);
+    if (read?.enabled) {
+      const port = unitPort(await boot.text().catch(() => null));
+      console.log(describeStartup(startupState(read.show, { port }), { linger: read.linger, user: boot.user }));
+    }
     process.exitCode = 3;
     return;
   }
-  const res = await fetch(`${url}/api/v1/sessions`, { headers: { Authorization: `Bearer ${loadOrCreateToken()}` } });
+  const headers = { Authorization: `Bearer ${loadOrCreateToken()}` };
+  const res = await fetch(`${url}/api/v1/sessions`, { headers });
   const { sessions = [] } = res.ok ? await res.json() : {};
   const running = sessions.filter((s) => s.status === 'running').length;
   console.log(`Session manager ${h.version} running at ${url} (pid ${h.pid}).`);
   const notice = versionNotice(h.version);
   if (notice) console.log(notice);
+  const startup = await fetch(`${url}/api/v1/autostart`, { headers }).then((r) => (r.ok ? r.json() : {}), () => ({}));
+  const summary = startupSummary(startup.autostart);
+  if (summary) console.log(summary);
   console.log(`${sessions.length} session(s), ${running} running.`);
   for (const s of sessions) {
     const model = s.model ? ` [${s.model.displayName || s.model.name}]` : '';
@@ -255,10 +272,19 @@ async function main() {
   switch (command) {
     case 'open': return cmdOpen({ browser: !flags.has('--no-browser'), signIn: flags.has('--sign-in') });
     case 'start': {
+      // `--service`: run by the Linux boot service, which systemd supervises.
+      const supervised = flags.has('--service');
       await import('../src/manager/main.mjs').then(async (m) => {
         process.on('uncaughtException', (err) => console.error('[manager] unexpected error:', err));
         process.on('unhandledRejection', (err) => console.error('[manager] unhandled rejection:', err));
-        const { shutdown } = await m.startManager();
+        const { shutdown } = await m.startManager({ supervised }).catch((err) => {
+          // Another manager has the port: an exit systemd does not retry, and the page reports.
+          if (supervised && err.code === 'EADDRINUSE') {
+            console.error(`agent-guild: ${err.message}`);
+            process.exit(EXIT_PORT_IN_USE);
+          }
+          throw err;
+        });
         console.log(`Open: ${pageUrl(readRuntimeFile()?.url ?? baseUrl(), loadOrCreateToken())}`);
         for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
           process.on(sig, () => shutdown(sig).then(() => process.exit(0)));

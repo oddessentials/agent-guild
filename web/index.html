@@ -48,9 +48,15 @@
           </fieldset>
           <fieldset id="autostart-choice" hidden>
             <legend>Startup</legend>
-            <label class="choice"><input id="autostart" type="checkbox" name="autostart"><span class="autostart">Launch at sign-in</span></label>
+            <label id="autostart-single" class="choice"><input id="autostart" type="checkbox" name="autostart"><span class="autostart">Launch at sign-in</span></label>
+            <div id="startup-modes" hidden>
+              <label class="choice"><input id="startup-off" type="radio" name="startup" value="off"><span class="startup-off">Only when I start it</span></label>
+              <label class="choice"><input id="startup-sign-in" type="radio" name="startup" value="sign-in"><span class="autostart">When I sign in</span></label>
+              <label class="choice"><input id="startup-boot" type="radio" name="startup" value="boot"><span class="startup-boot">When the computer starts</span></label>
+            </div>
             <p id="autostart-note" class="voice-note"></p>
             <p id="autostart-run" class="voice-note autostart-run" role="status" hidden></p>
+            <div id="startup-commands" class="startup-commands" hidden></div>
           </fieldset>
           <fieldset id="voice-choice" hidden>
             <legend>Voice</legend>
@@ -212,7 +218,7 @@
       <div id="github-views" class="github-views" role="tablist" aria-label="GitHub views" hidden>
         <button id="github-view-repos" class="github-view" type="button" role="tab" aria-controls="github-repos" aria-selected="true" data-view="repos" aria-label="Repositories"><span class="long">Repositories</span><span class="short" aria-hidden="true">Repos</span></button>
         <button id="github-view-issues" class="github-view" type="button" role="tab" aria-controls="github-issues" aria-selected="false" data-view="issues" tabindex="-1">Issues</button>
-        <button id="github-view-actions" class="github-view" type="button" role="tab" aria-controls="github-runs" aria-selected="false" data-view="actions" tabindex="-1" aria-label="Actions">Actions<span id="github-running" class="github-running" hidden></span></button>
+        <button id="github-view-actions" class="github-view" type="button" role="tab" aria-controls="github-runs" aria-selected="false" data-view="actions" tabindex="-1" aria-label="Actions">Actions<span id="github-outage" class="github-outage" aria-hidden="true" hidden>!</span><span id="github-running" class="github-running" hidden></span></button>
         <button id="github-view-pulls" class="github-view" type="button" role="tab" aria-controls="github-pulls" aria-selected="false" data-view="pulls" tabindex="-1" aria-label="Pull requests"><span class="long">Pull requests</span><span class="short" aria-hidden="true">PRs</span></button>
         <button id="github-view-branches" class="github-view" type="button" role="tab" aria-controls="github-branches" aria-selected="false" data-view="branches" tabindex="-1">Branches</button>
       </div>
@@ -376,18 +382,28 @@
     <div class="models-bar">
       <div class="models-heading">
         <h2 id="environment-title">Manager environment</h2>
-        <p class="sub">On the computer running Agent Guild</p>
+        <p id="environment-host" class="sub">On the computer running Agent Guild</p>
       </div>
       <button id="environment-close" class="btn" type="button">Close</button>
     </div>
     <div class="models-body">
-      <p class="environment-detail">Versions available to the manager. Shell profiles, projects and existing sessions can use different versions.</p>
-      <p class="environment-detail">Python uses <code>python</code> when found, otherwise <code>python3</code>. A failed <code>python</code> check stays primary.</p>
+      <div id="environment-scopes" class="environment-scopes" role="group" aria-label="Environment to check">
+        <button id="environment-scope-manager" class="environment-scope" type="button" aria-pressed="true">Manager</button>
+        <button id="environment-scope-project" class="environment-scope" type="button" aria-pressed="false">This project</button>
+        <button id="environment-scope-session" class="environment-scope" type="button" aria-pressed="false">Existing session</button>
+        <button id="environment-scope-launch" class="environment-scope" type="button" aria-pressed="false">New shell</button>
+      </div>
+      <p id="environment-intro" class="environment-detail">Versions available to the manager. Shell profiles, projects and existing sessions can use different versions.</p>
+      <p id="environment-python-note" class="environment-detail">Python uses <code>python</code> when found, otherwise <code>python3</code>. A failed <code>python</code> check stays primary.</p>
+      <p id="environment-folder" class="environment-detail" hidden>Choose a working folder.</p>
+      <label id="environment-session-label" for="environment-session" hidden>Session</label>
+      <select id="environment-session" hidden></select>
       <p id="environment-status" class="environment-detail" role="status"></p>
       <button id="environment-refresh" class="btn" type="button">Refresh</button>
       <div id="environment-runtimes"></div>
-      <h3>Detected tools</h3>
-      <p class="environment-detail">Presence only. Activation and the runtimes these tools manage are not checked.</p>
+      <div id="environment-pins" hidden></div>
+      <h3 id="environment-tools-heading">Detected tools</h3>
+      <p id="environment-tools-note" class="environment-detail">Presence only. Activation and the runtimes these tools manage are not checked.</p>
       <div id="environment-tools"></div>
       <p id="environment-tools-empty" class="environment-detail"></p>
       <p id="environment-manager-node" class="environment-detail"></p>

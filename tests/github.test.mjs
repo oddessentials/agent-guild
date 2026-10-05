@@ -45,7 +45,7 @@ async function setup({ tools = ['ssh', 'ssh-keygen', 'git'], ...fake } = {}) {
       else resolve({ stdout, stderr });
     });
   });
-  const hub = new GitHub({ dir: path.join(root, 'data', 'github'), registry: { env, platform: process.platform }, clientId: 'client-1', apiUrl: github.url, webUrl: github.url, run, hostname: 'test-host' });
+  const hub = new GitHub({ dir: path.join(root, 'data', 'github'), registry: { env, platform: process.platform }, clientId: 'client-1', apiUrl: github.url, webUrl: github.url, statusUrl: github.url, run, hostname: 'test-host' });
   const updates = [];
   hub.on('updated', () => updates.push(hub.snapshot()));
   const control_ = (value) => fs.writeFileSync(control, JSON.stringify(value));
@@ -618,6 +618,47 @@ test('Actions say a workflow is running only for an unfinished run, and pull req
   assert.deepEqual(pulls.pulls, [{ number: 8, title: 'Add viewer', draft: true, user: 'ada', head: 'viewer', base: 'main', updatedAt: '2026-10-02T00:00:00.000Z', url: 'https://github.com/octo-cat/agent-guild/pull/8' }]);
   assert.ok(ctx.github.state.requests.includes('GET /repos/octo-cat/agent-guild/pulls'));
   assert.equal(pulls.url, 'https://github.com/octo-cat/agent-guild/pulls');
+});
+
+test('Actions carry the GitHub status of Actions, read once a minute and never in the way of the runs', async () => {
+  const ctx = await setup();
+  const account = await signIn(ctx);
+  let clock = 0;
+  const views = createViews(ctx.hub, { now: () => clock });
+  const reads = () => ctx.github.state.requests.filter((r) => r === 'GET /api/v2/summary.json').length;
+  const actions = () => views.actions(account.id, 'octo-cat', 'agent-guild');
+
+  assert.equal((await actions()).service, null, 'operational');
+  ctx.github.state.statusSummary = {
+    components: [{ id: 'actions-1', name: 'Actions', status: 'major_outage' }, { id: 'pages-1', name: 'Pages', status: 'major_outage' }],
+    incidents: [
+      { id: 'pages0incident', name: 'Incident with Pages', components: [{ id: 'pages-1' }] },
+      { id: '3q1yb5m7ltvb', name: 'Incident with Actions', components: [{ id: 'actions-1' }] },
+    ],
+  };
+  assert.equal((await actions()).service, null, 'the last answer stands for a minute');
+  assert.equal(reads(), 1);
+
+  clock = 60 * 1000;
+  assert.deepEqual((await actions()).service, {
+    status: 'major_outage',
+    incident: { name: 'Incident with Actions', url: 'https://www.githubstatus.com/incidents/3q1yb5m7ltvb' },
+    url: 'https://www.githubstatus.com',
+  });
+  ctx.github.state.statusSummary.incidents = [{ id: '../x', name: 'Odd', components: [{ id: 'actions-1' }] }];
+  ctx.github.state.statusSummary.components[0].status = 'degraded_performance';
+  clock *= 2;
+  assert.deepEqual((await actions()).service.incident, { name: 'Odd', url: 'https://www.githubstatus.com' }, 'links stay on the status page');
+  ctx.github.state.statusSummary.incidents = [];
+  clock *= 2;
+  assert.equal((await actions()).service.incident, null);
+
+  ctx.github.state.statusSummary = null;
+  clock *= 2;
+  const unreachable = await actions();
+  assert.equal(unreachable.service, null, 'an unreadable status page is no alert');
+  assert.equal(unreachable.runs.length, 2);
+  assert.equal(reads(), 5);
 });
 
 test('a token refused or expiring in the middle of the views is refreshed once and the request goes through', async () => {

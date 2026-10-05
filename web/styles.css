@@ -162,6 +162,23 @@ main { max-width: calc(1200px + var(--dock-space, 0px)); margin: 0 auto; padding
 .environment-values dt { color: var(--muted); }
 .environment-values dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .environment-note { margin: 4px 0 0; color: var(--muted); font-size: .72rem; }
+.environment-scopes { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
+.environment-scope {
+  font: inherit; font-size: 0.75rem; font-weight: 600; padding: 3px 11px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--muted);
+}
+.environment-scope:hover { border-color: var(--muted); }
+.environment-scope:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.environment-scope[aria-pressed="true"] { background: var(--accent-fill); border-color: var(--accent-fill); color: var(--accent-text); }
+.environment-dialog select {
+  width: 100%; max-width: 100%; margin: 0 0 8px; padding: 8px; box-sizing: border-box;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); color: var(--text); font: inherit;
+}
+.environment-dialog label { display: block; margin: 8px 0 4px; font-size: 0.8rem; color: var(--muted); }
+@media (pointer: coarse), (max-width: 640px) {
+  .environment-scope { min-height: 36px; }
+  .environment-dialog select { min-height: 44px; }
+}
 .environment-detail { font-size: .85rem; line-height: 1.5; color: var(--muted); overflow-wrap: anywhere; }
 .environment-row { padding: 12px 0; border-bottom: 1px solid var(--border); }
 .environment-row-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 14px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
@@ -395,8 +412,15 @@ main { max-width: calc(1200px + var(--dock-space, 0px)); margin: 0 auto; padding
 .settings-menu .choice > .voice-input::before { mask-image: var(--icon-mic); }
 .settings-menu .choice > .autostart::before { mask-image: var(--icon-power); }
 .voice-note { margin: 0 8px 6px; max-width: 26ch; color: var(--muted); font-size: 0.75rem; line-height: 1.35; }
+.settings-menu .choice > .startup-boot::before { mask-image: var(--icon-server); }
+.settings-menu .choice > .startup-off::before { visibility: hidden; }
 .autostart-run { overflow-wrap: anywhere; }
 .autostart-run[data-outcome="failed"] { color: var(--danger); }
+.autostart-run[data-outcome="warn"] { color: var(--warn); }
+.startup-commands { display: grid; gap: 4px; margin: 0 8px 6px; max-width: 26ch; font-size: 0.75rem; }
+.startup-commands .command { align-items: flex-start; }
+.startup-commands .command pre { margin: 0; padding: 4px 6px; border: 1px solid var(--border); border-radius: calc(var(--radius) - 2px); background: var(--surface-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+.startup-commands .btn { padding: 3px 8px; font-size: 0.75rem; }
 .notes-open::before { mask-image: var(--icon-notes); }
 .notes-open[aria-pressed="true"], .github-toggle[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
 .menu-button::after { margin-left: 0.45em; transform: rotate(90deg); transition: transform 0.15s var(--ease); }
@@ -923,6 +947,8 @@ a.news-link:visited { color: var(--muted); }
   .github-branch-filter input { font-size: 16px; }
   .github-branch > .btn, #github-branches .github-view-tools .btn, .github-branch-filter .btn { min-height: 36px; }
 }
+.github-outage { display: inline-grid; place-items: center; width: 14px; height: 14px; border-radius: 50%; background: var(--danger); color: #fff; font-size: 0.65rem; font-weight: 700; line-height: 1; }
+.github-outage[hidden] { display: none; }
 .github-running { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 25%, transparent); animation: pulse 1.4s ease-in-out infinite; }
 .github-body[hidden] { display: none; }
 .github-view-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding-bottom: 6px; }
@@ -947,6 +973,8 @@ a.btn.github-out::after {
 .github-record-title:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; border-radius: 2px; }
 .github-record .btn { padding: 3px 10px; font-size: 0.8rem; }
 .github-running-note { margin: 4px 0 6px; padding: 6px 10px; border-radius: var(--radius); background: var(--surface-2); font-size: 0.85rem; }
+.github-service-note { margin: 4px 0 6px; padding: 6px 10px; border-radius: var(--radius); color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, var(--surface)); font-size: 0.85rem; }
+.github-service-note .console-link { color: inherit; text-decoration: underline; }
 .github-running-note.on { color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, var(--surface)); }
 .badge.run { --badge: var(--warn); }
 .badge.ok { --badge: var(--ok); }

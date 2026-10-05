@@ -79,7 +79,7 @@
   var startedAt = new Date(now - 60 * 60 * 1000).toISOString();
   var AUTOSTART_NOTE = 'Starts the session manager in the background when you sign in to this Mac. The page does not open. macOS also lists it as Agent Guild under System Settings › General › Login Items & Extensions; switched off there, it does not start even while this is checked.';
   var environment = {
-    scope: 'manager', platform: 'darwin', revision: 1, refreshing: false, checkedAt: new Date(now).toISOString(), error: null,
+    scope: 'manager', host: 'demo.local', platform: 'darwin', revision: 1, refreshing: false, checkedAt: new Date(now).toISOString(), error: null,
     managerNode: { version: '24.0.0', path: '/demo/bin/node' },
     runtimes: [
       { id: 'node', label: 'Node.js', command: 'node', status: 'ok', version: '24.0.0', path: '/demo/bin/node' },
@@ -202,6 +202,52 @@
     setTimeout(function () { eventSockets.forEach(function (socket) { socket.emit({ data: data }); }); }, 0);
   }
 
+  function demoEnvironment(url, refresh, body) {
+    var scope = refresh ? (body.scope || 'manager') : (url.searchParams.get('scope') || 'manager');
+    if (body.command || body.shell || body.args || body.env || ['command', 'shell', 'args', 'env'].some(function (key) { return url.searchParams.has(key); })) {
+      return error('The environment check cannot run a command.', 'bad_request');
+    }
+    if (scope === 'project' && !(refresh ? body.cwd : url.searchParams.get('cwd'))) return error('A working folder is required.', 'cwd_required');
+    if (scope === 'manager' || scope === 'launch') {
+      if (refresh) {
+        environment.revision++;
+        environment.checkedAt = new Date().toISOString();
+        announce({ type: 'environment.updated', environment: clone(environment) });
+      }
+      if (scope === 'manager') return json(clone(environment), refresh ? 202 : 200);
+      var launch = {
+        scope: 'launch', host: environment.host, platform: environment.platform, revision: environment.revision,
+        refreshing: false, checkedAt: environment.checkedAt, error: null,
+        detail: 'Launch PATH, profiles not applied. The selected shell is not consulted.',
+        runtimes: clone(environment.runtimes), tools: clone(environment.tools),
+      };
+      return json(launch, refresh ? 202 : 200);
+    }
+    if (scope === 'project') {
+      return json({
+        scope: 'project', host: environment.host, platform: 'darwin', cwd: refresh ? body.cwd : url.searchParams.get('cwd'),
+        revision: 1, refreshing: false, checkedAt: environment.checkedAt, error: null, stale: false, detail: null,
+        pins: [{ id: 'nvmrc', label: 'Node.js', source: '.nvmrc', version: '22', status: 'configured', detail: null }],
+      }, refresh ? 202 : 200);
+    }
+    if (scope !== 'session') return error('Unknown environment scope.', 'bad_request');
+    var sessionId = refresh ? body.id : url.searchParams.get('id');
+    if (!sessionId || !/^[a-f0-9]+$/.test(sessionId)) return error('Session id must be hexadecimal.', 'bad_request');
+    if (sessionId === '7e110005') {
+      return json({
+        scope: 'session', host: environment.host, platform: 'darwin', sessionId: sessionId, spawnCwd: '/work/storefront',
+        availability: 'unavailable', detail: 'This session is tmux or herdr. Its environment is not the spawn record.',
+        revision: 1, refreshing: false, checkedAt: environment.checkedAt, error: null, runtimes: [], tools: [],
+      }, refresh ? 202 : 200);
+    }
+    return json({
+      scope: 'session', host: environment.host, platform: 'darwin', sessionId: sessionId, spawnCwd: '/demo/project',
+      availability: 'ok', detail: 'Spawn PATH, before the shell startup files.',
+      revision: 1, refreshing: false, checkedAt: environment.checkedAt, error: null,
+      runtimes: clone(environment.runtimes), tools: [],
+    }, refresh ? 202 : 200);
+  }
+
   var realFetch = window.fetch.bind(window);
   window.fetch = function (input, init) {
     var url = new URL(typeof input === 'string' ? input : input.url, location.href);
@@ -226,13 +272,8 @@
     if (route === '/notes' && method === 'GET') return json({ notes: { revision: notesDoc.revision, text: notesDoc.text } });
     if (route === '/notes' && method === 'PUT') return saveNotes(body);
     if (route === '/providers' && method === 'GET') return json({ providers: clone(providers) });
-    if (route === '/environment' && method === 'GET') return json(clone(environment));
-    if (route === '/environment/refresh' && method === 'POST') {
-      environment.revision++;
-      environment.checkedAt = new Date().toISOString();
-      announce({ type: 'environment.updated', environment: clone(environment) });
-      return json(clone(environment), 202);
-    }
+    if (route === '/environment' && method === 'GET') return demoEnvironment(url, false, {});
+    if (route === '/environment/refresh' && method === 'POST') return demoEnvironment(url, true, body);
     if (route === '/providers/reload' && method === 'POST') return json({ providers: clone(providers), warnings: [] });
     if (route === '/usage' && method === 'GET') return json({ usage: [
       { providerId: 'anthropic', accountId: 'default', signedIn: true, plan: 'pro', windows: [{ label: '5 hours', usedPercent: 36, resetsAt: new Date(now + 2 * 3600000).toISOString() }] },
@@ -421,7 +462,7 @@
         return json({ branches: branches, nextPage: null, defaultBranch: Number(page) === 1 ? defaultBranch : null, metadataError: null, fetchedAt: new Date(now).toISOString(), url: web + '/branches' });
       }
       if (view[4] === 'actions' && !view[5] && method === 'GET') {
-        return json({ runs: clone(data.runs), running: data.runs.some(function (r) { return r.status !== 'completed'; }), truncated: false, url: web + '/actions' });
+        return json({ runs: clone(data.runs), running: data.runs.some(function (r) { return r.status !== 'completed'; }), service: null, truncated: false, url: web + '/actions' });
       }
       if (view[4] === 'pulls' && !view[5] && method === 'GET') return json({ pulls: clone(data.pulls), truncated: false, url: web + '/pulls' });
       if (view[4] === 'issues' && !view[5] && method === 'GET') {

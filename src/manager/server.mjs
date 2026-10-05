@@ -13,6 +13,7 @@ import { createFolderOpener } from './folder-opener.mjs';
 import { createFolderBrowser } from './folder-browser.mjs';
 import { normalizeAccess } from './access-policy.mjs';
 import { NOTES_BODY_LIMIT, createNotesStore } from './notes.mjs';
+import { MODES as AUTOSTART_MODES } from './autostart.mjs';
 
 const require = createRequire(import.meta.url);
 const API = '/api/v1';
@@ -94,6 +95,34 @@ function readJsonBody(req, max = MAX_BODY) {
     });
     req.on('error', reject);
   });
+}
+
+const ENVIRONMENT_SCOPES = new Set(['manager', 'project', 'session', 'launch']);
+
+function environmentResult(environment, method, url, body) {
+  const has = (key) => method === 'GET' ? url.searchParams.has(key) : Object.hasOwn(body, key);
+  const read = (key) => method === 'GET' ? url.searchParams.get(key) : body[key];
+  for (const key of ['shell', 'command', 'args', 'env']) {
+    if (has(key)) throw new HttpError(400, 'The environment check cannot run a command.', 'bad_request');
+  }
+  const scope = read('scope') ?? 'manager';
+  if (typeof scope !== 'string' || !ENVIRONMENT_SCOPES.has(scope)) throw new HttpError(400, 'Unknown environment scope.', 'bad_request');
+  if (scope === 'manager') {
+    if (method === 'POST') return environment.refresh();
+    if (!environment.snapshot().checkedAt) environment.refresh();
+    return environment.snapshot();
+  }
+  if (scope === 'launch') return environment.openLaunch({ refresh: method === 'POST' });
+  if (scope === 'project') {
+    const cwd = read('cwd');
+    if (typeof cwd !== 'string' || !cwd.trim()) throw new HttpError(400, 'A working folder is required.', 'cwd_required');
+    return environment.openProject(cwd, { refresh: method === 'POST' });
+  }
+  const id = read('id');
+  if (typeof id !== 'string' || !/^[a-f0-9]+$/.test(id)) throw new HttpError(400, 'Session id must be hexadecimal.', 'bad_request');
+  const snapshot = environment.openSession(id, { refresh: method === 'POST' });
+  if (!snapshot) throw new HttpError(404, `no session with id "${id}"`, 'not_found');
+  return snapshot;
 }
 
 export function createManagerServer({
@@ -282,7 +311,11 @@ export function createManagerServer({
       return sendJson(res, 200, { autostart: await autostart.describe() });
     }
     if (autostart && route === '/autostart' && method === 'PUT') {
-      const { enabled } = await readJsonBody(req);
+      const { enabled, mode } = await readJsonBody(req);
+      if (mode !== undefined) {
+        if (!AUTOSTART_MODES.includes(mode)) throw new HttpError(400, `mode must be one of ${AUTOSTART_MODES.join(', ')}`, 'bad_request');
+        return sendJson(res, 200, { autostart: await autostart.setMode(mode) });
+      }
       if (typeof enabled !== 'boolean') throw new HttpError(400, 'enabled must be true or false', 'bad_request');
       return sendJson(res, 200, { autostart: await autostart.set(enabled) });
     }
@@ -320,12 +353,10 @@ export function createManagerServer({
       return sendJson(res, 201, { session: session.toJSON() });
     }
     if (route === '/environment' && method === 'GET' && environment) {
-      if (!environment.snapshot().checkedAt) environment.refresh();
-      return sendJson(res, 200, environment.snapshot());
+      return sendJson(res, 200, await environmentResult(environment, 'GET', url, null));
     }
     if (route === '/environment/refresh' && method === 'POST' && environment) {
-      await readJsonBody(req);
-      return sendJson(res, 202, environment.refresh());
+      return sendJson(res, 202, await environmentResult(environment, 'POST', url, await readJsonBody(req)));
     }
     if (route === '/providers' && method === 'GET') {
       registry.refreshVersions().catch(() => {});
@@ -565,7 +596,7 @@ export function createManagerServer({
   }
   manager.on('event', broadcast);
   registry.on('updated', () => broadcast({ type: 'providers.updated', providers: registry.list() }));
-  const environmentUpdated = () => broadcast({ type: 'environment.updated', environment: environment.snapshot() });
+  const environmentUpdated = (snapshot) => broadcast({ type: 'environment.updated', environment: snapshot ?? environment.snapshot() });
   environment?.on('updated', environmentUpdated);
   selfUpdate?.on('updated', () => broadcast({ type: 'manager.upgrade', upgrade: upgradeInfo() }));
   news?.on('updated', () => broadcast({ type: 'news.updated' }));

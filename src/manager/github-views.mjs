@@ -7,6 +7,10 @@ const PAGE = 30;
 const RUNNING = new Set(['queued', 'in_progress', 'waiting', 'requested', 'pending']);
 const WEB = 'https://github.com';
 const ISSUE_RE = /^[1-9]\d{0,9}$/;
+const STATUS_PAGE = 'https://www.githubstatus.com';
+const STATUS_TTL_MS = 60 * 1000;
+const STATUS_TIMEOUT_MS = 5000;
+const OUTAGES = new Set(['degraded_performance', 'partial_outage', 'major_outage', 'under_maintenance']);
 
 function refusal(status, code, message) {
   return Object.assign(new Error(message), { status, code });
@@ -82,6 +86,20 @@ function cleanPull(raw, fullName) {
   };
 }
 
+/** The Actions part of a githubstatus.com summary: null while it is operational or unreadable. */
+export function actionsService(summary) {
+  const component = (Array.isArray(summary?.components) ? summary.components : []).find((c) => c?.name === 'Actions' && !c.group_id);
+  if (!component || !OUTAGES.has(component.status)) return null;
+  const incident = (Array.isArray(summary.incidents) ? summary.incidents : [])
+    .find((i) => Array.isArray(i?.components) && i.components.some((c) => c?.id === component.id));
+  const name = text(incident?.name, 200).trim();
+  return {
+    status: component.status,
+    incident: name ? { name, url: /^[a-z0-9]{1,32}$/.test(incident.id) ? `${STATUS_PAGE}/incidents/${incident.id}` : STATUS_PAGE } : null,
+    url: STATUS_PAGE,
+  };
+}
+
 function checkTitle(title) {
   if (typeof title !== 'string' || !title.trim()) throw refusal(400, 'bad_title', 'title must be a non-empty string');
   if (title.trim().length > 256) throw refusal(400, 'bad_title', 'Keep the title to 256 characters or fewer.');
@@ -95,7 +113,20 @@ function checkBody(body) {
   return body;
 }
 
-export function createViews(github) {
+export function createViews(github, { now = Date.now } = {}) {
+  let service = null;
+
+  /** GitHub's own word on Actions, read without an account and shared by every repository for a minute. */
+  function actionsStatus() {
+    if (service && now() - service.at < STATUS_TTL_MS) return service.read;
+    const read = github.fetchImpl(`${github.statusUrl}/api/v2/summary.json`, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(STATUS_TIMEOUT_MS),
+    }).then((res) => (res.ok ? res.json() : null)).then(actionsService, () => null);
+    service = { at: now(), read };
+    return read;
+  }
+
   /** One request for the repository's account. GitHub's own refusals become answers the page can show as they are. */
   async function call(accountId, owner, name, route, init) {
     const account = github.account(accountId);
@@ -185,11 +216,12 @@ export function createViews(github) {
     },
 
     async actions(accountId, owner, name) {
-      const { body, res, repo } = await call(accountId, owner, name, `/actions/runs?per_page=${PAGE}`);
+      const [{ body, res, repo }, outage] = await Promise.all([call(accountId, owner, name, `/actions/runs?per_page=${PAGE}`), actionsStatus()]);
       const runs = (Array.isArray(body?.workflow_runs) ? body.workflow_runs : []).map((item) => cleanRun(item, repo.fullName)).filter(Boolean);
       return {
         runs,
         running: runs.some((run) => RUNNING.has(run.status)),
+        service: outage,
         truncated: Boolean(nextLink(res.headers.get('link'))),
         url: `${WEB}/${repo.fullName}/actions`,
       };

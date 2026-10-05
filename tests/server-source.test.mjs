@@ -34,6 +34,26 @@ test('environment reads and refresh return immediately while discovery hangs, wi
   assert.equal((await request(api, '/api/v1/info', auth)).status, 200);
 });
 
+test('environment scopes reject commands and missing targets', async (t) => {
+  const environment = new Environment({ forkWorker: () => new EventEmitter() });
+  t.after(() => environment.close());
+  const api = await server(t, { environment });
+  const post = (body) => fetch(`${api.url}/api/v1/environment/refresh`, {
+    method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  const command = await post({ command: 'node' });
+  assert.equal(command.status, 400);
+  assert.equal((await command.json()).error.code, 'bad_request');
+  const project = await post({ scope: 'project' });
+  assert.equal(project.status, 400);
+  assert.equal((await project.json()).error.code, 'cwd_required');
+  const session = await post({ scope: 'session', id: 'abc' });
+  assert.equal(session.status, 404);
+  assert.equal((await session.json()).error.code, 'not_found');
+  const badId = await (await post({ scope: 'session', id: '../x' })).json();
+  assert.equal(badId.error.code, 'bad_request');
+});
+
 async function server(t, options = {}) {
   const session = new EventEmitter();
   Object.assign(session, {

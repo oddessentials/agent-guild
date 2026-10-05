@@ -155,7 +155,7 @@ async function startDemoManager() {
     AGENT_GUILD_SKIP_SHELL_ENV: '1',
   });
   const { startManager } = await import(pathToFileURL(path.join(repo, 'src', 'manager', 'main.mjs')));
-  const { api, token, shutdown } = await startManager({ port, version, github: { apiUrl: github.url } });
+  const { api, token, shutdown } = await startManager({ port, version, github: { apiUrl: github.url, statusUrl: github.url } });
   cleanups.push(() => shutdown('capture done'));
   console.log(`[capture] demo manager ${version} at ${api.url}`);
 

@@ -14,6 +14,10 @@
 //   runs a script in the data folder, as on macOS: desktops read Exec lines
 //   by different rules (systemd's autostart generator keeps a backslash that
 //   GLib removes), so the line holds only paths that read the same in all.
+//   Linux also offers a systemd user service that starts the manager when
+//   the computer starts (systemd-service.mjs). One starter at a time: the
+//   setting is a mode, off, sign-in or boot, and choosing one removes the
+//   other, so a sign-in never races the service for the port.
 //
 // Each launcher touches a file in the data folder before it starts Node.js,
 // and `open --sign-in` records whether a manager then answered, so the page
@@ -35,6 +39,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { DEFAULT_PORT } from './config.mjs';
+import { BOOT_NOTE, UNIT_UNSAFE, bootSupported, createBootService, journalCommand, lingerCommand, startupState, systemdRunner, unitPort, userName } from './systemd-service.mjs';
 
 export const ARGS = ['open', '--no-browser', '--sign-in'];
 export const WINDOWS_RUN_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
@@ -61,8 +66,8 @@ export const MAC_NOTE = 'Starts the session manager in the background when you s
 export const LINUX_NOTE = 'Starts the session manager in the background when you sign in to a desktop session on this computer. The page does not open. A computer with no desktop session, such as a server reached over SSH, does not start it. Desktop startup settings list it as Agent Guild.';
 /** Added to LINUX_NOTE when the manager itself was not started from a desktop session. */
 export const LINUX_NO_DESKTOP = 'This manager was not started from a desktop session, so this computer may not have one.';
-/** Characters that systemd's autostart generator and GLib read differently in an Exec line. */
-const EXEC_UNSAFE = /["`$\\]/;
+/** Linux startup modes. */
+export const MODES = ['off', 'sign-in', 'boot'];
 
 const failure = (message) => Object.assign(new Error(message), { status: 500, code: 'autostart_failed' });
 
@@ -318,6 +323,9 @@ async function clearSignIns(dataDir) {
  * @param {string|null} [opts.unavailable]  a reason autostart cannot be offered, which turns it off here
  * @param {(args: string[]) => Promise<{ status: number, stdout: string, stderr: string }>} [opts.reg]  reg.exe, replaceable in tests
  * @param {(args: string[]) => Promise<{ status: number, stdout: string, stderr: string }>} [opts.launchctl]  launchctl, replaceable in tests
+ * @param {(command: string, args: string[]) => Promise<object>} [opts.systemd]  systemctl and journalctl on Linux, replaceable in tests
+ * @param {string} [opts.lingerDir]  where systemd records lingering users, replaceable in tests
+ * @param {number} [opts.pid]  this manager, which the service state compares with systemd's
  */
 export function createAutostart({
   platform = process.platform,
@@ -333,6 +341,10 @@ export function createAutostart({
   reg = runCommand(path.win32.join(env.SystemRoot || env.SYSTEMROOT || env.WINDIR || 'C:\\Windows', 'System32', 'reg.exe')),
   uid = process.getuid?.(),
   launchctl = runCommand('/bin/launchctl'),
+  user = userName(uid),
+  systemd = systemdRunner({ uid, env }),
+  lingerDir,
+  pid = process.pid,
 }) {
   const entryExecPath = platform === 'win32' ? execPath : stableExecPath(execPath);
   const attempt = path.join(dataDir, SIGN_IN_ATTEMPT);
@@ -340,6 +352,9 @@ export function createAutostart({
   let note = null;
   let unusable = null;
   let refreshError = null;
+  /** The systemd user service, on a Linux that can offer it. */
+  let boot = null;
+  let bootRefreshError = null;
   let queue = Promise.resolve();
   /** One change or check at a time, so two clicks cannot interleave their writes. */
   const serial = (fn) => {
@@ -424,13 +439,15 @@ export function createAutostart({
         await fs.promises.rm(launcher, { force: true });
       },
     };
-  } else if (platform === 'linux' && !(env.WSL_DISTRO_NAME || /microsoft|wsl/i.test(release))) {
+  } else if (bootSupported({ platform, env, release })) {
     const file = path.join(env.XDG_CONFIG_HOME || path.join(home, '.config'), 'autostart', 'agent-guild.desktop');
     const launcher = path.join(dataDir, LINUX_LAUNCHER);
-    const unsafe = [entryExecPath, script, file, launcher, log, attempt].find((p) => EXEC_UNSAFE.test(p));
+    const service = createBootService({ env, home, user, uid, dataDir, run: systemd, ...(lingerDir && { lingerDir }) });
+    const unsafe = [entryExecPath, script, file, launcher, log, attempt, ...service.paths].find((p) => UNIT_UNSAFE.test(p));
     if (unsafe) {
-      unusable = `Not available because this path holds a character (", \`, $ or \\) that desktops read differently in a startup entry: ${unsafe}`;
+      unusable = `Not available because this path holds a character (", \`, $, \\ or a line break) that desktops and systemd read differently in a startup entry: ${unsafe}`;
     } else {
+      boot = service;
       const desktop = env.XDG_CURRENT_DESKTOP || env.WAYLAND_DISPLAY || env.DISPLAY;
       note = desktop ? LINUX_NOTE : `${LINUX_NOTE} ${LINUX_NO_DESKTOP}`;
       target = {
@@ -455,10 +472,25 @@ export function createAutostart({
     : unavailable || unusable || (platform === 'linux' ? 'Not available in WSL. Start Agent Guild from Windows to launch it at sign-in.'
       : 'Not available on this operating system.');
 
+  const FAILED = new Set(['failed', 'port-in-use']);
+  /** The service's side of a Linux description: its state, and the commands that are the next step. */
+  const describeBoot = async () => {
+    const read = await boot.read();
+    const base = { note: BOOT_NOTE, user, linger: read.linger };
+    if (!read.reachable) return { ...base, available: false, enabled: false, reason: read.reason, state: null, commands: [] };
+    const state = startupState(read.show, { pid, port: unitPort(await boot.text()) });
+    const commands = [];
+    if (read.enabled && FAILED.has(state.kind)) commands.push(journalCommand());
+    if (read.enabled && !read.linger) commands.push(lingerCommand(user));
+    return { ...base, available: true, enabled: read.enabled, reason: read.enabled ? bootRefreshError : null, state, commands };
+  };
+  const modeOf = (signIn, bootOn) => (signIn && bootOn ? 'both' : bootOn ? 'boot' : signIn ? 'sign-in' : 'off');
+
   const describe = async () => {
     if (!target) return { available: false, enabled: false, reason };
     try {
       const enabled = await target.enabled();
+      const linux = boot ? await describeBoot() : null;
       return {
         available: true,
         enabled,
@@ -467,38 +499,90 @@ export function createAutostart({
         // An unreadable record never keeps the setting from being turned off.
         lastRun: enabled ? await lastSignIn(dataDir).catch(() => null) : null,
         log,
+        ...(linux && { mode: modeOf(enabled, linux.enabled), boot: linux }),
       };
     } catch (err) {
       return { available: false, enabled: false, reason: `Could not read the startup setting: ${err.message}` };
     }
   };
 
+  /**
+   * Makes `mode` the one starter. The new one is added and confirmed before
+   * the old one goes, and nothing here starts or stops a manager: a service
+   * takes over at the manager's next restart or the computer's next start.
+   */
+  const apply = async (mode) => {
+    const signedIn = await target.enabled().catch(() => false);
+    // A fresh start says it has not run yet rather than report an earlier time it was on.
+    if (mode !== 'sign-in' || !signedIn) await clearSignIns(dataDir);
+    if (mode === 'boot') {
+      const read = await boot.read();
+      if (!read.reachable) throw Object.assign(new Error(read.reason), { status: 409, code: 'autostart_unavailable' });
+      try {
+        await boot.write(command());
+        await boot.reload();
+        await boot.enable();
+        if (!(await boot.read()).enabled) throw failure('systemd did not enable the unit.');
+      } catch (err) {
+        // Leave no half-made unit behind; the sign-in entry, if any, is still in place.
+        if (!read.enabled) await boot.remove().catch(() => {});
+        throw err;
+      }
+      await target.disable();
+      return;
+    }
+    await (mode === 'sign-in' ? target.enable() : target.disable());
+    if (boot) await boot.remove();
+  };
+
+  /** Applies the mode `pick` resolves to, inside the queue, and checks the result against what the OS reports. */
+  const change = (pick) => serial(async () => {
+    if (!target) throw Object.assign(new Error(reason), { status: 409, code: 'autostart_unavailable' });
+    const mode = await pick();
+    if (mode === 'boot' && !boot) throw Object.assign(new Error('Starting when the computer starts is offered only on Linux with systemd.'), { status: 409, code: 'autostart_unavailable' });
+    try {
+      await apply(mode);
+      refreshError = null;
+      bootRefreshError = null;
+      const state = await describe();
+      const done = boot ? state.mode === mode : state.enabled === (mode === 'sign-in');
+      if (!state.available || !done) throw failure(state.reason || 'Could not verify the startup setting.');
+      return state;
+    } catch (err) {
+      throw err.code === 'autostart_failed' || err.code === 'autostart_unavailable' ? err : failure(`Could not change the startup setting: ${err.message}`);
+    }
+  });
+
   return {
     describe: () => serial(describe),
-    /** Turns autostart on or off and resolves to the new description. */
-    set: (enabled) => serial(async () => {
-      if (!target) throw Object.assign(new Error(reason), { status: 409, code: 'autostart_unavailable' });
-      try {
-        // A fresh start says it has not run yet rather than report an earlier time it was on.
-        if (!enabled || !(await target.enabled().catch(() => false))) await clearSignIns(dataDir);
-        await (enabled ? target.enable() : target.disable());
-        refreshError = null;
-        const state = await describe();
-        if (!state.available || state.enabled !== enabled) throw failure(state.reason || 'Could not verify the startup setting.');
-        return state;
-      } catch (err) {
-        throw err.code === 'autostart_failed' ? err : failure(`Could not change the startup setting: ${err.message}`);
-      }
+    /**
+     * Turns the sign-in entry on or off and resolves to the new description.
+     * On Linux, on means the sign-in mode, and off keeps a service that is on.
+     */
+    set: (enabled) => change(async () => {
+      if (enabled) return 'sign-in';
+      return boot && ['boot', 'both'].includes((await describe()).mode) ? 'boot' : 'off';
     }),
-    /** Points an entry that is on at this manager's Node.js, package and port. */
+    /** Linux: makes `mode` (off, sign-in or boot) the one way the manager starts. Elsewhere boot is unavailable. */
+    setMode: (mode) => change(async () => mode),
+    /** Points what is on at this manager's Node.js, package and port. */
     refresh: () => serial(async () => {
+      let first = null;
       try {
         if (target && await target.enabled()) await target.write();
         refreshError = null;
       } catch (err) {
         refreshError = `Could not update the sign-in entry: ${err.message}`;
-        throw err;
+        first = err;
       }
+      try {
+        if (boot && (await boot.read()).enabled && await boot.write(command())) await boot.reload();
+        bootRefreshError = null;
+      } catch (err) {
+        bootRefreshError = `Could not update the systemd unit: ${err.message}`;
+        first ??= err;
+      }
+      if (first) throw first;
     }),
   };
 }

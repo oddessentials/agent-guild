@@ -154,19 +154,53 @@ the subscription tier.
 
 ### Manager environment
 
-`GET /environment` returns the cached snapshot and starts discovery if no
-check has finished. `POST /environment/refresh` with `{}` starts a new check
-and returns `202` immediately. Concurrent refreshes share the same helper.
-Both routes use the usual authentication and source checks. Neither accepts
-a shell, working directory, provider environment or command to execute.
+`GET /environment` returns the cached manager snapshot and starts discovery if no
+check has finished. `POST /environment/refresh` with `{}` or `{ "scope": "manager" }`
+starts a new check and returns `202` immediately. Concurrent refreshes of one
+scope share the same helper. Both routes use the usual authentication and
+source checks.
 
-The snapshot contains `scope: "manager"`, `platform`, a monotonically
-increasing `revision` within this manager lifetime, `refreshing`, `checkedAt`
-(ISO timestamp or null), `error` (null, or why the helper itself did not finish),
-`managerNode: { version, path }`, `runtimes[]` and `tools[]`. Refresh retains
-the previous results while `refreshing` is true. On completion, each runtime
-has a fresh result; unfinished checks become `failed`, never a stale success.
-A missing or unverified runtime is that runtime's own status and does not set `error`.
+Every snapshot names `host`, the hostname of the computer running the manager.
+A page does not compare that name with its own browser. `scope` is `manager`,
+`project`, `session`, or `launch`. Each scope has its own `revision`,
+`refreshing`, `checkedAt`, and `error`, and never fills a missing row from
+another scope. `error` is null, or why the helper itself did not finish.
+Refresh retains the previous results for that scope while `refreshing` is true.
+
+`GET /environment?scope=project&cwd=<folder>` and
+`POST /environment/refresh` with `{ "scope": "project", "cwd": "<folder>" }`
+read known pin files in that folder. `cwd` is required. An empty value is
+`400` `cwd_required` and is not replaced with the home directory. A missing
+path or a path that is not a folder is `400` `bad_cwd`. The result adds `cwd`,
+`stale`, and `pins[]`. A pin is `{ id, label, source, version, status, detail }`
+with `status` `configured`, `unreadable`, or `invalid`. `configured` means the
+file asked for that text. It does not mean the runtime is installed. Aliases
+such as `lts/*` are returned as written. A later GET compares file identity
+and may set `stale` without replacing the pins. POST reads them again.
+
+`GET /environment?scope=session&id=<hex>` and `{ "scope": "session", "id": "<hex>" }`
+probe the PATH recorded when that session was spawned, in a neutral temporary
+directory. Only PATH, the home folder and the toolchain-manager locations and
+version selectors (for example `RUSTUP_HOME`, `PYENV_ROOT`, `ASDF_DATA_DIR`)
+are passed to the probe. The response adds `sessionId`, `spawnCwd`, and `availability`.
+`availability` is `ok`, or `unavailable` for tmux and herdr, whose environment
+is not that spawn record. No command is written to the terminal. An unknown id
+is `404` `not_found`. An id that is not hexadecimal is `400` `bad_request`.
+The spawn environment is not stored, and the response never includes it.
+
+`GET /environment?scope=launch` and `{ "scope": "launch" }` report the manager
+PATH with `detail` explaining that profiles were not applied and the selected
+shell was not consulted. This does not start a second probe. A manager-only
+refresh does not replace a launch snapshot already stored.
+
+A body or query that includes `shell`, `command`, `args`, or `env` is `400`
+`bad_request`. Any other `scope` is `400` `bad_request`.
+
+The manager snapshot contains `scope: "manager"`, `host`, `platform`,
+`managerNode: { version, path }`, `runtimes[]` and `tools[]`. On completion,
+each runtime has a fresh result; unfinished checks become `failed`, never a
+stale success. A missing or unverified runtime is that runtime's own status
+and does not set `error`.
 
 Runtimes are ordered Node.js, Python, Go, .NET SDK, R, Rust. Each has `id`,
 `label`, `status`, `version` and `path`. Resolved results also name `command`
@@ -194,9 +228,22 @@ Runtime probes execute recognized native binaries (and R's Unix launcher)
 from a neutral temporary directory; unknown script/shim launchers and Windows
 execution aliases remain `unavailable`. rustup/Python auto-install and Go
 toolchain downloads are disabled for probes. Probe output and the full
-environment are never included in API responses. Selected shell profiles,
-projects, sessions and provider overrides do not participate. Refresh reads
-the manager's current environment without invoking PATH/profile discovery.
+environment are never included in API responses. The manager and session
+probes do not load shell profiles. A project check reads only `.nvmrc`,
+`.node-version`, `.python-version`, `package.json` (`engines.node`,
+`engines.npm`, `packageManager`), `pyproject.toml` (`requires-python` as one
+quoted line), `rust-toolchain.toml`, `rust-toolchain`, `go.mod` (the `go` line
+and the `toolchain` directive), `global.json` (`sdk.version`), and known rows
+in `.tool-versions` (`node`, `nodejs`, `python`, `go`, `golang`, `rust`,
+`dotnet`, `dotnet-sdk`). It does not enter that directory.
+
+Tool behavior stays bounded. POSIX nvm is `nvm.sh` at `NVM_DIR` or `~/.nvm`,
+and it is never sourced. NVM for Windows, vfox, and uv are presence on PATH.
+pnpm is presence on PATH plus a `packageManager` pin; Corepack is not enabled.
+Rust pins come from `rust-toolchain` files, Go pins from `go.mod`, and .NET
+pins from `global.json`. None of those tools is asked to install, select, or
+download a runtime. Refresh of the manager reads its current environment
+without invoking PATH or profile discovery.
 
 ### Multiplexer installations
 
@@ -497,13 +544,19 @@ signed-in account. Each list holds the 30 most recently updated items;
 { "issues": [{ "number": 4, "title": "Dock is too narrow", "body": "Steps", "state": "open", "user": "octo-cat", "comments": 2, "updatedAt": "2026-10-01T00:00:00.000Z", "url": "https://github.com/octo-cat/agent-guild/issues/4" }],
   "truncated": false, "url": "https://github.com/octo-cat/agent-guild/issues" }
 { "runs": [{ "id": 11, "name": "CI", "title": "Fix the gate", "branch": "main", "event": "push", "status": "in_progress", "conclusion": null, "runNumber": 12, "updatedAt": "2026-10-02T00:00:00.000Z", "url": "https://github.com/octo-cat/agent-guild/actions/runs/11" }],
-  "running": true, "truncated": false, "url": "https://github.com/octo-cat/agent-guild/actions" }
+  "running": true, "service": null, "truncated": false, "url": "https://github.com/octo-cat/agent-guild/actions" }
 { "pulls": [{ "number": 8, "title": "Add viewer", "draft": true, "user": "ada", "head": "viewer", "base": "main", "updatedAt": "2026-10-02T00:00:00.000Z", "url": "https://github.com/octo-cat/agent-guild/pull/8" }],
   "truncated": false, "url": "https://github.com/octo-cat/agent-guild/pulls" }
 ```
 
 Issues leave out pull requests. `running` is true while any listed run is
-`queued`, `in_progress`, `waiting`, `requested` or `pending`. Errors: 400
+`queued`, `in_progress`, `waiting`, `requested` or `pending`. `service` is
+null while githubstatus.com reports Actions operational or cannot be read, else
+`{ status, incident, url }`: `status` is `degraded_performance`,
+`partial_outage`, `major_outage` or `under_maintenance`, `incident` is
+`{ name, url }` for the open incident affecting Actions or null, and every `url`
+is a githubstatus.com page. The manager reads the status page at most once a
+minute, only when runs are fetched. Errors: 400
 `bad_repo`, 404 `unknown_account`, 404 `not_found` (GitHub has no such
 repository or issue for the account), 404 `issues_disabled`, 403 `forbidden`,
 400 `github_rejected`, 429 `rate_limited`, 409 `github_sign_in`.
@@ -563,15 +616,15 @@ All paths are under `/api/v1`.
 | GET | `/info` | | Manager version, platform, start time, provider config warnings, `upgrade` (an Upgrade object), and `launcher`: the path of the double-click launcher for this platform when the install carries one (a checkout of the repository), else null. `folderOpener` is `{ available, label, reason }` for this client; it is unavailable to clients that reach the manager by any address other than its own loopback ones. |
 | GET | `/folders?path=` | | `{ path, parent, home, segments, roots, entries, truncated, note }`: the subfolders of `path` (blank or `~` for the home folder) on the manager's computer. A missing `path` lists the nearest existing folder above it and names the requested path in `note`. `entries` are `{ name, path, hidden }`, sorted by name, at most 2,000 (`truncated` says when there were more); `segments` and `roots` are `{ name, path }` for the path's parts and the drives or `/`. 409 `folder_unreadable` when the folder cannot be read. |
 | POST | `/folders` | `{ path, name }` | 201 with the `GET /folders` listing of the new folder `name`, made inside the existing folder `path`. 400 `bad_name` when `name` is blank, `.` or `..`, holds a path separator or control character, or (on Windows) holds `<>:"|?*`, ends with a dot or space, or is a reserved device name; 409 `folder_exists` when something already has that name, `folder_missing` when `path` is not an existing folder, `folder_unreadable` or `folder_unwritable` when the host refuses. |
-| GET | `/autostart` | | `{ autostart: { available, enabled, reason, note?, lastRun?, log? } }`: whether the manager starts when the user signs in to its computer. `reason` says why it is unavailable (WSL, an unsupported system, a data folder set by `AGENT_GUILD_HOME`, or on Linux a path a desktop's startup entry cannot carry), else null. The entry turned off outside Agent Guild (Task Manager's Startup apps, a desktop's startup settings, `launchctl disable`) reads as off. On macOS, `note` explains that System Settings' Login Items switch for the item, which the manager cannot read, also keeps it from starting; on Linux it explains that a desktop session is needed, and warns when this manager was not started from one. While available, `lastRun` is null when off or when the entry has not run at a sign-in since it was turned on, else `{ at, outcome }`: `started` (it started the manager), `running` (a manager already answered), `starting` (it ran under 30 seconds ago and no manager has answered yet) or `failed` (none answered); `log` is the manager log, which records what a macOS or Linux entry ran. |
-| PUT | `/autostart` | `{ enabled }` | `{ autostart }` as above, after adding or removing the per-user sign-in entry, which runs `agent-guild open --no-browser --sign-in`. Turning it off, or on while it was off, forgets the last sign-in. 400 `bad_request` when `enabled` is not a boolean, 409 `autostart_unavailable`, 500 `autostart_failed` when the system refuses the change. |
+| GET | `/autostart` | | `{ autostart: { available, enabled, reason, note?, lastRun?, log? } }`: whether the manager starts when the user signs in to its computer. `reason` says why it is unavailable (WSL, an unsupported system, a data folder set by `AGENT_GUILD_HOME`, or on Linux a path a desktop's startup entry cannot carry), else null. The entry turned off outside Agent Guild (Task Manager's Startup apps, a desktop's startup settings, `launchctl disable`) reads as off. On macOS, `note` explains that System Settings' Login Items switch for the item, which the manager cannot read, also keeps it from starting; on Linux it explains that a desktop session is needed, and warns when this manager was not started from one. While available, `lastRun` is null when off or when the entry has not run at a sign-in since it was turned on, else `{ at, outcome }`: `started` (it started the manager), `running` (a manager already answered), `starting` (it ran under 30 seconds ago and no manager has answered yet) or `failed` (none answered); `log` is the manager log, which records what a macOS or Linux entry ran. On Linux outside WSL the description also has `mode` (`off`, `sign-in`, `boot`, or `both` when a sign-in entry and the systemd unit are both on) and `boot`: `{ available, enabled, reason, note, user, linger, state, commands }`. `available` is false, with `reason`, when the computer has no systemd or the user manager does not answer. `linger` says whether systemd lets the service start before anyone signs in. While the unit is enabled, `state` is what systemd reports: `{ kind: 'running', since, pid }` (the manager answering is the one systemd runs), `{ kind: 'other', since, pid, port }`, `{ kind: 'starting' }`, `{ kind: 'pending' }` (the manager answering was started without systemd and hands over at its next restart), `{ kind: 'stopped', at }`, `{ kind: 'port-in-use', at, port }` or `{ kind: 'failed', at, result, status }`; times are ISO strings or null. `commands` lists the next commands to run: the journal for a failure, and `sudo loginctl enable-linger <user>` without lingering. |
+| PUT | `/autostart` | `{ enabled }` or `{ mode }` | `{ autostart }` as above, after adding or removing the per-user sign-in entry, which runs `agent-guild open --no-browser --sign-in`. Turning it off, or on while it was off, forgets the last sign-in. `mode` (`off`, `sign-in` or `boot`) makes that the one way the manager starts: the new starter is added and confirmed before the other is removed, and no manager is started or stopped; `boot` writes and enables the systemd user unit, which runs `agent-guild start --service`. On Linux `{ enabled: true }` is `sign-in` and `{ enabled: false }` keeps a unit that is on. Other systems refuse `boot`. 400 `bad_request` when `enabled` is not a boolean or `mode` is not one of those, 409 `autostart_unavailable`, 500 `autostart_failed` when the system refuses the change. |
 | POST | `/open-folder` | `{ cwd? }` | `{ ok }`: opens the folder in the computer's file manager. 403 `local_only` from clients that reach the manager by any address other than its own loopback ones. |
 | GET | `/notes` | | `{ notes: { revision, text } }`. One notepad for every client of this manager. `revision` is null until the first save. `text` is at most 100,000 characters. |
 | PUT | `/notes` | `{ revision, text }` | `{ notes }` with a new `revision`. `revision` is the one this edit started from, or null to create the notepad. 500 `notes_unreadable` (on GET too) while the notes file cannot be read; it is left as it is. 409 `stale_notes` when that revision is no longer current; `error.notes` is the current notepad, so a client can retry or adopt it. 400 `notes_too_long` over 100,000 characters, 400 `bad_notes` when `text` is not a string. The body may be up to 1 MiB. A cleared notepad is stored as an empty string; it is not deleted. |
 | POST | `/upgrade` | | `201 { session }`: a session with `task` `upgrade` running the Upgrade `command`. 400 `not_updatable` when no newer release is known, it is already installed on disk, the manager is a development build, or version checks are off. 409 `npm_unavailable` without npm on PATH. 409 `upgrade_in_progress` while one is running. Sessions keep running; the new version is used after the manager restarts. |
 | GET | `/providers` | | `{ providers: Provider[] }` |
-| GET | `/environment` | | Manager environment snapshot; starts the initial check without waiting. |
-| POST | `/environment/refresh` | `{}` | `202` with the snapshot; starts or joins bounded read-only discovery. |
+| GET | `/environment?scope=&cwd=&id=` | | Environment snapshot for `scope` (`manager` when omitted, or `project`, `session`, `launch`). `cwd` is required for `project`. `id` is required for `session`. Starts the initial check for that scope without waiting. |
+| POST | `/environment/refresh` | `{ scope?, cwd?, id? }` | `202` with that scope's snapshot; starts or joins its read-only check. `{}` refreshes the manager. |
 | POST | `/providers/reload` | | Re-reads `providers.json`. |
 | POST | `/providers/:id/reporting` | `{ enabled }` | `{ provider }`: turns agent reporting on or off for a tool that needs it, by running the tool's own `plugin install`, `plugin enable` or `plugin uninstall`. An older copy of the Agent Guild plugin is replaced, and one turned off in the tool is turned back on. 400 `not_applicable` for any other tool, 409 `plugin_conflict` when another plugin has the same name, 502 `reporting_setup_failed` when the tool's command fails. |
 | POST | `/providers/:id/install` | `{ force? }` | `201 { session }`: a session running `npm install -g <package>@<version>`, or `updateCommand` when the tool is installed. 400 `not_updatable` when an installed tool has no `updateCommand`. 503 `release_unresolved` or 409 `release_incomplete` when the release cannot be read or its platform build is not published; nothing is run. 409 `install_in_progress` while one is already running. 409 `provider_in_use` (with `running`, the session count) while the provider's sessions are running, unless `force` is true. |

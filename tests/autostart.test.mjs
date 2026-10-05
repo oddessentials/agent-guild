@@ -21,7 +21,7 @@ import {
   SIGN_IN_RESULT,
   SIGN_IN_WAIT_MS,
   approvedDisabled,
-  createAutostart,
+  createAutostart as createAutostartWith,
   desktopArg,
   desktopEntry,
   desktopEntryEnabled,
@@ -34,6 +34,14 @@ import {
   windowsWrapper,
 } from '../src/manager/autostart.mjs';
 import { createManagerServer } from '../src/manager/server.mjs';
+import { BOOT_NOTE, EXIT_PORT_IN_USE, SERVICE, journalCommand, lingerCommand, unitPort } from '../src/manager/systemd-service.mjs';
+import { fakeSystemd } from './fixtures/fake-systemd.mjs';
+
+/** A computer without systemd, unless a test passes its own: no test reaches the real user manager. */
+const noSystemd = async () => ({ status: 127, stdout: '', stderr: 'spawn systemctl ENOENT', missing: true });
+const createAutostart = (options) => createAutostartWith({ systemd: noSystemd, user: 'ana', ...options });
+/** The service's part of a Linux description on a computer without systemd. */
+const noBoot = { note: BOOT_NOTE, user: 'ana', linger: false, available: false, enabled: false, reason: 'Not available because this computer does not use systemd.', state: null, commands: [] };
 
 // Linux entries deliberately refuse backslashes. Native Windows temporary
 // paths cannot stand in for their filesystem; the POSIX runners cover them.
@@ -154,7 +162,10 @@ for (const platform of ['linux', 'darwin']) {
       : path.join(home, 'xdg', 'autostart', 'agent-guild.desktop');
     const options = { platform, home, release: '6.8.0', env: { XDG_CONFIG_HOME: path.join(home, 'xdg') }, script: '/pkg/bin/agent-guild.mjs', dataDir: home, uid: 501, launchctl: fakeLaunchctl().launchctl };
     const autostart = createAutostart({ ...options, execPath: '/old/node' });
-    const on = (enabled) => ({ available: true, enabled, reason: null, note: platform === 'darwin' ? MAC_NOTE : `${LINUX_NOTE} ${LINUX_NO_DESKTOP}`, lastRun: null, log: path.join(home, 'manager.log') });
+    const on = (enabled) => ({
+      available: true, enabled, reason: null, note: platform === 'darwin' ? MAC_NOTE : `${LINUX_NOTE} ${LINUX_NO_DESKTOP}`, lastRun: null, log: path.join(home, 'manager.log'),
+      ...(platform === 'linux' && { mode: enabled ? 'sign-in' : 'off', boot: noBoot }),
+    });
     assert.deepEqual(await autostart.describe(), on(false));
     await autostart.refresh();
     assert.equal(fs.existsSync(file), false, 'refresh never turns it on');
@@ -703,4 +714,207 @@ test('linux: GLib launches the entry with the launcher and its arguments', { ski
   assert.deepEqual(JSON.parse(fs.readFileSync(ran, 'utf8')), { args: ENTRY_ARGS, port: '51234' });
   assert.equal(fs.existsSync(path.join(data, SIGN_IN_ATTEMPT)), true);
   assert.equal((await autostart.describe()).lastRun.outcome, 'starting', 'the probe records no result, as a manager that has not answered yet');
+});
+
+test('a uid with no user name, as in a container, still gets a startup setting, and names the uid for lingering', linuxPaths, async (t) => {
+  t.mock.method(os, 'userInfo', () => { throw Object.assign(new Error('uv_os_get_passwd returned ENOENT'), { code: 'ERR_SYSTEM_ERROR' }); });
+  const home = tempDir(t);
+  for (const platform of ['linux', 'darwin', 'win32']) {
+    const autostart = createAutostartWith({ platform, home, release: '6.8.0', env: {}, execPath: '/node', script: '/pkg/bin/agent-guild.mjs', dataDir: home, uid: 501, systemd: fakeSystemd().run, lingerDir: home, reg: fakeReg().reg, launchctl: fakeLaunchctl().launchctl });
+    const state = await autostart.describe();
+    assert.equal(state.available, true, platform);
+    if (platform === 'linux') assert.equal(state.boot.user, '501');
+  }
+});
+
+/** A Linux manager with a fake user manager: `entry` is the sign-in entry, `unit` the service, `linger` its lingering record. */
+function linuxStartup(t, { systemd = fakeSystemd(), pid = 4242, port = 47821, lingering = false } = {}) {
+  const home = tempDir(t);
+  const lingerDir = path.join(home, 'linger');
+  fs.mkdirSync(lingerDir);
+  if (lingering) fs.writeFileSync(path.join(lingerDir, 'ana'), '');
+  const data = path.join(home, 'data');
+  const options = { platform: 'linux', home, release: '6.8.0', env: { XDG_CURRENT_DESKTOP: 'GNOME' }, execPath: '/node', script: '/pkg/bin/agent-guild.mjs', dataDir: data, getPort: () => port, uid: 1000, user: 'ana', systemd: systemd.run, lingerDir, pid };
+  return {
+    systemd,
+    options,
+    autostart: createAutostartWith(options),
+    entry: path.join(home, '.config', 'autostart', 'agent-guild.desktop'),
+    unit: path.join(home, '.config', 'systemd', 'user', SERVICE),
+    launcher: path.join(data, 'boot.sh'),
+    linger: path.join(lingerDir, 'ana'),
+  };
+}
+
+test('linux: choosing boot enables the unit first, then removes the sign-in entry, and starts or stops nothing', linuxPaths, async (t) => {
+  const { systemd, options, entry, unit, launcher } = linuxStartup(t);
+  let entryAtEnable = null;
+  const runner = async (command, args) => {
+    if (args[1] === 'enable') entryAtEnable = fs.existsSync(entry);
+    return systemd.run(command, args);
+  };
+  const autostart = createAutostartWith({ ...options, systemd: runner });
+  await autostart.setMode('sign-in');
+  systemd.calls.length = 0;
+  const state = await autostart.setMode('boot');
+  assert.equal(entryAtEnable, true, 'the sign-in entry is kept until the unit is enabled');
+  assert.equal(fs.existsSync(entry), false);
+  assert.equal(fs.existsSync(unit), true);
+  assert.equal(fs.existsSync(launcher), true);
+  assert.equal(unitPort(fs.readFileSync(unit, 'utf8')), 47821);
+  assert.equal(state.mode, 'boot');
+  assert.equal(state.enabled, false);
+  assert.equal(state.boot.enabled, true);
+  assert.deepEqual(systemd.verbs().filter((verb) => verb !== 'show'), ['daemon-reload', 'enable'], 'changing the mode never starts or stops a manager');
+});
+
+test('linux: choosing sign-in or off adds the new starter before removing the unit', linuxPaths, async (t) => {
+  for (const mode of ['sign-in', 'off']) {
+    const { systemd, options, entry, unit, launcher } = linuxStartup(t);
+    let entryAtDisable = null;
+    const runner = async (command, args) => {
+      if (args[1] === 'disable') entryAtDisable = fs.existsSync(entry);
+      return systemd.run(command, args);
+    };
+    const autostart = createAutostartWith({ ...options, systemd: runner });
+    await autostart.setMode('boot');
+    const state = await autostart.setMode(mode);
+    assert.equal(state.mode, mode);
+    assert.equal(entryAtDisable, mode === 'sign-in', mode);
+    assert.equal(fs.existsSync(entry), mode === 'sign-in');
+    for (const file of [unit, launcher]) assert.equal(fs.existsSync(file), false, `${mode}: ${file}`);
+    assert.equal(systemd.verbs().includes('stop'), false, 'a running service manager is never stopped by a mode change');
+  }
+});
+
+test('linux: the checkbox API keeps one starter: on is sign-in, and off leaves a service on', linuxPaths, async (t) => {
+  const { autostart, entry, unit } = linuxStartup(t);
+  await autostart.setMode('boot');
+  assert.equal((await autostart.set(false)).mode, 'boot');
+  assert.equal(fs.existsSync(unit), true);
+  const on = await autostart.set(true);
+  assert.equal(on.mode, 'sign-in');
+  assert.equal(fs.existsSync(unit), false);
+  assert.equal(fs.existsSync(entry), true);
+  assert.equal((await autostart.set(false)).mode, 'off');
+});
+
+test('linux: a refused enable leaves the sign-in entry as it was and no unit behind', linuxPaths, async (t) => {
+  const { systemd, autostart, entry, unit, launcher } = linuxStartup(t);
+  await autostart.setMode('sign-in');
+  systemd.state.fail.add('enable');
+  await assert.rejects(autostart.setMode('boot'), (err) => err.code === 'autostart_failed' && /enable refused/.test(err.message));
+  const state = await autostart.describe();
+  assert.equal(state.mode, 'sign-in');
+  assert.equal(fs.existsSync(entry), true);
+  assert.equal(fs.existsSync(unit), false);
+  assert.equal(fs.existsSync(launcher), false);
+});
+
+test('linux: without a reachable user manager boot is unavailable with its reason, and the other modes still work', linuxPaths, async (t) => {
+  for (const systemd of [fakeSystemd({ reachable: false }), fakeSystemd({ missing: true })]) {
+    const { autostart, entry, unit } = linuxStartup(t, { systemd });
+    const before = await autostart.describe();
+    assert.equal(before.available, true);
+    assert.equal(before.boot.available, false);
+    assert.match(before.boot.reason, systemd.state.missing ? /does not use systemd/ : /did not answer: Failed to connect to bus/);
+    await assert.rejects(autostart.setMode('boot'), (err) => err.code === 'autostart_unavailable' && err.status === 409);
+    assert.equal(fs.existsSync(unit), false);
+    assert.equal((await autostart.setMode('sign-in')).mode, 'sign-in');
+    assert.equal(fs.existsSync(entry), true);
+    assert.equal((await autostart.setMode('off')).mode, 'off');
+  }
+});
+
+test('linux: the service state names this manager, lingering and the next step', linuxPaths, async (t) => {
+  const { systemd, autostart, linger } = linuxStartup(t, { pid: 4242 });
+  await autostart.setMode('boot');
+  let boot = (await autostart.describe()).boot;
+  assert.deepEqual(boot.state, { kind: 'pending' }, 'this manager was started without systemd');
+  assert.deepEqual(boot.commands, [lingerCommand('ana')]);
+  assert.equal(boot.linger, false);
+
+  fs.writeFileSync(linger, '');
+  Object.assign(systemd.state.show, { ActiveState: 'active', MainPID: '4242', ExecMainStartTimestamp: 'Mon 2026-10-05 18:40:29 UTC' });
+  boot = (await autostart.describe()).boot;
+  assert.deepEqual(boot.state, { kind: 'running', since: '2026-10-05T18:40:29.000Z', pid: 4242 });
+  assert.deepEqual(boot.commands, []);
+
+  Object.assign(systemd.state.show, { ActiveState: 'failed', MainPID: '0', Result: 'exit-code', ExecMainStatus: String(EXIT_PORT_IN_USE), InactiveEnterTimestamp: 'Mon 2026-10-05 18:41:00 UTC' });
+  boot = (await autostart.describe()).boot;
+  assert.deepEqual(boot.state, { kind: 'port-in-use', at: '2026-10-05T18:41:00.000Z', port: 47821 });
+  assert.deepEqual(boot.commands, [journalCommand()]);
+});
+
+test('linux: a unit and a sign-in entry both on read as both, and choosing one resolves it', linuxPaths, async (t) => {
+  const { autostart, entry, unit } = linuxStartup(t);
+  await autostart.setMode('boot');
+  fs.mkdirSync(path.dirname(entry), { recursive: true });
+  fs.writeFileSync(entry, desktopEntry({ launcher: '/l', execPath: '/node', script: '/s', file: entry, port: 47821, log: '/log', attempt: '/a' }));
+  assert.equal((await autostart.describe()).mode, 'both');
+  assert.equal((await autostart.setMode('boot')).mode, 'boot');
+  assert.equal(fs.existsSync(entry), false);
+  assert.equal(fs.existsSync(unit), true);
+});
+
+test('linux: refresh rewrites an enabled unit for this manager and reloads only when it changed', linuxPaths, async (t) => {
+  const { systemd, options, unit } = linuxStartup(t);
+  const autostart = createAutostartWith(options);
+  await autostart.refresh();
+  assert.equal(fs.existsSync(unit), false, 'refresh never turns it on');
+  await autostart.setMode('boot');
+  systemd.calls.length = 0;
+  await autostart.refresh();
+  assert.deepEqual(systemd.verbs(), ['show'], 'unchanged: no reload');
+  await createAutostartWith({ ...options, execPath: '/new/node', getPort: () => 51234 }).refresh();
+  assert.match(fs.readFileSync(unit, 'utf8'), /"\/new\/node"/);
+  assert.equal(unitPort(fs.readFileSync(unit, 'utf8')), 51234);
+  assert.deepEqual(systemd.verbs(), ['show', 'show', 'daemon-reload']);
+
+  systemd.state.fail.add('daemon-reload');
+  await assert.rejects(createAutostartWith({ ...options, execPath: '/newer/node' }).refresh(), /reload/);
+  const failing = createAutostartWith({ ...options, execPath: '/newest/node' });
+  await failing.refresh().catch(() => {});
+  assert.match((await failing.describe()).boot.reason, /^Could not update the systemd unit/);
+});
+
+test('linux: a path systemd would read differently makes startup unavailable', linuxPaths, async (t) => {
+  const { options } = linuxStartup(t);
+  for (const dataDir of ['/home/a/data "x"', '/home/a/da\nta']) {
+    const described = await createAutostartWith({ ...options, dataDir }).describe();
+    assert.equal(described.available, false);
+    assert.ok(described.reason.includes(dataDir));
+  }
+});
+
+test('other systems offer no boot mode: sign-in and off work as the checkbox does', async (t) => {
+  const home = tempDir(t);
+  const autostart = createAutostart({ platform: 'darwin', home, release: '25.0.0', env: {}, execPath: '/node', script: '/pkg/bin/agent-guild.mjs', dataDir: home, uid: 501, launchctl: fakeLaunchctl().launchctl });
+  await assert.rejects(autostart.setMode('boot'), (err) => err.code === 'autostart_unavailable' && err.status === 409);
+  const on = await autostart.setMode('sign-in');
+  assert.equal(on.enabled, true);
+  assert.equal('mode' in on, false);
+  assert.equal((await autostart.setMode('off')).enabled, false);
+});
+
+test('the autostart API takes a mode and refuses anything else', { timeout: 10000 }, async (t) => {
+  const modes = [];
+  const autostart = {
+    describe: async () => ({ available: true, enabled: false, reason: null }),
+    set: async () => { throw new Error('the mode goes to setMode'); },
+    setMode: async (mode) => { modes.push(mode); return { available: true, enabled: false, reason: null, mode }; },
+  };
+  const manager = Object.assign(new EventEmitter(), { list: () => [] });
+  const registry = Object.assign(new EventEmitter(), { warnings: [] });
+  const api = createManagerServer({ manager, registry, autostart, token: 'tok', webDir: fileURLToPath(new URL('../web', import.meta.url)) });
+  await api.listen();
+  t.after(() => api.close());
+  const put = (body) => fetch(`${api.url}/api/v1/autostart`, { method: 'PUT', headers: { Authorization: 'Bearer tok', 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  for (const mode of ['both', 'Boot', 1, null]) {
+    const bad = await put({ mode });
+    assert.equal(bad.status, 400, String(mode));
+    assert.match((await bad.json()).error.message, /mode must be one of off, sign-in, boot/);
+  }
+  assert.deepEqual(await (await put({ mode: 'boot' })).json(), { autostart: { available: true, enabled: false, reason: null, mode: 'boot' } });
+  assert.deepEqual(modes, ['boot']);
 });
