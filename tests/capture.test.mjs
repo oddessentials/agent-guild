@@ -93,6 +93,9 @@ test('the capture\'s GitHub signs in its account and fills every view of the pan
   const views = createViews(hub);
   const [owner, name] = DEMO_REPOS[0].split('/');
   assert.ok((await views.issues(DEMO_ACCOUNT.id, owner, name)).issues.length >= 3);
+  const branches = await views.branches(DEMO_ACCOUNT.id, owner, name);
+  assert.equal(branches.defaultBranch, 'main');
+  assert.ok(branches.branches.some((branch) => branch.protected));
   const actions = await views.actions(DEMO_ACCOUNT.id, owner, name);
   assert.ok(actions.runs.length >= 3 && actions.running);
   assert.ok((await views.pulls(DEMO_ACCOUNT.id, owner, name)).pulls.length >= 1);

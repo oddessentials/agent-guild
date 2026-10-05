@@ -499,6 +499,25 @@ Issues leave out pull requests. `running` is true while any listed run is
 repository or issue for the account), 404 `issues_disabled`, 403 `forbidden`,
 400 `github_rejected`, 429 `rate_limited`, 409 `github_sign_in`.
 
+Branches use `GET /github/accounts/:id/repos/:owner/:name/branches?page=1`.
+Each response holds up to 100 branches and `{ branches, nextPage, defaultBranch,
+metadataError, fetchedAt, url }`. Each branch is `{ name, sha, protected, url }`;
+`sha` is null when GitHub omits a valid commit SHA. `protected` comes directly
+from GitHub's branch-list endpoint and includes protection by rulesets.
+Branch names are preserved exactly; their GitHub links encode the name.
+
+`nextPage` comes from GitHub's next-page Link and is null only when there is no
+next link. Continue until it is null, even after a short or empty page. A bad
+page number returns 400 `bad_page`; an invalid upstream next link or list
+returns 502 `github_error`. There is no total branch limit.
+
+Page one also reads repository metadata for `defaultBranch`; subsequent pages
+return null for that field. A metadata failure leaves the branch list usable,
+with `metadataError` explaining the failure and no default badge. Each refresh
+starts at page one. The page loads successive pages while visible, preserves
+the visible row when sorting new results, and labels partial results and
+failed refreshes. Retry resumes the failed page; Refresh starts a new listing.
+
 ### Agent
 
 An agent is a worker that the coding tool reports inside a session, such as a
@@ -563,6 +582,7 @@ All paths are under `/api/v1`.
 | POST | `/github/accounts/:id/repos/:owner/:name/issues` | `{ title, body? }` | `201 { issue }`. 400 `bad_title` for an empty title, `bad_body` when `body` is not a string. The title is cut to 256 characters, the body to 48,000. |
 | PATCH | `/github/accounts/:id/repos/:owner/:name/issues/:number` | `{ title?, body?, state? }` | `{ issue }`. `state` is `open` or `closed`. 400 `bad_issue`, `bad_state`, or `bad_request` when nothing is given. |
 | GET | `/github/accounts/:id/repos/:owner/:name/actions` | | Workflow runs (see Repository views). |
+| GET | `/github/accounts/:id/repos/:owner/:name/branches?page=` | | Remote branches, up to 100 per page. Follow `nextPage` until null; see Repository views. |
 | GET | `/github/accounts/:id/repos/:owner/:name/pulls` | | Open pull requests (see Repository views). |
 | POST | `/github/accounts/:id/ssh` | | `{ account }`: makes the account's SSH key if it has none, adds it to the account, and checks that GitHub signs it in as this account. A failure is reported in `account.ssh.error`. |
 | POST | `/github/clone` | `{ account, repo, parent }` | `201 { session }`: a session with `task` `clone` running `git clone` for `repo` (owner/name) into `<parent>/<name>` over SSH with the account's key. 409 `ssh_not_ready`, `git_unavailable`, `clone_exists` or `folder_conflict` (both with `target`), or `clone_in_progress`. |

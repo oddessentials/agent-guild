@@ -31,6 +31,8 @@ export async function startFakeGitHub({ user = { id: 4242, login: 'octo-cat', na
     rateLimited: false,
     issuesDisabled: [],
     truncated: false,
+    branchQueries: [],
+    branches: { 'octo-cat/agent-guild': [{ name: 'trunk', commit: { sha: 'a'.repeat(40) }, protected: true }] },
     issues: {
       'octo-cat/agent-guild': [
         { number: 4, title: 'Dock is too narrow', state: 'open', body: 'Steps', user: { login: 'octo-cat' }, comments: 2, updated_at: '2026-10-01T00:00:00Z', html_url: 'https://github.com/octo-cat/agent-guild/issues/4' },
@@ -126,6 +128,23 @@ export async function startFakeGitHub({ user = { id: 4242, login: 'octo-cat', na
       const repo = { full_name: fullName, private: body.private, fork: false, archived: false, description: body.description ?? null, language: null, pushed_at: new Date().toISOString() };
       state.repos.unshift(repo);
       return json(201, withOwner(repo), scoped);
+    }
+    const metadata = /^\/repos\/([^/]+)\/([^/]+)$/.exec(url.pathname);
+    if (req.method === 'GET' && metadata) {
+      const fullName = `${metadata[1]}/${metadata[2]}`;
+      if (!state.repos.some((r) => r.full_name === fullName)) return json(404, { message: 'Not Found' });
+      return json(200, { default_branch: 'trunk' }, scoped);
+    }
+    const branchList = /^\/repos\/([^/]+)\/([^/]+)\/branches$/.exec(url.pathname);
+    if (req.method === 'GET' && branchList) {
+      const fullName = `${branchList[1]}/${branchList[2]}`;
+      if (!state.repos.some((r) => r.full_name === fullName)) return json(404, { message: 'Not Found' });
+      if (state.rateLimited) return json(403, { message: 'API rate limit exceeded' }, { 'X-RateLimit-Remaining': '0' });
+      const page = Number(url.searchParams.get('page') || 1);
+      state.branchQueries.push(Object.fromEntries(url.searchParams));
+      const branches = state.branches[fullName] ?? [];
+      const link = page * 100 < branches.length ? { Link: `<${base}${url.pathname}?per_page=100&page=${page + 1}>; rel="next"` } : {};
+      return json(200, branches.slice((page - 1) * 100, page * 100), { ...scoped, ...link });
     }
     const inRepo = /^\/repos\/([^/]+)\/([^/]+)\/(issues|actions\/runs|pulls)(?:\/(\d+))?$/.exec(url.pathname);
     if (inRepo) {

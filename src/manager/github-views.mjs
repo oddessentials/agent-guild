@@ -1,4 +1,4 @@
-// Issues, Actions runs and open pull requests of one repository, read with a
+// Branches, Issues, Actions runs and open pull requests of one repository, read with a
 // signed-in account. Reading and editing stay shallow: GitHub's page is the full view.
 
 import { nextLink, parseRepo } from './github.mjs';
@@ -114,6 +114,42 @@ export function createViews(github) {
   }
 
   return {
+    async branches(accountId, owner, name, { page = '1' } = {}) {
+      if (!/^[1-9]\d*$/.test(String(page)) || !Number.isSafeInteger(Number(page))) {
+        throw refusal(400, 'bad_page', 'page must be a positive integer');
+      }
+      page = Number(page);
+      // One metadata read per listing, never a protection request per branch.
+      const [listing, metadata] = await Promise.all([
+        call(accountId, owner, name, `/branches?per_page=100&page=${page}`),
+        page === 1 ? call(accountId, owner, name, '').then(({ body }) => ({ body }), (error) => ({ error: error.message })) : null,
+      ]);
+      const { body, res, repo } = listing;
+      if (!Array.isArray(body)) throw refusal(502, 'github_error', 'GitHub did not return a branch list');
+      let nextPage = null;
+      const next = nextLink(res.headers.get('link'));
+      if (next) {
+        // Reconstruct our own route; never send credentials to a supplied Link URL.
+        try { nextPage = Number(new URL(next).searchParams.get('page')); } catch { /* rejected below */ }
+        if (!Number.isSafeInteger(nextPage) || nextPage <= page) {
+          throw refusal(502, 'github_error', 'GitHub returned an invalid next page for branches');
+        }
+      }
+      const branches = body.filter((item) => typeof item?.name === 'string' && item.name.length > 0).map((item) => ({
+        name: item.name,
+        sha: typeof item.commit?.sha === 'string' && /^[a-f0-9]{40,64}$/i.test(item.commit.sha) ? item.commit.sha : null,
+        protected: item.protected === true,
+        url: `${WEB}/${repo.fullName}/tree/${encodeURIComponent(item.name)}`,
+      }));
+      return {
+        branches, nextPage,
+        defaultBranch: typeof metadata?.body?.default_branch === 'string' ? metadata.body.default_branch : null,
+        metadataError: metadata?.error ?? null,
+        fetchedAt: new Date().toISOString(),
+        url: `${WEB}/${repo.fullName}/branches`,
+      };
+    },
+
     async issues(accountId, owner, name, { state = 'open' } = {}) {
       if (state !== 'open' && state !== 'closed' && state !== 'all') throw refusal(400, 'bad_state', 'state must be open, closed or all');
       const { body, res, repo } = await call(accountId, owner, name, `/issues?state=${state}&per_page=${PAGE}&sort=updated&direction=desc`);

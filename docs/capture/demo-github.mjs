@@ -47,8 +47,15 @@ export function demoGitHubAnswer(method, pathname, searchParams) {
   if (method === 'GET' && pathname === '/user/repos') {
     return DEMO_REPOS.map((fullName, i) => ({ full_name: fullName, owner: { type: 'Organization' }, private: true, description: null, pushed_at: ago(10 + i * 90) }));
   }
-  const match = /^\/repos\/(acme\/[^/]+)\/(issues|actions\/runs|pulls)$/.exec(pathname);
+  const metadata = /^\/repos\/(acme\/[^/]+)$/.exec(pathname);
+  if (method === 'GET' && metadata && DEMO_REPOS.includes(metadata[1])) return { default_branch: metadata[1] === 'acme/api-gateway' ? 'trunk' : 'main' };
+  const match = /^\/repos\/(acme\/[^/]+)\/(issues|actions\/runs|pulls|branches)$/.exec(pathname);
   if (method !== 'GET' || !match || !DEMO_REPOS.includes(match[1])) return null;
+  if (match[2] === 'branches') {
+    if (Number(searchParams.get('page') || 1) !== 1) return [];
+    const names = match[1] === 'acme/game-engine' ? [] : [match[1] === 'acme/api-gateway' ? 'trunk' : 'main', 'feat/wallet-payments', 'release/2026', 'feat/accessibility-and-keyboard-navigation-for-the-checkout'];
+    return names.map((name, i) => ({ name, commit: { sha: String(i + 1).repeat(40) }, protected: i === 0 || name === 'release/2026' }));
+  }
   const data = views(match[1]);
   if (match[2] === 'actions/runs') return { total_count: data.runs.length, workflow_runs: data.runs };
   if (match[2] === 'pulls') return data.pulls;

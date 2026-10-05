@@ -2,7 +2,10 @@
 
 The GitHub panel's account selection, issue editing, delayed requests and repository
 picker also have a browser regression check: `node tests/browser/github.mjs`.
-It uses simulated GitHub responses and never contacts GitHub. Set `CHROME_PATH`
+Branch pagination, scroll anchoring, filtering and copy controls are checked by
+`node tests/browser/github-branches.mjs`. `BRANCH_SCREENSHOTS` optionally names
+a folder for desktop and phone screenshots. These checks use simulated GitHub
+responses and never contact GitHub. Set `CHROME_PATH`
 to Chrome or Edge on Windows, as with the checks below.
 
 ## HTTPS reverse proxy

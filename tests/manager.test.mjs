@@ -2278,6 +2278,13 @@ test('a GitHub account signs in, sets up SSH and clones over it in a visible ses
   assert.ok(!('target' in combined.body.repos[0]) && !('local' in combined.body.repos[0]));
 
   const repoPath = '/github/accounts/4242/repos/octo-cat/agent-guild';
+  const branches = await call('GET', `${repoPath}/branches`);
+  assert.equal(branches.status, 200);
+  assert.equal(branches.body.defaultBranch, 'trunk');
+  assert.equal(branches.body.branches[0].protected, true);
+  assert.equal(branches.body.nextPage, null);
+  assert.equal((await call('GET', `${repoPath}/branches?page=0`)).body.error.code, 'bad_page');
+  assert.equal((await call('POST', `${repoPath}/branches`, {})).status, 404);
   const issues = await call('GET', `${repoPath}/issues`);
   assert.equal(issues.status, 200);
   assert.deepEqual(issues.body.issues.map((i) => i.number), [4]);

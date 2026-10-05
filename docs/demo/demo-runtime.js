@@ -307,13 +307,23 @@
         }),
       } });
     }
-    var view = route.match(/^\/github\/accounts\/(\d+)\/repos\/([^/]+)\/([^/]+)\/(issues|actions|pulls)(?:\/(\d+))?$/);
+    var view = route.match(/^\/github\/accounts\/(\d+)\/repos\/([^/]+)\/([^/]+)\/(issues|actions|pulls|branches)(?:\/(\d+))?$/);
     if (view) {
       if (Number(view[1]) !== githubAccount.id) return error('no GitHub account with id "' + view[1] + '" is signed in', 'unknown_account', 404);
       var fullName = decodeURIComponent(view[2]) + '/' + decodeURIComponent(view[3]);
       if (!githubRepos.some(function (r) { return r.fullName === fullName; })) return error('GitHub could not find ' + fullName + ' for @' + githubAccount.login, 'not_found', 404);
       var data = repoViews[fullName] || (repoViews[fullName] = { issues: [], runs: [], pulls: [] });
       var web = 'https://github.com/' + fullName;
+      if (view[4] === 'branches' && !view[5] && method === 'GET') {
+        var page = params.get('page') || '1';
+        if (!/^[1-9]\d*$/.test(page) || !Number.isSafeInteger(Number(page))) return error('page must be a positive integer', 'bad_page');
+        var defaultBranch = fullName === 'acme/api-gateway' ? 'trunk' : 'main';
+        var names = fullName === 'demo-dev/old-prototype' ? [] : [defaultBranch, 'feat/wallet-payments', 'fix/checkout-layout', 'release/2026', 'feat/accessibility-and-keyboard-navigation-for-the-checkout'];
+        var branches = Number(page) === 1 ? names.map(function (name, i) {
+          return { name: name, sha: String(i + 1).repeat(40), protected: i === 0 || name === 'release/2026', url: web + '/tree/' + encodeURIComponent(name) };
+        }) : [];
+        return json({ branches: branches, nextPage: null, defaultBranch: Number(page) === 1 ? defaultBranch : null, metadataError: null, fetchedAt: new Date(now).toISOString(), url: web + '/branches' });
+      }
       if (view[4] === 'actions' && !view[5] && method === 'GET') {
         return json({ runs: clone(data.runs), running: data.runs.some(function (r) { return r.status !== 'completed'; }), truncated: false, url: web + '/actions' });
       }
