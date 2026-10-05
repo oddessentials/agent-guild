@@ -136,3 +136,41 @@ test('the notes routes require the manager token, accept a notepad larger than t
   const huge = await call(api, 'PUT', '/notes', { body: `{"revision":null,"text":"${'x'.repeat(NOTES_BODY_LIMIT)}"}` });
   assert.equal(huge.status, 413);
 });
+
+test('an unreadable notes file is reported in hello and logged once, and a fixed one is read again without a restart', async (t) => {
+  const dir = tempDir();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'notes.json');
+  fs.writeFileSync(file, 'not json', { mode: 0o600 });
+  const warnings = [];
+  const api = await listen(createNotesStore(file, { warn: (message) => warnings.push(message) }));
+  t.after(() => api.close());
+  const errors = [];
+  const error = console.error;
+  console.error = (...args) => errors.push(args);
+  t.after(() => { console.error = error; });
+
+  const hello = async () => {
+    const ws = new WebSocket(`${api.url.replace('http:', 'ws:')}/api/v1/events?token=test-manager-token`);
+    const message = JSON.parse((await once(ws, 'message'))[0]);
+    ws.terminate();
+    return message;
+  };
+  const first = await hello();
+  assert.equal(first.notesUnreadable, true);
+  assert.equal('notesRevision' in first, false);
+  await hello();
+  const put = await call(api, 'PUT', '/notes', { body: JSON.stringify({ revision: null, text: 'x' }) });
+  assert.equal(put.status, 500);
+  assert.equal(put.body.error.code, 'notes_unreadable');
+  assert.equal(fs.readFileSync(file, 'utf8'), 'not json', 'a damaged file is left for the user to inspect');
+  assert.equal(warnings.length, 1);
+  assert.ok(warnings[0].includes(file));
+  assert.equal(errors.length, 0, 'requests that hit the damaged file do not each log');
+
+  fs.rmSync(file);
+  const fixed = await hello();
+  assert.equal(fixed.notesUnreadable, undefined);
+  assert.equal(fixed.notesRevision, null);
+  assert.equal((await call(api, 'PUT', '/notes', { body: JSON.stringify({ revision: null, text: 'x' }) })).status, 200);
+});

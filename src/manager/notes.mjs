@@ -13,7 +13,8 @@ export const NOTES_BODY_LIMIT = 1024 * 1024;
 const NOTES_FILE_LIMIT = 2 * 1024 * 1024;
 
 function notesError(code, message, status, notes) {
-  const error = Object.assign(new Error(message), { code, status });
+  // The store reports an unreadable file once, so the server does not log every request that hits it.
+  const error = Object.assign(new Error(message), { code, status, logged: code === 'notes_unreadable' });
   if (notes) error.notes = notes;
   return error;
 }
@@ -58,14 +59,23 @@ function writeNotes(file, notes) {
 
 /**
  * @param {string} [file] omit for an in-memory store (tests). The real manager passes its notes file.
+ * @param {{ warn?: (message: string) => void }} [options] where the one line about an unreadable file goes
  */
-export function createNotesStore(file) {
+export function createNotesStore(file, { warn = (message) => console.warn(message) } = {}) {
   let current = { revision: null, text: '' };
   let loaded = !file;
+  let warned = false;
 
+  /** An unreadable file is read again next time, so fixing or removing it needs no restart. */
   function ensure() {
     if (loaded) return;
-    const read = readNotes(file);
+    let read;
+    try { read = readNotes(file); } catch (error) {
+      if (!warned) warn(`[notes] ${file} cannot be read, so notes are not shared until it is fixed or removed.`);
+      warned = true;
+      throw error;
+    }
+    warned = false;
     current = read ?? { revision: null, text: '' };
     loaded = true;
   }
@@ -103,7 +113,6 @@ export function createNotesStore(file) {
       try {
         return { known: true, revision: snapshot().revision };
       } catch {
-        loaded = false;
         return { known: false };
       }
     },

@@ -743,6 +743,8 @@ a.news-link:visited { color: var(--muted); }
 }
 .notes-text:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 .notes-panel .sub.warn { color: var(--warn); }
+/* Room below the status line for the field's focus ring, and for a warning that wraps to two lines. */
+.notes-panel .dock-sub { flex-shrink: 0; padding-bottom: 8px; line-height: 1.4; }
 @media (pointer: coarse) {
   /* iOS zooms in on a field with smaller text when it takes focus. */
   .notes-text { font-size: 16px; }

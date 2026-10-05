@@ -498,7 +498,7 @@ export function createManagerServer({
       else serveStatic(req, res, url.pathname);
     } catch (err) {
       const status = err.status || 500;
-      if (status >= 500) console.error('[server]', err);
+      if (status >= 500 && !err.logged) console.error('[server]', err);
       if (!res.headersSent) {
         const error = { code: err.code || 'error', message: err.message };
         if (err.running !== undefined) error.running = err.running;
@@ -555,6 +555,7 @@ export function createManagerServer({
     const hello = { type: 'hello', version, pid: process.pid, platform: process.platform, startedAt, launcher, folderOpener: folderOpenerFor(req), remoteAccess: remoteAccess ? { available: true } : null, upgrade: upgradeInfo(), sessions: manager.list() };
     const notesHello = notes.helloRevision();
     if (notesHello.known) hello.notesRevision = notesHello.revision;
+    else hello.notesUnreadable = true;
     safeSend(ws, hello);
     ws.on('close', () => eventClients.delete(ws));
     ws.on('message', () => { /* events socket is server -> client only */ });
