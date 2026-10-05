@@ -59,15 +59,18 @@ const checks = await withPage({ name: 'dialogs', instrumentation }, async ({ ori
 
     // The other dialogs use exactly the same sizing rule. Exercise overflow and
     // footer reachability without depending on provider accounts or Tailscale.
-    for (const selector of ['#models', '#remote-access']) {
-      await resize(1024, 768);
+    for (const [selector, width, height] of [
+      ['#models', 1024, 768], ['#remote-access', 1024, 768],
+      ['#folder-browser', 1024, 768], ['#folder-browser', 768, 1024], ['#folder-browser', 390, 844],
+    ]) {
+      await resize(width, height);
       await evaluate(`{const d=document.querySelector('${selector}');const b=d.querySelector('.models-body');window.testDialogContent=b.innerHTML;b.replaceChildren(...Array.from({length:100},(_,i)=>{const p=document.createElement('p');p.textContent='Dialog item '+i;return p}));d.showModal()}`);
       await settled();
       const g = await geometry(selector);
-      assert.ok(g.body > 120 && g.scrollable && g.inside && g.bodyBottom, `${engine} ${selector}: ${JSON.stringify(g)}`);
+      assert.ok(g.body > 120 && g.scrollable && g.inside && g.bodyBottom && g.footer, `${engine} ${selector} ${width}: ${JSON.stringify(g)}`);
       await evaluate(`{const d=document.querySelector('${selector}');d.close();d.querySelector('.models-body').innerHTML=window.testDialogContent}`);
     }
-    pass(`${engine}: model and remote-access dialogs retain a visible, scrollable body`);
+    pass(`${engine}: model, remote-access and folder dialogs retain a visible, scrollable body and footer`);
   };
 
   await send('Page.navigate', { url: origin });
