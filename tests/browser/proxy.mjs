@@ -110,6 +110,26 @@ try {
     await until('terminal round trip', () => evaluate(`document.querySelector('.xterm-screen')?.textContent.includes('ECHO:proxy-input')`));
     pass('terminal WebSocket carries keyboard input and real PTY output');
 
+    await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
+    await until('touch keys enabled', () => evaluate('!document.querySelector("#terminal-controls [data-key=Enter]").disabled'));
+    for (const mode of ['normal', 'application']) {
+      await evaluate('document.querySelector(".xterm-helper-textarea").focus()');
+      await send('Input.insertText', { text: `keys 14 ${mode}` });
+      await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' });
+      await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+      await until('PTY reading keys', () => evaluate(`document.querySelector('.xterm-screen').textContent.includes('KEYS-READY:${mode}')`));
+      for (const name of ['ArrowLeft', 'ArrowUp', 'ArrowDown', 'ArrowRight', 'Enter', 'Escape']) {
+        const point = await evaluate(`(()=>{const r=document.querySelector('#terminal-controls [data-key="${name}"]').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`);
+        await send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point] });
+        await send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      }
+      const prefix = mode === 'application' ? 79 : 91;
+      const received = `KEYS:${JSON.stringify([27, prefix, 68, 27, prefix, 65, 27, prefix, 66, 27, prefix, 67, 13, 27])}`;
+      await until(`PTY received ${mode} keys`, () => evaluate(`document.querySelector('.xterm-screen').textContent.includes(${JSON.stringify(received)})`));
+    }
+    await send('Emulation.setTouchEmulationEnabled', { enabled: false });
+    pass('all six trusted touch keys round trip through HTTPS and a real PTY in both cursor modes');
+
     const renamed = await evaluate(`fetch('/api/v1/sessions/${session.id}', {
       method:'PATCH', headers:{Authorization:${JSON.stringify(`Bearer ${ctx.token}`)},'Content-Type':'application/json'},
       body:JSON.stringify({name:'Proxy renamed'})

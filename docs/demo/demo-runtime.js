@@ -431,6 +431,7 @@
   notice.innerHTML = '<strong>Interactive demo</strong> — sessions and usage are simulated; no CLI tools or commands are running. <a href="https://github.com/oddessentials/agent-guild#quick-start">Install Agent Guild</a>';
   document.body.prepend(notice);
   var style = document.createElement('style');
-  style.textContent = '.demo-notice{position:relative;z-index:30;padding:.55rem 1rem;text-align:center;background:#312e81;color:#fff;font:600 14px/1.4 system-ui,sans-serif}.demo-notice a{color:#fff;text-decoration:underline}.demo-notice+header{position:sticky}';
+  // Like the page header, the notice sits below the terminal's compact touch view.
+  style.textContent = '.demo-notice{position:relative;z-index:5;padding:.55rem 1rem;text-align:center;background:#312e81;color:#fff;font:600 14px/1.4 system-ui,sans-serif}.demo-notice a{color:#fff;text-decoration:underline}.demo-notice+header{position:sticky}';
   document.head.append(style);
 }());

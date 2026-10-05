@@ -443,7 +443,7 @@ body:has(#app[hidden]):has(#auth[hidden]):has(#stopped[hidden])::after {
 
 .terminal-panel {
   /* Below the top bar, whose bottom edge the page publishes as --topbar-h. */
-  position: fixed; inset: calc(var(--topbar-h, 52px) + 12px) calc(16px + var(--dock-stage-space, 0px)) 16px 16px; z-index: 10; display: flex; flex-direction: column;
+  position: fixed; inset: max(calc(var(--topbar-h, 52px) + 12px), var(--terminal-viewport-top, 0px)) calc(16px + var(--dock-stage-space, 0px)) calc(16px + var(--terminal-viewport-bottom, 0px)) 16px; z-index: 10; display: flex; flex-direction: column;
   background: var(--term-bg); border: 1px solid var(--border); border-radius: var(--radius);
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35); overflow: hidden;
 }
@@ -518,6 +518,30 @@ body:has(#app[hidden]):has(#auth[hidden]):has(#stopped[hidden])::after {
 }
 .terminal-host { flex: 1; min-height: 0; padding: 8px 4px 4px 10px; }
 .terminal-host > div { height: 100%; }
+.terminal-controls {
+  flex: none; display: flex; justify-content: center; gap: 4px;
+  padding: 6px max(8px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+  border-top: 1px solid var(--border); background: var(--surface);
+  touch-action: manipulation; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+}
+.terminal-controls .terminal-key {
+  flex: 1 1 0; min-width: 44px; max-width: 64px; min-height: 48px; padding: 4px;
+  font: 600 0.85rem var(--font-mono); touch-action: manipulation;
+}
+.terminal-key[data-key^="Arrow"] { font-size: 1.3rem; }
+.terminal-key[data-key="Enter"] { flex-grow: 1.25; max-width: 80px; }
+.terminal-key.pressed:not(:disabled) { background: var(--accent-fill); border-color: var(--accent-fill); color: var(--accent-text); transform: translateY(1px); }
+.terminal-key:disabled { cursor: default; }
+.terminal-panel:has(.terminal-controls:not([hidden])) .voice-preview { bottom: calc(72px + env(safe-area-inset-bottom)); }
+/* A docked keyboard in landscape leaves little height. Keep the session and actions
+   available in one header row; Hide still returns to the normal page. */
+.terminal-panel[data-compact] { top: var(--terminal-viewport-top, 0px); }
+.terminal-panel[data-compact] .panel-bar { flex-wrap: nowrap; gap: 6px; padding: 6px 8px; }
+.terminal-panel[data-compact] .panel-title { flex: 1 1 0; }
+.terminal-panel[data-compact] :is(.panel-title .sub, .panel-title .agents, .panel-title .provider-icon) { display: none; }
+.terminal-panel[data-compact] .panel-actions { flex-wrap: nowrap; gap: 4px; max-width: 65%; overflow-x: auto; }
+.terminal-panel[data-compact] .panel-actions .btn { flex: none; }
+.terminal-panel[data-compact] #panel-close { position: sticky; right: 0; z-index: 1; box-shadow: -4px 0 0 var(--surface); }
 .terminal-copy {
   width: min(880px, calc(100vw - 24px)); height: min(720px, calc(100dvh - 24px));
   max-width: none; max-height: none; padding: 0; overflow: hidden;
@@ -545,7 +569,7 @@ body:has(#app[hidden]):has(#auth[hidden]):has(#stopped[hidden])::after {
 }
 @media (pointer: coarse) and (max-width: 900px) {
   /* Tablets in portrait are wider than the phone layout but still want the whole width. */
-  .terminal-panel { inset: var(--topbar-h, 56px) 0 0; border-radius: 0; }
+  .terminal-panel { inset: max(var(--topbar-h, 56px), var(--terminal-viewport-top, 0px)) 0 var(--terminal-viewport-bottom, 0px); border-radius: 0; }
 }
 
 .models {
@@ -558,7 +582,8 @@ body:has(#app[hidden]):has(#auth[hidden]):has(#stopped[hidden])::after {
 .models-bar { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
 .models-heading { flex: 1; min-width: 0; }
 .models-heading .sub { margin: 2px 0 0; color: var(--muted); font-size: 0.78rem; }
-.models-body { flex: 1; min-height: 0; overflow: auto; padding: 0 14px 14px; }
+/* Content supplies the basis for auto-height dialogs; a zero basis collapses in Safari. */
+.models-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 0 14px 14px; }
 .remote-access { width: min(560px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); }
 .remote-body { padding: 4px 20px 20px; font-size: 0.9rem; }
 .remote-body > p { color: var(--muted); line-height: 1.6; }
@@ -968,7 +993,7 @@ a.btn.github-out::after {
 @media (max-width: 640px) {
   .topbar { padding: 10px 16px; }
   .connection .label { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-  .terminal-panel { inset: var(--topbar-h, 56px) 0 0; border-radius: 0; }
+  .terminal-panel { inset: max(var(--topbar-h, 56px), var(--terminal-viewport-top, 0px)) 0 var(--terminal-viewport-bottom, 0px); border-radius: 0; }
   .session-grid { grid-template-columns: 1fr; }
   .cwd { flex-basis: 100%; }
   .launch-tools { flex-basis: 100%; justify-content: stretch; }

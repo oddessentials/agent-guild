@@ -68,6 +68,12 @@ session name in the header switches the focused terminal to another session.
 On a phone one terminal shows at a time, with a button to switch to the
 other. This browser reopens the terminals you had open after a reload.
 
+On phones and tablets, a strip below the terminal provides **← ↑ ↓ → Enter
+Esc**. Tap once to move through a prompt, confirm a choice or send Escape.
+The keys act on the focused terminal and leave the on-screen keyboard as
+it is. They are disabled while the terminal reconnects or after it exits;
+taps made while disconnected are never replayed.
+
 On a touchscreen, **Copy…** opens a still copy of the terminal text. Touch and
 hold to select, then use **Copy selection** or the browser's Copy menu. **Done**
 returns to the live terminal; the session keeps running while you copy. The

@@ -1,5 +1,5 @@
 // The launcher starts a detached manager that outlives it, and can stop it.
-import { test, after } from 'node:test';
+import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -9,21 +9,11 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
+import { waitForTerminalReady } from './fixtures/terminal-ready.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const cli = path.resolve(here, '../bin/agent-guild.mjs');
-const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-launcher-'));
-
-// A provider that runs the fake tool, so a real session can be running when
-// the manager is asked to stop.
-fs.writeFileSync(path.join(home, 'providers.json'), JSON.stringify({
-  providers: [
-    { id: 'fake', vendor: 'Test', tool: 'Fake Tool', command: process.execPath, args: [path.join(here, 'fixtures', 'fake-tool.mjs')] },
-    { id: 'anthropic', usage: null },
-    { id: 'openai', usage: null },
-    { id: 'google', usage: null },
-  ],
-}));
+const env = { ...process.env, AGENT_GUILD_SKIP_SHELL_ENV: '1', AGENT_GUILD_NO_UPDATE_CHECK: '1' };
 
 function freePort() {
   return new Promise((resolve) => {
@@ -34,10 +24,6 @@ function freePort() {
   });
 }
 
-const port = await freePort();
-const base = `http://127.0.0.1:${port}`;
-const env = { ...process.env, AGENT_GUILD_HOME: home, AGENT_GUILD_PORT: String(port), AGENT_GUILD_SKIP_SHELL_ENV: '1', AGENT_GUILD_NO_UPDATE_CHECK: '1' };
-
 function runWith(runEnv, ...args) {
   return new Promise((resolve) => {
     execFile(process.execPath, [cli, ...args], { env: runEnv, timeout: 30000 }, (error, stdout, stderr) => {
@@ -46,25 +32,67 @@ function runWith(runEnv, ...args) {
   });
 }
 
-const run = (...args) => runWith(env, ...args);
-
-const token = () => fs.readFileSync(path.join(home, 'auth-token'), 'utf8').trim();
-
-async function call(method, route, body) {
-  const res = await fetch(`${base}/api/v1${route}`, {
-    method,
-    headers: { Authorization: `Bearer ${token()}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
-    body: body ? JSON.stringify(body) : undefined,
+async function launcher(t) {
+  const port = await freePort();
+  const base = `http://127.0.0.1:${port}`;
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-launcher-'));
+  const runEnv = { ...env, AGENT_GUILD_HOME: home, AGENT_GUILD_PORT: String(port) };
+  const run = (...args) => runWith(runEnv, ...args);
+  const token = () => fs.readFileSync(path.join(home, 'auth-token'), 'utf8').trim();
+  // Register before any assertion: a failed test must still stop its own manager.
+  t.after(async () => {
+    const stopped = await run('stop');
+    assert.equal(stopped.code, 0, stopped.stderr);
+    assert.doesNotMatch(stopped.stdout, /still shutting down/, 'cleanup must finish before removing the data directory');
+    fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   });
-  return { status: res.status, body: await res.json() };
+  // A real PTY is essential here: shutdown must end the session's process.
+  fs.writeFileSync(path.join(home, 'providers.json'), JSON.stringify({
+    providers: [
+      { id: 'fake', vendor: 'Test', tool: 'Fake Tool', command: process.execPath, args: [path.join(here, 'fixtures', 'fake-tool.mjs')] },
+      { id: 'anthropic', usage: null },
+      { id: 'openai', usage: null },
+      { id: 'google', usage: null },
+    ],
+  }));
+  const call = async (method, route, body) => {
+    const res = await fetch(`${base}/api/v1${route}`, {
+      method, signal: AbortSignal.timeout(5000),
+      headers: { Authorization: `Bearer ${token()}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    return { status: res.status, body: await res.json() };
+  };
+  const ready = async (id) => {
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/api/v1/sessions/${id}/terminal?token=${token()}`);
+    // terminate() can emit an error when cleanup interrupts a connection attempt.
+    socket.on('error', () => {});
+    try {
+      await waitForTerminalReady(socket);
+      const current = await call('GET', `/sessions/${id}`);
+      assert.equal(current.status, 200);
+      assert.equal(current.body.session.status, 'running');
+      assert.ok(Number.isInteger(current.body.session.pid) && current.body.session.pid > 0, 'a ready session has a pid');
+      return current.body.session.pid;
+    } catch (error) {
+      let state;
+      try {
+        const { status, body } = await call('GET', `/sessions/${id}`);
+        const s = body.session;
+        state = s ? { id: s.id, status: s.status, pid: s.pid, exitCode: s.exitCode, signal: s.signal, lastOutputAt: s.lastOutputAt } : { httpStatus: status };
+      } catch (failure) { state = { unavailable: failure.message }; }
+      let log = '(no manager log)';
+      try { log = fs.readFileSync(path.join(home, 'manager.log'), 'utf8').slice(-4000); } catch { /* startup may have failed */ }
+      throw new Error(`${error.message}\nSession: ${JSON.stringify(state)}\nManager log:\n${log}`, { cause: error });
+    } finally {
+      socket.terminate();
+    }
+  };
+  return { port, base, home, run, token, call, ready };
 }
 
-after(async () => {
-  await run('stop');
-  fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
-});
-
-test('open starts a background manager, status reports it, stop ends it', async () => {
+test('open starts a background manager, status reports it, stop ends it', async (t) => {
+  const { port, base, home, run, token, call, ready } = await launcher(t);
   const opened = await run('open', '--no-browser');
   assert.equal(opened.code, 0, opened.stderr);
   assert.match(opened.stdout, /Session manager started/);
@@ -89,13 +117,7 @@ test('open starts a background manager, status reports it, stop ends it', async 
   // page uses that refusal to ask before ending sessions.
   const created = await call('POST', '/sessions', { providerId: 'fake', cwd: home });
   assert.equal(created.status, 201, JSON.stringify(created.body));
-  // Windows reports the pid a moment after the console connects.
-  let pid = created.body.session.pid;
-  for (let i = 0; pid === null && i < 200; i++) {
-    await new Promise((r) => setTimeout(r, 25));
-    pid = (await call('GET', `/sessions/${created.body.session.id}`)).body.session.pid;
-  }
-  assert.ok(pid, 'the session has a pid');
+  const pid = await ready(created.body.session.id);
   const refused = await call('POST', '/shutdown');
   assert.equal(refused.status, 409);
   assert.equal(refused.body.error.code, 'sessions_running');
@@ -104,6 +126,7 @@ test('open starts a background manager, status reports it, stop ends it', async 
 
   // Every events client hears that the manager is stopping before it goes.
   const events = new WebSocket(`ws://127.0.0.1:${port}/api/v1/events?token=${token()}`);
+  t.after(() => events.terminate());
   const messages = [];
   events.on('message', (raw) => messages.push(JSON.parse(raw.toString())));
   await new Promise((resolve, reject) => { events.once('open', resolve); events.once('error', reject); });
@@ -133,7 +156,8 @@ test('open starts a background manager, status reports it, stop ends it', async 
   assert.ok(!fs.existsSync(path.join(home, 'manager.json')), 'runtime file is removed on shutdown');
 });
 
-test('restart starts a manager when none runs, and replaces a running one on the same port and token', async () => {
+test('restart starts a manager when none runs, and replaces a running one on the same port and token', async (t) => {
+  const { port, base, home, run, token, call, ready } = await launcher(t);
   const health = async () => {
     try {
       const res = await fetch(`${base}/api/v1/health`, { signal: AbortSignal.timeout(500) });
@@ -142,7 +166,7 @@ test('restart starts a manager when none runs, and replaces a running one on the
       return null;
     }
   };
-  assert.equal(await health(), null, 'the previous test left the manager stopped');
+  assert.equal(await health(), null, 'this test starts without a manager');
 
   const first = await run('restart');
   assert.equal(first.code, 0, first.stderr);
@@ -154,8 +178,10 @@ test('restart starts a manager when none runs, and replaces a running one on the
   // A session is running: the CLI's restart forces, like its stop.
   const created = await call('POST', '/sessions', { providerId: 'fake', cwd: home });
   assert.equal(created.status, 201, JSON.stringify(created.body));
+  await ready(created.body.session.id);
 
   const events = new WebSocket(`ws://127.0.0.1:${port}/api/v1/events?token=${token()}`);
+  t.after(() => events.terminate());
   const messages = [];
   events.on('message', (raw) => messages.push(JSON.parse(raw.toString())));
   await new Promise((resolve, reject) => { events.once('open', resolve); events.once('error', reject); });
@@ -218,6 +244,7 @@ test('restart keeps an ephemeral port, and starts the manager itself when the ol
     assert.notEqual(after.pid, before.pid);
     assert.match((await runWith(zeroEnv, 'stop')).stdout, /stopped/);
   } finally {
+    await runWith(zeroEnv, 'stop');
     fs.rmSync(zeroHome, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   }
 
@@ -256,6 +283,11 @@ test('restart keeps an ephemeral port, and starts the manager itself when the ol
     assert.notEqual(runtimeNow.pid, process.pid);
     assert.match((await runWith(oldEnv, 'stop')).stdout, /stopped/);
   } finally {
+    // The configured port deliberately belongs to the other server. Once the
+    // runtime file is gone, cleanup must still address this fixture's port.
+    await runWith({ ...oldEnv, AGENT_GUILD_PORT: String(oldPort) }, 'stop');
+    old.closeAllConnections();
+    await new Promise((resolve) => old.close(resolve));
     other.closeAllConnections();
     await new Promise((resolve) => other.close(resolve));
     fs.rmSync(oldHome, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
