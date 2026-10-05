@@ -14,6 +14,7 @@ export const GITHUB_CLIENT_ID = 'Ov23lif6qqYKtXZTb130';
 export const GITHUB_SCOPES = ['repo', 'write:public_key'];
 const API_URL = 'https://api.github.com';
 const WEB_URL = 'https://github.com';
+const STATUS_URL = 'https://www.githubstatus.com';
 const SSH_HOST = 'git@github.com';
 
 /** GitHub's published SSH host keys (docs: "GitHub's SSH key fingerprints"). */
@@ -241,7 +242,7 @@ function failure(err) {
 
 export class GitHub extends EventEmitter {
   constructor({
-    dir, registry, clientId = GITHUB_CLIENT_ID, apiUrl = API_URL, webUrl = WEB_URL,
+    dir, registry, clientId = GITHUB_CLIENT_ID, apiUrl = API_URL, webUrl = WEB_URL, statusUrl = STATUS_URL,
     fetchImpl = (...args) => fetch(...args), run = runSpec, hostname = os.hostname(), timeoutMs = FETCH_TIMEOUT_MS,
   }) {
     super();
@@ -250,6 +251,7 @@ export class GitHub extends EventEmitter {
     this.clientId = clientId;
     this.apiUrl = apiUrl.replace(/\/+$/, '');
     this.webUrl = webUrl.replace(/\/+$/, '');
+    this.statusUrl = statusUrl.replace(/\/+$/, '');
     this.fetchImpl = fetchImpl;
     this.run = run;
     this.hostname = hostname;

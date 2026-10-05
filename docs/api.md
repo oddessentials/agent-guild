@@ -544,13 +544,19 @@ signed-in account. Each list holds the 30 most recently updated items;
 { "issues": [{ "number": 4, "title": "Dock is too narrow", "body": "Steps", "state": "open", "user": "octo-cat", "comments": 2, "updatedAt": "2026-10-01T00:00:00.000Z", "url": "https://github.com/octo-cat/agent-guild/issues/4" }],
   "truncated": false, "url": "https://github.com/octo-cat/agent-guild/issues" }
 { "runs": [{ "id": 11, "name": "CI", "title": "Fix the gate", "branch": "main", "event": "push", "status": "in_progress", "conclusion": null, "runNumber": 12, "updatedAt": "2026-10-02T00:00:00.000Z", "url": "https://github.com/octo-cat/agent-guild/actions/runs/11" }],
-  "running": true, "truncated": false, "url": "https://github.com/octo-cat/agent-guild/actions" }
+  "running": true, "service": null, "truncated": false, "url": "https://github.com/octo-cat/agent-guild/actions" }
 { "pulls": [{ "number": 8, "title": "Add viewer", "draft": true, "user": "ada", "head": "viewer", "base": "main", "updatedAt": "2026-10-02T00:00:00.000Z", "url": "https://github.com/octo-cat/agent-guild/pull/8" }],
   "truncated": false, "url": "https://github.com/octo-cat/agent-guild/pulls" }
 ```
 
 Issues leave out pull requests. `running` is true while any listed run is
-`queued`, `in_progress`, `waiting`, `requested` or `pending`. Errors: 400
+`queued`, `in_progress`, `waiting`, `requested` or `pending`. `service` is
+null while githubstatus.com reports Actions operational or cannot be read, else
+`{ status, incident, url }`: `status` is `degraded_performance`,
+`partial_outage`, `major_outage` or `under_maintenance`, `incident` is
+`{ name, url }` for the open incident affecting Actions or null, and every `url`
+is a githubstatus.com page. The manager reads the status page at most once a
+minute, only when runs are fetched. Errors: 400
 `bad_repo`, 404 `unknown_account`, 404 `not_found` (GitHub has no such
 repository or issue for the account), 404 `issues_disabled`, 403 `forbidden`,
 400 `github_rejected`, 429 `rate_limited`, 409 `github_sign_in`.

@@ -233,7 +233,7 @@ let token;
 before(async () => {
   ctx = await startManager({
     version: '1.0.0', packageFile, sessionDefaults: { doneAgentLingerMs: 200, activityIdleMs: 200, killGraceMs: 500, reportingTimeoutMs: 1500 },
-    github: { apiUrl: fakeGitHub.url, webUrl: fakeGitHub.url, clientId: 'test-client' },
+    github: { apiUrl: fakeGitHub.url, webUrl: fakeGitHub.url, statusUrl: fakeGitHub.url, clientId: 'test-client' },
   });
   probesAtStart = new Set(ctx.manager.sessionHooks.probes.keys());
   base = ctx.api.url;

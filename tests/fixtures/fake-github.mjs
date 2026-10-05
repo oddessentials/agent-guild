@@ -47,6 +47,7 @@ export async function startFakeGitHub({ user = { id: 4242, login: 'octo-cat', na
         { id: 10, name: 'CI', display_title: 'Earlier', head_branch: 'main', event: 'push', status: 'completed', conclusion: 'failure', run_number: 11, html_url: 'javascript:alert(1)' },
       ],
     },
+    statusSummary: { components: [{ id: 'actions-1', name: 'Actions', status: 'operational' }], incidents: [] },
     pulls: {
       'octo-cat/agent-guild': [
         { number: 8, title: 'Add viewer', draft: true, state: 'open', user: { login: 'ada' }, head: { ref: 'viewer' }, base: { ref: 'main' }, updated_at: '2026-10-02T00:00:00Z', html_url: 'https://github.com/octo-cat/agent-guild/pull/8' },
@@ -98,6 +99,9 @@ export async function startFakeGitHub({ user = { id: 4242, login: 'octo-cat', na
         return json(200, { error: 'authorization_pending' });
       }
       return json(200, issue());
+    }
+    if (req.method === 'GET' && url.pathname === '/api/v2/summary.json') {
+      return state.statusSummary ? json(200, state.statusSummary) : json(503, { message: 'Unavailable' });
     }
     if (url.pathname.startsWith('/avatar/')) {
       res.writeHead(200, { 'Content-Type': 'image/png' });

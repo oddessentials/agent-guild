@@ -4174,8 +4174,11 @@ function renderGitHubViews() {
   const ready = Boolean(state.github && githubAccount() && !githubAccount().needsSignIn);
   $('github-clone-into').hidden = !ready || shown !== 'repos';
   const running = Boolean(viewData('actions')?.value?.running);
+  const outage = viewData('actions')?.value?.service ?? null;
   $('github-running').hidden = !running;
-  $('github-view-actions').setAttribute('aria-label', running ? 'Actions, a workflow is running' : 'Actions');
+  $('github-outage').hidden = !outage;
+  $('github-view-actions').setAttribute('aria-label', ['Actions', outage && `GitHub Actions ${SERVICE_STATES[outage.status]}`, running && 'a workflow is running'].filter(Boolean).join(', '));
+  $('github-view-actions').title = outage ? `GitHub Actions ${SERVICE_STATES[outage.status]}` : '';
   renderPickerList();
   if (shown === 'issues') renderIssues();
   else if (shown === 'actions') renderRuns();
@@ -4438,6 +4441,22 @@ function runLabel(run) {
   return String(run.status === 'completed' && run.conclusion ? run.conclusion : run.status).replaceAll('_', ' ');
 }
 
+const SERVICE_STATES = {
+  degraded_performance: 'is degraded',
+  partial_outage: 'has a partial outage',
+  major_outage: 'has a major outage',
+  under_maintenance: 'is under maintenance',
+};
+
+/** GitHub's status page says Actions is not healthy: runs may wait for a runner or be cancelled. */
+function serviceNote(service) {
+  if (!service) return null;
+  const line = el('p', 'github-service-note', `GitHub Actions ${SERVICE_STATES[service.status]}. Runs may wait for a runner or be cancelled. `);
+  if (service.incident) line.append(keyed(externalLink(service.incident.name, service.incident.url), 'incident'), ' · ');
+  line.append(keyed(externalLink('GitHub Status', service.url), 'status-page'));
+  return line;
+}
+
 function renderRuns() {
   const panel = $('github-runs');
   if (!githubPick.repo) return redraw(panel, [noRepoNote('Actions runs')]);
@@ -4450,6 +4469,7 @@ function renderRuns() {
   });
   redraw(panel, [
     viewTools('actions'),
+    serviceNote(slot?.value?.service),
     banner,
     viewStatus('actions', slot?.value && !runs.length ? 'No workflow runs yet.' : null),
     rows.length ? el('div', 'history-list', ...rows) : null,

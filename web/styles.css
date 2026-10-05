@@ -947,6 +947,8 @@ a.news-link:visited { color: var(--muted); }
   .github-branch-filter input { font-size: 16px; }
   .github-branch > .btn, #github-branches .github-view-tools .btn, .github-branch-filter .btn { min-height: 36px; }
 }
+.github-outage { display: inline-grid; place-items: center; width: 14px; height: 14px; border-radius: 50%; background: var(--danger); color: #fff; font-size: 0.65rem; font-weight: 700; line-height: 1; }
+.github-outage[hidden] { display: none; }
 .github-running { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 25%, transparent); animation: pulse 1.4s ease-in-out infinite; }
 .github-body[hidden] { display: none; }
 .github-view-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding-bottom: 6px; }
@@ -971,6 +973,8 @@ a.btn.github-out::after {
 .github-record-title:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; border-radius: 2px; }
 .github-record .btn { padding: 3px 10px; font-size: 0.8rem; }
 .github-running-note { margin: 4px 0 6px; padding: 6px 10px; border-radius: var(--radius); background: var(--surface-2); font-size: 0.85rem; }
+.github-service-note { margin: 4px 0 6px; padding: 6px 10px; border-radius: var(--radius); color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, var(--surface)); font-size: 0.85rem; }
+.github-service-note .console-link { color: inherit; text-decoration: underline; }
 .github-running-note.on { color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, var(--surface)); }
 .badge.run { --badge: var(--warn); }
 .badge.ok { --badge: var(--ok); }

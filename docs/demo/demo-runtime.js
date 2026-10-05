@@ -462,7 +462,7 @@
         return json({ branches: branches, nextPage: null, defaultBranch: Number(page) === 1 ? defaultBranch : null, metadataError: null, fetchedAt: new Date(now).toISOString(), url: web + '/branches' });
       }
       if (view[4] === 'actions' && !view[5] && method === 'GET') {
-        return json({ runs: clone(data.runs), running: data.runs.some(function (r) { return r.status !== 'completed'; }), truncated: false, url: web + '/actions' });
+        return json({ runs: clone(data.runs), running: data.runs.some(function (r) { return r.status !== 'completed'; }), service: null, truncated: false, url: web + '/actions' });
       }
       if (view[4] === 'pulls' && !view[5] && method === 'GET') return json({ pulls: clone(data.pulls), truncated: false, url: web + '/pulls' });
       if (view[4] === 'issues' && !view[5] && method === 'GET') {
