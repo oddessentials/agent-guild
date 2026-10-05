@@ -104,6 +104,7 @@ export function createManagerServer({
   modelStats,
   news = null,
   changelog = null,
+  environment = null,
   github = null,
   token,
   host = '127.0.0.1',
@@ -306,6 +307,14 @@ export function createManagerServer({
     if (route === '/upgrade' && method === 'POST') {
       const session = await manager.upgrade();
       return sendJson(res, 201, { session: session.toJSON() });
+    }
+    if (route === '/environment' && method === 'GET' && environment) {
+      if (!environment.snapshot().checkedAt) environment.refresh();
+      return sendJson(res, 200, environment.snapshot());
+    }
+    if (route === '/environment/refresh' && method === 'POST' && environment) {
+      await readJsonBody(req);
+      return sendJson(res, 202, environment.refresh());
     }
     if (route === '/providers' && method === 'GET') {
       registry.refreshVersions().catch(() => {});
@@ -544,6 +553,8 @@ export function createManagerServer({
   }
   manager.on('event', broadcast);
   registry.on('updated', () => broadcast({ type: 'providers.updated', providers: registry.list() }));
+  const environmentUpdated = () => broadcast({ type: 'environment.updated', environment: environment.snapshot() });
+  environment?.on('updated', environmentUpdated);
   selfUpdate?.on('updated', () => broadcast({ type: 'manager.upgrade', upgrade: upgradeInfo() }));
   news?.on('updated', () => broadcast({ type: 'news.updated' }));
   changelog?.on('updated', () => broadcast({ type: 'changelog.updated' }));
@@ -650,6 +661,7 @@ export function createManagerServer({
     },
     /** @param {{ notice?: object }} [opts] a final event for the events clients */
     async close({ notice } = {}) {
+      environment?.off('updated', environmentUpdated);
       if (notice) await farewell(notice);
       clearInterval(heartbeat);
       for (const ws of wss.clients) ws.terminate();

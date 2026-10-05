@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ProviderRegistry } from './providers.mjs';
+import { Environment } from './environment.mjs';
 import { SessionManager } from './session-manager.mjs';
 import { UsageMonitor } from './usage.mjs';
 import { SessionHistory } from './session-history.mjs';
@@ -46,6 +47,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
   ensureDataDir();
   const token = loadOrCreateToken();
   const baseEnv = resolveBaseEnv();
+  const environment = new Environment({ env: baseEnv });
   const remoteAccess = new RemoteAccess({ file: paths.remoteAccess, env: baseEnv, loaded: remoteSettings, ...remoteOptions });
   const webDir = path.join(rootDir, 'web');
   // The hooks in examples/ call `agent-guild-report` by name; these shims
@@ -98,6 +100,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
     if (closing) return closing;
     console.log(`[manager] ${restart ? 'restarting' : 'stopping'} (${reason}); ending ${manager.sessions.size} session(s)`);
     clearInterval(versionTimer);
+    environment.close();
     remoteAccess.close();
     github.close();
     removeRuntimeFile();
@@ -124,6 +127,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
   api = createManagerServer({
     manager,
     registry,
+    environment,
     usage,
     history,
     modelStats,

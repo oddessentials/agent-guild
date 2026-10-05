@@ -57,6 +57,33 @@ const checks = await withPage({ name: 'dialogs', instrumentation }, async ({ ori
     }
     pass(`${engine}: 200 history rows scroll, and filtered/empty history remains usable on desktop, tablet and phone`);
 
+    await until(`${engine} environment summary`, () => evaluate('document.querySelectorAll(".provider[data-id=shell] .environment-values dd").length===4'));
+    for (const [width, height] of [[1440, 900], [768, 1024], [390, 844]]) {
+      await resize(width, height);
+      for (const skin of ['guild', 'professional', 'orbital', 'grove', 'gnomeland', 'goblinville']) {
+        for (const theme of ['light', 'dark']) {
+          await evaluate(`document.documentElement.dataset.skin='${skin}';document.documentElement.dataset.theme='${theme}';document.querySelector('.provider[data-id=shell] .environment-open').click()`);
+          await settled();
+          const g = await geometry('#environment');
+          assert.ok(g.body > 120 && g.inside && g.bodyBottom, `${engine} environment ${skin} ${theme} ${width}: ${JSON.stringify(g)}`);
+          assert.equal(await evaluate('document.querySelectorAll("#environment-runtimes .environment-row").length'), 6);
+          assert.ok(await evaluate('document.documentElement.scrollWidth<=innerWidth'), 'no horizontal page overflow');
+          assert.ok(await evaluate('document.querySelector("#environment").scrollWidth<=document.querySelector("#environment").clientWidth'), 'no horizontal dialog overflow');
+          await evaluate('document.querySelector("#environment-close").click()');
+          await until(`${engine} environment focus restored`, () => evaluate('document.activeElement.matches(".provider[data-id=shell] .environment-open")'));
+        }
+      }
+    }
+    await evaluate('document.querySelector(".provider[data-id=shell] .environment-open").click();document.querySelector("#environment-refresh").click()');
+    await until(`${engine} environment refresh complete`, () => evaluate('!document.querySelector("#environment-refresh").disabled'));
+    assert.equal(await evaluate('document.querySelector("#environment").open'), true);
+    // A provider refresh rebuilds cards while the dialog remains open.
+    await evaluate('document.querySelector(".provider[data-id=shell] .multiplexer-refresh").click()');
+    await settled();
+    await evaluate('document.querySelector("#environment-close").click()');
+    await until(`${engine} replacement opener`, () => evaluate('document.activeElement.matches(".provider[data-id=shell] .environment-open")'));
+    pass(`${engine}: manager environment, refresh and focus restoration work in all skins and themes at desktop, tablet and phone widths`);
+
     // The other dialogs use exactly the same sizing rule. Exercise overflow and
     // footer reachability without depending on provider accounts or Tailscale.
     for (const [selector, width, height] of [

@@ -10,11 +10,29 @@ import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
 import { createManagerServer } from '../src/manager/server.mjs';
 import { parseAllowedHosts } from '../src/manager/access-policy.mjs';
+import { Environment } from '../src/manager/environment.mjs';
 
 const proxyHost = 'guild.example.ts.net';
 const proxyOrigin = `https://${proxyHost}`;
 const token = 'test-manager-token';
 const auth = { Authorization: `Bearer ${token}` };
+
+test('environment reads and refresh return immediately while discovery hangs, with normal API authentication', async (t) => {
+  let starts = 0;
+  const environment = new Environment({ forkWorker: () => { starts++; return new EventEmitter(); } });
+  t.after(() => environment.close());
+  const api = await server(t, { environment });
+  assert.equal((await request(api, '/api/v1/environment')).status, 401);
+  assert.equal(starts, 0);
+  const first = await request(api, '/api/v1/environment', auth);
+  assert.equal(first.status, 200);
+  assert.equal(JSON.parse(first.body).refreshing, true);
+  const refreshed = await fetch(`${api.url}/api/v1/environment/refresh`, { method: 'POST', headers: auth, body: '{}' });
+  assert.equal(refreshed.status, 202);
+  assert.equal((await refreshed.json()).scope, 'manager');
+  assert.equal(starts, 1);
+  assert.equal((await request(api, '/api/v1/info', auth)).status, 200);
+});
 
 async function server(t, options = {}) {
   const session = new EventEmitter();

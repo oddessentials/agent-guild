@@ -152,6 +152,51 @@ For a tool whose agent reporting has to be turned on (`reporting` is `antigravit
 usage and billing pages and web app, or null when none is configured. A usage snapshot's `plan` is
 the subscription tier.
 
+### Manager environment
+
+`GET /environment` returns the cached snapshot and starts discovery if no
+check has finished. `POST /environment/refresh` with `{}` starts a new check
+and returns `202` immediately. Concurrent refreshes share the same helper.
+Both routes use the usual authentication and source checks. Neither accepts
+a shell, working directory, provider environment or command to execute.
+
+The snapshot contains `scope: "manager"`, `platform`, a monotonically
+increasing `revision` within this manager lifetime, `refreshing`, `checkedAt`
+(ISO timestamp or null), `error` (overall check failure or null),
+`managerNode: { version, path }`, `runtimes[]` and `tools[]`. Refresh retains
+the previous results while `refreshing` is true. On completion, each runtime
+has a fresh result; unfinished checks become `failed`, never a stale success.
+
+Runtimes are ordered Node.js, Python, Go, .NET SDK, R, Rust. Each has `id`,
+`label`, `status`, `version` and `path`. Resolved results also name `command`
+and an optional explanatory `detail`. Status is `pending` before the first
+check, `ok` for a parsed successful response, `not_found` when no executable
+resolves, `unavailable` when a launcher exists but no local runtime can be
+safely reported, or `failed` when inspection/probing fails (including timeout,
+excess output and unrecognized responses). `not_found` does not prove the
+runtime is absent from the computer.
+
+Python uses `python` if it resolves, otherwise `python3`, on every platform.
+A failed `python` never falls back to a successful `python3`; a different
+resolved `python3` appears in `alternatives[]` with its own result. .NET's
+primary value is the SDK, with `runtimes[]` containing `{ name, version }`
+when the host can enumerate installed runtimes. Go reports the local bundled
+toolchain with `GOTOOLCHAIN=local`, `GOENV=off` and `GOWORK=off`.
+
+Tools are separate `{ id, label, path, status: "detected" }` entries for
+nvm/NVM for Windows, vfox, uv and pnpm. Presence implies neither activation
+nor ownership of a reported runtime. POSIX nvm discovery checks `NVM_DIR` or
+`~/.nvm/nvm.sh` without sourcing it. Other tools are resolved on PATH without
+execution. There is no whole-disk installation inventory.
+
+Runtime probes execute recognized native binaries (and R's Unix launcher)
+from a neutral temporary directory; unknown script/shim launchers and Windows
+execution aliases remain `unavailable`. rustup/Python auto-install and Go
+toolchain downloads are disabled for probes. Probe output and the full
+environment are never included in API responses. Selected shell profiles,
+projects, sessions and provider overrides do not participate. Refresh reads
+the manager's current environment without invoking PATH/profile discovery.
+
 ### Multiplexer installations
 
 An `@shell` provider also describes `multiplexers[]`. Each entry contains
@@ -495,6 +540,8 @@ All paths are under `/api/v1`.
 | PUT | `/notes` | `{ revision, text }` | `{ notes }` with a new `revision`. `revision` is the one this edit started from, or null to create the notepad. 500 `notes_unreadable` (on GET too) while the notes file cannot be read; it is left as it is. 409 `stale_notes` when that revision is no longer current; `error.notes` is the current notepad, so a client can retry or adopt it. 400 `notes_too_long` over 100,000 characters, 400 `bad_notes` when `text` is not a string. The body may be up to 1 MiB. A cleared notepad is stored as an empty string; it is not deleted. |
 | POST | `/upgrade` | | `201 { session }`: a session with `task` `upgrade` running the Upgrade `command`. 400 `not_updatable` when no newer release is known, it is already installed on disk, the manager is a development build, or version checks are off. 409 `npm_unavailable` without npm on PATH. 409 `upgrade_in_progress` while one is running. Sessions keep running; the new version is used after the manager restarts. |
 | GET | `/providers` | | `{ providers: Provider[] }` |
+| GET | `/environment` | | Manager environment snapshot; starts the initial check without waiting. |
+| POST | `/environment/refresh` | `{}` | `202` with the snapshot; starts or joins bounded read-only discovery. |
 | POST | `/providers/reload` | | Re-reads `providers.json`. |
 | POST | `/providers/:id/reporting` | `{ enabled }` | `{ provider }`: turns agent reporting on or off for a tool that needs it, by running the tool's own `plugin install`, `plugin enable` or `plugin uninstall`. An older copy of the Agent Guild plugin is replaced, and one turned off in the tool is turned back on. 400 `not_applicable` for any other tool, 409 `plugin_conflict` when another plugin has the same name, 502 `reporting_setup_failed` when the tool's command fails. |
 | POST | `/providers/:id/install` | `{ force? }` | `201 { session }`: a session running `npm install -g <package>@<version>`, or `updateCommand` when the tool is installed. 400 `not_updatable` when an installed tool has no `updateCommand`. 503 `release_unresolved` or 409 `release_incomplete` when the release cannot be read or its platform build is not published; nothing is run. 409 `install_in_progress` while one is already running. 409 `provider_in_use` (with `running`, the session count) while the provider's sessions are running, unless `force` is true. |
@@ -566,6 +613,7 @@ This socket pushes changes to every session. It is server-to-client only.
 | `{ type: "session.updated", session }` | Status, activity, agents, name or size changed. |
 | `{ type: "session.removed", sessionId }` | A session was removed. |
 | `{ type: "providers.updated", providers }` | The provider list changed: a version check finished, `providers.json` was reloaded, or an install session ended. |
+| `{ type: "environment.updated", environment }` | Environment refresh started or finished. The full snapshot and revision allow clients to ignore stale HTTP responses. |
 | `{ type: "news.updated" }` | A news refresh finished; fetch `/news` again. |
 | `{ type: "changelog.updated" }` | A refresh of the release list finished; fetch `/changelog` again. |
 | `{ type: "github.updated" }` | A GitHub sign-in, account or SSH setup changed; fetch `/github` again. |

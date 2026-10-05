@@ -344,6 +344,28 @@
     </div>
   </dialog>
 
+  <dialog id="environment" class="models environment-dialog" aria-labelledby="environment-title">
+    <div class="models-bar">
+      <div class="models-heading">
+        <h2 id="environment-title">Manager environment</h2>
+        <p class="sub">On the computer running Agent Guild</p>
+      </div>
+      <button id="environment-close" class="btn" type="button">Close</button>
+    </div>
+    <div class="models-body">
+      <p class="environment-detail">Versions available to the manager. Shell profiles, projects and existing sessions can use different versions.</p>
+      <p class="environment-detail">Python uses <code>python</code> when found, otherwise <code>python3</code>. A failed <code>python</code> check stays primary.</p>
+      <p id="environment-status" class="environment-detail" role="status"></p>
+      <button id="environment-refresh" class="btn" type="button">Refresh</button>
+      <div id="environment-runtimes"></div>
+      <h3>Detected tools</h3>
+      <p class="environment-detail">Presence only. Activation and the runtimes these tools manage are not checked.</p>
+      <div id="environment-tools"></div>
+      <p id="environment-tools-empty" class="environment-detail"></p>
+      <p id="environment-manager-node" class="environment-detail"></p>
+    </div>
+  </dialog>
+
   <dialog id="models" class="models" aria-labelledby="models-title">
     <div class="models-bar">
       <span id="models-icon" class="provider-icon small"></span>
@@ -475,6 +497,11 @@
       </div>
       <div class="accounts" role="tablist" aria-label="Accounts" hidden></div>
       <div class="shells" role="tablist" aria-label="Shells" hidden></div>
+      <div class="environment-summary" hidden>
+        <button class="environment-open" type="button" aria-haspopup="dialog">Environment details</button>
+        <dl class="environment-values"></dl>
+        <p class="environment-note"></p>
+      </div>
       <div class="usage"></div>
       <div class="model-stats"></div>
       <div class="reporting-row" hidden>
