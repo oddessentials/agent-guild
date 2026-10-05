@@ -4596,6 +4596,7 @@ function upsertSession(session) {
 
 function dropSession(id) {
   state.sessions.delete(id);
+  state.environmentUI?.sessionRemoved(id);
   const view = state.views.get(id);
   const pane = state.panes.indexOf(id);
   if (pane !== -1) closePane(pane, { focusTerminal: paneNodes[pane].contains(document.activeElement) });

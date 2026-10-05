@@ -134,8 +134,9 @@ export function createEnvironmentUI({
             : data?.error ? data.error
               : data?.stale ? data.detail || 'These pins may be out of date. Refresh to read the folder again.'
                 : data?.availability === 'unavailable' ? data.detail
-                  : data?.checkedAt ? `Last checked ${new Date(data.checkedAt).toLocaleString()}`
-                    : 'Not checked yet.');
+                  : pending && data?.checkedAt ? 'Refreshing. Previous results remain visible.'
+                    : data?.checkedAt ? `Last checked ${new Date(data.checkedAt).toLocaleString()}`
+                      : 'Not checked yet.');
     const tools = scope === 'project' || data?.availability === 'unavailable' ? [] : (data?.tools || []);
     const showTools = scope !== 'project' && data?.availability !== 'unavailable';
     $('environment-tools-heading').hidden = !showTools;
@@ -298,6 +299,19 @@ export function createEnvironmentUI({
     },
     close() { openerId = null; dialog.close(); this.disconnected(); },
     sync() { render(); },
+    sessionRemoved(id) {
+      // Paint stays free of requests. The session list is already updated, so one
+      // check of the next session starts here instead of on every repaint.
+      if (!$('environment').open || scope !== 'session') return;
+      const selected = sessionId === id;
+      if (!selected) { render(); return; }
+      const listed = sessions();
+      sessionId = listed[0]?.id || '';
+      current = slots.get(sessionId ? `session:${sessionId}` : '') || null;
+      error = '';
+      if (!sessionId || !online) { render(); return; }
+      load(false);
+    },
     renderCard(card, provider) {
       const host = card.querySelector('.environment-summary');
       host.hidden = !Array.isArray(provider.shells);

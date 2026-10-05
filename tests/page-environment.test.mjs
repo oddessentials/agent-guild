@@ -244,6 +244,52 @@ test('removing the selected session hides its results before rendering the fallb
   assert.equal(p.get('environment-status').textContent, 'Not checked yet.');
 });
 
+test('a recheck keeps the visible results and says so', async () => {
+  const p = await sessionPage(4);
+  p.get('environment-refresh').click();
+  assert.equal(p.get('environment-refresh').textContent, 'Checking…');
+  assert.equal(p.get('environment-status').textContent, 'Refreshing. Previous results remain visible.');
+  assert.equal(p.get('environment-runtimes').children[0].children[0].children[1].textContent, '4.0.0');
+});
+
+test('removing the selected session starts one check of the next session', async () => {
+  const sessions = [{ id: 'aa', name: 'A' }, { id: 'bb', name: 'B' }];
+  const p = await sessionPage(4, sessions);
+  selectSession(p, 'bb').resolve(sessionSnapshot('bb', 2));
+  await flush();
+  p.get('environment').open = true;
+  const sent = p.requests.length;
+  sessions.pop();
+  p.ui.sessionRemoved('bb');
+  assert.equal(p.get('environment-session').value, 'aa');
+  assert.equal(p.requests.length, sent + 1);
+  assert.equal(p.requests.at(-1).route, '/environment?scope=session&id=aa');
+  assert.equal(p.get('environment-status').textContent, 'Refreshing. Previous results remain visible.');
+  assert.equal(p.get('environment-runtimes').children[0].children[0].children[1].textContent, '4.0.0');
+  sessions.shift();
+  p.ui.sessionRemoved('aa');
+  assert.equal(p.requests.length, sent + 1);
+  assert.equal(p.get('environment-status').textContent, 'No sessions.');
+});
+
+test('a removed session does not start a check while the dialog is closed or another session is selected', async () => {
+  const sessions = [{ id: 'aa', name: 'A' }, { id: 'bb', name: 'B' }];
+  const p = await sessionPage(2, sessions);
+  const sent = p.requests.length;
+  sessions.pop();
+  p.ui.sessionRemoved('bb');
+  assert.equal(p.requests.length, sent);
+  assert.equal(p.get('environment-session').value, 'aa');
+  sessions.push({ id: 'bb', name: 'B' });
+  p.get('environment').open = true;
+  p.ui.sync();
+  sessions.pop();
+  p.ui.sessionRemoved('bb');
+  assert.equal(p.requests.length, sent);
+  assert.equal(p.get('environment-session').value, 'aa');
+  assert.equal([...p.get('environment-session').children].some((option) => option.value === 'bb'), false);
+});
+
 test('reconnecting to a new manager clears the old session revisions', async () => {
   const p = await sessionPage(8);
   p.ui.disconnected();
