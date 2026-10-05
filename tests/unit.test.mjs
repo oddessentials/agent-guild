@@ -13,7 +13,7 @@ import { detectShells, tmuxNewSession, tmuxSupported } from '../src/manager/shel
 import { herdrAgentReports, herdrSocket } from '../src/manager/herdr.mjs';
 import { paths } from '../src/manager/config.mjs';
 import { classifyInstall, expandHome, homeRelative, helpDescribes, platformDependency, listInstallations, knownLaunchers, updateHelpAccepted, uninstallPlan } from '../src/manager/install-channels.mjs';
-import { runPlan, encodePlan, RUNNER } from '../src/manager/uninstall.mjs';
+import { runPlan, encodePlan, removeFile, RUNNER } from '../src/manager/uninstall.mjs';
 import { hookToReports, claudeStatuslineToReport, formatStatusLine } from '../src/report/hooks.mjs';
 import { shimContents, writeReportShims, prependPath, fileUrl, SHIM_NAME, LOADER_NAME } from '../src/manager/report-shims.mjs';
 import { bundleFiles, codexHookArgs, codexTrustArgs, codexHooksFrom, antigravityInstalled, antigravityPluginDir, antigravityConfigFile, antigravityPluginEnabled, helpLists, REPORT_COMMAND } from '../src/manager/session-hooks.mjs';
@@ -977,6 +977,31 @@ test('an uninstall plan stops before deleting anything when its command fails', 
   assert.equal(fs.existsSync(keep), false);
 });
 
+test('an uninstall stops instead of reporting a removal that did not happen', () => {
+  const home = tempDir();
+  const dir = path.join(home, '.tool', 'bin');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'tool'), 'binary');
+  const lines = [];
+  // What some Node releases do with a dangling link: no error, nothing deleted.
+  assert.equal(runPlan({ remove: [dir] }, { log: (line) => lines.push(line), rm: () => {} }), 1);
+  assert.ok(fs.existsSync(path.join(dir, 'tool')));
+  assert.ok(!lines.some((l) => l.startsWith('Removed')), lines.join('\n'));
+  assert.equal(lines.at(-1), `Could not remove ${dir}: it is still there. Stopped there. Close any program using it, then uninstall again.`);
+});
+
+test('a link goes as itself, even when what it pointed to is already gone', { skip: process.platform === 'win32' && 'symlinks need privileges on Windows' }, () => {
+  const home = tempDir();
+  const target = path.join(home, 'gone');
+  const link = path.join(home, 'link');
+  fs.writeFileSync(target, 'binary');
+  fs.symlinkSync(target, link);
+  fs.rmSync(target);
+  removeFile(link);
+  assert.equal(fs.lstatSync(link, { throwIfNoEntry: false }), undefined);
+  removeFile(link);
+});
+
 test('an uninstall that fails at any step leaves the copy findable and launchable, and a retry finishes it', () => {
   const posix = process.platform !== 'win32';
   const file = (home, rel) => {
@@ -1053,7 +1078,7 @@ test('an uninstall that fails at any step leaves the copy findable and launchabl
     const rmClean = (p) => {
       if (launcherGoneAt !== -1) assert.ok(!holdsFiles(p), `${name}: after the launcher stops working, ${p} holds no files`);
       deletions.push(p);
-      fs.rmSync(p, { recursive: true, force: true });
+      removeFile(p);
       if (launcherGoneAt === -1 && !fs.existsSync(clean.launcher)) launcherGoneAt = deletions.length - 1;
     };
     assert.equal(runPlan(clean, { log: quiet, rm: rmClean }), 0, name);
@@ -1065,7 +1090,7 @@ test('an uninstall that fails at any step leaves the copy findable and launchabl
       let calls = 0;
       const rm = (p) => {
         if (calls++ === failAt) throw Object.assign(new Error('resource busy or locked'), { code: 'EBUSY' });
-        fs.rmSync(p, { recursive: true, force: true });
+        removeFile(p);
       };
       const lines = [];
       assert.equal(runPlan(plan, { log: (l) => lines.push(l), rm }), 1, `${name}, failing at deletion ${failAt}`);
