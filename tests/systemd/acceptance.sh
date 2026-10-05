@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# The Linux boot service against a real systemd: packs this checkout,
-# installs it for a user in a container whose PID 1 is systemd, and runs
-# steps.mjs around two reboots. Needs Docker with privileged containers.
+# The Linux boot service against a real systemd: installs the given package
+# (or packs this checkout) for a user in a container whose PID 1 is systemd,
+# and runs steps.mjs around two reboots. Needs Docker with privileged
+# containers. Packing bundles the installed node_modules, so a checkout needs
+# npm ci first.
 #
-#   bash tests/systemd/acceptance.sh
+#   bash tests/systemd/acceptance.sh [package.tgz]
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -48,14 +50,18 @@ phase() {
 }
 
 docker build -q -t "$image" "$here" >/dev/null
-tarball=$(cd "$root" && npm pack --silent --pack-destination "$work" | tail -n 1)
+if (($#)); then
+  tarball=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
+else
+  tarball=$work/$(cd "$root" && npm pack --silent --pack-destination "$work" | tail -n 1)
+fi
 docker run -d --name "$name" --privileged --cgroupns=host -v /sys/fs/cgroup:/sys/fs/cgroup:rw "$image" >/dev/null
 booted
 uid=$(docker exec "$name" id -u guild)
 
 # Outside /tmp, which systemd may empty at boot.
 docker exec "$name" mkdir -p /opt/accept
-docker cp "$work/$tarball" "$name:/opt/accept/package.tgz"
+docker cp "$tarball" "$name:/opt/accept/package.tgz"
 docker cp "$here/steps.mjs" "$name:/opt/accept/steps.mjs"
 docker exec "$name" chmod -R a+rX /opt/accept
 as_guild npm install --global --prefix /home/guild/.local /opt/accept/package.tgz --no-audit --no-fund --loglevel=error
