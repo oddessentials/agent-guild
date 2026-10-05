@@ -47,6 +47,19 @@ export function bootSupported({ platform = process.platform, env = process.env, 
   return platform === 'linux' && !(env.WSL_DISTRO_NAME || /microsoft|wsl/i.test(release));
 }
 
+/**
+ * The user's name, or their uid where the system has no name for it, as in
+ * a container run with a uid of its own: os.userInfo() throws there, and a
+ * manager must still start.
+ */
+export function userName(uid = process.getuid?.()) {
+  try {
+    return os.userInfo().username;
+  } catch {
+    return String(uid ?? '');
+  }
+}
+
 function portString(port) {
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw failure('The manager must be listening before saving its startup port.');
   return String(port);
@@ -234,7 +247,7 @@ async function writeIfChanged(file, contents, mode = 0o644) {
 export function createBootService({
   env = process.env,
   home = os.homedir(),
-  user = os.userInfo().username,
+  user = userName(),
   uid = process.getuid?.(),
   dataDir,
   lingerDir = LINGER_DIR,

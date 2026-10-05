@@ -39,7 +39,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { DEFAULT_PORT } from './config.mjs';
-import { BOOT_NOTE, UNIT_UNSAFE, bootSupported, createBootService, journalCommand, lingerCommand, startupState, systemdRunner, unitPort } from './systemd-service.mjs';
+import { BOOT_NOTE, UNIT_UNSAFE, bootSupported, createBootService, journalCommand, lingerCommand, startupState, systemdRunner, unitPort, userName } from './systemd-service.mjs';
 
 export const ARGS = ['open', '--no-browser', '--sign-in'];
 export const WINDOWS_RUN_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
@@ -341,7 +341,7 @@ export function createAutostart({
   reg = runCommand(path.win32.join(env.SystemRoot || env.SYSTEMROOT || env.WINDIR || 'C:\\Windows', 'System32', 'reg.exe')),
   uid = process.getuid?.(),
   launchctl = runCommand('/bin/launchctl'),
-  user = os.userInfo().username,
+  user = userName(uid),
   systemd = systemdRunner({ uid, env }),
   lingerDir,
   pid = process.pid,

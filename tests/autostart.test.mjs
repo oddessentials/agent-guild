@@ -716,6 +716,17 @@ test('linux: GLib launches the entry with the launcher and its arguments', { ski
   assert.equal((await autostart.describe()).lastRun.outcome, 'starting', 'the probe records no result, as a manager that has not answered yet');
 });
 
+test('a uid with no user name, as in a container, still gets a startup setting, and names the uid for lingering', linuxPaths, async (t) => {
+  t.mock.method(os, 'userInfo', () => { throw Object.assign(new Error('uv_os_get_passwd returned ENOENT'), { code: 'ERR_SYSTEM_ERROR' }); });
+  const home = tempDir(t);
+  for (const platform of ['linux', 'darwin', 'win32']) {
+    const autostart = createAutostartWith({ platform, home, release: '6.8.0', env: {}, execPath: '/node', script: '/pkg/bin/agent-guild.mjs', dataDir: home, uid: 501, systemd: fakeSystemd().run, lingerDir: home, reg: fakeReg().reg, launchctl: fakeLaunchctl().launchctl });
+    const state = await autostart.describe();
+    assert.equal(state.available, true, platform);
+    if (platform === 'linux') assert.equal(state.boot.user, '501');
+  }
+});
+
 /** A Linux manager with a fake user manager: `entry` is the sign-in entry, `unit` the service, `linger` its lingering record. */
 function linuxStartup(t, { systemd = fakeSystemd(), pid = 4242, port = 47821, lingering = false } = {}) {
   const home = tempDir(t);
