@@ -22,7 +22,7 @@ Where those live is in each tool's hooks docs.
 ## Your own tool
 
 Inside an Agent Guild terminal, `agent-guild-report` is on PATH. Outside one
-it does nothing.
+it sends nothing.
 
 ```sh
 agent-guild-report explore-1 --name Explorer --status working --detail "Reading src/"

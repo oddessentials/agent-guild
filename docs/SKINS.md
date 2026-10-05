@@ -42,8 +42,8 @@ All optional; leave out what the skin does not need.
 
 ## Motion
 
-The page adds these classes and removes each when its animation ends. Animate
-each once, and nothing under `prefers-reduced-motion: reduce`.
+The page adds these classes as things appear. Animate each once, and nothing
+under `prefers-reduced-motion: reduce`.
 
 | Class | When |
 | --- | --- |

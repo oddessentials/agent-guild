@@ -37,13 +37,12 @@ tools by `id`; a field you set replaces the built-in value. See
 }
 ```
 
-The manager reads it when it starts, so run `agent-guild restart` after
-editing (this ends running sessions). Invalid values are ignored; a file that
-cannot be read is reported in `manager.log`.
+Edits apply after `agent-guild restart` (this ends running sessions). Invalid
+values are ignored; a file that cannot be read is reported in `manager.log`.
 
 | Field | Meaning |
 | --- | --- |
-| `id` | Lowercase letters, digits, `-` or `_`, up to 32 characters |
+| `id` | Up to 32 lowercase letters, digits, `-` or `_`, starting with a letter or digit |
 | `enabled` | `false` hides the tool |
 | `vendor`, `tool` | Names shown on the card |
 | `command`, `args` | What to run; `command` is looked up on PATH |
@@ -51,8 +50,8 @@ cannot be read is reported in `manager.log`.
 | `package` | npm package name; enables **Install** and update checks |
 | `versionArgs` | Arguments that print the version, e.g. `["--version"]` |
 | `resumeArgs` | Arguments that resume a session, `{id}` for its id; enables **Existing…** |
-| `usage` | `{ "command", "args" }` of a program printing `{ "plan", "windows": [{ "label", "usedPercent", "resetsAt" }] }`, or `null` |
-| `history` | `{ "command", "args" }` of a program printing `{ "sessions": [{ "id", "title", "cwd", "startedAt", "updatedAt" }] }`, or `null` |
+| `usage` | `"claude"`, `"codex"`, `{ "command", "args" }` of a program printing `{ "plan", "windows": [{ "label", "usedPercent", "resetsAt" }] }`, or `null` |
+| `history` | `"claude"`, `"codex"`, `"antigravity"`, `"grok"`, `{ "command", "args" }` of a program printing `{ "sessions": [{ "id", "title", "cwd", "startedAt", "updatedAt" }] }`, or `null` |
 | `modelPattern` | Regular expression that finds the model name on screen |
 | `homeVar` | Variable that moves the tool's home folder; required for `accounts` |
 | `accounts` | Extra sign-ins; see [Accounts](#accounts) |
@@ -62,8 +61,8 @@ cannot be read is reported in `manager.log`.
 | `win32`, `darwin`, `linux` | Fields that apply on one platform only |
 
 Other fields in the built-in file (`channels`, `hooks`, `reporting`,
-`accountEnv`, `multiplexers`) are for the built-in tools; copy them from there
-if you need them.
+`accountEnv`, `multiplexers`, `npmNote`) are for the built-in tools; copy them
+from there if you need them.
 
 ## Accounts
 
@@ -86,8 +85,8 @@ Codex CLI and Grok Build support this.
 
 * Each account appears as a chip on the card, with its own sign-in, meters
   and sessions.
-* Without `dir`, the account lives in `accounts/<tool>/<account>` in the data
-  folder.
+* Without `dir`, the account lives in `accounts/<tool id>/<account id>` in the
+  data folder.
 * Sign in from the first session of a new account.
 * `default` is the tool's own sign-in; only its `label` can change.
 
@@ -99,7 +98,7 @@ Codex CLI and Grok Build support this.
 | `AGENT_GUILD_HOME` | Moves the data folder. Turns off **Settings → Startup**. |
 | `AGENT_GUILD_NPM_REGISTRY` | npm registry for version checks and installs |
 | `AGENT_GUILD_NO_UPDATE_CHECK` | `1` turns off online version checks and self-upgrade |
-| `AGENT_GUILD_SKIP_SHELL_ENV` | `1` stops reading PATH from your login shell (macOS, Linux) |
+| `AGENT_GUILD_SKIP_SHELL_ENV` | `1` stops reading PATH from your login shell, or from the registry on Windows |
 | `AGENT_GUILD_ALLOWED_HOSTS`, `AGENT_GUILD_ALLOWED_ORIGINS` | Legacy proxy allowlists, used until remote access settings are saved. An invalid value stops the manager from starting. |
 
 Variables set inside each session are listed in
@@ -111,12 +110,13 @@ For Tailscale, use **Settings → Remote access**; see the
 [README](../README.md#remote-access-with-tailscale).
 
 For another proxy, open **Settings → Remote access → Use another reverse
-proxy** and save the Host and Origin your browser uses:
+proxy** and save the hosts and origins your browser uses, separated by
+commas:
 
 | Field | Example |
 | --- | --- |
-| Host | `guild.example.ts.net:8443` |
-| Origin | `https://guild.example.ts.net:8443` |
+| Allowed hosts | `guild.example.ts.net:8443` |
+| Allowed origins | `https://guild.example.ts.net:8443` |
 
 * Forward HTTP and WebSocket traffic to `127.0.0.1` on the manager's port.
 * The proxy must keep the browser's `Host` and `Origin` headers.

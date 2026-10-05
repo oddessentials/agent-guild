@@ -13,8 +13,9 @@ npm test
   with Node.js 22, 24 and 26, and installs the packed package on x64 and
   arm64.
 * `node tests/browser/proxy.mjs` checks the real UI and terminal through a
-  local HTTPS proxy with an isolated manager and test certificates. Set
-  `CHROME_PATH` to Chrome or Edge if it is not in a standard location.
+  local HTTPS proxy with an isolated manager and test certificates. On Windows,
+  or if Chrome is not in a standard Linux or macOS location, set
+  `CHROME_PATH` to Chrome or Edge.
 * In a checkout, `launchers/AgentGuild.cmd` (Windows) and
   `launchers/AgentGuild.command` (macOS) start Agent Guild with a
   double-click.
@@ -26,7 +27,7 @@ npm test
 * Pull request titles follow
   [Conventional Commits](https://www.conventionalcommits.org/). Merging to
   `main` publishes a release to npm and GitHub when it includes a `feat`,
-  `fix`, `perf` or `revert`.
+  `fix`, `perf`, `revert` or breaking change.
 
 ## Other front ends
 

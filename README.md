@@ -97,8 +97,9 @@ tailnet, with MagicDNS on.
 1. In the page, choose **Settings → Remote access → Enable remote access**.
 2. If it shows **Open Tailscale approval**, approve HTTPS there, then choose
    **Continue setup**.
-3. If it says **Tailscale needs permission** (Linux), run
-   `sudo tailscale set --operator=$USER`, then choose **Continue setup**.
+3. If it says **Tailscale needs permission**, run the command under
+   **Connection details** in a terminal allowed to manage Tailscale, then
+   choose **Continue setup**.
 4. Choose **Connect another device** and scan the QR code, or open the
    sign-in link, on the other device.
 
@@ -140,8 +141,8 @@ The first Claude Code usage meter may ask for access to the
 | `agent-guild url` | Print the page link with the access token. |
 | `agent-guild start` | Run the manager in the foreground. |
 
-Sessions end when the manager stops or the computer restarts, except tmux
-and herdr sessions.
+Sessions end when the manager stops or the computer restarts. tmux and herdr
+sessions survive a manager stop.
 
 ## Privacy
 
@@ -151,15 +152,16 @@ prompts:
 
 | To | For | How often |
 | --- | --- | --- |
-| npm registry | Version checks | At most hourly |
+| npm registry | Version checks | Hourly |
 | Anthropic and OpenAI | Usage meters, with the tool's own sign-in | Every minute while the page is open |
-| OpenRouter | Model list for benchmarks | At most every 6 hours |
+| OpenRouter | Model list for benchmarks | Every 6 hours |
 | News feeds, Hacker News, arXiv, GitHub | News feed | Every 30 minutes while the page is open |
-| GitHub releases | What's new | At most hourly |
-| herdr.dev, Homebrew | Multiplexer version checks | At most hourly |
-| GitHub | GitHub panel | When you use it |
+| GitHub releases | What's new | Hourly, more often just after a release |
+| herdr.dev, Homebrew | Multiplexer version checks | Hourly |
+| GitHub, GitHub Status | GitHub panel | When you use it |
 | Package sources | Installs and updates | When you ask |
 
+Failed news, model list and release checks retry after 10 minutes.
 `AGENT_GUILD_NO_UPDATE_CHECK=1` turns off version checks and self-upgrade.
 
 ## More
