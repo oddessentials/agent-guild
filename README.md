@@ -291,7 +291,8 @@ Any other tool or script can report agents and its model too. See
   console window opens;
   `~/Library/LaunchAgents/com.oddessentials.agent-guild.plist` on macOS; and
   `~/.config/autostart/agent-guild.desktop` on Linux. Turning it off removes
-  them.
+  them, and an entry whose Agent Guild package has been uninstalled or moved
+  removes itself at the next sign-in.
 
 The manager makes these outbound requests, and none of them carry your code
 or prompts:

@@ -4,11 +4,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
   WINDOWS_APPROVED_KEY,
   WINDOWS_RUN_KEY,
   WINDOWS_VALUE,
+  POSIX_LAUNCH,
   approvedDisabled,
   createAutostart,
   desktopArg,
@@ -19,6 +21,19 @@ import {
   windowsWrapper,
 } from '../src/manager/autostart.mjs';
 import { createManagerServer } from '../src/manager/server.mjs';
+
+/** Reads an Exec value back as a desktop would: the string escapes, then the quoting, then `%%`. */
+function desktopExecArgs(value) {
+  const text = value.replace(/\\(.)/g, (_, c) => (c === '\\' ? '\\' : `\\${c}`));
+  const args = [];
+  for (const [, quoted, bare] of text.matchAll(/"((?:\\.|[^"\\])*)"|(\S+)/g)) {
+    args.push((quoted !== undefined ? quoted.replace(/\\(.)/g, '$1') : bare).replace(/%%/g, '%'));
+  }
+  return args;
+}
+
+/** A module that records its arguments in `ran`, standing in for bin/agent-guild.mjs. */
+const probe = (ran) => `import fs from 'node:fs';\nfs.writeFileSync(${JSON.stringify(ran)}, JSON.stringify(process.argv.slice(2)));\n`;
 
 function tempDir(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'guild-autostart-'));
@@ -63,8 +78,9 @@ test('the Windows wrapper runs the launcher hidden and keeps any path intact in 
 });
 
 test('the LaunchAgent runs at load, escapes its paths and outlives the launching command', () => {
-  const text = launchAgentPlist({ execPath: '/opt/node & co/bin/node', script: '/Users/a/<guild>/bin/agent-guild.mjs' });
-  assert.match(text, /<string>\/opt\/node &amp; co\/bin\/node<\/string>\s*<string>\/Users\/a\/&lt;guild&gt;\/bin\/agent-guild\.mjs<\/string>\s*<string>open<\/string>\s*<string>--no-browser<\/string>/);
+  const text = launchAgentPlist({ execPath: '/opt/node & co/bin/node', script: '/Users/a/<guild>/bin/agent-guild.mjs', file: '/Users/a/Library/LaunchAgents/x.plist' });
+  const args = [...text.matchAll(/<string>([^<]*)<\/string>/g)].slice(1).map((m) => m[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&'));
+  assert.deepEqual(args, ['/bin/sh', '-c', POSIX_LAUNCH, '/opt/node & co/bin/node', '/Users/a/<guild>/bin/agent-guild.mjs', '/Users/a/Library/LaunchAgents/x.plist']);
   assert.match(text, /<key>RunAtLoad<\/key><true\/>/);
   assert.match(text, /<key>AbandonProcessGroup<\/key><true\/>/);
   assert.doesNotMatch(text, /KeepAlive/);
@@ -73,7 +89,9 @@ test('the LaunchAgent runs at load, escapes its paths and outlives the launching
 test('desktop entry arguments follow the quoting and string escape rules', () => {
   assert.equal(desktopArg('/home/a b/50%$x'), '"/home/a b/50%%\\\\$x"');
   assert.equal(desktopArg('/a"b`c\\d'), '"/a\\\\"b\\\\`c\\\\\\\\d"');
-  assert.match(desktopEntry({ execPath: '/usr/bin/node', script: '/opt/guild/bin/agent-guild.mjs' }), /^Exec="\/usr\/bin\/node" "\/opt\/guild\/bin\/agent-guild\.mjs" open --no-browser$/m);
+  const paths = { execPath: '/opt/my node/bin/node', script: '/home/a/50% "guild"/bin/agent-guild.mjs', file: '/home/a/.config/autostart/agent-guild.desktop' };
+  const exec = desktopEntry(paths).match(/^Exec=(.*)$/m)[1];
+  assert.deepEqual(desktopExecArgs(exec), ['/bin/sh', '-c', POSIX_LAUNCH, paths.execPath, paths.script, paths.file]);
   assert.equal(desktopEntryEnabled('[Desktop Entry]\nX-GNOME-Autostart-enabled=true\n'), true);
   assert.equal(desktopEntryEnabled('[Desktop Entry]\nHidden=true\n'), false);
   assert.equal(desktopEntryEnabled('[Desktop Entry]\nX-GNOME-Autostart-enabled=false\n'), false);
@@ -214,4 +232,53 @@ test('a manager without autostart answers 404, which hides the setting', { timeo
   await api.listen();
   t.after(() => api.close());
   assert.equal((await fetch(`${api.url}/api/v1/autostart`, { headers: { Authorization: 'Bearer t' } })).status, 404);
+});
+
+test('a macOS or Linux entry starts the manager while the package is there, and removes itself once it is gone', { skip: process.platform === 'win32' && 'sh entries run on macOS and Linux' }, (t) => {
+  const dir = tempDir(t);
+  const script = path.join(dir, 'pkg', 'agent guild "$x".mjs');
+  const entry = path.join(dir, 'entry $1.desktop');
+  const ran = path.join(dir, 'ran.json');
+  fs.mkdirSync(path.dirname(script));
+  fs.writeFileSync(script, probe(ran));
+  fs.writeFileSync(entry, 'entry');
+  const run = () => execFileSync('/bin/sh', ['-c', POSIX_LAUNCH, process.execPath, script, entry]);
+  run();
+  assert.deepEqual(JSON.parse(fs.readFileSync(ran, 'utf8')), ['open', '--no-browser']);
+  assert.equal(fs.existsSync(entry), true);
+  fs.rmSync(path.dirname(script), { recursive: true });
+  fs.rmSync(ran);
+  run();
+  assert.equal(fs.existsSync(entry), false);
+  assert.equal(fs.existsSync(ran), false);
+});
+
+test('the Windows wrapper starts the manager while the package is there, and removes its entry once it is gone', { skip: process.platform !== 'win32' && 'wscript runs on Windows' }, (t) => {
+  const dir = tempDir(t);
+  const reg = path.join(process.env.SystemRoot, 'System32', 'reg.exe');
+  const base = `HKCU\\Software\\AgentGuildAutostartTest-${process.pid}`;
+  const runKey = `${base}\\Run`;
+  const approvedKey = `${base}\\Approved`;
+  t.after(() => { try { execFileSync(reg, ['delete', base, '/f'], { stdio: 'ignore' }); } catch { /* removed */ } });
+  const script = path.join(dir, 'pkg ü', 'agent-guild.mjs');
+  const wrapper = path.join(dir, 'autostart.js');
+  const ran = path.join(dir, 'ran.json');
+  fs.mkdirSync(path.dirname(script));
+  fs.writeFileSync(script, probe(ran));
+  fs.writeFileSync(wrapper, windowsWrapper({ execPath: process.execPath, script, runKey, approvedKey }));
+  const has = (key) => { try { execFileSync(reg, ['query', key, '/v', WINDOWS_VALUE], { stdio: 'ignore' }); return true; } catch { return false; } };
+  execFileSync(reg, ['add', runKey, '/v', WINDOWS_VALUE, '/t', 'REG_SZ', '/d', 'x', '/f'], { stdio: 'ignore' });
+  execFileSync(reg, ['add', approvedKey, '/v', WINDOWS_VALUE, '/t', 'REG_BINARY', '/d', '03000000', '/f'], { stdio: 'ignore' });
+  const wscript = () => execFileSync(path.join(process.env.SystemRoot, 'System32', 'wscript.exe'), ['//B', '//NoLogo', wrapper]);
+
+  wscript();
+  for (let i = 0; i < 80 && !fs.existsSync(ran); i++) execFileSync(process.execPath, ['-e', 'setTimeout(() => {}, 100)']);
+  assert.deepEqual(JSON.parse(fs.readFileSync(ran, 'utf8')), ['open', '--no-browser']);
+  assert.equal(has(runKey) && has(approvedKey) && fs.existsSync(wrapper), true);
+
+  fs.rmSync(path.dirname(script), { recursive: true });
+  wscript();
+  assert.equal(has(runKey), false);
+  assert.equal(has(approvedKey), false);
+  assert.equal(fs.existsSync(wrapper), false);
 });

@@ -14,7 +14,10 @@
 // off in Task Manager or a desktop's startup settings sees it off here too.
 // Its paths are absolute, so a running manager rewrites an entry that is on
 // at every start: a Node.js version switch or a reinstall then takes effect
-// at the next sign-in.
+// at the next sign-in. npm runs no script when a package is uninstalled, so
+// an entry whose package script is gone removes itself at sign-in instead
+// of failing there at every sign-in after. A missing Node.js alone keeps
+// the entry: the next manager to start points it at its own.
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -35,12 +38,26 @@ function jsString(value) {
   return JSON.stringify(value).replace(/[\u007f-\uffff]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
 }
 
-/** The JScript that wscript.exe runs at sign-in: the launcher with its window hidden (0), not waited for. */
-export function windowsWrapper({ execPath, script }) {
+/**
+ * The JScript that wscript.exe runs at sign-in: the launcher with its
+ * window hidden (0), not waited for; or, once the package is gone, the
+ * removal of the Run value, its Task Manager setting and this file.
+ * `runKey` and `approvedKey` are replaceable in tests.
+ */
+export function windowsWrapper({ execPath, script, runKey = WINDOWS_RUN_KEY, approvedKey = WINDOWS_APPROVED_KEY }) {
   const command = [execPath, script].map((p) => `"${p}"`).concat(ARGS).join(' ');
   return [
     '// Agent Guild: starts the session manager at sign-in without a console window.',
-    `new ActiveXObject("WScript.Shell").Run(${jsString(command)}, 0, false);`,
+    'var files = new ActiveXObject("Scripting.FileSystemObject");',
+    'var shell = new ActiveXObject("WScript.Shell");',
+    `if (files.FileExists(${jsString(script)})) {`,
+    `  shell.Run(${jsString(command)}, 0, false);`,
+    '} else {',
+    '  // Agent Guild is no longer installed here: remove this sign-in entry.',
+    `  try { shell.RegDelete(${jsString(`${runKey}\\${WINDOWS_VALUE}`)}); } catch (e) {}`,
+    `  try { shell.RegDelete(${jsString(`${approvedKey}\\${WINDOWS_VALUE}`)}); } catch (e) {}`,
+    '  try { files.DeleteFile(WScript.ScriptFullName); } catch (e) {}',
+    '}',
     '',
   ].join('\r\n');
 }
@@ -51,9 +68,21 @@ export function windowsRunCommand({ env, wrapper }) {
   return `"${wscript}" //B //NoLogo "${wrapper}"`;
 }
 
+/**
+ * The sh script a macOS or Linux entry runs, with Node.js as $0, the
+ * package script as $1 and the entry's own file as $2, so no path is
+ * ever part of the script text.
+ */
+export const POSIX_LAUNCH = `if [ -f "$1" ]; then exec "$0" "$1" ${ARGS.join(' ')}; fi; rm -f "$2"`;
+
+/** The entry's command line: sh, its script, then the paths it reads. */
+export function posixCommand({ execPath, script, file }) {
+  return ['/bin/sh', '-c', POSIX_LAUNCH, execPath, script, file];
+}
+
 const xml = (value) => value.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
-export function launchAgentPlist({ execPath, script }) {
+export function launchAgentPlist({ execPath, script, file }) {
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
@@ -62,7 +91,7 @@ export function launchAgentPlist({ execPath, script }) {
     `  <key>Label</key><string>${LAUNCH_AGENT_LABEL}</string>`,
     '  <key>ProgramArguments</key>',
     '  <array>',
-    ...[execPath, script, ...ARGS].map((arg) => `    <string>${xml(arg)}</string>`),
+    ...posixCommand({ execPath, script, file }).map((arg) => `    <string>${xml(arg)}</string>`),
     '  </array>',
     '  <key>RunAtLoad</key><true/>',
     '  <key>AbandonProcessGroup</key><true/>',
@@ -82,13 +111,13 @@ export function desktopArg(value) {
   return quoted.replace(/\\/g, '\\\\').replace(/%/g, '%%');
 }
 
-export function desktopEntry({ execPath, script }) {
+export function desktopEntry({ execPath, script, file }) {
   return [
     '[Desktop Entry]',
     'Type=Application',
     'Name=Agent Guild',
     'Comment=Starts the Agent Guild session manager',
-    `Exec=${[execPath, script].map(desktopArg).concat(ARGS).join(' ')}`,
+    `Exec=${posixCommand({ execPath, script, file }).map(desktopArg).join(' ')}`,
     'Terminal=false',
     'NoDisplay=true',
     'X-GNOME-Autostart-enabled=true',
@@ -199,7 +228,7 @@ export function createAutostart({
     const file = platform === 'darwin'
       ? path.join(home, 'Library', 'LaunchAgents', `${LAUNCH_AGENT_LABEL}.plist`)
       : path.join(env.XDG_CONFIG_HOME || path.join(home, '.config'), 'autostart', 'agent-guild.desktop');
-    const contents = () => (platform === 'darwin' ? launchAgentPlist(paths) : desktopEntry(paths));
+    const contents = () => (platform === 'darwin' ? launchAgentPlist({ ...paths, file }) : desktopEntry({ ...paths, file }));
     target = {
       async enabled() {
         const text = await readText(file);
