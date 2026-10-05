@@ -162,6 +162,23 @@ main { max-width: calc(1200px + var(--dock-space, 0px)); margin: 0 auto; padding
 .environment-values dt { color: var(--muted); }
 .environment-values dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .environment-note { margin: 4px 0 0; color: var(--muted); font-size: .72rem; }
+.environment-scopes { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
+.environment-scope {
+  font: inherit; font-size: 0.75rem; font-weight: 600; padding: 3px 11px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--muted);
+}
+.environment-scope:hover { border-color: var(--muted); }
+.environment-scope:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.environment-scope[aria-pressed="true"] { background: var(--accent-fill); border-color: var(--accent-fill); color: var(--accent-text); }
+.environment-dialog select {
+  width: 100%; max-width: 100%; margin: 0 0 8px; padding: 8px; box-sizing: border-box;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); color: var(--text); font: inherit;
+}
+.environment-dialog label { display: block; margin: 8px 0 4px; font-size: 0.8rem; color: var(--muted); }
+@media (pointer: coarse), (max-width: 640px) {
+  .environment-scope { min-height: 36px; }
+  .environment-dialog select { min-height: 44px; }
+}
 .environment-detail { font-size: .85rem; line-height: 1.5; color: var(--muted); overflow-wrap: anywhere; }
 .environment-row { padding: 12px 0; border-bottom: 1px solid var(--border); }
 .environment-row-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 14px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }

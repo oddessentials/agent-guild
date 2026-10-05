@@ -87,12 +87,16 @@ shell. Pick the default chip to clear a saved choice and follow the default
 again. The choice applies to new sessions.
 
 **See the manager environment.** The Shell card summarizes detected Node.js,
-Python, Go, .NET SDK, R and Rust versions. **Environment details** shows the
-resolved paths, detection results, .NET runtimes and detected nvm/NVM for
-Windows, vfox, uv and pnpm launchers. Tools are listed by presence; their
-activation is not inferred. This describes the computer running Agent Guild
-and its manager environment, including when viewed remotely. Selected shells,
-projects and existing sessions may use different versions.
+Python, Go, .NET SDK, R and Rust versions. **Environment details** opens on
+the manager result: resolved paths, detection results, .NET runtimes and
+detected nvm/NVM for Windows, vfox, uv and pnpm launchers. Tools are listed
+by presence; their activation is not inferred. The same dialog can show three
+other facts, each refreshed on its own: pin files in the working folder
+(configured text, not an installed version), the PATH a Guild session was
+given when it started, and the PATH a new process receives before the shell
+runs its startup files. tmux and herdr sessions have no spawn record to show.
+The card itself stays the manager summary. This describes the computer running
+Agent Guild, including when viewed remotely.
 
 Python always uses `python` when it is found on the manager's PATH; otherwise
 it uses `python3`. A broken `python` remains the primary result, with a
@@ -105,8 +109,10 @@ Discovery runs on first viewing and again on **Refresh**, in an isolated
 helper with a neutral temporary working directory. It does not load shell
 profiles, activate tools, download runtimes or modify installations. Unknown
 script/shim launchers and Windows execution aliases are left unverified.
-Refresh checks the manager's current environment; it does not reload its
-PATH from a shell. Existing results remain visible during refresh. Go reports
+Refresh checks the fact selected in the dialog and leaves the others as they
+are. The manager fact reads the manager's current environment and does not
+reload its PATH from a shell. Existing results for that fact remain visible
+during refresh. Go reports
 the local bundled toolchain with automatic switching disabled, and the Node
 version running Agent Guild is also shown in details.
 

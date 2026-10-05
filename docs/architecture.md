@@ -42,15 +42,21 @@
   PowerShell, because ConPTY can only start real executables. It also checks
   each tool's installed and latest versions, and builds the sessions that
   install, update and uninstall a tool.
-* **Manager environment** (`environment.mjs`, `environment-probe.mjs`). A
-  cached, read-only runtime snapshot, separate from providers and sessions.
+* **Manager environment** (`environment.mjs`, `environment-probe.mjs`,
+  `environment-pins.mjs`). Read-only snapshots, separate from providers and
+  from install or repair. The manager scope is the PATH of the manager
+  process. A project scope reads known pin files and does not run them. A
+  session scope probes the PATH recorded for a Guild-started process and
+  reports tmux and herdr as unavailable. A launch scope is that manager PATH
+  labeled as the PATH a new process receives before shell startup files.
   First viewing and manual refresh start an isolated helper; HTTP requests
-  return immediately. The helper uses a fresh neutral temporary directory,
-  limits each probe to 1.8 seconds and 32 KiB, and runs at most three runtime
+  return immediately. Runtime probes use a fresh neutral temporary directory,
+  limit each probe to 1.8 seconds and 32 KiB, and run at most three runtime
   checks concurrently. The manager enforces a separate 10-second deadline
   and stops the helper process tree on completion, timeout or shutdown.
-  Tool presence is discovered without executing the tools. No shell profiles,
-  installation operations or project-specific resolution are added.
+  Pin reads do not enter the project directory. Tool presence is discovered
+  without executing the tools. No shell profiles or installation operations
+  are added.
 * **Usage monitor** (`usage.mjs`). Reads each tool's own sign-in and asks the
   vendor's usage endpoint for the remaining rate-limit windows. Tokens stay
   in the manager.
