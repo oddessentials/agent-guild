@@ -12,6 +12,8 @@ export function fakeSystemd({ reachable = true, missing = false, show = {}, onCa
     show: { LoadState: 'not-found', UnitFileState: '', ActiveState: 'inactive', Result: 'success', ExecMainStatus: '0', MainPID: '0', ExecMainStartTimestamp: '', InactiveEnterTimestamp: '', ...show },
     fail: new Set(),
     journal: 'line one\nline two\n',
+    /** What a start leaves: a Type=simple unit is active once start returns, as on a real user manager. */
+    started: { ActiveState: 'active', MainPID: '4242' },
   };
   const calls = [];
   const run = async (command, args) => {
@@ -28,6 +30,7 @@ export function fakeSystemd({ reachable = true, missing = false, show = {}, onCa
     }
     if (verb === 'enable') state.enabled = true;
     if (verb === 'disable') state.enabled = false;
+    if (verb === 'start') Object.assign(state.show, state.started);
     return { status: 0, stdout: '', stderr: '' };
   };
   /** The systemctl verbs called, in order. */

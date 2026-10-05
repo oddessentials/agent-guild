@@ -175,6 +175,17 @@ export function describeStartup(state, { linger = true, user = 'USER' } = {}) {
   return linger ? text : `${text} Without lingering it waits for you to sign in; to start before anyone signs in, run: ${lingerCommand(user)}`;
 }
 
+/** A GET /autostart description in one line, for `agent-guild status`; null when the manager offers none. */
+export function startupSummary(autostart) {
+  if (!autostart) return null;
+  if (!autostart.available) return autostart.reason ? `Startup: ${autostart.reason}` : null;
+  if (autostart.boot?.enabled) {
+    const line = describeStartup(autostart.boot.state, { linger: autostart.boot.linger, user: autostart.boot.user });
+    return autostart.mode === 'both' ? `${line} A sign-in entry is on as well; choose one under Settings › Startup.` : line;
+  }
+  return autostart.enabled ? 'Starts when you sign in.' : 'Starts only when you start it.';
+}
+
 /** Runs systemctl or journalctl for the user manager, with a fixed environment. Resolves `{ status, stdout, stderr, missing }`. */
 export function systemdRunner({ uid = process.getuid?.(), env = process.env } = {}) {
   const fixed = { ...env, XDG_RUNTIME_DIR: `/run/user/${uid}`, TZ: 'UTC', LC_ALL: 'C', SYSTEMD_PAGER: '', SYSTEMD_COLORS: '0' };

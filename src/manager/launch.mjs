@@ -11,8 +11,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { ensureDataDir, paths } from './config.mjs';
-import { EXIT_RESTART, unitPort } from './systemd-service.mjs';
+import { dataDir, ensureDataDir, paths } from './config.mjs';
+import { stableExecPath } from './autostart.mjs';
+import { EXIT_RESTART, UNIT_UNSAFE, bootSupported, createBootService, journalCommand, startupState, unitPort } from './systemd-service.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 /** The manager entry point, from the package files on disk. */
@@ -103,4 +104,53 @@ export async function nextManager({ supervised = false, boot = null, port, spawn
   const child = spawn({ note: 'restarting manager', env: { ...process.env, AGENT_GUILD_PORT: String(port) } });
   log(`[manager] started the next manager (pid ${child.pid})`);
   return 0;
+}
+
+/** The package script a unit runs: this package's, as the manager names it. */
+export const PACKAGE_SCRIPT = path.join(ROOT_DIR, 'bin', 'agent-guild.mjs');
+
+/** The boot service on a Linux that can offer it with the default data folder, or null. */
+export function defaultBoot() {
+  return bootSupported() && !process.env.AGENT_GUILD_HOME ? createBootService({ dataDir: dataDir() }) : null;
+}
+
+/**
+ * The boot service when it should start the manager on `port`: on, and for
+ * that port. `note` says why an existing unit was passed over, so the
+ * caller can say so rather than start an unsupervised manager silently.
+ */
+export async function serviceFor(port, boot = defaultBoot()) {
+  if (!boot) return { boot: null, note: null };
+  const read = await boot.read().catch((err) => ({ reachable: false, reason: err.message, enabled: false }));
+  if (!read.reachable) {
+    const text = await boot.text().catch(() => null);
+    return { boot: null, note: text ? `The boot service could not be used (${read.reason}), so the session manager runs without systemd.` : null };
+  }
+  if (!read.enabled || unitPort(await boot.text()) !== port) return { boot: null, note: null };
+  return { boot, note: null };
+}
+
+/**
+ * Starts the manager through systemd and resolves once `health` answers at
+ * `url`. The unit is first pointed at this Node.js and package, as a manager
+ * does at each start, so a Node.js removed since cannot keep it failing; a
+ * failed state is cleared so systemd does not refuse the start. Throws with
+ * the service's last journal lines when it does not come up.
+ */
+export async function startService({ boot, port, url, health, execPath = stableExecPath(process.execPath), script = PACKAGE_SCRIPT, timeoutMs = 20000, pollMs = 250 }) {
+  if (![execPath, script].some((p) => UNIT_UNSAFE.test(p)) && await boot.write({ execPath, script, port })) await boot.reload();
+  await boot.resetFailed();
+  await boot.start({ block: true });
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const up = await health(url, 500);
+    if (up) return { url, started: true, version: up.version };
+    const read = await boot.read().catch(() => null);
+    const state = read && startupState(read.show, { pid: null, port });
+    if (state && ['failed', 'port-in-use', 'stopped'].includes(state.kind)) break;
+    if (Date.now() >= deadline) break;
+    await new Promise((r) => setTimeout(r, pollMs));
+  }
+  const journal = await boot.journal(20);
+  throw new Error(`the session manager did not start under systemd.${journal ? `\n\nRecent log (${journalCommand(20)}):\n${journal}` : ''}`);
 }
