@@ -480,6 +480,7 @@ test('a session probe receives only the spawn PATH, and a multiplexer is not pro
   });
   t.after(() => service.close());
   assert.equal(probePathEnv({ PATH: '/bin', AGENT_GUILD_REPORT_TOKEN: 'secret' }).AGENT_GUILD_REPORT_TOKEN, undefined);
+  assert.deepEqual(probePathEnv({ RUSTUP_HOME: '/opt/rustup', PYENV_ROOT: '/opt/pyenv', GITHUB_TOKEN: 'secret' }), { RUSTUP_HOME: '/opt/rustup', PYENV_ROOT: '/opt/pyenv' });
   const started = service.openSession('aa');
   assert.equal(started.refreshing, true);
   assert.equal(seen[0].PATH, '/sessions');

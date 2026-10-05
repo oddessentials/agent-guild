@@ -180,7 +180,9 @@ and may set `stale` without replacing the pins. POST reads them again.
 
 `GET /environment?scope=session&id=<hex>` and `{ "scope": "session", "id": "<hex>" }`
 probe the PATH recorded when that session was spawned, in a neutral temporary
-directory. The response adds `sessionId`, `spawnCwd`, and `availability`.
+directory. Only PATH, the home folder and the toolchain-manager locations and
+version selectors (for example `RUSTUP_HOME`, `PYENV_ROOT`, `ASDF_DATA_DIR`)
+are passed to the probe. The response adds `sessionId`, `spawnCwd`, and `availability`.
 `availability` is `ok`, or `unavailable` for tmux and herdr, whose environment
 is not that spawn record. No command is written to the terminal. An unknown id
 is `404` `not_found`. An id that is not hexadecimal is `400` `bad_request`.

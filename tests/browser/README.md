@@ -37,6 +37,7 @@ node tests/browser/terminal-controls.mjs
 node tests/browser/layout.mjs
 node tests/browser/github.mjs
 node tests/browser/github-branches.mjs
+node tests/browser/environment-scopes.mjs
 node tests/browser/proxy.mjs
 npm install --prefix .cache/browser-tools --no-save --package-lock=false --ignore-scripts playwright-core@1.63.0
 node .cache/browser-tools/node_modules/playwright-core/cli.js install --with-deps webkit

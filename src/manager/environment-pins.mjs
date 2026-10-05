@@ -202,7 +202,7 @@ function inside(file, root) {
   const base = path.resolve(root);
   const left = process.platform === 'win32' ? child.toLowerCase() : child;
   const right = process.platform === 'win32' ? base.toLowerCase() : base;
-  return left.startsWith(right + path.sep);
+  return left.startsWith(right.endsWith(path.sep) ? right : right + path.sep);
 }
 
 const FILE_LABELS = {

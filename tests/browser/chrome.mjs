@@ -137,6 +137,8 @@ export async function withPage({ name, instrumentation = '', headers = () => ({}
       clearTimeout(force);
     }
     server.close();
-    fs.rmSync(profile, { recursive: true, force: true });
+    // Chrome's helper processes can still be writing the profile after the
+    // browser process exits; retry instead of failing on ENOTEMPTY.
+    fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   }
 }

@@ -13,7 +13,15 @@ export const ENVIRONMENT_TIMEOUT_MS = 10000;
 export const LAUNCH_DETAIL = 'Launch PATH, profiles not applied. The selected shell is not consulted.';
 export const SESSION_DETAIL = 'Spawn PATH, before the shell startup files.';
 export const MULTIPLEXER_DETAIL = 'This session is tmux or herdr. Its environment is not the spawn record.';
-const PATH_ENV = ['PATH', 'PATHEXT', 'SYSTEMROOT', 'HOME', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'NVM_DIR'];
+// Toolchain shims (rustup, pyenv, asdf, mise, volta, nodenv) read their home
+// and selected version from these, so a session probe without them reports
+// a runtime the session can actually run as unavailable.
+const PATH_ENV = [
+  'PATH', 'PATHEXT', 'SYSTEMROOT', 'HOME', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'XDG_DATA_HOME', 'XDG_CONFIG_HOME',
+  'NVM_DIR', 'VOLTA_HOME', 'NODENV_ROOT', 'NODENV_VERSION', 'PYENV_ROOT', 'PYENV_VERSION',
+  'ASDF_DIR', 'ASDF_DATA_DIR', 'MISE_DATA_DIR', 'MISE_CONFIG_DIR', 'RUSTUP_HOME', 'RUSTUP_TOOLCHAIN', 'CARGO_HOME',
+  'GOROOT', 'GOTOOLCHAIN', 'DOTNET_ROOT', 'R_HOME',
+];
 
 function hostName() {
   try { return os.hostname(); } catch { return null; }
@@ -353,7 +361,6 @@ export class Environment extends EventEmitter {
   }
 
   stopWorker(child) {
-    if (!child?.pid && !child) return;
     if (!child?.pid) return;
     if (process.platform === 'win32') killWindowsTree(child.pid);
     else { try { process.kill(-child.pid, 'SIGKILL'); } catch { /* already exited */ } }
