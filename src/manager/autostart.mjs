@@ -79,14 +79,17 @@ export function windowsRunCommand({ env, wrapper }) {
 
 /**
  * The sh script a macOS or Linux entry runs, with Node.js as $0, the
- * package script as $1, the entry's own file as $2, and the saved port as
- * $3, so no path is ever part of the script text.
+ * package script as $1, the entry's own file as $2, the saved port as $3
+ * and the manager log as $4, so no path is ever part of the script text.
+ * Its output, a missing Node.js included, is appended to the log when the
+ * log can be opened; the subshell tries first because a failed `exec`
+ * redirection would end sh before it starts anything.
  */
-export const POSIX_LAUNCH = `if [ -f "$1" ]; then AGENT_GUILD_PORT="$3" exec "$0" "$1" ${ARGS.join(' ')}; fi; rm -f "$2"`;
+export const POSIX_LAUNCH = `if [ -f "$1" ]; then if (exec >>"$4") 2>/dev/null; then exec >>"$4" 2>&1; echo "--- sign-in $(date -u +%Y-%m-%dT%H:%M:%SZ) ---"; fi; AGENT_GUILD_PORT="$3" exec "$0" "$1" ${ARGS.join(' ')}; fi; rm -f "$2"`;
 
 /** The entry's command line: sh, its script, then the paths it reads. */
-export function posixCommand({ execPath, script, file, port = DEFAULT_PORT }) {
-  return ['/bin/sh', '-c', POSIX_LAUNCH, execPath, script, file, portString(port)];
+export function posixCommand({ execPath, script, file, port = DEFAULT_PORT, log }) {
+  return ['/bin/sh', '-c', POSIX_LAUNCH, execPath, script, file, portString(port), log];
 }
 
 /**
@@ -107,7 +110,7 @@ export function stableExecPath(execPath, realpath = fs.realpathSync) {
 
 const xml = (value) => value.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
-export function launchAgentPlist({ execPath, script, file, port }) {
+export function launchAgentPlist({ execPath, script, file, port, log }) {
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
@@ -116,7 +119,7 @@ export function launchAgentPlist({ execPath, script, file, port }) {
     `  <key>Label</key><string>${LAUNCH_AGENT_LABEL}</string>`,
     '  <key>ProgramArguments</key>',
     '  <array>',
-    ...posixCommand({ execPath, script, file, port }).map((arg) => `    <string>${xml(arg)}</string>`),
+    ...posixCommand({ execPath, script, file, port, log }).map((arg) => `    <string>${xml(arg)}</string>`),
     '  </array>',
     '  <key>RunAtLoad</key><true/>',
     '  <key>AbandonProcessGroup</key><true/>',
@@ -136,13 +139,13 @@ export function desktopArg(value) {
   return quoted.replace(/\\/g, '\\\\').replace(/%/g, '%%');
 }
 
-export function desktopEntry({ execPath, script, file, port }) {
+export function desktopEntry({ execPath, script, file, port, log }) {
   return [
     '[Desktop Entry]',
     'Type=Application',
     'Name=Agent Guild',
     'Comment=Starts the Agent Guild session manager',
-    `Exec=${posixCommand({ execPath, script, file, port }).map(desktopArg).join(' ')}`,
+    `Exec=${posixCommand({ execPath, script, file, port, log }).map(desktopArg).join(' ')}`,
     'Terminal=false',
     'NoDisplay=true',
     'X-GNOME-Autostart-enabled=true',
@@ -212,6 +215,7 @@ async function writeIfChanged(file, contents) {
  * @param {object} opts
  * @param {string} opts.script  bin/agent-guild.mjs of the package that is running
  * @param {string} opts.dataDir  where the Windows wrapper is kept
+ * @param {string} [opts.log]  the manager log a macOS or Linux entry appends to
  * @param {() => number} [opts.getPort]  the bound port, read only when writing an entry
  * @param {string|null} [opts.unavailable]  a reason autostart cannot be offered, which turns it off here
  * @param {(args: string[]) => Promise<{ status: number, stdout: string, stderr: string }>} [opts.reg]  reg.exe, replaceable in tests
@@ -225,6 +229,7 @@ export function createAutostart({
   execPath = process.execPath,
   script,
   dataDir,
+  log = path.join(dataDir, 'manager.log'),
   getPort = () => DEFAULT_PORT,
   unavailable = null,
   reg = runCommand(path.win32.join(env.SystemRoot || env.SYSTEMROOT || env.WINDIR || 'C:\\Windows', 'System32', 'reg.exe')),
@@ -232,7 +237,7 @@ export function createAutostart({
   launchctl = runCommand('/bin/launchctl'),
 }) {
   const entryExecPath = platform === 'win32' ? execPath : stableExecPath(execPath);
-  const command = () => ({ execPath: entryExecPath, script, port: getPort() });
+  const command = () => ({ execPath: entryExecPath, script, port: getPort(), log });
   let refreshError = null;
   let queue = Promise.resolve();
   /** One change or check at a time, so two clicks cannot interleave their writes. */

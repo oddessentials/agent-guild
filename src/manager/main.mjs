@@ -89,6 +89,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
   autostart ??= createAutostart({
     script: path.join(rootDir, 'bin', 'agent-guild.mjs'),
     dataDir: dataDir(),
+    log: paths.log,
     getPort: () => api.port,
     unavailable: process.env.AGENT_GUILD_HOME ? 'Not available while AGENT_GUILD_HOME sets the data folder.' : null,
   });

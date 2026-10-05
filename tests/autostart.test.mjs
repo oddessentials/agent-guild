@@ -100,9 +100,9 @@ test('the Windows wrapper runs the launcher hidden and keeps any path intact in 
 });
 
 test('the LaunchAgent runs at load, escapes its paths and outlives the launching command', () => {
-  const text = launchAgentPlist({ execPath: '/opt/node & co/bin/node', script: '/Users/a/<guild>/bin/agent-guild.mjs', file: '/Users/a/Library/LaunchAgents/x.plist', port: 51234 });
+  const text = launchAgentPlist({ execPath: '/opt/node & co/bin/node', script: '/Users/a/<guild>/bin/agent-guild.mjs', file: '/Users/a/Library/LaunchAgents/x.plist', port: 51234, log: '/Users/a/.agent-guild/manager.log' });
   const args = [...text.matchAll(/<string>([^<]*)<\/string>/g)].slice(1).map((m) => m[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&'));
-  assert.deepEqual(args, ['/bin/sh', '-c', POSIX_LAUNCH, '/opt/node & co/bin/node', '/Users/a/<guild>/bin/agent-guild.mjs', '/Users/a/Library/LaunchAgents/x.plist', '51234']);
+  assert.deepEqual(args, ['/bin/sh', '-c', POSIX_LAUNCH, '/opt/node & co/bin/node', '/Users/a/<guild>/bin/agent-guild.mjs', '/Users/a/Library/LaunchAgents/x.plist', '51234', '/Users/a/.agent-guild/manager.log']);
   assert.match(text, /<key>RunAtLoad<\/key><true\/>/);
   assert.match(text, /<key>AbandonProcessGroup<\/key><true\/>/);
   assert.doesNotMatch(text, /KeepAlive/);
@@ -111,9 +111,9 @@ test('the LaunchAgent runs at load, escapes its paths and outlives the launching
 test('desktop entry arguments follow the quoting and string escape rules', () => {
   assert.equal(desktopArg('/home/a b/50%$x'), '"/home/a b/50%%\\\\$x"');
   assert.equal(desktopArg('/a"b`c\\d'), '"/a\\\\"b\\\\`c\\\\\\\\d"');
-  const paths = { execPath: '/opt/my node/bin/node', script: '/home/a/50% "guild"/bin/agent-guild.mjs', file: '/home/a/.config/autostart/agent-guild.desktop' };
+  const paths = { execPath: '/opt/my node/bin/node', script: '/home/a/50% "guild"/bin/agent-guild.mjs', file: '/home/a/.config/autostart/agent-guild.desktop', log: '/home/a/$HOME/manager.log' };
   const exec = desktopEntry(paths).match(/^Exec=(.*)$/m)[1];
-  assert.deepEqual(desktopExecArgs(exec), ['/bin/sh', '-c', POSIX_LAUNCH, paths.execPath, paths.script, paths.file, '47821']);
+  assert.deepEqual(desktopExecArgs(exec), ['/bin/sh', '-c', POSIX_LAUNCH, paths.execPath, paths.script, paths.file, '47821', paths.log]);
   assert.equal(desktopEntryEnabled('[Desktop Entry]\nX-GNOME-Autostart-enabled=true\n'), true);
   assert.equal(desktopEntryEnabled('[Desktop Entry]\nHidden=true\n'), false);
   assert.equal(desktopEntryEnabled('[Desktop Entry]\nX-GNOME-Autostart-enabled=false\n'), false);
@@ -283,7 +283,7 @@ test('Windows: a refused registry change is reported and leaves it off', async (
 });
 
 test('startup entries require a concrete valid port', () => {
-  const paths = { execPath: '/node', script: '/pkg/bin/agent-guild.mjs', file: '/entry' };
+  const paths = { execPath: '/node', script: '/pkg/bin/agent-guild.mjs', file: '/entry', log: '/manager.log' };
   for (const build of [windowsWrapper, launchAgentPlist, desktopEntry]) {
     for (const port of [0, -1, 65536, NaN, '51234']) assert.throws(() => build({ ...paths, port }), /listening/);
     for (const port of [1, 65535]) assert.ok(build({ ...paths, port }).includes(String(port)));
@@ -334,7 +334,7 @@ test('the API saves the actual bound port in every platform entry after listenin
     const saved = fs.readFileSync(file, 'utf8');
     if (platform === 'win32') assert.ok(saved.includes(`("AGENT_GUILD_PORT") = "${api.port}"`));
     else if (platform === 'darwin') assert.ok(saved.includes(`<string>${api.port}</string>`));
-    else assert.equal(desktopExecArgs(saved.match(/^Exec=(.*)$/m)[1]).at(-1), String(api.port));
+    else assert.equal(desktopExecArgs(saved.match(/^Exec=(.*)$/m)[1]).at(-2), String(api.port));
   }
 });
 
@@ -382,7 +382,8 @@ test('a macOS or Linux entry starts the manager while the package is there, and 
   fs.mkdirSync(path.dirname(script));
   fs.writeFileSync(script, probe(ran));
   fs.writeFileSync(entry, 'entry');
-  const run = (env) => execFileSync('/bin/sh', ['-c', POSIX_LAUNCH, process.execPath, script, entry, '51234'], { env });
+  const log = path.join(dir, 'no folder', 'manager.log');
+  const run = (env) => execFileSync('/bin/sh', ['-c', POSIX_LAUNCH, process.execPath, script, entry, '51234', log], { env });
   for (const inherited of [undefined, '47821']) {
     const env = { ...process.env };
     if (inherited === undefined) delete env.AGENT_GUILD_PORT;
@@ -469,4 +470,28 @@ test('macOS and Linux entries are writable only by their owner, whatever the uma
     await autostart.refresh();
     assert.equal(fs.statSync(file).mode & 0o777, 0o644, platform);
   }
+});
+
+test('a macOS or Linux entry appends what it runs to the manager log, and starts without one', { skip: process.platform === 'win32' && 'sh entries run on macOS and Linux' }, (t) => {
+  const dir = tempDir(t);
+  const script = path.join(dir, 'agent-guild.mjs');
+  const entry = path.join(dir, 'entry.plist');
+  const ran = path.join(dir, 'ran.json');
+  const log = path.join(dir, 'data $1', 'manager.log');
+  fs.writeFileSync(script, `${probe(ran)}console.log('manager output');\n`);
+  fs.writeFileSync(entry, 'entry');
+  const run = (execPath, logFile) => execFileSync('/bin/sh', ['-c', POSIX_LAUNCH, execPath, script, entry, '51234', logFile], { encoding: 'utf8' });
+  fs.mkdirSync(path.dirname(log));
+  fs.writeFileSync(log, 'earlier\n');
+  assert.equal(run(process.execPath, log), '', 'nothing is left on the launching output');
+  assert.match(fs.readFileSync(log, 'utf8'), /^earlier\n--- sign-in \d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ ---\nmanager output\n$/);
+  // A missing Node.js is recorded, and the entry is kept for the next manager to repair.
+  assert.throws(() => run(path.join(dir, 'gone', 'node'), log));
+  assert.match(fs.readFileSync(log, 'utf8'), /--- sign-in [^\n]+ ---\n(?:[^\n]*gone\/node[^\n]*\n)+$/);
+  assert.equal(fs.existsSync(entry), true);
+  // A log that cannot be opened still starts the manager.
+  fs.rmSync(ran);
+  fs.chmodSync(log, 0o444);
+  assert.equal(run(process.execPath, log), 'manager output\n');
+  assert.deepEqual(JSON.parse(fs.readFileSync(ran, 'utf8')).args, ['open', '--no-browser']);
 });
