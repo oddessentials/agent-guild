@@ -90,6 +90,7 @@ function loadDemo() {
     fetch: () => { throw new Error('demo API escaped to the network'); },
     localStorage: { setItem() {} },
     document: { body: { prepend() {} }, head: { append() {} }, createElement: (tag) => ({ tag, setAttribute() {} }) },
+    AGENT_GUILD_DEMO_VERSION: '2.3.4',
   };
   context.window = context;
   vm.runInNewContext(runtime, context, { filename: 'demo-runtime.js' });
@@ -301,6 +302,110 @@ test('the demo lists removable copies and simulates uninstalling one', async (t)
   assert.equal(left.installs.length, 1);
   assert.ok(left.installs[0].active, 'the remaining copy is the one in use');
   assert.deepEqual(left.warnings, []);
+});
+
+test('the demo serves health, sign-in launch and shared notes', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { context, call } = loadDemo();
+  const health = await call('GET', '/health');
+  assert.equal(health.status, 200);
+  assert.deepEqual({ ok: health.body.ok, name: health.body.name }, { ok: true, name: 'agent-guild' });
+
+  const off = (await call('GET', '/autostart')).body.autostart;
+  assert.equal(off.available, true);
+  assert.equal(off.enabled, false);
+  assert.equal(off.lastRun, null);
+  const on = (await call('PUT', '/autostart', { enabled: true })).body.autostart;
+  assert.equal(on.enabled, true);
+  assert.equal(on.lastRun.outcome, 'started');
+  assert.equal((await call('GET', '/autostart')).body.autostart.enabled, true);
+  assert.equal((await call('PUT', '/autostart', { enabled: false })).body.autostart.enabled, false);
+
+  const events = [];
+  const socket = new context.WebSocket('wss://example.test/api/v1/events');
+  socket.onmessage = ({ data }) => events.push(JSON.parse(data));
+  t.mock.timers.tick(40);
+  const notes = (await call('GET', '/notes')).body.notes;
+  assert.equal(typeof notes.text, 'string');
+  assert.equal(notes.text.length > 0, true);
+  assert.equal(events[0].notesRevision, notes.revision);
+  events.length = 0;
+  const saved = await call('PUT', '/notes', { revision: notes.revision, text: 'Hello from the demo' });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.body.notes.text, 'Hello from the demo');
+  const stale = await call('PUT', '/notes', { revision: notes.revision, text: 'too late' });
+  assert.equal(stale.status, 409);
+  assert.equal(stale.body.error.code, 'stale_notes');
+  assert.equal(stale.body.error.notes.text, 'Hello from the demo');
+  assert.equal((await call('GET', '/notes')).body.notes.text, 'Hello from the demo');
+  t.mock.timers.tick(0);
+  assert.equal(events.some((event) => event.type === 'notes.updated' && event.notes.text === 'Hello from the demo'), true);
+});
+
+test('the demo changelog, news and history match the shapes the page reads', async () => {
+  const { call } = loadDemo();
+  const changelog = (await call('GET', '/changelog')).body;
+  assert.equal(changelog.releases[0].version, '2.3.4');
+  assert.ok(changelog.releases[0].sections[0].changes.length >= 4);
+  assert.deepEqual(changelog.releases.map((release) => release.version), ['2.3.4', '0.32.0', '0.31.0']);
+
+  const news = (await call('GET', '/news')).body;
+  assert.equal(typeof news.refreshedAt, 'string');
+  for (const category of ['news', 'releases', 'research']) {
+    assert.equal(news.items.some((item) => item.category === category), true, category);
+  }
+
+  const history = (await call('GET', '/providers/anthropic/history?account=work')).body.history;
+  assert.equal(history.accountId, 'work');
+  assert.equal(history.total, history.sessions.length);
+  assert.ok(history.sessions.length >= 2);
+  for (const row of history.sessions) {
+    assert.deepEqual(Object.keys(row).sort(), ['cwd', 'id', 'startedAt', 'title', 'updatedAt']);
+  }
+  assert.equal((await call('GET', '/providers/shell/history')).body.error.code, 'history_unsupported');
+});
+
+test('the demo can reattach tmux, update Grok and stop while sessions are running', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { context, call } = loadDemo();
+  const reattached = await call('POST', '/sessions/7e110005/reattach');
+  assert.equal(reattached.status, 200);
+  assert.equal(reattached.body.session.status, 'running');
+  assert.equal(reattached.body.session.multiplexer.reattachable, true);
+
+  const grok = (await call('GET', '/providers')).body.providers.find((p) => p.id === 'xai');
+  assert.equal(grok.installedVersion, '0.1.40');
+  assert.equal(grok.latestVersion, '0.1.42');
+  assert.equal(grok.updateAvailable, true);
+  assert.equal(grok.cloudUrl, 'https://grok.com/');
+  const updated = await call('POST', '/providers/xai/install', {});
+  assert.equal(updated.status, 201);
+  assert.match(updated.body.session.name, /^Update Grok Build/);
+  t.mock.timers.tick(1200);
+  const after = (await call('GET', '/providers')).body.providers.find((p) => p.id === 'xai');
+  assert.equal(after.installedVersion, '0.1.42');
+  assert.equal(after.updateAvailable, false);
+
+  const reporting = await call('POST', '/providers/google/reporting', { enabled: false });
+  assert.equal(reporting.body.provider.reportingEnabled, false);
+  assert.equal((await call('POST', '/providers/anthropic/reporting', { enabled: true })).body.error.code, 'not_applicable');
+
+  const denied = await call('POST', '/shutdown', {});
+  assert.equal(denied.status, 409);
+  assert.equal(denied.body.error.code, 'sessions_running');
+  assert.equal(typeof denied.body.error.running, 'number');
+  assert.ok(denied.body.error.running > 0);
+
+  const events = [];
+  const socket = new context.WebSocket('wss://example.test/api/v1/events');
+  socket.onmessage = ({ data }) => events.push(JSON.parse(data));
+  t.mock.timers.tick(40);
+  events.length = 0;
+  const stopped = await call('POST', '/shutdown', { force: true });
+  assert.equal(stopped.status, 202);
+  assert.equal(stopped.body.restart, false);
+  t.mock.timers.tick(0);
+  assert.equal(events.some((event) => event.type === 'manager.stopped' && event.remaining === 0), true);
 });
 
 test('the release workflow gates Pages on the release and grants deployment-only permissions', () => {
