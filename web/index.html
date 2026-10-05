@@ -48,9 +48,15 @@
           </fieldset>
           <fieldset id="autostart-choice" hidden>
             <legend>Startup</legend>
-            <label class="choice"><input id="autostart" type="checkbox" name="autostart"><span class="autostart">Launch at sign-in</span></label>
+            <label id="autostart-single" class="choice"><input id="autostart" type="checkbox" name="autostart"><span class="autostart">Launch at sign-in</span></label>
+            <div id="startup-modes" hidden>
+              <label class="choice"><input id="startup-off" type="radio" name="startup" value="off"><span class="startup-off">Only when I start it</span></label>
+              <label class="choice"><input id="startup-sign-in" type="radio" name="startup" value="sign-in"><span class="autostart">When I sign in</span></label>
+              <label class="choice"><input id="startup-boot" type="radio" name="startup" value="boot"><span class="startup-boot">When the computer starts</span></label>
+            </div>
             <p id="autostart-note" class="voice-note"></p>
             <p id="autostart-run" class="voice-note autostart-run" role="status" hidden></p>
+            <div id="startup-commands" class="startup-commands" hidden></div>
           </fieldset>
           <fieldset id="voice-choice" hidden>
             <legend>Voice</legend>

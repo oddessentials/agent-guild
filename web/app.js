@@ -315,9 +315,87 @@ function autostartRun(autostart) {
   return `Last ran at sign-in on ${at}, but the session manager did not start.${autostart.log ? ` See ${autostart.log}.` : ''}`;
 }
 
-/** The manager's sign-in setting; hidden when the manager has none. */
+const STARTUP_MODES = ['off', 'sign-in', 'boot'];
+const STARTUP_OFF_NOTE = 'The session manager starts when you run agent-guild open, and stops when you stop it or the computer shuts down.';
+const startupTime = (iso) => new Date(iso).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+
+/** What the boot service is doing, as systemd reports it, and how loudly to say it. */
+function startupBootStatus(boot) {
+  const s = boot?.state;
+  if (!s) return { text: '', outcome: '' };
+  const on = (iso) => (iso ? ` on ${startupTime(iso)}` : '');
+  const text = {
+    running: `Running under systemd${s.since ? ` since ${startupTime(s.since)}` : ''}.`,
+    other: `systemd is running a different session manager (process ${s.pid}), not this one.`,
+    starting: 'systemd is starting the session manager…',
+    pending: 'Saved. This session manager was started without systemd; systemd takes over at its next restart or when the computer starts.',
+    stopped: 'systemd has stopped the session manager; it starts again when the computer starts.',
+    'port-in-use': `Did not start${on(s.at)}: another session manager was using port ${s.port}.`,
+    failed: `Stopped after failing to start${on(s.at)}. Its log says why:`,
+  }[s.kind] || '';
+  const linger = boot.linger ? '' : ' Until you allow it to run without a sign-in, it starts when you first sign in, not when the computer starts. Run this once as an administrator:';
+  const failed = s.kind === 'failed' || s.kind === 'port-in-use';
+  return { text: `${text}${linger}`, outcome: failed ? 'failed' : boot.linger ? 'started' : 'warn' };
+}
+
+/** Commands the state names as the next step, each with a Copy button. */
+function renderStartupCommands(commands = []) {
+  const box = $('startup-commands');
+  box.replaceChildren(...commands.map((command) => {
+    const row = document.createElement('div');
+    row.className = 'command';
+    const pre = document.createElement('pre');
+    pre.textContent = command;
+    const copy = document.createElement('button');
+    copy.className = 'btn';
+    copy.type = 'button';
+    copy.textContent = 'Copy';
+    copy.title = 'Copy the command';
+    copy.addEventListener('click', () => copyText(command, 'the command'));
+    row.append(pre, copy);
+    return row;
+  }));
+  box.hidden = commands.length === 0;
+}
+
+/** Linux: one choice of off, sign-in or boot, with what the chosen one is doing now. */
+function renderStartupModes(autostart) {
+  const { mode, boot } = autostart;
+  for (const value of STARTUP_MODES) {
+    const input = $(`startup-${value}`);
+    input.checked = value === mode;
+    input.disabled = !autostart.available || (value === 'boot' && !boot?.available);
+  }
+  let note;
+  let run = { text: '', outcome: '' };
+  if (mode === 'both') {
+    note = 'A sign-in entry and the systemd service are both on. Choose one.';
+  } else if (mode === 'boot') {
+    note = boot.reason || boot.note;
+    run = startupBootStatus(boot);
+  } else if (mode === 'sign-in') {
+    note = autostart.reason || autostart.note || AUTOSTART_NOTE;
+    run = { text: autostartRun(autostart), outcome: autostart.lastRun?.outcome ?? 'none' };
+  } else {
+    note = STARTUP_OFF_NOTE;
+  }
+  // Why the boot choice is greyed out, whichever mode is chosen.
+  if (boot && !boot.available && mode !== 'boot') run = { text: boot.reason, outcome: '' };
+  $('autostart-note').textContent = note;
+  $('autostart-run').textContent = run.text;
+  $('autostart-run').hidden = !run.text;
+  $('autostart-run').dataset.outcome = run.outcome;
+  renderStartupCommands(mode === 'boot' || mode === 'both' ? boot?.commands : []);
+}
+
+/** The manager's startup setting; hidden when the manager has none. */
 function renderAutostart(autostart) {
   $('autostart-choice').hidden = !autostart;
+  const modes = Boolean(autostart?.mode);
+  $('autostart-single').hidden = modes;
+  $('startup-modes').hidden = !modes;
+  if (modes) return renderStartupModes(autostart);
+  renderStartupCommands([]);
   $('autostart').checked = Boolean(autostart?.enabled);
   $('autostart').disabled = !autostart?.available;
   $('autostart-note').textContent = autostart?.reason || autostart?.note || AUTOSTART_NOTE;
@@ -327,10 +405,16 @@ function renderAutostart(autostart) {
   $('autostart-run').dataset.outcome = autostart?.enabled ? autostart.lastRun?.outcome ?? 'none' : '';
 }
 
+/** Every startup control, disabled while a read or change is in flight. */
+function disableStartup() {
+  $('autostart').disabled = true;
+  for (const value of STARTUP_MODES) $(`startup-${value}`).disabled = true;
+}
+
 async function loadAutostart({ afterChange = false } = {}) {
   if (!state.connected || (autostartChanging && !afterChange)) return;
   const request = ++autostartRequest;
-  $('autostart').disabled = true;
+  disableStartup();
   try {
     const { autostart } = await api('GET', '/autostart');
     if (request === autostartRequest) renderAutostart(autostart);
@@ -342,14 +426,14 @@ async function loadAutostart({ afterChange = false } = {}) {
   }
 }
 
-async function changeAutostart(input) {
+/** Sends one change, shows what the manager reports after it, and reads back the actual state when it fails. */
+async function sendStartup(body) {
   if (autostartChanging) return;
   autostartChanging = true;
   ++autostartRequest;
-  const enabled = input.checked;
-  input.disabled = true;
+  disableStartup();
   try {
-    renderAutostart((await api('PUT', '/autostart', { enabled })).autostart);
+    renderAutostart((await api('PUT', '/autostart', body)).autostart);
   } catch (err) {
     if (err instanceof AuthError) showAuth(err.message);
     else {
@@ -360,6 +444,14 @@ async function changeAutostart(input) {
   } finally {
     autostartChanging = false;
   }
+}
+
+function changeAutostart(input) {
+  return sendStartup({ enabled: input.checked });
+}
+
+function changeStartup(input) {
+  return sendStartup({ mode: input.value });
 }
 
 function changeSound(input) {
@@ -6064,6 +6156,7 @@ $('settings-menu').addEventListener('change', (e) => {
   else if (e.target.name === 'sound') changeSound(e.target);
   else if (e.target.name === 'voice') changeVoice(e.target);
   else if (e.target.name === 'autostart') changeAutostart(e.target);
+  else if (e.target.name === 'startup') changeStartup(e.target);
 });
 /**
  * Runs `opened` once a menu shows and `closed` once it hides. Chrome skips the toggle event of a menu

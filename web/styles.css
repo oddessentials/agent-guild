@@ -395,8 +395,15 @@ main { max-width: calc(1200px + var(--dock-space, 0px)); margin: 0 auto; padding
 .settings-menu .choice > .voice-input::before { mask-image: var(--icon-mic); }
 .settings-menu .choice > .autostart::before { mask-image: var(--icon-power); }
 .voice-note { margin: 0 8px 6px; max-width: 26ch; color: var(--muted); font-size: 0.75rem; line-height: 1.35; }
+.settings-menu .choice > .startup-boot::before { mask-image: var(--icon-server); }
+.settings-menu .choice > .startup-off::before { visibility: hidden; }
 .autostart-run { overflow-wrap: anywhere; }
 .autostart-run[data-outcome="failed"] { color: var(--danger); }
+.autostart-run[data-outcome="warn"] { color: var(--warn); }
+.startup-commands { display: grid; gap: 4px; margin: 0 8px 6px; max-width: 26ch; font-size: 0.75rem; }
+.startup-commands .command { align-items: flex-start; }
+.startup-commands .command pre { margin: 0; padding: 4px 6px; border: 1px solid var(--border); border-radius: calc(var(--radius) - 2px); background: var(--surface-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+.startup-commands .btn { padding: 3px 8px; font-size: 0.75rem; }
 .notes-open::before { mask-image: var(--icon-notes); }
 .notes-open[aria-pressed="true"], .github-toggle[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
 .menu-button::after { margin-left: 0.45em; transform: rotate(90deg); transition: transform 0.15s var(--ease); }
