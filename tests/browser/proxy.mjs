@@ -124,6 +124,47 @@ try {
     assert.deepEqual(errors, []);
     pass('both socket paths preserve the configured Host and Origin without CSP violations');
 
+    const tree = path.join(home, 'browse');
+    for (const dir of ['alpha/inner', 'beta', '.hidden']) fs.mkdirSync(path.join(tree, dir), { recursive: true });
+    await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+    assert.equal(await evaluate(`document.querySelector('#cwd-open').disabled`), true);
+    assert.equal(await evaluate(`document.querySelector('#cwd-open').title`), 'Only available on the computer running Agent Guild.');
+    await evaluate(`{ const cwd=document.querySelector('#cwd'); cwd.value=${JSON.stringify(path.join(tree, 'beta', 'missing'))}; document.querySelector('#cwd-pick').click(); }`);
+    await until('folder browser falls back to the nearest folder', () => evaluate(`document.querySelector('#folder-browser').open && document.querySelector('#folder-current').textContent===${JSON.stringify(path.join(tree, 'beta'))} && !document.querySelector('#folder-note').hidden`));
+    await evaluate(`document.querySelector('#folder-up').click()`);
+    await until('parent folder listed', () => evaluate(`document.querySelector('#folder-current').textContent===${JSON.stringify(tree)} && document.querySelectorAll('#folder-list .folder-row').length===2`));
+    assert.deepEqual(await evaluate(`[...document.querySelectorAll('#folder-list .folder-row')].map(r=>r.textContent)`), ['alpha', 'beta']);
+    const fit = await evaluate(`(() => { const d=document.querySelector('#folder-browser'),r=d.getBoundingClientRect(),rows=[...d.querySelectorAll('.folder-row')]; return {left:r.left,right:r.right,width:innerWidth,overflow:d.scrollWidth>d.clientWidth,rowHeight:Math.min(...rows.map(e=>e.offsetHeight))}; })()`);
+    assert.ok(fit.left >= 0 && fit.right <= fit.width && !fit.overflow && fit.rowHeight >= 44, JSON.stringify(fit));
+    await evaluate(`document.querySelector('#folder-hidden').click()`);
+    assert.deepEqual(await evaluate(`[...document.querySelectorAll('#folder-list .folder-row')].map(r=>r.textContent)`), ['.hidden', 'alpha', 'beta']);
+    await evaluate(`document.querySelector('#folder-hidden').click(); document.querySelector('#folder-list .folder-row').click()`);
+    await until('child folder listed', () => evaluate(`document.querySelector('#folder-current').textContent===${JSON.stringify(path.join(tree, 'alpha'))}`));
+    await evaluate(`document.querySelector('#folder-use').click()`);
+    assert.equal(await evaluate(`document.querySelector('#folder-browser').open`), false);
+    assert.equal(await evaluate(`document.querySelector('#cwd').value`), path.join(tree, 'alpha'));
+    await evaluate(`{ document.querySelector('#github-parent').value=${JSON.stringify(tree)}; document.querySelector('#github-parent-pick').click(); }`);
+    await until('clone folder browser', () => evaluate(`document.querySelector('#folder-title').textContent==='Choose clone folder' && document.querySelector('#folder-current').textContent===${JSON.stringify(tree)} && !document.querySelector('#folder-use').disabled`));
+    await evaluate(`document.querySelector('#folder-use').click()`);
+    assert.equal(await evaluate(`localStorage.getItem('agentGuild.cloneParent')`), tree);
+    await evaluate(`{ document.querySelector('#cwd').value=${JSON.stringify(path.join(tree, 'beta'))}; document.querySelector('.provider[data-id="fake"] .new').click(); }`);
+    await until('session started in the typed folder', () => [...ctx.manager.sessions.values()].some((s) => s.toJSON().cwd === path.join(tree, 'beta')));
+    await until('start recorded', () => evaluate(`JSON.parse(localStorage.getItem('agentGuild.recentCwds')||'[]').length===2`));
+    assert.deepEqual(await evaluate(`JSON.parse(localStorage.getItem('agentGuild.recentCwds'))`), [path.join(tree, 'beta'), path.join(tree, 'alpha')]);
+    await evaluate(`{ const cwd=document.querySelector('#cwd'); cwd.blur(); cwd.focus(); }`);
+    assert.deepEqual(await evaluate(`[...document.querySelectorAll('#cwd-recent [role=option]')].map(o=>o.textContent)`), [path.join(tree, 'beta'), path.join(tree, 'alpha')]);
+    assert.equal(await evaluate(`document.querySelector('#cwd').getAttribute('aria-expanded')`), 'true');
+    for (const key of ['ArrowDown', 'ArrowDown', 'Enter']) await send('Input.dispatchKeyEvent', { type: 'keyDown', key, code: key, windowsVirtualKeyCode: { ArrowDown: 40, Enter: 13 }[key] });
+    assert.equal(await evaluate(`document.querySelector('#cwd').value`), path.join(tree, 'alpha'));
+    assert.equal(await evaluate(`document.querySelector('#cwd-recent').hidden`), true);
+    await evaluate(`{ const cwd=document.querySelector('#cwd'); cwd.value='zzz'; cwd.dispatchEvent(new Event('input')); }`);
+    assert.equal(await evaluate(`document.querySelector('#cwd-recent').hidden`), true);
+    await evaluate(`document.querySelector('#cwd').blur()`);
+    assert.deepEqual(await evaluate('cspViolations'), []);
+    assert.deepEqual(errors, []);
+    await send('Emulation.clearDeviceMetricsOverride');
+    pass('a remote phone browses real host folders for both fields, gets recent working folders, and cannot open folders on the host');
+
     const pid = session.toJSON().pid;
     await evaluate(`{ const menu=document.querySelector('#menu-toggle'); if (menu.checkVisibility()) menu.click(); document.querySelector('#settings').click(); }`);
     await until('remote access available in Settings', () => evaluate(`document.querySelector('#remote-access-open').checkVisibility()`));
@@ -158,7 +199,7 @@ try {
     await evaluate(`document.querySelector('#remote-close').click()`);
     assert.equal(await evaluate(`document.querySelector('#remote-signin').value`), '');
     assert.equal(await evaluate(`document.querySelector('#remote-qr').hidden`), true);
-    assert.ok(['settings', 'menu-toggle'].includes(await evaluate('document.activeElement.id')));
+    await until('focus returns to Settings', () => evaluate(`['settings', 'menu-toggle'].includes(document.activeElement.id)`));
     pass('private QR and sign-in link render under CSP, fit a phone screen, and clear when closed');
 
     ctx.remoteAccess.change({ action: 'disable', revision: ctx.remoteAccess.snapshot().revision });
