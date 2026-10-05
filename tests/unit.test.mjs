@@ -2451,7 +2451,7 @@ test('a macOS manager with no locale takes Terminal.app\'s, and the login shell\
   // launchd sets no locale; the shell is asked with it already set, so /etc/zprofile keeps it.
   const signIn = resolveBaseEnv({ platform: 'darwin', env: { SHELL: '/bin/zsh', PATH: '/usr/bin' }, shellEnv: shellEnv({ PATH: '/opt/homebrew/bin' }), locale });
   assert.equal(signIn.LANG, 'en_GB.UTF-8');
-  assert.equal(signIn.PATH, '/opt/homebrew/bin:/usr/bin');
+  assert.equal(signIn.PATH, ['/opt/homebrew/bin', '/usr/bin'].join(path.delimiter));
   assert.deepEqual(seen, ['en_GB.UTF-8']);
   // A locale the user already has is kept, even one that is not UTF-8.
   for (const name of ['LANG', 'LC_ALL', 'LC_CTYPE']) {

@@ -434,7 +434,7 @@ test('the Windows wrapper starts the manager while the package is there, and rem
   assert.equal(fs.existsSync(wrapper), false);
 });
 
-test('Homebrew\'s Node.js is named by its opt link, which an upgrade keeps', async (t) => {
+test('Homebrew\'s Node.js is named by its opt link, which an upgrade keeps', { skip: process.platform === 'win32' && 'Homebrew uses POSIX paths and symlinks' }, async (t) => {
   const prefix = tempDir(t);
   const cellar = (version) => path.join(prefix, 'Cellar', 'node', version, 'bin', 'node');
   for (const version of ['25.8.1', '25.9.0']) {

@@ -3751,9 +3751,14 @@ async function loadBranches({ resume = false } = {}) {
       }
       for (const branch of result.branches) request.rows.set(branch.name, branch);
       request.nextPage = result.nextPage;
-      request.received = true;
-      request.value = { ...result, branches: [...request.rows.values()],
-        defaultBranch: request.defaultBranch, metadataError: request.metadataError };
+      // First loads display each page. A refresh keeps the previous list until
+      // every page arrives, so later-page rows and the reading position survive.
+      // `received` means the displayed value belongs to this listing generation.
+      if (!request.value || request.received || request.nextPage === null) {
+        request.received = true;
+        request.value = { ...result, branches: [...request.rows.values()],
+          defaultBranch: request.defaultBranch, metadataError: request.metadataError };
+      }
       renderGitHubViews();
     }
   } catch (err) {
@@ -3821,7 +3826,7 @@ function renderBranches({ preserveAnchor = true } = {}) {
   const branches = (value?.branches ?? []).filter((b) => b.name.toLocaleLowerCase().includes(query)).sort((a, b) =>
     Number(b.name === value.defaultBranch) - Number(a.name === value.defaultBranch)
       || a.name.localeCompare(b.name) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  const complete = Boolean(value && value.nextPage === null && (!slot.error || slot.received));
+  const complete = Boolean(slot?.received && value?.nextPage === null);
   const count = value?.branches.length ?? 0;
   let status = !value ? (slot?.error ? 'Branches could not be loaded.' : 'Loading branches…')
     : query ? `${branches.length} of ${count} loaded branches match.`
