@@ -2126,6 +2126,44 @@ test('no session can start once a shutdown has been accepted', async () => {
   }
 });
 
+test('a restart is refused, and nothing stopped, while the next manager could not run a terminal', async () => {
+  // As after an upgrade replaced a node-pty compiled on this computer.
+  const { createManagerServer } = await import('../src/manager/server.mjs');
+  const requests = [];
+  let checks = 0;
+  const spare = createManagerServer({
+    manager: ctx.manager,
+    registry: ctx.registry,
+    usage: { all: async () => [] },
+    token,
+    webDir: path.join(here, '..', 'web'),
+    onShutdownRequest: (opts) => requests.push(opts),
+    nextManagerProblem: () => { checks++; return 'Build node-pty first.'; },
+  });
+  await spare.listen();
+  const spareCall = (body) => fetch(`${spare.url}/api/v1/shutdown`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then(async (res) => ({ status: res.status, body: await res.json() }));
+  try {
+    const refused = await spareCall({ force: true, restart: true });
+    assert.equal(refused.status, 409);
+    assert.deepEqual(refused.body.error, { code: 'pty_unavailable', message: 'Build node-pty first.\nThe manager was not restarted, and its sessions keep running.' });
+    assert.equal(ctx.manager.closing, false, 'sessions can still start');
+    assert.deepEqual(requests, []);
+
+    const stopped = await spareCall({ force: true });
+    assert.equal(stopped.status, 202, 'a plain stop does not need a next manager');
+    assert.equal(checks, 1);
+    await waitFor(() => requests.length === 1, { label: 'the stop request' });
+    assert.deepEqual(requests, [{ restart: false }]);
+  } finally {
+    ctx.manager.closing = false;
+    await spare.close();
+  }
+});
+
 test('a tool that ignores the hang-up is force-killed', { skip: process.platform === 'win32' }, async () => {
   const session = await createFake();
   const client = terminal(session.id);

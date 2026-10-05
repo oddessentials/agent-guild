@@ -7,6 +7,7 @@ import { EventEmitter } from 'node:events';
 import { compareVersions, fetchManifest } from './versions.mjs';
 import { formatCommand } from './install-channels.mjs';
 import { buildSpawnSpec } from './command-resolver.mjs';
+import { ptyBuild } from './pty.mjs';
 
 const CHECK_TTL_MS = 60 * 60 * 1000;
 const FAILED_CHECK_TTL_MS = 5 * 60 * 1000;
@@ -39,13 +40,15 @@ export class SelfUpdate extends EventEmitter {
    * @param {string} opts.version        the running version
    * @param {string|null} [opts.packageFile]  the package.json the manager runs from; read again after an install
    * @param {import('./providers.mjs').ProviderRegistry} opts.registry  for the registry URL, npm, and fetch
+   * @param {() => ({ command: string, built: boolean }|null)} [opts.ptyBuild]  node-pty's build on this computer; a stand-in in tests
    */
-  constructor({ pkg, version, packageFile = null, registry }) {
+  constructor({ pkg, version, packageFile = null, registry, ptyBuild: readPtyBuild = ptyBuild }) {
     super();
     this.pkg = pkg;
     this.version = version;
     this.packageFile = packageFile;
     this.registry = registry;
+    this.readPtyBuild = readPtyBuild;
     this.latest = null;
     this.error = null;
     this.checkedAt = 0;
@@ -139,7 +142,7 @@ export class SelfUpdate extends EventEmitter {
     if (this.installing) {
       return {
         version: this.version, latestVersion: this.latest, available: false, command: null, guidance: null,
-        pendingVersion: null, installing: true, lastInstall: null,
+        pendingVersion: null, installing: true, lastInstall: null, ptyBuild: null,
       };
     }
     const installed = this.installedVersion();
@@ -155,6 +158,8 @@ export class SelfUpdate extends EventEmitter {
       pendingVersion: this.pendingVersion(installed),
       installing: false,
       lastInstall: this.lastInstall,
+      // Where node-pty has to be compiled here, an upgrade replaces that build.
+      ptyBuild: this.readPtyBuild(),
     };
   }
 

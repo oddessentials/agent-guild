@@ -4,10 +4,10 @@
 
 import { EventEmitter } from 'node:events';
 import crypto from 'node:crypto';
-import pty from 'node-pty';
 import headless from '@xterm/headless';
 import serializeAddon from '@xterm/addon-serialize';
 import { killWindowsTree } from './command-resolver.mjs';
+import { loadPty } from './pty.mjs';
 
 const { Terminal } = headless;
 const { SerializeAddon } = serializeAddon;
@@ -175,7 +175,7 @@ export class Session extends EventEmitter {
   }
 
   _start(spawnSpec, cwd = this.cwd) {
-    const proc = pty.spawn(spawnSpec.file, spawnSpec.args, {
+    const proc = loadPty().spawn(spawnSpec.file, spawnSpec.args, {
       name: 'xterm-256color',
       cols: this.cols,
       rows: this.rows,

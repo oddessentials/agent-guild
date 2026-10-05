@@ -14,6 +14,7 @@ import { createFolderBrowser } from './folder-browser.mjs';
 import { normalizeAccess } from './access-policy.mjs';
 import { NOTES_BODY_LIMIT, createNotesStore } from './notes.mjs';
 import { MODES as AUTOSTART_MODES } from './autostart.mjs';
+import { ptyProblem } from './pty.mjs';
 
 const require = createRequire(import.meta.url);
 const API = '/api/v1';
@@ -154,6 +155,8 @@ export function createManagerServer({
   launcher = null,
   /** @type {(opts: { restart: boolean }) => void} */
   onShutdownRequest = () => {},
+  /** Why a manager started from the files on disk could not run a terminal, or null; a stand-in in tests. */
+  nextManagerProblem = ptyProblem,
 }) {
   let access = normalizeAccess({ hosts: extraHosts, origins: extraOrigins });
   let policyVersion = 0;
@@ -429,6 +432,11 @@ export function createManagerServer({
       // so a client must say `force` while any of those is running. The same
       // guard serves every front end.
       const body = await readJsonBody(req);
+      // The next manager runs the files on disk. Where node-pty has to be
+      // built on this computer and an upgrade replaced that build, it would
+      // not start, so this one keeps running and says what to do first.
+      const problem = body.restart === true ? nextManagerProblem() : null;
+      if (problem) throw new HttpError(409, `${problem}\nThe manager was not restarted, and its sessions keep running.`, 'pty_unavailable');
       const running = manager.runningCount();
       if (running > 0 && body.force !== true) {
         const err = new HttpError(409, `${running} session(s) are running; stopping the manager ends them`, 'sessions_running');
