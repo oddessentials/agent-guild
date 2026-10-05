@@ -337,7 +337,7 @@ Any other tool or script can report agents and its model too. See
   been uninstalled or moved removes itself at the next sign-in. With nvm,
   the package lives in the Node.js version's folder, so uninstalling that
   version counts as uninstalling Agent Guild; a Homebrew Node.js upgrade
-  does not. On macOS and Linux what the entry runs at sign-in, including a
+  or a Snap Node.js refresh does not. On macOS and Linux what the entry runs at sign-in, including a
   missing Node.js, is appended to `manager.log`.
   The entry saves the manager's listening port, including the assigned port
   when started with `AGENT_GUILD_PORT=0`. Enabled entries are updated when

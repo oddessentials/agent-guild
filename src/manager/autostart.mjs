@@ -27,8 +27,8 @@
 // an entry whose package script is gone removes itself at sign-in instead
 // of failing there at every sign-in after. A missing Node.js alone keeps
 // the entry: the next manager to start points it at its own. Homebrew's
-// Node.js is named by its opt link, which an upgrade keeps, rather than by
-// the versioned Cellar folder the upgrade deletes.
+// and Snap's Node.js are named by the link an upgrade keeps (opt, current)
+// rather than by the versioned folder the upgrade deletes.
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -138,19 +138,31 @@ export function posixCommand({ launcher, ...paths }) {
 }
 
 /**
- * Homebrew runs Node.js from `<prefix>/Cellar/<formula>/<version>`, which
- * the next upgrade deletes. `<prefix>/opt/<formula>` follows the formula
- * across upgrades, so it names Node.js instead when it leads to the same file.
+ * Versioned Node.js folders that an upgrade deletes, each with the link that
+ * follows the package across upgrades. Homebrew runs Node.js from
+ * `<prefix>/Cellar/<formula>/<version>`, kept as `<prefix>/opt/<formula>`.
+ * A snap runs it from `<snaps>/<snap>/<revision>`, where `<snaps>` is
+ * `/snap` or `/var/lib/snapd/snap`, kept as `<snaps>/<snap>/current`; snapd
+ * removes old revisions after a refresh.
  */
+const VERSIONED_NODE = [
+  [/^(.+)\/Cellar\/([^/]+)\/[^/]+\/bin\/node$/, (prefix, formula) => `${prefix}/opt/${formula}/bin/node`],
+  [/^(.*\/snap)\/([^/]+)\/x?\d+\/bin\/node$/, (snaps, snap) => `${snaps}/${snap}/current/bin/node`],
+];
+
+/** Names Node.js by the link that survives upgrades, when that link leads to the same file. */
 export function stableExecPath(execPath, realpath = fs.realpathSync) {
-  const match = execPath.match(/^(.+)\/Cellar\/([^/]+)\/[^/]+\/bin\/node$/);
-  if (!match) return execPath;
-  const opt = `${match[1]}/opt/${match[2]}/bin/node`;
-  try {
-    return realpath(opt) === realpath(execPath) ? opt : execPath;
-  } catch {
-    return execPath;
+  for (const [pattern, link] of VERSIONED_NODE) {
+    const match = execPath.match(pattern);
+    if (!match) continue;
+    const stable = link(...match.slice(1));
+    try {
+      return realpath(stable) === realpath(execPath) ? stable : execPath;
+    } catch {
+      return execPath;
+    }
   }
+  return execPath;
 }
 
 const xml = (value) => value.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
