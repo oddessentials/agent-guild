@@ -17,7 +17,9 @@
 // at the next sign-in. npm runs no script when a package is uninstalled, so
 // an entry whose package script is gone removes itself at sign-in instead
 // of failing there at every sign-in after. A missing Node.js alone keeps
-// the entry: the next manager to start points it at its own.
+// the entry: the next manager to start points it at its own. Homebrew's
+// Node.js is named by its opt link, which an upgrade keeps, rather than by
+// the versioned Cellar folder the upgrade deletes.
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -85,6 +87,22 @@ export const POSIX_LAUNCH = `if [ -f "$1" ]; then AGENT_GUILD_PORT="$3" exec "$0
 /** The entry's command line: sh, its script, then the paths it reads. */
 export function posixCommand({ execPath, script, file, port = DEFAULT_PORT }) {
   return ['/bin/sh', '-c', POSIX_LAUNCH, execPath, script, file, portString(port)];
+}
+
+/**
+ * Homebrew runs Node.js from `<prefix>/Cellar/<formula>/<version>`, which
+ * the next upgrade deletes. `<prefix>/opt/<formula>` follows the formula
+ * across upgrades, so it names Node.js instead when it leads to the same file.
+ */
+export function stableExecPath(execPath, realpath = fs.realpathSync) {
+  const match = execPath.match(/^(.+)\/Cellar\/([^/]+)\/[^/]+\/bin\/node$/);
+  if (!match) return execPath;
+  const opt = `${match[1]}/opt/${match[2]}/bin/node`;
+  try {
+    return realpath(opt) === realpath(execPath) ? opt : execPath;
+  } catch {
+    return execPath;
+  }
 }
 
 const xml = (value) => value.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
@@ -205,7 +223,8 @@ export function createAutostart({
   uid = process.getuid?.(),
   launchctl = runCommand('/bin/launchctl'),
 }) {
-  const command = () => ({ execPath, script, port: getPort() });
+  const entryExecPath = platform === 'win32' ? execPath : stableExecPath(execPath);
+  const command = () => ({ execPath: entryExecPath, script, port: getPort() });
   let refreshError = null;
   let queue = Promise.resolve();
   /** One change or check at a time, so two clicks cannot interleave their writes. */

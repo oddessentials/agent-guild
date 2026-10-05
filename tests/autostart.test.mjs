@@ -19,6 +19,7 @@ import {
   desktopEntryEnabled,
   launchAgentPlist,
   launchAgentDisabled,
+  stableExecPath,
   windowsRunCommand,
   windowsWrapper,
 } from '../src/manager/autostart.mjs';
@@ -425,4 +426,29 @@ test('the Windows wrapper starts the manager while the package is there, and rem
   assert.equal(has(runKey), false);
   assert.equal(has(approvedKey), false);
   assert.equal(fs.existsSync(wrapper), false);
+});
+
+test('Homebrew\'s Node.js is named by its opt link, which an upgrade keeps', async (t) => {
+  const prefix = tempDir(t);
+  const cellar = (version) => path.join(prefix, 'Cellar', 'node', version, 'bin', 'node');
+  for (const version of ['25.8.1', '25.9.0']) {
+    fs.mkdirSync(path.dirname(cellar(version)), { recursive: true });
+    fs.writeFileSync(cellar(version), '');
+  }
+  fs.mkdirSync(path.join(prefix, 'opt'));
+  fs.symlinkSync('../Cellar/node/25.8.1', path.join(prefix, 'opt', 'node'));
+  const opt = path.join(prefix, 'opt', 'node', 'bin', 'node');
+  assert.equal(stableExecPath(cellar('25.8.1')), opt);
+  assert.equal(stableExecPath(cellar('25.9.0')), cellar('25.9.0'), 'an opt link to another version is not used');
+  assert.equal(stableExecPath(path.join(prefix, 'Cellar', 'node@22', '22.1.0', 'bin', 'node')), path.join(prefix, 'Cellar', 'node@22', '22.1.0', 'bin', 'node'), 'a formula with no opt link keeps its path');
+  assert.equal(stableExecPath('/Users/a/.nvm/versions/node/v24.13.0/bin/node'), '/Users/a/.nvm/versions/node/v24.13.0/bin/node');
+
+  const home = tempDir(t);
+  const options = { home, script: '/pkg/bin/agent-guild.mjs', dataDir: home, execPath: cellar('25.8.1'), uid: 501, launchctl: fakeLaunchctl().launchctl, release: '6.8.0', env: {} };
+  await createAutostart({ ...options, platform: 'darwin' }).set(true);
+  const plist = fs.readFileSync(path.join(home, 'Library', 'LaunchAgents', `${LAUNCH_AGENT_LABEL}.plist`), 'utf8');
+  assert.ok(plist.includes(`<string>${opt}</string>`));
+  assert.ok(!plist.includes('25.8.1'));
+  await createAutostart({ ...options, platform: 'linux' }).set(true);
+  assert.ok(fs.readFileSync(path.join(home, '.config', 'autostart', 'agent-guild.desktop'), 'utf8').includes(opt));
 });
