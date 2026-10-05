@@ -898,9 +898,26 @@ a.news-link:visited { color: var(--muted); }
 .github-view[aria-selected="true"] { color: var(--heading); background: var(--surface-2); border-color: var(--border); border-bottom-color: var(--surface-2); }
 .github-view:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 .github-view .short { display: none; }
-@container (max-width: 340px) {
+@container (max-width: 440px) {
   .github-view .long { display: none; }
   .github-view .short { display: inline; }
+}
+#github-branches { overflow-anchor: none; }
+.github-branch-filter { display: flex; align-items: center; gap: 6px; }
+.github-branch-filter input {
+  flex: 1; min-width: 0; padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface); color: var(--text); font: inherit; font-size: 0.85rem;
+}
+.github-branch-filter input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.github-branch .history-title { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; }
+.github-branch .github-record-title { min-width: 0; overflow-wrap: anywhere; }
+.github-branch-badges { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.github-branch .history-meta { font-family: var(--font-mono, monospace); }
+.github-branch > .btn { align-self: start; }
+#github-branches-error .btn { margin-left: 6px; }
+@media (pointer: coarse) {
+  .github-branch-filter input { font-size: 16px; }
+  .github-branch > .btn, #github-branches .github-view-tools .btn, .github-branch-filter .btn { min-height: 36px; }
 }
 .github-running { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 25%, transparent); animation: pulse 1.4s ease-in-out infinite; }
 .github-body[hidden] { display: none; }

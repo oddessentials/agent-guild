@@ -195,8 +195,11 @@ of them from the box at its top; it starts on the repository the focused
 terminal's folder is a clone of. **Issues** lists, opens, edits and closes
 issues. **Actions** shows the latest workflow runs and whether one is still
 going, refreshing while it is on screen. **Pull requests** lists the open
-ones. **Repositories** lists and creates repositories and clones them over SSH
-with a key Agent Guild keeps for each account. On a wide window the side panel
+ones. **Branches** lists every remote branch of the selected repository, with
+its default and protected branches marked. Filter by name, copy a branch name,
+or open it on GitHub. Larger lists load progressively; **Refresh** checks for
+changes while keeping your place in the list. **Repositories** lists and creates
+repositories and clones them over SSH with a key Agent Guild keeps for each account. On a wide window the side panel
 makes room for itself; on a smaller one it lies over the cards, and over the
 terminals when they would get too narrow. Drag its edge to resize it. Escape
 or **Close** puts it away.

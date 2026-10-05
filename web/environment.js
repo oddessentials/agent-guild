@@ -92,6 +92,8 @@ export function createEnvironmentUI({ api, onAuthError, isAuthError = () => fals
   $('environment-refresh').addEventListener('click', () => load(true));
   dialog.addEventListener('click', (event) => { if (event.target === dialog) dialog.close(); });
   dialog.addEventListener('close', () => {
+    // A queued close from an earlier opening must not clear the current opener.
+    if (dialog.open) return;
     if (openerId) document.querySelector(`.provider[data-id="${openerId}"] .environment-open`)?.focus();
     openerId = null;
   });

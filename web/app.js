@@ -2967,6 +2967,13 @@ function loadGitHub() {
 function setGitHub(github) {
   const before = state.github?.signIn;
   state.github = github;
+  const branches = githubPick.data.branches;
+  if (branches && !github.accounts.some((a) => a.id === branches.repo.accountId && !a.needsSignIn)) {
+    // Replace the generation even while the dock is closed; signing in again must
+    // never make an earlier account's pending answer current.
+    githubPick.data.branches = { ...branches, value: null, loading: false, nextPage: null,
+      error: `Sign in as @${branches.repo.login} in Repositories to see its branches.` };
+  }
   const done = github.signIn?.status === 'done' && before?.status === 'pending' ? github.signIn : null;
   if (done) {
     selectGitHubAccount(done.accountId);
@@ -3086,7 +3093,7 @@ function openGitHub({ focus = true } = {}) {
   loadGitHub();
   if (githubPick.repo) {
     loadView('actions');
-    if (githubShownView() === 'issues' || githubShownView() === 'pulls') loadView(githubShownView());
+    if (['issues', 'pulls', 'branches'].includes(githubShownView())) loadView(githubShownView());
   }
   followTerminal();
   if (focus) ($('github-card').querySelector('.btn.primary') ?? $('dock-close')).focus();
@@ -3497,7 +3504,7 @@ function useFolder(dir) {
 
 // ---- GitHub repository views ------------------------------------------------
 
-const GITHUB_VIEWS = ['repos', 'issues', 'actions', 'pulls'];
+const GITHUB_VIEWS = ['repos', 'issues', 'actions', 'pulls', 'branches'];
 const RUNS_POLL_MS = 6000;
 const RUNS_IDLE_POLL_MS = 30000;
 const BODY_LIMIT = 48000;
@@ -3592,7 +3599,11 @@ function pickRepo(repo, { chosen = false } = {}) {
     githubPick.recent = remember(githubPick.recent, repo);
     save(GITHUB_RECENT_KEY, JSON.stringify(githubPick.recent));
   }
-  if (!same) Object.assign(githubPick, { data: {}, editing: null });
+  if (!same) {
+    Object.assign(githubPick, { data: {}, editing: null });
+    $('github-branches-filter').value = '';
+    $('github-branches').scrollTop = 0;
+  }
   if ((!same || chosen) && githubView.accountId !== repo.accountId && state.github?.accounts.some((a) => a.id === repo.accountId)) {
     selectGitHubAccount(repo.accountId);
     githubView.card = null;
@@ -3605,7 +3616,7 @@ function pickRepo(repo, { chosen = false } = {}) {
   renderGitHubViews();
   if (!dockShows('github')) return;
   loadView('actions');
-  if (githubShownView() === 'issues' || githubShownView() === 'pulls') loadView(githubShownView());
+  if (['issues', 'pulls', 'branches'].includes(githubShownView())) loadView(githubShownView());
 }
 
 /** Picks the repository whose clone holds the focused terminal's folder, once for each terminal focused. */
@@ -3628,6 +3639,7 @@ async function followTerminal() {
 }
 
 async function loadView(view) {
+  if (view === 'branches') return loadBranches();
   const repo = githubPick.repo;
   if (!repo || view === 'repos') return;
   const query = view === 'issues' ? `?state=${githubPick.issueState}` : '';
@@ -3650,6 +3662,170 @@ async function loadView(view) {
   githubPick.data[view] = { key, stamp, value: value ?? slot.value, error, loading: false };
   renderGitHubViews();
   if (view === 'actions') scheduleRuns();
+}
+
+// Each object is a listing generation, scoped to the selected account/repository.
+// A retry continues that generation; Refresh replaces it and starts at page one.
+function branchesCurrent(request) {
+  return githubPick.data.branches === request && githubPick.repo && repoKey(githubPick.repo) === request.key
+    && state.github?.accounts.some((a) => a.id === request.repo.accountId && !a.needsSignIn);
+}
+
+function branchesVisible() {
+  return dockShows('github') && githubShownView() === 'branches' && document.visibilityState === 'visible';
+}
+
+async function loadBranches({ resume = false } = {}) {
+  const repo = githubPick.repo;
+  if (!repo || !state.github?.accounts.some((a) => a.id === repo.accountId && !a.needsSignIn)) return;
+  const before = viewData('branches');
+  if (resume && (!before || before.loading || before.nextPage === null)) return;
+  const request = resume ? before : {
+    key: repoKey(repo), repo, value: before?.value ?? null, loading: false, error: null,
+    nextPage: 1, received: false, rows: new Map(), defaultBranch: null, metadataError: null,
+  };
+  githubPick.data.branches = request;
+  request.loading = true;
+  request.error = null;
+  renderGitHubViews();
+  try {
+    while (request.nextPage !== null && branchesVisible() && branchesCurrent(request)) {
+      const page = request.nextPage;
+      const result = await api('GET', `${repoPath(repo)}/branches?page=${page}`);
+      if (!branchesCurrent(request)) return;
+      // A malformed response must not masquerade as a complete, empty list.
+      if (!Array.isArray(result.branches) || (result.nextPage !== null
+        && (!Number.isSafeInteger(result.nextPage) || result.nextPage <= page))) {
+        throw new Error('Could not read the next page of branches. Try again.');
+      }
+      if (page === 1) {
+        request.defaultBranch = result.defaultBranch;
+        request.metadataError = result.metadataError;
+      }
+      for (const branch of result.branches) request.rows.set(branch.name, branch);
+      request.nextPage = result.nextPage;
+      request.received = true;
+      request.value = { ...result, branches: [...request.rows.values()],
+        defaultBranch: request.defaultBranch, metadataError: request.metadataError };
+      renderGitHubViews();
+    }
+  } catch (err) {
+    if (!branchesCurrent(request)) return;
+    if (err instanceof AuthError) { showAuth(err.message); return; }
+    request.error = err.message;
+  } finally {
+    if (branchesCurrent(request)) {
+      request.loading = false;
+      renderGitHubViews();
+    }
+  }
+}
+
+/** Keep the first visible branch at the same pixel offset when earlier rows arrive. */
+function branchAnchor(panel, list) {
+  const { top, bottom } = panel.getBoundingClientRect();
+  const row = [...list.children].find((node) => {
+    const rect = node.getBoundingClientRect();
+    return rect.bottom > top && rect.top < bottom;
+  });
+  return row ? { name: row.dataset.branch, offset: row.getBoundingClientRect().top - top } : null;
+}
+
+async function copyBranch(name, control) {
+  const request = viewData('branches');
+  control.disabled = true;
+  let message;
+  try {
+    if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+    await navigator.clipboard.writeText(name);
+    message = `Copied branch name: ${name}`;
+  } catch {
+    message = 'Could not copy. Select the branch name and copy it using your browser.';
+  } finally {
+    control.disabled = false;
+  }
+  if (request === viewData('branches') && branchesVisible() && control.isConnected) toast(message);
+}
+
+function renderBranches({ preserveAnchor = true } = {}) {
+  const panel = $('github-branches');
+  const list = $('github-branches-list');
+  const repo = githubPick.repo;
+  const key = repo ? repoKey(repo) : '';
+  const same = panel.dataset.repo === key;
+  const anchor = same && preserveAnchor ? branchAnchor(panel, list) : null;
+  const focused = list.contains(document.activeElement) ? document.activeElement : null;
+  const oldScroll = same ? panel.scrollTop : 0;
+  if (!same) { list.replaceChildren(); panel.dataset.repo = key; }
+  $('github-branches-pick').hidden = Boolean(repo);
+  $('github-branches-content').hidden = !repo;
+  if (!repo) return;
+  const slot = viewData('branches');
+  const value = slot?.value;
+  const query = $('github-branches-filter').value.trim().toLocaleLowerCase();
+  $('github-branches-clear').disabled = !$('github-branches-filter').value;
+  const refresh = $('github-branches-refresh');
+  const usable = state.github?.accounts.some((a) => a.id === repo.accountId && !a.needsSignIn);
+  refresh.disabled = Boolean(slot?.loading) || !usable;
+  refresh.textContent = slot?.loading ? (value ? 'Refreshing…' : 'Loading…') : 'Refresh';
+  const out = $('github-branches-out');
+  out.href = value?.url ?? `https://github.com/${repo.fullName}/branches`;
+  out.title = `Open ${repo.fullName} branches on GitHub`;
+  const branches = (value?.branches ?? []).filter((b) => b.name.toLocaleLowerCase().includes(query)).sort((a, b) =>
+    Number(b.name === value.defaultBranch) - Number(a.name === value.defaultBranch)
+      || a.name.localeCompare(b.name) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  const complete = Boolean(value && value.nextPage === null && (!slot.error || slot.received));
+  const count = value?.branches.length ?? 0;
+  let status = !value ? (slot?.error ? 'Branches could not be loaded.' : 'Loading branches…')
+    : query ? `${branches.length} of ${count} loaded branches match.`
+      : `${count} ${count === 1 ? 'branch' : 'branches'}${complete ? '' : ' loaded'}.`;
+  if (value && !slot.received) status += slot.loading ? ' Refreshing…' : ' Showing previous results.';
+  else if (!complete && value) status += slot.loading ? ' Loading more…' : ' Listing incomplete.';
+  if (complete && !branches.length) status = query ? `No branches match “${$('github-branches-filter').value.trim()}”.` : 'No remote branches yet.';
+  const statusNode = $('github-branches-status');
+  if (statusNode.textContent !== status) statusNode.textContent = status;
+  const failure = $('github-branches-error');
+  failure.hidden = !slot?.error;
+  failure.querySelector('span').textContent = slot?.error ?? '';
+  $('github-branches-retry').disabled = Boolean(slot?.loading) || slot?.nextPage === null || !usable;
+  const metadata = $('github-branches-metadata');
+  metadata.hidden = !value?.metadataError;
+  metadata.textContent = value?.metadataError ? 'Branches loaded, but the default branch could not be identified. Refresh to try again.' : '';
+  const existing = new Map([...list.children].map((row) => [row.dataset.branch, row]));
+  const wanted = new Set(branches.map((branch) => branch.name));
+  let cursor = list.firstElementChild;
+  for (const branch of branches) {
+    let row = existing.get(branch.name);
+    if (!row) {
+      const copy = button('Copy name', () => copyBranch(branch.name, copy));
+      copy.setAttribute('aria-label', `Copy branch name ${branch.name}`);
+      row = recordRow(`branch:${branch.name}`, branch.name, '', copy, branch.url);
+      row.classList.add('github-branch');
+      row.dataset.branch = branch.name;
+      row.setAttribute('role', 'listitem');
+      row.querySelector('.history-title').append(el('span', 'github-branch-badges'));
+    }
+    const badges = row.querySelector('.github-branch-badges');
+    const badgeState = `${branch.name === value.defaultBranch}:${branch.protected}`;
+    if (badges.dataset.state !== badgeState) {
+      badges.dataset.state = badgeState;
+      badges.replaceChildren(...[
+        branch.name === value.defaultBranch ? badge('', 'Default', 'Default branch') : null,
+        branch.protected ? badge('', 'Protected', 'Protected by branch protection or rulesets') : null,
+      ].filter(Boolean));
+    }
+    row.querySelector('.history-meta').textContent = branch.sha ? branch.sha.slice(0, 7) : '';
+    row.querySelector('.history-meta').title = branch.sha ?? '';
+    if (row === cursor) cursor = cursor.nextElementSibling;
+    else list.insertBefore(row, cursor);
+  }
+  for (const row of [...list.children]) if (!wanted.has(row.dataset.branch)) row.remove();
+  if (focused?.isConnected && document.activeElement !== focused) focused.focus({ preventScroll: true });
+  panel.scrollTop = oldScroll;
+  if (anchor) {
+    const row = [...list.children].find((node) => node.dataset.branch === anchor.name);
+    if (row) panel.scrollTop += row.getBoundingClientRect().top - panel.getBoundingClientRect().top - anchor.offset;
+  }
 }
 
 function viewData(view) {
@@ -3824,6 +4000,7 @@ function renderGitHubViews() {
   $('github-issues').hidden = shown !== 'issues';
   $('github-runs').hidden = shown !== 'actions';
   $('github-pulls').hidden = shown !== 'pulls';
+  $('github-branches').hidden = shown !== 'branches';
   const ready = Boolean(state.github && githubAccount() && !githubAccount().needsSignIn);
   $('github-clone-into').hidden = !ready || shown !== 'repos';
   const running = Boolean(viewData('actions')?.value?.running);
@@ -3833,6 +4010,7 @@ function renderGitHubViews() {
   if (shown === 'issues') renderIssues();
   else if (shown === 'actions') renderRuns();
   else if (shown === 'pulls') renderPulls();
+  else if (shown === 'branches') renderBranches();
 }
 
 /** Rebuilds a panel and puts the focus back on the control with the same `data-key`. */
@@ -5650,6 +5828,18 @@ $('github-views').addEventListener('click', (e) => {
   if (view) switchGitHubView(view);
 });
 $('github-views').addEventListener('keydown', moveGitHubView);
+$('github-branches-refresh').addEventListener('click', () => loadView('branches'));
+$('github-branches-retry').addEventListener('click', () => loadBranches({ resume: true }));
+$('github-branches-filter').addEventListener('input', () => {
+  $('github-branches').scrollTop = 0;
+  renderBranches({ preserveAnchor: false });
+});
+$('github-branches-clear').addEventListener('click', () => {
+  $('github-branches-filter').value = '';
+  $('github-branches').scrollTop = 0;
+  renderBranches({ preserveAnchor: false });
+  $('github-branches-filter').focus();
+});
 $('github-parent').addEventListener('change', () => setCloneParent(cloneParent()));
 $('github-parent-pick').addEventListener('click', firstClick(() => chooseFolder('clone')));
 $('history-here').addEventListener('change', renderHistory);
@@ -5710,6 +5900,7 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && state.connected && Date.now() - newsLoadedAt > 60000) loadNews();
   if (document.visibilityState === 'visible' && dockShows('github') && githubShownView() === 'actions') loadView('actions');
   else scheduleRuns();
+  if (branchesVisible() && !viewData('branches')?.error) loadBranches({ resume: true });
 });
 addEventListener('pagehide', () => {
   flushNotes();

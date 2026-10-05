@@ -135,6 +135,8 @@ function realGitHub(t) {
     '/user/repos': [{ full_name: 'octo/demo', owner: { type: 'User' }, private: true, pushed_at: '2026-01-01T00:00:00Z' }],
     '/repos/octo/demo/issues': [{ number: 1, title: 'Bug', state: 'open', user: { login: 'octo' }, html_url: 'https://github.com/octo/demo/issues/1' }],
     '/repos/octo/demo/actions/runs': { workflow_runs: [{ id: 2, name: 'CI', status: 'queued' }] },
+    '/repos/octo/demo': { default_branch: 'trunk' },
+    '/repos/octo/demo/branches': [{ name: 'trunk', protected: true, commit: { sha: 'a'.repeat(40) } }],
     '/repos/octo/demo/pulls': [{ number: 3, title: 'Change', user: { login: 'octo' }, head: { ref: 'x' }, base: { ref: 'main' } }],
   };
   const fetchImpl = async (url, init = {}) => {
@@ -188,6 +190,7 @@ test('the demo answers GitHub in the manager\'s shapes, signed in with repositor
 
   const base = `/github/accounts/${account}/repos/acme/storefront`;
   const pairs = [
+    [await views.branches(7, 'octo', 'demo'), (await call('GET', `${base}/branches`)).body, 'branches'],
     [await views.issues(7, 'octo', 'demo'), (await call('GET', `${base}/issues`)).body, 'issues'],
     [await views.actions(7, 'octo', 'demo'), (await call('GET', `${base}/actions`)).body, 'runs'],
     [await views.pulls(7, 'octo', 'demo'), (await call('GET', `${base}/pulls`)).body, 'pulls'],

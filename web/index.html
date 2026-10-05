@@ -208,6 +208,7 @@
         <button id="github-view-issues" class="github-view" type="button" role="tab" aria-controls="github-issues" aria-selected="false" data-view="issues" tabindex="-1">Issues</button>
         <button id="github-view-actions" class="github-view" type="button" role="tab" aria-controls="github-runs" aria-selected="false" data-view="actions" tabindex="-1" aria-label="Actions">Actions<span id="github-running" class="github-running" hidden></span></button>
         <button id="github-view-pulls" class="github-view" type="button" role="tab" aria-controls="github-pulls" aria-selected="false" data-view="pulls" tabindex="-1" aria-label="Pull requests"><span class="long">Pull requests</span><span class="short" aria-hidden="true">PRs</span></button>
+        <button id="github-view-branches" class="github-view" type="button" role="tab" aria-controls="github-branches" aria-selected="false" data-view="branches" tabindex="-1">Branches</button>
       </div>
       <div id="github-repos" class="models-body github-body" role="tabpanel" aria-labelledby="github-view-repos">
         <section id="github-card" class="github-card" aria-live="polite" hidden></section>
@@ -241,6 +242,27 @@
       <div id="github-issues" class="models-body github-body" role="tabpanel" aria-labelledby="github-view-issues" hidden></div>
       <div id="github-runs" class="models-body github-body" role="tabpanel" aria-labelledby="github-view-actions" hidden></div>
       <div id="github-pulls" class="models-body github-body" role="tabpanel" aria-labelledby="github-view-pulls" hidden></div>
+      <div id="github-branches" class="models-body github-body" role="tabpanel" aria-labelledby="github-view-branches" hidden>
+        <p id="github-branches-pick" class="github-view-note">Pick a repository above to see its branches.</p>
+        <div id="github-branches-content" hidden>
+          <div class="github-view-tools">
+            <button id="github-branches-refresh" class="btn" type="button">Refresh</button>
+            <span class="github-spacer"></span>
+            <a id="github-branches-out" class="btn github-out" target="_blank" rel="noopener noreferrer" aria-description="Opens in a new tab">GitHub</a>
+          </div>
+          <div class="github-branch-filter">
+            <input id="github-branches-filter" type="search" placeholder="Filter branches" aria-label="Filter branches" spellcheck="false" autocomplete="off">
+            <button id="github-branches-clear" class="btn" type="button" disabled>Clear</button>
+          </div>
+          <p id="github-branches-status" class="github-view-note" role="status" aria-live="polite" aria-atomic="true"></p>
+          <div id="github-branches-error" class="github-error" hidden>
+            <span role="alert"></span>
+            <button id="github-branches-retry" class="btn" type="button">Retry</button>
+          </div>
+          <p id="github-branches-metadata" class="github-view-note" hidden></p>
+          <div id="github-branches-list" class="history-list" role="list" aria-label="Remote branches"></div>
+        </div>
+      </div>
       <div id="github-clone-into" class="history-form github-form">
         <label for="github-parent">Clone into</label>
         <div class="cwd-field single">
