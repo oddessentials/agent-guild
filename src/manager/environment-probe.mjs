@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { resolveCommand, killWindowsTree } from './command-resolver.mjs';
+import { scanPins } from './environment-pins.mjs';
 
 export const RUNTIMES = [
   { id: 'node', label: 'Node.js', command: 'node', args: ['--version'], pattern: /^v(\d+\.\d+\.\d+(?:-[\w.-]+)?)\s*$/m },
@@ -211,6 +212,16 @@ export async function releaseScanDirectory(cwd, kills = [], {
   try {
     remove(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 40 });
   } catch { /* a leftover lock must not fail the scan */ }
+}
+
+if ((process.argv[2] === '--scan-pins' || process.argv[2] === '--pin-identity') && process.send) {
+  // Read the named folder by absolute path. Never chdir into it: a project
+  // directory can activate tools on entry, and this check must not.
+  const started = process.cwd();
+  const result = scanPins(process.argv[3], { identityOnly: process.argv[2] === '--pin-identity' });
+  process.send({ ...result, cwd: process.cwd() });
+  if (process.cwd() !== started) process.chdir(started);
+  process.send({ done: true });
 }
 
 if (process.argv[2] === '--scan-environment' && process.send) {

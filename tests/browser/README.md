@@ -2,6 +2,8 @@
 
 The GitHub panel's account selection, issue editing, delayed requests and repository
 picker also have a browser regression check: `node tests/browser/github.mjs`.
+The environment dialog's four scopes, folder edit, session refusal, launch label
+and shell-card isolation are checked by `node tests/browser/environment-scopes.mjs`.
 Branch pagination, scroll anchoring, filtering and copy controls are checked by
 `node tests/browser/github-branches.mjs`. `BRANCH_SCREENSHOTS` optionally names
 a folder for desktop and phone screenshots. These checks use simulated GitHub

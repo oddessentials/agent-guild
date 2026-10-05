@@ -29,7 +29,7 @@ const snapshot = (revision, version = '24.0.0', extra = {}) => ({
 });
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
-function page() {
+function page(options = {}) {
   const nodes = new Map(), closeEvents = [];
   const document = { activeElement: null };
   const element = () => new Element(document, closeEvents);
@@ -43,7 +43,10 @@ function page() {
     querySelector: (selector) => selector === '.provider[data-id="shell"] .environment-open' ? opener : null,
   });
   const requests = [];
-  const ui = createEnvironmentUI({ document, api: (method, route, body) => new Promise((resolve, reject) => requests.push({ method, route, body, resolve, reject })) });
+  const ui = createEnvironmentUI({
+    document, workingFolder: options.workingFolder, sessions: options.sessions,
+    api: (method, route, body) => new Promise((resolve, reject) => requests.push({ method, route, body, resolve, reject })),
+  });
   const renderCard = () => ui.renderCard({ querySelector: () => summary }, { id: 'shell', shells: [] });
   renderCard();
   return {
@@ -83,6 +86,91 @@ test('the shell card repeats a helper failure in the helper\'s own words', () =>
 
 test('the page keeps all detection states distinct', () => {
   assert.deepEqual(['not_found', 'unavailable', 'failed'].map((status) => runtimeValue({ status })), ['Not found', 'Runtime unavailable', 'Probe failed']);
+  assert.notEqual(runtimeValue({ status: 'configured', version: '22' }), 'Configured');
+});
+
+test('scope buttons request that scope, and an empty folder is not sent', async () => {
+  const p = page({
+    workingFolder: () => '',
+    sessions: () => [{ id: 'abc', name: 'Shell', tool: 'Shell', cwd: '/work' }],
+  });
+  p.ui.connected(10);
+  p.requests[0].resolve(snapshot(1, '24.0.0', { host: 'guild-host' }));
+  await flush();
+  const before = p.requests.length;
+  p.get('environment-scope-project').click();
+  assert.equal(p.requests.length, before);
+  assert.match(p.get('environment-status').textContent, /Choose a working folder/);
+  assert.equal(p.get('environment-title').textContent, 'Project pins');
+  p.get('environment-scope-session').click();
+  assert.equal(p.requests.at(-1).route, '/environment?scope=session&id=abc');
+  assert.equal(p.get('environment-title').textContent, 'Session spawn environment');
+  p.requests.at(-1).resolve({
+    scope: 'session', revision: 1, refreshing: false, checkedAt: '2026-10-04T12:00:00Z', host: 'guild-host',
+    availability: 'unavailable', detail: 'This session is tmux or herdr. Its environment is not the spawn record.',
+    sessionId: 'abc', spawnCwd: '/work', runtimes: [], tools: [],
+  });
+  await flush();
+  assert.match(p.get('environment-status').textContent, /tmux or herdr/);
+  assert.equal(p.get('.environment-note').textContent, 'Manager environment');
+  p.get('environment-scope-launch').click();
+  const launch = p.requests.at(-1);
+  assert.equal(launch.route, '/environment?scope=launch');
+  launch.resolve({
+    scope: 'launch', revision: 1, refreshing: false, checkedAt: '2026-10-04T12:00:00Z', host: 'guild-host',
+    detail: 'Launch PATH, profiles not applied. The selected shell is not consulted.', runtimes: [], tools: [],
+  });
+  await flush();
+  p.get('environment-refresh').click();
+  assert.deepEqual([p.requests.at(-1).method, p.requests.at(-1).body], ['POST', { scope: 'launch' }]);
+  assert.equal(p.get('environment-host').textContent, 'On guild-host');
+});
+
+test('a project folder is sent with its refresh and configured pins stay off the shell card', async () => {
+  const p = page({ workingFolder: () => '/work/app' });
+  p.ui.connected(10);
+  p.requests[0].resolve(snapshot(1));
+  await flush();
+  p.get('environment-scope-project').click();
+  assert.equal(p.requests.at(-1).route, `/environment?scope=project&cwd=${encodeURIComponent('/work/app')}`);
+  p.requests.at(-1).resolve({
+    scope: 'project', cwd: '/resolved/app', revision: 1, refreshing: false, checkedAt: '2026-10-04T12:00:00Z',
+    error: null, stale: false, host: 'guild-host',
+    pins: [{ id: 'nvmrc', label: 'Node.js', source: '.nvmrc', version: 'lts/*', status: 'configured', detail: null }],
+  });
+  await flush();
+  const pin = p.get('environment-pins').children[0];
+  assert.equal(pin.children[0].children[1].textContent, 'Configured');
+  assert.equal(pin.children[2].textContent, 'lts/*');
+  assert.equal(p.get('.environment-note').textContent, 'Manager environment');
+  p.get('environment-refresh').click();
+  assert.deepEqual(p.requests.at(-1).body, { scope: 'project', cwd: '/work/app' });
+});
+
+test('editing the working folder hides pins until that folder is read', async () => {
+  let folder = '/work/app';
+  const p = page({ workingFolder: () => folder });
+  p.ui.connected(10);
+  p.requests[0].resolve(snapshot(1));
+  await flush();
+  p.get('environment-scope-project').click();
+  p.requests.at(-1).resolve({
+    scope: 'project', cwd: '/work/app', revision: 1, refreshing: false, checkedAt: '2026-10-04T12:00:00Z',
+    error: null, stale: false, host: 'guild-host',
+    pins: [{ id: 'nvmrc', label: 'Node.js', source: '.nvmrc', version: '22', status: 'configured', detail: null }],
+  });
+  await flush();
+  assert.equal(p.get('environment-pins').hidden, false);
+  const sent = p.requests.length;
+  folder = '/work/other';
+  p.ui.sync();
+  assert.equal(p.get('environment-pins').hidden, true);
+  assert.match(p.get('environment-status').textContent, /Refresh to read this folder/);
+  assert.equal(p.requests.length, sent);
+  folder = '/work/app';
+  p.ui.sync();
+  assert.equal(p.get('environment-pins').hidden, false);
+  assert.equal(p.get('environment-pins').children[0].children[2].textContent, '22');
 });
 
 test('an environment event wins over a stale initial response; manual refresh retains prior values', async () => {
@@ -126,6 +214,9 @@ test('environment data is confined to shell cards; tools only claim presence', a
   p.requests[0].resolve(snapshot(1, '24.0.0', { tools: [{ id: 'vfox', label: 'vfox', path: '/bin/vfox', status: 'detected' }] }));
   await flush();
   assert.equal(p.get('environment-tools').children[0].children[0].textContent, 'vfox · Detected');
+  p.ui.updated({ scope: 'project', cwd: '/work', revision: 9, host: 'elsewhere', pins: [{ id: 'nvmrc', label: 'Node.js', source: '.nvmrc', version: '18', status: 'configured', detail: null }] });
+  assert.equal(p.get('.environment-note').textContent, 'Manager environment');
+  assert.equal(p.get('.environment-values').children[1].textContent, '24.0.0');
   p.ui.renderCard({ querySelector: () => p.summary }, { id: 'openai', shells: null });
   assert.equal(p.summary.hidden, true);
 });

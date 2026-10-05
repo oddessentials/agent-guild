@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ProviderRegistry } from './providers.mjs';
-import { Environment } from './environment.mjs';
+import { Environment, probePathEnv } from './environment.mjs';
 import { SessionManager } from './session-manager.mjs';
 import { UsageMonitor } from './usage.mjs';
 import { SessionHistory } from './session-history.mjs';
@@ -78,6 +78,14 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
   sessionHooks.warm();
   const manager = new SessionManager({
     registry, baseEnv, getApiUrl: () => api.url, sessionDefaults, shimDir, selfUpdate, github, sessionHooks, store: multiplexerStore,
+  });
+  environment.setSessionLookup((id) => {
+    let session;
+    try { session = manager.get(id); } catch { return null; }
+    return { multiplexer: Boolean(session.multiplexer), spawnCwd: session.cwd, pathEnv: probePathEnv(session.env) };
+  });
+  manager.on('event', (event) => {
+    if (event.type === 'session.removed') environment.forgetSession(event.sessionId);
   });
   const usage = new UsageMonitor({ registry, env: baseEnv });
   const history = new SessionHistory({ registry, env: baseEnv });

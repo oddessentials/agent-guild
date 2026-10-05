@@ -6203,6 +6203,13 @@ publishTopbarHeight();
 applyDockLayout();
 
 state.remoteAccessUI = createRemoteAccessUI({ api, getToken: () => state.token, isConnected: () => state.connected, onAuthError: showAuth });
-state.environmentUI = createEnvironmentUI({ api, onAuthError: showAuth, isAuthError: (err) => err instanceof AuthError });
+state.environmentUI = createEnvironmentUI({
+  api, onAuthError: showAuth, isAuthError: (err) => err instanceof AuthError,
+  workingFolder: () => $('cwd').value.trim(),
+  sessions: () => [...state.sessions.values()].map((session) => ({
+    id: session.id, name: session.name, tool: session.provider?.tool || '', cwd: session.cwd || '', multiplexer: Boolean(session.multiplexer),
+  })),
+});
+$('cwd').addEventListener('input', () => { if ($('environment').open) state.environmentUI.sync(); });
 state.token = readTokenFromHash() || load(TOKEN_KEY);
 boot();

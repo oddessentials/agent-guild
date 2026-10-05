@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, fork } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { resolveCommand } from '../src/manager/command-resolver.mjs';
-import { Environment } from '../src/manager/environment.mjs';
+import { Environment, LAUNCH_DETAIL, probePathEnv } from '../src/manager/environment.mjs';
+import { resolveProjectCwd, scanPins } from '../src/manager/environment-pins.mjs';
 import { RUNTIMES, scanRuntime, detectTools, passiveExecutable, probeEnv, runProbe, releaseScanDirectory } from '../src/manager/environment-probe.mjs';
 
 const definition = (id) => RUNTIMES.find((row) => row.id === id);
@@ -316,4 +317,223 @@ test('real isolated scan reports the manager PATH Node without changing a projec
   assert.equal(snapshot.refreshing, false);
   assert.equal(snapshot.error, null);
   assert.deepEqual(fs.readdirSync(home), []);
+  assert.equal(typeof snapshot.host, 'string');
+});
+
+test('pin files report configured text and do not resolve aliases or shell out', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'guild-pins-'));
+  fs.writeFileSync(path.join(dir, '.nvmrc'), '# comment\n\nlts/*\n');
+  fs.writeFileSync(path.join(dir, '.node-version'), '22.11.0\n');
+  fs.writeFileSync(path.join(dir, '.python-version'), '3.12.1\n');
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({
+    engines: { node: '>=22', npm: '10' }, packageManager: 'pnpm@9.12.0',
+  }));
+  fs.writeFileSync(path.join(dir, 'pyproject.toml'), 'requires-python = ">=3.11"\n');
+  fs.writeFileSync(path.join(dir, 'rust-toolchain.toml'), '[toolchain]\nchannel = "1.80.0"\n');
+  fs.writeFileSync(path.join(dir, 'rust-toolchain'), 'stable\n');
+  fs.writeFileSync(path.join(dir, 'go.mod'), 'module example\n\ngo 1.22.0\n\ntoolchain go1.22.5\n');
+  fs.writeFileSync(path.join(dir, 'global.json'), JSON.stringify({ sdk: { version: '8.0.100', rollForward: 'latestFeature' } }));
+  fs.writeFileSync(path.join(dir, '.tool-versions'), 'nodejs 20.11.0\nruby 3.3.0\npython 3.11.8\n');
+  const { pins } = scanPins(dir);
+  const byId = Object.fromEntries(pins.map((item) => [item.id, item]));
+  assert.equal(byId.nvmrc.version, 'lts/*');
+  assert.equal(byId.nvmrc.status, 'configured');
+  assert.equal(byId['node-version'].version, '22.11.0');
+  assert.equal(byId['python-version'].version, '3.12.1');
+  assert.equal(byId['engines-node'].version, '>=22');
+  assert.equal(byId['engines-npm'].version, '10');
+  assert.equal(byId['package-manager'].label, 'pnpm');
+  assert.equal(byId['package-manager'].version, 'pnpm@9.12.0');
+  assert.equal(byId['requires-python'].version, '>=3.11');
+  assert.equal(byId['rust-toolchain'].version, '1.80.0');
+  assert.equal(byId['rust-toolchain-file'].version, 'stable');
+  assert.equal(byId['go-language'].version, '1.22.0');
+  assert.equal(byId['go-toolchain'].version, 'go1.22.5');
+  assert.equal(byId['global-json'].version, '8.0.100');
+  assert.equal(byId['tool-versions-node'].version, '20.11.0');
+  assert.equal(byId['tool-versions-python'].version, '3.11.8');
+  assert.equal(pins.some((item) => /ruby/.test(item.version || '')), false);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('unreadable and invalid pins stay distinct from a configured version', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'guild-pins-bad-'));
+  fs.writeFileSync(path.join(dir, 'package.json'), '{');
+  fs.writeFileSync(path.join(dir, 'pyproject.toml'), 'requires-python = [\n  ">=3.11",\n]\n');
+  fs.writeFileSync(path.join(dir, '.nvmrc'), `${'1'.repeat(200)}\n`);
+  fs.mkdirSync(path.join(dir, '.python-version'));
+  fs.writeFileSync(path.join(dir, '.node-version'), Buffer.alloc(64 * 1024 + 1));
+  const pins = Object.fromEntries(scanPins(dir).pins.map((item) => [item.source, item]));
+  assert.equal(pins['package.json'].status, 'invalid');
+  assert.equal(pins['pyproject.toml'].status, 'invalid');
+  assert.match(pins['pyproject.toml'].detail, /single-line/);
+  assert.equal(pins['.nvmrc'].status, 'invalid');
+  assert.equal(pins['.nvmrc'].version, null);
+  assert.equal(pins['.python-version'].status, 'unreadable');
+  assert.match(pins['.python-version'].detail, /not a file/);
+  assert.equal(pins['.node-version'].status, 'unreadable');
+  assert.match(pins['.node-version'].detail, /64 KiB/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('a pin symlink outside the project is not read', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'guild-pins-link-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const project = path.join(root, 'project');
+  fs.mkdirSync(project);
+  const outside = path.join(root, 'secret');
+  fs.writeFileSync(outside, '99\n');
+  try { fs.symlinkSync(outside, path.join(project, '.nvmrc')); } catch (err) {
+    if (err.code === 'EPERM' || err.code === 'EINVAL') return;
+    throw err;
+  }
+  const pin = scanPins(project).pins.find((item) => item.source === '.nvmrc');
+  assert.equal(pin.status, 'unreadable');
+  assert.match(pin.detail, /outside/);
+  assert.equal(pin.version, null);
+});
+
+test('a project check does not use the project as its working directory', async () => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'guild-pins-cwd-'));
+  fs.writeFileSync(path.join(project, '.nvmrc'), 'lts/*\n');
+  const child = fork(new URL('../src/manager/environment-probe.mjs', import.meta.url), ['--scan-pins', project], {
+    execArgv: [], cwd: os.tmpdir(), stdio: ['ignore', 'ignore', 'ignore', 'ipc'], windowsHide: true,
+  });
+  const message = await new Promise((resolve, reject) => {
+    child.once('message', resolve);
+    child.once('error', reject);
+  });
+  child.kill();
+  assert.equal(message.pins[0].version, 'lts/*');
+  assert.equal(path.resolve(message.cwd), path.resolve(os.tmpdir()));
+  assert.notEqual(path.resolve(message.cwd), path.resolve(project));
+  fs.rmSync(project, { recursive: true, force: true });
+});
+
+test('the project helper reads pins without inheriting the manager environment', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'guild-pins-live-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(dir, '.nvmrc'), '20\n');
+  const service = new Environment({ env: { ...process.env, AGENT_GUILD_REPORT_TOKEN: 'secret' } });
+  t.after(() => service.close());
+  const finished = new Promise((resolve) => {
+    service.on('updated', (snapshot) => {
+      if (snapshot?.scope === 'project' && !snapshot.refreshing) resolve(snapshot);
+    });
+  });
+  service.openProject(dir);
+  const snapshot = await finished;
+  assert.equal(snapshot.cwd, dir);
+  assert.equal(snapshot.pins[0].version, '20');
+  assert.equal(snapshot.pins[0].status, 'configured');
+  assert.equal(snapshot.error, null);
+});
+
+test('a project folder is required and does not fall back to home', () => {
+  assert.throws(() => resolveProjectCwd('  ', { homedir() { throw new Error('home'); } }), { code: 'cwd_required' });
+  assert.throws(() => resolveProjectCwd(path.join(os.tmpdir(), 'guild-pins-missing')), { code: 'bad_cwd' });
+});
+
+test('launch scope labels the manager result and a manager refresh leaves that copy alone', async (t) => {
+  const { service, children } = helper(t);
+  service.refresh();
+  emitRuntimes(children[0], { status: 'ok', version: '24.0.0', path: '/node' });
+  children[0].emit('message', { tools: [{ id: 'uv', label: 'uv', path: '/uv', status: 'detected' }] });
+  children[0].emit('message', { done: true });
+  await immediate();
+  const launch = service.openLaunch();
+  assert.equal(children.length, 1);
+  assert.equal(launch.scope, 'launch');
+  assert.equal(launch.detail, LAUNCH_DETAIL);
+  assert.equal(launch.managerNode, undefined);
+  assert.equal(launch.runtimes[0].version, '24.0.0');
+  service.refresh();
+  emitRuntimes(children[1], { status: 'ok', version: '24.9.0', path: '/node' });
+  children[1].emit('message', { done: true });
+  await immediate();
+  assert.equal(service.snapshot().runtimes[0].version, '24.9.0');
+  assert.equal(service.openLaunch().runtimes[0].version, '24.0.0');
+  service.openLaunch({ refresh: true });
+  assert.equal(children.length, 3);
+  emitRuntimes(children[2], { status: 'ok', version: '24.10.0', path: '/node' });
+  children[2].emit('message', { done: true });
+  await immediate();
+  assert.equal(service.openLaunch().runtimes[0].version, '24.10.0');
+  assert.equal(service.snapshot().runtimes[0].version, '24.10.0');
+});
+
+test('a session probe receives only the spawn PATH, and a multiplexer is not probed', async (t) => {
+  const seen = [];
+  const children = [];
+  const service = new Environment({
+    forkWorker: (_file, _args, opts) => {
+      seen.push(opts.env);
+      const child = new EventEmitter();
+      children.push(child);
+      return child;
+    },
+    sessionLookup: (id) => {
+      if (id === 'aa') return { multiplexer: false, spawnCwd: '/work', pathEnv: { PATH: '/sessions', AGENT_GUILD_REPORT_TOKEN: 'secret', NODE_OPTIONS: 'preload' } };
+      if (id === 'bb') return { multiplexer: true, spawnCwd: '/mux', pathEnv: { PATH: '/mux', AGENT_GUILD_REPORT_TOKEN: 'secret' } };
+      return null;
+    },
+  });
+  t.after(() => service.close());
+  assert.equal(probePathEnv({ PATH: '/bin', AGENT_GUILD_REPORT_TOKEN: 'secret' }).AGENT_GUILD_REPORT_TOKEN, undefined);
+  const started = service.openSession('aa');
+  assert.equal(started.refreshing, true);
+  assert.equal(seen[0].PATH, '/sessions');
+  assert.equal(seen[0].AGENT_GUILD_REPORT_TOKEN, undefined);
+  assert.equal(seen[0].NODE_OPTIONS, undefined);
+  emitRuntimes(children[0], { status: 'ok', version: '24.0.0', path: '/sessions/node' });
+  children[0].emit('message', { done: true });
+  await immediate();
+  const done = service.openSession('aa');
+  assert.equal(done.availability, 'ok');
+  assert.equal(done.spawnCwd, '/work');
+  assert.equal(done.runtimes[0].version, '24.0.0');
+  assert.equal(children.length, 1);
+  const mux = service.openSession('bb');
+  assert.equal(mux.availability, 'unavailable');
+  assert.match(mux.detail, /tmux or herdr/);
+  assert.deepEqual(mux.runtimes, []);
+  assert.equal(children.length, 1);
+  assert.equal(service.openSession('cc'), null);
+});
+
+test('an edited pin file marks the project stale without replacing the previous pin', async (t) => {
+  const children = [];
+  const args = [];
+  const service = new Environment({ forkWorker: (_file, argv) => {
+    args.push(argv[0]);
+    const child = new EventEmitter();
+    children.push(child);
+    return child;
+  } });
+  t.after(() => service.close());
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'guild-pins-stale-'));
+  t.after(() => fs.rmSync(cwd, { recursive: true, force: true }));
+  const first = service.openProject(cwd);
+  assert.equal(first.refreshing, true);
+  const pin = { id: 'nvmrc', label: 'Node.js', source: '.nvmrc', version: '22', status: 'configured', detail: null };
+  children[0].emit('message', { identity: 'same', pins: [pin] });
+  children[0].emit('message', { done: true });
+  await immediate();
+  assert.equal(service.openProject(cwd).pins[0].version, '22');
+  assert.equal(args[1], '--pin-identity');
+  children[1].emit('message', { identity: 'edited' });
+  children[1].emit('message', { done: true });
+  await immediate();
+  const stale = service.openProject(cwd);
+  assert.equal(stale.stale, true);
+  assert.equal(stale.pins[0].version, '22');
+  const again = service.openProject(cwd, { refresh: true });
+  assert.equal(again.refreshing, true);
+  assert.equal(again.pins[0].version, '22');
+  children.at(-1).emit('message', { identity: 'edited', pins: [{ ...pin, version: '24' }] });
+  children.at(-1).emit('message', { done: true });
+  await immediate();
+  const fresh = service.openProject(cwd);
+  assert.equal(fresh.stale, false);
+  assert.equal(fresh.pins[0].version, '24');
 });
