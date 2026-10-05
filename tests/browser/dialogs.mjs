@@ -22,6 +22,13 @@ window.WebSocket=class extends DemoSocket {
 
 const checks = await withPage({ name: 'dialogs', instrumentation }, async ({ origin, send, evaluate, layoutReady, pass, errors }) => {
   const checkDialogs = async (evaluate, resize, settle, engine) => {
+    const closeDialog = (selector, button) => evaluate(`new Promise((resolve, reject) => {
+      const dialog = document.querySelector(${JSON.stringify(selector)});
+      if (!dialog.open) { reject(new Error('Expected an open dialog: ' + ${JSON.stringify(selector)})); return; }
+      dialog.addEventListener('close', () => resolve(), { once: true });
+      ${button ? `document.querySelector(${JSON.stringify(button)}).click()` : 'dialog.close()'};
+    })`);
+    // Frames and animations settle geometry only, never close or refresh completion.
     const settled = async () => {
       await settle();
       await evaluate('Promise.allSettled([...document.querySelectorAll("dialog[open]")].flatMap(d=>d.getAnimations({subtree:true})).filter(a=>a.effect?.getTiming().iterations!==Infinity).map(a=>a.finished))');
@@ -53,7 +60,7 @@ const checks = await withPage({ name: 'dialogs', instrumentation }, async ({ ori
       await settled();
       assert.equal(await evaluate('document.querySelector("#history-note").checkVisibility()'), true);
       assert.ok((await geometry('#history')).body > 20, 'the empty state remains visible');
-      await evaluate('document.querySelector("#history-close").click()');
+      await closeDialog('#history', '#history-close');
     }
     pass(`${engine}: 200 history rows scroll, and filtered/empty history remains usable on desktop, tablet and phone`);
 
@@ -69,19 +76,41 @@ const checks = await withPage({ name: 'dialogs', instrumentation }, async ({ ori
           assert.equal(await evaluate('document.querySelectorAll("#environment-runtimes .environment-row").length'), 6);
           assert.ok(await evaluate('document.documentElement.scrollWidth<=innerWidth'), 'no horizontal page overflow');
           assert.ok(await evaluate('document.querySelector("#environment").scrollWidth<=document.querySelector("#environment").clientWidth'), 'no horizontal dialog overflow');
-          await evaluate('document.querySelector("#environment-close").click()');
-          await until(`${engine} environment focus restored`, () => evaluate('document.activeElement.matches(".provider[data-id=shell] .environment-open")'));
+          await closeDialog('#environment', '#environment-close');
+          assert.equal(await evaluate('document.activeElement===document.querySelector(".provider[data-id=shell] .environment-open")'), true, `${engine} environment focus restored`);
         }
       }
     }
-    await evaluate('document.querySelector(".provider[data-id=shell] .environment-open").click();document.querySelector("#environment-refresh").click()');
-    await until(`${engine} environment refresh complete`, () => evaluate('!document.querySelector("#environment-refresh").disabled'));
+    await evaluate(`new Promise(resolve => {
+      document.querySelector('.provider[data-id=shell] .environment-open').click();
+      const refresh = document.querySelector('#environment-refresh');
+      const observer = new MutationObserver(() => {
+        if (!refresh.disabled) { observer.disconnect(); resolve(); }
+      });
+      observer.observe(refresh, { attributes: true, attributeFilter: ['disabled'] });
+      refresh.click();
+    })`);
     assert.equal(await evaluate('document.querySelector("#environment").open'), true);
-    // A provider refresh rebuilds cards while the dialog remains open.
-    await evaluate('document.querySelector(".provider[data-id=shell] .multiplexer-refresh").click()');
-    await settled();
-    await evaluate('document.querySelector("#environment-close").click()');
-    await until(`${engine} replacement opener`, () => evaluate('document.activeElement.matches(".provider[data-id=shell] .environment-open")'));
+    // Observe the actual card replacement before closing; rendering frames do
+    // not indicate that the asynchronous provider refresh has finished.
+    await evaluate(`new Promise(resolve => {
+      const selector = '.provider[data-id=shell] .environment-open';
+      const original = document.querySelector(selector);
+      const observer = new MutationObserver(() => {
+        const replacement = document.querySelector(selector);
+        if (!original.isConnected && replacement?.isConnected && replacement !== original) {
+          observer.disconnect();
+          window.testEnvironmentReplacement = replacement;
+          resolve();
+        }
+      });
+      observer.observe(document.querySelector('#providers'), { childList: true, subtree: true });
+      document.querySelector('.provider[data-id=shell] .multiplexer-refresh').click();
+    })`);
+    assert.equal(await evaluate('document.querySelector("#environment").open'), true);
+    await closeDialog('#environment', '#environment-close');
+    assert.equal(await evaluate('testEnvironmentReplacement.isConnected && document.activeElement===testEnvironmentReplacement'), true, `${engine} replacement opener receives focus`);
+    await evaluate('delete window.testEnvironmentReplacement');
     pass(`${engine}: manager environment, refresh and focus restoration work in all skins and themes at desktop, tablet and phone widths`);
 
     // The other dialogs use exactly the same sizing rule. Exercise overflow and
@@ -95,7 +124,9 @@ const checks = await withPage({ name: 'dialogs', instrumentation }, async ({ ori
       await settled();
       const g = await geometry(selector);
       assert.ok(g.body > 120 && g.scrollable && g.inside && g.bodyBottom && g.footer, `${engine} ${selector} ${width}: ${JSON.stringify(g)}`);
-      await evaluate(`{const d=document.querySelector('${selector}');d.close();d.querySelector('.models-body').innerHTML=window.testDialogContent}`);
+      // Close handlers need the real controls, not the temporary overflow content.
+      await evaluate(`document.querySelector('${selector} .models-body').innerHTML=window.testDialogContent`);
+      await closeDialog(selector);
     }
     pass(`${engine}: model, remote-access and folder dialogs retain a visible, scrollable body and footer`);
   };
