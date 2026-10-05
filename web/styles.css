@@ -749,7 +749,7 @@ a.news-link:visited { color: var(--muted); }
 }
 
 .history-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 14px 0; }
-.history-tools input[type="search"] {
+.history-tools input[type="search"], .folder-new input {
   flex: 1 1 220px; min-width: 0; padding: 7px 10px; border-radius: var(--radius); border: 1px solid var(--border);
   background: var(--surface); color: var(--text); font: inherit; font-size: 0.9rem;
 }
@@ -1035,6 +1035,9 @@ a.btn.github-out::after {
 .folder-crumb:focus-visible, .folder-row:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 .folder-places, .folder-roots { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .folder-places .btn { min-height: 36px; }
+.folder-new-open { margin-left: auto; }
+.folder-new { flex-wrap: nowrap; }
+.folder-new input { flex: 1; min-width: 0; }
 .folder-list { display: flex; flex-direction: column; }
 .folder-row {
   display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 8px; border: 0; border-bottom: 1px solid var(--border);
@@ -1047,6 +1050,9 @@ a.btn.github-out::after {
 .folder-footer { justify-content: space-between; }
 .folder-current { flex: 1; min-width: 0; font-family: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace; font-size: 0.8rem; overflow-wrap: anywhere; }
 .folder-footer .btn { min-height: 42px; }
+@media (pointer: coarse), (max-width: 640px) {
+  .folder-places .btn, .folder-new .btn, .folder-new input, .folder-footer .btn, #folder-cancel { min-height: 44px; }
+}
 .cwd-recent {
   position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 5; margin: 0; padding: 4px; list-style: none;
   border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); box-shadow: 0 12px 30px rgba(0, 0, 0, 0.3);
@@ -1056,4 +1062,5 @@ a.btn.github-out::after {
   color: var(--text); font-family: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace; font-size: 0.82rem; overflow-wrap: anywhere; cursor: pointer;
 }
 .cwd-recent-option:hover, .cwd-recent-option[aria-selected="true"] { background: color-mix(in srgb, var(--accent) 14%, transparent); }
-@media (pointer: coarse) { .cwd-recent-option { min-height: 46px; } }
+@media (pointer: coarse), (max-width: 640px) { .cwd-recent-option { min-height: 46px; } }
+.cwd-recent.above { top: auto; bottom: calc(100% + 4px); }

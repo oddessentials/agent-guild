@@ -16,6 +16,20 @@ export function folderSegments(dir, paths = path) {
   return segments;
 }
 
+const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(\..*)?$/i;
+
+export function folderNameProblem(name, platform = process.platform) {
+  if (!name) return 'Enter a folder name.';
+  if (name === '.' || name === '..') return 'Choose a different folder name.';
+  if (/[/\\]/.test(name)) return 'A folder name cannot contain / or \\.';
+  if (/[\u0000-\u001f]/.test(name)) return 'A folder name cannot contain control characters.';
+  if (platform !== 'win32') return null;
+  if (/[<>:"|?*]/.test(name)) return 'A folder name cannot contain < > : " | ? or *.';
+  if (/[. ]$/.test(name)) return 'A folder name cannot end with a dot or a space.';
+  if (WINDOWS_RESERVED.test(name)) return `Windows reserves the name ${name}.`;
+  return null;
+}
+
 export function createFolderBrowser({ platform = process.platform, home = os.homedir(), limit = 2000, driveTimeoutMs = 500, fsp = fs.promises } = {}) {
   const paths = platform === 'win32' ? path.win32 : path.posix;
 
@@ -59,7 +73,30 @@ export function createFolderBrowser({ platform = process.platform, home = os.hom
     return folders.filter(Boolean).sort(byName);
   }
 
-  return {
+  const browser = {
+    async create(rawParent, rawName) {
+      if (typeof rawParent !== 'string' || !rawParent.trim() || rawParent.includes('\0')) throw failure(400, 'bad_path', 'The folder must be a path.');
+      const name = typeof rawName === 'string' ? rawName.trim() : '';
+      const problem = folderNameProblem(name, platform);
+      if (problem) throw failure(400, 'bad_name', problem);
+      const parent = paths.resolve(rawParent.trim());
+      const missing = () => failure(409, 'folder_missing', `${parent} no longer exists.`);
+      try {
+        if (!(await fsp.stat(parent)).isDirectory()) throw missing();
+      } catch (error) {
+        if (error.status) throw error;
+        throw error.code === 'ENOENT' || error.code === 'ENOTDIR' ? missing() : failure(409, 'folder_unreadable', `Agent Guild cannot read ${parent}.`);
+      }
+      const dir = paths.join(parent, name);
+      try {
+        await fsp.mkdir(dir);
+      } catch (error) {
+        if (error.code === 'EEXIST') throw failure(409, 'folder_exists', `${name} already exists in ${parent}.`);
+        if (error.code === 'ENOENT') throw missing();
+        throw failure(409, 'folder_unwritable', `Agent Guild cannot create ${dir}.`);
+      }
+      return browser.list(dir);
+    },
     async list(raw) {
       if (raw !== undefined && raw !== null && (typeof raw !== 'string' || raw.includes('\0'))) {
         throw failure(400, 'bad_path', 'The folder must be a path.');
@@ -82,4 +119,5 @@ export function createFolderBrowser({ platform = process.platform, home = os.hom
       };
     },
   };
+  return browser;
 }

@@ -244,7 +244,8 @@
       <div id="github-clone-into" class="history-form github-form">
         <label for="github-parent">Clone into</label>
         <div class="cwd-field single">
-          <input id="github-parent" type="text" placeholder="Folder that holds your clones" spellcheck="false" autocomplete="off">
+          <input id="github-parent" type="text" placeholder="Folder that holds your clones" spellcheck="false" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="github-parent-recent">
+          <ul id="github-parent-recent" class="cwd-recent above" role="listbox" aria-label="Recent clone folders" hidden></ul>
           <div class="cwd-tools">
             <button id="github-parent-pick" class="cwd-tool" type="button" aria-label="Choose a folder…" title="Connect to the session manager to choose folders" disabled>
               <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
@@ -434,7 +435,13 @@
       <button id="folder-up" class="btn" type="button">Up</button>
       <button id="folder-home" class="btn folder-chip" type="button">Home</button>
       <div id="folder-roots" class="folder-roots"></div>
+      <button id="folder-new-open" class="btn folder-new-open" type="button" aria-expanded="false" aria-controls="folder-new">New folder</button>
     </div>
+    <form id="folder-new" class="history-tools folder-new" hidden>
+      <input id="folder-new-name" type="text" placeholder="New folder name" aria-label="New folder name" spellcheck="false" autocomplete="off" autocapitalize="off" enterkeyhint="done">
+      <button id="folder-new-create" class="btn primary" type="submit">Create</button>
+      <button id="folder-new-cancel" class="btn" type="button">Cancel</button>
+    </form>
     <div class="history-tools">
       <input id="folder-filter" type="search" placeholder="Filter folders" aria-label="Filter folders" spellcheck="false" autocomplete="off">
       <label class="history-here"><input id="folder-hidden" type="checkbox"><span>Show hidden</span></label>

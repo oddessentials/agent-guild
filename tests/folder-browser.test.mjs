@@ -6,7 +6,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
-import { createFolderBrowser, folderSegments } from '../src/manager/folder-browser.mjs';
+import { createFolderBrowser, folderNameProblem, folderSegments } from '../src/manager/folder-browser.mjs';
 import { createManagerServer } from '../src/manager/server.mjs';
 
 function tree(t) {
@@ -103,4 +103,75 @@ test('the folders API requires the manager token and serves local and remote cli
   const remote = await get(`?path=${encodeURIComponent(path.join(root, 'Alpha'))}`, { ...auth, Host: 'guild.example.ts.net' });
   assert.equal(remote.status, 200);
   assert.deepEqual(remote.body.entries.map((e) => e.name), ['inner']);
+});
+
+test('a new folder is made inside an existing folder and listed as the new location', async (t) => {
+  const root = tree(t);
+  const browser = createFolderBrowser({ home: root });
+  const made = await browser.create(root, '  Fresh & co (1)  ');
+  assert.equal(made.path, path.join(root, 'Fresh & co (1)'));
+  assert.equal(made.parent, root);
+  assert.deepEqual(made.entries, []);
+  assert.ok(fs.statSync(made.path).isDirectory());
+  assert.equal((await browser.create(path.join(root, 'linked'), 'through-link')).path, path.join(root, 'linked', 'through-link'));
+  assert.ok(fs.statSync(path.join(root, 'Alpha', 'through-link')).isDirectory());
+  await assert.rejects(browser.create(root, 'beta'), { status: 409, code: 'folder_exists', message: /beta/ });
+  await assert.rejects(browser.create(root, 'file.txt'), { status: 409, code: 'folder_exists' });
+  await assert.rejects(browser.create(path.join(root, 'gone'), 'x'), { status: 409, code: 'folder_missing' });
+  await assert.rejects(browser.create(path.join(root, 'file.txt'), 'x'), { status: 409, code: 'folder_missing' });
+  await assert.rejects(browser.create('', 'x'), { status: 400, code: 'bad_path' });
+  await assert.rejects(browser.create(root, 7), { status: 400, code: 'bad_name' });
+  assert.equal(fs.existsSync(path.join(root, 'gone')), false);
+});
+
+test('folder names must be one plain name, with Windows rules on Windows', () => {
+  for (const name of ['', '.', '..', 'a/b', 'a\\b', 'a\0b', 'a\nb']) {
+    assert.ok(folderNameProblem(name, 'linux'), name);
+    assert.ok(folderNameProblem(name, 'win32'), name);
+  }
+  for (const name of ['CON', 'con.txt', 'Nul', 'COM1', 'lpt9.log', 'a:b', 'a?', 'a*', 'a|b', 'a"b', '<a>', 'trailing.', 'trailing ']) {
+    assert.ok(folderNameProblem(name, 'win32'), name);
+    assert.equal(folderNameProblem(name, 'linux'), null, name);
+  }
+  for (const name of ['.hidden', 'CONSOLE', 'com10', 'my repo', 'résumé', 'a.b']) assert.equal(folderNameProblem(name, 'win32'), null, name);
+});
+
+test('creating fails clearly when the folder cannot be read or written', async () => {
+  const readable = { stat: async () => ({ isDirectory: () => true }), readdir: async () => [], mkdir: async () => { throw Object.assign(new Error('denied'), { code: 'EACCES' }); } };
+  const browser = createFolderBrowser({ platform: 'linux', home: '/home/me', fsp: readable });
+  await assert.rejects(browser.create('/srv', 'new'), { status: 409, code: 'folder_unwritable', message: /\/srv\/new/ });
+  await assert.rejects(browser.create('/srv', 'CON'), { code: 'folder_unwritable' });
+  const vanished = { ...readable, mkdir: async () => { throw Object.assign(new Error('gone'), { code: 'ENOENT' }); } };
+  await assert.rejects(createFolderBrowser({ platform: 'linux', home: '/', fsp: vanished }).create('/srv', 'new'), { code: 'folder_missing' });
+  const locked = { ...readable, stat: async () => { throw Object.assign(new Error('denied'), { code: 'EACCES' }); } };
+  await assert.rejects(createFolderBrowser({ platform: 'linux', home: '/', fsp: locked }).create('/srv', 'new'), { code: 'folder_unreadable' });
+  const windows = createFolderBrowser({ platform: 'win32', home: 'C:\\', fsp: readable });
+  await assert.rejects(windows.create('C:\\work', 'aux.md'), { status: 400, code: 'bad_name', message: /aux\.md/ });
+});
+
+test('the create-folder API requires the manager token and answers with the new listing', { timeout: 10000 }, async (t) => {
+  const root = tree(t);
+  const manager = Object.assign(new EventEmitter(), { list: () => [] });
+  const registry = Object.assign(new EventEmitter(), { warnings: [] });
+  const api = createManagerServer({ manager, registry, folderBrowser: createFolderBrowser({ home: root }), extraHosts: ['guild.example.ts.net'],
+    token: 'test-manager-token', webDir: fileURLToPath(new URL('../web', import.meta.url)) });
+  await api.listen();
+  t.after(() => api.close());
+  const post = (body, headers) => new Promise((resolve, reject) => {
+    const req = http.request(`${api.url}/api/v1/folders`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers } }, (res) => {
+      let text = '';
+      res.setEncoding('utf8').on('data', (chunk) => { text += chunk; }).on('end', () => resolve({ status: res.statusCode, body: JSON.parse(text) }));
+    }).on('error', reject);
+    req.end(JSON.stringify(body));
+  });
+  const auth = { Authorization: 'Bearer test-manager-token', Host: 'guild.example.ts.net' };
+  assert.equal((await post({ path: root, name: 'nope' }, {})).status, 401);
+  assert.equal(fs.existsSync(path.join(root, 'nope')), false);
+  const made = await post({ path: root, name: 'clones' }, auth);
+  assert.equal(made.status, 201);
+  assert.equal(made.body.path, path.join(root, 'clones'));
+  const again = await post({ path: root, name: 'clones' }, auth);
+  assert.equal(again.status, 409);
+  assert.equal(again.body.error.code, 'folder_exists');
+  assert.equal((await post({ path: root, name: '../escape' }, auth)).body.error.code, 'bad_name');
 });

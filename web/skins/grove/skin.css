@@ -244,7 +244,7 @@
   }
   .btn.primary:hover { filter: brightness(1.07); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 6px 20px rgba(45, 107, 69, 0.36); }
   .btn.danger:hover { border-color: var(--danger); box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 14%, transparent); }
-  .cwd input, .auth input, .history-tools input[type="search"], .history-form input, .github-fields input, .github-fields select, .notes-text { background: var(--paper-strong); }
+  .cwd input, .auth input, .history-tools input[type="search"], .folder-new input, .history-form input, .github-fields input, .github-fields select, .notes-text { background: var(--paper-strong); }
 
   .models, .news-panel, .dock, .auth, .news-latest, .menu:popover-open { background: var(--paper-strong); backdrop-filter: blur(16px); }
   .models, .news-panel { box-shadow: var(--dialog-shadow); }
@@ -371,7 +371,7 @@
   .btn.primary { background: linear-gradient(135deg, #4a8c5e, #2a6340); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 0 18px rgba(80, 160, 105, 0.35); }
   .btn.danger { color: #ff9a8e; }
   .btn.danger:hover { border-color: #b8443a; box-shadow: 0 0 12px rgba(240, 122, 108, 0.3); }
-  .cwd input, .auth input, .history-tools input[type="search"], .history-form input, .github-fields input, .github-fields select, .notes-text { border-color: #2e4a3d; background: rgba(4, 10, 8, 0.7); }
+  .cwd input, .auth input, .history-tools input[type="search"], .folder-new input, .history-form input, .github-fields input, .github-fields select, .notes-text { border-color: #2e4a3d; background: rgba(4, 10, 8, 0.7); }
 
   .models::backdrop, .news-panel::backdrop { background: rgba(2, 6, 5, 0.66); }
   .terminal-panel { border-color: #2e4a3d; box-shadow: 0 0 0 1px rgba(140, 210, 160, 0.06), 0 30px 80px rgba(0, 0, 0, 0.7); }
