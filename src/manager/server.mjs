@@ -12,6 +12,7 @@ import { createViews } from './github-views.mjs';
 import { createFolderOpener } from './folder-opener.mjs';
 import { createFolderBrowser } from './folder-browser.mjs';
 import { normalizeAccess } from './access-policy.mjs';
+import { NOTES_BODY_LIMIT, createNotesStore } from './notes.mjs';
 
 const require = createRequire(import.meta.url);
 const API = '/api/v1';
@@ -63,7 +64,7 @@ class HttpError extends Error {
   }
 }
 
-function readJsonBody(req) {
+function readJsonBody(req, max = MAX_BODY) {
   return new Promise((resolve, reject) => {
     let size = 0;
     const chunks = [];
@@ -71,7 +72,7 @@ function readJsonBody(req) {
     req.on('data', (chunk) => {
       if (tooLarge) return; // drain the rest so the 413 response can be read
       size += chunk.length;
-      if (size > MAX_BODY) {
+      if (size > max) {
         tooLarge = true;
         chunks.length = 0;
         reject(new HttpError(413, 'request body too large', 'too_large'));
@@ -103,6 +104,7 @@ export function createManagerServer({
   modelStats,
   news = null,
   changelog = null,
+  environment = null,
   github = null,
   token,
   host = '127.0.0.1',
@@ -115,6 +117,8 @@ export function createManagerServer({
   remoteAccess = null,
   /** Starting the manager at sign-in, or null where it is not offered. */
   autostart = null,
+  /** In-memory when omitted, so a test server never reads the user's notes file. */
+  notes = createNotesStore(),
   folderOpener = createFolderOpener({ resolveCwd: (cwd) => manager.resolveCwd(cwd) }),
   folderBrowser = createFolderBrowser(),
   /** The double-click launcher file for this platform, or null when the package carries none. */
@@ -254,6 +258,15 @@ export function createManagerServer({
 
     requireAuth(req, url);
 
+    if (route === '/notes' && method === 'GET') {
+      return sendJson(res, 200, { notes: notes.snapshot() });
+    }
+    if (route === '/notes' && method === 'PUT') {
+      const saved = notes.save(await readJsonBody(req, NOTES_BODY_LIMIT));
+      broadcast({ type: 'notes.updated', notes: saved });
+      return sendJson(res, 200, { notes: saved });
+    }
+
     if (remoteAccess && route === '/remote-access' && method === 'GET') {
       return sendJson(res, 200, { remoteAccess: remoteAccess.snapshot() });
     }
@@ -305,6 +318,14 @@ export function createManagerServer({
     if (route === '/upgrade' && method === 'POST') {
       const session = await manager.upgrade();
       return sendJson(res, 201, { session: session.toJSON() });
+    }
+    if (route === '/environment' && method === 'GET' && environment) {
+      if (!environment.snapshot().checkedAt) environment.refresh();
+      return sendJson(res, 200, environment.snapshot());
+    }
+    if (route === '/environment/refresh' && method === 'POST' && environment) {
+      await readJsonBody(req);
+      return sendJson(res, 202, environment.refresh());
     }
     if (route === '/providers' && method === 'GET') {
       registry.refreshVersions().catch(() => {});
@@ -448,7 +469,7 @@ export function createManagerServer({
       const folder = manager.resolveCwd(url.searchParams.get('cwd'));
       return sendJson(res, 200, { folder, repo: folderOrigin(folder) });
     }
-    const view = route.match(/^\/github\/accounts\/([^/]+)\/repos\/([^/]+)\/([^/]+)\/(issues|actions|pulls)(?:\/([^/]+))?$/);
+    const view = route.match(/^\/github\/accounts\/([^/]+)\/repos\/([^/]+)\/([^/]+)\/(issues|actions|pulls|branches)(?:\/([^/]+))?$/);
     if (view) {
       let parts;
       try { parts = view.map((part) => (part === undefined ? part : decodeURIComponent(part))); } catch { throw new HttpError(400, 'repo must be a GitHub repository written as owner/name', 'bad_repo'); }
@@ -462,6 +483,7 @@ export function createManagerServer({
       if (kind === 'issues' && number !== undefined && method === 'PATCH') {
         return sendJson(res, 200, { issue: await views.updateIssue(id, owner, name, number, await readJsonBody(req)) });
       }
+      if (kind === 'branches' && number === undefined && method === 'GET') return sendJson(res, 200, await views.branches(id, owner, name, { page: url.searchParams.get('page') ?? '1' }));
       if (kind === 'actions' && number === undefined && method === 'GET') return sendJson(res, 200, await views.actions(id, owner, name));
       if (kind === 'pulls' && number === undefined && method === 'GET') return sendJson(res, 200, await views.pulls(id, owner, name));
     }
@@ -497,12 +519,13 @@ export function createManagerServer({
       else serveStatic(req, res, url.pathname);
     } catch (err) {
       const status = err.status || 500;
-      if (status >= 500) console.error('[server]', err);
+      if (status >= 500 && !err.logged) console.error('[server]', err);
       if (!res.headersSent) {
         const error = { code: err.code || 'error', message: err.message };
         if (err.running !== undefined) error.running = err.running;
         if (err.pending !== undefined) error.pending = err.pending;
         if (err.target !== undefined) error.target = err.target;
+        if (err.notes !== undefined) error.notes = err.notes;
         sendJson(res, status, { error });
       }
     }
@@ -542,6 +565,8 @@ export function createManagerServer({
   }
   manager.on('event', broadcast);
   registry.on('updated', () => broadcast({ type: 'providers.updated', providers: registry.list() }));
+  const environmentUpdated = () => broadcast({ type: 'environment.updated', environment: environment.snapshot() });
+  environment?.on('updated', environmentUpdated);
   selfUpdate?.on('updated', () => broadcast({ type: 'manager.upgrade', upgrade: upgradeInfo() }));
   news?.on('updated', () => broadcast({ type: 'news.updated' }));
   changelog?.on('updated', () => broadcast({ type: 'changelog.updated' }));
@@ -550,7 +575,11 @@ export function createManagerServer({
 
   function handleEvents(ws, req) {
     eventClients.add(ws);
-    safeSend(ws, { type: 'hello', version, pid: process.pid, platform: process.platform, startedAt, launcher, folderOpener: folderOpenerFor(req), remoteAccess: remoteAccess ? { available: true } : null, upgrade: upgradeInfo(), sessions: manager.list() });
+    const hello = { type: 'hello', version, pid: process.pid, platform: process.platform, startedAt, launcher, folderOpener: folderOpenerFor(req), remoteAccess: remoteAccess ? { available: true } : null, upgrade: upgradeInfo(), sessions: manager.list() };
+    const notesHello = notes.helloRevision();
+    if (notesHello.known) hello.notesRevision = notesHello.revision;
+    else hello.notesUnreadable = true;
+    safeSend(ws, hello);
     ws.on('close', () => eventClients.delete(ws));
     ws.on('message', () => { /* events socket is server -> client only */ });
   }
@@ -644,6 +673,7 @@ export function createManagerServer({
     },
     /** @param {{ notice?: object }} [opts] a final event for the events clients */
     async close({ notice } = {}) {
+      environment?.off('updated', environmentUpdated);
       if (notice) await farewell(notice);
       clearInterval(heartbeat);
       for (const ws of wss.clients) ws.terminate();

@@ -631,13 +631,16 @@ test('a token refused or expiring in the middle of the views is refreshed once a
 
   account.token.expiresAt = new Date(Date.now() - 1000).toISOString();
   ctx.github.state.refreshDelayMs = 150;
-  const [issues, actions, pulls, edited] = await Promise.all([
+  const [issues, actions, pulls, edited, branches] = await Promise.all([
     views.issues(account.id, 'octo-cat', 'agent-guild'),
     views.actions(account.id, 'octo-cat', 'agent-guild'),
     views.pulls(account.id, 'octo-cat', 'agent-guild'),
     views.updateIssue(account.id, 'octo-cat', 'agent-guild', 4, { title: 'Renamed' }),
+    views.branches(account.id, 'octo-cat', 'agent-guild'),
   ]);
-  assert.equal(ctx.github.state.refreshes, 2, 'one refresh for all four');
+  assert.equal(ctx.github.state.refreshes, 2, 'one refresh shared by all views and repository metadata');
+  assert.equal(branches.defaultBranch, 'trunk');
+  assert.equal(branches.branches[0].protected, true);
   assert.equal(issues.issues.length, 1);
   assert.equal(actions.runs.length, 2);
   assert.equal(pulls.pulls.length, 1);

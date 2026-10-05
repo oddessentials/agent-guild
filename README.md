@@ -86,6 +86,30 @@ Prompt are also offered when found. On macOS and Linux it follows your login
 shell. Pick the default chip to clear a saved choice and follow the default
 again. The choice applies to new sessions.
 
+**See the manager environment.** The Shell card summarizes detected Node.js,
+Python, Go, .NET SDK, R and Rust versions. **Environment details** shows the
+resolved paths, detection results, .NET runtimes and detected nvm/NVM for
+Windows, vfox, uv and pnpm launchers. Tools are listed by presence; their
+activation is not inferred. This describes the computer running Agent Guild
+and its manager environment, including when viewed remotely. Selected shells,
+projects and existing sessions may use different versions.
+
+Python always uses `python` when it is found on the manager's PATH; otherwise
+it uses `python3`. A broken `python` remains the primary result, with a
+different `python3` shown separately. **Not found** means no command was
+resolved, **Runtime unavailable** means a launcher was found but no runtime
+could safely be reported, and **Probe failed** means inspection or the version
+check failed. Missing optional runtimes never prevent starting a shell.
+
+Discovery runs on first viewing and again on **Refresh**, in an isolated
+helper with a neutral temporary working directory. It does not load shell
+profiles, activate tools, download runtimes or modify installations. Unknown
+script/shim launchers and Windows execution aliases are left unverified.
+Refresh checks the manager's current environment; it does not reload its
+PATH from a shell. Existing results remain visible during refresh. Go reports
+the local bundled toolchain with automatic switching disabled, and the Node
+version running Agent Guild is also shown in details.
+
 **Work inside tmux or herdr.** When installed, the Shell card also offers
 tmux (3.2 or later, on macOS and Linux) and herdr. A tmux card runs a tmux
 session of its own, with your own configuration, and tools in it report to
@@ -160,8 +184,10 @@ vX.Y.Z** switches over when you are ready. The version badge opens
 
 **Keep notes at hand.** **Notes** in the top bar opens a notepad for prompts,
 commands and to-dos in the side panel, next to your terminals. It saves up to
-100,000 characters as you type and keeps them in this browser, never on the
-manager; every tab of the page shows the same notes.
+100,000 characters as you type. The same notes follow every browser signed in
+to this manager, including one opened through remote access. This browser
+keeps a copy too: if the manager is unreachable, the line under the title
+says the notes are saved in this browser only, and they sync when it is back.
 
 **GitHub beside your work.** **GitHub** in the top bar opens the side panel.
 Sign in to one or more GitHub accounts, then search the repositories of all
@@ -169,8 +195,11 @@ of them from the box at its top; it starts on the repository the focused
 terminal's folder is a clone of. **Issues** lists, opens, edits and closes
 issues. **Actions** shows the latest workflow runs and whether one is still
 going, refreshing while it is on screen. **Pull requests** lists the open
-ones. **Repositories** lists and creates repositories and clones them over SSH
-with a key Agent Guild keeps for each account. On a wide window the side panel
+ones. **Branches** lists every remote branch of the selected repository, with
+its default and protected branches marked. Filter by name, copy a branch name,
+or open it on GitHub. Larger lists load progressively; **Refresh** checks for
+changes while keeping your place in the list. **Repositories** lists and creates
+repositories and clones them over SSH with a key Agent Guild keeps for each account. On a wide window the side panel
 makes room for itself; on a smaller one it lies over the cards, and over the
 terminals when they would get too narrow. Drag its edge to resize it. Escape
 or **Close** puts it away.
@@ -256,8 +285,9 @@ turn on **Agent reporting** on its card once, which installs an Agent Guild
 plugin into Antigravity. It reports the model and the conversation, but no
 helper agents or shell commands. Grok Build cannot take hooks for one session yet; add the hooks
 from [examples/grok-hooks.json](examples/grok-hooks.json) to see its agents.
-When a tool's hooks do not run, because hooks are turned off, restricted by
-an administrator or not trusted for the folder, the card says so.
+When a tool's hooks have not reported some time after a prompt was sent,
+because hooks are turned off, restricted by an administrator or not trusted
+for the folder, the card says so.
 
 The card also names the model, from the hooks, from `--model` or from the
 tool's screen.

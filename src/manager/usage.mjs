@@ -139,7 +139,7 @@ export async function fetchClaudeUsage({ accessToken, plan = null, version = nul
     },
     signal: AbortSignal.timeout(10000),
   });
-  if (!res.ok) throw httpUsageError(res.status, 'sign in again in Claude Code');
+  if (!res.ok) throw await httpUsageError(res, 'sign in again in Claude Code');
   const body = await res.json();
   const windows = [];
   for (const [key, label] of [['five_hour', '5-hour'], ['seven_day', '7-day'], ['seven_day_opus', '7-day Opus'], ['seven_day_sonnet', '7-day Sonnet']]) {
@@ -210,7 +210,7 @@ export async function fetchCodexUsage({ accessToken, accountId = null, fetchImpl
   const headers = { Authorization: `Bearer ${accessToken}`, Accept: 'application/json', 'User-Agent': 'agent-guild' };
   if (accountId) headers['ChatGPT-Account-Id'] = accountId;
   const res = await fetchImpl(CODEX_USAGE_URL, { headers, signal: AbortSignal.timeout(10000) });
-  if (!res.ok) throw httpUsageError(res.status, 'sign in again in Codex CLI');
+  if (!res.ok) throw await httpUsageError(res, 'sign in again in Codex CLI');
   const body = await res.json();
   const windows = codexWindows(body?.rate_limit ?? body?.rateLimit);
   // Limits metered apart from the plan's main windows, one entry per
@@ -279,10 +279,94 @@ export async function commandUsage({ command, args = [] }, env, platform = proce
   return { plan: body.plan ? String(body.plan).slice(0, 40) : null, windows };
 }
 
-function httpUsageError(status, signInHint) {
-  if (status === 401 || status === 403) return new UsageError(`usage endpoint refused the sign-in (HTTP ${status}); ${signInHint}`);
-  if (status === 429) return Object.assign(new UsageError('usage endpoint is rate limiting requests; retrying later'), { rateLimited: true });
-  return new UsageError(`usage endpoint answered HTTP ${status}`);
+// JWTs, API keys, bearer credentials and other long opaque strings never reach a message or the log.
+const SECRET_LIKE = /\beyJ[\w-]+\.[\w-]+(?:\.[\w-]*)?|\b(?:sk|rk|pk)-[\w-]{8,}|\bBearer\s+\S+|[\w+/=-]{40,}/gi;
+
+/** One line of at most `max` characters from a response body, without markup or anything credential-like. */
+export function excerpt(text, max = 200) {
+  if (typeof text !== 'string') return '';
+  return text
+    .replace(/<(script|style)\b[\s\S]*?<\/\1\s*>/gi, ' ')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(SECRET_LIKE, '[redacted]')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, max);
+}
+
+/** The error message a JSON body carries, in the shapes the vendors use, else null. */
+function jsonMessage(text) {
+  let body;
+  try { body = JSON.parse(text); } catch { return null; }
+  const error = body?.error;
+  const message = firstText(error?.message, typeof error === 'string' ? error : null, body?.error_description, body?.detail, body?.message);
+  return message ? excerpt(message, 120) || null : null;
+}
+
+/** How much of a failed reply is read: enough for any error message or the start of a challenge page. */
+export const ERROR_BODY_LIMIT = 16 * 1024;
+
+/**
+ * The start of a reply's body as text, at most about `limit` bytes, the rest
+ * left unread. A reply-like object without a body stream is read with text().
+ */
+export async function readStart(res, limit = ERROR_BODY_LIMIT) {
+  const reader = res.body?.getReader?.();
+  if (!reader) return typeof res.text === 'function' ? res.text() : '';
+  const decoder = new TextDecoder();
+  let text = '';
+  let size = 0;
+  try {
+    while (size < limit) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      text += decoder.decode(value, { stream: true });
+    }
+  } finally {
+    // Ends the download of whatever is left; the result does not matter.
+    reader.cancel().catch(() => {});
+  }
+  return (text + decoder.decode()).slice(0, limit);
+}
+
+/**
+ * The error for a failed usage request. A 401 means the token was refused;
+ * a 403 that Cloudflare answered means the request was blocked before the
+ * token was looked at, usually because of the network it came from, so it
+ * gets no sign-in advice. `detail` is what the manager log records.
+ */
+async function httpUsageError(res, signInHint) {
+  const { status } = res;
+  const header = (name) => { try { return res.headers?.get?.(name) ?? null; } catch { return null; } };
+  let text = '';
+  try { text = await readStart(res); } catch { /* the body is optional */ }
+  const server = header('server');
+  const detail = { status, server: excerpt(server, 80) || null, ray: excerpt(header('cf-ray'), 80) || null, body: excerpt(text) };
+  const error = (message, extra = {}) => Object.assign(new UsageError(message), { detail }, extra);
+  if (status === 401) return error(`usage endpoint refused the sign-in (HTTP 401); ${signInHint}`);
+  if (status === 403) {
+    const blocked = header('cf-mitigated') !== null || (/cloudflare/i.test(server ?? '') && /html/i.test(header('content-type') ?? ''));
+    if (blocked) return error('usage endpoint blocked this network (HTTP 403), not a sign-in problem; usually a VPN, proxy or exit node, and it clears by itself');
+    const message = jsonMessage(text);
+    return error(`usage endpoint refused access (HTTP 403${message ? `: ${message}` : ''}); if this continues, ${signInHint}`);
+  }
+  if (status === 429) return error('usage endpoint is rate limiting requests; retrying later', { rateLimited: true });
+  return error(`usage endpoint answered HTTP ${status}`);
+}
+
+/**
+ * What the manager log adds to a failed lookup's message, which already
+ * names the HTTP status: the reply's headers and body for a vendor failure,
+ * '' when there is nothing more to say, and null for a failure that needs
+ * no log entry, such as no sign-in.
+ */
+function failureDetail(err) {
+  if (err.detail) {
+    const { server, ray, body } = err.detail;
+    return [server && `server=${server}`, ray && `cf-ray=${ray}`, body && `body="${body}"`].filter(Boolean).join(' ');
+  }
+  return err instanceof UsageError || err.notSignedIn ? null : '';
 }
 
 // ---- monitor ----------------------------------------------------------------
@@ -295,15 +379,19 @@ export class UsageMonitor {
    * @param {Function} [opts.fetchImpl]
    * @param {number} [opts.ttlMs]
    * @param {object} [opts.readers]  credential readers, replaceable in tests
+   * @param {(line: string) => void} [opts.log]  where vendor and network failures are recorded
    */
-  constructor({ registry, env = process.env, platform = process.platform, fetchImpl = fetch, ttlMs = USAGE_TTL_MS, readers = {} } = {}) {
+  constructor({ registry, env = process.env, platform = process.platform, fetchImpl = fetch, ttlMs = USAGE_TTL_MS, readers = {}, log = console.warn } = {}) {
     this.registry = registry;
     this.env = env;
     this.platform = platform;
     this.fetchImpl = fetchImpl;
     this.ttlMs = ttlMs;
     this.readers = { claude: readClaudeCredentials, codex: readCodexCredentials, ...readers };
+    this.log = log;
     this.cache = new Map();
+    /** Account key → the failure last logged for it, so a failure that persists is logged once and its end once. */
+    this.logged = new Map();
   }
 
   /** Snapshots for every account of every provider that has a usage source. */
@@ -322,7 +410,8 @@ export class UsageMonitor {
     const now = Date.now();
     if (entry?.inflight) return entry.inflight;
     if (entry && now - entry.at < entry.ttl) return Promise.resolve(entry.snapshot);
-    const inflight = this._fetch(provider, account).then((snapshot) => {
+    const inflight = this._fetch(provider, account).then(({ snapshot, failure }) => {
+      this._record(`${provider.id}/${account.id}`, snapshot.error, failure);
       const ttl = snapshot.rateLimited ? RATE_LIMITED_TTL_MS : this.ttlMs;
       this.cache.set(key, { snapshot, at: Date.now(), ttl });
       return snapshot;
@@ -331,6 +420,20 @@ export class UsageMonitor {
     return inflight;
   }
 
+  /** Log a vendor or network failure when it starts or changes, and once when lookups succeed again. */
+  _record(key, error, failure) {
+    const previous = this.logged.get(key);
+    if (failure !== null) {
+      if (previous === error) return;
+      this.logged.set(key, error);
+      this.log(`[usage] ${key}: ${error}${failure ? ` (${failure})` : ''}`);
+    } else if (previous !== undefined) {
+      this.logged.delete(key);
+      if (!error) this.log(`[usage] ${key}: usage lookups work again`);
+    }
+  }
+
+  /** Resolves to `{ snapshot, failure }`: the snapshot for clients and, for a vendor or network failure, its log detail (else null). */
   async _fetch(provider, account) {
     const base = { providerId: provider.id, accountId: account.id, plan: null, windows: [], credits: null, signedIn: null, fetchedAt: new Date().toISOString(), error: null };
     const env = { ...this.env, ...provider.env, ...account.env };
@@ -352,10 +455,13 @@ export class UsageMonitor {
       } else {
         result = await commandUsage(provider.usage, env, this.platform);
       }
-      return { ...base, signedIn, ...result };
+      return { snapshot: { ...base, signedIn, ...result }, failure: null };
     } catch (err) {
       const message = err instanceof UsageError ? err.message : `usage check failed: ${err.name === 'TimeoutError' ? 'timed out' : err.message}`;
-      return { ...base, signedIn: err.notSignedIn ? false : signedIn, error: message, ...(err.rateLimited ? { rateLimited: true } : {}) };
+      return {
+        snapshot: { ...base, signedIn: err.notSignedIn ? false : signedIn, error: message, ...(err.rateLimited ? { rateLimited: true } : {}) },
+        failure: failureDetail(err),
+      };
     }
   }
 }

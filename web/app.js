@@ -8,6 +8,7 @@ import { topbarInline, dockMode, clampDockWidth, stageBesideDock, splitMode, cla
 import { highlightParts, rankRepos, recentFirst, remember, repoForOrigin, repoKey } from './repo-search.js';
 import { createActivityFavicon, isSessionWorking } from './activity-favicon.js';
 import { createRemoteAccessUI } from './remote-access.js';
+import { createEnvironmentUI } from './environment.js';
 import { matchFolders, readRecentFolders, rememberFolder } from './folders.js';
 
 const TOKEN_KEY = 'agentGuild.token';
@@ -31,6 +32,7 @@ const SESSION_ORDER_KEY = 'agentGuild.sessionOrder';
 const SOUND_KEY = 'agentGuild.sound';
 const VOICE_KEY = 'agentGuild.voice';
 const NOTES_KEY = 'agentGuild.notes';
+const NOTES_REV_KEY = 'agentGuild.notesRevision';
 const DOCK_KEY = 'agentGuild.dock';
 const DOCK_WIDTH_KEY = 'agentGuild.dockWidth';
 const PANES_KEY = 'agentGuild.panes';
@@ -413,35 +415,63 @@ function moveInMenu(e) {
 /** Notes share the page's storage with every other setting, so they stay far below the browser's limit for it. */
 const NOTES_LIMIT = 100000;
 const NOTES_STATUS = {
-  saved: 'Saved in this browser as you type',
+  saved: 'Saved and synced across your browsers',
+  local: 'Saved in this browser only. Syncs when the manager is back.',
+  damaged: 'Not syncing: the manager’s notes file is damaged. Saved in this browser only.',
   long: `Not saved: notes hold up to ${NOTES_LIMIT.toLocaleString('en-US')} characters. Shorten them to save.`,
   refused: 'Not saved: the browser’s storage for this page is full or turned off. Copy what you need before you close the page.',
 };
+/** How long a burst of typing waits before one save to the manager. */
+const NOTES_PUSH_MS = 400;
+/** Browsers drop a keepalive request larger than 64 KiB, so a bigger notepad waits for the next open. */
+const NOTES_KEEPALIVE_BYTES = 60 * 1024;
 /**
  * `saved`: the notes as this page last read or wrote them in storage. `status`: whether the text in the
- * panel is saved, too `long` or `refused`; `shown`: the status the line under the title shows.
+ * panel is saved, too `long` or `refused`; `sync`: whether the manager has it (`ok`), could not be reached
+ * (`local`) or cannot read its notes file (`damaged`); `shown`: the status the line under the title shows.
+ * `base`: the manager revision this page last saved from. `acked`: the text of that revision.
+ * `flight`: the save to the manager under way. Text typed meanwhile is sent when it finishes.
  */
-const notesView = { saved: '', status: 'saved', shown: 'saved' };
+const notesView = { saved: '', status: 'saved', sync: 'ok', shown: 'saved', base: null, acked: null, timer: 0, flight: null };
 
 /** Shows notes another tab saved since this page last read or wrote them. Saved notes win over text this page could not save. */
 function refreshNotes() {
   let text;
   // Unlike load(), a read that fails is not taken for empty notes.
   try { text = localStorage.getItem(NOTES_KEY) ?? ''; } catch { return; }
-  if (text === notesView.saved) return;
-  notesView.saved = text;
-  notesView.status = 'saved';
-  $('notes-text').value = text;
+  const revision = load(NOTES_REV_KEY);
+  if (text === notesView.saved && revision === notesView.base) return;
+  if (text !== notesView.saved) {
+    notesView.saved = text;
+    notesView.status = 'saved';
+    $('notes-text').value = text;
+  }
+  // The revision is kept only while the stored text is the one it names, so that text is on the manager.
+  if (revision) notesView.acked = text;
+  if (revision !== notesView.base) notesView.base = revision;
   renderNotesStatus();
   guardLeaving();
 }
 
-/** Saves the notes on every change; emptying them removes the saved copy. */
+/** Saves the notes on every change; emptying them removes the saved copy. This stays in the browser. */
 function saveNotes() {
   const text = $('notes-text').value;
-  if (text.length > NOTES_LIMIT) notesView.status = 'long';
-  else if (!save(NOTES_KEY, text || null)) notesView.status = 'refused';
-  else {
+  if (text.length > NOTES_LIMIT) {
+    notesView.status = 'long';
+    renderNotesStatus();
+    guardLeaving();
+    return;
+  }
+  // A reload can tell these keystrokes have not reached the manager: the stored revision goes first, so
+  // stored text never sits beside a revision it does not match. The revision in memory stays, for the save.
+  // An empty panel is probed with the same text, and that must not look like a new edit.
+  const revision = text !== notesView.saved ? load(NOTES_REV_KEY) : null;
+  if (revision) save(NOTES_REV_KEY, null);
+  if (!save(NOTES_KEY, text || null)) {
+    // The stored text did not change, so it still matches its revision.
+    if (revision) save(NOTES_REV_KEY, revision);
+    notesView.status = 'refused';
+  } else {
     notesView.status = 'saved';
     notesView.saved = text;
   }
@@ -451,16 +481,30 @@ function saveNotes() {
 
 /** The line under the title is a live region, so it is rewritten only when the status changes. */
 function renderNotesStatus() {
-  if (notesView.shown === notesView.status) return;
-  notesView.shown = notesView.status;
+  // A problem saving in this browser outranks one reaching the manager.
+  const shown = notesView.status === 'saved' && notesView.sync !== 'ok' ? notesView.sync : notesView.status;
+  if (notesView.shown === shown) return;
+  notesView.shown = shown;
   const sub = $('notes-sub');
-  sub.textContent = NOTES_STATUS[notesView.status];
-  sub.classList.toggle('warn', notesView.status !== 'saved');
+  sub.textContent = NOTES_STATUS[shown];
+  sub.classList.toggle('warn', shown !== 'saved');
+}
+
+/** Whether the manager has the notes. Typing never changes this, so the line does not flicker. */
+function setNotesSync(sync) {
+  if (notesView.sync === sync) return;
+  notesView.sync = sync;
+  renderNotesStatus();
+}
+
+/** A save or read that failed. A file the manager cannot read is reported as such; anything else is unreachable. */
+function notesFailed(error) {
+  setNotesSync(error?.code === 'notes_unreadable' ? 'damaged' : 'local');
 }
 
 /** Another tab saved the notes, or cleared this page's storage. */
 function notesStored(e) {
-  if (e.key === NOTES_KEY || e.key === null) refreshNotes();
+  if (e.key === NOTES_KEY || e.key === NOTES_REV_KEY || e.key === null) refreshNotes();
 }
 
 function openNotes({ focus = true } = {}) {
@@ -475,6 +519,181 @@ function openNotes({ focus = true } = {}) {
 function toggleNotes() {
   if (dockShows('notes')) closeDock();
   else openNotes();
+}
+
+function sharedPrefix(left, right) {
+  const end = Math.min(left.length, right.length);
+  let i = 0;
+  while (i < end && left.charCodeAt(i) === right.charCodeAt(i)) i += 1;
+  return i;
+}
+
+/** Takes the manager's notes. A selection that still sits in the unchanged prefix stays put. */
+function adoptNotes(notes) {
+  const area = $('notes-text');
+  const next = notes.text;
+  if (typeof next !== 'string') return;
+  if (next !== area.value) {
+    const start = area.selectionStart;
+    const end = area.selectionEnd;
+    const previous = area.value;
+    const focused = document.activeElement === area;
+    area.value = next;
+    if (focused) {
+      const keep = sharedPrefix(previous, next);
+      if (start <= keep && end <= keep) area.setSelectionRange(start, end);
+    }
+  }
+  notesView.saved = next;
+  notesView.acked = next;
+  notesView.base = notes.revision ?? null;
+  notesView.status = 'saved';
+  notesView.sync = 'ok';
+  // Revision last, and only over text that was stored: a stored revision always names the stored text.
+  save(NOTES_REV_KEY, null);
+  if (save(NOTES_KEY, next || null)) save(NOTES_REV_KEY, notes.revision || null);
+  renderNotesStatus();
+  guardLeaving();
+}
+
+function notesPushable() {
+  const text = $('notes-text').value;
+  if (notesView.status !== 'saved' || text.length > NOTES_LIMIT) return false;
+  if (text === notesView.acked) return false;
+  if (notesView.base == null && text === '') return false;
+  return true;
+}
+
+function scheduleNotesPush(delay = NOTES_PUSH_MS) {
+  clearTimeout(notesView.timer);
+  notesView.timer = 0;
+  if (!notesPushable()) return Promise.resolve();
+  if (delay === 0) return pushNotes();
+  notesView.timer = setTimeout(() => { notesView.timer = 0; void pushNotes(); }, delay);
+  return Promise.resolve();
+}
+
+/** The page is being hidden or closed: send what the debounce still holds. */
+function flushNotes() {
+  void scheduleNotesPush(0);
+}
+
+/**
+ * One save to the manager at a time, so two of this page's own saves can never race each other. Text typed
+ * while a save is under way follows it. A conflict sends this page's text once more at the manager's revision:
+ * the latest typing wins, and the text on screen is never replaced by an older copy.
+ */
+function pushNotes() {
+  // The save under way checks for newer text when it finishes.
+  if (notesView.flight) return notesView.flight;
+  const run = (async () => {
+    let resent = false;
+    for (;;) {
+      if (!notesPushable()) return;
+      const outcome = await sendNotes($('notes-text').value);
+      if (outcome === 'stale' && !resent) resent = true;
+      else if (outcome !== 'ok') return;
+    }
+  })();
+  notesView.flight = run;
+  return run.finally(() => { notesView.flight = null; });
+}
+
+/** @returns {Promise<'ok'|'stale'|'failed'>} `stale`: the manager moved on, and `base` now names its revision. */
+async function sendNotes(text) {
+  const body = { revision: notesView.base, text };
+  // A hidden page may be closing: keepalive lets the save outlive it, for bodies the browser allows.
+  const keepalive = document.visibilityState === 'hidden'
+    && new TextEncoder().encode(JSON.stringify(body)).length <= NOTES_KEEPALIVE_BYTES;
+  let payload;
+  try {
+    payload = (await api('PUT', '/notes', body, { keepalive })).notes;
+  } catch (error) {
+    if (error instanceof AuthError) {
+      showAuth(error.message);
+      return 'failed';
+    }
+    if (error.code !== 'stale_notes' || !error.notes || typeof error.notes.text !== 'string') {
+      notesFailed(error);
+      return 'failed';
+    }
+    // The manager already holds exactly this text, saved by another tab or an earlier request.
+    if (error.notes.text === $('notes-text').value) {
+      adoptNotes(error.notes);
+      return 'ok';
+    }
+    notesView.base = error.notes.revision ?? null;
+    return 'stale';
+  }
+  if (!payload || typeof payload.text !== 'string') {
+    notesFailed();
+    return 'failed';
+  }
+  if ($('notes-text').value === text) adoptNotes(payload);
+  else {
+    // Typing went on during the save: the newer text follows from this revision.
+    notesView.base = payload.revision ?? notesView.base;
+    setNotesSync('ok');
+  }
+  return 'ok';
+}
+
+/** Another browser's save. Our own echo matches the text already on screen and only adopts the revision. */
+function applyServerNotes(notes) {
+  if (!notes || typeof notes.text !== 'string') return;
+  const area = $('notes-text');
+  if (notes.text === area.value) {
+    adoptNotes(notes);
+    return;
+  }
+  if (notesView.acked !== null && area.value !== notesView.acked) {
+    notesView.base = notes.revision ?? notesView.base;
+    return;
+  }
+  adoptNotes(notes);
+}
+
+/** The notes part of hello. A missing revision means this manager cannot share notes. */
+async function catchUpNotes(revision, unreadable) {
+  if (unreadable) {
+    setNotesSync('damaged');
+    return;
+  }
+  if (revision === undefined) return;
+  // Hello can arrive before the first read. Load this browser's copy before deciding, unless typing has started.
+  if (notesView.saved === '' && $('notes-text').value === '' && notesView.acked === null) refreshNotes();
+  const local = $('notes-text').value;
+  // No file yet, or it was removed. Text this browser has is the first copy. An empty panel writes nothing.
+  if (revision === null) notesView.acked = local ? null : '';
+  if (revision === null || revision === notesView.base) {
+    if (notesPushable()) await scheduleNotesPush(0);
+    else setNotesSync('ok');
+    return;
+  }
+  await pullNotes();
+}
+
+/** The manager moved on while this page was away. Its copy wins unless this browser has edits it never sent. */
+async function pullNotes() {
+  let notes;
+  try {
+    notes = (await api('GET', '/notes')).notes;
+  } catch (error) {
+    if (error instanceof AuthError) showAuth(error.message);
+    else notesFailed(error);
+    return;
+  }
+  if (!notes || typeof notes.text !== 'string') return;
+  const local = $('notes-text').value;
+  // `acked` is unknown only when this browser holds text no revision names: an edit that never reached the manager.
+  const unsent = local !== notes.text && (notesView.acked === null ? local !== '' : local !== notesView.acked);
+  if (!unsent) {
+    adoptNotes(notes);
+    return;
+  }
+  notesView.base = notes.revision ?? null;
+  setNotesSync('ok');
+  await scheduleNotesPush(0);
 }
 
 // ---- dock -----------------------------------------------------------------
@@ -764,9 +983,10 @@ function renderAgents(container, agents, shells = []) {
 
 class AuthError extends Error {}
 
-async function api(method, path, body) {
+async function api(method, path, body, options = {}) {
   const res = await fetch(`/api/v1${path}`, {
     method,
+    keepalive: options.keepalive === true,
     headers: {
       Authorization: `Bearer ${state.token}`,
       ...(body ? { 'Content-Type': 'application/json' } : {}),
@@ -1220,6 +1440,7 @@ function renderProviders() {
     renderVendorLinks(node, provider);
     renderAccounts(node, provider);
     renderShells(node, provider);
+    state.environmentUI?.renderCard(node, provider);
     renderMultiplexers(node, provider);
     renderUsage(node, provider);
     renderReportingSetup(node, provider);
@@ -2793,6 +3014,13 @@ function loadGitHub() {
 function setGitHub(github) {
   const before = state.github?.signIn;
   state.github = github;
+  const branches = githubPick.data.branches;
+  if (branches && !github.accounts.some((a) => a.id === branches.repo.accountId && !a.needsSignIn)) {
+    // Replace the generation even while the dock is closed; signing in again must
+    // never make an earlier account's pending answer current.
+    githubPick.data.branches = { ...branches, value: null, loading: false, nextPage: null,
+      error: `Sign in as @${branches.repo.login} in Repositories to see its branches.` };
+  }
   const done = github.signIn?.status === 'done' && before?.status === 'pending' ? github.signIn : null;
   if (done) {
     selectGitHubAccount(done.accountId);
@@ -2912,7 +3140,7 @@ function openGitHub({ focus = true } = {}) {
   loadGitHub();
   if (githubPick.repo) {
     loadView('actions');
-    if (githubShownView() === 'issues' || githubShownView() === 'pulls') loadView(githubShownView());
+    if (['issues', 'pulls', 'branches'].includes(githubShownView())) loadView(githubShownView());
   }
   followTerminal();
   if (focus) ($('github-card').querySelector('.btn.primary') ?? $('dock-close')).focus();
@@ -3323,7 +3551,7 @@ function useFolder(dir) {
 
 // ---- GitHub repository views ------------------------------------------------
 
-const GITHUB_VIEWS = ['repos', 'issues', 'actions', 'pulls'];
+const GITHUB_VIEWS = ['repos', 'issues', 'actions', 'pulls', 'branches'];
 const RUNS_POLL_MS = 6000;
 const RUNS_IDLE_POLL_MS = 30000;
 const BODY_LIMIT = 48000;
@@ -3418,7 +3646,11 @@ function pickRepo(repo, { chosen = false } = {}) {
     githubPick.recent = remember(githubPick.recent, repo);
     save(GITHUB_RECENT_KEY, JSON.stringify(githubPick.recent));
   }
-  if (!same) Object.assign(githubPick, { data: {}, editing: null });
+  if (!same) {
+    Object.assign(githubPick, { data: {}, editing: null });
+    $('github-branches-filter').value = '';
+    $('github-branches').scrollTop = 0;
+  }
   if ((!same || chosen) && githubView.accountId !== repo.accountId && state.github?.accounts.some((a) => a.id === repo.accountId)) {
     selectGitHubAccount(repo.accountId);
     githubView.card = null;
@@ -3431,7 +3663,7 @@ function pickRepo(repo, { chosen = false } = {}) {
   renderGitHubViews();
   if (!dockShows('github')) return;
   loadView('actions');
-  if (githubShownView() === 'issues' || githubShownView() === 'pulls') loadView(githubShownView());
+  if (['issues', 'pulls', 'branches'].includes(githubShownView())) loadView(githubShownView());
 }
 
 /** Picks the repository whose clone holds the focused terminal's folder, once for each terminal focused. */
@@ -3454,6 +3686,7 @@ async function followTerminal() {
 }
 
 async function loadView(view) {
+  if (view === 'branches') return loadBranches();
   const repo = githubPick.repo;
   if (!repo || view === 'repos') return;
   const query = view === 'issues' ? `?state=${githubPick.issueState}` : '';
@@ -3476,6 +3709,170 @@ async function loadView(view) {
   githubPick.data[view] = { key, stamp, value: value ?? slot.value, error, loading: false };
   renderGitHubViews();
   if (view === 'actions') scheduleRuns();
+}
+
+// Each object is a listing generation, scoped to the selected account/repository.
+// A retry continues that generation; Refresh replaces it and starts at page one.
+function branchesCurrent(request) {
+  return githubPick.data.branches === request && githubPick.repo && repoKey(githubPick.repo) === request.key
+    && state.github?.accounts.some((a) => a.id === request.repo.accountId && !a.needsSignIn);
+}
+
+function branchesVisible() {
+  return dockShows('github') && githubShownView() === 'branches' && document.visibilityState === 'visible';
+}
+
+async function loadBranches({ resume = false } = {}) {
+  const repo = githubPick.repo;
+  if (!repo || !state.github?.accounts.some((a) => a.id === repo.accountId && !a.needsSignIn)) return;
+  const before = viewData('branches');
+  if (resume && (!before || before.loading || before.nextPage === null)) return;
+  const request = resume ? before : {
+    key: repoKey(repo), repo, value: before?.value ?? null, loading: false, error: null,
+    nextPage: 1, received: false, rows: new Map(), defaultBranch: null, metadataError: null,
+  };
+  githubPick.data.branches = request;
+  request.loading = true;
+  request.error = null;
+  renderGitHubViews();
+  try {
+    while (request.nextPage !== null && branchesVisible() && branchesCurrent(request)) {
+      const page = request.nextPage;
+      const result = await api('GET', `${repoPath(repo)}/branches?page=${page}`);
+      if (!branchesCurrent(request)) return;
+      // A malformed response must not masquerade as a complete, empty list.
+      if (!Array.isArray(result.branches) || (result.nextPage !== null
+        && (!Number.isSafeInteger(result.nextPage) || result.nextPage <= page))) {
+        throw new Error('Could not read the next page of branches. Try again.');
+      }
+      if (page === 1) {
+        request.defaultBranch = result.defaultBranch;
+        request.metadataError = result.metadataError;
+      }
+      for (const branch of result.branches) request.rows.set(branch.name, branch);
+      request.nextPage = result.nextPage;
+      request.received = true;
+      request.value = { ...result, branches: [...request.rows.values()],
+        defaultBranch: request.defaultBranch, metadataError: request.metadataError };
+      renderGitHubViews();
+    }
+  } catch (err) {
+    if (!branchesCurrent(request)) return;
+    if (err instanceof AuthError) { showAuth(err.message); return; }
+    request.error = err.message;
+  } finally {
+    if (branchesCurrent(request)) {
+      request.loading = false;
+      renderGitHubViews();
+    }
+  }
+}
+
+/** Keep the first visible branch at the same pixel offset when earlier rows arrive. */
+function branchAnchor(panel, list) {
+  const { top, bottom } = panel.getBoundingClientRect();
+  const row = [...list.children].find((node) => {
+    const rect = node.getBoundingClientRect();
+    return rect.bottom > top && rect.top < bottom;
+  });
+  return row ? { name: row.dataset.branch, offset: row.getBoundingClientRect().top - top } : null;
+}
+
+async function copyBranch(name, control) {
+  const request = viewData('branches');
+  control.disabled = true;
+  let message;
+  try {
+    if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+    await navigator.clipboard.writeText(name);
+    message = `Copied branch name: ${name}`;
+  } catch {
+    message = 'Could not copy. Select the branch name and copy it using your browser.';
+  } finally {
+    control.disabled = false;
+  }
+  if (request === viewData('branches') && branchesVisible() && control.isConnected) toast(message);
+}
+
+function renderBranches({ preserveAnchor = true } = {}) {
+  const panel = $('github-branches');
+  const list = $('github-branches-list');
+  const repo = githubPick.repo;
+  const key = repo ? repoKey(repo) : '';
+  const same = panel.dataset.repo === key;
+  const anchor = same && preserveAnchor ? branchAnchor(panel, list) : null;
+  const focused = list.contains(document.activeElement) ? document.activeElement : null;
+  const oldScroll = same ? panel.scrollTop : 0;
+  if (!same) { list.replaceChildren(); panel.dataset.repo = key; }
+  $('github-branches-pick').hidden = Boolean(repo);
+  $('github-branches-content').hidden = !repo;
+  if (!repo) return;
+  const slot = viewData('branches');
+  const value = slot?.value;
+  const query = $('github-branches-filter').value.trim().toLocaleLowerCase();
+  $('github-branches-clear').disabled = !$('github-branches-filter').value;
+  const refresh = $('github-branches-refresh');
+  const usable = state.github?.accounts.some((a) => a.id === repo.accountId && !a.needsSignIn);
+  refresh.disabled = Boolean(slot?.loading) || !usable;
+  refresh.textContent = slot?.loading ? (value ? 'Refreshing…' : 'Loading…') : 'Refresh';
+  const out = $('github-branches-out');
+  out.href = value?.url ?? `https://github.com/${repo.fullName}/branches`;
+  out.title = `Open ${repo.fullName} branches on GitHub`;
+  const branches = (value?.branches ?? []).filter((b) => b.name.toLocaleLowerCase().includes(query)).sort((a, b) =>
+    Number(b.name === value.defaultBranch) - Number(a.name === value.defaultBranch)
+      || a.name.localeCompare(b.name) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  const complete = Boolean(value && value.nextPage === null && (!slot.error || slot.received));
+  const count = value?.branches.length ?? 0;
+  let status = !value ? (slot?.error ? 'Branches could not be loaded.' : 'Loading branches…')
+    : query ? `${branches.length} of ${count} loaded branches match.`
+      : `${count} ${count === 1 ? 'branch' : 'branches'}${complete ? '' : ' loaded'}.`;
+  if (value && !slot.received) status += slot.loading ? ' Refreshing…' : ' Showing previous results.';
+  else if (!complete && value) status += slot.loading ? ' Loading more…' : ' Listing incomplete.';
+  if (complete && !branches.length) status = query ? `No branches match “${$('github-branches-filter').value.trim()}”.` : 'No remote branches yet.';
+  const statusNode = $('github-branches-status');
+  if (statusNode.textContent !== status) statusNode.textContent = status;
+  const failure = $('github-branches-error');
+  failure.hidden = !slot?.error;
+  failure.querySelector('span').textContent = slot?.error ?? '';
+  $('github-branches-retry').disabled = Boolean(slot?.loading) || slot?.nextPage === null || !usable;
+  const metadata = $('github-branches-metadata');
+  metadata.hidden = !value?.metadataError;
+  metadata.textContent = value?.metadataError ? 'Branches loaded, but the default branch could not be identified. Refresh to try again.' : '';
+  const existing = new Map([...list.children].map((row) => [row.dataset.branch, row]));
+  const wanted = new Set(branches.map((branch) => branch.name));
+  let cursor = list.firstElementChild;
+  for (const branch of branches) {
+    let row = existing.get(branch.name);
+    if (!row) {
+      const copy = button('Copy name', () => copyBranch(branch.name, copy));
+      copy.setAttribute('aria-label', `Copy branch name ${branch.name}`);
+      row = recordRow(`branch:${branch.name}`, branch.name, '', copy, branch.url);
+      row.classList.add('github-branch');
+      row.dataset.branch = branch.name;
+      row.setAttribute('role', 'listitem');
+      row.querySelector('.history-title').append(el('span', 'github-branch-badges'));
+    }
+    const badges = row.querySelector('.github-branch-badges');
+    const badgeState = `${branch.name === value.defaultBranch}:${branch.protected}`;
+    if (badges.dataset.state !== badgeState) {
+      badges.dataset.state = badgeState;
+      badges.replaceChildren(...[
+        branch.name === value.defaultBranch ? badge('', 'Default', 'Default branch') : null,
+        branch.protected ? badge('', 'Protected', 'Protected by branch protection or rulesets') : null,
+      ].filter(Boolean));
+    }
+    row.querySelector('.history-meta').textContent = branch.sha ? branch.sha.slice(0, 7) : '';
+    row.querySelector('.history-meta').title = branch.sha ?? '';
+    if (row === cursor) cursor = cursor.nextElementSibling;
+    else list.insertBefore(row, cursor);
+  }
+  for (const row of [...list.children]) if (!wanted.has(row.dataset.branch)) row.remove();
+  if (focused?.isConnected && document.activeElement !== focused) focused.focus({ preventScroll: true });
+  panel.scrollTop = oldScroll;
+  if (anchor) {
+    const row = [...list.children].find((node) => node.dataset.branch === anchor.name);
+    if (row) panel.scrollTop += row.getBoundingClientRect().top - panel.getBoundingClientRect().top - anchor.offset;
+  }
 }
 
 function viewData(view) {
@@ -3650,6 +4047,7 @@ function renderGitHubViews() {
   $('github-issues').hidden = shown !== 'issues';
   $('github-runs').hidden = shown !== 'actions';
   $('github-pulls').hidden = shown !== 'pulls';
+  $('github-branches').hidden = shown !== 'branches';
   const ready = Boolean(state.github && githubAccount() && !githubAccount().needsSignIn);
   $('github-clone-into').hidden = !ready || shown !== 'repos';
   const running = Boolean(viewData('actions')?.value?.running);
@@ -3659,6 +4057,7 @@ function renderGitHubViews() {
   if (shown === 'issues') renderIssues();
   else if (shown === 'actions') renderRuns();
   else if (shown === 'pulls') renderPulls();
+  else if (shown === 'branches') renderBranches();
 }
 
 /** Rebuilds a panel and puts the focus back on the control with the same `data-key`. */
@@ -5207,6 +5606,7 @@ function connectEvents() {
       state.sessions = new Map(msg.sessions.map((s) => [s.id, s]));
       for (const id of [...state.views.keys()]) if (!state.sessions.has(id)) dropSession(id);
       managerConnected(msg);
+      state.environmentUI?.connected(msg.pid);
       renderSessions();
       if (!sessionsShown && load(DOCK_KEY) === 'github' && !dockView.panel) openGitHub({ focus: false });
       restorePanes();
@@ -5216,6 +5616,11 @@ function connectEvents() {
       // A changelog.updated sent while the socket was down is lost; catch up the open panel.
       if ($('changelog').open) loadChangelog();
       if (dockShows('github')) loadGitHub();
+      catchUpNotes(msg.notesRevision, msg.notesUnreadable === true);
+    } else if (msg.type === 'notes.updated') {
+      applyServerNotes(msg.notes);
+    } else if (msg.type === 'environment.updated') {
+      state.environmentUI?.updated(msg.environment);
     } else if (msg.type === 'remote-access.updated') {
       state.remoteAccessUI?.updated();
     } else if (msg.type === 'news.updated') {
@@ -5246,6 +5651,7 @@ function connectEvents() {
   };
   ws.onclose = (event) => {
     if (state.pageAway || state.eventsSocket !== ws) return;
+    state.environmentUI?.disconnected();
     if (event?.code === 4403) {
       state.remoteRevoked = true;
       managerLoss.cancel();
@@ -5294,6 +5700,7 @@ let statsInterval;
 let newsTimer;
 
 function showAuth(message = '') {
+  state.environmentUI?.close();
   state.remoteAccessUI?.setAvailable(null);
   managerLoss.cancel();
   closePanel();
@@ -5468,6 +5875,18 @@ $('github-views').addEventListener('click', (e) => {
   if (view) switchGitHubView(view);
 });
 $('github-views').addEventListener('keydown', moveGitHubView);
+$('github-branches-refresh').addEventListener('click', () => loadView('branches'));
+$('github-branches-retry').addEventListener('click', () => loadBranches({ resume: true }));
+$('github-branches-filter').addEventListener('input', () => {
+  $('github-branches').scrollTop = 0;
+  renderBranches({ preserveAnchor: false });
+});
+$('github-branches-clear').addEventListener('click', () => {
+  $('github-branches-filter').value = '';
+  $('github-branches').scrollTop = 0;
+  renderBranches({ preserveAnchor: false });
+  $('github-branches-filter').focus();
+});
 $('github-parent').addEventListener('change', () => setCloneParent(cloneParent()));
 $('github-parent-pick').addEventListener('click', firstClick(() => chooseFolder('clone')));
 $('history-here').addEventListener('change', renderHistory);
@@ -5504,7 +5923,7 @@ document.addEventListener('keydown', (e) => {
 addEventListener('scroll', () => { if (tipFor) hideTip(); }, true);
 addEventListener('resize', () => { if (tipFor) hideTip(); });
 $('notes-open').addEventListener('click', firstClick(toggleNotes));
-$('notes-text').addEventListener('input', saveNotes);
+$('notes-text').addEventListener('input', () => { saveNotes(); void scheduleNotesPush(); });
 addEventListener('storage', notesStored);
 // On load, and again for a page back from the back/forward cache, which may have missed another tab's notes.
 addEventListener('pageshow', refreshNotes);
@@ -5521,12 +5940,17 @@ $('news').addEventListener('close', () => {
   newsView.opener = null;
 });
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState !== 'visible') stopDictation();
+  if (document.visibilityState !== 'visible') {
+    stopDictation();
+    flushNotes();
+  }
   if (document.visibilityState === 'visible' && state.connected && Date.now() - newsLoadedAt > 60000) loadNews();
   if (document.visibilityState === 'visible' && dockShows('github') && githubShownView() === 'actions') loadView('actions');
   else scheduleRuns();
+  if (branchesVisible() && !viewData('branches')?.error) loadBranches({ resume: true });
 });
 addEventListener('pagehide', () => {
+  flushNotes();
   state.pageAway = true;
   activityFavicon.setPaused(true);
   terminalCopy.close();
@@ -5747,5 +6171,6 @@ publishTopbarHeight();
 applyDockLayout();
 
 state.remoteAccessUI = createRemoteAccessUI({ api, getToken: () => state.token, isConnected: () => state.connected, onAuthError: showAuth });
+state.environmentUI = createEnvironmentUI({ api, onAuthError: showAuth, isAuthError: (err) => err instanceof AuthError });
 state.token = readTokenFromHash() || load(TOKEN_KEY);
 boot();

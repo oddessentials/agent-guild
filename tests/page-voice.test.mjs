@@ -97,7 +97,7 @@ function page({ android = false, available, supported = true, enabled = true, pr
     terminalCopy: { close: noop }, terminalControls: { cancel: noop, refresh: noop }, layoutPanes: noop, renderPaneLabels: noop, savePanes: noop, closeMenu: noop, dockMakesWayForTerminal: noop, followTerminal: noop,
     paneNodes: [0, 1].map(() => ({ contains: () => false })),
     activityFavicon: { setPaused: noop },
-    setConnection: noop, showStopped: noop, restartTimer: null, newsLoadedAt: 0, loadNews: noop, connectEvents: noop, dockShows: () => false, githubShownView: () => 'repos', loadView: noop, scheduleRuns: noop,
+    setConnection: noop, showStopped: noop, restartTimer: null, newsLoadedAt: 0, loadNews: noop, connectEvents: noop, dockShows: () => false, githubShownView: () => 'repos', loadView: noop, scheduleRuns: noop, flushNotes: noop, branchesVisible: () => false,
   };
   runInNewContext(`${voiceSource}\n${panelSource}\n${listenerSource}\nglobalThis.terminalMessage = ({${terminalMessageSource}}).onMessage;`, context);
   context.renderVoice();

@@ -95,7 +95,7 @@ test('switch, Hide, session removal and page departure dismiss sensitive copy te
     $: () => ({}), dictation: null, stopDictation: noop, updatePanel: noop, renderVoice: noop, renderSessions: noop,
     layoutPanes: noop, savePanes: noop, closeMenu: noop, dockMakesWayForTerminal: noop, followTerminal: noop, document: { activeElement: null },
     paneNodes: [0, 1].map(() => ({ contains: () => false })),
-    managerLoss: { cancel: noop }, addEventListener: (name, fn) => listeners.set(name, fn),
+    managerLoss: { cancel: noop }, flushNotes: noop, addEventListener: (name, fn) => listeners.set(name, fn),
   };
   vm.runInNewContext(functions + '\n' + pagehide, context);
   context.openPanel('a');

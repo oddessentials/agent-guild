@@ -24,6 +24,21 @@
     xai: [copy('native', home + '/.grok/bin/grok', true, null, [home + '/.grok/bin', home + '/.grok/downloads', home + '/.grok/completions'])],
   };
   providers.forEach(syncInstalls);
+  providers[4].shells = [{ id: 'zsh', label: 'zsh', path: '/bin/zsh', multiplexer: false }];
+  providers[4].defaultShell = 'zsh';
+  var environment = {
+    scope: 'manager', platform: 'darwin', revision: 1, refreshing: false, checkedAt: new Date(now).toISOString(), error: null,
+    managerNode: { version: '24.0.0', path: '/demo/bin/node' },
+    runtimes: [
+      { id: 'node', label: 'Node.js', command: 'node', status: 'ok', version: '24.0.0', path: '/demo/bin/node' },
+      { id: 'python', label: 'Python', command: 'python3', status: 'ok', version: '3.14.0', path: '/demo/bin/python3' },
+      { id: 'go', label: 'Go', command: 'go', status: 'ok', version: '1.25.0', path: '/demo/bin/go' },
+      { id: 'dotnet', label: '.NET SDK', command: 'dotnet', status: 'not_found', version: null, path: null },
+      { id: 'r', label: 'R', command: 'R', status: 'not_found', version: null, path: null },
+      { id: 'rust', label: 'Rust', command: 'rustc', status: 'ok', version: '1.90.0', path: '/demo/bin/rustc' },
+    ],
+    tools: [{ id: 'uv', label: 'uv', path: '/demo/bin/uv', status: 'detected' }],
+  };
   providers[4].multiplexers = ['tmux', 'herdr'].map(function (id) {
     return { id: id, tool: id, checked: true, available: false, installable: true, installs: [], busy: false, pendingCards: 0, installCommand: 'Simulate installing ' + id };
   });
@@ -121,6 +136,13 @@
     var body = init && init.body ? JSON.parse(init.body) : {};
 
     if (route === '/providers' && method === 'GET') return json({ providers: clone(providers) });
+    if (route === '/environment' && method === 'GET') return json(clone(environment));
+    if (route === '/environment/refresh' && method === 'POST') {
+      environment.revision++;
+      environment.checkedAt = new Date().toISOString();
+      announce({ type: 'environment.updated', environment: clone(environment) });
+      return json(clone(environment), 202);
+    }
     if (route === '/providers/reload' && method === 'POST') return json({ providers: clone(providers), warnings: [] });
     if (route === '/usage' && method === 'GET') return json({ usage: [
       { providerId: 'anthropic', accountId: 'default', signedIn: true, plan: 'pro', windows: [{ label: '5 hours', usedPercent: 36, resetsAt: new Date(now + 2 * 3600000).toISOString() }] },
@@ -285,13 +307,23 @@
         }),
       } });
     }
-    var view = route.match(/^\/github\/accounts\/(\d+)\/repos\/([^/]+)\/([^/]+)\/(issues|actions|pulls)(?:\/(\d+))?$/);
+    var view = route.match(/^\/github\/accounts\/(\d+)\/repos\/([^/]+)\/([^/]+)\/(issues|actions|pulls|branches)(?:\/(\d+))?$/);
     if (view) {
       if (Number(view[1]) !== githubAccount.id) return error('no GitHub account with id "' + view[1] + '" is signed in', 'unknown_account', 404);
       var fullName = decodeURIComponent(view[2]) + '/' + decodeURIComponent(view[3]);
       if (!githubRepos.some(function (r) { return r.fullName === fullName; })) return error('GitHub could not find ' + fullName + ' for @' + githubAccount.login, 'not_found', 404);
       var data = repoViews[fullName] || (repoViews[fullName] = { issues: [], runs: [], pulls: [] });
       var web = 'https://github.com/' + fullName;
+      if (view[4] === 'branches' && !view[5] && method === 'GET') {
+        var page = params.get('page') || '1';
+        if (!/^[1-9]\d*$/.test(page) || !Number.isSafeInteger(Number(page))) return error('page must be a positive integer', 'bad_page');
+        var defaultBranch = fullName === 'acme/api-gateway' ? 'trunk' : 'main';
+        var names = fullName === 'demo-dev/old-prototype' ? [] : [defaultBranch, 'feat/wallet-payments', 'fix/checkout-layout', 'release/2026', 'feat/accessibility-and-keyboard-navigation-for-the-checkout'];
+        var branches = Number(page) === 1 ? names.map(function (name, i) {
+          return { name: name, sha: String(i + 1).repeat(40), protected: i === 0 || name === 'release/2026', url: web + '/tree/' + encodeURIComponent(name) };
+        }) : [];
+        return json({ branches: branches, nextPage: null, defaultBranch: Number(page) === 1 ? defaultBranch : null, metadataError: null, fetchedAt: new Date(now).toISOString(), url: web + '/branches' });
+      }
       if (view[4] === 'actions' && !view[5] && method === 'GET') {
         return json({ runs: clone(data.runs), running: data.runs.some(function (r) { return r.status !== 'completed'; }), truncated: false, url: web + '/actions' });
       }

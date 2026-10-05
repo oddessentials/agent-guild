@@ -32,7 +32,7 @@ function page() {
     managerLoss: { cancel: noop, disconnected: noop },
     closePanel: noop, closeModels: noop, closeNews: noop, closeChangelog: noop, closeHistory: noop, closeGitHub: noop,
     showStopped: noop, showManagerStopped: noop, managerGone: noop,
-    wsUrl: (path) => path, WebSocket: class {}, setTimeout: noop,
+    wsUrl: (path) => path, WebSocket: class {}, setTimeout: noop, catchUpNotes: noop, applyServerNotes: noop,
   };
   runInNewContext(source, context);
   context.connectEvents();

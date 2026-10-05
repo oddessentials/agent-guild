@@ -8,7 +8,7 @@ import { runInNewContext } from 'node:vm';
 const app = readFileSync(new URL('../web/app.js', import.meta.url), 'utf8');
 const html = readFileSync(new URL('../web/index.html', import.meta.url), 'utf8');
 const found = (pattern, what) => app.match(pattern)?.[0] ?? assert.fail(`${what} is present in app.js`);
-const fn = (name) => found(new RegExp(`^function ${name}\\([^)]*\\) \\{[^]*?\\n\\}`, 'm'), name);
+const fn = (name) => found(new RegExp(`^(?:async )?function ${name}\\([^)]*\\) \\{[^]*?\\n\\}`, 'm'), name);
 const line = (name) => found(new RegExp(`^const ${name} = .*$`, 'm'), name);
 const limitLine = line('NOTES_LIMIT');
 const statusBlock = found(/^const NOTES_STATUS = \{[^]*?\n\};$/m, 'NOTES_STATUS');
@@ -18,17 +18,26 @@ const source = [
   // One line each: the pattern for longer functions would run on into the next one.
   found(/^function load\(.*$/m, 'load'),
   found(/^function save\(.*$/m, 'save'),
-  limitLine, statusBlock, line('notesView'), line('firstClick'),
-  ...['refreshNotes', 'saveNotes', 'renderNotesStatus', 'notesStored', 'openNotes', 'toggleNotes', 'guardLeaving', 'confirmLeaving'].map(fn),
+  limitLine, statusBlock, line('notesView'), line('firstClick'), line('NOTES_PUSH_MS'), line('NOTES_KEEPALIVE_BYTES'),
+  ...['refreshNotes', 'saveNotes', 'renderNotesStatus', 'notesStored', 'openNotes', 'toggleNotes',
+    'setNotesSync', 'notesFailed', 'sharedPrefix', 'adoptNotes', 'notesPushable', 'scheduleNotesPush', 'flushNotes', 'pushNotes', 'sendNotes',
+    'applyServerNotes', 'catchUpNotes', 'pullNotes', 'guardLeaving', 'confirmLeaving'].map(fn),
   'globalThis.firstClick = firstClick;',
+  'globalThis.notesView = notesView;',
 ].join('\n');
 const LIMIT = runInNewContext(`${limitLine}; NOTES_LIMIT`);
 const STATUS = runInNewContext(`${limitLine}\n${statusBlock}; NOTES_STATUS`);
 const KEY = 'agentGuild.notes';
+const REV = 'agentGuild.notesRevision';
+
+function stale(notes) {
+  return Object.assign(new Error('Notes changed in another browser.'), { code: 'stale_notes', notes });
+}
 
 /** One open page. `storage` is shared between pages to stand for other tabs or a reload. */
 function page({ storage = new Map(), blocked = false, full = false } = {}) {
   const calls = [];
+  const pushes = [];
   // `full`: writes throw as at the quota. `readsFail`: reads throw, as when site data is blocked mid-visit.
   const quota = { full, readsFail: false, setItems: 0 };
   const listeners = new Map();
@@ -64,6 +73,16 @@ function page({ storage = new Map(), blocked = false, full = false } = {}) {
     closeDock: () => { dock.panel = null; calls.push('closeDock'); },
     addEventListener: (type, listener) => listeners.set(type, (listeners.get(type) ?? new Set()).add(listener)),
     removeEventListener: (type, listener) => listeners.get(type)?.delete(listener),
+    document: { activeElement: null },
+    TextEncoder,
+    clearTimeout() {},
+    setTimeout() { return 0; },
+    AuthError: class AuthError extends Error {},
+    showAuth: (message) => calls.push(`auth ${message}`),
+    api: async (method, path, body, options) => {
+      pushes.push({ method, path, body, options });
+      return { notes: { revision: 'rev-1', text: body?.text ?? '' } };
+    },
   };
   // Blocked site data: the page cannot reach localStorage at all.
   if (!blocked) {
@@ -81,12 +100,13 @@ function page({ storage = new Map(), blocked = false, full = false } = {}) {
     };
   }
   runInNewContext(source, sandbox);
-  return {
-    ...sandbox, calls, storage, quota, sub, area, elements, dock,
+  // Return the context itself so a test can replace `api` and the page calls that replacement.
+  return Object.assign(sandbox, {
+    calls, pushes, storage, quota, sub, area, elements, dock,
     /** The user edits the text: the input event saves it. */
     type(next) { area.value = next; sandbox.saveNotes(); },
     guarded: () => Boolean(listeners.get('beforeunload')?.has(sandbox.confirmLeaving)),
-  };
+  });
 }
 
 test('notes save as they are typed, come back after a reload, and clearing them removes the saved copy', () => {
@@ -222,6 +242,7 @@ test('opening with empty notes changes nothing in working storage', () => {
   tab.openNotes();
   assert.equal(storage.size, 0);
   assert.equal(tab.quota.setItems, 0, 'only a removal of the missing key, which changes nothing');
+  assert.equal(tab.pushes.length, 0, 'an empty panel does not create notes on the manager');
   assert.equal(tab.sub.text, STATUS.saved);
   assert.equal(tab.sub.writes, 0);
 });
@@ -288,7 +309,7 @@ test('the page wires the notes up and has their controls', () => {
     "$('notes-open').addEventListener('click', firstClick(toggleNotes));",
     "$('stop-manager').addEventListener('click', firstClick(() => { closeMenu($('manager-menu')); stopManager(); }));",
     "$('restart-manager').addEventListener('click', firstClick(() => { closeMenu($('manager-menu')); stopManager({ restart: true }); }));",
-    "$('notes-text').addEventListener('input', saveNotes);",
+    "$('notes-text').addEventListener('input', () => { saveNotes(); void scheduleNotesPush(); });",
     "addEventListener('storage', notesStored);",
     "addEventListener('pageshow', refreshNotes);",
   ]) assert.ok(app.includes(`\n${wiring}\n`), wiring);
@@ -301,4 +322,349 @@ test('the page wires the notes up and has their controls', () => {
   assert.match(html, /<section id="notes" class="dock-panel notes-panel" role="tabpanel" aria-labelledby="notes-title" hidden>/);
   assert.match(html, /<textarea id="notes-text" class="notes-text" aria-labelledby="notes-title" aria-describedby="notes-sub" autocomplete="off"/);
   assert.ok(html.includes(`<p id="notes-sub" class="dock-sub sub" aria-live="polite">${STATUS.saved}</p>`), 'the status line starts as the page writes it');
+});
+
+test('an empty manager receives notes this browser already has, and an empty panel does not create any', async () => {
+  const tab = page();
+  await tab.catchUpNotes(null);
+  assert.equal(tab.pushes.length, 0);
+  assert.equal(tab.notesView.acked, '');
+  tab.type('checklist');
+  await tab.catchUpNotes(null);
+  assert.equal(tab.pushes.length, 1);
+  assert.equal(tab.pushes[0].body.revision, null);
+  assert.equal(tab.pushes[0].body.text, 'checklist');
+  assert.equal(tab.area.value, 'checklist');
+  assert.equal(tab.sub.writes, 0, 'the line stays quiet while the save succeeds');
+});
+
+test('a browser with no notes takes the manager copy', async () => {
+  const tab = page();
+  tab.api = async () => ({ notes: { revision: 'r9', text: 'from the host' } });
+  await tab.pullNotes();
+  assert.equal(tab.area.value, 'from the host');
+  assert.equal(tab.storage.get(KEY), 'from the host');
+  assert.equal(tab.storage.get('agentGuild.notesRevision'), 'r9');
+  assert.equal(tab.sub.text, STATUS.saved);
+});
+
+test('an echo of this page\'s save does not move the caret', () => {
+  const tab = page();
+  tab.type('hello world');
+  tab.adoptNotes({ revision: 'r1', text: 'hello world' });
+  tab.area.setSelectionRange(1, 4);
+  tab.applyServerNotes({ revision: 'r1', text: 'hello world' });
+  assert.deepEqual([tab.area.selectionStart, tab.area.selectionEnd], [1, 4]);
+});
+
+test('notes from another browser keep a selection in the unchanged part', () => {
+  const tab = page();
+  tab.type('hello world');
+  tab.adoptNotes({ revision: 'r1', text: 'hello world' });
+  tab.document.activeElement = tab.area;
+  tab.area.setSelectionRange(2, 2);
+  tab.applyServerNotes({ revision: 'r2', text: 'hello world!' });
+  assert.equal(tab.area.value, 'hello world!');
+  assert.equal(tab.area.selectionStart, 2);
+  assert.equal(tab.notesView.base, 'r2');
+  assert.equal(tab.storage.get('agentGuild.notesRevision'), 'r2');
+});
+
+test('notes arriving while this page is mid-edit stay off the text being typed', () => {
+  const tab = page();
+  tab.adoptNotes({ revision: 'r1', text: 'hello' });
+  tab.area.value = 'hello!';
+  tab.notesView.saved = 'hello!';
+  tab.area.setSelectionRange(6, 6);
+  tab.applyServerNotes({ revision: 'r2', text: 'hello?' });
+  assert.equal(tab.area.value, 'hello!');
+  assert.deepEqual([tab.area.selectionStart, tab.area.selectionEnd], [6, 6]);
+  assert.equal(tab.notesView.base, 'r2');
+});
+
+test('a conflict while typing sends the latest text once more, at the manager\'s revision', async () => {
+  const tab = page();
+  tab.area.value = 'mine';
+  tab.notesView.saved = 'mine';
+  tab.notesView.acked = '';
+  tab.notesView.base = 'old';
+  let n = 0;
+  tab.api = async (_method, _path, body) => {
+    n += 1;
+    tab.pushes.push(body);
+    if (n === 1) {
+      tab.area.value = 'mine!';
+      tab.notesView.saved = 'mine!';
+      const error = new Error('Notes changed in another browser.');
+      error.code = 'stale_notes';
+      error.notes = { revision: 'fresh', text: 'theirs' };
+      throw error;
+    }
+    if (n > 2) throw new Error('retried more than once');
+    return { notes: { revision: 'rev-2', text: body.text } };
+  };
+  await tab.scheduleNotesPush(0);
+  assert.equal(n, 2);
+  // The body is created inside the page context, so compare its fields.
+  assert.equal(tab.pushes[1].revision, 'fresh');
+  assert.equal(tab.pushes[1].text, 'mine!');
+  assert.equal(tab.area.value, 'mine!');
+  assert.equal(tab.notesView.base, 'rev-2');
+});
+
+test('a conflict never replaces the text on screen: this page sends it once more at the manager\'s revision', async () => {
+  const tab = page();
+  tab.area.value = 'mine';
+  tab.notesView.saved = 'mine';
+  tab.notesView.acked = '';
+  tab.notesView.base = 'old';
+  tab.api = async (_method, _path, body) => {
+    tab.pushes.push(body);
+    if (body.revision === 'old') throw stale({ revision: 'fresh', text: 'theirs' });
+    return { notes: { revision: 'rev-2', text: body.text } };
+  };
+  await tab.scheduleNotesPush(0);
+  assert.equal(tab.area.value, 'mine');
+  assert.equal(tab.pushes.length, 2);
+  assert.equal(tab.pushes[1].revision, 'fresh');
+  assert.equal(tab.notesView.acked, 'mine');
+  assert.equal(tab.notesView.base, 'rev-2');
+});
+
+test('a second conflict in a row stops rather than looping', async () => {
+  const tab = page();
+  tab.area.value = 'mine';
+  tab.notesView.saved = 'mine';
+  tab.notesView.acked = '';
+  tab.notesView.base = 'old';
+  let n = 0;
+  tab.api = async () => {
+    n += 1;
+    throw stale({ revision: `r${n}`, text: 'theirs' });
+  };
+  await tab.scheduleNotesPush(0);
+  assert.equal(n, 2);
+  assert.equal(tab.area.value, 'mine');
+});
+
+test('notes over the limit are not sent to the manager', async () => {
+  const tab = page();
+  tab.type('x'.repeat(LIMIT + 1));
+  await tab.scheduleNotesPush(0);
+  assert.equal(tab.pushes.length, 0);
+  assert.equal(tab.sub.text, STATUS.long);
+});
+
+test('notes already in this browser reach an empty manager on the first hello', async () => {
+  const tab = page({ storage: new Map([[KEY, 'from this browser']]) });
+  await tab.catchUpNotes(null);
+  assert.equal(tab.area.value, 'from this browser');
+  assert.equal(tab.pushes.length, 1);
+  assert.equal(tab.pushes[0].body.revision, null);
+  assert.equal(tab.pushes[0].body.text, 'from this browser');
+  assert.equal(tab.sub.writes, 0);
+});
+
+test('opening an empty notepad does not drop the revision or create notes', () => {
+  const storage = new Map([['agentGuild.notesRevision', 'r1']]);
+  const tab = page({ storage });
+  tab.openNotes();
+  assert.equal(storage.get('agentGuild.notesRevision'), 'r1');
+  assert.equal(tab.pushes.length, 0);
+  assert.equal(tab.notesView.base, 'r1');
+});
+
+test('a keystroke before hello is saved against the revision already in this browser', async () => {
+  const storage = new Map([[KEY, 'hello'], ['agentGuild.notesRevision', 'r1']]);
+  const tab = page({ storage });
+  tab.refreshNotes();
+  tab.type('hello!');
+  assert.equal(storage.has('agentGuild.notesRevision'), false, 'a reload can see the keystrokes were not saved');
+  assert.equal(tab.notesView.base, 'r1', 'the save still names the revision it started from');
+  await tab.catchUpNotes('r1');
+  assert.equal(tab.pushes.length, 1);
+  assert.equal(tab.pushes[0].body.revision, 'r1');
+  assert.equal(tab.pushes[0].body.text, 'hello!');
+  assert.equal(tab.area.value, 'hello!');
+});
+
+test('another tab’s revision arrives without moving the caret when the text is unchanged', () => {
+  const storage = new Map([[KEY, 'hello'], ['agentGuild.notesRevision', 'r1']]);
+  const tab = page({ storage });
+  tab.refreshNotes();
+  tab.area.setSelectionRange(2, 2);
+  storage.set('agentGuild.notesRevision', 'r2');
+  tab.notesStored({ key: 'agentGuild.notesRevision' });
+  assert.equal(tab.area.value, 'hello');
+  assert.deepEqual([tab.area.selectionStart, tab.area.selectionEnd], [2, 2]);
+  assert.equal(tab.notesView.base, 'r2');
+  assert.equal(tab.pushes.length, 0);
+});
+
+test('a browser reopened with an old synced copy takes the newer notes another browser saved', async () => {
+  // This browser last synced 'old' at r1; another browser has since saved r2.
+  const storage = new Map([[KEY, 'old'], [REV, 'r1']]);
+  const tab = page({ storage });
+  tab.refreshNotes();
+  tab.api = async (method, _path, body) => {
+    tab.pushes.push({ method, body });
+    if (method === 'GET') return { notes: { revision: 'r2', text: 'new from phone' } };
+    throw new Error('no save expected');
+  };
+  await tab.catchUpNotes('r2');
+  assert.deepEqual(tab.pushes.map((p) => p.method), ['GET'], 'the old copy is not sent');
+  assert.equal(tab.area.value, 'new from phone');
+  assert.equal(storage.get(KEY), 'new from phone');
+  assert.equal(storage.get(REV), 'r2');
+  assert.equal(tab.sub.text, STATUS.saved);
+});
+
+test('edits that never reached the manager are still sent after a reload, over its newer revision', async () => {
+  const storage = new Map([[KEY, 'old'], [REV, 'r1']]);
+  const first = page({ storage });
+  first.refreshNotes();
+  first.type('old, edited offline');
+  assert.equal(storage.has(REV), false);
+  const tab = page({ storage });
+  tab.refreshNotes();
+  tab.api = async (method, _path, body) => {
+    tab.pushes.push({ method, body });
+    if (method === 'GET') return { notes: { revision: 'r2', text: 'other' } };
+    return { notes: { revision: 'r3', text: body.text } };
+  };
+  await tab.catchUpNotes('r2');
+  assert.deepEqual(tab.pushes.map((p) => p.method), ['GET', 'PUT']);
+  assert.equal(tab.pushes[1].body.revision, 'r2');
+  assert.equal(tab.pushes[1].body.text, 'old, edited offline');
+  assert.equal(tab.area.value, 'old, edited offline');
+  assert.equal(storage.get(REV), 'r3');
+});
+
+test('an edit drops the stored revision before it stores the text, so no reload can see the new text as synced', () => {
+  const storage = new Map([[KEY, 'hello'], [REV, 'r1']]);
+  const tab = page({ storage });
+  tab.refreshNotes();
+  const seen = [];
+  const { setItem } = tab.localStorage;
+  tab.localStorage.setItem = (key, value) => {
+    seen.push([key, storage.get(REV) ?? null]);
+    return setItem(key, value);
+  };
+  tab.type('hello!');
+  assert.deepEqual(seen, [[KEY, null]]);
+});
+
+test('a refused edit keeps the stored revision, which still names the stored text', () => {
+  const storage = new Map([[KEY, 'hello'], [REV, 'r1']]);
+  const tab = page({ storage });
+  tab.refreshNotes();
+  // At the quota the longer text is refused; the short revision fits in the space its removal just freed.
+  const { setItem } = tab.localStorage;
+  tab.localStorage.setItem = (key, value) => {
+    if (key === KEY) throw Object.assign(new Error('The quota has been exceeded.'), { name: 'QuotaExceededError' });
+    return setItem(key, value);
+  };
+  tab.type('hello!');
+  assert.equal(tab.sub.text, STATUS.refused);
+  assert.equal(storage.get(KEY), 'hello');
+  assert.equal(storage.get(REV), 'r1');
+});
+
+test('hiding the page during a save sends no second request beside it, and the screen never rolls back', async () => {
+  const tab = page();
+  tab.adoptNotes({ revision: 'r1', text: 'a' });
+  let current = { revision: 'r1', text: 'a' };
+  let release;
+  let inFlight = 0;
+  let most = 0;
+  tab.api = async (_method, _path, body) => {
+    inFlight += 1;
+    most = Math.max(most, inFlight);
+    tab.pushes.push(body);
+    if (tab.pushes.length === 1) await new Promise((resolve) => { release = resolve; });
+    inFlight -= 1;
+    if (body.revision !== current.revision) throw stale(current);
+    current = { revision: `r${tab.pushes.length + 1}`, text: body.text };
+    return { notes: current };
+  };
+  tab.type('ab');
+  const first = tab.scheduleNotesPush(0);
+  tab.type('abc');
+  tab.document.visibilityState = 'hidden';
+  tab.flushNotes();
+  tab.flushNotes(); // pagehide right after visibilitychange
+  assert.equal(tab.pushes.length, 1, 'the flush waits for the save under way');
+  release();
+  await first;
+  assert.equal(most, 1);
+  assert.equal(tab.pushes.length, 2);
+  assert.equal(tab.pushes[1].text, 'abc');
+  assert.equal(tab.pushes[1].revision, 'r2');
+  assert.equal(tab.area.value, 'abc');
+  assert.equal(tab.storage.get(KEY), 'abc');
+  assert.equal(current.text, 'abc');
+});
+
+test('a hidden page sends small notes with keepalive and large ones without', async () => {
+  const tab = page();
+  tab.document.visibilityState = 'hidden';
+  tab.type('short');
+  await tab.scheduleNotesPush(0);
+  assert.equal(tab.pushes[0].options.keepalive, true);
+  tab.type('x'.repeat(70_000));
+  await tab.scheduleNotesPush(0);
+  assert.equal(tab.pushes[1].options.keepalive, false);
+});
+
+test('the status line says when notes are only in this browser, and clears once the manager has them', async () => {
+  const tab = page();
+  tab.type('todo');
+  tab.api = async () => { throw new TypeError('Failed to fetch'); };
+  await tab.scheduleNotesPush(0);
+  assert.equal(tab.sub.text, STATUS.local);
+  assert.ok(tab.sub.classes.has('warn'));
+  assert.equal(tab.guarded(), false, 'the text is safe in this browser, so leaving is not blocked');
+  tab.type('todo!');
+  assert.equal(tab.sub.text, STATUS.local, 'typing does not flip the line');
+  tab.api = async (_method, _path, body) => ({ notes: { revision: 'r1', text: body.text } });
+  await tab.catchUpNotes(null);
+  assert.equal(tab.sub.text, STATUS.saved);
+  assert.equal(tab.sub.classes.has('warn'), false);
+});
+
+test('a manager that cannot read its notes file says so, and recovers once it can', async () => {
+  const tab = page();
+  tab.type('todo');
+  await tab.catchUpNotes(undefined, true);
+  assert.equal(tab.sub.text, STATUS.damaged);
+  tab.api = async () => { throw Object.assign(new Error('Notes could not be read.'), { code: 'notes_unreadable' }); };
+  await tab.scheduleNotesPush(0);
+  assert.equal(tab.sub.text, STATUS.damaged, 'a failed save keeps the precise reason');
+  tab.api = async (_method, _path, body) => ({ notes: { revision: 'r1', text: body.text } });
+  await tab.catchUpNotes(null);
+  assert.equal(tab.sub.text, STATUS.saved);
+});
+
+test('a storage problem outranks a sync problem on the status line', async () => {
+  const tab = page();
+  tab.setNotesSync('local');
+  tab.type('x'.repeat(LIMIT + 1));
+  assert.equal(tab.sub.text, STATUS.long);
+  tab.type('ok');
+  assert.equal(tab.sub.text, STATUS.local);
+});
+
+test('a manager that lost its notes file gets this browser\'s synced copy back', async () => {
+  const storage = new Map([[KEY, 'kept'], [REV, 'r1']]);
+  const tab = page({ storage });
+  tab.refreshNotes();
+  tab.api = async (_method, _path, body) => {
+    tab.pushes.push(body);
+    if (body.revision !== null) throw stale({ revision: null, text: '' });
+    return { notes: { revision: 'r9', text: body.text } };
+  };
+  await tab.catchUpNotes(null);
+  assert.equal(tab.pushes.at(-1).text, 'kept');
+  assert.equal(tab.area.value, 'kept');
+  assert.equal(storage.get(REV), 'r9');
 });
