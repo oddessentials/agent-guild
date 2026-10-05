@@ -23,7 +23,7 @@ import { SelfUpdate, isDevelopmentBuild } from '../src/manager/self-update.mjs';
 import { launcherPath, MANAGER_ENTRY, ROOT_DIR } from '../src/manager/launch.mjs';
 import {
   UsageMonitor, readClaudeCredentials, readCodexCredentials,
-  claudeKeychainService, claudeCredentialsFile, fetchClaudeUsage, fetchCodexUsage, commandUsage, toIso, windowLabel, clampPercent, excerpt,
+  claudeKeychainService, claudeCredentialsFile, fetchClaudeUsage, fetchCodexUsage, commandUsage, toIso, windowLabel, clampPercent, excerpt, readStart, ERROR_BODY_LIMIT,
 } from '../src/manager/usage.mjs';
 import { Session } from '../src/manager/session.mjs';
 import {
@@ -1608,11 +1608,11 @@ test('a refused usage request says whether the sign-in or the network was refuse
   const page = '<!DOCTYPE html><html><head><title>Just a moment...</title><script>var x = 1;</script></head><body>Checking your browser</body></html>';
   for (const fetchUsage of [fetchClaudeUsage, fetchCodexUsage]) {
     const blocked = await fetchUsage({ accessToken: 'x', fetchImpl: reply(403, page, cloudflare) }).catch((err) => err);
-    assert.match(blocked.message, /blocked the request before checking the sign-in \(HTTP 403\)/);
+    assert.equal(blocked.message, 'usage endpoint blocked this network (HTTP 403), not a sign-in problem; usually a VPN, proxy or exit node, and it clears by itself', 'the meaning comes first, as the card shows one line');
     assert.doesNotMatch(blocked.message, /sign in again/, 'a network block is not blamed on the sign-in');
     assert.deepEqual(blocked.detail, { status: 403, server: 'cloudflare', ray: '8f1e2d3c4b5a6978-LHR', body: 'Just a moment... Checking your browser' });
     const challenged = await fetchUsage({ accessToken: 'x', fetchImpl: reply(403, '{}', { 'cf-mitigated': 'challenge', 'content-type': 'application/json' }) }).catch((err) => err);
-    assert.match(challenged.message, /blocked the request/, 'a Cloudflare challenge counts whatever the body');
+    assert.match(challenged.message, /blocked this network/, 'a Cloudflare challenge counts whatever the body');
   }
   const refused = await fetchClaudeUsage({
     accessToken: 'x',
@@ -1639,6 +1639,38 @@ test('a refused usage request says whether the sign-in or the network was refuse
   assert.equal(excerpt(`${'x'.repeat(10)} ${'y'.repeat(300)}`), 'xxxxxxxxxx [redacted]', 'a long opaque run is redacted before trimming');
   assert.equal(excerpt('word '.repeat(100)).length, 200);
   assert.equal(excerpt(undefined), '');
+});
+
+test('a failed usage reply is read only as far as an error needs, and its headers are kept short', async () => {
+  const kib = new Uint8Array(1024).fill(0x61);
+  let pulls = 0;
+  let cancelled = false;
+  const endless = new ReadableStream({
+    pull(controller) { pulls++; controller.enqueue(kib); },
+    cancel() { cancelled = true; },
+  });
+  const start = await readStart(new Response(endless));
+  assert.equal(start.length, ERROR_BODY_LIMIT);
+  assert.ok(pulls <= ERROR_BODY_LIMIT / 1024 + 2, `read about the limit, not the whole body (${pulls} chunks)`);
+  assert.ok(cancelled, 'the rest of the body is not downloaded');
+  assert.equal(await readStart(new Response('short')), 'short');
+  assert.equal(await readStart(new Response(null, { status: 403 })), '', 'a reply with no body');
+  assert.equal(await readStart({ text: async () => 'mock' }), 'mock', 'a test double without a stream is read whole');
+  assert.equal(await readStart({}), '');
+  // A character split across chunks is decoded whole.
+  const euro = new TextEncoder().encode('€');
+  const split = new ReadableStream({ start(c) { c.enqueue(euro.slice(0, 1)); c.enqueue(euro.slice(1)); c.close(); } });
+  assert.equal(await readStart(new Response(split)), '€');
+  const failing = new ReadableStream({ pull(c) { c.error(new Error('connection reset')); } });
+  await assert.rejects(readStart(new Response(failing)), /connection reset/);
+
+  const huge = await fetchCodexUsage({ accessToken: 'x', fetchImpl: async () => new Response(new ReadableStream({ pull(c) { c.enqueue(kib); } }), { status: 502, headers: { server: `cloudflare ${'v'.repeat(300)}`, 'cf-ray': 'r'.repeat(30) } }) }).catch((err) => err);
+  assert.equal(huge.message, 'usage endpoint answered HTTP 502', 'an endless reply still ends in an error');
+  assert.ok(huge.detail.server.length <= 80 && huge.detail.server.startsWith('cloudflare'), 'a header is capped before it reaches the log');
+  assert.equal(huge.detail.ray, 'r'.repeat(30));
+  const broken = await fetchClaudeUsage({ accessToken: 'x', fetchImpl: async () => new Response(new ReadableStream({ pull(c) { c.error(new Error('reset')); } }), { status: 403 }) }).catch((err) => err);
+  assert.equal(broken.message, 'usage endpoint refused access (HTTP 403); if this continues, sign in again in Claude Code', 'a body that fails to arrive is left out');
+  assert.equal(broken.detail.body, '');
 });
 
 test('the usage monitor logs a vendor or network failure when it starts or changes, and once when it ends', async () => {
@@ -1669,14 +1701,14 @@ test('the usage monitor logs a vendor or network failure when it starts or chang
   const check = () => monitor.snapshot(anthropic);
 
   replies.push(blocked());
-  assert.match((await check()).error, /blocked the request/);
-  assert.deepEqual(lines, ['[usage] anthropic/default: usage endpoint blocked the request before checking the sign-in (HTTP 403); this is usually the network, such as a VPN, proxy or exit node, and clears by itself (HTTP 403 server=cloudflare cf-ray=ray-1 body="Attention Required!")']);
+  assert.match((await check()).error, /blocked this network/);
+  assert.deepEqual(lines, ['[usage] anthropic/default: usage endpoint blocked this network (HTTP 403), not a sign-in problem; usually a VPN, proxy or exit node, and it clears by itself (server=cloudflare cf-ray=ray-1 body="Attention Required!")']);
   replies.push(blocked());
   await check();
   assert.equal(lines.length, 1, 'the same failure again is not logged again');
   replies.push(new Response('', { status: 503 }));
   await check();
-  assert.equal(lines.at(-1), '[usage] anthropic/default: usage endpoint answered HTTP 503 (HTTP 503)', 'a different failure is');
+  assert.equal(lines.at(-1), '[usage] anthropic/default: usage endpoint answered HTTP 503', 'a different failure is, without repeating the status');
   replies.push(Object.assign(new Error('fetch failed'), { name: 'TypeError' }));
   await check();
   assert.equal(lines.at(-1), '[usage] anthropic/default: usage check failed: fetch failed', 'a network failure has no response to describe');

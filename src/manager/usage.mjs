@@ -303,6 +303,33 @@ function jsonMessage(text) {
   return message ? excerpt(message, 120) || null : null;
 }
 
+/** How much of a failed reply is read: enough for any error message or the start of a challenge page. */
+export const ERROR_BODY_LIMIT = 16 * 1024;
+
+/**
+ * The start of a reply's body as text, at most about `limit` bytes, the rest
+ * left unread. A reply-like object without a body stream is read with text().
+ */
+export async function readStart(res, limit = ERROR_BODY_LIMIT) {
+  const reader = res.body?.getReader?.();
+  if (!reader) return typeof res.text === 'function' ? res.text() : '';
+  const decoder = new TextDecoder();
+  let text = '';
+  let size = 0;
+  try {
+    while (size < limit) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      text += decoder.decode(value, { stream: true });
+    }
+  } finally {
+    // Ends the download of whatever is left; the result does not matter.
+    reader.cancel().catch(() => {});
+  }
+  return (text + decoder.decode()).slice(0, limit);
+}
+
 /**
  * The error for a failed usage request. A 401 means the token was refused;
  * a 403 that Cloudflare answered means the request was blocked before the
@@ -313,14 +340,14 @@ async function httpUsageError(res, signInHint) {
   const { status } = res;
   const header = (name) => { try { return res.headers?.get?.(name) ?? null; } catch { return null; } };
   let text = '';
-  try { text = typeof res.text === 'function' ? await res.text() : ''; } catch { /* the body is optional */ }
+  try { text = await readStart(res); } catch { /* the body is optional */ }
   const server = header('server');
-  const detail = { status, server, ray: header('cf-ray'), body: excerpt(text) };
+  const detail = { status, server: excerpt(server, 80) || null, ray: excerpt(header('cf-ray'), 80) || null, body: excerpt(text) };
   const error = (message, extra = {}) => Object.assign(new UsageError(message), { detail }, extra);
   if (status === 401) return error(`usage endpoint refused the sign-in (HTTP 401); ${signInHint}`);
   if (status === 403) {
     const blocked = header('cf-mitigated') !== null || (/cloudflare/i.test(server ?? '') && /html/i.test(header('content-type') ?? ''));
-    if (blocked) return error('usage endpoint blocked the request before checking the sign-in (HTTP 403); this is usually the network, such as a VPN, proxy or exit node, and clears by itself');
+    if (blocked) return error('usage endpoint blocked this network (HTTP 403), not a sign-in problem; usually a VPN, proxy or exit node, and it clears by itself');
     const message = jsonMessage(text);
     return error(`usage endpoint refused access (HTTP 403${message ? `: ${message}` : ''}); if this continues, ${signInHint}`);
   }
@@ -329,14 +356,15 @@ async function httpUsageError(res, signInHint) {
 }
 
 /**
- * What the manager log adds to a failed lookup's message: the response's
- * details for a vendor failure, nothing more for a network failure, and
- * null for one that needs no log entry, such as no sign-in.
+ * What the manager log adds to a failed lookup's message, which already
+ * names the HTTP status: the reply's headers and body for a vendor failure,
+ * '' when there is nothing more to say, and null for a failure that needs
+ * no log entry, such as no sign-in.
  */
 function failureDetail(err) {
   if (err.detail) {
-    const { status, server, ray, body } = err.detail;
-    return `HTTP ${status}${server ? ` server=${server}` : ''}${ray ? ` cf-ray=${ray}` : ''}${body ? ` body="${body}"` : ''}`;
+    const { server, ray, body } = err.detail;
+    return [server && `server=${server}`, ray && `cf-ray=${ray}`, body && `body="${body}"`].filter(Boolean).join(' ');
   }
   return err instanceof UsageError || err.notSignedIn ? null : '';
 }
