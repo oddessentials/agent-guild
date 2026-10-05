@@ -68,8 +68,11 @@ function launchChain(launcher) {
   return chain;
 }
 
-function removeFile(file) {
-  fs.rmSync(file, { recursive: true, force: true, maxRetries: 3 });
+/** Deletes a file or folder, and a link as the link itself even when its target is already gone. */
+export function removeFile(file) {
+  // Some Node releases (24.13.0 among them) silently keep a dangling link that rmSync is asked to force.
+  if (fs.lstatSync(file, { throwIfNoEntry: false })?.isSymbolicLink()) fs.unlinkSync(file);
+  else fs.rmSync(file, { recursive: true, force: true, maxRetries: 3 });
 }
 
 export function runPlan(
@@ -111,6 +114,8 @@ export function runPlan(
     } catch (err) {
       throw Object.assign(err, { file });
     }
+    // Never report a removal that did not happen.
+    if (exists(file)) throw Object.assign(new Error('it is still there'), { file });
   };
   const prune = (dir) => {
     for (const name of fs.readdirSync(dir)) {

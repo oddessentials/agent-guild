@@ -73,3 +73,39 @@ export function bindSplitter(handle, { axis = () => 'x', start, move, end, step 
     end();
   });
 }
+
+/**
+ * Publishes the part of the window an on-screen keyboard leaves visible as
+ * `--<name>-viewport-top`, `--<name>-viewport-bottom` and `--<name>-viewport-height`
+ * on `element` while `shown()` holds. iOS Safari keeps fixed elements at their full
+ * height under its keyboard and pans the page beneath them, so they must fit themselves.
+ * `fitted(height)` runs after each update, with null while the element is not shown.
+ */
+export function bindVisibleViewport(element, name, { shown = () => !element.hidden, watch = [element], fitted = () => {} } = {}) {
+  const viewport = window.visualViewport;
+  const props = ['top', 'bottom', 'height'].map((edge) => `--${name}-viewport-${edge}`);
+  let frame;
+  const update = () => {
+    if (!shown()) {
+      for (const prop of props) element.style.removeProperty(prop);
+      return fitted(null);
+    }
+    // Magnification belongs to the browser; it must not resize the layout.
+    if (viewport && Math.abs(viewport.scale - 1) > 0.01) return;
+    const top = viewport?.offsetTop || 0;
+    const height = viewport?.height ?? innerHeight;
+    element.style.setProperty(props[0], `${top}px`);
+    element.style.setProperty(props[1], `${Math.max(0, innerHeight - top - height)}px`);
+    element.style.setProperty(props[2], `${height}px`);
+    fitted(height);
+  };
+  const schedule = () => { cancelAnimationFrame(frame); frame = requestAnimationFrame(update); };
+  viewport?.addEventListener('resize', schedule);
+  viewport?.addEventListener('scroll', schedule);
+  addEventListener('resize', schedule);
+  addEventListener('pageshow', schedule);
+  const observer = new MutationObserver(schedule);
+  for (const watched of watch) observer.observe(watched, { attributes: true, attributeFilter: ['hidden'] });
+  schedule();
+  return schedule;
+}

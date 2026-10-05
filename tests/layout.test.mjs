@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { topbarInline, dockMode, clampDockWidth, stageBesideDock, splitMode, clampRatio, bindSplitter, DOCK_DEFAULT, DOCK_MIN, DOCK_MAX, WORKSPACE_MIN } from '../web/layout.js';
+import { topbarInline, dockMode, clampDockWidth, stageBesideDock, splitMode, clampRatio, bindSplitter, bindVisibleViewport, DOCK_DEFAULT, DOCK_MIN, DOCK_MAX, WORKSPACE_MIN } from '../web/layout.js';
+import { bindTerminalViewport } from '../web/terminal-controls.js';
 
 test('the top bar keeps its controls inline only where they fit on one row', () => {
   assert.equal(topbarInline(1440), true);
@@ -96,4 +97,125 @@ test('a splitter moves with the arrow keys along its axis and jumps with Home an
   assert.deepEqual(moves, [-10, 10, -10, 10]);
   assert.deepEqual(jumps, ['home', 'end']);
   assert.equal(ends, 6);
+});
+
+// A phone page: an 800px window whose keyboard, page panning and zoom the test controls, frame by frame.
+function fakePage(t) {
+  const listeners = { window: {}, viewport: {} };
+  const on = (target) => (type, fn) => { (listeners[target][type] ||= []).push(fn); };
+  const viewport = { height: 800, offsetTop: 0, scale: 1, addEventListener: on('viewport') };
+  const frames = new Map();
+  let nextFrame = 0;
+  const observers = [];
+  const saved = Object.fromEntries(['window', 'innerHeight', 'addEventListener', 'requestAnimationFrame', 'cancelAnimationFrame', 'MutationObserver'].map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  Object.assign(globalThis, {
+    window: { visualViewport: viewport },
+    innerHeight: 800,
+    addEventListener: on('window'),
+    requestAnimationFrame: (fn) => { frames.set(++nextFrame, fn); return nextFrame; },
+    cancelAnimationFrame: (id) => frames.delete(id),
+    MutationObserver: class {
+      constructor(fn) { this.fn = fn; observers.push(this); }
+      observe(target) { (this.targets ||= []).push(target); }
+    },
+  });
+  t.after(() => {
+    for (const [key, descriptor] of Object.entries(saved)) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete globalThis[key];
+    }
+  });
+  const element = () => {
+    const props = new Map();
+    const attributes = new Set();
+    // As in the DOM, dataset.name is the data-name attribute.
+    const dataset = new Proxy({}, {
+      get: (_, key) => (attributes.has(`data-${String(key)}`) ? '' : undefined),
+      deleteProperty: (_, key) => attributes.delete(`data-${String(key)}`) || true,
+    });
+    return {
+      hidden: false, props, attributes, dataset,
+      style: { setProperty: (name, value) => props.set(name, value), removeProperty: (name) => props.delete(name) },
+      toggleAttribute: (name, on) => (on ? attributes.add(name) : attributes.delete(name)),
+    };
+  };
+  return {
+    viewport, element,
+    fire: (target, type) => { for (const fn of listeners[target][type] || []) fn(); },
+    hide: (el, hidden) => {
+      el.hidden = hidden;
+      for (const observer of observers) if (observer.targets.includes(el)) observer.fn();
+    },
+    // Runs the frames requested so far; returns how many ran.
+    frame: () => {
+      const queued = [...frames.values()];
+      frames.clear();
+      for (const fn of queued) fn();
+      return queued.length;
+    },
+  };
+}
+
+const edges = (el, name) => ['top', 'bottom', 'height'].map((edge) => el.props.get(`--${name}-viewport-${edge}`) ?? null);
+
+test('a fixed panel follows the part of the page an on-screen keyboard leaves visible', (t) => {
+  const page = fakePage(t);
+  const dock = page.element();
+  const fitted = [];
+  bindVisibleViewport(dock, 'dock', { fitted: (height) => fitted.push(height) });
+  assert.equal(page.frame(), 1);
+  assert.deepEqual(edges(dock, 'dock'), ['0px', '0px', '800px'], 'no keyboard: the whole window');
+
+  // The keyboard opens: Safari shrinks the visual viewport and keeps the layout viewport.
+  page.viewport.height = 367;
+  page.fire('viewport', 'resize');
+  page.fire('viewport', 'resize');
+  assert.equal(page.frame(), 1, 'one update per frame however many events arrive');
+  assert.deepEqual(edges(dock, 'dock'), ['0px', '433px', '367px'], 'the panel ends where the keyboard starts');
+
+  // Safari pans the page to show the focused field.
+  page.viewport.offsetTop = 120;
+  page.fire('viewport', 'scroll');
+  page.frame();
+  assert.deepEqual(edges(dock, 'dock'), ['120px', '313px', '367px'], 'the panel moves with the panned page');
+
+  // Pinch zoom belongs to the browser and leaves the panel as it was.
+  page.viewport.scale = 2;
+  page.viewport.height = 200;
+  page.fire('viewport', 'resize');
+  page.frame();
+  assert.deepEqual(edges(dock, 'dock'), ['120px', '313px', '367px']);
+  assert.deepEqual(fitted, [800, 367, 367]);
+
+  // The keyboard closes.
+  Object.assign(page.viewport, { scale: 1, height: 800, offsetTop: 0 });
+  page.fire('window', 'resize');
+  page.frame();
+  assert.deepEqual(edges(dock, 'dock'), ['0px', '0px', '800px']);
+
+  page.hide(dock, true);
+  page.frame();
+  assert.deepEqual(edges(dock, 'dock'), [null, null, null], 'a hidden panel leaves the page layout alone');
+  assert.equal(fitted.at(-1), null);
+});
+
+test('the terminal panel turns compact above a keyboard and back when it closes', (t) => {
+  const page = fakePage(t);
+  const panel = page.element();
+  const controls = page.element();
+  bindTerminalViewport(panel, controls);
+  page.frame();
+  assert.equal(panel.props.get('--terminal-viewport-bottom'), '0px');
+  assert.equal(panel.attributes.has('data-compact'), false);
+
+  page.viewport.height = 367;
+  page.fire('viewport', 'resize');
+  page.frame();
+  assert.equal(panel.attributes.has('data-compact'), true);
+  assert.equal(panel.props.get('--terminal-viewport-bottom'), '433px');
+
+  page.hide(controls, true);
+  page.frame();
+  assert.deepEqual(edges(panel, 'terminal').slice(0, 2), [null, null], 'without touch keys the panel keeps its usual place');
+  assert.equal(panel.attributes.has('data-compact'), false);
 });
