@@ -199,7 +199,7 @@ try {
     await evaluate(`document.querySelector('#remote-close').click()`);
     assert.equal(await evaluate(`document.querySelector('#remote-signin').value`), '');
     assert.equal(await evaluate(`document.querySelector('#remote-qr').hidden`), true);
-    assert.ok(['settings', 'menu-toggle'].includes(await evaluate('document.activeElement.id')));
+    await until('focus returns to Settings', () => evaluate(`['settings', 'menu-toggle'].includes(document.activeElement.id)`));
     pass('private QR and sign-in link render under CSP, fit a phone screen, and clear when closed');
 
     ctx.remoteAccess.change({ action: 'disable', revision: ctx.remoteAccess.snapshot().revision });
