@@ -10,7 +10,14 @@
 //   in the data folder, which System Settings lists by that name; running
 //   sh directly would list it as "sh". AbandonProcessGroup keeps launchd
 //   from killing the manager once the launching command exits.
-// * Linux: an XDG autostart entry, run when a desktop session starts.
+// * Linux: an XDG autostart entry, run when a desktop session starts. It
+//   runs a script in the data folder, as on macOS: desktops read Exec lines
+//   by different rules (systemd's autostart generator keeps a backslash that
+//   GLib removes), so the line holds only paths that read the same in all.
+//
+// Each launcher touches a file in the data folder before it starts Node.js,
+// and `open --sign-in` records whether a manager then answered, so the page
+// can say whether the last sign-in started the manager.
 //
 // The entry and the OS's enabled state record whether autostart is on, so
 // a user who turns it off outside the app sees it off here too.
@@ -29,18 +36,33 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { DEFAULT_PORT } from './config.mjs';
 
-export const ARGS = ['open', '--no-browser'];
+export const ARGS = ['open', '--no-browser', '--sign-in'];
 export const WINDOWS_RUN_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
 export const WINDOWS_APPROVED_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run';
 export const WINDOWS_VALUE = 'AgentGuild';
 export const WINDOWS_WRAPPER = 'autostart.js';
 export const LAUNCH_AGENT_LABEL = 'com.oddessentials.agent-guild';
 export const MAC_LAUNCHER = 'Agent Guild';
+export const LINUX_LAUNCHER = 'autostart.sh';
+/** Touched by an entry each time it runs at sign-in. */
+export const SIGN_IN_ATTEMPT = 'sign-in-attempt';
+/** What `open --sign-in` found: `{ at, outcome }`. */
+export const SIGN_IN_RESULT = 'sign-in.json';
+/** How long after an entry runs a manager may take to answer before it counts as not started. */
+export const SIGN_IN_WAIT_MS = 30000;
+/** File times may be rounded, so a result this much older than its attempt still belongs to it. */
+const CLOCK_SLACK_MS = 2000;
+const OUTCOMES = new Set(['started', 'running']);
 /**
  * macOS keeps its own switch for the item, which only an app signed to use
  * SMAppService can read, so the page says where it is instead.
  */
 export const MAC_NOTE = 'Starts the session manager in the background when you sign in to this Mac. The page does not open. macOS also lists it as Agent Guild under System Settings › General › Login Items & Extensions; switched off there, it does not start even while this is checked.';
+export const LINUX_NOTE = 'Starts the session manager in the background when you sign in to a desktop session on this computer. The page does not open. A computer with no desktop session, such as a server reached over SSH, does not start it. Desktop startup settings list it as Agent Guild.';
+/** Added to LINUX_NOTE when the manager itself was not started from a desktop session. */
+export const LINUX_NO_DESKTOP = 'This manager was not started from a desktop session, so this computer may not have one.';
+/** Characters that systemd's autostart generator and GLib read differently in an Exec line. */
+const EXEC_UNSAFE = /["`$\\]/;
 
 const failure = (message) => Object.assign(new Error(message), { status: 500, code: 'autostart_failed' });
 
@@ -60,13 +82,14 @@ function jsString(value) {
  * removal of the Run value, its Task Manager setting and this file.
  * `runKey` and `approvedKey` are replaceable in tests.
  */
-export function windowsWrapper({ execPath, script, port = DEFAULT_PORT, runKey = WINDOWS_RUN_KEY, approvedKey = WINDOWS_APPROVED_KEY }) {
+export function windowsWrapper({ execPath, script, attempt, port = DEFAULT_PORT, runKey = WINDOWS_RUN_KEY, approvedKey = WINDOWS_APPROVED_KEY }) {
   const command = [execPath, script].map((p) => `"${p}"`).concat(ARGS).join(' ');
   return [
     '// Agent Guild: starts the session manager at sign-in without a console window.',
     'var files = new ActiveXObject("Scripting.FileSystemObject");',
     'var shell = new ActiveXObject("WScript.Shell");',
     `if (files.FileExists(${jsString(script)})) {`,
+    `  try { files.CreateTextFile(${jsString(attempt)}, true).Close(); } catch (e) {}`,
     `  shell.Environment("Process")("AGENT_GUILD_PORT") = ${jsString(portString(port))};`,
     `  shell.Run(${jsString(command)}, 0, false);`,
     '} else {',
@@ -86,40 +109,32 @@ export function windowsRunCommand({ env, wrapper }) {
 }
 
 /**
- * The sh script a macOS or Linux entry runs, with Node.js as `node`, the
- * package script as $1, the entry's own file as $2, the saved port as $3
- * and the manager log as $4, so no path is ever part of the script text.
- * Its output, a missing Node.js included, is appended to the log when the
- * log can be opened; the subshell tries first because a failed `exec`
- * redirection would end sh before it starts anything.
+ * The sh launcher a macOS or Linux entry runs from the data folder, with
+ * Node.js, the package script, the entry's own file, the saved port, the
+ * manager log and the sign-in attempt file as its arguments, so no path is
+ * ever part of the script text. Its output, a missing Node.js included, is
+ * appended to the log when the log can be opened; the subshell tries first
+ * because a failed `exec` redirection would end sh before it starts
+ * anything. Once the package is gone it removes the entry and itself.
  */
-const posixLaunch = (node) => `if [ -f "$1" ]; then if (exec >>"$4") 2>/dev/null; then exec >>"$4" 2>&1; echo "--- sign-in $(date -u +%Y-%m-%dT%H:%M:%SZ) ---"; fi; AGENT_GUILD_PORT="$3" exec ${node} "$1" ${ARGS.join(' ')}; fi; rm -f "$2"`;
-
-/** The Linux entry's script, with Node.js as $0. */
-export const POSIX_LAUNCH = posixLaunch('"$0"');
-
-/**
- * The macOS launcher script, with Node.js as $1 ahead of POSIX_LAUNCH's
- * arguments. Once the package is gone it removes itself with the LaunchAgent.
- */
-export const MAC_LAUNCH = [
+export const POSIX_LAUNCHER = [
   '#!/bin/sh',
-  '# Agent Guild: starts the session manager at sign-in. Its LaunchAgent runs',
-  '# it with Node.js, the package script, the LaunchAgent, the port and the log.',
+  '# Agent Guild: starts the session manager at sign-in. Its sign-in entry runs it',
+  '# with Node.js, the package script, the entry, the port, the log and a file it touches.',
   'node="$1"; shift',
-  posixLaunch('"$node"'),
-  'rm -f "$0"',
+  `if [ -f "$1" ]; then touch "$5" 2>/dev/null; if (exec >>"$4") 2>/dev/null; then exec >>"$4" 2>&1; echo "--- sign-in $(date -u +%Y-%m-%dT%H:%M:%SZ) ---"; fi; AGENT_GUILD_PORT="$3" exec "$node" "$1" ${ARGS.join(' ')}; fi`,
+  'rm -f "$2" "$0"',
   '',
 ].join('\n');
 
-/** What a macOS or Linux entry passes its script: Node.js, then the paths and port it reads. */
-function launchArgs({ execPath, script, file, port = DEFAULT_PORT, log }) {
-  return [execPath, script, file, portString(port), log];
+/** What a macOS or Linux entry passes its launcher: Node.js, then the paths and port it reads. */
+function launchArgs({ execPath, script, file, port = DEFAULT_PORT, log, attempt }) {
+  return [execPath, script, file, portString(port), log, attempt];
 }
 
-/** The Linux entry's command line: sh, its script, then the arguments it reads. */
-export function posixCommand(paths) {
-  return ['/bin/sh', '-c', POSIX_LAUNCH, ...launchArgs(paths)];
+/** The Linux entry's command line: sh, the launcher, then the arguments it reads. */
+export function posixCommand({ launcher, ...paths }) {
+  return ['/bin/sh', launcher, ...launchArgs(paths)];
 }
 
 /**
@@ -140,7 +155,7 @@ export function stableExecPath(execPath, realpath = fs.realpathSync) {
 
 const xml = (value) => value.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
-export function launchAgentPlist({ launcher, execPath, script, file, port, log }) {
+export function launchAgentPlist({ launcher, execPath, script, file, port, log, attempt }) {
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
@@ -149,7 +164,7 @@ export function launchAgentPlist({ launcher, execPath, script, file, port, log }
     `  <key>Label</key><string>${LAUNCH_AGENT_LABEL}</string>`,
     '  <key>ProgramArguments</key>',
     '  <array>',
-    ...[launcher, ...launchArgs({ execPath, script, file, port, log })].map((arg) => `    <string>${xml(arg)}</string>`),
+    ...[launcher, ...launchArgs({ execPath, script, file, port, log, attempt })].map((arg) => `    <string>${xml(arg)}</string>`),
     '  </array>',
     '  <key>RunAtLoad</key><true/>',
     '  <key>AbandonProcessGroup</key><true/>',
@@ -163,21 +178,22 @@ export function launchAgentPlist({ launcher, execPath, script, file, port, log }
  * One Exec argument, quoted by the Desktop Entry rules: `"`, `` ` ``, `$`
  * and `\` are escaped inside the quotes, and the string-value escape then
  * doubles every backslash again. `%` is the field-code prefix, so it is doubled.
+ * Entries refuse paths with the escaped characters, which systemd's
+ * autostart generator reads differently, so in practice only `%` changes.
  */
 export function desktopArg(value) {
   const quoted = `"${value.replace(/["`$\\]/g, (c) => `\\${c}`)}"`;
   return quoted.replace(/\\/g, '\\\\').replace(/%/g, '%%');
 }
 
-export function desktopEntry({ execPath, script, file, port, log }) {
+export function desktopEntry(paths) {
   return [
     '[Desktop Entry]',
     'Type=Application',
     'Name=Agent Guild',
     'Comment=Starts the Agent Guild session manager',
-    `Exec=${posixCommand({ execPath, script, file, port, log }).map(desktopArg).join(' ')}`,
+    `Exec=${posixCommand(paths).map(desktopArg).join(' ')}`,
     'Terminal=false',
-    'NoDisplay=true',
     'X-GNOME-Autostart-enabled=true',
     '',
   ].join('\n');
@@ -242,6 +258,46 @@ async function writeIfChanged(file, contents, mode = 0o644) {
 }
 
 /**
+ * What the entry did at the last sign-in it ran at, or null when it has not
+ * run since it was turned on: `{ at, outcome }`, where `outcome` is
+ * `started` or `running` (a manager already answered) as `open --sign-in`
+ * recorded it, `starting` while a manager may still be coming up, and
+ * `failed` once none answered in time.
+ */
+export async function lastSignIn(dataDir, now = Date.now()) {
+  let attempt;
+  try {
+    attempt = (await fs.promises.stat(path.join(dataDir, SIGN_IN_ATTEMPT))).mtimeMs;
+  } catch (err) {
+    if (err.code === 'ENOENT') return null;
+    throw err;
+  }
+  let result = null;
+  try {
+    result = JSON.parse(await readText(path.join(dataDir, SIGN_IN_RESULT)));
+  } catch { /* unreadable reads as none */ }
+  if (Number.isFinite(result?.at) && OUTCOMES.has(result.outcome) && result.at >= attempt - CLOCK_SLACK_MS) {
+    return { at: new Date(result.at).toISOString(), outcome: result.outcome };
+  }
+  return { at: new Date(attempt).toISOString(), outcome: now - attempt < SIGN_IN_WAIT_MS ? 'starting' : 'failed' };
+}
+
+/** Records what `open --sign-in` found; best effort, since the manager runs either way. */
+export function recordSignIn(dataDir, outcome, now = Date.now()) {
+  try {
+    const file = path.join(dataDir, SIGN_IN_RESULT);
+    const tmp = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify({ at: now, outcome }));
+    fs.renameSync(tmp, file);
+  } catch { /* nothing to report it to */ }
+}
+
+async function clearSignIns(dataDir) {
+  await fs.promises.rm(path.join(dataDir, SIGN_IN_ATTEMPT), { force: true });
+  await fs.promises.rm(path.join(dataDir, SIGN_IN_RESULT), { force: true });
+}
+
+/**
  * @param {object} opts
  * @param {string} opts.script  bin/agent-guild.mjs of the package that is running
  * @param {string} opts.dataDir  where the Windows wrapper is kept
@@ -267,7 +323,10 @@ export function createAutostart({
   launchctl = runCommand('/bin/launchctl'),
 }) {
   const entryExecPath = platform === 'win32' ? execPath : stableExecPath(execPath);
-  const command = () => ({ execPath: entryExecPath, script, port: getPort(), log });
+  const attempt = path.join(dataDir, SIGN_IN_ATTEMPT);
+  const command = () => ({ execPath: entryExecPath, script, port: getPort(), log, attempt });
+  let note = null;
+  let unusable = null;
   let refreshError = null;
   let queue = Promise.resolve();
   /** One change or check at a time, so two clicks cannot interleave their writes. */
@@ -326,7 +385,7 @@ export function createAutostart({
         return (await readText(file)) !== null && !(await disabled());
       },
       async write() {
-        await writeIfChanged(launcher, MAC_LAUNCH, 0o755);
+        await writeIfChanged(launcher, POSIX_LAUNCHER, 0o755);
         await writeIfChanged(file, launchAgentPlist({ ...command(), launcher, file }));
       },
       async enable() {
@@ -355,25 +414,48 @@ export function createAutostart({
     };
   } else if (platform === 'linux' && !(env.WSL_DISTRO_NAME || /microsoft|wsl/i.test(release))) {
     const file = path.join(env.XDG_CONFIG_HOME || path.join(home, '.config'), 'autostart', 'agent-guild.desktop');
-    target = {
-      async enabled() {
-        const text = await readText(file);
-        return text !== null && desktopEntryEnabled(text);
-      },
-      write: () => writeIfChanged(file, desktopEntry({ ...command(), file })),
-      enable() { return this.write(); },
-      disable: () => fs.promises.rm(file, { force: true }),
-    };
+    const launcher = path.join(dataDir, LINUX_LAUNCHER);
+    const unsafe = [entryExecPath, script, file, launcher, log, attempt].find((p) => EXEC_UNSAFE.test(p));
+    if (unsafe) {
+      unusable = `Not available because this path holds a character (", \`, $ or \\) that desktops read differently in a startup entry: ${unsafe}`;
+    } else {
+      const desktop = env.XDG_CURRENT_DESKTOP || env.WAYLAND_DISPLAY || env.DISPLAY;
+      note = desktop ? LINUX_NOTE : `${LINUX_NOTE} ${LINUX_NO_DESKTOP}`;
+      target = {
+        async enabled() {
+          const text = await readText(file);
+          return text !== null && desktopEntryEnabled(text);
+        },
+        async write() {
+          await writeIfChanged(launcher, POSIX_LAUNCHER, 0o755);
+          await writeIfChanged(file, desktopEntry({ ...command(), launcher, file }));
+        },
+        enable() { return this.write(); },
+        async disable() {
+          await fs.promises.rm(file, { force: true });
+          await fs.promises.rm(launcher, { force: true });
+        },
+      };
+    }
   }
+  if (platform === 'darwin') note = MAC_NOTE;
   const reason = target ? null
-    : unavailable || (platform === 'linux' ? 'Not available in WSL. Start Agent Guild from Windows to launch it at sign-in.'
+    : unavailable || unusable || (platform === 'linux' ? 'Not available in WSL. Start Agent Guild from Windows to launch it at sign-in.'
       : 'Not available on this operating system.');
 
   const describe = async () => {
     if (!target) return { available: false, enabled: false, reason };
     try {
       const enabled = await target.enabled();
-      return { available: true, enabled, reason: enabled ? refreshError : null, ...(platform === 'darwin' && { note: MAC_NOTE }) };
+      return {
+        available: true,
+        enabled,
+        reason: enabled ? refreshError : null,
+        ...(note && { note }),
+        // An unreadable record never keeps the setting from being turned off.
+        lastRun: enabled ? await lastSignIn(dataDir).catch(() => null) : null,
+        log,
+      };
     } catch (err) {
       return { available: false, enabled: false, reason: `Could not read the startup setting: ${err.message}` };
     }
@@ -385,6 +467,8 @@ export function createAutostart({
     set: (enabled) => serial(async () => {
       if (!target) throw Object.assign(new Error(reason), { status: 409, code: 'autostart_unavailable' });
       try {
+        // A fresh start says it has not run yet rather than report an earlier time it was on.
+        if (!enabled || !(await target.enabled().catch(() => false))) await clearSignIns(dataDir);
         await (enabled ? target.enable() : target.disable());
         refreshError = null;
         const state = await describe();

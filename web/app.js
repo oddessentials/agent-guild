@@ -303,12 +303,28 @@ const AUTOSTART_NOTE = 'Starts the session manager in the background when you si
 let autostartRequest = 0;
 let autostartChanging = false;
 
+/** What the entry did at the last sign-in it ran at, or '' while it is off. */
+function autostartRun(autostart) {
+  if (!autostart?.available || !autostart.enabled) return '';
+  const run = autostart.lastRun;
+  if (!run) return 'Has not run at a sign-in yet.';
+  const at = new Date(run.at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+  if (run.outcome === 'started') return `Last ran at sign-in on ${at} and started the session manager.`;
+  if (run.outcome === 'running') return `Last ran at sign-in on ${at}; the session manager was already running.`;
+  if (run.outcome === 'starting') return `Starting the session manager for the sign-in on ${at}…`;
+  return `Last ran at sign-in on ${at}, but the session manager did not start.${autostart.log ? ` See ${autostart.log}.` : ''}`;
+}
+
 /** The manager's sign-in setting; hidden when the manager has none. */
 function renderAutostart(autostart) {
   $('autostart-choice').hidden = !autostart;
   $('autostart').checked = Boolean(autostart?.enabled);
   $('autostart').disabled = !autostart?.available;
   $('autostart-note').textContent = autostart?.reason || autostart?.note || AUTOSTART_NOTE;
+  const run = autostartRun(autostart);
+  $('autostart-run').textContent = run;
+  $('autostart-run').hidden = !run;
+  $('autostart-run').dataset.outcome = autostart?.enabled ? autostart.lastRun?.outcome ?? 'none' : '';
 }
 
 async function loadAutostart({ afterChange = false } = {}) {

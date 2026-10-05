@@ -225,10 +225,13 @@ the providers do not yet offer consistently reliable completion signals.
 background whenever you sign in to the computer running Agent Guild; open
 the page as usual afterwards. On Windows it is an entry in Task Manager's
 Startup apps, on macOS a background item named Agent Guild under System
-Settings › General › Login Items & Extensions, and on Linux a desktop
-autostart entry, so it needs a desktop session there. macOS keeps its own
+Settings › General › Login Items & Extensions, and on Linux an entry named
+Agent Guild in the desktop's startup settings, so it needs a desktop session
+there: a server reached over SSH does not start it. macOS keeps its own
 switch for that item, which Agent Guild cannot read: switched off there, it
-does not start even while **Launch at sign-in** is checked.
+does not start even while **Launch at sign-in** is checked. While it is on,
+the setting says when it last ran at sign-in and whether the session manager
+started then.
 
 The browser tab icon adds a rotating green ring whenever any session card says
 **Working**, including Shell and task cards. It mirrors the cards' terminal
@@ -324,7 +327,12 @@ Any other tool or script can report agents and its model too. See
   console window opens;
   `~/Library/LaunchAgents/com.oddessentials.agent-guild.plist` on macOS,
   which runs the `Agent Guild` script in the data folder so that macOS lists
-  it by that name; and `~/.config/autostart/agent-guild.desktop` on Linux.
+  it by that name; and `~/.config/autostart/agent-guild.desktop` on Linux,
+  which runs `autostart.sh` from the data folder. On Linux, a Node.js,
+  package or data folder path holding `"`, `` ` ``, `$` or `\` cannot be
+  used, because desktops read those differently in a startup entry; the
+  setting then says so. Each sign-in touches `sign-in-attempt` and records
+  its outcome in `sign-in.json` in the data folder.
   Turning it off removes them, and an entry whose Agent Guild package has
   been uninstalled or moved removes itself at the next sign-in. With nvm,
   the package lives in the Node.js version's folder, so uninstalling that

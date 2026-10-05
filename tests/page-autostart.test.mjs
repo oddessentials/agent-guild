@@ -10,7 +10,7 @@ function page(api) {
   const nodes = new Map();
   const messages = [];
   const node = (id) => {
-    if (!nodes.has(id)) nodes.set(id, { checked: false, disabled: false, hidden: false, textContent: '' });
+    if (!nodes.has(id)) nodes.set(id, { checked: false, disabled: false, hidden: false, textContent: '', dataset: {} });
     return nodes.get(id);
   };
   const context = { api, $: node, state: { connected: true }, AuthError: class extends Error {}, showAuth: (message) => messages.push(message), toast: (message) => messages.push(message) };
@@ -134,4 +134,29 @@ test('the note is the reason when there is one, else the manager\'s note for its
   assert.equal(note.textContent, 'Could not update the sign-in entry');
   view.renderAutostart({ available: true, enabled: false, reason: null });
   assert.equal(note.textContent, source.match(/const AUTOSTART_NOTE = '([^']+)'/)[1]);
+});
+
+test('while on, the setting says what the entry did at the last sign-in it ran at', () => {
+  const view = page(async () => ({}));
+  const run = view.node('autostart-run');
+  const on = (lastRun) => ({ available: true, enabled: true, reason: null, lastRun, log: '/home/a/.config/agent-guild/manager.log' });
+  const at = '2026-10-05T09:02:00.000Z';
+  view.renderAutostart(on(null));
+  assert.equal(run.hidden, false);
+  assert.equal(run.textContent, 'Has not run at a sign-in yet.');
+  assert.equal(run.dataset.outcome, 'none');
+  view.renderAutostart(on({ at, outcome: 'started' }));
+  assert.match(run.textContent, /^Last ran at sign-in on .+ and started the session manager\.$/);
+  view.renderAutostart(on({ at, outcome: 'running' }));
+  assert.match(run.textContent, /already running/);
+  view.renderAutostart(on({ at, outcome: 'starting' }));
+  assert.match(run.textContent, /^Starting the session manager/);
+  view.renderAutostart(on({ at, outcome: 'failed' }));
+  assert.match(run.textContent, /did not start\. See \/home\/a\/\.config\/agent-guild\/manager\.log\.$/);
+  assert.equal(run.dataset.outcome, 'failed');
+  for (const off of [{ available: true, enabled: false, reason: null, lastRun: null }, { available: false, enabled: false, reason: 'Not available in WSL.' }, null]) {
+    view.renderAutostart(off);
+    assert.equal(run.hidden, true);
+    assert.equal(run.textContent, '');
+  }
 });
