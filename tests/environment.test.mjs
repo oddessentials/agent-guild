@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -245,6 +246,40 @@ test('scan cleanup waits for kills and ignores a locked directory', async () => 
     },
   });
   assert.deepEqual(events, ['reaped', ['chdir', os.tmpdir()], 'remove']);
+});
+
+test('probe cleanup keeps an isolated process alive until close or the kill deadline', {
+  // POSIX uses child.kill; Windows uses a real taskkill process instead.
+  skip: process.platform === 'win32',
+}, (t) => {
+  for (const closes of [true, false]) {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-environment-'));
+    t.after(() => fs.rmSync(cwd, { recursive: true, force: true }));
+    // No test runner or real child process can keep this subprocess alive.
+    // Even the simulated close event is unref'd, so cleanup owns its lifetime.
+    execFileSync(process.execPath, ['--input-type=module', '-e', `
+      import assert from 'node:assert/strict';
+      import { EventEmitter } from 'node:events';
+      import { runProbe, releaseScanDirectory } from ${JSON.stringify(new URL('../src/manager/environment-probe.mjs', import.meta.url).href)};
+      const stream = () => Object.assign(new EventEmitter(), { destroy() {} });
+      const child = Object.assign(new EventEmitter(), {
+        pid: 1, stdout: stream(), stderr: stream(), unref() {},
+        kill() {
+          if (${closes}) setTimeout(() => child.emit('close', null), 10).unref();
+        },
+      });
+      const kills = [];
+      const result = await runProbe('/hung', [], { timeoutMs: 1, spawnProcess: () => child, kills });
+      assert.match(result.error, /timed out/);
+      assert.equal(kills.length, 1);
+      let ended = false;
+      kills[0].then(() => { ended = true; });
+      await Promise.resolve();
+      assert.equal(ended, false, 'the probe result does not wait for termination');
+      await releaseScanDirectory(process.argv[1], kills);
+    `, cwd], { env: probeEnv(process.env), encoding: 'utf8', timeout: 10000 });
+    assert.equal(fs.existsSync(cwd), false, closes ? 'cleanup after close' : 'cleanup after the kill deadline');
+  }
 });
 
 test('a timed-out probe releases its directory', async () => {

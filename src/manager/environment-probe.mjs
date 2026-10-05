@@ -84,8 +84,8 @@ export function runProbe(file, args, { env, cwd, timeoutMs = TIMEOUT_MS, spawnPr
       if (!child?.pid) return;
       const pending = new Promise((done) => {
         let ended = false;
+        // Keep cleanup alive after the child is unref'd, even if 'close' never arrives.
         const backup = setTimeout(finishKill, 2000);
-        if (typeof backup.unref === 'function') backup.unref();
         function finishKill() {
           if (ended) return;
           ended = true;
