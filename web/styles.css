@@ -153,6 +153,16 @@ main { max-width: calc(1200px + var(--dock-space, 0px)); margin: 0 auto; padding
 .account-chip.unsigned { border-style: dashed; }
 .provider .usage { display: grid; gap: 4px; }
 .provider .usage:empty { display: none; }
+/* Spent portrait: the art stills and a danger wash sits inside the frame. The card stays usable. */
+.provider .spent-veil {
+  position: absolute; inset: 0; z-index: 1; pointer-events: none; opacity: 0;
+  background:
+    radial-gradient(ellipse at 50% 42%, transparent 28%, color-mix(in srgb, var(--danger) 46%, transparent) 100%),
+    linear-gradient(to top, rgba(0, 0, 0, 0.55), transparent 52%);
+  transition: opacity 0.4s var(--ease);
+}
+.provider.spent .card-art::before { filter: grayscale(1) brightness(0.82); }
+.provider.spent .spent-veil { opacity: 1; }
 .environment-summary { min-width: 0; font-size: .78rem; }
 .environment-open { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; text-align: left; }
 .environment-open:hover { text-decoration: underline; }
@@ -1054,6 +1064,7 @@ a.btn.github-out::after {
   .btn.voice[aria-pressed="true"]::before { animation: none; }
   .drag-handle, .session-grid::before, .session-grid.reordering::before,
   .session-grid > .session-card.dragging, .session-grid > .session-card.settling { transition: none; }
+  .provider .spent-veil { transition: none; }
 }
 
 @media (max-width: 640px) {

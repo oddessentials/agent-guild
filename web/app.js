@@ -1787,10 +1787,43 @@ function creditsNote(usage) {
   return [note];
 }
 
+/** The same rounding the meter prints as "N% left". */
+function usageLeft(usedPercent) {
+  return Math.max(0, Math.round(100 - usedPercent));
+}
+
+/**
+ * true when every window explicitly reads 0% left.
+ * false when the account is logged in without that reading.
+ * null when there is no reading to count, including a signed-out account.
+ */
+function accountUsageSpent(usage) {
+  if (!usage || usage.signedIn === false) return null;
+  const windows = Array.isArray(usage.windows) ? usage.windows : [];
+  const readable = !usage.error && windows.length > 0 && windows.every((w) => typeof w.usedPercent === 'number' && Number.isFinite(w.usedPercent));
+  if (!readable) return usage.signedIn === true ? false : null;
+  if (typeof usage.credits === 'number' && Number.isFinite(usage.credits) && usage.credits > 0) return false;
+  return windows.every((w) => usageLeft(w.usedPercent) === 0);
+}
+
+/** The portrait is spent only when every logged-in account explicitly reads 0% left. */
+function cardUsageSpent(provider, usageByAccount) {
+  if (!provider?.available || !provider.usageSource) return false;
+  const accounts = provider.accounts?.length ? provider.accounts : [{ id: 'default' }];
+  let spent = false;
+  for (const account of accounts) {
+    const reading = accountUsageSpent(usageByAccount.get(`${provider.id}/${account.id}`));
+    if (reading === false) return false;
+    if (reading === true) spent = true;
+  }
+  return spent;
+}
+
 function renderUsage(card, provider) {
   const host = card.querySelector('.usage');
   const account = selectedAccount(provider);
   const usage = usageFor(provider, account);
+  card.classList.toggle('spent', cardUsageSpent(provider, state.usage));
   renderTier(card, provider, provider.usageSource ? usage : null);
   const start = card.querySelector('.new');
   const unsigned = Boolean(provider.available && usage?.signedIn === false);
@@ -1808,7 +1841,7 @@ function renderUsage(card, provider) {
   }
   host.replaceChildren(...usage.windows.map((w) => {
     const node = $('meter-template').content.firstElementChild.cloneNode(true);
-    const left = Math.max(0, Math.round(100 - w.usedPercent));
+    const left = usageLeft(w.usedPercent);
     node.classList.toggle('low', left <= 25 && left > 10);
     node.classList.toggle('empty', left <= 10);
     node.querySelector('.meter-label').textContent = w.label;
