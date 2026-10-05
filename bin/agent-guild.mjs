@@ -21,6 +21,7 @@ import {
 } from '../src/manager/config.mjs';
 import { spawnManager } from '../src/manager/launch.mjs';
 import { recordSignIn } from '../src/manager/autostart.mjs';
+import { EXIT_PORT_IN_USE } from '../src/manager/systemd-service.mjs';
 
 function usage() {
   console.log(`Usage: agent-guild [command] [--no-browser]
@@ -255,10 +256,19 @@ async function main() {
   switch (command) {
     case 'open': return cmdOpen({ browser: !flags.has('--no-browser'), signIn: flags.has('--sign-in') });
     case 'start': {
+      // `--service`: run by the Linux boot service, which systemd supervises.
+      const supervised = flags.has('--service');
       await import('../src/manager/main.mjs').then(async (m) => {
         process.on('uncaughtException', (err) => console.error('[manager] unexpected error:', err));
         process.on('unhandledRejection', (err) => console.error('[manager] unhandled rejection:', err));
-        const { shutdown } = await m.startManager();
+        const { shutdown } = await m.startManager({ supervised }).catch((err) => {
+          // Another manager has the port: an exit systemd does not retry, and the page reports.
+          if (supervised && err.code === 'EADDRINUSE') {
+            console.error(`agent-guild: ${err.message}`);
+            process.exit(EXIT_PORT_IN_USE);
+          }
+          throw err;
+        });
         console.log(`Open: ${pageUrl(readRuntimeFile()?.url ?? baseUrl(), loadOrCreateToken())}`);
         for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
           process.on(sig, () => shutdown(sig).then(() => process.exit(0)));

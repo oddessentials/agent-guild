@@ -20,8 +20,9 @@ import { SelfUpdate } from './self-update.mjs';
 import { resolveBaseEnv, pathReader } from './shell-env.mjs';
 import { writeReportShims } from './report-shims.mjs';
 import { SessionHooks } from './session-hooks.mjs';
-import { launcherPath, spawnManager } from './launch.mjs';
+import { launcherPath, nextManager } from './launch.mjs';
 import { createAutostart } from './autostart.mjs';
+import { bootSupported, createBootService } from './systemd-service.mjs';
 import {
   DEFAULT_HOST,
   PACKAGE_FILE,
@@ -42,8 +43,11 @@ const rootDir = path.resolve(here, '../..');
 
 const VERSION_REFRESH_MS = 60 * 60 * 1000;
 
-/** `version`, `packageFile`, `github` (GitHub's URLs and client id) and `autostart` stand in for the real ones in tests. */
-export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, sessionDefaults, version = VERSION, packageFile = PACKAGE_FILE, github: githubOptions = {}, remoteAccess: remoteOptions = {}, autostart = null } = {}) {
+/**
+ * `version`, `packageFile`, `github` (GitHub's URLs and client id), `autostart` and `boot` stand in for the real ones in tests.
+ * `supervised`: started by the Linux boot service, so systemd starts the next manager after a restart.
+ */
+export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, sessionDefaults, version = VERSION, packageFile = PACKAGE_FILE, github: githubOptions = {}, remoteAccess: remoteOptions = {}, autostart = null, boot, supervised = false } = {}) {
   // Validate before creating files, processes or timers, so a typo fails startup cleanly.
   const remoteSettings = loadRemoteAccess(paths.remoteAccess);
   ensureDataDir();
@@ -93,6 +97,8 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
     getPort: () => api.port,
     unavailable: process.env.AGENT_GUILD_HOME ? 'Not available while AGENT_GUILD_HOME sets the data folder.' : null,
   });
+  // The boot service, which starts the next manager after a restart while it is on.
+  if (boot === undefined) boot = bootSupported() && !process.env.AGENT_GUILD_HOME ? createBootService({ dataDir: dataDir() }) : null;
   let closing = null;
 
   const refreshVersions = () => {
@@ -105,7 +111,8 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
   /**
    * End every session and close the API. With `restart`, a new manager is
    * then started from the package on disk, so it comes up on the version
-   * an upgrade installed; clients reconnect to it by themselves.
+   * an upgrade installed; clients reconnect to it by themselves. Resolves to
+   * the code to exit with, which tells systemd to start a supervised one.
    */
   const shutdown = (reason = 'shutdown', { restart = false } = {}) => {
     if (closing) return closing;
@@ -124,13 +131,11 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
     }).then(() => {
       // Only once the port is released: the successor listens on the same one,
       // the bound one rather than a configured 0, so clients find it again.
-      if (!restart) return;
-      try {
-        const child = spawnManager({ note: 'restarting manager', env: { ...process.env, AGENT_GUILD_PORT: String(api.port) } });
-        console.log(`[manager] started the next manager (pid ${child.pid})`);
-      } catch (err) {
+      if (!restart) return 0;
+      return nextManager({ supervised, boot, port: api.port }).catch((err) => {
         console.error(`[manager] could not start the next manager: ${err.message}`);
-      }
+        return 0;
+      });
     });
     return closing;
   };
@@ -157,7 +162,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
     autostart,
     notes: createNotesStore(paths.notes),
     launcher: launcherPath(),
-    onShutdownRequest: ({ restart = false } = {}) => shutdown('requested via API', { restart }).then(() => process.exit(0)),
+    onShutdownRequest: ({ restart = false } = {}) => shutdown('requested via API', { restart }).then((code) => process.exit(code)),
   });
   remoteAccess.attach({ apply: (access) => api.setAccessPolicy(access), getTarget: () => api.url });
 

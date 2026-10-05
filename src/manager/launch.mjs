@@ -2,12 +2,17 @@
 // the `agent-guild` CLI, which starts one when none is running, and by a
 // manager that restarts itself: both run the package on disk, so a restart
 // after an upgrade comes up on the new version.
+//
+// While the Linux boot service is on, systemd is the one that starts a
+// manager: a supervised manager exits for systemd to start the next one,
+// and one started without systemd hands its restart over to it.
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { ensureDataDir, paths } from './config.mjs';
+import { EXIT_RESTART, unitPort } from './systemd-service.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 /** The manager entry point, from the package files on disk. */
@@ -61,4 +66,41 @@ export function launcherPath(platform = process.platform, rootDir = ROOT_DIR) {
   } catch {
     return null;
   }
+}
+
+/**
+ * Starts the manager that follows one restarting on `port`, once that one
+ * has released the port, and resolves to the exit code it should leave with.
+ *
+ * - Under the boot service (`supervised`): EXIT_RESTART, so systemd starts
+ *   the next one, after resetting its start count so that restarts never
+ *   use up the limit kept for crash loops.
+ * - With the boot service on for this port: systemd starts it, so the next
+ *   manager is supervised.
+ * - Otherwise, or if systemd refuses: a detached manager, as before.
+ *
+ * @param {{ supervised?: boolean, boot?: object|null, port: number, spawn?: typeof spawnManager, log?: (line: string) => void }} opts
+ */
+export async function nextManager({ supervised = false, boot = null, port, spawn = spawnManager, log = console.log }) {
+  if (supervised) {
+    await boot?.resetFailed().catch(() => {});
+    log('[manager] exiting for systemd to start the next manager');
+    return EXIT_RESTART;
+  }
+  if (boot) {
+    try {
+      const read = await boot.read();
+      if (read.enabled && unitPort(await boot.text()) === port) {
+        await boot.resetFailed();
+        await boot.start({ block: false });
+        log('[manager] systemd is starting the next manager');
+        return 0;
+      }
+    } catch (err) {
+      log(`[manager] systemd could not start the next manager (${err.message}); starting it directly`);
+    }
+  }
+  const child = spawn({ note: 'restarting manager', env: { ...process.env, AGENT_GUILD_PORT: String(port) } });
+  log(`[manager] started the next manager (pid ${child.pid})`);
+  return 0;
 }
