@@ -4,7 +4,7 @@
 import { SOUNDS, MAX_ALERT_AGE_MS, playOnce, rearmSound, managerLossWatcher, stopWatcher, updateWatcher } from './alerts.js';
 import { TerminalCopy } from './terminal-copy.js';
 import { TerminalControls, bindTerminalViewport } from './terminal-controls.js';
-import { topbarInline, dockMode, clampDockWidth, stageBesideDock, splitMode, clampRatio, bindSplitter, DOCK_MIN, SPLIT_RATIO_MIN } from './layout.js';
+import { topbarInline, dockMode, clampDockWidth, stageBesideDock, splitMode, clampRatio, bindSplitter, bindVisibleViewport, DOCK_MIN, SPLIT_RATIO_MIN } from './layout.js';
 import { highlightParts, rankRepos, recentFirst, remember, repoForOrigin, repoKey } from './repo-search.js';
 import { createActivityFavicon, isSessionWorking } from './activity-favicon.js';
 import { createRemoteAccessUI } from './remote-access.js';
@@ -3879,7 +3879,17 @@ function setPickerOpen(open) {
   input.setAttribute('aria-expanded', String(open));
   $('github-repo-list').hidden = !open;
   if (!open) input.removeAttribute('aria-activedescendant');
-  else renderPickerList();
+  else {
+    fitPickerList();
+    renderPickerList();
+  }
+}
+
+// The list stays inside the visible part of the dock, so no option sits under an on-screen keyboard.
+function fitPickerList() {
+  if (!githubPick.open) return;
+  const room = $('dock').getBoundingClientRect().bottom - $('github-repo').getBoundingClientRect().bottom - 12;
+  $('github-repo-list').style.setProperty('--picker-room', `${Math.max(120, Math.floor(room))}px`);
 }
 
 function highlighted(text, query) {
@@ -5041,6 +5051,7 @@ const terminalControls = new TerminalControls({
   },
 });
 bindTerminalViewport($('terminal-panel'), $('terminal-controls'));
+bindVisibleViewport($('dock'), 'dock', { fitted: fitPickerList });
 
 const terminalCopy = new TerminalCopy({
   opener: $('panel-copy'), dialog: $('terminal-copy'),
