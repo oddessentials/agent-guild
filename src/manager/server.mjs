@@ -13,6 +13,7 @@ import { createFolderOpener } from './folder-opener.mjs';
 import { createFolderBrowser } from './folder-browser.mjs';
 import { normalizeAccess } from './access-policy.mjs';
 import { NOTES_BODY_LIMIT, createNotesStore } from './notes.mjs';
+import { MODES as AUTOSTART_MODES } from './autostart.mjs';
 
 const require = createRequire(import.meta.url);
 const API = '/api/v1';
@@ -282,7 +283,11 @@ export function createManagerServer({
       return sendJson(res, 200, { autostart: await autostart.describe() });
     }
     if (autostart && route === '/autostart' && method === 'PUT') {
-      const { enabled } = await readJsonBody(req);
+      const { enabled, mode } = await readJsonBody(req);
+      if (mode !== undefined) {
+        if (!AUTOSTART_MODES.includes(mode)) throw new HttpError(400, `mode must be one of ${AUTOSTART_MODES.join(', ')}`, 'bad_request');
+        return sendJson(res, 200, { autostart: await autostart.setMode(mode) });
+      }
       if (typeof enabled !== 'boolean') throw new HttpError(400, 'enabled must be true or false', 'bad_request');
       return sendJson(res, 200, { autostart: await autostart.set(enabled) });
     }
