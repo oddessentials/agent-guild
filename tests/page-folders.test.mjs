@@ -50,6 +50,7 @@ function page({ answers = [] } = {}) {
     AuthError: class extends Error {},
     showAuth: (message) => auth.push(message),
     useFolder: (dir) => used.push(dir),
+    rememberCwd: () => {},
     loadRepos: () => reloads.push(true),
     cloneParent: () => $('github-parent').value.trim(),
     document: { activeElement: null },
@@ -150,4 +151,49 @@ test('using a folder fills the field it was opened for', async () => {
   assert.equal(p.saved['agentGuild.cloneParent'], '/work/space');
   assert.equal(p.reloads.length, 1);
   assert.deepEqual(p.used, ['/work/space']);
+});
+
+test('only folders chosen in the browser or started in successfully become recent', async () => {
+  const helpers = await import('../web/folders.js');
+  const run = (names, extra) => {
+    const saved = {}, context = {
+      state: { platform: 'win32' },
+      load: (key) => saved[key] ?? null,
+      save: (key, value) => { saved[key] = value; },
+      ...helpers, ...extra,
+    };
+    runInNewContext(`${constant('RECENT_CWDS_KEY')}${pick(['recentCwds', 'rememberCwd', ...names])}`, context);
+    return { context, recent: () => JSON.parse(saved['agentGuild.recentCwds'] ?? '[]') };
+  };
+  const field = { value: ' typed\path ' };
+  const starting = (answer) => run(['startSession'], {
+    $: () => field, CWD_KEY: 'agentGuild.cwd', selectedAccount: () => ({ id: 'default' }), pickedShell: () => null,
+    api: async () => { if (answer instanceof Error) throw answer; return { session: answer }; },
+    upsertSession() {}, closeHistory() {}, openPanel() {}, toast() {}, AuthError: class extends Error {},
+  });
+  const started = starting({ id: 'a', cwd: 'C:\Work\Guild' });
+  await started.context.startSession({ id: 'fake' }, null);
+  assert.deepEqual(started.recent(), ['C:\Work\Guild']);
+  const failed = starting(Object.assign(new Error('working directory does not exist'), { code: 'bad_cwd' }));
+  await failed.context.startSession({ id: 'fake' }, null);
+  assert.deepEqual(failed.recent(), []);
+
+  const browsed = run([], {});
+  browsed.context.rememberCwd('C:\Work\Guild');
+  browsed.context.rememberCwd('D:\Other');
+  browsed.context.rememberCwd('c:\work\guild');
+  assert.deepEqual(browsed.recent(), ['c:\work\guild', 'D:\Other']);
+});
+
+test('using a browsed folder records it as recent only for the working folder', async () => {
+  const p = page({ answers: [listing, listing] });
+  const remembered = [];
+  p.context.rememberCwd = (dir) => remembered.push(dir);
+  p.context.chooseFolder('clone');
+  await new Promise((resolve) => setImmediate(resolve));
+  p.context.useBrowsedFolder();
+  p.context.chooseFolder('cwd');
+  await new Promise((resolve) => setImmediate(resolve));
+  p.context.useBrowsedFolder();
+  assert.deepEqual(remembered, ['/work/space']);
 });

@@ -1022,3 +1022,13 @@ a.btn.github-out::after {
 .folder-footer { justify-content: space-between; }
 .folder-current { flex: 1; min-width: 0; font-family: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace; font-size: 0.8rem; overflow-wrap: anywhere; }
 .folder-footer .btn { min-height: 42px; }
+.cwd-recent {
+  position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 5; margin: 0; padding: 4px; list-style: none;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); box-shadow: 0 12px 30px rgba(0, 0, 0, 0.3);
+}
+.cwd-recent-option {
+  display: flex; align-items: center; min-height: 40px; padding: 6px 10px; border-radius: max(3px, calc(var(--radius) - 3px));
+  color: var(--text); font-family: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace; font-size: 0.82rem; overflow-wrap: anywhere; cursor: pointer;
+}
+.cwd-recent-option:hover, .cwd-recent-option[aria-selected="true"] { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+@media (pointer: coarse) { .cwd-recent-option { min-height: 46px; } }

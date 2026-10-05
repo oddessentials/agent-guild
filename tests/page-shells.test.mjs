@@ -43,7 +43,7 @@ function picker(saved = '{}') {
       requests.push({ method, route, body: JSON.parse(JSON.stringify(body)) });
       return { session: { id: 'new-session' } };
     },
-    upsertSession() {}, closeHistory() {}, openPanel() {},
+    upsertSession() {}, rememberCwd() {}, closeHistory() {}, openPanel() {},
     AuthError: class extends Error {},
     toast(message) { assert.fail(message); },
   };

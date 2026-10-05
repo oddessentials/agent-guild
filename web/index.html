@@ -69,7 +69,8 @@
           <div class="cwd">
             <label for="cwd">Working folder</label>
             <div class="cwd-field">
-              <input id="cwd" type="text" spellcheck="false" autocomplete="off" placeholder="Home folder">
+              <input id="cwd" type="text" spellcheck="false" autocomplete="off" placeholder="Home folder" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="cwd-recent">
+              <ul id="cwd-recent" class="cwd-recent" role="listbox" aria-label="Recent working folders" hidden></ul>
               <div class="cwd-tools">
                 <button id="cwd-pick" class="cwd-tool" type="button" aria-label="Choose a folder…" title="Connect to the session manager to choose folders" disabled>
                   <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">

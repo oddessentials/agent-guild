@@ -7,6 +7,7 @@ import { topbarInline, dockMode, clampDockWidth, stageBesideDock, splitMode, cla
 import { highlightParts, rankRepos, recentFirst, remember, repoForOrigin, repoKey } from './repo-search.js';
 import { createActivityFavicon, isSessionWorking } from './activity-favicon.js';
 import { createRemoteAccessUI } from './remote-access.js';
+import { matchFolders, readRecentFolders, rememberFolder } from './folders.js';
 
 const TOKEN_KEY = 'agentGuild.token';
 const CWD_KEY = 'agentGuild.cwd';
@@ -20,6 +21,7 @@ const CHANGELOG_SEEN_KEY = 'agentGuild.changelogSeen';
 const GITHUB_ACCOUNT_KEY = 'agentGuild.githubAccount';
 const CLONE_PARENT_KEY = 'agentGuild.cloneParent';
 const HIDDEN_FOLDERS_KEY = 'agentGuild.showHiddenFolders';
+const RECENT_CWDS_KEY = 'agentGuild.recentCwds';
 const GITHUB_REPO_KEY = 'agentGuild.githubRepo';
 const GITHUB_RECENT_KEY = 'agentGuild.githubRecent';
 const GITHUB_VIEW_KEY = 'agentGuild.githubView';
@@ -763,6 +765,71 @@ async function openWorkingFolder() {
   }
 }
 
+// ---- recent working folders -----------------------------------------------
+
+const recentView = { open: false, typed: false, active: -1 };
+
+function recentCwds() {
+  return readRecentFolders(load(RECENT_CWDS_KEY));
+}
+
+function rememberCwd(dir) {
+  if (dir) save(RECENT_CWDS_KEY, JSON.stringify(rememberFolder(recentCwds(), dir, { caseless: state.platform === 'win32' })));
+}
+
+function renderRecentCwds() {
+  const input = $('cwd'), list = $('cwd-recent');
+  const shown = recentView.open ? matchFolders(recentCwds(), recentView.typed ? input.value : '') : [];
+  recentView.active = Math.min(recentView.active, shown.length - 1);
+  list.replaceChildren(...shown.map((dir, i) => {
+    const option = el('li', 'cwd-recent-option', dir);
+    option.id = `cwd-recent-${i}`;
+    option.setAttribute('role', 'option');
+    option.setAttribute('aria-selected', String(i === recentView.active));
+    option.addEventListener('pointerdown', (e) => e.preventDefault());
+    option.addEventListener('click', () => pickRecentCwd(dir));
+    return option;
+  }));
+  list.hidden = !shown.length;
+  input.setAttribute('aria-expanded', String(!list.hidden));
+  if (recentView.active >= 0) input.setAttribute('aria-activedescendant', `cwd-recent-${recentView.active}`);
+  else input.removeAttribute('aria-activedescendant');
+}
+
+function showRecentCwds(typed = false) {
+  Object.assign(recentView, { open: true, typed, active: -1 });
+  renderRecentCwds();
+}
+
+function hideRecentCwds() {
+  Object.assign(recentView, { open: false, active: -1 });
+  renderRecentCwds();
+}
+
+function pickRecentCwd(dir) {
+  hideRecentCwds();
+  useFolder(dir);
+}
+
+function recentCwdKeys(e) {
+  const options = $('cwd-recent').hidden ? [] : [...$('cwd-recent').children];
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    if (!recentView.open) showRecentCwds();
+    const count = $('cwd-recent').children.length;
+    if (!count) return;
+    recentView.active = e.key === 'ArrowDown' ? (recentView.active + 1) % count : recentView.active <= 0 ? count - 1 : recentView.active - 1;
+    renderRecentCwds();
+    $(`cwd-recent-${recentView.active}`).scrollIntoView?.({ block: 'nearest' });
+  } else if (e.key === 'Enter' && recentView.active >= 0 && options[recentView.active]) {
+    e.preventDefault();
+    pickRecentCwd(options[recentView.active].textContent);
+  } else if (e.key === 'Escape' && options.length) {
+    e.preventDefault();
+    hideRecentCwds();
+  }
+}
+
 // ---- folder browser -------------------------------------------------------
 
 const FOLDER_FIELDS = {
@@ -853,7 +920,10 @@ function useBrowsedFolder() {
   const field = folderView.field;
   $('folder-browser').close();
   if (field === 'clone') setCloneParent(dir);
-  else useFolder(dir);
+  else {
+    rememberCwd(dir);
+    useFolder(dir);
+  }
 }
 
 function moveInFolders(e) {
@@ -2342,6 +2412,7 @@ async function startSession(provider, card, { resume, cwd, account = selectedAcc
       ({ session } = await api('POST', '/sessions', { ...body, cwd: working || undefined }));
     }
     upsertSession(session);
+    rememberCwd(session.cwd);
     closeHistory({ focusOpener: false });
     openPanel(session.id);
   } catch (err) {
@@ -5461,6 +5532,11 @@ $('panel-stop').addEventListener('click', () => {
 });
 $('cwd').value = load(CWD_KEY) || '';
 $('cwd-pick').addEventListener('click', firstClick(() => chooseFolder('cwd')));
+$('cwd').addEventListener('focus', () => showRecentCwds());
+$('cwd').addEventListener('click', () => { if (!recentView.open) showRecentCwds(); });
+$('cwd').addEventListener('input', () => showRecentCwds(true));
+$('cwd').addEventListener('blur', hideRecentCwds);
+$('cwd').addEventListener('keydown', recentCwdKeys);
 $('folder-cancel').addEventListener('click', () => $('folder-browser').close());
 $('folder-browser').addEventListener('click', (e) => { if (e.target === $('folder-browser')) $('folder-browser').close(); });
 $('folder-browser').addEventListener('close', () => {
