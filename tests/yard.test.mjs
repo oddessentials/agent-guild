@@ -107,9 +107,9 @@ function webpSize(bytes){
  throw new Error('Unknown WebP chunk '+chunk);
 }
 const MiB=1048576;
-test('plated worlds match the live camera, cover every view, and stay within budget',()=>{
+test('every world\'s plates match the live camera, cover every view, and stay within budget',()=>{
  const assets=new URL('../web/yard/assets/',import.meta.url);
- for(const [skin,world] of Object.entries(WORLDS).filter(([,w])=>w.plates)){
+ for(const [skin,world] of Object.entries(WORLDS)){
   const plates=JSON.parse(readFileSync(new URL(skin+'/plates.json',assets),'utf8'));
   assert.deepEqual(plates.camera,CAMERA,'plates were rendered for the current camera');
   assert.deepEqual(plates.sun,SUN,'plates were rendered for the current suns');

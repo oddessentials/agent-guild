@@ -1,25 +1,24 @@
 // Presentation only: never changes or infers manager state.
 export const PROVIDER_ORDER = ['anthropic', 'openai', 'google', 'xai', 'shell'];
-// Per world: its model, whether its surroundings are pre-rendered plates,
-// character and helper model prefixes (false draws simple markers and no
+// Per world: its model, character and helper model prefixes (false draws simple markers and no
 // helpers), and the light colours each theme uses.
 export const WORLDS = {
-  guild: { title: 'The Guild Yard', subtitle: 'A place for every great endeavour', asset: 'guild', plates: true,
+  guild: { title: 'The Guild Yard', subtitle: 'A place for every great endeavour', asset: 'guild',
     characters: 'hero_', helpers: { agent: 'familiar_', shell: 'drone_' },
     hemi: 0xc4dced, sun: { light: 0xffe0ad, dark: 0xff9a5c } },
-  orbital: { title: 'Orbital Station', subtitle: 'Your crew, at the edge of possibility', asset: 'orbital', plates: true,
+  orbital: { title: 'Orbital Station', subtitle: 'Your crew, at the edge of possibility', asset: 'orbital',
     characters: 'robot_', helpers: { agent: 'drone_', shell: 'drone_' },
     hemi: 0xa7c9ff, sun: { light: 0xfff8f0, dark: 0xffa46e } },
-  grove: { title: 'The Living Grove', subtitle: 'Good work takes root here', asset: 'grove', plates: true,
+  grove: { title: 'The Living Grove', subtitle: 'Good work takes root here', asset: 'grove',
     characters: 'spirit_', helpers: { agent: 'familiar_', shell: 'drone_' },
     hemi: 0xccebd6, sun: { light: 0xffe0ad, dark: 0xffe0ad } },
-  professional: { title: 'Operations Campus', subtitle: 'A clear view of work in progress', asset: 'professional', plates: true,
+  professional: { title: 'Operations Campus', subtitle: 'A clear view of work in progress', asset: 'professional',
     characters: false, helpers: false,
     hemi: 0xc8d6e2, sun: { light: 0xfff0d8, dark: 0xff9a5c } },
-  goblinville: { title: 'Goblinville Works', subtitle: 'Steam up, and mind the boardwalks', asset: 'goblinville', plates: true,
+  goblinville: { title: 'Goblinville Works', subtitle: 'Steam up, and mind the boardwalks', asset: 'goblinville',
     characters: 'goblin_', helpers: { agent: 'goblin_familiar_', shell: 'goblin_helper_' },
     hemi: 0xc9d6c8, sun: { light: 0xffe2b8, dark: 0xff8c50 } },
-  gnomeland: { title: 'Gnomeland Village', subtitle: 'Measure twice, enchant once', asset: 'gnomeland', plates: true,
+  gnomeland: { title: 'Gnomeland Village', subtitle: 'Measure twice, enchant once', asset: 'gnomeland',
     characters: 'gnome_', helpers: { agent: 'gnome_familiar_', shell: 'gnome_helper_' },
     hemi: 0xcbd9d6, sun: { light: 0xffe4bf, dark: 0xff8d52 } },
 };

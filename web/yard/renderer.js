@@ -41,7 +41,8 @@ export class YardRenderer {
     this.renderer=new T.WebGLRenderer({antialias:true,alpha:true,powerPreference:'low-power'});
     this.renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));
     this.renderer.outputColorSpace=T.SRGBColorSpace;
-    this.renderer.toneMapping=T.ACESFilmicToneMapping;
+    // Worlds match the AgX curve their plates were rendered with.
+    this.renderer.toneMapping=T.AgXToneMapping;
     this.renderer.toneMappingExposure=1.3;
     this.renderer.shadowMap.enabled=true;
     this.renderer.shadowMap.type=T.PCFSoftShadowMap;
@@ -97,7 +98,7 @@ export class YardRenderer {
     try {
       loaded=await new T.GLTFLoader(this.loadingManager).loadAsync(new URL(skin+'.glb',ASSETS).href);
       if(this.disposed||request!==this.worldRequest){disposeWorld(loaded.scene);return;}
-      if(WORLDS[skin].plates)await Promise.all([this.surfaceWorld(loaded.scene,skin),this.plateWorld(loaded.scene,skin)]);
+      await Promise.all([this.surfaceWorld(loaded.scene,skin),this.plateWorld(loaded.scene,skin)]);
     } catch(err) {
       disposeWorld(loaded?.scene);
       if(!this.disposed&&request===this.worldRequest)throw err;
@@ -110,8 +111,6 @@ export class YardRenderer {
     this.halls.clear();
     if(this.world){this.scene.remove(this.world);disposeWorld(this.world);}
     this.world=loaded.scene;this.skin=skin;this.scene.add(this.world);
-    // Plated worlds match the AgX curve their plates were rendered with.
-    this.renderer.toneMapping=WORLDS[skin].plates?T.AgXToneMapping:T.ACESFilmicToneMapping;
     this.light(skin,this.theme);
     this.host.dataset.world=skin;
     this.world.traverse(node=>{if(node.isMesh&&!node.userData.plate&&!node.material.isShadowMaterial){node.castShadow=true;node.receiveShadow=true;}});
@@ -182,7 +181,7 @@ export class YardRenderer {
     if(!plates.groups[other])this.plateTheme(this.world,other).catch(noop);
     this.dirty=true;this.drawOnce();
   }
-  // Live halls in plated worlds take scanned material sets by material name,
+  // Live halls take scanned material sets by material name,
   // and light from a small copy of the plates' sky.
   async surfaceWorld(world,skin) {
     const response=await fetch(new URL(skin+'/surfaces.json',ASSETS));
@@ -232,24 +231,24 @@ export class YardRenderer {
   light(skin,theme) {
     this.theme=theme;
     const light=theme==='light';
-    const plated=Boolean(WORLDS[skin].plates),key=themeKey(theme);
+    const key=themeKey(theme);
     this.world?.traverse(node=>{
       // Lit windows, magic and baked glow maps read as glow at night, not as paint by day.
       for(const m of (Array.isArray(node.material)?node.material:node.material?[node.material]:[]))
         if(m.name==='window'||m.name==='magic'||m.emissiveMap)m.emissiveIntensity=light?.35:1.4;
     });
     for(const unit of this.units.values())if(unit.token)unit.token.userData.glow.emissiveIntensity=light?0:.9;
-    // Plated worlds use the sun, sky and plates their theme was rendered with.
-    this.sun.position.set(...(plated?SUN[key]:SUN.light));
+    // Each theme uses the sun, sky and plates it was rendered with.
+    this.sun.position.set(...SUN[key]);
     this.scene.environment=this.world?.userData.environments?.[key]||null;
     if(this.world&&this.skin===skin)this.showPlates(key);
     this.renderer.toneMappingExposure=light?1.65:1.12;
     this.hemi.color.set(WORLDS[skin].hemi);
-    this.hemi.intensity=(light?3.2:1.8)*(plated?.35:1);
+    this.hemi.intensity=(light?3.2:1.8)*.35;
     // Blender and three.js place an equirectangular sky half a turn apart.
     this.scene.environmentRotation.y=Math.PI;this.scene.environmentIntensity=light?1.25:.7;
     this.sun.color.set(WORLDS[skin].sun[key]);
-    this.sun.intensity=light?4.0:plated?3.2:2.7;
+    this.sun.intensity=light?4.0:3.2;
     this.dirty=true;
   }
   resize() {
