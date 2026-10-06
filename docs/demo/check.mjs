@@ -10,6 +10,7 @@ const required = [
   '.nojekyll', 'index.html', 'app.js', 'activity-favicon.js', 'terminal-copy.js', 'layout.js', 'repo-search.js', 'folders.js', 'theme.js', 'styles.css', 'demo-config.js', 'demo-runtime.js',
   'vendor/xterm/xterm.js', 'vendor/xterm/xterm.css', 'vendor/xterm/addon-fit.js', 'vendor/xterm/addon-web-links.js',
   'remote-access.js', 'vendor/qrcode.mjs',
+  'yard/view.js', 'yard/renderer.js', 'yard/vendor/engine.js', 'yard/assets/guild.glb', 'yard/assets/guild/plates.json',
 ];
 const problems = [];
 for (const file of required) if (!fs.existsSync(path.join(dir, file))) problems.push(`missing ${file}`);
