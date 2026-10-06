@@ -2,19 +2,26 @@ import { WORLDS, sessionPose } from './model.mjs';
 
 const $ = id => document.getElementById(id);
 const make = (tag, cls, text) => Object.assign(document.createElement(tag), { className: cls, ...(text === undefined ? {} : { textContent: text }) });
-async function boundedLoad(promise) {
-  let timer;
+// Fails a load that makes no progress for 30 s. start receives a callback
+// for each sign of progress, which restarts the clock and reaches onProgress.
+async function boundedLoad(start, onProgress) {
+  let timer, stall, settled = false;
+  const stalled = new Promise((resolve, reject) => { stall = reject; });
+  const arm = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => stall(new Error('The Yard took too long to load.')), 30000);
+  };
+  arm();
   try {
-    return await Promise.race([promise,new Promise((resolve,reject)=>{
-      timer=setTimeout(()=>reject(new Error('The Yard took too long to load.')),30000);
-    })]);
-  } finally { clearTimeout(timer); }
+    return await Promise.race([start(bytes => { if (!settled) { arm(); onProgress(bytes); } }), stalled]);
+  } finally { settled = true; clearTimeout(timer); }
 }
+const megabytes = bytes => (bytes / 1048576).toFixed(1) + ' MB';
 
 /** A layout with injected canonical controls. No API, sockets, or business rules. */
 export function initYard(controller) {
   let selected = null, renderer = null, loading = null, failed = false, disposed = false;
-  let sceneAttempt = 0, worldAttempt = 0, pendingRenderer = null;
+  let sceneAttempt = 0, worldAttempt = 0, pendingRenderer = null, swapReveal = 0;
   const rows = new Map();
   const motion = matchMedia('(prefers-reduced-motion: reduce)');
   const root = document.documentElement;
@@ -59,11 +66,23 @@ export function initYard(controller) {
     if (view === 'yard') update();
     renderer?.setActive(sceneVisible());
   }
+  function showLoading(text, mode) {
+    $('yard-loading').dataset.mode = mode;
+    $('yard-loading-text').textContent = text;
+    $('yard-loading-size').textContent = '';
+  }
+  const loadingProgress = bytes => { $('yard-loading-size').textContent = bytes ? megabytes(bytes) : ''; };
+  function hideLoading() {
+    clearTimeout(swapReveal);
+    $('yard-loading').hidden = true;
+  }
   async function ensureScene() {
     if (disposed || renderer || loading || failed || view !== 'yard' || $('app').hidden) return;
     const attempt = ++sceneAttempt;
+    showLoading('Preparing your yard…', 'scene');
     $('yard-loading').hidden = false;
     $('yard-failure').hidden = true;
+    $('yard-swap-failure').hidden = true;
     loading = (async () => {
       let candidate;
       try {
@@ -80,7 +99,8 @@ export function initYard(controller) {
         do {
           skin = root.dataset.skin; theme = root.dataset.theme;
           if (!WORLDS[skin]) { candidate.dispose(); return; }
-          await boundedLoad(candidate.setWorld(skin, theme));
+          showLoading('Loading ' + WORLDS[skin].title + '…', 'scene');
+          await boundedLoad(progress => candidate.setWorld(skin, theme, { progress }), loadingProgress);
         } while (!disposed && !candidate.disposed && attempt === sceneAttempt && (skin !== root.dataset.skin || theme !== root.dataset.theme));
         if (disposed || candidate.disposed || attempt !== sceneAttempt) { candidate.dispose(); return; }
         pendingRenderer = null;
@@ -90,7 +110,7 @@ export function initYard(controller) {
         renderer.update(snapshot.providers, snapshot.sessions);
         renderer.select(selected);
         renderer.setActive(sceneVisible());
-        $('yard-loading').hidden = true;
+        hideLoading();
         $('yard-stage').dataset.ready = 'true';
       } catch (err) {
         candidate?.dispose();
@@ -108,7 +128,8 @@ export function initYard(controller) {
     pendingRenderer?.dispose(); pendingRenderer = null;
     failed = true;
     renderer?.dispose(); renderer = null;
-    $('yard-loading').hidden = true;
+    hideLoading();
+    $('yard-swap-failure').hidden = true;
     $('yard-failure').hidden = false;
     $('yard-stage').dataset.ready = 'false';
     if (restoreFocus) $('yard-retry').focus();
@@ -154,6 +175,25 @@ export function initYard(controller) {
     $('yard-no-results').hidden = matched !== 0;
     $('yard-no-results').textContent = filter ? 'No providers or sessions match your search.' : 'No providers or sessions yet.';
   }
+  // The current world stays up and usable while another loads, and after it
+  // fails. A swap that is ready almost at once shows no progress.
+  function swapWorld() {
+    const current = renderer, attempt = ++worldAttempt, title = WORLDS[lastSkin].title;
+    $('yard-swap-failure').hidden = true;
+    hideLoading();
+    showLoading('Loading ' + title + '…', 'swap');
+    swapReveal = setTimeout(() => { if (attempt === worldAttempt) $('yard-loading').hidden = false; }, 250);
+    const settle = () => renderer === current && attempt === worldAttempt && (hideLoading(), true);
+    boundedLoad(progress => current.setWorld(lastSkin, lastTheme, { progress }), loadingProgress).then(() => {
+      if (!settle()) return;
+      current.update(snapshot.providers,snapshot.sessions); current.select(selected);
+    }).catch(() => {
+      if (!settle()) return;
+      current.abandonWorld();
+      $('yard-swap-failure-text').textContent = title + ' could not load.';
+      $('yard-swap-failure').hidden = false;
+    });
+  }
   function update() {
     if (disposed || view !== 'yard') return;
     snapshot = controller.snapshot();
@@ -182,12 +222,7 @@ export function initYard(controller) {
       if (lastSkin !== root.dataset.skin || lastTheme !== root.dataset.theme) {
         if (!WORLDS[root.dataset.skin]) return;
         lastSkin = root.dataset.skin; lastTheme = root.dataset.theme;
-        const current = renderer;
-        const attempt = ++worldAttempt;
-        boundedLoad(current.setWorld(lastSkin,lastTheme)).then(() => {
-          if (renderer !== current || attempt !== worldAttempt) return;
-          current.update(snapshot.providers,snapshot.sessions); current.select(selected);
-        }).catch(() => { if (renderer === current && attempt === worldAttempt) failScene(); });
+        swapWorld();
       }
       renderer.update(snapshot.providers,snapshot.sessions);
       renderer.setActive(sceneVisible());
@@ -197,6 +232,12 @@ export function initYard(controller) {
   $('view-yard').addEventListener('click',() => { if (skinAllowsYard()) setView('yard'); });
   $('yard-cards').addEventListener('click',() => { setView('cards'); $('view-cards').focus(); });
   $('yard-retry').addEventListener('click',() => { failed=false; ensureScene(); });
+  $('yard-swap-retry').addEventListener('click',() => {
+    if ($('yard-swap-failure').contains(document.activeElement)) $('yard-stage').focus();
+    $('yard-swap-failure').hidden = true;
+    lastSkin = ''; lastTheme = '';
+    update();
+  });
   $('yard-filter').addEventListener('input',roster);
   $('yard-news').addEventListener('click',controller.openNews);
   $('yard-deselect').addEventListener('click',() => { select(null); $('yard-filter').focus(); });
@@ -236,7 +277,7 @@ export function initYard(controller) {
   window.addEventListener('pageshow',visibility);
   setView(view,{remember:false});
   return { update, select, setView, dispose() {
-    disposed=true; sceneAttempt++; worldAttempt++; observer.disconnect(); pendingRenderer?.dispose(); renderer?.dispose();
+    disposed=true; sceneAttempt++; worldAttempt++; clearTimeout(swapReveal); observer.disconnect(); pendingRenderer?.dispose(); renderer?.dispose();
     document.removeEventListener('visibilitychange',visibility);
     motion.removeEventListener('change',motionChange);
     window.removeEventListener('pagehide',pageHide);

@@ -36,7 +36,15 @@
 .yard-camera { position:absolute; right:18px; bottom:48px; z-index:2; display:flex; gap:5px; }
 .yard-camera .btn { min-height:30px; padding:5px 10px; font-size:11px; background:var(--surface); }
 #yard-help { position:absolute; bottom:10px; left:50%; transform:translateX(-50%); width:max-content; max-width:calc(100% - 36px); margin:0; padding:4px 12px; border-radius:30px; font-size:10px; color:var(--muted); text-align:center; pointer-events:none; background:color-mix(in srgb,var(--surface) 80%,transparent); }
-.yard-loading { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); padding:18px 26px; color:var(--text); border:1px solid var(--yard-line); background:var(--surface); z-index:4; border-radius:var(--radius); }
+.yard-loading { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); display:grid; grid-template-columns:1fr auto; align-items:center; gap:10px 16px; min-width:240px; padding:18px 26px; color:var(--text); border:1px solid var(--yard-line); background:var(--surface); z-index:4; border-radius:var(--radius); }
+.yard-loading-size { font-size:11px; color:var(--muted); font-variant-numeric:tabular-nums; }
+.yard-loading-bar { grid-column:1 / -1; height:3px; border-radius:3px; overflow:hidden; background:color-mix(in srgb,var(--gold) 18%,transparent); }
+.yard-loading-bar::before { content:""; display:block; width:35%; height:100%; border-radius:inherit; background:var(--gold); animation:yard-loading 1.3s ease-in-out infinite; }
+@keyframes yard-loading { from { transform:translateX(-100%); } to { transform:translateX(290%); } }
+/* A swap keeps the current world on screen, so its notices stay out of the way. */
+.yard-loading[data-mode="swap"],.yard-swap-failure { top:auto; bottom:88px; transform:translateX(-50%); min-width:0; padding:8px 14px; font-size:12px; border-radius:30px; background:color-mix(in srgb,var(--surface) 92%,transparent); }
+.yard-swap-failure { position:absolute; left:50%; z-index:4; display:flex; align-items:center; gap:12px; color:var(--text); border:1px solid var(--border); }
+.yard-swap-failure .btn { min-height:26px; padding:3px 10px; font-size:11px; }
 .yard-failure { position:absolute; top:40%; left:50%; transform:translate(-50%,-50%); max-width:380px; width:85%; padding:24px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); z-index:4; }
 .yard-failure p { color:var(--muted); line-height:1.5; font-size:13px; }
 .yard-news { border-top:1px solid var(--yard-line); min-height:47px; padding:8px 20px; display:flex; align-items:center; gap:16px; background:color-mix(in srgb,var(--surface) 95%,transparent); }
@@ -98,6 +106,7 @@
 }
 @media(prefers-reduced-motion:reduce) {
   #yard *,#yard *::before,#yard *::after { animation:none!important; transition:none!important; scroll-behavior:auto!important; }
+  .yard-loading-bar { display:none; }
 }
 
 .yard-row[data-key^="provider:"] { padding-top:6px; padding-bottom:6px; }

@@ -549,6 +549,105 @@ test('a stalled world times out, aborts its request and can be retried',options,
   assert.deepEqual(b.errors,[]);
 });
 
+test('loading shows progress for the first world and for a swap, then clears',options,async t=>{
+  const {b}=await setup(t,{yard:true,source:`
+    const originalFetch=window.fetch;
+    window.__gates={};window.__released={};window.__sizes=[];
+    window.fetch=(...args)=>{
+      const url=String(args[0]?.url||args[0]);
+      const name=url.match(/\\/(guild|orbital)\\.glb$/)?.[1];
+      if(!name||window.__released[name])return originalFetch(...args);
+      return new Promise((resolve,reject)=>{window.__gates[name]=()=>{window.__released[name]=true;originalFetch(...args).then(resolve,reject);};});
+    };
+    addEventListener('DOMContentLoaded',()=>new MutationObserver(()=>{
+      const text=document.querySelector('#yard-loading-size').textContent;if(text)window.__sizes.push(text);
+    }).observe(document.querySelector('#yard-loading-size'),{childList:true,characterData:true,subtree:true}));`});
+  const loading="(e=>!e.hidden&&e.dataset.mode+':'+document.querySelector('#yard-loading-text').textContent)(document.querySelector('#yard-loading'))";
+  await b.wait('window.__gates.guild');
+  assert.equal(await b.evaluate(loading),'scene:Loading The Guild Yard…');
+  await b.evaluate('window.__gates.guild()');await ready(b);
+  assert.equal(await b.evaluate("document.querySelector('#yard-loading').hidden"),true);
+  assert.ok((await b.evaluate('window.__sizes')).some(text=>/^\d+\.\d MB$/.test(text)),'the first load reports downloaded size');
+  await b.evaluate("document.documentElement.dataset.skin='orbital'");
+  await b.wait('window.__gates.orbital');
+  assert.equal(await b.wait(loading),'swap:Loading Orbital Station…');
+  assert.equal(await b.evaluate("document.querySelector('#yard-stage').dataset.world"),'guild','the current world stays up during a swap');
+  await b.evaluate('window.__gates.orbital()');
+  await b.wait("document.querySelector('#yard-stage').dataset.world==='orbital' && document.querySelector('#yard-loading').hidden");
+  assert.deepEqual(b.errors,[]);
+});
+
+test('a slow world that keeps downloading is not timed out',options,async t=>{
+  const {b}=await setup(t,{yard:true,source:`
+    const originalTimeout=window.setTimeout,originalFetch=window.fetch;
+    window.__slow=true;
+    // A fixed limit of a second would fail this three-second download.
+    window.setTimeout=(callback,delay,...args)=>originalTimeout(callback,window.__slow && delay===30000?1000:delay,...args);
+    window.fetch=async(...args)=>{
+      const response=await originalFetch(...args);
+      if(!String(args[0]?.url||args[0]).endsWith('/guild.glb'))return response;
+      const body=new Uint8Array(await response.arrayBuffer()),chunks=10,size=Math.ceil(body.length/chunks);
+      let sent=0;
+      return new Response(new ReadableStream({pull:controller=>new Promise(resolve=>originalTimeout(()=>{
+        controller.enqueue(body.slice(sent*size,(sent+1)*size));
+        if(++sent===chunks){window.__slow=false;controller.close();}
+        resolve();
+      },300))}),{headers:{'content-type':'model/gltf-binary'}});
+    };`});
+  await ready(b);
+  assert.equal(await b.evaluate("document.querySelector('#yard-failure').hidden"),true);
+  assert.equal(await b.evaluate("document.querySelector('#yard-stage').dataset.world"),'guild');
+  assert.deepEqual(b.errors,[]);
+});
+
+test('a world swap that stalls keeps the current world, and Retry finishes it',options,async t=>{
+  const {b}=await setup(t,{yard:true,source:`
+    const originalTimeout=window.setTimeout,originalFetch=window.fetch;
+    window.__stallWorld=false;window.__abortedWorld=false;
+    window.setTimeout=(callback,delay,...args)=>originalTimeout(callback,window.__stallWorld && delay===30000?0:delay,...args);
+    window.fetch=(...args)=>{
+      const request=args[0];
+      if(window.__stallWorld && String(request?.url||request).endsWith('/orbital.glb')) {
+        return new Promise((resolve,reject)=>{
+          const signal=request.signal||args[1]?.signal;
+          signal.addEventListener('abort',()=>{window.__abortedWorld=true;reject(new DOMException('Aborted','AbortError'));},{once:true});
+        });
+      }
+      return originalFetch(...args);
+    };`});
+  await ready(b);
+  await b.evaluate("window.__stallWorld=true;document.documentElement.dataset.skin='orbital'");
+  await b.wait("document.querySelector('#yard-swap-failure').hidden===false");
+  assert.equal(await b.evaluate('window.__abortedWorld'),true,'the abandoned swap stops downloading');
+  assert.match(await b.evaluate("document.querySelector('#yard-swap-failure-text').textContent"),/Orbital Station/);
+  assert.equal(await b.evaluate("document.querySelector('#yard-failure').hidden"),true);
+  assert.equal(await b.evaluate("document.querySelector('#yard-loading').hidden"),true);
+  assert.equal(await b.evaluate("document.querySelector('#yard-stage').dataset.world"),'guild');
+  assert.equal(await b.evaluate("document.querySelector('#yard-stage').dataset.ready"),'true');
+  await b.click(provider('anthropic'));
+  assert.equal(await b.evaluate(`document.querySelector('${inspector} .new').hidden`),false);
+  await b.evaluate('window.__stallWorld=false');await b.click('#yard-swap-retry');
+  await b.wait("document.querySelector('#yard-stage').dataset.world==='orbital' && document.querySelector('#yard-swap-failure').hidden && document.querySelector('#yard-loading').hidden");
+  assert.deepEqual(b.errors,[]);
+});
+
+test('background plate loads and a preloaded theme switch show no progress',options,async t=>{
+  const {b}=await setup(t,{yard:true,source:`
+    window.__loadingShown=0;
+    addEventListener('DOMContentLoaded',()=>{
+      const el=document.querySelector('#yard-loading');
+      new MutationObserver(()=>{if(document.querySelector('#yard-stage').dataset.ready==='true'&&!el.hidden)window.__loadingShown++;})
+        .observe(el,{attributes:true,attributeFilter:['hidden']});
+    });`});
+  await ready(b);await framesSettled(b);
+  assert.ok(b.requests.some(r=>/\/guild\/light-base-/.test(r.url)),'the other theme loaded in the background');
+  await b.evaluate("document.documentElement.dataset.theme='light'");
+  await b.evaluate('new Promise(resolve=>setTimeout(resolve,600))');
+  assert.equal(await b.evaluate('window.__loadingShown'),0);
+  assert.equal(await b.evaluate("document.querySelector('#yard-loading').hidden"),true);
+  assert.deepEqual(b.errors,[]);
+});
+
 test('auth, graphics failure, retry, manager restart and stopped screen remain usable',options,async t=>{
   const {f,b}=await setup(t,{yard:true,auth:false,source:`
     const getContext=HTMLCanvasElement.prototype.getContext;

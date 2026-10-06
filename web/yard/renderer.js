@@ -26,6 +26,25 @@ function disposeTree(root) {
   for(const m of materials) { for(const v of Object.values(m)) if(v?.isTexture) v.dispose(); m.dispose(); }
 }
 const themeKey=theme=>theme==='light'?'light':'dark';
+// One world request's downloads, counted in bytes so the view can show
+// progress and tell a slow load from a stalled one. Background loads use the
+// renderer's shared manager and never count.
+function tracked(progress) {
+  const manager=new T.LoadingManager(),urls=new Set(),streaming=new Map();
+  let bytes=0;
+  const report=()=>{let total=bytes;for(const n of streaming.values())total+=n;progress(total);};
+  const itemStart=manager.itemStart;
+  manager.itemStart=url=>{urls.add(new URL(url,location.href).href);itemStart(url);};
+  manager.onProgress=report;
+  const observer=new PerformanceObserver(list=>{
+    for(const entry of list.getEntries())if(urls.delete(entry.name)){streaming.delete(entry.name);bytes+=entry.encodedBodySize;}
+    report();
+  });
+  observer.observe({type:'resource'});
+  // Once a download's timing entry has counted it, its own progress events
+  // only show the load is alive.
+  return {manager,stream:url=>event=>{if(urls.has(url))streaming.set(url,event.loaded);report();},close(){observer.disconnect();manager.abort();}};
+}
 function disposeWorld(root) {
   if(root)root.userData.disposed=true;
   disposeTree(root);
@@ -36,7 +55,7 @@ export class YardRenderer {
     this.host=host;this.labels=labels;this.onSelect=select;this.onOpen=open;this.onError=error;
     this.scene=new T.Scene();this.units=new Map();this.halls=new Map();this.slots=new Map();this.cache=new Map();
     this.loadingManager=new T.LoadingManager();
-    this.providers=[];this.sessions=[];this.selected=null;this.world=null;this.skin=null;this.request=0;this.worldRequest=0;
+    this.providers=[];this.sessions=[];this.selected=null;this.world=null;this.skin=null;this.request=0;this.worldRequest=0;this.pending=null;
     this.active=false;this.reduced=false;this.disposed=false;this.frame=0;this.lastTime=0;this.dirty=true;
     this.renderer=new T.WebGLRenderer({antialias:true,alpha:true,powerPreference:'low-power'});
     this.renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));
@@ -88,21 +107,33 @@ export class YardRenderer {
     }
     return this.cache.get(name);
   }
-  async setWorld(skin,theme) {
+  // Shows skin's world in theme, or only theme's plates when that world is
+  // already up. What is on screen stays until the new world or theme is
+  // ready; progress receives the bytes downloaded so far.
+  async setWorld(skin,theme,{progress=noop}={}) {
     if(this.disposed)return;
     if(!WORLDS[skin])throw new Error('This skin has no yard.');
     const request=++this.worldRequest;
-    this.light(skin,theme);
-    if(this.skin===skin&&this.world){this.drawOnce();return;}
+    this.pending?.close();
+    const pending=this.pending=tracked(progress);
     let loaded;
     try {
-      loaded=await new T.GLTFLoader(this.loadingManager).loadAsync(new URL(skin+'.glb',ASSETS).href);
+      if(this.skin===skin&&this.world){
+        const world=this.world;
+        await this.plateTheme(world,themeKey(theme),pending.manager);
+        if(!this.disposed&&request===this.worldRequest&&this.world===world){this.light(skin,theme);this.drawOnce();}
+        return;
+      }
+      const url=new URL(skin+'.glb',ASSETS).href;
+      loaded=await new T.GLTFLoader(pending.manager).loadAsync(url,pending.stream(url));
       if(this.disposed||request!==this.worldRequest){disposeWorld(loaded.scene);return;}
-      await Promise.all([this.surfaceWorld(loaded.scene,skin),this.plateWorld(loaded.scene,skin)]);
+      await Promise.all([this.surfaceWorld(loaded.scene,skin,pending.manager),this.plateWorld(loaded.scene,skin,theme,pending.manager)]);
     } catch(err) {
       disposeWorld(loaded?.scene);
       if(!this.disposed&&request===this.worldRequest)throw err;
       return;
+    } finally {
+      if(this.pending===pending){pending.close();this.pending=null;}
     }
     if(this.disposed||request!==this.worldRequest){disposeWorld(loaded.scene);return;}
     this.request++;
@@ -111,27 +142,32 @@ export class YardRenderer {
     this.halls.clear();
     if(this.world){this.scene.remove(this.world);disposeWorld(this.world);}
     this.world=loaded.scene;this.skin=skin;this.scene.add(this.world);
-    this.light(skin,this.theme);
+    this.light(skin,theme);
     this.host.dataset.world=skin;
     this.world.traverse(node=>{if(node.isMesh&&!node.userData.plate&&!node.material.isShadowMaterial){node.castShadow=true;node.receiveShadow=true;}});
     this.update(this.providers,this.sessions);
     this.dirty=true;this.drawOnce();
   }
+  // Gives up on the pending setWorld and its downloads; what is on screen stays.
+  abandonWorld() {
+    this.worldRequest++;
+    this.pending?.close();this.pending=null;
+  }
   // Pre-rendered surroundings drawn behind everything, from the same view
   // direction as the camera, so they line up at any pan or zoom. Each theme
   // has its own set: the current theme's base layer gates the load, and its
   // sharper layers and the other theme follow without blocking it.
-  async plateWorld(world,skin) {
+  async plateWorld(world,skin,theme,manager) {
     const response=await fetch(new URL(skin+'/plates.json',ASSETS));
     if(!response.ok)throw new Error('The Yard plates could not be loaded.');
     world.userData.plates={themes:(await response.json()).themes,groups:{}};
-    await this.plateTheme(world,themeKey(this.theme));
+    await this.plateTheme(world,themeKey(theme),manager);
     // Live halls and characters cast onto the plate's ground.
     const catcher=new T.Mesh(new T.PlaneGeometry(400,400),new T.ShadowMaterial({opacity:.3,depthWrite:false}));
     catcher.rotation.x=-Math.PI/2;catcher.position.y=.01;catcher.receiveShadow=true;catcher.renderOrder=-50;
     world.add(catcher);
   }
-  plateTheme(world,theme) {
+  plateTheme(world,theme,manager=this.loadingManager) {
     const plates=world.userData.plates;
     if(plates.groups[theme])return plates.groups[theme].ready;
     const group=new T.Group();group.visible=false;world.add(group);
@@ -141,20 +177,22 @@ export class YardRenderer {
       if(this.disposed||world.userData.disposed){for(const mesh of meshes)disposeTree(mesh);return false;}
       group.add(...meshes);return true;
     };
-    const ready=this.plateLayer(base,0).then(meshes=>{
+    const ready=this.plateLayer(base,0,manager).then(meshes=>{
       if(!keep(meshes))return;
       sharper.forEach((entry,i)=>this.plateLayer(entry,i+1).then(meshes=>{
         if(keep(meshes)){this.dirty=true;this.drawOnce();}
       }).catch(noop));
     });
+    // A failed theme is forgotten, so asking again retries it.
+    ready.catch(()=>{if(plates.groups[theme]?.ready===ready){delete plates.groups[theme];world.remove(group);}});
     plates.groups[theme]={group,ready};
     return ready;
   }
-  async plateLayer(entry,order) {
+  async plateLayer(entry,order,manager=this.loadingManager) {
     const {right,up,forward}=viewBasis(),axes=[right,up,forward].map(v=>new T.Vector3(...v));
     const rotation=new T.Matrix4().makeBasis(axes[0],axes[1],axes[2].clone().negate());
     const depth=CAMERA.far*.75+axes[2].dot(new T.Vector3(...CAMERA.offset));
-    const loader=new T.TextureLoader(this.loadingManager);
+    const loader=new T.TextureLoader(manager);
     return Promise.all(entry.tiles.map(async tile=>{
       const texture=await loader.loadAsync(new URL(tile.file,ASSETS).href);
       texture.colorSpace=T.SRGBColorSpace;
@@ -183,11 +221,11 @@ export class YardRenderer {
   }
   // Live halls take scanned material sets by material name,
   // and light from a small copy of the plates' sky.
-  async surfaceWorld(world,skin) {
+  async surfaceWorld(world,skin,manager) {
     const response=await fetch(new URL(skin+'/surfaces.json',ASSETS));
     if(!response.ok)throw new Error('The Yard surfaces could not be loaded.');
     const {sky,surfaces}=await response.json();
-    const loader=new T.TextureLoader(this.loadingManager),textures=[];
+    const loader=new T.TextureLoader(manager),textures=[];
     const load=async(file,color,repeat)=>{
       const texture=await loader.loadAsync(new URL(file,ASSETS).href);textures.push(texture);
       texture.flipY=false;texture.wrapS=texture.wrapT=T.RepeatWrapping;texture.repeat.set(repeat,repeat);
@@ -206,7 +244,7 @@ export class YardRenderer {
       const pmrem=new T.PMREMGenerator(this.renderer);
       try {
         for(const [theme,file] of Object.entries(sky)) {
-          const equirect=await new T.HDRLoader(this.loadingManager).loadAsync(new URL(file,ASSETS).href);
+          const equirect=await new T.HDRLoader(manager).loadAsync(new URL(file,ASSETS).href);
           environments[theme]=pmrem.fromEquirectangular(equirect).texture;equirect.dispose();
         }
       } finally { pmrem.dispose(); }
@@ -530,7 +568,7 @@ export class YardRenderer {
   dispose() {
     if(this.disposed)return;
     this.disposed=true;this.request++;this.worldRequest++;cancelAnimationFrame(this.frame);
-    this.loadingManager.abort();
+    this.loadingManager.abort();this.pending?.close();this.pending=null;
     this.resizeObserver.disconnect();this.controls.dispose();this.clearUnits();
     for(const item of this.halls.values())item.label.remove();this.halls.clear();
     disposeWorld(this.world);

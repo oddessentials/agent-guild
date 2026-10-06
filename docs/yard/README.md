@@ -94,9 +94,12 @@ The engine and GLBs load only after an authenticated app displays Yard.
 The engine is bundled locally, and all assets use same-origin URLs. There
 is no CDN, runtime compiler, WASM decoder or Unreal runtime. WebGL2 failure
 leaves the roster and inspector available, with Retry and Cards controls.
-World loads time out after 30 seconds. Failed or disposed scenes cancel
-pending model requests and release their graphics context, so Retry can
-start a fresh scene even when initialization was interrupted.
+Loads show how much has downloaded, and time out after 30 seconds without
+progress. Failed or disposed scenes cancel pending model requests and
+release their graphics context, so Retry can start a fresh scene even when
+initialization was interrupted. A skin or theme switch keeps the current
+world on screen while the new one loads; if the switch fails, that world
+stays, with its own Retry.
 
 Rendering pauses while Cards, a terminal, an authentication screen or a
 stopped-manager screen is shown, and while the document is hidden. Reduced
