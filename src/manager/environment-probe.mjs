@@ -57,10 +57,7 @@ export function passiveExecutable(file, id, { platform = process.platform, env =
     return { error: WINDOWS_ALIAS };
   }
   const head = read(real);
-  const binary = head[0] === 0x4d && head[1] === 0x5a // PE
-    || head[0] === 0x7f && head.subarray(1, 4).toString() === 'ELF'
-    || ['feedface', 'feedfacf', 'cefaedfe', 'cffaedfe', 'cafebabe', 'bebafeca', 'cafebabf', 'bfbafeca'].includes(head.subarray(0, 4).toString('hex'));
-  if (binary) {
+  if (nativeProgram(head)) {
     // rustup dispatches using argv[0]; preserve its rustc proxy's name.
     return { file: id === 'rust' && /\/rustup(?:\.exe)?$/.test(normalized) ? file : real };
   }
@@ -71,6 +68,12 @@ export function passiveExecutable(file, id, { platform = process.platform, env =
 
 const WINDOWS_ALIAS = 'A Windows execution alias was found. A runtime behind this alias has not been verified.';
 
+function nativeProgram(head) {
+  return head[0] === 0x4d && head[1] === 0x5a // PE
+    || head[0] === 0x7f && head.subarray(1, 4).toString() === 'ELF'
+    || ['feedface', 'feedfacf', 'cefaedfe', 'cffaedfe', 'cafebabe', 'bebafeca', 'cafebabf', 'bfbafeca'].includes(head.subarray(0, 4).toString('hex'));
+}
+
 function windowsAlias(file) {
   return /[\\/]windowsapps[\\/]/i.test(file);
 }
@@ -78,7 +81,7 @@ function windowsAlias(file) {
 // The helper has a second, independent overall deadline in Environment. A
 // timeout here resolves immediately, even if a descendant retains stdout.
 // The kill is recorded for directory cleanup and does not delay this result.
-export function runProbe(file, args, { env, cwd, timeoutMs = TIMEOUT_MS, spawnProcess = spawn, kills = null } = {}) {
+export function runProbe(file, args, { env, cwd, timeoutMs = TIMEOUT_MS, limit = LIMIT, spawnProcess = spawn, kills = null } = {}) {
   return new Promise((resolve) => {
     let child, timer, size = 0, output = '', settled = false;
     const stop = () => {
@@ -113,7 +116,7 @@ export function runProbe(file, args, { env, cwd, timeoutMs = TIMEOUT_MS, spawnPr
       timer = setTimeout(() => finish({ error: 'Version check timed out.' }, true), timeoutMs);
       for (const stream of [child.stdout, child.stderr]) stream.on('data', (chunk) => {
         size += chunk.length;
-        if (size > LIMIT) return finish({ error: 'Version check produced too much output.' }, true);
+        if (size > limit) return finish({ error: 'Version check produced too much output.' }, true);
         output += chunk.toString();
       });
       child.on('error', () => finish({ error: 'Could not run the resolved executable.' }, true));
@@ -195,6 +198,207 @@ export function detectTools({ env, platform = process.platform, resolve = resolv
   return tools;
 }
 
+// Design tools an agent can drive from a terminal. A version is read only from
+// a native program whose real name is the tool's own: a snap, a Flatpak
+// launcher or another wrapper is reported by presence. Windows `convert` is a
+// disk utility, so ImageMagick is only `magick` there.
+export const DESIGN_TOOLS = [
+  {
+    id: 'blender', label: 'Blender', args: ['--version', '--factory-startup'],
+    commands: () => ['blender'],
+    pattern: /^Blender (\d+\.\d+(?:\.\d+)?)/m, program: /^blender(?:\.exe)?$/i, installed: /^Blender\b/i,
+  },
+  {
+    id: 'ffmpeg', label: 'FFmpeg', args: ['-version'],
+    commands: () => ['ffmpeg'],
+    pattern: /^ffmpeg version n?(\d+(?:\.\d+)+|N-\d+)/m, program: /^ffmpeg(?:\.exe)?$/i, installed: /^FFmpeg\b/i,
+  },
+  {
+    // GIMP's window program on Windows does not print its version; the console build does.
+    id: 'gimp', label: 'GIMP', args: ['--version'],
+    commands: (platform) => platform === 'win32' ? ['gimp-console'] : ['gimp-console', 'gimp'],
+    pattern: /version (\d+\.\d+\.\d+)/, installed: /^GIMP\b/i,
+    program: (platform) => platform === 'win32' ? /^gimp-console(?:-[\d.]+)?\.exe$/i : /^gimp(?:-console)?(?:-[\d.]+)?$/i,
+  },
+  {
+    id: 'inkscape', label: 'Inkscape', args: ['--version'],
+    commands: () => ['inkscape'],
+    pattern: /^Inkscape (\d+\.\d+(?:\.\d+)?)/m, program: /^inkscape(?:\.com|\.exe)?$/i, installed: /^Inkscape\b/i,
+  },
+  {
+    id: 'imagemagick', label: 'ImageMagick', args: ['-version'],
+    commands: (platform) => platform === 'win32' ? ['magick'] : ['magick', 'convert'],
+    pattern: /^Version: ImageMagick (\d+\.\d+\.\d+(?:-\d+)?)/m, program: /^(?:magick|convert)(?:-im\d[\w.]*)?(?:\.exe)?$/i, installed: /^ImageMagick\b/i,
+  },
+];
+const DESIGN_TIMEOUT_MS = 3000;
+const REGISTRY_LIMIT = 1024 * 1024;
+const UNINSTALL_KEYS = [
+  'HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall',
+  'HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall',
+  'HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall',
+];
+// Paths inside an install folder, Windows. A RegExp segment matches a directory entry.
+const WINDOWS_FILES = {
+  blender: [['blender.exe']],
+  ffmpeg: [['bin', 'ffmpeg.exe'], ['ffmpeg.exe'], [/^ffmpeg-/i, 'bin', 'ffmpeg.exe']],
+  gimp: [['bin', 'gimp-console.exe'], ['bin', /^gimp-console-[\d.]+\.exe$/i]],
+  inkscape: [['bin', 'inkscape.com'], ['bin', 'inkscape.exe']],
+  imagemagick: [['magick.exe']],
+};
+
+// Usual install locations, used only when PATH has no match. Each entry is an
+// absolute root followed by segments below it.
+export function designLocations(id, { platform = process.platform, env = process.env, registry = [] } = {}) {
+  if (platform === 'win32') {
+    const programFiles = [value(env, 'ProgramFiles'), value(env, 'ProgramW6432'), 'C:\\Program Files'].filter(Boolean);
+    const profile = value(env, 'USERPROFILE');
+    const local = value(env, 'LOCALAPPDATA') || (profile && path.win32.join(profile, 'AppData', 'Local'));
+    const folders = {
+      blender: programFiles.map((root) => [root, 'Blender Foundation', /^Blender/i]),
+      ffmpeg: [],
+      gimp: [...programFiles.map((root) => [root, /^GIMP/i]), ...(local ? [[local, 'Programs', /^GIMP/i]] : [])],
+      inkscape: programFiles.map((root) => [root, 'Inkscape']),
+      imagemagick: programFiles.map((root) => [root, /^ImageMagick/i]),
+    }[id];
+    return [...registry.map((dir) => [dir]), ...folders].flatMap((folder) => WINDOWS_FILES[id].map((file) => [...folder, ...file]));
+  }
+  const home = value(env, 'HOME') || os.homedir();
+  const bins = platform === 'darwin'
+    ? ['/opt/homebrew/bin', '/usr/local/bin', '/opt/local/bin']
+    : ['/usr/local/bin', '/usr/bin', '/snap/bin', '/home/linuxbrew/.linuxbrew/bin'];
+  const flatpaks = ['/var/lib/flatpak/exports/bin', path.posix.join(home, '.local/share/flatpak/exports/bin')];
+  const apps = ['/Applications', path.posix.join(home, 'Applications')];
+  const inBins = (names) => bins.flatMap((dir) => names.map((name) => [dir, name]));
+  const flatpak = (app) => platform === 'linux' ? flatpaks.map((dir) => [dir, app]) : [];
+  const bundle = (app, file) => platform === 'darwin' ? apps.map((dir) => [dir, app, 'Contents', 'MacOS', file]) : [];
+  return {
+    blender: [...bundle(/^Blender.*\.app$/i, 'Blender'), ...inBins(['blender']), ...flatpak('org.blender.Blender')],
+    ffmpeg: inBins(['ffmpeg']),
+    gimp: [...bundle(/^GIMP.*\.app$/i, /^gimp(?:-[\d.]+)?$/i), ...inBins(['gimp-console', 'gimp']), ...flatpak('org.gimp.GIMP')],
+    inkscape: [...bundle(/^Inkscape.*\.app$/i, 'inkscape'), ...inBins(['inkscape']), ...flatpak('org.inkscape.Inkscape')],
+    imagemagick: inBins(platform === 'darwin' ? ['magick'] : ['magick', 'convert']),
+  }[id];
+}
+
+// The first existing file among the locations, in order. Directory listings are sorted.
+export function findInstalled(locations, { platform = process.platform, readdir = fs.readdirSync, isFile = (file) => isExecutable(file, platform) } = {}) {
+  const join = platform === 'win32' ? path.win32.join : path.posix.join;
+  for (const [root, ...segments] of locations) {
+    let paths = [root];
+    for (const segment of segments) {
+      paths = paths.flatMap((dir) => {
+        if (typeof segment === 'string') return [join(dir, segment)];
+        try { return readdir(dir).filter((name) => segment.test(name)).sort().map((name) => join(dir, name)); } catch { return []; }
+      });
+    }
+    const hit = paths.find((file) => isFile(file));
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function isExecutable(file, platform) {
+  try {
+    if (!fs.statSync(file).isFile()) return false;
+    if (platform !== 'win32') fs.accessSync(file, fs.constants.X_OK);
+    return true;
+  } catch { return false; }
+}
+
+// Install folders from Windows uninstall entries whose name is a design tool.
+// Each query is bounded; a failed query adds nothing.
+export async function windowsInstallFolders({ env, cwd, run = runProbe, kills = null } = {}) {
+  const reg = path.win32.join(value(env, 'SystemRoot') || 'C:\\Windows', 'System32', 'reg.exe');
+  const query = (args) => run(reg, ['query', ...args], { env, cwd, kills, timeoutMs: DESIGN_TIMEOUT_MS, limit: REGISTRY_LIMIT })
+    .then((result) => result.code === 0 ? result.output : '');
+  const entries = (output, name) => {
+    const found = [];
+    let key = null;
+    for (const line of output.split(/\r?\n/)) {
+      if (/^HKEY_/.test(line)) key = line.trim();
+      const match = line.match(new RegExp(`^\\s+${name}\\s+REG_(?:EXPAND_)?SZ\\s+(.+?)\\s*$`));
+      if (key && match) found.push({ key, value: match[1] });
+    }
+    return found;
+  };
+  const named = (await Promise.all(UNINSTALL_KEYS.map((root) => query([root, '/s', '/v', 'DisplayName']))))
+    .flatMap((output) => entries(output, 'DisplayName'))
+    .map(({ key, value: name }) => ({ key, tool: DESIGN_TOOLS.find((tool) => tool.installed.test(name)) }))
+    .filter(({ tool }) => tool);
+  const folders = Object.fromEntries(DESIGN_TOOLS.map(({ id }) => [id, []]));
+  await Promise.all(named.map(async ({ key, tool }) => {
+    const folder = entries(await query([key, '/v', 'InstallLocation']), 'InstallLocation')[0]?.value.replace(/^"(.*)"$/, '$1');
+    if (folder && path.win32.isAbsolute(folder)) folders[tool.id].push(folder);
+  }));
+  return folders;
+}
+
+// Why a found program's version is not read, or the program to run.
+export function designProgram(file, tool, { platform = process.platform, realpath = fs.realpathSync, read = readHead } = {}) {
+  const real = realpath(file);
+  const normalized = real.replaceAll('\\', '/');
+  if (/\/flatpak\/exports\/bin\//.test(file.replaceAll('\\', '/'))) return { reason: 'A Flatpak app. Its version is not checked.' };
+  if (/(?:^|\/)snap$/.test(normalized)) return { reason: 'A snap. Its version is not checked.' };
+  if (!nativeProgram(read(real))) return { reason: 'A launcher script. Its version is not checked.' };
+  const name = path.posix.basename(normalized);
+  const program = typeof tool.program === 'function' ? tool.program(platform) : tool.program;
+  if (!program.test(name)) return { reason: `This runs ${name}, so its version is not checked.` };
+  return { file: real };
+}
+
+// GTK programs write a D-Bus keyring and profile folders even for --version.
+// Point every home and profile location at the scan's own temporary folder.
+export function designEnv(env, cwd) {
+  const out = probeEnv(env);
+  const overrides = { DBUS_SESSION_BUS_ADDRESS: 'disabled:' };
+  for (const key of ['HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME', 'XDG_STATE_HOME', 'INKSCAPE_PROFILE_DIR', 'GIMP2_DIRECTORY', 'GIMP3_DIRECTORY']) overrides[key] = cwd;
+  for (const key of Object.keys(out)) if (Object.hasOwn(overrides, key.toUpperCase())) delete out[key];
+  return { ...out, ...overrides };
+}
+
+export async function scanDesignTool(tool, {
+  env, cwd, platform = process.platform, resolve = resolveCommand, installed = async () => null,
+  inspect = designProgram, run = runProbe, kills = null,
+} = {}) {
+  const { id, label, args, pattern } = tool;
+  const base = { id, label, status: 'not_found', version: null, path: null, command: null, detail: null };
+  let command = null, file = null;
+  for (const name of tool.commands(platform)) {
+    file = resolve(name, env, platform, { onSkip: (candidate) => platform === 'win32' && windowsAlias(candidate) });
+    if (file) { command = name; break; }
+  }
+  const onPath = Boolean(file);
+  if (!file) file = await installed(id);
+  if (!file) return { ...base, detail: 'Not on PATH or in the usual install locations.' };
+  const row = { ...base, status: onPath ? 'on_path' : 'not_on_path', path: file, command };
+  try {
+    const program = inspect(file, tool, { platform });
+    if (program.reason) return { ...row, detail: program.reason };
+    const result = await run(program.file, args, { env: designEnv(env, cwd), cwd, kills, timeoutMs: DESIGN_TIMEOUT_MS });
+    const version = !result.error && result.code === 0 ? pattern.exec(result.output)?.[1] : null;
+    if (version) return { ...row, version };
+    return { ...row, detail: result.error === 'Version check timed out.' ? 'The version check timed out.'
+      : result.error ? 'Could not read its version.' : 'Its version response was not recognized.' };
+  } catch { return { ...row, detail: 'Could not read its version.' }; }
+}
+
+export async function scanDesignTools({ env, cwd, platform = process.platform, resolve = resolveCommand, kills = null, send = () => {} } = {}) {
+  let folders = null;
+  // Read the registry at most once, and only when some tool is missing from PATH.
+  const registry = () => folders ??= platform === 'win32'
+    ? windowsInstallFolders({ env, cwd, kills }).catch(() => ({}))
+    : Promise.resolve({});
+  const installed = async (id) => findInstalled(designLocations(id, { platform, env, registry: (await registry())[id] || [] }), { platform });
+  // Bounded concurrency: cold starts of large applications compete for the disk.
+  const queue = [...DESIGN_TOOLS];
+  await Promise.all([0, 1, 2].map(async () => {
+    for (let tool = queue.shift(); tool; tool = queue.shift()) {
+      send(await scanDesignTool(tool, { env, cwd, platform, resolve, installed, kills }));
+    }
+  }));
+}
+
 // Windows cannot remove a process's current working directory, and a probe
 // killed at its deadline can still hold that directory. Cleanup must not
 // decide whether the scan succeeded.
@@ -235,13 +439,18 @@ if (process.argv[2] === '--scan-environment' && process.send) {
     process.chdir(cwd);
     const env = { ...process.env };
     process.send({ tools: detectTools({ env }) });
-    // Two batches bound concurrency while giving each runtime its own result.
-    for (let i = 0; i < RUNTIMES.length; i += 3) {
-      await Promise.all(RUNTIMES.slice(i, i + 3).map(async (definition) => {
-        const runtime = await scanRuntime(definition, { env, cwd, kills });
-        process.send({ runtime });
-      }));
-    }
+    await Promise.all([
+      (async () => {
+        // Two batches bound concurrency while giving each runtime its own result.
+        for (let i = 0; i < RUNTIMES.length; i += 3) {
+          await Promise.all(RUNTIMES.slice(i, i + 3).map(async (definition) => {
+            const runtime = await scanRuntime(definition, { env, cwd, kills });
+            process.send({ runtime });
+          }));
+        }
+      })(),
+      scanDesignTools({ env, cwd, kills, send: (design) => process.send({ design }) }),
+    ]);
     finished = true;
   } finally {
     await releaseScanDirectory(cwd, kills);

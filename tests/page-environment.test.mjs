@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createEnvironmentUI, runtimeValue } from '../web/environment.js';
+import { createEnvironmentUI, runtimeValue, designValue } from '../web/environment.js';
 
 class Element extends EventTarget {
   constructor(document, closeEvents) {
@@ -390,7 +390,8 @@ test('environment data is confined to shell cards; tools only claim presence', a
   p.ui.connected(10);
   p.requests[0].resolve(snapshot(1, '24.0.0', { tools: [{ id: 'vfox', label: 'vfox', path: '/bin/vfox', status: 'detected' }] }));
   await flush();
-  assert.equal(p.get('environment-tools').children[0].children[0].textContent, 'vfox · Detected');
+  const head = p.get('environment-tools').children[0].children[0];
+  assert.deepEqual(head.children.map((node) => node.textContent), ['vfox', 'Detected']);
   p.ui.updated({ scope: 'project', cwd: '/work', revision: 9, host: 'elsewhere', pins: [{ id: 'nvmrc', label: 'Node.js', source: '.nvmrc', version: '18', status: 'configured', detail: null }] });
   assert.equal(p.get('.environment-note').textContent, 'Manager environment');
   assert.equal(p.get('.environment-values').children[1].textContent, '24.0.0');
@@ -466,4 +467,36 @@ test('environment teardown clears focus restoration before its queued close even
   p.releaseClose();
   assert.equal(p.document.activeElement, dialog, 'teardown must not focus a provider');
   assert.equal(p.get('environment-refresh').disabled, true);
+});
+
+test('design tools show a version only when read, say when a tool is outside PATH, and hide for projects', async () => {
+  assert.equal(designValue({ status: 'on_path', version: '8.0.1' }), '8.0.1');
+  assert.equal(designValue({ status: 'on_path', version: null }), 'On PATH');
+  assert.equal(designValue({ status: 'not_on_path', version: '5.2.1' }), '5.2.1 · Not on PATH');
+  assert.equal(designValue({ status: 'not_on_path', version: null }), 'Not on PATH');
+  assert.equal(designValue({ status: 'not_found', version: null }), 'Not found');
+  assert.equal(designValue({ status: 'pending', version: null }), 'Not checked');
+  assert.equal(designValue({ status: 'surprise', version: null }), 'Probe failed');
+  const p = page({ workingFolder: () => '/work' });
+  p.ui.connected(10);
+  p.requests[0].resolve(snapshot(1, '24.0.0', { designTools: [
+    { id: 'blender', label: 'Blender', status: 'not_on_path', version: '5.2.1', path: 'E:/Blender/blender.exe', command: null, detail: null },
+    { id: 'ffmpeg', label: 'FFmpeg', status: 'on_path', version: null, path: '/snap/bin/ffmpeg', command: 'ffmpeg', detail: 'A snap. Its version is not checked.' },
+    { id: 'gimp', label: 'GIMP', status: 'not_found', version: null, path: null, command: null, detail: 'Not on PATH or in the usual install locations.' },
+  ] }));
+  await flush();
+  const rows = p.get('environment-design').children;
+  const text = (row) => row.children.slice(1).map((node) => node.textContent);
+  assert.equal(p.get('environment-design-heading').hidden, false);
+  assert.deepEqual(rows[0].children[0].children.map((node) => node.textContent), ['Blender', '5.2.1 · Not on PATH']);
+  assert.deepEqual(text(rows[0]), ['E:/Blender/blender.exe', 'Installed outside PATH. Agents can run it once its folder is on PATH.']);
+  assert.deepEqual(text(rows[1]), ['Command: ffmpeg', '/snap/bin/ffmpeg', 'A snap. Its version is not checked.']);
+  assert.deepEqual(text(rows[2]), ['Not on PATH or in the usual install locations.']);
+  assert.equal(p.get('environment-runtimes-heading').textContent, 'Runtimes');
+  p.get('environment-scope-project').click();
+  await flush();
+  assert.equal(p.get('environment-runtimes-heading').textContent, 'Version pins');
+  assert.equal(p.get('environment-design-heading').hidden, true);
+  assert.equal(p.get('environment-design').hidden, true);
+  assert.deepEqual(p.get('environment-design').children, []);
 });

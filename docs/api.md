@@ -180,8 +180,9 @@ and may set `stale` without replacing the pins. POST reads them again.
 
 `GET /environment?scope=session&id=<hex>` and `{ "scope": "session", "id": "<hex>" }`
 probe the PATH recorded when that session was spawned, in a neutral temporary
-directory. Only PATH, the home folder and the toolchain-manager locations and
+directory. Only PATH, the home folder, the toolchain-manager locations and
 version selectors (for example `RUSTUP_HOME`, `PYENV_ROOT`, `ASDF_DATA_DIR`)
+and the Windows install folders (`LOCALAPPDATA`, `ProgramFiles`, `ProgramW6432`)
 are passed to the probe. The response adds `sessionId`, `spawnCwd`, and `availability`.
 `availability` is `ok`, or `unavailable` for tmux and herdr, whose environment
 is not that spawn record. No command is written to the terminal. An unknown id
@@ -197,7 +198,7 @@ A body or query that includes `shell`, `command`, `args`, or `env` is `400`
 `bad_request`. Any other `scope` is `400` `bad_request`.
 
 The manager snapshot contains `scope: "manager"`, `host`, `platform`,
-`managerNode: { version, path }`, `runtimes[]` and `tools[]`. On completion,
+`managerNode: { version, path }`, `runtimes[]`, `designTools[]` and `tools[]`. On completion,
 each runtime has a fresh result; unfinished checks become `failed`, never a
 stale success. A missing or unverified runtime is that runtime's own status
 and does not set `error`.
@@ -223,6 +224,24 @@ nvm/NVM for Windows, vfox, uv and pnpm. Presence implies neither activation
 nor ownership of a reported runtime. POSIX nvm discovery checks `NVM_DIR` or
 `~/.nvm/nvm.sh` without sourcing it. Other tools are resolved on PATH without
 execution. There is no whole-disk installation inventory.
+
+Design tools are ordered Blender, FFmpeg, GIMP, Inkscape, ImageMagick. Each
+has `id`, `label`, `status`, `version`, `path`, `command` and `detail`. Status
+is `pending` before the first check, `on_path` when a command resolves on
+PATH, `not_on_path` when the tool is installed only outside PATH, `not_found`,
+or `failed` when the check did not finish. `command` is the PATH command, or
+null. The commands are `blender`, `ffmpeg`, `gimp-console` (and `gimp` outside
+Windows), `inkscape`, and `magick` (and `convert` outside Windows; Windows
+`convert` is a disk utility). Outside PATH, Windows reads the `InstallLocation`
+of uninstall entries named for the tool, then the usual Program Files and
+per-user folders; macOS checks `/Applications` and `~/Applications` bundles and
+Homebrew and MacPorts folders; Linux checks `/usr/local/bin`, `/usr/bin`,
+`/snap/bin`, Linuxbrew and Flatpak exports. `version` is read only from a
+native program whose real file name is the tool's own, so a snap, a Flatpak
+launcher or a script reports presence with `detail` saying why. The version
+check runs with a 3 second deadline, D-Bus disabled, and HOME, the XDG
+folders and the tools' profile folders pointed at the scan's temporary folder.
+A timeout or unrecognized answer keeps the row's status and sets `detail`.
 
 Runtime probes execute recognized native binaries (and R's Unix launcher)
 from a neutral temporary directory; unknown script/shim launchers and Windows

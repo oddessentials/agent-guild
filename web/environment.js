@@ -1,4 +1,5 @@
 const STATES = { pending: 'Not checked', not_found: 'Not found', unavailable: 'Runtime unavailable', failed: 'Probe failed' };
+const DESIGN_STATES = { pending: 'Not checked', not_found: 'Not found', on_path: 'On PATH', not_on_path: 'Not on PATH', failed: 'Probe failed' };
 const PIN_STATES = { configured: 'Configured', unreadable: 'Unreadable', invalid: 'Invalid' };
 const SCOPES = [
   ['manager', 'Manager', 'Manager environment'],
@@ -8,6 +9,12 @@ const SCOPES = [
 ];
 
 export function runtimeValue(row) { return row.status === 'ok' ? row.version : STATES[row.status] || 'Probe failed'; }
+
+export function designValue(row) {
+  const state = DESIGN_STATES[row.status] || DESIGN_STATES.failed;
+  if (!row.version) return state;
+  return row.status === 'not_on_path' ? `${row.version} · Not on PATH` : row.version;
+}
 
 export function createEnvironmentUI({
   api, onAuthError, isAuthError = () => false, document = globalThis.document,
@@ -36,11 +43,16 @@ export function createEnvironmentUI({
           : !manager ? 'Not checked' : !found.length ? 'No runtime versions verified' : 'Manager environment';
   }
 
-  function rowElement(row) {
+  function rowHead(label, value) {
     const node = element('section', undefined, 'environment-row');
     const head = element('div', undefined, 'environment-row-head');
-    head.append(element('strong', row.label), element('span', runtimeValue(row)));
+    head.append(element('strong', label), element('span', value));
     node.append(head);
+    return node;
+  }
+
+  function rowElement(row) {
+    const node = rowHead(row.label, runtimeValue(row));
     if (row.command) node.append(element('p', `Command: ${row.command}`, 'environment-detail'));
     if (row.path) node.append(element('code', row.path, 'environment-path'));
     const detail = row.detail || (row.status === 'not_found' ? 'No executable was found on the manager’s PATH.' : '');
@@ -54,11 +66,17 @@ export function createEnvironmentUI({
     return node;
   }
 
+  function designElement(row) {
+    const node = rowHead(row.label, designValue(row));
+    if (row.command) node.append(element('p', `Command: ${row.command}`, 'environment-detail'));
+    if (row.path) node.append(element('code', row.path, 'environment-path'));
+    if (row.status === 'not_on_path') node.append(element('p', 'Installed outside PATH. Agents can run it once its folder is on PATH.', 'environment-detail'));
+    if (row.detail) node.append(element('p', row.detail, 'environment-detail'));
+    return node;
+  }
+
   function pinElement(row) {
-    const node = element('section', undefined, 'environment-row');
-    const head = element('div', undefined, 'environment-row-head');
-    head.append(element('strong', row.label), element('span', PIN_STATES[row.status] || 'Invalid'));
-    node.append(head);
+    const node = rowHead(row.label, PIN_STATES[row.status] || 'Invalid');
     node.append(element('p', row.source, 'environment-detail'));
     if (row.version) node.append(element('code', row.version, 'environment-path'));
     if (row.detail) node.append(element('p', row.detail, 'environment-detail'));
@@ -143,6 +161,10 @@ export function createEnvironmentUI({
     $('environment-tools-note').hidden = !showTools;
     $('environment-tools').hidden = !showTools;
     $('environment-tools-empty').hidden = !showTools;
+    $('environment-runtimes-heading').textContent = scope === 'project' ? 'Version pins' : 'Runtimes';
+    $('environment-runtimes-heading').hidden = scope === 'session' && data?.availability === 'unavailable';
+    for (const id of ['environment-design-heading', 'environment-design-note', 'environment-design']) $(id).hidden = !showTools;
+    $('environment-design').replaceChildren(...(showTools ? data?.designTools || [] : []).map(designElement));
     if (scope === 'project' && data && folder === projectFolder) {
       $('environment-runtimes').hidden = true;
       $('environment-runtimes').replaceChildren();
@@ -157,8 +179,8 @@ export function createEnvironmentUI({
     }
     if (showTools) {
       $('environment-tools').replaceChildren(...tools.map((tool) => {
-        const node = element('section', undefined, 'environment-row');
-        node.append(element('strong', `${tool.label} · Detected`), element('code', tool.path, 'environment-path'));
+        const node = rowHead(tool.label, 'Detected');
+        node.append(element('code', tool.path, 'environment-path'));
         return node;
       }));
       $('environment-tools-empty').hidden = Boolean(tools.length);

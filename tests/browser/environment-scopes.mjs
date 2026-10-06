@@ -46,6 +46,8 @@ const checks = await withPage({ name: 'environment-scopes', instrumentation }, a
   assert.equal(await read('#environment-host'), 'On demo.local');
   assert.equal(await evaluate(`document.querySelector('#environment-scopes').getAttribute('aria-label')`), 'Environment to check');
   assert.equal(await evaluate(`document.querySelectorAll('#environment-runtimes .environment-row').length`), 6);
+  assert.equal(await read('#environment-design .environment-row-head'), 'Blender5.2.1 · Not on PATH');
+  assert.equal(await evaluate(`document.querySelectorAll('#environment-design .environment-row').length`), 5);
   assert.equal(await evaluate(`document.querySelector('#environment-scope-manager').getAttribute('aria-pressed')`), 'true');
   assert.equal(await card(), CARD);
 
@@ -100,6 +102,8 @@ const checks = await withPage({ name: 'environment-scopes', instrumentation }, a
   await until('multiplexer refusal', () => evaluate(`document.querySelector('#environment-status').textContent.includes('tmux or herdr')`));
   assert.equal(await evaluate(`document.querySelectorAll('#environment-runtimes .environment-row').length`), 0);
   assert.equal(await evaluate(`document.querySelector('#environment-tools-heading').hidden`), true);
+  assert.equal(await evaluate(`document.querySelector('#environment-design-heading').hidden`), true);
+  assert.equal(await evaluate(`document.querySelector('#environment-runtimes-heading').hidden`), true);
   assert.equal(await card(), CARD);
 
   await evaluate(`document.querySelector('#environment-scope-launch').click()`);
