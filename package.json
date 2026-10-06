@@ -36,7 +36,7 @@
     "demo:check": "node docs/demo/check.mjs",
     "build:yard": "node scripts/build-yard.mjs",
     "optimize:yard": "node scripts/optimize-yard.mjs",
-    "test:yard": "node --test --test-concurrency=1 tests/yard.test.mjs tests/yard-browser.test.mjs",
+    "test:yard": "node --test --test-concurrency=1 tests/yard.test.mjs tests/browser/yard.mjs",
     "preview:yard": "node docs/yard/preview.mjs",
     "test": "node --test --test-concurrency=1 \"tests/*.test.mjs\""
   },

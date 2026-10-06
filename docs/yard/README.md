@@ -173,6 +173,7 @@ installed package users do not build assets or need Blender.
 npm run preview:yard
 node docs/yard/capture.mjs --all   # --wide: 21:9 and 32:9 at each zoom
 npm test
+node --test --test-concurrency=1 tests/browser/yard.mjs
 ```
 
 The preview prints a local URL and uses the real static/API/WebSocket server
@@ -180,7 +181,10 @@ with in-memory provider, account, history, GitHub and session fixtures.
 It never starts coding tools, accesses personal accounts, clones a repository
 or stops a real manager. Browser captures and test profiles live in ignored
 `.cache/` directories. Set `CHROME_PATH` if Chrome/Edge is not in a standard
-location. Browser tests explicitly skip when no browser binary is available.
+location. The yard browser check skips when no browser binary is available.
+`npm test` runs the asset and placement checks. CI runs the browser check once,
+on Linux, with the other browser checks.
+Set `CHROME_NO_SANDBOX=1` in a container that cannot use Chrome's sandbox.
 CI permits [Chromium's software WebGL fallback](https://chromium.googlesource.com/chromium/src/+/main/docs/gpu/swiftshader.md)
 only in these disposable fixture profiles. Set `YARD_SOFTWARE_GL=1` to force
 that path locally; this never changes the user's normal browser settings.
@@ -194,7 +198,8 @@ They also cover overlapping New/Resume requests, duplicate submission across
 views, independent install requests and model recovery without retry loops.
 Asset tests verify the shipped GLBs contain anchors, skinning and clips.
 
-The release gate is 32 MiB packed. Run `npm pack` and
+The release gate is 52 MiB packed. The yard worlds measured 49.0 MiB in the
+packed package. Run `npm pack` and
 `node tests/package/check-tarball.mjs <archive>` after asset changes. Pack on
 Linux/macOS for release: Windows npm archives do not preserve executable
 mode bits on node-pty's macOS spawn helpers, which the gate correctly rejects.

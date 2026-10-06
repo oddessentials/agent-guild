@@ -1,18 +1,52 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { startFixture } from '../docs/yard/fixture.mjs';
-import { browserBinary, openBrowser, pause, until } from '../docs/yard/browser.mjs';
+import { startFixture } from '../../docs/yard/fixture.mjs';
+import { browserBinary, openBrowser, until } from '../../docs/yard/browser.mjs';
 
-const options={skip:!browserBinary && 'Set CHROME_PATH to run browser coverage',timeout:180000};
+const options={skip:!browserBinary && 'Set CHROME_PATH to run browser coverage',timeout:120000};
 const q=JSON.stringify;
 const inspector='#yard-inspector';
 const provider=id=>`.yard-row[data-key="provider:${id}"]`;
 const session=id=>`.yard-row[data-key="session:${id}"]`;
-async function setup(t,{yard=false,auth=true,source='',...size}={}) {
+let shared;
+const installedScripts=[];
+test.after(async()=>{if(shared)await shared.close();});
+async function browser(){if(!shared)shared=await openBrowser();return shared;}
+const nextFrames=b=>b.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+function assetInflight(b){
+  const done=new Set();
+  for(const event of b.events){
+    if(event.method==='Network.loadingFinished'||event.method==='Network.loadingFailed')done.add(event.params.requestId);
+  }
+  return b.events.some(event=>event.method==='Network.requestWillBeSent'&&/\.(?:glb|gltf|webp|hdr)(?:$|\?)/.test(event.params?.request?.url||'')&&!done.has(event.params.requestId));
+}
+// The page counts every animation frame, including these probes. A quiet scene
+// adds exactly the two probe frames. Two quiet probes in a row, after the
+// downloads have finished, means reduced motion is not looping.
+async function framesSettled(b){
+  let quiet=0;
+  const settled=await until(async()=>{
+    if(assetInflight(b)){quiet=0;return false;}
+    const before=await b.evaluate('window.__frames');
+    await nextFrames(b);
+    if(assetInflight(b)){quiet=0;return false;}
+    const frames=await b.evaluate('window.__frames');
+    quiet=frames-before===2?quiet+1:0;
+    return quiet>=2?{frames}:false;
+  });
+  return settled.frames;
+}
+async function setup(t,{yard=false,auth=true,source='',width=1440,height=1000}={}) {
   const fixture=await startFixture();t.after(()=>fixture.close());
-  const b=await openBrowser(size);t.after(()=>b.close());
+  const b=await browser();
+  await b.send('Page.navigate',{url:'about:blank'});
+  await b.wait('document.readyState==="complete"');
+  b.errors.length=0;b.requests.length=0;b.events.length=0;
+  for(const identifier of installedScripts)await b.send('Page.removeScriptToEvaluateOnNewDocument',{identifier});
+  installedScripts.length=0;
+  await b.send('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});
   await b.send('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});
-  await b.send('Page.addScriptToEvaluateOnNewDocument',{source:`
+  const added=await b.send('Page.addScriptToEvaluateOnNewDocument',{source:`
     localStorage.setItem('agentGuild.theme','dark');
     localStorage.setItem('agentGuild.view',${q(yard?'yard':'cards')});
     window.confirm=()=>true; window.prompt=()=>'Renamed from Yard';
@@ -20,6 +54,7 @@ async function setup(t,{yard=false,auth=true,source='',...size}={}) {
     const raf=window.requestAnimationFrame;
     window.requestAnimationFrame=callback=>raf.call(window,time=>{window.__frames++;callback(time);});
     ${source}`});
+  installedScripts.push(added.identifier);
   await b.send('Page.navigate',{url:fixture.api.url+'/' +(auth?'#token='+fixture.token:'')});
   await b.wait(auth?"document.querySelector('#connection')?.classList.contains('ok')":"document.querySelector('#auth')?.hidden===false");
   return {f:fixture,b};
@@ -61,7 +96,7 @@ test('New pending state follows the account and folder across views, independent
   assert.equal(await disabled(inspector+' .existing'),false);
   assert.equal(await disabled(inspector+' .update'),false);
   await b.evaluate(`document.querySelector('${inspector} .new').dispatchEvent(new Event('click'))`);
-  await pause(100);assert.equal(pending.length,1,'duplicate submissions through either view are blocked');
+  assert.equal(pending.length,1,'duplicate submissions through either view are blocked');
 
   await b.click(inspector+' [data-account="work"]');
   assert.equal(await disabled(inspector+' .new'),false);
@@ -127,7 +162,7 @@ test('Resume shares one pending action across cards, Yard and history without bl
   await fill(b,'#history-id','history-1');assert.equal(await disabled(manual),true);
   await b.evaluate("document.querySelector('#history-form').dispatchEvent(new Event('submit',{cancelable:true}))");
   await b.evaluate(`document.querySelector(${q(history)}).dispatchEvent(new Event('click'))`);
-  await pause(100);assert.equal(pending.length,2,'manual id and history cannot duplicate a card Resume');
+  assert.equal(pending.length,2,'manual id and history cannot duplicate a card Resume');
   await b.click('#history-close');await b.click(inspector+' [data-account="work"]');
   await b.click(inspector+' .existing');await b.wait(`document.querySelector(${q(history)}) && !${blocked(history)}`);
   await b.click(history);await until(()=>pending.length===3);
@@ -175,8 +210,9 @@ test('pending New and Resume keep keyboard focus, ignore presses and recover foc
   async function press(selector,{release=true}={}) {
     const {x,y}=await b.evaluate(`(()=>{const e=document.querySelector(${q(selector)});e.scrollIntoView({block:'center'});const r=e.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()`);
     await b.send('Input.dispatchMouseEvent',{type:'mouseMoved',x,y});
+    await b.evaluate(`document.querySelector(${q(selector)}).style.transition='none'`);
     await b.send('Input.dispatchMouseEvent',{type:'mousePressed',x,y,button:'left',clickCount:1});
-    await pause(250);
+    await nextFrames(b);
     const transform=await b.evaluate(`getComputedStyle(document.querySelector(${q(selector)})).transform`);
     // Releasing elsewhere presses without clicking.
     if(!release)await b.send('Input.dispatchMouseEvent',{type:'mouseMoved',x:1,y:1});
@@ -188,7 +224,7 @@ test('pending New and Resume keep keyboard focus, ignore presses and recover foc
     await enter();await until(()=>pending.length===index+1);
     assert.equal(await focused(selector),true,'pending control keeps focus');
     assert.equal(await text(selector),pendingLabel);
-    await enter();await pause(100);
+    await enter();
     assert.equal(pending.length,index+1,'Enter on a pending control is ignored');
     pending[index].finish(failure());
     await b.wait('!'+blocked(selector));
@@ -200,7 +236,7 @@ test('pending New and Resume keep keyboard focus, ignore presses and recover foc
   await keepsFocus(card+' .new','New','Starting…',0);
   await b.click(card+' .new');await until(()=>pending.length===2);
   assert.equal(await press(card+' .new'),'none','a pending button does not press down');
-  await pause(100);assert.equal(pending.length,2,'clicking a pending control is ignored');
+  assert.equal(pending.length,2,'clicking a pending control is ignored');
   pending[1].finish(failure());await b.wait('!'+blocked(card+' .new'));
 
   await b.wait(`!document.querySelector(${q(resume)}).hidden`);
@@ -391,7 +427,7 @@ test('a skin without a yard shows Cards and keeps the saved Yard preference',opt
   assert.equal(fit.covers,false,'the view switch stays clear of the connection and upgrade controls');
   assert.equal(fit.off,false,'the view switch stays on screen');
   await b.send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
-  await pause(300);
+  await nextFrames(b);
   const narrow=await b.evaluate(`(()=>{
     const box=sel=>{const e=document.querySelector(sel);if(!e||e.hidden)return null;const r=e.getBoundingClientRect();return r.width&&r.height?{x:r.x,y:r.y,r:r.right,b:r.bottom}:null;};
     const hit=(a,c)=>a&&c&&a.x<c.r&&c.x<a.r&&a.y<c.b&&c.y<a.b;
@@ -419,11 +455,13 @@ test('Yard retains every session through skins, reduced motion, mobile and recon
     assert.equal(await b.evaluate(`document.querySelector('${inspector} .session-card').dataset.id`),last.id);
     assert.equal(await b.evaluate("document.querySelector('#yard-failure').hidden"),true);
   }
-  // Wait for all asset loads, then an unchanged reduced-motion scene has no frame loop.
-  await pause(1200);const frames=await b.evaluate('window.__frames');await pause(600);
-  assert.equal(await b.evaluate('window.__frames'),frames,'reduced motion renders only on changes');
+  const frames=await framesSettled(b);
+  assert.ok(frames>0,'the scene rendered');
+  const before=await b.evaluate('window.__frames');
+  await nextFrames(b);
+  assert.equal(await b.evaluate('window.__frames')-before,2,'reduced motion renders only on changes');
   await b.send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
-  await pause(300);
+  await nextFrames(b);
   assert.equal(await b.evaluate('document.documentElement.scrollWidth<=innerWidth'),true,'no horizontal overflow on mobile');
   await fill(b,'#yard-filter',last.name);
   assert.equal(await b.evaluate("[...document.querySelectorAll('.yard-row')].filter(x=>!x.hidden).length"),1);
@@ -436,17 +474,22 @@ test('Yard retains every session through skins, reduced motion, mobile and recon
 test('the latest skin wins during initial loading and an interrupted world switch',options,async t=>{
   const {b}=await setup(t,{yard:true,source:`
     const originalFetch=window.fetch;
-    window.fetch=async(...args)=>{
+    window.__gates={};window.__holdWorlds=true;
+    window.fetch=(...args)=>{
       const url=String(args[0]?.url||args[0]);
-      if(/\\/(guild|orbital)\\.glb$/.test(url))await new Promise(resolve=>setTimeout(resolve,700));
-      return originalFetch(...args);
+      const name=url.match(/\\/(guild|orbital)\\.glb$/)?.[1];
+      if(!window.__holdWorlds||!name)return originalFetch(...args);
+      return new Promise((resolve,reject)=>{window.__gates[name]=()=>originalFetch(...args).then(resolve,reject);});
     };`});
-  await b.evaluate("document.documentElement.dataset.skin='grove'");
+  await b.wait('window.__gates.guild');
+  await b.evaluate("document.documentElement.dataset.skin='grove';window.__gates.guild()");
   await ready(b);await b.wait("document.querySelector('#yard-stage').dataset.world==='grove'");
   await b.evaluate("document.documentElement.dataset.skin='orbital'");
-  await pause(100);
+  await b.wait('window.__gates.orbital');
   await b.evaluate("document.documentElement.dataset.skin='grove'");
-  await pause(1200);
+  await nextFrames(b);
+  await b.evaluate('window.__gates.orbital()');
+  await framesSettled(b);
   assert.equal(await b.evaluate("document.querySelector('#yard-stage').dataset.world"),'grove');
   assert.deepEqual(b.errors,[]);
 });
@@ -499,7 +542,7 @@ test('a stalled world times out, aborts its request and can be retried',options,
   const {b}=await setup(t,{yard:true,source:`
     const originalTimeout=window.setTimeout,originalFetch=window.fetch;
     window.__stallWorld=true;window.__abortedWorld=false;
-    window.setTimeout=(callback,delay,...args)=>originalTimeout(callback,window.__stallWorld && delay===30000?100:delay,...args);
+    window.setTimeout=(callback,delay,...args)=>originalTimeout(callback,window.__stallWorld && delay===30000?0:delay,...args);
     window.fetch=(...args)=>{
       const request=args[0];
       if(window.__stallWorld && String(request?.url||request).endsWith('.glb')) {

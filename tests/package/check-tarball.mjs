@@ -3,8 +3,9 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 
-// web/yard ships the worlds and plates. The packed package measured 49.0 MiB.
-const MAX_PACKED_BYTES = 64 * 1024 * 1024;
+// web/yard ships the worlds and plates. The packed package measured 49.0 MiB,
+// and the gate stays just above that measurement.
+const MAX_PACKED_BYTES = 52 * 1024 * 1024;
 const TOP_LEVEL = new Set(['package.json', 'README.md', 'LICENSE', 'bin', 'src', 'web', 'config', 'examples', 'node_modules']);
 const REQUIRED = ['package.json', 'README.md', 'LICENSE', 'src/manager/main.mjs', 'web/index.html', 'config/providers.default.json'];
 const PACKAGE_ROOT = /^((?:node_modules\/(?:@[^/]+\/)?[^/]+\/)+)package\.json$/;

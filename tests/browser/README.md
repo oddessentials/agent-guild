@@ -9,6 +9,10 @@ Branch pagination, scroll anchoring, filtering and copy controls are checked by
 a folder for desktop and phone screenshots. These checks use simulated GitHub
 responses and never contact GitHub. Set `CHROME_PATH`
 to Chrome or Edge on Windows, as with the checks below.
+The Yard's Cards parity, pending actions, skin gate, reduced motion and
+reconnect behavior are checked by
+`node --test --test-concurrency=1 tests/browser/yard.mjs`.
+`npm test` covers asset bytes, placement and the skin gate in `tests/yard.test.mjs`.
 
 ## Dialog lifecycle
 
@@ -35,6 +39,7 @@ export CHROME_NO_SANDBOX=1
 node tests/browser/terminal-copy.mjs
 node tests/browser/terminal-controls.mjs
 node tests/browser/layout.mjs
+node --test --test-concurrency=1 tests/browser/yard.mjs
 node tests/browser/github.mjs
 node tests/browser/github-branches.mjs
 node tests/browser/environment-scopes.mjs
