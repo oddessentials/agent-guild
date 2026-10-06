@@ -50,12 +50,12 @@ export function initYard(controller) {
     view = next === 'yard' && allowed ? 'yard' : 'cards';
     root.dataset.view = view;
     if (remember) { try { localStorage.setItem('agentGuild.view', next === 'yard' && allowed ? 'yard' : 'cards'); } catch {} }
-    $('view-cards').setAttribute('aria-pressed', String(view === 'cards'));
-    const yardButton = $('view-yard');
-    yardButton.setAttribute('aria-pressed', String(view === 'yard'));
-    yardButton.setAttribute('aria-disabled', String(!allowed));
-    if (allowed) yardButton.removeAttribute('title');
-    else yardButton.title = `${skinEntry()?.name || 'This skin'} has no yard yet.`;
+    $('view-cards').checked = view === 'cards';
+    const yardChoice = $('view-yard');
+    yardChoice.checked = view === 'yard';
+    yardChoice.disabled = !allowed;
+    if (allowed) yardChoice.parentElement.removeAttribute('title');
+    else yardChoice.parentElement.title = `${skinEntry()?.name || 'This skin'} has no yard yet.`;
     $('yard').hidden = view !== 'yard';
     $('providers').hidden = view === 'yard';
     $('providers').inert = view === 'yard';
@@ -228,9 +228,9 @@ export function initYard(controller) {
       renderer.setActive(sceneVisible());
     } else ensureScene();
   }
-  $('view-cards').addEventListener('click',() => setView('cards'));
-  $('view-yard').addEventListener('click',() => { if (skinAllowsYard()) setView('yard'); });
-  $('yard-cards').addEventListener('click',() => { setView('cards'); $('view-cards').focus(); });
+  $('view-cards').addEventListener('change',() => setView('cards'));
+  $('view-yard').addEventListener('change',() => { if (skinAllowsYard()) setView('yard'); });
+  $('yard-cards').addEventListener('click',() => { setView('cards'); ($('settings').checkVisibility() ? $('settings') : $('menu-toggle')).focus(); });
   $('yard-retry').addEventListener('click',() => { failed=false; ensureScene(); });
   $('yard-swap-retry').addEventListener('click',() => {
     if ($('yard-swap-failure').contains(document.activeElement)) $('yard-stage').focus();

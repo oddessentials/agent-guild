@@ -1,8 +1,4 @@
 /* The world is a layout. All controls still inherit the selected skin. */
-.view-switch { display:flex; gap:2px; padding:3px; border:1px solid var(--border); border-radius:var(--radius); background:var(--surface-2); }
-.view-switch .btn { border-color:transparent; box-shadow:none; min-height:30px; padding:4px 13px; }
-.view-switch .btn[aria-pressed="true"] { color:var(--accent-text); background:var(--accent-fill); }
-.view-switch .btn[aria-disabled="true"] { cursor:not-allowed; }
 :root[data-view="yard"] #app { max-width:none; padding:0; margin:0; gap:0; }
 :root[data-view="yard"] #app > .launcher { padding:12px 24px; margin:0; border-bottom:1px solid var(--border); background:var(--surface); }
 :root[data-view="yard"] .launcher > .section-head { margin:0; gap:16px; }

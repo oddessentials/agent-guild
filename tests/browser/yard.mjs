@@ -394,38 +394,26 @@ test('Cards and Yard use the same actions, accounts, dialogs and terminal',optio
   assert.deepEqual(b.errors,[]);
 });
 
-test('the Yard follows the theme and its view switch stays clear of the bar controls',options,async t=>{
+test('the Yard follows the theme, and its view choice lives in Settings, out of the top bar',options,async t=>{
   const {b}=await setup(t,{yard:true});await ready(b);
   const choose=async selector=>{
     await b.click('#settings');await b.click(selector);
     await b.evaluate("document.querySelector('#settings-menu').hidePopover()");
   };
   await b.wait("document.querySelector('#yard-stage').dataset.world==='guild' && document.documentElement.dataset.view==='yard'");
+  assert.equal(await b.evaluate("document.querySelector('#view-yard').checked"),true);
+  assert.equal(await b.evaluate("['#view-cards','#view-yard'].every(s=>document.querySelector(s).closest('#settings-menu'))"),true,'the view choice is in Settings');
   for (const theme of ['light','dark']) {
     await choose(`input[name=theme][value=${theme}]`);
     await b.wait(`document.documentElement.dataset.theme===${q(theme)} && document.querySelector('#yard-stage').dataset.world==='guild' && document.querySelector('#yard-failure').hidden`);
   }
-  const fit=await b.evaluate(`(()=>{
-    const box=sel=>{const e=document.querySelector(sel);if(!e||e.hidden)return null;const r=e.getBoundingClientRect();return r.width&&r.height?{x:r.x,y:r.y,r:r.right,b:r.bottom}:null;};
-    const hit=(a,c)=>a&&c&&a.x<c.r&&c.x<a.r&&a.y<c.b&&c.y<a.b;
-    const connection=box('#connection'),cards=box('#view-cards'),yard=box('#view-yard'),upgrade=box('#upgrade');
-    const off=item=>!item||item.x<-1||item.r>innerWidth+1;
-    return {covers:hit(connection,cards)||hit(connection,yard)||hit(upgrade,cards)||hit(upgrade,yard),off:off(cards)||off(yard)};
-  })()`);
-  assert.equal(fit.covers,false,'the view switch stays clear of the connection and upgrade controls');
-  assert.equal(fit.off,false,'the view switch stays on screen');
+  await choose('#view-cards');
+  await b.wait("document.documentElement.dataset.view==='cards' && document.querySelector('#view-cards').checked");
+  await choose('#view-yard');
+  await b.wait("document.documentElement.dataset.view==='yard' && document.querySelector('#view-yard').checked");
   await b.send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
   await nextFrames(b);
-  const narrow=await b.evaluate(`(()=>{
-    const box=sel=>{const e=document.querySelector(sel);if(!e||e.hidden)return null;const r=e.getBoundingClientRect();return r.width&&r.height?{x:r.x,y:r.y,r:r.right,b:r.bottom}:null;};
-    const hit=(a,c)=>a&&c&&a.x<c.r&&c.x<a.r&&a.y<c.b&&c.y<a.b;
-    const connection=box('#connection'),cards=box('#view-cards'),yard=box('#view-yard'),upgrade=box('#upgrade');
-    const off=item=>!item||item.x<-1||item.r>innerWidth+1;
-    return {covers:hit(connection,cards)||hit(connection,yard)||hit(upgrade,cards)||hit(upgrade,yard),off:off(cards)||off(yard),overflow:document.documentElement.scrollWidth>innerWidth};
-  })()`);
-  assert.equal(narrow.covers,false,'the view switch stays clear of the connection and upgrade controls on a phone');
-  assert.equal(narrow.off,false,'the view switch stays on screen on a phone');
-  assert.equal(narrow.overflow,false);
+  assert.equal(await b.evaluate('document.documentElement.scrollWidth>innerWidth'),false,'no sideways scroll on a phone');
   assert.deepEqual(b.errors,[]);
 });
 

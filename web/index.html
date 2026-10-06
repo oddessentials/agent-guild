@@ -30,10 +30,6 @@
       </div>
       <span id="upgrade-note" class="upgrade-note" hidden></span>
       <button id="upgrade" class="btn upgrade" type="button" hidden></button>
-      <div class="view-switch" role="group" aria-label="View">
-        <button id="view-cards" class="btn" type="button" aria-pressed="true">Cards</button>
-        <button id="view-yard" class="btn" type="button" aria-pressed="false">Yard</button>
-      </div>
       <button id="menu-toggle" class="btn menu-toggle" type="button" popovertarget="topbar-menu" aria-label="Menu" title="Menu"></button>
       <div id="topbar-menu" class="topbar-menu menu" popover>
         <button id="github-toggle" class="btn github-toggle" type="button" aria-controls="dock" aria-pressed="false">GitHub</button>
@@ -46,6 +42,11 @@
             <legend>Mode</legend>
             <label class="choice"><input type="radio" name="theme" value="light"><span class="mode-light">Light</span></label>
             <label class="choice"><input type="radio" name="theme" value="dark"><span class="mode-dark">Dark</span></label>
+          </fieldset>
+          <fieldset>
+            <legend>View</legend>
+            <label class="choice"><input id="view-cards" type="radio" name="view" value="cards"><span class="view-name">Cards</span></label>
+            <label class="choice"><input id="view-yard" type="radio" name="view" value="yard"><span class="view-name">Yard</span></label>
           </fieldset>
           <fieldset>
             <legend>Sound</legend>
