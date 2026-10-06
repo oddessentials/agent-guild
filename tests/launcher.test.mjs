@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
 import { waitForTerminalReady } from './fixtures/terminal-ready.mjs';
 import { lastSignIn, SIGN_IN_ATTEMPT, SIGN_IN_RESULT } from '../src/manager/autostart.mjs';
+import { VERSION } from '../src/manager/config.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const cli = path.resolve(here, '../bin/agent-guild.mjs');
@@ -367,5 +368,36 @@ test('open and status say when the running manager is another version', async ()
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
     fs.rmSync(otherHome, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  }
+});
+
+test('agent-guild --version, -v and version print the installed version and exit 0', async () => {
+  const { stdout: v1, code: c1 } = await runWith(env, '--version');
+  assert.equal(c1, 0);
+  assert.equal(v1.trim(), VERSION);
+
+  const { stdout: v2, code: c2 } = await runWith(env, '-v');
+  assert.equal(c2, 0);
+  assert.equal(v2.trim(), VERSION);
+
+  const { stdout: v3, code: c3 } = await runWith(env, 'version');
+  assert.equal(c3, 0);
+  assert.equal(v3.trim(), VERSION);
+});
+
+test('agent-guild doctor runs diagnostics and reports installation health', async () => {
+  const testHome = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-launcher-'));
+  const testEnv = { ...env, AGENT_GUILD_HOME: testHome };
+  try {
+    const { stdout, code } = await runWith(testEnv, 'doctor');
+    assert.equal(code, 0);
+    assert.match(stdout, /Agent Guild Doctor/);
+    assert.match(stdout, /Node\.js/);
+    assert.match(stdout, /Terminal/);
+    assert.match(stdout, /Data Directory/);
+    assert.match(stdout, /Session Manager/);
+    assert.match(stdout, /Doctor found no fatal problems/);
+  } finally {
+    fs.rmSync(testHome, { recursive: true, force: true });
   }
 });

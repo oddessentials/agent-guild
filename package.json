@@ -31,6 +31,7 @@
     "manager": "node bin/agent-guild.mjs start",
     "stop": "node bin/agent-guild.mjs stop",
     "status": "node bin/agent-guild.mjs status",
+    "doctor": "node bin/agent-guild.mjs doctor",
     "demo:build": "node docs/demo/build.mjs",
     "demo:check": "node docs/demo/check.mjs",
     "test": "node --test --test-concurrency=1 \"tests/*.test.mjs\""

@@ -142,6 +142,8 @@ The first Claude Code usage meter may ask for access to the
 | `agent-guild restart` | Restart the manager on the installed version and end every session. |
 | `agent-guild url` | Print the page link with the access token. |
 | `agent-guild start` | Run the manager in the foreground. |
+| `agent-guild doctor` | Diagnose the health of the installation and related tooling. |
+| `agent-guild --version` | Print the installed Agent Guild version (`-v` or `version`). |
 
 Sessions end when the manager stops or the computer restarts. tmux and herdr
 sessions survive a manager stop.

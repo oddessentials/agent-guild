@@ -1,0 +1,216 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import net from 'node:net';
+import path from 'node:path';
+import { diagnose, formatDiagnostics, runDoctor, checkPortAvailable } from '../src/manager/doctor.mjs';
+import { VERSION } from '../src/manager/config.mjs';
+
+test('checkPortAvailable returns true for a free port and false for an occupied port', async () => {
+  const srv = net.createServer();
+  await new Promise((resolve) => srv.listen(0, '127.0.0.1', resolve));
+  const occupiedPort = srv.address().port;
+
+  try {
+    const isFree = await checkPortAvailable(occupiedPort, '127.0.0.1');
+    assert.equal(isFree, false, 'occupied port should return false');
+  } finally {
+    srv.close();
+  }
+
+  // Find a free port after closing
+  const nowFree = await checkPortAvailable(occupiedPort, '127.0.0.1');
+  assert.equal(nowFree, true, 'closed port should return true');
+});
+
+test('diagnose reports healthy status on a valid environment', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-doctor-test-'));
+  try {
+    const diag = await diagnose({
+      nodeVersion: '22.0.0',
+      platform: 'darwin',
+      arch: 'arm64',
+      dir: tempDir,
+      port: 59999,
+      fetchHealth: async () => null,
+      testPortAvailable: async () => true,
+      checkPtyProblem: () => null,
+      verifyLoadPty: () => ({}),
+      tools: [
+        { id: 'google', name: 'Antigravity CLI', command: 'agy' },
+      ],
+    });
+
+    assert.equal(diag.healthy, true);
+    assert.equal(diag.fatalIssues.length, 0);
+    assert.equal(diag.node.ok, true);
+    assert.equal(diag.pty.ok, true);
+    assert.equal(diag.storage.writable, true);
+    assert.equal(diag.manager.running, false);
+    assert.equal(diag.manager.portFree, true);
+    assert.equal(diag.manager.portConflict, false);
+
+    const formatted = formatDiagnostics(diag);
+    assert.match(formatted, /Agent Guild Doctor/);
+    assert.match(formatted, /Node\.js v22\.0\.0/);
+    assert.match(formatted, /Terminal subsystem \(node-pty\): functional/);
+    assert.match(formatted, /Doctor found no fatal problems/);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('diagnose flags unsupported Node.js versions as fatal', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-doctor-test-'));
+  try {
+    const diag = await diagnose({
+      nodeVersion: '18.19.0',
+      dir: tempDir,
+      fetchHealth: async () => null,
+      testPortAvailable: async () => true,
+      checkPtyProblem: () => null,
+      verifyLoadPty: () => ({}),
+      tools: [],
+    });
+
+    assert.equal(diag.healthy, false);
+    assert.equal(diag.node.ok, false);
+    assert.ok(diag.fatalIssues.some((issue) => issue.includes('Node.js version is below requirement')));
+
+    const formatted = formatDiagnostics(diag);
+    assert.match(formatted, /✖ Node\.js v18\.19\.0 \(unsupported/);
+    assert.match(formatted, /Doctor found 1 fatal problem/);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('diagnose flags pty subsystem problems as fatal', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-doctor-test-'));
+  try {
+    const errorMsg = 'Agent Guild needs glibc 2.28 or later on Linux';
+    const diag = await diagnose({
+      nodeVersion: '22.0.0',
+      dir: tempDir,
+      fetchHealth: async () => null,
+      testPortAvailable: async () => true,
+      checkPtyProblem: () => errorMsg,
+      tools: [],
+    });
+
+    assert.equal(diag.healthy, false);
+    assert.equal(diag.pty.ok, false);
+    assert.equal(diag.pty.error, errorMsg);
+    assert.ok(diag.fatalIssues.some((issue) => issue.includes('glibc 2.28')));
+
+    const formatted = formatDiagnostics(diag);
+    assert.match(formatted, /✖ Terminal subsystem \(node-pty\): problem detected/);
+    assert.match(formatted, /needs glibc 2\.28/);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('diagnose flags port conflicts as fatal', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-doctor-test-'));
+  try {
+    const diag = await diagnose({
+      nodeVersion: '22.0.0',
+      dir: tempDir,
+      port: 47821,
+      fetchHealth: async () => null,
+      testPortAvailable: async () => false, // port occupied by non-manager
+      checkPtyProblem: () => null,
+      verifyLoadPty: () => ({}),
+      tools: [],
+    });
+
+    assert.equal(diag.healthy, false);
+    assert.equal(diag.manager.running, false);
+    assert.equal(diag.manager.portConflict, true);
+    assert.ok(diag.fatalIssues.some((issue) => issue.includes('Port 47821 is in use')));
+
+    const formatted = formatDiagnostics(diag);
+    assert.match(formatted, /✖ Status: not running, but port 47821 is in use by another process/);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('diagnose flags invalid providers.json syntax as fatal', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-doctor-test-'));
+  try {
+    fs.writeFileSync(path.join(tempDir, 'providers.json'), '{ invalid json ');
+    const diag = await diagnose({
+      nodeVersion: '22.0.0',
+      dir: tempDir,
+      fetchHealth: async () => null,
+      testPortAvailable: async () => true,
+      checkPtyProblem: () => null,
+      verifyLoadPty: () => ({}),
+      tools: [],
+    });
+
+    assert.equal(diag.healthy, false);
+    assert.equal(diag.storage.providersConfig.valid, false);
+    assert.ok(diag.fatalIssues.some((issue) => issue.includes('invalid JSON')));
+
+    const formatted = formatDiagnostics(diag);
+    assert.match(formatted, /✖ Custom tools \(providers\.json\): invalid syntax/);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('diagnose detects running manager and reports version mismatch without failing health', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-doctor-test-'));
+  try {
+    fs.writeFileSync(path.join(tempDir, 'auth-token'), 'dummy-token\n');
+    const diag = await diagnose({
+      nodeVersion: '22.0.0',
+      dir: tempDir,
+      port: 47821,
+      fetchHealth: async () => ({ name: 'agent-guild', version: '0.99.0', pid: 12345 }),
+      testPortAvailable: async () => false,
+      checkPtyProblem: () => null,
+      verifyLoadPty: () => ({}),
+      tools: [],
+    });
+
+    assert.equal(diag.healthy, true);
+    assert.equal(diag.manager.running, true);
+    assert.equal(diag.manager.pid, 12345);
+    assert.equal(diag.manager.version, '0.99.0');
+    assert.equal(diag.manager.versionMatch, false);
+
+    const formatted = formatDiagnostics(diag);
+    assert.match(formatted, /✔ Status: running at/);
+    assert.match(formatted, /! Version: running v0\.99\.0, installed/);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('runDoctor writes formatted output and returns boolean health status', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-doctor-test-'));
+  try {
+    let output = '';
+    const ok = await runDoctor({
+      nodeVersion: '22.0.0',
+      dir: tempDir,
+      fetchHealth: async () => null,
+      testPortAvailable: async () => true,
+      checkPtyProblem: () => null,
+      verifyLoadPty: () => ({}),
+      tools: [],
+      log: (msg) => { output += `${msg}\n`; },
+    });
+
+    assert.equal(ok, true);
+    assert.match(output, /Agent Guild Doctor/);
+    assert.match(output, /Doctor found no fatal problems/);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});

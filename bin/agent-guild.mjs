@@ -34,6 +34,11 @@ Commands:
   restart   Stop the session manager and start it again; ends every session
   status    Show whether the session manager is running
   url       Print the web page URL, including the access token
+  doctor    Diagnose the health of the installation and related tooling
+
+Options:
+  -v, --version  Print the installed Agent Guild version
+  -h, --help     Show this help message
 
 Environment:
   AGENT_GUILD_PORT             Port for the local API (default 47821)
@@ -276,6 +281,10 @@ async function main() {
   const flags = new Set(args.filter((a) => a.startsWith('-')));
   const command = args.find((a) => !a.startsWith('-')) || 'open';
   if (flags.has('-h') || flags.has('--help') || command === 'help') return usage();
+  if (flags.has('-v') || flags.has('--version') || command === 'version') {
+    console.log(VERSION);
+    return undefined;
+  }
 
   switch (command) {
     case 'open': return cmdOpen({ browser: !flags.has('--no-browser'), signIn: flags.has('--sign-in') });
@@ -303,6 +312,12 @@ async function main() {
     case 'stop': return cmdStop();
     case 'restart': return cmdRestart();
     case 'status': return cmdStatus();
+    case 'doctor': {
+      const { runDoctor } = await import('../src/manager/doctor.mjs');
+      const ok = await runDoctor();
+      process.exitCode = ok ? 0 : 1;
+      return undefined;
+    }
     case 'url': {
       console.log(pageUrl(baseUrl(), loadOrCreateToken()));
       return undefined;
