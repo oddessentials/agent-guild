@@ -98,7 +98,6 @@ export class YardRenderer {
       loaded=await new T.GLTFLoader(this.loadingManager).loadAsync(new URL(skin+'.glb',ASSETS).href);
       if(this.disposed||request!==this.worldRequest){disposeWorld(loaded.scene);return;}
       if(WORLDS[skin].plates)await Promise.all([this.surfaceWorld(loaded.scene,skin),this.plateWorld(loaded.scene,skin)]);
-      else if(WORLDS[skin].textures)await this.textureWorld(loaded.scene);
     } catch(err) {
       disposeWorld(loaded?.scene);
       if(!this.disposed&&request===this.worldRequest)throw err;
@@ -118,30 +117,6 @@ export class YardRenderer {
     this.world.traverse(node=>{if(node.isMesh&&!node.userData.plate&&!node.material.isShadowMaterial){node.castShadow=true;node.receiveShadow=true;}});
     this.update(this.providers,this.sessions);
     this.dirty=true;this.drawOnce();
-  }
-  async textureWorld(world) {
-    const loader=new T.TextureLoader(this.loadingManager);
-    const results=await Promise.allSettled(['stone','wood'].map(async name=>{
-      const texture=await loader.loadAsync(new URL(name+'.webp',ASSETS).href);
-      texture.wrapS=texture.wrapT=T.RepeatWrapping;texture.colorSpace=T.SRGBColorSpace;
-      texture.anisotropy=Math.min(8,this.renderer.capabilities.getMaxAnisotropy());
-      return texture;
-    }));
-    if(results.some(result=>result.status==='rejected')){
-      for(const result of results)if(result.status==='fulfilled')result.value.dispose();
-      throw results.find(result=>result.status==='rejected').reason;
-    }
-    const textures=results.map(result=>result.value);
-    const touched=new Set();
-    world.traverse(node=>{
-      for(const m of (Array.isArray(node.material)?node.material:node.material?[node.material]:[])){
-        if(touched.has(m))continue;touched.add(m);
-        const index=/stone|paver|edge/.test(m.name)?0:/wood|Wood|bark/.test(m.name)?1:-1;
-        if(index<0)continue;
-        m.map=textures[index];m.bumpMap=textures[index];m.bumpScale=index===0?.07:.045;
-        m.color.multiplyScalar(index===0?1.5:1.8);m.needsUpdate=true;
-      }
-    });
   }
   // Pre-rendered surroundings drawn behind everything, from the same view
   // direction as the camera, so they line up at any pan or zoom. Each theme

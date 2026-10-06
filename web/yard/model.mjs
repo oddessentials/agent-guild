@@ -2,8 +2,7 @@
 export const PROVIDER_ORDER = ['anthropic', 'openai', 'google', 'xai', 'shell'];
 // Per world: its model, whether its surroundings are pre-rendered plates,
 // character and helper model prefixes (false draws simple markers and no
-// helpers), whether unplated halls take the shared stone/wood textures, and
-// the light colours each theme uses.
+// helpers), and the light colours each theme uses.
 export const WORLDS = {
   guild: { title: 'The Guild Yard', subtitle: 'A place for every great endeavour', asset: 'guild', plates: true,
     characters: 'hero_', helpers: { agent: 'familiar_', shell: 'drone_' },
@@ -11,7 +10,7 @@ export const WORLDS = {
   orbital: { title: 'Orbital Station', subtitle: 'Your crew, at the edge of possibility', asset: 'orbital', plates: true,
     characters: 'robot_', helpers: { agent: 'drone_', shell: 'drone_' },
     hemi: 0xa7c9ff, sun: { light: 0xfff8f0, dark: 0xffa46e } },
-  grove: { title: 'The Living Grove', subtitle: 'Good work takes root here', asset: 'grove', textures: true,
+  grove: { title: 'The Living Grove', subtitle: 'Good work takes root here', asset: 'grove', plates: true,
     characters: 'spirit_', helpers: { agent: 'familiar_', shell: 'drone_' },
     hemi: 0xccebd6, sun: { light: 0xffe0ad, dark: 0xffe0ad } },
   professional: { title: 'Operations Campus', subtitle: 'A clear view of work in progress', asset: 'professional', plates: true,

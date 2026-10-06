@@ -63,7 +63,7 @@ colours are fields of `WORLDS` in `web/yard/model.mjs`.
 | --- | --- | --- |
 | Guild | Stone courtyard, five distinct halls, bronze trim and warm windows | Five fantasy heroes with baby dragon and spirit familiars |
 | Orbital | Station deck in orbit over a planet, with trusses out to solar wings, a docking hub and habitat modules; five provider modules | Five robots with helper drones |
-| Grove | Tree dwellings, stepping stones, mushrooms and planted borders | Five woodland spirits and small companions |
+| Grove | Sunlit glade in an old forest, with a spring, a stream, a lily pond and a village of tree dwellings; five provider tree halls | Five woodland spirits with Guild familiars and Orbital drones as shell helpers |
 | Professional | Office campus of glass and concrete round a paved plaza, with lawns, a pond and tree-lined avenues; five campus buildings | Simple session markers without character art |
 | Goblinville | Steam-powered town on stilts over a misty bog; five provider workshops on a plank deck | Five goblin-kin builders with creature familiars and clockwork shell helpers |
 | Gnomeland | Timber-and-stone mountain village on a cobbled square, with a lake, a waterfall and mountains beyond; five provider workshops | Five gnome builders with clockwork and creature familiars and clockwork shell helpers |
@@ -108,15 +108,14 @@ the regression tests do not establish a universal frame-rate guarantee.
 
 ## Art sources and rebuilding
 
-The Guild, Grove and Professional halls and the Grove spirits were authored in
+The Guild and Professional halls were authored in
 [`concept-art/guild-yard/build.py`](../../concept-art/guild-yard/build.py)
 using Blender 5.2, with an editable `guild.blend` alongside it. Models use metres,
 glTF Y-up, named provider anchors and five animation clips: `resting`,
 `working`, `waiting`, `done` and `arrival`. Arrival is available in the art
 set; live sessions currently enter in their reported working/resting pose.
 
-The raster backdrop, limestone and oak textures were generated with the
-built-in image generation tool. Originals and the full prompt briefs are
+The raster backdrop was generated with the built-in image generation tool. Originals and the full prompt briefs are
 recorded in the [art source notes](../../concept-art/guild-yard/ART.md).
 Guild's and Professional's surroundings are pre-rendered environment plates
 (for Guild a lakeside meadow, orchard and forested hills; for Professional
@@ -156,7 +155,8 @@ optimizes only its model.
 
 Goblinville's and Gnomeland's halls, builders, familiars and helpers,
 Orbital's modules, robots and drones (also Guild's and Grove's shell
-helpers), and Guild's heroes and familiars, are textured models made from
+helpers), Guild's heroes and familiars (also Grove's familiars), and Grove's
+halls and spirits, are textured models made from
 painted images with TRELLIS.2 in the local image studio, then rigged in
 Blender, by the shared pipeline in `concept-art/yard-models/`. Their
 surroundings are plates built the same way as Guild's, from
@@ -164,8 +164,9 @@ surroundings are plates built the same way as Guild's, from
 there, over a generated planet and nebula, and lit by a world shader in
 place of a Poly Haven sky. The steps and sources are in the
 [Goblinville](../../concept-art/goblinville-yard/ART.md),
-[Gnomeland](../../concept-art/gnomeland-yard/ART.md) and
-[Orbital](../../concept-art/orbital-yard/ART.md) art notes, and for Guild
+[Gnomeland](../../concept-art/gnomeland-yard/ART.md),
+[Orbital](../../concept-art/orbital-yard/ART.md) and
+[Grove](../../concept-art/grove-yard/ART.md) art notes, and for Guild
 in the [art source notes](../../concept-art/guild-yard/ART.md). Plate
 rendering needs a Cycles-capable GPU and
 downloads its Poly Haven sources into `.cache/polyhaven`, pinned by the

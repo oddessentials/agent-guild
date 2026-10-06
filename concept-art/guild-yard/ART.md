@@ -1,15 +1,13 @@
 # Guild Yard art sources
 
-The Yard uses authored Blender geometry and skeletal animation, with three
-generated raster assets for atmosphere and material detail. The code and
+The Guild and Professional halls are authored Blender geometry. The code and
 editable Blender files are the art sources. Runtime files are in
 `web/yard/assets`; generated originals remain here for future art passes.
 
 ## Geometry and motion
 
-`build.py` builds three worlds with five provider halls each. Guild combines
-stone, oak, bronze and provider-colored roofs; Grove uses living wood and
-garden forms. Distinct Guild
+`build.py` builds two worlds with five provider halls each. Guild combines
+stone, oak, bronze and provider-colored roofs. Distinct Guild
 silhouettes identify the keep, citadel, observatory, tower and timber
 workshop at overview scale. Professional's halls are five campus buildings:
 a studio with a timber-finned upper storey, a glass rotunda under a disc
@@ -19,20 +17,13 @@ crown, and a glass hall under a barrel vault. Their materials (`office`,
 the Poly Haven sets in `SURFACES` of `env/professional_env.py`; the glass and
 lit `window` panes keep their authored materials.
 
-`build.py` also makes the Grove spirits (`spirit()`), each with a rig and
-glTF animation channels; Orbital's world, robots and drones come from
-`concept-art/orbital-yard`. Work
-motion inclines the body and moves the hands; rest uses breathing and small
-head/arm movements. Waiting and done have separate poses. These are
-presentation states mapped to existing manager reports, not simulated game
-behavior.
+The other worlds' halls and every world's characters are TRELLIS.2 models
+from `concept-art/<world>-yard`.
 
-The source units are metres. Blender exports Y-up glTF and 24 fps clips.
-Seed 714 keeps the authored placement and surface variations reproducible.
-`guild.blend` can be opened directly in Blender. Rebuild every other variant
-with the script. The application adds the external stone/wood textures to
-the exported material names; Blender source previews use the authored base
-materials.
+The source units are metres, and Blender exports Y-up glTF. `guild.blend`
+can be opened directly in Blender; rebuild Professional with the script.
+The application adds the Poly Haven sets in `SURFACES` to the exported
+material names; Blender source previews use the authored base materials.
 
 ## Guild characters
 
@@ -89,15 +80,13 @@ rendered from four sides (2026-10-06):
 
 ## Generated image provenance
 
-Mode: built-in `image_gen` generation. Each asset was generated anew; no
-external reference artwork was supplied. The original PNG files are
-preserved. ImageMagick converts them to the shipped WebP formats.
+Mode: built-in `image_gen` generation. The asset was generated anew; no
+external reference artwork was supplied. The original PNG file is
+preserved. ImageMagick converts it to the shipped WebP format.
 
 | Source | Runtime asset | Purpose |
 | --- | --- | --- |
 | `backdrop-source.png` | `backdrop.webp` | Quiet distant forest and mountain atmosphere behind the 3D court |
-| `stone-source.png` | `stone.webp` | Repeating limestone albedo and subtle surface relief |
-| `wood-source.png` | `wood.webp` | Repeating oak grain for timber and bark |
 
 ### Backdrop prompt brief
 
@@ -107,23 +96,6 @@ pine silhouettes at the sides, warm haze and a quiet center for a 3D
 foreground. No foreground buildings, characters, text, logos or UI. The
 image provides depth and atmosphere behind an interactive miniature RTS
 base; it must not contain competing focal subjects.
-
-### Limestone prompt brief
-
-Seamless square limestone albedo texture, warm grey-beige, with fine
-pitting, hairline cracks, mineral streaks and restrained moss. A continuous
-stone surface with no brick boundaries or mortar joints. Orthographic,
-flat and evenly lit, without baked directional shadows, objects, text or
-borders. Painterly realistic material detail suited to a premium fantasy
-miniature, tileable on all edges.
-
-### Oak prompt brief
-
-Seamless square aged oak texture with vertical grain, brown weathering,
-fine fibres and small knots. A continuous wood surface without plank
-seams, nails, objects, borders or text. Even flat lighting without baked
-highlights or cast shadows. Restrained painterly realistic detail for
-fantasy timber architecture, tileable on all edges.
 
 ## Guild environment plates
 
@@ -172,13 +144,13 @@ tint over grey slate, so each hall stays recognisable.
 
 Review art inside the application in both light and dark mode and at
 overview and focused camera distances. The application renderer uses
-ACES tone mapping, directional shadows, external material maps and the
+AgX tone mapping, directional shadows, external material maps and the
 selected skin palette. An isolated Blender render alone is not the visual
 acceptance test. `node docs/yard/capture.mjs --all` produces review captures
 for every world plus a mobile capture without accessing live sessions.
 
 Keep status and interaction readable through shape and text as well as
-color. Preserve exact material names used by `textureWorld`, hall anchor
+color. Preserve exact material names used by `SURFACES`, hall anchor
 names and animation clip names when editing sources. Run the optimizer
 after a fresh Blender export, then asset/browser tests before committing.
 

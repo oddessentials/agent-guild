@@ -1,19 +1,8 @@
 {
   "version": 1,
-  "seed": 714,
   "worlds": [
     "guild",
-    "grove",
     "professional"
-  ],
-  "heroes": 5,
-  "familiars": 4,
-  "clips": [
-    "resting",
-    "working",
-    "waiting",
-    "done",
-    "arrival"
   ],
   "up": "Y",
   "units": "metres",
