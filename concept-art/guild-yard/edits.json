@@ -1,0 +1,71 @@
+{
+  "hero_anthropic": [
+    {
+      "input": "../default-art-design-v1/characters/anthropic/idle.png",
+      "seed": 11,
+      "prompt": "Zoom out to show this exact same bearded sorcerer full length from the top of his hood to his feet: same face, burnt-orange hooded robe embroidered with glowing gold runes, belt and wide sleeves, the robe falling to the ground over plain brown leather boots, standing facing the viewer in a relaxed A-pose with his arms held slightly away from his body and his hands open, with no glowing runes, glyphs or sparks floating around him, evenly lit, on a plain flat light grey background. Same painterly style."
+    }
+  ],
+  "hero_openai": [
+    {
+      "input": "../default-art-design-v1/characters/openai/idle.png",
+      "seed": 11,
+      "prompt": "Zoom out to show this exact same armoured knight full length from the top of his helm to his armoured boots: same closed great helm with the glowing emerald visor slit, plate armour with thin glowing emerald seams, arms folded across his chest, belt, cloak and the longsword's hilt over his shoulder, armoured legs and boots standing on the ground, facing the viewer, evenly lit, on a plain flat light grey background. Same painterly style."
+    },
+    {
+      "seed": 3,
+      "prompt": "Change his armour and helm from glossy black to matte dark gunmetal grey steel with no shine, and replace his tattered fur-trimmed cloak with a heavy dark charcoal wool cloak with a clean hem reaching his calves. Keep the glowing emerald visor slit and seams, his folded arms, belt, sword hilt, legs, boots, pose, lighting, framing and the plain light grey background exactly the same."
+    },
+    {
+      "seed": 5,
+      "prompt": "Make the glowing emerald-green seams on his armour bold and bright, thick glowing lines along every plate edge, make the visor slit glow bright emerald green, and add a bright emerald-green trim along the hem and edges of his cloak. Make his armour a slightly lighter matte gunmetal grey. Keep his folded arms, sword, belt, cloak shape, pose, lighting, framing and the plain light grey background exactly the same."
+    }
+  ],
+  "hero_google": [
+    {
+      "input": "../default-art-design-v1/characters/google/idle.png",
+      "seed": 11,
+      "prompt": "Zoom out to show these exact same two young people full length from the tops of their hoods to their feet, standing side by side facing the viewer and holding hands between them: same faces, deep-blue hooded robes embroidered with silver stars and constellations, the robes falling to the ground over plain dark blue boots, with no glowing star or light floating between them, evenly lit, on a plain flat light grey background. Same painterly style."
+    }
+  ],
+  "hero_xai": [
+    {
+      "input": "../default-art-design-v1/characters/xai/idle.png",
+      "seed": 11,
+      "prompt": "Zoom out to show this exact same young rogue full length from his messy black hair to his boots: same face, sly smile, glowing cyan eyes, long high-collared coat with glowing electric-cyan circuit-trace patterns, his hands in his coat pockets, dark trousers and black boots standing on the ground, facing the viewer, evenly lit, on a plain flat light grey background. Same painterly style."
+    },
+    {
+      "seed": 3,
+      "prompt": "Change his glossy black leather coat, trousers and boots to matte dark charcoal-grey wool felt with no shine or reflections. Keep the bright glowing electric-cyan circuit-trace patterns, his face, hair, eyes, hands in his pockets, pose, lighting, framing and the plain light grey background exactly the same."
+    }
+  ],
+  "hero_shell": [
+    {
+      "input": "../default-art-design-v1/characters/shell/idle.png",
+      "seed": 11,
+      "prompt": "Turn this smoky hooded wraith into a solid opaque figure shown full length: a tall hooded figure in a heavy deep-violet wool robe falling straight to the ground with a clean hem and the tips of dark boots showing beneath it, wide sleeves with dark gloved hands at its sides, the deep hood opening a dark shadowed void with a single glowing bright violet '>' chevron symbol inside it, no smoke, wisps, mist or glow around it, standing facing the viewer, evenly lit, on a plain flat light grey background. Same painterly style."
+    },
+    {
+      "seed": 5,
+      "prompt": "Fill the hood's opening with a smooth matte black face mask set forward level with the hood's rim, with a large bright glowing violet '>' chevron symbol across it, and make the robe a richer, lighter royal violet wool with a thin bright violet trim along its hem, cuffs and hood edge. Keep the robe's shape, the hands, boots, pose, lighting, framing and the plain light grey background exactly the same."
+    }
+  ],
+  "familiar_aether": [
+    {
+      "input": "../default-art-design-v1/familiars/aether.png",
+      "seed": 11,
+      "prompt": "Turn this translucent winged spirit into a solid opaque figure: the same round little body with big eyes and smile, made of smooth matte pale sky-blue porcelain painted with small silver stars, a short solid curled tail instead of wisps, and two small wings of smooth solid white porcelain feathers carved as one piece each, with no transparency, sparkles or glow around it. Same pose and painterly style, evenly lit, on a plain flat light grey background."
+    },
+    {
+      "seed": 5,
+      "prompt": "Remove all the stars, spots and markings from its body and tail, leaving clean smooth unmarked pale sky-blue porcelain. Keep its shape, face, eyes, wings, tail, pose, lighting, framing and the plain light grey background exactly the same."
+    }
+  ],
+  "familiar_night": [
+    {
+      "input": "../default-art-design-v1/familiars/night.png",
+      "seed": 11,
+      "prompt": "Show this exact same baby night dragon with the same face, horns, pose and spread wings, but make every surface matte and opaque with no shine, sparkle or transparency: deep violet scales painted with small pale lilac speckles, solid matte violet wing membranes with darker veins, and the crystals on its head and tail made smooth opaque matte lilac stone. Same painterly style, evenly lit, on a plain flat light grey background."
+    }
+  ]
+}

@@ -404,7 +404,7 @@ def animate(rig):
     b.keyframe_insert(data_path='scale',frame=f,group=b.name)
  rig.animation_data.action=None
  for b in rig.pose.bones:b.rotation_euler=(0,0,0);b.location=(0,0,0);b.scale=(1,1,1)
-def hero(index,skin='guild'):
+def hero(index,skin):
  clear();s=Sculpt();color=['amber','emerald','blue','cyan','violet'][index]
  robot=skin=='orbital';spirit=skin=='grove';wraith=index==4 and not robot
  main='orbitalPanel' if robot else 'groveWood' if spirit else color
@@ -459,29 +459,26 @@ def hero(index,skin='guild'):
   s.cone((-.52,0,.56),.065,0,.6,'orbitalEdge',4,bone='armR')
  s.torus((0,-.25,1.34),.075,.024,'gold',16,rot=(PI/2,0,0),bone='body')
  mesh=s.object('character');rig=armature();s.bind(mesh,rig);animate(rig)
- export(('robot_' if robot else 'spirit_' if spirit else 'hero_')+str(index),save=skin=='guild')
-def familiar(index,robot=False):
+ export(('robot_' if robot else 'spirit_')+str(index))
+def drone(index):
  clear();s=Sculpt();color=['amber','emerald','violet','blue'][index]
- s.sphere((0,0,1.05),(.36,.25,.3),'orbitalPanel' if robot else color,20,12,bone='body')
+ s.sphere((0,0,1.05),(.36,.25,.3),'orbitalPanel',20,12,bone='body')
  s.sphere((0,-.17,1.28),(.3,.2,.23),color,18,10,bone='head')
  for side in [-1,1]:
   s.sphere((side*.105,-.34,1.31),(.055,.032,.055),'window',12,8,bone='head')
   s.sphere((side*.11,-.363,1.32),(.022,.014,.028),'black',10,6,bone='head')
-  if robot:
-   s.torus((side*.42,0,1.18),.18,.055,'orbitalEdge',16,bone='armL' if side==1 else 'armR')
-  else:
-   s.sphere((side*.39,.02,1.32),(.3,.07,.16),'cloth' if index==0 else 'leafLight' if index==1 else 'magic',16,8,bone='armL' if side==1 else 'armR')
-   s.cone((side*.17,0,1.58),.09,0,.25,color,10,bone='head')
+  s.torus((side*.42,0,1.18),.18,.055,'orbitalEdge',16,bone='armL' if side==1 else 'armR')
  s.cone((0,.26,.94),.16,0,.55,color,12,bone='body',rot=(PI/3,0,0))
  mesh=s.object('familiar');rig=armature();s.bind(mesh,rig);animate(rig)
- export(('drone_' if robot else 'familiar_')+str(index))
+ export('drone_'+str(index))
 for skin in ['guild','orbital','grove','professional']:
  if ONLY is None or skin in ONLY:environment(skin)
 if ONLY is not None:
  print('Guild worlds rebuilt:',','.join(ONLY),flush=True);sys.exit(0)
-for skin in ['guild','orbital','grove']:
+# Guild's heroes and familiars are TRELLIS.2 models (concept-art/guild-yard/world.json).
+for skin in ['orbital','grove']:
  for i in range(5):hero(i,skin)
-for i in range(4):familiar(i);familiar(i,True)
+for i in range(4):drone(i)
 manifest={'version':1,'seed':714,'worlds':['guild','orbital','grove','professional'],'heroes':5,'familiars':4,'clips':['resting','working','waiting','done','arrival'],'up':'Y','units':'metres','source':'concept-art/guild-yard/build.py'}
 (OUT/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n',encoding='utf-8')
 print('Guild art set complete',flush=True)

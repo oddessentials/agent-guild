@@ -13,18 +13,72 @@ and instrument domes; Grove uses living wood and garden forms; Professional
 uses simple campus architecture. Distinct Guild silhouettes identify the
 keep, citadel, observatory, tower and timber workshop at overview scale.
 
-The fifteen main character models and eight helper models have actual rigs
-and glTF animation channels. Work motion inclines the body and moves the
-hands; rest uses breathing and small head/arm movements. Waiting and done
-have separate poses. These are presentation states mapped to existing
-manager reports, not simulated game behavior.
+`build.py` also makes the Orbital robots and Grove spirits (`hero()`) and
+the drones (`drone()`), each with a rig and glTF animation channels. Work
+motion inclines the body and moves the hands; rest uses breathing and small
+head/arm movements. Waiting and done have separate poses. These are
+presentation states mapped to existing manager reports, not simulated game
+behavior.
 
 The source units are metres. Blender exports Y-up glTF and 24 fps clips.
 Seed 714 keeps the authored placement and surface variations reproducible.
-`guild.blend` and `hero_0.blend` through `hero_4.blend` can be opened directly
-in Blender. Rebuild every other variant with the script. The application
-adds the external stone/wood textures to the exported material names;
-Blender source previews use the authored base materials.
+`guild.blend` can be opened directly in Blender. Rebuild every other variant
+with the script. The application adds the external stone/wood textures to
+the exported material names; Blender source previews use the authored base
+materials.
+
+## Guild characters
+
+The five heroes (`hero_0`–`hero_4`) and four familiars (`familiar_0`–`familiar_3`,
+also Grove's helpers) are textured models made from the Guild skin's art
+(`concept-art/default-art-design-v1`) with TRELLIS.2, by the shared pipeline in
+`concept-art/yard-models/` run with the world name `guild`; see
+`concept-art/goblinville-yard/ART.md` for how each step works. This folder
+holds the cast in `world.json`, the edits in `edits.json` and the picks in
+`concepts/`; `raw/` and the TRELLIS.2 models in `.cache/guild-yard` are not
+committed.
+
+| Step | Command | Writes |
+| --- | --- | --- |
+| Edits | `python edits.py guild [name ...]` | `raw/edit/<name>-<step>.png` with `qwen-edit`, from `edits.json`; the results replace `concepts/<name>.png` |
+| Models | `python build.py guild models [name ...]` | `.cache/guild-yard/models/<name>.glb` with TRELLIS.2 |
+| Cast | `python build.py guild cast [name ...]` | `web/yard/assets/hero_*.glb` and `familiar_*.glb`, rigged and animated |
+
+- **Heroes**: the portraits are framed from the knees up, so each is
+  restaged full length with `qwen-edit` on a light grey background. The
+  sorcerer's floating runes are left out (the runes on his robe stay); the
+  knight's glossy obsidian plate is made matte steel, his tattered fur cloak
+  a plain wool one, and his emerald seams bold, with an emerald hem, so the
+  figure is not a near-black silhouette; the rogue's black leather coat is
+  made matte charcoal felt, keeping its cyan circuit traces; the smoke wraith
+  is a solid figure in a violet wool robe with a bright trim and the chevron
+  in its dark hood; and the Google portrait stays two figures, holding hands,
+  as one model, with the star floating between them left out. All five work
+  by the steady lean and nod: their arms are folded, joined or in pockets,
+  and the sorcerer's wide sleeves stretched into his robe when he conducted.
+- **Familiars**: the flame and leaf dragons are the skin's sprites as they
+  are; their wings reconstruct whole. The night dragon's glossy crystals
+  and translucent wings shattered, so it is restaged matte and opaque with
+  stone crystals. The translucent aether spirit is restaged as unmarked
+  opaque porcelain with solid wings and tail; painted stars on it baked as
+  brown or black specks.
+
+TRELLIS.2 bakes albedo without lighting, so glows (runes, seams, chevrons)
+come out as plain paint or are lost, and flat painted emblems are dropped or
+garbled: a chevron on the wraith's chest, glowing or matte, did not survive
+three tries, and was left out.
+
+### Reconstruction trials
+
+Unedited inputs from later worlds, reconstructed at the settings above and
+rendered from four sides (2026-10-06):
+
+| Input | Result |
+| --- | --- |
+| Guild flame dragon sprite (512 voxels) | Whole from every side: wing membranes, spines, horns and the curled tail all hold. The glow on its scales bakes darker. |
+| Orbital OpenAI robot, glossy black enamel (1024 voxels, with its mask) | Geometry whole, sword and cloak included, but the black enamel bakes as bright chrome and the cloak's back as invented olive. Restage matte for colour, not shape. |
+| Grove water spirit, translucent (1024 voxels, with its mask) | Shattered into faceted shards; the lily pad breaks into fragments and the koi is lost. Needs an opaque restage, as Gnomeland's wraith had. |
+| Grove moss deer (1024 voxels, with its mask) | Whole: the moss reads as a clumpy surface, and antlers, ferns and mushrooms hold. Usable as it is. |
 
 ## Generated image provenance
 
@@ -120,3 +174,4 @@ Keep status and interaction readable through shape and text as well as
 color. Preserve exact material names used by `textureWorld`, hall anchor
 names and animation clip names when editing sources. Run the optimizer
 after a fresh Blender export, then asset/browser tests before committing.
+

@@ -37,7 +37,9 @@ def models(name, names):
     # 16 GB on cloaks and fur, so everything stays at 1024.
     jobs = {key: (c['image'], 50000, 2048, 1024) if c.get('work') else (c['image'], 30000, 1024, 512)
             for key, c in spec['cast'].items()}
-    jobs.update({f'hall_{p}': (folder / f'concepts/hall_{p}.png', 60000, 2048, 1024) for p in PROVIDERS})
+    # A world whose halls are authored elsewhere (Guild) has no hall concepts.
+    jobs.update({f'hall_{p}': (folder / f'concepts/hall_{p}.png', 60000, 2048, 1024) for p in PROVIDERS
+                 if (folder / f'concepts/hall_{p}.png').exists()})
     jobs.update({t: (folder / f'concepts/{t}.png', 40000, 2048, 1024) for t in spec.get('town', [])})
     for key, (image, faces, texture, resolution) in jobs.items():
         out = out_dir / f'{key}.glb'
