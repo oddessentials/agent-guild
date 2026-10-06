@@ -6,6 +6,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { resolveCommand, killWindowsTree } from './command-resolver.mjs';
 import { scanPins } from './environment-pins.mjs';
+import { systemInfo, dockerInfo, isWsl, wslInteropEnabled } from './environment-system.mjs';
 
 export const RUNTIMES = [
   { id: 'node', label: 'Node.js', command: 'node', args: ['--version'], pattern: /^v(\d+\.\d+\.\d+(?:-[\w.-]+)?)\s*$/m },
@@ -359,7 +360,7 @@ export function designEnv(env, cwd) {
 
 export async function scanDesignTool(tool, {
   env, cwd, platform = process.platform, resolve = resolveCommand, installed = async () => null,
-  inspect = designProgram, run = runProbe, kills = null,
+  inspect = designProgram, run = runProbe, kills = null, wslInterop = false,
 } = {}) {
   const { id, label, args, pattern } = tool;
   const base = { id, label, status: 'not_found', version: null, path: null, command: null, detail: null };
@@ -367,6 +368,13 @@ export async function scanDesignTool(tool, {
   for (const name of tool.commands(platform)) {
     file = resolve(name, env, platform, { onSkip: (candidate) => platform === 'win32' && windowsAlias(candidate) });
     if (file) { command = name; break; }
+  }
+  // WSL puts the Windows PATH on its own. Agents there run a Windows program by its .exe name.
+  if (!file && wslInterop) {
+    for (const name of tool.commands('win32').map((name) => `${name}.exe`)) {
+      file = resolve(name, env, platform);
+      if (file) return { ...base, status: 'on_path', path: file, command: name, detail: 'A Windows program, run through WSL. Its version is not checked.' };
+    }
   }
   const onPath = Boolean(file);
   if (!file) file = await installed(id);
@@ -390,11 +398,12 @@ export async function scanDesignTools({ env, cwd, platform = process.platform, r
     ? windowsInstallFolders({ env, cwd, kills }).catch(() => ({}))
     : Promise.resolve({});
   const installed = async (id) => findInstalled(designLocations(id, { platform, env, registry: (await registry())[id] || [] }), { platform });
+  const wslInterop = platform === 'linux' && isWsl({ env }) && wslInteropEnabled();
   // Bounded concurrency: cold starts of large applications compete for the disk.
   const queue = [...DESIGN_TOOLS];
   await Promise.all([0, 1, 2].map(async () => {
     for (let tool = queue.shift(); tool; tool = queue.shift()) {
-      send(await scanDesignTool(tool, { env, cwd, platform, resolve, installed, kills }));
+      send(await scanDesignTool(tool, { env, cwd, platform, resolve, installed, kills, wslInterop }));
     }
   }));
 }
@@ -450,6 +459,13 @@ if (process.argv[2] === '--scan-environment' && process.send) {
         }
       })(),
       scanDesignTools({ env, cwd, kills, send: (design) => process.send({ design }) }),
+      dockerInfo({ env, resolve: resolveCommand })
+        .catch(() => ({ status: 'failed', detail: 'The Docker check did not finish.' }))
+        .then((docker) => process.send({ docker })),
+      // System facts are the same for every scope, so only the manager asks.
+      process.argv.includes('--system') && systemInfo({ env, cwd, run: runProbe, kills })
+        .catch(() => null)
+        .then((system) => process.send({ system })),
     ]);
     finished = true;
   } finally {

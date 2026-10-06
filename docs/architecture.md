@@ -43,8 +43,8 @@
   each tool's installed and latest versions, and builds the sessions that
   install, update and uninstall a tool.
 * **Manager environment** (`environment.mjs`, `environment-probe.mjs`,
-  `environment-pins.mjs`). Read-only snapshots, separate from providers and
-  from install or repair. The manager scope is the PATH of the manager
+  `environment-pins.mjs`, `environment-system.mjs`). Read-only snapshots,
+  separate from providers and from install or repair. The manager scope is the PATH of the manager
   process. A project scope reads known pin files and does not run them. A
   session scope probes the PATH recorded for a Guild-started process and
   reports tmux and herdr as unavailable. A launch scope is that manager PATH
@@ -52,11 +52,14 @@
   First viewing and manual refresh start an isolated helper; HTTP requests
   return immediately. Runtime probes use a fresh neutral temporary directory,
   limit each probe to 1.8 seconds and 32 KiB, and run at most three runtime
-  checks concurrently. The manager enforces a separate 10-second deadline
-  and stops the helper process tree on completion, timeout or shutdown.
-  Pin reads do not enter the project directory. Tool presence is discovered
-  without executing the tools. No shell profiles or installation operations
-  are added.
+  checks concurrently. Design tools run beside them, at most three at once,
+  with a 3-second limit and their home and profile folders in the temporary
+  directory. Docker is one request to a local socket or pipe; system facts
+  come from `os`, small files and, on Windows, one registry read. The manager
+  enforces a separate 15-second deadline and stops the helper process tree on
+  completion, timeout or shutdown. Pin reads do not enter the project
+  directory. Version-manager presence is discovered without executing the
+  tools. No shell profiles or installation operations are added.
 * **Usage monitor** (`usage.mjs`). Reads each tool's own sign-in and asks the
   vendor's usage endpoint for the remaining rate-limit windows. Tokens stay
   in the manager.

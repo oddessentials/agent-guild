@@ -20,7 +20,7 @@ const PATH_ENV = [
   'PATH', 'PATHEXT', 'SYSTEMROOT', 'HOME', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'XDG_DATA_HOME', 'XDG_CONFIG_HOME',
   'NVM_DIR', 'VOLTA_HOME', 'NODENV_ROOT', 'NODENV_VERSION', 'PYENV_ROOT', 'PYENV_VERSION',
   'ASDF_DIR', 'ASDF_DATA_DIR', 'MISE_DATA_DIR', 'MISE_CONFIG_DIR', 'RUSTUP_HOME', 'RUSTUP_TOOLCHAIN', 'CARGO_HOME',
-  'GOROOT', 'GOTOOLCHAIN', 'DOTNET_ROOT', 'R_HOME',
+  'GOROOT', 'GOTOOLCHAIN', 'DOTNET_ROOT', 'R_HOME', 'DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_CONFIG',
   // Install folders searched for design tools that are not on PATH.
   'LOCALAPPDATA', 'PROGRAMFILES', 'PROGRAMW6432',
 ];
@@ -41,8 +41,10 @@ function pendingRows(list) {
   return list.map(({ id, label }) => ({ id, label, status: 'pending', version: null, path: null }));
 }
 
+const PENDING_DOCKER = { status: 'pending' };
+
 function scanRun(extra = {}) {
-  return { child: null, timer: null, rows: new Map(), designs: new Map(), tools: [], ...extra };
+  return { child: null, timer: null, rows: new Map(), designs: new Map(), tools: [], docker: null, system: undefined, withSystem: false, ...extra };
 }
 
 // Records one helper message. Returns true when the helper reports it is done.
@@ -50,11 +52,14 @@ function takeMessage(run, message) {
   if (message?.runtime && RUNTIMES.some((runtime) => runtime.id === message.runtime.id)) run.rows.set(message.runtime.id, message.runtime);
   if (message?.design && DESIGN_TOOLS.some((tool) => tool.id === message.design.id)) run.designs.set(message.design.id, message.design);
   if (Array.isArray(message?.tools)) run.tools = message.tools;
+  if (message?.docker && typeof message.docker === 'object') run.docker = message.docker;
+  if (run.withSystem && message && 'system' in message) run.system = message.system ?? null;
   return Boolean(message?.done);
 }
 
 function scanComplete(run) {
-  return run.rows.size === RUNTIMES.length && run.designs.size === DESIGN_TOOLS.length;
+  return run.rows.size === RUNTIMES.length && run.designs.size === DESIGN_TOOLS.length
+    && Boolean(run.docker) && (!run.withSystem || run.system !== undefined);
 }
 
 // Every row has a fresh result; an unfinished check is a failure, never a stale success.
@@ -63,7 +68,9 @@ function scanRows(run, error) {
   return {
     runtimes: RUNTIMES.map((row) => run.rows.get(row.id) ?? failed(row)),
     designTools: DESIGN_TOOLS.map((row) => run.designs.get(row.id) ?? failed(row)),
+    docker: run.docker ?? { status: 'failed', detail: error || 'The environment check did not finish.' },
     tools: run.tools,
+    ...(run.withSystem ? { system: run.system ?? null } : {}),
   };
 }
 
@@ -106,6 +113,8 @@ export class Environment extends EventEmitter {
       managerNode: { version: process.versions.node, path: process.execPath },
       runtimes: pendingRows(RUNTIMES),
       designTools: pendingRows(DESIGN_TOOLS),
+      docker: PENDING_DOCKER,
+      system: null,
       tools: [],
     };
   }
@@ -122,7 +131,7 @@ export class Environment extends EventEmitter {
       }
       return publishLaunch ? this.launch : this.snapshot();
     }
-    const run = scanRun({ publishLaunch });
+    const run = scanRun({ publishLaunch, withSystem: true });
     this.run = run;
     this.value = { ...this.value, revision: this.value.revision + 1, refreshing: true, error: null };
     if (publishLaunch) this.armLaunch();
@@ -142,7 +151,7 @@ export class Environment extends EventEmitter {
       // A preload in NODE_OPTIONS must not execute inside a passive scan.
       const env = { ...this.env };
       for (const key of Object.keys(env)) if (key.toUpperCase() === 'NODE_OPTIONS') delete env[key];
-      run.child = this.forkWorker(new URL('./environment-probe.mjs', import.meta.url), ['--scan-environment'], {
+      run.child = this.forkWorker(new URL('./environment-probe.mjs', import.meta.url), ['--scan-environment', '--system'], {
         env, execArgv: [], stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
         windowsHide: true, detached: process.platform !== 'win32',
       });
@@ -170,6 +179,7 @@ export class Environment extends EventEmitter {
       detail: LAUNCH_DETAIL,
       runtimes: (previous?.runtimes ?? this.value.runtimes).map(cloneRow),
       designTools: (previous?.designTools ?? this.value.designTools).map(cloneRow),
+      docker: { ...(previous?.docker ?? this.value.docker) },
       tools: (previous?.tools ?? this.value.tools).map((tool) => ({ ...tool })),
     };
     if (!this.closed) this.emit('updated', this.launch);
@@ -182,6 +192,7 @@ export class Environment extends EventEmitter {
       detail: LAUNCH_DETAIL,
       runtimes: this.value.runtimes.map(cloneRow),
       designTools: this.value.designTools.map(cloneRow),
+      docker: { ...this.value.docker },
       tools: this.value.tools.map((tool) => ({ ...tool })),
     };
     if (!this.closed) this.emit('updated', this.launch);
@@ -312,7 +323,7 @@ export class Environment extends EventEmitter {
     return {
       scope: 'session', host: this.host, platform: process.platform, sessionId: id, spawnCwd: found.spawnCwd,
       availability: 'ok', detail: SESSION_DETAIL, revision: 0, refreshing: false, checkedAt: null, error: null,
-      runtimes: pendingRows(RUNTIMES), designTools: pendingRows(DESIGN_TOOLS), tools: [],
+      runtimes: pendingRows(RUNTIMES), designTools: pendingRows(DESIGN_TOOLS), docker: PENDING_DOCKER, tools: [],
     };
   }
 
@@ -324,7 +335,7 @@ export class Environment extends EventEmitter {
     const value = {
       scope: 'session', host: this.host, platform: process.platform, sessionId: id, spawnCwd: found.spawnCwd,
       availability: 'unavailable', detail: MULTIPLEXER_DETAIL, revision: 1, refreshing: false,
-      checkedAt: new Date().toISOString(), error: null, runtimes: [], designTools: [], tools: [],
+      checkedAt: new Date().toISOString(), error: null, runtimes: [], designTools: [], docker: null, tools: [],
     };
     this.sessions.set(key, { value, run: null });
     return value;

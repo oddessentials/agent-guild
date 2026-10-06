@@ -202,6 +202,8 @@ function emitRuntimes(child, row = {}) {
   for (const tool of DESIGN_TOOLS) {
     child.emit('message', { design: { id: tool.id, label: tool.label, status: 'not_found', version: null, path: null, command: null, detail: null } });
   }
+  child.emit('message', { docker: { status: 'stopped', detail: 'The Docker engine is not running.' } });
+  child.emit('message', { system: { os: 'Linux', arch: 'x64' } });
 }
 
 test('a helper that exits after every runtime is a finished scan', async (t) => {
@@ -729,4 +731,76 @@ test('manager and launch scopes carry design tools', async (t) => {
   await immediate();
   assert.equal(service.snapshot().designTools.find((row) => row.id === 'ffmpeg').version, '8.0.1');
   assert.equal(service.openLaunch().designTools.find((row) => row.id === 'ffmpeg').version, '8.0.1');
+});
+
+test('a scan waits for Docker and, for the manager only, the system facts', async (t) => {
+  const { service, children } = helper(t);
+  assert.deepEqual(service.snapshot().docker, { status: 'pending' });
+  assert.equal(service.snapshot().system, null);
+  service.refresh();
+  for (const runtime of RUNTIMES) children[0].emit('message', { runtime: { id: runtime.id, label: runtime.label, status: 'not_found' } });
+  for (const tool of DESIGN_TOOLS) children[0].emit('message', { design: { id: tool.id, label: tool.label, status: 'not_found' } });
+  children[0].emit('message', { docker: { status: 'running', version: '29.1.3' } });
+  children[0].emit('exit', 1);
+  await immediate();
+  assert.match(service.snapshot().error, /stopped before finishing/);
+  assert.equal(service.snapshot().docker.version, '29.1.3');
+  assert.equal(service.snapshot().system, null);
+  service.refresh();
+  emitRuntimes(children[1]);
+  children[1].emit('exit', 0);
+  await immediate();
+  assert.equal(service.snapshot().error, null);
+  assert.equal(service.snapshot().system.os, 'Linux');
+  assert.equal(service.snapshot().docker.status, 'stopped');
+  const launch = service.openLaunch();
+  assert.equal(launch.docker.status, 'stopped');
+  assert.equal('system' in launch, false);
+});
+
+test('an unfinished Docker check is a failure, and the manager asks for system facts', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const args = [];
+  const children = [];
+  const service = new Environment({ forkWorker: (_file, argv) => { args.push(argv); const child = new EventEmitter(); children.push(child); return child; }, timeoutMs: 50 });
+  t.after(() => service.close());
+  service.refresh();
+  assert.deepEqual(args[0], ['--scan-environment', '--system']);
+  t.mock.timers.tick(50);
+  assert.deepEqual(service.snapshot().docker, { status: 'failed', detail: 'The environment check timed out.' });
+  assert.equal(service.snapshot().system, null);
+});
+
+test('a session check carries Docker settings but not system facts', async (t) => {
+  const args = [], envs = [], children = [];
+  const service = new Environment({
+    forkWorker: (_file, argv, opts) => { args.push(argv); envs.push(opts.env); const child = new EventEmitter(); children.push(child); return child; },
+    sessionLookup: () => ({ multiplexer: false, spawnCwd: '/work', pathEnv: { PATH: '/bin', DOCKER_HOST: 'unix:///run/user/1000/docker.sock', DOCKER_CONTEXT: 'rootless', DOCKER_CONFIG: '/cfg' } }),
+  });
+  t.after(() => service.close());
+  service.openSession('aa');
+  assert.deepEqual(args[0], ['--scan-environment']);
+  assert.equal(envs[0].DOCKER_HOST, 'unix:///run/user/1000/docker.sock');
+  assert.equal(envs[0].DOCKER_CONTEXT, 'rootless');
+  assert.equal(envs[0].DOCKER_CONFIG, '/cfg');
+  emitRuntimes(children[0]);
+  children[0].emit('message', { done: true });
+  await immediate();
+  const session = service.openSession('aa');
+  assert.equal(session.docker.status, 'stopped');
+  assert.equal('system' in session, false);
+});
+
+test('in WSL a Windows design tool on PATH is reported by its .exe name without being run', async () => {
+  const paths = { 'ffmpeg.exe': '/mnt/c/ffmpeg/bin/ffmpeg.exe', 'gimp-console.exe': '/mnt/c/GIMP 3/bin/gimp-console.exe' };
+  const options = designScan({ resolve: (name) => paths[name] || null, run: async () => assert.fail('a Windows program is not run'), wslInterop: true });
+  const ffmpeg = await scanDesignTool(designTool('ffmpeg'), options);
+  assert.deepEqual([ffmpeg.status, ffmpeg.command, ffmpeg.version, ffmpeg.path], ['on_path', 'ffmpeg.exe', null, '/mnt/c/ffmpeg/bin/ffmpeg.exe']);
+  assert.equal(ffmpeg.detail, 'A Windows program, run through WSL. Its version is not checked.');
+  assert.equal((await scanDesignTool(designTool('gimp'), options)).command, 'gimp-console.exe');
+  assert.equal((await scanDesignTool(designTool('imagemagick'), options)).status, 'not_found');
+  const native = await scanDesignTool(designTool('ffmpeg'), { ...options, resolve: (name) => name === 'ffmpeg' ? '/usr/bin/ffmpeg' : paths[name], run: async () => ({ code: 0, output: 'ffmpeg version 6.1.1-3ubuntu5' }) });
+  assert.deepEqual([native.command, native.version], ['ffmpeg', '6.1.1']);
+  const off = await scanDesignTool(designTool('ffmpeg'), { ...options, wslInterop: false });
+  assert.equal(off.status, 'not_found');
 });

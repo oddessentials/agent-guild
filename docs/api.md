@@ -182,7 +182,8 @@ and may set `stale` without replacing the pins. POST reads them again.
 probe the PATH recorded when that session was spawned, in a neutral temporary
 directory. Only PATH, the home folder, the toolchain-manager locations and
 version selectors (for example `RUSTUP_HOME`, `PYENV_ROOT`, `ASDF_DATA_DIR`)
-and the Windows install folders (`LOCALAPPDATA`, `ProgramFiles`, `ProgramW6432`)
+the Windows install folders (`LOCALAPPDATA`, `ProgramFiles`, `ProgramW6432`)
+and the Docker selectors (`DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`)
 are passed to the probe. The response adds `sessionId`, `spawnCwd`, and `availability`.
 `availability` is `ok`, or `unavailable` for tmux and herdr, whose environment
 is not that spawn record. No command is written to the terminal. An unknown id
@@ -198,7 +199,9 @@ A body or query that includes `shell`, `command`, `args`, or `env` is `400`
 `bad_request`. Any other `scope` is `400` `bad_request`.
 
 The manager snapshot contains `scope: "manager"`, `host`, `platform`,
-`managerNode: { version, path }`, `runtimes[]`, `designTools[]` and `tools[]`. On completion,
+`managerNode: { version, path }`, `system`, `runtimes[]`, `designTools[]`,
+`docker` and `tools[]`. Session and launch snapshots have `docker` but not
+`system`; a tmux or herdr session has `docker: null`. On completion,
 each runtime has a fresh result; unfinished checks become `failed`, never a
 stale success. A missing or unverified runtime is that runtime's own status
 and does not set `error`.
@@ -242,6 +245,33 @@ launcher or a script reports presence with `detail` saying why. The version
 check runs with a 3 second deadline, D-Bus disabled, and HOME, the XDG
 folders and the tools' profile folders pointed at the scan's temporary folder.
 A timeout or unrecognized answer keeps the row's status and sets `detail`.
+In WSL with Windows interop on, a tool found only as a Windows program on PATH
+is `on_path` with its `.exe` command (for example `ffmpeg.exe`) and no version;
+it is not run.
+
+`system` is null until the first manager check finishes, or when it could not
+be read. Otherwise it is `{ os, osDetail, arch, hostArch, cpu: { model,
+threads }, memory, wsl, wslDistributions }`. `os` is the Windows edition, the
+Linux `PRETTY_NAME` from `os-release`, or `macOS <version>` from
+`SystemVersion.plist`; `osDetail` is the Windows build, Linux kernel or Darwin
+release. `hostArch` names the machine's architecture only when Node runs
+emulated on a different one. `memory` is total bytes. `wsl` is null outside WSL,
+or `{ version, distro, interop }` inside it, where `memory` is the WSL virtual
+machine's. On Windows, `wslDistributions` lists `{ name, version, default }`
+from the user's `Lxss` registry key without starting WSL; it is `[]` when none
+are registered and null elsewhere or when the key cannot be read.
+
+`docker` is `{ status, version, platform, os, arch, wsl2, context, endpoint,
+cli, detail }`. The engine is chosen as the docker command would choose it:
+`DOCKER_HOST`, then `DOCKER_CONTEXT`, then `currentContext` in the Docker
+config, then the platform default. The check sends one `GET /version` to a
+local Unix socket or named pipe, with a 1.5 second deadline and a 256 KiB
+limit; no docker process runs. Status is `pending`, `running` (with `version`,
+`platform`, `os`, `arch`, and `wsl2` when a Linux engine runs in WSL 2),
+`stopped` (the docker command is on PATH but no engine answered), `not_found`,
+`denied` (the socket or pipe exists but this user cannot open it), `remote`
+(a `tcp://` or `ssh://` engine, never contacted), or `failed` with `detail`.
+`cli` is the docker command on PATH, or null.
 
 Runtime probes execute recognized native binaries (and R's Unix launcher)
 from a neutral temporary directory; unknown script/shim launchers and Windows
