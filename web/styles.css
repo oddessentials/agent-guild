@@ -400,13 +400,13 @@ main { max-width: calc(1200px + var(--dock-space, 0px)); margin: 0 auto; padding
   color: var(--text); font: inherit; font-size: 0.85rem; cursor: pointer;
   transition: border-color 0.15s, box-shadow 0.15s, filter 0.15s, transform 0.1s;
 }
-.btn:active:not(:disabled) { transform: translateY(1px); }
+.btn:active:not(:disabled):not([aria-disabled="true"]) { transform: translateY(1px); }
 .btn:hover { border-color: var(--muted); }
 .btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 .btn.primary { background: var(--accent-fill); border-color: var(--accent-fill); color: var(--accent-text); }
 .btn.danger { color: var(--danger); }
 .btn.danger:hover { border-color: var(--danger); }
-.btn:disabled { opacity: 0.6; cursor: progress; }
+.btn:disabled, .btn[aria-disabled="true"] { opacity: 0.6; cursor: progress; }
 .menu-button, .notes-open, .github-toggle, .upgrade { white-space: nowrap; }
 .settings::before, .manager::before, .notes-open::before, .github-toggle::before, .menu-toggle::before, .btn.split::before, .settings-menu .choice > span::before {
   content: ""; display: inline-block; width: 1em; height: 1em; margin-right: 0.4em; vertical-align: -0.15em;
@@ -1060,7 +1060,7 @@ a.btn.github-out::after {
   .status-pill.active::before, .agent.working::after, .model-detail .stat-fill, .toast:not([hidden]), .tip:not([hidden]), .menu:popover-open { animation: none; }
   .model-name::before, .provider .copies summary::before, .menu-button::after, .btn, .models, .news-panel, .models::backdrop, .news-panel::backdrop { transition: none; }
   .github-waiting::before, .github-running, body:has(#app[hidden]):has(#auth[hidden]):has(#stopped[hidden])::after { animation: none; }
-  .btn:active:not(:disabled) { transform: none; }
+  .btn:active:not(:disabled):not([aria-disabled="true"]) { transform: none; }
   .btn.voice[aria-pressed="true"]::before { animation: none; }
   .drag-handle, .session-grid::before, .session-grid.reordering::before,
   .session-grid > .session-card.dragging, .session-grid > .session-card.settling { transition: none; }

@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 
 const app = readFileSync(new URL('../web/app.js', import.meta.url), 'utf8');
-const source = ['pickedShell', 'selectedShell', 'selectShell', 'renderShells', 'startSession'].map((name) => {
+const source = ['pickedShell', 'selectedShell', 'selectShell', 'renderShells', 'sessionActionKey', 'startSession'].map((name) => {
   const found = app.match(new RegExp(`(?:async )?function ${name}\\([^]*?\\n\\}`))?.[0];
   assert.ok(found, `${name} is present in app.js`);
   return found;
@@ -29,7 +29,10 @@ function picker(saved = '{}') {
     state: { shellPicks: JSON.parse(saved) },
     SHELLS_KEY: 'agentGuild.shells', CWD_KEY: 'agentGuild.cwd',
     save: (key, value) => storage.set(key, value),
+    pendingSessionActions: new Set(),
+    refreshPendingActions() {},
     document: {
+      querySelectorAll: () => [],
       createElement: () => ({
         dataset: {}, attributes: {},
         setAttribute(key, value) { this.attributes[key] = value; },

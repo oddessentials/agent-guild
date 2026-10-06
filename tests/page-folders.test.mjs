@@ -166,8 +166,9 @@ test('only folders chosen in the browser or started in successfully become recen
     return { context, recent: (key = 'agentGuild.recentCwds') => JSON.parse(saved[key] ?? '[]') };
   };
   const field = { value: ' typed/path ' };
-  const starting = (answer) => run(['startSession'], {
+  const starting = (answer) => run(['sessionActionKey', 'startSession'], {
     $: () => field, CWD_KEY: 'agentGuild.cwd', selectedAccount: () => ({ id: 'default' }), pickedShell: () => null,
+    pendingSessionActions: new Set(), refreshPendingActions() {},
     api: async () => { if (answer instanceof Error) throw answer; return { session: answer }; },
     upsertSession() {}, closeHistory() {}, openPanel() {}, toast() {}, AuthError: class extends Error {},
   });

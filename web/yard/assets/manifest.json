@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "seed": 714,
+  "worlds": [
+    "guild",
+    "orbital",
+    "grove",
+    "professional"
+  ],
+  "heroes": 5,
+  "familiars": 4,
+  "clips": [
+    "resting",
+    "working",
+    "waiting",
+    "done",
+    "arrival"
+  ],
+  "up": "Y",
+  "units": "metres",
+  "source": "concept-art/guild-yard/build.py"
+}

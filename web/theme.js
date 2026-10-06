@@ -9,8 +9,9 @@
     { id: 'professional', name: 'Professional' },
     { id: 'orbital', name: 'Orbital' },
     { id: 'grove', name: 'Grove' },
-    { id: 'gnomeland', name: 'Gnomeland' },
-    { id: 'goblinville', name: 'Goblinville' },
+    // yard: false keeps Cards on screen until that skin has a world in web/yard/model.mjs.
+    { id: 'gnomeland', name: 'Gnomeland', yard: false },
+    { id: 'goblinville', name: 'Goblinville', yard: false },
   ];
   window.agentGuildSkins = skins;
 
@@ -24,6 +25,13 @@
     theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   }
   if (!skins.some(function (s) { return s.id === skin; })) skin = skins[0].id;
+  var entry = skins.find(function (s) { return s.id === skin; });
+  var view = 'cards';
+  // Leave a saved Yard preference in place. Skins without a world open on Cards.
+  try {
+    if (entry.yard !== false && localStorage.getItem('agentGuild.view') === 'yard') view = 'yard';
+  } catch (e) { /* storage unavailable */ }
+  document.documentElement.dataset.view = view;
   document.documentElement.dataset.theme = theme;
   document.documentElement.dataset.skin = skin;
 })();

@@ -10,6 +10,8 @@ labels.
 
 1. Add `{ id: '<id>', name: '<Menu label>' }` to the `skins` list in
    `web/theme.js`. List order is menu order; the first is the default.
+   A skin with `yard: false` keeps Cards on screen and disables the Yard
+   control. Remove that flag when the skin has a world in `web/yard/model.mjs`.
 2. Link `<link rel="stylesheet" href="/skins/<id>/skin.css">` in
    `web/index.html` with the other skins.
 3. Write `web/skins/<id>/skin.css`:
