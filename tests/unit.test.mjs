@@ -20,6 +20,7 @@ import { bundleFiles, codexHookArgs, codexTrustArgs, codexHooksFrom, antigravity
 import { execFileSync } from 'node:child_process';
 import { parseVersion, compareVersions, probeVersion, diagnosticLine, latestVersion } from '../src/manager/versions.mjs';
 import { SelfUpdate, isDevelopmentBuild } from '../src/manager/self-update.mjs';
+import { glibcVersion, loadPty, ptyBuild, ptyBuildCommand, ptyBuiltHere, ptyDir, ptyProblem, ptyRestartProblem } from '../src/manager/pty.mjs';
 import { launcherPath, MANAGER_ENTRY, ROOT_DIR } from '../src/manager/launch.mjs';
 import {
   UsageMonitor, readClaudeCredentials, readCodexCredentials,
@@ -2945,6 +2946,94 @@ test('the manager checks its own release and knows when a restart is needed', as
   assert.equal(calls.length, before);
   assert.equal(off.describe().latestVersion, null);
   await assert.rejects(off.spec(), { code: 'not_updatable', message: /AGENT_GUILD_NO_UPDATE_CHECK/ });
+});
+
+test('the upgrade description says when node-pty is compiled on this computer, except while npm runs', () => {
+  let build = { command: 'cd /pty && npx --yes node-gyp rebuild', built: true };
+  const registry = { checkUpdates: true, env: {}, platform: 'linux', resolveNpm: () => '/usr/bin/npm', npmArgs: ProviderRegistry.prototype.npmArgs };
+  const self = new SelfUpdate({ pkg: '@scope/app', version: '1.0.0', registry, ptyBuild: () => build });
+  assert.deepEqual(self.describe().ptyBuild, { command: 'cd /pty && npx --yes node-gyp rebuild', built: true });
+  build = { ...build, built: false };
+  assert.equal(self.describe().ptyBuild.built, false, 'read again each time, as an upgrade replaces the build');
+  self.beginInstall();
+  assert.equal(self.describe().ptyBuild, null, 'withheld while the files on disk are being replaced');
+  build = null;
+  self.finishInstall({ exitCode: 0 });
+  assert.equal(self.describe().ptyBuild, null);
+});
+
+test('node-pty runs from its own builds on Windows, macOS and Linux with glibc 2.28 or later', () => {
+  const dir = tempDir();
+  for (const platform of ['win32', 'darwin']) {
+    assert.equal(ptyBuild({ platform, glibc: null, dir }), null, platform);
+    assert.equal(ptyProblem({ platform, glibc: null, dir }), null, platform);
+  }
+  for (const glibc of ['2.28', '2.39', '3.0']) {
+    assert.equal(ptyBuild({ platform: 'linux', glibc, dir }), null, glibc);
+    assert.equal(ptyProblem({ platform: 'linux', glibc, dir }), null, glibc);
+  }
+});
+
+test('node-pty refuses an older glibc, compared as numbers', () => {
+  const dir = tempDir();
+  for (const glibc of ['2.17', '2.27', '2.9']) {
+    assert.equal(ptyProblem({ platform: 'linux', glibc, dir }),
+      `Agent Guild needs glibc 2.28 or later on Linux, for example Debian 10, Ubuntu 20.04 or RHEL 8. This system has glibc ${glibc}.`);
+    assert.deepEqual(ptyBuild({ platform: 'linux', glibc, dir }), { command: ptyBuildCommand(dir), built: false });
+  }
+});
+
+test('on musl, node-pty says how to compile it, and runs once it is compiled here', () => {
+  const dir = tempDir();
+  const problem = ptyProblem({ platform: 'linux', glibc: null, dir });
+  assert.match(problem, /^Agent Guild's terminal library, node-pty, comes built for Linux with glibc 2\.28 or later, and this system uses another C library, such as musl on Alpine\.$/m);
+  assert.match(problem, /on Alpine: apk add python3 make g\+\+ linux-headers/);
+  assert.equal(problem.split('\n').at(-1), `  ${ptyBuildCommand(dir)}`, 'the command is a line of its own, to copy');
+
+  for (const build of ['Release', 'Debug']) {
+    const built = tempDir();
+    fs.mkdirSync(path.join(built, 'build', build), { recursive: true });
+    fs.writeFileSync(path.join(built, 'build', build, 'pty.node'), '');
+    assert.equal(ptyBuiltHere(built), true, build);
+    assert.equal(ptyProblem({ platform: 'linux', glibc: null, dir: built }), null, build);
+    assert.equal(ptyProblem({ platform: 'linux', glibc: '2.17', dir: built }), null, `${build}, on an older glibc`);
+    assert.deepEqual(ptyBuild({ platform: 'linux', glibc: null, dir: built }), { command: ptyBuildCommand(built), built: true });
+  }
+  assert.equal(ptyBuiltHere(dir), false);
+});
+
+test('a restart without the node-pty compiled here says how to compile it again, on any C library', () => {
+  const dir = tempDir();
+  for (const glibc of [null, '2.17']) {
+    assert.equal(ptyRestartProblem({ platform: 'linux', glibc, dir }), [
+      'Agent Guild\'s terminal library, node-pty, is built on this computer, and the files on disk no longer hold that build, as after an upgrade. Build it again, then restart:',
+      `  ${ptyBuildCommand(dir)}`,
+      'The manager was not restarted, and its sessions keep running.',
+    ].join('\n'), String(glibc));
+  }
+  fs.mkdirSync(path.join(dir, 'build', 'Release'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'build', 'Release', 'pty.node'), '');
+  assert.equal(ptyRestartProblem({ platform: 'linux', glibc: null, dir }), null, 'built again');
+  assert.equal(ptyRestartProblem({ platform: 'linux', glibc: '2.39', dir: tempDir() }), null, 'node-pty\'s own builds run');
+  assert.equal(ptyRestartProblem({ platform: 'darwin', glibc: null, dir: tempDir() }), null);
+  assert.equal(ptyRestartProblem(), null);
+});
+
+test('the node-pty build command quotes a folder the shell would split', () => {
+  assert.equal(ptyBuildCommand('/usr/local/lib/node_modules/@oddessentials/agent-guild/node_modules/node-pty'),
+    'cd /usr/local/lib/node_modules/@oddessentials/agent-guild/node_modules/node-pty && npx --yes node-gyp rebuild');
+  assert.equal(ptyBuildCommand("/home/a b/it's/node-pty"), "cd '/home/a b/it'\\''s/node-pty' && npx --yes node-gyp rebuild");
+});
+
+test('this computer runs node-pty, and loads it once', () => {
+  const version = glibcVersion();
+  if (process.platform === 'linux') assert.match(version, /^\d+\.\d+$/, 'the test runners have glibc');
+  else assert.equal(version, null);
+  assert.equal(glibcVersion(), version);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(ptyDir(), 'package.json'), 'utf8')).name, 'node-pty');
+  assert.equal(ptyProblem(), null);
+  assert.equal(typeof loadPty().spawn, 'function');
+  assert.equal(loadPty(), loadPty());
 });
 
 function catalogEntry(id, { created = 1780000000, coding, intelligence, agentic, arena = [], tools = true, output = ['text'], canonical = '', name = `Test: ${id}`, context = 100000 } = {}) {

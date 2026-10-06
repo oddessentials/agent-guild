@@ -11,7 +11,9 @@ npm test
 * The tests start real managers and real pseudo-terminals, using a small fake
   coding tool in `tests/fixtures`. CI runs them on Windows, macOS and Linux
   with Node.js 22, 24 and 26, and installs the packed package on x64 and
-  arm64.
+  arm64. On Alpine it checks that `agent-guild` says how to build node-pty
+  and that the package works once it is built; `bash tests/package/musl.sh`
+  runs that check with Docker.
 * `node tests/browser/proxy.mjs` checks the real UI and terminal through a
   local HTTPS proxy with an isolated manager and test certificates. On Windows,
   or if Chrome is not in a standard Linux or macOS location, set

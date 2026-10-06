@@ -21,6 +21,7 @@ import {
 } from '../src/manager/config.mjs';
 import { defaultBoot, serviceFor, spawnManager, startService } from '../src/manager/launch.mjs';
 import { recordSignIn } from '../src/manager/autostart.mjs';
+import { ptyProblem } from '../src/manager/pty.mjs';
 import { EXIT_PORT_IN_USE, describeStartup, startupState, startupSummary, unitPort } from '../src/manager/systemd-service.mjs';
 
 function usage() {
@@ -106,6 +107,10 @@ async function ensureManager({ port = null } = {}) {
   const running = await health(knownUrl);
   if (running) return { url: knownUrl, started: false, version: running.version };
 
+  // Say why no manager can run here rather than start one that fails.
+  const problem = ptyProblem();
+  if (problem) throw new Error(problem);
+
   // While the boot service is on for this port, systemd is the one that starts a manager.
   const { boot, note } = await serviceFor(listenPort);
   if (boot) return startService({ boot, port: listenPort, url: expectedUrl, health });
@@ -161,7 +166,10 @@ async function requestShutdown(url, { restart = false } = {}) {
     headers: { Authorization: `Bearer ${loadOrCreateToken()}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(restart ? { force: true, restart: true } : { force: true }),
   });
-  if (!res.ok) throw new Error(`${restart ? 'restart' : 'stop'} failed: HTTP ${res.status}`);
+  if (!res.ok) {
+    const { error } = await res.json().catch(() => ({}));
+    throw new Error(`${restart ? 'restart' : 'stop'} failed: ${error?.message ?? `HTTP ${res.status}`}`);
+  }
   const body = await res.json().catch(() => ({}));
   const running = body.running ?? 0;
   if (running > 0) console.log(`Ending ${running} running session(s).`);

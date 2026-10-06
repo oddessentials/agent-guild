@@ -39,10 +39,12 @@ terminal.
 | Node.js | 22 or newer |
 | Windows | 10 version 1809 or later, x64 or arm64. No WSL needed. |
 | macOS | 11 or later, Intel or Apple silicon |
-| Linux | x64 or arm64, with a desktop or over SSH |
+| Linux | x64 or arm64 with glibc 2.28 or later (for example Debian 10, Ubuntu 20.04 or RHEL 8), with a desktop or over SSH |
 
-No compiler is needed. A missing tool shows **Install** on its card;
-Antigravity CLI, which is not on npm, shows its install command instead.
+No compiler is needed, except on Linux without glibc, such as Alpine:
+`agent-guild` prints the commands that build its terminal library there. A
+missing tool shows **Install** on its card; Antigravity CLI, which is not on
+npm, shows its install command instead.
 
 ## Setup
 

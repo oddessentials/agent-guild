@@ -879,26 +879,58 @@ function moveDockTab(e) {
 
 // ---- upgrading the manager ------------------------------------------------
 
+/**
+ * On a computer that compiles node-pty, the terminal library, itself: the
+ * build an installed upgrade replaced, which the manager will not restart
+ * without. Null otherwise.
+ */
+function ptyRebuild(u = state.upgrade) {
+  const build = u?.ptyBuild;
+  return u?.pendingVersion && build && !build.built ? build : null;
+}
+
+/**
+ * While an upgrade waits for node-pty to be compiled again, read the build
+ * once more when the user comes back to the page, from the terminal where
+ * they may have run the command. The manager sends no event for it.
+ */
+async function recheckPtyBuild() {
+  if (!state.connected || !ptyRebuild()) return;
+  try {
+    setUpgrade((await api('GET', '/info')).upgrade);
+  } catch { /* the next hello brings it */ }
+}
+
+/** A message about compiling node-pty here, with a button that copies the command. */
+function ptyBuildToast(message, build) {
+  toast(message, 20000, { label: 'Copy command', run: () => copyText(build.command, 'the command') });
+}
+
 function renderUpgrade() {
   const u = state.upgrade;
   const button = $('upgrade');
   const note = $('upgrade-note');
   const offer = Boolean(state.connected && u?.available && u.command);
+  const build = u?.ptyBuild;
   button.hidden = !offer;
   if (offer) {
     button.textContent = `Upgrade to ${u.latestVersion}`;
-    button.title = `Run "${u.command}" in a session. Sessions keep running; the new version is used once the manager is restarted.`;
+    button.title = `Run "${u.command}" in a session. Sessions keep running; the new version is used once the manager is restarted.` +
+      (build ? ` This computer builds node-pty, the terminal library, itself: after the upgrade, run "${build.command}" in a terminal before restarting.` : '');
   }
   // A newer version on disk is used by the next manager, so the restart
   // button becomes the way to pick it up.
   const restart = $('restart-manager');
   const pending = u?.pendingVersion;
+  const rebuild = ptyRebuild(u);
   restart.classList.toggle('pending', Boolean(pending));
   $('manager').classList.toggle('pending', Boolean(pending) && state.restartable);
   restart.textContent = pending ? `Restart to use v${pending}` : 'Restart manager';
-  restart.title = pending
-    ? `Agent Guild ${pending} is installed, but this manager is still ${u.version}. Restarting ends every session and starts the new version; this page reconnects by itself.`
-    : 'Stop the session manager and start it again. This ends every session; this page reconnects by itself.';
+  restart.title = rebuild
+    ? `Agent Guild ${pending} is installed, and node-pty, the terminal library, has to be built for this computer again before the manager can restart. Run "${rebuild.command}" in a terminal first.`
+    : pending
+      ? `Agent Guild ${pending} is installed, but this manager is still ${u.version}. Restarting ends every session and starts the new version; this page reconnects by itself.`
+      : 'Stop the session manager and start it again. This ends every session; this page reconnects by itself.';
   const panelUpgrade = $('changelog-upgrade');
   panelUpgrade.hidden = button.hidden;
   panelUpgrade.textContent = button.textContent;
@@ -914,6 +946,9 @@ function renderUpgrade() {
   if (u?.installing) {
     text = `Upgrading${u.latestVersion ? ` to v${u.latestVersion}` : ''}…`;
     title = 'npm is running in a session. Keep the manager running until it finishes.';
+  } else if (rebuild) {
+    text = `v${pending} installed · build node-pty before restarting`;
+    title = `This computer builds node-pty, the terminal library, itself, and the upgrade replaced that build. Run "${rebuild.command}" in a terminal, then restart.`;
   } else if (pending && !state.restartable) {
     text = `v${pending} installed · run "agent-guild restart" to use it`;
     title = `Agent Guild ${pending} is installed, but this manager is still ${u.version} and cannot restart itself. Run "agent-guild restart" in a terminal when your sessions are done; this page reconnects by itself.`;
@@ -926,6 +961,9 @@ function renderUpgrade() {
   } else if (u?.available && !u.command) {
     text = `v${u.latestVersion} available`;
     title = u.guidance || '';
+  } else if (offer && build) {
+    text = 'Build node-pty again after upgrading';
+    title = `This computer builds node-pty, the terminal library, itself, and an upgrade replaces that build. After upgrading, run "${build.command}" in a terminal before restarting.`;
   }
   note.hidden = !state.connected || !text;
   note.textContent = text;
@@ -940,7 +978,10 @@ function setUpgrade(upgrade, baseline = false) {
   renderVersion();
   if ($('changelog').open) renderChangelog();
   const pending = state.upgrade?.pendingVersion;
-  if (pending && pending !== before?.pendingVersion) {
+  const rebuild = ptyRebuild();
+  if (pending && pending !== before?.pendingVersion && rebuild) {
+    ptyBuildToast(`Agent Guild ${pending} is installed. Before restarting, build node-pty for this computer again: run "${rebuild.command}" in a terminal.`, rebuild);
+  } else if (pending && pending !== before?.pendingVersion) {
     toast(state.restartable
       ? `Agent Guild ${pending} is installed. Use "Restart to use v${pending}" in the top bar when your sessions are done.`
       : `Agent Guild ${pending} is installed. Run "agent-guild restart" in a terminal when your sessions are done.`, 10000);
@@ -5634,6 +5675,10 @@ async function stopManager({ force = false, restart = false } = {}) {
       }
       return;
     }
+    const build = state.upgrade?.ptyBuild;
+    if (err.code === 'pty_unavailable' && build) {
+      return ptyBuildToast(`The manager was not restarted, and its sessions keep running. First build node-pty, the terminal library, for this computer: run "${build.command}" in a terminal.`, build);
+    }
     toast(err.message, 8000);
   } finally {
     for (const button of buttons) button.disabled = false;
@@ -6123,10 +6168,12 @@ document.addEventListener('visibilitychange', () => {
     flushNotes();
   }
   if (document.visibilityState === 'visible' && state.connected && Date.now() - newsLoadedAt > 60000) loadNews();
+  if (document.visibilityState === 'visible') recheckPtyBuild();
   if (document.visibilityState === 'visible' && dockShows('github') && githubShownView() === 'actions') loadView('actions');
   else scheduleRuns();
   if (branchesVisible() && !viewData('branches')?.error) loadBranches({ resume: true });
 });
+addEventListener('focus', recheckPtyBuild);
 addEventListener('pagehide', () => {
   flushNotes();
   state.pageAway = true;

@@ -491,7 +491,8 @@ The manager's own version check, in `GET /info`, the `hello` message and
   "guidance": null,
   "pendingVersion": null,
   "installing": false,
-  "lastInstall": null
+  "lastInstall": null,
+  "ptyBuild": null
 }
 ```
 
@@ -519,6 +520,15 @@ session until its npm process has exited, even if the session was removed
 meanwhile; `available` and `pendingVersion` are withheld during that time,
 because the files on disk are mid-replacement, and `POST /upgrade` answers
 409 `upgrade_in_progress`.
+
+`ptyBuild` is null where node-pty, the terminal library, runs from the builds
+it comes with: Windows, macOS, and Linux with glibc 2.28 or later. Elsewhere,
+such as Alpine with musl, node-pty is compiled on the computer, and
+`ptyBuild` is `{ command, built }`: the shell command that compiles it, and
+whether the files on disk hold such a build. An upgrade replaces that build,
+so `built` turns false once the new version is installed, and
+`POST /shutdown` refuses a restart until the command has run. It is null
+while `installing`.
 
 ### GitHub
 
@@ -681,7 +691,7 @@ All paths are under `/api/v1`.
 | POST | `/sessions/:id/tool-session` | `{ toolSessionId }` | `{ toolSessionId }`. Records the id the tool gave its own session: one printable line of at most 200 characters. 409 once the session has exited. |
 | POST | `/sessions/:id/reporting` | | `{ reporting }`: the tool's hooks announce themselves, which makes `reporting.state` `active`. |
 | POST | `/sessions/:id/shells` | `{ shell, key \| task, match?, agentId?, persist?, endsWithAgent?, tasks? }` | `{ ok }`. `shell` is `start`, `end`, `background` (with the tool's `task` id), `waiting` (a permission request, which hides the command), `asked` (one that ends the command with its turn), `running` (`tasks` lists the background tasks still running; any other ends) or `reset` (every command ends). `key` is the tool's call id. `match` is a hash of the command, which pairs a permission request with it; `persist` keeps a command past the end of its turn, and `endsWithAgent` ends a background one with its sub-agent. |
-| POST | `/shutdown` | `{ force?, restart? }` | `202 { ok, running, restart }`: stops the manager and every session, detaching tmux and herdr sessions rather than ending them. 409 `sessions_running` (with `running`, the count of sessions it would end) while any session other than a tmux or herdr one is running, unless `force` is true. From the 202 on, `POST /sessions` and `POST /providers/:id/install` answer 503 `manager_stopping`. Events clients get `manager.stopping` first and `manager.stopped` last, after the sessions have ended and before the API closes. With `restart` true, the manager then starts a new manager from the package on disk, on the same port and with the same token, before it exits; the new one runs whatever version is installed, so this is how an upgrade's `pendingVersion` is put to use. Clients reconnect to it as to any manager; its `hello` is the new source of truth. |
+| POST | `/shutdown` | `{ force?, restart? }` | `202 { ok, running, restart }`: stops the manager and every session, detaching tmux and herdr sessions rather than ending them. 409 `sessions_running` (with `running`, the count of sessions it would end) while any session other than a tmux or herdr one is running, unless `force` is true. With `restart`, 409 `pty_unavailable` first when the new manager could not run a terminal, which happens when an upgrade replaced a node-pty compiled on this computer (see `ptyBuild` under [Upgrade](#upgrade)); the message says what to run, and nothing is stopped. From the 202 on, `POST /sessions` and `POST /providers/:id/install` answer 503 `manager_stopping`. Events clients get `manager.stopping` first and `manager.stopped` last, after the sessions have ended and before the API closes. With `restart` true, the manager then starts a new manager from the package on disk, on the same port and with the same token, before it exits; the new one runs whatever version is installed, so this is how an upgrade's `pendingVersion` is put to use. Clients reconnect to it as to any manager; its `hello` is the new source of truth. |
 
 `cwd` defaults to the user's home folder and must be an existing folder. A
 leading `~` is expanded. `args` are appended to the provider's configured
