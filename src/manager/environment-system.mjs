@@ -1,7 +1,8 @@
 // System facts and the Docker engine, for the environment helper. Reads only:
 // os, a few small files, one registry query on Windows, and one GET /version
 // on a local Docker socket or pipe. No docker process is started and a remote
-// engine is never contacted.
+// engine is never contacted. Where systemd starts the engine on demand
+// (docker.socket, podman.socket), opening its socket starts it.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -12,6 +13,8 @@ const DOCKER_TIMEOUT_MS = 1500;
 const DOCKER_LIMIT = 256 * 1024;
 const REGISTRY_TIMEOUT_MS = 3000;
 const LXSS = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Lxss';
+// Linux's system sockets belong to the docker group; a rootless or Podman socket does not.
+const GROUP_SOCKETS = ['/var/run/docker.sock', '/run/docker.sock'];
 
 function value(env, name) {
   return env[Object.keys(env).find((key) => key.toUpperCase() === name.toUpperCase())];
@@ -80,11 +83,16 @@ export async function systemInfo({
   read = fs.readFileSync, release = os.release(), version = os.version(),
   arch = process.arch, machine = os.machine(), cpus = os.cpus(), threads = os.availableParallelism(), memory = os.totalmem(),
 } = {}) {
+  // Node says 'unknown' for a CPU it cannot name, such as many arm64 cores on Linux.
+  const model = cpus[0]?.model?.trim();
   const info = {
     os: null, osDetail: null, arch: normalArch(arch), hostArch: null,
-    cpu: { model: cpus[0]?.model?.trim() || null, threads }, memory, wsl: null, wslDistributions: null,
+    cpu: { model: model && model !== 'unknown' ? model : null, threads }, memory, wsl: null, wslDistributions: null,
   };
-  const host = normalArch(machine);
+  // Linux names the kernel's architecture, which can differ from Node's
+  // without emulation (a 32-bit build on a 64-bit kernel), so only Windows
+  // and macOS name a host architecture.
+  const host = platform === 'win32' || platform === 'darwin' ? normalArch(machine) : null;
   if (host && host !== info.arch) info.hostArch = host;
   if (platform === 'win32') {
     info.os = version || 'Windows';
@@ -175,7 +183,7 @@ export async function dockerInfo({ env = process.env, platform = process.platfor
   if (result.error === 'EACCES' || result.error === 'EPERM') {
     return { ...row, status: 'denied', detail: platform === 'win32'
       ? 'The engine is running, but this user cannot open its pipe.'
-      : 'The engine socket exists, but this user cannot open it. Adding the user to the docker group allows it.' };
+      : `The engine socket exists, but this user cannot open it.${platform === 'linux' && GROUP_SOCKETS.includes(socket) ? ' Adding the user to the docker group allows it.' : ''}` };
   }
   if (['ENOENT', 'ECONNREFUSED', 'ENOTSOCK'].includes(result.error)) {
     return cli

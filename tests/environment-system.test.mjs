@@ -87,6 +87,13 @@ test('macOS reads its version from the system plist, and emulation names the hos
   assert.equal(emulated.hostArch, 'arm64');
 });
 
+test('Linux names no host architecture, and a CPU Node cannot name has no model', async () => {
+  const linux = { ...machine, platform: 'linux', env: {}, read: files({}), release: '6.12.0' };
+  assert.equal((await systemInfo({ ...linux, arch: 'arm', machine: 'aarch64' })).hostArch, null);
+  assert.equal((await systemInfo({ ...linux, arch: 'arm', machine: 'armv7l' })).hostArch, null);
+  assert.equal((await systemInfo({ ...linux, arch: 'arm64', machine: 'aarch64', cpus: [{ model: 'unknown' }] })).cpu.model, null);
+});
+
 test('the Docker engine follows DOCKER_HOST, then DOCKER_CONTEXT, then the current context, then the default', () => {
   const meta = (name, host) => [path.win32.join('C:\\Users\\me\\.docker', 'contexts', 'meta', createHash('sha256').update(name).digest('hex'), 'meta.json'),
     JSON.stringify({ Name: name, Endpoints: { docker: { Host: host } } })];
@@ -146,6 +153,11 @@ test('a running engine reports its version and platform; each failure says what 
     assert.equal(row.detail, detail);
     assert.equal(row.version, null);
   }
+  // Only Linux's system socket belongs to the docker group.
+  const rootless = await dockerInfo({ ...base, env: { ...env, DOCKER_HOST: 'unix:///run/user/1000/docker.sock' }, resolve: withCli, query: async () => ({ error: 'EACCES' }) });
+  assert.equal(rootless.detail, 'The engine socket exists, but this user cannot open it.');
+  const mac = await dockerInfo({ ...base, platform: 'darwin', resolve: withCli, query: async () => ({ error: 'EACCES' }) });
+  assert.equal(mac.detail, 'The engine socket exists, but this user cannot open it.');
   const remote = await dockerInfo({ ...base, env: { ...env, DOCKER_HOST: 'tcp://10.0.0.5:2376' }, resolve: withCli, query: async () => assert.fail('a remote engine is not contacted') });
   assert.equal(remote.status, 'remote');
   assert.equal(remote.endpoint, 'tcp://10.0.0.5:2376');

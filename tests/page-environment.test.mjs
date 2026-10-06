@@ -514,6 +514,7 @@ test('system rows name the OS, architecture, CPU and memory, with WSL facts from
   assert.equal(systemRows({ ...base, wslDistributions: [] }).at(-1).value, 'None installed');
   assert.equal(systemRows({ ...base, wslDistributions: null }).length, 4);
   assert.equal(systemRows({ ...base, hostArch: 'arm64' })[1].value, 'x64 · emulated on arm64');
+  assert.deepEqual(systemRows({ ...base, cpu: { model: null, threads: 24 } })[2].details, []);
   const wsl = systemRows({ ...base, os: 'Ubuntu 24.04.4 LTS', osDetail: 'Kernel 6.6.87.2-microsoft-standard-WSL2', memory: 31 * 1024 ** 3, wsl: { version: 2, distro: 'Ubuntu-24.04', interop: false }, wslDistributions: null });
   assert.deepEqual(wsl[0].details, ['WSL 2 · Ubuntu-24.04', 'Kernel 6.6.87.2-microsoft-standard-WSL2']);
   assert.deepEqual(wsl[3].details, ['Memory of the WSL virtual machine, set in .wslconfig. Windows can have more.']);

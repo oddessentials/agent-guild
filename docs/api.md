@@ -255,9 +255,10 @@ threads }, memory, wsl, wslDistributions }`. `os` is the Windows edition, the
 Linux `PRETTY_NAME` from `os-release`, or `macOS <version>` from
 `SystemVersion.plist`; `osDetail` is the Windows build, Linux kernel or Darwin
 release. `hostArch` names the machine's architecture only when Node runs
-emulated on a different one. `memory` is total bytes. `wsl` is null outside WSL,
-or `{ version, distro, interop }` inside it, where `memory` is the WSL virtual
-machine's. On Windows, `wslDistributions` lists `{ name, version, default }`
+emulated on a different one, on Windows or macOS; it is null on Linux.
+`cpu.model` is null when the CPU has no known name. `memory` is total bytes.
+`wsl` is null outside WSL, or `{ version, distro, interop }` inside it, where
+`memory` is the WSL virtual machine's. On Windows, `wslDistributions` lists `{ name, version, default }`
 from the user's `Lxss` registry key without starting WSL; it is `[]` when none
 are registered and null elsewhere or when the key cannot be read.
 
@@ -266,8 +267,10 @@ cli, detail }`. The engine is chosen as the docker command would choose it:
 `DOCKER_HOST`, then `DOCKER_CONTEXT`, then `currentContext` in the Docker
 config, then the platform default. The check sends one `GET /version` to a
 local Unix socket or named pipe, with a 1.5 second deadline and a 256 KiB
-limit; no docker process runs. Status is `pending`, `running` (with `version`,
-`platform`, `os`, `arch`, and `wsl2` when a Linux engine runs in WSL 2),
+limit; no docker process runs. Where systemd starts the engine on demand
+(`docker.socket`, `podman.socket`), this request starts it. Status is
+`pending`, `running` (with `version`, `platform`, `os`, `arch`, and `wsl2`
+when a Linux engine runs in WSL 2),
 `stopped` (the docker command is on PATH but no engine answered), `not_found`,
 `denied` (the socket or pipe exists but this user cannot open it), `remote`
 (a `tcp://` or `ssh://` engine, never contacted), or `failed` with `detail`.
