@@ -7,9 +7,9 @@ editable Blender files are the art sources. Runtime files are in
 
 ## Geometry and motion
 
-`build.py` builds four worlds with five provider halls each. Guild combines
-stone, oak, bronze and provider-colored roofs. Orbital uses station panels
-and instrument domes; Grove uses living wood and garden forms. Distinct Guild
+`build.py` builds three worlds with five provider halls each. Guild combines
+stone, oak, bronze and provider-colored roofs; Grove uses living wood and
+garden forms. Distinct Guild
 silhouettes identify the keep, citadel, observatory, tower and timber
 workshop at overview scale. Professional's halls are five campus buildings:
 a studio with a timber-finned upper storey, a glass rotunda under a disc
@@ -19,8 +19,9 @@ crown, and a glass hall under a barrel vault. Their materials (`office`,
 the Poly Haven sets in `SURFACES` of `env/professional_env.py`; the glass and
 lit `window` panes keep their authored materials.
 
-`build.py` also makes the Orbital robots and Grove spirits (`hero()`) and
-the drones (`drone()`), each with a rig and glTF animation channels. Work
+`build.py` also makes the Grove spirits (`spirit()`), each with a rig and
+glTF animation channels; Orbital's world, robots and drones come from
+`concept-art/orbital-yard`. Work
 motion inclines the body and moves the hands; rest uses breathing and small
 head/arm movements. Waiting and done have separate poses. These are
 presentation states mapped to existing manager reports, not simulated game

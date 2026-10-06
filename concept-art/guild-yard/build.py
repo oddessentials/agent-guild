@@ -24,9 +24,8 @@ PALETTE={
  'wood':'624735','woodLight':'98704a','gold':'bb914a','iron':'28353b',
  'amber':'b86930','emerald':'295947','blue':'345777','cyan':'2b6976','violet':'614778',
  'window':'ffb35a','magic':'83d8d0','glass':'254751','white':'c4d0c5','black':'15232b',
- 'orbitalBase':'263540','orbitalPanel':'465b6a','orbitalEdge':'a2b9c1',
  'groveBase':'314531','groveWood':'8b6951','groveLeaf':'59824c',
- 'office':'c4c8bf','officeDark':'6c7d80','officeGlass':'5a8994',
+ 'office':'c4c8bf','officeDark':'6c7d80','officeGlass':'5a8994','steel':'a2b9c1',
  'skin':'c8a27a','hair':'3e3028','cloth':'ded0a2'
 }
 M={}
@@ -43,7 +42,7 @@ def mat(name):
  bs=m.node_tree.nodes.get('Principled BSDF')
  bs.inputs['Base Color'].default_value=(*(v**2.2 for v in rgb),1)
  bs.inputs['Roughness'].default_value=.08 if name=='officeGlass' else .7 if name not in ['gold','iron','glass'] else .33
- bs.inputs['Metallic'].default_value=.7 if name in ['gold','iron','orbitalEdge','officeGlass'] else .05
+ bs.inputs['Metallic'].default_value=.7 if name in ['gold','iron','steel','officeGlass'] else .05
  if name in ['window','magic']:
   bs.inputs['Emission Color'].default_value=(*(v**2.2 for v in rgb),1);bs.inputs['Emission Strength'].default_value=1.6
  M[name]=m;return m
@@ -136,11 +135,11 @@ def tree(s,x,y,scale=1,grove=False):
   if grove:s.sphere((x,y,h*scale),(r*scale,r*.8*scale,r*.65*scale),'leafLight',12,7)
   else:s.cone((x,y,h*scale),r*scale,.08,1.5*scale,'leaf' if h<3 else 'leafLight',10)
 def floor_world(s,skin):
- base={'guild':'stoneDark','orbital':'orbitalBase','grove':'groveBase','professional':'officeDark'}[skin]
+ base={'guild':'stoneDark','grove':'groveBase','professional':'officeDark'}[skin]
  s.cone((0,0,-.7),14,13.6,1.3,base,72)
  s.cone((0,0,-.08),13.7,13.7,.2,'stone' if skin=='guild' else base,72)
  for radius,height in [(13.7,.06),(13.3,.14)]:
-  s.torus((0,0,height),radius,.10,'gold' if skin=='guild' else 'orbitalEdge' if skin=='orbital' else 'groveWood' if skin=='grove' else 'white',96)
+  s.torus((0,0,height),radius,.10,'gold' if skin=='guild' else 'groveWood' if skin=='grove' else 'white',96)
  if skin=='guild':
   for j in range(-15,16):
    for i in range(-15,16):
@@ -166,15 +165,6 @@ def floor_world(s,skin):
   for x in [-3,3]:
    s.box((x,-5,.55),(1.4,.6,.17),'wood',.04)
    for dx in [-.5,.5]:s.box((x+dx,-5,.28),(.1,.4,.55),'iron',.025)
- elif skin=='orbital':
-  for i in range(-6,7):
-   for j in range(-6,7):
-    if i*i+j*j<40:
-     s.box((i*1.9,j*1.9,.08),(1.82,1.82,.12),'orbitalPanel',.07)
-  for r in [3,9,12.5]:s.torus((0,0,.18),r,.055,'magic',72)
-  for x in [-11,11]:
-   s.box((x,1,.45),(1.4,6,.7),'orbitalBase',.1)
-   for y in [-1,0,1,2,3]:s.box((x,y,.83),(1.1,.3,.06),'magic',.02)
  elif skin=='grove':
   for r in [2.9,6,9.5]:
    for i in range(int(r*7)):
@@ -195,7 +185,7 @@ def floor_world(s,skin):
    s.box((x,y,.67),(1.3,.85,.3),'leaf',.1)
  # Central focal point / commons.
  for r,h in [(2.35,.16),(2.05,.27),(1.75,.38)]:
-  s.cone((0,0,h),r,r,.15,'edge' if skin=='guild' else 'orbitalPanel' if skin=='orbital' else 'groveWood' if skin=='grove' else 'white',48)
+  s.cone((0,0,h),r,r,.15,'edge' if skin=='guild' else 'groveWood' if skin=='grove' else 'white',48)
  if skin=='guild':
   s.torus((0,0,.5),1.65,.07,'gold',48)
   for i in range(12):
@@ -204,9 +194,6 @@ def floor_world(s,skin):
   s.torus((0,0,1.2),.54,.08,'gold',24)
   s.sphere((0,0,1.75),(.38,.38,.42),'magic',20,12)
   for a in [0,PI/2]:s.torus((0,0,1.75),.63,.035,'gold',36,rot=(PI/2,a,0))
- elif skin=='orbital':
-  s.cone((0,0,.8),1,.7,.7,'orbitalBase',24)
-  for z in [1.3,1.65,2]:s.torus((0,0,z),.7,.05,'magic',32)
  elif skin=='grove':
   tree(s,0,0,.9,True)
  else:
@@ -304,24 +291,7 @@ def guild_hall(index):
 
 def other_hall(index,skin):
  s=Sculpt();color=['amber','emerald','blue','cyan','violet'][index]
- if skin=='orbital':
-  s.cone((0,0,.25),2.3,2.3,.35,'orbitalBase',8)
-  s.box((0,0,1.2),(2.8,2.4,1.7),'orbitalPanel',.18)
-  for x in [-1.3,1.3]:
-   s.box((x,0,1.45),(.25,2.5,2.15),'orbitalEdge',.08)
-   s.box((x,-1.26,1.45),(.15,.06,1.75),'magic',.015)
-  s.box((0,-1.24,1.25),(1.8,.08,.6),'glass',.035)
-  s.box((0,-1.30,.95),(1.9,.04,.055),color,.01)
-  if index%2==0:
-   s.sphere((0,0,2.1),(1.45,1.25,.85),'glass',24,10)
-   s.torus((0,0,2.12),1.3,.08,'orbitalEdge',32)
-  else:
-   s.cone((0,0,2.7),.85,.65,1.7,'orbitalBase',8)
-   for z in [2,2.5,3]:s.torus((0,0,z),.84,.06,color,24)
-  if index==2:
-   s.cone((0,0,3.8),.08,.08,1.2,'orbitalEdge',8)
-   s.sphere((0,0,4.4),(.95,.65,.15),'white',24,8)
- elif skin=='grove':
+ if skin=='grove':
   s.cone((0,0,.25),2.3,2.2,.4,'groveWood',16)
   s.cone((0,0,1.7),1.25,1.05,2.7,'bark',14)
   for i in range(12):
@@ -473,31 +443,31 @@ def animate(rig):
     b.keyframe_insert(data_path='scale',frame=f,group=b.name)
  rig.animation_data.action=None
  for b in rig.pose.bones:b.rotation_euler=(0,0,0);b.location=(0,0,0);b.scale=(1,1,1)
-def hero(index,skin):
+def spirit(index):
+ # Grove's spirits; the other worlds' characters are TRELLIS.2 models (concept-art/<world>-yard).
  clear();s=Sculpt();color=['amber','emerald','blue','cyan','violet'][index]
- robot=skin=='orbital';spirit=skin=='grove';wraith=index==4 and not robot
- main='orbitalPanel' if robot else 'groveWood' if spirit else color
+ wraith=index==4;main='groveWood'
  # Boots, trousers, coat and shaped shoulder silhouette.
  for side,bone in [(1,'legL'),(-1,'legR')]:
-  s.box((side*.16,-.1,.13),(.24,.40,.22),'iron' if not spirit else 'bark',.07,bone=bone)
+  s.box((side*.16,-.1,.13),(.24,.40,.22),'bark',.07,bone=bone)
   s.cone((side*.16,0,.53),.115,.14,.67,main,12,bone=bone)
  s.cone((0,0,.91),.34,.27,.47,main,16,bone='body')
  s.sphere((0,0,1.25),(.36,.24,.38),main,20,12,bone='body')
  s.box((0,-.21,1.11),(.50,.10,.13),'gold',.03,bone='body')
  for side,bone in [(1,'armL'),(-1,'armR')]:
-  s.sphere((side*.36,0,1.38),(.20,.22,.18),'iron' if index==1 or robot else main,16,9,bone=bone)
+  s.sphere((side*.36,0,1.38),(.20,.22,.18),'iron' if index==1 else main,16,9,bone=bone)
   s.cone((side*.45,0,1.12),.13,.16,.48,main,12,bone=bone,rot=(0,-side*.18,0))
   s.torus((side*.5,0,.91),.12,.025,'gold',16,bone=bone)
-  s.sphere((side*.5,-.01,.86),(.11,.105,.14),'orbitalEdge' if robot else 'bark' if spirit else 'skin',14,8,bone=bone)
+  s.sphere((side*.5,-.01,.86),(.11,.105,.14),'bark',14,8,bone=bone)
  # Head, face and hood/helm
- if index==1 or robot:
-  s.sphere((0,0,1.72),(.245,.21,.29),'iron' if not robot else 'orbitalEdge',20,12,bone='head')
+ if index==1:
+  s.sphere((0,0,1.72),(.245,.21,.29),'iron',20,12,bone='head')
   s.box((0,-.201,1.77),(.34,.035,.063),'magic',.018,bone='head')
   s.box((0,-.21,1.59),(.09,.04,.18),'gold',.025,bone='head')
   for side in [-1,1]:s.box((side*.17,-.18,1.68),(.055,.08,.22),color,.018,bone='head')
  else:
-  s.sphere((0,.015,1.71),(.28,.26,.33),color if not spirit else 'leaf',20,12,bone='head')
-  s.sphere((0,-.162,1.7),(.185,.11,.225),'black' if wraith else 'skin' if not spirit else 'woodLight',18,12,bone='head')
+  s.sphere((0,.015,1.71),(.28,.26,.33),'leaf',20,12,bone='head')
+  s.sphere((0,-.162,1.7),(.185,.11,.225),'black' if wraith else 'woodLight',18,12,bone='head')
   if not wraith:
    for side in [-1,1]:
     s.sphere((side*.074,-.261,1.75),(.026,.018,.025),'black',10,6,bone='head')
@@ -510,7 +480,7 @@ def hero(index,skin):
  for i in range(9):
   a=(i-4)*.13;x=math.sin(a)*.43;y=.12+math.cos(a)*.12
   s.cone((x,y,.98),.11,.05,.9,main,6,bone='body',rot=(0,-a*.2,0))
- if index in [0,2,4] and not robot:
+ if index in [0,2,4]:
   s.cone((0,0,.58),.46,.29,.74,main,18,bone='body')
   for a in range(12):
    t=a*2*PI/12;s.box((.37*math.cos(t),.37*math.sin(t),.49),(.022,.022,.48),'gold',.008,bone='body')
@@ -519,35 +489,21 @@ def hero(index,skin):
   s.sphere((-.61,0,2.14),(.14,.14,.18),'window',16,10,bone='armR')
   s.torus((-.61,0,2.14),.20,.025,'gold',20,rot=(PI/2,0,0),bone='armR')
  elif index==1:
-  s.box((-.49,-.08,.55),(.12,.06,.8),'orbitalEdge',.025,bone='armR')
+  s.box((-.49,-.08,.55),(.12,.06,.8),'steel',.025,bone='armR')
   s.box((-.49,-.08,.97),(.42,.09,.065),'gold',.025,bone='armR')
  elif index==2:
   s.box((.5,-.12,.96),(.28,.18,.1),'blue',.035,bone='armL')
   s.box((.5,-.12,1.02),(.25,.16,.035),'cloth',.005,bone='armL')
  elif index==3:
-  s.cone((-.52,0,.56),.065,0,.6,'orbitalEdge',4,bone='armR')
+  s.cone((-.52,0,.56),.065,0,.6,'steel',4,bone='armR')
  s.torus((0,-.25,1.34),.075,.024,'gold',16,rot=(PI/2,0,0),bone='body')
  mesh=s.object('character');rig=armature();s.bind(mesh,rig);animate(rig)
- export(('robot_' if robot else 'spirit_')+str(index))
-def drone(index):
- clear();s=Sculpt();color=['amber','emerald','violet','blue'][index]
- s.sphere((0,0,1.05),(.36,.25,.3),'orbitalPanel',20,12,bone='body')
- s.sphere((0,-.17,1.28),(.3,.2,.23),color,18,10,bone='head')
- for side in [-1,1]:
-  s.sphere((side*.105,-.34,1.31),(.055,.032,.055),'window',12,8,bone='head')
-  s.sphere((side*.11,-.363,1.32),(.022,.014,.028),'black',10,6,bone='head')
-  s.torus((side*.42,0,1.18),.18,.055,'orbitalEdge',16,bone='armL' if side==1 else 'armR')
- s.cone((0,.26,.94),.16,0,.55,color,12,bone='body',rot=(PI/3,0,0))
- mesh=s.object('familiar');rig=armature();s.bind(mesh,rig);animate(rig)
- export('drone_'+str(index))
-for skin in ['guild','orbital','grove','professional']:
+ export('spirit_'+str(index))
+for skin in ['guild','grove','professional']:
  if ONLY is None or skin in ONLY:environment(skin)
 if ONLY is not None:
  print('Guild worlds rebuilt:',','.join(ONLY),flush=True);sys.exit(0)
-# Guild's heroes and familiars are TRELLIS.2 models (concept-art/guild-yard/world.json).
-for skin in ['orbital','grove']:
- for i in range(5):hero(i,skin)
-for i in range(4):drone(i)
-manifest={'version':1,'seed':714,'worlds':['guild','orbital','grove','professional'],'heroes':5,'familiars':4,'clips':['resting','working','waiting','done','arrival'],'up':'Y','units':'metres','source':'concept-art/guild-yard/build.py'}
+for i in range(5):spirit(i)
+manifest={'version':1,'seed':714,'worlds':['guild','grove','professional'],'heroes':5,'familiars':4,'clips':['resting','working','waiting','done','arrival'],'up':'Y','units':'metres','source':'concept-art/guild-yard/build.py'}
 (OUT/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n',encoding='utf-8')
 print('Guild art set complete',flush=True)

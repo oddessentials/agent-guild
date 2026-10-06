@@ -4,7 +4,7 @@
 
 Halls are live models, so they take Poly Haven material sets (colour, normal,
 roughness) at a size suited to their screen size, plus a small copy of the
-plates' sky for image-based lighting. Writes web/yard/assets/<world>/surfaces.json.
+plates' sky for image-based lighting (or the world's own `sky()` render). Writes web/yard/assets/<world>/surfaces.json.
 """
 import json, sys
 from pathlib import Path
@@ -41,7 +41,14 @@ def export(world):
             entry[key] = file
         manifest['surfaces'][name] = entry
     for theme, asset in env.SKIES.items():
-        sky = bpy.data.images.load(str(polyhaven.hdri(asset, '1k')))
+        # A world with no Poly Haven sky (Orbital) renders its own.
+        if hasattr(env, 'sky'):
+            path = ROOT / '.cache/yard-env' / f'{asset}.hdr'
+            path.parent.mkdir(parents=True, exist_ok=True)
+            env.sky(theme, path)
+        else:
+            path = polyhaven.hdri(asset, '1k')
+        sky = bpy.data.images.load(str(path))
         sky.scale(512, 256)
         sky.filepath_raw, sky.file_format = str(ROOT / 'web/yard/assets' / manifest['sky'][theme]), 'HDR'
         sky.save()

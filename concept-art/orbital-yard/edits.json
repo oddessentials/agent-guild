@@ -1,0 +1,85 @@
+{
+  "robot_anthropic": [
+    {
+      "input": "../orbital-skin/characters/anthropic/idle.png",
+      "seed": 11,
+      "prompt": "Show this exact same little robot full body from the tip of its hood to its feet: same burnt-orange wool hooded robe with gold rune embroidery on its hems, same brass body, hands and boots, standing facing the viewer in a relaxed pose with its arms held slightly away from its body and its hands open. Make every surface matte with no shine or reflections: the brass is matte brushed bronze, and the round face screen is a matte dark charcoal faceplate with two big bright amber eyes and a small smile. No glowing runes, glyphs or sparks floating around it. Evenly lit, on a plain flat light grey background. Same 3D toy style."
+    }
+  ],
+  "robot_openai": [
+    {
+      "input": "../orbital-skin/characters/openai/idle.png",
+      "seed": 11,
+      "prompt": "Show this exact same little armoured robot knight full body from the top of its helm to its armoured boots: same big round great helm with the emerald visor slit, arms folded across its chest, belt, tabard, cloak and the sword. Change its armour and helm from glossy black to matte mid gunmetal grey steel with no shine, make its emerald seams bold thick bright emerald-green bands along every plate edge, give its cloak a heavy dark charcoal wool with a broad bright emerald-green hem, and make the visor slit solid bright emerald green. Standing facing the viewer, evenly lit, on a plain flat light grey background. Same 3D toy style."
+    }
+  ],
+  "robot_google": [
+    {
+      "input": "../orbital-skin/characters/google/idle.png",
+      "seed": 11,
+      "prompt": "Show these exact same two little robots full body, standing side by side facing the viewer and holding hands between them: same faces with big blue eyes, same deep-blue hooded robes with silver star embroidery on the hems, same white robot bodies and boots. Make every surface matte: the white bodies and faces are smooth matte white porcelain with no pearl sheen or reflections, and the robes are matte deep-blue wool. Remove the glowing star floating between them and the small star brooches. Evenly lit, on a plain flat light grey background. Same 3D toy style."
+    }
+  ],
+  "robot_xai": [
+    {
+      "input": "../orbital-skin/characters/xai/idle.png",
+      "seed": 11,
+      "prompt": "Show this exact same little robot full body from the top of its helmet to its boots: same round helmet with the cyan visor band, high-collared long coat, hands in its coat pockets. Change the glossy black helmet, coat, armour and boots to matte dark charcoal grey with no shine or reflections, make the visor band solid bright cyan, and make the circuit-trace patterns on the coat bold thick bright cyan lines. Standing facing the viewer, evenly lit, on a plain flat light grey background. Same 3D toy style."
+    },
+    {
+      "seed": 5,
+      "prompt": "Make his coat, trousers, armour, boots and helmet a lighter matte slate grey, a clear mid grey, so the figure is not a near-black silhouette, and make the cyan visor band and the cyan circuit-trace lines on the coat thick, bold and bright. Keep his shape, hands in his pockets, pose, lighting, framing and the plain light grey background exactly the same."
+    }
+  ],
+  "robot_shell": [
+    {
+      "input": "../orbital-skin/characters/shell/idle.png",
+      "seed": 11,
+      "prompt": "Turn this translucent ghostly robot into a solid opaque little robot shown full body: the same hooded head and armoured body made of solid matte lavender-grey painted metal with deep violet panels, its hood a solid matte deep-violet fabric hood, its round face a matte black faceplate with a big bold thick bright violet '>' chevron shape on it, solid robot legs ending in sturdy violet boots standing on the ground, no smoke, no wisps, no mist, no glow, no transparency. Standing facing the viewer with its arms held slightly away from its body, evenly lit, on a plain flat light grey background. Same 3D toy style."
+    },
+    {
+      "seed": 7,
+      "prompt": "Make the hood a bright amethyst purple fabric, a true purple exactly halfway between blue and magenta, neither bluish nor pinkish, with a thin pale lilac trim along its edge, and make the boots and chest panels the same amethyst purple. Keep the chevron on the black faceplate exactly as it is, pointing to the right like a greater-than sign, only thicker and brighter. Keep the robot's body, pose, lighting, framing and the plain light grey background exactly the same."
+    }
+  ],
+  "drone_flame": [
+    {
+      "input": "../orbital-skin/familiars/flame.png",
+      "seed": 11,
+      "prompt": "Show this exact same round orange drone with the same big eye, antenna, side thruster pods and two rotors, but with all flames and fire removed: the thruster pods end in plain copper nozzles. Make the rotors still, with broad solid flat blades and no motion blur. Make every surface matte with no shine: matte orange enamel and matte grey metal, the eye a matte painted amber iris. Same pose and 3D toy style, evenly lit, on a plain flat light grey background."
+    }
+  ],
+  "drone_leaf": [
+    {
+      "input": "../orbital-skin/familiars/leaf.png",
+      "seed": 11,
+      "prompt": "Show this exact same round green drone with the same big eye, little arms, wheels and two leaf-bladed rotors, but with no sparkles or particles around it. Make the leaf blades solid and still. Make every surface matte with no shine: matte green enamel and matte grey metal, the eye a matte painted green iris. Same pose and 3D toy style, evenly lit, on a plain flat light grey background."
+    },
+    {
+      "seed": 5,
+      "prompt": "Paint a big friendly eye on the round lens: a large bright green iris with a black pupil and a small white highlight dot, painted flat and matte, filling most of the lens. Keep the body, rotors, arms, colours, pose, lighting, framing and the plain light grey background exactly the same."
+    }
+  ],
+  "drone_night": [
+    {
+      "input": "../orbital-skin/familiars/night.png",
+      "seed": 11,
+      "prompt": "Turn this translucent purple drone into a solid opaque one: the same round body, big eye, little arms and two curled antennae, made of smooth matte deep-violet enamel with matte grey metal parts, no transparency, no stars, no sparkles and no signal arcs around it, the eye a matte painted violet iris. Same pose and 3D toy style, evenly lit, on a plain flat light grey background."
+    },
+    {
+      "seed": 5,
+      "prompt": "Paint a big friendly eye on the round lens: a large bright violet iris with a black pupil and a small white highlight dot, painted flat and matte, filling most of the lens. Keep the body, rotors, arms, colours, pose, lighting, framing and the plain light grey background exactly the same."
+    }
+  ],
+  "drone_aether": [
+    {
+      "input": "../orbital-skin/familiars/aether.png",
+      "seed": 11,
+      "prompt": "Turn this glass-domed blue drone into a solid opaque one: the same body, big eye, little arms and legs, and the rotor on top, its dome made of smooth matte sky-blue enamel with no glass, no transparency and no stars inside, matte silver-grey metal parts, the rotor a still ring with broad solid flat blades and no motion blur, the eye a matte painted blue iris. Same pose and 3D toy style, evenly lit, on a plain flat light grey background."
+    },
+    {
+      "seed": 5,
+      "prompt": "Paint a big friendly eye on the round lens: a large bright blue iris with a black pupil and a small white highlight dot, painted flat and matte, filling most of the lens. Keep the body, rotors, arms, colours, pose, lighting, framing and the plain light grey background exactly the same."
+    }
+  ]
+}

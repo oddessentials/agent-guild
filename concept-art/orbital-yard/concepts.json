@@ -1,0 +1,47 @@
+{
+  "_style": "Highly detailed stylized 3D render of a single module of a friendly toy-like space station, premium animated film look, chunky rounded forms, matte off-white and light grey hull panels with crisp panel lines, matte gunmetal trim, a few small round portholes, the whole module and its low round docking base fully visible and centered, seen from an elevated three-quarter view from the front right, isolated on a pure flat light grey background, even soft studio lighting, every surface matte with no glossy reflections, no glass domes, no transparency, no glow effects, no ground, no space background, no stars, no people, no robots, no smoke, no fire, no text, no letters, no logos, no border.",
+  "hall_anthropic": {
+    "seed": 1101,
+    "prompt": "The sage's observatory module: a round two-tier hull with a tall pointed hood-shaped roof like a wizard's hood, made of bold burnt-orange hull plates edged in matte bronze, a big round porthole near the top, a wide arched airlock door with bronze trim, bold bronze rune-like grooves around the base ring, a small telescope on a side platform.",
+    "pick": 1101
+  },
+  "hall_openai": {
+    "seed": 1102,
+    "prompt": "The knight's hangar module: a squat heavily armoured hangar with a big round helmet-like dome roof and a wide horizontal slot window like a visor, matte gunmetal grey armour plates with thick bold emerald-green bands along every plate edge, a tall shield-shaped emerald-green hangar door in front, two short turret-like towers at its sides.",
+    "pick": 1102
+  },
+  "hall_google": {
+    "seed": 1103,
+    "prompt": "The twins' tower module: two identical slender round towers side by side joined by an enclosed bridge halfway up, each tower capped with a rounded deep-blue hood-shaped roof, white hull panels with bold deep-blue bands and big silver star shapes, a shared round radar dish on top of the bridge, a blue airlock door at the foot of each tower.",
+    "pick": 1104
+  },
+  "hall_xai": {
+    "seed": 1104,
+    "prompt": "The rogue's relay module: a sleek angular wedge-shaped hull of matte dark charcoal panels with bold thick bright cyan stripes tracing circuit paths across it, a tall thin antenna spire with crossbars rising from its back, a long horizontal cyan visor-like window band, a low sliding door in front.",
+    "pick": 1105
+  },
+  "hall_shell": {
+    "seed": 1105,
+    "prompt": "The terminal command module: a rounded hooded dome hull of matte lavender-grey panels under a deep-violet hood-shaped canopy, a big bold violet chevron-shaped doorway in front shaped like a '>' symbol, a small dish antenna and two short masts on top, a ring of violet panels around its base.",
+    "pick": 1105
+  },
+  "town_shuttle": {
+    "seed": 1111,
+    "prompt": "A small chubby toy-like space shuttle parked on four landing legs, rounded white hull with grey panels and a bold orange stripe, short stubby wings, a dark grey cockpit window band, two round engine nozzles at the back, fully visible on its own.",
+    "style": "_prop",
+    "pick": 1112
+  },
+  "town_dish": {
+    "seed": 1112,
+    "prompt": "A large communications dish antenna on a sturdy rotating gunmetal pedestal, a white parabolic dish with grey ribs and a central feed horn on three struts, tilted up toward the upper left, fully visible on its own.",
+    "style": "_prop",
+    "pick": 1112
+  },
+  "town_crane": {
+    "seed": 1114,
+    "prompt": "A station cargo crane: a chunky robotic arm with three white segments and gunmetal joints on a round grey base, its claw gripper resting low, fully visible on its own.",
+    "style": "_prop",
+    "pick": 1114
+  },
+  "_prop": "Highly detailed stylized 3D render of a single piece of equipment from a friendly toy-like space station, premium animated film look, chunky rounded forms, crisp panel lines, centered and fully visible, seen from an elevated three-quarter view from the front right, isolated on a pure flat light grey background, even soft studio lighting, every surface matte with no glossy reflections, no transparency, no glow effects, no ground, no space background, no stars, no people, no robots, no smoke, no fire, no text, no letters, no logos, no border."
+}

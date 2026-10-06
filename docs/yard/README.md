@@ -62,7 +62,7 @@ colours are fields of `WORLDS` in `web/yard/model.mjs`.
 | Skin | World | Session representation |
 | --- | --- | --- |
 | Guild | Stone courtyard, five distinct halls, bronze trim and warm windows | Five fantasy heroes with baby dragon and spirit familiars |
-| Orbital | Station deck, observatories, panels and illuminated rings | Five robot variants and helper drones |
+| Orbital | Station deck in orbit over a planet, with trusses out to solar wings, a docking hub and habitat modules; five provider modules | Five robots with helper drones |
 | Grove | Tree dwellings, stepping stones, mushrooms and planted borders | Five woodland spirits and small companions |
 | Professional | Office campus of glass and concrete round a paved plaza, with lawns, a pond and tree-lined avenues; five campus buildings | Simple session markers without character art |
 | Goblinville | Steam-powered town on stilts over a misty bog; five provider workshops on a plank deck | Five goblin-kin builders with creature familiars and clockwork shell helpers |
@@ -108,8 +108,7 @@ the regression tests do not establish a universal frame-rate guarantee.
 
 ## Art sources and rebuilding
 
-The Guild, Orbital, Grove and Professional halls, the Orbital and Grove
-characters and the drones were authored in
+The Guild, Grove and Professional halls and the Grove spirits were authored in
 [`concept-art/guild-yard/build.py`](../../concept-art/guild-yard/build.py)
 using Blender 5.2, with an editable `guild.blend` alongside it. Models use metres,
 glTF Y-up, named provider anchors and five animation clips: `resting`,
@@ -155,13 +154,18 @@ npm run test:yard
 `build.py -- --only guild` rebuilds one world, and `optimize:yard guild`
 optimizes only its model.
 
-Goblinville's and Gnomeland's halls, builders, familiars and helpers, and
-Guild's heroes and familiars, are textured models made from painted images
-with TRELLIS.2 in the local image studio, then rigged in Blender, by the
-shared pipeline in `concept-art/yard-models/`. Their surroundings are plates built the same way
-as Guild's, from `concept-art/guild-yard/env/<world>_env.py`. The steps and
-sources are in the [Goblinville](../../concept-art/goblinville-yard/ART.md)
-and [Gnomeland](../../concept-art/gnomeland-yard/ART.md) art notes, and for Guild
+Goblinville's and Gnomeland's halls, builders, familiars and helpers,
+Orbital's modules, robots and drones (also Guild's and Grove's shell
+helpers), and Guild's heroes and familiars, are textured models made from
+painted images with TRELLIS.2 in the local image studio, then rigged in
+Blender, by the shared pipeline in `concept-art/yard-models/`. Their
+surroundings are plates built the same way as Guild's, from
+`concept-art/guild-yard/env/<world>_env.py`; Orbital's station is modelled
+there, over a generated planet and nebula, and lit by a world shader in
+place of a Poly Haven sky. The steps and sources are in the
+[Goblinville](../../concept-art/goblinville-yard/ART.md),
+[Gnomeland](../../concept-art/gnomeland-yard/ART.md) and
+[Orbital](../../concept-art/orbital-yard/ART.md) art notes, and for Guild
 in the [art source notes](../../concept-art/guild-yard/ART.md). Plate
 rendering needs a Cycles-capable GPU and
 downloads its Poly Haven sources into `.cache/polyhaven`, pinned by the
@@ -206,7 +210,7 @@ They also cover overlapping New/Resume requests, duplicate submission across
 views, independent install requests and model recovery without retry loops.
 Asset tests verify the shipped GLBs contain anchors, skinning and clips.
 
-The release gate is 118 MiB packed. The yard worlds measured 116.3 MiB in the
+The release gate is 136 MiB packed. The yard worlds measured 134.9 MiB in the
 packed package. Run `npm pack` and
 `node tests/package/check-tarball.mjs <archive>` after asset changes. Pack on
 Linux/macOS for release: Windows npm archives do not preserve executable

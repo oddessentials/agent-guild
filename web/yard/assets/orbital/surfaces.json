@@ -1,0 +1,7 @@
+{
+ "sky": {
+  "light": "orbital/sky-light.hdr",
+  "dark": "orbital/sky-dark.hdr"
+ },
+ "surfaces": {}
+}
