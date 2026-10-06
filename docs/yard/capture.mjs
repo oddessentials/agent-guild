@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import { startFixture } from './fixture.mjs';
 import { openBrowser, pause } from './browser.mjs';
+import { WORLDS } from '../../web/yard/model.mjs';
 const fixture=await startFixture();const browser=await openBrowser();
 try{
  await browser.send('Page.addScriptToEvaluateOnNewDocument',{source:"localStorage.setItem('agentGuild.view','yard');localStorage.setItem('agentGuild.theme','dark');"});
@@ -12,7 +13,7 @@ try{
  await pause(300);
  await browser.shot('.cache/yard-inspector.png');
  if(process.argv.includes('--all')) {
-  for(const skin of ['guild','orbital','grove','professional'])for(const theme of ['dark','light']) {
+  for(const skin of Object.keys(WORLDS))for(const theme of ['dark','light']) {
    await browser.evaluate(`document.documentElement.dataset.skin=${JSON.stringify(skin)};document.documentElement.dataset.theme=${JSON.stringify(theme)}`);
    await browser.wait(`document.querySelector('#yard-stage').dataset.world===${JSON.stringify(skin)}`);
    await pause(700);

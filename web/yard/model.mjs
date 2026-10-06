@@ -1,10 +1,25 @@
 // Presentation only: never changes or infers manager state.
 export const PROVIDER_ORDER = ['anthropic', 'openai', 'google', 'xai', 'shell'];
+// Per world: its model, whether its surroundings are pre-rendered plates,
+// character and helper model prefixes (false draws simple markers and no
+// helpers), whether unplated halls take the shared stone/wood textures, and
+// the light colours each theme uses.
 export const WORLDS = {
-  guild: { title: 'The Guild Yard', subtitle: 'A place for every great endeavour', asset: 'guild', characters: true, plates: true },
-  orbital: { title: 'Orbital Station', subtitle: 'Your crew, at the edge of possibility', asset: 'orbital', characters: true },
-  grove: { title: 'The Living Grove', subtitle: 'Good work takes root here', asset: 'grove', characters: true },
-  professional: { title: 'Operations Campus', subtitle: 'A clear view of work in progress', asset: 'professional', characters: false },
+  guild: { title: 'The Guild Yard', subtitle: 'A place for every great endeavour', asset: 'guild', plates: true,
+    characters: 'hero_', helpers: { agent: 'familiar_', shell: 'drone_' },
+    hemi: 0xc4dced, sun: { light: 0xffe0ad, dark: 0xff9a5c } },
+  orbital: { title: 'Orbital Station', subtitle: 'Your crew, at the edge of possibility', asset: 'orbital',
+    characters: 'robot_', helpers: { agent: 'drone_', shell: 'drone_' },
+    hemi: 0xa7c9ff, sun: { light: 0xc5d8ff, dark: 0xc5d8ff } },
+  grove: { title: 'The Living Grove', subtitle: 'Good work takes root here', asset: 'grove', textures: true,
+    characters: 'spirit_', helpers: { agent: 'familiar_', shell: 'drone_' },
+    hemi: 0xccebd6, sun: { light: 0xffe0ad, dark: 0xffe0ad } },
+  professional: { title: 'Operations Campus', subtitle: 'A clear view of work in progress', asset: 'professional',
+    characters: false, helpers: false,
+    hemi: 0xc4dced, sun: { light: 0xffe0ad, dark: 0xffe0ad } },
+  goblinville: { title: 'Goblinville Works', subtitle: 'Steam up, and mind the boardwalks', asset: 'goblinville', plates: true,
+    characters: 'goblin_', helpers: { agent: 'goblin_familiar_', shell: 'goblin_helper_' },
+    hemi: 0xc9d6c8, sun: { light: 0xffe2b8, dark: 0xff8c50 } },
 };
 // One orthographic view shared by the live scene and the pre-rendered
 // environment plates, which only line up while these values agree.

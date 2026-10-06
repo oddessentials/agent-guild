@@ -1,0 +1,90 @@
+{
+  "builder_openai": [
+    {
+      "input": "../goblinville-skin/characters/openai/idle.png",
+      "seed": 11,
+      "prompt": "Show this exact same orc boilermaker, same face, tusks, topknot, braided beard, emerald goggles, blackened-steel armor with glowing emerald seams, gauntlets and fur-trimmed cape, standing full body facing the viewer in a relaxed A-pose with his arms held slightly away from his body, the head of his big steam forge hammer resting on the ground beside his right boot, evenly lit, on a plain flat light grey background. Same painterly style."
+    },
+    {
+      "seed": 3,
+      "prompt": "Change his armour from glossy black to matte dark gunmetal grey steel with clearly visible rivets, and replace his black fur cape with a short heavy dark olive-grey wool cloak with a simple hem. Keep his face, tusks, topknot, braided beard, emerald goggles, glowing emerald seams and gauges, belt, gauntlets, boots, hammer, pose, lighting, framing and the plain light grey background exactly the same."
+    }
+  ],
+  "builder_xai": [
+    {
+      "input": "../goblinville-skin/characters/xai/idle.png",
+      "seed": 11,
+      "prompt": "Show this exact same young goblin electrician, same face, ears, goggles, glowing cyan circuit coat, coil gauntlet and tool belt, standing full body facing the viewer in a relaxed A-pose with his arms held slightly away from his body, evenly lit, on a plain flat light grey background. Same painterly style."
+    }
+  ],
+  "hall_openai": [
+    {
+      "input": "raw/hall_openai-403.png",
+      "seed": 7,
+      "prompt": "Remove all smoke, steam and vapour from the image. Keep the building and everything on it exactly the same, same style, same framing, on a plain flat light grey background."
+    }
+  ],
+  "hall_google": [
+    {
+      "input": "raw/hall_google-403.png",
+      "seed": 7,
+      "prompt": "Remove all smoke, steam and vapour from the image. Keep the building and everything on it exactly the same, same style, same framing, on a plain flat light grey background."
+    }
+  ],
+  "hall_xai": [
+    {
+      "input": "raw/hall_xai-404.png",
+      "seed": 7,
+      "prompt": "Remove all smoke, steam and vapour from the image. Keep the building and everything on it exactly the same, same style, same framing, on a plain flat light grey background."
+    }
+  ],
+  "hall_shell": [
+    {
+      "input": "raw/hall_shell-405.png",
+      "seed": 7,
+      "prompt": "Remove all smoke, steam and vapour from the image. Keep the building and everything on it exactly the same, same style, same framing, on a plain flat light grey background."
+    }
+  ],
+  "crane": [
+    {
+      "input": "raw/crane-505.png",
+      "seed": 7,
+      "prompt": "Remove all smoke, steam and vapour from the image. Keep the building and everything on it exactly the same, same style, same framing, on a plain flat light grey background."
+    }
+  ],
+  "factory": [
+    {
+      "input": "raw/factory-506.png",
+      "seed": 7,
+      "prompt": "Remove all smoke, steam and vapour from the image. Keep the building and everything on it exactly the same, same style, same framing, on a plain flat light grey background."
+    }
+  ],
+  "town_house_a": [
+    {
+      "input": "raw/town_house_a-501.png",
+      "seed": 7,
+      "prompt": "Remove all smoke, steam and vapour from the image. Keep the building and everything on it exactly the same, same style, same framing, on a plain flat light grey background."
+    }
+  ],
+  "town_house_b": [
+    {
+      "input": "raw/town_house_b-502.png",
+      "seed": 7,
+      "prompt": "Remove all smoke, steam and vapour from the image. Keep the building and everything on it exactly the same, same style, same framing, on a plain flat light grey background."
+    }
+  ],
+  "town_house_c": [
+    {
+      "input": "raw/town_house_c-503.png",
+      "seed": 7,
+      "prompt": "Remove all smoke, steam and vapour from the image. Keep the building and everything on it exactly the same, same style, same framing, on a plain flat light grey background."
+    }
+  ],
+  "water_tower": [
+    {
+      "input": "raw/water_tower-505.png",
+      "seed": 7,
+      "prompt": "Remove all smoke, steam and vapour from the image. Keep the building and everything on it exactly the same, same style, same framing, on a plain flat light grey background."
+    }
+  ]
+}

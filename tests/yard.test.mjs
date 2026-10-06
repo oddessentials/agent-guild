@@ -42,7 +42,7 @@ test('view restores before paint, tolerates blocked storage, and defaults to Car
  const document={documentElement:{dataset:{}}};
  runInNewContext(source,{document,window:{matchMedia:()=>({matches:false})},localStorage:{getItem:()=>{throw new Error('blocked');}}});
  assert.equal(document.documentElement.dataset.view,'cards');
- for (const skin of ['gnomeland','goblinville']) {
+ for (const skin of ['gnomeland']) {
   const stored={ 'agentGuild.skin':skin, 'agentGuild.view':'yard' };
   const blocked={documentElement:{dataset:{}}};
   runInNewContext(source,{document:blocked,window:{matchMedia:()=>({matches:true})},localStorage:{getItem:key=>stored[key]??null,setItem:(key,value)=>{stored[key]=value;}}});
@@ -51,13 +51,13 @@ test('view restores before paint, tolerates blocked storage, and defaults to Car
   assert.equal(stored['agentGuild.view'],'yard',skin+' keeps the saved preference');
  }
 });
-test('only Gnomeland and Goblinville opt out of the yard, and every other skin has a world',()=>{
+test('only Gnomeland opts out of the yard, and every other skin has a world',()=>{
  const source=readFileSync(new URL('../web/theme.js',import.meta.url),'utf8');
  const window={matchMedia:()=>({matches:false})};
  runInNewContext(source,{document:{documentElement:{dataset:{}}},window,localStorage:{getItem:()=>null}});
  const ids=list=>JSON.parse(JSON.stringify(list));
  const blocked=ids(window.agentGuildSkins.filter(skin=>skin.yard===false).map(skin=>skin.id).sort());
- assert.deepEqual(blocked,['gnomeland','goblinville']);
+ assert.deepEqual(blocked,['gnomeland']);
  const allowed=ids(window.agentGuildSkins.filter(skin=>skin.yard!==false).map(skin=>skin.id).sort());
  assert.deepEqual(Object.keys(WORLDS).sort(),allowed);
 });
@@ -73,10 +73,16 @@ test('each skin has a distinct authored world with named provider anchors',()=>{
   for(const {id}of providers)assert.ok(asset.nodes.some(n=>n.name==='hall_'+id),skin+' '+id);
  }
  assert.equal(WORLDS.professional.characters,false);
+ assert.equal(WORLDS.professional.helpers,false);
 });
-test('the shipped characters and familiars have actual skinning and usable animation tracks',()=>{
- for(const prefix of ['hero_','robot_','spirit_','familiar_','drone_']){
-  for(let i=0;i<(prefix.includes('familiar')||prefix.includes('drone')?4:5);i++){
+test('the shipped characters and helpers have actual skinning and usable animation tracks',()=>{
+ const counts=new Map();
+ for(const world of Object.values(WORLDS)){
+  if(world.characters)counts.set(world.characters,5);
+  if(world.helpers)for(const prefix of Object.values(world.helpers))counts.set(prefix,4);
+ }
+ for(const [prefix,count] of counts){
+  for(let i=0;i<count;i++){
    const asset=glb(prefix+i);
    assert.ok(asset.skins?.length);
    for(const name of ['resting','working','waiting','done','arrival']){
@@ -119,7 +125,9 @@ test('plated worlds match the live camera, cover every view, and stay within bud
   assert.deepEqual(plates.camera,CAMERA,'plates were rendered for the current camera');
   assert.deepEqual(plates.sun,SUN,'plates were rendered for the current suns');
   assert.deepEqual(Object.keys(plates.themes).sort(),['dark','light']);
+  // The world model and the textures it references beside it.
   let bytes=statSync(new URL(world.asset+'.glb',assets)).size;
+  for(const image of glb(world.asset).images||[])if(image.uri)bytes+=statSync(new URL(image.uri,assets)).size;
   const extent=plateExtent();
   for(const [theme,layers] of Object.entries(plates.themes)){
    for(const layer of layers)for(const tile of layer.tiles){

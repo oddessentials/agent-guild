@@ -128,7 +128,7 @@ The first Claude Code usage meter may ask for access to the
 * Resume a tool's earlier sessions with **Existing…**
 * GitHub issues, pull requests, workflow runs, branches and cloning
 * Shared notes, a news feed, six skins, light and dark mode
-* A Yard view of the same providers and sessions for Guild, Orbital, Grove, and Professional. Gnomeland and Goblinville stay on Cards until they have worlds ([the yard](docs/yard/README.md))
+* A Yard view of the same providers and sessions for Guild, Orbital, Grove, Professional, and Goblinville. Gnomeland stays on Cards until it has a world ([the yard](docs/yard/README.md))
 * tmux and herdr sessions that keep running when the manager stops
 
 <img src="docs/images/workspace.webp" alt="Two terminals side by side with the GitHub panel showing the workflow runs of the focused terminal's repository">

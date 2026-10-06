@@ -98,7 +98,7 @@ export class YardRenderer {
       loaded=await new T.GLTFLoader(this.loadingManager).loadAsync(new URL(skin+'.glb',ASSETS).href);
       if(this.disposed||request!==this.worldRequest){disposeWorld(loaded.scene);return;}
       if(WORLDS[skin].plates)await Promise.all([this.surfaceWorld(loaded.scene,skin),this.plateWorld(loaded.scene,skin)]);
-      else await this.textureWorld(loaded.scene, skin);
+      else if(WORLDS[skin].textures)await this.textureWorld(loaded.scene);
     } catch(err) {
       disposeWorld(loaded?.scene);
       if(!this.disposed&&request===this.worldRequest)throw err;
@@ -119,8 +119,7 @@ export class YardRenderer {
     this.update(this.providers,this.sessions);
     this.dirty=true;this.drawOnce();
   }
-  async textureWorld(world,skin) {
-    if(skin!=='guild'&&skin!=='grove')return;
+  async textureWorld(world) {
     const loader=new T.TextureLoader(this.loadingManager);
     const results=await Promise.allSettled(['stone','wood'].map(async name=>{
       const texture=await loader.loadAsync(new URL(name+'.webp',ASSETS).href);
@@ -258,22 +257,22 @@ export class YardRenderer {
   light(skin,theme) {
     this.theme=theme;
     const light=theme==='light';
-    const plated=Boolean(WORLDS[skin]?.plates),key=themeKey(theme);
+    const plated=Boolean(WORLDS[skin].plates),key=themeKey(theme);
     this.world?.traverse(node=>{
-      // Lit windows and magic read as glow at night, not as paint by day.
+      // Lit windows, magic and baked glow maps read as glow at night, not as paint by day.
       for(const m of (Array.isArray(node.material)?node.material:node.material?[node.material]:[]))
-        if(m.name==='window'||m.name==='magic')m.emissiveIntensity=light?.35:1.4;
+        if(m.name==='window'||m.name==='magic'||m.emissiveMap)m.emissiveIntensity=light?.35:1.4;
     });
     // Plated worlds use the sun, sky and plates their theme was rendered with.
     this.sun.position.set(...(plated?SUN[key]:SUN.light));
     this.scene.environment=this.world?.userData.environments?.[key]||null;
     if(this.world&&this.skin===skin)this.showPlates(key);
     this.renderer.toneMappingExposure=light?1.65:1.12;
-    this.hemi.color.set(skin==='grove'?0xccebd6:skin==='orbital'?0xa7c9ff:0xc4dced);
-    this.hemi.intensity=(light?3.2:1.8)*(WORLDS[skin]?.plates?.35:1);
+    this.hemi.color.set(WORLDS[skin].hemi);
+    this.hemi.intensity=(light?3.2:1.8)*(plated?.35:1);
     // Blender and three.js place an equirectangular sky half a turn apart.
     this.scene.environmentRotation.y=Math.PI;this.scene.environmentIntensity=light?1.25:.7;
-    this.sun.color.set(plated&&!light?0xff9a5c:skin==='orbital'?0xc5d8ff:0xffe0ad);
+    this.sun.color.set(WORLDS[skin].sun[key]);
     this.sun.intensity=light?4.0:plated?3.2:2.7;
     this.dirty=true;
   }
@@ -395,11 +394,11 @@ export class YardRenderer {
   async loadUnit(unit,session) {
     if(unit.loaded||unit.loading)return;
     const generation=this.request;
-    if(this.skin==='professional') {
+    const prefix=WORLDS[this.skin].characters;
+    if(!prefix) {
       const material=new T.MeshStandardMaterial({color:session.provider.color||0x70868e,roughness:.5});
       const mesh=new T.Mesh(new T.BoxGeometry(.45,.65,.45),material);mesh.position.y=.33;mesh.castShadow=true;unit.root.add(mesh);unit.token=mesh;unit.loaded=true;return;
     }
-    const prefix=this.skin==='orbital'?'robot_':this.skin==='grove'?'spirit_':'hero_';
     const index=Math.max(0,PROVIDER_ORDER.indexOf(session.provider.id));
     unit.loading=true;
     try {
@@ -441,12 +440,13 @@ export class YardRenderer {
     const rev=++unit.revision,generation=this.request;
     for(const helper of unit.helpers){unit.root.remove(helper.model);helper.mixer?.stopAllAction();helper.mixer?.uncacheRoot(helper.model);disposeSkeletons(helper.model);}
     unit.helpers=[];
-    if(this.skin==='professional')return;
+    const kinds=WORLDS[this.skin].helpers;
+    if(!kinds)return;
     // The full helper count and all helper details remain in the canonical inspector.
     // Small squads preserve readable character silhouettes at the overview scale.
     await Promise.all(agents.slice(0,6).map(async(agent,i)=>{
       try {
-        const asset=await this.asset((this.skin==='orbital'||agent.shell?'drone_':'familiar_')+(hash(agent.name||agent.id)%4));
+        const asset=await this.asset((agent.shell?kinds.shell:kinds.agent)+(hash(agent.name||agent.id)%4));
         if(this.disposed||generation!==this.request||rev!==unit.revision||!unit.root.parent)return;
         const model=T.cloneSkeleton(asset.scene);
         const angle=(i/Math.min(agents.length,6))*Math.PI*2;

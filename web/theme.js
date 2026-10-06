@@ -11,7 +11,7 @@
     { id: 'grove', name: 'Grove' },
     // yard: false keeps Cards on screen until that skin has a world in web/yard/model.mjs.
     { id: 'gnomeland', name: 'Gnomeland', yard: false },
-    { id: 'goblinville', name: 'Goblinville', yard: false },
+    { id: 'goblinville', name: 'Goblinville' },
   ];
   window.agentGuildSkins = skins;
 
