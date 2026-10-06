@@ -78,25 +78,6 @@ rendered from four sides (2026-10-06):
 | Grove water spirit, translucent (1024 voxels, with its mask) | Shattered into faceted shards; the lily pad breaks into fragments and the koi is lost. Needs an opaque restage, as Gnomeland's wraith had. |
 | Grove moss deer (1024 voxels, with its mask) | Whole: the moss reads as a clumpy surface, and antlers, ferns and mushrooms hold. Usable as it is. |
 
-## Generated image provenance
-
-Mode: built-in `image_gen` generation. The asset was generated anew; no
-external reference artwork was supplied. The original PNG file is
-preserved. ImageMagick converts it to the shipped WebP format.
-
-| Source | Runtime asset | Purpose |
-| --- | --- | --- |
-| `backdrop-source.png` | `backdrop.webp` | Quiet distant forest and mountain atmosphere behind the 3D court |
-
-### Backdrop prompt brief
-
-Wide 16:9 premium fantasy matte painting of distant forested mountains
-under a midnight teal sky with moonlit clouds. Keep the horizon low, with
-pine silhouettes at the sides, warm haze and a quiet center for a 3D
-foreground. No foreground buildings, characters, text, logos or UI. The
-image provides depth and atmosphere behind an interactive miniature RTS
-base; it must not contain competing focal subjects.
-
 ## Guild environment plates
 
 `env/guild_env.py` assembles the lakeside estate in Blender and

@@ -115,8 +115,8 @@ glTF Y-up, named provider anchors and five animation clips: `resting`,
 `working`, `waiting`, `done` and `arrival`. Arrival is available in the art
 set; live sessions currently enter in their reported working/resting pose.
 
-The raster backdrop was generated with the built-in image generation tool. Originals and the full prompt briefs are
-recorded in the [art source notes](../../concept-art/guild-yard/ART.md).
+The [art source notes](../../concept-art/guild-yard/ART.md) record how each
+model and plate was made.
 Guild's and Professional's surroundings are pre-rendered environment plates
 (for Guild a lakeside meadow, orchard and forested hills; for Professional
 an office campus with lawns, a pond and avenues) built in Blender from
