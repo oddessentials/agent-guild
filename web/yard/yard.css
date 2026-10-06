@@ -12,6 +12,9 @@
 #yard { --yard-line:color-mix(in srgb,var(--gold) 27%, transparent); display:grid; grid-template-columns:minmax(0,1fr) 334px; min-height:650px; height:calc(100dvh - var(--topbar-h,60px) - 75px); margin:0; background:var(--bg); }
 .yard-main { min-width:0; min-height:0; display:flex; flex-direction:column; position:relative; isolation:isolate; }
 .yard-heading { display:flex; align-items:center; justify-content:space-between; gap:20px; padding:24px 28px 34px; position:absolute; inset:0 0 auto; z-index:2; pointer-events:none; background:linear-gradient(180deg,color-mix(in srgb,var(--bg) 78%,transparent),transparent); }
+/* A soft scrim keeps the title block readable over busy light plates. */
+.yard-heading > div:first-child { position:relative; isolation:isolate; }
+.yard-heading > div:first-child::before { content:""; position:absolute; inset:-12px -22px -14px; z-index:-1; border-radius:28px; background:color-mix(in srgb,var(--bg) 72%,transparent); filter:blur(12px); }
 .yard-eyebrow { margin:0 0 6px; font-size:9px; font-weight:650; letter-spacing:.22em; color:var(--gold); }
 #yard-title { font-size:clamp(22px,2.2vw,34px); letter-spacing:.015em; text-shadow:0 2px 14px var(--bg); }
 #yard-subtitle { margin:6px 0 0; font-size:12px; color:var(--muted); }
@@ -32,7 +35,7 @@
 .yard-label[data-status="locked"] { border-style:dashed; }
 .yard-camera { position:absolute; right:18px; bottom:48px; z-index:2; display:flex; gap:5px; }
 .yard-camera .btn { min-height:30px; padding:5px 10px; font-size:11px; background:var(--surface); }
-#yard-help { position:absolute; bottom:12px; left:24px; right:18px; margin:0; font-size:10px; color:var(--muted); text-align:center; pointer-events:none; }
+#yard-help { position:absolute; bottom:10px; left:50%; transform:translateX(-50%); width:max-content; max-width:calc(100% - 36px); margin:0; padding:4px 12px; border-radius:30px; font-size:10px; color:var(--muted); text-align:center; pointer-events:none; background:color-mix(in srgb,var(--surface) 80%,transparent); }
 .yard-loading { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); padding:18px 26px; color:var(--text); border:1px solid var(--yard-line); background:var(--surface); z-index:4; border-radius:var(--radius); }
 .yard-failure { position:absolute; top:40%; left:50%; transform:translate(-50%,-50%); max-width:380px; width:85%; padding:24px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); z-index:4; }
 .yard-failure p { color:var(--muted); line-height:1.5; font-size:13px; }
@@ -91,7 +94,7 @@
   :root[data-view="yard"] #app > .launcher { padding:10px 14px; }
   :root[data-view="yard"] #launch-heading { display:none; }
   .yard-camera { right:12px; bottom:56px; }
-  #yard-help { left:12px; font-size:9px; }
+  #yard-help { font-size:9px; }
 }
 @media(prefers-reduced-motion:reduce) {
   #yard *,#yard *::before,#yard *::after { animation:none!important; transition:none!important; scroll-behavior:auto!important; }
