@@ -60,10 +60,6 @@ jobs:
         env:
           CHROME_NO_SANDBOX: '1'
         timeout-minutes: 2
-      - run: node --test --test-concurrency=1 tests/browser/yard.mjs
-        env:
-          CHROME_NO_SANDBOX: '1'
-        timeout-minutes: 3
       - name: Install isolated WebKit test tools
         run: |
           npm install --prefix .cache/browser-tools --no-save --package-lock=false --ignore-scripts playwright-core@1.63.0

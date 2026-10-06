@@ -198,12 +198,13 @@ It never starts coding tools, accesses personal accounts, clones a repository
 or stops a real manager. Browser captures and test profiles live in ignored
 `.cache/` directories. Set `CHROME_PATH` if Chrome/Edge is not in a standard
 location. The yard browser check skips when no browser binary is available.
-`npm test` runs the asset and placement checks. CI runs the browser check once,
-on Linux, with the other browser checks.
+`npm test` runs the asset and placement checks, in CI too. CI does not run
+the browser check: without a GPU it renders every frame in software, which
+makes it too slow to run there, so run it locally before pushing.
 Set `CHROME_NO_SANDBOX=1` in a container that cannot use Chrome's sandbox.
-CI permits [Chromium's software WebGL fallback](https://chromium.googlesource.com/chromium/src/+/main/docs/gpu/swiftshader.md)
-only in these disposable fixture profiles. Set `YARD_SOFTWARE_GL=1` to force
-that path locally; this never changes the user's normal browser settings.
+Set `YARD_SOFTWARE_GL=1` to use [Chromium's software WebGL fallback](https://chromium.googlesource.com/chromium/src/+/main/docs/gpu/swiftshader.md),
+only in these disposable fixture profiles; this never changes the user's
+normal browser settings.
 
 The Yard tests cover request parity between Cards and Yard, terminal/socket
 preservation, accounts/usage, benchmarks, history including missing folders

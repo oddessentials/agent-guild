@@ -39,7 +39,7 @@ export CHROME_NO_SANDBOX=1
 node tests/browser/terminal-copy.mjs
 node tests/browser/terminal-controls.mjs
 node tests/browser/layout.mjs
-node --test --test-concurrency=1 tests/browser/yard.mjs
+node --test --test-concurrency=1 tests/browser/yard.mjs   # local only: too slow without a GPU for CI
 node tests/browser/github.mjs
 node tests/browser/github-branches.mjs
 node tests/browser/environment-scopes.mjs
