@@ -16,7 +16,7 @@ from camera import ROOT
 # plates.py and preview() call render_settings through this module.
 from common import (COURTYARD_RADIUS, to_ground, to_frame, smooth, live_distance, tall_clear,
                     line_distance, surface, painted, mix, textured, source, scatter, variant_sets,
-                    reeds, lights as sky_lights, lantern_posts, render_settings, preview)
+                    reeds, lights as sky_lights, lantern_posts, slab, building, render_settings, preview)
 
 TOWN = ROOT / '.cache/goblinville-yard/models'
 # Sky per theme: a misty morning for light, an industrial sunset for dark.
@@ -196,39 +196,6 @@ def brass_material():
     links.new(rough.outputs['Result'], bsdf.inputs['Roughness'])
     return m
 
-def lit_windows(material, theme):
-    """At dusk, warm window glass in a generated texture glows: bright, saturated,
-    orange-to-yellow texels become emission."""
-    if theme != 'dark' or not material or not material.node_tree:
-        return
-    nodes, links = material.node_tree.nodes, material.node_tree.links
-    bsdf = next((n for n in nodes if n.type == 'BSDF_PRINCIPLED'), None)
-    base = bsdf and bsdf.inputs['Base Color'].links
-    if not base:
-        return
-    color = base[0].from_socket
-    hsv = nodes.new('ShaderNodeSeparateColor')
-    hsv.mode = 'HSV'
-    links.new(color, hsv.inputs['Color'])
-    def band(socket, lo, hi):
-        r = nodes.new('ShaderNodeMapRange')
-        r.inputs['From Min'].default_value, r.inputs['From Max'].default_value = lo, hi
-        links.new(socket, r.inputs['Value'])
-        return r.outputs['Result']
-    def times(a, b):
-        n = nodes.new('ShaderNodeMath')
-        n.operation = 'MULTIPLY'
-        links.new(a, n.inputs[0]); links.new(b, n.inputs[1])
-        return n.outputs['Value']
-    warm = band(hsv.outputs['Red'], .17, .06)  # 0 at yellow-green, 1 at orange
-    glow = times(times(band(hsv.outputs['Blue'], .55, .8), band(hsv.outputs['Green'], .35, .6)), warm)
-    links.new(color, bsdf.inputs['Emission Color'])
-    strength = nodes.new('ShaderNodeMath')
-    strength.operation = 'MULTIPLY'
-    strength.inputs[1].default_value = 18
-    links.new(glow, strength.inputs[0])
-    links.new(strength.outputs['Value'], bsdf.inputs['Emission Strength'])
-
 # --- Geometry ---------------------------------------------------------------
 def terrain():
     import bpy, bmesh
@@ -267,25 +234,6 @@ def water(theme):
     obj = bpy.data.objects.new('water', mesh)
     obj.data.materials.append(water_material(theme))
     bpy.context.scene.collection.objects.link(obj)
-
-def slab(name, verts2d, top, thick, material):
-    """A flat prism from an outline, its top at `top`."""
-    import bpy, bmesh
-    bm = bmesh.new()
-    lower = [bm.verts.new((x, y, top - thick)) for x, y in verts2d]
-    upper = [bm.verts.new((x, y, top)) for x, y in verts2d]
-    bm.faces.new(upper)
-    bm.faces.new(list(reversed(lower)))
-    n = len(verts2d)
-    for i in range(n):
-        bm.faces.new((lower[i], lower[(i + 1) % n], upper[(i + 1) % n], upper[i]))
-    mesh = bpy.data.meshes.new(name)
-    bm.to_mesh(mesh)
-    bm.free()
-    obj = bpy.data.objects.new(name, mesh)
-    obj.data.materials.append(material)
-    bpy.context.scene.collection.objects.link(obj)
-    return obj
 
 def deck_outline(step=.5):
     """The deck's edge: the courtyard circle joined to the rectangle in front."""
@@ -440,26 +388,13 @@ def walk_segments():
 def town(theme):
     """The town's TRELLIS.2 buildings, stood in the water on their own stilts."""
     import bpy
-    from mathutils import Vector
     loaded = {}
     for name, (a, b), tall, turn in BUILDINGS:
         if not tall_clear(a, b, tall):
             print('YARD_ENV skipped', name, (a, b), flush=True)
             continue
         if name not in loaded:
-            before = set(bpy.data.objects)
-            bpy.ops.import_scene.gltf(filepath=str(TOWN / f'{name}.glb'))
-            parts = [o for o in bpy.data.objects if o not in before and o.type == 'MESH']
-            coll = bpy.data.collections.new(name)
-            for o in parts:
-                for c in o.users_collection:
-                    c.objects.unlink(o)
-                coll.objects.link(o)
-                for m in o.data.materials:
-                    lit_windows(m, theme)
-            lo = min((o.matrix_world @ Vector(c)).z for o in parts for c in o.bound_box)
-            hi = max((o.matrix_world @ Vector(c)).z for o in parts for c in o.bound_box)
-            loaded[name] = (coll, lo, hi - lo)
+            loaded[name] = building(TOWN / f'{name}.glb', theme)
         coll, lo, size = loaded[name]
         x, y = to_ground(a, b)
         scale = tall / size

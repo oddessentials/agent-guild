@@ -42,24 +42,13 @@ test('view restores before paint, tolerates blocked storage, and defaults to Car
  const document={documentElement:{dataset:{}}};
  runInNewContext(source,{document,window:{matchMedia:()=>({matches:false})},localStorage:{getItem:()=>{throw new Error('blocked');}}});
  assert.equal(document.documentElement.dataset.view,'cards');
- for (const skin of ['gnomeland']) {
-  const stored={ 'agentGuild.skin':skin, 'agentGuild.view':'yard' };
-  const blocked={documentElement:{dataset:{}}};
-  runInNewContext(source,{document:blocked,window:{matchMedia:()=>({matches:true})},localStorage:{getItem:key=>stored[key]??null,setItem:(key,value)=>{stored[key]=value;}}});
-  assert.equal(blocked.documentElement.dataset.view,'cards',skin);
-  assert.equal(blocked.documentElement.dataset.skin,skin);
-  assert.equal(stored['agentGuild.view'],'yard',skin+' keeps the saved preference');
- }
 });
-test('only Gnomeland opts out of the yard, and every other skin has a world',()=>{
+test('every skin has a yard world',()=>{
  const source=readFileSync(new URL('../web/theme.js',import.meta.url),'utf8');
  const window={matchMedia:()=>({matches:false})};
  runInNewContext(source,{document:{documentElement:{dataset:{}}},window,localStorage:{getItem:()=>null}});
- const ids=list=>JSON.parse(JSON.stringify(list));
- const blocked=ids(window.agentGuildSkins.filter(skin=>skin.yard===false).map(skin=>skin.id).sort());
- assert.deepEqual(blocked,['gnomeland']);
- const allowed=ids(window.agentGuildSkins.filter(skin=>skin.yard!==false).map(skin=>skin.id).sort());
- assert.deepEqual(Object.keys(WORLDS).sort(),allowed);
+ const skins=JSON.parse(JSON.stringify(window.agentGuildSkins.map(skin=>skin.id).sort()));
+ assert.deepEqual(Object.keys(WORLDS).sort(),skins);
 });
 function glb(name){
  const bytes=readFileSync(new URL('../web/yard/assets/'+name+'.glb',import.meta.url));

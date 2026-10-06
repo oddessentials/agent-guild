@@ -55,12 +55,9 @@ trigger another attempt. Successful assets and in-flight loads stay shared.
 
 ## Worlds and animation
 
-One renderer and interaction system serves five separately authored worlds.
-Each world's model, characters, helpers, plates and light colours are fields
-of `WORLDS` in `web/yard/model.mjs`. Gnomeland stays on Cards until it has a
-world. The Yard button remains in the bar for that skin and is disabled. A
-saved Yard preference is left as it is, so choosing another skin again shows
-the yard.
+One renderer and interaction system serves six separately authored worlds,
+one for each skin. Each world's model, characters, helpers, plates and light
+colours are fields of `WORLDS` in `web/yard/model.mjs`.
 
 | Skin | World | Session representation |
 | --- | --- | --- |
@@ -69,7 +66,7 @@ the yard.
 | Grove | Tree dwellings, stepping stones, mushrooms and planted borders | Five woodland spirits and small companions |
 | Professional | Restrained architectural campus | Simple session markers without character art |
 | Goblinville | Steam-powered town on stilts over a misty bog; five provider workshops on a plank deck | Five goblin-kin builders with creature familiars and clockwork shell helpers |
-| Gnomeland | Cards only, until it has a world | |
+| Gnomeland | Timber-and-stone mountain village on a cobbled square, with a lake, a waterfall and mountains beyond; five provider workshops | Five gnome builders with clockwork and creature familiars and clockwork shell helpers |
 
 Running sessions with active output use the `working` clip. Quiet running
 sessions use `resting`; they still say **Running**. Exited sessions use a
@@ -158,11 +155,14 @@ npm run test:yard
 `build.py -- --only guild` rebuilds one world, and `optimize:yard guild`
 optimizes only its model.
 
-Goblinville's halls, builders, familiars and helpers are textured models
-made from painted images with TRELLIS.2 in the local image studio, then
-rigged in Blender; its surroundings are plates built the same way as
-Guild's, from `concept-art/guild-yard/env/goblinville_env.py`. The steps and
-sources are in the [Goblinville art notes](../../concept-art/goblinville-yard/ART.md). Plate rendering needs a Cycles-capable GPU and
+Goblinville's and Gnomeland's halls, builders, familiars and helpers are
+textured models made from painted images with TRELLIS.2 in the local image
+studio, then rigged in Blender, by the shared pipeline in
+`concept-art/yard-models/`. Their surroundings are plates built the same way
+as Guild's, from `concept-art/guild-yard/env/<world>_env.py`. The steps and
+sources are in the [Goblinville](../../concept-art/goblinville-yard/ART.md)
+and [Gnomeland](../../concept-art/gnomeland-yard/ART.md) art notes. Plate
+rendering needs a Cycles-capable GPU and
 downloads its Poly Haven sources into `.cache/polyhaven`, pinned by the
 checksums in `env/polyhaven.lock.json`. Change the camera in `model.mjs`
 only together with a plate re-render.
@@ -205,7 +205,7 @@ They also cover overlapping New/Resume requests, duplicate submission across
 views, independent install requests and model recovery without retry loops.
 Asset tests verify the shipped GLBs contain anchors, skinning and clips.
 
-The release gate is 77 MiB packed. The yard worlds measured 74.0 MiB in the
+The release gate is 105 MiB packed. The yard worlds measured 102.0 MiB in the
 packed package. Run `npm pack` and
 `node tests/package/check-tarball.mjs <archive>` after asset changes. Pack on
 Linux/macOS for release: Windows npm archives do not preserve executable

@@ -394,23 +394,12 @@ test('Cards and Yard use the same actions, accounts, dialogs and terminal',optio
   assert.deepEqual(b.errors,[]);
 });
 
-test('a skin without a yard shows Cards and keeps the saved Yard preference',options,async t=>{
+test('the Yard follows the theme and its view switch stays clear of the bar controls',options,async t=>{
   const {b}=await setup(t,{yard:true});await ready(b);
   const choose=async selector=>{
     await b.click('#settings');await b.click(selector);
     await b.evaluate("document.querySelector('#settings-menu').hidePopover()");
   };
-  const cardsOnly=async skin=>{
-    await choose(`input[name=skin][value=${skin}]`);
-    await b.wait(`document.documentElement.dataset.skin===${q(skin)} && document.documentElement.dataset.view==='cards'`);
-    assert.equal(await b.evaluate("document.querySelector('#providers').hidden"),false);
-    assert.equal(await b.evaluate("document.querySelector('#yard').hidden"),true);
-    assert.equal(await b.evaluate("document.querySelector('#view-yard').getAttribute('aria-disabled')"),'true');
-    assert.equal(await b.evaluate("localStorage.getItem('agentGuild.view')"),'yard');
-  };
-  await cardsOnly('gnomeland');
-  await choose('input[name=skin][value=guild]');
-  await ready(b);
   await b.wait("document.querySelector('#yard-stage').dataset.world==='guild' && document.documentElement.dataset.view==='yard'");
   for (const theme of ['light','dark']) {
     await choose(`input[name=theme][value=${theme}]`);
@@ -446,7 +435,7 @@ test('Yard retains every session through skins, reduced motion, mobile and recon
   await b.wait("document.querySelectorAll('.yard-row[data-key^=\"session:\"]').length===40");
   const last=[...f.data.values()].at(-1);await b.click(session(last.id));
   await b.click('#yard-focus');
-  for(const skin of ['orbital','grove','professional','goblinville','guild']){
+  for(const skin of ['orbital','grove','professional','goblinville','gnomeland','guild']){
     await b.click('#settings');await b.click(`input[name=skin][value=${skin}]`);
     await b.evaluate("document.querySelector('#settings-menu').hidePopover()");
     await b.wait(`document.documentElement.dataset.skin===${q(skin)}`);

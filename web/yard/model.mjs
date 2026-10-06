@@ -20,6 +20,9 @@ export const WORLDS = {
   goblinville: { title: 'Goblinville Works', subtitle: 'Steam up, and mind the boardwalks', asset: 'goblinville', plates: true,
     characters: 'goblin_', helpers: { agent: 'goblin_familiar_', shell: 'goblin_helper_' },
     hemi: 0xc9d6c8, sun: { light: 0xffe2b8, dark: 0xff8c50 } },
+  gnomeland: { title: 'Gnomeland Village', subtitle: 'Measure twice, enchant once', asset: 'gnomeland', plates: true,
+    characters: 'gnome_', helpers: { agent: 'gnome_familiar_', shell: 'gnome_helper_' },
+    hemi: 0xcbd9d6, sun: { light: 0xffe4bf, dark: 0xff8d52 } },
 };
 // One orthographic view shared by the live scene and the pre-rendered
 // environment plates, which only line up while these values agree.

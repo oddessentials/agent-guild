@@ -16,7 +16,7 @@ OUTPUTS = Path('D:/local-image-studio/outputs')
 # A clear 16 GB card takes about three minutes; far longer means it is swapping.
 TIMEOUT = 600
 
-def graph(image, seed, faces, texture, mask=None, resolution=1536, background='#000000', remesh=768):
+def graph(image, seed, faces, texture, mask=None, resolution=1536, background='#000000', remesh=768, tag='yard-models'):
     g = {}
     def node(cls, **inputs):
         key = str(len(g) + 1)
@@ -73,7 +73,7 @@ def graph(image, seed, faces, texture, mask=None, resolution=1536, background='#
     final = node('ApplyTextureToMesh', mesh=out(low), base_color=out(baked, 0), metallic=out(baked, 1), roughness=out(baked, 2),
                  occlusion=out(ao), normal_map=out(normal))
     final = node('MeshSmoothNormals', mesh=out(final), crease_angle=180)
-    prefix = 'goblinville-yard/' + uuid.uuid4().hex[:8]
+    prefix = tag + '/' + uuid.uuid4().hex[:8]
     node('SaveGLB', mesh=out(final), filename_prefix=prefix)
     return g, prefix
 
@@ -106,11 +106,13 @@ def cancel(prompt_id):
     except OSError:
         pass
 
-def run(image, out, seed=42, faces=60000, texture=2048, mask=None, resolution=1536, background='#000000', remesh=768):
+def run(image, out, seed=42, faces=60000, texture=2048, mask=None, resolution=1536, background='#000000', remesh=768,
+        tag='yard-models'):
+    """`tag` names the ComfyUI output folder and client."""
     free()
     name = upload(Path(image))
-    g, prefix = graph(name, seed, faces, texture, mask and upload(Path(mask)), resolution, background, remesh)
-    body = json.dumps({'prompt': g, 'client_id': 'goblinville-yard'}).encode()
+    g, prefix = graph(name, seed, faces, texture, mask and upload(Path(mask)), resolution, background, remesh, tag)
+    body = json.dumps({'prompt': g, 'client_id': tag}).encode()
     req = urllib.request.Request(HOST + '/prompt', data=body, headers={'Content-Type': 'application/json'})
     try:
         with urllib.request.urlopen(req) as r:

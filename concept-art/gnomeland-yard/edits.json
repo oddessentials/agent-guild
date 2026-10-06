@@ -1,0 +1,134 @@
+{
+  "builder_anthropic": [
+    {
+      "input": "../gnomeland-skin/characters/anthropic/idle.png",
+      "seed": 11,
+      "prompt": "Show this exact same old gnome rune-smith, same face, long white beard, tall burnt-orange pointed hat with gold rune stitching, burnt-orange embroidered coat, leather apron, tool belt and rune-etched hammer, standing full body facing the viewer in a relaxed A-pose with his arms held slightly away from his body and his hands open, with no glowing runes or glyphs floating around him, evenly lit, on a plain flat light grey background. Same painterly style."
+    }
+  ],
+  "builder_openai": [
+    {
+      "input": "../gnomeland-skin/characters/openai/idle.png",
+      "seed": 11,
+      "prompt": "Show this exact same stout gnome forge-engineer, same face, bushy brown beard, glowing emerald eyes, tall pointed conical steel helm with welding goggles, riveted armour with thin glowing emerald seams, gauntlets and cape, standing full body facing the viewer in a relaxed A-pose with his arms held slightly away from his body, the head of his big riveted forge hammer resting on the ground beside his right boot, evenly lit, on a plain flat light grey background. Same painterly style."
+    },
+    {
+      "seed": 3,
+      "prompt": "Change his armour and helm from glossy black to matte dark gunmetal grey steel with clearly visible rivets, and replace his fur-trimmed cape with a short heavy dark olive-grey wool cloak with a simple hem. Keep his face, beard, emerald eyes, goggles, glowing emerald seams, belt, gauntlets, boots, hammer, pose, lighting, framing and the plain light grey background exactly the same."
+    },
+    {
+      "seed": 5,
+      "prompt": "Make his helmet a very tall narrow pointed conical matte gunmetal steel helm, like a tall gnome hat, riveted, with the emerald welding goggles pushed up on its brim. Make all his armour plates matte with no shine. Keep his face, beard, cloak, belt, gauntlets, boots, hammer, pose, lighting, framing and the plain light grey background exactly the same."
+    }
+  ],
+  "builder_google": [
+    {
+      "input": "../gnomeland-skin/characters/google/idle.png",
+      "seed": 11,
+      "prompt": "Show this exact same gnome levitation engineer, same face, silver beard, round brass spectacles, tall pointed sapphire-blue hat with silver stars, sapphire-blue coat with brass buttons and leather tool harness, standing full body facing the viewer in a relaxed A-pose with his arms held slightly away from his body, holding his brass gauge-staff upright beside him with its blue-white star crystal on top, with no stones, blocks or cogs floating around him, evenly lit, on a plain flat light grey background. Same painterly style."
+    }
+  ],
+  "builder_xai": [
+    {
+      "input": "../gnomeland-skin/characters/xai/idle.png",
+      "seed": 11,
+      "prompt": "Show this exact same young gnome tinkerer-electrician, same face, messy black hair, glowing cyan eyes, sly smile, very tall narrow pointed hat with brass goggles, long coat with glowing electric-cyan circuit-trace patterns and tool belt, standing full body facing the viewer in a relaxed A-pose with his arms held slightly away from his body and his hands out of his pockets, evenly lit, on a plain flat light grey background. Same painterly style."
+    },
+    {
+      "seed": 3,
+      "prompt": "Change his glossy black leather coat and hat to matte dark charcoal-grey wool felt with no shine. Keep the bright glowing electric-cyan circuit-trace patterns, his face, hair, eyes, goggles, tool belt, boots, pose, lighting, framing and the plain light grey background exactly the same."
+    }
+  ],
+  "builder_shell": [
+    {
+      "input": "../gnomeland-skin/characters/shell/idle.png",
+      "seed": 11,
+      "prompt": "Turn this spectral hooded gnome into a solid opaque figure: a short hooded gnome wearing a heavy deep-violet wool robe and a very tall pointed hood with a curled tip, the hood opening a dark shadowed void with a single glowing bright violet '>' chevron symbol inside it, a leather tool belt with a wrench and a small iron lantern at its waist, short solid legs in brown leather boots instead of wisps, standing full body facing the viewer in a relaxed A-pose with its arms held slightly away from its body, no smoke, no mist, no translucency, evenly lit, on a plain flat light grey background. Same painterly style."
+    }
+  ],
+  "familiar_flame": [
+    {
+      "input": "../gnomeland-skin/familiars/flame.png",
+      "seed": 11,
+      "prompt": "Show this exact same clockwork fire salamander sitting on its brass-bound treasure chest, with all flames and fire removed: its tail ends in a polished copper tip, and the chest's grille shows warm glowing orange coals instead of flames. Same pose, colours and painterly style, evenly lit, on a plain flat light grey background."
+    }
+  ],
+  "familiar_leaf": [
+    {
+      "input": "../gnomeland-skin/familiars/leaf.png",
+      "seed": 11,
+      "prompt": "Show this exact same hedgehog with its tool belt and wrench, but instead of spines and loose leaves its back is a smooth rounded shell of large overlapping carved green leaf-shaped wooden shingles, and the sprout on its back is removed. Same face, pose and painterly style, evenly lit, on a plain flat light grey background."
+    },
+    {
+      "seed": 5,
+      "prompt": "Turn this hedgehog into a smooth carved and painted wooden figure: its back one single smooth rounded dome of matte green-painted wood with a leaf pattern carved in shallow relief, no separate leaves, and its face, ears and body smooth carved pale wood with no fur. Keep the tool belt, wrench, pose, framing and the plain light grey background exactly the same. Same painterly style."
+    }
+  ],
+  "familiar_aether": [
+    {
+      "input": "../gnomeland-skin/familiars/aether.png",
+      "seed": 11,
+      "prompt": "Show this exact same brass lantern drone with its propeller on top, but with the glowing energy ring around it removed and the glass globe replaced by an opaque frosted pale blue crystal orb glowing softly from within. Same brass details, pose and painterly style, evenly lit, on a plain flat light grey background."
+    },
+    {
+      "seed": 5,
+      "prompt": "Make the propellers still, with broad solid flat brass blades and no motion blur, and make the orb a fully opaque pale blue frosted crystal glowing softly, with no reflections or transparency. Keep the lantern body, frame, gear, colours, pose, lighting, framing and the plain light grey background exactly the same."
+    }
+  ],
+  "hall_anthropic": [
+    {
+      "input": "raw/hall_anthropic-802.png",
+      "seed": 7,
+      "prompt": "Remove all the background scenery, sky, mountains, trees, other buildings and the ground around the building, leaving only the building and its low stone footing on a plain flat light grey background. Keep the building and everything on it exactly the same, same style, same framing."
+    }
+  ],
+  "hall_openai": [
+    {
+      "input": "raw/hall_openai-803.png",
+      "seed": 7,
+      "prompt": "Remove the gnome figures from the image and fill in the building behind them, so no people remain. Keep the building and everything else exactly the same, same style, same framing, on a plain flat light grey background."
+    }
+  ],
+  "hall_xai": [
+    {
+      "input": "raw/hall_xai-804.png",
+      "seed": 7,
+      "prompt": "Remove the gnome figures from the image and fill in the building behind them, so no people remain. Keep the building and everything else exactly the same, same style, same framing, on a plain flat light grey background."
+    }
+  ],
+  "town_cottage_a": [
+    {
+      "input": "raw/town_cottage_a-812.png",
+      "seed": 7,
+      "prompt": "Remove all the background scenery, sky, mountains, trees, other buildings and the ground around the building, leaving only the building and its low stone footing on a plain flat light grey background. Keep the building and everything on it exactly the same, same style, same framing."
+    }
+  ],
+  "town_mill": [
+    {
+      "input": "raw/town_mill-814.png",
+      "seed": 7,
+      "prompt": "Remove all the background scenery, sky, mountains, trees, other buildings and the ground around the building, leaving only the building and its low stone footing on a plain flat light grey background. Keep the building and everything on it exactly the same, same style, same framing."
+    }
+  ],
+  "town_workshop": [
+    {
+      "input": "raw/town_workshop-815.png",
+      "seed": 7,
+      "prompt": "Remove the gnome figures from the image and fill in the building behind them, so no people remain. Keep the building and everything else exactly the same, same style, same framing, on a plain flat light grey background."
+    }
+  ],
+  "familiar_night": [
+    {
+      "input": "../gnomeland-skin/familiars/night.png",
+      "seed": 11,
+      "prompt": "Turn this owl into a clockwork owl built of smooth riveted plates of matte purple-enamelled brass, a solid smooth rounded body with its wings folded tight against its sides, no loose or fluffy feathers, keeping its big glowing violet eyes, brass gear chest and talons gripping nothing. Same pose and painterly style, evenly lit, on a plain flat light grey background."
+    }
+  ],
+  "shell_helper_2": [
+    {
+      "input": "raw/shell_helper_2-904.png",
+      "seed": 7,
+      "prompt": "Keep this exact clockwork snail with its brass-banded spiral shell, satchel and violet-tipped antennae, but make every surface matte with no shine, and put it on a plain perfectly flat even light grey background with no texture, no shadow and no glow. Same painterly style, same framing."
+    }
+  ]
+}

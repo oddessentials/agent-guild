@@ -23,8 +23,8 @@ export function initYard(controller) {
   let lastSkin = '', lastTheme = '';
   const sceneVisible = () => view === 'yard' && !$('app').hidden && document.visibilityState !== 'hidden' && $('terminal-panel').hidden;
   const skinEntry = (skin = root.dataset.skin) => (window.agentGuildSkins || []).find((item) => item.id === skin) || null;
-  // A skin has a yard only when theme.js allows it and model.mjs has its world.
-  const skinAllowsYard = (skin = root.dataset.skin) => Boolean(WORLDS[skin]) && skinEntry(skin)?.yard !== false;
+  // A skin has a yard only when model.mjs has its world.
+  const skinAllowsYard = (skin = root.dataset.skin) => Boolean(WORLDS[skin]);
   function select(next, { focus = false } = {}) {
     selected = next;
     updateInspector();

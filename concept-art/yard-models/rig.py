@@ -1,7 +1,7 @@
 """Rig a generated character and give it the Yard's five clips.
 
   blender -b --factory-startup --python rig.py -- IN.glb OUT.glb HEIGHT [--kind builder|familiar]
-      [--work tinker|conduct] [--faces N] [--texture PX]
+      [--work tinker|conduct|steady] [--faces N] [--texture PX]
 
 The mesh is scaled to HEIGHT metres, stood on the ground facing -Y (glTF +Z,
 toward the Yard camera), and fitted with a skeleton whose joints come from its
@@ -218,7 +218,10 @@ def pose(rig, clip, t, f, work):
     if clip == 'working':
         k = math.sin(2 * t)
         turn(rig, 'spine', X, .12); turn(rig, 'head', X, .18)
-        if work == 'conduct':
+        if work == 'steady':  # hands stay put: they hold a staff or sit in pockets
+            turn(rig, 'spine', X, .06 * k); turn(rig, 'head', X, .12 * math.sin(2 * t + .6))
+            turn(rig, 'chest', Z, .06 * s); turn(rig, 'head', Z, .1 * s)
+        elif work == 'conduct':
             turn(rig, 'upperArmL', X, -.7 - .25 * k); turn(rig, 'upperArmL', Y, .25 * s)
             turn(rig, 'foreArmL', X, -.5); turn(rig, 'upperArmR', X, -.35 + .2 * math.sin(2 * t + 1))
             turn(rig, 'head', Z, .12 * s)
@@ -229,7 +232,8 @@ def pose(rig, clip, t, f, work):
         turn(rig, 'hips', Z, .03 * k)
     elif clip == 'waiting':
         turn(rig, 'head', Z, .35 * math.sin(t / 2)); turn(rig, 'head', X, -.05)
-        turn(rig, 'upperArmL', X, -.25); turn(rig, 'foreArmL', X, -.6)
+        if work != 'steady':
+            turn(rig, 'upperArmL', X, -.25); turn(rig, 'foreArmL', X, -.6)
         turn(rig, 'hips', Y, .03 * math.sin(t / 2))
     elif clip == 'done':
         turn(rig, 'spine', X, .1); turn(rig, 'chest', X, .08); turn(rig, 'head', X, .28)

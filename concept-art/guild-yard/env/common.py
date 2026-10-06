@@ -1,6 +1,7 @@
 """Shared building blocks for the Yard's environment plates: the screen-aligned
 ground frame and live-area tests, PBR and painted materials, Poly Haven model
-scatters, sky and sun, lantern posts, Cycles settings and previews. Each
+scatters, TRELLIS.2 buildings with lit windows, sky and sun, lantern posts,
+Cycles settings and previews. Each
 world's `<world>_env.py` composes these into its own surroundings.
 
 Layout uses a ground frame aligned with the screen: `a` runs screen-right and
@@ -264,7 +265,8 @@ def variant_sets(asset):
     coll = source(asset, None)
     result = []
     for o in list(coll.objects):
-        if 'LOD' in o.name and 'LOD0' not in o.name:
+        # Lower LODs, and the geometry-nodes helper some plant sets carry.
+        if ('LOD' in o.name and 'LOD0' not in o.name) or o.name.endswith('geometry_nodes'):
             continue
         c = bpy.data.collections.new(o.name)
         c.objects.link(o)
@@ -305,6 +307,77 @@ def reeds():
         c.objects.link(obj)
         variants.append(c)
     return variants
+
+def lit_windows(material, theme):
+    """At dusk, warm window glass in a generated texture glows: bright, saturated,
+    orange-to-yellow texels become emission."""
+    if theme != 'dark' or not material or not material.node_tree:
+        return
+    nodes, links = material.node_tree.nodes, material.node_tree.links
+    bsdf = next((n for n in nodes if n.type == 'BSDF_PRINCIPLED'), None)
+    base = bsdf and bsdf.inputs['Base Color'].links
+    if not base:
+        return
+    color = base[0].from_socket
+    hsv = nodes.new('ShaderNodeSeparateColor')
+    hsv.mode = 'HSV'
+    links.new(color, hsv.inputs['Color'])
+    def band(socket, lo, hi):
+        r = nodes.new('ShaderNodeMapRange')
+        r.inputs['From Min'].default_value, r.inputs['From Max'].default_value = lo, hi
+        links.new(socket, r.inputs['Value'])
+        return r.outputs['Result']
+    def times(a, b):
+        n = nodes.new('ShaderNodeMath')
+        n.operation = 'MULTIPLY'
+        links.new(a, n.inputs[0]); links.new(b, n.inputs[1])
+        return n.outputs['Value']
+    warm = band(hsv.outputs['Red'], .17, .06)  # 0 at yellow-green, 1 at orange
+    glow = times(times(band(hsv.outputs['Blue'], .55, .8), band(hsv.outputs['Green'], .35, .6)), warm)
+    links.new(color, bsdf.inputs['Emission Color'])
+    strength = nodes.new('ShaderNodeMath')
+    strength.operation = 'MULTIPLY'
+    strength.inputs[1].default_value = 18
+    links.new(glow, strength.inputs[0])
+    links.new(strength.outputs['Value'], bsdf.inputs['Emission Strength'])
+
+def slab(name, verts2d, top, thick, material):
+    """A flat prism from an outline, its top at `top`."""
+    import bpy, bmesh
+    bm = bmesh.new()
+    lower = [bm.verts.new((x, y, top - thick)) for x, y in verts2d]
+    upper = [bm.verts.new((x, y, top)) for x, y in verts2d]
+    bm.faces.new(upper)
+    bm.faces.new(list(reversed(lower)))
+    n = len(verts2d)
+    for i in range(n):
+        bm.faces.new((lower[i], lower[(i + 1) % n], upper[(i + 1) % n], upper[i]))
+    mesh = bpy.data.meshes.new(name)
+    bm.to_mesh(mesh)
+    bm.free()
+    obj = bpy.data.objects.new(name, mesh)
+    obj.data.materials.append(material)
+    bpy.context.scene.collection.objects.link(obj)
+    return obj
+
+def building(path, theme):
+    """A TRELLIS.2 model as an unlinked collection for instancing, with its lit
+    windows at dusk. Returns the collection, its lowest point and its height."""
+    import bpy
+    from mathutils import Vector
+    before = set(bpy.data.objects)
+    bpy.ops.import_scene.gltf(filepath=str(path))
+    parts = [o for o in bpy.data.objects if o not in before and o.type == 'MESH']
+    coll = bpy.data.collections.new(Path(path).stem)
+    for o in parts:
+        for c in o.users_collection:
+            c.objects.unlink(o)
+        coll.objects.link(o)
+        for m in o.data.materials:
+            lit_windows(m, theme)
+    lo = min((o.matrix_world @ Vector(c)).z for o in parts for c in o.bound_box)
+    hi = max((o.matrix_world @ Vector(c)).z for o in parts for c in o.bound_box)
+    return coll, lo, hi - lo
 
 # --- Light ------------------------------------------------------------------
 def sun(theme):

@@ -1,36 +1,38 @@
-"""Assemble web/yard/assets/goblinville.glb from the five TRELLIS.2 halls.
+"""Assemble web/yard/assets/<world>.glb from the five TRELLIS.2 halls.
 
-  blender -b --factory-startup --python halls.py
+  blender -b --factory-startup --python halls.py -- WORLD
 
-Each hall in .cache/goblinville-yard/models/hall_<provider>.glb is stood on
-the deck (y = 0), scaled to at most a FOOTPRINT metre footprint and HEIGHT
-metres tall, and turned by TURN. TRELLIS.2 squares a model to its axes with
-the concept's front facing -Y, so unturned, the Yard camera sees the front and
-right side, as the concepts show them. It is placed at its provider's anchor
-as `hall_<provider>`, as build.py places every world's halls. Warm window
+Each hall in .cache/<world>-yard/models/hall_<provider>.glb is stood on
+the ground (y = 0), scaled to at most a FOOTPRINT metre footprint and HEIGHT
+metres tall, and turned by `turn` in concept-art/<world>-yard/world.json.
+TRELLIS.2 squares a model to its axes with the concept's front facing -Y, so
+unturned, the Yard camera sees the front and right side, as the concepts show
+them. It is placed at its provider's anchor as `hall_<provider>`, as
+concept-art/guild-yard/build.py places every world's halls. Warm window
 texels become an emissive map, which the renderer brightens at dusk. Textures
 are written as WebP.
 """
-import bpy, math
+import bpy, json, math, sys
 import numpy as np
 from pathlib import Path
 from mathutils import Vector, Matrix
 
 HERE = Path(__file__).resolve().parent
-ROOT = HERE.parents[2]
-MODELS = ROOT / '.cache/goblinville-yard/models'
-OUT = ROOT / 'web/yard/assets/goblinville.glb'
+ROOT = HERE.parents[1]
+WORLD = sys.argv[sys.argv.index('--') + 1]
+MODELS = ROOT / f'.cache/{WORLD}-yard/models'
+OUT = ROOT / f'web/yard/assets/{WORLD}.glb'
 FOOTPRINT = 5.2
 HEIGHT = 5.5
 FACES = 35000  # triangles per hall; baked normals keep the fine detail
 TEXTURE = 2048  # base colour; other maps are half this
-# Blender positions, as build.py's environment() places halls.
+# Blender positions, as concept-art/guild-yard/build.py's environment() places halls.
 ANCHORS = [('anthropic', -7, 5), ('openai', 0, 7), ('google', 7, 5), ('xai', -8, -3), ('shell', 8, -3)]
 # Extra turn about the vertical, in degrees, for a hall whose best side is not its front.
-TURN = {'openai': 90}
+TURN = json.loads((ROOT / f'concept-art/{WORLD}-yard/world.json').read_text(encoding='utf-8')).get('turn', {})
 
 def emissive(image):
-    """Warm, bright, saturated texels (lit windows, lanterns, glowing trim)."""
+    """Bright, saturated texels: lit windows, lanterns and glowing trim."""
     w, h = image.size
     px = np.array(image.pixels[:], dtype=np.float32).reshape(h, w, 4)[..., :3]
     mx, mn = px.max(-1), px.min(-1)
@@ -38,9 +40,10 @@ def emissive(image):
     r, g, b = px[..., 0], px[..., 1], px[..., 2]
     warm = (r >= g) & (g >= b) & (g > r * .35)
     glow = warm * np.clip((mx - .62) / .2, 0, 1) * np.clip((sat - .4) / .25, 0, 1)
-    # Cyan and violet provider glows count too.
+    # Cyan, violet and emerald provider glows count too.
     cool = ((b > r) & (mx > .6) & (sat > .45)) * np.clip((mx - .6) / .2, 0, 1)
-    mask = np.maximum(glow, cool)[..., None] * px
+    green = ((g > r * 1.3) & (g > b * 1.1) & (mx > .5) & (sat > .5)) * np.clip((mx - .5) / .2, 0, 1)
+    mask = np.maximum(np.maximum(glow, cool), green)[..., None] * px
     out = bpy.data.images.new(image.name + '_glow', w, h)
     out.pixels[:] = np.concatenate([mask, np.ones((h, w, 1), np.float32)], -1).ravel()
     return out
@@ -101,6 +104,6 @@ def main():
     bpy.ops.export_scene.gltf(filepath=str(OUT), export_format='GLB', export_yup=True, export_lights=False,
                               export_cameras=False, export_animations=False, export_image_format='WEBP',
                               export_image_quality=85)
-    print('YARD_ASSET goblinville', flush=True)
+    print('YARD_ASSET', WORLD, flush=True)
 
 main()

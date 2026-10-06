@@ -9,15 +9,17 @@ like the Guild's (see `concept-art/guild-yard/ART.md`).
 
 ## Pipeline
 
-All steps run from `concept-art/goblinville-yard/source/`.
+The steps are the shared Yard model pipeline in `concept-art/yard-models/`,
+run with the world name; this folder holds Goblinville's `world.json` (cast,
+town buildings, seeds and hall turns), `concepts.json` and `edits.json`.
 
 | Step | Command | Writes |
 | --- | --- | --- |
-| Concepts | `python concepts.py [name ...] [--seeds N]` | `raw/<name>-<seed>.png` with `hidream-o1`, from `concepts.json`; copy picks to `concepts/<name>.png` |
-| Edits | `python edits.py [name ...]` | `raw/edit/<name>.png` with `qwen-edit`, from `edits.json`; the results replace `concepts/<name>.png` |
-| Models | `python build.py models [name ...]` | `.cache/goblinville-yard/models/<name>.glb` with TRELLIS.2 (`trellis.py`) |
-| Cast | `python build.py cast [name ...]` | `web/yard/assets/goblin_*.glb`: rigged and animated (`rig.py`) |
-| Halls | `python build.py halls` | `web/yard/assets/goblinville.glb` (`halls.py`) |
+| Concepts | `python concepts.py goblinville [name ...] [--seeds N]` | `raw/<name>-<seed>.png` with `hidream-o1`, from `concepts.json`; copy picks to `concepts/<name>.png` |
+| Edits | `python edits.py goblinville [name ...]` | `raw/edit/<name>-<step>.png` with `qwen-edit`, from `edits.json`; the results replace `concepts/<name>.png` |
+| Models | `python build.py goblinville models [name ...]` | `.cache/goblinville-yard/models/<name>.glb` with TRELLIS.2 (`trellis.py`) |
+| Cast | `python build.py goblinville cast [name ...]` | `web/yard/assets/goblin_*.glb`: rigged and animated (`rig.py`) |
+| Halls | `python build.py goblinville halls` | `web/yard/assets/goblinville.glb` (`halls.py`) |
 | Plates | `blender -b --factory-startup --python concept-art/guild-yard/env/plates.py -- goblinville` | `web/yard/assets/goblinville/` |
 | Sky | `blender -b --factory-startup --python concept-art/guild-yard/env/surfaces.py -- goblinville` | `web/yard/assets/goblinville/surfaces.json` and skies |
 
@@ -55,24 +57,25 @@ ambient occlusion from the full-detail remesh. Models are `trellis_2_int8_convro
 (MIT), its shape and texture VAEs, and DINOv3 ViT-L conditioning (DINOv3
 License), from [Comfy-Org/TRELLIS.2](https://huggingface.co/Comfy-Org/TRELLIS.2).
 Background removal is BiRefNet (MIT) where no mask is given. The seed is 42
-unless `SEEDS` in `build.py` names another. Each job frees the GPU first and is
+unless `seeds` in `world.json` names another. Each job frees the GPU first and is
 cancelled after ten minutes.
 
 `rig.py` stands each model on the ground facing the camera, scales it to its
-height in `build.py` and decimates it (25,000 triangles for builders, 10,000
+height in `world.json` and decimates it (25,000 triangles for builders, 10,000
 for familiars and helpers). It fits a skeleton from the silhouette: hips,
 spine, chest, neck and head, and for builders arms and legs. Weights are bone
 heat on a voxel proxy, transferred to the model. The five clips (`resting`,
 `working`, `waiting`, `done`, `arrival`) are keyed per bone; builders work by
-tinkering or conducting. Textures are 1024 px WebP for builders and 512 px for
+tinkering or conducting, or, when their hands hold a staff or sit in pockets,
+by a steady lean and nod that leaves the hands still. Textures are 1024 px WebP for builders and 512 px for
 familiars and helpers.
 
 `halls.py` stands each hall on the deck within a 5.2 m footprint and 5.5 m
-height, at the anchors `build.py` uses for every world, decimated to 35,000
+height, at the anchors `concept-art/guild-yard/build.py` uses for every world, decimated to 35,000
 triangles with 2048 px colour and 1024 px other maps. TRELLIS.2 squares each
 model to its axes with the concept's front facing the camera, so the Yard sees
-the front and right side, as the concepts show them; `TURN` turns a hall whose
-best side is elsewhere. Warm and glowing texels become an emissive map, which
+the front and right side, as the concepts show them; `turn` in `world.json`
+turns a hall whose best side is elsewhere. Warm and glowing texels become an emissive map, which
 the renderer brightens at dusk.
 
 ## Plates
