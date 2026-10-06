@@ -1,0 +1,78 @@
+{
+  "_style": "Highly detailed storybook fantasy illustration of a single building from a gnome builders' mountain village, rich painterly digital painting with crisp detail, rough fieldstone walls, warm oak timber framing, grey slate shingles, a few warm-lit leaded windows, the whole building and its low fieldstone footing fully visible and centered, seen from an elevated three-quarter view from the front right, isolated on a pure flat light grey background, no ground, no grass, no moss, no ivy, no people, no smoke, no steam, no fire, no text, no letters, no logos, no signs with writing, no border.",
+  "hall_anthropic": {
+    "seed": 801,
+    "prompt": "The rune-smith's hall: a broad two-storey half-timbered workshop on a fieldstone ground floor, a steep slate roof with a deep overhang and a tall square stone chimney, burnt-orange painted timbers, shutters and a big arched oak double door, softly glowing amber rune glyphs carved into the lintel stone, a mason's workbench beside the door with a large rune-etched hammer and chisels, a wooden ladder leaning on the wall.",
+    "pick": 802
+  },
+  "hall_openai": {
+    "seed": 802,
+    "prompt": "The forge-engineer's smithy: a squat heavy fieldstone smithy with a low wide slate roof and a massive tapering stone forge chimney, a big round-arched forge opening glowing bright emerald green, matte dark grey iron bands and rivets on its oak doors, small emerald-green lanterns at the corners, an iron anvil on a stump and a huge riveted forge hammer standing beside the door.",
+    "pick": 803
+  },
+  "hall_google": {
+    "seed": 803,
+    "prompt": "The levitation engineer's tower: a round fieldstone tower of three storeys with a tall steep conical roof of sapphire-blue slate tiles patterned with small silver stars, a silver star finial on the spire, a wooden balcony ring with a brass telescope, deep blue shutters, a glowing blue-white four-pointed crystal set in a brass ring over the door, a small timber lean-to workshop at its foot.",
+    "pick": 804
+  },
+  "hall_xai": {
+    "seed": 804,
+    "prompt": "The tinkerer-electrician's workshop: a tall narrow crooked timber workshop leaning slightly, a steep pointed slate roof with a curled tip, walls of matte charcoal-stained wooden boards inlaid with bright glowing electric-cyan circuit-trace patterns, a brass lightning rod and a copper coil mast on the roof ridge, coils of copper wire and glass insulators on the walls, a round brass-framed window glowing cyan.",
+    "pick": 804
+  },
+  "hall_shell": {
+    "seed": 805,
+    "prompt": "The lantern-keeper's gatehouse: a small square fieldstone gatehouse with a wide round archway passing straight through it, a very steep pointed slate roof that curls over at the tip like a gnome hat, small leaded windows glowing violet, two large iron lanterns with violet glowing crystals hanging inside the arch, a narrow wooden door in the side wall.",
+    "pick": 806
+  },
+  "town_cottage_a": {
+    "seed": 811,
+    "prompt": "A tall two-storey gnome cottage with a fieldstone ground floor and a half-timbered upper floor of oak beams and cream plaster, a very steep slate roof with sharply pointed gables, a tall stone chimney, a small dormer, a wooden ladder leaning on the wall, barrels by the door.",
+    "pick": 812
+  },
+  "town_cottage_b": {
+    "seed": 812,
+    "prompt": "A long low gnome longhouse of rough fieldstone with a timber-framed gable end, a long steep slate roof with two small dormers and a round stone chimney, an arched oak door with iron hinges, a covered wooden porch with a bench, firewood stacked under the eaves.",
+    "pick": 812
+  },
+  "town_tower": {
+    "seed": 813,
+    "prompt": "A slender round fieldstone tower with a very tall steep conical slate spire topped by an iron finial, small arched windows spiralling up it, a timber-framed room cantilevered out near the top under the spire, an arched door at its foot.",
+    "pick": 813
+  },
+  "town_mill": {
+    "seed": 814,
+    "prompt": "A gnome watermill: a two-storey fieldstone and timber mill house with a steep slate roof, a large wooden waterwheel with paddles on its side, a short wooden flume chute leading to the top of the wheel, sacks of flour by the door, a small hoist beam under the gable.",
+    "pick": 814
+  },
+  "town_workshop": {
+    "seed": 815,
+    "prompt": "A gnome carpenter's workshop: an open-fronted timber workshop with a steep slate roof on stout oak posts over a fieldstone back wall, wooden scaffolding and a ladder against one side, a workbench, stacked planks and a small hand crane with a rope and pulley.",
+    "pick": 815
+  },
+  "_helper_style": "Highly detailed storybook fantasy illustration, rich painterly digital painting with fine texture and crisp detail, a little clockwork helper machine built by gnome craftsmen, carved oak, riveted brass and copper, charming but crafted and believable, matte surfaces, warm soft key light with a subtle violet rim light, seen from an elevated three-quarter view from the front, single subject isolated and centered filling most of the frame, on a pure flat light grey background, no floor, no shadow, no smoke, no steam, no fire, no glass, no text, no letters, no logos, no border.",
+  "shell_helper_0": {
+    "seed": 901,
+    "style": "_helper_style",
+    "prompt": "A small clockwork toadstool walker: a broad domed carved wooden mushroom cap painted deep red with cream spots on a stout brass stalk body, two short jointed brass legs with round feet, a single round violet glowing eye in the stalk, a little wind-up key on its back.",
+    "pick": 901
+  },
+  "shell_helper_1": {
+    "seed": 902,
+    "style": "_helper_style",
+    "prompt": "A small wind-up wooden gnome automaton: a carved and painted oak figure with a tall pointed violet hat, a brass face plate with two round violet glowing eyes and a carved wooden beard, jointed brass arms holding a tiny wrench, a big brass wind-up key in its back, stubby wooden legs.",
+    "pick": 903
+  },
+  "shell_helper_2": {
+    "seed": 903,
+    "style": "_helper_style",
+    "prompt": "A small clockwork snail: a large spiral shell of riveted brass bands and carved oak segments, a soft-looking body of dark green enamelled copper plates, two short antennae tipped with violet glowing beads, a tiny tool satchel strapped to its shell.",
+    "pick": 904
+  },
+  "shell_helper_3": {
+    "seed": 904,
+    "style": "_helper_style",
+    "prompt": "A small walking lantern: a squat four-sided brass and oak lantern housing with solid carved panels and a pointed copper roof like a gnome hat, a large violet glowing crystal inside behind open fretwork, standing on three thin jointed brass legs, a little carry handle on top.",
+    "pick": 905
+  }
+}

@@ -10,6 +10,8 @@ labels.
 
 1. Add `{ id: '<id>', name: '<Menu label>' }` to the `skins` list in
    `web/theme.js`. List order is menu order; the first is the default.
+   Every skin needs a Yard world in `WORLDS` in `web/yard/model.mjs`, which
+   `npm test` checks; until it has one, the Yard control is disabled for it.
 2. Link `<link rel="stylesheet" href="/skins/<id>/skin.css">` in
    `web/index.html` with the other skins.
 3. Write `web/skins/<id>/skin.css`:

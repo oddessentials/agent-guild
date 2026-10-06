@@ -1,0 +1,7 @@
+{
+ "sky": {
+  "light": "goblinville/sky-light.hdr",
+  "dark": "goblinville/sky-dark.hdr"
+ },
+ "surfaces": {}
+}

@@ -24,6 +24,11 @@
     theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   }
   if (!skins.some(function (s) { return s.id === skin; })) skin = skins[0].id;
+  var view = 'cards';
+  try {
+    if (localStorage.getItem('agentGuild.view') === 'yard') view = 'yard';
+  } catch (e) { /* storage unavailable */ }
+  document.documentElement.dataset.view = view;
   document.documentElement.dataset.theme = theme;
   document.documentElement.dataset.skin = skin;
 })();

@@ -26,7 +26,7 @@ function page() {
     $: (id) => id === 'sessions' ? grid : node(id),
     orderSessions: (sessions) => [...sessions], buildCard: (s) => node(s.id),
     updateCard: (el, s) => { el.label = context.statusText(s); },
-    guardLeaving: noop, noticeClone: noop, renderVersion: noop, setConnection: noop,
+    guardLeaving: noop, noticeClone: noop, renderVersion: noop, setConnection: noop, notifyViews: noop,
     managerConnected: noop, setUpgrade: noop, loadNews: noop,
     load: noop, DOCK_KEY: 'dock', dockView: {}, restorePanes: noop, dockShows: () => false,
     managerLoss: { cancel: noop, disconnected: noop },

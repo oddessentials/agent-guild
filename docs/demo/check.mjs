@@ -10,6 +10,7 @@ const required = [
   '.nojekyll', 'index.html', 'app.js', 'activity-favicon.js', 'terminal-copy.js', 'layout.js', 'repo-search.js', 'folders.js', 'theme.js', 'styles.css', 'demo-config.js', 'demo-runtime.js',
   'vendor/xterm/xterm.js', 'vendor/xterm/xterm.css', 'vendor/xterm/addon-fit.js', 'vendor/xterm/addon-web-links.js',
   'remote-access.js', 'vendor/qrcode.mjs',
+  'yard/view.js', 'yard/renderer.js', 'yard/vendor/engine.js', 'yard/assets/guild.glb', 'yard/assets/guild/plates.json',
 ];
 const problems = [];
 for (const file of required) if (!fs.existsSync(path.join(dir, file))) problems.push(`missing ${file}`);
@@ -40,7 +41,8 @@ const walk = (folder) => {
   }
 };
 if (fs.existsSync(dir)) walk(dir);
-if (bytes > 50 * 1024 * 1024) problems.push(`site is ${(bytes / 1024 / 1024).toFixed(1)} MB; limit is 50 MB`);
+// The Yard worlds are most of the site; GitHub Pages allows far more.
+if (bytes > 171 * 1024 * 1024) problems.push(`site is ${(bytes / 1024 / 1024).toFixed(1)} MB; limit is 171 MB`);
 
 for (const problem of problems) console.error(`not ok  ${problem}`);
 if (problems.length) process.exitCode = 1;

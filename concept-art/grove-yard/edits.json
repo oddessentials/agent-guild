@@ -1,0 +1,90 @@
+{
+  "spirit_anthropic": [
+    {
+      "input": "../grove-skin/characters/anthropic/idle.png",
+      "seed": 11,
+      "prompt": "Show this exact same little fox spirit full body, standing on all four legs in a three-quarter view facing the viewer, its eyes closed in the same gentle smile, its big bushy tail raised behind it, wearing the same short cape of autumn maple leaves over its shoulders, the same small paper lantern hanging from a short cord round its neck. Make it a smooth hand-carved and painted wooden toy: every surface smoothly sculpted with no fur texture, no fuzz and no loose hairs, painted orange with a cream chest, muzzle, ear insides and tail tip and dark brown legs, the leaf cape smooth carved leaf shapes painted burnt orange and amber, the lantern matte amber paper in a dark wooden frame with no glow. Keep the patches of green moss on its head. Every surface matte. No rocks or plants around it. Evenly lit, on a plain flat light grey background. Same 3D toy style."
+    }
+  ],
+  "spirit_openai": [
+    {
+      "input": "../grove-skin/characters/openai/idle.png",
+      "seed": 11,
+      "prompt": "Show this exact same little moss deer spirit full body from the tips of its antlers to its hooves, standing on all four legs facing the viewer: same big friendly eyes, same ferns, little white flowers and lichen patches, same small mushrooms at its hooves. Make its body solid: a smooth dense coat of bright emerald-green moss in solid shapes with no loose hairs and no fuzzy glowing outline, a cream felt chest and muzzle, and its antlers smooth matte carved pale wood. Make every surface matte with no shine or glow. Evenly lit, on a plain flat light grey background. Same 3D toy style."
+    }
+  ],
+  "spirit_google": [
+    {
+      "input": "../grove-skin/characters/google/idle.png",
+      "seed": 11,
+      "prompt": "Turn this translucent water spirit into a solid opaque little figure shown full body from the lotus flower on its head to its feet: the same chubby child shape, pointed ears, big blue eyes, smile and hands clasped in front, made of smooth matte opaque glazed ceramic in a bright clear water blue, with a bold wavy deeper-blue wave pattern painted around its belly and a bold bright orange and white koi fish shape painted on its tummy. The same lily pad on its head as a solid matte green hat with the pink lotus flower on top. No transparency, no glass, no bubbles, no water droplets, no reflections. No rocks or plants around it. Standing facing the viewer, evenly lit, on a plain flat light grey background. Same 3D toy style."
+    }
+  ],
+  "spirit_xai": [
+    {
+      "input": "../grove-skin/characters/xai/idle.png",
+      "seed": 11,
+      "prompt": "Show this exact same little bird spirit full body from the top of its crest to its feet, standing on its own two feet facing the viewer: same big golden eyes, same beak, same swept-back crest. Make it a solid hand-carved and painted wooden figure: its feathers are smooth carved solid shapes with no loose feathers and no fluff, a white body with bold charcoal-grey markings, its crest, wing tips and tail feathers solid bright cyan-turquoise in bold broad carved shapes. No smoke, no wisps, no mist, no glow. No rock or plants under it. Every surface matte. Evenly lit, on a plain flat light grey background. Same 3D toy style."
+    }
+  ],
+  "spirit_shell": [
+    {
+      "input": "../grove-skin/characters/shell/idle.png",
+      "seed": 11,
+      "prompt": "Show this exact same little stone lantern spirit full body, standing on the ground on two short sturdy stone legs facing the viewer, with its same stubby stone arms, same mossy roof and round finial, same green moss. Its square window is a flat matte pale lilac painted face panel with the same two dark eyes and small smile, with no glow. The wisteria hanging from its roof is bold solid clusters of bright amethyst-purple blossoms, a true purple halfway between blue and magenta. Its stone is matte mid warm grey. No smoke, no wisps, no mist, no fireflies, no glow. Every surface matte. Evenly lit, on a plain flat light grey background. Same 3D toy style."
+    },
+    {
+      "seed": 5,
+      "prompt": "Make this lantern spirit a smooth carved and painted figure: its stone is smooth rounded matte warm grey with no cracks, pits or rough texture, its moss is a few smooth solid painted patches of bright green, and the wisteria is chunky smooth sculpted clusters of bright amethyst-purple blossoms. Its face is a solid raised flat pale lilac panel set flush in the window, with the same two dark eyes and small smile painted on it. Keep its shape, roof, legs, arms, pose, lighting, framing and the plain light grey background exactly the same."
+    }
+  ],
+  "hall_openai": [
+    {
+      "input": "raw/hall_openai-1321.png",
+      "seed": 11,
+      "prompt": "Remove every tree, branch and leaf behind and around this dwelling: show only the moss-covered hollow trunk tower with its crown of huge pale antler-shaped branches, its ferns, round windows, antler-framed door and thick roots, complete and centred with empty space round it, on a plain flat light grey background. Keep the dwelling, colours and painterly style exactly the same."
+    }
+  ],
+  "hall_anthropic": [
+    {
+      "input": "raw/hall_anthropic-1301.png",
+      "seed": 11,
+      "prompt": "Keep this same oak dwelling with its round door, paper lanterns, balcony and roots, but make its canopy a compact rounded crown sitting close over the house, made of big chunky solid sculpted clumps of bold burnt-orange and amber maple leaves, with no loose leaves and no gaps showing the background. Render it as a highly detailed stylized 3D model with chunky solid rounded forms and matte surfaces, the whole dwelling and its roots fully visible and centred with empty space round it, on a plain flat even light grey background with no texture, no shadow and no scenery."
+    }
+  ],
+  "hall_google": [
+    {
+      "input": "raw/hall_google-1304.png",
+      "seed": 11,
+      "prompt": "Keep this same blue lily-pad-shingled cottage with its waterwheel, stone basin and lotus flowers, but replace the willow branches and the trunk above the roof with a short thick willow trunk topped by a compact rounded dome of big chunky solid sculpted clumps of green willow leaves draping just over the roof edge, with no thin strands and no gaps showing the background. Render it as a highly detailed stylized 3D model with chunky solid rounded forms and matte surfaces, the whole dwelling and its roots fully visible and centred with empty space round it, on a plain flat even light grey background with no texture, no shadow and no scenery."
+    }
+  ],
+  "hall_shell": [
+    {
+      "input": "raw/hall_shell-1305.png",
+      "seed": 11,
+      "prompt": "Keep this same three-tiered stone pagoda dwelling on its gnarled wisteria trunk, with its stone lantern and moon-gate door, but make every tier's upturned roof bold bright amethyst-purple tiles, a true purple halfway between blue and magenta, and make the wisteria a few big chunky solid sculpted clusters of amethyst-purple blossoms hanging close under the eaves, with no thin strands and no gaps showing the background. Render it as a highly detailed stylized 3D model with chunky solid rounded forms and matte surfaces, the whole dwelling and its roots fully visible and centred with empty space round it, on a plain flat even light grey background with no texture, no shadow and no scenery."
+    }
+  ],
+  "town_treehouse": [
+    {
+      "input": "raw/town_treehouse-1312.png",
+      "seed": 11,
+      "prompt": "Keep this same round treehouse hut with its conical bark-shingle roof, ladder, railing and thick oak trunk with spreading roots, but make the leafy canopy a compact rounded clump of big chunky solid sculpted green leaf clusters close beside the roof, with no loose leaves, no thin branches and no gaps showing the background. Render it as a highly detailed stylized 3D model with chunky solid rounded forms and matte surfaces, fully visible and centred with empty space round it, on a plain flat even light grey background with no texture, no shadow and no scenery."
+    }
+  ],
+  "town_stump": [
+    {
+      "input": "raw/town_stump-1317.png",
+      "seed": 11,
+      "prompt": "Keep this same tree-stump house with its arched door, round windows, chimney pipe, toadstools and spreading roots, with no thin twigs or branches. Render it as a highly detailed stylized 3D model with chunky solid rounded forms and matte surfaces, fully visible and centred with empty space round it, on a plain flat even light grey background with no texture, no shadow and no scenery."
+    }
+  ],
+  "town_mushroom": [
+    {
+      "input": "raw/town_mushroom-1313.png",
+      "seed": 11,
+      "prompt": "Keep these same three toadstool houses with their red spotted caps, cream stalks, doors, windows and ladder, with no plants, twigs or ground around them. Render it as a highly detailed stylized 3D model with chunky solid rounded forms and matte surfaces, fully visible and centred with empty space round it, on a plain flat even light grey background with no texture, no shadow and no scenery."
+    }
+  ]
+}

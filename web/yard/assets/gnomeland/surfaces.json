@@ -1,0 +1,7 @@
+{
+ "sky": {
+  "light": "gnomeland/sky-light.hdr",
+  "dark": "gnomeland/sky-dark.hdr"
+ },
+ "surfaces": {}
+}

@@ -16,6 +16,7 @@
   <link rel="stylesheet" href="/skins/grove/skin.css">
   <link rel="stylesheet" href="/skins/gnomeland/skin.css">
   <link rel="stylesheet" href="/skins/goblinville/skin.css">
+  <link rel="stylesheet" href="/yard/yard.css">
 </head>
 <body>
   <header class="topbar">
@@ -41,6 +42,11 @@
             <legend>Mode</legend>
             <label class="choice"><input type="radio" name="theme" value="light"><span class="mode-light">Light</span></label>
             <label class="choice"><input type="radio" name="theme" value="dark"><span class="mode-dark">Dark</span></label>
+          </fieldset>
+          <fieldset>
+            <legend>View</legend>
+            <label class="choice"><input id="view-cards" type="radio" name="view" value="cards"><span class="view-name">Cards</span></label>
+            <label class="choice"><input id="view-yard" type="radio" name="view" value="yard"><span class="view-name">Yard</span></label>
           </fieldset>
           <fieldset>
             <legend>Sound</legend>
@@ -102,6 +108,30 @@
         </div>
       </div>
       <div id="providers" class="providers" role="list"></div>
+    </section>
+
+    <section id="yard" hidden aria-label="Yard">
+      <div class="yard-main">
+        <div class="yard-heading"><div><p class="yard-eyebrow">AGENT GUILD · YOUR WORK, ALIVE</p><h2 id="yard-title">The Guild Yard</h2><p id="yard-subtitle"></p></div><span id="yard-summary" class="yard-summary" role="status"></span></div>
+        <div id="yard-stage" class="yard-stage" role="region" tabindex="0" aria-label="Interactive yard. Select a provider or session using the roster, or select it in the scene. Drag to pan; scroll to zoom." aria-describedby="yard-help">
+          <div id="yard-labels" class="yard-labels"></div>
+          <div id="yard-loading" class="yard-loading" role="status" data-mode="scene"><span id="yard-loading-text">Preparing your yard…</span><span id="yard-loading-size" class="yard-loading-size" aria-hidden="true"></span><span class="yard-loading-bar" aria-hidden="true"></span></div>
+          <div id="yard-swap-failure" class="yard-swap-failure" hidden role="status"><span id="yard-swap-failure-text"></span><button id="yard-swap-retry" class="btn" type="button">Retry</button></div>
+          <div id="yard-failure" class="yard-failure" hidden role="status"><strong>The 3D view is unavailable</strong><p>You can still use every action in the roster and inspector.</p><button id="yard-retry" class="btn" type="button">Retry 3D</button><button id="yard-cards" class="btn" type="button">Show Cards</button></div>
+          <div class="yard-camera" role="group" aria-label="Camera"><button id="yard-zoom-in" type="button" class="btn" aria-label="Zoom in">+</button><button id="yard-zoom-out" type="button" class="btn" aria-label="Zoom out">−</button><button id="yard-fit" type="button" class="btn">Overview</button><button id="yard-focus" type="button" class="btn" disabled>Focus selected</button></div>
+          <p id="yard-help">Drag to explore · Scroll to zoom · Select to inspect · Double-click a session to open</p>
+        </div>
+        <div class="yard-news"><button id="yard-news" type="button" class="btn">All news</button><a id="yard-headline" target="_blank" rel="noopener noreferrer" hidden></a><span id="yard-news-empty">Your guild is ready.</span></div>
+      </div>
+      <aside class="yard-sidebar" aria-label="Yard roster and inspector">
+        <div class="yard-roster-heading"><h3>Roster</h3><span id="yard-roster-count"></span></div>
+        <label class="yard-search"><span class="sr-only">Filter providers and sessions</span><input id="yard-filter" type="search" placeholder="Find a provider or session…" autocomplete="off"></label>
+        <div id="yard-roster" class="yard-roster" role="group" aria-label="Providers and sessions"></div>
+        <p id="yard-no-results" class="yard-no-results" role="status" hidden></p>
+        <div class="yard-inspector-heading"><h3>Inspector</h3><button id="yard-deselect" class="btn" type="button" hidden aria-label="Clear selection">×</button></div>
+        <div id="yard-welcome" class="yard-welcome"><img src="/brand/crest.png" alt=""><h3>A place for your next idea</h3><p>Select a provider to start working, or a character to return to its session.</p><p>Everything you know from Cards is here.</p></div>
+        <div id="yard-inspector" class="yard-inspector" role="list" aria-label="Selected item"></div>
+      </aside>
     </section>
 
     <section class="sessions" aria-labelledby="sessions-heading">

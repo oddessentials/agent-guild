@@ -1,0 +1,90 @@
+{
+  "_style": "Highly detailed storybook steampunk illustration of a single building from a steam-powered goblin town built on stilts over a bog, rich painterly digital painting with crisp detail, weathered timber framing, riveted copper and brass, soot-stained slate shingles, a few warm-lit windows, the whole building and its square wooden stilt platform fully visible and centered, seen from an elevated three-quarter view from the front right, isolated on a pure flat light grey background, no ground, no water, no scenery, no people, no smoke, no steam, no fire, no text, no letters, no logos, no signs with writing, no border.",
+  "hall_anthropic": {
+    "seed": 401,
+    "prompt": "The master builder's drafting hall: a broad two-storey timber-framed workshop with a steep slate roof, a big riveted copper chimney, tall arched drafting windows glowing warm amber, burnt-orange painted shutters and trim, racks of rolled blueprints by the wide double doors and a giant brass folding rule mounted over them, small amber rune lanterns at the doorway, a short flight of plank steps up to the door.",
+    "pick": 402
+  },
+  "hall_openai": {
+    "seed": 402,
+    "prompt": "The boilermaker's foundry: a heavy squat brick and blackened-steel boiler house with two tall riveted iron smokestacks, a big round riveted boiler bulging from one side wrapped in copper pipes, thin glowing emerald-green seams along its iron plates, small emerald pressure gauges by the door, a wide forge doorway glowing deep green, a giant steam hammer on a frame beside it.",
+    "pick": 403
+  },
+  "hall_google": {
+    "seed": 403,
+    "prompt": "The lift engineer's tower: a tall narrow timber and brass lift tower with a sapphire-blue painted cab, a brass crane arm reaching out from the top with a chain and hook, a compact brass levitation engine on its roof with a glowing blue-white crystal core inside brass rings, deep blue shutters, a small workshop shed at its foot.",
+    "pick": 403
+  },
+  "hall_xai": {
+    "seed": 404,
+    "prompt": "The electrician's power station: a compact black-lacquered timber and iron substation with a tall brass tesla coil tower on its roof crowned by a copper torus, glass insulators and coiled copper cables running down its walls, bright glowing ice-blue electric-cyan circuit-trace patterns of pure cyan light on its black panels and door, rows of glass vacuum tubes in a window.",
+    "pick": 404
+  },
+  "hall_shell": {
+    "seed": 405,
+    "prompt": "The night watchman's lantern tower: a slender octagonal timber watchtower with a pointed slate roof, an enclosed lookout room at the top glowing violet behind small-paned windows, a large brass lantern hanging under the eaves with a violet flame, a narrow door at the base with a satchel and tools hung beside it.",
+    "pick": 405
+  },
+  "town_house_a": {
+    "seed": 501,
+    "prompt": "A tall narrow three-storey timber-framed goblin townhouse leaning slightly, a steep shingled roof with a dormer, a crooked brick chimney and a thin copper flue pipe, a striped canvas awning over the ground floor shopfront, crates and barrels on its porch, all standing on tall wooden stilts with cross bracing and a ladder.",
+    "pick": 501
+  },
+  "town_house_b": {
+    "seed": 502,
+    "prompt": "A wide two-storey goblin boarding house of weathered planks and timber framing with a long gabled shingle roof, two copper chimneys, a covered wraparound balcony with a rope railing, patched corrugated iron on one wall, standing on a broad wooden stilt deck with cross bracing.",
+    "pick": 502
+  },
+  "town_house_c": {
+    "seed": 503,
+    "prompt": "A small crooked goblin workshop shack of patched planks and rusty corrugated iron with a lean-to roof, a big riveted copper water boiler and pipes against one side, a stovepipe chimney, a coil of rope and a few gears hanging on the wall, on short wooden stilts.",
+    "pick": 503
+  },
+  "water_tower": {
+    "seed": 504,
+    "prompt": "A tall riveted copper and iron water tower: a round wooden-staved tank with copper hoops and a conical shingle cap, on a tall braced timber trestle with a ladder up to a railed catwalk around the tank, a thick pipe running down to the ground.",
+    "pick": 505
+  },
+  "crane": {
+    "seed": 505,
+    "prompt": "A tall riveted iron lattice dockside crane with a small timber operator cabin, a long lattice boom angled up with a chain and a heavy hook hanging from its tip, a counterweight box at the back, standing on a square timber pier base with wooden piles.",
+    "pick": 505
+  },
+  "factory": {
+    "seed": 506,
+    "prompt": "A large brick and timber goblin steam factory with a sawtooth roof of slate and glass, three tall riveted copper smokestacks of different heights, big round boilers and a web of copper pipes along its side wall, a large gear wheel on the facade, standing on a heavy timber pile foundation.",
+    "pick": 506
+  },
+  "_helper_style": "Highly detailed storybook steampunk illustration, rich painterly digital painting with fine texture and crisp detail, a little clockwork helper machine built by the goblin builders of a steam-powered town, riveted brass, copper and dark iron, charming but crafted and believable, warm soft key light with a subtle violet rim light, seen from an elevated three-quarter view from the front, single subject isolated and centered filling most of the frame, on a pure flat light grey background, no floor, no shadow, no smoke, no steam, no text, no letters, no logos, no border.",
+  "shell_helper_0": {
+    "seed": 601,
+    "style": "_helper_style",
+    "prompt": "A small clockwork beetle automaton with a domed riveted brass shell split down the middle, six thin jointed iron legs, a single round glass eye glowing soft violet, a tiny wind-up key on its back.",
+    "pick": 602
+  },
+  "shell_helper_1": {
+    "seed": 602,
+    "style": "_helper_style",
+    "prompt": "A small brass spider-bot with a round riveted copper body like a pocket watch, eight thin jointed brass legs, a cluster of small violet glowing lenses at its front, a little coil of copper wire on its back.",
+    "pick": 602
+  },
+  "shell_helper_2": {
+    "seed": 603,
+    "style": "_helper_style",
+    "prompt": "A small steam walker robot on two stubby jointed iron legs, a round riveted copper boiler body with a tiny chimney, a single big glass porthole face glowing violet, two little pincer arms.",
+    "pick": 604
+  },
+  "shell_helper_3": {
+    "seed": 604,
+    "style": "_helper_style",
+    "prompt": "A small hovering brass lantern drone with a single spinning brass propeller on top, a riveted brass cage body holding a glowing violet flame, a few tiny tool arms folded underneath.",
+    "pick": 605
+  },
+  "_familiar_style": "Highly detailed storybook steampunk illustration, rich painterly digital painting with fine texture and crisp detail, a little familiar kept by the goblin builders of a steam-powered town, part creature and part brass contraption, charming but crafted and believable, matte surfaces, soft even studio light, seen from an elevated three-quarter view from the front, single subject isolated and centered filling most of the frame, on a pure flat light grey background, no floor, no shadow, no smoke, no steam, no text, no letters, no logos, no border.",
+  "familiar_leaf": {
+    "seed": 701,
+    "style": "_familiar_style",
+    "prompt": "A small stout clockwork tortoise with a high domed shell of riveted brass plates overgrown with a thick cushion of green moss and tiny clover, a calm wise face with round brass goggles pushed up on its head, sturdy scaled legs with brass knee guards, a little leather tool strap with a wrench across its shell.",
+    "pick": 701
+  }
+}

@@ -35,6 +35,8 @@ const MIME = {
   '.ico': 'image/x-icon',
   '.wav': 'audio/wav',
   '.json': 'application/json; charset=utf-8',
+  '.glb': 'model/gltf-binary',
+  '.gltf': 'model/gltf+json',
 };
 
 function vendorFiles() {

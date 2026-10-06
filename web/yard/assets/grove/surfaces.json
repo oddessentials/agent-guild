@@ -1,0 +1,7 @@
+{
+ "sky": {
+  "light": "grove/sky-light.hdr",
+  "dark": "grove/sky-dark.hdr"
+ },
+ "surfaces": {}
+}

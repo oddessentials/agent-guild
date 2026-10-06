@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "worlds": [
+    "guild",
+    "professional"
+  ],
+  "up": "Y",
+  "units": "metres",
+  "source": "concept-art/guild-yard/build.py"
+}

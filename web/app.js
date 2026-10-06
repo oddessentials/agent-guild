@@ -10,6 +10,7 @@ import { createActivityFavicon, isSessionWorking } from './activity-favicon.js';
 import { createRemoteAccessUI } from './remote-access.js';
 import { createEnvironmentUI } from './environment.js';
 import { matchFolders, readRecentFolders, rememberFolder } from './folders.js';
+import { initYard } from './yard/view.js';
 
 const TOKEN_KEY = 'agentGuild.token';
 const CWD_KEY = 'agentGuild.cwd';
@@ -45,6 +46,13 @@ const coarsePointer = window.matchMedia('(pointer: coarse)');
 const activityFavicon = createActivityFavicon({ link: document.querySelector('link[rel="icon"]'), reducedMotion });
 
 const $ = (id) => document.getElementById(id);
+let yardUi = null;
+let yardQueued = false;
+function notifyViews() {
+  if (!yardUi || yardQueued) return;
+  yardQueued = true;
+  queueMicrotask(() => { yardQueued = false; yardUi.update(); });
+}
 const state = {
   token: null,
   providers: [],
@@ -122,6 +130,7 @@ function toast(message, ms = 5000, action = null) {
 const firstClick = (run) => (e) => { if (e.detail < 2) run(); };
 
 function setConnection(kind, label) {
+  notifyViews();
   const el = $('connection');
   el.className = `connection ${kind}`;
   el.querySelector('.label').textContent = label;
@@ -1434,6 +1443,14 @@ function selectedAccount(provider) {
 function selectAccount(provider, id) {
   state.accounts[provider.id] = id;
   save(ACCOUNTS_KEY, JSON.stringify(state.accounts));
+  for (const card of document.querySelectorAll('.provider[data-id]')) {
+    if (card.dataset.id !== provider.id) continue;
+    renderAccounts(card, provider);
+    renderUsage(card, provider);
+    renderReportingSetup(card, provider);
+  }
+  refreshPendingActions();
+  notifyViews();
 }
 
 /** The shell the user picked for the provider, or null to start its default. */
@@ -1449,6 +1466,11 @@ function selectShell(provider, id) {
   if (id === provider.defaultShell) delete state.shellPicks[provider.id];
   else state.shellPicks[provider.id] = id;
   save(SHELLS_KEY, JSON.stringify(state.shellPicks));
+  for (const card of document.querySelectorAll('.provider[data-id]')) {
+    if (card.dataset.id !== provider.id) continue;
+    renderShells(card, provider);
+    renderUsage(card, provider);
+  }
 }
 
 function renderShells(card, provider) {
@@ -1546,13 +1568,9 @@ function renderReportingSetup(card, provider) {
 
 let dealt = false;
 
-function renderProviders() {
-  const list = $('providers');
-  const focused = document.activeElement;
-  const focusKey = focused?.dataset?.muxFocus;
-  const tpl = $('provider-template');
-  list.replaceChildren(...state.providers.map((provider) => {
-    const node = tpl.content.firstElementChild.cloneNode(true);
+// Both layouts mount these same controls with these same command handlers.
+function buildProvider(provider) {
+    const node = $('provider-template').content.firstElementChild.cloneNode(true);
     paintProviderIcon(node.querySelector('.provider-icon'), provider);
     node.querySelector('.vendor').textContent = provider.vendor;
     node.querySelector('.tool').textContent = provider.tool;
@@ -1594,8 +1612,16 @@ function renderProviders() {
     renderUsage(node, provider);
     renderReportingSetup(node, provider);
     renderModelStats(node, provider);
+    renderProviderPending(node, provider);
     return node;
-  }));
+}
+
+function renderProviders() {
+  const list = $('providers');
+  const focused = document.activeElement;
+  const focusKey = focused?.dataset?.muxFocus;
+  list.replaceChildren(...state.providers.map(buildProvider));
+  notifyViews();
   if (focusKey) {
     const controls = [...list.querySelectorAll('[data-mux-focus]')];
     const fallback = focusKey.split(':').slice(0, 2).join(':') + ':copies';
@@ -1900,6 +1926,7 @@ async function loadUsage() {
   let usage;
   try { ({ usage } = await api('GET', '/usage')); } catch { return; }
   state.usage = new Map(usage.map((u) => [`${u.providerId}/${u.accountId ?? 'default'}`, u]));
+  notifyViews();
   for (const card of $('providers').children) {
     const provider = state.providers.find((p) => p.id === card.dataset.id);
     if (!provider) continue;
@@ -2459,6 +2486,7 @@ function newsNote(news) {
 }
 
 function renderLatestNews() {
+  notifyViews();
   const news = state.news;
   const list = $('news-latest');
   const seen = newsSeen() ?? Infinity;
@@ -2878,8 +2906,59 @@ function uninstallCopy(provider, card, install) {
   return installProvider(provider, card, { path: install.path });
 }
 
+const pendingSessionActions = new Set();
+// Install and update have their own guard. The manager still owns install safety.
+const pendingInstalls = new Set();
+
+function sessionActionKey(providerId, account, resume, cwd = $('cwd').value.trim()) {
+  // One conversation is one Resume action, whichever control started it.
+  // New also depends on the working folder.
+  return JSON.stringify([providerId, account, resume ? 'resume' : 'new', resume || cwd || '']);
+}
+
+// aria-disabled, not disabled: a native disabled button drops keyboard focus.
+function paintPending(button, busy, label, pendingLabel) {
+  if (!button) return;
+  button.setAttribute('aria-disabled', String(busy));
+  button.setAttribute('aria-busy', String(busy));
+  if (label !== undefined) button.textContent = busy ? pendingLabel : label;
+}
+
+function renderProviderPending(node, provider) {
+  const key = sessionActionKey(provider.id, selectedAccount(provider).id);
+  paintPending(node.querySelector('.new'), pendingSessionActions.has(key), 'New', 'Starting…');
+  for (const button of node.querySelectorAll('.install, .update')) paintPending(button, pendingInstalls.has(provider.id));
+}
+
+function resumeAccount(provider, session) {
+  return provider.accounts?.find((a) => a.id === session.account?.id)?.id ?? selectedAccount(provider).id;
+}
+
+function renderResumePending(node, session) {
+  // A multiplexer card says Reattach and uses a different command.
+  if (session.multiplexer) return;
+  const resume = node.querySelector('.resume');
+  const provider = state.providers.find((p) => p.id === session.provider.id);
+  const key = provider && sessionActionKey(provider.id, resumeAccount(provider, session), toolSessionId(session));
+  paintPending(resume, Boolean(key && pendingSessionActions.has(key)), 'Resume', 'Resuming…');
+}
+
+function refreshPendingActions() {
+  for (const node of document.querySelectorAll('.provider[data-id]')) {
+    const provider = state.providers.find((p) => p.id === node.dataset.id);
+    if (provider) renderProviderPending(node, provider);
+  }
+  for (const node of document.querySelectorAll('.session-card[data-id]')) {
+    const session = state.sessions.get(node.dataset.id);
+    if (session) renderResumePending(node, session);
+  }
+  if ($('history').open) renderHistory();
+}
+
 async function installProvider(provider, card, { force = false, path = null } = {}) {
-  card.classList.add('busy');
+  if (pendingInstalls.has(provider.id)) return;
+  pendingInstalls.add(provider.id);
+  refreshPendingActions();
   try {
     const { session } = path
       ? await api('POST', `/providers/${provider.id}/uninstall`, { path, force })
@@ -2889,18 +2968,21 @@ async function installProvider(provider, card, { force = false, path = null } = 
   } catch (err) {
     if (err instanceof AuthError) return showAuth(err.message);
     if (err.code === 'provider_in_use') {
-      card.classList.remove('busy');
       const n = err.running;
       const what = `${n} ${provider.tool} session${n === 1 ? ' is' : 's are'} running`;
       const [doing, verb] = path ? ['Removing', 'Uninstall'] : ['Updating', 'Update'];
       if (confirm(`${what}. ${doing} ${provider.tool} while it runs can break ${n === 1 ? 'that session' : 'those sessions'}. ${verb} anyway?`)) {
-        return installProvider(provider, card, { force: true, path });
+        // Drop the key so the retried request can take it. Awaiting that
+        // request keeps this one from clearing the key while it is in flight.
+        pendingInstalls.delete(provider.id);
+        return await installProvider(provider, card, { force: true, path });
       }
       return;
     }
     toast(err.message, 8000);
   } finally {
-    card.classList.remove('busy');
+    pendingInstalls.delete(provider.id);
+    refreshPendingActions();
   }
 }
 
@@ -2911,8 +2993,11 @@ async function installProvider(provider, card, { force = false, path = null } = 
  */
 async function startSession(provider, card, { resume, cwd, account = selectedAccount(provider).id } = {}) {
   const working = $('cwd').value.trim();
+  const key = sessionActionKey(provider.id, account, resume, cwd || working);
+  if (pendingSessionActions.has(key)) return;
   save(CWD_KEY, working);
-  card?.classList.add('busy');
+  pendingSessionActions.add(key);
+  refreshPendingActions();
   try {
     const body = { providerId: provider.id, account, shell: pickedShell(provider)?.id, cwd: cwd || working || undefined, cols: 120, rows: 32, resume };
     let session;
@@ -2931,7 +3016,8 @@ async function startSession(provider, card, { resume, cwd, account = selectedAcc
     if (err instanceof AuthError) return showAuth(err.message);
     toast(err.message, 8000);
   } finally {
-    card?.classList.remove('busy');
+    pendingSessionActions.delete(key);
+    refreshPendingActions();
   }
 }
 
@@ -3059,7 +3145,8 @@ function updateHistoryRow(node, provider, entry) {
   meta.textContent = [entry.cwd && folderName(entry.cwd), when, running && `open in Agent Guild as ${running.name}`].filter(Boolean).join(' · ');
   meta.title = [entry.cwd, entry.startedAt && `started ${new Date(entry.startedAt).toLocaleString()}`].filter(Boolean).join('\n');
   const action = node.querySelector('.history-resume');
-  action.textContent = running ? 'Open' : 'Resume';
+  const key = sessionActionKey(provider.id, historyView.accountId, entry.id);
+  paintPending(action, pendingSessionActions.has(key), running ? 'Open' : 'Resume', 'Resuming…');
   action.title = running
     ? `This session is running in Agent Guild as "${running.name}". Open it instead of resuming it twice.`
     : `Resume this ${provider.tool} session${entry.cwd ? ` in ${entry.cwd}` : ''}`;
@@ -3102,6 +3189,7 @@ function renderHistory() {
   }
   $('history-sub').textContent = parts.join(' · ');
   renderHistoryRows(provider, shown);
+  renderHistorySubmit();
   let note = '';
   if (!provider.historySource) note = `Agent Guild cannot list ${provider.tool}'s sessions. Enter the id of one to resume it.`;
   else if (historyView.loading && !snapshot) note = `Reading ${provider.tool}'s sessions…`;
@@ -3112,6 +3200,15 @@ function renderHistory() {
   $('history-note').hidden = !note;
   $('history-filter').disabled = !provider.historySource;
   here.parentElement.hidden = !provider.historySource;
+}
+
+function renderHistorySubmit() {
+  const provider = historyProvider();
+  if (!provider) return;
+  const id = $('history-id').value.trim();
+  const key = id && sessionActionKey(provider.id, historyView.accountId, id);
+  const running = id && runningOn(provider.id, historyView.accountId, id);
+  paintPending($('history-form').querySelector('button[type="submit"]'), pendingSessionActions.has(key), running ? 'Open' : 'Resume', 'Resuming…');
 }
 
 /** Closing to open a session leaves focus with the terminal; otherwise it returns to the opener. */
@@ -3727,6 +3824,8 @@ function noticeClone(s) {
 function useFolder(dir) {
   $('cwd').value = dir;
   save(CWD_KEY, dir);
+  refreshPendingActions();
+  notifyViews();
   if (dockShows('github')) renderGitHub();
   toast(`New sessions start in ${dir}.`, 4000);
 }
@@ -4713,6 +4812,7 @@ function updateCard(node, s) {
   const resume = node.querySelector('.resume');
   resume.hidden = !resumable(s) && !reattachable(s);
   resume.textContent = s.multiplexer ? 'Reattach' : 'Resume';
+  renderResumePending(node, s);
   resume.title = s.multiplexer
     ? `Attach this card to its ${s.multiplexer.label} session again, as ${s.multiplexer.attach} would`
     : `Start ${s.provider.tool} again on this session${id ? ` (${id})` : ''} in ${s.cwd}`;
@@ -4754,6 +4854,7 @@ function renderSessions() {
   if (state.activeId) updatePanel();
   if ($('history').open) renderHistory();
   if (state.stats && sessions.some((s) => s.model && state.statsFor.get(s.id) !== modelKey(s))) scheduleStats();
+  notifyViews();
 }
 
 function confirmLeaving(event) {
@@ -6113,6 +6214,7 @@ $('github-branches-clear').addEventListener('click', () => {
 $('github-parent').addEventListener('change', () => setCloneParent(cloneParent()));
 $('github-parent-pick').addEventListener('click', firstClick(() => chooseFolder('clone')));
 $('history-here').addEventListener('change', renderHistory);
+$('history-id').addEventListener('input', renderHistorySubmit);
 $('history-form').addEventListener('submit', resumeById);
 $('models').addEventListener('click', (e) => { if (e.target === $('models')) closeModels(); });
 $('models').addEventListener('close', () => {
@@ -6404,6 +6506,65 @@ state.environmentUI = createEnvironmentUI({
     id: session.id, name: session.name, tool: session.provider?.tool || '', cwd: session.cwd || '', multiplexer: Boolean(session.multiplexer),
   })),
 });
-$('cwd').addEventListener('input', () => { if ($('environment').open) state.environmentUI.sync(); });
+$('cwd').addEventListener('input', () => {
+  refreshPendingActions();
+  notifyViews();
+  if ($('environment').open) state.environmentUI.sync();
+});
+
+// The Yard is another layout of this page. It mounts the same controls.
+yardUi = initYard({
+  snapshot: () => ({
+    providers: state.providers,
+    sessions: [...state.sessions.values()],
+    connected: state.connected,
+    news: state.news,
+    activeId: state.activeId,
+  }),
+  openSession: openPanel,
+  openNews,
+  mountInspector(host, selection) {
+    if (!selection) { host.replaceChildren(); return; }
+    if (selection.kind === 'provider') {
+      const provider = state.providers.find((item) => item.id === selection.id);
+      if (!provider) { host.replaceChildren(); return; }
+      const signature = JSON.stringify(provider);
+      let node = host.firstElementChild;
+      if (!node || node.dataset.signature !== signature || !node.classList.contains('provider')) {
+        node = buildProvider(provider);
+        node.dataset.signature = signature;
+        host.replaceChildren(node);
+      }
+      const contentSignature = JSON.stringify([
+        state.accounts[provider.id],
+        state.shellPicks[provider.id],
+        usageFor(provider),
+        state.stats?.providers?.[provider.id],
+        state.stats?.retrievedAt,
+      ]);
+      if (node.dataset.contentSignature !== contentSignature) {
+        renderAccounts(node, provider);
+        renderShells(node, provider);
+        renderUsage(node, provider);
+        renderReportingSetup(node, provider);
+        renderModelStats(node, provider);
+        node.dataset.contentSignature = contentSignature;
+      }
+      renderProviderPending(node, provider);
+    } else {
+      const session = state.sessions.get(selection.id);
+      if (!session) { host.replaceChildren(); return; }
+      let node = host.firstElementChild;
+      if (!node || node.dataset.id !== session.id || !node.classList.contains('session-card')) {
+        node = buildCard(session);
+        node.querySelector('.drag-handle').hidden = true;
+        host.replaceChildren(node);
+      }
+      updateCard(node, session);
+      node.querySelector('.drag-handle').hidden = true;
+    }
+  },
+});
+
 state.token = readTokenFromHash() || load(TOKEN_KEY);
 boot();

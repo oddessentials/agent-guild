@@ -1,0 +1,53 @@
+{
+  "_style": "Highly detailed storybook fantasy illustration of a single dwelling built into a living tree in an enchanted woodland spirit village, rich painterly digital painting with crisp detail, gnarled living bark, thick roots, carved wooden doors and shutters, round leaded windows glowing warm, patches of green moss, the whole tree, its canopy and its spreading roots fully visible and centered, seen from an elevated three-quarter view from the front right, isolated on a pure flat light grey background, every surface matte, no ground, no grass, no people, no animals, no smoke, no fire, no glow effects, no fireflies, no text, no letters, no logos, no signs with writing, no border.",
+  "hall_anthropic": {
+    "seed": 1301,
+    "prompt": "The fox spirit's lantern oak: a broad squat ancient oak with a hollow trunk housing a cosy round home, a big round arched wooden door with a hanging amber paper lantern, a wide spreading rounded canopy of bold burnt-orange and amber autumn maple leaves, round windows in the trunk, a little wooden balcony under the canopy, paper lanterns hung from the lower branches.",
+    "pick": 1301
+  },
+  "hall_openai": {
+    "seed": 1320,
+    "prompt": "The moss deer's antler hall: a tall hollowed-out ancient tree trunk made into a tower home, wide at its foot on thick buttress roots, its bark thickly covered in bold bright emerald-green moss, a round arched wooden door framed by pale carved antler-shaped beams, round windows up the trunk, its broken top crowned by a wide ring of huge pale bare antler-like branches with ferns sprouting between them. The whole dwelling stands alone, small in the centre of the frame with empty grey background all round it, no forest behind it.",
+    "pick": 1321
+  },
+  "hall_google": {
+    "seed": 1303,
+    "prompt": "The water spirit's willow house: a great weeping willow whose long drooping curtains of leaves hang all round like a dome, a round cottage of pale blue-painted wood set into its trunk, a roof of large bold sapphire-blue lily-pad shaped shingles, a small wooden waterwheel turning beside a little stone basin at its foot, pink lotus flowers in the basin.",
+    "pick": 1304
+  },
+  "hall_xai": {
+    "seed": 1304,
+    "prompt": "The bird spirit's lookout pine: a very tall slender pine tree with a stack of three small round birdhouse-like rooms climbing its trunk, each with a steep pointed roof of bold bright cyan-turquoise shingles, a spiral wooden stair winding round the trunk, a crow's-nest platform with a railing at the top among the pine boughs, carved white wooden feather shapes on the eaves.",
+    "pick": 1305
+  },
+  "hall_shell": {
+    "seed": 1305,
+    "prompt": "The lantern spirit's wisteria pagoda: a wide low gnarled wisteria tree whose twisting trunk holds up a three-tiered mossy stone pagoda dwelling with upturned stone roof eaves, heavy hanging clusters of bold bright amethyst-purple wisteria blossoms draping from every tier, a stone lantern beside the round moon-gate doorway, a square lilac-painted window.",
+    "pick": 1305
+  },
+  "_prop": "Highly detailed storybook fantasy illustration of a single object from an enchanted woodland spirit village, rich painterly digital painting with crisp detail, gnarled living bark, carved wood, patches of green moss, centered and fully visible, seen from an elevated three-quarter view from the front right, isolated on a pure flat light grey background, every surface matte, no ground, no grass, no people, no animals, no smoke, no fire, no glow effects, no fireflies, no text, no letters, no logos, no border.",
+  "town_treehouse": {
+    "seed": 1311,
+    "prompt": "A small woodland treehouse cottage: a round wooden hut with a conical bark-shingle roof perched in the fork of a short thick oak trunk, a wooden ladder up to its door, a round window, a small rounded green leafy canopy above it, roots spreading at its foot.",
+    "style": "_prop",
+    "pick": 1312
+  },
+  "town_stump": {
+    "seed": 1316,
+    "prompt": "A woodland stump house: a huge wide old tree stump with a little arched wooden door and two round windows in its side, a mossy flat top with a small crooked chimney pipe and a few toadstools, thick roots spreading out around it. The stump stands alone, small in the centre of the frame with empty grey background all round it, no trees behind it.",
+    "style": "_prop",
+    "pick": 1317
+  },
+  "town_mushroom": {
+    "seed": 1313,
+    "prompt": "A cluster of three giant toadstool houses of different heights: thick cream stalks with little arched wooden doors and round windows, broad domed caps of rich red with cream spots, the tallest in the middle, a small wooden ladder against one stalk.",
+    "style": "_prop",
+    "pick": 1313
+  },
+  "town_lantern": {
+    "seed": 1314,
+    "prompt": "A tall old Japanese stone garden lantern of weathered grey granite: a square base, a slender pillar, a square firebox with an open window and a wide upturned stone cap with a round finial, patches of green moss on its cap and base.",
+    "style": "_prop",
+    "pick": 1314
+  }
+}

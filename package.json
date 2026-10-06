@@ -34,6 +34,10 @@
     "doctor": "node bin/agent-guild.mjs doctor",
     "demo:build": "node docs/demo/build.mjs",
     "demo:check": "node docs/demo/check.mjs",
+    "build:yard": "node scripts/build-yard.mjs",
+    "optimize:yard": "node scripts/optimize-yard.mjs",
+    "test:yard": "node --test --test-concurrency=1 tests/yard.test.mjs tests/browser/yard.mjs",
+    "preview:yard": "node docs/yard/preview.mjs",
     "test": "node --test --test-concurrency=1 \"tests/*.test.mjs\""
   },
   "dependencies": {
@@ -52,5 +56,12 @@
   },
   "allowScripts": {
     "node-pty@1.2.0-beta.15": true
+  },
+  "devDependencies": {
+    "@gltf-transform/core": "4.5.1",
+    "@gltf-transform/extensions": "4.5.1",
+    "@gltf-transform/functions": "4.5.1",
+    "esbuild": "0.28.2",
+    "three": "0.186.1"
   }
 }

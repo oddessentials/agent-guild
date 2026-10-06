@@ -1,0 +1,53 @@
+{
+ "sky": {
+  "light": "professional/sky-light.hdr",
+  "dark": "professional/sky-dark.hdr"
+ },
+ "surfaces": {
+  "concrete": {
+   "metres": 3,
+   "materials": [
+    "office",
+    "white"
+   ],
+   "tint": false,
+   "color": "professional/concrete-color.webp",
+   "normal": "professional/concrete-normal.webp",
+   "rough": "professional/concrete-rough.webp"
+  },
+  "stone": {
+   "metres": 2.5,
+   "materials": [
+    "officeDark"
+   ],
+   "tint": false,
+   "color": "professional/stone-color.webp",
+   "normal": "professional/stone-normal.webp",
+   "rough": "professional/stone-rough.webp"
+  },
+  "timber": {
+   "metres": 2,
+   "materials": [
+    "woodLight"
+   ],
+   "tint": false,
+   "color": "professional/timber-color.webp",
+   "normal": "professional/timber-normal.webp",
+   "rough": "professional/timber-rough.webp"
+  },
+  "accent": {
+   "metres": 2,
+   "materials": [
+    "amber",
+    "emerald",
+    "blue",
+    "cyan",
+    "violet"
+   ],
+   "tint": true,
+   "color": "professional/accent-color.webp",
+   "normal": "professional/accent-normal.webp",
+   "rough": "professional/accent-rough.webp"
+  }
+ }
+}
