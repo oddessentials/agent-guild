@@ -16,7 +16,7 @@ ARGS=sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else []
 ONLY=ARGS[ARGS.index('--only')+1].split(',') if '--only' in ARGS else None
 # Worlds whose ground and surroundings are pre-rendered plates (env/); their
 # glTF carries only the live halls.
-PLATED={'guild'}
+PLATED={'guild','professional'}
 PALETTE={
  'stone':'777966','stoneLight':'a2a08b','stoneDark':'434b42','edge':'bcb08b',
  'paver0':'777966','paver1':'898777','paver2':'686e61','paver3':'969281',
@@ -42,8 +42,8 @@ def mat(name):
  m=bpy.data.materials.new(name);m.diffuse_color=(*rgb,1);m.use_nodes=True
  bs=m.node_tree.nodes.get('Principled BSDF')
  bs.inputs['Base Color'].default_value=(*(v**2.2 for v in rgb),1)
- bs.inputs['Roughness'].default_value=.7 if name not in ['gold','iron','glass','officeGlass'] else .33
- bs.inputs['Metallic'].default_value=.7 if name in ['gold','iron','orbitalEdge'] else .05
+ bs.inputs['Roughness'].default_value=.08 if name=='officeGlass' else .7 if name not in ['gold','iron','glass'] else .33
+ bs.inputs['Metallic'].default_value=.7 if name in ['gold','iron','orbitalEdge','officeGlass'] else .05
  if name in ['window','magic']:
   bs.inputs['Emission Color'].default_value=(*(v**2.2 for v in rgb),1);bs.inputs['Emission Strength'].default_value=1.6
  M[name]=m;return m
@@ -334,14 +334,83 @@ def other_hall(index,skin):
   for x in [-1.6,1.6]:
    s.cone((x,-.3,.48),.06,.05,.8,'woodLight',8);s.sphere((x,-.3,.95),(.48,.42,.2),color,16,8)
  else:
-  s.box((0,0,.25),(4,3.3,.35),'white',.05)
-  s.box((0,0,1.3),(2.8,2.4,1.8),'office',.055)
-  for x in [-1.1,0,1.1]:s.box((x,-1.22,1.4),(.9,.05,1.2),'officeGlass',.02)
-  s.box((0,0,2.27),(3.15,2.75,.17),'white',.02)
-  s.box((0,-1.32,2.3),(2.8,.07,.10),color,.01)
-  s.box((.6,.1,3.0),(1.4,1.8,1.4),'officeGlass',.05)
-  s.box((.6,.1,3.74),(1.6,2,.14),'white',.02)
+  campus_hall(s,index,color)
  return s
+
+def glazing(s,x,y,z,width,height,mullions,face='front'):
+ # A glass wall a few centimetres proud of its face, with white mullions.
+ # face: 'front' faces the camera (-Y), 'side' the right (+X).
+ if face=='front':
+  s.box((x,y,z),(width,.05,height),'officeGlass',.01)
+  for i in range(mullions+1):s.box((x-width/2+i*width/mullions,y-.03,z),(.05,.05,height),'white',.008)
+  s.box((x,y-.03,z+height/2),(width,.06,.06),'white',.008)
+ else:
+  s.box((x,y,z),(.05,width,height),'officeGlass',.01)
+  for i in range(mullions+1):s.box((x+.03,y-width/2+i*width/mullions,z),(.05,.05,height),'white',.008)
+
+def campus_hall(s,index,color):
+ # Each stands on a granite plinth with steps to its entrance, facing the camera.
+ s.box((0,0,.12),(4.9,4.3,.24),'officeDark',.03)
+ for i in range(2):s.box((0,-2.3-i*.22,.1-i*.05),(1.8,.4,.12),'officeDark',.02)
+ if index==0:
+  # Studio: a glazed ground floor, a set-back upper storey behind timber fins, a roof terrace.
+  s.box((0,.1,1.25),(4.4,3.6,2.0),'office',.03)
+  glazing(s,-.2,-1.73,1.15,3.4,1.6,6)
+  glazing(s,2.23,.1,1.15,2.6,1.6,4,'side')
+  s.box((0,.1,2.32),(4.6,3.8,.16),'white',.02)
+  s.box((-.3,.5,3.25),(3.4,2.8,1.7),'office',.03)
+  glazing(s,-.3,-.93,3.2,3.1,1.4,5)
+  for i in range(14):s.box((-1.9+i*.25,-1.02,3.25),(.07,.14,1.75),'woodLight',.01)
+  s.box((-.3,.5,4.17),(3.6,3.0,.14),'white',.02)
+  s.box((1.55,-.6,2.55),(1.1,1.4,.3),'leaf',.08)
+  s.box((-.2,-2.05,2.05),(1.6,.8,.1),color,.02)
+  s.box((1.9,-1.8,1.55),(.12,.12,2.6),color,.01)
+ elif index==1:
+  # Rotunda: a glass drum under a wide disc canopy on slim columns.
+  s.cone((0,.1,.36),2.05,2.05,.24,'white',48)
+  s.cone((0,.1,1.55),1.75,1.75,2.2,'officeGlass',48)
+  for i in range(24):
+   a=i*2*PI/24;s.box((1.78*math.cos(a),.1+1.78*math.sin(a),1.55),(.06,.06,2.2),'white',.01,rot=(0,0,a))
+  for i in range(12):
+   a=i*2*PI/12+PI/12;s.cone((2.15*math.cos(a),.1+2.15*math.sin(a),1.6),.07,.07,2.5,'white',10)
+  s.cone((0,.1,2.95),2.45,2.45,.26,'white',64)
+  s.cone((0,.1,2.78),2.42,2.42,.1,color,64)
+  s.cone((0,.1,3.6),1.1,1.1,1.05,'office',32)
+  s.cone((0,.1,4.16),1.2,1.2,.1,'white',32)
+  s.cone((0,.1,4.35),.75,.2,.3,'officeGlass',24)
+  for x in [-.35,.35]:s.box((x,-1.68,1.25),(.66,.04,1.6),'window',.01)
+ elif index==2:
+  # Stack: three glazed volumes, each turned and cantilevered off the one below.
+  for k,(w,d,z,dx,turn) in enumerate([(4.2,3.2,.95,0,0),(3.7,2.7,2.45,.45,.2),(3.1,2.3,3.9,-.4,-.14)]):
+   rot=(0,0,turn)
+   s.box((dx,.15,z),(w,d,1.42),'office',.03,rot=rot)
+   c,sn=math.cos(turn),math.sin(turn)
+   s.box((dx+(d/2+.02)*sn,.15-(d/2+.02)*c,z),(w-.3,.05,.9),'officeGlass',.01,rot=rot)
+   s.box((dx+(d/2+.04)*sn,.15-(d/2+.04)*c,z+.6),(w,.08,.14),color if k==1 else 'white',.01,rot=rot)
+  s.box((-.4,.15,4.68),(3.3,2.5,.12),'white',.02,rot=(0,0,-.14))
+  s.box((1.6,-1.2,.85),(.12,.12,1.2),'white',.01)
+ elif index==3:
+  # Tower: a slender dark stone shaft with tall glass slots and a sloped crown, beside a low wing.
+  s.box((-.6,.3,2.65),(2.4,2.4,4.8),'officeDark',.03)
+  for x in [-1.25,-.6,.05]:s.box((x,-.92,2.7),(.34,.05,4.2),'officeGlass',.01)
+  for y in [-.35,.3,.95]:s.box((.62,y,2.7),(.05,.34,4.2),'officeGlass',.01)
+  s.add([(-1.85,-.95,5.05),(.65,-.95,5.05),(.65,1.55,5.05),(-1.85,1.55,5.05),(-1.85,-.95,5.65),(-1.85,1.55,5.65)],
+        [(0,1,4),(1,2,5,4),(2,3,5),(0,4,5,3),(3,2,1,0)],'iron')
+  s.box((-.6,-.95,5.0),(2.5,.06,.1),color,.01)
+  s.box((1.25,-.3,.95),(2.1,2.9,1.4),'office',.03)
+  glazing(s,1.25,-1.77,.95,1.8,1.0,3)
+  glazing(s,2.32,-.3,.95,2.6,1.0,4,'side')
+  s.box((1.25,-.3,1.7),(2.3,3.1,.12),'white',.02)
+  s.box((-.6,-1.6,.95),(1.2,.9,.08),color,.01)
+ else:
+  # Hangar: a long glass hall under a barrel vault, with coloured gable ends.
+  s.box((0,.1,1.0),(4.6,3.4,1.5),'office',.03)
+  glazing(s,0,-1.63,1.0,4.2,1.3,8)
+  glazing(s,2.33,.1,1.0,3.0,1.3,5,'side')
+  s.cone((0,.1,1.75),1.75,1.75,4.7,'white',32,rot=(0,PI/2,0))
+  for x in [-2.36,2.36]:s.cone((x,.1,1.75),1.78,1.78,.08,color,32,rot=(0,PI/2,0))
+  for i in range(7):s.torus((-1.8+i*.6,.1,1.75),1.77,.025,'iron',32,rot=(0,PI/2,0))
+  s.box((-1.5,-2.05,1.95),(1.0,.7,.08),color,.02)
 
 def environment(skin):
  clear();random.seed(714)

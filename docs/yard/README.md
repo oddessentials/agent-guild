@@ -64,7 +64,7 @@ colours are fields of `WORLDS` in `web/yard/model.mjs`.
 | Guild | Stone courtyard, five distinct halls, bronze trim and warm windows | Five fantasy heroes with baby dragon and spirit familiars |
 | Orbital | Station deck, observatories, panels and illuminated rings | Five robot variants and helper drones |
 | Grove | Tree dwellings, stepping stones, mushrooms and planted borders | Five woodland spirits and small companions |
-| Professional | Restrained architectural campus | Simple session markers without character art |
+| Professional | Office campus of glass and concrete round a paved plaza, with lawns, a pond and tree-lined avenues; five campus buildings | Simple session markers without character art |
 | Goblinville | Steam-powered town on stilts over a misty bog; five provider workshops on a plank deck | Five goblin-kin builders with creature familiars and clockwork shell helpers |
 | Gnomeland | Timber-and-stone mountain village on a cobbled square, with a lake, a waterfall and mountains beyond; five provider workshops | Five gnome builders with clockwork and creature familiars and clockwork shell helpers |
 
@@ -119,8 +119,9 @@ set; live sessions currently enter in their reported working/resting pose.
 The raster backdrop, limestone and oak textures were generated with the
 built-in image generation tool. Originals and the full prompt briefs are
 recorded in the [art source notes](../../concept-art/guild-yard/ART.md).
-Guild's surroundings are pre-rendered environment plates: a lakeside
-meadow, orchard and forested hills built in Blender from
+Guild's and Professional's surroundings are pre-rendered environment plates
+(for Guild a lakeside meadow, orchard and forested hills; for Professional
+an office campus with lawns, a pond and avenues) built in Blender from
 [Poly Haven](https://polyhaven.com/license) CC0 models, textures and sky,
 then path-traced from the Yard's own camera direction. Because the camera
 is orthographic and never rotates, the plates line up with the live halls
@@ -205,7 +206,7 @@ They also cover overlapping New/Resume requests, duplicate submission across
 views, independent install requests and model recovery without retry loops.
 Asset tests verify the shipped GLBs contain anchors, skinning and clips.
 
-The release gate is 111 MiB packed. The yard worlds measured 109.1 MiB in the
+The release gate is 118 MiB packed. The yard worlds measured 116.3 MiB in the
 packed package. Run `npm pack` and
 `node tests/package/check-tarball.mjs <archive>` after asset changes. Pack on
 Linux/macOS for release: Windows npm archives do not preserve executable

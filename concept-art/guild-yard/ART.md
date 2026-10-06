@@ -9,9 +9,15 @@ editable Blender files are the art sources. Runtime files are in
 
 `build.py` builds four worlds with five provider halls each. Guild combines
 stone, oak, bronze and provider-colored roofs. Orbital uses station panels
-and instrument domes; Grove uses living wood and garden forms; Professional
-uses simple campus architecture. Distinct Guild silhouettes identify the
-keep, citadel, observatory, tower and timber workshop at overview scale.
+and instrument domes; Grove uses living wood and garden forms. Distinct Guild
+silhouettes identify the keep, citadel, observatory, tower and timber
+workshop at overview scale. Professional's halls are five campus buildings:
+a studio with a timber-finned upper storey, a glass rotunda under a disc
+canopy, a stack of turned glazed volumes, a dark stone tower with a sloped
+crown, and a glass hall under a barrel vault. Their materials (`office`,
+`white`, `officeDark`, `woodLight` and the provider colours) take
+the Poly Haven sets in `SURFACES` of `env/professional_env.py`; the glass and
+lit `window` panes keep their authored materials.
 
 `build.py` also makes the Orbital robots and Grove spirits (`hero()`) and
 the drones (`drone()`), each with a rig and glTF animation channels. Work
@@ -175,3 +181,28 @@ color. Preserve exact material names used by `textureWorld`, hall anchor
 names and animation clip names when editing sources. Run the optimizer
 after a fresh Blender export, then asset/browser tests before committing.
 
+## Professional environment plates
+
+`env/professional_env.py` builds an office campus for Professional's plates,
+rendered with `plates.py -- professional` and its live surfaces with
+`surfaces.py -- professional`. A level plaza of large grey slabs, edged in
+granite with a still round pool at its centre, carries the live halls and
+session markers; planters and benches line its back and left edges. Mown
+lawns with stripes, footpaths and two tree-lined avenues lead out to a pond
+with café tables, and office blocks stand in a row behind the plaza and
+along the avenues' outer sides. The blocks are modelled in the script: a
+curtain wall drawn by a shader (mullions and spandrels in Poly Haven
+concrete over reflective glass, in three styles) above a glazed lobby, with
+a parapet and roof plant. Every block is kept low enough to stay in view
+and off the live area (`tall_clear`).
+
+Light renders under `kloofendal_38d_partly_cloudy_puresky`; dark under
+`qwantani_dusk_1_puresky`, with a share of the offices lit, glazed lobbies
+and the street lamps on. Every other source is Poly Haven CC0 (trees,
+shrubs, reeds, planters, benches, café sets, street lamps, paving, asphalt,
+granite, concrete and gravel), pinned in `env/polyhaven.lock.json`; the
+lawn is the Guild's generated `meadow` texture.
+
+The session markers stay simple: `loadUnit` in `web/yard/renderer.js`
+draws a granite-grey plinth and a satin column in the provider's colour,
+which glows at dusk.

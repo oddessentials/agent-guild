@@ -263,6 +263,7 @@ export class YardRenderer {
       for(const m of (Array.isArray(node.material)?node.material:node.material?[node.material]:[]))
         if(m.name==='window'||m.name==='magic'||m.emissiveMap)m.emissiveIntensity=light?.35:1.4;
     });
+    for(const unit of this.units.values())if(unit.token)unit.token.userData.glow.emissiveIntensity=light?0:.9;
     // Plated worlds use the sun, sky and plates their theme was rendered with.
     this.sun.position.set(...(plated?SUN[key]:SUN.light));
     this.scene.environment=this.world?.userData.environments?.[key]||null;
@@ -396,8 +397,16 @@ export class YardRenderer {
     const generation=this.request;
     const prefix=WORLDS[this.skin].characters;
     if(!prefix) {
-      const material=new T.MeshStandardMaterial({color:session.provider.color||0x70868e,roughness:.5});
-      const mesh=new T.Mesh(new T.BoxGeometry(.45,.65,.45),material);mesh.position.y=.33;mesh.castShadow=true;unit.root.add(mesh);unit.token=mesh;unit.loaded=true;return;
+      // A granite-grey plinth and a satin column in the provider's colour, which glows at dusk.
+      const color=new T.Color(session.provider.color||0x70868e),token=new T.Group();
+      const base=new T.Mesh(new T.CylinderGeometry(.42,.48,.14,32),new T.MeshStandardMaterial({color:0x8d9192,roughness:.75}));
+      const glow=new T.MeshStandardMaterial({color,emissive:color,roughness:.35,metalness:.1});
+      const column=new T.Mesh(new T.CapsuleGeometry(.24,.62,8,24),glow);
+      const cap=new T.Mesh(new T.CylinderGeometry(.28,.28,.05,32),new T.MeshStandardMaterial({color:0xe8eaea,roughness:.4,metalness:.3}));
+      base.position.y=.07;column.position.y=.7;cap.position.y=.17;
+      for(const mesh of [base,column,cap]){mesh.castShadow=true;mesh.receiveShadow=true;token.add(mesh);}
+      token.userData.glow=glow;glow.emissiveIntensity=themeKey(this.theme)==='light'?0:.9;
+      unit.root.add(token);unit.token=token;unit.loaded=true;return;
     }
     const index=Math.max(0,PROVIDER_ORDER.indexOf(session.provider.id));
     unit.loading=true;
@@ -541,7 +550,7 @@ export class YardRenderer {
     for(const helper of unit.helpers){helper.mixer.stopAllAction();helper.mixer.uncacheRoot(helper.model);}
     disposeSkeletons(unit.root);
     this.scene.remove(unit.root);unit.label.remove();unit.ring.geometry.dispose();unit.ring.material.dispose();
-    if(unit.token){unit.token.geometry.dispose();unit.token.material.dispose();}
+    if(unit.token)disposeTree(unit.token);
   }
   clearUnits() { for(const unit of this.units.values())this.removeUnit(unit);this.units.clear(); }
   dispose() {
