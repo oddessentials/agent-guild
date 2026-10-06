@@ -323,6 +323,27 @@ test('restart keeps an ephemeral port, and starts the manager itself when the ol
   }
 });
 
+test('restart says why the running manager refused, which keeps running', async () => {
+  const otherHome = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-launcher-'));
+  const message = 'Build node-pty first.\nThe manager was not restarted, and its sessions keep running.';
+  const server = http.createServer((req, res) => {
+    const refused = req.url === '/api/v1/shutdown';
+    res.writeHead(refused ? 409 : 200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(refused ? { error: { code: 'pty_unavailable', message } } : { ok: true, name: 'agent-guild', version: '9.9.9', pid: process.pid }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const otherEnv = { ...env, AGENT_GUILD_HOME: otherHome, AGENT_GUILD_PORT: String(server.address().port) };
+  try {
+    const restarted = await runWith(otherEnv, 'restart');
+    assert.equal(restarted.code, 1);
+    assert.equal(restarted.stderr, `agent-guild: restart failed: ${message}\n`);
+  } finally {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+    fs.rmSync(otherHome, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  }
+});
+
 test('open and status say when the running manager is another version', async () => {
   const otherHome = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-launcher-'));
   const server = http.createServer((req, res) => {

@@ -14,6 +14,7 @@ import { NewsFeed } from './news.mjs';
 import { Changelog } from './changelog.mjs';
 import { GitHub } from './github.mjs';
 import { createManagerServer } from './server.mjs';
+import { loadPty } from './pty.mjs';
 import { createNotesStore } from './notes.mjs';
 import { RemoteAccess, loadRemoteAccess } from './remote-access.mjs';
 import { SelfUpdate } from './self-update.mjs';
@@ -48,7 +49,9 @@ const VERSION_REFRESH_MS = 60 * 60 * 1000;
  * `supervised`: started by the Linux boot service, so systemd starts the next manager after a restart.
  */
 export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, sessionDefaults, version = VERSION, packageFile = PACKAGE_FILE, github: githubOptions = {}, remoteAccess: remoteOptions = {}, autostart = null, boot, supervised = false } = {}) {
-  // Validate before creating files, processes or timers, so a typo fails startup cleanly.
+  // Validate before creating files, processes or timers, so a typo, or a
+  // system node-pty cannot run on, fails startup cleanly.
+  loadPty();
   const remoteSettings = loadRemoteAccess(paths.remoteAccess);
   ensureDataDir();
   const token = loadOrCreateToken();

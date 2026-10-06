@@ -180,8 +180,10 @@ and may set `stale` without replacing the pins. POST reads them again.
 
 `GET /environment?scope=session&id=<hex>` and `{ "scope": "session", "id": "<hex>" }`
 probe the PATH recorded when that session was spawned, in a neutral temporary
-directory. Only PATH, the home folder and the toolchain-manager locations and
+directory. Only PATH, the home folder, the toolchain-manager locations and
 version selectors (for example `RUSTUP_HOME`, `PYENV_ROOT`, `ASDF_DATA_DIR`)
+the Windows install folders (`LOCALAPPDATA`, `ProgramFiles`, `ProgramW6432`)
+and the Docker selectors (`DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`)
 are passed to the probe. The response adds `sessionId`, `spawnCwd`, and `availability`.
 `availability` is `ok`, or `unavailable` for tmux and herdr, whose environment
 is not that spawn record. No command is written to the terminal. An unknown id
@@ -197,7 +199,9 @@ A body or query that includes `shell`, `command`, `args`, or `env` is `400`
 `bad_request`. Any other `scope` is `400` `bad_request`.
 
 The manager snapshot contains `scope: "manager"`, `host`, `platform`,
-`managerNode: { version, path }`, `runtimes[]` and `tools[]`. On completion,
+`managerNode: { version, path }`, `system`, `runtimes[]`, `designTools[]`,
+`docker` and `tools[]`. Session and launch snapshots have `docker` but not
+`system`; a tmux or herdr session has `docker: null`. On completion,
 each runtime has a fresh result; unfinished checks become `failed`, never a
 stale success. A missing or unverified runtime is that runtime's own status
 and does not set `error`.
@@ -223,6 +227,54 @@ nvm/NVM for Windows, vfox, uv and pnpm. Presence implies neither activation
 nor ownership of a reported runtime. POSIX nvm discovery checks `NVM_DIR` or
 `~/.nvm/nvm.sh` without sourcing it. Other tools are resolved on PATH without
 execution. There is no whole-disk installation inventory.
+
+Design tools are ordered Blender, FFmpeg, GIMP, Inkscape, ImageMagick. Each
+has `id`, `label`, `status`, `version`, `path`, `command` and `detail`. Status
+is `pending` before the first check, `on_path` when a command resolves on
+PATH, `not_on_path` when the tool is installed only outside PATH, `not_found`,
+or `failed` when the check did not finish. `command` is the PATH command, or
+null. The commands are `blender`, `ffmpeg`, `gimp-console` (and `gimp` outside
+Windows), `inkscape`, and `magick` (and `convert` outside Windows; Windows
+`convert` is a disk utility). Outside PATH, Windows reads the `InstallLocation`
+of uninstall entries named for the tool, then the usual Program Files and
+per-user folders; macOS checks `/Applications` and `~/Applications` bundles and
+Homebrew and MacPorts folders; Linux checks `/usr/local/bin`, `/usr/bin`,
+`/snap/bin`, Linuxbrew and Flatpak exports. `version` is read only from a
+native program whose real file name is the tool's own, so a snap, a Flatpak
+launcher or a script reports presence with `detail` saying why. The version
+check runs with a 3 second deadline, D-Bus disabled, and HOME, the XDG
+folders and the tools' profile folders pointed at the scan's temporary folder.
+A timeout or unrecognized answer keeps the row's status and sets `detail`.
+In WSL with Windows interop on, a tool found only as a Windows program on PATH
+is `on_path` with its `.exe` command (for example `ffmpeg.exe`) and no version;
+it is not run.
+
+`system` is null until the first manager check finishes, or when it could not
+be read. Otherwise it is `{ os, osDetail, arch, hostArch, cpu: { model,
+threads }, memory, wsl, wslDistributions }`. `os` is the Windows edition, the
+Linux `PRETTY_NAME` from `os-release`, or `macOS <version>` from
+`SystemVersion.plist`; `osDetail` is the Windows build, Linux kernel or Darwin
+release. `hostArch` names the machine's architecture only when Node runs
+emulated on a different one, on Windows or macOS; it is null on Linux.
+`cpu.model` is null when the CPU has no known name. `memory` is total bytes.
+`wsl` is null outside WSL, or `{ version, distro, interop }` inside it, where
+`memory` is the WSL virtual machine's. On Windows, `wslDistributions` lists `{ name, version, default }`
+from the user's `Lxss` registry key without starting WSL; it is `[]` when none
+are registered and null elsewhere or when the key cannot be read.
+
+`docker` is `{ status, version, platform, os, arch, wsl2, context, endpoint,
+cli, detail }`. The engine is chosen as the docker command would choose it:
+`DOCKER_HOST`, then `DOCKER_CONTEXT`, then `currentContext` in the Docker
+config, then the platform default. The check sends one `GET /version` to a
+local Unix socket or named pipe, with a 1.5 second deadline and a 256 KiB
+limit; no docker process runs. Where systemd starts the engine on demand
+(`docker.socket`, `podman.socket`), this request starts it. Status is
+`pending`, `running` (with `version`, `platform`, `os`, `arch`, and `wsl2`
+when a Linux engine runs in WSL 2),
+`stopped` (the docker command is on PATH but no engine answered), `not_found`,
+`denied` (the socket or pipe exists but this user cannot open it), `remote`
+(a `tcp://` or `ssh://` engine, never contacted), or `failed` with `detail`.
+`cli` is the docker command on PATH, or null.
 
 Runtime probes execute recognized native binaries (and R's Unix launcher)
 from a neutral temporary directory; unknown script/shim launchers and Windows
@@ -472,7 +524,8 @@ The manager's own version check, in `GET /info`, the `hello` message and
   "guidance": null,
   "pendingVersion": null,
   "installing": false,
-  "lastInstall": null
+  "lastInstall": null,
+  "ptyBuild": null
 }
 ```
 
@@ -500,6 +553,15 @@ session until its npm process has exited, even if the session was removed
 meanwhile; `available` and `pendingVersion` are withheld during that time,
 because the files on disk are mid-replacement, and `POST /upgrade` answers
 409 `upgrade_in_progress`.
+
+`ptyBuild` is null where node-pty, the terminal library, runs from the builds
+it comes with: Windows, macOS, and Linux with glibc 2.28 or later. Elsewhere,
+such as Alpine with musl, node-pty is compiled on the computer, and
+`ptyBuild` is `{ command, built }`: the shell command that compiles it, and
+whether the files on disk hold such a build. An upgrade replaces that build,
+so `built` turns false once the new version is installed, and
+`POST /shutdown` refuses a restart until the command has run. It is null
+while `installing`.
 
 ### GitHub
 
@@ -662,7 +724,7 @@ All paths are under `/api/v1`.
 | POST | `/sessions/:id/tool-session` | `{ toolSessionId }` | `{ toolSessionId }`. Records the id the tool gave its own session: one printable line of at most 200 characters. 409 once the session has exited. |
 | POST | `/sessions/:id/reporting` | | `{ reporting }`: the tool's hooks announce themselves, which makes `reporting.state` `active`. |
 | POST | `/sessions/:id/shells` | `{ shell, key \| task, match?, agentId?, persist?, endsWithAgent?, tasks? }` | `{ ok }`. `shell` is `start`, `end`, `background` (with the tool's `task` id), `waiting` (a permission request, which hides the command), `asked` (one that ends the command with its turn), `running` (`tasks` lists the background tasks still running; any other ends) or `reset` (every command ends). `key` is the tool's call id. `match` is a hash of the command, which pairs a permission request with it; `persist` keeps a command past the end of its turn, and `endsWithAgent` ends a background one with its sub-agent. |
-| POST | `/shutdown` | `{ force?, restart? }` | `202 { ok, running, restart }`: stops the manager and every session, detaching tmux and herdr sessions rather than ending them. 409 `sessions_running` (with `running`, the count of sessions it would end) while any session other than a tmux or herdr one is running, unless `force` is true. From the 202 on, `POST /sessions` and `POST /providers/:id/install` answer 503 `manager_stopping`. Events clients get `manager.stopping` first and `manager.stopped` last, after the sessions have ended and before the API closes. With `restart` true, the manager then starts a new manager from the package on disk, on the same port and with the same token, before it exits; the new one runs whatever version is installed, so this is how an upgrade's `pendingVersion` is put to use. Clients reconnect to it as to any manager; its `hello` is the new source of truth. |
+| POST | `/shutdown` | `{ force?, restart? }` | `202 { ok, running, restart }`: stops the manager and every session, detaching tmux and herdr sessions rather than ending them. 409 `sessions_running` (with `running`, the count of sessions it would end) while any session other than a tmux or herdr one is running, unless `force` is true. With `restart`, 409 `pty_unavailable` first when the new manager could not run a terminal, which happens when an upgrade replaced a node-pty compiled on this computer (see `ptyBuild` under [Upgrade](#upgrade)); the message says what to run, and nothing is stopped. From the 202 on, `POST /sessions` and `POST /providers/:id/install` answer 503 `manager_stopping`. Events clients get `manager.stopping` first and `manager.stopped` last, after the sessions have ended and before the API closes. With `restart` true, the manager then starts a new manager from the package on disk, on the same port and with the same token, before it exits; the new one runs whatever version is installed, so this is how an upgrade's `pendingVersion` is put to use. Clients reconnect to it as to any manager; its `hello` is the new source of truth. |
 
 `cwd` defaults to the user's home folder and must be an existing folder. A
 leading `~` is expanded. `args` are appended to the provider's configured

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createEnvironmentUI, runtimeValue } from '../web/environment.js';
+import { createEnvironmentUI, runtimeValue, designValue, systemRows, dockerValue, formatMemory } from '../web/environment.js';
 
 class Element extends EventTarget {
   constructor(document, closeEvents) {
@@ -390,7 +390,8 @@ test('environment data is confined to shell cards; tools only claim presence', a
   p.ui.connected(10);
   p.requests[0].resolve(snapshot(1, '24.0.0', { tools: [{ id: 'vfox', label: 'vfox', path: '/bin/vfox', status: 'detected' }] }));
   await flush();
-  assert.equal(p.get('environment-tools').children[0].children[0].textContent, 'vfox · Detected');
+  const head = p.get('environment-tools').children[0].children[0];
+  assert.deepEqual(head.children.map((node) => node.textContent), ['vfox', 'Detected']);
   p.ui.updated({ scope: 'project', cwd: '/work', revision: 9, host: 'elsewhere', pins: [{ id: 'nvmrc', label: 'Node.js', source: '.nvmrc', version: '18', status: 'configured', detail: null }] });
   assert.equal(p.get('.environment-note').textContent, 'Manager environment');
   assert.equal(p.get('.environment-values').children[1].textContent, '24.0.0');
@@ -466,4 +467,91 @@ test('environment teardown clears focus restoration before its queued close even
   p.releaseClose();
   assert.equal(p.document.activeElement, dialog, 'teardown must not focus a provider');
   assert.equal(p.get('environment-refresh').disabled, true);
+});
+
+test('design tools show a version only when read, say when a tool is outside PATH, and hide for projects', async () => {
+  assert.equal(designValue({ status: 'on_path', version: '8.0.1' }), '8.0.1');
+  assert.equal(designValue({ status: 'on_path', version: null }), 'On PATH');
+  assert.equal(designValue({ status: 'not_on_path', version: '5.2.1' }), '5.2.1 · Not on PATH');
+  assert.equal(designValue({ status: 'not_on_path', version: null }), 'Not on PATH');
+  assert.equal(designValue({ status: 'not_found', version: null }), 'Not found');
+  assert.equal(designValue({ status: 'pending', version: null }), 'Not checked');
+  assert.equal(designValue({ status: 'surprise', version: null }), 'Probe failed');
+  const p = page({ workingFolder: () => '/work' });
+  p.ui.connected(10);
+  p.requests[0].resolve(snapshot(1, '24.0.0', { designTools: [
+    { id: 'blender', label: 'Blender', status: 'not_on_path', version: '5.2.1', path: 'E:/Blender/blender.exe', command: null, detail: null },
+    { id: 'ffmpeg', label: 'FFmpeg', status: 'on_path', version: null, path: '/snap/bin/ffmpeg', command: 'ffmpeg', detail: 'A snap. Its version is not checked.' },
+    { id: 'gimp', label: 'GIMP', status: 'not_found', version: null, path: null, command: null, detail: 'Not on PATH or in the usual install locations.' },
+  ] }));
+  await flush();
+  const rows = p.get('environment-design').children;
+  const text = (row) => row.children.slice(1).map((node) => node.textContent);
+  assert.equal(p.get('environment-design-heading').hidden, false);
+  assert.deepEqual(rows[0].children[0].children.map((node) => node.textContent), ['Blender', '5.2.1 · Not on PATH']);
+  assert.deepEqual(text(rows[0]), ['E:/Blender/blender.exe', 'Installed outside PATH. Agents can run it once its folder is on PATH.']);
+  assert.deepEqual(text(rows[1]), ['Command: ffmpeg', '/snap/bin/ffmpeg', 'A snap. Its version is not checked.']);
+  assert.deepEqual(text(rows[2]), ['Not on PATH or in the usual install locations.']);
+  assert.equal(p.get('environment-runtimes-heading').textContent, 'Runtimes');
+  p.get('environment-scope-project').click();
+  await flush();
+  assert.equal(p.get('environment-runtimes-heading').textContent, 'Version pins');
+  assert.equal(p.get('environment-design-heading').hidden, true);
+  assert.equal(p.get('environment-design').hidden, true);
+  assert.deepEqual(p.get('environment-design').children, []);
+});
+
+test('system rows name the OS, architecture, CPU and memory, with WSL facts from each side', () => {
+  const base = { os: 'Windows 11 Pro', osDetail: 'Version 10.0.26300', arch: 'x64', hostArch: null, cpu: { model: 'Intel Core Ultra 9 285K', threads: 24 }, memory: 64 * 1024 ** 3, wsl: null };
+  const windows = systemRows({ ...base, wslDistributions: [{ name: 'Ubuntu-24.04', version: 2, default: true }, { name: 'docker-desktop', version: 2, default: false }] });
+  assert.deepEqual(windows.map((row) => [row.label, row.value, row.details]), [
+    ['OS', 'Windows 11 Pro', ['Version 10.0.26300']],
+    ['Architecture', 'x64', []],
+    ['CPU', '24 threads', ['Intel Core Ultra 9 285K']],
+    ['Memory', '64.0 GB', []],
+    ['WSL', '2 distributions', ['Ubuntu-24.04 · WSL 2 · default', 'docker-desktop · WSL 2']],
+  ]);
+  assert.equal(systemRows({ ...base, wslDistributions: [] }).at(-1).value, 'None installed');
+  assert.equal(systemRows({ ...base, wslDistributions: null }).length, 4);
+  assert.equal(systemRows({ ...base, hostArch: 'arm64' })[1].value, 'x64 · emulated on arm64');
+  assert.deepEqual(systemRows({ ...base, cpu: { model: null, threads: 24 } })[2].details, []);
+  const wsl = systemRows({ ...base, os: 'Ubuntu 24.04.4 LTS', osDetail: 'Kernel 6.6.87.2-microsoft-standard-WSL2', memory: 31 * 1024 ** 3, wsl: { version: 2, distro: 'Ubuntu-24.04', interop: false }, wslDistributions: null });
+  assert.deepEqual(wsl[0].details, ['WSL 2 · Ubuntu-24.04', 'Kernel 6.6.87.2-microsoft-standard-WSL2']);
+  assert.deepEqual(wsl[3].details, ['Memory of the WSL virtual machine, set in .wslconfig. Windows can have more.']);
+  assert.deepEqual([wsl[4].label, wsl[4].value, wsl[4].details], ['Windows interop', 'Off', ['Agents cannot run Windows programs from this distribution.']]);
+  assert.equal(formatMemory(33265160192), '31.0 GB');
+});
+
+test('the Docker row shows the engine version or its state, and System appears only for the manager', async () => {
+  assert.equal(dockerValue({ status: 'running', version: '29.1.3' }), '29.1.3');
+  assert.equal(dockerValue({ status: 'stopped' }), 'Not running');
+  assert.equal(dockerValue({ status: 'denied' }), 'No access');
+  assert.equal(dockerValue({ status: 'remote' }), 'Not checked');
+  assert.equal(dockerValue({ status: 'surprise' }), 'Probe failed');
+  const p = page({ workingFolder: () => '/work' });
+  p.ui.connected(10);
+  p.requests[0].resolve(snapshot(1, '24.0.0', {
+    system: { os: 'Windows 11 Pro', osDetail: 'Version 10.0.26300', arch: 'x64', hostArch: null, cpu: { model: 'CPU', threads: 8 }, memory: 8 * 1024 ** 3, wsl: null, wslDistributions: null },
+    docker: {
+      status: 'running', version: '29.1.3', platform: 'Docker Desktop 4.55.0 (213807)', os: 'linux', arch: 'amd64', wsl2: true,
+      context: 'desktop-linux', endpoint: 'npipe:////./pipe/dockerDesktopLinuxEngine', cli: 'C:/Docker/docker.exe', detail: null,
+    },
+  }));
+  await flush();
+  assert.equal(p.get('environment-system-heading').hidden, false);
+  assert.equal(p.get('environment-system').children.length, 4);
+  const docker = p.get('environment-docker').children[0];
+  assert.deepEqual(docker.children[0].children.map((node) => node.textContent), ['Docker Engine', '29.1.3']);
+  assert.deepEqual(docker.children.slice(1).map((node) => node.textContent), [
+    'Docker Desktop 4.55.0 (213807)', 'linux/amd64 · runs in WSL 2', 'Context: desktop-linux', 'npipe:////./pipe/dockerDesktopLinuxEngine', 'Command: docker', 'C:/Docker/docker.exe',
+  ]);
+  p.ui.updated({ ...snapshot(2), docker: { status: 'stopped', context: 'default', endpoint: 'npipe:////./pipe/docker_engine', cli: null, detail: 'The Docker engine is not running.' }, system: null });
+  assert.deepEqual(p.get('environment-docker').children[0].children.slice(1).map((node) => node.textContent), [
+    'Context: default', 'npipe:////./pipe/docker_engine', 'The Docker engine is not running.', 'The docker command is not on PATH.',
+  ]);
+  assert.equal(p.get('environment-system-heading').hidden, true);
+  p.get('environment-scope-project').click();
+  await flush();
+  assert.equal(p.get('environment-docker-heading').hidden, true);
+  assert.equal(p.get('environment-system').hidden, true);
 });

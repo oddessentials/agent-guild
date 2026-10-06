@@ -6,10 +6,10 @@ import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { fork } from 'node:child_process';
 import { killWindowsTree } from './command-resolver.mjs';
-import { RUNTIMES } from './environment-probe.mjs';
+import { RUNTIMES, DESIGN_TOOLS } from './environment-probe.mjs';
 import { resolveProjectCwd } from './environment-pins.mjs';
 
-export const ENVIRONMENT_TIMEOUT_MS = 10000;
+export const ENVIRONMENT_TIMEOUT_MS = 15000;
 export const LAUNCH_DETAIL = 'Launch PATH, profiles not applied. The selected shell is not consulted.';
 export const SESSION_DETAIL = 'Spawn PATH, before the shell startup files.';
 export const MULTIPLEXER_DETAIL = 'This session is tmux or herdr. Its environment is not the spawn record.';
@@ -20,7 +20,9 @@ const PATH_ENV = [
   'PATH', 'PATHEXT', 'SYSTEMROOT', 'HOME', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'XDG_DATA_HOME', 'XDG_CONFIG_HOME',
   'NVM_DIR', 'VOLTA_HOME', 'NODENV_ROOT', 'NODENV_VERSION', 'PYENV_ROOT', 'PYENV_VERSION',
   'ASDF_DIR', 'ASDF_DATA_DIR', 'MISE_DATA_DIR', 'MISE_CONFIG_DIR', 'RUSTUP_HOME', 'RUSTUP_TOOLCHAIN', 'CARGO_HOME',
-  'GOROOT', 'GOTOOLCHAIN', 'DOTNET_ROOT', 'R_HOME',
+  'GOROOT', 'GOTOOLCHAIN', 'DOTNET_ROOT', 'R_HOME', 'DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_CONFIG',
+  // Install folders searched for design tools that are not on PATH.
+  'LOCALAPPDATA', 'PROGRAMFILES', 'PROGRAMW6432',
 ];
 
 function hostName() {
@@ -35,8 +37,41 @@ function cloneRow(row) {
   };
 }
 
-function pendingRuntimes() {
-  return RUNTIMES.map(({ id, label }) => ({ id, label, status: 'pending', version: null, path: null }));
+function pendingRows(list) {
+  return list.map(({ id, label }) => ({ id, label, status: 'pending', version: null, path: null }));
+}
+
+const PENDING_DOCKER = { status: 'pending' };
+
+function scanRun(extra = {}) {
+  return { child: null, timer: null, rows: new Map(), designs: new Map(), tools: [], docker: null, system: undefined, withSystem: false, ...extra };
+}
+
+// Records one helper message. Returns true when the helper reports it is done.
+function takeMessage(run, message) {
+  if (message?.runtime && RUNTIMES.some((runtime) => runtime.id === message.runtime.id)) run.rows.set(message.runtime.id, message.runtime);
+  if (message?.design && DESIGN_TOOLS.some((tool) => tool.id === message.design.id)) run.designs.set(message.design.id, message.design);
+  if (Array.isArray(message?.tools)) run.tools = message.tools;
+  if (message?.docker && typeof message.docker === 'object') run.docker = message.docker;
+  if (run.withSystem && message && 'system' in message) run.system = message.system ?? null;
+  return Boolean(message?.done);
+}
+
+function scanComplete(run) {
+  return run.rows.size === RUNTIMES.length && run.designs.size === DESIGN_TOOLS.length
+    && Boolean(run.docker) && (!run.withSystem || run.system !== undefined);
+}
+
+// Every row has a fresh result; an unfinished check is a failure, never a stale success.
+function scanRows(run, error) {
+  const failed = ({ id, label }) => ({ id, label, status: 'failed', version: null, path: null, detail: error || 'The environment check did not finish.' });
+  return {
+    runtimes: RUNTIMES.map((row) => run.rows.get(row.id) ?? failed(row)),
+    designTools: DESIGN_TOOLS.map((row) => run.designs.get(row.id) ?? failed(row)),
+    docker: run.docker ?? { status: 'failed', detail: error || 'The environment check did not finish.' },
+    tools: run.tools,
+    ...(run.withSystem ? { system: run.system ?? null } : {}),
+  };
 }
 
 export function probePathEnv(env) {
@@ -76,7 +111,10 @@ export class Environment extends EventEmitter {
     return {
       scope: 'manager', host: this.host, platform: process.platform, revision: 0, refreshing: false, checkedAt: null, error: null,
       managerNode: { version: process.versions.node, path: process.execPath },
-      runtimes: pendingRuntimes(),
+      runtimes: pendingRows(RUNTIMES),
+      designTools: pendingRows(DESIGN_TOOLS),
+      docker: PENDING_DOCKER,
+      system: null,
       tools: [],
     };
   }
@@ -93,7 +131,7 @@ export class Environment extends EventEmitter {
       }
       return publishLaunch ? this.launch : this.snapshot();
     }
-    const run = { child: null, timer: null, rows: new Map(), tools: [], publishLaunch };
+    const run = scanRun({ publishLaunch, withSystem: true });
     this.run = run;
     this.value = { ...this.value, revision: this.value.revision + 1, refreshing: true, error: null };
     if (publishLaunch) this.armLaunch();
@@ -104,10 +142,7 @@ export class Environment extends EventEmitter {
       this.stopWorker(run.child);
       this.value = {
         ...this.value, revision: this.value.revision + 1, refreshing: false, checkedAt: new Date().toISOString(), error,
-        runtimes: RUNTIMES.map(({ id, label }) => run.rows.get(id) ?? {
-          id, label, status: 'failed', version: null, path: null, detail: error || 'The environment check did not finish.',
-        }),
-        tools: run.tools,
+        ...scanRows(run, error),
       };
       if (!this.closed) this.emit('updated', this.snapshot());
       if (run.publishLaunch) this.storeLaunch();
@@ -116,21 +151,18 @@ export class Environment extends EventEmitter {
       // A preload in NODE_OPTIONS must not execute inside a passive scan.
       const env = { ...this.env };
       for (const key of Object.keys(env)) if (key.toUpperCase() === 'NODE_OPTIONS') delete env[key];
-      run.child = this.forkWorker(new URL('./environment-probe.mjs', import.meta.url), ['--scan-environment'], {
+      run.child = this.forkWorker(new URL('./environment-probe.mjs', import.meta.url), ['--scan-environment', '--system'], {
         env, execArgv: [], stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
         windowsHide: true, detached: process.platform !== 'win32',
       });
       run.child.on('message', (message) => {
-        if (this.run !== run) return;
-        if (message?.runtime && RUNTIMES.some((runtime) => runtime.id === message.runtime.id)) run.rows.set(message.runtime.id, message.runtime);
-        if (Array.isArray(message?.tools)) run.tools = message.tools;
-        if (message?.done) finish();
+        if (this.run === run && takeMessage(run, message)) finish();
       });
       run.child.once('error', () => finish('Could not start the environment check.'));
-      // Let messages already queued win. Exit is a failed check only when a runtime never reported.
+      // Let messages already queued win. Exit is a failed check only when a row never reported.
       run.child.once('exit', () => setImmediate(() => {
         if (this.run !== run) return;
-        finish(run.rows.size === RUNTIMES.length ? null : 'The environment check stopped before finishing.');
+        finish(scanComplete(run) ? null : 'The environment check stopped before finishing.');
       }));
       run.timer = setTimeout(() => finish('The environment check timed out.'), this.timeoutMs);
       run.timer.unref();
@@ -146,6 +178,8 @@ export class Environment extends EventEmitter {
       revision: (previous?.revision ?? 0) + 1, refreshing: true, checkedAt: previous?.checkedAt ?? null, error: null,
       detail: LAUNCH_DETAIL,
       runtimes: (previous?.runtimes ?? this.value.runtimes).map(cloneRow),
+      designTools: (previous?.designTools ?? this.value.designTools).map(cloneRow),
+      docker: { ...(previous?.docker ?? this.value.docker) },
       tools: (previous?.tools ?? this.value.tools).map((tool) => ({ ...tool })),
     };
     if (!this.closed) this.emit('updated', this.launch);
@@ -157,6 +191,8 @@ export class Environment extends EventEmitter {
       revision: (this.launch?.revision ?? 0) + 1, refreshing: false, checkedAt: this.value.checkedAt, error: this.value.error,
       detail: LAUNCH_DETAIL,
       runtimes: this.value.runtimes.map(cloneRow),
+      designTools: this.value.designTools.map(cloneRow),
+      docker: { ...this.value.docker },
       tools: this.value.tools.map((tool) => ({ ...tool })),
     };
     if (!this.closed) this.emit('updated', this.launch);
@@ -287,7 +323,7 @@ export class Environment extends EventEmitter {
     return {
       scope: 'session', host: this.host, platform: process.platform, sessionId: id, spawnCwd: found.spawnCwd,
       availability: 'ok', detail: SESSION_DETAIL, revision: 0, refreshing: false, checkedAt: null, error: null,
-      runtimes: pendingRuntimes(), tools: [],
+      runtimes: pendingRows(RUNTIMES), designTools: pendingRows(DESIGN_TOOLS), docker: PENDING_DOCKER, tools: [],
     };
   }
 
@@ -299,7 +335,7 @@ export class Environment extends EventEmitter {
     const value = {
       scope: 'session', host: this.host, platform: process.platform, sessionId: id, spawnCwd: found.spawnCwd,
       availability: 'unavailable', detail: MULTIPLEXER_DETAIL, revision: 1, refreshing: false,
-      checkedAt: new Date().toISOString(), error: null, runtimes: [], tools: [],
+      checkedAt: new Date().toISOString(), error: null, runtimes: [], designTools: [], docker: null, tools: [],
     };
     this.sessions.set(key, { value, run: null });
     return value;
@@ -307,7 +343,7 @@ export class Environment extends EventEmitter {
 
   startSession(entry, found) {
     if (this.closed || entry.run) return;
-    const run = { child: null, timer: null, rows: new Map(), tools: [] };
+    const run = scanRun();
     entry.run = run;
     entry.value = { ...entry.value, revision: entry.value.revision + 1, refreshing: true, error: null };
     const finish = (error = null) => {
@@ -317,10 +353,7 @@ export class Environment extends EventEmitter {
       this.stopWorker(run.child);
       entry.value = {
         ...entry.value, revision: entry.value.revision + 1, refreshing: false, checkedAt: new Date().toISOString(), error,
-        runtimes: RUNTIMES.map(({ id, label }) => run.rows.get(id) ?? {
-          id, label, status: 'failed', version: null, path: null, detail: error || 'The environment check did not finish.',
-        }),
-        tools: run.tools,
+        ...scanRows(run, error),
       };
       if (!this.closed) this.emit('updated', entry.value);
     };
@@ -332,15 +365,12 @@ export class Environment extends EventEmitter {
         windowsHide: true, detached: process.platform !== 'win32',
       });
       run.child.on('message', (message) => {
-        if (entry.run !== run) return;
-        if (message?.runtime && RUNTIMES.some((runtime) => runtime.id === message.runtime.id)) run.rows.set(message.runtime.id, message.runtime);
-        if (Array.isArray(message?.tools)) run.tools = message.tools;
-        if (message?.done) finish();
+        if (entry.run === run && takeMessage(run, message)) finish();
       });
       run.child.once('error', () => finish('Could not start the environment check.'));
       run.child.once('exit', () => setImmediate(() => {
         if (entry.run !== run) return;
-        finish(run.rows.size === RUNTIMES.length ? null : 'The environment check stopped before finishing.');
+        finish(scanComplete(run) ? null : 'The environment check stopped before finishing.');
       }));
       run.timer = setTimeout(() => finish('The environment check timed out.'), this.timeoutMs);
       run.timer.unref();

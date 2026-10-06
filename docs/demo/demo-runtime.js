@@ -89,6 +89,21 @@
       { id: 'r', label: 'R', command: 'R', status: 'not_found', version: null, path: null },
       { id: 'rust', label: 'Rust', command: 'rustc', status: 'ok', version: '1.90.0', path: '/demo/bin/rustc' },
     ],
+    designTools: [
+      { id: 'blender', label: 'Blender', command: null, status: 'not_on_path', version: '5.2.1', path: '/Applications/Blender.app/Contents/MacOS/Blender', detail: null },
+      { id: 'ffmpeg', label: 'FFmpeg', command: 'ffmpeg', status: 'on_path', version: '8.0.1', path: '/demo/bin/ffmpeg', detail: null },
+      { id: 'gimp', label: 'GIMP', command: null, status: 'not_found', version: null, path: null, detail: 'Not on PATH or in the usual install locations.' },
+      { id: 'inkscape', label: 'Inkscape', command: null, status: 'not_on_path', version: '1.4.3', path: '/Applications/Inkscape.app/Contents/MacOS/inkscape', detail: null },
+      { id: 'imagemagick', label: 'ImageMagick', command: 'magick', status: 'on_path', version: '7.1.2-31', path: '/demo/bin/magick', detail: null },
+    ],
+    docker: {
+      status: 'running', version: '29.1.3', platform: 'Docker Desktop 4.55.0', os: 'linux', arch: 'arm64', wsl2: false,
+      context: 'desktop-linux', endpoint: 'unix:///Users/demo/.docker/run/docker.sock', cli: '/demo/bin/docker', detail: null,
+    },
+    system: {
+      os: 'macOS 15.3', osDetail: 'Darwin 24.3.0', arch: 'arm64', hostArch: null,
+      cpu: { model: 'Apple M3 Pro', threads: 12 }, memory: 38654705664, wsl: null, wslDistributions: null,
+    },
     tools: [{ id: 'uv', label: 'uv', path: '/demo/bin/uv', status: 'detected' }],
   };
   providers[4].multiplexers = [
@@ -219,7 +234,7 @@
         scope: 'launch', host: environment.host, platform: environment.platform, revision: environment.revision,
         refreshing: false, checkedAt: environment.checkedAt, error: null,
         detail: 'Launch PATH, profiles not applied. The selected shell is not consulted.',
-        runtimes: clone(environment.runtimes), tools: clone(environment.tools),
+        runtimes: clone(environment.runtimes), designTools: clone(environment.designTools), docker: clone(environment.docker), tools: clone(environment.tools),
       };
       return json(launch, refresh ? 202 : 200);
     }
@@ -237,14 +252,14 @@
       return json({
         scope: 'session', host: environment.host, platform: 'darwin', sessionId: sessionId, spawnCwd: '/work/storefront',
         availability: 'unavailable', detail: 'This session is tmux or herdr. Its environment is not the spawn record.',
-        revision: 1, refreshing: false, checkedAt: environment.checkedAt, error: null, runtimes: [], tools: [],
+        revision: 1, refreshing: false, checkedAt: environment.checkedAt, error: null, runtimes: [], designTools: [], docker: null, tools: [],
       }, refresh ? 202 : 200);
     }
     return json({
       scope: 'session', host: environment.host, platform: 'darwin', sessionId: sessionId, spawnCwd: '/demo/project',
       availability: 'ok', detail: 'Spawn PATH, before the shell startup files.',
       revision: 1, refreshing: false, checkedAt: environment.checkedAt, error: null,
-      runtimes: clone(environment.runtimes), tools: [],
+      runtimes: clone(environment.runtimes), designTools: clone(environment.designTools), docker: clone(environment.docker), tools: [],
     }, refresh ? 202 : 200);
   }
 

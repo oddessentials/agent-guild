@@ -8,7 +8,10 @@ import path from 'node:path';
 import { resolveCommand } from '../src/manager/command-resolver.mjs';
 import { Environment, LAUNCH_DETAIL, probePathEnv } from '../src/manager/environment.mjs';
 import { resolveProjectCwd, scanPins } from '../src/manager/environment-pins.mjs';
-import { RUNTIMES, scanRuntime, detectTools, passiveExecutable, probeEnv, runProbe, releaseScanDirectory } from '../src/manager/environment-probe.mjs';
+import {
+  RUNTIMES, DESIGN_TOOLS, scanRuntime, detectTools, passiveExecutable, probeEnv, runProbe, releaseScanDirectory,
+  scanDesignTool, designProgram, designLocations, findInstalled, windowsInstallFolders,
+} from '../src/manager/environment-probe.mjs';
 
 const definition = (id) => RUNTIMES.find((row) => row.id === id);
 function scanner(files, outputs, options = {}) {
@@ -196,6 +199,11 @@ function emitRuntimes(child, row = {}) {
       id: runtime.id, label: runtime.label, status: 'not_found', version: null, path: null, command: runtime.id, ...row,
     } });
   }
+  for (const tool of DESIGN_TOOLS) {
+    child.emit('message', { design: { id: tool.id, label: tool.label, status: 'not_found', version: null, path: null, command: null, detail: null } });
+  }
+  child.emit('message', { docker: { status: 'stopped', detail: 'The Docker engine is not running.' } });
+  child.emit('message', { system: { os: 'Linux', arch: 'x64' } });
 }
 
 test('a helper that exits after every runtime is a finished scan', async (t) => {
@@ -208,6 +216,21 @@ test('a helper that exits after every runtime is a finished scan', async (t) => 
   assert.equal(snapshot.error, null);
   assert.equal(snapshot.refreshing, false);
   assert.ok(snapshot.runtimes.every((row) => row.status === 'not_found'));
+});
+
+test('a helper that exits before every design tool reports is a failed scan', async (t) => {
+  const { service, children } = helper(t);
+  service.refresh();
+  for (const runtime of RUNTIMES) children[0].emit('message', { runtime: { id: runtime.id, label: runtime.label, status: 'not_found', version: null, path: null } });
+  children[0].emit('message', { design: { id: 'blender', label: 'Blender', status: 'on_path', version: '5.2.1', path: '/blender' } });
+  children[0].emit('message', { design: { id: 'unknown', label: 'Unknown', status: 'on_path', version: '1.0.0', path: '/x' } });
+  children[0].emit('exit', 1);
+  await immediate();
+  const snapshot = service.snapshot();
+  assert.match(snapshot.error, /stopped before finishing/);
+  assert.deepEqual(snapshot.designTools.map((row) => row.id), DESIGN_TOOLS.map((tool) => tool.id));
+  assert.equal(snapshot.designTools[0].version, '5.2.1');
+  assert.ok(snapshot.designTools.slice(1).every((row) => row.status === 'failed' && row.version === null));
 });
 
 test('a helper that exits before every runtime is a failed scan', async (t) => {
@@ -544,4 +567,257 @@ test('an edited pin file marks the project stale without replacing the previous 
   const fresh = service.openProject(cwd);
   assert.equal(fresh.stale, false);
   assert.equal(fresh.pins[0].version, '24');
+});
+
+const designTool = (id) => DESIGN_TOOLS.find((tool) => tool.id === id);
+function designScan(options = {}) {
+  const calls = [];
+  return {
+    calls,
+    env: { PATH: '/bin' }, cwd: '/neutral', platform: 'linux',
+    resolve: () => null,
+    inspect: (file) => ({ file }),
+    run: async (file, args, opts) => { calls.push({ file, args, ...opts }); return { code: 0, output: '' }; },
+    ...options,
+  };
+}
+
+test('a design tool on PATH reports its version from its own program', async () => {
+  const outputs = {
+    blender: 'Blender 5.2.1 LTS\n\tbuild date: 2026-09-01', ffmpeg: 'ffmpeg version 8.0.1-full_build-www.gyan.dev Copyright (c) 2000-2025',
+    gimp: 'GNU Image Manipulation Program version 3.0.8', inkscape: 'Inkscape 1.4.3 (0d15f75, 2025-12-25)',
+    imagemagick: 'Version: ImageMagick 7.1.2-31 Q16-HDRI x64 fb965f1:20260903 https://imagemagick.org',
+  };
+  const versions = { blender: '5.2.1', ffmpeg: '8.0.1', gimp: '3.0.8', inkscape: '1.4.3', imagemagick: '7.1.2-31' };
+  for (const tool of DESIGN_TOOLS) {
+    const row = await scanDesignTool(tool, designScan({ resolve: (name) => `/bin/${name}`, run: async () => ({ code: 0, output: outputs[tool.id] }) }));
+    assert.equal(row.status, 'on_path', tool.id);
+    assert.equal(row.version, versions[tool.id], tool.id);
+    assert.equal(row.detail, null);
+  }
+  const git = designScan({ resolve: (name) => `/bin/${name}`, run: async () => ({ code: 0, output: 'ffmpeg version N-125875-g5d4d3bdc61-20260731' }) });
+  assert.equal((await scanDesignTool(designTool('ffmpeg'), git)).version, 'N-125875');
+  const legacy = designScan({ resolve: (name) => name === 'convert' ? '/usr/bin/convert' : null, run: async () => ({ code: 0, output: 'Version: ImageMagick 6.9.12-98 Q16 x86_64' }) });
+  const im6 = await scanDesignTool(designTool('imagemagick'), legacy);
+  assert.equal(im6.command, 'convert');
+  assert.equal(im6.version, '6.9.12-98');
+});
+
+test('Windows resolves only magick and the GIMP console program, and a probe cannot write to the user profile', async () => {
+  const asked = [];
+  const options = designScan({ platform: 'win32', resolve: (name) => { asked.push(name); return null; } });
+  await scanDesignTool(designTool('imagemagick'), options);
+  await scanDesignTool(designTool('gimp'), options);
+  assert.deepEqual(asked, ['magick', 'gimp-console']);
+  const probe = designScan({ env: { PATH: '/bin', NODE_OPTIONS: '--require x' }, resolve: () => '/bin/blender', run: async (file, args, opts) => {
+    probe.calls.push({ file, args, ...opts });
+    return { code: 0, output: 'Blender 5.2.1' };
+  } });
+  await scanDesignTool(designTool('blender'), probe);
+  assert.deepEqual(probe.calls[0].args, ['--version', '--factory-startup']);
+  assert.equal(probe.calls[0].cwd, '/neutral');
+  assert.equal(probe.calls[0].env.NODE_OPTIONS, '');
+  assert.equal(probe.calls[0].env.HOME, '/neutral');
+  assert.equal(probe.calls[0].env.XDG_CONFIG_HOME, '/neutral');
+  assert.equal(probe.calls[0].env.DBUS_SESSION_BUS_ADDRESS, 'disabled:');
+  assert.equal(probe.calls[0].env.PATH, '/bin');
+  assert.equal(probe.calls[0].timeoutMs, 3000);
+});
+
+test('a design tool outside PATH is found in its install folder, and a missing one says where it looked', async () => {
+  const found = await scanDesignTool(designTool('blender'), designScan({
+    installed: async (id) => id === 'blender' ? 'E:/Program Files/Blender Foundation/Blender 5.2/blender.exe' : null,
+    run: async () => ({ code: 0, output: 'Blender 5.2.1 LTS' }),
+  }));
+  assert.equal(found.status, 'not_on_path');
+  assert.equal(found.version, '5.2.1');
+  assert.equal(found.command, null);
+  const missing = await scanDesignTool(designTool('gimp'), designScan());
+  assert.equal(missing.status, 'not_found');
+  assert.equal(missing.path, null);
+  assert.equal(missing.detail, 'Not on PATH or in the usual install locations.');
+});
+
+test('a design tool whose version cannot be read keeps its presence and says why', async () => {
+  const tool = designTool('inkscape');
+  const cases = [
+    [{ error: 'Version check timed out.' }, 'The version check timed out.'],
+    [{ error: 'Could not run the resolved executable.' }, 'Could not read its version.'],
+    [{ code: 0, output: 'Something else' }, 'Its version response was not recognized.'],
+    [{ code: 1, output: 'Inkscape 1.4.3' }, 'Its version response was not recognized.'],
+  ];
+  for (const [result, detail] of cases) {
+    const row = await scanDesignTool(tool, designScan({ resolve: () => '/bin/inkscape', run: async () => ({ output: '', ...result }) }));
+    assert.equal(row.status, 'on_path');
+    assert.equal(row.version, null);
+    assert.equal(row.detail, detail);
+  }
+  const wrapped = await scanDesignTool(tool, designScan({ resolve: () => '/bin/inkscape', inspect: () => ({ reason: 'A snap. Its version is not checked.' }), run: async () => assert.fail('not run') }));
+  assert.equal(wrapped.detail, 'A snap. Its version is not checked.');
+  const broken = await scanDesignTool(tool, designScan({ resolve: () => '/bin/inkscape', inspect: () => { throw new Error('gone'); } }));
+  assert.equal(broken.detail, 'Could not read its version.');
+});
+
+test('only a native program named for the tool is run for its version', () => {
+  const elf = Buffer.from([0x7f, 0x45, 0x4c, 0x46]);
+  const pe = Buffer.from([0x4d, 0x5a, 0, 0]);
+  const linux = { platform: 'linux', realpath: (file) => file, read: () => elf };
+  assert.equal(designProgram('/usr/bin/blender', designTool('blender'), linux).file, '/usr/bin/blender');
+  assert.match(designProgram('/snap/bin/blender', designTool('blender'), { ...linux, realpath: () => '/usr/bin/snap' }).reason, /snap/);
+  assert.match(designProgram('/var/lib/flatpak/exports/bin/org.gimp.GIMP', designTool('gimp'), { ...linux, read: () => Buffer.from('#!/bin/sh') }).reason, /Flatpak/);
+  assert.match(designProgram('/usr/local/bin/inkscape', designTool('inkscape'), { ...linux, read: () => Buffer.from('#!/bin/sh\nexec x') }).reason, /launcher script/);
+  assert.equal(designProgram('/usr/bin/convert', designTool('imagemagick'), { ...linux, realpath: () => '/usr/bin/convert-im6.q16' }).file, '/usr/bin/convert-im6.q16');
+  assert.equal(designProgram('/usr/bin/gimp', designTool('gimp'), { ...linux, realpath: () => '/usr/bin/gimp-2.10' }).file, '/usr/bin/gimp-2.10');
+  assert.match(designProgram('/usr/bin/ffmpeg', designTool('ffmpeg'), { ...linux, realpath: () => '/opt/tools/busybox' }).reason, /runs busybox/);
+  const windows = { platform: 'win32', realpath: (file) => file, read: () => pe };
+  assert.equal(designProgram('C:\\GIMP 3\\bin\\gimp-console-3.0.exe', designTool('gimp'), windows).file, 'C:\\GIMP 3\\bin\\gimp-console-3.0.exe');
+  assert.match(designProgram('C:\\GIMP 3\\bin\\gimp-3.exe', designTool('gimp'), windows).reason, /runs gimp-3\.exe/);
+  assert.ok(designProgram('C:\\Inkscape\\bin\\inkscape.com', designTool('inkscape'), windows).file);
+});
+
+test('a Homebrew cask wrapper on macOS is followed to the one program it runs, and nothing looser', () => {
+  const macho = Buffer.from([0xcf, 0xfa, 0xed, 0xfe]);
+  const wrapper = '/opt/homebrew/Caskroom/blender/5.2.2/.homebrew-command-wrappers/blender';
+  const app = '/Applications/Blender.app/Contents/MacOS/Blender';
+  const script = (text) => ({ platform: 'darwin', realpath: (file) => file === '/opt/homebrew/bin/blender' ? wrapper : file, read: (file) => file.startsWith('/Applications/') ? macho : Buffer.from(text) });
+  const exact = `#!/bin/bash\nexec "${app}"  "$@"\n`;
+  assert.equal(designProgram('/opt/homebrew/bin/blender', designTool('blender'), script(exact)).file, app);
+  assert.match(designProgram('/opt/homebrew/bin/blender', designTool('blender'), { ...script(exact), platform: 'linux' }).reason, /launcher script/);
+  for (const text of [`#!/bin/bash\nexport X=1\nexec "${app}" "$@"\n`, `#!/bin/bash\nexec "$HOME/Blender" "$@"\n`, `#!/bin/bash\nexec "${app}" --background "$@"\n`]) {
+    assert.match(designProgram('/opt/homebrew/bin/blender', designTool('blender'), script(text)).reason, /launcher script/);
+  }
+  const other = script('#!/bin/bash\nexec "/Applications/Other.app/Contents/MacOS/Other" "$@"\n');
+  assert.match(designProgram('/opt/homebrew/bin/blender', designTool('blender'), other).reason, /runs Other/);
+  const elsewhere = { ...script(exact), realpath: (file) => file === '/usr/local/bin/blender' ? '/usr/local/libexec/blender' : file };
+  assert.match(designProgram('/usr/local/bin/blender', designTool('blender'), elsewhere).reason, /launcher script/);
+});
+
+test('install folders come from the registry first, then the usual folders, in a fixed order', () => {
+  const env = { ProgramFiles: 'C:\\Program Files', LOCALAPPDATA: 'C:\\Users\\me\\AppData\\Local' };
+  const blender = designLocations('blender', { platform: 'win32', env, registry: ['E:\\Program Files\\Blender Foundation\\Blender 5.2\\'] });
+  assert.deepEqual(blender[0], ['E:\\Program Files\\Blender Foundation\\Blender 5.2\\', 'blender.exe']);
+  assert.ok(blender.some((entry) => entry[0] === 'C:\\Program Files' && entry[1] === 'Blender Foundation'));
+  const bin = 'C:\\Users\\me\\AppData\\Local\\Programs\\GIMP 3\\bin';
+  const dirs = { 'C:\\Users\\me\\AppData\\Local\\Programs': ['Git', 'GIMP 3'], [bin]: ['gimp-console.exe', 'gimp-console-3.0.exe', 'gimp-3.exe'] };
+  const files = new Set([`${bin}\\gimp-console.exe`, `${bin}\\gimp-console-3.0.exe`]);
+  const fake = { platform: 'win32', readdir: (dir) => { if (!dirs[dir]) throw new Error('missing'); return dirs[dir]; }, isFile: (file) => files.has(file) };
+  assert.equal(findInstalled(designLocations('gimp', { platform: 'win32', env }), fake), `${bin}\\gimp-console.exe`);
+  files.delete(`${bin}\\gimp-console.exe`);
+  assert.equal(findInstalled(designLocations('gimp', { platform: 'win32', env }), fake), `${bin}\\gimp-console-3.0.exe`);
+  assert.equal(findInstalled(designLocations('ffmpeg', { platform: 'win32', env }), fake), null);
+  assert.equal(designLocations('inkscape', { platform: 'darwin', env: { HOME: '/Users/me' } })[0][0], '/Applications');
+  assert.ok(!designLocations('imagemagick', { platform: 'win32', env }).flat().includes('convert.exe'));
+  assert.ok(designLocations('blender', { platform: 'linux', env: { HOME: '/home/me' } }).some((entry) => entry.join('/').endsWith('flatpak/exports/bin/org.blender.Blender')));
+});
+
+test('registry install folders are read from uninstall entries named for a design tool', async () => {
+  const calls = [];
+  const run = async (file, args, opts) => {
+    calls.push({ file, args, opts });
+    const key = args[1], value = args.at(-1);
+    if (value === 'DisplayName' && key.startsWith('HKLM\\SOFTWARE\\Microsoft')) {
+      return { code: 0, output: [
+        '', 'HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{89F3}',
+        '    DisplayName    REG_SZ    Blender', '',
+        'HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Paint',
+        '    DisplayName    REG_SZ    Paint.NET', '',
+      ].join('\r\n') };
+    }
+    if (value === 'DisplayName' && key.startsWith('HKCU')) {
+      return { code: 0, output: 'HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\GIMP-3_is1\r\n    DisplayName    REG_SZ    GIMP 3.0.8\r\n' };
+    }
+    if (value === 'DisplayName') return { output: '', error: 'Version check timed out.' };
+    if (key.endsWith('{89F3}')) return { code: 0, output: `${key}\r\n    InstallLocation    REG_SZ    E:\\Program Files\\Blender Foundation\\Blender 5.2\\\r\n` };
+    if (key.endsWith('GIMP-3_is1')) return { code: 0, output: `${key}\r\n    InstallLocation    REG_SZ    "C:\\Users\\me\\AppData\\Local\\Programs\\GIMP 3\\"\r\n` };
+    return { code: 1, output: 'ERROR: The system was unable to find the specified registry key or value.' };
+  };
+  const folders = await windowsInstallFolders({ env: { SystemRoot: 'C:\\Windows' }, cwd: '/neutral', run });
+  assert.deepEqual(folders.blender, ['E:\\Program Files\\Blender Foundation\\Blender 5.2\\']);
+  assert.deepEqual(folders.gimp, ['C:\\Users\\me\\AppData\\Local\\Programs\\GIMP 3\\']);
+  assert.deepEqual(folders.inkscape, []);
+  assert.ok(calls.every((call) => call.file === 'C:\\Windows\\System32\\reg.exe' && call.args[0] === 'query' && call.opts.cwd === '/neutral'));
+});
+
+test('manager and launch scopes carry design tools', async (t) => {
+  const { service, children } = helper(t);
+  assert.ok(service.snapshot().designTools.every((row) => row.status === 'pending'));
+  service.refresh();
+  emitRuntimes(children[0]);
+  children[0].emit('message', { design: { id: 'ffmpeg', label: 'FFmpeg', status: 'on_path', version: '8.0.1', path: '/ffmpeg', command: 'ffmpeg', detail: null } });
+  children[0].emit('message', { done: true });
+  await immediate();
+  assert.equal(service.snapshot().designTools.find((row) => row.id === 'ffmpeg').version, '8.0.1');
+  assert.equal(service.openLaunch().designTools.find((row) => row.id === 'ffmpeg').version, '8.0.1');
+});
+
+test('a scan waits for Docker and, for the manager only, the system facts', async (t) => {
+  const { service, children } = helper(t);
+  assert.deepEqual(service.snapshot().docker, { status: 'pending' });
+  assert.equal(service.snapshot().system, null);
+  service.refresh();
+  for (const runtime of RUNTIMES) children[0].emit('message', { runtime: { id: runtime.id, label: runtime.label, status: 'not_found' } });
+  for (const tool of DESIGN_TOOLS) children[0].emit('message', { design: { id: tool.id, label: tool.label, status: 'not_found' } });
+  children[0].emit('message', { docker: { status: 'running', version: '29.1.3' } });
+  children[0].emit('exit', 1);
+  await immediate();
+  assert.match(service.snapshot().error, /stopped before finishing/);
+  assert.equal(service.snapshot().docker.version, '29.1.3');
+  assert.equal(service.snapshot().system, null);
+  service.refresh();
+  emitRuntimes(children[1]);
+  children[1].emit('exit', 0);
+  await immediate();
+  assert.equal(service.snapshot().error, null);
+  assert.equal(service.snapshot().system.os, 'Linux');
+  assert.equal(service.snapshot().docker.status, 'stopped');
+  const launch = service.openLaunch();
+  assert.equal(launch.docker.status, 'stopped');
+  assert.equal('system' in launch, false);
+});
+
+test('an unfinished Docker check is a failure, and the manager asks for system facts', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const args = [];
+  const children = [];
+  const service = new Environment({ forkWorker: (_file, argv) => { args.push(argv); const child = new EventEmitter(); children.push(child); return child; }, timeoutMs: 50 });
+  t.after(() => service.close());
+  service.refresh();
+  assert.deepEqual(args[0], ['--scan-environment', '--system']);
+  t.mock.timers.tick(50);
+  assert.deepEqual(service.snapshot().docker, { status: 'failed', detail: 'The environment check timed out.' });
+  assert.equal(service.snapshot().system, null);
+});
+
+test('a session check carries Docker settings but not system facts', async (t) => {
+  const args = [], envs = [], children = [];
+  const service = new Environment({
+    forkWorker: (_file, argv, opts) => { args.push(argv); envs.push(opts.env); const child = new EventEmitter(); children.push(child); return child; },
+    sessionLookup: () => ({ multiplexer: false, spawnCwd: '/work', pathEnv: { PATH: '/bin', DOCKER_HOST: 'unix:///run/user/1000/docker.sock', DOCKER_CONTEXT: 'rootless', DOCKER_CONFIG: '/cfg' } }),
+  });
+  t.after(() => service.close());
+  service.openSession('aa');
+  assert.deepEqual(args[0], ['--scan-environment']);
+  assert.equal(envs[0].DOCKER_HOST, 'unix:///run/user/1000/docker.sock');
+  assert.equal(envs[0].DOCKER_CONTEXT, 'rootless');
+  assert.equal(envs[0].DOCKER_CONFIG, '/cfg');
+  emitRuntimes(children[0]);
+  children[0].emit('message', { done: true });
+  await immediate();
+  const session = service.openSession('aa');
+  assert.equal(session.docker.status, 'stopped');
+  assert.equal('system' in session, false);
+});
+
+test('in WSL a Windows design tool on PATH is reported by its .exe name without being run', async () => {
+  const paths = { 'ffmpeg.exe': '/mnt/c/ffmpeg/bin/ffmpeg.exe', 'gimp-console.exe': '/mnt/c/GIMP 3/bin/gimp-console.exe' };
+  const options = designScan({ resolve: (name) => paths[name] || null, run: async () => assert.fail('a Windows program is not run'), wslInterop: true });
+  const ffmpeg = await scanDesignTool(designTool('ffmpeg'), options);
+  assert.deepEqual([ffmpeg.status, ffmpeg.command, ffmpeg.version, ffmpeg.path], ['on_path', 'ffmpeg.exe', null, '/mnt/c/ffmpeg/bin/ffmpeg.exe']);
+  assert.equal(ffmpeg.detail, 'A Windows program, run through WSL. Its version is not checked.');
+  assert.equal((await scanDesignTool(designTool('gimp'), options)).command, 'gimp-console.exe');
+  assert.equal((await scanDesignTool(designTool('imagemagick'), options)).status, 'not_found');
+  const native = await scanDesignTool(designTool('ffmpeg'), { ...options, resolve: (name) => name === 'ffmpeg' ? '/usr/bin/ffmpeg' : paths[name], run: async () => ({ code: 0, output: 'ffmpeg version 6.1.1-3ubuntu5' }) });
+  assert.deepEqual([native.command, native.version], ['ffmpeg', '6.1.1']);
+  const off = await scanDesignTool(designTool('ffmpeg'), { ...options, wslInterop: false });
+  assert.equal(off.status, 'not_found');
 });
