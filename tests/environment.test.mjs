@@ -675,6 +675,23 @@ test('only a native program named for the tool is run for its version', () => {
   assert.ok(designProgram('C:\\Inkscape\\bin\\inkscape.com', designTool('inkscape'), windows).file);
 });
 
+test('a Homebrew cask wrapper on macOS is followed to the one program it runs, and nothing looser', () => {
+  const macho = Buffer.from([0xcf, 0xfa, 0xed, 0xfe]);
+  const wrapper = '/opt/homebrew/Caskroom/blender/5.2.2/.homebrew-command-wrappers/blender';
+  const app = '/Applications/Blender.app/Contents/MacOS/Blender';
+  const script = (text) => ({ platform: 'darwin', realpath: (file) => file === '/opt/homebrew/bin/blender' ? wrapper : file, read: (file) => file.startsWith('/Applications/') ? macho : Buffer.from(text) });
+  const exact = `#!/bin/bash\nexec "${app}"  "$@"\n`;
+  assert.equal(designProgram('/opt/homebrew/bin/blender', designTool('blender'), script(exact)).file, app);
+  assert.match(designProgram('/opt/homebrew/bin/blender', designTool('blender'), { ...script(exact), platform: 'linux' }).reason, /launcher script/);
+  for (const text of [`#!/bin/bash\nexport X=1\nexec "${app}" "$@"\n`, `#!/bin/bash\nexec "$HOME/Blender" "$@"\n`, `#!/bin/bash\nexec "${app}" --background "$@"\n`]) {
+    assert.match(designProgram('/opt/homebrew/bin/blender', designTool('blender'), script(text)).reason, /launcher script/);
+  }
+  const other = script('#!/bin/bash\nexec "/Applications/Other.app/Contents/MacOS/Other" "$@"\n');
+  assert.match(designProgram('/opt/homebrew/bin/blender', designTool('blender'), other).reason, /runs Other/);
+  const elsewhere = { ...script(exact), realpath: (file) => file === '/usr/local/bin/blender' ? '/usr/local/libexec/blender' : file };
+  assert.match(designProgram('/usr/local/bin/blender', designTool('blender'), elsewhere).reason, /launcher script/);
+});
+
 test('install folders come from the registry first, then the usual folders, in a fixed order', () => {
   const env = { ProgramFiles: 'C:\\Program Files', LOCALAPPDATA: 'C:\\Users\\me\\AppData\\Local' };
   const blender = designLocations('blender', { platform: 'win32', env, registry: ['E:\\Program Files\\Blender Foundation\\Blender 5.2\\'] });

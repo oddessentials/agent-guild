@@ -335,14 +335,28 @@ export async function windowsInstallFolders({ env, cwd, run = runProbe, kills = 
   return folders;
 }
 
+// A Homebrew cask's command wrapper is exactly `exec "<program in the app>" "$@"`.
+// Only that exact form is followed; any other script stays unchecked.
+const HOMEBREW_WRAPPER = /\/Caskroom\/[^/]+\/[^/]+\/\.homebrew-command-wrappers\/[^/]+$/;
+
+function homebrewTarget(head) {
+  return head.toString('utf8').match(/^#!\/bin\/(?:ba)?sh\nexec "(\/[^"$`\\\n]+)"\s+"\$@"\n?$/)?.[1] ?? null;
+}
+
 // Why a found program's version is not read, or the program to run.
 export function designProgram(file, tool, { platform = process.platform, realpath = fs.realpathSync, read = readHead } = {}) {
-  const real = realpath(file);
+  let real = realpath(file);
   const normalized = real.replaceAll('\\', '/');
   if (/\/flatpak\/exports\/bin\//.test(file.replaceAll('\\', '/'))) return { reason: 'A Flatpak app. Its version is not checked.' };
   if (/(?:^|\/)snap$/.test(normalized)) return { reason: 'A snap. Its version is not checked.' };
-  if (!nativeProgram(read(real))) return { reason: 'A launcher script. Its version is not checked.' };
-  const name = path.posix.basename(normalized);
+  const head = read(real);
+  if (!nativeProgram(head)) {
+    const target = platform === 'darwin' && HOMEBREW_WRAPPER.test(normalized) ? homebrewTarget(head) : null;
+    if (!target) return { reason: 'A launcher script. Its version is not checked.' };
+    real = realpath(target);
+    if (!nativeProgram(read(real))) return { reason: 'A launcher script. Its version is not checked.' };
+  }
+  const name = path.posix.basename(real.replaceAll('\\', '/'));
   const program = typeof tool.program === 'function' ? tool.program(platform) : tool.program;
   if (!program.test(name)) return { reason: `This runs ${name}, so its version is not checked.` };
   return { file: real };
