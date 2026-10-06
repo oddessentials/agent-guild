@@ -6,7 +6,7 @@ import { runInNewContext } from 'node:vm';
 // app.js is a browser script. Run its real upgrade and restart functions
 // against stub elements, without booting the DOM or a manager.
 const app = readFileSync(new URL('../web/app.js', import.meta.url), 'utf8');
-const source = ['function ptyRebuild', 'function ptyBuildToast', 'function renderUpgrade', 'function setUpgrade', 'async function stopManager']
+const source = ['function ptyRebuild', 'async function recheckPtyBuild', 'function ptyBuildToast', 'function renderUpgrade', 'function setUpgrade', 'async function stopManager']
   .map((name) => {
     const found = app.match(new RegExp(`${name}\\([^]*?\\n\\}`))?.[0];
     assert.ok(found, `${name} is present in app.js`);
@@ -89,6 +89,36 @@ test('where node-pty is compiled here, the upgrade says it has to be built again
   assert.equal(view.node('upgrade-note').hidden, true);
   assert.match(view.node('restart-manager').title, /^Agent Guild 1\.1\.0 is installed, but this manager is still 1\.0\.0/);
   assert.equal(view.toasts.length, 1, 'the same installed version is announced once');
+});
+
+test('back on the page, a build made in a terminal clears the warning; nothing is asked otherwise', async () => {
+  const requests = [];
+  let built = false;
+  const view = page({
+    api: async (method, route) => {
+      requests.push(`${method} ${route}`);
+      return { upgrade: upgrade({ pendingVersion: '1.1.0', ptyBuild: { command: COMMAND, built } }) };
+    },
+  });
+  await view.recheckPtyBuild();
+  assert.deepEqual(requests, [], 'no upgrade is waiting for a build');
+
+  view.setUpgrade(upgrade({ pendingVersion: '1.1.0', ptyBuild: { command: COMMAND, built: false } }));
+  await view.recheckPtyBuild();
+  assert.equal(view.node('upgrade-note').textContent, 'v1.1.0 installed · build node-pty before restarting', 'not built yet');
+  built = true;
+  await view.recheckPtyBuild();
+  assert.deepEqual(requests, ['GET /info', 'GET /info']);
+  assert.equal(view.node('upgrade-note').hidden, true);
+  assert.equal(view.node('restart-manager').textContent, 'Restart to use v1.1.0');
+  await view.recheckPtyBuild();
+  assert.equal(requests.length, 2, 'nothing more to wait for');
+  assert.equal(view.toasts.length, 1, 'the installed version is announced once');
+
+  view.setUpgrade(upgrade({ pendingVersion: '1.1.0', ptyBuild: { command: COMMAND, built: false } }));
+  view.state.connected = false;
+  await view.recheckPtyBuild();
+  assert.equal(requests.length, 2, 'not while the manager is unreachable');
 });
 
 test('a restart the manager refuses for node-pty says so, with the command to copy', async () => {

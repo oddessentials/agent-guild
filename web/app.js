@@ -889,6 +889,18 @@ function ptyRebuild(u = state.upgrade) {
   return u?.pendingVersion && build && !build.built ? build : null;
 }
 
+/**
+ * While an upgrade waits for node-pty to be compiled again, read the build
+ * once more when the user comes back to the page, from the terminal where
+ * they may have run the command. The manager sends no event for it.
+ */
+async function recheckPtyBuild() {
+  if (!state.connected || !ptyRebuild()) return;
+  try {
+    setUpgrade((await api('GET', '/info')).upgrade);
+  } catch { /* the next hello brings it */ }
+}
+
 /** A message about compiling node-pty here, with a button that copies the command. */
 function ptyBuildToast(message, build) {
   toast(message, 20000, { label: 'Copy command', run: () => copyText(build.command, 'the command') });
@@ -6156,10 +6168,12 @@ document.addEventListener('visibilitychange', () => {
     flushNotes();
   }
   if (document.visibilityState === 'visible' && state.connected && Date.now() - newsLoadedAt > 60000) loadNews();
+  if (document.visibilityState === 'visible') recheckPtyBuild();
   if (document.visibilityState === 'visible' && dockShows('github') && githubShownView() === 'actions') loadView('actions');
   else scheduleRuns();
   if (branchesVisible() && !viewData('branches')?.error) loadBranches({ resume: true });
 });
+addEventListener('focus', recheckPtyBuild);
 addEventListener('pagehide', () => {
   flushNotes();
   state.pageAway = true;

@@ -2138,7 +2138,7 @@ test('a restart is refused, and nothing stopped, while the next manager could no
     token,
     webDir: path.join(here, '..', 'web'),
     onShutdownRequest: (opts) => requests.push(opts),
-    nextManagerProblem: () => { checks++; return 'Build node-pty first.'; },
+    nextManagerProblem: () => { checks++; return 'Build node-pty again first.'; },
   });
   await spare.listen();
   const spareCall = (body) => fetch(`${spare.url}/api/v1/shutdown`, {
@@ -2149,7 +2149,7 @@ test('a restart is refused, and nothing stopped, while the next manager could no
   try {
     const refused = await spareCall({ force: true, restart: true });
     assert.equal(refused.status, 409);
-    assert.deepEqual(refused.body.error, { code: 'pty_unavailable', message: 'Build node-pty first.\nThe manager was not restarted, and its sessions keep running.' });
+    assert.deepEqual(refused.body.error, { code: 'pty_unavailable', message: 'Build node-pty again first.' });
     assert.equal(ctx.manager.closing, false, 'sessions can still start');
     assert.deepEqual(requests, []);
 

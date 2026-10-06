@@ -14,7 +14,7 @@ import { createFolderBrowser } from './folder-browser.mjs';
 import { normalizeAccess } from './access-policy.mjs';
 import { NOTES_BODY_LIMIT, createNotesStore } from './notes.mjs';
 import { MODES as AUTOSTART_MODES } from './autostart.mjs';
-import { ptyProblem } from './pty.mjs';
+import { ptyRestartProblem } from './pty.mjs';
 
 const require = createRequire(import.meta.url);
 const API = '/api/v1';
@@ -156,7 +156,7 @@ export function createManagerServer({
   /** @type {(opts: { restart: boolean }) => void} */
   onShutdownRequest = () => {},
   /** Why a manager started from the files on disk could not run a terminal, or null; a stand-in in tests. */
-  nextManagerProblem = ptyProblem,
+  nextManagerProblem = ptyRestartProblem,
 }) {
   let access = normalizeAccess({ hosts: extraHosts, origins: extraOrigins });
   let policyVersion = 0;
@@ -436,7 +436,7 @@ export function createManagerServer({
       // built on this computer and an upgrade replaced that build, it would
       // not start, so this one keeps running and says what to do first.
       const problem = body.restart === true ? nextManagerProblem() : null;
-      if (problem) throw new HttpError(409, `${problem}\nThe manager was not restarted, and its sessions keep running.`, 'pty_unavailable');
+      if (problem) throw new HttpError(409, problem, 'pty_unavailable');
       const running = manager.runningCount();
       if (running > 0 && body.force !== true) {
         const err = new HttpError(409, `${running} session(s) are running; stopping the manager ends them`, 'sessions_running');

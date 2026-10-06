@@ -20,7 +20,7 @@ import { bundleFiles, codexHookArgs, codexTrustArgs, codexHooksFrom, antigravity
 import { execFileSync } from 'node:child_process';
 import { parseVersion, compareVersions, probeVersion, diagnosticLine, latestVersion } from '../src/manager/versions.mjs';
 import { SelfUpdate, isDevelopmentBuild } from '../src/manager/self-update.mjs';
-import { glibcVersion, loadPty, ptyBuild, ptyBuildCommand, ptyBuiltHere, ptyDir, ptyProblem } from '../src/manager/pty.mjs';
+import { glibcVersion, loadPty, ptyBuild, ptyBuildCommand, ptyBuiltHere, ptyDir, ptyProblem, ptyRestartProblem } from '../src/manager/pty.mjs';
 import { launcherPath, MANAGER_ENTRY, ROOT_DIR } from '../src/manager/launch.mjs';
 import {
   UsageMonitor, readClaudeCredentials, readCodexCredentials,
@@ -3000,6 +3000,23 @@ test('on musl, node-pty says how to compile it, and runs once it is compiled her
     assert.deepEqual(ptyBuild({ platform: 'linux', glibc: null, dir: built }), { command: ptyBuildCommand(built), built: true });
   }
   assert.equal(ptyBuiltHere(dir), false);
+});
+
+test('a restart without the node-pty compiled here says how to compile it again, on any C library', () => {
+  const dir = tempDir();
+  for (const glibc of [null, '2.17']) {
+    assert.equal(ptyRestartProblem({ platform: 'linux', glibc, dir }), [
+      'Agent Guild\'s terminal library, node-pty, is built on this computer, and the files on disk no longer hold that build, as after an upgrade. Build it again, then restart:',
+      `  ${ptyBuildCommand(dir)}`,
+      'The manager was not restarted, and its sessions keep running.',
+    ].join('\n'), String(glibc));
+  }
+  fs.mkdirSync(path.join(dir, 'build', 'Release'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'build', 'Release', 'pty.node'), '');
+  assert.equal(ptyRestartProblem({ platform: 'linux', glibc: null, dir }), null, 'built again');
+  assert.equal(ptyRestartProblem({ platform: 'linux', glibc: '2.39', dir: tempDir() }), null, 'node-pty\'s own builds run');
+  assert.equal(ptyRestartProblem({ platform: 'darwin', glibc: null, dir: tempDir() }), null);
+  assert.equal(ptyRestartProblem(), null);
 });
 
 test('the node-pty build command quotes a folder the shell would split', () => {

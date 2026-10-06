@@ -84,6 +84,22 @@ export function ptyProblem(opts = {}) {
   ].join('\n');
 }
 
+/**
+ * Why a manager started from the files on disk could not run a terminal, or
+ * null. A manager running where node-pty's own builds do not means node-pty
+ * was compiled here, so the message is how to compile it again, on any C
+ * library. Takes the same stand-ins as ptyBuild().
+ */
+export function ptyRestartProblem(opts = {}) {
+  const build = ptyBuild(opts);
+  if (!build || build.built) return null;
+  return [
+    'Agent Guild\'s terminal library, node-pty, is built on this computer, and the files on disk no longer hold that build, as after an upgrade. Build it again, then restart:',
+    `  ${build.command}`,
+    'The manager was not restarted, and its sessions keep running.',
+  ].join('\n');
+}
+
 let pty = null;
 
 /** node-pty, loaded on first use. Throws with ptyProblem()'s message where it cannot run. */
