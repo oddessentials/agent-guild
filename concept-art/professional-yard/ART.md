@@ -3,7 +3,7 @@
 The Professional yard is an office campus of glass and concrete round a paved
 plaza. Its halls and plates are authored in `concept-art/guild-yard/` (see
 that folder's `ART.md`). Its live cast (five campus staff and four office
-robots) are textured 3D models made from generated images with
+robots) and the city's vehicles are textured 3D models made from generated images with
 [TRELLIS.2](https://github.com/microsoft/TRELLIS.2) (MIT), running in the
 local image studio's ComfyUI. The robots stand in for both agents and shell
 commands, as Orbital's drones do.
@@ -49,6 +49,11 @@ for each subject and one picked.
   pick had its glossy dark face screen made a matte charcoal panel with
   `qwen-edit`, since gloss bakes as chrome, and the sweeper's bristles were
   removed, since brush fibres reconstruct as shattered geometry.
+- **Vehicles** (`town` in `world.json`: a sedan, a hatchback, a crossover, a
+  taxi, a city bus and a delivery van) are generated from `concepts.json`,
+  restaged on a flat grey with `qwen-edit`, and placed by
+  `concept-art/guild-yard/env/professional_env.py` in the plates; they are
+  not live models, so their TRELLIS.2 output in `.cache` is not committed.
 - **Backgrounds**: `hidream-o1` ignores "flat light grey" and paints a
   mottled, blocky grey. Three subjects whose light tones sat close to it
   (the courier, the technician and the first green robot) shattered, and

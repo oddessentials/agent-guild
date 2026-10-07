@@ -37,5 +37,47 @@
    "seed": 5,
    "prompt": "Make the robot's dark face panel a smooth matte dark charcoal with no shine, gloss or reflections, keeping its two big round painted green eyes and smile. Replace the background with a perfectly flat, uniform, untextured medium grey with no noise, pattern, gradient or shadow. Keep everything else about the robot, its pose, framing and lighting exactly the same."
   }
+ ],
+ "car_sedan": [
+  {
+   "input": "concepts/car_sedan.png",
+   "seed": 5,
+   "prompt": "Replace the background with a perfectly flat, uniform, untextured medium grey with no noise, pattern, gradient or shadow. Keep the vehicle, its pose, framing and lighting exactly the same."
+  }
+ ],
+ "car_hatch": [
+  {
+   "input": "concepts/car_hatch.png",
+   "seed": 5,
+   "prompt": "Replace the background with a perfectly flat, uniform, untextured medium grey with no noise, pattern, gradient or shadow. Keep the vehicle, its pose, framing and lighting exactly the same."
+  }
+ ],
+ "car_suv": [
+  {
+   "input": "concepts/car_suv.png",
+   "seed": 5,
+   "prompt": "Replace the background with a perfectly flat, uniform, untextured medium grey with no noise, pattern, gradient or shadow. Keep the vehicle, its pose, framing and lighting exactly the same."
+  }
+ ],
+ "car_taxi": [
+  {
+   "input": "concepts/car_taxi.png",
+   "seed": 5,
+   "prompt": "Replace the background with a perfectly flat, uniform, untextured medium grey with no noise, pattern, gradient or shadow. Keep the vehicle, its pose, framing and lighting exactly the same."
+  }
+ ],
+ "city_bus": [
+  {
+   "input": "concepts/city_bus.png",
+   "seed": 5,
+   "prompt": "Replace the background with a perfectly flat, uniform, untextured medium grey with no noise, pattern, gradient or shadow. Keep the vehicle, its pose, framing and lighting exactly the same."
+  }
+ ],
+ "delivery_van": [
+  {
+   "input": "concepts/delivery_van.png",
+   "seed": 5,
+   "prompt": "Replace the background with a perfectly flat, uniform, untextured medium grey with no noise, pattern, gradient or shadow. Keep the vehicle, its pose, framing and lighting exactly the same."
+  }
  ]
 }

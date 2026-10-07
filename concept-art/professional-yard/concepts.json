@@ -49,5 +49,42 @@
   "style": "_helper_style",
   "prompt": "A small front-desk concierge robot made as one chunky solid piece: a plump egg-shaped off-white body with no neck and no separate head, sitting on a wide flat rounded base with concealed wheels, a matte dark charcoal face panel set into its upper front with two big round painted emerald-green eyes and a smile, a bold emerald-green band around the base, two small rounded green bumps for ears, smooth clean untextured surfaces, on a perfectly flat uniform untextured medium grey background.",
   "pick": 213
+ },
+ "_vehicle_style": "Highly detailed stylized 3D render of a single vehicle from a friendly modern city, premium animated film look, chunky rounded forms, every surface matte with no glossy reflections, windows as flat matte dark charcoal panels with no transparency and no reflections, wheels with solid dark grey tyres, seen from an elevated three-quarter view from the front left, the whole vehicle fully visible and centered, isolated on a perfectly flat uniform untextured medium grey background, no ground, no shadow, no people, no text, no letters, no logos, no number plates, no border.",
+ "car_sedan": {
+  "seed": 301,
+  "style": "_vehicle_style",
+  "prompt": "A compact four-door city sedan painted matte cobalt blue with a light grey roof.",
+  "pick": 301
+ },
+ "car_hatch": {
+  "seed": 311,
+  "style": "_vehicle_style",
+  "prompt": "A small two-door hatchback painted matte coral red.",
+  "pick": 311
+ },
+ "car_suv": {
+  "seed": 321,
+  "style": "_vehicle_style",
+  "prompt": "A boxy small crossover SUV painted matte off-white with dark grey trim.",
+  "pick": 321
+ },
+ "car_taxi": {
+  "seed": 331,
+  "style": "_vehicle_style",
+  "prompt": "A rounded taxi cab painted matte marigold yellow with a small roof sign box.",
+  "pick": 331
+ },
+ "city_bus": {
+  "seed": 341,
+  "style": "_vehicle_style",
+  "prompt": "A single-deck city bus painted matte teal and white with a row of flat dark windows and a rounded front.",
+  "pick": 341
+ },
+ "delivery_van": {
+  "seed": 351,
+  "style": "_vehicle_style",
+  "prompt": "A small boxy delivery van painted matte slate blue with a tall cargo body and small flat windows.",
+  "pick": 351
  }
 }

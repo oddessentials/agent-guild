@@ -45,5 +45,13 @@
  "seeds": {
   "staff_4": 123,
   "bot_0": 123
- }
+ },
+ "town": [
+  "car_sedan",
+  "car_hatch",
+  "car_suv",
+  "car_taxi",
+  "city_bus",
+  "delivery_van"
+ ]
 }

@@ -64,7 +64,7 @@ colours are fields of `WORLDS` in `web/yard/model.mjs`.
 | Guild | Stone courtyard, five distinct halls, bronze trim and warm windows | Five fantasy heroes with baby dragon and spirit familiars |
 | Orbital | Station deck in orbit over a planet, with trusses out to solar wings, a docking hub and habitat modules; five provider modules | Five robots with helper drones |
 | Grove | Sunlit glade in an old forest, with a spring, a stream, a lily pond and a village of tree dwellings; five provider tree halls | Five woodland spirits with Guild familiars and Orbital drones as shell helpers |
-| Professional | Office campus of glass and concrete round a paved plaza, with lawns, a pond and tree-lined avenues; five campus buildings | Five campus staff with small office robots as helpers |
+| Professional | Busy city of glass, concrete and brick round a paved civic square, with a street grid, traffic and a pocket park; five campus buildings | Five campus staff with small office robots as helpers |
 | Goblinville | Steam-powered town on stilts over a misty bog; five provider workshops on a plank deck | Five goblin-kin builders with creature familiars and clockwork shell helpers |
 | Gnomeland | Timber-and-stone mountain village on a cobbled square, with a lake, a waterfall and mountains beyond; five provider workshops | Five gnome builders with clockwork and creature familiars and clockwork shell helpers |
 
@@ -123,7 +123,7 @@ The [art source notes](../../concept-art/guild-yard/ART.md) record how each
 model and plate was made.
 Guild's and Professional's surroundings are pre-rendered environment plates
 (for Guild a lakeside meadow, orchard and forested hills; for Professional
-an office campus with lawns, a pond and avenues) built in Blender from
+a city of streets, towers and traffic round the square) built in Blender from
 [Poly Haven](https://polyhaven.com/license) CC0 models, textures and sky,
 then path-traced from the Yard's own camera direction. Because the camera
 is orthographic and never rotates, the plates line up with the live halls
