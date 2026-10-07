@@ -345,9 +345,15 @@ test('the demo serves health, sign-in launch and shared notes', async (t) => {
 test('the demo changelog, news and history match the shapes the page reads', async () => {
   const { call } = loadDemo();
   const changelog = (await call('GET', '/changelog')).body;
-  assert.equal(changelog.releases[0].version, '2.3.4');
-  assert.ok(changelog.releases[0].sections[0].changes.length >= 4);
-  assert.deepEqual(changelog.releases.map((release) => release.version), ['2.3.4', '0.32.0', '0.31.0']);
+  assert.deepEqual(changelog.releases.map((release) => release.version),
+    ['0.38.0', '0.37.0', '0.36.0', '0.35.0', '0.34.0', '0.33.2', '0.33.1', '0.33.0', '0.32.0', '0.31.0']);
+  assert.deepEqual(changelog.releases[1].sections, [{ title: 'Features', changes: [[
+    { text: 'add agent-guild --version and doctor commands (' },
+    { text: '#136', url: 'https://github.com/oddessentials/agent-guild/issues/136' },
+    { text: ') (' },
+    { text: '#142', url: 'https://github.com/oddessentials/agent-guild/issues/142' },
+    { text: ')' },
+  ]] }]);
 
   const news = (await call('GET', '/news')).body;
   assert.equal(typeof news.refreshedAt, 'string');
