@@ -7,7 +7,8 @@ const noop = () => {};
 function helpersFor(session) {
   return [
     ...(session.agents||[]).map(a=>({id:a.id,name:a.name,pose:familiarPose(a),shell:false})),
-    ...(session.shells||[]).map(s=>({id:s.id,name:'Shell command',pose:'working',shell:true})),
+    // A monitor watches rather than works, so it rests beside the character.
+    ...(session.shells||[]).map(s=>s.kind==='monitor'?{id:s.id,name:'Monitor',pose:'idle',shell:true}:{id:s.id,name:'Shell command',pose:'working',shell:true}),
   ];
 }
 function disposeSkeletons(root) {

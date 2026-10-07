@@ -2342,7 +2342,9 @@ test('hook events map to agent reports for every tool\'s spelling', () => {
   assert.deepEqual(hookToReports({ hookEventName: 'session_end', hook_event_name: 'SessionEnd', sessionId: 'parent', session_id: 'parent', reason: 'channel_closed' }), [{ shell: 'reset' }], 'the main session ending is not an agent, and ends its commands');
   assert.deepEqual(hookToReports({ hookEventName: 'stop_cancelled', hook_event_name: 'StopCancelled', sessionId: 'g4', session_id: 'g4', subagentType: 'plan', reason: 'max_turns', cancelledBy: 'runtime' }),
     [{ agentId: 'hook-g4', name: 'plan', kind: 'subagent', status: 'done' }], 'a sub-agent cut off at its turn limit is done');
-  assert.deepEqual(hookToReports({ hookEventName: 'stop_cancelled', hook_event_name: 'StopCancelled', sessionId: 'parent', session_id: 'parent', reason: 'user_interrupt', cancelledBy: 'user' }), []);
+  assert.deepEqual(hookToReports({ hookEventName: 'stop_cancelled', hook_event_name: 'StopCancelled', sessionId: 'parent', session_id: 'parent', reason: 'user_interrupt', cancelledBy: 'user' }), [{ finishForeground: true }], 'the main session\'s interrupted turn ends its commands');
+  assert.deepEqual(hookToReports({ hookEventName: 'stop_failure', hook_event_name: 'StopFailure', sessionId: 'parent', session_id: 'parent', error: 'rate_limit', errorDetails: '429' }), [{ finishForeground: true }], 'so does one that ends on an API error');
+  assert.deepEqual(hookToReports({ hook_event_name: 'StopFailure', session_id: 'c', error: 'server_error', error_details: '500', last_assistant_message: 'API Error' }), [{ finishForeground: true }], 'Claude Code fires StopFailure instead of Stop');
   assert.deepEqual(hookToReports({ hook_event_name: 'SessionEnd', session_id: 's', reason: 'exit', agent_type: 'security-reviewer' }), [{ shell: 'reset' }], 'a Claude Code --agent session ending is not an agent either');
   assert.deepEqual(hookToReports({ cwd: '/w', hook_event_name: 'SessionEnd', reason: 'other', session_id: 's', transcript_path: null }), [{ shell: 'reset' }], 'Codex SessionEnd is root-only');
   assert.deepEqual(hookToReports({ hook_event_name: 'PreInvocation', conversationId: 'c1', modelName: 'gemini-3.8-flash-high', invocationNum: 0, workspacePaths: ['/w'] }),
@@ -3754,14 +3756,17 @@ test('every reporting bundle runs the reporter, Antigravity\'s through a script 
   const unix = bundleFiles('1.2.3', { platform: 'linux' });
   const commands = (files) => [...JSON.stringify(JSON.parse(files['hooks/hooks.json'])).matchAll(/"command":"((?:[^"\\]|\\.)*)"/g)].map((m) => JSON.parse(`"${m[1]}"`));
   const claude = JSON.parse(unix.claude['hooks/hooks.json']).hooks;
-  assert.deepEqual(Object.keys(claude), ['SessionStart', 'UserPromptSubmit', 'SubagentStart', 'SubagentStop', 'PostModelSwitch', 'PreToolUse', 'PermissionRequest', 'PostToolUse', 'PostToolUseFailure', 'Stop']);
-  assert.equal(claude.PreToolUse[0].matcher, 'Bash|PowerShell', 'only shell commands pay for the tool hooks');
-  assert.equal(claude.PermissionRequest[0].matcher, 'Bash|PowerShell');
-  assert.equal(claude.PostToolUse[0].matcher, 'Bash|PowerShell|TaskStop', 'TaskStop ends a background command');
-  assert.equal(claude.PostToolUseFailure[0].matcher, 'Bash|PowerShell', 'a TaskStop that failed stopped nothing');
+  assert.deepEqual(Object.keys(claude), ['SessionStart', 'UserPromptSubmit', 'SubagentStart', 'SubagentStop', 'PostModelSwitch', 'PreToolUse', 'PermissionRequest', 'PermissionDenied', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'StopFailure']);
+  assert.equal(claude.PreToolUse[0].matcher, 'Bash|PowerShell|Monitor', 'only shell commands and monitors pay for the tool hooks');
+  assert.equal(claude.PermissionRequest[0].matcher, 'Bash|PowerShell|Monitor');
+  assert.equal(claude.PermissionDenied[0].matcher, 'Bash|PowerShell|Monitor', 'auto mode denies a command after its PreToolUse');
+  assert.equal(claude.PostToolUse[0].matcher, 'Bash|PowerShell|Monitor|TaskStop', 'TaskStop ends a background command');
+  assert.equal(claude.PostToolUseFailure[0].matcher, 'Bash|PowerShell|Monitor', 'a TaskStop that failed stopped nothing');
+  assert.equal(claude.StopFailure[0].matcher, undefined, 'every API error ends the turn');
   assert.deepEqual(Object.keys(claude).filter((event) => claude[event][0].hooks[0].async !== true), ['SubagentStart', 'PreToolUse'], 'only a start holds Claude Code up, so it reaches the manager before its end');
   assert.equal(claude.SessionStart[0].matcher, undefined);
   assert.equal(JSON.parse(unix.grok['hooks/hooks.json']).hooks.PreToolUse[0].matcher, 'run_terminal_command');
+  assert.ok(Object.keys(JSON.parse(unix.grok['hooks/hooks.json']).hooks).includes('StopFailure'), 'Grok Build fires StopFailure instead of Stop on an API error');
   assert.ok(commands(unix.claude).every((c) => c === REPORT_COMMAND));
   assert.ok(commands(unix.grok).every((c) => c === REPORT_COMMAND));
   assert.equal(JSON.parse(unix.claude['.claude-plugin/plugin.json']).name, 'agent-guild');
@@ -3875,6 +3880,15 @@ test('shell commands map to shell reports that carry no command text', () => {
   assert.match(start.match, /^[a-f0-9]{32}$/);
   assert.deepEqual(hookToReports({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_use_id: 'toolu_1', tool_input: { command: secret }, tool_response: { stdout: '' } }), [{ shell: 'end', key: 'toolu_1' }]);
   assert.deepEqual(hookToReports({ hook_event_name: 'PostToolUseFailure', tool_name: 'Bash', tool_use_id: 'toolu_1', tool_input: { command: secret } }), [{ shell: 'end', key: 'toolu_1' }]);
+  assert.deepEqual(hookToReports({ hook_event_name: 'PermissionDenied', tool_name: 'Bash', tool_use_id: 'toolu_1', tool_input: { command: secret }, reason: '[Irreversible Local Destruction]' }), [{ shell: 'end', key: 'toolu_1' }], 'auto mode denied it after PreToolUse; no PostToolUse follows');
+  assert.deepEqual(hookToReports({ hook_event_name: 'PermissionDenied', tool_name: 'Edit', tool_use_id: 'toolu_9', tool_input: {}, reason: 'x' }), []);
+  const [monitor] = hookToReports({ hook_event_name: 'PreToolUse', tool_name: 'Monitor', tool_use_id: 'toolu_m', tool_input: { description: 'watch CI', timeout_ms: 300000, command: secret } });
+  assert.deepEqual(monitor, { shell: 'start', key: 'toolu_m', match: start.match }, 'a monitor starts like a command, so a permission request finds it');
+  assert.deepEqual(hookToReports({ hook_event_name: 'PostToolUse', tool_name: 'Monitor', tool_use_id: 'toolu_m', tool_input: { command: secret }, tool_response: { taskId: 'm1', timeoutMs: 300000 } }),
+    [{ shell: 'background', key: 'toolu_m', task: 'm1', kind: 'monitor' }], 'and keeps watching in the background under its task id');
+  assert.deepEqual(hookToReports({ hook_event_name: 'PostToolUse', tool_name: 'Monitor', tool_use_id: 'toolu_w', tool_input: { ws: { url: 'wss://x' } }, tool_response: { taskId: 'm2', timeoutMs: 0, persistent: true } }),
+    [{ shell: 'background', key: 'toolu_w', task: 'm2', kind: 'monitor' }]);
+  assert.deepEqual(hookToReports({ hook_event_name: 'PostToolUseFailure', tool_name: 'Monitor', tool_use_id: 'toolu_m', tool_input: { command: secret }, error: 'bad url' }), [{ shell: 'end', key: 'toolu_m' }]);
   assert.deepEqual(hookToReports({ hook_event_name: 'PostToolUse', tool_name: 'PowerShell', tool_use_id: 'toolu_2', tool_input: { command: 'Start-Sleep 60', run_in_background: true }, tool_response: { stdout: '', backgroundTaskId: 'b1', backgroundedByUser: true } }),
     [{ shell: 'background', key: 'toolu_2', task: 'b1' }]);
   assert.deepEqual(hookToReports({ hook_event_name: 'PostToolUse', agent_id: 's1', tool_name: 'Bash', tool_use_id: 'toolu_3', tool_input: { command: 'npm run dev' }, tool_response: { backgroundTaskId: 'b2', backgroundEndsWithFinalResponse: true } }),
@@ -3894,7 +3908,10 @@ test('shell commands map to shell reports that carry no command text', () => {
     { id: 'm1', type: 'monitor', status: 'running', server: 's', tool: 't' },
     { id: 'a1', type: 'subagent', status: 'running', agent_type: 'Explore' },
   ];
-  assert.deepEqual(hookToReports({ hook_event_name: 'Stop', stop_hook_active: false, background_tasks: tasks, session_crons: [] }), [{ shell: 'running', tasks: ['b1'] }, { finishForeground: true }]);
+  assert.deepEqual(hookToReports({ hook_event_name: 'Stop', stop_hook_active: false, background_tasks: tasks, session_crons: [] }),
+    [{ shell: 'running', tasks: [{ id: 'b1', kind: 'shell' }, { id: 'm1', kind: 'monitor' }] }, { finishForeground: true }], 'commands and monitors still running; a sub-agent is no shell');
+  assert.deepEqual(hookToReports({ hookEventName: 'stop', hook_event_name: 'Stop', sessionId: 'parent', session_id: 'parent', stopHookActive: false, backgroundTasks: tasks, sessionCrons: [] }),
+    [{ shell: 'running', tasks: [{ id: 'b1', kind: 'shell' }, { id: 'm1', kind: 'monitor' }] }, { finishForeground: true }], 'Grok Build lists them in camelCase');
   assert.deepEqual(hookToReports({ hook_event_name: 'Stop', stop_hook_active: false }), [{ finishForeground: true }], 'without the list, nothing to match it to');
   assert.deepEqual(hookToReports({ hook_event_name: 'SubagentStop', agent_id: 's1', agent_type: 'Explore', background_tasks: [] }),
     [{ agentId: 'hook-s1', name: 'Explore', kind: 'subagent', status: 'done' }, { shell: 'running', tasks: [] }]);
