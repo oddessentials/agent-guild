@@ -81,7 +81,7 @@ test('Windows opens a validated folder as the working directory with a fixed arg
   assert.deepEqual(args, ['.']);
   assert.equal(options.cwd, dir);
   assert.equal(options.shell, false);
-  assert.equal(options.windowsHide, true);
+  assert.equal(options.windowsHide, false);
   assert.equal(child.unreffed, true);
   assert.deepEqual(opener.describe(), { available: true, label: 'File Explorer', reason: null });
 });
