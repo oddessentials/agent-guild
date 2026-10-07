@@ -301,6 +301,13 @@ const checks = await withPage({ name: 'github', instrumentation }, async ({ orig
   assert.equal(await value('#github-repo'), 'acme/bulk-199');
   pass('zero, one, 200 and 201 matches keep arrows, Enter and accessibility within rendered options');
 
+  // iOS Safari moves focus after a tap's pointerup and before its click, and the blur closes the list.
+  await search('bulk-01');
+  const tapped = await evaluate(`document.querySelectorAll('#github-repo-list .github-option-name')[1].textContent`);
+  await evaluate(`{const o=document.querySelectorAll('#github-repo-list [role=option]')[1];for(const type of ['pointerdown','pointerup'])o.dispatchEvent(new PointerEvent(type,{bubbles:true,cancelable:true,pointerType:'touch'}));document.querySelector('#github-repo').blur();}`);
+  assert.equal(await value('#github-repo'), tapped);
+  pass('a tap picks a repository even when focus leaves before its click');
+
   await choose('storefront work-dev');
   await issueList();
   await newIssue('Account context at every dock size');

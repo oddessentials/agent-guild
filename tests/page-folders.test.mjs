@@ -229,8 +229,8 @@ function combobox(saved = {}) {
     matchFolders: (list, query) => list.filter((dir) => dir.includes(query)),
     Object,
   };
-  runInNewContext(`${constant('RECENT_CWDS_KEY')}${constant('RECENT_CLONE_PARENTS_KEY')}${constant('RECENT_FIELDS')}${constant('recentView')}
-${pick(['recentFolders', 'rememberRecent', 'renderRecent', 'showRecent', 'hideRecent', 'pickRecent', 'recentKeys'])}`, context);
+  runInNewContext(`${constant('RECENT_CWDS_KEY')}${constant('RECENT_CLONE_PARENTS_KEY')}${constant('RECENT_FIELDS')}${constant('recentView')}${constant('optionPress')}
+${pick(['bindOption', 'recentFolders', 'rememberRecent', 'renderRecent', 'showRecent', 'hideRecent', 'pickRecent', 'recentKeys'])}`, context);
   return { context, $, picked, saved };
 }
 
