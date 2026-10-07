@@ -81,12 +81,21 @@ test('a session shows each shell command from its start until its end, whatever 
   assert.equal(drawn(), 1, 'running in the background, so drawn again');
   report({ shell: 'running', tasks: [] });
   assert.equal(drawn(), 0, 'a task the tool no longer lists has ended');
-  report({ shell: 'running', tasks: ['t2', 't3'] });
-  assert.equal(session.toJSON().shells.length, 1, 'an ended task never comes back; one not seen before is drawn at once');
+  report({ shell: 'running', tasks: [{ id: 't2' }, { id: 't3', kind: 'monitor' }] });
+  assert.deepEqual(session.toJSON().shells.map((sh) => sh.kind), ['monitor'], 'an ended task never comes back; one not seen before is drawn at once, as what the list says it is');
   report({ shell: 'end', task: 't3' });
   report({ shell: 'end', task: 't4' });
-  report({ shell: 'running', tasks: ['t4'] });
+  report({ shell: 'running', tasks: [{ id: 't4' }] });
   assert.equal(drawn(), 0, 'nor one whose end came before the list');
+
+  report({ shell: 'start', key: 'w1', match: m(8) });
+  report({ shell: 'background', key: 'w1', task: 'tw1', kind: 'monitor' });
+  drawn();
+  assert.deepEqual(session.toJSON().shells.map((sh) => sh.kind), ['monitor'], 'a watch the tool keeps is a monitor, not a command');
+  report({ shell: 'running', tasks: [{ id: 'tw1', kind: 'shell' }] });
+  assert.deepEqual(session.toJSON().shells.map((sh) => sh.kind), ['shell'], 'the tool\'s own list wins');
+  report({ shell: 'running', tasks: [] });
+  assert.equal(drawn(), 0);
 
   report({ shell: 'start', key: 'c1', match: m(3), persist: true });
   report({ shell: 'start', key: 'c2', match: m(4), persist: true });
@@ -125,5 +134,7 @@ test('a session shows each shell command from its start until its end, whatever 
   assert.throws(() => report({ shell: 'start' }), /needs a key/);
   assert.throws(() => report({ shell: 'background', key: 'k9' }), /needs a task/);
   assert.throws(() => report({ shell: 'running' }), /tasks array/);
+  assert.throws(() => report({ shell: 'running', tasks: [{ id: 't9', kind: 'cron' }] }), /kind must be/);
+  assert.throws(() => report({ shell: 'background', key: 'k9', task: 't9', kind: 'cron' }), /kind must be/);
   assert.throws(() => report({ shell: 'end' }), /key or a task/);
 });

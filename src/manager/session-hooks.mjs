@@ -15,8 +15,11 @@ const groups = (events, extra) => Object.fromEntries(events.map((event) => [even
 
 const shellEvents = (events, matcher) => Object.fromEntries(events.map((event) => [event, { group: { matcher } }]));
 
-const CLAUDE_EVENTS = ['SessionStart', 'UserPromptSubmit', 'SubagentStart', 'SubagentStop', 'PostModelSwitch', 'PreToolUse', 'PermissionRequest', 'PostToolUse', 'PostToolUseFailure', 'Stop'];
-const CLAUDE_MATCHERS = { PreToolUse: 'Bash|PowerShell', PermissionRequest: 'Bash|PowerShell', PostToolUse: 'Bash|PowerShell|TaskStop', PostToolUseFailure: 'Bash|PowerShell' };
+// Shell commands and monitors are the only tool calls reported. StopFailure (an API error) ends a turn like Stop, and
+// PermissionDenied (auto mode) ends a command that PreToolUse started, since no PostToolUse follows a denial.
+const CLAUDE_SHELL_TOOLS = 'Bash|PowerShell|Monitor';
+const CLAUDE_EVENTS = ['SessionStart', 'UserPromptSubmit', 'SubagentStart', 'SubagentStop', 'PostModelSwitch', 'PreToolUse', 'PermissionRequest', 'PermissionDenied', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'StopFailure'];
+const CLAUDE_MATCHERS = { PreToolUse: CLAUDE_SHELL_TOOLS, PermissionRequest: CLAUDE_SHELL_TOOLS, PermissionDenied: CLAUDE_SHELL_TOOLS, PostToolUse: `${CLAUDE_SHELL_TOOLS}|TaskStop`, PostToolUseFailure: CLAUDE_SHELL_TOOLS };
 const CLAUDE_BLOCKING = new Set(['SubagentStart', 'PreToolUse']);
 export const CODEX_EVENTS = ['SessionStart', 'UserPromptSubmit', 'SubagentStart', 'SubagentStop', 'PreToolUse', 'PermissionRequest', 'PostToolUse', 'Stop', 'Interrupt', 'SessionEnd'];
 const CODEX_MATCHERS = { PermissionRequest: 'Bash', PostToolUse: 'Bash' };
@@ -26,7 +29,7 @@ const claudeHooks = () => Object.fromEntries(CLAUDE_EVENTS.map((event) => [event
   ...(CLAUDE_MATCHERS[event] ? { matcher: CLAUDE_MATCHERS[event] } : {}),
   hooks: [handler(CLAUDE_BLOCKING.has(event) ? {} : { async: true })],
 }]]));
-const GROK_EVENTS = ['SessionStart', 'SubagentStart', 'SubagentStop', 'StopCancelled', 'SessionEnd', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Stop'];
+const GROK_EVENTS = ['SessionStart', 'SubagentStart', 'SubagentStop', 'StopCancelled', 'StopFailure', 'SessionEnd', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Stop'];
 
 // Antigravity CLI loads an installed plugin into every session, also those started outside Agent Guild, and runs
 // its hooks in the plugin's folder, on Windows through cmd /C, which cannot take a quoted path. So the hook is a

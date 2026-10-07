@@ -1116,10 +1116,11 @@ function renderAgents(container, agents, shells = []) {
     return el;
   });
   const shellEls = shells.slice(0, MAX_SHELLS_SHOWN).map((shell) => {
-    const el = familiar(shell.id, 'Shell', hueFor(shell.id));
-    el.classList.add('agent', 'working', 'shell');
-    el.textContent = '>';
-    el.title = 'Shell command (running)';
+    const monitor = shell.kind === 'monitor';
+    const el = familiar(shell.id, monitor ? 'Monitor' : 'Shell', hueFor(shell.id));
+    el.classList.add('agent', 'working', monitor ? 'monitor' : 'shell');
+    el.textContent = monitor ? '◉' : '>';
+    el.title = monitor ? 'Monitor (watching)' : 'Shell command (running)';
     el.setAttribute('aria-label', el.title);
     return el;
   });
@@ -1129,12 +1130,22 @@ function renderAgents(container, agents, shells = []) {
     more.className = 'agent-overflow';
     more.dataset.agent = 'shell-overflow';
     more.textContent = `+${hidden}`;
-    more.title = `${shells.length} shell commands running; ${hidden} more not drawn`;
+    more.title = `${shellSummary(shells)}; ${hidden} more not drawn`;
     more.setAttribute('role', 'img');
     more.setAttribute('aria-label', more.title);
     shellEls.push(more);
   }
   container.replaceChildren(...agentEls, ...shellEls);
+}
+
+/** "2 shell commands running, 1 monitor watching", or '' with none. */
+function shellSummary(shells) {
+  const monitors = shells.filter((shell) => shell.kind === 'monitor').length;
+  const commands = shells.length - monitors;
+  return [
+    commands ? `${commands} shell command${commands === 1 ? '' : 's'} running` : '',
+    monitors ? `${monitors} monitor${monitors === 1 ? '' : 's'} watching` : '',
+  ].filter(Boolean).join(', ');
 }
 
 // ---- API ------------------------------------------------------------------
@@ -4842,9 +4853,9 @@ function updateCard(node, s) {
     : `Start ${s.provider.tool} again on this session${id ? ` (${id})` : ''} in ${s.cwd}`;
   const modelLabel = s.model ? `, model ${modelText(s)}` : '';
   const accountName = accountLabel(s) ? `, ${accountLabel(s)} account` : '';
-  const shellCount = (s.shells || []).length;
+  const shells = shellSummary(s.shells || []);
   const reportingNote = s.status === 'running' && REPORTING_TEXT[s.reporting?.state] ? `, agent reporting: ${REPORTING_TEXT[s.reporting.state]}` : '';
-  node.setAttribute('aria-label', `${s.name}, ${s.provider.vendor}${accountName}${modelLabel}, ${statusText(s)}, ${s.agents.length} agents${shellCount ? `, ${shellCount} shell command${shellCount === 1 ? '' : 's'} running` : ''}${reportingNote}`);
+  node.setAttribute('aria-label', `${s.name}, ${s.provider.vendor}${accountName}${modelLabel}, ${statusText(s)}, ${s.agents.length} agents${shells ? `, ${shells}` : ''}${reportingNote}`);
 }
 
 function renderSessions() {

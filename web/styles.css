@@ -391,7 +391,7 @@ main { max-width: calc(1200px + var(--dock-space, 0px)); margin: 0 auto; padding
 .agent.waiting { border-style: dashed; }
 .agent.done, .agent.idle { opacity: 0.5; }
 .panel-title .agents:empty::after { content: none; }
-.agent.shell { font-family: var(--font-mono, monospace); font-size: 0.8rem; }
+.agent.shell, .agent.monitor { font-family: var(--font-mono, monospace); font-size: 0.8rem; }
 .agent-overflow { align-self: center; font-size: 0.75rem; font-weight: 600; color: var(--muted); }
 
 .card-actions { display: flex; gap: 8px; flex-wrap: wrap; }

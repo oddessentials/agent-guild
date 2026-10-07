@@ -72,7 +72,8 @@ Running sessions with active output use the `working` clip. Quiet running
 sessions use `resting`; they still say **Running**. Exited sessions use a
 subdued `done` pose and say **Exited**. Familiar poses come from reported
 working, waiting, idle and done states. Shell helpers represent actual
-reported shell commands. The scene never invents tasks, progress or helpers.
+reported shell commands and monitors: a command works, a monitor rests. The
+scene never invents tasks, progress or helpers.
 
 Every session has a roster entry and a stable scene slot, including custom
 providers, clone and upgrade tasks. Large groups extend beyond the central

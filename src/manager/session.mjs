@@ -21,6 +21,8 @@ const SCREEN_SCAN_MAX_DELAY_MS = 2000;
 const MAX_TOOL_SESSION_ID = 200;
 const REPORTING_STATES = new Set(['pending', 'active', 'unavailable', 'setup_required', 'unsupported']);
 const SHELL_EVENTS = new Set(['start', 'waiting', 'asked', 'background', 'end', 'running', 'reset']);
+// A shell command, or a monitor: a watch the tool keeps in the background and reacts to.
+const SHELL_KINDS = new Set(['shell', 'monitor']);
 const MAX_SHELLS = 256;
 const MAX_ENDED_TASKS = 256;
 // Keys and reports a terminal sends as escape sequences: X10 mouse reports (three raw bytes after ESC [ M), other CSI
@@ -527,6 +529,11 @@ export class Session extends EventEmitter {
     const task = id(report.task);
     const match = typeof report.match === 'string' && /^[a-f0-9]{32}$/.test(report.match) ? report.match : null;
     const agentId = id(report.agentId);
+    const kindOf = (value) => {
+      if (value === undefined) return 'shell';
+      if (!SHELL_KINDS.has(value)) throw badRequest(`kind must be one of ${[...SHELL_KINDS].join(', ')}`);
+      return value;
+    };
     this._reportingHeard();
 
     if (report.shell === 'reset') {
@@ -536,10 +543,18 @@ export class Session extends EventEmitter {
 
     if (report.shell === 'running') {
       if (!Array.isArray(report.tasks)) throw badRequest('a running report needs a tasks array');
-      const running = new Set(report.tasks.slice(0, MAX_SHELLS).map(id).filter(Boolean));
-      for (const shell of [...this.shells.values()]) if (shell.task && !running.has(shell.task)) this._endShell(shell);
+      const running = new Map();
+      for (const entry of report.tasks.slice(0, MAX_SHELLS)) {
+        const task = id(entry?.id);
+        if (task) running.set(task, kindOf(entry.kind));
+      }
+      for (const shell of [...this.shells.values()]) {
+        if (!shell.task) continue;
+        if (!running.has(shell.task)) this._endShell(shell);
+        else if (shell.kind !== running.get(shell.task)) this._setKind(shell, running.get(shell.task));
+      }
       const known = new Set([...this.shells.values()].map((shell) => shell.task));
-      for (const each of running) if (!known.has(each) && !this._endedTasks.has(each)) this._addShell({ task: each }, { now: true });
+      for (const [each, kind] of running) if (!known.has(each) && !this._endedTasks.has(each)) this._addShell({ task: each, kind }, { now: true });
       return null;
     }
 
@@ -574,9 +589,11 @@ export class Session extends EventEmitter {
     }
 
     if (!task) throw badRequest('a background report needs a task');
+    const kind = kindOf(report.kind);
     const shell = this._shellBy('key', key);
     if (!shell) return null;
     Object.assign(shell, { task, endsWithAgent: report.endsWithAgent === true });
+    this._setKind(shell, kind);
     if (shell.waiting) {
       shell.waiting = false;
       this._showAfterDelay(shell);
@@ -590,7 +607,7 @@ export class Session extends EventEmitter {
       return;
     }
     const shell = {
-      id: `shell-${++this._shellSeq}`, key: null, match: null, agentId: null, persist: false, task: null,
+      id: `shell-${++this._shellSeq}`, kind: 'shell', key: null, match: null, agentId: null, persist: false, task: null,
       endsWithAgent: false, waiting: false, asked: false, visible: false, timer: null, ...fields,
     };
     this.shells.set(shell.id, shell);
@@ -608,6 +625,12 @@ export class Session extends EventEmitter {
     if (shell.visible === visible) return;
     shell.visible = visible;
     this._changed();
+  }
+
+  _setKind(shell, kind) {
+    if (shell.kind === kind) return;
+    shell.kind = kind;
+    if (shell.visible) this._changed();
   }
 
   _foreground(shell) {
@@ -760,7 +783,7 @@ export class Session extends EventEmitter {
       toolSessionId: this.toolSessionId,
       reporting: this.reporting,
       agents: [...this.agents.values()],
-      shells: [...this.shells.values()].filter((s) => s.visible).map((s) => ({ id: s.id })),
+      shells: [...this.shells.values()].filter((s) => s.visible).map((s) => ({ id: s.id, kind: s.kind })),
     };
   }
 }
