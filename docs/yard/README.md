@@ -64,7 +64,7 @@ colours are fields of `WORLDS` in `web/yard/model.mjs`.
 | Guild | Stone courtyard, five distinct halls, bronze trim and warm windows | Five fantasy heroes with baby dragon and spirit familiars |
 | Orbital | Station deck in orbit over a planet, with trusses out to solar wings, a docking hub and habitat modules; five provider modules | Five robots with helper drones |
 | Grove | Sunlit glade in an old forest, with a spring, a stream, a lily pond and a village of tree dwellings; five provider tree halls | Five woodland spirits with Guild familiars and Orbital drones as shell helpers |
-| Professional | Office campus of glass and concrete round a paved plaza, with lawns, a pond and tree-lined avenues; five campus buildings | Simple session markers without character art |
+| Professional | Busy city of glass, concrete and brick round a paved civic square, with a street grid, traffic and a pocket park; five campus buildings | Five campus staff with small office robots as helpers |
 | Goblinville | Steam-powered town on stilts over a misty bog; five provider workshops on a plank deck | Five goblin-kin builders with creature familiars and clockwork shell helpers |
 | Gnomeland | Timber-and-stone mountain village on a cobbled square, with a lake, a waterfall and mountains beyond; five provider workshops | Five gnome builders with clockwork and creature familiars and clockwork shell helpers |
 
@@ -123,7 +123,7 @@ The [art source notes](../../concept-art/guild-yard/ART.md) record how each
 model and plate was made.
 Guild's and Professional's surroundings are pre-rendered environment plates
 (for Guild a lakeside meadow, orchard and forested hills; for Professional
-an office campus with lawns, a pond and avenues) built in Blender from
+a city of streets, towers and traffic round the square) built in Blender from
 [Poly Haven](https://polyhaven.com/license) CC0 models, textures and sky,
 then path-traced from the Yard's own camera direction. Because the camera
 is orthographic and never rotates, the plates line up with the live halls
@@ -159,8 +159,8 @@ optimizes only its model.
 
 Goblinville's and Gnomeland's halls, builders, familiars and helpers,
 Orbital's modules, robots and drones (also Guild's and Grove's shell
-helpers), Guild's heroes and familiars (also Grove's familiars), and Grove's
-halls and spirits, are textured models made from
+helpers), Guild's heroes and familiars (also Grove's familiars), Professional's
+staff and office robots, and Grove's halls and spirits, are textured models made from
 painted images with TRELLIS.2 in the local image studio, then rigged in
 Blender, by the shared pipeline in `concept-art/yard-models/`. Their
 surroundings are plates built the same way as Guild's, from
@@ -169,8 +169,9 @@ there, over a generated planet and nebula, and lit by a world shader in
 place of a Poly Haven sky. The steps and sources are in the
 [Goblinville](../../concept-art/goblinville-yard/ART.md),
 [Gnomeland](../../concept-art/gnomeland-yard/ART.md),
-[Orbital](../../concept-art/orbital-yard/ART.md) and
-[Grove](../../concept-art/grove-yard/ART.md) art notes, and for Guild
+[Orbital](../../concept-art/orbital-yard/ART.md),
+[Grove](../../concept-art/grove-yard/ART.md) and
+[Professional](../../concept-art/professional-yard/ART.md) art notes, and for Guild
 in the [art source notes](../../concept-art/guild-yard/ART.md). Plate
 rendering needs a Cycles-capable GPU and
 downloads its Poly Haven sources into `.cache/polyhaven`, pinned by the
@@ -216,8 +217,8 @@ They also cover overlapping New/Resume requests, duplicate submission across
 views, independent install requests and model recovery without retry loops.
 Asset tests verify the shipped GLBs contain anchors, skinning and clips.
 
-The release gate is 136 MiB packed. The yard worlds measured 134.9 MiB in the
-packed package. Run `npm pack` and
+The release gate is 170 MiB packed, and the Pages demo's is 182 MiB; the
+package measured 168.1 MiB. Run `npm pack` and
 `node tests/package/check-tarball.mjs <archive>` after asset changes. Pack on
 Linux/macOS for release: Windows npm archives do not preserve executable
 mode bits on node-pty's macOS spawn helpers, which the gate correctly rejects.

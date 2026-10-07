@@ -137,26 +137,32 @@ after a fresh Blender export, then asset/browser tests before committing.
 
 ## Professional environment plates
 
-`env/professional_env.py` builds an office campus for Professional's plates,
-rendered with `plates.py -- professional` and its live surfaces with
-`surfaces.py -- professional`. A level plaza of large grey slabs, edged in
-granite with a still round pool at its centre, carries the live halls and
-session markers; planters and benches line its back and left edges. Mown
-lawns with stripes, footpaths and two tree-lined avenues lead out to a pond
-with café tables, and office blocks stand in a row behind the plaza and
-along the avenues' outer sides. The blocks are modelled in the script: a
+`env/professional_env.py` builds a city for Professional's plates, rendered
+with `plates.py -- professional` and its live surfaces with
+`surfaces.py -- professional`. A level civic square of large grey slabs,
+edged in granite with a still round pool at its centre, carries the live
+halls and cast; planters and benches line its back and left edges and a ring
+of trees stands on its promenade. A street grid surrounds it: avenues either
+side of the square, cross streets behind and in front, and the blocks
+beyond, each an asphalt ribbon with granite kerbs, paved sidewalks, a dashed
+centre line, crosswalks and traffic signals at every junction. The blocks
+between are filled by `parcels()` with buildings modelled in the script: a
 curtain wall drawn by a shader (mullions and spandrels in Poly Haven
-concrete over reflective glass, in three styles) above a glazed lobby, with
-a parapet and roof plant. Every block is kept low enough to stay in view
-and off the live area (`tall_clear`).
+concrete, brick or plaster over reflective glass, in six styles) above a
+glazed ground floor, with a parapet and roof plant. Buildings grow taller up
+the screen, from low shopfronts with awnings and signs in front of the
+square to towers with a setback crown and a beacon behind it, and every one
+is lowered until its screen rise stays off the live area (`tall_clear`).
+Two parks, one behind-left and one in front-right, keep lawn, paths, copses
+and café tables. Cars, taxis, a bus and a van are TRELLIS.2 models from
+`concept-art/professional-yard` (see its `ART.md`), parked along the kerbs
+and standing in the lanes.
 
 Light renders under `kloofendal_38d_partly_cloudy_puresky`; dark under
-`qwantani_dusk_1_puresky`, with a share of the offices lit, glazed lobbies
-and the street lamps on. Every other source is Poly Haven CC0 (trees,
-shrubs, reeds, planters, benches, café sets, street lamps, paving, asphalt,
-granite, concrete and gravel), pinned in `env/polyhaven.lock.json`; the
-lawn is the Guild's generated `meadow` texture.
+`qwantani_dusk_1_puresky`, with a share of the offices lit, glazed ground
+floors, signs, signals, beacons and the street lamps on. Every other source
+is Poly Haven CC0 (trees, shrubs, planters, benches, café sets, street
+lamps, hydrants, bins, paving, asphalt, granite, concrete, brick and
+plaster), pinned in `env/polyhaven.lock.json`; the park lawn is the Guild's
+generated `meadow` texture.
 
-The session markers stay simple: `loadUnit` in `web/yard/renderer.js`
-draws a granite-grey plinth and a satin column in the provider's colour,
-which glows at dusk.

@@ -1,0 +1,57 @@
+{
+ "cast": {
+  "staff_0": {
+   "image": "concepts/staff_anthropic.png",
+   "height": 2.0,
+   "work": "conduct"
+  },
+  "staff_1": {
+   "image": "concepts/staff_openai.png",
+   "height": 2.05,
+   "work": "tinker"
+  },
+  "staff_2": {
+   "image": "concepts/staff_google.png",
+   "height": 1.95,
+   "work": "tinker"
+  },
+  "staff_3": {
+   "image": "concepts/staff_xai.png",
+   "height": 2.05,
+   "work": "tinker"
+  },
+  "staff_4": {
+   "image": "concepts/staff_shell.png",
+   "height": 2.0,
+   "work": "tinker"
+  },
+  "bot_0": {
+   "image": "concepts/bot_courier.png",
+   "height": 1.0
+  },
+  "bot_1": {
+   "image": "concepts/bot_concierge.png",
+   "height": 1.1
+  },
+  "bot_2": {
+   "image": "concepts/bot_sweeper.png",
+   "height": 0.7
+  },
+  "bot_3": {
+   "image": "concepts/bot_butler.png",
+   "height": 1.1
+  }
+ },
+ "seeds": {
+  "staff_4": 123,
+  "bot_0": 123
+ },
+ "town": [
+  "car_sedan",
+  "car_hatch",
+  "car_suv",
+  "car_taxi",
+  "city_bus",
+  "delivery_van"
+ ]
+}
