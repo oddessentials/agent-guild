@@ -24,6 +24,15 @@ test('all sessions remain addressable beyond the prototype limit and retain thei
  const added=layoutSessions([...sessions.filter(s=>s.id!=='s11'),session('new')],providers,second);
  assert.equal(added.get('new').slot,first.get('s11').slot);
 });
+test('crews behind a front hall start at their right end, the others at their left end',()=>{
+ const anchors=providerPositions(providers);
+ for(const id of ['anthropic','openai','google','xai','shell']) {
+  const slots=layoutSessions([session(id+'-a',id),session(id+'-b',id)],providers);
+  const first=slots.get(id+'-a').x-anchors.get(id).x,second=slots.get(id+'-b').x-anchors.get(id).x;
+  if(id==='anthropic'||id==='google')assert.ok(first>0&&second<first,id);
+  else assert.ok(first<0&&second>first,id);
+ }
+});
 test('custom providers and non-provider task sessions have distinct stable placements',()=>{
  const custom=Array.from({length:18},(_,i)=>({id:'custom-'+i}));
  const anchors=providerPositions([...providers,...custom]);

@@ -106,7 +106,9 @@ export function layoutSessions(sessions, providers, previous = new Map()) {
       used.get(key).add(slot); result.set(s.id,{group:key,slot});
     }
     const entry=result.get(s.id), origin=anchors.get(key)||{x:0,z:4};
-    entry.x=origin.x+((entry.slot%4)-1.5)*1.25;
+    // Crews behind a front hall fill from the end the camera can see past it.
+    const dir=key==='anthropic'||key==='google'?-1:1;
+    entry.x=origin.x+dir*((entry.slot%4)-1.5)*1.25;
     entry.z=origin.z+3.25+Math.floor(entry.slot/4)*1.6;
   }
   return result;
