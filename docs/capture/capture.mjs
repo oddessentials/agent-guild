@@ -53,6 +53,8 @@ const WIDTH = 1360;
 // high-density screens at about half the bytes of 2x.
 const SCALE = 1.5;
 const QUALITY = 90;
+// Gallery thumbnails show about 290 px wide; 720 px stays sharp at 2x.
+const THUMB_WIDTH = 720;
 
 const FOLDERS = ['storefront', 'billing', 'api-gateway', 'docs-site', 'game-engine'];
 
@@ -314,6 +316,17 @@ async function takeShots(send, { url, token, sessions }) {
     if (fullPage) await viewport(height, width);
   };
 
+  /** A 16:10 `<name>-thumb` for the README gallery, `height` CSS pixels tall from the top of the window. */
+  const thumb = async (name, { height = 850, align = 'left' } = {}) => {
+    const width = height * 1.6;
+    const x = { left: 0, center: (WIDTH - width) / 2, right: WIDTH - width }[align];
+    const clip = { x, y: 0, width, height, scale: THUMB_WIDTH / (width * SCALE) };
+    const { data } = await send('Page.captureScreenshot', { format: 'webp', quality: QUALITY, clip });
+    const file = path.join(out, `${name}-thumb.webp`);
+    fs.writeFileSync(file, Buffer.from(data, 'base64'));
+    console.log(`[capture] ${path.relative(repo, file)} (${Math.round(fs.statSync(file).size / 1024)} KB)`);
+  };
+
   fs.mkdirSync(out, { recursive: true });
   await send('Page.enable');
   await send('Runtime.enable');
@@ -341,6 +354,7 @@ async function takeShots(send, { url, token, sessions }) {
   await click('#settings-menu input[name="theme"][value="light"]');
   await sleep(2000);
   await shot('overview-light', { fullPage: true, stop: 'section.news' });
+  await thumb('overview-light');
   await click('#settings-menu input[name="theme"][value="dark"]');
   await sleep(2000);
 
@@ -358,6 +372,7 @@ async function takeShots(send, { url, token, sessions }) {
   await waitFor('the models dialog', `document.querySelectorAll('#models-list .model').length > 0`);
   await sleep(1500);
   await shot('models');
+  await thumb('models', { height: 600, align: 'center' });
   await click('#models-close');
   await sleep(600);
 
@@ -365,6 +380,7 @@ async function takeShots(send, { url, token, sessions }) {
   await waitFor('the news panel', `document.querySelectorAll('#news-list > *').length > 3`);
   await sleep(1500);
   await shot('news');
+  await thumb('news', { height: 520, align: 'right' });
   await click('#news-close');
   await sleep(600);
 
@@ -372,6 +388,7 @@ async function takeShots(send, { url, token, sessions }) {
   await waitFor('the session history', `document.querySelectorAll('#history-list .history-row').length > 3`);
   await sleep(1200);
   await shot('history');
+  await thumb('history', { height: 600, align: 'center' });
   await click('#history-close');
   await sleep(600);
 
@@ -379,6 +396,7 @@ async function takeShots(send, { url, token, sessions }) {
   await waitFor('the release notes', `document.querySelectorAll('#changelog-list > *').length > 0`, 60000);
   await sleep(1500);
   await shot('whats-new');
+  await thumb('whats-new', { height: 520, align: 'right' });
   await click('#changelog-close');
   await sleep(600);
 
@@ -388,6 +406,7 @@ async function takeShots(send, { url, token, sessions }) {
   await waitFor('the terminal', `document.querySelector('.terminal-pane.focused .xterm-rows')?.textContent.trim().length > 40`);
   await sleep(2500);
   await shot('terminal');
+  await thumb('terminal', { height: 540 });
 
   // Two terminals side by side, with the GitHub panel on the focused one's repository.
   await viewport(900, 1600);

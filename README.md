@@ -140,6 +140,19 @@ The first Claude Code usage meter may ask for access to the
 
 <img src="docs/images/yard.webp" alt="The Guild Yard: a 3D courtyard with a hall for each coding tool, its sessions' characters outside, and the roster and inspector beside it">
 
+<table>
+  <tr>
+    <td width="33%" align="center"><a href="docs/images/terminal.webp"><img src="docs/images/terminal-thumb.webp" alt="A Claude Code session's terminal, with its helper agents in the header"></a><br><sub>Terminal</sub></td>
+    <td width="33%" align="center"><a href="docs/images/history.webp"><img src="docs/images/history-thumb.webp" alt="Claude Code's earlier sessions, each with a Resume button"></a><br><sub>Resume an earlier session</sub></td>
+    <td width="33%" align="center"><a href="docs/images/models.webp"><img src="docs/images/models-thumb.webp" alt="Claude Code's models with their coding, intelligence and agentic benchmarks"></a><br><sub>Model benchmarks</sub></td>
+  </tr>
+  <tr>
+    <td width="33%" align="center"><a href="docs/images/news.webp"><img src="docs/images/news-thumb.webp" alt="The news panel, filtered by news, releases and research"></a><br><sub>News</sub></td>
+    <td width="33%" align="center"><a href="docs/images/whats-new.webp"><img src="docs/images/whats-new-thumb.webp" alt="What's new, listing Agent Guild's release notes"></a><br><sub>What's new</sub></td>
+    <td width="33%" align="center"><a href="docs/images/overview-light.webp"><img src="docs/images/overview-light-thumb.webp" alt="Agent Guild in light mode"></a><br><sub>Light mode</sub></td>
+  </tr>
+</table>
+
 ## Commands
 
 | Command | What it does |
