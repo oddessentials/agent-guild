@@ -42,6 +42,7 @@ for (const [target, dependency] of Object.entries(vendor)) {
 }
 
 fs.copyFileSync(path.join(here, 'demo-runtime.js'), path.join(out, 'demo-runtime.js'));
+fs.copyFileSync(path.join(here, 'social.png'), path.join(out, 'social.png'));
 fs.writeFileSync(path.join(out, 'demo-config.js'), `window.AGENT_GUILD_DEMO_VERSION=${JSON.stringify(version)};\n`);
 fs.writeFileSync(path.join(out, '.nojekyll'), '');
 
@@ -53,6 +54,24 @@ index = index.replace(
   '<script src="./demo-config.js"></script>\n  <script src="./demo-runtime.js"></script>\n  <script type="module" src="./app.js"></script>',
 );
 if (!index.includes('./demo-runtime.js')) throw new Error('could not insert the demo runtime before app.js');
+// Link previews need absolute URLs, so these name the published Pages site.
+const site = 'https://oddessentials.github.io/agent-guild/';
+const summary = 'Try the Agent Guild web client in your browser. The sessions are simulated; nothing runs on your computer.';
+index = index.replace('<title>Agent Guild</title>', [
+  '<title>Agent Guild</title>',
+  `<meta name="description" content="${summary}">`,
+  '<meta property="og:type" content="website">',
+  '<meta property="og:site_name" content="Agent Guild">',
+  '<meta property="og:title" content="Agent Guild">',
+  `<meta property="og:description" content="${summary}">`,
+  `<meta property="og:url" content="${site}">`,
+  `<meta property="og:image" content="${site}social.png">`,
+  '<meta property="og:image:width" content="1280">',
+  '<meta property="og:image:height" content="640">',
+  '<meta property="og:image:alt" content="The Agent Guild crest above the install command, npm install -g @oddessentials/agent-guild, for Windows, macOS and Linux">',
+  '<meta name="twitter:card" content="summary_large_image">',
+].join('\n  '));
+if (!index.includes('og:image')) throw new Error('could not insert the link preview tags after the title');
 fs.writeFileSync(indexFile, index);
 
 // Stylesheets name fonts and images from the origin root too; a project page lives below it.

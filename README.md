@@ -25,6 +25,8 @@ Close the page whenever you like; the sessions keep running.
 
 ## Quick start
 
+With Node.js 22 or newer:
+
 ```sh
 npm install -g @oddessentials/agent-guild
 agent-guild
@@ -127,11 +129,29 @@ The first Claude Code usage meter may ask for access to the
 * Model grades and benchmarks for each tool's models
 * Resume a tool's earlier sessions with **Existing…**
 * GitHub issues, pull requests, workflow runs, branches and cloning
+* The manager's environment on the Shell card: runtimes, design tools,
+  Docker, and the versions a project pins
+* Start the manager when you sign in, on Windows, macOS and Linux
 * Shared notes, a news feed, six skins, light and dark mode
-* A Yard view of the same providers and sessions, with a world for every skin ([the yard](docs/yard/README.md))
+* The Yard: your tools and sessions as a 3D world, one for each skin
 * tmux and herdr sessions that keep running when the manager stops
 
 <img src="docs/images/workspace.webp" alt="Two terminals side by side with the GitHub panel showing the workflow runs of the focused terminal's repository">
+
+<img src="docs/images/yard.webp" alt="The Guild Yard: a 3D courtyard with a hall for each coding tool, its sessions' characters outside, and the roster and inspector beside it">
+
+<table>
+  <tr>
+    <td width="33%" align="center"><a href="docs/images/terminal.webp"><img src="docs/images/terminal-thumb.webp" alt="A Claude Code session's terminal, with its helper agents in the header"></a><br><sub>Terminal</sub></td>
+    <td width="33%" align="center"><a href="docs/images/history.webp"><img src="docs/images/history-thumb.webp" alt="Claude Code's earlier sessions, each with a Resume button"></a><br><sub>Resume an earlier session</sub></td>
+    <td width="33%" align="center"><a href="docs/images/models.webp"><img src="docs/images/models-thumb.webp" alt="Claude Code's models with their coding, intelligence and agentic benchmarks"></a><br><sub>Model benchmarks</sub></td>
+  </tr>
+  <tr>
+    <td width="33%" align="center"><a href="docs/images/news.webp"><img src="docs/images/news-thumb.webp" alt="The news panel, filtered by news, releases and research"></a><br><sub>News</sub></td>
+    <td width="33%" align="center"><a href="docs/images/whats-new.webp"><img src="docs/images/whats-new-thumb.webp" alt="What's new, listing Agent Guild's release notes"></a><br><sub>What's new</sub></td>
+    <td width="33%" align="center"><a href="docs/images/overview-light.webp"><img src="docs/images/overview-light-thumb.webp" alt="Agent Guild in light mode"></a><br><sub>Light mode</sub></td>
+  </tr>
+</table>
 
 ## Commands
 

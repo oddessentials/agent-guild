@@ -23,6 +23,8 @@ test('the Pages builder makes a portable, complete site without changing web/', 
   const index = fs.readFileSync(path.join(out, 'index.html'), 'utf8');
   assert.doesNotMatch(index, /\b(?:src|href)=["']\//);
   assert.ok(index.indexOf('./demo-runtime.js') < index.indexOf('./app.js'));
+  assert.match(index, /<meta property="og:image" content="https:\/\/oddessentials\.github\.io\/agent-guild\/social\.png">/);
+  assert.match(index, /<meta name="twitter:card" content="summary_large_image">/);
   assert.match(fs.readFileSync(path.join(out, 'demo-config.js'), 'utf8'), /1\.2\.3/);
   const styles = fs.readFileSync(path.join(out, 'styles.css'), 'utf8');
   assert.doesNotMatch(styles, /url\(\s*["']?\/(?!\/)/, 'fonts and images resolve below the project path');
@@ -345,9 +347,17 @@ test('the demo serves health, sign-in launch and shared notes', async (t) => {
 test('the demo changelog, news and history match the shapes the page reads', async () => {
   const { call } = loadDemo();
   const changelog = (await call('GET', '/changelog')).body;
-  assert.equal(changelog.releases[0].version, '2.3.4');
-  assert.ok(changelog.releases[0].sections[0].changes.length >= 4);
-  assert.deepEqual(changelog.releases.map((release) => release.version), ['2.3.4', '0.32.0', '0.31.0']);
+  assert.deepEqual(changelog.releases.map((release) => release.version),
+    ['0.38.1', '0.38.0', '0.37.0', '0.36.0', '0.35.0', '0.34.0', '0.33.2', '0.33.1', '0.33.0', '0.32.0']);
+  assert.deepEqual(changelog.releases[0].sections, [{ title: 'Bug Fixes', changes: [[
+    { text: 'show the Explorer window and keep front crews visible (' },
+    { text: '#150', url: 'https://github.com/oddessentials/agent-guild/issues/150' },
+    { text: ', ' },
+    { text: '#151', url: 'https://github.com/oddessentials/agent-guild/issues/151' },
+    { text: ') (' },
+    { text: '#152', url: 'https://github.com/oddessentials/agent-guild/issues/152' },
+    { text: ')' },
+  ]] }]);
 
   const news = (await call('GET', '/news')).body;
   assert.equal(typeof news.refreshedAt, 'string');

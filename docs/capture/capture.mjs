@@ -53,6 +53,8 @@ const WIDTH = 1360;
 // high-density screens at about half the bytes of 2x.
 const SCALE = 1.5;
 const QUALITY = 90;
+// Gallery thumbnails show about 290 px wide; 720 px stays sharp at 2x.
+const THUMB_WIDTH = 720;
 
 const FOLDERS = ['storefront', 'billing', 'api-gateway', 'docs-site', 'game-engine'];
 
@@ -293,7 +295,7 @@ async function takeShots(send, { url, token, sessions }) {
   const waitFor = (what, expression, timeoutMs) => until(what, () => evaluate(expression), timeoutMs);
   const click = (selector) => evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`);
 
-  /** `fullPage` grows the viewport to the page; `stop` ends it above that element. */
+  /** `fullPage` grows the viewport to the page; `stop` ends the shot above that element. */
   const shot = async (name, { height = 1000, width = WIDTH, fullPage = false, stop = null } = {}) => {
     if (fullPage) {
       await viewport(height, width);
@@ -303,11 +305,26 @@ async function takeShots(send, { url, token, sessions }) {
       await viewport(content, width);
       await sleep(600);
     }
-    const { data } = await send('Page.captureScreenshot', { format: 'webp', quality: QUALITY });
+    const top = stop && !fullPage
+      ? await evaluate(`Math.floor(document.querySelector(${JSON.stringify(stop)}).getBoundingClientRect().top)`)
+      : null;
+    const clip = top ? { clip: { x: 0, y: 0, width, height: top, scale: 1 } } : {};
+    const { data } = await send('Page.captureScreenshot', { format: 'webp', quality: QUALITY, ...clip });
     const file = path.join(out, `${name}.webp`);
     fs.writeFileSync(file, Buffer.from(data, 'base64'));
     console.log(`[capture] ${path.relative(repo, file)} (${Math.round(fs.statSync(file).size / 1024)} KB)`);
     if (fullPage) await viewport(height, width);
+  };
+
+  /** A 16:10 `<name>-thumb` for the README gallery, `height` CSS pixels tall from the top of the window. */
+  const thumb = async (name, { height = 850, align = 'left' } = {}) => {
+    const width = height * 1.6;
+    const x = { left: 0, center: (WIDTH - width) / 2, right: WIDTH - width }[align];
+    const clip = { x, y: 0, width, height, scale: THUMB_WIDTH / (width * SCALE) };
+    const { data } = await send('Page.captureScreenshot', { format: 'webp', quality: QUALITY, clip });
+    const file = path.join(out, `${name}-thumb.webp`);
+    fs.writeFileSync(file, Buffer.from(data, 'base64'));
+    console.log(`[capture] ${path.relative(repo, file)} (${Math.round(fs.statSync(file).size / 1024)} KB)`);
   };
 
   fs.mkdirSync(out, { recursive: true });
@@ -337,13 +354,25 @@ async function takeShots(send, { url, token, sessions }) {
   await click('#settings-menu input[name="theme"][value="light"]');
   await sleep(2000);
   await shot('overview-light', { fullPage: true, stop: 'section.news' });
+  await thumb('overview-light');
   await click('#settings-menu input[name="theme"][value="dark"]');
   await sleep(2000);
+
+  // The same tools and sessions in the Guild skin's 3D world, above the news.
+  await viewport(820);
+  await click('#view-yard');
+  await waitFor('the yard', `document.getElementById('yard-stage')?.dataset.ready === 'true'`, 60000);
+  await sleep(4000);
+  await shot('yard', { stop: '.yard-news' });
+  await click('#view-cards');
+  await viewport(1000);
+  await sleep(1000);
 
   await click('.provider[data-id="anthropic"] .model-stats > :first-child');
   await waitFor('the models dialog', `document.querySelectorAll('#models-list .model').length > 0`);
   await sleep(1500);
   await shot('models');
+  await thumb('models', { height: 600, align: 'center' });
   await click('#models-close');
   await sleep(600);
 
@@ -351,6 +380,7 @@ async function takeShots(send, { url, token, sessions }) {
   await waitFor('the news panel', `document.querySelectorAll('#news-list > *').length > 3`);
   await sleep(1500);
   await shot('news');
+  await thumb('news', { height: 520, align: 'right' });
   await click('#news-close');
   await sleep(600);
 
@@ -358,6 +388,7 @@ async function takeShots(send, { url, token, sessions }) {
   await waitFor('the session history', `document.querySelectorAll('#history-list .history-row').length > 3`);
   await sleep(1200);
   await shot('history');
+  await thumb('history', { height: 600, align: 'center' });
   await click('#history-close');
   await sleep(600);
 
@@ -365,6 +396,7 @@ async function takeShots(send, { url, token, sessions }) {
   await waitFor('the release notes', `document.querySelectorAll('#changelog-list > *').length > 0`, 60000);
   await sleep(1500);
   await shot('whats-new');
+  await thumb('whats-new', { height: 520, align: 'right' });
   await click('#changelog-close');
   await sleep(600);
 
@@ -374,6 +406,7 @@ async function takeShots(send, { url, token, sessions }) {
   await waitFor('the terminal', `document.querySelector('.terminal-pane.focused .xterm-rows')?.textContent.trim().length > 40`);
   await sleep(2500);
   await shot('terminal');
+  await thumb('terminal', { height: 540 });
 
   // Two terminals side by side, with the GitHub panel on the focused one's repository.
   await viewport(900, 1600);

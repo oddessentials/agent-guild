@@ -554,31 +554,35 @@
     return false;
   }
 
-  function releaseNotes(ver, minutes, lines) {
+  // The ten most recent releases as GitHub published them: version, date, section, change.
+  var RELEASES = [
+    ['0.38.1', '2026-10-07T01:43:44Z', 'Bug Fixes', 'show the Explorer window and keep front crews visible (#150, #151) (#152)'],
+    ['0.38.0', '2026-10-06T23:18:23Z', 'Features', 'premium 3D worlds for every Yard skin (#147)'],
+    ['0.37.0', '2026-10-06T03:26:51Z', 'Features', 'add agent-guild --version and doctor commands (#136) (#142)'],
+    ['0.36.0', '2026-10-06T01:56:26Z', 'Features', 'show design tools, system facts and Docker in the manager environment (#135)'],
+    ['0.35.0', '2026-10-05T23:32:14Z', 'Features', "dim a tool's portrait when its usage is spent, and cut the docs to what the code does (#133)"],
+    ['0.34.0', '2026-10-05T21:53:04Z', 'Features', 'start the manager at boot on Linux and report each environment scope (#129)'],
+    ['0.33.2', '2026-10-05T18:21:32Z', 'Bug Fixes', 'finish environment checks when a runtime is missing (#124)'],
+    ['0.33.1', '2026-10-05T18:05:52Z', 'Bug Fixes', 'bring the GitHub Pages demo in line with the current manager (#121)'],
+    ['0.33.0', '2026-10-05T17:11:02Z', 'Features', 'launch the session manager at sign-in on Windows, macOS and Linux (#122)'],
+    ['0.32.0', '2026-10-05T04:43:52Z', 'Features', 'browse remote branches in the GitHub panel (#116)'],
+  ];
+
+  function releaseNotes(row) {
+    var repo = 'https://github.com/oddessentials/agent-guild';
+    var change = row[3].split(/(#\d+)/).filter(Boolean).map(function (text) {
+      return /^#\d+$/.test(text) ? { text: text, url: repo + '/issues/' + text.slice(1) } : { text: text };
+    });
     return {
-      version: ver,
-      url: 'https://github.com/oddessentials/agent-guild/releases/tag/v' + ver,
-      publishedAt: new Date(now - minutes * 60000).toISOString(),
-      sections: [{ title: null, changes: lines.map(function (text) { return [{ text: text }]; }) }],
+      version: row[0],
+      url: repo + '/releases/tag/v' + row[0],
+      publishedAt: new Date(row[1]).toISOString(),
+      sections: [{ title: row[2], changes: [change] }],
     };
   }
 
   function changelogSnapshot() {
-    var current = [
-      'Launch the session manager at sign-in on Windows, macOS and Linux.',
-      'Browse remote branches in the GitHub panel.',
-      'Share notes across browsers through the manager.',
-      'Create folders in the folder browser and reopen recent ones.',
-      'Manage Tailscale remote access without restarting sessions.',
-      'Open two terminals at once.',
-    ];
-    var releases = [releaseNotes(version, 0, current)];
-    [
-      ['0.32.0', 24 * 60, ['Browse remote branches in the GitHub panel.']],
-      ['0.31.0', 26 * 60, ['Show the manager environment on the Shell card.']],
-    ].forEach(function (row) {
-      if (olderThan(row[0], version)) releases.push(releaseNotes(row[0], row[1], row[2]));
-    });
+    var releases = RELEASES.filter(function (row) { return !olderThan(version, row[0]); }).map(releaseNotes);
     return { refreshing: false, okAt: new Date(now).toISOString(), error: null, releases: releases };
   }
 
@@ -594,7 +598,7 @@
     var items = [
       newsItem('demo-news', 'news', 'Agent Guild', 'agent-guild', 'Coding tools side by side, in the browser', repo, 'Simulated sessions for Claude Code, Codex CLI, Antigravity CLI, Grok Build and a shell. No command runs on your computer.', 50),
       newsItem('demo-news-notes', 'news', 'Agent Guild', 'agent-guild', 'Notes in this demo stay in the simulated manager', repo + '#quick-start', 'Open Notes, edit the text, and the save is shared with this page through the demo manager.', 180),
-      newsItem('demo-release', 'releases', 'Agent Guild', 'agent-guild-releases', 'Agent Guild ' + version, repo + '/releases', 'This page is the ' + version + ' web client. Release notes in What\u2019s new are a static sample.', 10),
+      newsItem('demo-release', 'releases', 'Agent Guild', 'agent-guild-releases', 'Agent Guild ' + version, repo + '/releases', 'This page is the ' + version + ' web client. What\u2019s new shows a copy of the latest release notes.', 10),
       newsItem('demo-release-claude', 'releases', 'Claude Code', 'claude-code', 'Claude Code releases', 'https://github.com/anthropics/claude-code/releases', 'A sample row for the Releases filter. The demo does not fetch live release feeds.', 90),
       newsItem('demo-research', 'research', 'Agent Guild', 'agent-guild-docs', 'How sessions report their model and agents', repo + '/blob/main/docs/agent-reporting.md', 'The hooks that fill a session card. Static sample for the Research filter.', 240),
       newsItem('demo-research-arxiv', 'research', 'arXiv cs.CL', 'arxiv-cs-cl', 'Computation and language, recent papers', 'https://arxiv.org/list/cs.CL/recent', 'A sample research row. Nothing is fetched while you browse the demo.', 300),
