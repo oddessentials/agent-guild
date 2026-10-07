@@ -23,6 +23,8 @@ test('the Pages builder makes a portable, complete site without changing web/', 
   const index = fs.readFileSync(path.join(out, 'index.html'), 'utf8');
   assert.doesNotMatch(index, /\b(?:src|href)=["']\//);
   assert.ok(index.indexOf('./demo-runtime.js') < index.indexOf('./app.js'));
+  assert.match(index, /<meta property="og:image" content="https:\/\/oddessentials\.github\.io\/agent-guild\/social\.png">/);
+  assert.match(index, /<meta name="twitter:card" content="summary_large_image">/);
   assert.match(fs.readFileSync(path.join(out, 'demo-config.js'), 'utf8'), /1\.2\.3/);
   const styles = fs.readFileSync(path.join(out, 'styles.css'), 'utf8');
   assert.doesNotMatch(styles, /url\(\s*["']?\/(?!\/)/, 'fonts and images resolve below the project path');
