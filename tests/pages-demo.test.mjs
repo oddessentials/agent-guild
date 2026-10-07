@@ -348,12 +348,14 @@ test('the demo changelog, news and history match the shapes the page reads', asy
   const { call } = loadDemo();
   const changelog = (await call('GET', '/changelog')).body;
   assert.deepEqual(changelog.releases.map((release) => release.version),
-    ['0.38.0', '0.37.0', '0.36.0', '0.35.0', '0.34.0', '0.33.2', '0.33.1', '0.33.0', '0.32.0', '0.31.0']);
-  assert.deepEqual(changelog.releases[1].sections, [{ title: 'Features', changes: [[
-    { text: 'add agent-guild --version and doctor commands (' },
-    { text: '#136', url: 'https://github.com/oddessentials/agent-guild/issues/136' },
+    ['0.38.1', '0.38.0', '0.37.0', '0.36.0', '0.35.0', '0.34.0', '0.33.2', '0.33.1', '0.33.0', '0.32.0']);
+  assert.deepEqual(changelog.releases[0].sections, [{ title: 'Bug Fixes', changes: [[
+    { text: 'show the Explorer window and keep front crews visible (' },
+    { text: '#150', url: 'https://github.com/oddessentials/agent-guild/issues/150' },
+    { text: ', ' },
+    { text: '#151', url: 'https://github.com/oddessentials/agent-guild/issues/151' },
     { text: ') (' },
-    { text: '#142', url: 'https://github.com/oddessentials/agent-guild/issues/142' },
+    { text: '#152', url: 'https://github.com/oddessentials/agent-guild/issues/152' },
     { text: ')' },
   ]] }]);
 
