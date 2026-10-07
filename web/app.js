@@ -39,6 +39,7 @@ const DOCK_WIDTH_KEY = 'agentGuild.dockWidth';
 const PANES_KEY = 'agentGuild.panes';
 const SPLIT_RATIO_KEY = 'agentGuild.splitRatio';
 const RELEASES_URL = 'https://github.com/oddessentials/agent-guild/releases';
+const SUPPORT_URL = 'https://oddessentials.ai/donate/?ref=agent-guild';
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 const finePointer = window.matchMedia('(hover: hover) and (pointer: fine)');
@@ -2867,6 +2868,7 @@ function renderChangelogStatus(changelog) {
     if (changelog.error && changelog.releases.length) lines.push(`The last check failed (${changelog.error}); showing notes fetched ${relativeTime(changelog.okAt)}.`);
   }
   lines.push(releasesLink('All releases on GitHub'));
+  lines.push(externalLink('Support Agent Guild: buy the lab a beer', SUPPORT_URL));
   $('changelog-status').replaceChildren(...lines.map((content) => {
     const line = document.createElement('span');
     line.append(content);
