@@ -293,7 +293,7 @@ async function takeShots(send, { url, token, sessions }) {
   const waitFor = (what, expression, timeoutMs) => until(what, () => evaluate(expression), timeoutMs);
   const click = (selector) => evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`);
 
-  /** `fullPage` grows the viewport to the page; `stop` ends it above that element. */
+  /** `fullPage` grows the viewport to the page; `stop` ends the shot above that element. */
   const shot = async (name, { height = 1000, width = WIDTH, fullPage = false, stop = null } = {}) => {
     if (fullPage) {
       await viewport(height, width);
@@ -303,7 +303,11 @@ async function takeShots(send, { url, token, sessions }) {
       await viewport(content, width);
       await sleep(600);
     }
-    const { data } = await send('Page.captureScreenshot', { format: 'webp', quality: QUALITY });
+    const top = stop && !fullPage
+      ? await evaluate(`Math.floor(document.querySelector(${JSON.stringify(stop)}).getBoundingClientRect().top)`)
+      : null;
+    const clip = top ? { clip: { x: 0, y: 0, width, height: top, scale: 1 } } : {};
+    const { data } = await send('Page.captureScreenshot', { format: 'webp', quality: QUALITY, ...clip });
     const file = path.join(out, `${name}.webp`);
     fs.writeFileSync(file, Buffer.from(data, 'base64'));
     console.log(`[capture] ${path.relative(repo, file)} (${Math.round(fs.statSync(file).size / 1024)} KB)`);
@@ -339,6 +343,16 @@ async function takeShots(send, { url, token, sessions }) {
   await shot('overview-light', { fullPage: true, stop: 'section.news' });
   await click('#settings-menu input[name="theme"][value="dark"]');
   await sleep(2000);
+
+  // The same tools and sessions in the Guild skin's 3D world, above the news.
+  await viewport(820);
+  await click('#view-yard');
+  await waitFor('the yard', `document.getElementById('yard-stage')?.dataset.ready === 'true'`, 60000);
+  await sleep(4000);
+  await shot('yard', { stop: '.yard-news' });
+  await click('#view-cards');
+  await viewport(1000);
+  await sleep(1000);
 
   await click('.provider[data-id="anthropic"] .model-stats > :first-child');
   await waitFor('the models dialog', `document.querySelectorAll('#models-list .model').length > 0`);

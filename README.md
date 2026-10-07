@@ -25,6 +25,8 @@ Close the page whenever you like; the sessions keep running.
 
 ## Quick start
 
+With Node.js 22 or newer:
+
 ```sh
 npm install -g @oddessentials/agent-guild
 agent-guild
@@ -127,11 +129,16 @@ The first Claude Code usage meter may ask for access to the
 * Model grades and benchmarks for each tool's models
 * Resume a tool's earlier sessions with **Existing…**
 * GitHub issues, pull requests, workflow runs, branches and cloning
+* The manager's environment on the Shell card: runtimes, design tools,
+  Docker, and the versions a project pins
+* Start the manager when you sign in, on Windows, macOS and Linux
 * Shared notes, a news feed, six skins, light and dark mode
-* A Yard view of the same providers and sessions, with a world for every skin ([the yard](docs/yard/README.md))
+* The Yard: your tools and sessions as a 3D world, one for each skin
 * tmux and herdr sessions that keep running when the manager stops
 
 <img src="docs/images/workspace.webp" alt="Two terminals side by side with the GitHub panel showing the workflow runs of the focused terminal's repository">
+
+<img src="docs/images/yard.webp" alt="The Guild Yard: a 3D courtyard with a hall for each coding tool, its sessions' characters outside, and the roster and inspector beside it">
 
 ## Commands
 
