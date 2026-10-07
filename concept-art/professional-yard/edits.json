@@ -1,0 +1,41 @@
+{
+ "bot_courier": [
+  {
+   "input": "concepts/bot_courier.png",
+   "seed": 11,
+   "prompt": "Make the robot's dark face screen a smooth matte dark charcoal panel with no shine, gloss or reflections, keeping its two big round painted eyes and smile exactly as they are. Keep everything else about the robot, its pose, framing, lighting and the plain light grey background exactly the same."
+  },
+  {
+   "seed": 5,
+   "prompt": "Replace the background with a perfectly flat, uniform, untextured medium grey with no noise, pattern, gradient or shadow. Keep the subject, its pose, framing and lighting exactly the same."
+  }
+ ],
+ "bot_sweeper": [
+  {
+   "input": "concepts/bot_sweeper.png",
+   "seed": 11,
+   "prompt": "Remove all the grey bristle brushes from under the robot's rim so its underside is a smooth rounded off-white shell, and make its dark face screen a smooth matte dark charcoal panel with no shine, gloss or reflections, keeping its two big round painted eyes and smile. Keep everything else about the robot, its pose, framing, lighting and the plain light grey background exactly the same."
+  }
+ ],
+ "bot_butler": [
+  {
+   "input": "concepts/bot_butler.png",
+   "seed": 11,
+   "prompt": "Make the robot's dark face screen a smooth matte dark charcoal panel with no shine, gloss or reflections, keeping its two big round painted eyes and smile exactly as they are. Keep everything else about the robot, its pose, framing, lighting and the plain light grey background exactly the same."
+  }
+ ],
+ "staff_shell": [
+  {
+   "input": "concepts/staff_shell.png",
+   "seed": 5,
+   "prompt": "Remove the small name tag and any writing from the polo shirt, leaving plain fabric. Replace the background with a perfectly flat, uniform, untextured medium grey with no noise, pattern, gradient or shadow. Keep the subject, its pose, framing and lighting exactly the same."
+  }
+ ],
+ "bot_concierge": [
+  {
+   "input": "concepts/bot_concierge.png",
+   "seed": 5,
+   "prompt": "Make the robot's dark face panel a smooth matte dark charcoal with no shine, gloss or reflections, keeping its two big round painted green eyes and smile. Replace the background with a perfectly flat, uniform, untextured medium grey with no noise, pattern, gradient or shadow. Keep everything else about the robot, its pose, framing and lighting exactly the same."
+  }
+ ]
+}

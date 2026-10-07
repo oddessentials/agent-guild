@@ -1,0 +1,53 @@
+{
+ "_style": "Highly detailed stylized 3D character render of a single friendly office professional, premium animated film look, chunky rounded forms with a slightly oversized head, full body from the top of the head to the shoes, standing upright facing the viewer in a relaxed A-pose with both arms held slightly away from the body and hands open, feet together on the ground, every fabric and surface matte with no glossy reflections, even soft studio lighting, isolated and centered on a pure flat light grey background, no ground, no shadow, no props on the floor, no text, no letters, no logos, no badges with writing, no border.",
+ "staff_anthropic": {
+  "seed": 101,
+  "prompt": "A confident lead architect in her forties with warm brown skin and short curly dark hair, wearing a tailored burnt-orange blazer over a cream turtleneck, camel-brown trousers and matte tan leather shoes, a thin cream lanyard, a slim matte grey tablet held flat against her side in one hand.",
+  "pick": 102
+ },
+ "staff_openai": {
+  "seed": 102,
+  "prompt": "A cheerful young software engineer with light skin, short sandy hair and a trimmed beard, wearing a bright emerald-green quilted vest over a light heather-grey long-sleeve shirt, navy chinos and matte white sneakers, a slim green lanyard, a closed slim matte grey laptop held flat against his side in one hand.",
+  "pick": 104
+ },
+ "staff_google": {
+  "seed": 103,
+  "prompt": "A friendly data analyst with East Asian features, dark hair in a neat bun and round glasses, wearing a bright cobalt-blue cardigan over a white collared shirt, light grey trousers and matte navy flat shoes, a blue lanyard, a slim blue folder held flat against her side in one hand.",
+  "pick": 104
+ },
+ "staff_xai": {
+  "seed": 104,
+  "prompt": "A sharp site engineer with deep brown skin and a close-cropped haircut, wearing a bright cyan-teal bomber jacket over a white t-shirt, slate-grey trousers and matte white sneakers, a cyan headset resting around his neck, a cyan lanyard.",
+  "pick": 106
+ },
+ "staff_shell": {
+  "seed": 105,
+  "prompt": "A capable facilities technician with olive skin and a short dark ponytail, wearing a bright amethyst-purple polo shirt, a purple halfway between blue and magenta, with a cream collar, slate-blue work trousers with a tan leather tool belt holding a wrench and a screwdriver, matte brown work boots, a purple lanyard with a key ring.",
+  "pick": 106
+ },
+ "_helper_style": "Highly detailed stylized 3D render of a single small friendly office helper robot from a modern tech campus, premium animated film look, chunky rounded forms, matte off-white and light grey body panels with crisp panel lines and one bold matte accent colour, a friendly face with two big round matte painted eyes, every surface matte with no glossy reflections, no glass, no transparency, no glow effects, no motion blur, seen from an elevated three-quarter view from the front, single subject isolated and centered filling most of the frame, on a pure flat light grey background, no floor, no shadow, no text, no letters, no logos, no border.",
+ "bot_courier": {
+  "seed": 201,
+  "style": "_helper_style",
+  "prompt": "A small wheeled delivery robot: a rounded off-white box body with a flip-top lid and a bold burnt-orange band around its middle, two big round painted eyes on its front panel, a short stubby antenna with a round orange tip, riding on four chunky grey rubber wheels.",
+  "pick": 201
+ },
+ "bot_sweeper": {
+  "seed": 203,
+  "style": "_helper_style",
+  "prompt": "A small round floor-cleaning robot with a personality: a flat rounded off-white disc body with a bold cobalt-blue top panel and a small blue dome bump on top, two big round painted eyes on its raised front bumper, little grey brushes peeking from under its rim.",
+  "pick": 203
+ },
+ "bot_butler": {
+  "seed": 204,
+  "style": "_helper_style",
+  "prompt": "A small two-wheeled self-balancing assistant robot: a rounded off-white pod body with a bold amethyst-purple chest panel, two big round painted eyes, two short stubby grey arms holding a matte grey tray with a solid paper coffee cup, two big chunky grey wheels.",
+  "pick": 205
+ },
+ "bot_concierge": {
+  "seed": 211,
+  "style": "_helper_style",
+  "prompt": "A small front-desk concierge robot made as one chunky solid piece: a plump egg-shaped off-white body with no neck and no separate head, sitting on a wide flat rounded base with concealed wheels, a matte dark charcoal face panel set into its upper front with two big round painted emerald-green eyes and a smile, a bold emerald-green band around the base, two small rounded green bumps for ears, smooth clean untextured surfaces, on a perfectly flat uniform untextured medium grey background.",
+  "pick": 213
+ }
+}

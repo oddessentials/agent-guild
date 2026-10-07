@@ -70,8 +70,7 @@ test('each skin has a distinct authored world with named provider anchors',()=>{
   const asset=glb(world.asset);
   for(const {id}of providers)assert.ok(asset.nodes.some(n=>n.name==='hall_'+id),skin+' '+id);
  }
- assert.equal(WORLDS.professional.characters,false);
- assert.equal(WORLDS.professional.helpers,false);
+ for(const [skin,world]of Object.entries(WORLDS))assert.ok(world.characters&&world.helpers.agent&&world.helpers.shell,skin+' has a cast');
 });
 test('the shipped characters and helpers have actual skinning and usable animation tracks',()=>{
  const counts=new Map();

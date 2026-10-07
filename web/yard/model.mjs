@@ -1,7 +1,6 @@
 // Presentation only: never changes or infers manager state.
 export const PROVIDER_ORDER = ['anthropic', 'openai', 'google', 'xai', 'shell'];
-// Per world: its model, character and helper model prefixes (false draws simple markers and no
-// helpers), and the light colours each theme uses.
+// Per world: its model, character and helper model prefixes, and the light colours each theme uses.
 export const WORLDS = {
   guild: { title: 'The Guild Yard', subtitle: 'A place for every great endeavour', asset: 'guild',
     characters: 'hero_', helpers: { agent: 'familiar_', shell: 'drone_' },
@@ -13,7 +12,7 @@ export const WORLDS = {
     characters: 'spirit_', helpers: { agent: 'familiar_', shell: 'drone_' },
     hemi: 0xccebd6, sun: { light: 0xffe0ad, dark: 0xffe0ad } },
   professional: { title: 'Operations Campus', subtitle: 'A clear view of work in progress', asset: 'professional',
-    characters: false, helpers: false,
+    characters: 'staff_', helpers: { agent: 'bot_', shell: 'bot_' },
     hemi: 0xc8d6e2, sun: { light: 0xfff0d8, dark: 0xff9a5c } },
   goblinville: { title: 'Goblinville Works', subtitle: 'Steam up, and mind the boardwalks', asset: 'goblinville',
     characters: 'goblin_', helpers: { agent: 'goblin_familiar_', shell: 'goblin_helper_' },
