@@ -11,6 +11,10 @@
   "bugs": {
     "url": "https://github.com/oddessentials/agent-guild/issues"
   },
+  "funding": {
+    "type": "individual",
+    "url": "https://oddessentials.ai/donate/?ref=agent-guild"
+  },
   "type": "module",
   "engines": {
     "node": ">=22"
