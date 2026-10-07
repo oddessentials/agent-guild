@@ -83,7 +83,7 @@ export function createFolderOpener({ resolveCwd, spawnImpl = spawn, cooldownMs =
           try {
             child = spawnImpl(target.command, args, {
               cwd: target.kind === 'explorer' ? dir : undefined,
-              shell: false, windowsHide: true, detached: true, stdio: 'ignore',
+              shell: false, windowsHide: false, detached: true, stdio: 'ignore',
             });
             child.once('error', finish);
             child.once('spawn', () => { timer = setTimeout(() => finish(), handoffMs); });
