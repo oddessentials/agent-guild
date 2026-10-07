@@ -1193,6 +1193,32 @@ async function openWorkingFolder() {
   }
 }
 
+// ---- listbox options --------------------------------------------------------
+
+const optionPress = { option: null };
+
+/**
+ * Picks an option of a list that closes when its text box loses focus. A press keeps focus in
+ * the box, but iOS Safari still moves it with the mousedown it emulates after a tap, and the
+ * blur that closes the list then cancels the tap's click. So a press released on the option
+ * picks it first. A drag that scrolls the list is cancelled and picks nothing; click remains
+ * for keyboards and assistive tech, and does nothing once the press has picked.
+ */
+function bindOption(option, isOpen, choose) {
+  option.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    optionPress.option = option;
+  });
+  option.addEventListener('mousedown', (e) => e.preventDefault());
+  option.addEventListener('pointercancel', () => { optionPress.option = null; });
+  option.addEventListener('pointerup', () => {
+    if (optionPress.option !== option) return;
+    optionPress.option = null;
+    if (isOpen()) choose();
+  });
+  option.addEventListener('click', () => { if (isOpen()) choose(); });
+}
+
 // ---- recent folders ---------------------------------------------------------
 
 const RECENT_FIELDS = {
@@ -1220,8 +1246,7 @@ function renderRecent(field) {
     option.id = `${listId}-${i}`;
     option.setAttribute('role', 'option');
     option.setAttribute('aria-selected', String(open && i === recentView.active));
-    option.addEventListener('pointerdown', (e) => e.preventDefault());
-    option.addEventListener('click', () => pickRecent(field, dir));
+    bindOption(option, () => recentView.field === field, () => pickRecent(field, dir));
     return option;
   }));
   list.hidden = !shown.length;
@@ -4248,8 +4273,7 @@ function renderPickerList() {
     item.id = `github-repo-option-${index}`;
     item.setAttribute('role', 'option');
     item.setAttribute('aria-selected', String(index === githubPick.active));
-    item.addEventListener('pointerdown', (e) => e.preventDefault());
-    item.addEventListener('click', () => choosePickerRepo(repo));
+    bindOption(item, () => githubPick.open, () => choosePickerRepo(repo));
     return item;
   });
   if (!items.length) {
