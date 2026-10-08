@@ -1,8 +1,9 @@
 // Translate a coding tool's hook event into Agent Guild reports.
 //
-// Claude Code, Codex CLI, Antigravity CLI and Grok Build all run hook
-// commands with one JSON event on stdin. They spell the event name and the
-// sub-agent and model fields differently, so every spelling is accepted here.
+// Claude Code, Codex CLI, Antigravity CLI, Grok Build and Docker Agent all
+// run hook commands with one JSON event on stdin. They spell the event name
+// and the sub-agent and model fields differently, so every spelling is
+// accepted here.
 //
 // Sub-agents come from:
 // - SubagentStart / SubagentStop (Claude Code, Codex CLI, Grok Build).
@@ -19,8 +20,9 @@
 //   of the sub-agent's own session then closes it, as does a StopCancelled
 //   inside it (its turn limit, no progress or a declined permission).
 //
-// Shell commands come from the Bash, PowerShell (Claude Code, Codex CLI) and
-// run_terminal_command (Grok Build) tools; Claude Code's Monitor tool is a
+// Shell commands come from the Bash, PowerShell (Claude Code, Codex CLI),
+// run_terminal_command (Grok Build) and shell (Docker Agent, whose events
+// name the agent in agent_name) tools; Claude Code's Monitor tool is a
 // background watch reported as a monitor. A turn ends with Stop, with
 // StopFailure (an API error, Claude Code and Grok Build), with StopCancelled
 // (an interrupt or a declined permission, Grok Build) or with Interrupt and
@@ -31,6 +33,8 @@ import crypto from 'node:crypto';
 
 const SUBAGENT_TOOLS = new Set(['Task', 'Agent']);
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell', 'run_terminal_command', 'Monitor']);
+// Codex CLI's multi_agent_v2 tool of the same name is not a shell command here, so the name counts for Docker Agent only.
+const DOCKER_SHELL_TOOLS = new Set(['shell']);
 const MONITOR_TOOLS = new Set(['Monitor']);
 const TOOL_START_EVENTS = new Set(['PreToolUse']);
 const TOOL_END_EVENTS = new Set(['PostToolUse', 'PostToolUseFailure']);
@@ -54,7 +58,9 @@ function shellReport(event, input, toolName, subagentId) {
   const toolInput = input.tool_input || input.toolInput || {};
   const id = text(input.tool_use_id, input.toolUseId);
   const agent = subagentId ? { agentId: `hook-${subagentId}` } : {};
-  const match = typeof toolInput.command === 'string' ? { match: commandHash(toolInput.command) } : {};
+  // Docker Agent's shell tool takes the command as cmd.
+  const command = [toolInput.command, toolInput.cmd].find((value) => typeof value === 'string');
+  const match = command !== undefined ? { match: commandHash(command) } : {};
   // Codex CLI (its events carry turn_id) keeps a command running past its turn, and reports no end for one it refused.
   const codex = Boolean(text(input.turn_id));
   if (event === 'PermissionRequest') return { shell: codex ? 'asked' : 'waiting', ...agent, ...match };
@@ -156,7 +162,8 @@ export function hookToReports(input) {
 
   const toolName = text(input.tool_name, input.toolName);
   const toolEvent = TOOL_START_EVENTS.has(event) || TOOL_END_EVENTS.has(event);
-  const shell = (toolEvent || PERMISSION_EVENTS.has(event)) && SHELL_TOOLS.has(toolName) ? shellReport(event, input, toolName, subagentId) : null;
+  const shellTool = SHELL_TOOLS.has(toolName) || (typeof input.agent_name === 'string' && DOCKER_SHELL_TOOLS.has(toolName));
+  const shell = (toolEvent || PERMISSION_EVENTS.has(event)) && shellTool ? shellReport(event, input, toolName, subagentId) : null;
   if (shell) reports.push(shell);
   if (event === 'PostToolUse' && toolName === 'TaskStop') {
     const toolInput = input.tool_input || input.toolInput || {};
@@ -195,7 +202,7 @@ export function hookToReports(input) {
 
   const model = insideSubagent || toolEvent || PERMISSION_EVENTS.has(event) ? null : event === 'PostModelSwitch'
     ? text(input.to_model)
-    : text(input.model, input.modelId, input.modelName);
+    : text(input.model, input.modelId, input.modelName, input.model_id);
   if (model) reports.push({ model });
 
   if (!insideSubagent && event === 'SessionStart') reports.push({ hello: true });

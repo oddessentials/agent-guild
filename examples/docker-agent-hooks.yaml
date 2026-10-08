@@ -1,0 +1,34 @@
+# Docker Agent hooks that report to the Agent Guild session they run in.
+# Save as ~/.config/cagent/hooks.d/agent-guild.yaml (or under the folder
+# DOCKER_AGENT_CONFIG_DIR names). Outside an Agent Guild session the command
+# does nothing.
+#
+# Agent Guild passes session_start, pre_tool_use, post_tool_use, stop and
+# session_end to every session it starts on the command line. This file adds
+# before_llm_call, which has no flag and carries the model.
+session_start:
+  - hooks:
+      - type: command
+        command: agent-guild-report --hook
+pre_tool_use:
+  - matcher: shell
+    hooks:
+      - type: command
+        command: agent-guild-report --hook
+post_tool_use:
+  - matcher: shell
+    hooks:
+      - type: command
+        command: agent-guild-report --hook
+before_llm_call:
+  - hooks:
+      - type: command
+        command: agent-guild-report --hook
+stop:
+  - hooks:
+      - type: command
+        command: agent-guild-report --hook
+session_end:
+  - hooks:
+      - type: command
+        command: agent-guild-report --hook

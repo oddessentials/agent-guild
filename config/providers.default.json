@@ -134,6 +134,25 @@
       }
     },
     {
+      "id": "docker",
+      "vendor": "Docker",
+      "tool": "Docker Agent",
+      "command": "docker",
+      "versionArgs": ["agent", "version"],
+      "history": "docker",
+      "reporting": "docker",
+      "hooks": { "path": "hooks.d/agent-guild.yaml", "example": "docker-agent-hooks.yaml" },
+      "args": ["agent", "run"],
+      "resumeArgs": ["--session", "{id}"],
+      "color": "#2496ED",
+      "monogram": "D",
+      "install": "mkdir -p ~/.docker/cli-plugins && curl -fsSL \"https://github.com/docker/docker-agent/releases/latest/download/docker-agent-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')\" -o ~/.docker/cli-plugins/docker-agent && chmod +x ~/.docker/cli-plugins/docker-agent",
+      "docs": "https://docker.github.io/docker-agent/getting-started/installation/",
+      "win32": {
+        "install": "$d = \"$HOME\\.docker\\cli-plugins\"; New-Item -ItemType Directory -Force $d | Out-Null; $a = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'amd64' }; irm \"https://github.com/docker/docker-agent/releases/latest/download/docker-agent-windows-$a.exe\" -OutFile \"$d\\docker-agent.exe\""
+      }
+    },
+    {
       "id": "shell",
       "vendor": "Local",
       "tool": "Shell",

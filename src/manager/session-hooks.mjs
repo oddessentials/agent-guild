@@ -31,6 +31,12 @@ const claudeHooks = () => Object.fromEntries(CLAUDE_EVENTS.map((event) => [event
 }]]));
 const GROK_EVENTS = ['SessionStart', 'SubagentStart', 'SubagentStop', 'StopCancelled', 'StopFailure', 'SessionEnd', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Stop'];
 
+// Docker Agent takes one hook command per event on its command line. These flags cover the session's own
+// shell commands and turns; the model needs a hooks.d drop-in (examples/docker-agent-hooks.yaml), since
+// before_llm_call has no flag.
+export const DOCKER_HOOK_FLAGS = ['--hook-session-start', '--hook-pre-tool-use', '--hook-post-tool-use', '--hook-stop', '--hook-session-end'];
+export const dockerHookArgs = () => DOCKER_HOOK_FLAGS.flatMap((flag) => [flag, REPORT_COMMAND]);
+
 // Antigravity CLI loads an installed plugin into every session, also those started outside Agent Guild, and runs
 // its hooks in the plugin's folder, on Windows through cmd /C, which cannot take a quoted path. So the hook is a
 // script in that folder: it reports only inside an Agent Guild Antigravity session, and always prints the JSON object
@@ -250,7 +256,7 @@ export class SessionHooks {
 
   warm() {
     for (const provider of this.registry.providers) {
-      if (provider.reporting === 'claude' || provider.reporting === 'codex' || provider.reporting === 'grok') this._probe(provider).catch(() => {});
+      if (['claude', 'codex', 'grok', 'docker'].includes(provider.reporting)) this._probe(provider).catch(() => {});
     }
   }
 
@@ -271,9 +277,12 @@ export class SessionHooks {
         entry.ok = result.args.length > 0;
         return result;
       }
-      const { stdout, stderr } = await runSpec(buildSpawnSpec(resolved, ['--help'], env, platform), { env, timeoutMs: this.probeTimeoutMs });
+      // Docker Agent's run flags are listed by `docker agent run --help`, after the provider's own args.
+      const helpArgs = provider.reporting === 'docker' ? [...provider.args, '--help'] : ['--help'];
+      const { stdout, stderr } = await runSpec(buildSpawnSpec(resolved, helpArgs, env, platform), { env, timeoutMs: this.probeTimeoutMs });
       entry.ok = true;
-      return { pluginDir: helpLists(`${stdout}\n${stderr}`, '--plugin-dir') };
+      const help = `${stdout}\n${stderr}`;
+      return { pluginDir: helpLists(help, '--plugin-dir'), hookFlags: DOCKER_HOOK_FLAGS.every((flag) => helpLists(help, flag)) };
     })().catch((err) => ({ error: err.message }));
     this.probes.set(provider.id, entry);
     return entry.promise;
@@ -294,6 +303,19 @@ export class SessionHooks {
     if (mode === 'codex') {
       if (probe?.args?.length) return { args: probe.args, reporting: pending(tool, 'runs its first prompt') };
       return { args: [], reporting: { state: 'unavailable', reason: `${tool} did not accept Agent Guild's reporting hooks${probe?.error ? ` (${probe.error})` : ''}.` } };
+    }
+    if (mode === 'docker') {
+      if (probe?.hookFlags) return { args: dockerHookArgs(), reporting: pending(tool, 'starts its session') };
+      if (probe?.error) {
+        return { args: [], reporting: { state: 'unavailable', reason: `Could not check whether ${tool} takes Agent Guild's reporting hooks (${probe.error}).` } };
+      }
+      return {
+        args: [],
+        reporting: {
+          state: 'unsupported',
+          reason: `This version of ${tool} takes no hook flags, so Agent Guild cannot add its reporting hooks. Hooks you add to ${tool}'s own settings still report.`,
+        },
+      };
     }
     const dir = mode === 'claude' ? this.bundles.claude : this.bundles.grok;
     if (probe?.pluginDir) return { args: ['--plugin-dir', dir], reporting: pending(tool, 'starts its session') };

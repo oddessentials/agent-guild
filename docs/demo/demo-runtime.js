@@ -38,6 +38,11 @@
       usageUrl: 'https://grok.com/?_s=usage', billingUrl: 'https://grok.com/?_s=billing', cloudUrl: 'https://grok.com/',
       modelPattern: '\\bgrok-(?:build|\\d)[a-z0-9.-]*',
     },
+    docker: {
+      command: 'docker', package: null, reporting: 'docker',
+      install: 'mkdir -p ~/.docker/cli-plugins && curl -fsSL "https://github.com/docker/docker-agent/releases/latest/download/docker-agent-$(uname -s | tr \'[:upper:]\' \'[:lower:]\')-$(uname -m | sed \'s/x86_64/amd64/;s/aarch64/arm64/\')" -o ~/.docker/cli-plugins/docker-agent && chmod +x ~/.docker/cli-plugins/docker-agent',
+      docs: 'https://docker.github.io/docker-agent/getting-started/installation/',
+    },
     shell: { command: '@shell', package: null, reporting: null, install: '', docs: '' },
   };
   var providers = [
@@ -45,8 +50,10 @@
     provider('openai', 'OpenAI', 'Codex CLI', '#10a37f', 'O', true),
     provider('google', 'Google', 'Antigravity CLI', '#4285f4', 'G', false),
     provider('xai', 'xAI', 'Grok Build', '#111827', 'X', false),
+    provider('docker', 'Docker', 'Docker Agent', '#2496ed', 'D', false),
     provider('shell', 'Local', 'Shell', '#64748b', '>', false),
   ];
+  var shellCard = providers[5];
   var home = '/Users/demo';
   var labels = { npm: 'npm', native: 'native', brew: 'Homebrew' };
   var copies = {
@@ -57,6 +64,7 @@
     openai: [copy('brew', '/opt/homebrew/bin/codex', true, '/opt/homebrew/bin/brew uninstall --cask codex', [], '0.98.0')],
     google: [copy('native', home + '/.local/bin/agy', true, null, [home + '/.local/bin/agy'], '1.19.2')],
     xai: [copy('native', home + '/.grok/bin/grok', true, null, [home + '/.grok/bin', home + '/.grok/downloads', home + '/.grok/completions'], '0.1.40')],
+    docker: [copy('native', home + '/.docker/cli-plugins/docker-agent', true, null, [home + '/.docker/cli-plugins/docker-agent'], '1.149.0')],
   };
   // A removed tool can be installed again from this snapshot. Taken before any demo edit.
   var copyBlueprints = JSON.parse(JSON.stringify(copies));
@@ -69,8 +77,8 @@
   providers[0].updateCommand = home + '/.local/bin/claude update';
   providers[1].updateCommand = '/opt/homebrew/bin/brew upgrade codex';
   providers[2].updateCommand = home + '/.local/bin/agy update';
-  providers[4].shells = [{ id: 'zsh', label: 'zsh', path: '/bin/zsh', multiplexer: false }];
-  providers[4].defaultShell = 'zsh';
+  shellCard.shells = [{ id: 'zsh', label: 'zsh', path: '/bin/zsh', multiplexer: false }];
+  shellCard.defaultShell = 'zsh';
   var notesSeq = 1;
   var notesDoc = { revision: 'n1', text: 'Wallet checkout: retry a saved card once, then show the provider error.' };
   var autostartOn = false;
@@ -106,7 +114,7 @@
     },
     tools: [{ id: 'uv', label: 'uv', path: '/demo/bin/uv', status: 'detected' }],
   };
-  providers[4].multiplexers = [
+  shellCard.multiplexers = [
     {
       id: 'tmux', tool: 'tmux', checked: true, available: true, installable: false, busy: false, pendingCards: 0,
       installCommand: 'Simulate installing tmux',
@@ -191,6 +199,7 @@
     session('a11ce001', 'anthropic', 'Checkout: wallet payments', 'storefront', { name: 'claude-sonnet-4-5', displayName: 'Claude Sonnet 4.5' }, ['Explore', 'Test writer', 'Reviewer']),
     session('c0de0002', 'openai', 'Gateway rate limits', 'api-gateway', { name: 'gpt-5-codex', displayName: 'GPT-5 Codex' }, ['Worker', 'Tests']),
     session('600d0003', 'google', 'Docs site migration', 'docs-site', { name: 'gemini-2.5-pro', displayName: 'Gemini 2.5 Pro' }, ['Researcher']),
+    session('d0c4e006', 'docker', 'Docs upgrade notes', 'docs-site', { name: 'openai/gpt-5', displayName: 'GPT-5' }, []),
     session('5he11004'.replace('h', 'b'), 'shell', 'Storefront dev server', 'storefront', null, []),
   ];
   var detached = session('7e110005', 'shell', 'Storefront in tmux', 'storefront', null, []);
@@ -309,7 +318,7 @@
     if (route === '/sessions' && method === 'POST') {
       if (closing) return error('the session manager is stopping', 'manager_stopping', 503);
       var id = Math.random().toString(16).slice(2, 10).padEnd(8, '0');
-      var p = providers.find(function (item) { return item.id === body.providerId; }) || providers[4];
+      var p = providers.find(function (item) { return item.id === body.providerId; }) || shellCard;
       var made = session(id, p.id, body.name || p.tool + ' demo', String(body.cwd || 'demo').replace(/^.*[\\/]/, ''), p.id === 'shell' ? null : 'Demo model', []);
       sessions.push(made); announce({ type: 'session.created', session: clone(made) });
       return json({ session: clone(made) }, 201);
@@ -628,6 +637,9 @@
       xai: [
         ['ses_grok_notes', 'Draft the release notes for wallet payments', '/work/storefront', 8 * 60],
       ],
+      docker: [
+        ['3f9c1e2a-7d41-4b0e-9a6c-2e5f8b1d4c70', 'Write the upgrade notes for the particle engine', '/work/game-engine', 12 * 60],
+      ],
     };
     return (rows[providerId] || []).map(function (row) {
       return { id: row[0], title: row[1], cwd: row[2], startedAt: ago(row[3] + 90), updatedAt: ago(row[3]) };
@@ -739,7 +751,7 @@
   }
 
   function manageMultiplexer(toolId, kind, body) {
-    var tool = providers[4].multiplexers.find(function (m) { return m.id === toolId; });
+    var tool = shellCard.multiplexers.find(function (m) { return m.id === toolId; });
     if (tool.busy) return error('An operation is already running.', 'install_in_progress', 409);
     if (kind !== 'install' && !tool.installs.some(function (c) { return c.path === body.path; })) return error('Installation not found.', 'unknown_copy', 404);
     if (kind === 'install' && !tool.installable) return error('Already installed.', 'not_installable', 400);

@@ -6,7 +6,7 @@
  └──────────────┘                                          │                          │
  ┌──────────────┐                                          │  SessionManager          │
  │ Future: UE5  │ ◀─────────────── same API ─────────────▶ │   └ Session × N          │
- │ or desktop UI│                                          │      ├ node-pty process  │──▶ claude / codex / agy / grok / shell / npm install
+ │ or desktop UI│                                          │      ├ node-pty process  │──▶ claude / codex / agy / grok / docker agent / shell / npm install
  └──────────────┘                                          │      ├ headless xterm    │
                                                            │      └ agents, model     │◀── agent-guild-report, OSC 7777
                                                            │  ProviderRegistry        │──▶ tool --version, npm registry

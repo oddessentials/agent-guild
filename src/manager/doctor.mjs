@@ -63,6 +63,14 @@ const KNOWN_TOOLS = [
     docs: 'https://docs.x.ai/build/overview',
   },
   {
+    id: 'docker',
+    name: 'Docker Agent',
+    command: 'docker',
+    versionArgs: ['agent', 'version'],
+    install: 'curl -fsSL "https://github.com/docker/docker-agent/releases/latest/download/docker-agent-$(uname -s | tr \'[:upper:]\' \'[:lower:]\')-$(uname -m | sed \'s/x86_64/amd64/;s/aarch64/arm64/\')" -o ~/.docker/cli-plugins/docker-agent && chmod +x ~/.docker/cli-plugins/docker-agent',
+    docs: 'https://docker.github.io/docker-agent/getting-started/installation/',
+  },
+  {
     id: 'tmux',
     name: 'tmux',
     command: 'tmux',

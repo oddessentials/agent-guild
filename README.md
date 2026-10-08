@@ -12,8 +12,9 @@
   <a href="https://oddessentials.ai/donate/?ref=agent-guild"><img src="https://img.shields.io/badge/support-buy%20the%20lab%20a%20beer-f2a93b" alt="Support Agent Guild: buy the lab a beer"></a>
 </p>
 
-**Agent Guild** runs Claude Code, Codex CLI, Antigravity CLI, Grok Build and
-your own shell side by side, in real terminals, from one local web page.
+**Agent Guild** runs Claude Code, Codex CLI, Antigravity CLI, Grok Build,
+Docker Agent and your own shell side by side, in real terminals, from one
+local web page.
 Close the page whenever you like; the sessions keep running.
 
 [Try the demo](https://oddessentials.github.io/agent-guild/) in your browser
@@ -46,8 +47,9 @@ terminal.
 
 No compiler is needed, except on Linux without glibc, such as Alpine:
 `agent-guild` prints the commands that build its terminal library there. A
-missing tool shows **Install** on its card; Antigravity CLI, which is not on
-npm, shows its install command instead.
+missing tool shows **Install** on its card; Antigravity CLI and Docker Agent,
+which are not on npm, show their install commands instead. Docker Agent is
+the `docker agent` plugin; Docker Desktop 4.63 and later ship it.
 
 ## Setup
 

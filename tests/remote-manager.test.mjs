@@ -21,7 +21,7 @@ test('remote access API preserves a live PTY, enforces authentication, and survi
     };
     const fixture = fileURLToPath(new URL('./fixtures/fake-tool.mjs', import.meta.url));
     fs.writeFileSync(path.join(home, 'providers.json'), JSON.stringify({ providers: [
-      ...['anthropic', 'openai', 'google', 'xai', 'shell'].map((id) => ({ id, enabled: false })),
+      ...['anthropic', 'openai', 'google', 'xai', 'docker', 'shell'].map((id) => ({ id, enabled: false })),
       { id: 'fake', command: process.execPath, args: [fixture], versionArgs: [fixture, '--version'] },
     ] }));
     const tailFile = path.join(home, 'tailscale.json');

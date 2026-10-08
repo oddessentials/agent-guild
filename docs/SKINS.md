@@ -69,8 +69,10 @@ image-set(url("page.avif") type("image/avif"), url("page.webp") type("image/webp
 ```
 
 The tools are `shell`, `anthropic`, `openai`, `google` and `xai`. Each has an
-`idle`, `working` and `locked` portrait. Agent avatars are `flame`, `leaf`,
-`night` and `aether`; the page picks one per agent.
+`idle`, `working` and `locked` portrait. `docker` has no portraits yet: its
+cards take the skin's default rule, and its icon is the lettered badge. Agent
+avatars are `flame`, `leaf`, `night` and `aether`; the page picks one per
+agent.
 
 ```text
 web/skins/<id>/

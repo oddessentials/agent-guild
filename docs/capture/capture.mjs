@@ -63,6 +63,7 @@ const PACKAGES = {
   openai: '@openai/codex',
   google: null,
   xai: '@xai-official/grok',
+  docker: null,
 };
 
 function latestTag() {
@@ -136,7 +137,7 @@ async function demoProviders() {
         history: { command: node, args: [script('demo-history.mjs'), id, root] },
         accountEnv: { DEMO_ACCOUNT: '{dir}' },
       }),
-      ...(id === 'shell' || id === 'google' || id === 'xai' ? {} : { usage: { command: node, args: [script('demo-usage.mjs'), id] } }),
+      ...(id === 'shell' || id === 'google' || id === 'xai' || id === 'docker' ? {} : { usage: { command: node, args: [script('demo-usage.mjs'), id] } }),
       ...(id === 'anthropic' ? { accounts: [{ id: 'default', label: 'Personal' }, { id: 'work', label: 'Work' }] } : {}),
     });
   }

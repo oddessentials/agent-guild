@@ -112,7 +112,7 @@ else fs.symlinkSync(path.join(npmBinDir, 'fake-npmtool'), path.join(linkDir, 'fa
 const codingTool = path.join(here, 'fixtures', 'fake-coding-tool.mjs');
 const toolsDir = path.join(home, 'coding-tools');
 fs.mkdirSync(toolsDir);
-for (const name of ['claude', 'codex', 'agy', 'grok']) {
+for (const name of ['claude', 'codex', 'agy', 'grok', 'docker']) {
   writeScript(path.join(toolsDir, name), { win: `"${process.execPath}" "${codingTool}" ${name} %*`, sh: `exec "${process.execPath}" "${codingTool}" ${name} "$@"` });
 }
 const userHookLog = path.join(home, 'user-hooks.log');
@@ -208,6 +208,7 @@ fs.writeFileSync(path.join(home, 'providers.json'), JSON.stringify({
     { id: 'openai', usage: null, history: null, accounts: [{ id: 'work', label: 'Work' }] },
     { id: 'google', history: null, env: { [win ? 'USERPROFILE' : 'HOME']: toolHomes.agy } },
     { id: 'xai', history: null },
+    { id: 'docker', history: null },
     { id: 'claudeoff', vendor: 'Test', tool: 'Claude Hooks Off', command: 'claude', reporting: 'claude', env: { CLAUDE_CONFIG_DIR: claudeHooksOff } },
     {
       id: 'codexbroken', vendor: 'Test', tool: 'Codex Changed', command: 'codex', reporting: 'codex', env: { FAKE_CODEX_REJECT: '1' },
@@ -1375,6 +1376,19 @@ test('Grok Build reports sub-agents through --plugin-dir where it accepts it, an
   await call('DELETE', `/sessions/${tool.session.id}`);
 });
 
+test('Docker Agent reports its shell commands through the hook flags added after `agent run`', async () => {
+  const tool = await startTool('docker');
+  assert.equal(tool.session.reporting.state, 'pending');
+  await waitForText(tool.client, tool.session.id, 'FAKE-DOCKER READY hooks=5', 'one hook per flag');
+  await waitFor(reportingIs(tool.session.id, 'active'), { label: 'the session start hook', timeout: 15000 });
+  tool.client.input('shell build hold fg go test ./...');
+  await waitFor(shellCountIs(tool.session.id, 1), { label: 'the command on the card', timeout: 15000 });
+  await runShells(tool, ['shell-end build'], 'SHELL-DONE build');
+  await waitFor(shellCountIs(tool.session.id, 0), { label: 'gone at its end', timeout: 2000 });
+  await tool.client.close();
+  await call('DELETE', `/sessions/${tool.session.id}`);
+});
+
 // The page relies on this: it ignores a reply that shows a session running once it has seen it exit.
 test('once a session has exited nothing shows it running again, whichever tool it ran', async () => {
   const events = new Client(`${base.replace('http', 'ws')}/api/v1/events?token=${token}`);
@@ -1462,7 +1476,7 @@ test('a Claude Code account keeps the settings file earlier versions seeded, sta
 });
 
 test('the reporting probes start with the manager, before any session asks', () => {
-  for (const id of ['anthropic', 'openai', 'xai']) assert.ok(probesAtStart.has(id), `${id} was being probed when the manager came up`);
+  for (const id of ['anthropic', 'openai', 'xai', 'docker']) assert.ok(probesAtStart.has(id), `${id} was being probed when the manager came up`);
 });
 
 test('a Codex probe that loads no hooks is asked again, not trusted for good', async () => {
