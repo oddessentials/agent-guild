@@ -5,6 +5,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { buildSpawnSpec, runSpec, killWindowsTree } from './command-resolver.mjs';
 import { compareVersions, probeVersion } from './versions.mjs';
+import { dockerSessionDb, openSessionStore } from './docker-sessions.mjs';
 
 export const REPORT_COMMAND = 'agent-guild-report --hook';
 export const PLUGIN_NAME = 'agent-guild';
@@ -33,24 +34,42 @@ const claudeHooks = () => Object.fromEntries(CLAUDE_EVENTS.map((event) => [event
 }]]));
 const GROK_EVENTS = ['SessionStart', 'SubagentStart', 'SubagentStop', 'StopCancelled', 'StopFailure', 'SessionEnd', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Stop'];
 
-// Docker Agent takes one hook command per event on its command line. These flags cover the session's own
-// shell commands and turns, and its sub-agents, each of which runs in a session of its own. The model needs a
-// hooks.d drop-in, since before_llm_call has no flag.
+// Docker Agent takes one hook command per event on its command line, all five from v1.55.0. These flags cover its
+// sessions' shell commands and turns, and its sub-agents, each of which runs in a session of its own; the launch nonce
+// in them marks events from the process Agent Guild started (see docker-sessions.mjs). The model needs a hooks.d
+// drop-in, since before_llm_call has no flag.
 export const DOCKER_HOOK_FLAGS = ['--hook-session-start', '--hook-pre-tool-use', '--hook-post-tool-use', '--hook-stop', '--hook-session-end'];
-export const dockerHookArgs = () => DOCKER_HOOK_FLAGS.flatMap((flag) => [flag, REPORT_COMMAND]);
-// From 1.80.0, `--session` with an id Docker Agent has not seen creates the session under that id. Agent Guild names
-// the main session that way, so its hook can tell it from the sub-agents' sessions. hooks.d drop-ins load from 1.100.0.
-export const DOCKER_SESSION_VERSION = '1.80.0';
+export const dockerHookArgs = (launch) => DOCKER_HOOK_FLAGS.flatMap((flag) => [flag, `${REPORT_COMMAND} --docker --launch ${launch}`]);
+// From v1.81.2, `--session` with an id Docker Agent has not seen creates the session under that id, so Resume knows
+// it before the first prompt; v1.79.0 refuses it ("session not found"). hooks.d drop-ins load from v1.100.0.
+export const DOCKER_SESSION_VERSION = '1.81.2';
 export const DOCKER_DROPIN_VERSION = '1.100.0';
 const DOCKER_DROPIN_MARKER = '# Written by Agent Guild';
 
-/** The value of a `--session` the user passed to Docker Agent: undefined without one, null for a relative one (-1). */
+/** The `--session` the user passed to Docker Agent: { at, width, value, offset } (offset for a relative -N), or null. */
 export function dockerSessionArg(args) {
   for (let i = 0; i < args.length; i++) {
-    const value = args[i] === '--session' ? args[i + 1] : args[i].startsWith('--session=') ? args[i].slice(10) : undefined;
-    if (value !== undefined) return value && !/^-\d+$/.test(value) ? value : null;
+    const joined = args[i].startsWith('--session=');
+    if (args[i] !== '--session' && !joined) continue;
+    const value = joined ? args[i].slice('--session='.length) : args[i + 1] ?? '';
+    const relative = /^-(\d+)$/.exec(value);
+    return { at: i, width: joined ? 1 : 2, value, offset: relative ? Number(relative[1]) : null };
   }
-  return undefined;
+  return null;
+}
+
+/** The id Docker Agent's `--session -N` names, read from its store as Docker Agent reads it, or null. */
+async function resolveRelativeSession(store, offset) {
+  if (!(offset >= 1) || !fs.existsSync(store)) return null;
+  let db;
+  try {
+    db = await openSessionStore(store);
+    return db.relative(offset);
+  } catch {
+    return null;
+  } finally {
+    db?.close();
+  }
 }
 
 /** Docker Agent's model drop-in, in the config folder `docker agent` reads (DOCKER_AGENT_CONFIG_DIR, else ~/.config/cagent). */
@@ -65,8 +84,8 @@ export function dockerDropinFile(env = {}, platform = process.platform) {
 // shell that is, so the check there runs in sh.
 export function dockerDropin(platform = process.platform) {
   const command = platform === 'win32'
-    ? `if ($env:AGENT_GUILD_SESSION_ID) { ${REPORT_COMMAND} }`
-    : `sh -c '[ -z "$AGENT_GUILD_SESSION_ID" ] || exec ${REPORT_COMMAND}'`;
+    ? `if ($env:AGENT_GUILD_SESSION_ID) { ${REPORT_COMMAND} --docker }`
+    : `sh -c '[ -z "$AGENT_GUILD_SESSION_ID" ] || exec ${REPORT_COMMAND} --docker'`;
   return [
     `${DOCKER_DROPIN_MARKER}: it shows the model of each Docker Agent session Agent Guild starts.`,
     '# Turn it off from the Docker Agent card. Outside Agent Guild it does nothing.',
@@ -387,24 +406,34 @@ export class SessionHooks {
     }
     if (mode === 'docker') {
       if (probe?.hookFlags) {
-        if (!probe.version || compareVersions(probe.version, DOCKER_SESSION_VERSION) < 0) {
-          const which = probe.version ? `this is ${probe.version}` : 'its version could not be read';
-          return { args: [], reporting: { state: 'unsupported', reason: `Agent Guild reports ${tool} ${DOCKER_SESSION_VERSION} or later; ${which}. Update ${tool} to see its agents and shell commands here.` } };
-        }
-        // The main session's id: the one resumed, the user's own --session, or a new one Agent Guild names. A relative
-        // --session (-1) names none, and every session then reports as the main one.
+        const env = { ...this.registry.env, ...provider.env };
+        const store = dockerSessionDb([...provider.args, ...args], env, probe.version);
+        // Resume first knows the session resumed, the user's own --session (a relative -N read from the store as
+        // Docker Agent reads it, and passed on as that id), or one Agent Guild names where Docker Agent creates it.
+        // Otherwise it learns the session at its first prompt.
         const own = dockerSessionArg(args);
-        const toolSessionId = resume || (own === undefined ? crypto.randomUUID() : own);
-        const named = resume || own !== undefined ? [] : ['--session', toolSessionId];
+        let sessionArgs = null;
+        let toolSessionId = resume || (own && own.offset === null ? own.value || null : null);
+        if (!resume && own?.offset !== null && own?.offset !== undefined) {
+          const id = await resolveRelativeSession(store, own.offset);
+          if (id) {
+            toolSessionId = id;
+            sessionArgs = [...args.slice(0, own.at), '--session', id, ...args.slice(own.at + own.width)];
+          }
+        }
+        const named = !resume && !own && probe.version && compareVersions(probe.version, DOCKER_SESSION_VERSION) >= 0;
+        if (named) toolSessionId = crypto.randomUUID();
         // A drop-in an older Agent Guild wrote is brought up to date; it was turned on, and stays on.
         if (this._dropinState(provider) === 'stale') {
           try { this._writeDropin(provider); } catch (err) { console.warn(`[reporting] could not update ${this._dropinFile(provider)}: ${err.message}`); }
         }
+        const launch = crypto.randomBytes(16).toString('hex');
         // Docker Agent fires session_start when the first prompt runs, not when its TUI opens.
         return {
-          args: [...dockerHookArgs(), ...named],
-          env: toolSessionId ? { AGENT_GUILD_TOOL_SESSION: toolSessionId } : null,
+          args: [...dockerHookArgs(launch), ...(named ? ['--session', toolSessionId] : [])],
+          sessionArgs,
           toolSessionId,
+          docker: { launch, store },
           reporting: pending(tool, 'runs its first prompt'),
         };
       }
@@ -416,7 +445,7 @@ export class SessionHooks {
         reporting: {
           state: 'unsupported',
           // Without the plugin, `docker agent run --help` prints the Docker CLI's own help and succeeds.
-          reason: `${tool} is not installed, or this version takes no hook flags, so Agent Guild cannot add its reporting hooks. Hooks you add to ${tool}'s own settings still report.`,
+          reason: `${tool} is not installed, or is older than v1.55.0 and takes no hook flags, so Agent Guild cannot add its reporting hooks. Update ${tool} to see its agents and shell commands here.`,
         },
       };
     }
@@ -448,8 +477,7 @@ export class SessionHooks {
   /** Why the card's reporting switch cannot be used, or null. */
   note(provider) {
     if (provider.reporting !== 'docker') return null;
-    const version = this.probes.get(provider.id)?.version;
-    if (!version || compareVersions(version, DOCKER_SESSION_VERSION) < 0) return null;
+    if (!this.probes.get(provider.id)?.version) return null;
     if (!this._dockerDropins(provider)) return `Model reporting needs ${provider.tool} ${DOCKER_DROPIN_VERSION} or later.`;
     if (this._dropinState(provider) === 'other') {
       return `Model reporting is off: ${this._dropinFile(provider)} was not written by Agent Guild. Remove it to turn model reporting on here.`;

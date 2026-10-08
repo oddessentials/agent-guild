@@ -17,7 +17,7 @@
   },
   "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.13"
   },
   "bin": {
     "agent-guild": "bin/agent-guild.mjs",

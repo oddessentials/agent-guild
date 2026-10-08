@@ -6,7 +6,10 @@
 // Hooks come from:
 //   docker  `agent run --hook-<event> <command>` flags (session-start, pre-tool-use, post-tool-use,
 //           stop, session-end); `agent version` prints the version. Events are snake_case and
-//           name the agent; the shell tool is `shell` with `cmd`
+//           name the agent; the shell tool is `shell` with `cmd`. Like Docker Agent it keeps
+//           session.db (--session-db, else $DOCKER_AGENT_DATA_DIR): the main session's row before
+//           its session_start, the parent's transfer_task call before a sub-agent's, and the
+//           sub-agent's row, with its parent, after it ends
 //   claude  --plugin-dir <dir> (hooks/hooks.json), and $CLAUDE_CONFIG_DIR/settings.json
 //   codex   -c hooks.<Event>=[...] (run only when hooks.state trusts them by key and hash),
 //           and $CODEX_HOME/hooks.json; `app-server` answers initialize and hooks/list
@@ -55,6 +58,13 @@ const [tool, ...argv] = process.argv.slice(2);
 const win = process.platform === 'win32';
 const out = (text) => process.stdout.write(`${text}\r\n`);
 const readJson = (file) => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } };
+
+// `docker info --format '{{json .ClientInfo.Plugins}}'`, as the Docker CLI answers it with or without the agent plugin.
+if (tool === 'docker' && argv[0] === 'info') {
+  const plugins = process.env.FAKE_DOCKER_NO_PLUGIN === '1' ? [] : [{ SchemaVersion: '0.1.0', Vendor: 'Docker Inc.', Version: `v${process.env.FAKE_DOCKER_VERSION || '9.0.0'}`, Name: 'agent', Path: process.argv[1] }];
+  out(JSON.stringify(plugins));
+  process.exit(0);
+}
 
 if (argv.includes('--version') || (tool === 'docker' && argv[0] === 'agent' && argv[1] === 'version')) {
   out(tool === 'docker' ? `docker agent version v${process.env.FAKE_DOCKER_VERSION || '9.0.0'}` : `${tool} 9.0.0`);
@@ -133,6 +143,29 @@ function codexOverrides() {
     const hash = `sha256:${crypto.createHash('sha256').update(`${event}\0${command}`).digest('hex')}`;
     return { event, matcher, command, key, hash, trusted: state[key] === hash };
   }));
+}
+
+// Docker Agent's session store, as much of it as Agent Guild reads.
+let dockerDb = null;
+function dockerSession() { return flag('--session')[0] ?? 'docker-session'; }
+async function dockerStore() {
+  if (dockerDb) return dockerDb;
+  const file = flag('--session-db')[0] ?? path.join(process.env.DOCKER_AGENT_DATA_DIR || path.join(os.homedir(), '.cagent'), 'session.db');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const { DatabaseSync } = await import('node:sqlite');
+  dockerDb = new DatabaseSync(file);
+  dockerDb.exec(`create table if not exists sessions (id text primary key, created_at text, parent_id text);
+    create table if not exists session_items (id integer primary key autoincrement, session_id text not null, position integer not null, item_type text not null, agent_name text, message_json text)`);
+  return dockerDb;
+}
+async function dockerSaveSession(id, parent = null) {
+  (await dockerStore()).prepare('insert or ignore into sessions (id, created_at, parent_id) values (?, ?, ?)').run(id, new Date().toISOString(), parent);
+}
+async function dockerSaveCall(session, callId, name, args) {
+  const db = await dockerStore();
+  const position = (db.prepare('select max(position) as last from session_items where session_id = ?').get(session)?.last ?? -1) + 1;
+  const message = { role: 'assistant', content: '', tool_calls: [{ id: callId, type: 'function', function: { name, arguments: JSON.stringify(args) } }] };
+  db.prepare("insert into session_items (session_id, position, item_type, agent_name, message_json) values (?, ?, 'message', 'root', ?)").run(session, position, JSON.stringify(message));
 }
 
 if (tool === 'codex' && argv.includes('app-server')) {
@@ -238,7 +271,7 @@ function runHooks(hooks, event, payload, toolName = null) {
     });
     const snake = (name) => name.replace(/[A-Z]/g, (c, i) => `${i ? '_' : ''}${c.toLowerCase()}`);
     // Docker Agent's session is the one --session names, created under that id when it is new.
-    const named = tool === 'docker' ? { hook_event_name: snake(event), agent_name: 'root', session_id: flag('--session')[0] ?? 'docker-session' } : { hook_event_name: event, session_id: `${tool}-session` };
+    const named = tool === 'docker' ? { hook_event_name: snake(event), agent_name: 'root', session_id: dockerSession() } : { hook_event_name: event, session_id: `${tool}-session` };
     child.stdin.end(JSON.stringify(tool === 'agy' ? agyPayload(payload) : { ...named, cwd: process.cwd(), ...payload }));
   })), Promise.resolve());
 }
@@ -250,6 +283,7 @@ function runTool() {
   const sessionStart = () => {
     if (started) return Promise.resolve();
     started = true;
+    if (tool === 'docker') return dockerSaveSession(dockerSession()).then(() => runHooks(hooks, 'SessionStart', { source: 'startup' }));
     return runHooks(hooks, 'SessionStart', { source: 'startup' });
   };
   if (tool !== 'codex' && tool !== 'agy') sessionStart();
@@ -392,8 +426,13 @@ function runTool() {
       } else if (tool === 'docker') {
         // Docker Agent: a sub-agent runs in a session of its own, whose turn ends with stop and whose session ends.
         const sub = { session_id: id, agent_name: type };
-        if (start) await runHooks(hooks, 'SessionStart', { ...sub, source: 'startup' });
-        else for (const event of ['Stop', 'SessionEnd']) await runHooks(hooks, event, { ...sub, reason: 'stream_ended' });
+        if (start) {
+          await dockerSaveCall(dockerSession(), `call-${id}`, 'transfer_task', { agent: type, task: 'help', expected_output: '' });
+          await runHooks(hooks, 'SessionStart', { ...sub, source: 'startup' });
+        } else {
+          for (const event of ['Stop', 'SessionEnd']) await runHooks(hooks, event, { ...sub, reason: 'stream_ended' });
+          await dockerSaveSession(id, dockerSession());
+        }
       } else {
         await runHooks(hooks, start ? 'SubagentStart' : 'SubagentStop', { agent_id: id, agent_type: type });
       }

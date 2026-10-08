@@ -40,7 +40,6 @@
     },
     docker: {
       command: 'docker', package: null, reporting: 'docker', reportingEnabled: false,
-      install: 'sh -c \'d="${DOCKER_CONFIG:-$HOME/.docker}/cli-plugins" && mkdir -p "$d" && curl -fsSL "https://github.com/docker/docker-agent/releases/latest/download/docker-agent-$(uname -s | tr "[:upper:]" "[:lower:]")-$(uname -m | sed "s/x86_64/amd64/;s/aarch64/arm64/")" -o "$d/docker-agent.tmp" && chmod +x "$d/docker-agent.tmp" && mv -f "$d/docker-agent.tmp" "$d/docker-agent"\'',
       docs: 'https://docker.github.io/docker-agent/getting-started/installation/',
     },
     shell: { command: '@shell', package: null, reporting: null, install: '', docs: '' },
@@ -55,7 +54,7 @@
   ];
   var shellCard = providers[5];
   var home = '/Users/demo';
-  var labels = { npm: 'npm', native: 'native', brew: 'Homebrew' };
+  var labels = { npm: 'npm', native: 'native', brew: 'Homebrew', 'agent-guild': 'Agent Guild' };
   var copies = {
     anthropic: [
       copy('native', home + '/.local/bin/claude', true, null, [home + '/.local/bin/claude', home + '/.local/share/claude'], '2.1.141'),
@@ -64,10 +63,12 @@
     openai: [copy('brew', '/opt/homebrew/bin/codex', true, '/opt/homebrew/bin/brew uninstall --cask codex', [], '0.98.0')],
     google: [copy('native', home + '/.local/bin/agy', true, null, [home + '/.local/bin/agy'], '1.19.2')],
     xai: [copy('native', home + '/.grok/bin/grok', true, null, [home + '/.grok/bin', home + '/.grok/downloads', home + '/.grok/completions'], '0.1.40')],
-    docker: [copy('native', home + '/.docker/cli-plugins/docker-agent', true, null, [home + '/.docker/cli-plugins/docker-agent'], '1.149.0')],
+    // The copy Agent Guild installed from the release; Docker Desktop's own copy would be listed without actions.
+    docker: [copy('agent-guild', home + '/.docker/cli-plugins/docker-agent', true, null, [home + '/.docker/cli-plugins/docker-agent'], '1.149.0')],
   };
   // A removed tool can be installed again from this snapshot. Taken before any demo edit.
   var copyBlueprints = JSON.parse(JSON.stringify(copies));
+  providers[4].plugin = { target: '~/.docker/cli-plugins/docker-agent', phase: 'ready', outcome: null, message: null };
   providers.forEach(syncInstalls);
   providers.forEach(function (p) { if (p.id !== 'shell') p.latestVersion = p.installedVersion; });
   var grok = providers[3];
@@ -161,6 +162,11 @@
     });
     p.warnings = list.length > 1 ? [list.length + ' copies of ' + p.tool + ' are installed. The one in use is ' + labels[active.channel] + ' v' + active.version + ' at ' + active.displayPath + '.'] : [];
     if (p.id === 'shell') return;
+    // A Docker CLI plugin can be installed again by Agent Guild once its copy is gone.
+    if (p.plugin) {
+      p.installable = !active;
+      p.plugin.phase = active ? 'ready' : 'missing';
+    }
     p.available = Boolean(active);
     p.installChannel = active ? active.channel : null;
     p.resolvedPath = active ? active.path : null;
@@ -710,7 +716,8 @@
     var updating = p.available;
     if (!updating && !p.installable) return error(p.tool + ' is not installable from the demo.', 'not_installable', 400);
     var running = sessions.filter(function (s) { return s.status === 'running' && s.task === null && s.provider.id === p.id; }).length;
-    if (running > 0 && body.force !== true) {
+    // A plugin's copy is renamed aside, which leaves running sessions their file.
+    if (running > 0 && body.force !== true && !p.plugin) {
       var doing = updating ? 'updating the tool now may break them' : 'installing the tool now may break them';
       return error(running + ' ' + p.tool + ' session(s) are running; ' + doing, 'provider_in_use', 409, { running: running });
     }
@@ -791,7 +798,7 @@
       return error(p.tool + ' is already being installed, updated or removed', 'install_in_progress', 409);
     }
     var running = sessions.filter(function (s) { return mine(s) && s.task === null; }).length;
-    if (running > 0 && body.force !== true) {
+    if (running > 0 && body.force !== true && !p.plugin) {
       return json({ error: { message: running + ' ' + p.tool + ' session(s) are running; removing the tool now may break them', code: 'provider_in_use', running: running } }, 409);
     }
     var id = Math.random().toString(16).slice(2, 10).padEnd(8, '0');

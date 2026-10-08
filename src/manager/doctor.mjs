@@ -1,7 +1,7 @@
 // Installation and tooling health diagnostics for Agent Guild.
 //
 // Checks:
-// - Node.js version (minimum 22 required)
+// - Node.js version (minimum 22.13, the first with node:sqlite, which Docker Agent's sessions need)
 // - Platform and OS details
 // - Terminal PTY subsystem (node-pty native bindings, C library)
 // - Data directory permissions and configuration files
@@ -26,12 +26,12 @@ import { ptyProblem, loadPty, glibcVersion } from './pty.mjs';
 import { defaultBoot } from './launch.mjs';
 import { startupState, startupSummary, unitPort } from './systemd-service.mjs';
 import { buildSpawnSpec, resolveCommand } from './command-resolver.mjs';
-import { parseTmuxVersion, probeVersion } from './versions.mjs';
+import { compareVersions, parseTmuxVersion, probeVersion } from './versions.mjs';
 import { loadProviders, mergeDiscoveredPath } from './providers.mjs';
 import { pathReader, probeLoginShell, resolveBaseEnv } from './shell-env.mjs';
 import { tmuxSupported } from './shells.mjs';
 
-export const MIN_NODE_MAJOR = 22;
+export const MIN_NODE = '22.13.0';
 const MIN_TMUX = '3.2';
 
 /**
@@ -142,7 +142,7 @@ export async function diagnose({
 } = {}) {
   // 1. Node.js check
   const nodeMajor = Number(nodeVersion.split('.')[0]);
-  const nodeOk = nodeMajor >= MIN_NODE_MAJOR;
+  const nodeOk = compareVersions(nodeVersion, MIN_NODE) >= 0;
   const node = {
     version: nodeVersion,
     major: nodeMajor,
@@ -275,7 +275,7 @@ export async function diagnose({
   const toolResults = await Promise.all((tools ?? knownTools(dir, platform)).map((tool) => checkTool(tool, toolEnv, platform)));
 
   const fatalIssues = [
-    !nodeOk && 'Node.js version is below requirement (>= 22)',
+    !nodeOk && `Node.js version is below requirement (>= ${MIN_NODE})`,
     !ptyOk && (ptyError || 'node-pty native bindings failed to load'),
     !dirWritable && `Data directory is not writable (${writeError})`,
     managerInfo.portConflict && `Port ${port} is in use by another process`,
@@ -314,9 +314,9 @@ export function formatDiagnostics(diag) {
   // 1. Environment
   lines.push('Environment:');
   if (diag.node.ok) {
-    lines.push(`  ✔ Node.js v${diag.node.version} (meets requirement >= ${MIN_NODE_MAJOR})`);
+    lines.push(`  ✔ Node.js v${diag.node.version} (meets requirement >= ${MIN_NODE})`);
   } else {
-    lines.push(`  ✖ Node.js v${diag.node.version} (unsupported; Node.js ${MIN_NODE_MAJOR} or newer is required)`);
+    lines.push(`  ✖ Node.js v${diag.node.version} (unsupported; Node.js ${MIN_NODE} or newer is required)`);
   }
 
   const glibcNote = diag.sys.glibc ? ` · glibc ${diag.sys.glibc}` : '';

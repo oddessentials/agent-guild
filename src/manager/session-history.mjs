@@ -8,6 +8,7 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { resolveCommand, buildSpawnSpec, runSpec } from './command-resolver.mjs';
 import { toIso } from './usage.mjs';
+import { compareVersions } from './versions.mjs';
 import { antigravityUserConversation } from '../report/hooks.mjs';
 
 export const HISTORY_TTL_MS = 5 * 1000;
@@ -302,12 +303,17 @@ export async function listAntigravitySessions(dir, memo = new FileMemo()) {
 
 // ---- Docker Agent ---------------------------------------------------------
 
-export function dockerAgentDataDir(env = process.env) {
-  return env.DOCKER_AGENT_DATA_DIR || env.CAGENT_DATA_DIR || path.join(os.homedir(), '.cagent');
+// Docker Agent reads DOCKER_AGENT_DATA_DIR from v1.147.0; before that only its --data-dir flag moves the folder.
+export const DOCKER_DATA_ENV_VERSION = '1.147.0';
+
+/** Docker Agent's data folder for the version installed (null: the latest's rules). */
+export function dockerAgentDataDir(env = process.env, version = null) {
+  const honoured = !version || compareVersions(version, DOCKER_DATA_ENV_VERSION) >= 0;
+  return (honoured && env.DOCKER_AGENT_DATA_DIR) || path.join(os.homedir(), '.cagent');
 }
 
 let sqlite = null;
-async function loadSqlite() {
+export async function loadSqlite() {
   if (!sqlite) {
     // Node.js 22 to 24 print "SQLite is an experimental feature" to stderr when the module loads; the manager's log
     // need not carry it. The warning is emitted synchronously by the import, so the filter covers only that call.
@@ -471,12 +477,12 @@ export class SessionHistory {
     this.cache = new Map();
   }
 
-  static sourceDir(source, env) {
+  static sourceDir(source, env, version = null) {
     if (source === 'claude') return claudeConfigDir(env);
     if (source === 'codex') return codexHome(env);
     if (source === 'antigravity') return antigravityDir(env);
     if (source === 'grok') return grokHome(env);
-    if (source === 'docker') return dockerAgentDataDir(env);
+    if (source === 'docker') return dockerAgentDataDir(env, version);
     return null;
   }
 
@@ -505,7 +511,7 @@ export class SessionHistory {
     const env = { ...this.env, ...provider.env, ...account.env };
     try {
       const sessions = typeof provider.history === 'string'
-        ? await this.readers[provider.history](SessionHistory.sourceDir(provider.history, env), this.memo)
+        ? await this.readers[provider.history](SessionHistory.sourceDir(provider.history, env, this.registry.versions?.get(provider.id)?.installed ?? null), this.memo)
         : await commandHistory(provider.history, env, this.platform);
       return { ...base, sessions, total: sessions.length };
     } catch (err) {

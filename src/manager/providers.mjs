@@ -18,6 +18,7 @@ import { RUNNER, encodePlan } from './uninstall.mjs';
 import { paths } from './config.mjs';
 import { MultiplexerRegistry } from './multiplexers.mjs';
 import { reconcileHerdrPath } from './multiplexer-paths.mjs';
+import { PluginCards } from './docker-plugin-cards.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULTS_FILE = path.resolve(here, '../../config/providers.default.json');
@@ -177,6 +178,8 @@ function normalize(raw, platform, warnings) {
     monogram: String(merged.monogram || String(merged.vendor || merged.id).charAt(0)).slice(0, 2),
     icon: merged.icon ? String(merged.icon) : null,
     install: String(merged.install || ''),
+    // The Docker CLI plugin the tool is, when Agent Guild installs and manages it itself (see docker-plugin.mjs).
+    dockerPlugin: typeof merged.dockerPlugin === 'string' && /^[a-z][a-z0-9]*$/.test(merged.dockerPlugin) ? merged.dockerPlugin : null,
     npmNote: merged.npmNote ? String(merged.npmNote) : null,
     channels: normalizeChannels(merged.channels),
     multiplexers: Array.isArray(merged.multiplexers) ? merged.multiplexers
@@ -266,8 +269,9 @@ export class ProviderRegistry extends EventEmitter {
    * @param {boolean} [opts.checkUpdates] false skips registry lookups entirely
    * @param {Function} [opts.fetchImpl]
    * @param {string} [opts.accountsDir]  where accounts without a dir get their home folders
+   * @param {object} [opts.pluginOptions]  for the Docker CLI plugins Agent Guild manages: { dir, run }
    */
-  constructor({ userFile, env, platform = process.platform, iconDir, registryUrl = null, checkUpdates = true, fetchImpl, pathReader = null, accountsDir = paths.accounts, multiplexerOptions } = {}) {
+  constructor({ userFile, env, platform = process.platform, iconDir, registryUrl = null, checkUpdates = true, fetchImpl, pathReader = null, accountsDir = paths.accounts, multiplexerOptions, pluginOptions = {} } = {}) {
     super();
     this.userFile = userFile;
     this.accountsDir = accountsDir;
@@ -289,6 +293,9 @@ export class ProviderRegistry extends EventEmitter {
     this.reportingNote = null;
     this.multiplexers = new MultiplexerRegistry(this, multiplexerOptions);
     this.multiplexerState = null;
+    this.plugins = new PluginCards(this, { dir: paths.plugins, fetchImpl, ...pluginOptions });
+    /** Whether an Install, Update or Remove session of the provider runs; the session manager sets it. */
+    this.installRunning = null;
     this.reload();
   }
 
@@ -377,6 +384,7 @@ export class ProviderRegistry extends EventEmitter {
       const muxChanged = await this.multiplexers.refresh(provider, { force });
       if (muxChanged) this._shells.delete(provider.id);
       changed ||= muxChanged;
+      if (this.plugins.nameOf(provider)) changed = (await this.plugins.refresh(provider, { force })) || changed;
       const entry = this.versions.get(provider.id) || {
         installed: null, versionStatus: null, versionError: null, installedPath: null, installedMtime: null, installedAt: 0,
         latest: null, latestAt: 0, probePath: null, probeMtime: null, probeAt: 0, probeOk: null, lastInstall: null, copies: {},
@@ -451,6 +459,11 @@ export class ProviderRegistry extends EventEmitter {
   async finishInstall(id, { exitCode = null, kind = 'update', path: removed = null } = {}) {
     const provider = this.get(id);
     if (!provider) return;
+    if (this.plugins.nameOf(provider)) {
+      await this.plugins.finished(provider, { exitCode, kind });
+      await this.refreshVersions({ force: true, ids: [id] });
+      return;
+    }
     const before = this.versions.get(id)?.installed ?? null;
     this.emit('updated');
     await this.refreshVersions({ force: true, ids: [id] });
@@ -676,7 +689,7 @@ export class ProviderRegistry extends EventEmitter {
     for (const install of installs) {
       install.newer = Boolean(!install.active && inUse && install.version && compareVersions(install.version, inUse) > 0);
     }
-    return {
+    const description = {
       id: provider.id,
       vendor: provider.vendor,
       tool: provider.tool,
@@ -718,6 +731,10 @@ export class ProviderRegistry extends EventEmitter {
       available: Boolean(resolvedPath),
       resolvedPath,
     };
+    // A Docker CLI plugin is the tool, not the docker command that runs it.
+    return this.plugins.nameOf(provider)
+      ? this.plugins.describe(provider, description, { installing: Boolean(this.installRunning?.(provider.id)) })
+      : description;
   }
 
   list() {
@@ -754,6 +771,7 @@ export class ProviderRegistry extends EventEmitter {
   }
 
   async updateSpec(provider) {
+    if (this.plugins.nameOf(provider)) return this.plugins.operation(provider, 'update');
     const channel = this.channelFor(provider);
     const update = this.updateFor(provider, channel);
     if (!update.command) {
@@ -766,6 +784,7 @@ export class ProviderRegistry extends EventEmitter {
   }
 
   uninstallSpec(provider, copyPath) {
+    if (this.plugins.nameOf(provider)) return this.plugins.operation(provider, 'remove', copyPath);
     const install = this.listInstalls(provider).find((i) => i.resolvedPath === copyPath);
     if (!install) throw refusal(404, 'unknown_copy', `${provider.tool} has no copy at ${copyPath}`);
     if (!install.uninstall) {
@@ -778,6 +797,7 @@ export class ProviderRegistry extends EventEmitter {
   }
 
   async installSpec(provider) {
+    if (this.plugins.nameOf(provider)) return (await this.plugins.operation(provider, 'install')).spec;
     if (!provider.package) {
       const err = new Error(`${provider.tool} has no npm package configured; install it by hand: ${provider.install || provider.docs || 'see its documentation'}`);
       err.status = 400;

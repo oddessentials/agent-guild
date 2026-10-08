@@ -75,6 +75,8 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
     registryUrl: process.env.AGENT_GUILD_NPM_REGISTRY || undefined,
     checkUpdates: process.env.AGENT_GUILD_NO_UPDATE_CHECK !== '1',
     pathReader: pathReader(process.platform, baseEnv),
+    // Docker Agent's releases, which its card installs from; tests point it elsewhere.
+    pluginOptions: { releasesUrl: process.env.AGENT_GUILD_DOCKER_AGENT_RELEASES || undefined },
   });
 
   let api;

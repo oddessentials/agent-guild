@@ -51,6 +51,8 @@ export const paths = {
   /** Launchers for agent-guild-report, put first on every session's PATH. */
   get shims() { return path.join(dataDir(), 'bin'); },
   get reporting() { return path.join(dataDir(), 'reporting'); },
+  /** Receipts and journals of the Docker CLI plugins Agent Guild installs. */
+  get plugins() { return path.join(dataDir(), 'plugins'); },
   /** The tmux and herdr cards a restarted manager brings back, report tokens included. */
   get multiplexers() { return path.join(dataDir(), 'multiplexers.json'); },
 };

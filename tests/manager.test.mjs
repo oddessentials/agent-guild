@@ -188,6 +188,8 @@ const npmRegistry = http.createServer((req, res) => {
 });
 await new Promise((resolve) => npmRegistry.listen(0, '127.0.0.1', resolve));
 process.env.AGENT_GUILD_NPM_REGISTRY = `http://127.0.0.1:${npmRegistry.address().port}`;
+// Docker Agent's release lookup answers nothing: no test reaches GitHub.
+process.env.AGENT_GUILD_DOCKER_AGENT_RELEASES = 'http://127.0.0.1:9/releases/latest';
 
 fs.writeFileSync(path.join(home, 'providers.json'), JSON.stringify({
   providers: [
@@ -1518,12 +1520,13 @@ test('a Docker Agent probe is asked again by the next session, as installing or 
   provider.env = {};
   const installed = await hooks.launch(provider, null);
   assert.equal(installed.reporting.state, 'pending', 'the plugin is installed: the next session gets the hooks, within the retry interval');
-  assert.deepEqual(installed.args, [...dockerHookArgs(), '--session', installed.toolSessionId], 'and a session id Agent Guild chose');
-  assert.deepEqual(installed.env, { AGENT_GUILD_TOOL_SESSION: installed.toolSessionId });
+  const flags = (launched) => dockerHookArgs(launched.docker.launch);
+  assert.match(installed.docker.launch, /^[0-9a-f]{32}$/, 'each launch carries a nonce of its own');
+  assert.deepEqual(installed.args, [...flags(installed), '--session', installed.toolSessionId], 'and a session id Agent Guild chose');
   const resumed = await hooks.launch(provider, { resume: 'abc', args: [] });
-  assert.deepEqual([resumed.args, resumed.toolSessionId], [dockerHookArgs(), 'abc'], 'a resumed session is named by its resume args');
+  assert.deepEqual([resumed.args, resumed.toolSessionId], [flags(resumed), 'abc'], 'a resumed session is named by its resume args');
   const own = await hooks.launch(provider, { args: ['--session=mine'] });
-  assert.deepEqual([own.args, own.toolSessionId], [dockerHookArgs(), 'mine'], 'the user\'s own --session is left alone');
+  assert.deepEqual([own.args, own.toolSessionId, own.sessionArgs], [flags(own), 'mine', null], 'the user\'s own --session is left alone');
   assert.deepEqual(refreshed, [{ force: true, ids: ['docker-retry'] }], 'the card\'s version line is refreshed when the plugin appears');
   // Two sessions starting together share one probe.
   const [a, b] = await Promise.all([hooks.launch(provider, null), hooks.launch(provider, null)]);
@@ -1537,8 +1540,32 @@ test('a Docker Agent probe is asked again by the next session, as installing or 
   assert.equal(refreshed.length, 2, 'and the card\'s version line is refreshed again');
   provider.env = { FAKE_DOCKER_VERSION: '1.79.0' };
   const old = await hooks.launch(provider, null);
-  assert.deepEqual([old.reporting.state, old.args], ['unsupported', []], 'a version that cannot name its session gets no hooks, rather than mixing up its sub-agents');
-  assert.match(old.reporting.reason, /1\.80\.0 or later; this is 1\.79\.0/);
+  assert.deepEqual([old.reporting.state, old.args, old.toolSessionId], ['pending', flags(old), null],
+    'before v1.81.2 Docker Agent refuses a --session it has not seen, so the session reports unnamed and Resume learns it at its first prompt');
+});
+
+test('a Docker Agent session started with a relative --session resumes the session it names, and Resume knows it', async () => {
+  const { SessionHooks } = await import('../src/manager/session-hooks.mjs');
+  const docker = path.join(toolsDir, win ? 'docker.cmd' : 'docker');
+  const data = path.join(home, 'docker-relative');
+  fs.mkdirSync(data, { recursive: true });
+  const { DatabaseSync } = await import('node:sqlite');
+  const db = new DatabaseSync(path.join(data, 'session.db'));
+  db.exec('create table sessions (id text primary key, created_at text, parent_id text)');
+  for (const [id, at, parent] of [['older', '2026-10-01T10:00:00Z', null], ['newest', '2026-10-02T10:00:00Z', null], ['sub', '2026-10-03T10:00:00Z', 'newest']]) {
+    db.prepare('insert into sessions values (?, ?, ?)').run(id, at, parent);
+  }
+  db.close();
+  const registry = { providers: [], env: { ...process.env, DOCKER_AGENT_DATA_DIR: data }, platform: process.platform, resolve: () => docker };
+  const hooks = new SessionHooks({ registry, dir: path.join(home, 'probe-docker-relative'), version: '1' });
+  const provider = { id: 'docker-relative', tool: 'Docker Agent', reporting: 'docker', args: ['agent', 'run'], versionArgs: ['agent', 'version'], env: {} };
+  const last = await hooks.launch(provider, { args: ['--yolo', '--session', '-1'] });
+  assert.deepEqual([last.toolSessionId, last.sessionArgs], ['newest', ['--yolo', '--session', 'newest']], 'a sub-agent\'s newer session is not the last session');
+  const second = await hooks.launch(provider, { args: ['--session=-2'] });
+  assert.deepEqual([second.toolSessionId, second.sessionArgs], ['older', ['--session', 'older']]);
+  const beyond = await hooks.launch(provider, { args: ['--session', '-3'] });
+  assert.deepEqual([beyond.toolSessionId, beyond.sessionArgs], [null, null], 'out of range, Docker Agent says so itself');
+  assert.equal(last.docker.store, path.join(data, 'session.db'));
 });
 
 test('the Docker Agent card\'s model reporting switch writes and removes only its own hooks.d file', async () => {

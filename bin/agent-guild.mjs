@@ -270,12 +270,13 @@ async function cmdStatus() {
   }
 }
 
-const MIN_NODE_MAJOR = 22;
+// 22.13 is the first Node.js with node:sqlite, which Docker Agent's sessions need.
+const MIN_NODE = [22, 13];
 
 async function main() {
-  const major = Number(process.versions.node.split('.')[0]);
-  if (major < MIN_NODE_MAJOR) {
-    throw new Error(`Node.js ${MIN_NODE_MAJOR} or newer is required; this is ${process.versions.node}. Install a current LTS from https://nodejs.org.`);
+  const [major, minor] = process.versions.node.split('.').map(Number);
+  if (major < MIN_NODE[0] || (major === MIN_NODE[0] && minor < MIN_NODE[1])) {
+    throw new Error(`Node.js ${MIN_NODE.join('.')} or newer is required; this is ${process.versions.node}. Install a current LTS from https://nodejs.org.`);
   }
   const args = process.argv.slice(2);
   const flags = new Set(args.filter((a) => a.startsWith('-')));

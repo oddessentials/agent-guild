@@ -7,6 +7,7 @@ import crypto from 'node:crypto';
 import headless from '@xterm/headless';
 import serializeAddon from '@xterm/addon-serialize';
 import { killWindowsTree } from './command-resolver.mjs';
+import { DockerSessions } from './docker-sessions.mjs';
 import { loadPty } from './pty.mjs';
 
 const { Terminal } = headless;
@@ -97,6 +98,8 @@ export class Session extends EventEmitter {
     this.reportingTimeoutMs = opts.reportingTimeoutMs ?? 30000;
     this.reporting = REPORTING_STATES.has(opts.reporting?.state) ? { state: opts.reporting.state, reason: opts.reporting.reason ?? null } : null;
     this._reportingTimer = null;
+    /** Something reporting cannot do in this session although it runs, shown with its state. */
+    this._reportingNote = null;
     this._typedSinceEnter = false;
     this.shellDisplayDelayMs = opts.shellDisplayDelayMs ?? 600;
     this.shells = new Map();
@@ -114,6 +117,8 @@ export class Session extends EventEmitter {
     this.agents = new Map();
     this.model = null;
     this.toolSessionId = null;
+    /** Docker Agent's sessions in this process, when Agent Guild passed it the launch's hooks: { launch, store }. */
+    this.docker = opts.docker?.launch ? new DockerSessions({ session: this, ...opts.docker }) : null;
     this.modelRegex = null;
     if (opts.provider.modelPattern && this.task === null) {
       try {
@@ -537,7 +542,9 @@ export class Session extends EventEmitter {
     this._reportingHeard();
 
     if (report.shell === 'reset') {
-      for (const shell of [...this.shells.values()]) this._endShell(shell);
+      // A scoped reset ends one of the tool's sessions' commands (Docker Agent runs several in one process).
+      const scope = id(report.scope);
+      for (const shell of [...this.shells.values()]) if (!scope || shell.scope === scope) this._endShell(shell);
       return null;
     }
 
@@ -586,7 +593,7 @@ export class Session extends EventEmitter {
 
     if (!key) throw badRequest('a shell report needs a key');
     if (report.shell === 'start') {
-      if (!this._shellBy('key', key)) this._addShell({ key, match, agentId, persist: report.persist === true });
+      if (!this._shellBy('key', key)) this._addShell({ key, match, agentId, scope: id(report.scope), persist: report.persist === true });
       return null;
     }
 
@@ -609,7 +616,7 @@ export class Session extends EventEmitter {
       return;
     }
     const shell = {
-      id: `shell-${++this._shellSeq}`, kind: 'shell', key: null, match: null, agentId: null, persist: false, task: null,
+      id: `shell-${++this._shellSeq}`, kind: 'shell', key: null, match: null, agentId: null, scope: null, persist: false, task: null,
       endsWithAgent: false, waiting: false, asked: false, visible: false, timer: null, ...fields,
     };
     this.shells.set(shell.id, shell);
@@ -644,10 +651,27 @@ export class Session extends EventEmitter {
     return null;
   }
 
+  /** The end of a turn of one of the tool's own sessions, which ends that session's foreground commands only. */
+  finishForeground(scope) {
+    if (this.status !== 'running') return;
+    this._endForegroundShells(null, scope);
+  }
+
+  /** Commands of one of the tool's sessions, shown on the main agent until it turned out to be a sub-agent's. */
+  moveShells(scope, agentId) {
+    let moved = false;
+    for (const shell of this.shells.values()) {
+      if (shell.scope !== scope || shell.agentId === agentId) continue;
+      shell.agentId = agentId;
+      moved ||= shell.visible;
+    }
+    if (moved) this._changed();
+  }
+
   // A turn's foreground commands end with it; a background command, or one Codex CLI keeps running, does not.
-  _endForegroundShells(agentId) {
+  _endForegroundShells(agentId, scope = null) {
     for (const shell of [...this.shells.values()]) {
-      if (shell.agentId !== agentId) continue;
+      if (shell.agentId !== agentId || (scope && shell.scope !== scope)) continue;
       const lasting = this._foreground(shell) ? shell.persist && !shell.asked : !(agentId && shell.endsWithAgent);
       if (!lasting) this._endShell(shell);
     }
@@ -708,6 +732,14 @@ export class Session extends EventEmitter {
     return this.toolSessionId;
   }
 
+  /** One Docker Agent hook event; which of its sessions it belongs to decides what it changes. */
+  reportDocker(report) {
+    if (!report || typeof report !== 'object') throw badRequest('docker report must be an object');
+    if (this.status !== 'running') throw Object.assign(new Error('session has exited'), { status: 409 });
+    if (!this.docker) throw badRequest("this session was not started with Docker Agent's reporting hooks");
+    return this.docker.report(report);
+  }
+
   reportHello() {
     if (this.status !== 'running') throw Object.assign(new Error('session has exited'), { status: 409 });
     this._reportingHeard();
@@ -717,7 +749,15 @@ export class Session extends EventEmitter {
   _reportingHeard() {
     clearTimeout(this._reportingTimer);
     if (!this.reporting || this.reporting.state === 'active') return;
-    this.reporting = { state: 'active', reason: null };
+    this.reporting = { state: 'active', reason: this._reportingNote };
+    this._changed();
+  }
+
+  /** A note on what reporting cannot do although it runs, or null; shown while reporting is active. */
+  setReportingNote(note) {
+    this._reportingNote = note || null;
+    if (this.reporting?.state !== 'active' || this.reporting.reason === this._reportingNote) return;
+    this.reporting = { state: 'active', reason: this._reportingNote };
     this._changed();
   }
 

@@ -52,6 +52,7 @@ values are ignored; a file that cannot be read is reported in `manager.log`.
 | `resumeArgs` | Arguments that resume a session, `{id}` for its id; enables **Existing…** |
 | `usage` | `"claude"`, `"codex"`, `{ "command", "args" }` of a program printing `{ "plan", "windows": [{ "label", "usedPercent", "resetsAt" }] }`, or `null` |
 | `history` | `"claude"`, `"codex"`, `"antigravity"`, `"grok"`, `"docker"`, `{ "command", "args" }` of a program printing `{ "sessions": [{ "id", "title", "cwd", "startedAt", "updatedAt" }] }`, or `null` |
+| `dockerPlugin` | The Docker CLI plugin the tool is, such as `"agent"`, when `command` is `docker`: Agent Guild then installs, updates and removes its own copy of it |
 | `modelPattern` | Regular expression that finds the model name on screen |
 | `homeVar` | Variable that moves the tool's home folder; required for `accounts` |
 | `accounts` | Extra sign-ins; see [Accounts](#accounts) |
@@ -97,6 +98,7 @@ Codex CLI and Grok Build support this.
 | `AGENT_GUILD_PORT` | Port of the page, default `47821` |
 | `AGENT_GUILD_HOME` | Moves the data folder. Turns off **Settings → Startup**. |
 | `AGENT_GUILD_NPM_REGISTRY` | npm registry for version checks and installs |
+| `AGENT_GUILD_DOCKER_AGENT_RELEASES` | GitHub API URL of Docker Agent's latest release, for its card's version check and installs |
 | `AGENT_GUILD_NO_UPDATE_CHECK` | `1` turns off online version checks and self-upgrade |
 | `AGENT_GUILD_SKIP_SHELL_ENV` | `1` stops reading PATH from your login shell, or from the registry on Windows |
 | `AGENT_GUILD_ALLOWED_HOSTS`, `AGENT_GUILD_ALLOWED_ORIGINS` | Legacy proxy allowlists, used until remote access settings are saved. An invalid value stops the manager from starting. |

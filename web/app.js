@@ -1086,7 +1086,7 @@ function paintReporting(row, s) {
   agents.dataset.empty = REPORTING_TEXT[reporting?.state] || 'none reported';
   agents.classList.toggle('reporting-attention', ['unavailable', 'setup_required', 'unsupported'].includes(reporting?.state));
   const why = row.querySelector('.reporting-why');
-  const reason = reporting?.state !== 'active' ? reporting?.reason || '' : '';
+  const reason = reporting?.reason || '';
   why.hidden = !reason;
   why.title = reason;
   why.setAttribute('aria-label', `Why agent reporting says ${agents.dataset.empty}: ${reason}`);
@@ -1645,14 +1645,18 @@ function buildProvider(provider) {
       : `Resume one of ${provider.tool}'s own sessions by its id`;
     existing.addEventListener('click', () => showHistory(provider));
     const install = node.querySelector('.install');
-    install.hidden = provider.available || !provider.installable;
-    install.title = `Install ${provider.tool} using npm.${provider.npmNote ? ` ${provider.npmNote}` : ''}`;
+    // A Docker CLI plugin can be installed beside a copy Agent Guild does not manage; the card says what changes.
+    install.hidden = !provider.installable || (provider.available && !provider.plugin);
+    install.title = provider.plugin
+      ? [`Install ${provider.tool} from its GitHub release, checked against its SHA-256.`, provider.plugin.message].filter(Boolean).join(' ')
+      : `Install ${provider.tool} using npm.${provider.npmNote ? ` ${provider.npmNote}` : ''}`;
     install.addEventListener('click', () => installProvider(provider, node));
     const update = node.querySelector('.update');
     update.hidden = !(provider.available && provider.updateCommand && (provider.updateAvailable || checkFailed));
     if (provider.installChannel !== 'npm') update.textContent = 'Update';
     else update.textContent = checkFailed ? 'Reinstall' : `Update to ${provider.latestVersion}`;
-    update.title = provider.updateCommand ? `Run "${provider.updateCommand}" in a session` : '';
+    update.title = provider.plugin && provider.updateCommand ? `Install ${provider.updateCommand}`
+      : provider.updateCommand ? `Run "${provider.updateCommand}" in a session` : '';
     update.addEventListener('click', () => installProvider(provider, node));
     renderHint(hint, provider);
     renderCopies(node.querySelector('.copies'), provider, node);
@@ -1859,6 +1863,8 @@ function renderHint(hint, provider) {
   // the plugin. The install command replaces the generic update guidance, which would describe the docker binary, not the plugin.
   else if (provider.versionStatus === 'failed') text = [provider.versionError, !provider.updateCommand && (provider.install || provider.updateGuidance)].filter(Boolean).join(' ');
   else if (provider.updateAvailable && !provider.updateCommand) text = provider.updateGuidance || '';
+  // A Docker CLI plugin's card says what its last change did, or what Install would change.
+  if (provider.plugin?.message) text = provider.versionError && text.includes(provider.versionError) ? text : [text, provider.plugin.message].filter(Boolean).join(' ');
   hint.hidden = !text;
   hint.replaceChildren(text);
   const docs = text && httpsHref(provider.docs);
@@ -2918,6 +2924,7 @@ function renderChangelog() {
 
 const CHANNEL_LABELS = {
   npm: 'npm', native: 'native', brew: 'Homebrew', winget: 'WinGet', system: 'system package', legacy: 'legacy install', unknown: 'unknown install',
+  'agent-guild': 'Agent Guild', 'docker-desktop': 'Docker Desktop', other: 'installed separately',
 };
 
 function installNote(provider) {
@@ -2935,6 +2942,9 @@ function installNote(provider) {
 }
 
 function providerState(provider) {
+  const phase = provider.plugin?.phase;
+  if (phase === 'installing') return 'Installing…';
+  if (phase === 'verifying') return 'Verifying…';
   const note = installNote(provider);
   if (!provider.available) return note ? `Not installed · ${note}` : 'Not installed';
   const checkFailed = provider.versionStatus === 'failed';
@@ -3012,6 +3022,10 @@ function refreshPendingActions() {
 
 async function installProvider(provider, card, { force = false, path = null } = {}) {
   if (pendingInstalls.has(provider.id)) return;
+  // An install that changes which copy Docker runs says so first.
+  if (!path && !force && provider.plugin && provider.installable && provider.plugin.message && !confirm(`${provider.plugin.message}
+
+Install ${provider.tool}?`)) return;
   pendingInstalls.add(provider.id);
   refreshPendingActions();
   try {

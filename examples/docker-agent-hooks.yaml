@@ -16,4 +16,4 @@ pre_tool_use:
     preempt_yolo: true
     hooks:
       - type: command
-        command: agent-guild-report --hook
+        command: agent-guild-report --hook --docker

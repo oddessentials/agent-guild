@@ -9,7 +9,7 @@ report these through hooks or the `agent-guild-report` command.
 | --- | --- |
 | Claude Code, Codex CLI, Grok Build | Automatic when the installed version can load hooks for one session. Otherwise the card says so; add the hooks yourself below. |
 | Antigravity CLI | Turn on **Agent reporting** on its card. Reports the model, not helper agents. |
-| Docker Agent | Automatic from 1.80.0. Reports from the first prompt: its agents (`transfer_task`, background agents, skills), shell commands in its approval modes, and turns. For the model, turn on **Model reporting** on its card (1.100.0 and later). Shell commands in autonomous mode (`--yolo`, `--safety autonomous`) show once they end, or as they start with the hook below. |
+| Docker Agent | Automatic from 1.55.0. Reports from the first prompt: its agents (`transfer_task`, background agents, skills), shell commands in its approval modes, and turns, in every tab. Resume opens the most recently started session. For the model, turn on **Model reporting** on its card (1.100.0 and later). Shell commands in autonomous mode (`--yolo`, `--safety autonomous`) show once they end, or as they start with the hook below. |
 
 To add hooks yourself, merge the example into the tool's own hook settings.
 Where those live is in each tool's hooks docs.
@@ -44,7 +44,8 @@ agent-guild-report --session <the tool's own session id>
 | `--remove` | Remove the agent now |
 | `--model`, `--display-name` | The model in use |
 | `--session` | The tool's own session id. The card shows it, and uses it to resume the session after it ends. |
-| `--hook` | Read a Claude Code, Codex CLI, Antigravity CLI, Grok Build or Docker Agent hook event from stdin |
+| `--hook` | Read a Claude Code, Codex CLI, Antigravity CLI or Grok Build hook event from stdin |
+| `--hook --docker` | Read a Docker Agent hook event from stdin |
 | `--claude-statusline` | Use as Claude Code's status line command |
 
 Report `working` before `done`; a `done` for an unknown agent is ignored.

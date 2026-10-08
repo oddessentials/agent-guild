@@ -119,6 +119,21 @@ when Agent Guild cannot remove that copy, otherwise the `command` it runs (or nu
 (`remove`); `uninstallGuidance` then says why and how to remove it instead.
 `POST /providers/:id/uninstall` removes one copy.
 
+A provider that runs a Docker CLI plugin (`dockerPlugin`, Docker Agent's
+`agent`) describes the plugin, not the `docker` command: `available` says
+whether Docker runs a copy, `installs` lists the copy it runs and the ones it
+shadows, as `docker info` reports them, with `channel` `agent-guild`,
+`docker-desktop` or `other`, and only Agent Guild's own copy can be updated
+or removed. `installable` is true when Agent Guild has no copy, Docker is
+installed, and a copy in `<config dir>/cli-plugins` would be the one Docker
+runs. `latestVersion` is the latest GitHub release. `plugin` is
+`{ target, phase, outcome, message }`: `target` is where Agent Guild installs
+it, `phase` is `installing`, `verifying`, `ready` or `missing`, `outcome`
+is the last change's (`ready`, `removed`, `shadowed`, `failed`, `conflict` or
+null), and `message` says what that change did, what Install would change,
+or why it cannot run. Install, Update and Remove run while the plugin's
+sessions run, since the copy they replace is renamed aside.
+
 `usageSource` is `claude`, `codex`, `command` or null, and says
 whether `GET /usage` reports the provider. `historySource` is `claude`,
 `codex`, `antigravity`, `grok`, `docker`, `command` or null, and says whether
@@ -725,7 +740,8 @@ All paths are under `/api/v1`.
 | POST | `/sessions/:id/model` | `{ model, displayName? }` | `{ model }`. Sets the session's model with source `report`. |
 | POST | `/sessions/:id/tool-session` | `{ toolSessionId }` | `{ toolSessionId }`. Records the id the tool gave its own session: one printable line of at most 200 characters. 409 once the session has exited. |
 | POST | `/sessions/:id/reporting` | | `{ reporting }`: the tool's hooks announce themselves, which makes `reporting.state` `active`. |
-| POST | `/sessions/:id/shells` | `{ shell, key \| task, match?, agentId?, persist?, endsWithAgent?, kind?, tasks? }` | `{ ok }`. `shell` is `start`, `end`, `background` (with the tool's `task` id), `waiting` (a permission request, which hides the command), `asked` (one that ends the command with its turn), `running` (`tasks` lists the background tasks still running as `{ id, kind? }`; any other ends, and a listed `monitor` promotes a command while a listed `shell` never demotes a monitor) or `reset` (every command ends). `key` is the tool's call id. `match` is a hash of the command, which pairs a permission request with it; `persist` keeps a command past the end of its turn, and `endsWithAgent` ends a background one with its sub-agent. `kind` is `shell` (default) or `monitor`, a background watch; the session lists each as `{ id, kind }`. |
+| POST | `/sessions/:id/shells` | `{ shell, key \| task, match?, agentId?, scope?, persist?, endsWithAgent?, kind?, tasks? }` | `{ ok }`. `shell` is `start`, `end`, `background` (with the tool's `task` id), `waiting` (a permission request, which hides the command), `asked` (one that ends the command with its turn), `running` (`tasks` lists the background tasks still running as `{ id, kind? }`; any other ends, and a listed `monitor` promotes a command while a listed `shell` never demotes a monitor) or `reset` (every command ends, or with `scope` only the commands started with that `scope`). `key` is the tool's call id. `match` is a hash of the command, which pairs a permission request with it; `persist` keeps a command past the end of its turn, and `endsWithAgent` ends a background one with its sub-agent. `kind` is `shell` (default) or `monitor`, a background watch; the session lists each as `{ id, kind }`. |
+| POST | `/sessions/:id/docker` | `{ launch, event, sessionId, agentName?, toolName?, toolUseId?, match?, model? }` | `{ ok }`. One Docker Agent hook event, as `agent-guild-report --hook --docker` sends it. `launch` is the nonce in the hook arguments Agent Guild passed when it started the session; only events that carry it can say which of Docker Agent's sessions are the card's, and the manager tells its tabs and sub-agents apart from Docker Agent's session store. 400 for a session started without those hooks. |
 | POST | `/shutdown` | `{ force?, restart? }` | `202 { ok, running, restart }`: stops the manager and every session, detaching tmux and herdr sessions rather than ending them. 409 `sessions_running` (with `running`, the count of sessions it would end) while any session other than a tmux or herdr one is running, unless `force` is true. With `restart`, 409 `pty_unavailable` first when the new manager could not run a terminal, which happens when an upgrade replaced a node-pty compiled on this computer (see `ptyBuild` under [Upgrade](#upgrade)); the message says what to run, and nothing is stopped. From the 202 on, `POST /sessions` and `POST /providers/:id/install` answer 503 `manager_stopping`. Events clients get `manager.stopping` first and `manager.stopped` last, after the sessions have ended and before the API closes. With `restart` true, the manager then starts a new manager from the package on disk, on the same port and with the same token, before it exits; the new one runs whatever version is installed, so this is how an upgrade's `pendingVersion` is put to use. Clients reconnect to it as to any manager; its `hello` is the new source of truth. |
 
 `cwd` defaults to the user's home folder and must be an existing folder. A
@@ -737,7 +753,7 @@ when the provider has none). `account` is one of the provider's account ids
 home folder is created before its first session.
 
 `POST /sessions/:id/agents`, `POST /sessions/:id/model`,
-`POST /sessions/:id/tool-session`, `POST /sessions/:id/reporting` and `POST /sessions/:id/shells` also accept the
+`POST /sessions/:id/tool-session`, `POST /sessions/:id/reporting`, `POST /sessions/:id/shells` and `POST /sessions/:id/docker` also accept the
 per-session report token instead of the API token, in an
 `X-Agent-Guild-Report-Token` header. The manager gives that token only to the
 processes inside that session. Without the API token, an unknown session id

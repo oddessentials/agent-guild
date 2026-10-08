@@ -31,7 +31,7 @@ test('diagnose reports healthy status on a valid environment', async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-doctor-test-'));
   try {
     const diag = await diagnose({
-      nodeVersion: '22.0.0',
+      nodeVersion: '22.13.0',
       platform: 'darwin',
       arch: 'arm64',
       dir: tempDir,
@@ -56,7 +56,7 @@ test('diagnose reports healthy status on a valid environment', async () => {
 
     const formatted = formatDiagnostics(diag);
     assert.match(formatted, /Agent Guild Doctor/);
-    assert.match(formatted, /Node\.js v22\.0\.0/);
+    assert.match(formatted, /Node\.js v22\.13\.0/);
     assert.match(formatted, /Terminal subsystem \(node-pty\): functional/);
     assert.match(formatted, /Doctor found no fatal problems/);
   } finally {
@@ -84,6 +84,10 @@ test('diagnose flags unsupported Node.js versions as fatal', async () => {
     const formatted = formatDiagnostics(diag);
     assert.match(formatted, /✖ Node\.js v18\.19\.0 \(unsupported/);
     assert.match(formatted, /Doctor found 1 fatal problem/);
+    // 22.13 is the first with node:sqlite, which Docker Agent's sessions need.
+    const before = await diagnose({ nodeVersion: '22.12.0', dir: tempDir, fetchHealth: async () => null, testPortAvailable: async () => true, checkPtyProblem: () => null, verifyLoadPty: () => ({}), tools: [] });
+    assert.equal(before.node.ok, false);
+    assert.match(formatDiagnostics(before), /Node\.js 22\.13\.0 or newer is required/);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
@@ -94,7 +98,7 @@ test('diagnose flags pty subsystem problems as fatal', async () => {
   try {
     const errorMsg = 'Agent Guild needs glibc 2.28 or later on Linux';
     const diag = await diagnose({
-      nodeVersion: '22.0.0',
+      nodeVersion: '22.13.0',
       dir: tempDir,
       fetchHealth: async () => null,
       testPortAvailable: async () => true,
@@ -119,7 +123,7 @@ test('diagnose flags port conflicts as fatal', async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-doctor-test-'));
   try {
     const diag = await diagnose({
-      nodeVersion: '22.0.0',
+      nodeVersion: '22.13.0',
       dir: tempDir,
       port: 47821,
       fetchHealth: async () => null,
@@ -146,7 +150,7 @@ test('diagnose flags invalid providers.json syntax as fatal', async () => {
   try {
     fs.writeFileSync(path.join(tempDir, 'providers.json'), '{ invalid json ');
     const diag = await diagnose({
-      nodeVersion: '22.0.0',
+      nodeVersion: '22.13.0',
       dir: tempDir,
       fetchHealth: async () => null,
       testPortAvailable: async () => true,
@@ -171,7 +175,7 @@ test('diagnose detects running manager and reports version mismatch without fail
   try {
     fs.writeFileSync(path.join(tempDir, 'auth-token'), 'dummy-token\n');
     const diag = await diagnose({
-      nodeVersion: '22.0.0',
+      nodeVersion: '22.13.0',
       dir: tempDir,
       port: 47821,
       fetchHealth: async () => ({ name: 'agent-guild', version: '0.99.0', pid: 12345 }),
@@ -200,7 +204,7 @@ test('runDoctor writes formatted output and returns boolean health status', asyn
   try {
     let output = '';
     const ok = await runDoctor({
-      nodeVersion: '22.0.0',
+      nodeVersion: '22.13.0',
       dir: tempDir,
       fetchHealth: async () => null,
       testPortAvailable: async () => true,

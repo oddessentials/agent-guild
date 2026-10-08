@@ -27,7 +27,7 @@ Close the page whenever you like; the sessions keep running.
 
 ## Quick start
 
-With Node.js 22 or newer:
+With Node.js 22.13 or newer:
 
 ```sh
 npm install -g @oddessentials/agent-guild
@@ -40,19 +40,23 @@ terminal.
 
 | Requirement | |
 | --- | --- |
-| Node.js | 22 or newer |
+| Node.js | 22.13 or newer |
 | Windows | 10 version 1809 or later, x64 or arm64. No WSL needed. |
 | macOS | 11 or later, Intel or Apple silicon |
 | Linux | x64 or arm64 with glibc 2.28 or later (for example Debian 10, Ubuntu 20.04 or RHEL 8), with a desktop or over SSH |
 
 No compiler is needed, except on Linux without glibc, such as Alpine:
 `agent-guild` prints the commands that build its terminal library there. A
-missing tool shows **Install** on its card; Antigravity CLI and Docker Agent,
-which are not on npm, show their install commands instead. Docker Agent is
-the `docker agent` plugin; Docker Desktop 4.63 and later ship it.
+missing tool shows **Install** on its card; Antigravity CLI, which is not
+on npm, shows its install command instead. Docker Agent is the `docker agent`
+plugin; Docker Desktop 4.63 and later ship it. Its card's **Install** puts the
+latest release, checked against the SHA-256 GitHub publishes for it, in
+`~/.docker/cli-plugins`, and Agent Guild updates and removes only that copy.
+The card lists every copy Docker finds, says which one it runs, and leaves
+Docker Desktop's copy to Docker Desktop.
 
-On Linux, Docker Engine does not include the plugin; the card's install
-command adds it. The card needs Docker's own `docker` command: Podman's
+On Linux, Docker Engine does not include the plugin; the card's **Install**
+adds it. The card needs Docker's own `docker` command: Podman's
 `docker` and the Ubuntu snap of Docker do not load the plugin. If you
 installed Docker Agent on its own as `docker-agent` (Homebrew or a release
 download), add this to [`providers.json`](docs/configuration.md#providersjson),

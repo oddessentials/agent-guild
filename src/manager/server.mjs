@@ -272,7 +272,7 @@ export function createManagerServer({
     // Agent, model and tool-session reports may authenticate with the
     // per-session report token that the manager injects into each tool's
     // environment.
-    const reportMatch = route.match(/^\/sessions\/([a-f0-9]+)\/(agents|model|tool-session|reporting|shells)$/);
+    const reportMatch = route.match(/^\/sessions\/([a-f0-9]+)\/(agents|model|tool-session|reporting|shells|docker)$/);
     if (reportMatch && method === 'POST') {
       const [, id, kind] = reportMatch;
       const body = await readJsonBody(req);
@@ -285,6 +285,10 @@ export function createManagerServer({
       if (kind === 'reporting') return sendJson(res, 200, { reporting: manager.reportHello(id, auth) });
       if (kind === 'shells') {
         manager.reportShell(id, body, auth);
+        return sendJson(res, 200, { ok: true });
+      }
+      if (kind === 'docker') {
+        await manager.reportDocker(id, body, auth);
         return sendJson(res, 200, { ok: true });
       }
       return sendJson(res, 200, { toolSessionId: manager.reportToolSession(id, body, auth) });
@@ -418,7 +422,7 @@ export function createManagerServer({
     const uninstallMatch = route.match(/^\/providers\/([a-z0-9][a-z0-9_-]{0,31})\/uninstall$/);
     if (uninstallMatch && method === 'POST') {
       const body = await readJsonBody(req);
-      const session = manager.uninstall(uninstallMatch[1], body.path, { force: body.force === true });
+      const session = await manager.uninstall(uninstallMatch[1], body.path, { force: body.force === true });
       return sendJson(res, 201, { session: session.toJSON() });
     }
     if (route === '/sessions' && method === 'GET') {

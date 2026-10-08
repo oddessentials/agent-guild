@@ -78,6 +78,7 @@ export class SessionManager extends EventEmitter {
     /** True once shutdown has begun; no new session may start after that. */
     this.closing = false;
     this.installing = new Set();
+    if (this.registry && typeof this.registry === 'object') this.registry.installRunning = (id) => this.installsRunningFor(id) > 0;
     /** Session id → how a tmux or herdr card attaches again, and whether its multiplexer session is still there. */
     this.multiplexers = new Map();
     /** Session id → the watcher that shows a running herdr card the agents herdr sees. */
@@ -141,13 +142,15 @@ export class SessionManager extends EventEmitter {
       || (provider.accounts.length > 1 ? `${provider.tool} · ${signIn.label}` : null)
       || (runShell && this.registry.shellsFor(provider).shells.length > 1 ? `${provider.tool} · ${runShell.label}` : null);
     const extraEnv = hooks.env ? { ...runShell?.env, ...hooks.env } : runShell?.env;
-    const options = { provider, cwd: workDir, cols, rows, name: sessionName, resume: resumeId, account: signIn, reporting: hooks.reporting, extraEnv };
+    const options = { provider, cwd: workDir, cols, rows, name: sessionName, resume: resumeId, account: signIn, reporting: hooks.reporting, docker: hooks.docker ?? null, extraEnv };
     if (runShell?.multiplexer) return this._withMultiplexerStart(provider.id, runShell.id, () => this._startMultiplexer(options, runShell, args || []));
-    const spawnSpec = this.registry.spawnSpec(provider, args || [], resumeId, hooks.args, runShell);
+    // Docker Agent's relative --session -N is passed on as the id it names, so Resume and the tool agree.
+    const toolArgs = hooks.sessionArgs ?? (args || []);
+    const spawnSpec = this.registry.spawnSpec(provider, toolArgs, resumeId, hooks.args, runShell);
     const session = this._spawn({ ...options, spawnSpec });
     // A session id Agent Guild chose is known before the tool reports it, so the card can resume it at once.
     if (hooks.toolSessionId) session.reportToolSession({ toolSessionId: hooks.toolSessionId }, 'launch');
-    const model = modelFromArgs([...provider.args, ...(args || [])]);
+    const model = modelFromArgs([...provider.args, ...toolArgs]);
     if (model) session.setModel({ name: model }, 'args');
     return session;
   }
@@ -401,9 +404,17 @@ export class SessionManager extends EventEmitter {
    * set, because replacing a tool under a running process can break it.
    */
   async install(providerId, { force = false } = {}) {
-    const { provider, guard } = this._installGuard(providerId, force, 'updating the tool now may break them');
+    // A Docker CLI plugin's copy is replaced by a rename, which leaves running sessions their file.
+    const plugin = Boolean(this.registry.plugins?.nameOf(this.registry.get(String(providerId || ''))));
+    const { provider, guard } = this._installGuard(providerId, force || plugin, 'updating the tool now may break them');
     this.installing.add(provider.id);
     try {
+      if (plugin) {
+        const kind = this.registry.plugins.owned(provider) ? 'update' : 'install';
+        const { spec } = await this.registry.plugins.operation(provider, kind);
+        guard();
+        return this._pluginSession(provider, spec, kind, `${kind === 'update' ? 'Update' : 'Install'} ${provider.tool}`);
+      }
       if (this.registry.resolve(provider)) {
         const { spec, channel } = await this.registry.updateSpec(provider);
         guard();
@@ -420,11 +431,31 @@ export class SessionManager extends EventEmitter {
 
   uninstall(providerId, copyPath, { force = false } = {}) {
     if (typeof copyPath !== 'string' || !copyPath) throw httpError(400, 'path must name the copy to remove', 'bad_request');
-    const { provider, guard } = this._installGuard(providerId, force, 'removing the tool now may break them');
+    const plugin = Boolean(this.registry.plugins?.nameOf(this.registry.get(String(providerId || ''))));
+    const { provider, guard } = this._installGuard(providerId, force || plugin, 'removing the tool now may break them');
+    // A plugin's removal is planned asynchronously, so it alone answers with a promise.
+    if (plugin) {
+      this.installing.add(provider.id);
+      return this.registry.plugins.operation(provider, 'remove', copyPath).then(({ spec }) => {
+        guard();
+        return this._pluginSession(provider, spec, 'uninstall', `Remove ${provider.tool}`, copyPath);
+      }).finally(() => this.installing.delete(provider.id));
+    }
     const { spec, channel } = this.registry.uninstallSpec(provider, copyPath);
     guard();
     const name = `Uninstall ${provider.tool} (${CHANNEL_LABELS[channel]})`;
     return this._spawn({ provider, spawnSpec: spec, cwd: os.homedir(), name, task: 'install', installKind: 'uninstall', installPath: copyPath });
+  }
+
+  /** An Install, Update or Remove of a Docker CLI plugin: the card shows Installing until its session ends. */
+  _pluginSession(provider, spawnSpec, installKind, name, installPath = null) {
+    this.registry.plugins.began(provider);
+    try {
+      return this._spawn({ provider, spawnSpec, cwd: os.homedir(), name, task: 'install', installKind, installPath });
+    } catch (err) {
+      this.registry.plugins.abandoned(provider);
+      throw err;
+    }
   }
 
   _installGuard(providerId, force, risk) {
@@ -662,7 +693,7 @@ export class SessionManager extends EventEmitter {
 
   _spawn({
     provider, description = this.registry.describe(provider), spawnSpec, cwd, cols, rows, name, resume = null, task = null, installKind = null, installPath = null, account = null,
-    extraEnv = null, dropEnv = null, clone = null, reporting = null, multiplexer = null,
+    extraEnv = null, dropEnv = null, clone = null, reporting = null, docker = null, multiplexer = null,
     id = newId(), reportToken = crypto.randomBytes(16).toString('hex'), createdAt, multiplexerInstall = null,
   }) {
     this._assertCanSpawn();
@@ -686,6 +717,7 @@ export class SessionManager extends EventEmitter {
         account: account ? { id: account.id, label: account.label } : null,
         clone,
         reporting,
+        docker,
         multiplexer,
         createdAt,
       });
@@ -749,6 +781,10 @@ export class SessionManager extends EventEmitter {
 
   reportShell(id, report, auth) {
     return this._reportingSession(id, auth).reportShell(report);
+  }
+
+  reportDocker(id, report, auth) {
+    return this._reportingSession(id, auth).reportDocker(report);
   }
 
   _reportingSession(id, { reportToken, trusted = false } = {}) {
