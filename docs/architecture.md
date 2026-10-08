@@ -38,7 +38,9 @@
 * **Provider registry** (`providers.mjs`). Built-in providers plus the user's
   `providers.json`. Finds each tool on PATH. On macOS and Linux it first reads
   the login shell's PATH, because apps started from Finder or the Dock do not
-  get it. On Windows it runs `.cmd` and `.ps1` shims through `cmd.exe` or
+  get it. The shell runs in its own session and is stopped after 8 seconds,
+  with anything its profile started, so a slow or prompting profile cannot
+  hold up the manager. On Windows it runs `.cmd` and `.ps1` shims through `cmd.exe` or
   PowerShell, because ConPTY can only start real executables. It also checks
   each tool's installed and latest versions, and builds the sessions that
   install, update and uninstall a tool.

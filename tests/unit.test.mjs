@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { resolveCommand, resolveAllCommands, buildSpawnSpec, quoteForCmd } from '../src/manager/command-resolver.mjs';
-import { mergePathLists, parsePathFromEnvOutput, parseEnvOutput, macLocale, resolveBaseEnv, weavePaths, parseRegValue, expandWindowsVars, readWindowsPath, trimPathExt } from '../src/manager/shell-env.mjs';
+import { mergePathLists, parsePathFromEnvOutput, parseEnvOutput, macLocale, resolveBaseEnv, weavePaths, parseRegValue, expandWindowsVars, readWindowsPath, trimPathExt, loginShellEnv, readLoginShellPath } from '../src/manager/shell-env.mjs';
 import { mergeEnv, cleanResumeId, modelFromArgs, SessionManager } from '../src/manager/session-manager.mjs';
 import { loadProviders, ProviderRegistry } from '../src/manager/providers.mjs';
 import { detectShells, tmuxNewSession, tmuxSupported } from '../src/manager/shells.mjs';
@@ -2515,6 +2515,48 @@ test('a macOS manager with no locale takes Terminal.app\'s, and the login shell\
   assert.equal(linux.LANG, 'C');
   assert.equal(resolveBaseEnv({ platform: 'linux', env: {}, shellEnv: shellEnv(), locale: () => assert.fail('chose a locale') }).LANG, undefined);
   assert.equal(resolveBaseEnv({ platform: 'win32', env: {}, shellEnv: () => null, locale: () => assert.fail('chose a locale') }).LANG, undefined);
+});
+
+// A stand-in login shell that ignores SIGTERM, as interactive shells do, and whose profile leaves a process running.
+function stubbornShell(dir) {
+  const pidFile = path.join(dir, 'profile.pid');
+  const shell = path.join(dir, 'stubborn-shell');
+  fs.writeFileSync(shell, `#!/bin/sh\ntrap '' TERM\nsleep 30 &\necho $! > '${pidFile}'\nwait\n`, { mode: 0o755 });
+  return { shell, pidFile, pid: () => Number(fs.readFileSync(pidFile, 'utf8')) };
+}
+
+async function processEnded(pid, ms = 3000) {
+  for (const deadline = Date.now() + ms; Date.now() < deadline; await new Promise((resolve) => setTimeout(resolve, 50))) {
+    const ps = spawnSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' });
+    if (ps.status !== 0 || ps.stdout.trim().startsWith('Z')) return true;
+  }
+  return false;
+}
+
+test('a login shell that ignores SIGTERM ends at its time limit, with what its profile started', { skip: process.platform === 'win32' }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-login-shell-'));
+  try {
+    const sync = stubbornShell(dir);
+    const started = Date.now();
+    assert.equal(loginShellEnv({ shell: sync.shell, timeoutMs: 1500 }), null);
+    assert.ok(Date.now() - started < 6000, `took ${Date.now() - started} ms`);
+    assert.ok(await processEnded(sync.pid()), "the profile's process outlived the shell");
+
+    const refresh = stubbornShell(dir);
+    assert.equal(await readLoginShellPath({ shell: refresh.shell, timeoutMs: 1500 }), null);
+    assert.ok(await processEnded(refresh.pid()), "the profile's process outlived the PATH refresh");
+
+    // A manager that exits while a PATH refresh is still waiting takes the shell with it.
+    const exiting = stubbornShell(dir);
+    const shellEnv = pathToFileURL(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src', 'manager', 'shell-env.mjs')).href;
+    const script = `import fs from 'node:fs'; import { readLoginShellPath } from ${JSON.stringify(shellEnv)};
+      readLoginShellPath({ shell: ${JSON.stringify(exiting.shell)}, timeoutMs: 30000 });
+      setInterval(() => { if (fs.existsSync(${JSON.stringify(exiting.pidFile)})) process.exit(0); }, 20);`;
+    assert.equal(spawnSync(process.execPath, ['--input-type=module', '-e', script], { timeout: 10000 }).status, 0);
+    assert.ok(await processEnded(exiting.pid()), "the profile's process outlived a manager that exited mid-read");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('PATHEXT entries are trimmed on Windows, so a stray space cannot hide .cmd files from sessions', () => {

@@ -53,17 +53,34 @@ export function parsePathFromEnvOutput(stdout) {
   return parseEnvOutput(stdout, ['PATH'])?.PATH ?? null;
 }
 
+/** How long a login shell may take to report its environment. */
+export const LOGIN_SHELL_TIMEOUT_MS = 8000;
+
+// Read the exported PATH from `env` rather than expanding $PATH: fish, for
+// one, expands "$PATH" to a space-separated list.
+const LOGIN_SHELL_ARGS = ['-l', '-i', '-c', `printf '%s' ${START}; command env; printf '%s' ${END}`];
+
+// The login shell runs in its own session, as it does under a manager started
+// at sign-in or boot, so it cannot prompt on this terminal and the time limit
+// ends it with everything its profile started. Interactive shells ignore
+// SIGTERM, so the limit uses SIGKILL.
+function endLoginShell(pid) {
+  if (!(pid > 0)) return;
+  try { process.kill(-pid, 'SIGKILL'); } catch { /* already gone */ }
+}
+
 /** PATH and the locale variables the user's login shell exports, or null. */
-export function loginShellEnv({ shell, env = process.env, timeoutMs = 8000 } = {}) {
+export function loginShellEnv({ shell, env = process.env, timeoutMs = LOGIN_SHELL_TIMEOUT_MS } = {}) {
   if (process.platform === 'win32' || !shell) return null;
-  // Read the exported PATH from `env` rather than expanding $PATH: fish, for
-  // one, expands "$PATH" to a space-separated list.
-  const result = spawnSync(shell, ['-l', '-i', '-c', `printf '%s' ${START}; command env; printf '%s' ${END}`], {
+  const result = spawnSync(shell, LOGIN_SHELL_ARGS, {
     encoding: 'utf8',
     timeout: timeoutMs,
+    killSignal: 'SIGKILL',
+    detached: true,
     stdio: ['ignore', 'pipe', 'ignore'],
     env: { ...env, AGENT_GUILD_RESOLVING_ENV: '1' },
   });
+  if (result.error?.code === 'ETIMEDOUT') endLoginShell(result.pid);
   if (result.error) return null;
   return parseEnvOutput(result.stdout, ['PATH', ...LOCALE_VARS]);
 }
@@ -163,24 +180,29 @@ export async function readWindowsPath({ env = process.env, timeoutMs = 5000, que
   return [machine, user].filter(Boolean).map((value) => expandWindowsVars(value, env)).join(';');
 }
 
-export function readLoginShellPath({ shell = process.env.SHELL, timeoutMs = 8000 } = {}) {
+export function readLoginShellPath({ shell = process.env.SHELL, timeoutMs = LOGIN_SHELL_TIMEOUT_MS } = {}) {
   if (!shell) return Promise.resolve(null);
   return new Promise((resolve) => {
     let stdout = '';
     let child;
     try {
-      child = spawn(shell, ['-l', '-i', '-c', `printf '%s' ${START}; command env; printf '%s' ${END}`], {
+      child = spawn(shell, LOGIN_SHELL_ARGS, {
+        detached: process.platform !== 'win32',
         stdio: ['ignore', 'pipe', 'ignore'],
         env: { ...process.env, AGENT_GUILD_RESOLVING_ENV: '1' },
       });
     } catch {
       return resolve(null);
     }
-    const timer = setTimeout(() => { child.kill(); resolve(null); }, timeoutMs);
+    // In its own session the shell would outlive a manager that exits mid-read, so it goes too.
+    const end = () => endLoginShell(child.pid);
+    const done = (value) => { clearTimeout(timer); process.off('exit', end); resolve(value); };
+    const timer = setTimeout(() => { end(); done(null); }, timeoutMs);
+    process.once('exit', end);
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (chunk) => { stdout += chunk; });
-    child.on('error', () => { clearTimeout(timer); resolve(null); });
-    child.on('close', () => { clearTimeout(timer); resolve(parsePathFromEnvOutput(stdout)); });
+    child.on('error', () => done(null));
+    child.on('close', () => done(parsePathFromEnvOutput(stdout)));
   });
 }
 
