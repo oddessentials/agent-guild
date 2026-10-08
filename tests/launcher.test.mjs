@@ -196,13 +196,23 @@ test('restart starts a manager when none runs, and replaces a running one on the
       return null;
     }
   };
+  // The CLI returns once the manager answered it, but one more fetch with a short timeout can still miss on a loaded
+  // runner. Wait for an answer, bounded, as the CLI does.
+  const awaitHealth = async (label, timeoutMs = 10000) => {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const now = await health();
+      if (now) return now;
+      if (Date.now() >= deadline) assert.fail(`${label}: no manager answered within ${timeoutMs / 1000} s`);
+      await new Promise((r) => setTimeout(r, 150));
+    }
+  };
   assert.equal(await health(), null, 'this test starts without a manager');
 
   const first = await run('restart');
   assert.equal(first.code, 0, first.stderr);
   assert.match(first.stdout, /was not running; started/);
-  const before = await health();
-  assert.ok(before, 'restart started a manager');
+  const before = await awaitHealth('restart started a manager');
   const tokenBefore = token();
 
   // A session is running: the CLI's restart forces, like its stop.
@@ -231,8 +241,7 @@ test('restart starts a manager when none runs, and replaces a running one on the
   assert.equal(done?.restart, true);
   assert.equal(done.remaining, 0);
 
-  const after = await health();
-  assert.ok(after, 'a manager answers after the restart');
+  const after = await awaitHealth('a manager answers after the restart');
   assert.notEqual(after.pid, before.pid, 'the new manager is another process');
   assert.equal(token(), tokenBefore, 'the token is kept');
   const sessions = await call('GET', '/sessions');
