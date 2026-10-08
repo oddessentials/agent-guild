@@ -45,7 +45,8 @@ jobs:
       - run: node tests/browser/layout.mjs
         env:
           CHROME_NO_SANDBOX: '1'
-        timeout-minutes: 2
+        # Limits are about three times each step's time on a healthy runner.
+        timeout-minutes: 3
       - run: |
           node tests/browser/github.mjs
           node tests/browser/github-branches.mjs
@@ -60,6 +61,13 @@ jobs:
         env:
           CHROME_NO_SANDBOX: '1'
         timeout-minutes: 2
+      # The WebKit download is the one network step in this job; a warm cache keeps it off the critical path.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .cache/browser-tools
+            ~/.cache/ms-playwright
+          key: webkit-${{ runner.os }}-playwright-1.63.0-webkit-2359
       - name: Install isolated WebKit test tools
         run: |
           npm install --prefix .cache/browser-tools --no-save --package-lock=false --ignore-scripts playwright-core@1.63.0
@@ -69,7 +77,7 @@ jobs:
         env:
           CHROME_NO_SANDBOX: '1'
           PLAYWRIGHT_MODULE: .cache/browser-tools/node_modules/playwright-core/index.mjs
-        timeout-minutes: 2
+        timeout-minutes: 5
 
   systemd:
     name: Boot service (systemd)

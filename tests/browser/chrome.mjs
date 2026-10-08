@@ -136,7 +136,13 @@ export async function withPage({ name, instrumentation = '', headers = () => ({}
       await stopped;
       clearTimeout(force);
     }
-    server.close();
+    // Chrome's crash handler and other helpers inherit its stderr pipe and can outlive it by
+    // seconds, or on a CI runner longer than the step allows; Node would wait for their end of
+    // the pipe. Stop reading it once Chrome itself has exited: its diagnostics have been used.
+    chrome.stderr.destroy();
+    // Likewise close the page's keep-alive connections rather than waiting for them to idle out.
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
     // Chrome's helper processes can still be writing the profile after the
     // browser process exits; retry instead of failing on ENOTEMPTY.
     fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
