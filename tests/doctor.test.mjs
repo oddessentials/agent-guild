@@ -230,14 +230,15 @@ test('diagnose shows the version of a working tool and flags one whose version c
       verifyLoadPty: () => ({}),
       tools: [
         { id: 'works', name: 'Works', command: process.execPath, versionArgs: [fakeTool, '--version'] },
-        { id: 'broken', name: 'Broken', command: process.execPath, versionArgs: ['-e', "console.error('docker: unknown command: docker agent'); process.exit(1)"] },
+        { id: 'broken', name: 'Broken', command: process.execPath, versionArgs: ['-e', "console.error('docker: unknown command: docker agent'); process.exit(1)"], install: 'install-the-plugin' },
       ],
     });
 
     assert.equal(diag.healthy, true);
     const formatted = formatDiagnostics(diag);
     assert.match(formatted, /✔ Works \(.+\): v1\.2\.3/);
-    assert.match(formatted, /! Broken \(.+\): found, but .+ failed: docker: unknown command: docker agent/);
+    assert.match(formatted, /! Broken \(.+\): found, but .+ failed: docker: unknown command: docker agent \(.+\) · install: install-the-plugin\n/);
+    assert.match(formatted, /Doctor found no fatal problems and 1 warning \(see ! above\)\./);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }

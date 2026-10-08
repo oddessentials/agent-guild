@@ -281,6 +281,12 @@ export async function diagnose({
     managerInfo.portConflict && `Port ${port} is in use by another process`,
     providersConfig && !providersConfig.valid && `providers.json contains invalid JSON: ${providersConfig.error}`,
   ].filter(Boolean);
+  // Each matches a "!" line in the report.
+  const warnings = [
+    !pathSource.ok && `PATH: ${pathSource.text}`,
+    managerInfo.running && !managerInfo.versionMatch && `the running manager is v${managerInfo.version}, installed is v${VERSION}`,
+    ...toolResults.filter((t) => ['failed', 'unavailable', 'outdated'].includes(t.versionStatus)).map((t) => `${t.name}: ${t.versionStatus}`),
+  ].filter(Boolean);
 
   return {
     version: VERSION,
@@ -292,6 +298,7 @@ export async function diagnose({
     manager: managerInfo,
     tools: toolResults,
     fatalIssues,
+    warnings,
     healthy: fatalIssues.length === 0,
   };
 }
@@ -380,32 +387,30 @@ export function formatDiagnostics(diag) {
   lines.push('Coding Assistants & Multiplexers:');
   for (const t of diag.tools) {
     const version = t.version ? `v${t.version}` : t.build;
+    const tip = t.install ? ` · install: ${t.install}` : t.docs ? ` · ${t.docs}` : '';
     if (t.disabled) {
       lines.push(`  ℹ ${t.name} (${t.command}): turned off in providers.json, so not checked`);
     } else if (t.found && t.versionStatus === 'failed') {
-      lines.push(`  ! ${t.name} (${t.command}): found, but "${[t.command, ...t.versionArgs].join(' ')}" failed: ${t.versionError} (${t.path})`);
+      lines.push(`  ! ${t.name} (${t.command}): found, but "${[t.command, ...t.versionArgs].join(' ')}" failed: ${t.versionError} (${t.path})${tip}`);
     } else if (t.found && t.versionStatus === 'unavailable') {
       lines.push(`  ! ${t.name} (${t.command}): found, but its version could not be read (${t.path})`);
     } else if (t.found && t.versionStatus === 'outdated') {
-      lines.push(`  ! ${t.name} (${t.command}): ${version} is too old; ${MIN_TMUX} or later is required (${t.path})`);
+      lines.push(`  ! ${t.name} (${t.command}): ${version} is too old; ${MIN_TMUX} or later is required (${t.path})${t.docs ? ` · ${t.docs}` : ''}`);
     } else if (t.found && t.versionStatus === 'unchecked') {
       lines.push(`  ✔ ${t.name} (${t.command}): found; providers.json sets no versionArgs, so its version is not checked (${t.path})`);
     } else if (t.found) {
       lines.push(`  ✔ ${t.name} (${t.command}): ${version} (${t.path})`);
     } else {
-      const tip = t.install ? ` · install: ${t.install}` : t.docs ? ` · ${t.docs}` : '';
       lines.push(`  ℹ ${t.name} (${t.command}): not found on PATH${tip}`);
     }
   }
   lines.push('');
 
   // Summary
-  if (diag.healthy) {
-    lines.push('Doctor found no fatal problems.');
-  } else {
-    const count = diag.fatalIssues.length;
-    lines.push(`Doctor found ${count} fatal problem${count === 1 ? '' : 's'} (see ✖ above).`);
-  }
+  const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
+  const fatal = diag.healthy ? 'no fatal problems' : `${plural(diag.fatalIssues.length, 'fatal problem')} (see ✖ above)`;
+  const warned = diag.warnings.length ? ` and ${plural(diag.warnings.length, 'warning')} (see ! above)` : '';
+  lines.push(`Doctor found ${fatal}${warned}.`);
 
   return lines.join('\n');
 }
