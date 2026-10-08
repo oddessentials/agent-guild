@@ -39,6 +39,8 @@ export function diagnosticLine(text) {
   const lines = String(text || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   const line = lines.find((l) => /^(?:[A-Za-z]*error|fatal|panic)\b[^A-Za-z]/i.test(l))
     || lines.find((l) => /\berror\b/i.test(l) && !/^(?:at|throw)\s/.test(l))
+    // The Docker CLI reports a missing plugin as `docker: unknown command: docker agent` or `'agent' is not a docker command`.
+    || lines.find((l) => /\bunknown command\b|\bis not an? \S+ command\b/i.test(l))
     || lines.at(-1)
     || '';
   return line.slice(0, 240);

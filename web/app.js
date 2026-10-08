@@ -1840,7 +1840,9 @@ async function manageMultiplexer(provider, tool, kind, copy = null, force = fals
 function renderHint(hint, provider) {
   let text = '';
   if (!provider.available) text = provider.installable ? '' : provider.install || `${provider.command} was not found on PATH.`;
-  else if (provider.versionStatus === 'failed') text = [provider.versionError, !provider.updateCommand && provider.updateGuidance].filter(Boolean).join(' ');
+  // A version check that fails with no update on offer shows how to install the tool: `docker agent version` fails without
+  // the plugin. The install command replaces the generic update guidance, which would describe the docker binary, not the plugin.
+  else if (provider.versionStatus === 'failed') text = [provider.versionError, !provider.updateCommand && (provider.install || provider.updateGuidance)].filter(Boolean).join(' ');
   else if (provider.updateAvailable && !provider.updateCommand) text = provider.updateGuidance || '';
   hint.hidden = !text;
   hint.replaceChildren(text);

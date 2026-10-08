@@ -23,7 +23,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULTS_FILE = path.resolve(here, '../../config/providers.default.json');
 const ID_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 const PLATFORM_KEYS = ['win32', 'darwin', 'linux'];
-const REPORTING_MODES = new Set(['claude', 'codex', 'antigravity', 'grok']);
+const REPORTING_MODES = new Set(['claude', 'codex', 'antigravity', 'grok', 'docker']);
 const VERSION_TTL_MS = 60 * 60 * 1000;
 const FAILED_PROBE_TTL_MS = 5 * 60 * 1000;
 const PATH_REFRESH_MS = 60 * 1000;
@@ -60,9 +60,9 @@ function normalizeUsage(usage) {
   return null;
 }
 
-/** "claude", "codex", "antigravity", "grok", a { command, args } that prints past sessions as JSON, or null. */
+/** "claude", "codex", "antigravity", "grok", "docker", a { command, args } that prints past sessions as JSON, or null. */
 function normalizeHistory(history) {
-  if (['claude', 'codex', 'antigravity', 'grok'].includes(history)) return history;
+  if (['claude', 'codex', 'antigravity', 'grok', 'docker'].includes(history)) return history;
   if (history && typeof history === 'object' && typeof history.command === 'string' && history.command) {
     return { command: history.command, args: Array.isArray(history.args) ? history.args.map(String) : [] };
   }
@@ -716,8 +716,12 @@ export class ProviderRegistry extends EventEmitter {
     return this.providers.map((p) => this.describe(p));
   }
 
-  /** Spawn spec for node-pty, or throws with a user-facing message. */
-  spawnSpec(provider, extraArgs = [], resume = null, leadArgs = [], shell = null) {
+  /**
+   * Spawn spec for node-pty, or throws with a user-facing message. `hookArgs` are the reporting hooks the
+   * manager adds; they follow the provider's own args, so a tool run as a subcommand (`docker agent run`)
+   * gets them after it, and precede the resume args, which may be a subcommand too (`codex resume <id>`).
+   */
+  spawnSpec(provider, extraArgs = [], resume = null, hookArgs = [], shell = null) {
     const resolved = shell ? shell.path : this.resolve(provider);
     if (!resolved) {
       const hint = provider.install ? ` ${provider.install}` : '';
@@ -738,7 +742,7 @@ export class ProviderRegistry extends EventEmitter {
     }
     // The provider's own args were written for its default shell, not for one picked instead.
     const args = shell && shell.id !== this.shellsFor(provider).defaultId ? [] : provider.args;
-    return buildSpawnSpec(resolved, [...(shell?.args ?? []), ...leadArgs, ...args, ...resumeArgs, ...extraArgs], this.env, this.platform);
+    return buildSpawnSpec(resolved, [...(shell?.args ?? []), ...args, ...hookArgs, ...resumeArgs, ...extraArgs], this.env, this.platform);
   }
 
   async updateSpec(provider) {

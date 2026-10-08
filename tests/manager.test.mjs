@@ -112,7 +112,7 @@ else fs.symlinkSync(path.join(npmBinDir, 'fake-npmtool'), path.join(linkDir, 'fa
 const codingTool = path.join(here, 'fixtures', 'fake-coding-tool.mjs');
 const toolsDir = path.join(home, 'coding-tools');
 fs.mkdirSync(toolsDir);
-for (const name of ['claude', 'codex', 'agy', 'grok']) {
+for (const name of ['claude', 'codex', 'agy', 'grok', 'docker']) {
   writeScript(path.join(toolsDir, name), { win: `"${process.execPath}" "${codingTool}" ${name} %*`, sh: `exec "${process.execPath}" "${codingTool}" ${name} "$@"` });
 }
 const userHookLog = path.join(home, 'user-hooks.log');
@@ -208,6 +208,7 @@ fs.writeFileSync(path.join(home, 'providers.json'), JSON.stringify({
     { id: 'openai', usage: null, history: null, accounts: [{ id: 'work', label: 'Work' }] },
     { id: 'google', history: null, env: { [win ? 'USERPROFILE' : 'HOME']: toolHomes.agy } },
     { id: 'xai', history: null },
+    { id: 'docker', history: null },
     { id: 'claudeoff', vendor: 'Test', tool: 'Claude Hooks Off', command: 'claude', reporting: 'claude', env: { CLAUDE_CONFIG_DIR: claudeHooksOff } },
     {
       id: 'codexbroken', vendor: 'Test', tool: 'Codex Changed', command: 'codex', reporting: 'codex', env: { FAKE_CODEX_REJECT: '1' },
@@ -1375,6 +1376,19 @@ test('Grok Build reports sub-agents through --plugin-dir where it accepts it, an
   await call('DELETE', `/sessions/${tool.session.id}`);
 });
 
+test('Docker Agent reports its shell commands through the hook flags added after `agent run`', async () => {
+  const tool = await startTool('docker');
+  assert.equal(tool.session.reporting.state, 'pending');
+  await waitForText(tool.client, tool.session.id, 'FAKE-DOCKER READY hooks=5', 'one hook per flag');
+  await waitFor(reportingIs(tool.session.id, 'active'), { label: 'the session start hook', timeout: 15000 });
+  tool.client.input('shell build hold fg go test ./...');
+  await waitFor(shellCountIs(tool.session.id, 1), { label: 'the command on the card', timeout: 15000 });
+  await runShells(tool, ['shell-end build'], 'SHELL-DONE build');
+  await waitFor(shellCountIs(tool.session.id, 0), { label: 'gone at its end', timeout: 2000 });
+  await tool.client.close();
+  await call('DELETE', `/sessions/${tool.session.id}`);
+});
+
 // The page relies on this: it ignores a reply that shows a session running once it has seen it exit.
 test('once a session has exited nothing shows it running again, whichever tool it ran', async () => {
   const events = new Client(`${base.replace('http', 'ws')}/api/v1/events?token=${token}`);
@@ -1462,7 +1476,7 @@ test('a Claude Code account keeps the settings file earlier versions seeded, sta
 });
 
 test('the reporting probes start with the manager, before any session asks', () => {
-  for (const id of ['anthropic', 'openai', 'xai']) assert.ok(probesAtStart.has(id), `${id} was being probed when the manager came up`);
+  for (const id of ['anthropic', 'openai', 'xai', 'docker']) assert.ok(probesAtStart.has(id), `${id} was being probed when the manager came up`);
 });
 
 test('a Codex probe that loads no hooks is asked again, not trusted for good', async () => {
@@ -1476,6 +1490,35 @@ test('a Codex probe that loads no hooks is asked again, not trusted for good', a
   const again = await hooks.launch(provider, null);
   assert.equal(again.reporting.state, 'pending', 'the next session gets the hooks once Codex loads them');
   assert.ok(again.args.length > 0);
+});
+
+test('a Docker Agent probe is asked again by the next session, as installing or removing the plugin leaves docker as it was', async () => {
+  const { SessionHooks, dockerHookArgs } = await import('../src/manager/session-hooks.mjs');
+  const docker = path.join(toolsDir, win ? 'docker.cmd' : 'docker');
+  const refreshed = [];
+  const registry = { providers: [], env: process.env, platform: process.platform, resolve: () => docker, refreshVersions: async (opts) => { refreshed.push(opts); } };
+  const hooks = new SessionHooks({ registry, dir: path.join(home, 'probe-docker'), version: '1' });
+  const provider = { id: 'docker-retry', tool: 'Docker Agent', reporting: 'docker', args: ['agent', 'run'], env: { FAKE_DOCKER_NO_PLUGIN: '1' } };
+  const missing = await hooks.launch(provider, null);
+  assert.equal(missing.reporting.state, 'unsupported');
+  assert.match(missing.reporting.reason, /not installed/);
+  assert.deepEqual(missing.args, []);
+  assert.deepEqual(refreshed, [], 'the first answer is what the card already shows');
+  provider.env = {};
+  const installed = await hooks.launch(provider, null);
+  assert.equal(installed.reporting.state, 'pending', 'the plugin is installed: the next session gets the hooks, within the retry interval');
+  assert.deepEqual(installed.args, dockerHookArgs());
+  assert.deepEqual(refreshed, [{ force: true, ids: ['docker-retry'] }], 'the card\'s version line is refreshed when the plugin appears');
+  // Two sessions starting together share one probe.
+  const [a, b] = await Promise.all([hooks.launch(provider, null), hooks.launch(provider, null)]);
+  assert.equal(a.reporting.state, 'pending');
+  assert.equal(b.reporting.state, 'pending');
+  assert.equal(refreshed.length, 1, 'an unchanged answer refreshes nothing');
+  provider.env = { FAKE_DOCKER_NO_PLUGIN: '1' };
+  const removed = await hooks.launch(provider, null);
+  assert.equal(removed.reporting.state, 'unsupported', 'the plugin is gone: the next session is told so, not handed flags docker would reject');
+  assert.deepEqual(removed.args, []);
+  assert.equal(refreshed.length, 2, 'and the card\'s version line is refreshed again');
 });
 
 test('turning Antigravity reporting on refreshes an older copy of its plugin, and refuses another plugin\'s name', async (t) => {

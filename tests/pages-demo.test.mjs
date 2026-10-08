@@ -59,7 +59,7 @@ test('the demo runtime handles initial API calls and opens event and terminal so
 
   const providers = await (await context.fetch('/api/v1/providers')).json();
   const usage = await (await context.fetch('/api/v1/usage')).json();
-  assert.equal(providers.providers.length, 5);
+  assert.equal(providers.providers.length, 6);
   assert.ok(usage.usage.length >= 2);
   assert.equal(storage.get('agentGuild.token'), 'public-demo');
   assert.equal(elements[0].className, 'demo-notice');

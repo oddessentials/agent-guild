@@ -300,6 +300,67 @@ export async function listAntigravitySessions(dir, memo = new FileMemo()) {
   return dedupe(entries);
 }
 
+// ---- Docker Agent ---------------------------------------------------------
+
+export function dockerAgentDataDir(env = process.env) {
+  return env.DOCKER_AGENT_DATA_DIR || env.CAGENT_DATA_DIR || path.join(os.homedir(), '.cagent');
+}
+
+let sqlite = null;
+async function loadSqlite() {
+  if (!sqlite) {
+    // Node.js 22 to 24 print "SQLite is an experimental feature" to stderr when the module loads; the manager's log
+    // need not carry it. The warning is emitted synchronously by the import, so the filter covers only that call.
+    const emitWarning = process.emitWarning;
+    process.emitWarning = (warning, ...rest) => {
+      if (/SQLite/.test(String(warning?.message ?? warning))) return;
+      emitWarning.call(process, warning, ...rest);
+    };
+    try {
+      sqlite = await import('node:sqlite');
+    } catch {
+      throw new HistoryError('Docker Agent history needs Node.js 22.13 or newer, which has node:sqlite');
+    } finally {
+      process.emitWarning = emitWarning;
+    }
+  }
+  return sqlite;
+}
+
+// A session's title, else its first user message; the newest message dates it. A sub-agent's session has a parent.
+const DOCKER_SESSIONS_SQL = `
+  select s.id, s.title, s.created_at, s.working_dir,
+    (select i.message_json from session_items i where i.session_id = s.id and i.item_type = 'message' order by i.position limit 1) as first_message,
+    (select max(json_extract(i.message_json, '$.created_at')) from session_items i where i.session_id = s.id) as updated_at
+  from sessions s where s.parent_id is null order by s.created_at desc limit ${MAX_LIMIT}`;
+
+function dockerEntry(row) {
+  let title = typeof row.title === 'string' && row.title.trim() ? row.title : null;
+  if (!title && typeof row.first_message === 'string') {
+    try {
+      const message = JSON.parse(row.first_message);
+      if (message?.role === 'user') title = promptTitle(contentText(message.content));
+    } catch { /* not a message */ }
+  }
+  return cleanEntry({ id: row.id, title, cwd: row.working_dir, startedAt: row.created_at, updatedAt: row.updated_at ?? row.created_at });
+}
+
+/** Sessions in `<dir>/session.db`, Docker Agent's SQLite store, opened read-only. */
+export async function listDockerSessions(dir) {
+  const file = path.join(dir, 'session.db');
+  if (!(await statFile(file))) return [];
+  const { DatabaseSync } = await loadSqlite();
+  let db = null;
+  try {
+    db = new DatabaseSync(file, { readOnly: true });
+    return dedupe(db.prepare(DOCKER_SESSIONS_SQL).all().map(dockerEntry).filter(Boolean));
+  } catch (err) {
+    throw new HistoryError(`${shortPath(file)} could not be read: ${err.message}`);
+  } finally {
+    db?.close();
+  }
+}
+
 // ---- Grok Build -----------------------------------------------------------
 
 export function grokHome(env = process.env) {
@@ -405,7 +466,7 @@ export class SessionHistory {
     this.env = env;
     this.platform = platform;
     this.ttlMs = ttlMs;
-    this.readers = { claude: listClaudeSessions, codex: listCodexSessions, antigravity: listAntigravitySessions, grok: listGrokSessions, ...readers };
+    this.readers = { claude: listClaudeSessions, codex: listCodexSessions, antigravity: listAntigravitySessions, grok: listGrokSessions, docker: listDockerSessions, ...readers };
     this.memo = new FileMemo();
     this.cache = new Map();
   }
@@ -415,6 +476,7 @@ export class SessionHistory {
     if (source === 'codex') return codexHome(env);
     if (source === 'antigravity') return antigravityDir(env);
     if (source === 'grok') return grokHome(env);
+    if (source === 'docker') return dockerAgentDataDir(env);
     return null;
   }
 

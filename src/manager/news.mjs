@@ -31,6 +31,7 @@ export const FEEDS = [
   latestRelease('claude-code', 'Claude Code', 'anthropics/claude-code', 'anthropic'),
   latestRelease('codex-cli', 'Codex CLI', 'openai/codex', 'openai'),
   latestRelease('antigravity-cli', 'Antigravity CLI', 'google-antigravity/antigravity-cli', 'google'),
+  latestRelease('docker-agent', 'Docker Agent', 'docker/docker-agent', 'docker'),
   { id: 'ollama', name: 'Ollama', category: 'releases', url: 'https://github.com/ollama/ollama/releases.atom' },
   { id: 'llama-cpp', name: 'llama.cpp', category: 'releases', url: 'https://github.com/ggml-org/llama.cpp/releases.atom' },
   { id: 'transformers', name: 'Transformers', category: 'releases', url: 'https://github.com/huggingface/transformers/releases.atom' },

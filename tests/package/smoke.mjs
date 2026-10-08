@@ -88,7 +88,20 @@ function check(condition, name, detail = '') {
 }
 const firstLine = (result) => `${result.stdout}${result.stderr}`.trim().split(/\r?\n/)[0] ?? '';
 
+// `stop` returns once the manager's API is down; the process, and on Windows its session's shell, may take a moment
+// longer to exit and release the home folder. Wait for the manager's pid to go rather than for a fixed time.
+async function gone(pid, timeoutMs) {
+  if (!pid) return true;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try { process.kill(pid, 0); } catch { return true; }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return false;
+}
+
 let failure = null;
+let managerPid = null;
 try {
   const help = await run('agent-guild-report', '--help');
   check(help.code === 0 && /Usage: agent-guild-report/.test(help.stdout), 'agent-guild-report is installed', firstLine(help));
@@ -98,6 +111,7 @@ try {
 
   const health = await (await fetch(`${base}/api/v1/health`)).json();
   check(health.ok === true && health.name === 'agent-guild', 'the manager answers', `version ${health.version}`);
+  managerPid = health.pid;
   if (expectedVersion !== null) check(health.version === expectedVersion, 'the manager is the expected version', expectedVersion);
 
   const assets = ['/', '/app.js', '/theme.js', '/styles.css', '/skins/guild/skin.css', '/skins/guild/page.avif', '/skins/professional/skin.css', '/skins/orbital/skin.css', '/skins/gnomeland/skin.css', '/skins/goblinville/skin.css', '/vendor/xterm/xterm.js', '/vendor/xterm/xterm.css',
@@ -154,6 +168,7 @@ try {
   check(/Session manager stopped/.test(stopped.stdout), 'stop ends the manager');
   const after = await run('agent-guild', 'status');
   check(after.code === 3, 'status reports that the manager is not running');
+  check(await gone(managerPid, 10000), 'the manager process has exited', `pid ${managerPid}`);
 } catch (err) {
   failure = err;
 }
@@ -166,4 +181,10 @@ if (failure) {
   await run('agent-guild', 'stop');
   process.exitCode = 1;
 }
-fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+if (failure) await gone(managerPid, 10000);
+try {
+  // Windows may hold the folder briefly after the processes exit, as the manager tests also allow for.
+  fs.rmSync(home, { recursive: true, force: true, maxRetries: 25, retryDelay: 400 });
+} catch (err) {
+  console.warn(`could not remove ${home}: ${err.message}`);
+}

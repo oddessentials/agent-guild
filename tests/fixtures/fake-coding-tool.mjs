@@ -1,9 +1,12 @@
-// Stand-ins for Claude Code, Codex CLI, Antigravity CLI and Grok Build that
-// find and run hooks the way each real tool does, so tests can follow a
-// sub-agent from the tool's hook to the session card. The first argument
-// names the tool: claude, codex, agy or grok.
+// Stand-ins for Claude Code, Codex CLI, Antigravity CLI, Grok Build and
+// Docker Agent that find and run hooks the way each real tool does, so tests
+// can follow a sub-agent from the tool's hook to the session card. The first
+// argument names the tool: claude, codex, agy, grok or docker.
 //
 // Hooks come from:
+//   docker  `agent run --hook-<event> <command>` flags (session-start, pre-tool-use, post-tool-use,
+//           stop, session-end); `agent version` prints the version. Events are snake_case and
+//           name the agent; the shell tool is `shell` with `cmd`
 //   claude  --plugin-dir <dir> (hooks/hooks.json), and $CLAUDE_CONFIG_DIR/settings.json
 //   codex   -c hooks.<Event>=[...] (run only when hooks.state trusts them by key and hash),
 //           and $CODEX_HOME/hooks.json; `app-server` answers initialize and hooks/list
@@ -13,6 +16,8 @@
 //           no event name, and must print a JSON object
 //   grok    --plugin-dir <dir>, accepted only when FAKE_GROK_PLUGIN_DIR=1, and $GROK_HOME/hooks/*.json
 // FAKE_CODEX_LOADS_NONE=1 makes Codex's hooks/list answer without our hooks.
+// FAKE_DOCKER_NO_PLUGIN=1 makes docker's --help answer as the Docker CLI does without the agent plugin: its own
+// help, no hook flags, exit 0.
 //
 // Lines typed into the session:
 //   prompt                 a user prompt (Codex runs its SessionStart hooks here)
@@ -51,14 +56,17 @@ const win = process.platform === 'win32';
 const out = (text) => process.stdout.write(`${text}\r\n`);
 const readJson = (file) => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } };
 
-if (argv.includes('--version')) {
-  out(`${tool} 9.0.0`);
+if (argv.includes('--version') || (tool === 'docker' && argv[0] === 'agent' && argv[1] === 'version')) {
+  out(tool === 'docker' ? 'docker agent version v9.0.0' : `${tool} 9.0.0`);
   process.exit(0);
 }
+
+const DOCKER_HOOK_FLAGS = ['--hook-session-start', '--hook-pre-tool-use', '--hook-post-tool-use', '--hook-stop', '--hook-session-end'];
 
 if (argv.includes('--help')) {
   out(`Usage: ${tool} [options]`);
   if (tool === 'claude' || (tool === 'grok' && process.env.FAKE_GROK_PLUGIN_DIR === '1')) out('  --plugin-dir <path>   Load a plugin for this session only');
+  if (tool === 'docker' && process.env.FAKE_DOCKER_NO_PLUGIN !== '1') for (const name of DOCKER_HOOK_FLAGS) out(`      ${name} stringArray   Add a hook command (repeatable)`);
   out('  -h, --help            Show help');
   process.exit(0);
 }
@@ -184,6 +192,10 @@ function discover() {
         .flatMap(([event, entries]) => entries.flatMap((entry) => (entry.hooks || [entry]).map((h) => ({ event, matcher: entry.hooks ? entry.matcher : undefined, command: h.command, cwd })))));
     });
   }
+  if (tool === 'docker') {
+    const event = (name) => name.slice('--hook-'.length).replace(/(?:^|-)([a-z])/g, (_m, c) => c.toUpperCase());
+    return DOCKER_HOOK_FLAGS.flatMap((name) => flag(name).map((command) => ({ event: event(name), command })));
+  }
   const home = process.env.GROK_HOME || path.join(os.homedir(), '.grok');
   const files = fs.existsSync(path.join(home, 'hooks')) ? fs.readdirSync(path.join(home, 'hooks')).filter((f) => f.endsWith('.json')) : [];
   return [...pluginHooks(flag('--plugin-dir')), ...files.flatMap((f) => settingsHooks(path.join(home, 'hooks', f)))];
@@ -224,7 +236,9 @@ function runHooks(hooks, event, payload, toolName = null) {
       out(`HOOK ${event} EXIT:${code}${answer}${stderr.trim() ? ` STDERR:${JSON.stringify(stderr.trim())}` : ''}`);
       resolve();
     });
-    child.stdin.end(JSON.stringify(tool === 'agy' ? agyPayload(payload) : { hook_event_name: event, session_id: `${tool}-session`, cwd: process.cwd(), ...payload }));
+    const snake = (name) => name.replace(/[A-Z]/g, (c, i) => `${i ? '_' : ''}${c.toLowerCase()}`);
+    const named = tool === 'docker' ? { hook_event_name: snake(event), agent_name: 'root' } : { hook_event_name: event };
+    child.stdin.end(JSON.stringify(tool === 'agy' ? agyPayload(payload) : { ...named, session_id: `${tool}-session`, cwd: process.cwd(), ...payload }));
   })), Promise.resolve());
 }
 
@@ -245,7 +259,7 @@ function runTool() {
   // Claude Code's background tasks still running, by task id, as its Stop lists them.
   const tasks = new Map();
   const codexTurn = tool === 'codex' ? { turn_id: 'turn-1' } : {};
-  const toolName = { claude: 'Bash', codex: 'Bash', grok: 'run_terminal_command' }[tool];
+  const toolName = { claude: 'Bash', codex: 'Bash', grok: 'run_terminal_command', docker: 'shell' }[tool];
   const shellEvent = (start, id, input, response, name = toolName) => {
     if (tool === 'grok') return [start ? 'PreToolUse' : 'PostToolUse', { hookEventName: start ? 'pre_tool_use' : 'post_tool_use', toolName: name, toolUseId: id, toolInput: input, ...(response ? { toolResult: response } : {}) }, name];
     return [start ? 'PreToolUse' : 'PostToolUse', { tool_name: name, tool_use_id: id, tool_input: input, ...codexTurn, ...(response ? { tool_response: response } : {}) }, name];
@@ -254,7 +268,7 @@ function runTool() {
   const runShell = async (id, mode, command) => {
     const background = mode === 'bg' || mode === 'bg-silent';
     const name = mode === 'ps' ? 'PowerShell' : toolName;
-    const announced = { command, ...(background && tool === 'claude' ? { run_in_background: true } : {}) };
+    const announced = tool === 'docker' ? { cmd: command } : { command, ...(background && tool === 'claude' ? { run_in_background: true } : {}) };
     const [startEvent, startPayload, matcher] = shellEvent(true, id, announced, null, name);
     await runHooks(hooks, startEvent, startPayload, matcher);
     const input = mode.endsWith('-rewrite') ? { ...announced, command: `${command} -- --runInBand` } : announced;

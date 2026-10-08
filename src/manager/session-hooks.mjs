@@ -31,6 +31,12 @@ const claudeHooks = () => Object.fromEntries(CLAUDE_EVENTS.map((event) => [event
 }]]));
 const GROK_EVENTS = ['SessionStart', 'SubagentStart', 'SubagentStop', 'StopCancelled', 'StopFailure', 'SessionEnd', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Stop'];
 
+// Docker Agent takes one hook command per event on its command line. These flags cover the session's own
+// shell commands and turns; the model needs a hooks.d drop-in (examples/docker-agent-hooks.yaml), since
+// before_llm_call has no flag.
+export const DOCKER_HOOK_FLAGS = ['--hook-session-start', '--hook-pre-tool-use', '--hook-post-tool-use', '--hook-stop', '--hook-session-end'];
+export const dockerHookArgs = () => DOCKER_HOOK_FLAGS.flatMap((flag) => [flag, REPORT_COMMAND]);
+
 // Antigravity CLI loads an installed plugin into every session, also those started outside Agent Guild, and runs
 // its hooks in the plugin's folder, on Windows through cmd /C, which cannot take a quoted path. So the hook is a
 // script in that folder: it reports only inside an Agent Guild Antigravity session, and always prints the JSON object
@@ -250,7 +256,7 @@ export class SessionHooks {
 
   warm() {
     for (const provider of this.registry.providers) {
-      if (provider.reporting === 'claude' || provider.reporting === 'codex' || provider.reporting === 'grok') this._probe(provider).catch(() => {});
+      if (['claude', 'codex', 'grok', 'docker'].includes(provider.reporting)) this._probe(provider).catch(() => {});
     }
   }
 
@@ -260,21 +266,37 @@ export class SessionHooks {
     let mtime = null;
     try { mtime = fs.statSync(resolved).mtimeMs; } catch { /* probe anyway */ }
     const cached = this.probes.get(provider.id);
-    const fresh = cached && cached.resolved === resolved && cached.mtime === mtime && (cached.ok || Date.now() - cached.at < this.probeRetryMs);
+    // A probe still running is shared. A finished one is reused while the binary is the same, for good when it found the
+    // hooks and for the retry interval when it did not, unless it asked to be rechecked by the next session (Docker Agent).
+    const fresh = cached && cached.resolved === resolved && cached.mtime === mtime
+      && (!cached.done || (!cached.recheck && (cached.ok || Date.now() - cached.at < this.probeRetryMs)));
     if (fresh) return cached.promise;
     const env = { ...this.registry.env, ...provider.env };
     const platform = this.registry.platform;
-    const entry = { resolved, mtime, at: Date.now(), ok: false };
+    const entry = { resolved, mtime, at: Date.now(), ok: false, done: false, recheck: false, error: false, hookFlags: null };
     entry.promise = (async () => {
       if (provider.reporting === 'codex') {
         const result = await probeCodex(resolved, { env, platform, timeoutMs: this.probeTimeoutMs });
         entry.ok = result.args.length > 0;
         return result;
       }
-      const { stdout, stderr } = await runSpec(buildSpawnSpec(resolved, ['--help'], env, platform), { env, timeoutMs: this.probeTimeoutMs });
-      entry.ok = true;
-      return { pluginDir: helpLists(`${stdout}\n${stderr}`, '--plugin-dir') };
-    })().catch((err) => ({ error: err.message }));
+      // Docker Agent's run flags are listed by `docker agent run --help`, after the provider's own args.
+      const helpArgs = provider.reporting === 'docker' ? [...provider.args, '--help'] : ['--help'];
+      const { stdout, stderr } = await runSpec(buildSpawnSpec(resolved, helpArgs, env, platform), { env, timeoutMs: this.probeTimeoutMs });
+      const help = `${stdout}\n${stderr}`;
+      const hookFlags = DOCKER_HOOK_FLAGS.every((flag) => helpLists(help, flag));
+      entry.ok = provider.reporting !== 'docker' || hookFlags;
+      // Docker Agent is a plugin of the docker command checked here, and installing, updating or removing the plugin
+      // leaves docker's path and mtime as they were. So every Docker answer is asked again by the next session; its
+      // help takes well under a second. When the plugin has come or gone, the card's version line is refreshed too,
+      // as after an install (finishInstall), rather than at its hourly check.
+      if (provider.reporting === 'docker') {
+        entry.recheck = true;
+        entry.hookFlags = hookFlags;
+        if (cached?.done && !cached.error && cached.hookFlags !== hookFlags) this.registry.refreshVersions?.({ force: true, ids: [provider.id] }).catch(() => {});
+      }
+      return { pluginDir: helpLists(help, '--plugin-dir'), hookFlags };
+    })().catch((err) => { entry.error = true; return { error: err.message }; }).finally(() => { entry.done = true; });
     this.probes.set(provider.id, entry);
     return entry.promise;
   }
@@ -294,6 +316,21 @@ export class SessionHooks {
     if (mode === 'codex') {
       if (probe?.args?.length) return { args: probe.args, reporting: pending(tool, 'runs its first prompt') };
       return { args: [], reporting: { state: 'unavailable', reason: `${tool} did not accept Agent Guild's reporting hooks${probe?.error ? ` (${probe.error})` : ''}.` } };
+    }
+    if (mode === 'docker') {
+      // Docker Agent fires session_start when the first prompt runs, not when its TUI opens.
+      if (probe?.hookFlags) return { args: dockerHookArgs(), reporting: pending(tool, 'runs its first prompt') };
+      if (probe?.error) {
+        return { args: [], reporting: { state: 'unavailable', reason: `Could not check whether ${tool} takes Agent Guild's reporting hooks (${probe.error}).` } };
+      }
+      return {
+        args: [],
+        reporting: {
+          state: 'unsupported',
+          // Without the plugin, `docker agent run --help` prints the Docker CLI's own help and succeeds.
+          reason: `${tool} is not installed, or this version takes no hook flags, so Agent Guild cannot add its reporting hooks. Hooks you add to ${tool}'s own settings still report.`,
+        },
+      };
     }
     const dir = mode === 'claude' ? this.bundles.claude : this.bundles.grok;
     if (probe?.pluginDir) return { args: ['--plugin-dir', dir], reporting: pending(tool, 'starts its session') };

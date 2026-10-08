@@ -51,7 +51,7 @@ values are ignored; a file that cannot be read is reported in `manager.log`.
 | `versionArgs` | Arguments that print the version, e.g. `["--version"]` |
 | `resumeArgs` | Arguments that resume a session, `{id}` for its id; enables **Existing…** |
 | `usage` | `"claude"`, `"codex"`, `{ "command", "args" }` of a program printing `{ "plan", "windows": [{ "label", "usedPercent", "resetsAt" }] }`, or `null` |
-| `history` | `"claude"`, `"codex"`, `"antigravity"`, `"grok"`, `{ "command", "args" }` of a program printing `{ "sessions": [{ "id", "title", "cwd", "startedAt", "updatedAt" }] }`, or `null` |
+| `history` | `"claude"`, `"codex"`, `"antigravity"`, `"grok"`, `"docker"`, `{ "command", "args" }` of a program printing `{ "sessions": [{ "id", "title", "cwd", "startedAt", "updatedAt" }] }`, or `null` |
 | `modelPattern` | Regular expression that finds the model name on screen |
 | `homeVar` | Variable that moves the tool's home folder; required for `accounts` |
 | `accounts` | Extra sign-ins; see [Accounts](#accounts) |

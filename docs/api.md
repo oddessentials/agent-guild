@@ -121,7 +121,7 @@ when Agent Guild cannot remove that copy, otherwise the `command` it runs (or nu
 
 `usageSource` is `claude`, `codex`, `command` or null, and says
 whether `GET /usage` reports the provider. `historySource` is `claude`,
-`codex`, `antigravity`, `grok`, `command` or null, and says whether
+`codex`, `antigravity`, `grok`, `docker`, `command` or null, and says whether
 `GET /providers/:id/history` can list the tool's earlier sessions.
 `accounts` lists the sign-ins the tool can run under: `default` is the
 tool's own, and each further one has its own home folder, so it keeps its
@@ -406,8 +406,9 @@ The tool's own earlier sessions, newest first, read from where the tool
 keeps them under the account's home folder: Claude Code's
 `projects/<folder>/<id>.jsonl` transcripts, Codex CLI's
 `sessions/<date>/rollout-*.jsonl` files, Antigravity CLI's
-`brain/<id>/.system_generated/logs/transcript.jsonl` files and Grok Build's
-`sessions/<folder>/<id>/summary.json`. Sub-agent sessions are left out.
+`brain/<id>/.system_generated/logs/transcript.jsonl` files, Grok Build's
+`sessions/<folder>/<id>/summary.json` and Docker Agent's `session.db`, a
+SQLite database. Sub-agent sessions are left out.
 `id` is what the tool resumes by (`POST /sessions` with `resume`); `title` is
 the session's name or first prompt, or null; `cwd` is the folder the session
 ran in, or null when the tool did not record it. Claude Code

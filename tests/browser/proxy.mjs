@@ -68,7 +68,7 @@ try {
     AGENT_GUILD_ALLOWED_HOSTS: authority, AGENT_GUILD_ALLOWED_ORIGINS: origin,
   });
   fs.writeFileSync(path.join(home, 'providers.json'), JSON.stringify({ providers: [
-    ...['anthropic', 'openai', 'google', 'xai', 'shell'].map((id) => ({ id, enabled: false })),
+    ...['anthropic', 'openai', 'google', 'xai', 'docker', 'shell'].map((id) => ({ id, enabled: false })),
     { id: 'fake', vendor: 'Test', tool: 'Fake Tool', command: process.execPath, args: [fixture], versionArgs: [fixture, '--version'] },
   ] }));
   // The test needs no external feeds, provider accounts or network services.

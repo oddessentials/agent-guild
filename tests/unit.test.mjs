@@ -4,7 +4,7 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { resolveCommand, resolveAllCommands, buildSpawnSpec, quoteForCmd } from '../src/manager/command-resolver.mjs';
 import { mergePathLists, parsePathFromEnvOutput, parseEnvOutput, macLocale, resolveBaseEnv, weavePaths, parseRegValue, expandWindowsVars, readWindowsPath, trimPathExt } from '../src/manager/shell-env.mjs';
 import { mergeEnv, cleanResumeId, modelFromArgs, SessionManager } from '../src/manager/session-manager.mjs';
@@ -16,8 +16,8 @@ import { classifyInstall, expandHome, homeRelative, helpDescribes, platformDepen
 import { runPlan, encodePlan, removeFile, RUNNER } from '../src/manager/uninstall.mjs';
 import { hookToReports, claudeStatuslineToReport, formatStatusLine } from '../src/report/hooks.mjs';
 import { shimContents, writeReportShims, prependPath, fileUrl, SHIM_NAME, LOADER_NAME } from '../src/manager/report-shims.mjs';
-import { bundleFiles, codexHookArgs, codexTrustArgs, codexHooksFrom, antigravityInstalled, antigravityPluginDir, antigravityConfigFile, antigravityPluginEnabled, helpLists, REPORT_COMMAND } from '../src/manager/session-hooks.mjs';
-import { execFileSync } from 'node:child_process';
+import { bundleFiles, codexHookArgs, codexTrustArgs, codexHooksFrom, antigravityInstalled, antigravityPluginDir, antigravityConfigFile, antigravityPluginEnabled, helpLists, REPORT_COMMAND, dockerHookArgs, DOCKER_HOOK_FLAGS } from '../src/manager/session-hooks.mjs';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { parseVersion, compareVersions, probeVersion, diagnosticLine, latestVersion } from '../src/manager/versions.mjs';
 import { SelfUpdate, isDevelopmentBuild } from '../src/manager/self-update.mjs';
 import { glibcVersion, loadPty, ptyBuild, ptyBuildCommand, ptyBuiltHere, ptyDir, ptyProblem, ptyRestartProblem } from '../src/manager/pty.mjs';
@@ -36,7 +36,7 @@ import {
 import { Changelog, parseNotes, parseReleases } from '../src/manager/changelog.mjs';
 import { once } from 'node:events';
 import {
-  SessionHistory, FileMemo, listClaudeSessions, listCodexSessions, listAntigravitySessions, listGrokSessions, commandHistory, cleanEntry,
+  SessionHistory, FileMemo, listClaudeSessions, listCodexSessions, listAntigravitySessions, listGrokSessions, listDockerSessions, dockerAgentDataDir, commandHistory, cleanEntry,
 } from '../src/manager/session-history.mjs';
 import crypto from 'node:crypto';
 import zlib from 'node:zlib';
@@ -135,7 +135,7 @@ test('loadProviders merges user overrides, platform keys and disabled entries', 
   }));
   const linux = loadProviders({ userFile, platform: 'linux' });
   const ids = linux.providers.map((p) => p.id);
-  assert.deepEqual(ids, ['anthropic', 'openai', 'google', 'shell', 'local-llm']);
+  assert.deepEqual(ids, ['anthropic', 'openai', 'google', 'docker', 'shell', 'local-llm']);
   const anthropic = linux.providers[0];
   assert.deepEqual(anthropic.args, ['--verbose']);
   assert.equal(anthropic.command, 'claude');
@@ -499,6 +499,9 @@ test('a failed version command never yields a version', async () => {
   assert.equal(diagnosticLine('error: unrecognized subcommand\n\nUsage: tool'), 'error: unrecognized subcommand');
   assert.equal(diagnosticLine('  throw new Error(\n        ^\n\nTypeError: x is not a function\n    at main'), 'TypeError: x is not a function');
   assert.equal(diagnosticLine("'tool' is not recognized as an internal or external command,\r\noperable program or batch file."), 'operable program or batch file.');
+  // The Docker CLI without the agent plugin, two spellings across its versions.
+  assert.equal(diagnosticLine("docker: unknown command: docker agent\n\nRun 'docker --help' for more information"), 'docker: unknown command: docker agent');
+  assert.equal(diagnosticLine("docker: 'agent' is not a docker command.\nSee 'docker --help'"), "docker: 'agent' is not a docker command.");
   assert.equal(diagnosticLine(''), '');
 
   const userFile = path.join(dir, 'providers.json');
@@ -2066,7 +2069,7 @@ test('a history command prints JSON, and the monitor reads each account\'s own f
   assert.deepEqual(registry.get('custom').history, { command: process.execPath, args: [fixture] });
   assert.equal(registry.get('bad').history, null);
   assert.equal(registry.get('shell').history, null);
-  assert.deepEqual(registry.list().map((p) => [p.id, p.historySource]), [['anthropic', 'claude'], ['openai', null], ['google', 'antigravity'], ['xai', 'grok'], ['shell', null], ['custom', 'command'], ['bad', null]]);
+  assert.deepEqual(registry.list().map((p) => [p.id, p.historySource]), [['anthropic', 'claude'], ['openai', null], ['google', 'antigravity'], ['xai', 'grok'], ['docker', 'docker'], ['shell', null], ['custom', 'command'], ['bad', null]]);
 
   const defaultHome = path.join(dir, 'claude-home');
   const workHome = path.join(accountsDir, 'anthropic', 'work');
@@ -2098,7 +2101,7 @@ test('a history command prints JSON, and the monitor reads each account\'s own f
 test('console and cloud links are https URLs that users can override per platform or turn off', () => {
   const defaults = loadProviders({ platform: 'linux' });
   assert.deepEqual(defaults.warnings, []);
-  for (const provider of defaults.providers.filter((p) => p.id !== 'shell')) {
+  for (const provider of defaults.providers.filter((p) => !['shell', 'docker'].includes(p.id))) {
     if (provider.id !== 'google') assert.match(provider.usageUrl, /^https:\/\//, `${provider.id} usageUrl`);
     assert.match(provider.billingUrl, /^https:\/\//, `${provider.id} billingUrl`);
     assert.match(provider.cloudUrl, /^https:\/\//, `${provider.id} cloudUrl`);
@@ -2106,6 +2109,8 @@ test('console and cloud links are https URLs that users can override per platfor
   const google = defaults.providers.find((p) => p.id === 'google');
   assert.equal(google.usageUrl, null, 'Antigravity CLI shows its quota only inside the tool');
   assert.equal(google.docs, 'https://antigravity.google/docs/cli/install');
+  const docker = defaults.providers.find((p) => p.id === 'docker');
+  assert.deepEqual([docker.usageUrl, docker.billingUrl, docker.cloudUrl], [null, null, null], 'Docker Agent runs on each model vendor\'s own key or a local model, so it has no console of its own');
   const shell = defaults.providers.find((p) => p.id === 'shell');
   assert.equal(shell.usageUrl, null);
   assert.equal(shell.billingUrl, null);
@@ -3935,4 +3940,101 @@ test('a Claude Code task notification ends the sub-agent it names, and is no tur
   // Claude Code fires it at once for a prompt typed while a turn still runs, so none is a turn boundary; Codex CLI's is.
   assert.deepEqual(hookToReports({ hook_event_name: 'UserPromptSubmit', session_id: 's', prompt_id: 'p2', permission_mode: 'default', prompt: 'fix the <task-notification> parser' }), []);
   assert.deepEqual(hookToReports({ hook_event_name: 'UserPromptSubmit', turn_id: 't2', prompt: 'next' }), [{ finishForeground: true }]);
+});
+
+test('Docker Agent hook events report the session, its shell commands, its turns and the model', () => {
+  // Every event names the agent; event names are snake_case; the shell tool is `shell` with `cmd`.
+  const base = { session_id: 'd1', cwd: '/w', agent_name: 'root' };
+  assert.deepEqual(hookToReports({ ...base, hook_event_name: 'session_start', source: 'startup' }), [{ hello: true }, { toolSessionId: 'd1' }]);
+  const [start] = hookToReports({ ...base, hook_event_name: 'pre_tool_use', tool_name: 'shell', tool_use_id: 'call_1', tool_input: { cmd: 'go test ./...', cwd: '.' } });
+  assert.ok(start.match, 'the command is hashed for matching the screen');
+  assert.deepEqual(start, { shell: 'start', key: 'call_1', match: start.match });
+  assert.deepEqual(hookToReports({ ...base, hook_event_name: 'post_tool_use', tool_name: 'shell', tool_use_id: 'call_1', tool_input: { cmd: 'go test ./...' }, tool_response: 'ok' }), [{ shell: 'end', key: 'call_1' }]);
+  assert.deepEqual(hookToReports({ ...base, hook_event_name: 'pre_tool_use', tool_name: 'edit_file', tool_use_id: 'call_2', tool_input: {} }), [], 'only the shell tool is a shell command');
+  assert.deepEqual(hookToReports({ ...base, hook_event_name: 'stop', reason: 'end_turn' }), [{ finishForeground: true }]);
+  assert.deepEqual(hookToReports({ ...base, hook_event_name: 'session_end', reason: 'stream_ended' }), [{ shell: 'reset' }]);
+  assert.deepEqual(hookToReports({ ...base, hook_event_name: 'before_llm_call', iteration: 1, model_id: 'openai/gpt-5' }), [{ model: 'openai/gpt-5' }]);
+  // Codex CLI's multi_agent_v2 tool of the same name names no agent, and is no shell command.
+  assert.deepEqual(hookToReports({ hook_event_name: 'PreToolUse', turn_id: 't', tool_name: 'shell', tool_use_id: 'x', tool_input: { command: ['ls'] } }), []);
+});
+
+test('Docker Agent gets its reporting hooks as run flags, after `agent run` and before --session', () => {
+  assert.deepEqual(dockerHookArgs(), DOCKER_HOOK_FLAGS.flatMap((flag) => [flag, REPORT_COMMAND]));
+  // `docker agent run --help`, v1.149.0
+  const help = [
+    'Flags:',
+    '      --hook-on-user-input stringArray        Add an on-user-input hook command (repeatable)',
+    '      --hook-post-tool-use stringArray        Add a post-tool-use hook command that runs after every tool call (repeatable)',
+    '      --hook-pre-tool-use stringArray         Add a pre-tool-use hook command that runs before every tool call (repeatable)',
+    '      --hook-session-end stringArray          Add a session-end hook command (repeatable)',
+    '      --hook-session-start stringArray        Add a session-start hook command (repeatable)',
+    '      --hook-stop stringArray                 Add a stop hook command, fired when the model finishes responding (repeatable)',
+  ].join('\n');
+  assert.ok(DOCKER_HOOK_FLAGS.every((flag) => helpLists(help, flag)));
+  assert.ok(!DOCKER_HOOK_FLAGS.every((flag) => helpLists('Usage: docker agent run [flags]\n  --model string\n', flag)));
+
+  const dir = tempDir();
+  const userFile = path.join(dir, 'providers.json');
+  fs.writeFileSync(userFile, JSON.stringify({ providers: [{ id: 'docker', command: process.execPath }] }));
+  const registry = new ProviderRegistry({ userFile, env: process.env, checkUpdates: false });
+  const docker = registry.get('docker');
+  assert.deepEqual([docker.tool, docker.args, docker.versionArgs, docker.reporting, docker.history, docker.package], ['Docker Agent', ['agent', 'run'], ['agent', 'version'], 'docker', 'docker', null]);
+  assert.deepEqual(registry.spawnSpec(docker, ['--yolo'], 'abc', dockerHookArgs()).args, ['agent', 'run', ...dockerHookArgs(), '--session', 'abc', '--yolo']);
+});
+
+test('the Docker Agent hooks example fires pre_tool_use in autonomous mode too', () => {
+  const example = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'examples', 'docker-agent-hooks.yaml'), 'utf8');
+  // Each top-level event's block, by name; pre_tool_use must carry preempt_yolo, since --yolo skips the ordinary lane.
+  const blocks = Object.fromEntries([...example.matchAll(/^([a-z_]+):\n((?:[ \t#].*\n?|\n)*)/gm)].map((m) => [m[1], m[2]]));
+  assert.ok(blocks.pre_tool_use, 'the example has pre_tool_use hooks');
+  assert.equal((blocks.pre_tool_use.match(/^  - /gm) || []).length, (blocks.pre_tool_use.match(/^    preempt_yolo: true$/gm) || []).length, 'every pre_tool_use entry is preempt_yolo');
+  for (const event of ['session_start', 'post_tool_use', 'stop', 'session_end', 'before_llm_call']) assert.ok(blocks[event] && !/preempt_yolo/.test(blocks[event]), `${event} has no preempt_yolo, which Docker Agent rejects there`);
+});
+
+test('reading Docker Agent history prints no SQLite experimental warning', async (t) => {
+  let sqlite;
+  try { sqlite = await import('node:sqlite'); } catch { t.skip('node:sqlite is not in this Node.js'); return; }
+  const dir = tempDir();
+  const db = new sqlite.DatabaseSync(path.join(dir, 'session.db'));
+  db.exec(`create table sessions (id text primary key, created_at text, title text default '', working_dir text default '', parent_id text);
+    create table session_items (id integer primary key autoincrement, session_id text not null, position integer not null, item_type text not null, agent_name text, message_json text);`);
+  db.prepare('insert into sessions (id, created_at, title, working_dir) values (?, ?, ?, ?)').run('s1', '2026-10-07T20:00:00Z', 'Quiet', '/w');
+  db.close();
+  // A fresh process, so the only node:sqlite import is the reader's own; other warnings still print.
+  const reader = pathToFileURL(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src', 'manager', 'session-history.mjs')).href;
+  const script = `const m = await import(${JSON.stringify(reader)}); console.log(JSON.stringify((await m.listDockerSessions(process.argv[1])).map((s) => s.id))); process.emitWarning('still printed', 'OtherWarning');`;
+  const child = spawnSync(process.execPath, ['--input-type=module', '-e', script, dir], { encoding: 'utf8', timeout: 20000, windowsHide: true, env: { ...process.env, NODE_OPTIONS: '' } });
+  assert.equal(child.status, 0, child.stderr);
+  assert.equal(child.stdout.trim(), '["s1"]');
+  assert.doesNotMatch(child.stderr, /ExperimentalWarning/);
+  assert.match(child.stderr, /OtherWarning: still printed/);
+});
+
+test('Docker Agent sessions come from its SQLite store, titled by name or first prompt, sub-sessions left out', async (t) => {
+  let sqlite;
+  try { sqlite = await import('node:sqlite'); } catch { t.skip('node:sqlite is not in this Node.js'); return; }
+  assert.equal(dockerAgentDataDir({ DOCKER_AGENT_DATA_DIR: '/data' }), '/data');
+  assert.equal(dockerAgentDataDir({}), path.join(os.homedir(), '.cagent'));
+  const dir = tempDir();
+  assert.deepEqual(await listDockerSessions(dir), [], 'no store yet');
+  const db = new sqlite.DatabaseSync(path.join(dir, 'session.db'));
+  db.exec(`create table sessions (id text primary key, created_at text, title text default '', working_dir text default '', parent_id text references sessions(id));
+    create table session_items (id integer primary key autoincrement, session_id text not null, position integer not null, item_type text not null, agent_name text, message_json text);`);
+  const add = db.prepare('insert into sessions (id, created_at, title, working_dir, parent_id) values (?, ?, ?, ?, ?)');
+  const item = db.prepare('insert into session_items (session_id, position, item_type, message_json) values (?, ?, ?, ?)');
+  add.run('named', '2026-10-07T19:38:31-04:00', 'Upgrade notes', 'C:\work\engine', null);
+  item.run('named', 0, 'message', JSON.stringify({ role: 'user', content: 'write the notes', created_at: '2026-10-07T19:38:32-04:00' }));
+  item.run('named', 1, 'message', JSON.stringify({ role: 'assistant', content: 'done', created_at: '2026-10-07T19:40:00-04:00' }));
+  add.run('untitled', '2026-10-07T20:00:00-04:00', '', '/w', null);
+  item.run('untitled', 0, 'message', JSON.stringify({ role: 'user', content: '  say   hi ', created_at: '2026-10-07T20:00:01-04:00' }));
+  add.run('child', '2026-10-07T20:30:00-04:00', 'A sub-agent', '/w', 'untitled');
+  add.run('empty', '2026-10-07T21:00:00-04:00', '', '/w', null);
+  db.close();
+  assert.deepEqual(await listDockerSessions(dir), [
+    { id: 'empty', title: null, cwd: '/w', startedAt: '2026-10-08T01:00:00.000Z', updatedAt: '2026-10-08T01:00:00.000Z' },
+    { id: 'untitled', title: 'say hi', cwd: '/w', startedAt: '2026-10-08T00:00:00.000Z', updatedAt: '2026-10-08T00:00:01.000Z' },
+    { id: 'named', title: 'Upgrade notes', cwd: 'C:\work\engine', startedAt: '2026-10-07T23:38:31.000Z', updatedAt: '2026-10-07T23:40:00.000Z' },
+  ]);
+  fs.writeFileSync(path.join(dir, 'session.db'), 'not a database');
+  await assert.rejects(listDockerSessions(dir), /session\.db could not be read/);
 });
