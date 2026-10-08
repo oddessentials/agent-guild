@@ -44,10 +44,10 @@ node tests/browser/github.mjs
 node tests/browser/github-branches.mjs
 node tests/browser/environment-scopes.mjs
 node tests/browser/proxy.mjs
-npm install --prefix .cache/browser-tools --no-save --package-lock=false --ignore-scripts playwright-core@1.63.0
-node .cache/browser-tools/node_modules/playwright-core/cli.js install --with-deps webkit
-PLAYWRIGHT_MODULE=.cache/browser-tools/node_modules/playwright-core/index.mjs node tests/browser/dialogs.mjs
+node tests/browser/dialogs.mjs
 ```
+
+CI runs the WebKit pass of the dialog check separately, on macOS (see below).
 
 ## HTTPS reverse proxy
 
@@ -81,8 +81,8 @@ positioned by the OS and need not resize the browser viewport.
 empty states and shared dialog bodies in Chrome. It checks actual scrollable
 space and footer reachability at desktop, tablet and phone sizes.
 
-To also run WebKit (as CI does), install the test tools separately from the
-application's dependencies:
+To also run WebKit (as CI does on macOS, where it needs no system packages),
+install the test tools separately from the application's dependencies:
 
 ```sh
 npm install --prefix .cache/browser-tools --no-save --package-lock=false --ignore-scripts playwright-core@1.63.0
