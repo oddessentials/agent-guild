@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { resolveCommand, resolveAllCommands, buildSpawnSpec, quoteForCmd } from '../src/manager/command-resolver.mjs';
-import { mergePathLists, parsePathFromEnvOutput, parseEnvOutput, macLocale, resolveBaseEnv, weavePaths, parseRegValue, expandWindowsVars, readWindowsPath, trimPathExt, loginShellEnv, readLoginShellPath } from '../src/manager/shell-env.mjs';
+import { mergePathLists, parsePathFromEnvOutput, parseEnvOutput, macLocale, resolveBaseEnv, weavePaths, parseRegValue, expandWindowsVars, readWindowsPath, trimPathExt, probeLoginShell, loginShellEnv, readLoginShellPath } from '../src/manager/shell-env.mjs';
 import { mergeEnv, cleanResumeId, modelFromArgs, SessionManager } from '../src/manager/session-manager.mjs';
 import { loadProviders, ProviderRegistry } from '../src/manager/providers.mjs';
 import { detectShells, tmuxNewSession, tmuxSupported } from '../src/manager/shells.mjs';
@@ -2538,7 +2538,7 @@ test('a login shell that ignores SIGTERM ends at its time limit, with what its p
   try {
     const sync = stubbornShell(dir);
     const started = Date.now();
-    assert.equal(loginShellEnv({ shell: sync.shell, timeoutMs: 1500 }), null);
+    assert.deepEqual(probeLoginShell({ shell: sync.shell, timeoutMs: 1500 }), { vars: null, failure: 'did not finish within 1.5 seconds' });
     assert.ok(Date.now() - started < 6000, `took ${Date.now() - started} ms`);
     assert.ok(await processEnded(sync.pid()), "the profile's process outlived the shell");
 
@@ -2554,6 +2554,26 @@ test('a login shell that ignores SIGTERM ends at its time limit, with what its p
       setInterval(() => { if (fs.existsSync(${JSON.stringify(exiting.pidFile)})) process.exit(0); }, 20);`;
     assert.equal(spawnSync(process.execPath, ['--input-type=module', '-e', script], { timeout: 10000 }).status, 0);
     assert.ok(await processEnded(exiting.pid()), "the profile's process outlived a manager that exited mid-read");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the login shell probe says why a shell gave no environment', { skip: process.platform === 'win32' }, () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-login-shell-'));
+  const shell = (name, body, mode = 0o755) => {
+    const file = path.join(dir, name);
+    fs.writeFileSync(file, `#!/bin/sh\n${body}\n`, { mode });
+    return file;
+  };
+  const report = (vars) => `printf '%s' __AGENT_GUILD_PATH_START__; printf '${vars}\\n'; printf '%s' __AGENT_GUILD_PATH_END__`;
+  try {
+    assert.deepEqual(probeLoginShell({ shell: path.join(dir, 'missing') }), { vars: null, failure: 'does not exist' });
+    assert.deepEqual(probeLoginShell({ shell: shell('plain', 'exit 0', 0o644) }), { vars: null, failure: 'cannot be run (permission denied)' });
+    assert.deepEqual(probeLoginShell({ shell: shell('quits', 'exit 3') }), { vars: null, failure: 'exited with status 3 before reporting its environment' });
+    assert.deepEqual(probeLoginShell({ shell: shell('no-path', report('LANG=C.UTF-8')) }), { vars: { LANG: 'C.UTF-8' }, failure: 'reported no PATH' });
+    assert.deepEqual(probeLoginShell({ shell: shell('works', report('PATH=/opt/tools/bin')) }), { vars: { PATH: '/opt/tools/bin' }, failure: null });
+    assert.deepEqual(loginShellEnv({ shell: shell('works', report('PATH=/opt/tools/bin')) }), { PATH: '/opt/tools/bin' });
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

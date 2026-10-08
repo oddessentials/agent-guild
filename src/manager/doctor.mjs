@@ -28,7 +28,7 @@ import { startupState, startupSummary, unitPort } from './systemd-service.mjs';
 import { buildSpawnSpec, resolveCommand } from './command-resolver.mjs';
 import { compareTmuxVersions, parseTmuxVersion, probeVersion } from './versions.mjs';
 import { loadProviders, mergeDiscoveredPath } from './providers.mjs';
-import { loginShellEnv, pathReader, resolveBaseEnv } from './shell-env.mjs';
+import { pathReader, probeLoginShell, resolveBaseEnv } from './shell-env.mjs';
 
 export const MIN_NODE_MAJOR = 22;
 const MIN_TMUX = '3.2';
@@ -49,7 +49,7 @@ function knownTools(dir, platform) {
  */
 export async function managerEnvironment({ env, platform }) {
   let answer = null;
-  const base = resolveBaseEnv({ platform, env, shellEnv: (opts) => (answer = loginShellEnv(opts)) });
+  const base = resolveBaseEnv({ platform, env, shellEnv: (opts) => (answer = probeLoginShell(opts)).vars });
   const keep = (text) => ({ env: base, pathSource: { ok: false, text: `${text}; using this terminal's PATH` } });
   if (env.AGENT_GUILD_SKIP_SHELL_ENV === '1') return { env: base, pathSource: { ok: true, text: "this terminal's PATH (AGENT_GUILD_SKIP_SHELL_ENV=1)" } };
   if (platform === 'win32') {
@@ -59,7 +59,7 @@ export async function managerEnvironment({ env, platform }) {
     return { env: base, pathSource: { ok: true, text: 'Windows registry PATH merged' } };
   }
   if (!env.SHELL) return keep('SHELL is not set, so there is no login shell to ask');
-  if (!answer?.PATH) return keep(`the login shell (${env.SHELL}) did not report its PATH within 8 seconds`);
+  if (!answer?.vars?.PATH) return keep(`the login shell (${env.SHELL}) ${answer?.failure ?? 'reported no PATH'}`);
   return { env: base, pathSource: { ok: true, text: `login shell (${env.SHELL}) PATH merged` } };
 }
 

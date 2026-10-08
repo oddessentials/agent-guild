@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import net from 'node:net';
 import path from 'node:path';
-import { diagnose, formatDiagnostics, runDoctor, checkPortAvailable } from '../src/manager/doctor.mjs';
+import { diagnose, formatDiagnostics, runDoctor, checkPortAvailable, managerEnvironment } from '../src/manager/doctor.mjs';
 import { VERSION } from '../src/manager/config.mjs';
 
 // Doctor asks the login shell or the registry for PATH like the manager; keep tests to this process's PATH.
@@ -238,6 +238,21 @@ test('diagnose shows the version of a working tool and flags one whose version c
     const formatted = formatDiagnostics(diag);
     assert.match(formatted, /✔ Works \(.+\): v1\.2\.3/);
     assert.match(formatted, /! Broken \(.+\): found, but .+ failed: docker: unknown command: docker agent/);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('doctor says why the login shell gave no PATH', { skip: process.platform === 'win32' }, async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-doctor-test-'));
+  const quits = path.join(tempDir, 'quits');
+  fs.writeFileSync(quits, '#!/bin/sh\nexit 3\n', { mode: 0o755 });
+  try {
+    const missing = await managerEnvironment({ env: { SHELL: path.join(tempDir, 'missing'), PATH: '/usr/bin' }, platform: process.platform });
+    assert.deepEqual(missing.pathSource, { ok: false, text: `the login shell (${path.join(tempDir, 'missing')}) does not exist; using this terminal's PATH` });
+    assert.equal(missing.env.PATH, '/usr/bin');
+    const exited = await managerEnvironment({ env: { SHELL: quits, PATH: '/usr/bin' }, platform: process.platform });
+    assert.equal(exited.pathSource.text, `the login shell (${quits}) exited with status 3 before reporting its environment; using this terminal's PATH`);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }

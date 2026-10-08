@@ -69,9 +69,13 @@ function endLoginShell(pid) {
   try { process.kill(-pid, 'SIGKILL'); } catch { /* already gone */ }
 }
 
-/** PATH and the locale variables the user's login shell exports, or null. */
-export function loginShellEnv({ shell, env = process.env, timeoutMs = LOGIN_SHELL_TIMEOUT_MS } = {}) {
-  if (process.platform === 'win32' || !shell) return null;
+/**
+ * PATH and the locale variables the user's login shell exports, as
+ * { vars, failure }. Without them vars is null and failure says why, as a
+ * phrase that follows "the login shell".
+ */
+export function probeLoginShell({ shell, env = process.env, timeoutMs = LOGIN_SHELL_TIMEOUT_MS } = {}) {
+  if (process.platform === 'win32' || !shell) return { vars: null, failure: null };
   const result = spawnSync(shell, LOGIN_SHELL_ARGS, {
     encoding: 'utf8',
     timeout: timeoutMs,
@@ -80,9 +84,22 @@ export function loginShellEnv({ shell, env = process.env, timeoutMs = LOGIN_SHEL
     stdio: ['ignore', 'pipe', 'ignore'],
     env: { ...env, AGENT_GUILD_RESOLVING_ENV: '1' },
   });
-  if (result.error?.code === 'ETIMEDOUT') endLoginShell(result.pid);
-  if (result.error) return null;
-  return parseEnvOutput(result.stdout, ['PATH', ...LOCALE_VARS]);
+  if (result.error?.code === 'ETIMEDOUT') {
+    endLoginShell(result.pid);
+    return { vars: null, failure: `did not finish within ${timeoutMs / 1000} seconds` };
+  }
+  if (result.error) {
+    const why = { ENOENT: 'does not exist', EACCES: 'cannot be run (permission denied)' }[result.error.code];
+    return { vars: null, failure: why || `could not start (${result.error.code || result.error.message})` };
+  }
+  const vars = parseEnvOutput(result.stdout, ['PATH', ...LOCALE_VARS]);
+  if (!vars) return { vars: null, failure: `${result.signal ? `was ended by ${result.signal}` : `exited with status ${result.status}`} before reporting its environment` };
+  return { vars, failure: vars.PATH ? null : 'reported no PATH' };
+}
+
+/** PATH and the locale variables the user's login shell exports, or null. */
+export function loginShellEnv(options) {
+  return probeLoginShell(options).vars;
 }
 
 function readAppleLocale() {
