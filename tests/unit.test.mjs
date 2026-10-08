@@ -2559,6 +2559,13 @@ test('a login shell that ignores SIGTERM ends at its time limit, with what its p
   }
 });
 
+test('a version check of a tool that ignores SIGTERM ends at its time limit', async () => {
+  const started = Date.now();
+  const stuck = await probeVersion({ file: process.execPath, args: ['-e', "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"] }, { timeoutMs: 1000 });
+  assert.deepEqual([stuck.ok, stuck.error], [false, 'no answer within 1 seconds']);
+  assert.ok(Date.now() - started < 5000, `took ${Date.now() - started} ms`);
+});
+
 test('the login shell probe says why a shell gave no environment', { skip: process.platform === 'win32' }, () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-login-shell-'));
   const shell = (name, body, mode = 0o755) => {
