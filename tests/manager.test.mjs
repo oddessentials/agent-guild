@@ -1558,6 +1558,10 @@ test('the Docker Agent card\'s model reporting switch writes and removes only it
   assert.deepEqual([hooks.enabled(provider), hooks.note(provider)], [false, null]);
   assert.equal(await hooks.setEnabled(provider, true), true);
   assert.equal(fs.readFileSync(file, 'utf8'), dockerDropin(process.platform));
+  // Every session probes Docker Agent again; the switch stays on the card meanwhile.
+  const probing = hooks.launch(provider, null);
+  assert.equal(hooks.enabled(provider), true, 'the last version read stands while the next probe runs');
+  await probing;
   fs.writeFileSync(file, `${dockerDropin(process.platform)}# an older Agent Guild's\n`);
   await hooks.launch(provider, null);
   assert.equal(fs.readFileSync(file, 'utf8'), dockerDropin(process.platform), 'a session brings an older copy up to date');

@@ -321,7 +321,9 @@ export class SessionHooks {
     if (fresh) return cached.promise;
     const env = { ...this.registry.env, ...provider.env };
     const platform = this.registry.platform;
-    const entry = { resolved, mtime, at: Date.now(), ok: false, done: false, recheck: false, error: false, hookFlags: null, version: null };
+    // The last version read stands while a new probe runs, so the card's model reporting row does not blink off
+    // whenever a session starts.
+    const entry = { resolved, mtime, at: Date.now(), ok: false, done: false, recheck: false, error: false, hookFlags: null, version: cached?.version ?? null };
     entry.promise = (async () => {
       if (provider.reporting === 'codex') {
         const result = await probeCodex(resolved, { env, platform, timeoutMs: this.probeTimeoutMs });
@@ -352,7 +354,11 @@ export class SessionHooks {
         if (cached?.version !== entry.version) this.registry.emit?.('updated');
       }
       return { pluginDir: helpLists(help, '--plugin-dir'), hookFlags, version: entry.version };
-    })().catch((err) => { entry.error = true; return { error: err.message }; }).finally(() => { entry.done = true; });
+    })().catch((err) => {
+      entry.error = true;
+      if (entry.version !== null) { entry.version = null; this.registry.emit?.('updated'); }
+      return { error: err.message };
+    }).finally(() => { entry.done = true; });
     this.probes.set(provider.id, entry);
     return entry.promise;
   }
