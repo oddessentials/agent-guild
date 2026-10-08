@@ -15,8 +15,9 @@ concurrency:
   group: ci-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
-# Stage 1 is a quick Linux gate; the cross-platform matrices start only once
-# it passes, and the first failure among them cancels the run.
+# Stage 1 is a quick Linux gate beside the WebKit pass on macOS; the
+# cross-platform matrices start only once both pass, and the first failure
+# among them cancels the run.
 jobs:
   linux:
     name: Test (ubuntu-latest, Node 24)
@@ -61,21 +62,43 @@ jobs:
         env:
           CHROME_NO_SANDBOX: '1'
         timeout-minutes: 2
-      # The WebKit download is the one network step in this job; a warm cache keeps it off the critical path.
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            .cache/browser-tools
-            ~/.cache/ms-playwright
-          key: webkit-${{ runner.os }}-playwright-1.63.0-webkit-2359
-      - name: Install isolated WebKit test tools
-        run: |
-          npm install --prefix .cache/browser-tools --no-save --package-lock=false --ignore-scripts playwright-core@1.63.0
-          node .cache/browser-tools/node_modules/playwright-core/cli.js install --with-deps webkit
-        timeout-minutes: 5
+      # Chrome only here; the WebKit pass runs in the webkit job.
       - run: node tests/browser/dialogs.mjs
         env:
           CHROME_NO_SANDBOX: '1'
+        timeout-minutes: 2
+
+  # Playwright's WebKit needs no system packages on macOS, so this job never
+  # waits on an apt mirror; a warm cache leaves npm ci as its only download.
+  webkit:
+    name: WebKit dialogs (macos-latest)
+    runs-on: macos-latest
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.cache/ms-playwright
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - id: cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .cache/browser-tools
+            .cache/ms-playwright
+          key: webkit-${{ runner.os }}-${{ runner.arch }}-playwright-1.63.0
+      - name: Install isolated WebKit test tools
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          npm install --prefix .cache/browser-tools --no-save --package-lock=false --ignore-scripts playwright-core@1.63.0
+          node .cache/browser-tools/node_modules/playwright-core/cli.js install webkit
+        timeout-minutes: 5
+      - run: node tests/browser/dialogs.mjs
+        env:
           PLAYWRIGHT_MODULE: .cache/browser-tools/node_modules/playwright-core/index.mjs
         timeout-minutes: 5
 
@@ -170,7 +193,7 @@ jobs:
 
   test:
     name: Test (${{ matrix.os }}, Node ${{ matrix.node }})
-    needs: [linux, systemd, musl, plan]
+    needs: [linux, webkit, systemd, musl, plan]
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -204,7 +227,7 @@ jobs:
 
   verify:
     name: Install (${{ matrix.os }}, Node ${{ matrix.node }}, npm ${{ matrix.npm }})
-    needs: [linux, systemd, musl, plan, pack]
+    needs: [linux, webkit, systemd, musl, plan, pack]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     permissions:
@@ -258,11 +281,12 @@ jobs:
   required:
     name: Required checks
     if: always()
-    needs: [linux, systemd, musl, plan, pack, test, verify]
+    needs: [linux, webkit, systemd, musl, plan, pack, test, verify]
     runs-on: ubuntu-latest
     steps:
       - env:
           LINUX: ${{ needs.linux.result }}
+          WEBKIT: ${{ needs.webkit.result }}
           TEST: ${{ needs.test.result }}
           SYSTEMD: ${{ needs.systemd.result }}
           MUSL: ${{ needs.musl.result }}
@@ -270,5 +294,5 @@ jobs:
           PACK: ${{ needs.pack.result }}
           VERIFY: ${{ needs.verify.result }}
         run: |
-          echo "linux: $LINUX, test: $TEST, systemd: $SYSTEMD, musl: $MUSL, plan: $PLAN, pack: $PACK, verify: $VERIFY"
-          [ "$LINUX" = success ] && [ "$TEST" = success ] && [ "$SYSTEMD" = success ] && [ "$MUSL" = success ] && [ "$PLAN" = success ] && [ "$PACK" = success ] && [ "$VERIFY" = success ]
+          echo "linux: $LINUX, webkit: $WEBKIT, test: $TEST, systemd: $SYSTEMD, musl: $MUSL, plan: $PLAN, pack: $PACK, verify: $VERIFY"
+          [ "$LINUX" = success ] && [ "$WEBKIT" = success ] && [ "$TEST" = success ] && [ "$SYSTEMD" = success ] && [ "$MUSL" = success ] && [ "$PLAN" = success ] && [ "$PACK" = success ] && [ "$VERIFY" = success ]
