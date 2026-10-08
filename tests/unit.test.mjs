@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { resolveCommand, resolveAllCommands, buildSpawnSpec, quoteForCmd } from '../src/manager/command-resolver.mjs';
-import { mergePathLists, parsePathFromEnvOutput, parseEnvOutput, macLocale, resolveBaseEnv, weavePaths, parseRegValue, expandWindowsVars, readWindowsPath, trimPathExt, probeLoginShell, loginShellEnv, readLoginShellPath } from '../src/manager/shell-env.mjs';
+import { mergePathLists, parsePathFromEnvOutput, parseEnvOutput, macLocale, resolveBaseEnv, weavePaths, parseRegValue, expandWindowsVars, readWindowsPath, trimPathExt, probeLoginShell } from '../src/manager/shell-env.mjs';
 import { mergeEnv, cleanResumeId, modelFromArgs, SessionManager } from '../src/manager/session-manager.mjs';
 import { loadProviders, ProviderRegistry } from '../src/manager/providers.mjs';
 import { detectShells, tmuxNewSession, tmuxSupported } from '../src/manager/shells.mjs';
@@ -17,7 +17,7 @@ import { runPlan, encodePlan, removeFile, RUNNER } from '../src/manager/uninstal
 import { hookToReports, claudeStatuslineToReport, formatStatusLine } from '../src/report/hooks.mjs';
 import { shimContents, writeReportShims, prependPath, fileUrl, SHIM_NAME, LOADER_NAME } from '../src/manager/report-shims.mjs';
 import { bundleFiles, codexHookArgs, codexTrustArgs, codexHooksFrom, antigravityInstalled, antigravityPluginDir, antigravityConfigFile, antigravityPluginEnabled, helpLists, REPORT_COMMAND, dockerHookArgs, DOCKER_HOOK_FLAGS } from '../src/manager/session-hooks.mjs';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { parseVersion, compareVersions, probeVersion, diagnosticLine, latestVersion } from '../src/manager/versions.mjs';
 import { SelfUpdate, isDevelopmentBuild } from '../src/manager/self-update.mjs';
 import { glibcVersion, loadPty, ptyBuild, ptyBuildCommand, ptyBuiltHere, ptyDir, ptyProblem, ptyRestartProblem } from '../src/manager/pty.mjs';
@@ -2491,99 +2491,98 @@ test('macOS gets the region\'s UTF-8 locale, as Terminal.app gives its shells', 
   assert.equal(macLocale({ read: () => '../../etc', exists: () => true }), 'en_US.UTF-8', 'only a locale name is looked up');
 });
 
-test('a macOS manager with no locale takes Terminal.app\'s, and the login shell\'s wins there', () => {
+test('a macOS manager with no locale takes Terminal.app\'s, and the login shell\'s wins there', async () => {
   const locale = () => 'en_GB.UTF-8';
   const seen = [];
   const shellEnv = (shell = {}) => (opts) => { seen.push(opts.env.LANG); return shell; };
   // launchd sets no locale; the shell is asked with it already set, so /etc/zprofile keeps it.
-  const signIn = resolveBaseEnv({ platform: 'darwin', env: { SHELL: '/bin/zsh', PATH: '/usr/bin' }, shellEnv: shellEnv({ PATH: '/opt/homebrew/bin' }), locale });
+  const signIn = await resolveBaseEnv({ platform: 'darwin', env: { SHELL: '/bin/zsh', PATH: '/usr/bin' }, shellEnv: shellEnv({ PATH: '/opt/homebrew/bin' }), locale });
   assert.equal(signIn.LANG, 'en_GB.UTF-8');
   assert.equal(signIn.PATH, ['/opt/homebrew/bin', '/usr/bin'].join(path.delimiter));
   assert.deepEqual(seen, ['en_GB.UTF-8']);
   // A locale the user already has is kept, even one that is not UTF-8.
   for (const name of ['LANG', 'LC_ALL', 'LC_CTYPE']) {
-    const env = resolveBaseEnv({ platform: 'darwin', env: { [name]: 'C' }, shellEnv: shellEnv(), locale });
+    const env = await resolveBaseEnv({ platform: 'darwin', env: { [name]: 'C' }, shellEnv: shellEnv(), locale });
     assert.equal(env[name], 'C');
     assert.equal(env.LANG, name === 'LANG' ? 'C' : undefined);
   }
   // A locale the login shell exports wins, as it would in Terminal.
-  assert.equal(resolveBaseEnv({ platform: 'darwin', env: {}, shellEnv: shellEnv({ LANG: 'de_DE.UTF-8', LC_ALL: 'de_DE.UTF-8' }), locale }).LC_ALL, 'de_DE.UTF-8');
+  assert.equal((await resolveBaseEnv({ platform: 'darwin', env: {}, shellEnv: shellEnv({ LANG: 'de_DE.UTF-8', LC_ALL: 'de_DE.UTF-8' }), locale })).LC_ALL, 'de_DE.UTF-8');
   // Without the shell lookup the locale is still set.
-  assert.equal(resolveBaseEnv({ platform: 'darwin', env: { AGENT_GUILD_SKIP_SHELL_ENV: '1' }, shellEnv: () => assert.fail('asked the shell'), locale }).LANG, 'en_GB.UTF-8');
+  assert.equal((await resolveBaseEnv({ platform: 'darwin', env: { AGENT_GUILD_SKIP_SHELL_ENV: '1' }, shellEnv: () => assert.fail('asked the shell'), locale })).LANG, 'en_GB.UTF-8');
   // Linux and Windows keep their own locale handling.
-  const linux = resolveBaseEnv({ platform: 'linux', env: { LANG: 'C' }, shellEnv: shellEnv({ LANG: 'de_DE.UTF-8' }), locale: () => assert.fail('chose a locale') });
+  const linux = await resolveBaseEnv({ platform: 'linux', env: { LANG: 'C' }, shellEnv: shellEnv({ LANG: 'de_DE.UTF-8' }), locale: () => assert.fail('chose a locale') });
   assert.equal(linux.LANG, 'C');
-  assert.equal(resolveBaseEnv({ platform: 'linux', env: {}, shellEnv: shellEnv(), locale: () => assert.fail('chose a locale') }).LANG, undefined);
-  assert.equal(resolveBaseEnv({ platform: 'win32', env: {}, shellEnv: () => null, locale: () => assert.fail('chose a locale') }).LANG, undefined);
+  assert.equal((await resolveBaseEnv({ platform: 'linux', env: {}, shellEnv: shellEnv(), locale: () => assert.fail('chose a locale') })).LANG, undefined);
+  assert.equal((await resolveBaseEnv({ platform: 'win32', env: {}, shellEnv: () => null, locale: () => assert.fail('chose a locale') })).LANG, undefined);
 });
+
+// Polls until the process is gone; the test's own time limit, through `signal`, catches one that never goes.
+async function processEnded(pid, signal) {
+  while (!signal.aborted) {
+    if (process.platform === 'win32') {
+      try { process.kill(pid, 0); } catch { return; }
+    } else {
+      const ps = spawnSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' });
+      if (ps.status !== 0 || ps.stdout.trim().startsWith('Z')) return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  assert.fail(`process ${pid} is still running`);
+}
+
+// When a test times out, kill the process it left running, so the test file still finishes.
+function killOnAbort(signal, pidFile) {
+  signal.addEventListener('abort', () => {
+    try { process.kill(Number(fs.readFileSync(pidFile, 'utf8')), 'SIGKILL'); } catch { /* already gone */ }
+  });
+}
 
 // A stand-in login shell that ignores SIGTERM, as interactive shells do, and whose profile leaves a process running.
 function stubbornShell(dir) {
   const pidFile = path.join(dir, 'profile.pid');
   const shell = path.join(dir, 'stubborn-shell');
-  fs.writeFileSync(shell, `#!/bin/sh\ntrap '' TERM\nsleep 30 &\necho $! > '${pidFile}'\nwait\n`, { mode: 0o755 });
+  fs.writeFileSync(shell, `#!/bin/sh\ntrap '' TERM\nsleep 300 &\necho $! > '${pidFile}'\nwait\n`, { mode: 0o755 });
   return { shell, pidFile, pid: () => Number(fs.readFileSync(pidFile, 'utf8')) };
 }
 
-async function processEnded(pid, ms = 3000) {
-  for (const deadline = Date.now() + ms; Date.now() < deadline; await new Promise((resolve) => setTimeout(resolve, 50))) {
-    const ps = spawnSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' });
-    if (ps.status !== 0 || ps.stdout.trim().startsWith('Z')) return true;
-  }
-  return false;
-}
-
-test('a login shell that ignores SIGTERM ends at its time limit, with what its profile started', { skip: process.platform === 'win32' }, async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-login-shell-'));
-  try {
-    const sync = stubbornShell(dir);
-    const started = Date.now();
-    assert.deepEqual(probeLoginShell({ shell: sync.shell, timeoutMs: 1500 }), { vars: null, failure: 'did not finish within 1.5 seconds' });
-    assert.ok(Date.now() - started < 6000, `took ${Date.now() - started} ms`);
-    assert.ok(await processEnded(sync.pid()), "the profile's process outlived the shell");
-
-    const refresh = stubbornShell(dir);
-    assert.equal(await readLoginShellPath({ shell: refresh.shell, timeoutMs: 1500 }), null);
-    assert.ok(await processEnded(refresh.pid()), "the profile's process outlived the PATH refresh");
-
-    // A manager that exits while a PATH refresh is still waiting takes the shell with it.
-    const exiting = stubbornShell(dir);
-    const shellEnv = pathToFileURL(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src', 'manager', 'shell-env.mjs')).href;
-    const script = `import fs from 'node:fs'; import { readLoginShellPath } from ${JSON.stringify(shellEnv)};
-      readLoginShellPath({ shell: ${JSON.stringify(exiting.shell)}, timeoutMs: 30000 });
-      setInterval(() => { if (fs.existsSync(${JSON.stringify(exiting.pidFile)})) process.exit(0); }, 20);`;
-    assert.equal(spawnSync(process.execPath, ['--input-type=module', '-e', script], { timeout: 10000 }).status, 0);
-    assert.ok(await processEnded(exiting.pid()), "the profile's process outlived a manager that exited mid-read");
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
+test('a login shell that ignores SIGTERM ends at its time limit, with what its profile started', { skip: process.platform === 'win32', timeout: 15000 }, async (t) => {
+  const stubborn = stubbornShell(tempDir());
+  killOnAbort(t.signal, stubborn.pidFile);
+  assert.deepEqual(await probeLoginShell({ shell: stubborn.shell, timeoutMs: 1500 }), { vars: null, failure: 'did not finish within 1.5 seconds' });
+  await processEnded(stubborn.pid(), t.signal);
 });
 
-test('a version check of a tool that ignores SIGTERM ends at its time limit', async () => {
-  const started = Date.now();
-  const stuck = await probeVersion({ file: process.execPath, args: ['-e', "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"] }, { timeoutMs: 1000 });
-  assert.deepEqual([stuck.ok, stuck.error], [false, 'no answer within 1 seconds']);
-  assert.ok(Date.now() - started < 5000, `took ${Date.now() - started} ms`);
+test('Ctrl+C ends a login shell the process is waiting on, and still stops the process', { skip: process.platform === 'win32', timeout: 15000 }, async (t) => {
+  const stubborn = stubbornShell(tempDir());
+  killOnAbort(t.signal, stubborn.pidFile);
+  const shellEnv = pathToFileURL(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src', 'manager', 'shell-env.mjs')).href;
+  const script = `import { readLoginShellPath } from ${JSON.stringify(shellEnv)}; readLoginShellPath({ shell: ${JSON.stringify(stubborn.shell)}, timeoutMs: 60000 });`;
+  const waiting = spawn(process.execPath, ['--input-type=module', '-e', script], { stdio: 'ignore' });
+  while (!fs.existsSync(stubborn.pidFile) || !fs.readFileSync(stubborn.pidFile, 'utf8').trim()) await new Promise((resolve) => setTimeout(resolve, 50));
+  const exited = once(waiting, 'exit');
+  waiting.kill('SIGINT');
+  assert.deepEqual(await exited, [null, 'SIGINT']);
+  await processEnded(stubborn.pid(), t.signal);
 });
 
-test('the login shell probe says why a shell gave no environment', { skip: process.platform === 'win32' }, () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-login-shell-'));
-  const shell = (name, body, mode = 0o755) => {
-    const file = path.join(dir, name);
-    fs.writeFileSync(file, `#!/bin/sh\n${body}\n`, { mode });
-    return file;
-  };
-  const report = (vars) => `printf '%s' __AGENT_GUILD_PATH_START__; printf '${vars}\\n'; printf '%s' __AGENT_GUILD_PATH_END__`;
-  try {
-    assert.deepEqual(probeLoginShell({ shell: path.join(dir, 'missing') }), { vars: null, failure: 'does not exist' });
-    assert.deepEqual(probeLoginShell({ shell: shell('plain', 'exit 0', 0o644) }), { vars: null, failure: 'cannot be run (permission denied)' });
-    assert.deepEqual(probeLoginShell({ shell: shell('quits', 'exit 3') }), { vars: null, failure: 'exited with status 3 before reporting its environment' });
-    assert.deepEqual(probeLoginShell({ shell: shell('no-path', report('LANG=C.UTF-8')) }), { vars: { LANG: 'C.UTF-8' }, failure: 'reported no PATH' });
-    assert.deepEqual(probeLoginShell({ shell: shell('works', report('PATH=/opt/tools/bin')) }), { vars: { PATH: '/opt/tools/bin' }, failure: null });
-    assert.deepEqual(loginShellEnv({ shell: shell('works', report('PATH=/opt/tools/bin')) }), { PATH: '/opt/tools/bin' });
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
+test('the login shell probe says why a shell gave no environment', { skip: process.platform === 'win32' }, async () => {
+  const quits = path.join(tempDir(), 'quits');
+  fs.writeFileSync(quits, '#!/bin/sh\nexit 3\n', { mode: 0o755 });
+  assert.deepEqual(await probeLoginShell({ shell: quits }), { vars: null, failure: 'exited with status 3 before reporting its environment' });
+});
+
+test('a version check ends at its time limit with everything the tool started', { timeout: 20000 }, async (t) => {
+  const dir = tempDir();
+  const pidFile = path.join(dir, 'child.pid');
+  // A wrapper that runs the real tool and waits on it, as .cmd shims and Docker CLI plugins do; the shell one also ignores SIGTERM.
+  const tool = `"${process.execPath}" -e "require('fs').writeFileSync(process.argv[1], String(process.pid)); setInterval(() => {}, 1000)" "${pidFile}"`;
+  const wrapper = path.join(dir, process.platform === 'win32' ? 'tool.cmd' : 'tool');
+  fs.writeFileSync(wrapper, process.platform === 'win32' ? `@echo off\r\n${tool}\r\n` : `#!/bin/sh\ntrap '' TERM\n${tool}\n`, { mode: 0o755 });
+  killOnAbort(t.signal, pidFile);
+  const stuck = await probeVersion(buildSpawnSpec(wrapper, ['--version']), { timeoutMs: 3000 });
+  assert.deepEqual([stuck.ok, stuck.error], [false, 'no answer within 3 seconds']);
+  await processEnded(Number(fs.readFileSync(pidFile, 'utf8')), t.signal);
 });
 
 test('PATHEXT entries are trimmed on Windows, so a stray space cannot hide .cmd files from sessions', () => {

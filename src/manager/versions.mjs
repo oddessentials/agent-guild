@@ -48,8 +48,8 @@ export function diagnosticLine(text) {
 
 export async function probeVersion(spec, { env, timeoutMs = 15000, parse = parseVersion } = {}) {
   try {
-    // Asking for a version changes nothing, so a tool that ignores SIGTERM is killed outright.
-    const { stdout, stderr } = await runSpec(spec, { env, timeoutMs, killSignal: 'SIGKILL' });
+    // Asking for a version changes nothing, so at the limit the tool and all it started are killed outright.
+    const { stdout, stderr } = await runSpec(spec, { env, timeoutMs, killTree: true });
     return { ok: true, version: parse(`${stdout}\n${stderr}`), stdout, exitCode: 0, error: null };
   } catch (err) {
     const error = err.killed

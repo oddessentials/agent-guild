@@ -40,10 +40,12 @@
   the login shell's PATH, because apps started from Finder or the Dock do not
   get it. The shell runs in its own session and is stopped after 8 seconds,
   with anything its profile started, so a slow or prompting profile cannot
-  hold up the manager. On Windows it runs `.cmd` and `.ps1` shims through `cmd.exe` or
-  PowerShell, because ConPTY can only start real executables. It also checks
-  each tool's installed and latest versions, and builds the sessions that
-  install, update and uninstall a tool.
+  hold up the manager; stopping the manager or doctor stops it too. On Windows
+  it runs `.cmd` and `.ps1` shims through `cmd.exe` or PowerShell, because
+  ConPTY can only start real executables. It also checks each tool's installed
+  and latest versions; a version check that passes its time limit is ended with
+  everything it started. It builds the sessions that install, update and
+  uninstall a tool.
 * **Manager environment** (`environment.mjs`, `environment-probe.mjs`,
   `environment-pins.mjs`, `environment-system.mjs`). Read-only snapshots,
   separate from providers and from install or repair. The manager scope is the PATH of the manager

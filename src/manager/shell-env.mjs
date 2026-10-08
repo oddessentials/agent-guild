@@ -13,6 +13,7 @@
 import fs from 'node:fs';
 import { execFile, spawn, spawnSync } from 'node:child_process';
 import path from 'node:path';
+import { endWithProcess, killGroup } from './command-resolver.mjs';
 
 const START = '__AGENT_GUILD_PATH_START__';
 const END = '__AGENT_GUILD_PATH_END__';
@@ -63,11 +64,8 @@ const LOGIN_SHELL_ARGS = ['-l', '-i', '-c', `printf '%s' ${START}; command env; 
 // The login shell runs in its own session, as it does under a manager started
 // at sign-in or boot, so it cannot prompt on this terminal and the time limit
 // ends it with everything its profile started. Interactive shells ignore
-// SIGTERM, so the limit uses SIGKILL.
-function endLoginShell(pid) {
-  if (!(pid > 0)) return;
-  try { process.kill(-pid, 'SIGKILL'); } catch { /* already gone */ }
-}
+// SIGTERM, so the limit uses SIGKILL, and so does this process exiting or
+// being stopped, since the terminal's Ctrl+C no longer reaches the shell.
 
 /**
  * PATH and the locale variables the user's login shell exports, as
@@ -75,31 +73,51 @@ function endLoginShell(pid) {
  * phrase that follows "the login shell".
  */
 export function probeLoginShell({ shell, env = process.env, timeoutMs = LOGIN_SHELL_TIMEOUT_MS } = {}) {
-  if (process.platform === 'win32' || !shell) return { vars: null, failure: null };
-  const result = spawnSync(shell, LOGIN_SHELL_ARGS, {
-    encoding: 'utf8',
-    timeout: timeoutMs,
-    killSignal: 'SIGKILL',
-    detached: true,
-    stdio: ['ignore', 'pipe', 'ignore'],
-    env: { ...env, AGENT_GUILD_RESOLVING_ENV: '1' },
+  if (process.platform === 'win32' || !shell) return Promise.resolve({ vars: null, failure: null });
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn(shell, LOGIN_SHELL_ARGS, {
+        detached: true,
+        stdio: ['ignore', 'pipe', 'ignore'],
+        env: { ...env, AGENT_GUILD_RESOLVING_ENV: '1' },
+      });
+    } catch (err) {
+      return resolve({ vars: null, failure: `could not start (${err.code || err.message})` });
+    }
+    let stdout = '';
+    let settled = false;
+    const end = () => killGroup(child.pid);
+    const release = endWithProcess(end);
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      release();
+      resolve(result);
+    };
+    const timer = setTimeout(() => {
+      end();
+      child.stdout.destroy();
+      finish({ vars: null, failure: `did not finish within ${timeoutMs / 1000} seconds` });
+    }, timeoutMs);
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.on('error', (err) => {
+      const why = { ENOENT: 'does not exist', EACCES: 'cannot be run (permission denied)' }[err.code];
+      finish({ vars: null, failure: why || `could not start (${err.code || err.message})` });
+    });
+    child.on('close', (status, signal) => {
+      const vars = parseEnvOutput(stdout, ['PATH', ...LOCALE_VARS]);
+      if (!vars) finish({ vars: null, failure: `${signal ? `was ended by ${signal}` : `exited with status ${status}`} before reporting its environment` });
+      else finish({ vars, failure: vars.PATH ? null : 'reported no PATH' });
+    });
   });
-  if (result.error?.code === 'ETIMEDOUT') {
-    endLoginShell(result.pid);
-    return { vars: null, failure: `did not finish within ${timeoutMs / 1000} seconds` };
-  }
-  if (result.error) {
-    const why = { ENOENT: 'does not exist', EACCES: 'cannot be run (permission denied)' }[result.error.code];
-    return { vars: null, failure: why || `could not start (${result.error.code || result.error.message})` };
-  }
-  const vars = parseEnvOutput(result.stdout, ['PATH', ...LOCALE_VARS]);
-  if (!vars) return { vars: null, failure: `${result.signal ? `was ended by ${result.signal}` : `exited with status ${result.status}`} before reporting its environment` };
-  return { vars, failure: vars.PATH ? null : 'reported no PATH' };
 }
 
 /** PATH and the locale variables the user's login shell exports, or null. */
-export function loginShellEnv(options) {
-  return probeLoginShell(options).vars;
+export async function loginShellEnv(options) {
+  return (await probeLoginShell(options)).vars;
 }
 
 function readAppleLocale() {
@@ -130,12 +148,12 @@ export function trimPathExt(env, platform = process.platform) {
 }
 
 /** `platform`, `env`, `shellEnv` and `locale` are replaceable in tests. */
-export function resolveBaseEnv({ platform = process.platform, env: source = process.env, shellEnv = loginShellEnv, locale = macLocale } = {}) {
+export async function resolveBaseEnv({ platform = process.platform, env: source = process.env, shellEnv = loginShellEnv, locale = macLocale } = {}) {
   const env = trimPathExt({ ...source }, platform);
   // Set before asking the shell, so macOS's /etc/zprofile keeps it rather than putting its C.UTF-8 in its place.
   if (platform === 'darwin' && !LOCALE_VARS.some((name) => env[name])) env.LANG = locale();
   if (env.AGENT_GUILD_SKIP_SHELL_ENV === '1') return env;
-  const shell = shellEnv({ shell: env.SHELL, env }) || {};
+  const shell = await shellEnv({ shell: env.SHELL, env }) || {};
   if (shell.PATH) env.PATH = mergePathLists(shell.PATH, env.PATH);
   if (platform === 'darwin') for (const name of LOCALE_VARS) if (shell[name]) env[name] = shell[name];
   return env;
@@ -197,30 +215,9 @@ export async function readWindowsPath({ env = process.env, timeoutMs = 5000, que
   return [machine, user].filter(Boolean).map((value) => expandWindowsVars(value, env)).join(';');
 }
 
-export function readLoginShellPath({ shell = process.env.SHELL, timeoutMs = LOGIN_SHELL_TIMEOUT_MS } = {}) {
-  if (!shell) return Promise.resolve(null);
-  return new Promise((resolve) => {
-    let stdout = '';
-    let child;
-    try {
-      child = spawn(shell, LOGIN_SHELL_ARGS, {
-        detached: process.platform !== 'win32',
-        stdio: ['ignore', 'pipe', 'ignore'],
-        env: { ...process.env, AGENT_GUILD_RESOLVING_ENV: '1' },
-      });
-    } catch {
-      return resolve(null);
-    }
-    // In its own session the shell would outlive a manager that exits mid-read, so it goes too.
-    const end = () => endLoginShell(child.pid);
-    const done = (value) => { clearTimeout(timer); process.off('exit', end); resolve(value); };
-    const timer = setTimeout(() => { end(); done(null); }, timeoutMs);
-    process.once('exit', end);
-    child.stdout.setEncoding('utf8');
-    child.stdout.on('data', (chunk) => { stdout += chunk; });
-    child.on('error', () => done(null));
-    child.on('close', () => done(parsePathFromEnvOutput(stdout)));
-  });
+export async function readLoginShellPath({ shell = process.env.SHELL, timeoutMs } = {}) {
+  if (!shell) return null;
+  return (await probeLoginShell({ shell, timeoutMs })).vars?.PATH ?? null;
 }
 
 export function pathReader(platform = process.platform, env = process.env) {

@@ -55,7 +55,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
   const remoteSettings = loadRemoteAccess(paths.remoteAccess);
   ensureDataDir();
   const token = loadOrCreateToken();
-  const baseEnv = resolveBaseEnv();
+  const baseEnv = await resolveBaseEnv();
   const environment = new Environment({ env: baseEnv });
   const remoteAccess = new RemoteAccess({ file: paths.remoteAccess, env: baseEnv, loaded: remoteSettings, ...remoteOptions });
   const webDir = path.join(rootDir, 'web');
