@@ -51,6 +51,17 @@ missing tool shows **Install** on its card; Antigravity CLI and Docker Agent,
 which are not on npm, show their install commands instead. Docker Agent is
 the `docker agent` plugin; Docker Desktop 4.63 and later ship it.
 
+On Linux, Docker Engine does not include the plugin; the card's install
+command adds it. The card needs Docker's own `docker` command: Podman's
+`docker` and the Ubuntu snap of Docker do not load the plugin. If you
+installed Docker Agent on its own as `docker-agent` (Homebrew or a release
+download), add this to [`providers.json`](docs/configuration.md#providersjson),
+then run `agent-guild restart`:
+
+```json
+{ "providers": [{ "id": "docker", "command": "docker-agent", "args": ["run"], "versionArgs": ["version"] }] }
+```
+
 ## Setup
 
 ### Access token
