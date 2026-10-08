@@ -1492,20 +1492,33 @@ test('a Codex probe that loads no hooks is asked again, not trusted for good', a
   assert.ok(again.args.length > 0);
 });
 
-test('a Docker Agent probe that finds no hook flags is asked again by the next session, as installing the plugin leaves docker as it was', async () => {
+test('a Docker Agent probe is asked again by the next session, as installing or removing the plugin leaves docker as it was', async () => {
   const { SessionHooks, dockerHookArgs } = await import('../src/manager/session-hooks.mjs');
   const docker = path.join(toolsDir, win ? 'docker.cmd' : 'docker');
-  const registry = { providers: [], env: process.env, platform: process.platform, resolve: () => docker };
+  const refreshed = [];
+  const registry = { providers: [], env: process.env, platform: process.platform, resolve: () => docker, refreshVersions: async (opts) => { refreshed.push(opts); } };
   const hooks = new SessionHooks({ registry, dir: path.join(home, 'probe-docker'), version: '1' });
   const provider = { id: 'docker-retry', tool: 'Docker Agent', reporting: 'docker', args: ['agent', 'run'], env: { FAKE_DOCKER_NO_PLUGIN: '1' } };
   const missing = await hooks.launch(provider, null);
   assert.equal(missing.reporting.state, 'unsupported');
   assert.match(missing.reporting.reason, /not installed/);
   assert.deepEqual(missing.args, []);
+  assert.deepEqual(refreshed, [], 'the first answer is what the card already shows');
   provider.env = {};
   const installed = await hooks.launch(provider, null);
   assert.equal(installed.reporting.state, 'pending', 'the plugin is installed: the next session gets the hooks, within the retry interval');
   assert.deepEqual(installed.args, dockerHookArgs());
+  assert.deepEqual(refreshed, [{ force: true, ids: ['docker-retry'] }], 'the card\'s version line is refreshed when the plugin appears');
+  // Two sessions starting together share one probe.
+  const [a, b] = await Promise.all([hooks.launch(provider, null), hooks.launch(provider, null)]);
+  assert.equal(a.reporting.state, 'pending');
+  assert.equal(b.reporting.state, 'pending');
+  assert.equal(refreshed.length, 1, 'an unchanged answer refreshes nothing');
+  provider.env = { FAKE_DOCKER_NO_PLUGIN: '1' };
+  const removed = await hooks.launch(provider, null);
+  assert.equal(removed.reporting.state, 'unsupported', 'the plugin is gone: the next session is told so, not handed flags docker would reject');
+  assert.deepEqual(removed.args, []);
+  assert.equal(refreshed.length, 2, 'and the card\'s version line is refreshed again');
 });
 
 test('turning Antigravity reporting on refreshes an older copy of its plugin, and refuses another plugin\'s name', async (t) => {

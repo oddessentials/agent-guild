@@ -266,12 +266,14 @@ export class SessionHooks {
     let mtime = null;
     try { mtime = fs.statSync(resolved).mtimeMs; } catch { /* probe anyway */ }
     const cached = this.probes.get(provider.id);
+    // A probe still running is shared. A finished one is reused while the binary is the same, for good when it found the
+    // hooks and for the retry interval when it did not, unless it asked to be rechecked by the next session (Docker Agent).
     const fresh = cached && cached.resolved === resolved && cached.mtime === mtime
-      && (cached.ok || !cached.done || (!cached.recheck && Date.now() - cached.at < this.probeRetryMs));
+      && (!cached.done || (!cached.recheck && (cached.ok || Date.now() - cached.at < this.probeRetryMs)));
     if (fresh) return cached.promise;
     const env = { ...this.registry.env, ...provider.env };
     const platform = this.registry.platform;
-    const entry = { resolved, mtime, at: Date.now(), ok: false, done: false, recheck: false };
+    const entry = { resolved, mtime, at: Date.now(), ok: false, done: false, recheck: false, error: false, hookFlags: null };
     entry.promise = (async () => {
       if (provider.reporting === 'codex') {
         const result = await probeCodex(resolved, { env, platform, timeoutMs: this.probeTimeoutMs });
@@ -284,11 +286,17 @@ export class SessionHooks {
       const help = `${stdout}\n${stderr}`;
       const hookFlags = DOCKER_HOOK_FLAGS.every((flag) => helpLists(help, flag));
       entry.ok = provider.reporting !== 'docker' || hookFlags;
-      // Docker Agent is a plugin of the docker command checked here, and installing or updating the plugin leaves
-      // docker's path and mtime as they were. So an answer without hook flags is asked again by the next session.
-      entry.recheck = !entry.ok;
+      // Docker Agent is a plugin of the docker command checked here, and installing, updating or removing the plugin
+      // leaves docker's path and mtime as they were. So every Docker answer is asked again by the next session; its
+      // help takes well under a second. When the plugin has come or gone, the card's version line is refreshed too,
+      // as after an install (finishInstall), rather than at its hourly check.
+      if (provider.reporting === 'docker') {
+        entry.recheck = true;
+        entry.hookFlags = hookFlags;
+        if (cached?.done && !cached.error && cached.hookFlags !== hookFlags) this.registry.refreshVersions?.({ force: true, ids: [provider.id] }).catch(() => {});
+      }
       return { pluginDir: helpLists(help, '--plugin-dir'), hookFlags };
-    })().catch((err) => ({ error: err.message })).finally(() => { entry.done = true; });
+    })().catch((err) => { entry.error = true; return { error: err.message }; }).finally(() => { entry.done = true; });
     this.probes.set(provider.id, entry);
     return entry.promise;
   }
