@@ -551,7 +551,9 @@ export class Session extends EventEmitter {
       for (const shell of [...this.shells.values()]) {
         if (!shell.task) continue;
         if (!running.has(shell.task)) this._endShell(shell);
-        else if (shell.kind !== running.get(shell.task)) this._setKind(shell, running.get(shell.task));
+        // The list can promote a command to a monitor, never the reverse: Claude Code lists a monitor that runs a shell
+        // command as a shell, and only the monitor's own background report tells them apart.
+        else if (running.get(shell.task) === 'monitor') this._setKind(shell, 'monitor');
       }
       const known = new Set([...this.shells.values()].map((shell) => shell.task));
       for (const [each, kind] of running) if (!known.has(each) && !this._endedTasks.has(each)) this._addShell({ task: each, kind }, { now: true });

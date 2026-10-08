@@ -93,7 +93,12 @@ test('a session shows each shell command from its start until its end, whatever 
   drawn();
   assert.deepEqual(session.toJSON().shells.map((sh) => sh.kind), ['monitor'], 'a watch the tool keeps is a monitor, not a command');
   report({ shell: 'running', tasks: [{ id: 'tw1', kind: 'shell' }] });
-  assert.deepEqual(session.toJSON().shells.map((sh) => sh.kind), ['shell'], 'the tool\'s own list wins');
+  assert.deepEqual(session.toJSON().shells.map((sh) => sh.kind), ['monitor'], 'Claude Code lists a monitor that runs a command as a shell, so the list never demotes one');
+  report({ shell: 'start', key: 'w2', match: m(9) });
+  report({ shell: 'background', key: 'w2', task: 'tw2' });
+  report({ shell: 'running', tasks: [{ id: 'tw1' }, { id: 'tw2', kind: 'monitor' }] });
+  drawn();
+  assert.deepEqual(session.toJSON().shells.map((sh) => sh.kind), ['monitor', 'monitor'], 'but it can promote a command to a monitor');
   report({ shell: 'running', tasks: [] });
   assert.equal(drawn(), 0);
 
