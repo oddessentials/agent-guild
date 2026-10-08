@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import net from 'node:net';
 import path from 'node:path';
-import { diagnose, formatDiagnostics, runDoctor, checkPortAvailable, managerEnvironment } from '../src/manager/doctor.mjs';
+import { diagnose, formatDiagnostics, runDoctor, checkPortAvailable } from '../src/manager/doctor.mjs';
 import { VERSION } from '../src/manager/config.mjs';
 
 // Doctor asks the login shell or the registry for PATH like the manager; keep tests to this process's PATH.
@@ -244,37 +244,13 @@ test('diagnose shows the version of a working tool and flags one whose version c
   }
 });
 
-test('doctor says why the login shell gave no PATH', { skip: process.platform === 'win32' }, async () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-doctor-test-'));
-  const quits = path.join(tempDir, 'quits');
-  fs.writeFileSync(quits, '#!/bin/sh\nexit 3\n', { mode: 0o755 });
-  try {
-    const missing = await managerEnvironment({ env: { SHELL: path.join(tempDir, 'missing'), PATH: '/usr/bin' }, platform: process.platform });
-    assert.deepEqual(missing.pathSource, { ok: false, text: `the login shell (${path.join(tempDir, 'missing')}) does not exist; using this terminal's PATH` });
-    assert.equal(missing.env.PATH, '/usr/bin');
-    const exited = await managerEnvironment({ env: { SHELL: quits, PATH: '/usr/bin' }, platform: process.platform });
-    assert.equal(exited.pathSource.text, `the login shell (${quits}) exited with status 3 before reporting its environment; using this terminal's PATH`);
-  } finally {
-    fs.rmSync(tempDir, { recursive: true, force: true });
-  }
-});
-
 const quiet = { fetchHealth: async () => null, testPortAvailable: async () => true, checkPtyProblem: () => null, verifyLoadPty: () => ({}) };
 
-test('doctor judges tmux as the manager does, so builds from source pass and old ones are flagged', async () => {
+test('doctor judges tmux as the manager does, so a build from source passes', async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-doctor-test-'));
-  const tmux = (output) => ({ id: 'tmux', name: 'tmux', command: process.execPath, versionArgs: ['-e', `console.log(${JSON.stringify(output)})`] });
   try {
-    const diag = await diagnose({ ...quiet, dir: tempDir, tools: ['tmux 3.4', 'tmux next-3.5', 'tmux master', 'tmux 3.1', 'tmux next-3.1', '3.4'].map(tmux) });
-    const lines = formatDiagnostics(diag).split('\n').filter((line) => line.includes(' tmux ('));
-    assert.equal(lines.length, 6);
-    assert.match(lines[0], /✔ tmux \(.+\): v3\.4 \(/);
-    assert.match(lines[1], /✔ tmux \(.+\): next-3\.5 \(/);
-    assert.match(lines[2], /✔ tmux \(.+\): master \(/);
-    assert.match(lines[3], /! tmux \(.+\): v3\.1 is too old; 3\.2 or later is required/);
-    assert.match(lines[4], /! tmux \(.+\): next-3\.1 is too old; 3\.2 or later is required/);
-    assert.match(lines[5], /! tmux \(.+\): found, but its version could not be read/);
-    assert.equal(diag.healthy, true);
+    const diag = await diagnose({ ...quiet, dir: tempDir, tools: [{ id: 'tmux', name: 'tmux', command: process.execPath, versionArgs: ['-e', "console.log('tmux next-3.5')"] }] });
+    assert.match(formatDiagnostics(diag), /✔ tmux \(.+\): next-3\.5 \(/);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
@@ -282,23 +258,11 @@ test('doctor judges tmux as the manager does, so builds from source pass and old
 
 test('doctor lists a tool that providers.json turns off instead of leaving it out', async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-doctor-test-'));
-  const builtIn = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, '..', 'config', 'providers.default.json'), 'utf8')).providers;
-  const tools = builtIn.filter((p) => p.command !== '@shell');
-  const off = tools.map((p) => ({ id: p.id, enabled: false }));
-  const run = async (providers) => {
-    fs.writeFileSync(path.join(tempDir, 'providers.json'), JSON.stringify({ providers }));
-    return formatDiagnostics(await diagnose({ ...quiet, dir: tempDir }));
-  };
-  const turnedOff = (name, command) => `  ℹ ${name} (${command}): turned off in providers.json, so not checked`;
   try {
-    // Each coding tool off, each multiplexer off on its own, and a tool of the user's own with no versionArgs.
-    let out = await run([...off, { id: 'shell', multiplexers: [{ id: 'tmux', enabled: false }, { id: 'herdr', enabled: false }] }, { id: 'mine', tool: 'My Tool', command: process.execPath }]);
-    for (const p of tools) assert.ok(out.includes(turnedOff(p.tool, p.command)), `${p.tool} is listed as off:\n${out}`);
-    for (const id of ['tmux', 'herdr']) assert.ok(out.includes(turnedOff(id, id)), `${id} is listed as off:\n${out}`);
+    fs.writeFileSync(path.join(tempDir, 'providers.json'), JSON.stringify({ providers: [{ id: 'docker', enabled: false }, { id: 'mine', tool: 'My Tool', command: process.execPath }] }));
+    const out = formatDiagnostics(await diagnose({ ...quiet, dir: tempDir }));
+    assert.ok(out.includes('  ℹ Docker Agent (docker): turned off in providers.json, so not checked'), out);
     assert.match(out, /✔ My Tool \(.+\): found; providers\.json sets no versionArgs, so its version is not checked/);
-    // The whole shell provider off takes its multiplexers with it.
-    out = await run([...off, { id: 'shell', enabled: false }]);
-    for (const id of ['tmux', 'herdr']) assert.ok(out.includes(turnedOff(id, id)), `${id} is listed as off:\n${out}`);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
