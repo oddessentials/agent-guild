@@ -5,13 +5,20 @@
 #
 # Agent Guild passes session_start, pre_tool_use, post_tool_use, stop and
 # session_end to every session it starts on the command line. This file adds
-# before_llm_call, which has no flag and carries the model.
+# before_llm_call, which has no flag and carries the model, and marks
+# pre_tool_use preempt_yolo: in autonomous mode (--yolo, --safety autonomous)
+# Docker Agent skips the ordinary pre_tool_use hooks, so without this a running
+# command never reaches the card.
+#
+# Tool events (pre_tool_use, post_tool_use) take matcher blocks; the others
+# take the hooks directly. Docker Agent skips the whole file if any event is
+# written the other way.
 session_start:
-  - hooks:
-      - type: command
-        command: agent-guild-report --hook
+  - type: command
+    command: agent-guild-report --hook
 pre_tool_use:
   - matcher: shell
+    preempt_yolo: true
     hooks:
       - type: command
         command: agent-guild-report --hook
@@ -21,14 +28,11 @@ post_tool_use:
       - type: command
         command: agent-guild-report --hook
 before_llm_call:
-  - hooks:
-      - type: command
-        command: agent-guild-report --hook
+  - type: command
+    command: agent-guild-report --hook
 stop:
-  - hooks:
-      - type: command
-        command: agent-guild-report --hook
+  - type: command
+    command: agent-guild-report --hook
 session_end:
-  - hooks:
-      - type: command
-        command: agent-guild-report --hook
+  - type: command
+    command: agent-guild-report --hook

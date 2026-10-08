@@ -4,7 +4,7 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { resolveCommand, resolveAllCommands, buildSpawnSpec, quoteForCmd } from '../src/manager/command-resolver.mjs';
 import { mergePathLists, parsePathFromEnvOutput, parseEnvOutput, macLocale, resolveBaseEnv, weavePaths, parseRegValue, expandWindowsVars, readWindowsPath, trimPathExt } from '../src/manager/shell-env.mjs';
 import { mergeEnv, cleanResumeId, modelFromArgs, SessionManager } from '../src/manager/session-manager.mjs';
@@ -17,7 +17,7 @@ import { runPlan, encodePlan, removeFile, RUNNER } from '../src/manager/uninstal
 import { hookToReports, claudeStatuslineToReport, formatStatusLine } from '../src/report/hooks.mjs';
 import { shimContents, writeReportShims, prependPath, fileUrl, SHIM_NAME, LOADER_NAME } from '../src/manager/report-shims.mjs';
 import { bundleFiles, codexHookArgs, codexTrustArgs, codexHooksFrom, antigravityInstalled, antigravityPluginDir, antigravityConfigFile, antigravityPluginEnabled, helpLists, REPORT_COMMAND, dockerHookArgs, DOCKER_HOOK_FLAGS } from '../src/manager/session-hooks.mjs';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { parseVersion, compareVersions, probeVersion, diagnosticLine, latestVersion } from '../src/manager/versions.mjs';
 import { SelfUpdate, isDevelopmentBuild } from '../src/manager/self-update.mjs';
 import { glibcVersion, loadPty, ptyBuild, ptyBuildCommand, ptyBuiltHere, ptyDir, ptyProblem, ptyRestartProblem } from '../src/manager/pty.mjs';
@@ -499,6 +499,9 @@ test('a failed version command never yields a version', async () => {
   assert.equal(diagnosticLine('error: unrecognized subcommand\n\nUsage: tool'), 'error: unrecognized subcommand');
   assert.equal(diagnosticLine('  throw new Error(\n        ^\n\nTypeError: x is not a function\n    at main'), 'TypeError: x is not a function');
   assert.equal(diagnosticLine("'tool' is not recognized as an internal or external command,\r\noperable program or batch file."), 'operable program or batch file.');
+  // The Docker CLI without the agent plugin, two spellings across its versions.
+  assert.equal(diagnosticLine("docker: unknown command: docker agent\n\nRun 'docker --help' for more information"), 'docker: unknown command: docker agent');
+  assert.equal(diagnosticLine("docker: 'agent' is not a docker command.\nSee 'docker --help'"), "docker: 'agent' is not a docker command.");
   assert.equal(diagnosticLine(''), '');
 
   const userFile = path.join(dir, 'providers.json');
@@ -3977,6 +3980,34 @@ test('Docker Agent gets its reporting hooks as run flags, after `agent run` and 
   const docker = registry.get('docker');
   assert.deepEqual([docker.tool, docker.args, docker.versionArgs, docker.reporting, docker.history, docker.package], ['Docker Agent', ['agent', 'run'], ['agent', 'version'], 'docker', 'docker', null]);
   assert.deepEqual(registry.spawnSpec(docker, ['--yolo'], 'abc', dockerHookArgs()).args, ['agent', 'run', ...dockerHookArgs(), '--session', 'abc', '--yolo']);
+});
+
+test('the Docker Agent hooks example fires pre_tool_use in autonomous mode too', () => {
+  const example = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'examples', 'docker-agent-hooks.yaml'), 'utf8');
+  // Each top-level event's block, by name; pre_tool_use must carry preempt_yolo, since --yolo skips the ordinary lane.
+  const blocks = Object.fromEntries([...example.matchAll(/^([a-z_]+):\n((?:[ \t#].*\n?|\n)*)/gm)].map((m) => [m[1], m[2]]));
+  assert.ok(blocks.pre_tool_use, 'the example has pre_tool_use hooks');
+  assert.equal((blocks.pre_tool_use.match(/^  - /gm) || []).length, (blocks.pre_tool_use.match(/^    preempt_yolo: true$/gm) || []).length, 'every pre_tool_use entry is preempt_yolo');
+  for (const event of ['session_start', 'post_tool_use', 'stop', 'session_end', 'before_llm_call']) assert.ok(blocks[event] && !/preempt_yolo/.test(blocks[event]), `${event} has no preempt_yolo, which Docker Agent rejects there`);
+});
+
+test('reading Docker Agent history prints no SQLite experimental warning', async (t) => {
+  let sqlite;
+  try { sqlite = await import('node:sqlite'); } catch { t.skip('node:sqlite is not in this Node.js'); return; }
+  const dir = tempDir();
+  const db = new sqlite.DatabaseSync(path.join(dir, 'session.db'));
+  db.exec(`create table sessions (id text primary key, created_at text, title text default '', working_dir text default '', parent_id text);
+    create table session_items (id integer primary key autoincrement, session_id text not null, position integer not null, item_type text not null, agent_name text, message_json text);`);
+  db.prepare('insert into sessions (id, created_at, title, working_dir) values (?, ?, ?, ?)').run('s1', '2026-10-07T20:00:00Z', 'Quiet', '/w');
+  db.close();
+  // A fresh process, so the only node:sqlite import is the reader's own; other warnings still print.
+  const reader = pathToFileURL(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src', 'manager', 'session-history.mjs')).href;
+  const script = `const m = await import(${JSON.stringify(reader)}); console.log(JSON.stringify((await m.listDockerSessions(process.argv[1])).map((s) => s.id))); process.emitWarning('still printed', 'OtherWarning');`;
+  const child = spawnSync(process.execPath, ['--input-type=module', '-e', script, dir], { encoding: 'utf8', timeout: 20000, windowsHide: true, env: { ...process.env, NODE_OPTIONS: '' } });
+  assert.equal(child.status, 0, child.stderr);
+  assert.equal(child.stdout.trim(), '["s1"]');
+  assert.doesNotMatch(child.stderr, /ExperimentalWarning/);
+  assert.match(child.stderr, /OtherWarning: still printed/);
 });
 
 test('Docker Agent sessions come from its SQLite store, titled by name or first prompt, sub-sessions left out', async (t) => {

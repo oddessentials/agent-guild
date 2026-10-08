@@ -305,7 +305,8 @@ export class SessionHooks {
       return { args: [], reporting: { state: 'unavailable', reason: `${tool} did not accept Agent Guild's reporting hooks${probe?.error ? ` (${probe.error})` : ''}.` } };
     }
     if (mode === 'docker') {
-      if (probe?.hookFlags) return { args: dockerHookArgs(), reporting: pending(tool, 'starts its session') };
+      // Docker Agent fires session_start when the first prompt runs, not when its TUI opens.
+      if (probe?.hookFlags) return { args: dockerHookArgs(), reporting: pending(tool, 'runs its first prompt') };
       if (probe?.error) {
         return { args: [], reporting: { state: 'unavailable', reason: `Could not check whether ${tool} takes Agent Guild's reporting hooks (${probe.error}).` } };
       }

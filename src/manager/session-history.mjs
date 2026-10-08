@@ -309,10 +309,19 @@ export function dockerAgentDataDir(env = process.env) {
 let sqlite = null;
 async function loadSqlite() {
   if (!sqlite) {
+    // Node.js 22 to 24 print "SQLite is an experimental feature" to stderr when the module loads; the manager's log
+    // need not carry it. The warning is emitted synchronously by the import, so the filter covers only that call.
+    const emitWarning = process.emitWarning;
+    process.emitWarning = (warning, ...rest) => {
+      if (/SQLite/.test(String(warning?.message ?? warning))) return;
+      emitWarning.call(process, warning, ...rest);
+    };
     try {
       sqlite = await import('node:sqlite');
     } catch {
       throw new HistoryError('Docker Agent history needs Node.js 22.13 or newer, which has node:sqlite');
+    } finally {
+      process.emitWarning = emitWarning;
     }
   }
   return sqlite;

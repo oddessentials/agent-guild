@@ -9,7 +9,7 @@ report these through hooks or the `agent-guild-report` command.
 | --- | --- |
 | Claude Code, Codex CLI, Grok Build | Automatic when the installed version can load hooks for one session. Otherwise the card says so; add the hooks yourself below. |
 | Antigravity CLI | Turn on **Agent reporting** on its card. Reports the model, not helper agents. |
-| Docker Agent | Automatic when the installed version takes `--hook-*` flags. Reports shell commands and turns; the model needs the hooks below. |
+| Docker Agent | Automatic when the installed version takes `--hook-*` flags. Reports from the first prompt: shell commands in its approval modes, and turns. The model, and shell commands in autonomous mode (`--yolo`, `--safety autonomous`), need the hooks below. |
 
 To add hooks yourself, merge the example into the tool's own hook settings.
 Where those live is in each tool's hooks docs.
