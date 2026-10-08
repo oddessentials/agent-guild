@@ -131,7 +131,7 @@ export class SessionManager extends EventEmitter {
     const workDir = this.resolveCwd(cwd);
     const signIn = this.registry.account(provider, account);
     const runShell = this.registry.shellFor(provider, shell);
-    const hooks = this.sessionHooks ? await this.sessionHooks.launch(provider) : { args: [], reporting: null };
+    const hooks = this.sessionHooks ? await this.sessionHooks.launch(provider, { resume: resumeId, args: args || [] }) : { args: [], reporting: null };
     // Checked after the await, so an install that started meanwhile is seen.
     if (this.installing.has(provider.id) || this.installsRunningFor(provider.id) > 0) {
       throw httpError(409, `${provider.tool} is being installed, updated or removed; start it once that finishes`, 'install_in_progress');
@@ -140,10 +140,13 @@ export class SessionManager extends EventEmitter {
     const sessionName = cleanName(name)
       || (provider.accounts.length > 1 ? `${provider.tool} · ${signIn.label}` : null)
       || (runShell && this.registry.shellsFor(provider).shells.length > 1 ? `${provider.tool} · ${runShell.label}` : null);
-    const options = { provider, cwd: workDir, cols, rows, name: sessionName, resume: resumeId, account: signIn, reporting: hooks.reporting, extraEnv: runShell?.env };
+    const extraEnv = hooks.env ? { ...runShell?.env, ...hooks.env } : runShell?.env;
+    const options = { provider, cwd: workDir, cols, rows, name: sessionName, resume: resumeId, account: signIn, reporting: hooks.reporting, extraEnv };
     if (runShell?.multiplexer) return this._withMultiplexerStart(provider.id, runShell.id, () => this._startMultiplexer(options, runShell, args || []));
     const spawnSpec = this.registry.spawnSpec(provider, args || [], resumeId, hooks.args, runShell);
     const session = this._spawn({ ...options, spawnSpec });
+    // A session id Agent Guild chose is known before the tool reports it, so the card can resume it at once.
+    if (hooks.toolSessionId) session.reportToolSession({ toolSessionId: hooks.toolSessionId }, 'launch');
     const model = modelFromArgs([...provider.args, ...(args || [])]);
     if (model) session.setModel({ name: model }, 'args');
     return session;

@@ -141,7 +141,6 @@
       "versionArgs": ["agent", "version"],
       "history": "docker",
       "reporting": "docker",
-      "hooks": { "path": "hooks.d/agent-guild.yaml", "example": "docker-agent-hooks.yaml" },
       "args": ["agent", "run"],
       "resumeArgs": ["--session", "{id}"],
       "color": "#2496ED",

@@ -286,6 +286,7 @@ export class ProviderRegistry extends EventEmitter {
     this._refreshing = null;
     this._npmRegistry = null;
     this.reportingEnabled = null;
+    this.reportingNote = null;
     this.multiplexers = new MultiplexerRegistry(this, multiplexerOptions);
     this.multiplexerState = null;
     this.reload();
@@ -700,6 +701,7 @@ export class ProviderRegistry extends EventEmitter {
       historySource: provider.history === null ? null : typeof provider.history === 'string' ? provider.history : 'command',
       reporting: provider.reporting,
       reportingEnabled: this.reportingEnabled?.(provider) ?? null,
+      reportingNote: this.reportingNote?.(provider) ?? null,
       accounts: provider.accounts.map((account) => ({ id: account.id, label: account.label })),
       shells: shells?.shells.map((shell) => ({ id: shell.id, label: shell.label, path: shell.path, multiplexer: Boolean(shell.multiplexer) })) ?? null,
       defaultShell: shells?.defaultId ?? null,

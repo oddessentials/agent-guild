@@ -147,7 +147,8 @@ its panes; its request `args` are added to `herdr` and kept for reattachment,
 including across manager restarts. Older saved cards without arguments
 continue to use the default herdr invocation.
 For a tool whose agent reporting has to be turned on (`reporting` is `antigravity`),
-`reportingEnabled` says whether it is.
+or whose model reporting does (`docker`, 1.100.0 and later), `reportingEnabled`
+says whether it is. `reportingNote` says why that switch cannot be used, or is null.
 `usageUrl`, `billingUrl` and `cloudUrl` are `https://` links to the vendor's
 usage and billing pages and web app, or null when none is configured. A usage snapshot's `plan` is
 the subscription tier.
@@ -689,7 +690,7 @@ All paths are under `/api/v1`.
 | GET | `/environment?scope=&cwd=&id=` | | Environment snapshot for `scope` (`manager` when omitted, or `project`, `session`, `launch`). `cwd` is required for `project`. `id` is required for `session`. Starts the initial check for that scope without waiting. |
 | POST | `/environment/refresh` | `{ scope?, cwd?, id? }` | `202` with that scope's snapshot; starts or joins its read-only check. `{}` refreshes the manager. |
 | POST | `/providers/reload` | | Re-reads `providers.json`. |
-| POST | `/providers/:id/reporting` | `{ enabled }` | `{ provider }`: turns agent reporting on or off for a tool that needs it, by running the tool's own `plugin install`, `plugin enable` or `plugin uninstall`. An older copy of the Agent Guild plugin is replaced, and one turned off in the tool is turned back on. 400 `not_applicable` for any other tool, 409 `plugin_conflict` when another plugin has the same name, 502 `reporting_setup_failed` when the tool's command fails. |
+| POST | `/providers/:id/reporting` | `{ enabled }` | `{ provider }`: turns agent reporting on or off for a tool that needs it, by running the tool's own `plugin install`, `plugin enable` or `plugin uninstall`. An older copy of the Agent Guild plugin is replaced, and one turned off in the tool is turned back on. For Docker Agent it writes or removes `agent-guild.yaml` in its `hooks.d` folder, which reports the model. 400 `not_applicable` for any other tool, 409 `plugin_conflict` when another plugin or file has the same name, 409 `provider_unsupported` when the Docker Agent version loads no `hooks.d` files, 500 or 502 `reporting_setup_failed` when the file or the tool's command fails. |
 | POST | `/providers/:id/install` | `{ force? }` | `201 { session }`: a session running `npm install -g <package>@<version>`, or `updateCommand` when the tool is installed. 400 `not_updatable` when an installed tool has no `updateCommand`. 503 `release_unresolved` or 409 `release_incomplete` when the release cannot be read or its platform build is not published; nothing is run. 409 `install_in_progress` while one is already running. 409 `provider_in_use` (with `running`, the session count) while the provider's sessions are running, unless `force` is true. |
 | POST | `/providers/:id/uninstall` | `{ path, force? }` | `201 { session }`: a session that removes the copy at `path`, one of the provider's `installs`. It runs that copy's package manager, or deletes the paths its installer created, the launcher last, so a copy that fails partway with files left is still listed and can be uninstalled again. 400 `bad_request` without `path`, 404 `unknown_copy` when no copy is at `path`, 400 `not_removable` when its `uninstall` is null. 409 `install_in_progress` and `provider_in_use` as for `install`. |
 | GET | `/usage` | | `{ usage: Usage[] }`, one per account of every provider with a `usageSource`. |

@@ -1578,22 +1578,37 @@ function renderAccounts(card, provider) {
   });
 }
 
+// Docker Agent reports its agents and commands with no setup; the switch adds its model.
+const REPORTING_SWITCH = {
+  docker: {
+    what: 'Model reporting',
+    off: (p) => `Stop showing the model of new ${p.tool} sessions, and remove Agent Guild's hook file from ${p.tool}'s hooks.d folder.`,
+    on: (p) => `Show the model of new ${p.tool} sessions: Agent Guild adds a hook file to ${p.tool}'s hooks.d folder. ${p.tool} runs it before each model call; outside Agent Guild it does nothing.`,
+  },
+  antigravity: {
+    what: 'Agent reporting',
+    off: (p) => `Remove the Agent Guild plugin from ${p.tool}. New sessions stop reporting their model.`,
+    on: (p) => `Install the Agent Guild plugin into ${p.tool} with "${p.command} plugin install", so new sessions show their model and can be resumed. It does nothing in sessions started outside Agent Guild.`,
+  },
+};
+
 function renderReportingSetup(card, provider) {
   const row = card.querySelector('.reporting-row');
-  row.hidden = !provider.available || typeof provider.reportingEnabled !== 'boolean';
+  const note = provider.reportingNote;
+  row.hidden = !provider.available || (typeof provider.reportingEnabled !== 'boolean' && !note);
   if (row.hidden) return;
+  const words = REPORTING_SWITCH[provider.reporting] ?? REPORTING_SWITCH.antigravity;
   const on = provider.reportingEnabled;
-  row.querySelector('.reporting-text').textContent = `Agent reporting ${on ? 'on' : 'off'}`;
   const button = row.querySelector('.reporting-toggle');
+  row.querySelector('.reporting-text').textContent = note || `${words.what} ${on ? 'on' : 'off'}`;
+  button.hidden = Boolean(note);
   button.textContent = on ? 'Turn off' : 'Turn on';
-  button.title = on
-    ? `Remove the Agent Guild plugin from ${provider.tool}. New sessions stop reporting their model.`
-    : `Install the Agent Guild plugin into ${provider.tool} with "${provider.command} plugin install", so new sessions show their model and can be resumed. It does nothing in sessions started outside Agent Guild.`;
+  button.title = on ? words.off(provider) : words.on(provider);
   button.onclick = async () => {
     button.disabled = true;
     try {
       await api('POST', `/providers/${provider.id}/reporting`, { enabled: !on });
-      toast(on ? `Agent reporting is off for ${provider.tool}.` : `Agent reporting is on for ${provider.tool}. It applies to new sessions.`);
+      toast(on ? `${words.what} is off for ${provider.tool}.` : `${words.what} is on for ${provider.tool}. It applies to new sessions.`);
     } catch (err) {
       if (err instanceof AuthError) return showAuth(err.message);
       toast(err.message, 10000);

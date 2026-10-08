@@ -1,38 +1,19 @@
-# Docker Agent hooks that report to the Agent Guild session they run in.
-# Save as ~/.config/cagent/hooks.d/agent-guild.yaml (or under the folder
+# Docker Agent hook that shows a running shell command on the card in
+# autonomous mode (--yolo, --safety autonomous). Save as
+# ~/.config/cagent/hooks.d/agent-guild-autonomous.yaml (or under the folder
 # DOCKER_AGENT_CONFIG_DIR names). Outside an Agent Guild session the command
 # does nothing.
 #
 # Agent Guild passes session_start, pre_tool_use, post_tool_use, stop and
-# session_end to every session it starts on the command line. This file adds
-# before_llm_call, which has no flag and carries the model, and marks
-# pre_tool_use preempt_yolo: in autonomous mode (--yolo, --safety autonomous)
-# Docker Agent skips the ordinary pre_tool_use hooks, so without this a running
-# command never reaches the card.
-#
-# Tool events (pre_tool_use, post_tool_use) take matcher blocks; the others
-# take the hooks directly. Docker Agent skips the whole file if any event is
-# written the other way.
-session_start:
-  - type: command
-    command: agent-guild-report --hook
+# session_end to every session it starts, and the Docker Agent card's
+# Model reporting switch adds the model. In autonomous mode Docker Agent skips
+# the ordinary pre_tool_use hooks, so a command shows only once it ends.
+# preempt_yolo runs this one in every mode, before Docker Agent asks for
+# approval: in the approval modes a command then shows as running while it
+# waits for you.
 pre_tool_use:
   - matcher: shell
     preempt_yolo: true
     hooks:
       - type: command
         command: agent-guild-report --hook
-post_tool_use:
-  - matcher: shell
-    hooks:
-      - type: command
-        command: agent-guild-report --hook
-before_llm_call:
-  - type: command
-    command: agent-guild-report --hook
-stop:
-  - type: command
-    command: agent-guild-report --hook
-session_end:
-  - type: command
-    command: agent-guild-report --hook

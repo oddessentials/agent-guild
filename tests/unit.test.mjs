@@ -4026,6 +4026,25 @@ test('Docker Agent hook events report the session, its shell commands, its turns
   assert.deepEqual(hookToReports({ hook_event_name: 'PreToolUse', turn_id: 't', tool_name: 'shell', tool_use_id: 'x', tool_input: { command: ['ls'] } }), []);
 });
 
+test('a Docker Agent sub-agent\'s own session reports a sub-agent, not the main session\'s end, turn or model', () => {
+  // Captured from docker-agent v1.149.0: root ran transfer_task to helper, which ran one shell command (--yolo).
+  const root = '11111111-2222-4333-8444-555555555555';
+  const helper = { session_id: '89ac0beb-aaaa-4d27-b562-36f308181f6e', cwd: '/w', agent_name: 'helper' };
+  const reports = (input) => hookToReports(input, { rootSession: root });
+  const agent = { agentId: `hook-${helper.session_id}`, name: 'helper', kind: 'subagent' };
+  assert.deepEqual(reports({ ...helper, hook_event_name: 'session_start', source: 'startup' }), [{ ...agent, status: 'working' }]);
+  assert.deepEqual(reports({ ...helper, hook_event_name: 'before_llm_call', model_id: 'dmr/ai/qwen2.5:3B-Q4_K_M', iteration: 1 }), []);
+  assert.deepEqual(reports({ ...helper, hook_event_name: 'post_tool_use', tool_name: 'shell', tool_use_id: 'NzNHr8eNuxvzWFbvL04MaXHpybRLfGeP', tool_input: { cmd: 'echo helper-ran', cwd: '.' }, safety_policy: 'autonomous', tool_response: 'helper-ran' }),
+    [{ shell: 'end', key: 'NzNHr8eNuxvzWFbvL04MaXHpybRLfGeP' }]);
+  const [start] = reports({ ...helper, hook_event_name: 'pre_tool_use', tool_name: 'shell', tool_use_id: 'c2', tool_input: { cmd: 'go test' } });
+  assert.equal(start.agentId, agent.agentId, 'its commands are its own');
+  assert.deepEqual(reports({ ...helper, hook_event_name: 'stop', last_user_message: 'Please proceed.', stop_response: 'Done' }), []);
+  assert.deepEqual(reports({ ...helper, hook_event_name: 'session_end', reason: 'stream_ended' }), [{ ...agent, status: 'done' }]);
+  assert.deepEqual(reports({ ...helper, hook_event_name: 'subagent_stop', stop_response: 'Done', parent_session_id: root }), [{ ...agent, status: 'done' }]);
+  // The main session reports as before.
+  assert.deepEqual(reports({ session_id: root, cwd: '/w', hook_event_name: 'session_end', agent_name: 'root', reason: 'stream_ended' }), [{ shell: 'reset' }]);
+});
+
 test('Docker Agent gets its reporting hooks as run flags, after `agent run` and before --session', () => {
   assert.deepEqual(dockerHookArgs(), DOCKER_HOOK_FLAGS.flatMap((flag) => [flag, REPORT_COMMAND]));
   // `docker agent run --help`, v1.149.0
@@ -4056,7 +4075,7 @@ test('the Docker Agent hooks example fires pre_tool_use in autonomous mode too',
   const blocks = Object.fromEntries([...example.matchAll(/^([a-z_]+):\n((?:[ \t#].*\n?|\n)*)/gm)].map((m) => [m[1], m[2]]));
   assert.ok(blocks.pre_tool_use, 'the example has pre_tool_use hooks');
   assert.equal((blocks.pre_tool_use.match(/^  - /gm) || []).length, (blocks.pre_tool_use.match(/^    preempt_yolo: true$/gm) || []).length, 'every pre_tool_use entry is preempt_yolo');
-  for (const event of ['session_start', 'post_tool_use', 'stop', 'session_end', 'before_llm_call']) assert.ok(blocks[event] && !/preempt_yolo/.test(blocks[event]), `${event} has no preempt_yolo, which Docker Agent rejects there`);
+  assert.deepEqual(Object.keys(blocks), ['pre_tool_use'], 'Docker Agent rejects preempt_yolo on any other event, and the flags cover the rest');
 });
 
 test('reading Docker Agent history prints no SQLite experimental warning', async (t) => {
