@@ -236,6 +236,19 @@ export function loadProviders({ userFile, platform = process.platform } = {}) {
   return { providers, warnings };
 }
 
+/** Weave a PATH read from the registry or a login shell into `env`. True when PATH changed. */
+export function mergeDiscoveredPath(env, discovered, platform) {
+  const key = pathKey(env, platform);
+  const current = platform === 'win32' ? reconcileHerdrPath(env[key] || '', env) : env[key] || '';
+  const next = weavePaths(current, discovered, {
+    delimiter: platform === 'win32' ? ';' : ':',
+    caseInsensitive: platform === 'win32',
+  });
+  if (next === (env[key] || '')) return false;
+  env[key] = next;
+  return true;
+}
+
 // Why a copy cannot be removed here. An unrecognised copy's own guidance is about updating it.
 function removalGuidance(provider, install, where) {
   if (install.channel !== 'unknown' && install.guidance) return install.guidance;
@@ -341,14 +354,7 @@ export class ProviderRegistry extends EventEmitter {
   async _readPath() {
     const discovered = await Promise.resolve().then(() => this.pathReader()).catch(() => null);
     if (discovered === null || discovered === undefined) return false;
-    const key = pathKey(this.env, this.platform);
-    const current = this.platform === 'win32' ? reconcileHerdrPath(this.env[key] || '', this.env) : this.env[key] || '';
-    const next = weavePaths(current, discovered, {
-      delimiter: this.platform === 'win32' ? ';' : ':',
-      caseInsensitive: this.platform === 'win32',
-    });
-    if (next === (this.env[key] || '')) return false;
-    this.env[key] = next;
+    if (!mergeDiscoveredPath(this.env, discovered, this.platform)) return false;
     this._installs.clear();
     this._shells.clear();
     return true;

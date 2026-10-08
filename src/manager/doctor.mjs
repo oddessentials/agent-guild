@@ -6,6 +6,7 @@
 // - Terminal PTY subsystem (node-pty native bindings, C library)
 // - Data directory permissions and configuration files
 // - Session manager health, port availability, and version alignment
+// - The PATH the manager gives coding tools (login shell or Windows registry)
 // - Availability and versions of AI coding tools and terminal multiplexers
 
 import fs from 'node:fs';
@@ -24,67 +25,76 @@ import {
 import { ptyProblem, loadPty, glibcVersion } from './pty.mjs';
 import { defaultBoot } from './launch.mjs';
 import { startupState, startupSummary, unitPort } from './systemd-service.mjs';
-import { resolveCommand } from './command-resolver.mjs';
-import { probeVersion } from './versions.mjs';
+import { buildSpawnSpec, resolveCommand } from './command-resolver.mjs';
+import { parseTmuxVersion, probeVersion } from './versions.mjs';
+import { loadProviders, mergeDiscoveredPath } from './providers.mjs';
+import { pathReader, probeLoginShell, resolveBaseEnv } from './shell-env.mjs';
+import { tmuxSupported } from './shells.mjs';
 
 export const MIN_NODE_MAJOR = 22;
+const MIN_TMUX = '3.2';
 
-const KNOWN_TOOLS = [
-  {
-    id: 'google',
-    name: 'Antigravity CLI',
-    command: 'agy',
-    versionArgs: ['--version'],
-    install: 'curl -fsSL https://antigravity.google/cli/install.sh | bash',
-    docs: 'https://antigravity.google/docs/cli/install',
-  },
-  {
-    id: 'anthropic',
-    name: 'Claude Code',
-    command: 'claude',
-    versionArgs: ['--version'],
-    install: 'curl -fsSL https://claude.ai/install.sh | bash',
-    docs: 'https://code.claude.com/docs/en/setup',
-  },
-  {
-    id: 'openai',
-    name: 'Codex CLI',
-    command: 'codex',
-    versionArgs: ['--version'],
-    install: 'curl -fsSL https://chatgpt.com/codex/install.sh | sh',
-    docs: 'https://github.com/openai/codex',
-  },
-  {
-    id: 'xai',
-    name: 'Grok Build',
-    command: 'grok',
-    versionArgs: ['--version'],
-    install: 'curl -fsSL https://x.ai/cli/install.sh | bash',
-    docs: 'https://docs.x.ai/build/overview',
-  },
-  {
-    id: 'docker',
-    name: 'Docker Agent',
-    command: 'docker',
-    versionArgs: ['agent', 'version'],
-    install: 'sh -c \'d="${DOCKER_CONFIG:-$HOME/.docker}/cli-plugins" && mkdir -p "$d" && curl -fsSL "https://github.com/docker/docker-agent/releases/latest/download/docker-agent-$(uname -s | tr "[:upper:]" "[:lower:]")-$(uname -m | sed "s/x86_64/amd64/;s/aarch64/arm64/")" -o "$d/docker-agent.tmp" && chmod +x "$d/docker-agent.tmp" && mv -f "$d/docker-agent.tmp" "$d/docker-agent"\'',
-    docs: 'https://docker.github.io/docker-agent/getting-started/installation/',
-  },
-  {
-    id: 'tmux',
-    name: 'tmux',
-    command: 'tmux',
-    versionArgs: ['-V'],
-    docs: 'https://github.com/tmux/tmux/wiki/Installing',
-  },
-  {
-    id: 'herdr',
-    name: 'herdr',
-    command: 'herdr',
-    versionArgs: ['--version'],
-    docs: 'https://herdr.dev/docs/install/',
-  },
-];
+/**
+ * Every coding tool and multiplexer the built-in configuration knows, then
+ * any providers.json adds, from the same configuration the manager reads. One
+ * that providers.json turns off stays in the list, marked disabled.
+ */
+function knownTools(dir, platform) {
+  const builtIn = loadProviders({ platform }).providers;
+  const { providers } = loadProviders({ userFile: path.join(dir, 'providers.json'), platform });
+  const enabled = new Map(providers.map((p) => [p.id, p]));
+  const ordered = [...builtIn.map((p) => enabled.get(p.id) ?? p), ...providers.filter((p) => !builtIn.some((b) => b.id === p.id))];
+  // The manager offers multiplexers through its shell providers only.
+  const shellMultiplexers = (list) => list.filter((p) => p.command === '@shell').flatMap((p) => p.multiplexers);
+  const offered = new Map(shellMultiplexers(providers).map((m) => [m.id, m]));
+  const multiplexers = new Map([...shellMultiplexers(builtIn), ...offered.values()].map((m) => [m.id, offered.get(m.id) ?? m]));
+  return [
+    ...ordered.filter((p) => p.command !== '@shell').map((p) => ({
+      id: p.id, name: p.tool, command: p.command, versionArgs: p.versionArgs, env: p.env, install: p.install, docs: p.docs, disabled: !enabled.has(p.id),
+    })),
+    ...[...multiplexers.values()].map((m) => ({ id: m.id, name: m.tool, command: m.id, versionArgs: m.versionArgs, docs: m.docs, disabled: !offered.has(m.id) })),
+  ];
+}
+
+/**
+ * The environment the manager gives coding tools, and where its PATH came
+ * from. On macOS and Linux the manager's later login-shell reads repeat the
+ * one resolveBaseEnv makes, so one read is enough here.
+ */
+export async function managerEnvironment({ env, platform }) {
+  let answer = null;
+  const base = await resolveBaseEnv({ platform, env, shellEnv: async (opts) => (answer = await probeLoginShell(opts)).vars });
+  const keep = (text) => ({ env: base, pathSource: { ok: false, text: `${text}; using this terminal's PATH` } });
+  if (env.AGENT_GUILD_SKIP_SHELL_ENV === '1') return { env: base, pathSource: { ok: true, text: "this terminal's PATH (AGENT_GUILD_SKIP_SHELL_ENV=1)" } };
+  if (platform === 'win32') {
+    const discovered = await Promise.resolve().then(() => pathReader(platform, base)?.()).catch(() => null);
+    if (!discovered) return keep('could not read PATH from the Windows registry');
+    mergeDiscoveredPath(base, discovered, platform);
+    return { env: base, pathSource: { ok: true, text: 'Windows registry PATH merged' } };
+  }
+  if (!env.SHELL) return keep('SHELL is not set, so there is no login shell to ask');
+  if (!answer?.vars?.PATH) return keep(`the login shell (${env.SHELL}) ${answer?.failure ?? 'reported no PATH'}`);
+  return { env: base, pathSource: { ok: true, text: `login shell (${env.SHELL}) PATH merged` } };
+}
+
+async function checkTool(tool, env, platform) {
+  if (tool.disabled) return { ...tool, found: false };
+  const resolved = resolveCommand(tool.command, env, platform);
+  if (!resolved) return { ...tool, found: false };
+  if (!tool.versionArgs) return { ...tool, found: true, path: resolved, versionStatus: 'unchecked' };
+  const tmux = tool.id === 'tmux';
+  const probe = await probeVersion(buildSpawnSpec(resolved, tool.versionArgs, env, platform), {
+    env: { ...env, ...tool.env },
+    parse: tmux ? parseTmuxVersion : undefined,
+  });
+  const result = { ...tool, found: true, path: resolved, version: probe.version, versionError: probe.error };
+  if (!probe.ok) return { ...result, versionStatus: 'failed' };
+  if (!tmux) return { ...result, versionStatus: probe.version ? 'ok' : 'unavailable' };
+  // The manager's own test decides, so builds such as "tmux next-3.5" and "tmux master" pass.
+  const text = probe.stdout.trim();
+  if (!text.startsWith('tmux ')) return { ...result, versionStatus: 'unavailable' };
+  return { ...result, build: text.slice(5).trim(), versionStatus: tmuxSupported(text) ? 'ok' : 'outdated' };
+}
 
 /** Check if port is available to listen on host. */
 export function checkPortAvailable(port, host = DEFAULT_HOST) {
@@ -127,7 +137,8 @@ export async function diagnose({
   testPortAvailable = checkPortAvailable,
   checkPtyProblem = ptyProblem,
   verifyLoadPty = loadPty,
-  tools = KNOWN_TOOLS,
+  tools = null,
+  resolveEnv = managerEnvironment,
 } = {}) {
   // 1. Node.js check
   const nodeMajor = Number(nodeVersion.split('.')[0]);
@@ -259,26 +270,9 @@ export async function diagnose({
   }
   managerInfo.startup = startup;
 
-  // 6. AI Assistants & Tools
-  const toolResults = [];
-  for (const tool of tools) {
-    const resolved = resolveCommand(tool.command, env, platform);
-    if (resolved) {
-      const spec = { command: resolved, args: tool.versionArgs || ['--version'] };
-      const probe = await probeVersion(spec, { env, timeoutMs: 3000 });
-      toolResults.push({
-        ...tool,
-        found: true,
-        path: resolved,
-        version: probe.version,
-      });
-    } else {
-      toolResults.push({
-        ...tool,
-        found: false,
-      });
-    }
-  }
+  // 6. AI Assistants & Tools, checked in parallel so the slowest sets the pace
+  const { env: toolEnv, pathSource } = await resolveEnv({ env, platform });
+  const toolResults = await Promise.all((tools ?? knownTools(dir, platform)).map((tool) => checkTool(tool, toolEnv, platform)));
 
   const fatalIssues = [
     !nodeOk && 'Node.js version is below requirement (>= 22)',
@@ -287,16 +281,24 @@ export async function diagnose({
     managerInfo.portConflict && `Port ${port} is in use by another process`,
     providersConfig && !providersConfig.valid && `providers.json contains invalid JSON: ${providersConfig.error}`,
   ].filter(Boolean);
+  // Each matches a "!" line in the report.
+  const warnings = [
+    !pathSource.ok && `PATH: ${pathSource.text}`,
+    managerInfo.running && !managerInfo.versionMatch && `the running manager is v${managerInfo.version}, installed is v${VERSION}`,
+    ...toolResults.filter((t) => ['failed', 'unavailable', 'outdated'].includes(t.versionStatus)).map((t) => `${t.name}: ${t.versionStatus}`),
+  ].filter(Boolean);
 
   return {
     version: VERSION,
     node,
     sys,
+    pathSource,
     pty,
     storage,
     manager: managerInfo,
     tools: toolResults,
     fatalIssues,
+    warnings,
     healthy: fatalIssues.length === 0,
   };
 }
@@ -319,6 +321,8 @@ export function formatDiagnostics(diag) {
 
   const glibcNote = diag.sys.glibc ? ` · glibc ${diag.sys.glibc}` : '';
   lines.push(`  ✔ Platform: ${diag.sys.platform} (${diag.sys.arch} · ${diag.sys.type} ${diag.sys.release}${glibcNote})`);
+
+  lines.push(`  ${diag.pathSource.ok ? '✔' : '!'} PATH: ${diag.pathSource.text}`);
 
   if (diag.pty.ok) {
     lines.push('  ✔ Terminal subsystem (node-pty): functional');
@@ -382,23 +386,31 @@ export function formatDiagnostics(diag) {
   // 4. Tools
   lines.push('Coding Assistants & Multiplexers:');
   for (const t of diag.tools) {
-    if (t.found) {
-      const v = t.version ? `v${t.version}` : 'installed';
-      lines.push(`  ✔ ${t.name} (${t.command}): ${v} (${t.path})`);
+    const version = t.version ? `v${t.version}` : t.build;
+    const tip = t.install ? ` · install: ${t.install}` : t.docs ? ` · ${t.docs}` : '';
+    if (t.disabled) {
+      lines.push(`  ℹ ${t.name} (${t.command}): turned off in providers.json, so not checked`);
+    } else if (t.found && t.versionStatus === 'failed') {
+      lines.push(`  ! ${t.name} (${t.command}): found, but "${[t.command, ...t.versionArgs].join(' ')}" failed: ${t.versionError} (${t.path})${tip}`);
+    } else if (t.found && t.versionStatus === 'unavailable') {
+      lines.push(`  ! ${t.name} (${t.command}): found, but its version could not be read (${t.path})`);
+    } else if (t.found && t.versionStatus === 'outdated') {
+      lines.push(`  ! ${t.name} (${t.command}): ${version} is too old; ${MIN_TMUX} or later is required (${t.path})${t.docs ? ` · ${t.docs}` : ''}`);
+    } else if (t.found && t.versionStatus === 'unchecked') {
+      lines.push(`  ✔ ${t.name} (${t.command}): found; providers.json sets no versionArgs, so its version is not checked (${t.path})`);
+    } else if (t.found) {
+      lines.push(`  ✔ ${t.name} (${t.command}): ${version} (${t.path})`);
     } else {
-      const tip = t.install ? ` · install: ${t.install}` : t.docs ? ` · ${t.docs}` : '';
       lines.push(`  ℹ ${t.name} (${t.command}): not found on PATH${tip}`);
     }
   }
   lines.push('');
 
   // Summary
-  if (diag.healthy) {
-    lines.push('Doctor found no fatal problems.');
-  } else {
-    const count = diag.fatalIssues.length;
-    lines.push(`Doctor found ${count} fatal problem${count === 1 ? '' : 's'} (see ✖ above).`);
-  }
+  const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
+  const fatal = diag.healthy ? 'no fatal problems' : `${plural(diag.fatalIssues.length, 'fatal problem')} (see ✖ above)`;
+  const warned = diag.warnings.length ? ` and ${plural(diag.warnings.length, 'warning')} (see ! above)` : '';
+  lines.push(`Doctor found ${fatal}${warned}.`);
 
   return lines.join('\n');
 }

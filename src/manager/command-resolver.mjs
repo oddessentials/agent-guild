@@ -3,7 +3,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 
 function isExecutableFile(file, platform) {
   try {
@@ -90,6 +90,47 @@ export function killWindowsTree(pid, done = () => {}, { tree = true } = {}) {
   execFile('taskkill', ['/PID', String(pid), ...(tree ? ['/T'] : []), '/F'], { windowsHide: true, timeout: 5000 }, (err) => done(err));
 }
 
+/** SIGKILL a process group started with `detached`, so nothing it started outlives it. */
+export function killGroup(pid) {
+  if (!(pid > 0)) return;
+  try { process.kill(-pid, 'SIGKILL'); } catch { /* already gone */ }
+}
+
+// A child in its own session no longer gets the terminal's Ctrl+C, so these
+// end it when this process exits or is stopped by a signal.
+const STOP_SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+const pendingKills = new Set();
+
+function killPending() {
+  for (const kill of pendingKills) kill();
+}
+
+function unhook() {
+  process.off('exit', killPending);
+  for (const signal of STOP_SIGNALS) process.off(signal, onStopSignal);
+}
+
+function onStopSignal(signal) {
+  killPending();
+  pendingKills.clear();
+  unhook();
+  // With no handler of its own left, the process ends as the signal would have ended it.
+  if (process.listenerCount(signal) === 0) process.kill(process.pid, signal);
+}
+
+/** Run `kill` if this process exits or is stopped before the returned release is called. */
+export function endWithProcess(kill) {
+  if (!pendingKills.size) {
+    process.on('exit', killPending);
+    for (const signal of STOP_SIGNALS) process.on(signal, onStopSignal);
+  }
+  pendingKills.add(kill);
+  return () => {
+    pendingKills.delete(kill);
+    if (!pendingKills.size) unhook();
+  };
+}
+
 /** Quote one argument for a cmd.exe command line. */
 export function quoteForCmd(arg) {
   const s = String(arg);
@@ -124,23 +165,83 @@ export function buildSpawnSpec(resolvedPath, args = [], env = process.env, platf
 }
 
 /**
+ * Run a file in its own process group, which execFile cannot do, and at the
+ * time limit SIGKILL the whole group. Settles as execFile would.
+ */
+function runInOwnGroup(file, args, { env, cwd, timeoutMs, input }) {
+  return new Promise((resolve, reject) => {
+    let child;
+    try {
+      child = spawn(file, args, { env, cwd, detached: true });
+    } catch (err) {
+      return reject(Object.assign(err, { stdout: '', stderr: '' }));
+    }
+    let stdout = '';
+    let stderr = '';
+    let timedOut = false;
+    let settled = false;
+    const end = () => killGroup(child.pid);
+    const release = endWithProcess(end);
+    const finish = (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      release();
+      if (err) reject(Object.assign(err, { stdout, stderr }));
+      else resolve({ stdout, stderr });
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      end();
+      // A process that left the group may still hold the pipes.
+      child.stdout.destroy();
+      child.stderr.destroy();
+    }, timeoutMs);
+    child.stdout.setEncoding('utf8').on('data', (chunk) => { stdout += chunk; });
+    child.stderr.setEncoding('utf8').on('data', (chunk) => { stderr += chunk; });
+    child.on('error', finish);
+    child.on('close', (code, signal) => {
+      if (code === 0 && !timedOut) return finish(null);
+      finish(Object.assign(new Error(`Command failed: ${[file, ...args].join(' ')}`), { code, signal, killed: timedOut }));
+    });
+    if (input !== undefined) child.stdin.end(input);
+  });
+}
+
+/**
  * Run a spawn spec to completion without a terminal, with `input` on its
  * stdin. Resolves with its output; rejects with the error carrying stdout
- * and stderr.
+ * and stderr. At the time limit the child gets SIGTERM; with `killTree`, it
+ * and everything it started are killed outright, for wrappers such as .cmd
+ * shims and Docker CLI plugins whose own children would otherwise live on.
  */
-export function runSpec(spec, { env, timeoutMs = 15000, cwd, input } = {}) {
+export function runSpec(spec, { env, timeoutMs = 15000, cwd, input, killTree = false } = {}) {
+  const tree = killTree && timeoutMs > 0;
+  if (tree && process.platform !== 'win32') return runInOwnGroup(spec.file, spec.args, { env, cwd, timeoutMs, input });
   return new Promise((resolve, reject) => {
-    const opts = { env, cwd, timeout: timeoutMs, windowsHide: true, maxBuffer: 1024 * 1024 };
+    const opts = { env, cwd, timeout: tree ? 0 : timeoutMs, windowsHide: true, maxBuffer: 1024 * 1024 };
     let args = spec.args;
     if (typeof args === 'string') {
       opts.windowsVerbatimArguments = true;
       args = [args];
     }
+    let timer = null;
+    let timedOut = false;
     try {
       const child = execFile(spec.file, args, opts, (err, stdout, stderr) => {
-        if (err) reject(Object.assign(err, { stdout, stderr }));
+        clearTimeout(timer);
+        if (err) reject(Object.assign(err, { stdout, stderr }, timedOut && { killed: true }));
         else resolve({ stdout, stderr });
       });
+      // taskkill /T finds the children through the wrapper, so it runs before the wrapper goes.
+      if (tree && child.pid) {
+        timer = setTimeout(() => {
+          timedOut = true;
+          killWindowsTree(child.pid);
+          child.stdout?.destroy();
+          child.stderr?.destroy();
+        }, timeoutMs);
+      }
       if (input !== undefined) child.stdin.end(input);
     } catch (err) {
       reject(err);

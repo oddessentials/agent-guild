@@ -7,6 +7,9 @@ import path from 'node:path';
 import { diagnose, formatDiagnostics, runDoctor, checkPortAvailable } from '../src/manager/doctor.mjs';
 import { VERSION } from '../src/manager/config.mjs';
 
+// Doctor asks the login shell or the registry for PATH like the manager; keep tests to this process's PATH.
+process.env.AGENT_GUILD_SKIP_SHELL_ENV = '1';
+
 test('checkPortAvailable returns true for a free port and false for an occupied port', async () => {
   const srv = net.createServer();
   await new Promise((resolve) => srv.listen(0, '127.0.0.1', resolve));
@@ -210,6 +213,56 @@ test('runDoctor writes formatted output and returns boolean health status', asyn
     assert.equal(ok, true);
     assert.match(output, /Agent Guild Doctor/);
     assert.match(output, /Doctor found no fatal problems/);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('diagnose shows the version of a working tool and flags one whose version check fails', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-doctor-test-'));
+  const fakeTool = path.join(import.meta.dirname, 'fixtures', 'fake-tool.mjs');
+  try {
+    const diag = await diagnose({
+      dir: tempDir,
+      fetchHealth: async () => null,
+      testPortAvailable: async () => true,
+      checkPtyProblem: () => null,
+      verifyLoadPty: () => ({}),
+      tools: [
+        { id: 'works', name: 'Works', command: process.execPath, versionArgs: [fakeTool, '--version'] },
+        { id: 'broken', name: 'Broken', command: process.execPath, versionArgs: ['-e', "console.error('docker: unknown command: docker agent'); process.exit(1)"], install: 'install-the-plugin' },
+      ],
+    });
+
+    assert.equal(diag.healthy, true);
+    const formatted = formatDiagnostics(diag);
+    assert.match(formatted, /✔ Works \(.+\): v1\.2\.3/);
+    assert.match(formatted, /! Broken \(.+\): found, but .+ failed: docker: unknown command: docker agent \(.+\) · install: install-the-plugin\n/);
+    assert.match(formatted, /Doctor found no fatal problems and 1 warning \(see ! above\)\./);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+const quiet = { fetchHealth: async () => null, testPortAvailable: async () => true, checkPtyProblem: () => null, verifyLoadPty: () => ({}) };
+
+test('doctor judges tmux as the manager does, so a build from source passes', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-doctor-test-'));
+  try {
+    const diag = await diagnose({ ...quiet, dir: tempDir, tools: [{ id: 'tmux', name: 'tmux', command: process.execPath, versionArgs: ['-e', "console.log('tmux next-3.5')"] }] });
+    assert.match(formatDiagnostics(diag), /✔ tmux \(.+\): next-3\.5 \(/);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('doctor lists a tool that providers.json turns off instead of leaving it out', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-doctor-test-'));
+  try {
+    fs.writeFileSync(path.join(tempDir, 'providers.json'), JSON.stringify({ providers: [{ id: 'docker', enabled: false }, { id: 'mine', tool: 'My Tool', command: process.execPath }] }));
+    const out = formatDiagnostics(await diagnose({ ...quiet, dir: tempDir }));
+    assert.ok(out.includes('  ℹ Docker Agent (docker): turned off in providers.json, so not checked'), out);
+    assert.match(out, /✔ My Tool \(.+\): found; providers\.json sets no versionArgs, so its version is not checked/);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
