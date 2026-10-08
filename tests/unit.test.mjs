@@ -494,7 +494,7 @@ test('a failed version command never yields a version', async () => {
   assert.equal(parseVersion('file:///C:/nodejs/v-24.20.0/nodejs-24.20.0/fake.js:107'), '24.20.0', 'the error text alone does parse as a version');
 
   const odd = await probeVersion(spec, { env: { ...process.env, FAKE_TOOL_VERSION_TEXT: 'fake-tool nightly build' } });
-  assert.deepEqual(odd, { ok: true, version: null, exitCode: 0, error: null });
+  assert.deepEqual(odd, { ok: true, version: null, stdout: 'fake-tool nightly build\n', exitCode: 0, error: null });
 
   assert.equal(diagnosticLine('error: unrecognized subcommand\n\nUsage: tool'), 'error: unrecognized subcommand');
   assert.equal(diagnosticLine('  throw new Error(\n        ^\n\nTypeError: x is not a function\n    at main'), 'TypeError: x is not a function');
@@ -1334,7 +1334,7 @@ test('versions are parsed, compared and looked up', async () => {
   assert.ok(compareVersions('1.2.3-beta', '1.2.3') < 0);
 
   const fake = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-tool.mjs');
-  assert.deepEqual(await probeVersion(buildSpawnSpec(process.execPath, [fake, '--version'])), { ok: true, version: '1.2.3', exitCode: 0, error: null });
+  assert.deepEqual(await probeVersion(buildSpawnSpec(process.execPath, [fake, '--version'])), { ok: true, version: '1.2.3', stdout: 'fake-tool 1.2.3\n', exitCode: 0, error: null });
   const absent = await probeVersion({ file: path.join(tempDir(), 'missing'), args: [] });
   assert.equal(absent.ok, false);
   assert.equal(absent.version, null);

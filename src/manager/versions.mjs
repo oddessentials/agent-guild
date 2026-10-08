@@ -49,12 +49,12 @@ export function diagnosticLine(text) {
 export async function probeVersion(spec, { env, timeoutMs = 15000, parse = parseVersion } = {}) {
   try {
     const { stdout, stderr } = await runSpec(spec, { env, timeoutMs });
-    return { ok: true, version: parse(`${stdout}\n${stderr}`), exitCode: 0, error: null };
+    return { ok: true, version: parse(`${stdout}\n${stderr}`), stdout, exitCode: 0, error: null };
   } catch (err) {
     const error = err.killed
       ? `no answer within ${Math.round(timeoutMs / 1000)} seconds`
       : diagnosticLine(`${err.stderr || ''}\n${err.stdout || ''}`) || String(err.message || err).slice(0, 240);
-    return { ok: false, version: null, exitCode: typeof err.code === 'number' ? err.code : null, error };
+    return { ok: false, version: null, stdout: err.stdout || '', exitCode: typeof err.code === 'number' ? err.code : null, error };
   }
 }
 

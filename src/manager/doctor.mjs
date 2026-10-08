@@ -26,9 +26,10 @@ import { ptyProblem, loadPty, glibcVersion } from './pty.mjs';
 import { defaultBoot } from './launch.mjs';
 import { startupState, startupSummary, unitPort } from './systemd-service.mjs';
 import { buildSpawnSpec, resolveCommand } from './command-resolver.mjs';
-import { compareTmuxVersions, parseTmuxVersion, probeVersion } from './versions.mjs';
+import { parseTmuxVersion, probeVersion } from './versions.mjs';
 import { loadProviders, mergeDiscoveredPath } from './providers.mjs';
 import { pathReader, probeLoginShell, resolveBaseEnv } from './shell-env.mjs';
+import { tmuxSupported } from './shells.mjs';
 
 export const MIN_NODE_MAJOR = 22;
 const MIN_TMUX = '3.2';
@@ -71,16 +72,13 @@ async function checkTool(tool, env, platform) {
     env: { ...env, ...tool.env },
     parse: tmux ? parseTmuxVersion : undefined,
   });
-  const versionStatus = !probe.ok ? 'failed' : probe.version ? 'ok' : 'unavailable';
-  return {
-    ...tool,
-    found: true,
-    path: resolved,
-    version: probe.version,
-    versionStatus,
-    versionError: probe.error,
-    outdated: tmux && versionStatus === 'ok' && compareTmuxVersions(probe.version, MIN_TMUX) < 0,
-  };
+  const result = { ...tool, found: true, path: resolved, version: probe.version, versionError: probe.error };
+  if (!probe.ok) return { ...result, versionStatus: 'failed' };
+  if (!tmux) return { ...result, versionStatus: probe.version ? 'ok' : 'unavailable' };
+  // The manager's own test decides, so builds such as "tmux next-3.5" and "tmux master" pass.
+  const text = probe.stdout.trim();
+  if (!text.startsWith('tmux ')) return { ...result, versionStatus: 'unavailable' };
+  return { ...result, build: text.slice(5).trim(), versionStatus: tmuxSupported(text) ? 'ok' : 'outdated' };
 }
 
 /** Check if port is available to listen on host. */
@@ -366,14 +364,15 @@ export function formatDiagnostics(diag) {
   // 4. Tools
   lines.push('Coding Assistants & Multiplexers:');
   for (const t of diag.tools) {
+    const version = t.version ? `v${t.version}` : t.build;
     if (t.found && t.versionStatus === 'failed') {
       lines.push(`  ! ${t.name} (${t.command}): found, but "${[t.command, ...t.versionArgs].join(' ')}" failed: ${t.versionError} (${t.path})`);
     } else if (t.found && t.versionStatus === 'unavailable') {
       lines.push(`  ! ${t.name} (${t.command}): found, but its version could not be read (${t.path})`);
-    } else if (t.found && t.outdated) {
-      lines.push(`  ! ${t.name} (${t.command}): v${t.version} is too old; ${MIN_TMUX} or later is required (${t.path})`);
+    } else if (t.found && t.versionStatus === 'outdated') {
+      lines.push(`  ! ${t.name} (${t.command}): ${version} is too old; ${MIN_TMUX} or later is required (${t.path})`);
     } else if (t.found) {
-      lines.push(`  ✔ ${t.name} (${t.command}): v${t.version} (${t.path})`);
+      lines.push(`  ✔ ${t.name} (${t.command}): ${version} (${t.path})`);
     } else {
       const tip = t.install ? ` · install: ${t.install}` : t.docs ? ` · ${t.docs}` : '';
       lines.push(`  ℹ ${t.name} (${t.command}): not found on PATH${tip}`);

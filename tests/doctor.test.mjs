@@ -257,3 +257,24 @@ test('doctor says why the login shell gave no PATH', { skip: process.platform ==
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+const quiet = { fetchHealth: async () => null, testPortAvailable: async () => true, checkPtyProblem: () => null, verifyLoadPty: () => ({}) };
+
+test('doctor judges tmux as the manager does, so builds from source pass and old ones are flagged', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-doctor-test-'));
+  const tmux = (output) => ({ id: 'tmux', name: 'tmux', command: process.execPath, versionArgs: ['-e', `console.log(${JSON.stringify(output)})`] });
+  try {
+    const diag = await diagnose({ ...quiet, dir: tempDir, tools: ['tmux 3.4', 'tmux next-3.5', 'tmux master', 'tmux 3.1', 'tmux next-3.1', '3.4'].map(tmux) });
+    const lines = formatDiagnostics(diag).split('\n').filter((line) => line.includes(' tmux ('));
+    assert.equal(lines.length, 6);
+    assert.match(lines[0], /✔ tmux \(.+\): v3\.4 \(/);
+    assert.match(lines[1], /✔ tmux \(.+\): next-3\.5 \(/);
+    assert.match(lines[2], /✔ tmux \(.+\): master \(/);
+    assert.match(lines[3], /! tmux \(.+\): v3\.1 is too old; 3\.2 or later is required/);
+    assert.match(lines[4], /! tmux \(.+\): next-3\.1 is too old; 3\.2 or later is required/);
+    assert.match(lines[5], /! tmux \(.+\): found, but its version could not be read/);
+    assert.equal(diag.healthy, true);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
