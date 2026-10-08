@@ -1962,7 +1962,14 @@ test('a hook run through the shell finds agent-guild-report on the session PATH'
   for (const [i, shell] of shells.entries()) {
     const payload = { session_id: 'claude-session', hook_event_name: 'SubagentStart', agent_id: `via-${shell}`, agent_type: 'Explore' };
     client.input(`hook ${shell} ${JSON.stringify(payload)}`);
-    await waitFor(() => (stripAnsi(client.output).match(/HOOK-EXIT:[^\r\n]*/g) || []).length > i, { timeout: 20000, label: `${shell} hook exit` });
+    // A cold PowerShell on a loaded runner takes well over the few seconds it usually needs; wait for it, bounded, and
+    // on a timeout show what the terminal had, so a late exit can be told from none.
+    try {
+      await waitFor(() => (stripAnsi(client.output).match(/HOOK-EXIT:[^\r\n]*/g) || []).length > i, { timeout: 60000, label: `${shell} hook exit` });
+    } catch (err) {
+      err.message += `\n--- stream tail ---\n${JSON.stringify(client.output.slice(-600))}\n--- screen ---\n${screenText(session.id).trimEnd().slice(-600)}`;
+      throw err;
+    }
     const line = stripAnsi(client.output).match(/HOOK-EXIT:[^\r\n]*/g)[i];
     assert.match(line, /^HOOK-EXIT:0 STDERR:""/, `${shell}: ${line}`);
     const agents = (await call('GET', `/sessions/${session.id}`)).body.session.agents;
