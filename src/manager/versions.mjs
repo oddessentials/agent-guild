@@ -46,10 +46,10 @@ export function diagnosticLine(text) {
   return line.slice(0, 240);
 }
 
-export async function probeVersion(spec, { env, timeoutMs = 15000 } = {}) {
+export async function probeVersion(spec, { env, timeoutMs = 15000, parse = parseVersion } = {}) {
   try {
     const { stdout, stderr } = await runSpec(spec, { env, timeoutMs });
-    return { ok: true, version: parseVersion(`${stdout}\n${stderr}`), exitCode: 0, error: null };
+    return { ok: true, version: parse(`${stdout}\n${stderr}`), exitCode: 0, error: null };
   } catch (err) {
     const error = err.killed
       ? `no answer within ${Math.round(timeoutMs / 1000)} seconds`

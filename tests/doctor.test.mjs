@@ -7,6 +7,9 @@ import path from 'node:path';
 import { diagnose, formatDiagnostics, runDoctor, checkPortAvailable } from '../src/manager/doctor.mjs';
 import { VERSION } from '../src/manager/config.mjs';
 
+// Doctor asks the login shell or the registry for PATH like the manager; keep tests to this process's PATH.
+process.env.AGENT_GUILD_SKIP_SHELL_ENV = '1';
+
 test('checkPortAvailable returns true for a free port and false for an occupied port', async () => {
   const srv = net.createServer();
   await new Promise((resolve) => srv.listen(0, '127.0.0.1', resolve));
@@ -210,6 +213,31 @@ test('runDoctor writes formatted output and returns boolean health status', asyn
     assert.equal(ok, true);
     assert.match(output, /Agent Guild Doctor/);
     assert.match(output, /Doctor found no fatal problems/);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('diagnose shows the version of a working tool and flags one whose version check fails', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-doctor-test-'));
+  const fakeTool = path.join(import.meta.dirname, 'fixtures', 'fake-tool.mjs');
+  try {
+    const diag = await diagnose({
+      dir: tempDir,
+      fetchHealth: async () => null,
+      testPortAvailable: async () => true,
+      checkPtyProblem: () => null,
+      verifyLoadPty: () => ({}),
+      tools: [
+        { id: 'works', name: 'Works', command: process.execPath, versionArgs: [fakeTool, '--version'] },
+        { id: 'broken', name: 'Broken', command: process.execPath, versionArgs: ['-e', "console.error('docker: unknown command: docker agent'); process.exit(1)"] },
+      ],
+    });
+
+    assert.equal(diag.healthy, true);
+    const formatted = formatDiagnostics(diag);
+    assert.match(formatted, /✔ Works \(.+\): v1\.2\.3/);
+    assert.match(formatted, /! Broken \(.+\): found, but .+ failed: docker: unknown command: docker agent/);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
