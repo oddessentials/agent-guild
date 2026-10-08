@@ -17,7 +17,7 @@
 //   grok    --plugin-dir <dir>, accepted only when FAKE_GROK_PLUGIN_DIR=1, and $GROK_HOME/hooks/*.json
 // FAKE_CODEX_LOADS_NONE=1 makes Codex's hooks/list answer without our hooks.
 // FAKE_DOCKER_NO_PLUGIN=1 makes docker's --help answer as the Docker CLI does without the agent plugin: its own
-// help, no hook flags, exit 0.
+// help, no hook flags, exit 0. FAKE_DOCKER_VERSION sets the version `docker agent version` prints.
 //
 // Lines typed into the session:
 //   prompt                 a user prompt (Codex runs its SessionStart hooks here)
@@ -57,7 +57,7 @@ const out = (text) => process.stdout.write(`${text}\r\n`);
 const readJson = (file) => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } };
 
 if (argv.includes('--version') || (tool === 'docker' && argv[0] === 'agent' && argv[1] === 'version')) {
-  out(tool === 'docker' ? 'docker agent version v9.0.0' : `${tool} 9.0.0`);
+  out(tool === 'docker' ? `docker agent version v${process.env.FAKE_DOCKER_VERSION || '9.0.0'}` : `${tool} 9.0.0`);
   process.exit(0);
 }
 
@@ -237,8 +237,9 @@ function runHooks(hooks, event, payload, toolName = null) {
       resolve();
     });
     const snake = (name) => name.replace(/[A-Z]/g, (c, i) => `${i ? '_' : ''}${c.toLowerCase()}`);
-    const named = tool === 'docker' ? { hook_event_name: snake(event), agent_name: 'root' } : { hook_event_name: event };
-    child.stdin.end(JSON.stringify(tool === 'agy' ? agyPayload(payload) : { ...named, session_id: `${tool}-session`, cwd: process.cwd(), ...payload }));
+    // Docker Agent's session is the one --session names, created under that id when it is new.
+    const named = tool === 'docker' ? { hook_event_name: snake(event), agent_name: 'root', session_id: flag('--session')[0] ?? 'docker-session' } : { hook_event_name: event, session_id: `${tool}-session` };
+    child.stdin.end(JSON.stringify(tool === 'agy' ? agyPayload(payload) : { ...named, cwd: process.cwd(), ...payload }));
   })), Promise.resolve());
 }
 
@@ -388,6 +389,11 @@ function runTool() {
         await runHooks(hooks, 'PreInvocation', { ...sub, invocationNum: 1, initialNumSteps: 3 });
       } else if (tool === 'grok') {
         await runHooks(hooks, start ? 'SubagentStart' : 'SubagentStop', { hookEventName: start ? 'subagent_start' : 'subagent_stop', subagentId: id, subagentType: type });
+      } else if (tool === 'docker') {
+        // Docker Agent: a sub-agent runs in a session of its own, whose turn ends with stop and whose session ends.
+        const sub = { session_id: id, agent_name: type };
+        if (start) await runHooks(hooks, 'SessionStart', { ...sub, source: 'startup' });
+        else for (const event of ['Stop', 'SessionEnd']) await runHooks(hooks, event, { ...sub, reason: 'stream_ended' });
       } else {
         await runHooks(hooks, start ? 'SubagentStart' : 'SubagentStop', { agent_id: id, agent_type: type });
       }

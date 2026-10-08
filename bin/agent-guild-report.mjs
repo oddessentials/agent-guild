@@ -11,7 +11,8 @@
 //   agent-guild-report --model NAME [--display-name TEXT]
 //   agent-guild-report --session ID          (the tool's own session id, for resuming it later)
 //   agent-guild-report --hook [--event NAME] (reads a hook event as JSON on stdin:
-//                                             Claude Code, Codex CLI, Antigravity CLI, Grok Build;
+//                                             Claude Code, Codex CLI, Antigravity CLI, Grok Build,
+//                                             Docker Agent, whose main session AGENT_GUILD_TOOL_SESSION names;
 //                                             --event names one that does not name itself)
 //   agent-guild-report --claude-statusline [--passthrough]
 //                      (reads Claude Code status line JSON on stdin; prints a
@@ -138,7 +139,7 @@ async function main() {
     if (args.event && input.hook_event_name === undefined) input.hook_event_name = args.event;
     // Antigravity CLI runs the hook in its sub-agents too, each a conversation of its own.
     if (typeof input.conversationId === 'string' && !antigravityUserConversation(firstRecord(input.transcriptPath))) return;
-    for (const report of hookToReports(input)) await sendQuietly(report);
+    for (const report of hookToReports(input, { rootSession: env.AGENT_GUILD_TOOL_SESSION || null })) await sendQuietly(report);
     return;
   }
   if (args.claudeStatusline) {

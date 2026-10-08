@@ -9,7 +9,7 @@ report these through hooks or the `agent-guild-report` command.
 | --- | --- |
 | Claude Code, Codex CLI, Grok Build | Automatic when the installed version can load hooks for one session. Otherwise the card says so; add the hooks yourself below. |
 | Antigravity CLI | Turn on **Agent reporting** on its card. Reports the model, not helper agents. |
-| Docker Agent | Automatic when the installed version takes `--hook-*` flags. Reports from the first prompt: shell commands in its approval modes, and turns. The model, and shell commands in autonomous mode (`--yolo`, `--safety autonomous`), need the hooks below. |
+| Docker Agent | Automatic from 1.80.0. Reports from the first prompt: its agents (`transfer_task`, background agents, skills), shell commands in its approval modes, and turns. For the model, turn on **Model reporting** on its card (1.100.0 and later). Shell commands in autonomous mode (`--yolo`, `--safety autonomous`) show once they end, or as they start with the hook below. |
 
 To add hooks yourself, merge the example into the tool's own hook settings.
 Where those live is in each tool's hooks docs.
@@ -19,7 +19,7 @@ Where those live is in each tool's hooks docs.
 | Claude Code | [claude-code-settings.json](../examples/claude-code-settings.json) | [docs](https://code.claude.com/docs/en/hooks) |
 | Codex CLI | [codex-hooks.json](../examples/codex-hooks.json) | [docs](https://developers.openai.com/codex/hooks) |
 | Grok Build | [grok-hooks.json](../examples/grok-hooks.json) | [docs](https://docs.x.ai/build/features/hooks) |
-| Docker Agent | [docker-agent-hooks.yaml](../examples/docker-agent-hooks.yaml), as `~/.config/cagent/hooks.d/agent-guild.yaml` | [docs](https://docker.github.io/docker-agent/configuration/hooks/) |
+| Docker Agent | [docker-agent-hooks.yaml](../examples/docker-agent-hooks.yaml), as `~/.config/cagent/hooks.d/agent-guild-autonomous.yaml` | [docs](https://docker.github.io/docker-agent/configuration/hooks/) |
 
 ## Your own tool
 

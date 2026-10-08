@@ -1376,13 +1376,24 @@ test('Grok Build reports sub-agents through --plugin-dir where it accepts it, an
   await call('DELETE', `/sessions/${tool.session.id}`);
 });
 
-test('Docker Agent reports its shell commands through the hook flags added after `agent run`', async () => {
+test('Docker Agent reports its shell commands and its sub-agents through the hook flags added after `agent run`', async () => {
   const tool = await startTool('docker');
   assert.equal(tool.session.reporting.state, 'pending');
+  // Agent Guild names the main session, so Resume works before the first prompt and no sub-agent's session replaces it.
+  const named = tool.session.toolSessionId;
+  assert.match(named, /^[0-9a-f-]{36}$/);
   await waitForText(tool.client, tool.session.id, 'FAKE-DOCKER READY hooks=5', 'one hook per flag');
   await waitFor(reportingIs(tool.session.id, 'active'), { label: 'the session start hook', timeout: 15000 });
   tool.client.input('shell build hold fg go test ./...');
   await waitFor(shellCountIs(tool.session.id, 1), { label: 'the command on the card', timeout: 15000 });
+  // A sub-agent's session starts, ends its turn and ends: an agent on the card, while the main command keeps running.
+  tool.client.input('subagent helper-1 helper');
+  await waitFor(agentIs(tool.session.id, 'helper', 'working'), { label: 'helper working', timeout: 15000 });
+  tool.client.input('subagent-done helper-1 helper');
+  await waitFor(agentIs(tool.session.id, 'helper', 'done'), { label: 'helper done', timeout: 15000 });
+  const after = await sessionNow(tool.session.id);
+  assert.equal(after.shells.length, 1, 'the sub-agent\'s end leaves the main session\'s command running');
+  assert.equal(after.toolSessionId, named, 'Resume still opens the main session');
   await runShells(tool, ['shell-end build'], 'SHELL-DONE build');
   await waitFor(shellCountIs(tool.session.id, 0), { label: 'gone at its end', timeout: 2000 });
   await tool.client.close();
@@ -1498,7 +1509,7 @@ test('a Docker Agent probe is asked again by the next session, as installing or 
   const refreshed = [];
   const registry = { providers: [], env: process.env, platform: process.platform, resolve: () => docker, refreshVersions: async (opts) => { refreshed.push(opts); } };
   const hooks = new SessionHooks({ registry, dir: path.join(home, 'probe-docker'), version: '1' });
-  const provider = { id: 'docker-retry', tool: 'Docker Agent', reporting: 'docker', args: ['agent', 'run'], env: { FAKE_DOCKER_NO_PLUGIN: '1' } };
+  const provider = { id: 'docker-retry', tool: 'Docker Agent', reporting: 'docker', args: ['agent', 'run'], versionArgs: ['agent', 'version'], env: { FAKE_DOCKER_NO_PLUGIN: '1' } };
   const missing = await hooks.launch(provider, null);
   assert.equal(missing.reporting.state, 'unsupported');
   assert.match(missing.reporting.reason, /not installed/);
@@ -1507,7 +1518,12 @@ test('a Docker Agent probe is asked again by the next session, as installing or 
   provider.env = {};
   const installed = await hooks.launch(provider, null);
   assert.equal(installed.reporting.state, 'pending', 'the plugin is installed: the next session gets the hooks, within the retry interval');
-  assert.deepEqual(installed.args, dockerHookArgs());
+  assert.deepEqual(installed.args, [...dockerHookArgs(), '--session', installed.toolSessionId], 'and a session id Agent Guild chose');
+  assert.deepEqual(installed.env, { AGENT_GUILD_TOOL_SESSION: installed.toolSessionId });
+  const resumed = await hooks.launch(provider, { resume: 'abc', args: [] });
+  assert.deepEqual([resumed.args, resumed.toolSessionId], [dockerHookArgs(), 'abc'], 'a resumed session is named by its resume args');
+  const own = await hooks.launch(provider, { args: ['--session=mine'] });
+  assert.deepEqual([own.args, own.toolSessionId], [dockerHookArgs(), 'mine'], 'the user\'s own --session is left alone');
   assert.deepEqual(refreshed, [{ force: true, ids: ['docker-retry'] }], 'the card\'s version line is refreshed when the plugin appears');
   // Two sessions starting together share one probe.
   const [a, b] = await Promise.all([hooks.launch(provider, null), hooks.launch(provider, null)]);
@@ -1519,6 +1535,40 @@ test('a Docker Agent probe is asked again by the next session, as installing or 
   assert.equal(removed.reporting.state, 'unsupported', 'the plugin is gone: the next session is told so, not handed flags docker would reject');
   assert.deepEqual(removed.args, []);
   assert.equal(refreshed.length, 2, 'and the card\'s version line is refreshed again');
+  provider.env = { FAKE_DOCKER_VERSION: '1.79.0' };
+  const old = await hooks.launch(provider, null);
+  assert.deepEqual([old.reporting.state, old.args], ['unsupported', []], 'a version that cannot name its session gets no hooks, rather than mixing up its sub-agents');
+  assert.match(old.reporting.reason, /1\.80\.0 or later; this is 1\.79\.0/);
+});
+
+test('the Docker Agent card\'s model reporting switch writes and removes only its own hooks.d file', async () => {
+  const { SessionHooks, dockerDropin } = await import('../src/manager/session-hooks.mjs');
+  const docker = path.join(toolsDir, win ? 'docker.cmd' : 'docker');
+  const config = path.join(home, 'docker-agent-config');
+  const file = path.join(config, 'hooks.d', 'agent-guild.yaml');
+  const registry = { providers: [], env: { ...process.env, DOCKER_AGENT_CONFIG_DIR: config }, platform: process.platform, resolve: () => docker };
+  const hooks = new SessionHooks({ registry, dir: path.join(home, 'probe-dropin'), version: '1' });
+  const provider = { id: 'docker-model', tool: 'Docker Agent', reporting: 'docker', args: ['agent', 'run'], versionArgs: ['agent', 'version'], env: { FAKE_DOCKER_VERSION: '1.99.0' } };
+  assert.equal(hooks.enabled(provider), null, 'no switch before the version is known');
+  await hooks.launch(provider, null);
+  assert.deepEqual([hooks.enabled(provider), hooks.note(provider)], [null, 'Model reporting needs Docker Agent 1.100.0 or later.']);
+  await assert.rejects(hooks.setEnabled(provider, true), /needs Docker Agent 1\.100\.0/);
+  provider.env = {};
+  await hooks.launch(provider, null);
+  assert.deepEqual([hooks.enabled(provider), hooks.note(provider)], [false, null]);
+  assert.equal(await hooks.setEnabled(provider, true), true);
+  assert.equal(fs.readFileSync(file, 'utf8'), dockerDropin(process.platform));
+  fs.writeFileSync(file, `${dockerDropin(process.platform)}# an older Agent Guild's\n`);
+  await hooks.launch(provider, null);
+  assert.equal(fs.readFileSync(file, 'utf8'), dockerDropin(process.platform), 'a session brings an older copy up to date');
+  assert.equal(await hooks.setEnabled(provider, false), false);
+  assert.ok(!fs.existsSync(file));
+  fs.writeFileSync(file, 'before_llm_call: []\n');
+  assert.equal(hooks.enabled(provider), null, 'someone else\'s file of that name: no switch, and a note');
+  assert.match(hooks.note(provider), /was not written by Agent Guild/);
+  await assert.rejects(hooks.setEnabled(provider, true), /was not written by Agent Guild/);
+  assert.equal(await hooks.setEnabled(provider, false), false);
+  assert.equal(fs.readFileSync(file, 'utf8'), 'before_llm_call: []\n', 'and it is left alone');
 });
 
 test('turning Antigravity reporting on refreshes an older copy of its plugin, and refuses another plugin\'s name', async (t) => {

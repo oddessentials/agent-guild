@@ -19,6 +19,10 @@
 // - Grok Build skips SubagentStop for a cancelled sub-agent; the SessionEnd
 //   of the sub-agent's own session then closes it, as does a StopCancelled
 //   inside it (its turn limit, no progress or a declined permission).
+// - Docker Agent runs each sub-agent (transfer_task, a background agent, a
+//   skill) in a session of its own, which fires session_start, stop and
+//   session_end under its own session_id. Agent Guild names the main session
+//   when it starts Docker Agent, so every other session is a sub-agent.
 //
 // Shell commands come from the Bash, PowerShell (Claude Code, Codex CLI),
 // run_terminal_command (Grok Build) and shell (Docker Agent, whose events
@@ -106,10 +110,31 @@ function eventName(input) {
   return raw.replace(/(?:^|[_-])([a-z])/g, (_m, c) => c.toUpperCase());
 }
 
-/** Reports for one hook event: its sub-agents, shell commands, model and the tool's own session id. */
-export function hookToReports(input) {
+/** A Docker Agent sub-agent's session: it starts working, runs shell commands and ends; its turns and model are its own. */
+function dockerSubagentReports(event, input, sessionId) {
+  const agent = { agentId: `hook-${sessionId}`, name: text(input.agent_name), kind: 'subagent' };
+  if (event === 'SessionStart') return [{ ...agent, status: 'working' }];
+  // session_end fires even for an interrupted sub-agent; subagent_stop (a hooks.d event) follows a finished one.
+  if (event === 'SessionEnd' || event === 'SubagentStop') return [{ ...agent, status: 'done' }];
+  const toolName = text(input.tool_name);
+  if ((TOOL_START_EVENTS.has(event) || TOOL_END_EVENTS.has(event)) && DOCKER_SHELL_TOOLS.has(toolName)) {
+    const shell = shellReport(event, input, toolName, sessionId);
+    return shell ? [shell] : [];
+  }
+  return [];
+}
+
+/**
+ * Reports for one hook event: its sub-agents, shell commands, model and the tool's own session id. `rootSession` is
+ * the Docker Agent session Agent Guild started, when it named one.
+ */
+export function hookToReports(input, { rootSession = null } = {}) {
   if (!input || typeof input !== 'object') return [];
   const event = eventName(input);
+  const sessionId = text(input.session_id);
+  if (rootSession && typeof input.agent_name === 'string' && sessionId && sessionId !== rootSession) {
+    return dockerSubagentReports(event, input, sessionId);
+  }
   const reports = [];
   // Claude Code and Codex CLI name the sub-agent an event belongs to by
   // agent_id; Grok Build by subagentId on its own events and by subagentType

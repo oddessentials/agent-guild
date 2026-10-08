@@ -39,7 +39,7 @@
       modelPattern: '\\bgrok-(?:build|\\d)[a-z0-9.-]*',
     },
     docker: {
-      command: 'docker', package: null, reporting: 'docker',
+      command: 'docker', package: null, reporting: 'docker', reportingEnabled: false,
       install: 'sh -c \'d="${DOCKER_CONFIG:-$HOME/.docker}/cli-plugins" && mkdir -p "$d" && curl -fsSL "https://github.com/docker/docker-agent/releases/latest/download/docker-agent-$(uname -s | tr "[:upper:]" "[:lower:]")-$(uname -m | sed "s/x86_64/amd64/;s/aarch64/arm64/")" -o "$d/docker-agent.tmp" && chmod +x "$d/docker-agent.tmp" && mv -f "$d/docker-agent.tmp" "$d/docker-agent"\'',
       docs: 'https://docker.github.io/docker-agent/getting-started/installation/',
     },
@@ -134,7 +134,7 @@
       latestVersion: id === 'shell' ? null : '1.0.0', updateAvailable: false, installChannel: null,
       updateCommand: null, updateGuidance: null, lastInstall: null, installs: [], warnings: [], npmNote: info.npmNote || null,
       usageSource: metered ? 'command' : null, historySource: id === 'shell' ? null : 'command',
-      reporting: info.reporting || null, reportingEnabled: typeof info.reportingEnabled === 'boolean' ? info.reportingEnabled : null,
+      reporting: info.reporting || null, reportingEnabled: typeof info.reportingEnabled === 'boolean' ? info.reportingEnabled : null, reportingNote: null,
       accounts: id === 'anthropic' ? [{ id: 'default', label: 'Personal' }, { id: 'work', label: 'Work' }] : [{ id: 'default', label: 'Default' }],
       modelPattern: info.modelPattern || null, install: info.install || null, docs: info.docs || null,
       usageUrl: info.usageUrl || null, billingUrl: info.billingUrl || null, cloudUrl: info.cloudUrl || null,
@@ -661,7 +661,7 @@
     var p = providers.find(function (item) { return item.id === providerId; });
     if (!p) return error('unknown provider "' + providerId + '"', 'unknown_provider', 404);
     if (typeof body.enabled !== 'boolean') return error('enabled must be true or false', 'bad_request');
-    if (p.reporting !== 'antigravity') return error(p.tool + ' needs no setup for agent reporting', 'not_applicable', 400);
+    if (p.reporting !== 'antigravity' && p.reporting !== 'docker') return error(p.tool + ' needs no setup for agent reporting', 'not_applicable', 400);
     if (!p.available) return error(p.tool + ' is not installed', 'provider_unavailable', 409);
     p.reportingEnabled = body.enabled;
     announce({ type: 'providers.updated', providers: clone(providers) });

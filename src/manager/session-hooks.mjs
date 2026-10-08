@@ -1,8 +1,10 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { buildSpawnSpec, runSpec, killWindowsTree } from './command-resolver.mjs';
+import { compareVersions, probeVersion } from './versions.mjs';
 
 export const REPORT_COMMAND = 'agent-guild-report --hook';
 export const PLUGIN_NAME = 'agent-guild';
@@ -32,10 +34,56 @@ const claudeHooks = () => Object.fromEntries(CLAUDE_EVENTS.map((event) => [event
 const GROK_EVENTS = ['SessionStart', 'SubagentStart', 'SubagentStop', 'StopCancelled', 'StopFailure', 'SessionEnd', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Stop'];
 
 // Docker Agent takes one hook command per event on its command line. These flags cover the session's own
-// shell commands and turns; the model needs a hooks.d drop-in (examples/docker-agent-hooks.yaml), since
-// before_llm_call has no flag.
+// shell commands and turns, and its sub-agents, each of which runs in a session of its own. The model needs a
+// hooks.d drop-in, since before_llm_call has no flag.
 export const DOCKER_HOOK_FLAGS = ['--hook-session-start', '--hook-pre-tool-use', '--hook-post-tool-use', '--hook-stop', '--hook-session-end'];
 export const dockerHookArgs = () => DOCKER_HOOK_FLAGS.flatMap((flag) => [flag, REPORT_COMMAND]);
+// From 1.80.0, `--session` with an id Docker Agent has not seen creates the session under that id. Agent Guild names
+// the main session that way, so its hook can tell it from the sub-agents' sessions. hooks.d drop-ins load from 1.100.0.
+export const DOCKER_SESSION_VERSION = '1.80.0';
+export const DOCKER_DROPIN_VERSION = '1.100.0';
+const DOCKER_DROPIN_MARKER = '# Written by Agent Guild';
+
+/** The value of a `--session` the user passed to Docker Agent: undefined without one, null for a relative one (-1). */
+export function dockerSessionArg(args) {
+  for (let i = 0; i < args.length; i++) {
+    const value = args[i] === '--session' ? args[i + 1] : args[i].startsWith('--session=') ? args[i].slice(10) : undefined;
+    if (value !== undefined) return value && !/^-\d+$/.test(value) ? value : null;
+  }
+  return undefined;
+}
+
+/** Docker Agent's model drop-in, in the config folder `docker agent` reads (DOCKER_AGENT_CONFIG_DIR, else ~/.config/cagent). */
+export function dockerDropinFile(env = {}, platform = process.platform) {
+  const dir = env.DOCKER_AGENT_CONFIG_DIR || env.CAGENT_CONFIG_DIR
+    || path.join((platform === 'win32' ? env.USERPROFILE : env.HOME) || os.homedir(), '.config', 'cagent');
+  return path.join(dir, 'hooks.d', `${PLUGIN_NAME}.yaml`);
+}
+
+// before_llm_call runs before every model call of every Docker Agent session, so the command checks for an Agent Guild
+// session before starting Node. Docker Agent runs hooks in PowerShell on Windows and in $SHELL elsewhere, whatever
+// shell that is, so the check there runs in sh.
+export function dockerDropin(platform = process.platform) {
+  const command = platform === 'win32'
+    ? `if ($env:AGENT_GUILD_SESSION_ID) { ${REPORT_COMMAND} }`
+    : `sh -c '[ -z "$AGENT_GUILD_SESSION_ID" ] || exec ${REPORT_COMMAND}'`;
+  return [
+    `${DOCKER_DROPIN_MARKER}: it shows the model of each Docker Agent session Agent Guild starts.`,
+    '# Turn it off from the Docker Agent card. Outside Agent Guild it does nothing.',
+    'before_llm_call:',
+    '  - type: command',
+    `    command: '${command.replaceAll("'", "''")}'`,
+    '',
+  ].join('\n');
+}
+
+/** "current" when the drop-in is this version's, "stale" when an older one of ours, "other" or null. */
+export function dockerDropinState(file, platform = process.platform) {
+  const text = readOr(file, null);
+  if (text === null) return null;
+  if (!text.startsWith(DOCKER_DROPIN_MARKER)) return 'other';
+  return text === dockerDropin(platform) ? 'current' : 'stale';
+}
 
 // Antigravity CLI loads an installed plugin into every session, also those started outside Agent Guild, and runs
 // its hooks in the plugin's folder, on Windows through cmd /C, which cannot take a quoted path. So the hook is a
@@ -273,35 +321,49 @@ export class SessionHooks {
     if (fresh) return cached.promise;
     const env = { ...this.registry.env, ...provider.env };
     const platform = this.registry.platform;
-    const entry = { resolved, mtime, at: Date.now(), ok: false, done: false, recheck: false, error: false, hookFlags: null };
+    const entry = { resolved, mtime, at: Date.now(), ok: false, done: false, recheck: false, error: false, hookFlags: null, version: null };
     entry.promise = (async () => {
       if (provider.reporting === 'codex') {
         const result = await probeCodex(resolved, { env, platform, timeoutMs: this.probeTimeoutMs });
         entry.ok = result.args.length > 0;
         return result;
       }
-      // Docker Agent's run flags are listed by `docker agent run --help`, after the provider's own args.
-      const helpArgs = provider.reporting === 'docker' ? [...provider.args, '--help'] : ['--help'];
-      const { stdout, stderr } = await runSpec(buildSpawnSpec(resolved, helpArgs, env, platform), { env, timeoutMs: this.probeTimeoutMs });
+      // Docker Agent's run flags are listed by `docker agent run --help`, after the provider's own args, and what
+      // Agent Guild adds depends on its version.
+      const docker = provider.reporting === 'docker';
+      const helpArgs = docker ? [...provider.args, '--help'] : ['--help'];
+      const [{ stdout, stderr }, version] = await Promise.all([
+        runSpec(buildSpawnSpec(resolved, helpArgs, env, platform), { env, timeoutMs: this.probeTimeoutMs }),
+        docker ? probeVersion(buildSpawnSpec(resolved, provider.versionArgs, env, platform), { env, timeoutMs: this.probeTimeoutMs }) : null,
+      ]);
       const help = `${stdout}\n${stderr}`;
       const hookFlags = DOCKER_HOOK_FLAGS.every((flag) => helpLists(help, flag));
-      entry.ok = provider.reporting !== 'docker' || hookFlags;
+      entry.ok = !docker || hookFlags;
       // Docker Agent is a plugin of the docker command checked here, and installing, updating or removing the plugin
       // leaves docker's path and mtime as they were. So every Docker answer is asked again by the next session; its
       // help takes well under a second. When the plugin has come or gone, the card's version line is refreshed too,
-      // as after an install (finishInstall), rather than at its hourly check.
-      if (provider.reporting === 'docker') {
+      // as after an install (finishInstall), rather than at its hourly check, and a new version redraws the card's
+      // model reporting row.
+      if (docker) {
         entry.recheck = true;
         entry.hookFlags = hookFlags;
+        entry.version = hookFlags ? version.version : null;
         if (cached?.done && !cached.error && cached.hookFlags !== hookFlags) this.registry.refreshVersions?.({ force: true, ids: [provider.id] }).catch(() => {});
+        if (cached?.version !== entry.version) this.registry.emit?.('updated');
       }
-      return { pluginDir: helpLists(help, '--plugin-dir'), hookFlags };
+      return { pluginDir: helpLists(help, '--plugin-dir'), hookFlags, version: entry.version };
     })().catch((err) => { entry.error = true; return { error: err.message }; }).finally(() => { entry.done = true; });
     this.probes.set(provider.id, entry);
     return entry.promise;
   }
 
-  async launch(provider) {
+  /**
+   * What a new session of `provider` needs for reporting: `args` for its command line, `env` for its process,
+   * `toolSessionId` when Agent Guild names the tool's session itself, and the card's first `reporting` state.
+   * `resume` and `args` are the session's own.
+   */
+  async launch(provider, options = null) {
+    const { resume = null, args = [] } = options ?? {};
     const mode = provider.reporting;
     if (!mode) return { args: [], reporting: null };
     const tool = provider.tool;
@@ -318,8 +380,28 @@ export class SessionHooks {
       return { args: [], reporting: { state: 'unavailable', reason: `${tool} did not accept Agent Guild's reporting hooks${probe?.error ? ` (${probe.error})` : ''}.` } };
     }
     if (mode === 'docker') {
-      // Docker Agent fires session_start when the first prompt runs, not when its TUI opens.
-      if (probe?.hookFlags) return { args: dockerHookArgs(), reporting: pending(tool, 'runs its first prompt') };
+      if (probe?.hookFlags) {
+        if (!probe.version || compareVersions(probe.version, DOCKER_SESSION_VERSION) < 0) {
+          const which = probe.version ? `this is ${probe.version}` : 'its version could not be read';
+          return { args: [], reporting: { state: 'unsupported', reason: `Agent Guild reports ${tool} ${DOCKER_SESSION_VERSION} or later; ${which}. Update ${tool} to see its agents and shell commands here.` } };
+        }
+        // The main session's id: the one resumed, the user's own --session, or a new one Agent Guild names. A relative
+        // --session (-1) names none, and every session then reports as the main one.
+        const own = dockerSessionArg(args);
+        const toolSessionId = resume || (own === undefined ? crypto.randomUUID() : own);
+        const named = resume || own !== undefined ? [] : ['--session', toolSessionId];
+        // A drop-in an older Agent Guild wrote is brought up to date; it was turned on, and stays on.
+        if (this._dropinState(provider) === 'stale') {
+          try { this._writeDropin(provider); } catch (err) { console.warn(`[reporting] could not update ${this._dropinFile(provider)}: ${err.message}`); }
+        }
+        // Docker Agent fires session_start when the first prompt runs, not when its TUI opens.
+        return {
+          args: [...dockerHookArgs(), ...named],
+          env: toolSessionId ? { AGENT_GUILD_TOOL_SESSION: toolSessionId } : null,
+          toolSessionId,
+          reporting: pending(tool, 'runs its first prompt'),
+        };
+      }
       if (probe?.error) {
         return { args: [], reporting: { state: 'unavailable', reason: `Could not check whether ${tool} takes Agent Guild's reporting hooks (${probe.error}).` } };
       }
@@ -346,9 +428,68 @@ export class SessionHooks {
     };
   }
 
+  /** Whether the card's reporting switch is on, or null when the card shows no switch. */
   enabled(provider) {
+    if (provider.reporting === 'docker') {
+      if (!this._dockerDropins(provider)) return null;
+      const state = this._dropinState(provider);
+      return state === 'other' ? null : Boolean(state);
+    }
     if (provider.reporting !== 'antigravity' || !this.bundles) return null;
     return this._installed(provider) === 'current' && this._pluginEnabled(provider);
+  }
+
+  /** Why the card's reporting switch cannot be used, or null. */
+  note(provider) {
+    if (provider.reporting !== 'docker') return null;
+    const version = this.probes.get(provider.id)?.version;
+    if (!version || compareVersions(version, DOCKER_SESSION_VERSION) < 0) return null;
+    if (!this._dockerDropins(provider)) return `Model reporting needs ${provider.tool} ${DOCKER_DROPIN_VERSION} or later.`;
+    if (this._dropinState(provider) === 'other') {
+      return `Model reporting is off: ${this._dropinFile(provider)} was not written by Agent Guild. Remove it to turn model reporting on here.`;
+    }
+    return null;
+  }
+
+  /** Docker Agent's model drop-in needs hooks.d, which the version the last probe found must load. */
+  _dockerDropins(provider) {
+    const version = this.probes.get(provider.id)?.version;
+    return Boolean(version && compareVersions(version, DOCKER_DROPIN_VERSION) >= 0);
+  }
+
+  _dropinFile(provider) {
+    return dockerDropinFile({ ...this.registry.env, ...provider.env }, this.registry.platform);
+  }
+
+  _dropinState(provider) {
+    return dockerDropinState(this._dropinFile(provider), this.registry.platform);
+  }
+
+  _writeDropin(provider) {
+    const file = this._dropinFile(provider);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    // Docker Agent reads the folder at every start, so the file appears whole or not at all.
+    const temp = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(temp, dockerDropin(this.registry.platform));
+    fs.renameSync(temp, file);
+  }
+
+  _setDockerModel(provider, enabled) {
+    if (!this._dockerDropins(provider)) {
+      throw Object.assign(new Error(`Model reporting needs ${provider.tool} ${DOCKER_DROPIN_VERSION} or later`), { status: 409, code: 'provider_unsupported' });
+    }
+    const state = this._dropinState(provider);
+    if (state === 'other') {
+      if (!enabled) return false;
+      throw Object.assign(new Error(`${this._dropinFile(provider)} was not written by Agent Guild. Remove it to turn on model reporting.`), { status: 409, code: 'plugin_conflict' });
+    }
+    try {
+      if (enabled && state !== 'current') this._writeDropin(provider);
+      if (!enabled && state) fs.rmSync(this._dropinFile(provider), { force: true });
+    } catch (err) {
+      throw Object.assign(new Error(`Agent Guild could not ${enabled ? 'write' : 'remove'} ${this._dropinFile(provider)}: ${err.message}`), { status: 500, code: 'reporting_setup_failed' });
+    }
+    return this.enabled(provider);
   }
 
   _installed(provider) {
@@ -360,6 +501,7 @@ export class SessionHooks {
   }
 
   async setEnabled(provider, enabled) {
+    if (provider.reporting === 'docker') return this._setDockerModel(provider, enabled);
     if (provider.reporting !== 'antigravity') throw Object.assign(new Error(`${provider.tool} needs no setup for agent reporting`), { status: 400, code: 'not_applicable' });
     if (!this.bundles) throw Object.assign(new Error('Agent Guild could not write its reporting hooks'), { status: 500, code: 'reporting_unavailable' });
     const resolved = this.registry.resolve(provider);
