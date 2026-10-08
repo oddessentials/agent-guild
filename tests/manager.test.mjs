@@ -1492,6 +1492,22 @@ test('a Codex probe that loads no hooks is asked again, not trusted for good', a
   assert.ok(again.args.length > 0);
 });
 
+test('a Docker Agent probe that finds no hook flags is asked again by the next session, as installing the plugin leaves docker as it was', async () => {
+  const { SessionHooks, dockerHookArgs } = await import('../src/manager/session-hooks.mjs');
+  const docker = path.join(toolsDir, win ? 'docker.cmd' : 'docker');
+  const registry = { providers: [], env: process.env, platform: process.platform, resolve: () => docker };
+  const hooks = new SessionHooks({ registry, dir: path.join(home, 'probe-docker'), version: '1' });
+  const provider = { id: 'docker-retry', tool: 'Docker Agent', reporting: 'docker', args: ['agent', 'run'], env: { FAKE_DOCKER_NO_PLUGIN: '1' } };
+  const missing = await hooks.launch(provider, null);
+  assert.equal(missing.reporting.state, 'unsupported');
+  assert.match(missing.reporting.reason, /not installed/);
+  assert.deepEqual(missing.args, []);
+  provider.env = {};
+  const installed = await hooks.launch(provider, null);
+  assert.equal(installed.reporting.state, 'pending', 'the plugin is installed: the next session gets the hooks, within the retry interval');
+  assert.deepEqual(installed.args, dockerHookArgs());
+});
+
 test('turning Antigravity reporting on refreshes an older copy of its plugin, and refuses another plugin\'s name', async (t) => {
   const installed = path.join(toolHomes.agy, '.gemini', 'config', 'plugins', 'agent-guild');
   t.after(() => fs.rmSync(installed, { recursive: true, force: true }));

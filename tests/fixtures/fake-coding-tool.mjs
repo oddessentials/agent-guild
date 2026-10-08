@@ -16,6 +16,8 @@
 //           no event name, and must print a JSON object
 //   grok    --plugin-dir <dir>, accepted only when FAKE_GROK_PLUGIN_DIR=1, and $GROK_HOME/hooks/*.json
 // FAKE_CODEX_LOADS_NONE=1 makes Codex's hooks/list answer without our hooks.
+// FAKE_DOCKER_NO_PLUGIN=1 makes docker's --help answer as the Docker CLI does without the agent plugin: its own
+// help, no hook flags, exit 0.
 //
 // Lines typed into the session:
 //   prompt                 a user prompt (Codex runs its SessionStart hooks here)
@@ -64,7 +66,7 @@ const DOCKER_HOOK_FLAGS = ['--hook-session-start', '--hook-pre-tool-use', '--hoo
 if (argv.includes('--help')) {
   out(`Usage: ${tool} [options]`);
   if (tool === 'claude' || (tool === 'grok' && process.env.FAKE_GROK_PLUGIN_DIR === '1')) out('  --plugin-dir <path>   Load a plugin for this session only');
-  if (tool === 'docker') for (const name of DOCKER_HOOK_FLAGS) out(`      ${name} stringArray   Add a hook command (repeatable)`);
+  if (tool === 'docker' && process.env.FAKE_DOCKER_NO_PLUGIN !== '1') for (const name of DOCKER_HOOK_FLAGS) out(`      ${name} stringArray   Add a hook command (repeatable)`);
   out('  -h, --help            Show help');
   process.exit(0);
 }

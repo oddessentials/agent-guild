@@ -67,7 +67,7 @@ const KNOWN_TOOLS = [
     name: 'Docker Agent',
     command: 'docker',
     versionArgs: ['agent', 'version'],
-    install: 'mkdir -p ~/.docker/cli-plugins && curl -fsSL "https://github.com/docker/docker-agent/releases/latest/download/docker-agent-$(uname -s | tr \'[:upper:]\' \'[:lower:]\')-$(uname -m | sed \'s/x86_64/amd64/;s/aarch64/arm64/\')" -o ~/.docker/cli-plugins/docker-agent.tmp && chmod +x ~/.docker/cli-plugins/docker-agent.tmp && mv -f ~/.docker/cli-plugins/docker-agent.tmp ~/.docker/cli-plugins/docker-agent',
+    install: 'sh -c \'d="${DOCKER_CONFIG:-$HOME/.docker}/cli-plugins" && mkdir -p "$d" && curl -fsSL "https://github.com/docker/docker-agent/releases/latest/download/docker-agent-$(uname -s | tr "[:upper:]" "[:lower:]")-$(uname -m | sed "s/x86_64/amd64/;s/aarch64/arm64/")" -o "$d/docker-agent.tmp" && chmod +x "$d/docker-agent.tmp" && mv -f "$d/docker-agent.tmp" "$d/docker-agent"\'',
     docs: 'https://docker.github.io/docker-agent/getting-started/installation/',
   },
   {

@@ -266,11 +266,12 @@ export class SessionHooks {
     let mtime = null;
     try { mtime = fs.statSync(resolved).mtimeMs; } catch { /* probe anyway */ }
     const cached = this.probes.get(provider.id);
-    const fresh = cached && cached.resolved === resolved && cached.mtime === mtime && (cached.ok || Date.now() - cached.at < this.probeRetryMs);
+    const fresh = cached && cached.resolved === resolved && cached.mtime === mtime
+      && (cached.ok || !cached.done || (!cached.recheck && Date.now() - cached.at < this.probeRetryMs));
     if (fresh) return cached.promise;
     const env = { ...this.registry.env, ...provider.env };
     const platform = this.registry.platform;
-    const entry = { resolved, mtime, at: Date.now(), ok: false };
+    const entry = { resolved, mtime, at: Date.now(), ok: false, done: false, recheck: false };
     entry.promise = (async () => {
       if (provider.reporting === 'codex') {
         const result = await probeCodex(resolved, { env, platform, timeoutMs: this.probeTimeoutMs });
@@ -280,10 +281,14 @@ export class SessionHooks {
       // Docker Agent's run flags are listed by `docker agent run --help`, after the provider's own args.
       const helpArgs = provider.reporting === 'docker' ? [...provider.args, '--help'] : ['--help'];
       const { stdout, stderr } = await runSpec(buildSpawnSpec(resolved, helpArgs, env, platform), { env, timeoutMs: this.probeTimeoutMs });
-      entry.ok = true;
       const help = `${stdout}\n${stderr}`;
-      return { pluginDir: helpLists(help, '--plugin-dir'), hookFlags: DOCKER_HOOK_FLAGS.every((flag) => helpLists(help, flag)) };
-    })().catch((err) => ({ error: err.message }));
+      const hookFlags = DOCKER_HOOK_FLAGS.every((flag) => helpLists(help, flag));
+      entry.ok = provider.reporting !== 'docker' || hookFlags;
+      // Docker Agent is a plugin of the docker command checked here, and installing or updating the plugin leaves
+      // docker's path and mtime as they were. So an answer without hook flags is asked again by the next session.
+      entry.recheck = !entry.ok;
+      return { pluginDir: helpLists(help, '--plugin-dir'), hookFlags };
+    })().catch((err) => ({ error: err.message })).finally(() => { entry.done = true; });
     this.probes.set(provider.id, entry);
     return entry.promise;
   }
@@ -314,7 +319,8 @@ export class SessionHooks {
         args: [],
         reporting: {
           state: 'unsupported',
-          reason: `This version of ${tool} takes no hook flags, so Agent Guild cannot add its reporting hooks. Hooks you add to ${tool}'s own settings still report.`,
+          // Without the plugin, `docker agent run --help` prints the Docker CLI's own help and succeeds.
+          reason: `${tool} is not installed, or this version takes no hook flags, so Agent Guild cannot add its reporting hooks. Hooks you add to ${tool}'s own settings still report.`,
         },
       };
     }
