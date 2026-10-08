@@ -34,13 +34,26 @@ import { tmuxSupported } from './shells.mjs';
 export const MIN_NODE_MAJOR = 22;
 const MIN_TMUX = '3.2';
 
-/** The coding tools and multiplexers the manager offers, from the same provider configuration. */
+/**
+ * Every coding tool and multiplexer the built-in configuration knows, then
+ * any providers.json adds, from the same configuration the manager reads. One
+ * that providers.json turns off stays in the list, marked disabled.
+ */
 function knownTools(dir, platform) {
+  const builtIn = loadProviders({ platform }).providers;
   const { providers } = loadProviders({ userFile: path.join(dir, 'providers.json'), platform });
-  return providers.flatMap((p) => [
-    ...(p.versionArgs ? [{ id: p.id, name: p.tool, command: p.command, versionArgs: p.versionArgs, env: p.env, install: p.install, docs: p.docs }] : []),
-    ...p.multiplexers.map((m) => ({ id: m.id, name: m.tool, command: m.id, versionArgs: m.versionArgs, docs: m.docs })),
-  ]);
+  const enabled = new Map(providers.map((p) => [p.id, p]));
+  const ordered = [...builtIn.map((p) => enabled.get(p.id) ?? p), ...providers.filter((p) => !builtIn.some((b) => b.id === p.id))];
+  // The manager offers multiplexers through its shell providers only.
+  const shellMultiplexers = (list) => list.filter((p) => p.command === '@shell').flatMap((p) => p.multiplexers);
+  const offered = new Map(shellMultiplexers(providers).map((m) => [m.id, m]));
+  const multiplexers = new Map([...shellMultiplexers(builtIn), ...offered.values()].map((m) => [m.id, offered.get(m.id) ?? m]));
+  return [
+    ...ordered.filter((p) => p.command !== '@shell').map((p) => ({
+      id: p.id, name: p.tool, command: p.command, versionArgs: p.versionArgs, env: p.env, install: p.install, docs: p.docs, disabled: !enabled.has(p.id),
+    })),
+    ...[...multiplexers.values()].map((m) => ({ id: m.id, name: m.tool, command: m.id, versionArgs: m.versionArgs, docs: m.docs, disabled: !offered.has(m.id) })),
+  ];
 }
 
 /**
@@ -65,8 +78,10 @@ export async function managerEnvironment({ env, platform }) {
 }
 
 async function checkTool(tool, env, platform) {
+  if (tool.disabled) return { ...tool, found: false };
   const resolved = resolveCommand(tool.command, env, platform);
   if (!resolved) return { ...tool, found: false };
+  if (!tool.versionArgs) return { ...tool, found: true, path: resolved, versionStatus: 'unchecked' };
   const tmux = tool.id === 'tmux';
   const probe = await probeVersion(buildSpawnSpec(resolved, tool.versionArgs, env, platform), {
     env: { ...env, ...tool.env },
@@ -365,12 +380,16 @@ export function formatDiagnostics(diag) {
   lines.push('Coding Assistants & Multiplexers:');
   for (const t of diag.tools) {
     const version = t.version ? `v${t.version}` : t.build;
-    if (t.found && t.versionStatus === 'failed') {
+    if (t.disabled) {
+      lines.push(`  ℹ ${t.name} (${t.command}): turned off in providers.json, so not checked`);
+    } else if (t.found && t.versionStatus === 'failed') {
       lines.push(`  ! ${t.name} (${t.command}): found, but "${[t.command, ...t.versionArgs].join(' ')}" failed: ${t.versionError} (${t.path})`);
     } else if (t.found && t.versionStatus === 'unavailable') {
       lines.push(`  ! ${t.name} (${t.command}): found, but its version could not be read (${t.path})`);
     } else if (t.found && t.versionStatus === 'outdated') {
       lines.push(`  ! ${t.name} (${t.command}): ${version} is too old; ${MIN_TMUX} or later is required (${t.path})`);
+    } else if (t.found && t.versionStatus === 'unchecked') {
+      lines.push(`  ✔ ${t.name} (${t.command}): found; providers.json sets no versionArgs, so its version is not checked (${t.path})`);
     } else if (t.found) {
       lines.push(`  ✔ ${t.name} (${t.command}): ${version} (${t.path})`);
     } else {

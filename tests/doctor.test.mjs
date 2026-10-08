@@ -278,3 +278,27 @@ test('doctor judges tmux as the manager does, so builds from source pass and old
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+test('doctor lists a tool that providers.json turns off instead of leaving it out', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-doctor-test-'));
+  const builtIn = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, '..', 'config', 'providers.default.json'), 'utf8')).providers;
+  const tools = builtIn.filter((p) => p.command !== '@shell');
+  const off = tools.map((p) => ({ id: p.id, enabled: false }));
+  const run = async (providers) => {
+    fs.writeFileSync(path.join(tempDir, 'providers.json'), JSON.stringify({ providers }));
+    return formatDiagnostics(await diagnose({ ...quiet, dir: tempDir }));
+  };
+  const turnedOff = (name, command) => `  ℹ ${name} (${command}): turned off in providers.json, so not checked`;
+  try {
+    // Each coding tool off, each multiplexer off on its own, and a tool of the user's own with no versionArgs.
+    let out = await run([...off, { id: 'shell', multiplexers: [{ id: 'tmux', enabled: false }, { id: 'herdr', enabled: false }] }, { id: 'mine', tool: 'My Tool', command: process.execPath }]);
+    for (const p of tools) assert.ok(out.includes(turnedOff(p.tool, p.command)), `${p.tool} is listed as off:\n${out}`);
+    for (const id of ['tmux', 'herdr']) assert.ok(out.includes(turnedOff(id, id)), `${id} is listed as off:\n${out}`);
+    assert.match(out, /✔ My Tool \(.+\): found; providers\.json sets no versionArgs, so its version is not checked/);
+    // The whole shell provider off takes its multiplexers with it.
+    out = await run([...off, { id: 'shell', enabled: false }]);
+    for (const id of ['tmux', 'herdr']) assert.ok(out.includes(turnedOff(id, id)), `${id} is listed as off:\n${out}`);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
