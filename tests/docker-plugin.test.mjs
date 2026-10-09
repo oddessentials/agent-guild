@@ -4,13 +4,15 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { copyChannel, dockerConfigDir, downloadDir, readPlugin, pluginVersion, PLUGIN_INFO_ARGS, PLUGIN_METADATA_ARGS } from '../src/manager/docker-plugin.mjs';
+import { copyChannel, dockerConfigDir, downloadDir, linkOnPath, readPlugin, pluginVersion, PLUGIN_INFO_ARGS, PLUGIN_METADATA_ARGS } from '../src/manager/docker-plugin.mjs';
 import { latestReleaseTag } from '../src/manager/versions.mjs';
 import { ProviderRegistry } from '../src/manager/providers.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const fixture = path.join(here, 'fixtures', 'fake-coding-tool.mjs');
-const tempDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-docker-plugin-'));
+// By real path: macOS's temp folder is under /var, a link to /private/var, and a Windows runner's is spelled by its
+// short name; neither is what these tests are about.
+const tempDir = () => fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'agent-guild-docker-plugin-'));
 const noLinks = { realpath: (f) => f, isLink: () => false };
 
 test('a plugin copy\'s channel says who put it there, on each platform', () => {
@@ -21,6 +23,11 @@ test('a plugin copy\'s channel says who put it there, on each platform', () => {
   assert.equal(copyChannel('D:\\tools\\cli-plugins\\docker-agent.exe', win, 'win32', noLinks), 'unknown', 'a cliPluginsExtraDirs folder');
   assert.equal(copyChannel('C:\\Users\\me\\.docker\\cli-plugins\\docker-agent.exe', { ...win, DOCKER_CONFIG: 'D:\\dockercfg' }, 'win32', noLinks), 'unknown', 'DOCKER_CONFIG moves the download folder');
   assert.equal(copyChannel('D:\\dockercfg\\cli-plugins\\docker-agent.exe', { ...win, DOCKER_CONFIG: 'D:\\dockercfg' }, 'win32', noLinks), 'download');
+  // A folder spelled by its short name (a GitHub runner's RUNNER~1) is the same folder, and no link is on the way.
+  const shortNamed = { realpath: (f) => f.replace('RUNNER~1', 'runneradmin'), isLink: () => false };
+  const shortEnv = { USERPROFILE: 'C:\\Users\\RUNNER~1', ProgramFiles: 'C:\\Program Files' };
+  assert.equal(copyChannel('C:\\Users\\RUNNER~1\\.docker\\cli-plugins\\docker-agent.exe', shortEnv, 'win32', shortNamed), 'download', 'a short name is a spelling, not a link');
+  assert.equal(linkOnPath('C:\\Users\\RUNNER~1\\.docker\\cli-plugins\\docker-agent.exe', 'win32', shortNamed), null);
 
   const mac = { HOME: '/Users/me' };
   assert.equal(copyChannel('/Users/me/.docker/cli-plugins/docker-agent', mac, 'darwin', noLinks), 'download');
@@ -31,6 +38,12 @@ test('a plugin copy\'s channel says who put it there, on each platform', () => {
   assert.equal(copyChannel('/usr/local/lib/docker/cli-plugins/docker-agent', mac, 'darwin', noLinks), 'system');
   const otherLink = { realpath: () => '/opt/tools/docker-agent', isLink: () => true };
   assert.equal(copyChannel('/Users/me/.docker/cli-plugins/docker-agent', mac, 'darwin', otherLink), 'unknown', 'a link to somewhere else is not Agent Guild\'s download');
+
+  // A download under a linked parent (macOS's /var is /private/var) is still the download: the link only stops Remove.
+  const viaVar = { realpath: (f) => f.replace(/^\/var\//, '/private/var/'), isLink: (p) => p === '/var' };
+  assert.equal(copyChannel('/var/home/me/.docker/cli-plugins/docker-agent', { HOME: '/var/home/me' }, 'darwin', viaVar), 'download');
+  assert.equal(linkOnPath('/var/home/me/.docker/cli-plugins/docker-agent', 'darwin', viaVar), '/var', 'the link the runner would refuse');
+  assert.equal(linkOnPath('/Users/me/.docker/cli-plugins/docker-agent', 'darwin', noLinks), null);
 
   const linux = { HOME: '/home/me' };
   assert.equal(copyChannel('/home/me/.docker/cli-plugins/docker-agent', linux, 'linux', noLinks), 'download');
@@ -149,6 +162,24 @@ test('the Docker Agent card is about the plugin copy that runs: installable with
   provider.env.FAKE_DOCKER_PLUGINS = JSON.stringify([{ Name: 'agent', Version: 'v1.149.0', Path: plugin, ShadowedPaths: [link] }]);
   await registry.refreshVersions({ force: true, ids: ['docker'] });
   assert.equal(registry.describe(provider).installs.length, 1, 'a link to the running copy is not a second copy');
+});
+
+test('a downloaded copy reached through a link is listed as the download it is, updatable, and not removable', async () => {
+  const { dir, registry } = registryWith({});
+  const realHome = path.join(dir, 'real-home');
+  const linkedHome = path.join(dir, 'linked-home');
+  fs.mkdirSync(path.join(realHome, '.docker', 'cli-plugins'), { recursive: true });
+  try { fs.symlinkSync(realHome, linkedHome, 'junction'); } catch { return; }
+  const plugin = path.join(linkedHome, '.docker', 'cli-plugins', process.platform === 'win32' ? 'docker-agent.exe' : 'docker-agent');
+  fs.writeFileSync(plugin, 'plugin');
+  const provider = registry.get('docker');
+  Object.assign(provider.env, { HOME: linkedHome, USERPROFILE: linkedHome, FAKE_DOCKER_PLUGINS: JSON.stringify([{ Name: 'agent', Version: 'v1.149.0', Path: plugin }]) });
+  await registry.refreshVersions({ force: true, ids: ['docker'] });
+  const card = registry.describe(provider);
+  assert.deepEqual([card.available, card.installChannel, card.installs.length, card.installs[0].uninstall], [true, 'download', 1, null]);
+  assert.match(card.installs[0].uninstallGuidance, /reached through a link at .*linked-home.*Remove the file yourself/);
+  assert.equal(card.updateCommand, provider.install, 'the download command writes through the link without harm');
+  assert.throws(() => registry.uninstallSpec(provider, plugin), { code: 'not_removable' });
 });
 
 test('a plugin copy docker cannot load fails its version check with docker\'s reason, offers Reinstall for a download, and does not start', async () => {

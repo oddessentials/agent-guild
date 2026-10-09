@@ -13,7 +13,9 @@ import crypto from 'node:crypto';
 import { startFakeGitHub } from './fixtures/fake-github.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-test-'));
+// By real path: macOS's temp folder is under /var, a link to /private/var, which the strict uninstall runner refuses to
+// delete through; nothing here is about that.
+const home = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'agent-guild-test-'));
 process.env.AGENT_GUILD_HOME = home;
 // A home of the tests' own: copies of coding tools installed in the developer's home must not change a result.
 const userHome = path.join(home, 'user-home');

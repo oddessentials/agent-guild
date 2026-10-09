@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { resolveCommand, resolveAllCommands, pathKey, buildSpawnSpec, runSpec } from './command-resolver.mjs';
 import { compareVersions, probeVersion, fetchManifest, latestVersion, latestReleaseTag, DEFAULT_NPM_REGISTRY } from './versions.mjs';
 import { CHANNEL_LABELS, classifyInstall, expandHome, formatCommand, homeRelative, knownLaunchers, listInstallations, platformDependency, updateHelpAccepted } from './install-channels.mjs';
-import { copyChannel, pluginVersion, readPlugin } from './docker-plugin.mjs';
+import { copyChannel, linkOnPath, pluginVersion, readPlugin } from './docker-plugin.mjs';
 import { weavePaths } from './shell-env.mjs';
 import { detectShells, fallbackShell } from './shells.mjs';
 import { RUNNER, encodePlan } from './uninstall.mjs';
@@ -573,14 +573,17 @@ export class ProviderRegistry extends EventEmitter {
     const seen = new Set();
     return copies.map((copy) => ({ ...copy, realPath: realPathOf(copy.path) })).filter((copy) => !seen.has(copy.realPath) && seen.add(copy.realPath)).map((copy) => {
       const channel = copyChannel(copy.path, env, this.platform);
+      // The runner deletes only through real folders, so a download reached through a link is listed as the download
+      // it is, and the link is what the card says stands in the way of removing it.
+      const link = channel === 'download' ? linkOnPath(copy.path, this.platform) : null;
       const guidance = {
         desktop: `Docker Desktop installed ${provider.tool} at ${copy.path}; Docker Desktop updates and removes it.`,
         system: `${provider.tool} at ${copy.path} comes from a system package. Update or remove it with that package.`,
+        download: link ? `${provider.tool} at ${copy.path} is reached through a link at ${link}, which Agent Guild does not delete through. Remove the file yourself.` : null,
       }[channel] ?? null;
       return {
         resolvedPath: copy.path, realPath: copy.realPath, channel, key: `${channel}:${copy.path}`, onPath: true, active: copy.active, guidance,
-        // Only a downloaded copy is Agent Guild's to remove; the runner deletes that one file, under a folder that is no link.
-        uninstall: channel === 'download' ? { run: null, remove: [copy.path], links: [], launcher: null, strict: true } : null,
+        uninstall: channel === 'download' && !link ? { run: null, remove: [copy.path], links: [], launcher: null, strict: true } : null,
       };
     });
   }

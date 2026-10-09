@@ -6,7 +6,10 @@
 // plugin with the path it runs from and the paths it shadows, and needs no engine for that.
 //
 // A copy's channel says who put it there, so the card offers to remove only a downloaded one:
-// - download: in <config dir>/cli-plugins, not a link; the card's install command writes here.
+// - download: in <config dir>/cli-plugins, by real path, so a folder spelled by a short name (RUNNER~1) or reached
+//   through a linked parent (/var on macOS) is still the download folder; the card's install command writes here.
+//   Whether Agent Guild may delete the copy is a separate question, the uninstall runner's (uninstall.mjs): not
+//   through a link anywhere on its path.
 // - desktop: Docker Desktop's, in %ProgramFiles%\Docker\cli-plugins or inside Docker.app (on macOS Desktop
 //   links ~/.docker/cli-plugins/docker-agent into the app).
 // - system: a Linux or macOS system plugin folder, a package's.
@@ -73,11 +76,25 @@ export function copyChannel(file, env, platform = process.platform, fsx = defaul
   } else if (platform === 'darwin') {
     if (/\/Docker\.app\//.test(real) || /\/Docker\.app\//.test(file)) return 'desktop';
   }
-  // A download is Agent Guild's to remove only when nothing on its path is a link: the remover refuses those.
+  // By real paths: a file linked to from the download folder but kept elsewhere is not a download.
   const download = downloadDir(env, platform);
-  if (inside(file, download, platform) && !fsx.isLink(file) && normalize(fsx.realpath(download), platform) === normalize(download, platform)) return 'download';
+  if (inside(real, fsx.realpath(download), platform)) return 'download';
   if (platform !== 'win32' && LINUX_SYSTEM_DIRS.some((dir) => inside(real, dir, platform))) return 'system';
   return 'unknown';
+}
+
+/**
+ * The first link (symlink or junction) on the way to `file`, the file itself included, or null. The uninstall runner
+ * refuses to delete through one (uninstall.mjs, strict), so the card offers Remove only when this is null.
+ */
+export function linkOnPath(file, platform = process.platform, fsx = defaultFsx) {
+  const m = pathModule(platform);
+  const steps = [];
+  for (let p = file; ; p = m.dirname(p)) {
+    steps.unshift(p);
+    if (m.dirname(p) === p) break;
+  }
+  return steps.find((p) => fsx.isLink(p)) ?? null;
 }
 
 /**
