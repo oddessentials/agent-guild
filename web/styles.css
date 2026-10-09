@@ -121,7 +121,10 @@ main { max-width: calc(1200px + var(--dock-space, 0px)); margin: 0 auto; padding
   .cwd-tool { width: 44px; }
 }
 
+.launcher { container-type: inline-size; }
 .providers { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+/* Six cards share the top row once each is at least 180px wide; the light-theme portraits fill their frame down to about 177px. */
+@container (min-width: 1150px) { .providers { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
 .provider {
   display: flex; flex-direction: column; gap: 10px; padding: 14px;
   border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow);
