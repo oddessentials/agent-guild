@@ -164,6 +164,32 @@ test('the Docker Agent card is about the plugin copy that runs: installable with
   assert.equal(registry.describe(provider).installs.length, 1, 'a link to the running copy is not a second copy');
 });
 
+test('a listed copy that was already missing is not asked about on every refresh; one that goes missing is asked about once', async () => {
+  const { dir, registry } = registryWith({});
+  const plugin = path.join(dir, '.docker', 'cli-plugins', process.platform === 'win32' ? 'docker-agent.exe' : 'docker-agent');
+  const log = path.join(dir, 'info.log');
+  const infos = () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter(Boolean).length : 0);
+  const provider = registry.get('docker');
+  // The fake docker lists a copy at `plugin` whether or not the file is there, as docker does until it looks again.
+  Object.assign(provider.env, { FAKE_DOCKER_INFO_LOG: log, FAKE_DOCKER_PLUGINS: JSON.stringify([{ Name: 'agent', Version: 'v1.149.0', Path: plugin }]) });
+  await registry.refreshVersions({ force: true, ids: ['docker'] });
+  assert.equal(infos(), 1);
+  for (let i = 0; i < 4; i++) await registry.refreshVersions({ ids: ['docker'] });
+  assert.equal(infos(), 1, 'a copy missing when docker listed it is not asked about again until the interval');
+  // The file appears, then is removed by hand: docker is asked once, and not again while its answer stands.
+  fs.mkdirSync(path.dirname(plugin), { recursive: true });
+  fs.writeFileSync(plugin, 'plugin');
+  await registry.refreshVersions({ force: true, ids: ['docker'] });
+  assert.equal(infos(), 2);
+  await registry.refreshVersions({ ids: ['docker'] });
+  assert.equal(infos(), 2, 'nothing changed: not asked');
+  fs.rmSync(plugin);
+  await registry.refreshVersions({ ids: ['docker'] });
+  assert.equal(infos(), 3, 'the file went missing: asked once');
+  for (let i = 0; i < 3; i++) await registry.refreshVersions({ ids: ['docker'] });
+  assert.equal(infos(), 3, 'and not again');
+});
+
 test('a downloaded copy reached through a link is listed as the download it is, updatable, and not removable', async () => {
   const { dir, registry } = registryWith({});
   const realHome = path.join(dir, 'real-home');

@@ -80,6 +80,8 @@ if (argv.includes('--version') || (tool === 'docker' && argv[0] === 'agent' && a
   process.exit(0);
 }
 if (tool === 'docker' && argv[0] === 'info') {
+  // FAKE_DOCKER_INFO_LOG names a file that gets one line per `docker info`, so a test can count them.
+  if (process.env.FAKE_DOCKER_INFO_LOG) fs.appendFileSync(process.env.FAKE_DOCKER_INFO_LOG, 'info\n');
   const plugin = { SchemaVersion: '0.1.0', Vendor: 'Docker Inc.', Version: `v${process.env.FAKE_DOCKER_VERSION || '9.0.0'}`, ShortDescription: 'Docker AI Agent Runner', Name: 'agent', Path: dockerPluginPath };
   // FAKE_DOCKER_PLUGINS is printed as it is, JSON or not.
   out(process.env.FAKE_DOCKER_PLUGINS || JSON.stringify(dockerPluginPresent ? [plugin] : []));

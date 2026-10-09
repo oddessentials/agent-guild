@@ -396,13 +396,17 @@ export class ProviderRegistry extends EventEmitter {
         // minutes after a read that failed or found no copy, so a copy installed by hand is seen soon.
         const read = entry.plugin;
         const ttl = read && !read.error && read.copies.length > 0 ? VERSION_TTL_MS : FAILED_PROBE_TTL_MS;
-        // A listed copy whose file is gone was removed by hand: ask docker again now.
-        const gone = Boolean(read?.copies.some((c) => fileMtime(c.path) === null));
+        // A listed copy whose file has gone since docker listed it was removed by hand: ask docker again, once. A copy
+        // docker lists that was already missing when it answered is not asked about again until the next interval,
+        // or every refresh would run docker info (the providers request refreshes on every call).
+        const missing = (copies) => copies.filter((c) => fileMtime(c.path) === null).map((c) => c.path);
+        const gone = Boolean(read && missing(read.copies).some((file) => !read.missing.includes(file)));
         if (!found) {
           if (read) { entry.plugin = null; changed = true; }
         } else if (force || !read || gone || read.docker !== found || now - read.at > ttl) {
           const result = await readPlugin(found, provider.plugin, { env: { ...this.env, ...provider.env }, platform: this.platform });
-          entry.plugin = { docker: found, at: now, copies: result.copies ?? [], error: result.error ?? null };
+          const copies = result.copies ?? [];
+          entry.plugin = { docker: found, at: now, copies, error: result.error ?? null, missing: missing(copies) };
           changed ||= JSON.stringify([read?.copies ?? null, read?.error ?? null]) !== JSON.stringify([entry.plugin.copies, entry.plugin.error]);
         }
       }
