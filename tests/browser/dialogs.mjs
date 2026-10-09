@@ -68,19 +68,22 @@ const checks = await withPage({ name: 'dialogs', instrumentation }, async ({ ori
     }
     pass(`${engine}: 200 history rows scroll, and filtered/empty history remains usable on desktop, tablet and phone`);
 
+    // The first file's reply is held back until a newer file has been chosen and shown. The page
+    // handles the released reply in the same microtask run that sets the flag, so once the flag
+    // reads true the page has already kept or replaced the text.
+    await evaluate('window.memoryGate=new Promise(resolve=>{window.releaseMemory=resolve});window.memoryStaleDelivered=false;document.querySelector(".provider[data-id=anthropic] .memory").click()');
+    await until(`${engine} memory files`, () => evaluate('document.querySelectorAll("#memory-list .memory-item").length===2'));
+    await evaluate('document.querySelectorAll("#memory-list .memory-item")[1].click()');
+    await until(`${engine} chosen memory file`, () => evaluate('document.querySelector("#memory-text").textContent.includes("## Commands")'));
+    await evaluate('window.releaseMemory();window.memoryGate=null');
+    await until(`${engine} earlier memory reply`, () => evaluate('window.memoryStaleDelivered'));
+    assert.match(await evaluate('document.querySelector("#memory-text").textContent'), /## Commands/, 'an earlier, slower reply does not replace the chosen file');
+    assert.equal(await evaluate('document.querySelector("#memory-list [aria-current=true]").dataset.path'), 'topics/testing.md');
+    await closeDialog('#memory', '#memory-close');
     for (const [width, height] of [[1440, 900], [768, 1024], [390, 844]]) {
       await resize(width, height);
-      // The first file's reply is held back until a newer file has been chosen and shown.
-      await evaluate('window.memoryGate=new Promise(resolve=>{window.releaseMemory=resolve});window.memoryStaleDelivered=false;document.querySelector(".provider[data-id=anthropic] .memory").click()');
-      await until(`${engine} memory files`, () => evaluate('document.querySelectorAll("#memory-list .memory-item").length===2'));
-      await evaluate('document.querySelectorAll("#memory-list .memory-item")[1].click()');
-      await until(`${engine} chosen memory file`, () => evaluate('document.querySelector("#memory-text").textContent.includes("## Commands")'));
-      await evaluate('window.releaseMemory();window.memoryGate=null');
-      await until(`${engine} earlier memory reply`, () => evaluate('window.memoryStaleDelivered'));
-      // A task queued after that reply was parsed runs once the page has handled it.
-      await evaluate('new Promise(resolve=>setTimeout(resolve))');
-      assert.match(await evaluate('document.querySelector("#memory-text").textContent'), /## Commands/, 'an earlier, slower reply does not replace the chosen file');
-      assert.equal(await evaluate('document.querySelector("#memory-list [aria-current=true]").dataset.path'), 'topics/testing.md');
+      await evaluate('document.querySelector(".provider[data-id=anthropic] .memory").click()');
+      await until(`${engine} memory text at ${width}`, () => evaluate('document.querySelector("#memory-text").textContent.length>0'));
       await settled();
       const g = await evaluate(`(()=>{
         const d=document.querySelector('#memory'),r=d.getBoundingClientRect(),t=document.querySelector('#memory-text').getBoundingClientRect(),l=document.querySelector('#memory-list').getBoundingClientRect();
