@@ -110,7 +110,7 @@ export function layoutSessions(sessions, providers, previous = new Map()) {
     }
     const entry=result.get(s.id), origin=anchors.get(key)||{x:0,z:4};
     // Crews behind a front hall fill from the end the camera can see past it.
-    const dir=key==='anthropic'||key==='google'?-1:1;
+    const dir=key==='anthropic'||key==='google'||key==='xai'?-1:1;
     // Docker Agent's hall and crew are oversized, so its crew stands further out and further apart.
     const size=key==='docker'?1.3:1;
     entry.x=origin.x+dir*((entry.slot%4)-1.5)*1.25*size;
