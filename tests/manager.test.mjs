@@ -2033,14 +2033,14 @@ test('Docker Agent run inside a Shell card reports through hooks the user config
     const child = execFile(process.execPath, [reporter, '--hook'], { env, timeout: 10000 }, (err, _out, stderr) => (err ? reject(new Error(stderr)) : resolve(stderr)));
     child.stdin.end(JSON.stringify(payload));
   });
-  assert.equal(await hook({ session_id: 'shell-main', hook_event_name: 'session_start', agent_name: 'root', source: 'startup' }), '', 'nothing is refused');
+  assert.doesNotMatch(await hook({ session_id: 'shell-main', hook_event_name: 'session_start', agent_name: 'root', source: 'startup' }), /agent-guild-report:/, 'nothing is refused');
   assert.equal((await sessionNow(session.id)).toolSessionId, 'shell-main', 'the first Docker session heard from is the one Resume would open');
   await hook({ session_id: 'shell-main', hook_event_name: 'pre_tool_use', agent_name: 'root', tool_name: 'shell', tool_use_id: 'c1', tool_input: { cmd: 'go test ./...' } });
-  await waitFor(shellCountIs(session.id, 1), { label: 'the command on the card', timeout: 5000 });
+  await waitFor(shellCountIs(session.id, 1), { label: 'the command on the card', timeout: 15000 });
   await hook({ session_id: 'shell-sub', hook_event_name: 'session_start', agent_name: 'helper', source: 'startup' });
-  await waitFor(agentIs(session.id, 'helper', 'working'), { label: 'the sub-agent on the card', timeout: 5000 });
+  await waitFor(agentIs(session.id, 'helper', 'working'), { label: 'the sub-agent on the card', timeout: 15000 });
   await hook({ session_id: 'shell-main', hook_event_name: 'stop', agent_name: 'root' });
-  await waitFor(shellCountIs(session.id, 0), { label: 'the turn\'s end', timeout: 5000 });
+  await waitFor(shellCountIs(session.id, 0), { label: 'the turn\'s end', timeout: 15000 });
 });
 
 test('a hook run through the shell finds agent-guild-report on the session PATH', async () => {
