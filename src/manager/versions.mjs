@@ -76,6 +76,25 @@ export async function latestVersion(pkg, options) {
   return (await fetchManifest(pkg, 'latest', options)).manifest?.version ?? null;
 }
 
+export const FORMULAE_API = 'https://formulae.brew.sh/api';
+
+/**
+ * The version `brew upgrade` installs for a cask or formula, from Homebrew's formulae API, or null.
+ * A cask may follow a vendor's stable channel while npm's `latest` tag is ahead, so a Homebrew-owned
+ * copy is compared with what Homebrew offers, not with the registry.
+ */
+export async function brewVersion(token, { cask = false, fetchImpl = fetch, timeoutMs = 10000 } = {}) {
+  const url = `${FORMULAE_API}/${cask ? 'cask' : 'formula'}/${encodeURIComponent(token)}.json`;
+  try {
+    const res = await fetchImpl(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(timeoutMs) });
+    if (!res.ok) return null;
+    const body = await res.json();
+    return parseVersion(cask ? body?.version : body?.versions?.stable);
+  } catch {
+    return null;
+  }
+}
+
 /**
  * The version a "latest release" page redirects to (GitHub's releases/latest answers 302 to the tag's page), or
  * null. No API call, so no rate limit.

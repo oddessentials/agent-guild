@@ -10,7 +10,7 @@ import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { resolveCommand, resolveAllCommands, pathKey, buildSpawnSpec, runSpec } from './command-resolver.mjs';
-import { compareVersions, probeVersion, fetchManifest, latestVersion, latestReleaseTag, DEFAULT_NPM_REGISTRY } from './versions.mjs';
+import { compareVersions, probeVersion, fetchManifest, latestVersion, latestReleaseTag, brewVersion, DEFAULT_NPM_REGISTRY } from './versions.mjs';
 import { CHANNEL_LABELS, classifyInstall, expandHome, formatCommand, homeRelative, knownLaunchers, listInstallations, platformDependency, updateHelpAccepted } from './install-channels.mjs';
 import { copyChannel, linkOnPath, pluginVersion, readPlugin } from './docker-plugin.mjs';
 import { weavePaths } from './shell-env.mjs';
@@ -389,7 +389,7 @@ export class ProviderRegistry extends EventEmitter {
       changed ||= muxChanged;
       const entry = this.versions.get(provider.id) || {
         installed: null, versionStatus: null, versionError: null, installedPath: null, installedMtime: null, installedAt: 0,
-        latest: null, latestAt: 0, probePath: null, probeMtime: null, probeAt: 0, probeOk: null, lastInstall: null, copies: {},
+        latest: null, latestAt: 0, latestSource: null, probePath: null, probeMtime: null, probeAt: 0, probeOk: null, lastInstall: null, copies: {},
       };
       const found = this.resolve(provider);
       if (provider.plugin) {
@@ -472,14 +472,17 @@ export class ProviderRegistry extends EventEmitter {
       }
       changed ||= Object.keys(entry.copies).length !== Object.keys(copies).length;
       entry.copies = copies;
-      if (provider.package && lookups && (force || now - entry.latestAt > VERSION_TTL_MS)) {
-        const latest = await latestVersion(provider.package, { registryUrl, fetchImpl: this.fetchImpl });
+      // The latest version comes from wherever the update command installs from: Homebrew's formulae API for a
+      // Homebrew-owned copy (a cask may follow a stable channel behind npm's `latest`), else the npm registry or
+      // the releases page. It is asked again at once when the copy changes hands, not only hourly.
+      const brewOwned = this.checkUpdates && channel?.channel === 'brew' && channel.update ? channel : null;
+      const source = brewOwned ? `brew:${brewOwned.cask ? 'cask' : 'formula'}:${brewOwned.token}` : provider.package && lookups ? 'npm' : provider.releases && this.checkUpdates ? 'releases' : null;
+      if (source && (force || entry.latestSource !== source || now - entry.latestAt > VERSION_TTL_MS)) {
+        const latest = brewOwned ? await brewVersion(brewOwned.token, { cask: brewOwned.cask, fetchImpl: this.fetchImpl })
+          : source === 'npm' ? await latestVersion(provider.package, { registryUrl, fetchImpl: this.fetchImpl })
+            : await latestReleaseTag(provider.releases, { fetchImpl: this.fetchImpl });
         changed ||= latest !== entry.latest;
-        Object.assign(entry, { latest, latestAt: now });
-      } else if (provider.releases && this.checkUpdates && (force || now - entry.latestAt > VERSION_TTL_MS)) {
-        const latest = await latestReleaseTag(provider.releases, { fetchImpl: this.fetchImpl });
-        changed ||= latest !== entry.latest;
-        Object.assign(entry, { latest, latestAt: now });
+        Object.assign(entry, { latest, latestAt: now, latestSource: source });
       }
       const last = entry.lastInstall;
       if (last && (entry.installed !== last.after || entry.latest !== last.latest || entry.versionStatus !== last.verification)) {
