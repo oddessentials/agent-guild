@@ -71,7 +71,7 @@ const checks = await withPage({ name: 'dialogs', instrumentation }, async ({ ori
     // The first file's reply is held back until a newer file has been chosen and shown. The page
     // handles the released reply in the same microtask run that sets the flag, so once the flag
     // reads true the page has already kept or replaced the text.
-    await evaluate('window.memoryGate=new Promise(resolve=>{window.releaseMemory=resolve});window.memoryStaleDelivered=false;document.querySelector(".provider[data-id=anthropic] .memory").click()');
+    await evaluate('window.memoryGate=new Promise(resolve=>{window.releaseMemory=resolve});window.memoryStaleDelivered=false;document.querySelector(".provider[data-id=anthropic] .memory-link").click()');
     await until(`${engine} memory files`, () => evaluate('document.querySelectorAll("#memory-list .memory-item").length===2'));
     await evaluate('document.querySelectorAll("#memory-list .memory-item")[1].click()');
     await until(`${engine} chosen memory file`, () => evaluate('document.querySelector("#memory-text").textContent.includes("## Commands")'));
@@ -82,7 +82,7 @@ const checks = await withPage({ name: 'dialogs', instrumentation }, async ({ ori
     await closeDialog('#memory', '#memory-close');
     for (const [width, height] of [[1440, 900], [768, 1024], [390, 844]]) {
       await resize(width, height);
-      await evaluate('document.querySelector(".provider[data-id=anthropic] .memory").click()');
+      await evaluate('document.querySelector(".provider[data-id=anthropic] .memory-link").click()');
       await until(`${engine} memory text at ${width}`, () => evaluate('document.querySelector("#memory-text").textContent.length>0'));
       await settled();
       const g = await evaluate(`(()=>{
@@ -91,12 +91,12 @@ const checks = await withPage({ name: 'dialogs', instrumentation }, async ({ ori
       })()`);
       assert.ok(g.inside && g.text > 80 && g.list > 60 && g.textBottom && !g.overflow, `${engine} memory ${width}: ${JSON.stringify(g)}`);
       await closeDialog('#memory', '#memory-close');
-      assert.equal(await evaluate('document.activeElement===document.querySelector(".provider[data-id=anthropic] .memory")'), true, `${engine} memory focus restored`);
+      assert.equal(await evaluate('document.activeElement===document.querySelector(".provider[data-id=anthropic] .memory-link")'), true, `${engine} memory focus restored`);
     }
     // close() queues the dialog's close event, so another card can open it again before that event runs.
-    await evaluate('document.querySelector(".provider[data-id=anthropic] .memory").click()');
+    await evaluate('document.querySelector(".provider[data-id=anthropic] .memory-link").click()');
     await until(`${engine} memory before reopening`, () => evaluate('document.querySelectorAll("#memory-list .memory-item").length===2'));
-    await evaluate('document.querySelector("#memory-close").click();document.querySelector(".provider[data-id=xai] .memory").click()');
+    await evaluate('document.querySelector("#memory-close").click();document.querySelector(".provider[data-id=xai] .memory-link").click()');
     await until(`${engine} memory reopened from another card`, () => evaluate('document.querySelector("#memory-title").textContent==="Grok Build memory"&&document.querySelectorAll("#memory-list .memory-item").length===2'));
     await closeDialog('#memory', '#memory-close');
     pass(`${engine}: memory lists files, keeps the newest choice over a slower reply, reopens from another card, and fits desktop, tablet and phone`);

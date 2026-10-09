@@ -1644,7 +1644,7 @@ function buildProvider(provider) {
       ? `Resume one of ${provider.tool}'s own earlier sessions`
       : `Resume one of ${provider.tool}'s own sessions by its id`;
     existing.addEventListener('click', () => showHistory(provider));
-    const memory = node.querySelector('.memory');
+    const memory = node.querySelector('.memory-link');
     memory.hidden = !provider.available || !provider.memorySource;
     memory.title = `See what ${provider.tool} remembers about the working folder`;
     memory.addEventListener('click', () => showMemory(provider));
@@ -1883,7 +1883,7 @@ function renderHint(hint, provider) {
 function renderVendorLinks(card, provider) {
   const usage = setVendorLink(card.querySelector('.usage-link'), provider.usageUrl, `${provider.vendor} usage console`);
   const billing = setVendorLink(card.querySelector('.billing-link'), provider.billingUrl, `${provider.vendor} billing console`);
-  card.querySelector('.provider-links').hidden = !usage && !billing;
+  card.querySelector('.provider-links').hidden = !usage && !billing && card.querySelector('.memory-link').hidden;
   setVendorLink(card.querySelector('.cloud-link'), provider.cloudUrl, `${provider.vendor} web app`);
 }
 
@@ -3318,7 +3318,7 @@ function showMemory(provider) {
   renderMemory();
   if (!$('memory').open) {
     // Safari does not focus a clicked button, so closing falls back to the card's.
-    memoryOpener = document.activeElement?.closest?.('.memory') ?? null;
+    memoryOpener = document.activeElement?.closest?.('.memory-link') ?? null;
     $('memory').showModal();
   }
   loadMemory();
@@ -6378,7 +6378,7 @@ $('memory').addEventListener('close', () => {
   memoryView.fileRequest++;
   memoryView.loading = false;
   const opener = memoryOpener?.isConnected ? memoryOpener
-    : $('providers').querySelector(`.provider[data-id="${memoryView.providerId}"] .memory`);
+    : $('providers').querySelector(`.provider[data-id="${memoryView.providerId}"] .memory-link`);
   opener?.focus();
   memoryOpener = null;
 });

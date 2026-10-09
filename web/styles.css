@@ -278,6 +278,10 @@ main { max-width: calc(1200px + var(--dock-space, 0px)); margin: 0 auto; padding
 .console-link { color: var(--accent); text-decoration: none; }
 .console-link:hover { text-decoration: underline; }
 .console-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 3px; }
+/* Opens a dialog, so it is a button that reads as the links beside it, without their new-tab mark. */
+.memory-link { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; }
+.memory-link:hover { text-decoration: underline; }
+.memory-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 3px; }
 .cloud-link { display: block; flex: none; align-self: flex-start; width: 32px; height: 32px; margin: -4px -6px 0 0; border-radius: 8px; color: var(--muted); }
 .cloud-link::before { content: ""; display: block; width: 100%; height: 100%; background: currentColor; mask: var(--icon-cloud) center / 20px no-repeat; }
 .cloud-link:hover { color: var(--accent); }
