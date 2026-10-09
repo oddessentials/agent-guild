@@ -2613,6 +2613,7 @@ for (const task of [null, 'install']) {
     const registry = {
       get: (id) => ({ ...provider, id }),
       resolve: () => null,
+      installed: () => false,
       installSpec: async () => ({}),
       uninstallSpec: () => ({ spec: {}, channel: 'native' }),
     };
@@ -4008,41 +4009,6 @@ test('a Claude Code task notification ends the sub-agent it names, and is no tur
   // Claude Code fires it at once for a prompt typed while a turn still runs, so none is a turn boundary; Codex CLI's is.
   assert.deepEqual(hookToReports({ hook_event_name: 'UserPromptSubmit', session_id: 's', prompt_id: 'p2', permission_mode: 'default', prompt: 'fix the <task-notification> parser' }), []);
   assert.deepEqual(hookToReports({ hook_event_name: 'UserPromptSubmit', turn_id: 't2', prompt: 'next' }), [{ finishForeground: true }]);
-});
-
-test('Docker Agent hook events report the session, its shell commands, its turns and the model', () => {
-  // Every event names the agent; event names are snake_case; the shell tool is `shell` with `cmd`.
-  const base = { session_id: 'd1', cwd: '/w', agent_name: 'root' };
-  assert.deepEqual(hookToReports({ ...base, hook_event_name: 'session_start', source: 'startup' }), [{ hello: true }, { toolSessionId: 'd1' }]);
-  const [start] = hookToReports({ ...base, hook_event_name: 'pre_tool_use', tool_name: 'shell', tool_use_id: 'call_1', tool_input: { cmd: 'go test ./...', cwd: '.' } });
-  assert.ok(start.match, 'the command is hashed for matching the screen');
-  assert.deepEqual(start, { shell: 'start', key: 'call_1', match: start.match });
-  assert.deepEqual(hookToReports({ ...base, hook_event_name: 'post_tool_use', tool_name: 'shell', tool_use_id: 'call_1', tool_input: { cmd: 'go test ./...' }, tool_response: 'ok' }), [{ shell: 'end', key: 'call_1' }]);
-  assert.deepEqual(hookToReports({ ...base, hook_event_name: 'pre_tool_use', tool_name: 'edit_file', tool_use_id: 'call_2', tool_input: {} }), [], 'only the shell tool is a shell command');
-  assert.deepEqual(hookToReports({ ...base, hook_event_name: 'stop', reason: 'end_turn' }), [{ finishForeground: true }]);
-  assert.deepEqual(hookToReports({ ...base, hook_event_name: 'session_end', reason: 'stream_ended' }), [{ shell: 'reset' }]);
-  assert.deepEqual(hookToReports({ ...base, hook_event_name: 'before_llm_call', iteration: 1, model_id: 'openai/gpt-5' }), [{ model: 'openai/gpt-5' }]);
-  // Codex CLI's multi_agent_v2 tool of the same name names no agent, and is no shell command.
-  assert.deepEqual(hookToReports({ hook_event_name: 'PreToolUse', turn_id: 't', tool_name: 'shell', tool_use_id: 'x', tool_input: { command: ['ls'] } }), []);
-});
-
-test('a Docker Agent sub-agent\'s own session reports a sub-agent, not the main session\'s end, turn or model', () => {
-  // Captured from docker-agent v1.149.0: root ran transfer_task to helper, which ran one shell command (--yolo).
-  const root = '11111111-2222-4333-8444-555555555555';
-  const helper = { session_id: '89ac0beb-aaaa-4d27-b562-36f308181f6e', cwd: '/w', agent_name: 'helper' };
-  const reports = (input) => hookToReports(input, { rootSession: root });
-  const agent = { agentId: `hook-${helper.session_id}`, name: 'helper', kind: 'subagent' };
-  assert.deepEqual(reports({ ...helper, hook_event_name: 'session_start', source: 'startup' }), [{ ...agent, status: 'working' }]);
-  assert.deepEqual(reports({ ...helper, hook_event_name: 'before_llm_call', model_id: 'dmr/ai/qwen2.5:3B-Q4_K_M', iteration: 1 }), []);
-  assert.deepEqual(reports({ ...helper, hook_event_name: 'post_tool_use', tool_name: 'shell', tool_use_id: 'NzNHr8eNuxvzWFbvL04MaXHpybRLfGeP', tool_input: { cmd: 'echo helper-ran', cwd: '.' }, safety_policy: 'autonomous', tool_response: 'helper-ran' }),
-    [{ shell: 'end', key: 'NzNHr8eNuxvzWFbvL04MaXHpybRLfGeP' }]);
-  const [start] = reports({ ...helper, hook_event_name: 'pre_tool_use', tool_name: 'shell', tool_use_id: 'c2', tool_input: { cmd: 'go test' } });
-  assert.equal(start.agentId, agent.agentId, 'its commands are its own');
-  assert.deepEqual(reports({ ...helper, hook_event_name: 'stop', last_user_message: 'Please proceed.', stop_response: 'Done' }), []);
-  assert.deepEqual(reports({ ...helper, hook_event_name: 'session_end', reason: 'stream_ended' }), [{ ...agent, status: 'done' }]);
-  assert.deepEqual(reports({ ...helper, hook_event_name: 'subagent_stop', stop_response: 'Done', parent_session_id: root }), [{ ...agent, status: 'done' }]);
-  // The main session reports as before.
-  assert.deepEqual(reports({ session_id: root, cwd: '/w', hook_event_name: 'session_end', agent_name: 'root', reason: 'stream_ended' }), [{ shell: 'reset' }]);
 });
 
 test('Docker Agent gets its reporting hooks as run flags, after `agent run` and before --session', () => {

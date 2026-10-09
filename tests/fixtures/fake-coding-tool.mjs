@@ -17,7 +17,10 @@
 //   grok    --plugin-dir <dir>, accepted only when FAKE_GROK_PLUGIN_DIR=1, and $GROK_HOME/hooks/*.json
 // FAKE_CODEX_LOADS_NONE=1 makes Codex's hooks/list answer without our hooks.
 // FAKE_DOCKER_NO_PLUGIN=1 makes docker's --help answer as the Docker CLI does without the agent plugin: its own
-// help, no hook flags, exit 0. FAKE_DOCKER_VERSION sets the version `docker agent version` prints.
+// help, no hook flags, exit 0, and `docker info` lists no agent plugin. FAKE_DOCKER_VERSION sets the version
+// `docker agent version` prints. `docker info --format '{{json .ClientInfo.Plugins}}'` lists FAKE_DOCKER_PLUGINS
+// (a JSON array), else the agent plugin at FAKE_DOCKER_PLUGIN_PATH or ~/.docker/cli-plugins/docker-agent; run with
+// `docker-cli-plugin-metadata`, the fixture answers as a plugin file does.
 //
 // Lines typed into the session:
 //   prompt                 a user prompt (Codex runs its SessionStart hooks here)
@@ -56,8 +59,34 @@ const win = process.platform === 'win32';
 const out = (text) => process.stdout.write(`${text}\r\n`);
 const readJson = (file) => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } };
 
+// The docker fixture's agent plugin: absent with FAKE_DOCKER_NO_PLUGIN=1, or when FAKE_DOCKER_PLUGIN_PATH names a
+// file that is not there (so an install command that writes it, `docker-install`, makes the plugin appear).
+const dockerPluginPath = process.env.FAKE_DOCKER_PLUGIN_PATH || path.join(os.homedir(), '.docker', 'cli-plugins', win ? 'docker-agent.exe' : 'docker-agent');
+const dockerPluginPresent = process.env.FAKE_DOCKER_NO_PLUGIN !== '1' && (!process.env.FAKE_DOCKER_PLUGIN_PATH || fs.existsSync(dockerPluginPath));
+const dockerVersion = (process.env.FAKE_DOCKER_VERSION || '9.0.0').split('.').map(Number);
+const dockerNamesAgents = dockerVersion[0] > 1 || (dockerVersion[0] === 1 && (dockerVersion[1] > 81 || (dockerVersion[1] === 81 && dockerVersion[2] >= 2)));
+if (tool === 'docker' && argv[0] === 'docker-install') {
+  fs.mkdirSync(path.dirname(dockerPluginPath), { recursive: true });
+  fs.writeFileSync(dockerPluginPath, 'fake plugin\n');
+  out(`installed ${dockerPluginPath}`);
+  process.exit(0);
+}
 if (argv.includes('--version') || (tool === 'docker' && argv[0] === 'agent' && argv[1] === 'version')) {
+  if (tool === 'docker' && !dockerPluginPresent) {
+    process.stderr.write("docker: unknown command: docker agent\n\nRun 'docker --help' for more information\n");
+    process.exit(1);
+  }
   out(tool === 'docker' ? `docker agent version v${process.env.FAKE_DOCKER_VERSION || '9.0.0'}` : `${tool} 9.0.0`);
+  process.exit(0);
+}
+if (tool === 'docker' && argv[0] === 'info') {
+  const plugin = { SchemaVersion: '0.1.0', Vendor: 'Docker Inc.', Version: `v${process.env.FAKE_DOCKER_VERSION || '9.0.0'}`, ShortDescription: 'Docker AI Agent Runner', Name: 'agent', Path: dockerPluginPath };
+  // FAKE_DOCKER_PLUGINS is printed as it is, JSON or not.
+  out(process.env.FAKE_DOCKER_PLUGINS || JSON.stringify(dockerPluginPresent ? [plugin] : []));
+  process.exit(0);
+}
+if (tool === 'docker' && argv[0] === 'docker-cli-plugin-metadata') {
+  out(JSON.stringify({ SchemaVersion: '0.1.0', Vendor: 'Docker Inc.', Version: `v${process.env.FAKE_DOCKER_VERSION || '9.0.0'}`, ShortDescription: 'Docker AI Agent Runner' }));
   process.exit(0);
 }
 
@@ -66,7 +95,7 @@ const DOCKER_HOOK_FLAGS = ['--hook-session-start', '--hook-pre-tool-use', '--hoo
 if (argv.includes('--help')) {
   out(`Usage: ${tool} [options]`);
   if (tool === 'claude' || (tool === 'grok' && process.env.FAKE_GROK_PLUGIN_DIR === '1')) out('  --plugin-dir <path>   Load a plugin for this session only');
-  if (tool === 'docker' && process.env.FAKE_DOCKER_NO_PLUGIN !== '1') for (const name of DOCKER_HOOK_FLAGS) out(`      ${name} stringArray   Add a hook command (repeatable)`);
+  if (tool === 'docker' && dockerPluginPresent) for (const name of DOCKER_HOOK_FLAGS) out(`      ${name} stringArray   Add a hook command (repeatable)`);
   out('  -h, --help            Show help');
   process.exit(0);
 }
@@ -237,8 +266,9 @@ function runHooks(hooks, event, payload, toolName = null) {
       resolve();
     });
     const snake = (name) => name.replace(/[A-Z]/g, (c, i) => `${i ? '_' : ''}${c.toLowerCase()}`);
-    // Docker Agent's session is the one --session names, created under that id when it is new.
-    const named = tool === 'docker' ? { hook_event_name: snake(event), agent_name: 'root', session_id: flag('--session')[0] ?? 'docker-session' } : { hook_event_name: event, session_id: `${tool}-session` };
+    // Docker Agent's session is the one --session names, created under that id when it is new. Events name their
+    // agent from 1.81.2.
+    const named = tool === 'docker' ? { hook_event_name: snake(event), ...(dockerNamesAgents ? { agent_name: 'root' } : {}), session_id: flag('--session')[0] ?? 'docker-session' } : { hook_event_name: event, session_id: `${tool}-session` };
     child.stdin.end(JSON.stringify(tool === 'agy' ? agyPayload(payload) : { ...named, cwd: process.cwd(), ...payload }));
   })), Promise.resolve());
 }
@@ -391,7 +421,7 @@ function runTool() {
         await runHooks(hooks, start ? 'SubagentStart' : 'SubagentStop', { hookEventName: start ? 'subagent_start' : 'subagent_stop', subagentId: id, subagentType: type });
       } else if (tool === 'docker') {
         // Docker Agent: a sub-agent runs in a session of its own, whose turn ends with stop and whose session ends.
-        const sub = { session_id: id, agent_name: type };
+        const sub = { session_id: id, ...(dockerNamesAgents ? { agent_name: type } : {}) };
         if (start) await runHooks(hooks, 'SessionStart', { ...sub, source: 'startup' });
         else for (const event of ['Stop', 'SessionEnd']) await runHooks(hooks, event, { ...sub, reason: 'stream_ended' });
       } else {

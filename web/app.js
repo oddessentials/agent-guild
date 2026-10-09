@@ -1646,12 +1646,13 @@ function buildProvider(provider) {
     existing.addEventListener('click', () => showHistory(provider));
     const install = node.querySelector('.install');
     install.hidden = provider.available || !provider.installable;
-    install.title = `Install ${provider.tool} using npm.${provider.npmNote ? ` ${provider.npmNote}` : ''}`;
+    install.title = provider.installCommand ? `Downloads the latest ${provider.tool} release into Docker's plugin folder, in a session.` : `Install ${provider.tool} using npm.${provider.npmNote ? ` ${provider.npmNote}` : ''}`;
     install.addEventListener('click', () => installProvider(provider, node));
     const update = node.querySelector('.update');
     update.hidden = !(provider.available && provider.updateCommand && (provider.updateAvailable || checkFailed));
     if (provider.installChannel !== 'npm') update.textContent = 'Update';
     else update.textContent = checkFailed ? 'Reinstall' : `Update to ${provider.latestVersion}`;
+    if (provider.installCommand && checkFailed) update.textContent = 'Reinstall';
     update.title = provider.updateCommand ? `Run "${provider.updateCommand}" in a session` : '';
     update.addEventListener('click', () => installProvider(provider, node));
     renderHint(hint, provider);
@@ -1693,7 +1694,8 @@ const openCopies = new Set();
 function renderCopies(box, provider, card, actions = null) {
   const installs = provider.installs || [];
   const warnings = provider.warnings || [];
-  box.hidden = actions ? installs.length === 0 : warnings.length === 0 && !installs.some((i) => i.uninstall);
+  // A plugin's card always says which copy docker runs and who put it there.
+  box.hidden = actions ? installs.length === 0 : warnings.length === 0 && !installs.some((i) => i.uninstall) && !(provider.installCommand && installs.length > 0);
   if (box.hidden) return;
   box.classList.toggle('warned', warnings.length > 0);
   const inUse = installs.some((i) => i.active);
@@ -1854,10 +1856,12 @@ async function manageMultiplexer(provider, tool, kind, copy = null, force = fals
 
 function renderHint(hint, provider) {
   let text = '';
-  if (!provider.available) text = provider.installable ? '' : provider.install || `${provider.command} was not found on PATH.`;
+  if (provider.pluginError) text = provider.pluginError;
+  else if (provider.pluginPending) text = '';
+  else if (!provider.available) text = provider.installable ? '' : provider.install || `${provider.command} was not found on PATH.`;
   // A version check that fails with no update on offer shows how to install the tool: `docker agent version` fails without
   // the plugin. The install command replaces the generic update guidance, which would describe the docker binary, not the plugin.
-  else if (provider.versionStatus === 'failed') text = [provider.versionError, !provider.updateCommand && (provider.install || provider.updateGuidance)].filter(Boolean).join(' ');
+  else if (provider.versionStatus === 'failed') text = [provider.versionError, !provider.updateCommand && (provider.installCommand ? provider.updateGuidance : provider.install || provider.updateGuidance)].filter(Boolean).join(' ');
   else if (provider.updateAvailable && !provider.updateCommand) text = provider.updateGuidance || '';
   hint.hidden = !text;
   hint.replaceChildren(text);
@@ -2917,6 +2921,8 @@ function renderChangelog() {
 }
 
 const CHANNEL_LABELS = {
+  download: 'release download',
+  desktop: 'Docker Desktop',
   npm: 'npm', native: 'native', brew: 'Homebrew', winget: 'WinGet', system: 'system package', legacy: 'legacy install', unknown: 'unknown install',
 };
 
@@ -2929,13 +2935,16 @@ function installNote(provider) {
   }
   if (last.kind === 'uninstall') return last.outcome === 'remaining' ? 'Uninstalled copy is still present' : '';
   if (last.verification === 'failed') return `Installation completed, but ${provider.tool} verification failed`;
-  if (last.outcome === 'missing') return 'Installed, but not found on PATH';
+  if (last.outcome === 'missing') return provider.installCommand ? 'Installed, but docker does not list it' : 'Installed, but not found on PATH';
   if (last.outcome === 'unchanged') return 'No version change after update';
   return '';
 }
 
 function providerState(provider) {
   const note = installNote(provider);
+  // A plugin whose copies could not be listed is neither installed nor known to be missing.
+  if (provider.pluginError) return note ? `Could not list Docker's plugins · ${note}` : "Could not list Docker's plugins";
+  if (provider.pluginPending) return 'Checking…';
   if (!provider.available) return note ? `Not installed · ${note}` : 'Not installed';
   const checkFailed = provider.versionStatus === 'failed';
   const named = provider.installChannel && (provider.installChannel !== 'unknown' || provider.updateAvailable || checkFailed);

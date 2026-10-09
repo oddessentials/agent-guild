@@ -38,9 +38,9 @@ const GROK_EVENTS = ['SessionStart', 'SubagentStart', 'SubagentStop', 'StopCance
 // hooks.d drop-in, since before_llm_call has no flag.
 export const DOCKER_HOOK_FLAGS = ['--hook-session-start', '--hook-pre-tool-use', '--hook-post-tool-use', '--hook-stop', '--hook-session-end'];
 export const dockerHookArgs = () => DOCKER_HOOK_FLAGS.flatMap((flag) => [flag, REPORT_COMMAND]);
-// From 1.80.0, `--session` with an id Docker Agent has not seen creates the session under that id. Agent Guild names
-// the main session that way, so its hook can tell it from the sub-agents' sessions. hooks.d drop-ins load from 1.100.0.
-export const DOCKER_SESSION_VERSION = '1.80.0';
+// From 1.81.2, `--session` with an id Docker Agent has not seen creates the session under that id. Agent Guild names
+// the main session that way, so the card can resume it before its first prompt. hooks.d drop-ins load from 1.100.0.
+export const DOCKER_SESSION_VERSION = '1.81.2';
 export const DOCKER_DROPIN_VERSION = '1.100.0';
 const DOCKER_DROPIN_MARKER = '# Written by Agent Guild';
 
@@ -350,7 +350,8 @@ export class SessionHooks {
         entry.recheck = true;
         entry.hookFlags = hookFlags;
         entry.version = hookFlags ? version.version : null;
-        if (cached?.done && !cached.error && cached.hookFlags !== hookFlags) this.registry.refreshVersions?.({ force: true, ids: [provider.id] }).catch(() => {});
+        // Awaited, so the session that noticed the change starts against the refreshed plugin list.
+        if (cached?.done && !cached.error && cached.hookFlags !== hookFlags) await this.registry.refreshVersions?.({ force: true, ids: [provider.id] })?.catch?.(() => {});
         if (cached?.version !== entry.version) this.registry.emit?.('updated');
       }
       return { pluginDir: helpLists(help, '--plugin-dir'), hookFlags, version: entry.version };
@@ -387,26 +388,19 @@ export class SessionHooks {
     }
     if (mode === 'docker') {
       if (probe?.hookFlags) {
-        if (!probe.version || compareVersions(probe.version, DOCKER_SESSION_VERSION) < 0) {
-          const which = probe.version ? `this is ${probe.version}` : 'its version could not be read';
-          return { args: [], reporting: { state: 'unsupported', reason: `Agent Guild reports ${tool} ${DOCKER_SESSION_VERSION} or later; ${which}. Update ${tool} to see its agents and shell commands here.` } };
-        }
-        // The main session's id: the one resumed, the user's own --session, or a new one Agent Guild names. A relative
-        // --session (-1) names none, and every session then reports as the main one.
+        // The main session's id, known before Docker Agent runs: the one resumed, the user's own --session, or a new
+        // one Agent Guild names when this version creates a session from an unknown id. A relative --session (-1), or
+        // an older version, names none: the card then takes the first session heard from (docker-sessions.mjs).
         const own = dockerSessionArg(args);
-        const toolSessionId = resume || (own === undefined ? crypto.randomUUID() : own);
-        const named = resume || own !== undefined ? [] : ['--session', toolSessionId];
+        const names = Boolean(probe.version && compareVersions(probe.version, DOCKER_SESSION_VERSION) >= 0);
+        const toolSessionId = resume || (own !== undefined ? own : names ? crypto.randomUUID() : null);
+        const named = !resume && own === undefined && toolSessionId ? ['--session', toolSessionId] : [];
         // A drop-in an older Agent Guild wrote is brought up to date; it was turned on, and stays on.
         if (this._dropinState(provider) === 'stale') {
           try { this._writeDropin(provider); } catch (err) { console.warn(`[reporting] could not update ${this._dropinFile(provider)}: ${err.message}`); }
         }
         // Docker Agent fires session_start when the first prompt runs, not when its TUI opens.
-        return {
-          args: [...dockerHookArgs(), ...named],
-          env: toolSessionId ? { AGENT_GUILD_TOOL_SESSION: toolSessionId } : null,
-          toolSessionId,
-          reporting: pending(tool, 'runs its first prompt'),
-        };
+        return { args: [...dockerHookArgs(), ...named], toolSessionId, reporting: pending(tool, 'runs its first prompt') };
       }
       if (probe?.error) {
         return { args: [], reporting: { state: 'unavailable', reason: `Could not check whether ${tool} takes Agent Guild's reporting hooks (${probe.error}).` } };
@@ -416,7 +410,7 @@ export class SessionHooks {
         reporting: {
           state: 'unsupported',
           // Without the plugin, `docker agent run --help` prints the Docker CLI's own help and succeeds.
-          reason: `${tool} is not installed, or this version takes no hook flags, so Agent Guild cannot add its reporting hooks. Hooks you add to ${tool}'s own settings still report.`,
+          reason: `${probe?.version ? `${tool} ${probe.version}` : `${tool} is not installed, or this version`} takes no hook flags, so Agent Guild cannot add its reporting hooks. Hooks you add to ${tool}'s own settings still report.`,
         },
       };
     }
@@ -448,8 +442,7 @@ export class SessionHooks {
   /** Why the card's reporting switch cannot be used, or null. */
   note(provider) {
     if (provider.reporting !== 'docker') return null;
-    const version = this.probes.get(provider.id)?.version;
-    if (!version || compareVersions(version, DOCKER_SESSION_VERSION) < 0) return null;
+    if (!this.probes.get(provider.id)?.version) return null;
     if (!this._dockerDropins(provider)) return `Model reporting needs ${provider.tool} ${DOCKER_DROPIN_VERSION} or later.`;
     if (this._dropinState(provider) === 'other') {
       return `Model reporting is off: ${this._dropinFile(provider)} was not written by Agent Guild. Remove it to turn model reporting on here.`;

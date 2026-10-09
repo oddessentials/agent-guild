@@ -75,3 +75,18 @@ export async function fetchManifest(pkg, version = 'latest', { registryUrl = DEF
 export async function latestVersion(pkg, options) {
   return (await fetchManifest(pkg, 'latest', options)).manifest?.version ?? null;
 }
+
+/**
+ * The version a "latest release" page redirects to (GitHub's releases/latest answers 302 to the tag's page), or
+ * null. No API call, so no rate limit.
+ */
+export async function latestReleaseTag(url, { fetchImpl = fetch, timeoutMs = 10000 } = {}) {
+  try {
+    const res = await fetchImpl(url, { method: 'HEAD', redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) });
+    if (res.status < 300 || res.status > 399) return null;
+    const location = res.headers.get('location') || '';
+    return parseVersion(location.split('/').pop() || '');
+  } catch {
+    return null;
+  }
+}

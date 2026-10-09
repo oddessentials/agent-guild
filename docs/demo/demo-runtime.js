@@ -40,8 +40,10 @@
     },
     docker: {
       command: 'docker', package: null, reporting: 'docker', reportingEnabled: false,
-      install: 'sh -c \'d="${DOCKER_CONFIG:-$HOME/.docker}/cli-plugins" && mkdir -p "$d" && curl -fsSL "https://github.com/docker/docker-agent/releases/latest/download/docker-agent-$(uname -s | tr "[:upper:]" "[:lower:]")-$(uname -m | sed "s/x86_64/amd64/;s/aarch64/arm64/")" -o "$d/docker-agent.tmp" && chmod +x "$d/docker-agent.tmp" && mv -f "$d/docker-agent.tmp" "$d/docker-agent"\'',
+      install: 'sh -c \'d="${DOCKER_CONFIG:-$HOME/.docker}/cli-plugins" && mkdir -p "$d" && curl -fsSL "https://github.com/docker/docker-agent/releases/latest/download/docker-agent-$(uname -s | tr "[:upper:]" "[:lower:]")-$(uname -m | sed "s/x86_64/amd64/;s/aarch64/arm64/")" -o "$d/.docker-agent.download" && chmod +x "$d/.docker-agent.download" && mv -f "$d/.docker-agent.download" "$d/docker-agent"\'',
       docs: 'https://docker.github.io/docker-agent/getting-started/installation/',
+      // The card installs the plugin itself, with that command: it is the download in ~/.docker/cli-plugins.
+      plugin: true,
     },
     shell: { command: '@shell', package: null, reporting: null, install: '', docs: '' },
   };
@@ -55,7 +57,7 @@
   ];
   var shellCard = providers[5];
   var home = '/Users/demo';
-  var labels = { npm: 'npm', native: 'native', brew: 'Homebrew' };
+  var labels = { npm: 'npm', native: 'native', brew: 'Homebrew', download: 'release download' };
   var copies = {
     anthropic: [
       copy('native', home + '/.local/bin/claude', true, null, [home + '/.local/bin/claude', home + '/.local/share/claude'], '2.1.141'),
@@ -64,7 +66,7 @@
     openai: [copy('brew', '/opt/homebrew/bin/codex', true, '/opt/homebrew/bin/brew uninstall --cask codex', [], '0.98.0')],
     google: [copy('native', home + '/.local/bin/agy', true, null, [home + '/.local/bin/agy'], '1.19.2')],
     xai: [copy('native', home + '/.grok/bin/grok', true, null, [home + '/.grok/bin', home + '/.grok/downloads', home + '/.grok/completions'], '0.1.40')],
-    docker: [copy('native', home + '/.docker/cli-plugins/docker-agent', true, null, [home + '/.docker/cli-plugins/docker-agent'], '1.149.0')],
+    docker: [copy('download', home + '/.docker/cli-plugins/docker-agent', true, null, [home + '/.docker/cli-plugins/docker-agent'], '1.149.0')],
   };
   // A removed tool can be installed again from this snapshot. Taken before any demo edit.
   var copyBlueprints = JSON.parse(JSON.stringify(copies));
@@ -77,6 +79,7 @@
   providers[0].updateCommand = home + '/.local/bin/claude update';
   providers[1].updateCommand = '/opt/homebrew/bin/brew upgrade codex';
   providers[2].updateCommand = home + '/.local/bin/agy update';
+  providers[4].updateCommand = about.docker.install;
   shellCard.shells = [{ id: 'zsh', label: 'zsh', path: '/bin/zsh', multiplexer: false }];
   shellCard.defaultShell = 'zsh';
   var notesSeq = 1;
@@ -130,6 +133,7 @@
     return {
       id: id, vendor: vendor, tool: tool, color: color, monogram: monogram, iconUrl: null,
       command: info.command || id, package: info.package || null, args: [], resumable: id !== 'shell', installable: Boolean(info.package),
+      installCommand: info.plugin ? info.install : null, pluginError: null, pluginPending: false,
       installedVersion: id === 'shell' ? null : '1.0.0', versionStatus: 'ok', versionError: null,
       latestVersion: id === 'shell' ? null : '1.0.0', updateAvailable: false, installChannel: null,
       updateCommand: null, updateGuidance: null, lastInstall: null, installs: [], warnings: [], npmNote: info.npmNote || null,
@@ -162,6 +166,8 @@
     p.warnings = list.length > 1 ? [list.length + ' copies of ' + p.tool + ' are installed. The one in use is ' + labels[active.channel] + ' v' + active.version + ' at ' + active.displayPath + '.'] : [];
     if (p.id === 'shell') return;
     p.available = Boolean(active);
+    // A plugin's card installs it with its own command once no copy is left.
+    if (p.installCommand) p.installable = !active;
     p.installChannel = active ? active.channel : null;
     p.resolvedPath = active ? active.path : null;
     p.installedVersion = active ? active.version : null;
@@ -723,7 +729,7 @@
     made.toolSessionId = null;
     var nextVersion = p.latestVersion || p.installedVersion || '1.0.0';
     transcripts[id] = '\u001b[1;36mAgent Guild interactive demo\u001b[0m\r\n\r\n> ' + (p.updateCommand || p.install || 'install ' + p.command) +
-      '\r\n' + (updating ? 'updated ' : 'installed ') + p.command + ' to ' + nextVersion +
+      '\r\n' + (updating ? 'updated ' : 'installed ') + (p.installCommand ? p.tool : p.command) + ' to ' + nextVersion +
       '\r\n\r\n\u001b[2m[demo only \u2014 nothing was installed on your computer]\u001b[0m\r\n';
     sessions.push(made);
     announce({ type: 'session.created', session: clone(made) });

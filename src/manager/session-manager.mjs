@@ -12,6 +12,7 @@ import { buildSpawnSpec, runSpec } from './command-resolver.mjs';
 import { tmuxNewSession } from './shells.mjs';
 import { HerdrAgents, herdrAgentReports, herdrSocket } from './herdr.mjs';
 import { CHANNEL_LABELS } from './install-channels.mjs';
+import { DockerSessions } from './docker-sessions.mjs';
 import { SELF_PROVIDER } from './self-update.mjs';
 import { GITHUB_PROVIDER, dropsFromCloneEnv, parseRepo } from './github.mjs';
 import { pathIdentity } from './multiplexer-paths.mjs';
@@ -147,6 +148,9 @@ export class SessionManager extends EventEmitter {
     const session = this._spawn({ ...options, spawnSpec });
     // A session id Agent Guild chose is known before the tool reports it, so the card can resume it at once.
     if (hooks.toolSessionId) session.reportToolSession({ toolSessionId: hooks.toolSessionId }, 'launch');
+    // Every Docker Agent session is tracked, with or without Agent Guild's own hook flags: hooks the user configured
+    // report through the same route.
+    if (provider.reporting === 'docker') session.docker = new DockerSessions(session, { mainId: hooks.toolSessionId ?? null });
     const model = modelFromArgs([...provider.args, ...(args || [])]);
     if (model) session.setModel({ name: model }, 'args');
     return session;
@@ -404,7 +408,7 @@ export class SessionManager extends EventEmitter {
     const { provider, guard } = this._installGuard(providerId, force, 'updating the tool now may break them');
     this.installing.add(provider.id);
     try {
-      if (this.registry.resolve(provider)) {
+      if (this.registry.installed(provider)) {
         const { spec, channel } = await this.registry.updateSpec(provider);
         guard();
         const name = `Update ${provider.tool} (${CHANNEL_LABELS[channel]})`;
@@ -749,6 +753,16 @@ export class SessionManager extends EventEmitter {
 
   reportShell(id, report, auth) {
     return this._reportingSession(id, auth).reportShell(report);
+  }
+
+  /**
+   * A Docker Agent hook event. A session that was not started as Docker Agent (a Shell card the user ran it in, with
+   * its own hooks) becomes one at its first event; the first Docker session heard from is then its main one.
+   */
+  reportDocker(id, event, auth) {
+    const session = this._reportingSession(id, auth);
+    session.docker ??= new DockerSessions(session);
+    session.docker.report(event);
   }
 
   _reportingSession(id, { reportToken, trusted = false } = {}) {

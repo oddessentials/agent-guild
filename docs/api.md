@@ -113,11 +113,25 @@ skips the lookup). Both are null until the first check finishes; a
 `{ path, displayPath, channel, version, versionStatus, active, newer, onPath, uninstall, uninstallGuidance }`.
 `path` is the copy's launcher and `displayPath` the same path with the home
 folder shown as `~`. `channel` is `npm`, `native`, `brew`, `winget`, `legacy`
-or `unknown`. `active` marks the copy that runs, `newer` a copy newer than
+or `unknown`, and for a Docker CLI plugin `download` (in `~/.docker/cli-plugins`,
+or `$DOCKER_CONFIG/cli-plugins`), `desktop` (Docker Desktop's), `system` (a
+system plugin folder) or `unknown`. `active` marks the copy that runs, `newer` a copy newer than
 that one, and `onPath` whether its folder is on PATH. `uninstall` is null
 when Agent Guild cannot remove that copy, otherwise the `command` it runs (or null) and the paths it deletes
 (`remove`); `uninstallGuidance` then says why and how to remove it instead.
 `POST /providers/:id/uninstall` removes one copy.
+
+For a tool that is a Docker CLI plugin (`plugin` in its configuration; Docker
+Agent is `docker agent`), the copies are the plugin's as `docker info` lists
+them, `resolvedPath` and `available` are about the copy that runs, and
+`installable` is true while docker is on PATH and no copy runs. `installCommand`
+is the command **Install** and **Update** run, in a session; only a `download`
+copy is updated or removed. `pluginError` says why the copies could not be
+listed (docker info failed), or is null; `pluginPending` is true until docker
+has listed them once after the manager started. In either case the card is
+neither installed nor known to be missing, and `installable` is false:
+`POST /providers/:id/install` answers 409 `plugins_unchecked` then, and 409
+`already_installed` when a copy runs.
 
 `usageSource` is `claude`, `codex`, `command` or null, and says
 whether `GET /usage` reports the provider. `historySource` is `claude`,
@@ -691,7 +705,7 @@ All paths are under `/api/v1`.
 | POST | `/environment/refresh` | `{ scope?, cwd?, id? }` | `202` with that scope's snapshot; starts or joins its read-only check. `{}` refreshes the manager. |
 | POST | `/providers/reload` | | Re-reads `providers.json`. |
 | POST | `/providers/:id/reporting` | `{ enabled }` | `{ provider }`: turns agent reporting on or off for a tool that needs it, by running the tool's own `plugin install`, `plugin enable` or `plugin uninstall`. An older copy of the Agent Guild plugin is replaced, and one turned off in the tool is turned back on. For Docker Agent it writes or removes `agent-guild.yaml` in its `hooks.d` folder, which reports the model. 400 `not_applicable` for any other tool, 409 `plugin_conflict` when another plugin or file has the same name, 409 `provider_unsupported` when the Docker Agent version loads no `hooks.d` files, 500 or 502 `reporting_setup_failed` when the file or the tool's command fails. |
-| POST | `/providers/:id/install` | `{ force? }` | `201 { session }`: a session running `npm install -g <package>@<version>`, or `updateCommand` when the tool is installed. 400 `not_updatable` when an installed tool has no `updateCommand`. 503 `release_unresolved` or 409 `release_incomplete` when the release cannot be read or its platform build is not published; nothing is run. 409 `install_in_progress` while one is already running. 409 `provider_in_use` (with `running`, the session count) while the provider's sessions are running, unless `force` is true. |
+| POST | `/providers/:id/install` | `{ force? }` | `201 { session }`: a session running `npm install -g <package>@<version>`, or `updateCommand` when the tool is installed; for a Docker CLI plugin, `installCommand` in both cases, and 409 `provider_unavailable` without docker on PATH. 400 `not_updatable` when an installed tool has no `updateCommand`. 503 `release_unresolved` or 409 `release_incomplete` when the release cannot be read or its platform build is not published; nothing is run. 409 `install_in_progress` while one is already running. 409 `provider_in_use` (with `running`, the session count) while the provider's sessions are running, unless `force` is true. |
 | POST | `/providers/:id/uninstall` | `{ path, force? }` | `201 { session }`: a session that removes the copy at `path`, one of the provider's `installs`. It runs that copy's package manager, or deletes the paths its installer created, the launcher last, so a copy that fails partway with files left is still listed and can be uninstalled again. 400 `bad_request` without `path`, 404 `unknown_copy` when no copy is at `path`, 400 `not_removable` when its `uninstall` is null. 409 `install_in_progress` and `provider_in_use` as for `install`. |
 | GET | `/usage` | | `{ usage: Usage[] }`, one per account of every provider with a `usageSource`. |
 | GET | `/model-stats` | | Benchmarks for the models of every provider with a `modelPattern`, from OpenRouter's public model list (Artificial Analysis and Design Arena results), cached for 6 hours. `{ retrievedAt, stale, error, stats, pool, providers, models, sessions }`: `stats` describes each benchmark; `providers[id]` is `{ featured, models }`, a provider's model ids newest first; `models[id]` holds a model's name, context and price, and in `stats`, per benchmark, its `value`, `rank`, `level` (0-100, its standing among the models of all configured tools) and `tier` (S 90+, A 75+, B 50+, C 25+, D below); `sessions[id]` is the model id a session's reported model matched, or null. |
@@ -725,6 +739,7 @@ All paths are under `/api/v1`.
 | POST | `/sessions/:id/model` | `{ model, displayName? }` | `{ model }`. Sets the session's model with source `report`. |
 | POST | `/sessions/:id/tool-session` | `{ toolSessionId }` | `{ toolSessionId }`. Records the id the tool gave its own session: one printable line of at most 200 characters. 409 once the session has exited. |
 | POST | `/sessions/:id/reporting` | | `{ reporting }`: the tool's hooks announce themselves, which makes `reporting.state` `active`. |
+| POST | `/sessions/:id/docker` | `{ event, sessionId, agentName?, toolName?, toolUseId?, command?, model? }` | `{ ok }`. One Docker Agent hook event (`event` is its `hook_event_name`, `sessionId` its `session_id`, `command` the shell tool's `cmd`, `model` its `model_id`); the manager tells the main session, its tabs and its sub-agents apart, and turns the event into the agent, shell, model and tool-session reports above. A session not started as Docker Agent (a Shell card it was run in) is treated as one from its first event. 409 once the session has exited. |
 | POST | `/sessions/:id/shells` | `{ shell, key \| task, match?, agentId?, persist?, endsWithAgent?, kind?, tasks? }` | `{ ok }`. `shell` is `start`, `end`, `background` (with the tool's `task` id), `waiting` (a permission request, which hides the command), `asked` (one that ends the command with its turn), `running` (`tasks` lists the background tasks still running as `{ id, kind? }`; any other ends, and a listed `monitor` promotes a command while a listed `shell` never demotes a monitor) or `reset` (every command ends). `key` is the tool's call id. `match` is a hash of the command, which pairs a permission request with it; `persist` keeps a command past the end of its turn, and `endsWithAgent` ends a background one with its sub-agent. `kind` is `shell` (default) or `monitor`, a background watch; the session lists each as `{ id, kind }`. |
 | POST | `/shutdown` | `{ force?, restart? }` | `202 { ok, running, restart }`: stops the manager and every session, detaching tmux and herdr sessions rather than ending them. 409 `sessions_running` (with `running`, the count of sessions it would end) while any session other than a tmux or herdr one is running, unless `force` is true. With `restart`, 409 `pty_unavailable` first when the new manager could not run a terminal, which happens when an upgrade replaced a node-pty compiled on this computer (see `ptyBuild` under [Upgrade](#upgrade)); the message says what to run, and nothing is stopped. From the 202 on, `POST /sessions` and `POST /providers/:id/install` answer 503 `manager_stopping`. Events clients get `manager.stopping` first and `manager.stopped` last, after the sessions have ended and before the API closes. With `restart` true, the manager then starts a new manager from the package on disk, on the same port and with the same token, before it exits; the new one runs whatever version is installed, so this is how an upgrade's `pendingVersion` is put to use. Clients reconnect to it as to any manager; its `hello` is the new source of truth. |
 
@@ -737,7 +752,7 @@ when the provider has none). `account` is one of the provider's account ids
 home folder is created before its first session.
 
 `POST /sessions/:id/agents`, `POST /sessions/:id/model`,
-`POST /sessions/:id/tool-session`, `POST /sessions/:id/reporting` and `POST /sessions/:id/shells` also accept the
+`POST /sessions/:id/tool-session`, `POST /sessions/:id/reporting`, `POST /sessions/:id/shells` and `POST /sessions/:id/docker` also accept the
 per-session report token instead of the API token, in an
 `X-Agent-Guild-Report-Token` header. The manager gives that token only to the
 processes inside that session. Without the API token, an unknown session id

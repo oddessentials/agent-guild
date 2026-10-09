@@ -10,8 +10,9 @@ import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { resolveCommand, resolveAllCommands, pathKey, buildSpawnSpec, runSpec } from './command-resolver.mjs';
-import { compareVersions, probeVersion, fetchManifest, latestVersion, DEFAULT_NPM_REGISTRY } from './versions.mjs';
+import { compareVersions, probeVersion, fetchManifest, latestVersion, latestReleaseTag, DEFAULT_NPM_REGISTRY } from './versions.mjs';
 import { CHANNEL_LABELS, classifyInstall, expandHome, formatCommand, homeRelative, knownLaunchers, listInstallations, platformDependency, updateHelpAccepted } from './install-channels.mjs';
+import { copyChannel, linkOnPath, pluginVersion, readPlugin } from './docker-plugin.mjs';
 import { weavePaths } from './shell-env.mjs';
 import { detectShells, fallbackShell } from './shells.mjs';
 import { RUNNER, encodePlan } from './uninstall.mjs';
@@ -31,6 +32,10 @@ const INSTALLS_TTL_MS = 30 * 1000;
 
 function fileMtime(file) {
   try { return fs.statSync(file).mtimeMs; } catch { return null; }
+}
+
+function realPathOf(file) {
+  try { return fs.realpathSync.native(file); } catch { return file; }
 }
 
 function refusal(status, code, message) {
@@ -178,6 +183,10 @@ function normalize(raw, platform, warnings) {
     icon: merged.icon ? String(merged.icon) : null,
     install: String(merged.install || ''),
     npmNote: merged.npmNote ? String(merged.npmNote) : null,
+    // The Docker CLI plugin the tool is (`docker agent`): its copies, not the docker command's, are the installation.
+    // A plugin is only ever run through the docker command: a standalone docker-agent (README) is a plain tool.
+    plugin: typeof merged.plugin === 'string' && /^[a-z][a-z0-9]*$/.test(merged.plugin) && /^docker(?:\.exe)?$/i.test(path.basename(String(merged.command || ''))) ? merged.plugin : null,
+    releases: httpsUrl(merged.releases, 'releases', merged.id, warnings),
     channels: normalizeChannels(merged.channels),
     multiplexers: Array.isArray(merged.multiplexers) ? merged.multiplexers
       .filter((m) => m && typeof m === 'object' && !Array.isArray(m))
@@ -382,6 +391,21 @@ export class ProviderRegistry extends EventEmitter {
         latest: null, latestAt: 0, probePath: null, probeMtime: null, probeAt: 0, probeOk: null, lastInstall: null, copies: {},
       };
       const found = this.resolve(provider);
+      if (provider.plugin) {
+        // The plugin's copies, from `docker info`: read again when forced, when docker changed, hourly, and five
+        // minutes after a read that failed or found no copy, so a copy installed by hand is seen soon.
+        const read = entry.plugin;
+        const ttl = read && !read.error && read.copies.length > 0 ? VERSION_TTL_MS : FAILED_PROBE_TTL_MS;
+        // A listed copy whose file is gone was removed by hand: ask docker again now.
+        const gone = Boolean(read?.copies.some((c) => fileMtime(c.path) === null));
+        if (!found) {
+          if (read) { entry.plugin = null; changed = true; }
+        } else if (force || !read || gone || read.docker !== found || now - read.at > ttl) {
+          const result = await readPlugin(found, provider.plugin, { env: { ...this.env, ...provider.env }, platform: this.platform });
+          entry.plugin = { docker: found, at: now, copies: result.copies ?? [], error: result.error ?? null };
+          changed ||= JSON.stringify([read?.copies ?? null, read?.error ?? null]) !== JSON.stringify([entry.plugin.copies, entry.plugin.error]);
+        }
+      }
       const channel = found ? this.channelFor(provider, found) : null;
       if (channel?.probe) {
         const mtime = fileMtime(found);
@@ -397,14 +421,20 @@ export class ProviderRegistry extends EventEmitter {
         Object.assign(entry, { probePath: null, probeMtime: null, probeAt: 0, probeOk: null });
         changed = true;
       }
-      const resolved = provider.versionArgs ? found : null;
+      // A plugin's version is asked of docker, and follows the plugin file that runs, not docker's.
+      const pluginCopies = entry.plugin?.copies ?? [];
+      const resolved = provider.versionArgs ? (provider.plugin ? pluginCopies.find((c) => c.active)?.path ?? null : found) : null;
       if (resolved) {
         const mtime = fileMtime(resolved);
         const ttl = entry.installed === null ? FAILED_PROBE_TTL_MS : VERSION_TTL_MS;
         const stale = entry.installedPath !== resolved || entry.installedMtime !== mtime || now - entry.installedAt > ttl;
         if (force || stale) {
-          const spec = buildSpawnSpec(resolved, provider.versionArgs, this.env, this.platform);
-          const probe = await probeVersion(spec, { env: { ...this.env, ...provider.env } });
+          const spec = buildSpawnSpec(provider.plugin ? found : resolved, provider.versionArgs, this.env, this.platform);
+          // A plugin copy docker cannot load fails its version check with docker's reason, and is not asked.
+          const broken = provider.plugin ? pluginCopies.find((c) => c.active)?.error ?? null : null;
+          const probe = broken
+            ? { ok: false, version: null, error: `${this.commandFor(provider)} cannot load ${provider.tool} at ${resolved}: ${broken}` }
+            : await probeVersion(spec, { env: { ...this.env, ...provider.env } });
           const versionStatus = !probe.ok ? 'failed' : probe.version ? 'ok' : 'unavailable';
           changed ||= probe.version !== entry.installed || versionStatus !== entry.versionStatus || probe.error !== entry.versionError;
           Object.assign(entry, {
@@ -416,7 +446,9 @@ export class ProviderRegistry extends EventEmitter {
         changed = true;
       }
       const copies = {};
-      for (const other of provider.versionArgs ? this.installsFor(provider, found).filter((i) => i.resolvedPath !== found) : []) {
+      const env = { ...this.env, ...provider.env };
+      const installs = provider.plugin ? this._pluginInstalls(provider, pluginCopies) : this.installsFor(provider, found);
+      for (const other of provider.versionArgs ? installs.filter((i) => i.resolvedPath !== resolved) : []) {
         const file = other.resolvedPath;
         const mtime = fileMtime(file);
         const cached = entry.copies[file];
@@ -425,7 +457,10 @@ export class ProviderRegistry extends EventEmitter {
           copies[file] = cached;
           continue;
         }
-        const probe = await probeVersion(buildSpawnSpec(file, provider.versionArgs, this.env, this.platform), { env: { ...this.env, ...provider.env } });
+        // A plugin copy that does not run answers through the plugin protocol, which every copy speaks.
+        const probe = provider.plugin
+          ? await pluginVersion(file, { env, platform: this.platform }).then((version) => ({ ok: version !== null, version }))
+          : await probeVersion(buildSpawnSpec(file, provider.versionArgs, this.env, this.platform), { env });
         const status = !probe.ok ? 'failed' : probe.version ? 'ok' : 'unavailable';
         changed ||= !cached || cached.version !== probe.version || cached.status !== status;
         copies[file] = { version: probe.version, status, mtime, at: now };
@@ -434,6 +469,10 @@ export class ProviderRegistry extends EventEmitter {
       entry.copies = copies;
       if (provider.package && lookups && (force || now - entry.latestAt > VERSION_TTL_MS)) {
         const latest = await latestVersion(provider.package, { registryUrl, fetchImpl: this.fetchImpl });
+        changed ||= latest !== entry.latest;
+        Object.assign(entry, { latest, latestAt: now });
+      } else if (provider.releases && this.checkUpdates && (force || now - entry.latestAt > VERSION_TTL_MS)) {
+        const latest = await latestReleaseTag(provider.releases, { fetchImpl: this.fetchImpl });
         changed ||= latest !== entry.latest;
         Object.assign(entry, { latest, latestAt: now });
       }
@@ -459,7 +498,7 @@ export class ProviderRegistry extends EventEmitter {
     let outcome;
     if (exitCode !== 0) outcome = 'failed';
     else if (kind === 'uninstall') outcome = this.installsFor(provider).some((i) => i.resolvedPath === removed) ? 'remaining' : 'removed';
-    else if (kind === 'install') outcome = this.resolve(provider) ? 'installed' : 'missing';
+    else if (kind === 'install') outcome = (provider.plugin ? this._pluginPath(provider) : this.resolve(provider)) ? 'installed' : 'missing';
     else if (entry.installed === null) outcome = 'done';
     else outcome = entry.installed !== before ? 'updated' : 'unchanged';
     entry.lastInstall = {
@@ -508,8 +547,56 @@ export class ProviderRegistry extends EventEmitter {
     return args;
   }
 
+  /** Whether the tool is there to run: its command on PATH, and for a plugin a copy that `docker` runs. */
+  installed(provider) {
+    return Boolean(provider.plugin ? this._pluginPath(provider) : this.resolve(provider));
+  }
+
+  /** The plugin's copies as `docker info` last listed them, the one that runs first; [] until read or without docker. */
+  _pluginCopies(provider) {
+    return this.versions.get(provider.id)?.plugin?.copies ?? [];
+  }
+
+  /** Why the plugin's copies could not be listed, or null. */
+  _pluginError(provider) {
+    return this.versions.get(provider.id)?.plugin?.error ?? null;
+  }
+
+  /** The plugin copy `docker <plugin>` runs, or null. */
+  _pluginPath(provider) {
+    return this._pluginCopies(provider).find((c) => c.active)?.path ?? null;
+  }
+
+  _pluginInstalls(provider, copies = this._pluginCopies(provider)) {
+    const env = { ...this.env, ...provider.env };
+    // Docker Desktop on macOS links two plugin folders to one file: one copy, listed once, as the one that runs.
+    const seen = new Set();
+    return copies.map((copy) => ({ ...copy, realPath: realPathOf(copy.path) })).filter((copy) => !seen.has(copy.realPath) && seen.add(copy.realPath)).map((copy) => {
+      const channel = copyChannel(copy.path, env, this.platform);
+      // The runner deletes only through real folders, so a download reached through a link is listed as the download
+      // it is, and the link is what the card says stands in the way of removing it.
+      const link = channel === 'download' ? linkOnPath(copy.path, this.platform) : null;
+      const guidance = {
+        desktop: `Docker Desktop installed ${provider.tool} at ${copy.path}; Docker Desktop updates and removes it.`,
+        system: `${provider.tool} at ${copy.path} comes from a system package. Update or remove it with that package.`,
+        download: link ? `${provider.tool} at ${copy.path} is reached through a link at ${link}, which Agent Guild does not delete through. Remove the file yourself.` : null,
+      }[channel] ?? null;
+      return {
+        resolvedPath: copy.path, realPath: copy.realPath, channel, key: `${channel}:${copy.path}`, onPath: true, active: copy.active, guidance,
+        uninstall: channel === 'download' && !link ? { run: null, remove: [copy.path], links: [], launcher: null, strict: true } : null,
+      };
+    });
+  }
+
   channelFor(provider, resolvedPath = this.resolve(provider)) {
     if (!resolvedPath) return null;
+    if (provider.plugin) {
+      const active = this._pluginInstalls(provider).find((i) => i.active);
+      if (!active) return null;
+      // The downloaded copy is updated by the install command, which writes over it.
+      const update = active.channel === 'download' && provider.install ? { file: null, args: [], command: provider.install } : null;
+      return { channel: active.channel, resolvedPath: active.resolvedPath, realPath: active.realPath, update, probe: false, guidance: active.guidance ?? `${provider.tool} at ${active.resolvedPath} was not downloaded by Agent Guild. Update it the way you installed it.` };
+    }
     return classifyInstall({
       resolvedPath,
       provider,
@@ -525,6 +612,7 @@ export class ProviderRegistry extends EventEmitter {
   }
 
   installsFor(provider, resolvedPath = this.resolve(provider)) {
+    if (provider.plugin) return this._pluginInstalls(provider);
     const cached = this._installs.get(provider.id);
     if (cached && cached.resolvedPath === resolvedPath && Date.now() - cached.at < INSTALLS_TTL_MS) return cached.list;
     const list = this.listInstalls(provider);
@@ -533,6 +621,7 @@ export class ProviderRegistry extends EventEmitter {
   }
 
   listInstalls(provider) {
+    if (provider.plugin) return this._pluginInstalls(provider);
     const env = { ...this.env, ...provider.env };
     const command = this.commandFor(provider);
     const tracked = Boolean(provider.package) || Object.keys(provider.channels).length > 0;
@@ -556,13 +645,15 @@ export class ProviderRegistry extends EventEmitter {
       warnings.push(`${installs.length} copies of ${provider.tool} are installed. The one in use is ${label(active)} at ${active.displayPath}.`);
     }
     const newer = installs.find((i) => i.newer);
-    if (newer) warnings.push(`An older copy comes first on PATH: ${label(active)} is in use while ${label(newer)} is installed at ${newer.displayPath}.`);
+    const first = provider.plugin ? "comes first in Docker's plugin folders" : 'comes first on PATH';
+    if (newer) warnings.push(`An older copy ${first}: ${label(active)} is in use while ${label(newer)} is installed at ${newer.displayPath}.`);
     return warnings;
   }
 
   updateFor(provider, channel = this.channelFor(provider)) {
     if (!channel) return { file: null, args: [], command: null, guidance: null };
     if (!channel.update) return { file: null, args: [], command: null, guidance: channel.guidance };
+    if (provider.plugin) return { file: null, args: [], command: channel.update.command, guidance: null };
     const args = this.npmArgs(channel.update, this.versions.get(provider.id)?.latest ?? 'latest');
     const command = formatCommand(channel.update.file, args);
     if (channel.probe) {
@@ -646,7 +737,9 @@ export class ProviderRegistry extends EventEmitter {
 
   /** Public description, including whether the tool is installed. */
   describe(provider) {
-    const resolvedPath = this.resolve(provider);
+    const commandPath = this.resolve(provider);
+    // A plugin's card is about the plugin copy that runs; the docker command only has to be there.
+    const resolvedPath = provider.plugin ? this._pluginPath(provider) : commandPath;
     const versions = this.versions.get(provider.id);
     const installed = resolvedPath ? versions?.installed ?? null : null;
     const latest = versions?.latest ?? null;
@@ -654,6 +747,9 @@ export class ProviderRegistry extends EventEmitter {
     const update = this.updateFor(provider, channel);
     const shown = (file) => homeRelative(file, { ...this.env, ...provider.env }, this.platform);
     const shells = this.shellsFor(provider);
+    const pluginError = provider.plugin && commandPath ? this._pluginError(provider) : null;
+    // Until docker has listed its plugins once, the card is neither installed nor known to be missing.
+    const pluginPending = Boolean(provider.plugin && commandPath && !versions?.plugin);
     const installs = this.installsFor(provider, resolvedPath).map((install) => {
       const active = install.resolvedPath === resolvedPath;
       const copy = active ? { version: installed, status: versions?.versionStatus ?? null } : versions?.copies?.[install.resolvedPath];
@@ -684,7 +780,10 @@ export class ProviderRegistry extends EventEmitter {
       package: provider.package,
       args: provider.args,
       resumable: provider.resumeArgs.length > 0,
-      installable: Boolean(provider.package && this.resolveNpm()),
+      installable: provider.plugin ? Boolean(commandPath && !resolvedPath && !pluginError && !pluginPending && provider.install) : Boolean(provider.package && this.resolveNpm()),
+      installCommand: provider.plugin && provider.install ? provider.install : null,
+      pluginError,
+      pluginPending,
       installedVersion: installed,
       versionStatus: resolvedPath ? versions?.versionStatus ?? null : null,
       versionError: resolvedPath ? versions?.versionError ?? null : null,
@@ -710,7 +809,8 @@ export class ProviderRegistry extends EventEmitter {
       color: provider.color,
       monogram: provider.monogram,
       iconUrl: this.iconUrl(provider),
-      install: provider.install,
+      // Without docker there is nothing to install the plugin into: the card says docker is missing instead.
+      install: provider.plugin && !commandPath ? '' : provider.install,
       docs: provider.docs,
       usageUrl: provider.usageUrl,
       billingUrl: provider.billingUrl,
@@ -738,6 +838,16 @@ export class ProviderRegistry extends EventEmitter {
       err.code = 'provider_unavailable';
       throw err;
     }
+    // Known to be missing (docker listed its plugins and had no copy), not merely not yet checked: before the first
+    // check, and when docker could not list them, docker itself gets to say so in the session.
+    const plugins = provider.plugin && !shell ? this.versions.get(provider.id)?.plugin : null;
+    if (plugins && !plugins.error && !plugins.copies.some((c) => c.active)) {
+      throw refusal(409, 'provider_unavailable', `${provider.tool} is not installed: ${this.commandFor(provider)} finds no ${provider.plugin} plugin. Install it from its card.`);
+    }
+    const broken = plugins && !plugins.error ? plugins.copies.find((c) => c.active)?.error : null;
+    if (broken) {
+      throw refusal(409, 'provider_unavailable', `${provider.tool} cannot run: ${this.commandFor(provider)} cannot load ${this._pluginPath(provider)} (${broken}). Reinstall it from its card, or replace that copy.`);
+    }
     let resumeArgs = [];
     if (resume !== null) {
       if (provider.resumeArgs.length === 0) {
@@ -753,12 +863,22 @@ export class ProviderRegistry extends EventEmitter {
     return buildSpawnSpec(resolved, [...(shell?.args ?? []), ...args, ...hookArgs, ...resumeArgs, ...extraArgs], this.env, this.platform);
   }
 
+  /** The install one-liner as a spawn spec: PowerShell on Windows, sh elsewhere. */
+  _installCommandSpec(provider) {
+    if (this.platform === 'win32') {
+      const system32 = path.win32.join(this.env.SystemRoot || this.env.SYSTEMROOT || 'C:\\Windows', 'System32');
+      return { file: path.win32.join(system32, 'WindowsPowerShell', 'v1.0', 'powershell.exe'), args: ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', provider.install] };
+    }
+    return { file: '/bin/sh', args: ['-c', provider.install] };
+  }
+
   async updateSpec(provider) {
     const channel = this.channelFor(provider);
     const update = this.updateFor(provider, channel);
     if (!update.command) {
       throw refusal(400, 'not_updatable', update.guidance || `Still checking how ${provider.tool} was installed. Try again in a moment.`);
     }
+    if (provider.plugin) return { spec: this._installCommandSpec(provider), channel: channel.channel };
     const args = channel.update.package
       ? this.npmArgs(channel.update, await this.resolveRelease(provider, update.file))
       : update.args;
@@ -778,6 +898,15 @@ export class ProviderRegistry extends EventEmitter {
   }
 
   async installSpec(provider) {
+    if (provider.plugin) {
+      if (!provider.install) throw refusal(400, 'not_installable', `${provider.tool} has no install command configured; see ${provider.docs || 'its documentation'}`);
+      if (!this.resolve(provider)) throw refusal(409, 'provider_unavailable', `${this.commandFor(provider)} was not found on PATH, so there is nothing to install the ${provider.tool} plugin into.`);
+      // A download over a copy docker already runs would only shadow it: install only once docker has said there is none.
+      const plugins = this.versions.get(provider.id)?.plugin;
+      if (!plugins || plugins.error) throw refusal(409, 'plugins_unchecked', `Still checking which ${provider.tool} copies docker finds${plugins?.error ? ` (${plugins.error})` : ''}. Try again in a moment.`);
+      if (plugins.copies.some((c) => c.active)) throw refusal(409, 'already_installed', `${provider.tool} is already installed at ${this._pluginPath(provider)}.`);
+      return this._installCommandSpec(provider);
+    }
     if (!provider.package) {
       const err = new Error(`${provider.tool} has no npm package configured; install it by hand: ${provider.install || provider.docs || 'see its documentation'}`);
       err.status = 400;
