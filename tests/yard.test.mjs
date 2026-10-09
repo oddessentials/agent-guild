@@ -29,7 +29,7 @@ test('crews behind a front hall start at their right end, the others at their le
  for(const id of ['anthropic','openai','google','xai','shell','docker']) {
   const slots=layoutSessions([session(id+'-a',id),session(id+'-b',id)],providers);
   const first=slots.get(id+'-a').x-anchors.get(id).x,second=slots.get(id+'-b').x-anchors.get(id).x;
-  if(id==='anthropic'||id==='google')assert.ok(first>0&&second<first,id);
+  if(id==='anthropic'||id==='google'||id==='xai')assert.ok(first>0&&second<first,id);
   else assert.ok(first<0&&second>first,id);
  }
  // Docker Agent's hall is 1.3 times the 5.2 m footprint; its crew stands clear of it.
