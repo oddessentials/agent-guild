@@ -19,6 +19,7 @@ WORKING = {
     "google": "Keep the exact same water spirit, lily pad hat, lotus and koi. Change it: it raises both hands and the water of its body swirls upward into graceful glowing spiral ribbons of clear blue water and spray around it, the koi leaping in an arc above its hands, droplets sparkling, its eyes glowing bright blue, the lotus open and glowing.",
     "xai": "Keep the exact same ink-wash night heron spirit. Change it: it spreads its wings wide while staying the same size and filling the frame, swirls of pale mist and flowing black ink trails spiral around it, its teal-cyan feather tips glowing bright cyan, glowing cyan motes drifting in the mist, its eyes bright gold.",
     "shell": "Keep the exact same mossy stone lantern spirit with wisteria. Change it: its window blazes with bright violet light, the wisteria blossoms glowing, a swarm of glowing violet and gold fireflies spiraling around it, ribbons of violet spirit-smoke curling upward, its eyes bright and happy.",
+    "docker": "Keep the exact same hermit crab spirit, its azure sea-glass body and claws, its mossy crimson cargo crate and the river stone, at the exact same size and position in the frame. Change it: it rears up proudly on its legs with both big claws raised high, its whole azure body clearly visible, its eyes blazing bright azure, the moss on its crate bursting into glowing white blossoms, a mighty spiralling ribbon of glowing azure water, sea foam and bubbles surging up behind and around it without covering its body, two small mossy crimson wooden crates floating in the glowing spray beside it.",
 }
 
 only = [a.split(":") for a in sys.argv[1:]]
@@ -33,7 +34,7 @@ for pid, spec in C.items():
                         "--width", str(spec["w"]), "--height", str(spec["h"]), "--out", str(idle_dir)], check=True, capture_output=True)
         print(pid, "idle", flush=True)
     idle = glob.glob(str(idle_dir / "*.png"))[0]
-    for state, prompt in (("working", WORKING[pid] + KEEP), ("locked", LOCKED)):
+    for state, prompt in (("working", WORKING[pid] + KEEP), ("locked", spec.get("locked", LOCKED))):
         if state not in states:
             continue
         out = RAW / f"{pid}-{state}"

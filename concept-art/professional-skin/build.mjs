@@ -13,6 +13,7 @@ const PROVIDERS = {
   google: '#4285f4',
   xai: '#14b8c4',
   shell: '#7c6cf0',
+  docker: '#2496ed',
 };
 const LOCKED = '#8b929e';
 const MODES = {
@@ -109,10 +110,12 @@ const MARKS = {
   xai: 'M6.469 8.776L16.512 23h-4.464L2.005 8.776H6.47zm-.004 7.9l2.233 3.164L6.467 23H2l4.465-6.324zM22 2.582V23h-3.659V7.764L22 2.582zM22 1l-9.952 14.095-2.233-3.163L17.533 1H22z',
 };
 const SHELL = '<g fill="none" stroke="#fff" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 24l8 8-8 8M33 41h11"/></g>';
+// Docker Agent: a ribbed shipping container, not Docker's logo.
+const CONTAINER = '<g fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><rect x="14" y="21" width="36" height="22" rx="2.5"/><path d="M22 26.5v11M28 26.5v11M34 26.5v11M40 26.5v11"/></g>';
 
 /** Provider icon: a rounded tile in the provider's colour with the vendor's mark in white. 64×64. */
 function icon(id, color) {
-  const mark = MARKS[id] ? `<path transform="translate(17 17) scale(1.25)" fill="#fff" fill-rule="evenodd" d="${MARKS[id]}"/>` : SHELL;
+  const mark = MARKS[id] ? `<path transform="translate(17 17) scale(1.25)" fill="#fff" fill-rule="evenodd" d="${MARKS[id]}"/>` : id === 'docker' ? CONTAINER : SHELL;
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
     <defs><linearGradient id="t" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="${color}"/><stop offset="1" stop-color="${color}" stop-opacity="0.82"/>

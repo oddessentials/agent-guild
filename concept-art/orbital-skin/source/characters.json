@@ -32,5 +32,11 @@
     "w": 1056,
     "h": 1408,
     "prompt": "A small hooded spectral robot made of translucent glowing violet hologram light, no face, a single glowing bright violet '>' chevron symbol inside the dark hood, its robot body dissolving into wispy violet light tendrils below the waist, hovering calmly."
+  },
+  "docker": {
+    "seed": 18,
+    "w": 1056,
+    "h": 1408,
+    "prompt": "A small but mighty heavy cargo-loader robot with a wide boxy chassis, glossy azure-blue enamel armor with riveted crimson-red steel plates ribbed like the corrugated walls of a shipping container, a round dark glass faceplate with two big glowing azure eyes and a tiny confident smile, two oversized chunky hydraulic arms ending in magnetic grab claws, three small crimson-red shipping containers stacked on its back like a backpack with glowing azure lock seals, a short antenna with an amber beacon light, standing firm and planted with its claws at its sides, radiating quiet unstoppable power."
   }
 }

@@ -9,11 +9,11 @@ from PIL import Image, ImageDraw, ImageFilter
 PACK = Path(__file__).resolve().parent.parent
 WEB = PACK.parent.parent / "web" / "skins" / "goblinville"
 GEN = Path("E:/projects/local-image-studio/scripts/gen.py")
-PROVIDERS = {"anthropic": "#dd7a3e", "openai": "#36b86f", "google": "#4d84e6", "xai": "#2cc3d3", "shell": "#9a6cf0"}
+PROVIDERS = {"anthropic": "#dd7a3e", "openai": "#36b86f", "google": "#4d84e6", "xai": "#2cc3d3", "shell": "#9a6cf0", "docker": "#2496ed"}
 STATES = ["idle", "working", "locked"]
 CHARACTER_WIDTH = 640
 # The square around each provider's head in its idle art (1056×1408), for the provider icon.
-HEADS = {"anthropic": (270, 60, 480), "openai": (300, 60, 420), "google": (300, 30, 440), "xai": (330, 40, 420), "shell": (250, 40, 520)}
+HEADS = {"anthropic": (270, 60, 480), "openai": (300, 60, 420), "google": (300, 30, 440), "xai": (330, 40, 420), "shell": (250, 40, 520), "docker": (300, 40, 440)}
 FAMILIAR_SIZE = 112
 # Cut-out options for art the mask alone gets wrong: the girders the ogre rivets stand below the mask,
 # and the stones and rings around the levitating troll would count as backdrop.

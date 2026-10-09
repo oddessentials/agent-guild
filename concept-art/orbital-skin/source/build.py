@@ -9,11 +9,11 @@ from PIL import Image, ImageDraw, ImageFilter
 PACK = Path(__file__).resolve().parent.parent
 WEB = PACK.parent.parent / "web" / "skins" / "orbital"
 GEN = Path("E:/projects/local-image-studio/scripts/gen.py")
-PROVIDERS = {"anthropic": "#e0835f", "openai": "#1fd08f", "google": "#5b9cff", "xai": "#38d6e8", "shell": "#a67cf6"}
+PROVIDERS = {"anthropic": "#e0835f", "openai": "#1fd08f", "google": "#5b9cff", "xai": "#38d6e8", "shell": "#a67cf6", "docker": "#2496ed"}
 STATES = ["idle", "working", "locked"]
 CHARACTER_WIDTH = 640
 # The square around each provider's head in its idle art (1056×1408), for the provider icon.
-HEADS = {"anthropic": (262, 100, 530), "openai": (310, 84, 484), "google": (140, 140, 780), "xai": (286, 70, 474), "shell": (236, 106, 596)}
+HEADS = {"anthropic": (262, 100, 530), "openai": (310, 84, 484), "google": (140, 140, 780), "xai": (286, 70, 474), "shell": (236, 106, 596), "docker": (240, 190, 520)}
 FAMILIAR_SIZE = 112
 
 

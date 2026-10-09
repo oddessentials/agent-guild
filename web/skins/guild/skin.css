@@ -90,16 +90,24 @@
     --working: image-set(url("characters/xai/working.avif") type("image/avif"), url("characters/xai/working.webp") type("image/webp"));
     --locked: image-set(url("characters/xai/locked.avif") type("image/avif"), url("characters/xai/locked.webp") type("image/webp"));
   }
+  .provider[data-id="docker"], .session-card[data-provider="docker"] {
+    --pc: #2496ed;
+    --idle: image-set(url("characters/docker/idle.avif") type("image/avif"), url("characters/docker/idle.webp") type("image/webp"));
+    --working: image-set(url("characters/docker/working.avif") type("image/avif"), url("characters/docker/working.webp") type("image/webp"));
+    --locked: image-set(url("characters/docker/locked.avif") type("image/avif"), url("characters/docker/locked.webp") type("image/webp"));
+  }
 
   .provider-icon[data-provider="anthropic"] { --icon: image-set(url("icons/anthropic.avif") type("image/avif"), url("icons/anthropic.webp") type("image/webp")); }
   .provider-icon[data-provider="openai"] { --icon: image-set(url("icons/openai.avif") type("image/avif"), url("icons/openai.webp") type("image/webp")); }
   .provider-icon[data-provider="google"] { --icon: image-set(url("icons/google.avif") type("image/avif"), url("icons/google.webp") type("image/webp")); }
   .provider-icon[data-provider="xai"] { --icon: image-set(url("icons/xai.avif") type("image/avif"), url("icons/xai.webp") type("image/webp")); }
+  .provider-icon[data-provider="docker"] { --icon: image-set(url("icons/docker.avif") type("image/avif"), url("icons/docker.webp") type("image/webp")); }
   .provider-icon[data-provider="shell"] { --icon: image-set(url("icons/shell.avif") type("image/avif"), url("icons/shell.webp") type("image/webp")); }
   .provider-icon:not(.has-image)[data-provider="anthropic"],
   .provider-icon:not(.has-image)[data-provider="openai"],
   .provider-icon:not(.has-image)[data-provider="google"],
   .provider-icon:not(.has-image)[data-provider="xai"],
+  .provider-icon:not(.has-image)[data-provider="docker"],
   .provider-icon:not(.has-image)[data-provider="shell"] {
     background: var(--icon) center / cover no-repeat; color: transparent;
   }

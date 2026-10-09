@@ -9,6 +9,7 @@ Sources for `web/skins/grove/`: a cast of gentle nature spirits, one per provide
 | Google | Water spirit with a lily-pad hat and a koi |
 | xAI | Ink-and-mist heron |
 | Shell | Mossy stone lantern spirit hung with wisteria |
+| Docker | Hermit crab spirit of azure sea glass, carrying a mossy crimson cargo crate as its shell |
 
 Idle is calm, working is awake and glowing, and locked is the same spirit turned to a sleeping, moss-grown stone statue.
 

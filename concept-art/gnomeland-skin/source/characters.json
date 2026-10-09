@@ -36,5 +36,14 @@
     "edit_seeds": {
       "locked": 9
     }
+  },
+  "docker": {
+    "seed": 57,
+    "w": 1056,
+    "h": 1408,
+    "prompt": "A broad barrel-chested gnome harbormaster and crane-master, the mightiest gnome in the village, with a thick braided copper-red beard bound with brass rings and a bold confident grin, glowing azure eyes, a tall pointed azure-blue gnome hat with a curled tip, a band of knotted hemp rope and a small brass anchor pin, a heavy azure-blue sailor's pea coat with brass buttons over a crimson-red knit sweater, sleeves rolled up over mighty forearms, a coil of thick rope over one shoulder ending in a big iron crane hook he holds in one hand, one boot planted on a small crimson-red wooden cargo crate banded with iron like a tiny shipping container, standing proud and immovable.",
+    "edit_seeds": {
+      "working": 11
+    }
   }
 }

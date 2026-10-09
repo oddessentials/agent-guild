@@ -10,6 +10,7 @@ const DARK_TOKENS = TOKENS.filter((t) => !['--accent-text', '--radius', '--font-
 
 const web = new URL('../web/', import.meta.url);
 const html = readFileSync(new URL('index.html', web), 'utf8');
+const providers = JSON.parse(readFileSync(new URL('../config/providers.default.json', import.meta.url), 'utf8')).providers.map((p) => p.id);
 
 /** The skins list exactly as theme.js builds it in the browser. */
 function skins() {
@@ -81,6 +82,13 @@ for (const { id } of list) {
     const css = readFileSync(file, 'utf8').replace(/\/\*[^]*?\*\//g, '');
     const lists = [...css.matchAll(/([^{};]+)\{/g)].map((m) => m[1].split(',').map((s) => s.replace(/\s+/g, ' ').trim()));
     for (const list of lists.filter((l) => l.includes('.cwd input'))) assert.ok(list.includes('.notes-text'), list.join(', '));
+  });
+
+  // Shell's art is the default every card starts from; each other provider overrides it with its own.
+  test(`skin "${id}": every provider has its own card art and icon`, () => {
+    const css = readFileSync(file, 'utf8');
+    const own = (p) => css.includes(`.provider[data-id="${p}"], .session-card[data-provider="${p}"] {`) && css.includes(`.provider-icon[data-provider="${p}"] {`);
+    assert.deepEqual(providers.filter((p) => p !== 'shell' && !own(p)), []);
   });
 
   test(`skin "${id}": every relative url() points to a file`, () => {
