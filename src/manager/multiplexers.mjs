@@ -3,7 +3,7 @@
 import path from 'node:path';
 import { buildSpawnSpec, resolveCommand, resolveAllCommands, runSpec, pathKey } from './command-resolver.mjs';
 import { classifyInstall, defaultFsx, formatCommand, homeRelative, installationKey, uninstallPlan } from './install-channels.mjs';
-import { parseVersion, parseTmuxVersion, compareVersions, compareTmuxVersions } from './versions.mjs';
+import { parseVersion, parseTmuxVersion, compareVersions, compareTmuxVersions, brewVersion, formulaeApi } from './versions.mjs';
 import { tmuxSupported } from './shells.mjs';
 import { herdrLayout, ownsPathEntry, pathIdentity } from './multiplexer-paths.mjs';
 import { RUNNER, encodePlan } from './uninstall.mjs';
@@ -228,7 +228,7 @@ export class MultiplexerRegistry {
   async latestFor(definition, copy, env, force) {
     if (!this.registry.checkUpdates) return null;
     let url;
-    if (copy.channel === 'brew') url = `https://formulae.brew.sh/api/formula/${definition.id}.json`;
+    if (copy.channel === 'brew') url = `${formulaeApi(env)}/formula/${definition.id}.json`;
     else if (copy.channel === 'native' && !copy.partial) {
       // Preview identity is not ordinary semver. Do not compare it to stable.
       try {
@@ -240,15 +240,16 @@ export class MultiplexerRegistry {
     if (!url || !this.registry.checkUpdates) return null;
     const cached = this.latest.get(url);
     if (!force && cached && Date.now() - cached.at < LATEST_TTL) return cached.version;
+    const parse = definition.id === 'tmux' ? parseTmuxVersion : parseVersion;
     let version = null;
-    try {
-      const response = await (this.registry.fetchImpl || fetch)(url, { signal: AbortSignal.timeout(10_000) });
-      if (response.ok) {
-        const body = await response.json();
-        const raw = copy.channel === 'brew' ? body.versions?.stable : body.version;
-        version = definition.id === 'tmux' ? parseTmuxVersion(raw) : parseVersion(raw);
-      }
-    } catch {}
+    if (copy.channel === 'brew') {
+      version = (await brewVersion(definition.id, { env, fetchImpl: this.registry.fetchImpl, parse })).version;
+    } else {
+      try {
+        const response = await (this.registry.fetchImpl || fetch)(url, { signal: AbortSignal.timeout(10_000) });
+        if (response.ok) version = parse((await response.json()).version);
+      } catch {}
+    }
     this.latest.set(url, { version, at: Date.now() });
     return version;
   }

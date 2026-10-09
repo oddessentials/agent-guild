@@ -1654,9 +1654,11 @@ function buildProvider(provider) {
     install.addEventListener('click', () => installProvider(provider, node));
     const update = node.querySelector('.update');
     update.hidden = !(provider.available && provider.updateCommand && (provider.updateAvailable || checkFailed));
-    // npm and Homebrew install the version the card names; a native updater picks its own.
+    // npm and Homebrew install the version the card names; a native updater picks its own. Only npm's command
+    // reinstalls a copy whose version check failed: brew upgrade leaves a current cask or formula alone.
     if (!offersExactVersion(provider)) update.textContent = 'Update';
-    else update.textContent = checkFailed ? 'Reinstall' : `Update to ${provider.latestVersion}`;
+    else if (checkFailed) update.textContent = provider.installChannel === 'npm' ? 'Reinstall' : 'Update';
+    else update.textContent = `Update to ${provider.latestVersion}`;
     if (provider.installCommand && checkFailed) update.textContent = 'Reinstall';
     update.title = provider.updateCommand ? `Run "${provider.updateCommand}" in a session` : '';
     update.addEventListener('click', () => installProvider(provider, node));
