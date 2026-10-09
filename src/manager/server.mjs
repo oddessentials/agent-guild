@@ -133,6 +133,8 @@ export function createManagerServer({
   registry,
   usage,
   history,
+  /** Each tool's memory files for a working folder, or null where the API offers none. */
+  memory = null,
   modelStats,
   news = null,
   changelog = null,
@@ -396,6 +398,15 @@ export function createManagerServer({
       if (!provider.history) throw new HttpError(400, `${provider.tool} has no history source configured`, 'history_unsupported');
       const account = registry.account(provider, url.searchParams.get('account'));
       return sendJson(res, 200, { history: await history.list(provider, account, { limit: url.searchParams.get('limit') }) });
+    }
+    const memoryMatch = memory && route.match(/^\/providers\/([a-z0-9][a-z0-9_-]{0,31})\/memory(\/file)?$/);
+    if (memoryMatch && method === 'GET') {
+      const provider = registry.get(memoryMatch[1]);
+      if (!provider) throw new HttpError(404, `unknown provider "${memoryMatch[1]}"`, 'unknown_provider');
+      const account = registry.account(provider, url.searchParams.get('account'));
+      const cwd = url.searchParams.get('cwd') ?? undefined;
+      if (!memoryMatch[2]) return sendJson(res, 200, { memory: await memory.list(provider, account, cwd) });
+      return sendJson(res, 200, { file: await memory.read(provider, account, cwd, url.searchParams.get('scope'), url.searchParams.get('path')) });
     }
     const reportingMatch = route.match(/^\/providers\/([a-z0-9][a-z0-9_-]{0,31})\/reporting$/);
     if (reportingMatch && method === 'POST' && manager.sessionHooks) {

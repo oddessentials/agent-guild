@@ -8,7 +8,7 @@
   // Public card fields from config/providers.default.json. Versions below are sample data.
   var about = {
     anthropic: {
-      command: 'claude', package: '@anthropic-ai/claude-code', reporting: 'claude',
+      command: 'claude', package: '@anthropic-ai/claude-code', reporting: 'claude', memory: 'claude',
       npmNote: 'npm installs the same native build as Anthropic\'s installer.',
       install: 'curl -fsSL https://claude.ai/install.sh | bash',
       docs: 'https://code.claude.com/docs/en/setup',
@@ -16,7 +16,7 @@
       modelPattern: 'claude-(?:opus|sonnet|haiku|fable|\\d)[a-z0-9.-]*|\\b(?:opus|sonnet|haiku|fable)\\s?\\d+(?:\\.\\d+)?',
     },
     openai: {
-      command: 'codex', package: '@openai/codex', reporting: 'codex',
+      command: 'codex', package: '@openai/codex', reporting: 'codex', memory: 'codex',
       npmNote: 'npm installs the native Codex binary.',
       install: 'curl -fsSL https://chatgpt.com/codex/install.sh | sh',
       docs: 'https://github.com/openai/codex',
@@ -31,7 +31,7 @@
       modelPattern: '\\bgemini-\\d[a-z0-9.-]*',
     },
     xai: {
-      command: 'grok', package: '@xai-official/grok', reporting: 'grok',
+      command: 'grok', package: '@xai-official/grok', reporting: 'grok', memory: 'grok',
       npmNote: 'npm installs the native grok binary into ~/.grok/bin.',
       install: 'curl -fsSL https://x.ai/cli/install.sh | bash',
       docs: 'https://docs.x.ai/build/overview',
@@ -138,6 +138,7 @@
       latestVersion: id === 'shell' ? null : '1.0.0', updateAvailable: false, installChannel: null,
       updateCommand: null, updateGuidance: null, lastInstall: null, installs: [], warnings: [], npmNote: info.npmNote || null,
       usageSource: metered ? 'command' : null, historySource: id === 'shell' ? null : 'command',
+      memorySource: info.memory || null,
       reporting: info.reporting || null, reportingEnabled: typeof info.reportingEnabled === 'boolean' ? info.reportingEnabled : null, reportingNote: null,
       accounts: id === 'anthropic' ? [{ id: 'default', label: 'Personal' }, { id: 'work', label: 'Work' }] : [{ id: 'default', label: 'Default' }],
       modelPattern: info.modelPattern || null, install: info.install || null, docs: info.docs || null,
@@ -318,6 +319,8 @@
     if (route.indexOf('/github') === 0) return githubRoute(route, method, body, url.searchParams);
     var historyMatch = route.match(/^\/providers\/([^/]+)\/history$/);
     if (historyMatch && method === 'GET') return providerHistory(historyMatch[1], url.searchParams.get('account'));
+    var memoryMatch = route.match(/^\/providers\/([^/]+)\/memory(\/file)?$/);
+    if (memoryMatch && method === 'GET') return providerMemory(memoryMatch[1], url.searchParams, Boolean(memoryMatch[2]));
     var reportingMatch = route.match(/^\/providers\/([^/]+)\/reporting$/);
     if (reportingMatch && method === 'POST') return setReporting(reportingMatch[1], body);
     if (route === '/shutdown' && method === 'POST') return shutdown(body);
@@ -660,6 +663,27 @@
     return json({ history: {
       providerId: p.id, accountId: accountId || 'default', sessions: list, total: list.length,
       fetchedAt: new Date(now).toISOString(), error: null,
+    } });
+  }
+
+  var memoryFiles = {
+    'topics/checkout.md': '# Checkout\nHow the storefront takes payment.\n\n## Wallets\n- Apple Pay and Google Pay go through the same payment sheet.\n- Safari needs the merchant id in the domain association file.\n',
+    'topics/testing.md': '# Testing\nHow this repository is tested.\n\n## Commands\n- npm test runs the unit tests.\n- The cart badge test waits for the animation frame, never a fixed delay.\n',
+  };
+
+  function providerMemory(providerId, params, file) {
+    var p = providers.find(function (item) { return item.id === providerId; });
+    if (!p) return error('unknown provider "' + providerId + '"', 'unknown_provider', 404);
+    if (!p.memorySource) return error(p.tool + ' has no memory source configured', 'memory_unsupported', 400);
+    if (file) {
+      var text = memoryFiles[params.get('path')];
+      if (text === undefined) return error('This file is gone. Refresh the list.', 'memory_file_gone', 404);
+      return json({ file: { scope: params.get('scope'), path: params.get('path'), bytes: text.length, modified: ago(40 * 60), truncated: false, text: text } });
+    }
+    var files = Object.keys(memoryFiles).map(function (path, i) { return { path: path, title: memoryFiles[path].split('\n')[0].slice(2), bytes: memoryFiles[path].length, modified: ago((i + 1) * 40 * 60) }; });
+    return json({ memory: {
+      providerId: p.id, accountId: params.get('account') || 'default', folder: params.get('cwd') || '/work/storefront', fetchedAt: new Date(now).toISOString(),
+      scopes: [{ id: 'project', label: 'This project', dir: '/demo/memory/storefront', note: null, truncated: false, files: files }],
     } });
   }
 
