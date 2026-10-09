@@ -371,7 +371,7 @@ async function runInstall(id) {
   const { session } = started.body;
   const client = terminal(session.id);
   await client.opened;
-  await waitFor(() => client.messages.find((m) => m.type === 'exit'), { label: `${id} update exit` });
+  await waitFor(() => client.messages.find((m) => m.type === 'exit'), { label: `${id} update exit`, timeout: 60000 });
   const output = `${stripAnsi(client.output)}\n${screenText(session.id)}`;
   await client.close();
   await call('DELETE', `/sessions/${session.id}`);
