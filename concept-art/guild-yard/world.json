@@ -5,10 +5,11 @@
   "hero_2": {"image": "concepts/hero_google.png", "height": 1.95, "work": "steady"},
   "hero_3": {"image": "concepts/hero_xai.png", "height": 2.0, "work": "steady"},
   "hero_4": {"image": "concepts/hero_shell.png", "height": 2.1, "work": "steady"},
+  "hero_5": {"image": "concepts/hero_docker.png", "height": 2.5, "work": "steady"},
   "familiar_0": {"image": "../default-art-design-v1/familiars/flame.png", "height": 1.1},
   "familiar_1": {"image": "../default-art-design-v1/familiars/leaf.png", "height": 1.1},
   "familiar_2": {"image": "concepts/familiar_night.png", "height": 1.1},
   "familiar_3": {"image": "concepts/familiar_aether.png", "height": 1.0}
  },
- "grey": ["hero_1", "hero_2", "hero_3", "hero_4"]
+ "grey": ["hero_1", "hero_2", "hero_3", "hero_4", "hero_5"]
 }

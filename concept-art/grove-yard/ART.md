@@ -70,6 +70,9 @@ model's textures to `web/yard/assets/maps/`, and the Yard tests.
   stylized 3D models on plain grey; the antler hall's forest background was
   removed. The stone lantern and the pine hall reconstructed from their picks
   as they are. Every model was checked from four sides.
+- **Docker Agent's boathouse** stands in a broad mossy stump rather than
+  under a crown: its spreading oak canopy came back as a flat card at seed
+  123 and shattered as clumps, and a topiary dome restage read as a bowl.
 
 ## Plates
 

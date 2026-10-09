@@ -20,7 +20,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 ASSETS = ROOT / 'web/yard/assets'
 BLENDER = 'E:/Program Files/Blender Foundation/Blender 5.2/blender.exe'
-PROVIDERS = ['anthropic', 'openai', 'google', 'xai', 'shell']
+PROVIDERS = ['anthropic', 'openai', 'google', 'xai', 'shell', 'docker']
 
 def world(name):
     folder = ROOT / 'concept-art' / f'{name}-yard'

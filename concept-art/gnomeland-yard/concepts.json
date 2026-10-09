@@ -25,6 +25,11 @@
     "prompt": "The lantern-keeper's gatehouse: a small square fieldstone gatehouse with a wide round archway passing straight through it, a very steep pointed slate roof that curls over at the tip like a gnome hat, small leaded windows glowing violet, two large iron lanterns with violet glowing crystals hanging inside the arch, a narrow wooden door in the side wall.",
     "pick": 806
   },
+  "hall_docker": {
+    "seed": 831,
+    "prompt": "The harbourmaster's crane house: a broad fieldstone warehouse with a steep slate roof, wide bright azure blue painted cargo doors, a big oak timber jib crane on the roof with a thick rope and a large iron hook, two chunky crimson-red wooden cargo crates stacked by the doors, a brass anchor mounted over them, leaded windows glowing warm.",
+    "pick": 831
+  },
   "town_cottage_a": {
     "seed": 811,
     "prompt": "A tall two-storey gnome cottage with a fieldstone ground floor and a half-timbered upper floor of oak beams and cream plaster, a very steep slate roof with sharply pointed gables, a tall stone chimney, a small dormer, a wooden ladder leaning on the wall, barrels by the door.",

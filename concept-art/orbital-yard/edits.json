@@ -81,5 +81,19 @@
       "seed": 5,
       "prompt": "Paint a big friendly eye on the round lens: a large bright blue iris with a black pupil and a small white highlight dot, painted flat and matte, filling most of the lens. Keep the body, rotors, arms, colours, pose, lighting, framing and the plain light grey background exactly the same."
     }
+  ],
+  "robot_docker": [
+    {
+      "input": "../orbital-skin/characters/docker/idle.png",
+      "seed": 11,
+      "prompt": "Show this exact same little cargo-loader robot full body from the top of its helmet to its feet: same bright azure blue armour plates with crimson-red trim, same two crimson-red shipping containers strapped on its back, same claw hands, standing facing the viewer in a relaxed pose with its arms held slightly away from its body. Make every surface matte with no shine or reflections: the round face screen is a matte dark charcoal faceplate with two big bright cyan eyes and a small smile, and the antenna has no light. Evenly lit, on a plain flat light grey background. Same 3D toy style."
+    }
+  ],
+  "hall_docker": [
+    {
+      "input": "raw/hall_docker-1133.png",
+      "seed": 11,
+      "prompt": "Remove the crane, gantry, vehicles, cargo carts and ground markings beside and around the module, leaving only the azure cargo bay module with its two crimson-red containers on the roof and its low round base, complete and centred with empty space round it, on a plain flat light grey background. Keep the module, its colours and style exactly the same."
+    }
   ]
 }

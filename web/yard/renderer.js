@@ -1,5 +1,5 @@
 import * as T from './vendor/engine.js';
-import { WORLDS, PROVIDER_ORDER, CAMERA, SUN, minZoom, clampPan, viewBasis, providerPositions, layoutSessions, sessionPose, familiarPose, hash } from './model.mjs';
+import { WORLDS, PROVIDER_ORDER, characterIndex, CAMERA, SUN, minZoom, clampPan, viewBasis, providerPositions, layoutSessions, sessionPose, familiarPose, hash } from './model.mjs';
 
 const ASSETS = new URL('./assets/', import.meta.url);
 const vector = new T.Vector3();
@@ -408,7 +408,7 @@ export class YardRenderer {
     if(unit.loaded||unit.loading)return;
     const generation=this.request;
     const prefix=WORLDS[this.skin].characters;
-    const index=Math.max(0,PROVIDER_ORDER.indexOf(session.provider.id));
+    const index=characterIndex(session.provider.id);
     unit.loading=true;
     try {
       const asset=await this.asset(prefix+index);

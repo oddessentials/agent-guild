@@ -130,5 +130,19 @@
       "seed": 7,
       "prompt": "Keep this exact clockwork snail with its brass-banded spiral shell, satchel and violet-tipped antennae, but make every surface matte with no shine, and put it on a plain perfectly flat even light grey background with no texture, no shadow and no glow. Same painterly style, same framing."
     }
+  ],
+  "builder_docker": [
+    {
+      "input": "../gnomeland-skin/characters/docker/idle.png",
+      "seed": 11,
+      "prompt": "Show this exact same gnome harbourmaster full body from the tip of his hat to his boots: same face, long braided red beard, tall blue hat with the brass anchor badge, blue sea coat, red knitted jumper, coil of rope over his shoulder and the iron crane hook in his right hand. Remove the chest at his feet. He is standing facing the viewer in a relaxed A-pose with his arms held slightly away from his body, evenly lit, on a plain flat light grey background. Same painterly style."
+    }
+  ],
+  "hall_docker": [
+    {
+      "input": "raw/hall_docker-831.png",
+      "seed": 7,
+      "prompt": "Remove all the background scenery, sky, trees, other buildings and the ground around the building, leaving only the building, its roof crane and its crates on a plain flat light grey background. Keep the building and everything on it exactly the same, same style, same framing."
+    }
   ]
 }

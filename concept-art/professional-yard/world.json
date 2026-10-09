@@ -25,6 +25,11 @@
    "height": 2.0,
    "work": "tinker"
   },
+  "staff_5": {
+   "image": "concepts/staff_docker.png",
+   "height": 2.3,
+   "work": "tinker"
+  },
   "bot_0": {
    "image": "concepts/bot_courier.png",
    "height": 1.0

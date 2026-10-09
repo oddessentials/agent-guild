@@ -79,5 +79,12 @@
    "seed": 5,
    "prompt": "Replace the background with a perfectly flat, uniform, untextured medium grey with no noise, pattern, gradient or shadow. Keep the vehicle, its pose, framing and lighting exactly the same."
   }
+ ],
+ "staff_docker": [
+  {
+   "input": "raw/staff_docker-111.png",
+   "seed": 5,
+   "prompt": "Replace the background with a perfectly flat, uniform, untextured medium grey with no noise, pattern, gradient or shadow. Keep the subject, its pose, framing and lighting exactly the same."
+  }
  ]
 }

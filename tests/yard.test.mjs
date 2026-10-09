@@ -2,9 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, statSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
-import { sessionPose, familiarPose, layoutSessions, providerPositions, WORLDS, CAMERA, SUN, minZoom, clampPan, viewBasis, plateExtent } from '../web/yard/model.mjs';
+import { sessionPose, familiarPose, layoutSessions, providerPositions, characterIndex, WORLDS, CAMERA, SUN, minZoom, clampPan, viewBasis, plateExtent } from '../web/yard/model.mjs';
 import { Matrix4, Vector3 } from 'three';
-const providers=['anthropic','openai','google','xai','shell'].map(id=>({id}));
+const providers=['anthropic','openai','google','xai','shell','docker'].map(id=>({id}));
 const session=(id,provider='anthropic')=>({id,provider:{id:provider},createdAt:'2026-01-01T00:00:00Z'});
 
 test('visual poses preserve running/quiet vs exited and reported helper states',()=>{
@@ -26,17 +26,24 @@ test('all sessions remain addressable beyond the prototype limit and retain thei
 });
 test('crews behind a front hall start at their right end, the others at their left end',()=>{
  const anchors=providerPositions(providers);
- for(const id of ['anthropic','openai','google','xai','shell']) {
+ for(const id of ['anthropic','openai','google','xai','shell','docker']) {
   const slots=layoutSessions([session(id+'-a',id),session(id+'-b',id)],providers);
   const first=slots.get(id+'-a').x-anchors.get(id).x,second=slots.get(id+'-b').x-anchors.get(id).x;
   if(id==='anthropic'||id==='google')assert.ok(first>0&&second<first,id);
   else assert.ok(first<0&&second>first,id);
  }
+ // Docker Agent's hall is 1.3 times the 5.2 m footprint; its crew stands clear of it.
+ const docker=layoutSessions([session('d','docker')],providers).get('d');
+ assert.ok(docker.z-anchors.get('docker').z>5.2*1.3/2,'Docker crew in front of its hall');
+});
+test('Docker Agent sessions wear its own character, custom providers the shell one',()=>{
+ assert.equal(characterIndex('docker'),5);
+ assert.equal(characterIndex('custom-0'),characterIndex('shell'));
 });
 test('custom providers and non-provider task sessions have distinct stable placements',()=>{
  const custom=Array.from({length:18},(_,i)=>({id:'custom-'+i}));
  const anchors=providerPositions([...providers,...custom]);
- assert.equal(new Set([...anchors.values()].map(p=>p.x+','+p.z)).size,23);
+ assert.equal(new Set([...anchors.values()].map(p=>p.x+','+p.z)).size,24);
  const slots=layoutSessions([session('clone','github'),session('upgrade','agent-guild'),session('custom','custom-12')],[...providers,...custom]);
  assert.notDeepEqual(slots.get('clone'),slots.get('upgrade'));
  assert.equal(slots.get('custom').group,'custom-12');
@@ -75,7 +82,7 @@ test('each skin has a distinct authored world with named provider anchors',()=>{
 test('the shipped characters and helpers have actual skinning and usable animation tracks',()=>{
  const counts=new Map();
  for(const world of Object.values(WORLDS)){
-  if(world.characters)counts.set(world.characters,5);
+  if(world.characters)counts.set(world.characters,6);
   if(world.helpers)for(const prefix of Object.values(world.helpers))counts.set(prefix,4);
  }
  for(const [prefix,count] of counts){
@@ -146,6 +153,6 @@ test('every world\'s plates match the live camera, cover every view, and stay wi
    for(const material of surface.materials)assert.ok(materials.has(material),`${name} textures ${material}, which ${world.asset}.glb must contain`);
    for(const key of ['color','normal','rough'])bytes+=readFileSync(new URL(surface[key],assets)).length;
   }
-  assert.ok(bytes<=21*MiB,`${skin} world is ${(bytes/MiB).toFixed(2)} MiB`);
+  assert.ok(bytes<=24*MiB,`${skin} world is ${(bytes/MiB).toFixed(2)} MiB`);
  }
 });

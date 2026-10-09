@@ -86,5 +86,23 @@
       "seed": 11,
       "prompt": "Keep these same three toadstool houses with their red spotted caps, cream stalks, doors, windows and ladder, with no plants, twigs or ground around them. Render it as a highly detailed stylized 3D model with chunky solid rounded forms and matte surfaces, fully visible and centred with empty space round it, on a plain flat even light grey background with no texture, no shadow and no scenery."
     }
+  ],
+  "spirit_docker": [
+    {
+      "input": "../grove-skin/characters/docker/idle.png",
+      "seed": 11,
+      "prompt": "Show this exact same friendly bright azure blue hermit crab spirit, same face, eyes on stalks and big claws, carrying the same weathered crimson-red wooden crate on its back as its shell, standing on the ground in a three-quarter view from the front right. Remove the rock, ferns, flowers and bubbles; the crate has only a thick smooth cap of moss on its lid. Stylized 3D model with chunky solid forms, every surface matte, evenly lit, on a perfectly flat, uniform, untextured light grey background."
+    }
+  ],
+  "hall_docker": [
+    {
+      "input": "raw/hall_docker-1332.png",
+      "seed": 11,
+      "prompt": "Remove the other trees and branches in the background and the ground, stones and scattered clutter, but keep the great gnarled sea-oak that the boathouse is built into: its thick twisting trunk rising from the roof and its spreading canopy above. Show only that tree and the boathouse with its azure-blue doors and shutters, round glowing windows, crimson-red cargo crate and coil of rope, complete and centred with empty space round it, on a plain flat light grey background. Keep the colours and painterly style exactly the same."
+    },
+    {
+      "seed": 11,
+      "prompt": "Remove the canopy and branches: the great gnarled sea-oak is cut off a little above the boathouse roof into a broad, thick, hollow old stump with a smooth thick cap of moss on its top and a few small ferns, with no leaves and no branches above it. Keep the boathouse built into the stump with its azure-blue doors and shutters, round warm windows, crimson-red crate, coil of rope and spreading roots. Render it as a highly detailed stylized 3D model with chunky solid rounded forms and matte surfaces, the whole dwelling and its roots fully visible and centred with empty space round it, on a plain flat even light grey background with no texture, no shadow and no scenery."
+    }
   ]
 }

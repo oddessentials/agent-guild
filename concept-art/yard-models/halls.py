@@ -1,10 +1,10 @@
-"""Assemble web/yard/assets/<world>.glb from the five TRELLIS.2 halls.
+"""Assemble web/yard/assets/<world>.glb from its TRELLIS.2 halls.
 
   blender -b --factory-startup --python halls.py -- WORLD
 
 Each hall in .cache/<world>-yard/models/hall_<provider>.glb is stood on
 the ground (y = 0), scaled to at most a FOOTPRINT metre footprint and HEIGHT
-metres tall, and turned by `turn` in concept-art/<world>-yard/world.json.
+metres tall (times SIZE for an oversized hall), and turned by `turn` in concept-art/<world>-yard/world.json.
 TRELLIS.2 squares a model to its axes with the concept's front facing -Y, so
 unturned, the Yard camera sees the front and right side, as the concepts show
 them. It is placed at its provider's anchor as `hall_<provider>`, as
@@ -27,7 +27,9 @@ HEIGHT = 5.5
 FACES = 35000  # triangles per hall; baked normals keep the fine detail
 TEXTURE = 2048  # base colour; other maps are half this
 # Blender positions, as concept-art/guild-yard/build.py's environment() places halls.
-ANCHORS = [('anthropic', -7, 5), ('openai', 0, 7), ('google', 7, 5), ('xai', -8, -3), ('shell', 8, -3)]
+ANCHORS = [('anthropic', -7, 5), ('openai', 0, 7), ('google', 7, 5), ('xai', -8, -3), ('shell', 8, -3), ('docker', -10, -11)]
+# Docker Agent arrived as an expansion, and its hall stands larger than the rest.
+SIZE = {'docker': 1.3}
 # Extra turn about the vertical, in degrees, for a hall whose best side is not its front.
 TURN = json.loads((ROOT / f'concept-art/{WORLD}-yard/world.json').read_text(encoding='utf-8')).get('turn', {})
 
@@ -66,7 +68,7 @@ def hall(provider):
     co = np.array([v.co[:] for v in obj.data.vertices])
     lo, hi = co.min(0), co.max(0)
     # Tall halls hide the sessions standing behind them, so height is capped too.
-    scale = min(FOOTPRINT / max(hi[0] - lo[0], hi[1] - lo[1]), HEIGHT / (hi[2] - lo[2]))
+    scale = SIZE.get(provider, 1) * min(FOOTPRINT / max(hi[0] - lo[0], hi[1] - lo[1]), HEIGHT / (hi[2] - lo[2]))
     centre = Vector(((lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, lo[2]))
     obj.data.transform(Matrix.Rotation(math.radians(TURN.get(provider, 0)), 4, 'Z') @ Matrix.Scale(scale, 4) @ Matrix.Translation(-centre))
     obj.name = obj.data.name = 'hall_' + provider

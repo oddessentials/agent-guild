@@ -16,7 +16,7 @@ ONLY=ARGS[ARGS.index('--only')+1].split(',') if '--only' in ARGS else None
 PALETTE={
  'stone':'777966','stoneLight':'a2a08b','stoneDark':'434b42','edge':'bcb08b','leaf':'447653',
  'wood':'624735','woodLight':'98704a','gold':'bb914a','iron':'28353b',
- 'amber':'b86930','emerald':'295947','blue':'345777','cyan':'2b6976','violet':'614778',
+ 'amber':'b86930','emerald':'295947','blue':'345777','cyan':'2b6976','violet':'614778','docker':'2496ed','crimson':'8a1f2b',
  'window':'ffb35a','magic':'83d8d0','white':'c4d0c5',
  'office':'c4c8bf','officeDark':'6c7d80','officeGlass':'5a8994','steel':'a2b9c1'
 }
@@ -116,7 +116,7 @@ def lantern(s,x,y,z):
  s.cone((x,y,z+.2),.2,0,.14,'iron',8)
  s.box((x,y,z-.18),(.25,.25,.07),'gold',.02)
 def guild_hall(index):
- s=Sculpt();color=['amber','emerald','blue','cyan','violet'][index]
+ s=Sculpt();color=['amber','emerald','blue','cyan','violet','docker'][index]
  s.cone((0,0,.15),2.55,2.55,.25,'stoneDark',32)
  s.cone((0,0,.30),2.30,2.30,.12,'edge',32)
  # welcoming steps, facade detail and lanterns
@@ -161,7 +161,7 @@ def guild_hall(index):
   for x in [-.78,.78]:
    s.box((x,-1.18,2.65),(.18,.08,.9),'magic',.015)
    s.box((x,-1.2,2.65),(.04,.12,1),'iron',.005)
- else:
+ elif index==4:
   s.box((0,0,1.4),(3.15,2.5,2.1),'woodLight',.05)
   s.roof((0,0,2.48),3.7,3.2,1.65,color)
   for x in [-1.5,0,1.5]:s.box((x,-1.28,1.4),(.14,.14,2.1),'wood',.02)
@@ -172,9 +172,30 @@ def guild_hall(index):
   for x in [-1,1]:s.box((x,-1.32,1.6),(.5,.08,.65),'window',.035)
   s.box((-1.6,-1.7,.65),(.7,.5,.6),'wood',.04)
   for x in [-1.8,-1.5]:s.sphere((x,-1.7,1.03),(.12,.12,.18),color,12,8)
+ else:
+  # Harbour warehouse: a broad stone store under an azure roof, a timber jib crane and crimson cargo.
+  s.box((0,0,1.7),(3.4,2.6,2.8),'stone',.08)
+  s.roof((0,0,3.1),3.75,2.95,1.45,color)
+  arch(s,0,-1.33,.36,1.05,1.75)
+  for x in [-1.1,1.1]:s.box((x,-1.32,2.2),(.42,.07,.6),'window',.03)
+  s.box((1.72,.2,2.0),(.07,1.2,.55),'window',.02)
+  s.box((1.4,.95,3.6),(.24,.24,4.4),'wood',.03)
+  s.box((1.4,-.35,5.6),(.2,2.8,.2),'wood',.03)
+  s.box((1.4,.3,5.0),(.12,.12,1.4),'wood',.02,rot=(-PI/4,0,0))
+  s.box((1.4,-1.65,4.75),(.035,.035,1.55),'woodLight',.01)
+  s.torus((1.4,-1.65,3.85),.16,.04,'iron',16,rot=(0,PI/2,0))
+  s.box((1.4,-1.65,3.62),(.4,.3,.35),'crimson',.03)
+  for x,y,z in [(-1.75,-1.75,.62),(-1.15,-1.8,.62),(-1.5,-1.72,1.2)]:
+   s.box((x,y,z),(.56,.5,.52),'crimson',.03)
+   for dz in [-.18,.18]:s.box((x,y,z+dz),(.6,.54,.05),'iron',.01)
+  # The anchor over the door.
+  s.box((0,-1.36,3.05),(.08,.06,.75),'gold',.015)
+  s.box((0,-1.36,3.35),(.42,.06,.07),'gold',.015)
+  for side in [-1,1]:s.box((side*.17,-1.36,2.75),(.32,.06,.07),'gold',.015,rot=(0,side*.6,0))
+  s.torus((0,-1.37,3.5),.08,.02,'gold',12,rot=(PI/2,0,0))
  # Dressed stone courses, corner quoins and roof seams.
- if index in [0,1,3]:
-  width,depth,top=([2.9,2.3,3.05] if index==0 else [2.8,2.7,3.32] if index==1 else [2.25,2.3,3.62])
+ if index in [0,1,3,5]:
+  width,depth,top=([2.9,2.3,3.05] if index==0 else [2.8,2.7,3.32] if index==1 else [3.4,2.6,3.1] if index==5 else [2.25,2.3,3.62])
   for course in range(1,9):
    z=.35+course*(top-.35)/9
    s.box((0,-depth/2-.012,z),(width,.018,.022),'stoneDark',.004)
@@ -193,9 +214,10 @@ def guild_hall(index):
  if index==2:
   for z in [.9,1.8,2.25,2.9]:s.torus((0,0,z),1.555,.018,'stoneDark',48)
  # Bands and the provider's hanging pennant.
- if index<4:
+ if index!=4:
   for x in [-.95,.95]:
    lantern(s,x,-1.65,1.4)
+ if index<4:
   for y in [-.75,0,.75]:
    if index!=2:s.box((-1.48,y,1.3),(.12,.08,1.6),'stoneDark',.02)
  s.box((.86,-1.43,2.48),(.45,.065,.75),color,.015)
@@ -216,7 +238,7 @@ def glazing(s,x,y,z,width,height,mullions,face='front'):
   for i in range(mullions+1):s.box((x+.03,y-width/2+i*width/mullions,z),(.05,.05,height),'white',.008)
 
 def campus_hall(index):
- s=Sculpt();color=['amber','emerald','blue','cyan','violet'][index]
+ s=Sculpt();color=['amber','emerald','blue','cyan','violet','docker'][index]
  # Each stands on a granite plinth with steps to its entrance, facing the camera.
  s.box((0,0,.12),(4.9,4.3,.24),'officeDark',.03)
  for i in range(2):s.box((0,-2.3-i*.22,.1-i*.05),(1.8,.4,.12),'officeDark',.02)
@@ -270,7 +292,7 @@ def campus_hall(index):
   glazing(s,2.32,-.3,.95,2.6,1.0,4,'side')
   s.box((1.25,-.3,1.7),(2.3,3.1,.12),'white',.02)
   s.box((-.6,-1.6,.95),(1.2,.9,.08),color,.01)
- else:
+ elif index==4:
   # Hangar: a long glass hall under a barrel vault, with coloured gable ends.
   s.box((0,.1,1.0),(4.6,3.4,1.5),'office',.03)
   glazing(s,0,-1.63,1.0,4.2,1.3,8)
@@ -279,14 +301,30 @@ def campus_hall(index):
   for x in [-2.36,2.36]:s.cone((x,.1,1.75),1.78,1.78,.08,color,32,rot=(0,PI/2,0))
   for i in range(7):s.torus((-1.8+i*.6,.1,1.75),1.77,.025,'iron',32,rot=(0,PI/2,0))
   s.box((-1.5,-2.05,1.95),(1.0,.7,.08),color,.02)
+ else:
+  # Depot: a ribbed azure shed with loading bays, shipping containers stacked on its roof.
+  s.box((0,.3,1.25),(4.5,3.4,2.0),color,.03)
+  for i in range(19):s.box((-2.16+i*.24,-1.42,1.25),(.05,.06,1.9),'steel',.008)
+  for x in [-1.4,0,1.4]:
+   s.box((x,-1.47,.92),(1.0,.05,1.26),'office',.01)
+   for k in range(6):s.box((x,-1.5,.38+k*.21),(1.0,.03,.025),'officeDark',.004)
+   s.box((x,-1.5,1.62),(1.12,.08,.1),'crimson',.01)
+  glazing(s,2.27,.3,1.25,2.8,1.2,4,'side')
+  s.box((0,.3,2.32),(4.7,3.6,.14),'white',.02)
+  s.box((0,-1.5,2.0),(3.6,.06,.3),'crimson',.01)
+  for x,z,c in [(-1.15,2.95,'crimson'),(1.15,2.95,'white'),(0,4.05,'crimson')]:
+   s.box((x,.3,z),(2.1,2.9,1.05),c,.02)
+   for k in range(11):s.box((x-1.0+k*.2,-1.17,z),(.04,.05,.95),'officeDark' if c=='white' else 'iron',.006)
  return s
 
 def environment(skin):
  # The ground and surroundings are pre-rendered plates (env/); the glTF carries only the halls.
  clear(); bpy.context.collection.objects.link(bpy.data.objects.new('courtyard',None))
- for i,(id,x,y) in enumerate([('anthropic',-7,5),('openai',0,7),('google',7,5),('xai',-8,-3),('shell',8,-3)]):
+ for i,(id,x,y) in enumerate([('anthropic',-7,5),('openai',0,7),('google',7,5),('xai',-8,-3),('shell',8,-3),('docker',-10,-11)]):
   sculpt=guild_hall(i) if skin=='guild' else campus_hall(i)
   obj=sculpt.object('hall_'+id);obj.location=(x,y,0)
+  # Docker Agent arrived as an expansion, and its hall stands larger than the rest.
+  if id=='docker':obj.data.transform(Matrix.Scale(1.3,4))
  export(skin,save=skin=='guild')
 
 WORLDS=['guild','professional']
