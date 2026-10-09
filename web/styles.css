@@ -278,6 +278,10 @@ main { max-width: calc(1200px + var(--dock-space, 0px)); margin: 0 auto; padding
 .console-link { color: var(--accent); text-decoration: none; }
 .console-link:hover { text-decoration: underline; }
 .console-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 3px; }
+/* Opens a dialog, so it is a button that reads as the links beside it, without their new-tab mark. */
+.memory-link { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; }
+.memory-link:hover { text-decoration: underline; }
+.memory-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 3px; }
 .cloud-link { display: block; flex: none; align-self: flex-start; width: 32px; height: 32px; margin: -4px -6px 0 0; border-radius: 8px; color: var(--muted); }
 .cloud-link::before { content: ""; display: block; width: 100%; height: 100%; background: currentColor; mask: var(--icon-cloud) center / 20px no-repeat; }
 .cloud-link:hover { color: var(--accent); }
@@ -835,6 +839,36 @@ a.news-link:visited { color: var(--muted); }
 .history-form input {
   flex: 1; min-width: 0; padding: 6px 10px; border-radius: var(--radius); border: 1px solid var(--border);
   background: var(--surface); color: var(--text); font: inherit; font-size: 0.85rem;
+}
+
+.memory-dialog { width: min(1080px, calc(100vw - 32px)); height: min(760px, calc(100dvh - 48px)); }
+.memory-body { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: minmax(220px, 320px) minmax(0, 1fr); }
+.memory-list { min-height: 0; overflow: auto; padding: 6px 8px 14px 14px; border-right: 1px solid var(--border); }
+.memory-scope + .memory-scope { margin-top: 10px; }
+.memory-scope-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 6px 4px; }
+.memory-scope-head h3 { margin: 0; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.memory-open { padding: 2px 8px; font-size: 0.75rem; }
+.memory-note { margin: 4px 6px 8px; color: var(--muted); font-size: 0.82rem; line-height: 1.45; }
+.memory-item {
+  display: grid; width: 100%; gap: 1px; padding: 6px 8px; border: 0; border-radius: 6px; background: none; color: var(--text);
+  font: inherit; text-align: left; cursor: pointer;
+}
+.memory-item:hover { background: var(--surface-2); }
+.memory-item[aria-current="true"] { background: var(--surface-2); box-shadow: inset 3px 0 0 var(--focus); }
+.memory-item:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.memory-name { font-size: 0.85rem; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+.memory-meta { color: var(--muted); font-size: 0.72rem; }
+.memory-view { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.memory-file { margin: 0; padding: 10px 14px; border-bottom: 1px solid var(--border); font-weight: 600; font-size: 0.85rem; overflow-wrap: anywhere; }
+.memory-view .models-note { margin: 10px 14px 0; }
+.memory-text {
+  flex: 1 1 auto; min-height: 0; margin: 0; padding: 12px 14px 16px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+  font-family: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace; font-size: 0.8rem; line-height: 1.55;
+}
+.memory-text:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+@media (max-width: 700px) {
+  .memory-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 2fr) minmax(0, 3fr); }
+  .memory-list { border-right: 0; border-bottom: 1px solid var(--border); }
 }
 
 .launch-tools { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex: 1 1 360px; flex-wrap: wrap; max-width: 680px; }

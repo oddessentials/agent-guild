@@ -6,8 +6,16 @@ import { until, withDialogClose, withPage } from './chrome.mjs';
 
 const instrumentation = `<script>
 const demoFetch=window.fetch;
+window.memoryGate=null;
 window.fetch=(input,init)=>{
-  if(new URL(typeof input==='string'?input:input.url,location.href).pathname.endsWith('/history'))
+  const url=new URL(typeof input==='string'?input:input.url,location.href);
+  if(url.pathname.endsWith('/memory/file')&&url.searchParams.get('path')==='topics/checkout.md'&&window.memoryGate)
+    return window.memoryGate.then(()=>demoFetch(input,init)).then(res=>{
+      const read=res.json.bind(res);
+      res.json=()=>read().then(data=>{window.memoryStaleDelivered=true;return data;});
+      return res;
+    });
+  if(url.pathname.endsWith('/history'))
     return Promise.resolve(new Response(JSON.stringify({history:{total:334,sessions:Array.from({length:200},(_,i)=>({
       id:'saved-'+i,title:'Saved session '+i,cwd:'/work/storefront',updatedAt:'2026-10-04T10:00:00Z'
     }))}}),{headers:{'Content-Type':'application/json'}}));
@@ -59,6 +67,39 @@ const checks = await withPage({ name: 'dialogs', instrumentation }, async ({ ori
       await closeDialog('#history', '#history-close');
     }
     pass(`${engine}: 200 history rows scroll, and filtered/empty history remains usable on desktop, tablet and phone`);
+
+    // The first file's reply is held back until a newer file has been chosen and shown. The page
+    // handles the released reply in the same microtask run that sets the flag, so once the flag
+    // reads true the page has already kept or replaced the text.
+    await evaluate('window.memoryGate=new Promise(resolve=>{window.releaseMemory=resolve});window.memoryStaleDelivered=false;document.querySelector(".provider[data-id=anthropic] .memory-link").click()');
+    await until(`${engine} memory files`, () => evaluate('document.querySelectorAll("#memory-list .memory-item").length===2'));
+    await evaluate('document.querySelectorAll("#memory-list .memory-item")[1].click()');
+    await until(`${engine} chosen memory file`, () => evaluate('document.querySelector("#memory-text").textContent.includes("## Commands")'));
+    await evaluate('window.releaseMemory();window.memoryGate=null');
+    await until(`${engine} earlier memory reply`, () => evaluate('window.memoryStaleDelivered'));
+    assert.match(await evaluate('document.querySelector("#memory-text").textContent'), /## Commands/, 'an earlier, slower reply does not replace the chosen file');
+    assert.equal(await evaluate('document.querySelector("#memory-list [aria-current=true]").dataset.path'), 'topics/testing.md');
+    await closeDialog('#memory', '#memory-close');
+    for (const [width, height] of [[1440, 900], [768, 1024], [390, 844]]) {
+      await resize(width, height);
+      await evaluate('document.querySelector(".provider[data-id=anthropic] .memory-link").click()');
+      await until(`${engine} memory text at ${width}`, () => evaluate('document.querySelector("#memory-text").textContent.length>0'));
+      await settled();
+      const g = await evaluate(`(()=>{
+        const d=document.querySelector('#memory'),r=d.getBoundingClientRect(),t=document.querySelector('#memory-text').getBoundingClientRect(),l=document.querySelector('#memory-list').getBoundingClientRect();
+        return {inside:r.top>=-1&&r.bottom<=innerHeight+1&&r.left>=-1&&r.right<=innerWidth+1,text:t.height,list:l.height,textBottom:t.bottom<=r.bottom+1,overflow:d.scrollWidth>d.clientWidth};
+      })()`);
+      assert.ok(g.inside && g.text > 80 && g.list > 60 && g.textBottom && !g.overflow, `${engine} memory ${width}: ${JSON.stringify(g)}`);
+      await closeDialog('#memory', '#memory-close');
+      assert.equal(await evaluate('document.activeElement===document.querySelector(".provider[data-id=anthropic] .memory-link")'), true, `${engine} memory focus restored`);
+    }
+    // close() queues the dialog's close event, so another card can open it again before that event runs.
+    await evaluate('document.querySelector(".provider[data-id=anthropic] .memory-link").click()');
+    await until(`${engine} memory before reopening`, () => evaluate('document.querySelectorAll("#memory-list .memory-item").length===2'));
+    await evaluate('document.querySelector("#memory-close").click();document.querySelector(".provider[data-id=xai] .memory-link").click()');
+    await until(`${engine} memory reopened from another card`, () => evaluate('document.querySelector("#memory-title").textContent==="Grok Build memory"&&document.querySelectorAll("#memory-list .memory-item").length===2'));
+    await closeDialog('#memory', '#memory-close');
+    pass(`${engine}: memory lists files, keeps the newest choice over a slower reply, reopens from another card, and fits desktop, tablet and phone`);
 
     await until(`${engine} environment summary`, () => evaluate('document.querySelectorAll(".provider[data-id=shell] .environment-values dd").length===4'));
     for (const [width, height] of [[1440, 900], [768, 1024], [390, 844]]) {

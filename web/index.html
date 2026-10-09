@@ -526,6 +526,26 @@
     </form>
   </dialog>
 
+  <dialog id="memory" class="models memory-dialog" aria-labelledby="memory-title">
+    <div class="models-bar">
+      <span id="memory-icon" class="provider-icon small"></span>
+      <div class="models-heading">
+        <h2 id="memory-title"></h2>
+        <p id="memory-sub" class="sub"></p>
+      </div>
+      <button id="memory-refresh" class="btn" type="button">Refresh</button>
+      <button id="memory-close" class="btn" type="button">Close</button>
+    </div>
+    <div class="memory-body">
+      <nav id="memory-list" class="memory-list" aria-label="Memory files"></nav>
+      <section class="memory-view" aria-live="polite">
+        <p id="memory-file" class="memory-file"></p>
+        <p id="memory-file-note" class="models-note" hidden></p>
+        <pre id="memory-text" class="memory-text" tabindex="0" aria-label="File contents"></pre>
+      </section>
+    </div>
+  </dialog>
+
   <dialog id="folder-browser" class="models folder-browser" aria-labelledby="folder-title">
     <div class="models-bar">
       <div class="models-heading">
@@ -593,6 +613,7 @@
       <div class="provider-links">
         <a class="console-link usage-link" target="_blank" rel="noopener noreferrer">Usage</a>
         <a class="console-link billing-link" target="_blank" rel="noopener noreferrer">Billing</a>
+        <button class="memory-link" type="button">Memory</button>
       </div>
       <details class="copies" hidden>
         <summary></summary>

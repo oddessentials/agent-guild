@@ -80,6 +80,7 @@ Errors use one shape:
   "updateAvailable": true,
   "usageSource": "claude",
   "historySource": "claude",
+  "memorySource": "claude",
   "accounts": [{ "id": "default", "label": "Default" }, { "id": "work", "label": "Work" }],
   "color": "#D97757",
   "monogram": "A",
@@ -137,6 +138,8 @@ neither installed nor known to be missing, and `installable` is false:
 whether `GET /usage` reports the provider. `historySource` is `claude`,
 `codex`, `antigravity`, `grok`, `docker`, `command` or null, and says whether
 `GET /providers/:id/history` can list the tool's earlier sessions.
+`memorySource` is `claude`, `codex`, `grok` or null, and says whether
+`GET /providers/:id/memory` can list what the tool remembers.
 `accounts` lists the sign-ins the tool can run under: `default` is the
 tool's own, and each further one has its own home folder, so it keeps its
 own sign-in and usage. `POST /sessions` takes an account id.
@@ -434,6 +437,36 @@ is read, and a transcript is read again only when it changed; the list is
 cached for a few seconds. `error` says why nothing could be listed; a tool
 that has never run lists no sessions and no error.
 
+### Memory
+
+```json
+{
+  "providerId": "xai",
+  "accountId": "default",
+  "folder": "/Users/me/src/app",
+  "scopes": [
+    { "id": "project", "label": "This project", "dir": "/Users/me/.grok/memory-v2/workspaces/app-1c1b5e9a", "note": null, "truncated": false,
+      "files": [{ "path": "topics/build.md", "title": "Build", "bytes": 2048, "modified": "2026-10-01T13:49:28.000Z" }] },
+    { "id": "global", "label": "Global", "dir": "/Users/me/.grok/memory-v2/global", "note": null, "truncated": false, "files": [] }
+  ],
+  "fetchedAt": "2026-10-01T14:00:00.000Z"
+}
+```
+
+The markdown files a tool keeps as memory for the working folder `folder`,
+read from the account's home folder. Claude Code has one `project` scope,
+`projects/<project>/memory/`, where `<project>` is the folder of the main
+checkout of the Git repository holding `folder` (so its worktrees share it),
+else `folder`; its `autoMemoryDirectory` setting moves it. Grok Build has a
+`project` scope, `memory-v2/workspaces/<name>-<hash>/`, named for the
+repository's `origin` remote (so its clones share it) or else for the
+folder's real path, and a `global` scope; its archive is left out. Codex CLI
+keeps one memory for every folder: the `all` scope, `memories/`, and
+`all-v2`, `memories_v2/`, once that exists. `dir` is null when the tool keeps
+no memory there, and `note` says why, or anything else that qualifies the
+scope. A file's `title` is its first `# ` heading, or null. At most 500 files are listed per scope; `truncated` says more exist.
+Links are not followed.
+
 ### Session
 
 ```json
@@ -712,6 +745,8 @@ All paths are under `/api/v1`.
 | GET | `/news` | | `{ refreshedAt, refreshing, sources, items }`. `items` are the last 30 days of the built-in feeds, newest first, each `{ id, title, url, discussion, summary, source, sourceId, category, publishedAt }` with `category` `news`, `releases` or `research`. A coding tool's own release feed is included only while that tool is installed. `sources` lists each feed with its `error` and the time it last answered. Feeds that are due are re-read in the background; a `news.updated` event follows. |
 | GET | `/changelog` | | `{ refreshing, okAt, error, releases }`: Agent Guild's own releases from GitHub, newest first, each `{ version, url, publishedAt, sections: [{ title, changes }] }`, where a change is a list of text runs. Re-read hourly in the background; a `changelog.updated` event follows. |
 | GET | `/providers/:id/history?account=&limit=` | | `{ history }`: a History object for one account (default `default`; 404 `unknown_account`), with at most `limit` sessions (default 100, at most 500). 400 `history_unsupported` when the provider has no `historySource`. |
+| GET | `/providers/:id/memory?account=&cwd=` | | `{ memory }`: a Memory object for one account and the working folder `cwd` (the home folder when empty; 400 `bad_cwd` when it does not exist). 400 `memory_unsupported` when the provider has no `memorySource`. |
+| GET | `/providers/:id/memory/file?account=&cwd=&scope=&path=` | | `{ file: { scope, path, bytes, modified, truncated, text } }`: one listed file of a scope, its first 512 KiB. 404 `memory_not_found` for an unknown scope, 404 `memory_file_gone` when the file no longer exists, 400 `bad_memory_path` for a path that is not a markdown file inside the scope's folder. |
 | GET | `/github` | | `{ github }`: a GitHub object. |
 | POST | `/github/sign-in` | | `202 { github }`: starts a device-flow sign-in; the manager polls GitHub and announces the result in `github.updated`. |
 | DELETE | `/github/sign-in` | | `{ github }`: cancels it. |

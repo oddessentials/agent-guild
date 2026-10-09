@@ -828,6 +828,26 @@ test('past sessions of a provider are listed from its history source', async () 
   assert.equal((await call('GET', '/providers/plain/history?account=nobody')).body.error.code, 'unknown_account');
 });
 
+test('a tool\'s memory for the working folder is listed and read per account', async () => {
+  const { body: listed } = await call('GET', '/providers');
+  assert.equal(listed.providers.find((p) => p.id === 'anthropic').memorySource, 'claude');
+  const query = `account=work&cwd=${encodeURIComponent(home)}`;
+  const first = await call('GET', `/providers/anthropic/memory?${query}`);
+  assert.equal(first.status, 200, JSON.stringify(first.body));
+  const [scope] = first.body.memory.scopes;
+  assert.ok(scope.dir.startsWith(path.join(home, 'accounts', 'anthropic', 'work')), 'the work account reads its own home folder');
+  assert.deepEqual(scope.files, []);
+  writeFile(path.join(scope.dir, 'MEMORY.md'), '- [Tests](tests.md)\n');
+  const { body } = await call('GET', `/providers/anthropic/memory?${query}`);
+  assert.deepEqual(body.memory.scopes[0].files.map((f) => f.path), ['MEMORY.md']);
+  const read = await call('GET', `/providers/anthropic/memory/file?${query}&scope=project&path=MEMORY.md`);
+  assert.deepEqual([read.status, read.body.file.text], [200, '- [Tests](tests.md)\n']);
+  const escape = await call('GET', `/providers/anthropic/memory/file?${query}&scope=project&path=..%2F..%2Fsettings.json`);
+  assert.deepEqual([escape.status, escape.body.error.code], [400, 'bad_memory_path']);
+  assert.equal((await call('GET', '/providers/fake/memory')).body.error.code, 'memory_unsupported');
+  assert.equal((await call('GET', `/providers/anthropic/memory?cwd=${encodeURIComponent(path.join(home, 'nope'))}`)).body.error.code, 'bad_cwd');
+});
+
 test('the tool\'s own session id is reported over HTTP, in-band, and through hooks', async () => {
   const session = await createFake();
   assert.equal(session.toolSessionId, null);

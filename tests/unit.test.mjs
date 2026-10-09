@@ -34,6 +34,7 @@ import {
   NewsFeed, parseFeed, parseHackerNews, parseGithubRelease, markdownText, releaseTitle, isPrerelease, canonicalUrl, cleanUrl, matchesTerms,
 } from '../src/manager/news.mjs';
 import { Changelog, parseNotes, parseReleases } from '../src/manager/changelog.mjs';
+import { AgentMemory, claudeProjectRoot, claudeProjectSlug, grokSlug, grokWorkspaceId, normalizeRemoteUrl } from '../src/manager/agent-memory.mjs';
 import { once } from 'node:events';
 import {
   SessionHistory, FileMemo, listClaudeSessions, listCodexSessions, listAntigravitySessions, listGrokSessions, listDockerSessions, dockerAgentDataDir, commandHistory, cleanEntry,
@@ -2096,6 +2097,86 @@ test('a history command prints JSON, and the monitor reads each account\'s own f
   assert.match((await failing.list(missing, { id: 'default', env: {} })).error, /not found on PATH/);
   const unreadable = new SessionHistory({ registry, env: { ...env, CLAUDE_CONFIG_DIR: path.join(dir, 'nothing-here') } });
   assert.deepEqual((await unreadable.list(anthropic)).sessions, [], 'a tool never run has no sessions and no error');
+});
+
+test('Claude Code memory is keyed on the main checkout, so a worktree and a subfolder share it', async () => {
+  const dir = fs.realpathSync.native(tempDir());
+  const main = path.join(dir, 'My Repo');
+  const tree = path.join(dir, 'tree');
+  const linked = path.join(main, '.git', 'worktrees', 'tree');
+  fs.mkdirSync(path.join(main, 'src'), { recursive: true });
+  fs.mkdirSync(linked, { recursive: true });
+  fs.mkdirSync(tree);
+  fs.writeFileSync(path.join(tree, '.git'), `gitdir: ${linked}\n`);
+  fs.writeFileSync(path.join(linked, 'commondir'), '../..\n');
+  fs.writeFileSync(path.join(linked, 'gitdir'), `${path.join(tree, '.git')}\n`);
+  assert.equal(claudeProjectRoot(path.join(main, 'src')), main);
+  assert.equal(claudeProjectRoot(tree), main, 'a linked worktree uses the main checkout');
+  fs.writeFileSync(path.join(linked, 'gitdir'), `${path.join(dir, 'elsewhere', '.git')}\n`);
+  assert.equal(claudeProjectRoot(tree), tree, 'a worktree the repository does not point back at keeps its own');
+  fs.writeFileSync(path.join(linked, 'gitdir'), `${path.join(tree, '.git')}\n`);
+  assert.equal(claudeProjectSlug('E:\\projects\\agent-guild'), 'E--projects-agent-guild', 'as Claude Code 2.1 names it');
+
+  const config = path.join(dir, 'claude');
+  const memory = path.join(config, 'projects', claudeProjectSlug(main).toLowerCase(), 'memory');
+  fs.mkdirSync(path.join(memory, 'team'), { recursive: true });
+  fs.writeFileSync(path.join(memory, 'MEMORY.md'), '- [Build](build.md)\n');
+  fs.writeFileSync(path.join(memory, 'build.md'), 'npm test\n');
+  fs.writeFileSync(path.join(memory, 'team', 'style.md'), 'tabs\n');
+  fs.writeFileSync(path.join(memory, 'notes.txt'), 'not markdown');
+  const reader = new AgentMemory({ env: { CLAUDE_CONFIG_DIR: config }, platform: 'win32', resolveCwd: (cwd) => cwd });
+  const claude = { id: 'anthropic', tool: 'Claude Code', memory: 'claude', env: {} };
+  const listed = await reader.list(claude, { id: 'default', env: {} }, tree);
+  assert.deepEqual(listed.scopes.map((s) => [s.id, s.dir, s.files.map((f) => f.path)]),
+    [['project', memory, ['MEMORY.md', 'build.md', 'team/style.md']]], 'a folder name in another case matches where names ignore case');
+  assert.equal((await reader.read(claude, { id: 'default', env: {} }, tree, 'project', 'team/style.md')).text, 'tabs\n');
+});
+
+test('Grok Build workspace folders are named as Grok Build names them', () => {
+  // Folders Grok Build 1.0.50 made on a real machine.
+  assert.equal(grokWorkspaceId({ repo: normalizeRemoteUrl('git@github.com-odd:oddessentials/agent-guild.git') }), 'agent-guild-7b0e3bee');
+  assert.equal(grokWorkspaceId({ repo: null, realPath: 'E:\\projects\\github-viewer' }, path.win32), 'github-viewer-69c89bce');
+  assert.equal(grokWorkspaceId({ repo: null, realPath: 'C:\\Users\\petep' }, path.win32), 'petep-8a9ba686');
+  for (const [url, repo] of [
+    ['https://github.com/org/repo.git', 'org/repo'],
+    ['ssh://git@host:22/org/team/repo/', 'org/team/repo'],
+    ['git@host:org/repo.git.git', 'org/repo'],
+    ['https://host/repo', null],
+    ['/srv/org/repo.git', null],
+    ['file:///srv/org/repo', 'srv/org/repo'],
+  ]) assert.equal(normalizeRemoteUrl(url), repo, url);
+  assert.equal(grokSlug('--My__Big Project!--'), 'my-big-project');
+});
+
+test('a memory file is read only from inside its scope folder', async () => {
+  const dir = fs.realpathSync.native(tempDir());
+  const home = path.join(dir, 'grok');
+  const global = path.join(home, 'memory-v2', 'global');
+  fs.mkdirSync(path.join(global, 'topics'), { recursive: true });
+  fs.mkdirSync(path.join(global, 'archive'));
+  fs.writeFileSync(path.join(global, 'topics', 'a.md'), '---\ntype: project\n---\n# Kept fact\nbody\n');
+  fs.writeFileSync(path.join(global, 'topics', 'b.md'), 'no heading\n');
+  fs.writeFileSync(path.join(global, 'archive', 'old.md'), 'folded into a topic');
+  fs.mkdirSync(path.join(dir, 'outside'));
+  fs.writeFileSync(path.join(dir, 'outside', 'secret.md'), 'outside');
+  fs.symlinkSync(path.join(dir, 'outside'), path.join(global, 'linked'), 'junction');
+  const reader = new AgentMemory({ env: { GROK_HOME: home }, resolveCwd: (cwd) => cwd, findOrigin: async () => 'git@host:org/app.git' });
+  const grok = { id: 'xai', tool: 'Grok Build', memory: 'grok', env: {} };
+  const account = { id: 'default', env: {} };
+  const repoRoot = fileURLToPath(new URL('..', import.meta.url));
+  const listed = await reader.list(grok, account, repoRoot);
+  assert.equal(listed.scopes[0].dir, path.join(home, 'memory-v2', 'workspaces', grokWorkspaceId({ repo: 'org/app' })));
+  const temp = await reader.list(grok, account, dir);
+  assert.deepEqual([temp.scopes[0].dir, temp.scopes[0].files], [null, []], 'Grok Build keeps no workspace memory in the temporary folder');
+  assert.match(temp.scopes[0].note, /temporary folder/);
+  assert.deepEqual(listed.scopes[1].files.map((f) => [f.path, f.title]), [['topics/a.md', 'Kept fact'], ['topics/b.md', null]], 'no archive and no links; a title is the heading after any frontmatter');
+  assert.equal((await reader.read(grok, account, dir, 'global', 'topics/b.md')).text, 'no heading\n');
+  for (const bad of ['../../../secret.md', 'topics/../topics/a.md', 'topics\\a.md', 'archive/../topics/a.md', 'topics/a.txt', 'linked/secret.md']) {
+    await assert.rejects(reader.read(grok, account, dir, 'global', bad), { code: 'bad_memory_path' }, bad);
+  }
+  await assert.rejects(reader.read(grok, account, dir, 'global', 'topics/gone.md'), { code: 'memory_file_gone' });
+  await assert.rejects(reader.read(grok, account, dir, 'nowhere', 'topics/a.md'), { code: 'memory_not_found' });
+  await assert.rejects(reader.list({ ...grok, memory: null }, account, dir), { code: 'memory_unsupported' });
 });
 
 test('console and cloud links are https URLs that users can override per platform or turn off', () => {
