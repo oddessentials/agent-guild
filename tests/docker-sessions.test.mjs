@@ -141,19 +141,26 @@ test('a session first heard from under another name while nothing runs is a tab,
   const session = createSession(t);
   const docker = new DockerSessions(session, { mainId: MAIN });
   // The user switched the first tab to coder before its first prompt, so coder is the launch agent as far as the
-  // card knows. Its turn ends; then a tab Docker Agent started with root is prompted: no sub-agent runs outside a turn.
+  // card knows. Its run ends; then a tab Docker Agent started with root is prompted: no sub-agent runs outside a run.
   docker.report(event(MAIN, 'coder', 'SessionStart'));
   docker.report(event(MAIN, 'coder', 'Stop'));
+  // A stop is not the run's end: a queued follow-up or a forced handoff continues the run with no new session_start
+  // (pkg/runtime/loop.go), and a helper it delegates to is still a sub-agent.
+  docker.report(event('sub-0', 'helper', 'SessionStart'));
+  assert.deepEqual(agents(session), [['hook-sub-0', 'helper', 'working']], 'a helper delegated to after a stop, in the same run, has its card');
+  docker.report(event('sub-0', 'helper', 'SessionEnd'));
+  docker.report(event(MAIN, 'coder', 'SessionEnd'));
   docker.report(event('tab-1', 'root', 'SessionStart'));
   docker.report(shell('tab-1', 'root', 'PreToolUse', 'c1', 'ls'));
-  assert.deepEqual(agents(session), [], 'a tab prompted while no turn runs is not a sub-agent, whatever its agent');
+  assert.deepEqual(agents(session), [['hook-sub-0', 'helper', 'done']], 'a tab prompted while no run is in progress is not a sub-agent, whatever its agent');
   assert.equal(shells(session, t), 1, 'its command shows as the terminal\'s activity');
   docker.report(event('tab-1', 'root', 'Stop'));
   assert.equal(shells(session, t), 0);
-  // A sub-agent begins inside its parent's turn, under another name: still a card.
+  docker.report(event('tab-1', 'root', 'SessionEnd'));
+  // A sub-agent begins inside its parent's run, under another name: still a card.
   docker.report(event(MAIN, 'coder', 'SessionStart'));
   docker.report(event('sub-1', 'reviewer', 'SessionStart'));
-  assert.deepEqual(agents(session), [['hook-sub-1', 'reviewer', 'working']]);
+  assert.deepEqual(agents(session), [['hook-sub-0', 'helper', 'done'], ['hook-sub-1', 'reviewer', 'working']]);
   docker.report(event('sub-1', 'reviewer', 'SessionEnd'));
   docker.report(event(MAIN, 'coder', 'SessionEnd'));
   assert.equal(docker.open.size, 0, 'every run heard to end is closed');
