@@ -115,6 +115,7 @@ fs.mkdirSync(toolsDir);
 for (const name of ['claude', 'codex', 'agy', 'grok', 'docker']) {
   writeScript(path.join(toolsDir, name), { win: `"${process.execPath}" "${codingTool}" ${name} %*`, sh: `exec "${process.execPath}" "${codingTool}" ${name} "$@"` });
 }
+const dockerPluginFile = path.join(userHome, '.docker', 'cli-plugins', win ? 'docker-agent.exe' : 'docker-agent');
 const userHookLog = path.join(home, 'user-hooks.log');
 const userHook = path.join(home, 'user-hook.mjs');
 fs.writeFileSync(userHook, `import fs from 'node:fs';\nfs.appendFileSync(${JSON.stringify(userHookLog)}, process.argv[2] + '\\n');\n`);
@@ -209,6 +210,12 @@ fs.writeFileSync(path.join(home, 'providers.json'), JSON.stringify({
     { id: 'google', history: null, env: { [win ? 'USERPROFILE' : 'HOME']: toolHomes.agy } },
     { id: 'xai', history: null },
     { id: 'docker', history: null },
+    { id: 'dockerold', vendor: 'Test', tool: 'Docker Agent Old', command: 'docker', args: ['agent', 'run'], versionArgs: ['agent', 'version'], reporting: 'docker', env: { FAKE_DOCKER_VERSION: '1.60.0' } },
+    // The docker fixture's plugin lives where a download would, and its install command writes it there.
+    {
+      id: 'dockerplug', vendor: 'Test', tool: 'Docker Plug', command: 'docker', args: ['agent', 'run'], versionArgs: ['agent', 'version'], reporting: 'docker', plugin: 'agent',
+      install: `${win ? '& ' : ''}"${process.execPath}" "${codingTool}" docker docker-install`, env: { FAKE_DOCKER_PLUGIN_PATH: dockerPluginFile, FAKE_DOCKER_VERSION: '1.149.0' },
+    },
     { id: 'claudeoff', vendor: 'Test', tool: 'Claude Hooks Off', command: 'claude', reporting: 'claude', env: { CLAUDE_CONFIG_DIR: claudeHooksOff } },
     {
       id: 'codexbroken', vendor: 'Test', tool: 'Codex Changed', command: 'codex', reporting: 'codex', env: { FAKE_CODEX_REJECT: '1' },
@@ -1394,8 +1401,70 @@ test('Docker Agent reports its shell commands and its sub-agents through the hoo
   const after = await sessionNow(tool.session.id);
   assert.equal(after.shells.length, 1, 'the sub-agent\'s end leaves the main session\'s command running');
   assert.equal(after.toolSessionId, named, 'Resume still opens the main session');
+  // A tab (/new) is another session run by the main agent, root: no agent on the card, and Resume stays.
+  tool.client.input('subagent tab-1 root');
+  await waitForText(tool.client, tool.session.id, 'SUBAGENT tab-1', 'the tab\'s session start, with its hook done');
+  const withTab = await sessionNow(tool.session.id);
+  assert.deepEqual(withTab.agents.filter((a) => a.name === 'root'), [], 'a session run by the main agent is not a sub-agent');
+  assert.equal(withTab.toolSessionId, named);
+  tool.client.input('subagent-done tab-1 root');
+  await waitForText(tool.client, tool.session.id, 'SUBAGENT-DONE tab-1', 'the tab\'s end');
   await runShells(tool, ['shell-end build'], 'SHELL-DONE build');
   await waitFor(shellCountIs(tool.session.id, 0), { label: 'gone at its end', timeout: 2000 });
+  await tool.client.close();
+  await call('DELETE', `/sessions/${tool.session.id}`);
+});
+
+test('the Docker Agent card installs, updates and removes the downloaded plugin copy, with the outcome read from disk', async () => {
+  const before = await waitFor(async () => {
+    const p = await findProvider('dockerplug');
+    return p.installable ? p : null;
+  }, { label: 'the plugin card before the install' });
+  assert.deepEqual([before.available, before.installs, before.resolvedPath, before.pluginError], [false, [], null, null], 'docker runs, no plugin copy does');
+  assert.equal((await call('POST', '/sessions', { providerId: 'dockerplug', cwd: home })).status, 409, 'nothing to start without the plugin');
+
+  const installed = await runInstall('dockerplug');
+  assert.equal(installed.session.name, 'Install Docker Plug');
+  assert.match(installed.output, /installed /);
+  assert.deepEqual([installed.provider.lastInstall.kind, installed.provider.lastInstall.outcome, installed.provider.lastInstall.exitCode], ['install', 'installed', 0]);
+  assert.deepEqual([installed.provider.available, installed.provider.installable, installed.provider.installedVersion, installed.provider.resolvedPath], [true, false, '1.149.0', dockerPluginFile]);
+  assert.deepEqual(installed.provider.installs.map((i) => [i.channel, i.active, i.uninstall.remove]), [['download', true, [path.join('~', '.docker', 'cli-plugins', path.basename(dockerPluginFile))]]]);
+  assert.equal(installed.provider.updateCommand, installed.provider.installCommand, 'the downloaded copy is updated by the same command');
+
+  const updated = await runInstall('dockerplug');
+  assert.equal(updated.session.name, 'Update Docker Plug (release download)');
+  assert.deepEqual([updated.provider.lastInstall.kind, updated.provider.lastInstall.outcome, updated.provider.installedVersion], ['update', 'unchanged', '1.149.0'], 'the same release again: nothing changed, and the card says so');
+
+  const { status, body } = await call('POST', '/providers/dockerplug/uninstall', { path: dockerPluginFile });
+  assert.equal(status, 201, JSON.stringify(body));
+  assert.equal(body.session.name, 'Uninstall Docker Plug (release download)');
+  const client = terminal(body.session.id);
+  await client.opened;
+  await waitForText(client, body.session.id, `Removed ${dockerPluginFile}`, 'removal output');
+  await waitFor(() => client.messages.find((m) => m.type === 'exit'), { label: 'uninstall exit' });
+  await client.close();
+  assert.equal(fs.existsSync(dockerPluginFile), false);
+  const after = await waitFor(async () => {
+    const p = await findProvider('dockerplug');
+    return p.lastInstall?.kind === 'uninstall' ? p : null;
+  }, { label: 'uninstall outcome' });
+  assert.deepEqual([after.lastInstall.outcome, after.available, after.installable, after.installs], ['removed', false, true, []]);
+  await call('DELETE', `/sessions/${body.session.id}`);
+});
+
+test('a Docker Agent too old to be given a session id reports from the first session heard from, which Resume opens', async () => {
+  const tool = await startTool('dockerold');
+  assert.equal(tool.session.toolSessionId, null, 'nothing is known before the first prompt');
+  await waitForText(tool.client, tool.session.id, 'FAKE-DOCKER READY hooks=5');
+  await waitFor(reportingIs(tool.session.id, 'active'), { label: 'the session start hook', timeout: 15000 });
+  assert.equal((await sessionNow(tool.session.id)).toolSessionId, 'docker-session', 'the first session heard from is the main one');
+  // This version names no agent on its events, so a sub-agent's session cannot be told from a tab: no card, and Resume stays.
+  tool.client.input('subagent helper-2 helper');
+  await waitForText(tool.client, tool.session.id, 'SUBAGENT helper-2', 'the sub-agent\'s session start, with its hook done');
+  const during = await sessionNow(tool.session.id);
+  assert.deepEqual([during.agents, during.toolSessionId], [[], 'docker-session'], 'a sub-agent never becomes the session Resume opens');
+  tool.client.input('subagent-done helper-2 helper');
+  await waitForText(tool.client, tool.session.id, 'SUBAGENT-DONE helper-2');
   await tool.client.close();
   await call('DELETE', `/sessions/${tool.session.id}`);
 });
@@ -1519,7 +1588,6 @@ test('a Docker Agent probe is asked again by the next session, as installing or 
   const installed = await hooks.launch(provider, null);
   assert.equal(installed.reporting.state, 'pending', 'the plugin is installed: the next session gets the hooks, within the retry interval');
   assert.deepEqual(installed.args, [...dockerHookArgs(), '--session', installed.toolSessionId], 'and a session id Agent Guild chose');
-  assert.deepEqual(installed.env, { AGENT_GUILD_TOOL_SESSION: installed.toolSessionId });
   const resumed = await hooks.launch(provider, { resume: 'abc', args: [] });
   assert.deepEqual([resumed.args, resumed.toolSessionId], [dockerHookArgs(), 'abc'], 'a resumed session is named by its resume args');
   const own = await hooks.launch(provider, { args: ['--session=mine'] });
@@ -1537,8 +1605,9 @@ test('a Docker Agent probe is asked again by the next session, as installing or 
   assert.equal(refreshed.length, 2, 'and the card\'s version line is refreshed again');
   provider.env = { FAKE_DOCKER_VERSION: '1.79.0' };
   const old = await hooks.launch(provider, null);
-  assert.deepEqual([old.reporting.state, old.args], ['unsupported', []], 'a version that cannot name its session gets no hooks, rather than mixing up its sub-agents');
-  assert.match(old.reporting.reason, /1\.80\.0 or later; this is 1\.79\.0/);
+  assert.deepEqual([old.reporting.state, old.args, old.toolSessionId], ['pending', dockerHookArgs(), null], 'a version that cannot create a named session gets the hooks and no --session; the main session is the first heard from');
+  const relative = await hooks.launch(provider, { args: ['--session', '-1'] });
+  assert.deepEqual([relative.args, relative.toolSessionId], [dockerHookArgs(), null], 'a relative --session names no session either');
 });
 
 test('the Docker Agent card\'s model reporting switch writes and removes only its own hooks.d file', async () => {

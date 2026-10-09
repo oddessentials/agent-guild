@@ -10,6 +10,8 @@ export const CHANNEL_LABELS = {
   system: 'system package',
   legacy: 'legacy install',
   unknown: 'unknown install',
+  download: 'release download',
+  desktop: 'Docker Desktop',
 };
 
 export const defaultFsx = {

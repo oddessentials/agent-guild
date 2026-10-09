@@ -19,14 +19,11 @@
 // - Grok Build skips SubagentStop for a cancelled sub-agent; the SessionEnd
 //   of the sub-agent's own session then closes it, as does a StopCancelled
 //   inside it (its turn limit, no progress or a declined permission).
-// - Docker Agent runs each sub-agent (transfer_task, a background agent, a
-//   skill) in a session of its own, which fires session_start, stop and
-//   session_end under its own session_id. Agent Guild names the main session
-//   when it starts Docker Agent, so every other session is a sub-agent.
+// - Docker Agent's events are not translated here: each is sent whole to the
+//   manager, which tells its sessions apart (src/manager/docker-sessions.mjs).
 //
-// Shell commands come from the Bash, PowerShell (Claude Code, Codex CLI),
-// run_terminal_command (Grok Build) and shell (Docker Agent, whose events
-// name the agent in agent_name) tools; Claude Code's Monitor tool is a
+// Shell commands come from the Bash, PowerShell (Claude Code, Codex CLI) and
+// run_terminal_command (Grok Build) tools; Claude Code's Monitor tool is a
 // background watch reported as a monitor. A turn ends with Stop, with
 // StopFailure (an API error, Claude Code and Grok Build), with StopCancelled
 // (an interrupt or a declined permission, Grok Build) or with Interrupt and
@@ -37,8 +34,6 @@ import crypto from 'node:crypto';
 
 const SUBAGENT_TOOLS = new Set(['Task', 'Agent']);
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell', 'run_terminal_command', 'Monitor']);
-// Codex CLI's multi_agent_v2 tool of the same name is not a shell command here, so the name counts for Docker Agent only.
-const DOCKER_SHELL_TOOLS = new Set(['shell']);
 const MONITOR_TOOLS = new Set(['Monitor']);
 const TOOL_START_EVENTS = new Set(['PreToolUse']);
 const TOOL_END_EVENTS = new Set(['PostToolUse', 'PostToolUseFailure']);
@@ -54,7 +49,7 @@ const MAX_RUNNING_TASKS = 256;
 
 const text = (...values) => values.find((v) => typeof v === 'string' && v.trim())?.trim() ?? null;
 
-function commandHash(command) {
+export function commandHash(command) {
   return crypto.createHash('sha256').update(command.replace(/\s+/g, ' ').trim()).digest('hex').slice(0, 32);
 }
 
@@ -62,9 +57,7 @@ function shellReport(event, input, toolName, subagentId) {
   const toolInput = input.tool_input || input.toolInput || {};
   const id = text(input.tool_use_id, input.toolUseId);
   const agent = subagentId ? { agentId: `hook-${subagentId}` } : {};
-  // Docker Agent's shell tool takes the command as cmd.
-  const command = [toolInput.command, toolInput.cmd].find((value) => typeof value === 'string');
-  const match = command !== undefined ? { match: commandHash(command) } : {};
+  const match = typeof toolInput.command === 'string' ? { match: commandHash(toolInput.command) } : {};
   // Codex CLI (its events carry turn_id) keeps a command running past its turn, and reports no end for one it refused.
   const codex = Boolean(text(input.turn_id));
   if (event === 'PermissionRequest') return { shell: codex ? 'asked' : 'waiting', ...agent, ...match };
@@ -105,36 +98,42 @@ function backgroundTasks(input) {
 }
 
 /** "subagent_start", "subagentStart" and "SubagentStart" all become "SubagentStart". */
-function eventName(input) {
-  const raw = text(input.hook_event_name, input.hookEventName) || '';
-  return raw.replace(/(?:^|[_-])([a-z])/g, (_m, c) => c.toUpperCase());
+export function normalizeEventName(raw) {
+  return String(raw || '').replace(/(?:^|[_-])([a-z])/g, (_m, c) => c.toUpperCase());
 }
 
-/** A Docker Agent sub-agent's session: it starts working, runs shell commands and ends; its turns and model are its own. */
-function dockerSubagentReports(event, input, sessionId) {
-  const agent = { agentId: `hook-${sessionId}`, name: text(input.agent_name), kind: 'subagent' };
-  if (event === 'SessionStart') return [{ ...agent, status: 'working' }];
-  // session_end fires even for an interrupted sub-agent; subagent_stop (a hooks.d event) follows a finished one.
-  if (event === 'SessionEnd' || event === 'SubagentStop') return [{ ...agent, status: 'done' }];
-  const toolName = text(input.tool_name);
-  if ((TOOL_START_EVENTS.has(event) || TOOL_END_EVENTS.has(event)) && DOCKER_SHELL_TOOLS.has(toolName)) {
-    const shell = shellReport(event, input, toolName, sessionId);
-    return shell ? [shell] : [];
-  }
-  return [];
+function eventName(input) {
+  return normalizeEventName(text(input.hook_event_name, input.hookEventName));
 }
 
 /**
- * Reports for one hook event: its sub-agents, shell commands, model and the tool's own session id. `rootSession` is
- * the Docker Agent session Agent Guild started, when it named one.
+ * The part of a Docker Agent hook event the manager needs, or null when the event names no session. The
+ * shell tool's command (`tool_input.cmd`) comes along; tool output and messages stay behind.
  */
-export function hookToReports(input, { rootSession = null } = {}) {
+export function dockerHookEvent(input) {
+  if (!input || typeof input !== 'object') return null;
+  const sessionId = text(input.session_id);
+  const event = eventName(input);
+  if (!sessionId || !event) return null;
+  const out = { event, sessionId };
+  const agentName = text(input.agent_name);
+  if (agentName) out.agentName = agentName;
+  const toolName = text(input.tool_name);
+  if (toolName) out.toolName = toolName;
+  const toolUseId = text(input.tool_use_id);
+  if (toolUseId) out.toolUseId = toolUseId;
+  // The shell tool takes cmd; Docker Agent accepts command as well.
+  const command = [input.tool_input?.cmd, input.tool_input?.command].find((value) => typeof value === 'string');
+  if (command !== undefined) out.command = command;
+  const model = text(input.model_id);
+  if (model) out.model = model;
+  return out;
+}
+
+/** Reports for one hook event: its sub-agents, shell commands, model and the tool's own session id. */
+export function hookToReports(input) {
   if (!input || typeof input !== 'object') return [];
   const event = eventName(input);
-  const sessionId = text(input.session_id);
-  if (rootSession && typeof input.agent_name === 'string' && sessionId && sessionId !== rootSession) {
-    return dockerSubagentReports(event, input, sessionId);
-  }
   const reports = [];
   // Claude Code and Codex CLI name the sub-agent an event belongs to by
   // agent_id; Grok Build by subagentId on its own events and by subagentType
@@ -187,8 +186,7 @@ export function hookToReports(input, { rootSession = null } = {}) {
 
   const toolName = text(input.tool_name, input.toolName);
   const toolEvent = TOOL_START_EVENTS.has(event) || TOOL_END_EVENTS.has(event);
-  const shellTool = SHELL_TOOLS.has(toolName) || (typeof input.agent_name === 'string' && DOCKER_SHELL_TOOLS.has(toolName));
-  const shell = (toolEvent || PERMISSION_EVENTS.has(event)) && shellTool ? shellReport(event, input, toolName, subagentId) : null;
+  const shell = (toolEvent || PERMISSION_EVENTS.has(event)) && SHELL_TOOLS.has(toolName) ? shellReport(event, input, toolName, subagentId) : null;
   if (shell) reports.push(shell);
   if (event === 'PostToolUse' && toolName === 'TaskStop') {
     const toolInput = input.tool_input || input.toolInput || {};

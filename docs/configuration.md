@@ -56,7 +56,9 @@ values are ignored; a file that cannot be read is reported in `manager.log`.
 | `homeVar` | Variable that moves the tool's home folder; required for `accounts` |
 | `accounts` | Extra sign-ins; see [Accounts](#accounts) |
 | `color`, `monogram`, `icon` | Card appearance; `icon` is a URL path |
-| `install`, `docs` | Shown when the tool is not installed |
+| `install`, `docs` | Shown when the tool is not installed; for a `plugin`, `install` is the command **Install** and **Update** run |
+| `plugin` | The Docker CLI plugin the tool is (`"agent"` for `docker agent`): the card lists the plugin's copies as `docker info` finds them, offers to remove a downloaded one, and runs `install` to add or update it |
+| `releases` | `https://` URL of a "latest release" page that redirects to the release's tag (GitHub's `releases/latest`); its version is the update check for a `plugin` |
 | `usageUrl`, `billingUrl`, `cloudUrl` | `https://` links on the card; `null` hides one |
 | `win32`, `darwin`, `linux` | Fields that apply on one platform only |
 

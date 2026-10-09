@@ -47,12 +47,16 @@ terminal.
 
 No compiler is needed, except on Linux without glibc, such as Alpine:
 `agent-guild` prints the commands that build its terminal library there. A
-missing tool shows **Install** on its card; Antigravity CLI and Docker Agent,
-which are not on npm, show their install commands instead. Docker Agent is
-the `docker agent` plugin; Docker Desktop 4.63 and later ship it.
+missing tool shows **Install** on its card; Antigravity CLI, which is not on
+npm, shows its install command instead. Docker Agent is the `docker agent`
+plugin; Docker Desktop 4.63 and later ship it, and its card's **Install**
+downloads the latest release into `~/.docker/cli-plugins` when no copy runs.
+The card's installation box lists every copy the Docker CLI finds and which
+one runs; the card updates and removes only the downloaded one, and leaves
+Docker Desktop's to Desktop.
 
-On Linux, Docker Engine does not include the plugin; the card's install
-command adds it. The card needs Docker's own `docker` command: Podman's
+On Linux, Docker Engine does not include the plugin; the card's **Install**
+adds it. The card needs Docker's own `docker` command: Podman's
 `docker` and the Ubuntu snap of Docker do not load the plugin. If you
 installed Docker Agent on its own as `docker-agent` (Homebrew or a release
 download), add this to [`providers.json`](docs/configuration.md#providersjson),

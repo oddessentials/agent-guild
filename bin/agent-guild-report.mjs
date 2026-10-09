@@ -11,8 +11,8 @@
 //   agent-guild-report --model NAME [--display-name TEXT]
 //   agent-guild-report --session ID          (the tool's own session id, for resuming it later)
 //   agent-guild-report --hook [--event NAME] (reads a hook event as JSON on stdin:
-//                                             Claude Code, Codex CLI, Antigravity CLI, Grok Build,
-//                                             Docker Agent, whose main session AGENT_GUILD_TOOL_SESSION names;
+//                                             Claude Code, Codex CLI, Antigravity CLI, Grok Build, or
+//                                             Docker Agent when AGENT_GUILD_REPORTING is docker;
 //                                             --event names one that does not name itself)
 //   agent-guild-report --claude-statusline [--passthrough]
 //                      (reads Claude Code status line JSON on stdin; prints a
@@ -20,7 +20,7 @@
 
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
-import { hookToReports, claudeStatuslineToReport, formatStatusLine, antigravityUserConversation } from '../src/report/hooks.mjs';
+import { hookToReports, dockerHookEvent, claudeStatuslineToReport, formatStatusLine, antigravityUserConversation } from '../src/report/hooks.mjs';
 
 // Importing node:http as an ES module costs a hook about 50 ms more than requiring it.
 const http = createRequire(import.meta.url)('node:http');
@@ -67,11 +67,10 @@ function readStdin() {
   });
 }
 
-function send(report) {
-  const kind = report.shell !== undefined ? 'shells'
-    : report.agentId !== undefined || report.finishForeground === true ? 'agents'
-    : report.hello === true ? 'reporting'
-    : report.toolSessionId !== undefined ? 'tool-session' : 'model';
+function send(report, kind = report.shell !== undefined ? 'shells'
+  : report.agentId !== undefined || report.finishForeground === true ? 'agents'
+  : report.hello === true ? 'reporting'
+  : report.toolSessionId !== undefined ? 'tool-session' : 'model') {
   const body = JSON.stringify(report);
   return new Promise((resolve, reject) => {
     const req = http.request(`${env.AGENT_GUILD_URL}/api/v1/sessions/${env.AGENT_GUILD_SESSION_ID}/${kind}`, {
@@ -95,7 +94,7 @@ function send(report) {
 }
 
 /** A hook must never break the coding tool, so report failures quietly. */
-const sendQuietly = (report) => send(report).catch((err) => console.error(`agent-guild-report: ${err.message}`));
+const sendQuietly = (report, kind) => send(report, kind).catch((err) => console.error(`agent-guild-report: ${err.message}`));
 
 const MAX_FIRST_LINE = 1024 * 1024;
 
@@ -137,9 +136,15 @@ async function main() {
     const input = parseJson(await readStdin());
     if (!inSession || !input || typeof input !== 'object') return;
     if (args.event && input.hook_event_name === undefined) input.hook_event_name = args.event;
+    // Docker Agent's events go whole to the manager, which tells its sessions (tabs, sub-agents) apart.
+    if (env.AGENT_GUILD_REPORTING === 'docker') {
+      const event = dockerHookEvent(input);
+      if (event) await sendQuietly(event, 'docker');
+      return;
+    }
     // Antigravity CLI runs the hook in its sub-agents too, each a conversation of its own.
     if (typeof input.conversationId === 'string' && !antigravityUserConversation(firstRecord(input.transcriptPath))) return;
-    for (const report of hookToReports(input, { rootSession: env.AGENT_GUILD_TOOL_SESSION || null })) await sendQuietly(report);
+    for (const report of hookToReports(input)) await sendQuietly(report);
     return;
   }
   if (args.claudeStatusline) {
