@@ -74,16 +74,25 @@
     --locked: url("banners/xai/locked.svg");
     --mark: url("icons/xai.svg");
   }
+  .provider[data-id="docker"], .session-card[data-provider="docker"] {
+    --pc: #2496ed;
+    --idle: url("banners/docker/idle.svg");
+    --working: url("banners/docker/working.svg");
+    --locked: url("banners/docker/locked.svg");
+    --mark: url("icons/docker.svg");
+  }
 
   .provider-icon[data-provider="anthropic"] { --icon: url("icons/anthropic.svg"); }
   .provider-icon[data-provider="openai"] { --icon: url("icons/openai.svg"); }
   .provider-icon[data-provider="google"] { --icon: url("icons/google.svg"); }
   .provider-icon[data-provider="xai"] { --icon: url("icons/xai.svg"); }
+  .provider-icon[data-provider="docker"] { --icon: url("icons/docker.svg"); }
   .provider-icon[data-provider="shell"] { --icon: url("icons/shell.svg"); }
   .provider-icon:not(.has-image)[data-provider="anthropic"],
   .provider-icon:not(.has-image)[data-provider="openai"],
   .provider-icon:not(.has-image)[data-provider="google"],
   .provider-icon:not(.has-image)[data-provider="xai"],
+  .provider-icon:not(.has-image)[data-provider="docker"],
   .provider-icon:not(.has-image)[data-provider="shell"] {
     background: var(--icon) center / cover no-repeat; color: transparent; border-radius: 10px;
   }

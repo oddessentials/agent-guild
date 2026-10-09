@@ -29,5 +29,12 @@
     "w": 1056,
     "h": 1408,
     "prompt": "A small floating stone lantern spirit, a round weathered Japanese stone lantern body covered in soft green moss, a tiny roof cap draped with cascading violet wisteria blossoms, a soft violet glow inside its little window with two gentle round eyes, short wispy violet spirit-smoke trailing below it instead of legs, hovering calmly, two tiny fireflies near it."
+  },
+  "docker": {
+    "seed": 27,
+    "w": 1056,
+    "h": 1408,
+    "prompt": "A small, sturdy, wise old hermit crab spirit living in a weathered little crimson-red wooden cargo crate that it carries on its back as its shell, the crate's planks ribbed and banded with iron like a tiny shipping container, softly overgrown with velvety green moss, tiny ferns and a few white star flowers, its rounded body and chunky claws a soft glossy azure-blue like sea glass with a pearly sheen, two big round gentle glowing azure eyes on short stalks and a calm content little smile, standing proudly on a smooth mossy river stone, a few tiny glowing azure bubbles drifting around it.",
+    "locked": "Turn this exact same hermit crab spirit and the cargo crate on its back into a dormant, weathered grey stone statue, asleep with its eye stalks drooping and its eyes closed: every glow, light and colour gone, its crab body, claws and the crate with its planks and bands all carved from cold, cracked, lichen-spotted grey granite, the crate still clearly a box on its back, thickly overgrown with soft green moss, a few tiny ferns and creeping ivy tendrils wrapped around it. It stays a crab, with no human face. Same pose and silhouette, still and sleeping. Keep the exact same art style, rendering, camera framing, scale and the pure flat black background."
   }
 }

@@ -41,5 +41,14 @@
     "edit_seeds": {
       "working": 21
     }
+  },
+  "docker": {
+    "seed": 79,
+    "w": 1056,
+    "h": 1408,
+    "prompt": "A huge, powerfully built frog-folk dockmaster of the bog harbor, a towering broad-chested bullfrog-man standing upright, smooth glossy vivid azure-blue skin with bold black poison-dart-frog markings, a wide confident grin, big golden eyes, wearing heavy crimson-red riveted canvas work overalls with brass buckles, thick leather work gloves, a battered brass harbor-master's cap, one massive arm replaced by a riveted brass steam-powered crane arm with copper pipes, pressure gauges and a heavy iron cargo claw, a small crimson-red iron-banded cargo crate tucked under his other arm, thin wisps of steam curling from the crane arm's vents, standing tall, calm and unshakeable.",
+    "edit_seeds": {
+      "working": 21
+    }
   }
 }

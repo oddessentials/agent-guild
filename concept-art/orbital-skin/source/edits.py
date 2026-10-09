@@ -19,6 +19,7 @@ WORKING = {
     "google": "Keep the exact same twin robots, robes and faces. Change the pose: both raise one hand together, channeling a brilliant blue-white starburst between them, glowing constellation lines and orbiting star sparks swirling around them, their eyes blazing bright, robes stirring.",
     "xai": "Keep the exact same robot, helmet, visor and coat. Change its pose: it thrusts one hand forward summoning crackling electric-cyan lightning and floating holographic code panels, coat flaring, the cyan circuit sigils and the visor blazing bright.",
     "shell": "Keep the exact same hooded violet hologram robot with the glowing '>' chevron in its hood. Change it: it now swirls into a powerful vortex of violet energy, streams of glowing violet terminal glyphs and code characters spiraling around it, the chevron blazing bright.",
+    "docker": "Keep the exact same cargo-loader robot, faceplate, eyes, azure-and-crimson armor and its stack of shipping containers. Keep it at the exact same large size, standing upright and filling the frame from the antenna to the feet. Change its pose: it now hoists two glowing crimson-red shipping containers just above its head with both claws, the containers fully inside the frame, its body as large as before, crackling azure magnetic beams locking the containers together, its eyes and every seal blazing bright azure, the amber beacon flashing, a shockwave of azure energy rippling at its feet.",
 }
 
 only = [a.split(":") for a in sys.argv[1:]]
