@@ -17,10 +17,62 @@ const vendor = {
 };
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-export async function until(label, check) {
-  const end = Date.now() + 15000;
+export async function until(label, check, timeoutMs = 15000) {
+  const end = Date.now() + timeoutMs;
   do { const value = await check(); if (value) return value; await pause(40); } while (Date.now() < end);
   throw new Error(`Timed out: ${label}`);
+}
+
+export const LAUNCH_ATTEMPTS = 3;
+
+/** Ends a Chrome process and its profile folder; never throws. */
+async function discard(chrome, profile) {
+  if (chrome.pid && chrome.exitCode === null && chrome.signalCode === null) {
+    const stopped = new Promise((resolve) => chrome.once('exit', resolve));
+    const force = setTimeout(() => chrome.kill('SIGKILL'), 2000);
+    chrome.kill();
+    await stopped;
+    clearTimeout(force);
+  }
+  // Chrome's crash handler and other helpers inherit its stderr pipe and can outlive it by
+  // seconds, or on a CI runner longer than the step allows; Node would wait for their end of
+  // the pipe. Stop reading it once Chrome itself has exited: its diagnostics have been used.
+  chrome.stderr.destroy();
+  // Chrome's helper processes can still be writing the profile after the
+  // browser process exits; retry instead of failing on ENOTEMPTY.
+  fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+}
+
+/**
+ * Starts headless Chrome and waits for its DevTools port. Only this wait is retried: a browser that does not come up
+ * within the bound says nothing about the page under test, and a CI runner that is slow to start it should not fail a
+ * run. Each failed attempt is logged, its process ended and its profile removed, and the last failure's reason is
+ * thrown. Nothing after the launch is retried.
+ */
+export async function launchChrome({ chromePath, name, chromeArgs = [], attempts = LAUNCH_ATTEMPTS, timeoutMs = 15000, spawnImpl = spawn, log = console.log }) {
+  let failure = null;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const profile = fs.mkdtempSync(path.join(os.tmpdir(), `guild-${name}-browser-`));
+    const chrome = spawnImpl(chromePath, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`,
+      '--no-first-run', '--no-default-browser-check', ...(process.env.CHROME_NO_SANDBOX === '1' ? ['--no-sandbox'] : []), ...chromeArgs, 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
+    let diagnostics = '';
+    chrome.stderr.on('data', (data) => { diagnostics = (diagnostics + data).slice(-3000); });
+    let startupError;
+    chrome.on('error', (error) => { startupError = error; });
+    try {
+      const port = await until('Chrome DevTools', () => {
+        if (startupError) throw startupError;
+        if (chrome.exitCode !== null) throw new Error(`Chrome exited with code ${chrome.exitCode}`);
+        try { return Number(fs.readFileSync(path.join(profile, 'DevToolsActivePort'), 'utf8').split('\n')[0]); } catch { return null; }
+      }, timeoutMs);
+      return { chrome, port, profile, diagnostics: () => diagnostics };
+    } catch (error) {
+      failure = new Error(`${error.message}\n${diagnostics}`.trimEnd());
+      log(`# Chrome launch attempt ${attempt} of ${attempts} failed: ${error.message}`);
+      await discard(chrome, profile);
+    }
+  }
+  throw failure;
 }
 
 let nextDialogClose = 0;
@@ -74,21 +126,12 @@ export async function withPage({ name, instrumentation = '', headers = () => ({}
   server.listen(0, '127.0.0.1');
   await new Promise((resolve) => server.once('listening', resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;
-  const profile = fs.mkdtempSync(path.join(os.tmpdir(), `guild-${name}-browser-`));
-  const chrome = spawn(chromePath, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`,
-    '--no-first-run', '--no-default-browser-check', ...(process.env.CHROME_NO_SANDBOX === '1' ? ['--no-sandbox'] : []), ...chromeArgs, 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
-  let diagnostics = '', socket;
-  chrome.stderr.on('data', (data) => { diagnostics = (diagnostics + data).slice(-3000); });
-  let startupError;
-  chrome.on('error', (error) => { startupError = error; });
+  let launched, socket;
   let checks = 0;
   const pass = (label) => { checks++; console.log(`ok ${checks} - ${label}`); };
   try {
-    const port = await until('Chrome DevTools', () => {
-      if (startupError) throw startupError;
-      if (chrome.exitCode !== null) throw new Error(diagnostics);
-      try { return Number(fs.readFileSync(path.join(profile, 'DevToolsActivePort'), 'utf8').split('\n')[0]); } catch { return null; }
-    }).catch((error) => { throw new Error(`${error.message}\n${diagnostics}`); });
+    launched = await launchChrome({ chromePath, name, chromeArgs });
+    const { port } = launched;
     const tabs = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
     socket = new WebSocket(tabs.find((tab) => tab.type === 'page').webSocketDebuggerUrl);
     await new Promise((resolve, reject) => { socket.onopen = resolve; socket.onerror = reject; });
@@ -129,22 +172,9 @@ export async function withPage({ name, instrumentation = '', headers = () => ({}
     return checks;
   } finally {
     socket?.close();
-    if (chrome.pid && chrome.exitCode === null && chrome.signalCode === null) {
-      const stopped = new Promise((resolve) => chrome.once('exit', resolve));
-      const force = setTimeout(() => chrome.kill('SIGKILL'), 2000);
-      chrome.kill();
-      await stopped;
-      clearTimeout(force);
-    }
-    // Chrome's crash handler and other helpers inherit its stderr pipe and can outlive it by
-    // seconds, or on a CI runner longer than the step allows; Node would wait for their end of
-    // the pipe. Stop reading it once Chrome itself has exited: its diagnostics have been used.
-    chrome.stderr.destroy();
+    if (launched) await discard(launched.chrome, launched.profile);
     // Likewise close the page's keep-alive connections rather than waiting for them to idle out.
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
-    // Chrome's helper processes can still be writing the profile after the
-    // browser process exits; retry instead of failing on ENOTEMPTY.
-    fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   }
 }
