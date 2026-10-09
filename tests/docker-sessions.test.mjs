@@ -137,6 +137,28 @@ test('a tab starts with the launch agent whatever another tab switched to, and k
   assert.ok(!docker.sessions.has('sub-1') && docker.sessions.has('tab-1'), 'a finished sub-agent is forgotten; a tab is kept with its role');
 });
 
+test('a session first heard from under another name while nothing runs is a tab, not a sub-agent', (t) => {
+  const session = createSession(t);
+  const docker = new DockerSessions(session, { mainId: MAIN });
+  // The user switched the first tab to coder before its first prompt, so coder is the launch agent as far as the
+  // card knows. Its turn ends; then a tab Docker Agent started with root is prompted: no sub-agent runs outside a turn.
+  docker.report(event(MAIN, 'coder', 'SessionStart'));
+  docker.report(event(MAIN, 'coder', 'Stop'));
+  docker.report(event('tab-1', 'root', 'SessionStart'));
+  docker.report(shell('tab-1', 'root', 'PreToolUse', 'c1', 'ls'));
+  assert.deepEqual(agents(session), [], 'a tab prompted while no turn runs is not a sub-agent, whatever its agent');
+  assert.equal(shells(session, t), 1, 'its command shows as the terminal\'s activity');
+  docker.report(event('tab-1', 'root', 'Stop'));
+  assert.equal(shells(session, t), 0);
+  // A sub-agent begins inside its parent's turn, under another name: still a card.
+  docker.report(event(MAIN, 'coder', 'SessionStart'));
+  docker.report(event('sub-1', 'reviewer', 'SessionStart'));
+  assert.deepEqual(agents(session), [['hook-sub-1', 'reviewer', 'working']]);
+  docker.report(event('sub-1', 'reviewer', 'SessionEnd'));
+  docker.report(event(MAIN, 'coder', 'SessionEnd'));
+  assert.equal(docker.open.size, 0, 'every run heard to end is closed');
+});
+
 test('without a named session the first session heard from is the main one, and Resume never moves', (t) => {
   const session = createSession(t);
   const docker = new DockerSessions(session);

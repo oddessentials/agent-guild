@@ -12,7 +12,8 @@
 //   agent-guild-report --session ID          (the tool's own session id, for resuming it later)
 //   agent-guild-report --hook [--event NAME] (reads a hook event as JSON on stdin:
 //                                             Claude Code, Codex CLI, Antigravity CLI, Grok Build, or
-//                                             Docker Agent when AGENT_GUILD_REPORTING is docker;
+//                                             Docker Agent, when AGENT_GUILD_REPORTING is docker or
+//                                             empty and the event names its agent;
 //                                             --event names one that does not name itself)
 //   agent-guild-report --claude-statusline [--passthrough]
 //                      (reads Claude Code status line JSON on stdin; prints a
@@ -136,8 +137,10 @@ async function main() {
     const input = parseJson(await readStdin());
     if (!inSession || !input || typeof input !== 'object') return;
     if (args.event && input.hook_event_name === undefined) input.hook_event_name = args.event;
-    // Docker Agent's events go whole to the manager, which tells its sessions (tabs, sub-agents) apart.
-    if (env.AGENT_GUILD_REPORTING === 'docker') {
+    // Docker Agent's events go whole to the manager, which tells its sessions (tabs, sub-agents) apart. In a session
+    // with no reporting of its own (a Shell card Docker Agent was run in, with hooks the user configured) they are
+    // known by agent_name, which Docker Agent alone sends, from 1.81.2; another tool's session keeps its own reports.
+    if (env.AGENT_GUILD_REPORTING === 'docker' || (!env.AGENT_GUILD_REPORTING && typeof input.agent_name === 'string')) {
       const event = dockerHookEvent(input);
       if (event) await sendQuietly(event, 'docker');
       return;

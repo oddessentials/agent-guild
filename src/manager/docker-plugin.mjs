@@ -81,9 +81,10 @@ export function copyChannel(file, env, platform = process.platform, fsx = defaul
 }
 
 /**
- * What `docker info` says about the plugin named `name`: `{ copies: [{ path, active }] }` with the running copy
- * first, `{ copies: [] }` when no copy is installed, or `{ error }` when docker could not say. `run` runs a spawn
- * spec and resolves `{ stdout }`.
+ * What `docker info` says about the plugin named `name`: `{ copies: [{ path, active, error? }] }` with the copy docker
+ * would run first (`error` is docker's reason when it cannot run that copy: a wrong platform's build, a corrupt file),
+ * `{ copies: [] }` when no copy is installed, or `{ error }` when docker could not say. `run` runs a spawn spec and
+ * resolves `{ stdout }`.
  */
 export async function readPlugin(docker, name, { env = process.env, platform = process.platform, run = runSpec, timeoutMs = INFO_TIMEOUT_MS } = {}) {
   const command = path.basename(docker).replace(/\.(?:exe|cmd|bat)$/i, '');
@@ -103,7 +104,9 @@ export async function readPlugin(docker, name, { env = process.env, platform = p
   if (!Array.isArray(plugins)) return { copies: [] };
   const entry = plugins.find((p) => p && typeof p === 'object' && p.Name === name && typeof p.Path === 'string');
   if (!entry) return { copies: [] };
-  const copies = [{ path: entry.Path, active: true }];
+  // Docker lists a copy it cannot load with Err, as text; the plugin is then not usable, and docker still lists no other.
+  const broken = typeof entry.Err === 'string' && entry.Err.trim() ? entry.Err.trim().slice(0, 240) : entry.Err ? 'docker could not load it' : null;
+  const copies = [{ path: entry.Path, active: true, ...(broken ? { error: broken } : {}) }];
   for (const shadowed of Array.isArray(entry.ShadowedPaths) ? entry.ShadowedPaths : []) {
     if (typeof shadowed === 'string' && shadowed && !copies.some((c) => c.path === shadowed)) copies.push({ path: shadowed, active: false });
   }

@@ -430,7 +430,11 @@ export class ProviderRegistry extends EventEmitter {
         const stale = entry.installedPath !== resolved || entry.installedMtime !== mtime || now - entry.installedAt > ttl;
         if (force || stale) {
           const spec = buildSpawnSpec(provider.plugin ? found : resolved, provider.versionArgs, this.env, this.platform);
-          const probe = await probeVersion(spec, { env: { ...this.env, ...provider.env } });
+          // A plugin copy docker cannot load fails its version check with docker's reason, and is not asked.
+          const broken = provider.plugin ? pluginCopies.find((c) => c.active)?.error ?? null : null;
+          const probe = broken
+            ? { ok: false, version: null, error: `${this.commandFor(provider)} cannot load ${provider.tool} at ${resolved}: ${broken}` }
+            : await probeVersion(spec, { env: { ...this.env, ...provider.env } });
           const versionStatus = !probe.ok ? 'failed' : probe.version ? 'ok' : 'unavailable';
           changed ||= probe.version !== entry.installed || versionStatus !== entry.versionStatus || probe.error !== entry.versionError;
           Object.assign(entry, {
@@ -836,6 +840,10 @@ export class ProviderRegistry extends EventEmitter {
     const plugins = provider.plugin && !shell ? this.versions.get(provider.id)?.plugin : null;
     if (plugins && !plugins.error && !plugins.copies.some((c) => c.active)) {
       throw refusal(409, 'provider_unavailable', `${provider.tool} is not installed: ${this.commandFor(provider)} finds no ${provider.plugin} plugin. Install it from its card.`);
+    }
+    const broken = plugins && !plugins.error ? plugins.copies.find((c) => c.active)?.error : null;
+    if (broken) {
+      throw refusal(409, 'provider_unavailable', `${provider.tool} cannot run: ${this.commandFor(provider)} cannot load ${this._pluginPath(provider)} (${broken}). Reinstall it from its card, or replace that copy.`);
     }
     let resumeArgs = [];
     if (resume !== null) {

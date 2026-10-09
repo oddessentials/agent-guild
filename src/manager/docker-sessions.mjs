@@ -13,11 +13,15 @@
 //
 // So the main session is the first session heard from: the one Agent Guild named or resumed, unless the user
 // opened a tab before the first prompt. Resume targets it from then on and never moves. Another session is a
-// sub-agent when the agent name on its first event differs from the launch agent (the first event's), decided
-// then and kept. Anything else (a tab, a skill run by the launch agent, a version with no agent names) is
-// main-level: its commands show on the card's main agent, its turn ends end only its own commands, and it gets
-// no agent card. A background agent is shown while its session runs. Known omissions: a sub-agent that has the
-// launch agent's name shows no card; commands Docker Agent allows without asking fire no pre_tool_use, so
+// sub-agent when the agent name on its first event differs from the launch agent (the first event's) and that
+// event comes inside a run of a session already heard from (between its session_start and its stop or
+// session_end), since a sub-agent only ever runs inside its parent's run; decided then and kept. Anything else
+// (a tab, a skill run by the launch agent, a version with no agent names, a session first heard from while
+// nothing runs) is main-level: its commands show on the card's main agent, its turn ends end only its own
+// commands, and it gets no agent card. A background agent is shown while its session runs. Known omissions: a
+// sub-agent that has the launch agent's name shows no card; the launch agent is the one named on the first event,
+// so an agent switched to before the first prompt counts as it; a tab prompted under another agent's name while
+// a tab's turn runs shows as a sub-agent; commands Docker Agent allows without asking fire no pre_tool_use, so
 // they never show (examples/docker-agent-hooks.yaml adds that).
 
 import { commandHash, normalizeEventName } from '../report/hooks.mjs';
@@ -41,6 +45,8 @@ export class DockerSessions {
     this.launchAgent = null;
     /** other sessions heard from, by id: { sub: boolean } */
     this.sessions = new Map();
+    /** ids of sessions in a run: from their session_start to their stop or session_end */
+    this.open = new Set();
   }
 
   /** One hook event, as `dockerHookEvent` (src/report/hooks.mjs) shaped it. Throws 400 for a malformed one, 409 once the session has exited. */
@@ -65,6 +71,10 @@ export class DockerSessions {
     const agentName = text(event.agentName)?.slice(0, 80) ?? null;
     // The agent the process was launched with: every tab starts with it, whatever agent another tab switched to.
     if (this.launchAgent === null && agentName) this.launchAgent = agentName;
+    // A run begins with session_start and ends with stop or session_end; a sub-agent can only begin inside one.
+    const inRun = this.open.size > 0;
+    if (name === 'SessionStart') this._open(sid);
+    else if (name === 'Stop' || name === 'SessionEnd') this.open.delete(sid);
     if (sid === this.mainId) {
       this._shell(event, name, sid, null);
       if (name === 'Stop' || name === 'SessionEnd') session.reportAgent({ finishForeground: true });
@@ -78,7 +88,7 @@ export class DockerSessions {
     if (!entry) {
       // A session first heard of at its end has nothing to show.
       if (ending) return;
-      entry = { sub: Boolean(agentName) && agentName !== this.launchAgent };
+      entry = { sub: Boolean(agentName) && agentName !== this.launchAgent && inRun };
       this._remember(sid, entry);
       // The card holds 64 agents; past that the sub-agent's commands still show and end with it.
       if (entry.sub) try { session.reportAgent({ agentId, name: agentName, kind: 'subagent', status: 'working' }); } catch { /* full */ }
@@ -107,5 +117,11 @@ export class DockerSessions {
   _remember(sid, entry) {
     if (this.sessions.size >= MAX_SESSIONS) this.sessions.delete(this.sessions.keys().next().value);
     this.sessions.set(sid, entry);
+  }
+
+  _open(sid) {
+    // A run whose end was never heard (a session Docker Agent dropped) is forgotten before the oldest ones pile up.
+    if (this.open.size >= MAX_SESSIONS) this.open.delete(this.open.keys().next().value);
+    this.open.add(sid);
   }
 }

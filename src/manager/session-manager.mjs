@@ -148,7 +148,9 @@ export class SessionManager extends EventEmitter {
     const session = this._spawn({ ...options, spawnSpec });
     // A session id Agent Guild chose is known before the tool reports it, so the card can resume it at once.
     if (hooks.toolSessionId) session.reportToolSession({ toolSessionId: hooks.toolSessionId }, 'launch');
-    if (provider.reporting === 'docker' && hooks.args.length > 0) session.docker = new DockerSessions(session, { mainId: hooks.toolSessionId ?? null });
+    // Every Docker Agent session is tracked, with or without Agent Guild's own hook flags: hooks the user configured
+    // report through the same route.
+    if (provider.reporting === 'docker') session.docker = new DockerSessions(session, { mainId: hooks.toolSessionId ?? null });
     const model = modelFromArgs([...provider.args, ...(args || [])]);
     if (model) session.setModel({ name: model }, 'args');
     return session;
@@ -753,10 +755,13 @@ export class SessionManager extends EventEmitter {
     return this._reportingSession(id, auth).reportShell(report);
   }
 
-  /** A Docker Agent hook event, for a session that runs Docker Agent. */
+  /**
+   * A Docker Agent hook event. A session that was not started as Docker Agent (a Shell card the user ran it in, with
+   * its own hooks) becomes one at its first event; the first Docker session heard from is then its main one.
+   */
   reportDocker(id, event, auth) {
     const session = this._reportingSession(id, auth);
-    if (!session.docker) throw httpError(400, 'this session does not run Docker Agent', 'not_applicable');
+    session.docker ??= new DockerSessions(session);
     session.docker.report(event);
   }
 

@@ -59,6 +59,10 @@ test('docker info lists the plugin copy that runs and the ones it shadows; failu
   assert.deepEqual(calls[0][0], { file: '/usr/bin/docker', args: PLUGIN_INFO_ARGS });
   assert.equal(calls[0][1].killTree, true);
   assert.deepEqual(await readPlugin('/usr/bin/docker', 'agent', { env: {}, platform: 'linux', run: answering(JSON.stringify(listed.slice(1))) }), { copies: [] }, 'no agent plugin');
+  const unloadable = [{ Name: 'agent', Path: '/home/me/.docker/cli-plugins/docker-agent', Err: 'failed to fetch metadata: fork/exec /home/me/.docker/cli-plugins/docker-agent: exec format error' }];
+  assert.deepEqual(await readPlugin('/usr/bin/docker', 'agent', { env: {}, platform: 'linux', run: answering(JSON.stringify(unloadable)) }), {
+    copies: [{ path: '/home/me/.docker/cli-plugins/docker-agent', active: true, error: 'failed to fetch metadata: fork/exec /home/me/.docker/cli-plugins/docker-agent: exec format error' }],
+  }, 'a copy docker cannot load is listed with docker\'s reason');
   assert.deepEqual(await readPlugin('/usr/bin/docker', 'agent', { env: {}, platform: 'linux', run: answering('null') }), { copies: [] }, 'docker lists no plugins at all');
   assert.deepEqual(await readPlugin('/usr/bin/docker', 'agent', { env: {}, platform: 'linux', run: answering('not json') }), { error: 'docker info did not list its plugins as JSON' });
   const failing = async () => { throw Object.assign(new Error('exit 1'), { stderr: 'Cannot connect to the Docker daemon\nerror during connect: open //./pipe/docker_engine' }); };
@@ -145,6 +149,21 @@ test('the Docker Agent card is about the plugin copy that runs: installable with
   provider.env.FAKE_DOCKER_PLUGINS = JSON.stringify([{ Name: 'agent', Version: 'v1.149.0', Path: plugin, ShadowedPaths: [link] }]);
   await registry.refreshVersions({ force: true, ids: ['docker'] });
   assert.equal(registry.describe(provider).installs.length, 1, 'a link to the running copy is not a second copy');
+});
+
+test('a plugin copy docker cannot load fails its version check with docker\'s reason, offers Reinstall for a download, and does not start', async () => {
+  const { dir, registry } = registryWith({});
+  const plugin = path.join(dir, '.docker', 'cli-plugins', process.platform === 'win32' ? 'docker-agent.exe' : 'docker-agent');
+  fs.mkdirSync(path.dirname(plugin), { recursive: true });
+  fs.writeFileSync(plugin, 'not a plugin');
+  const provider = registry.get('docker');
+  provider.env.FAKE_DOCKER_PLUGINS = JSON.stringify([{ Name: 'agent', Path: plugin, Err: 'failed to fetch metadata: exec format error' }]);
+  await registry.refreshVersions({ force: true, ids: ['docker'] });
+  const card = registry.describe(provider);
+  assert.deepEqual([card.available, card.installable, card.resolvedPath, card.installedVersion, card.versionStatus, card.installChannel], [true, false, plugin, null, 'failed', 'download']);
+  assert.equal(card.versionError, `docker cannot load Docker Agent at ${plugin}: failed to fetch metadata: exec format error`);
+  assert.equal(card.updateCommand, provider.install, 'the page shows Reinstall, which downloads over the broken copy');
+  assert.throws(() => registry.spawnSpec(provider, [], null, [], null), { code: 'provider_unavailable', message: /cannot load .*exec format error.*Reinstall/ });
 });
 
 test('a copy removed by hand is noticed at the next look, and nothing is installable or startable until docker has answered once', async () => {
