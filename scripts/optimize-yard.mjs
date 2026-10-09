@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { NodeIO, Logger } from '@gltf-transform/core';
 import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
 import { dedup, weld, quantize } from '@gltf-transform/functions';
+import { PROVIDER_ORDER } from '../web/yard/model.mjs';
 
 const directory=new URL('../web/yard/assets/',import.meta.url);
 const io=new NodeIO().registerExtensions(ALL_EXTENSIONS);
@@ -56,7 +57,7 @@ for(const name of (await readdir(directory)).filter(name=>name.endsWith('.glb')&
   // Quantization adjusts mesh transforms. Keep the public hall anchor on an
   // unchanged parent so the renderer can still position provider buildings.
   for(const node of document.getRoot().listNodes()) {
-    if(!/^hall_(anthropic|openai|google|xai|shell)$/.test(node.getName()) || !node.getMesh())continue;
+    if(!PROVIDER_ORDER.some(id=>node.getName()==='hall_'+id) || !node.getMesh())continue;
     const anchor=document.createNode(node.getName()).setMatrix(node.getMatrix());
     node.setName(node.getName()+'_mesh');
     const parents=node.listParents().filter(parent=>parent.propertyType==='Node'||parent.propertyType==='Scene');

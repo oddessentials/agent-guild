@@ -25,6 +25,11 @@
     "prompt": "The lantern spirit's wisteria pagoda: a wide low gnarled wisteria tree whose twisting trunk holds up a three-tiered mossy stone pagoda dwelling with upturned stone roof eaves, heavy hanging clusters of bold bright amethyst-purple wisteria blossoms draping from every tier, a stone lantern beside the round moon-gate doorway, a square lilac-painted window.",
     "pick": 1305
   },
+  "hall_docker": {
+    "seed": 1331,
+    "prompt": "The hermit crab's boathouse: a broad low gnarled sea-oak tree whose hollow trunk opens into a wide boathouse with bright azure blue painted double doors and shutters, a big weathered crimson-red wooden cargo crate built into its side as a room, a thick coil of rope round a wooden mooring post and a small iron anchor by the door, round windows glowing warm.",
+    "pick": 1332
+  },
   "_prop": "Highly detailed storybook fantasy illustration of a single object from an enchanted woodland spirit village, rich painterly digital painting with crisp detail, gnarled living bark, carved wood, patches of green moss, centered and fully visible, seen from an elevated three-quarter view from the front right, isolated on a pure flat light grey background, every surface matte, no ground, no grass, no people, no animals, no smoke, no fire, no glow effects, no fireflies, no text, no letters, no logos, no border.",
   "town_treehouse": {
     "seed": 1311,

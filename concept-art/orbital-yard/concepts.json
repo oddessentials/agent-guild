@@ -25,6 +25,11 @@
     "prompt": "The terminal command module: a rounded hooded dome hull of matte lavender-grey panels under a deep-violet hood-shaped canopy, a big bold violet chevron-shaped doorway in front shaped like a '>' symbol, a small dish antenna and two short masts on top, a ring of violet panels around its base.",
     "pick": 1105
   },
+  "hall_docker": {
+    "seed": 1131,
+    "prompt": "The cargo bay module: a broad low rounded hangar hull of matte bright azure blue hull plates with matte gunmetal trim, a wide square cargo door in front edged with bold crimson-red stripes, two big chunky crimson-red shipping containers docked side by side on its roof, a stubby loading crane arm beside them, a ring of azure panels around its base.",
+    "pick": 1133
+  },
   "town_shuttle": {
     "seed": 1111,
     "prompt": "A small chubby toy-like space shuttle parked on four landing legs, rounded white hull with grey panels and a bold orange stripe, short stubby wings, a dark grey cockpit window band, two round engine nozzles at the back, fully visible on its own.",

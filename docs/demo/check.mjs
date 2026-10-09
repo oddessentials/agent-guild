@@ -43,7 +43,7 @@ const walk = (folder) => {
 };
 if (fs.existsSync(dir)) walk(dir);
 // The Yard worlds are most of the site; GitHub Pages allows far more.
-if (bytes > 182 * 1024 * 1024) problems.push(`site is ${(bytes / 1024 / 1024).toFixed(1)} MB; limit is 182 MB`);
+if (bytes > 215 * 1024 * 1024) problems.push(`site is ${(bytes / 1024 / 1024).toFixed(1)} MB; limit is 215 MB`);
 
 for (const problem of problems) console.error(`not ok  ${problem}`);
 if (problems.length) process.exitCode = 1;

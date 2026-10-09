@@ -25,6 +25,11 @@
   "prompt": "A capable facilities technician with olive skin and a short dark ponytail, wearing a bright amethyst-purple polo shirt, a purple halfway between blue and magenta, with a cream collar, slate-blue work trousers with a tan leather tool belt holding a wrench and a screwdriver, matte brown work boots, a purple lanyard with a key ring.",
   "pick": 106
  },
+ "staff_docker": {
+  "seed": 111,
+  "prompt": "A confident logistics lead with warm brown skin and short curly black hair, wearing a bright azure blue zip-up work jacket with crimson-red shoulder panels and cuffs over a white t-shirt, charcoal cargo trousers, matte dark grey work boots, a crimson-red lanyard with a key card, a small tablet held at the hip.",
+  "pick": 111
+ },
  "_helper_style": "Highly detailed stylized 3D render of a single small friendly office helper robot from a modern tech campus, premium animated film look, chunky rounded forms, matte off-white and light grey body panels with crisp panel lines and one bold matte accent colour, a friendly face with two big round matte painted eyes, every surface matte with no glossy reflections, no glass, no transparency, no glow effects, no motion blur, seen from an elevated three-quarter view from the front, single subject isolated and centered filling most of the frame, on a pure flat light grey background, no floor, no shadow, no text, no letters, no logos, no border.",
  "bot_courier": {
   "seed": 201,

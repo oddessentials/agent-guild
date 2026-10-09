@@ -1,5 +1,7 @@
 // Presentation only: never changes or infers manager state.
-export const PROVIDER_ORDER = ['anthropic', 'openai', 'google', 'xai', 'shell'];
+export const PROVIDER_ORDER = ['anthropic', 'openai', 'google', 'xai', 'shell', 'docker'];
+// Character model index for a provider; custom providers wear the shell's, as they get its hall.
+export const characterIndex = id => PROVIDER_ORDER.includes(id) ? PROVIDER_ORDER.indexOf(id) : PROVIDER_ORDER.indexOf('shell');
 // Per world: its model, character and helper model prefixes, and the light colours each theme uses.
 export const WORLDS = {
   guild: { title: 'The Guild Yard', subtitle: 'A place for every great endeavour', asset: 'guild',
@@ -75,12 +77,14 @@ export function hash(value) {
   return Math.abs(n);
 }
 export function providerPositions(providers) {
-  const slots = [[-7,-5], [0,-7], [7,-5], [-8,3], [8,3]];
+  const slots = [[-7,-5], [0,-7], [7,-5], [-8,3], [8,3], [-10,11]];
   const result = new Map();
   const extra = providers.filter(p => !PROVIDER_ORDER.includes(p.id));
   for (const p of providers) {
     const i = PROVIDER_ORDER.indexOf(p.id);
-    const [x,z] = i < 0 ? [((extra.indexOf(p)%5)-2)*5, 11+Math.floor(extra.indexOf(p)/5)*6] : slots[i];
+    // Custom providers fill the front rows, starting past Docker Agent's place.
+    const n = extra.indexOf(p) + 1;
+    const [x,z] = i < 0 ? [((n%5)-2)*5, 11+Math.floor(n/5)*6] : slots[i];
     result.set(p.id,{x,z});
   }
   return result;
@@ -107,8 +111,10 @@ export function layoutSessions(sessions, providers, previous = new Map()) {
     const entry=result.get(s.id), origin=anchors.get(key)||{x:0,z:4};
     // Crews behind a front hall fill from the end the camera can see past it.
     const dir=key==='anthropic'||key==='google'?-1:1;
-    entry.x=origin.x+dir*((entry.slot%4)-1.5)*1.25;
-    entry.z=origin.z+3.25+Math.floor(entry.slot/4)*1.6;
+    // Docker Agent's hall and crew are oversized, so its crew stands further out and further apart.
+    const size=key==='docker'?1.3:1;
+    entry.x=origin.x+dir*((entry.slot%4)-1.5)*1.25*size;
+    entry.z=origin.z+(3.25+Math.floor(entry.slot/4)*1.6)*size;
   }
   return result;
 }

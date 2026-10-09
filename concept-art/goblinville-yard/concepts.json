@@ -25,6 +25,11 @@
     "prompt": "The night watchman's lantern tower: a slender octagonal timber watchtower with a pointed slate roof, an enclosed lookout room at the top glowing violet behind small-paned windows, a large brass lantern hanging under the eaves with a violet flame, a narrow door at the base with a satchel and tools hung beside it.",
     "pick": 405
   },
+  "hall_docker": {
+    "seed": 431,
+    "prompt": "The dockmaster's steam crane shed: a broad timber and riveted iron dock shed on its square stilt platform, a bright azure blue painted corrugated iron roof, a big brass steam crane arm on top with a hanging iron claw, wide sliding cargo doors painted crimson-red, two chunky crimson-red cargo crates beside the doors, round brass gauges and pipes along its side.",
+    "pick": 433
+  },
   "town_house_a": {
     "seed": 501,
     "prompt": "A tall narrow three-storey timber-framed goblin townhouse leaning slightly, a steep shingled roof with a dormer, a crooked brick chimney and a thin copper flue pipe, a striped canvas awning over the ground floor shopfront, crates and barrels on its porch, all standing on tall wooden stilts with cross bracing and a ladder.",

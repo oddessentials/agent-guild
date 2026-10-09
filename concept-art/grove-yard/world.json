@@ -4,8 +4,9 @@
   "spirit_1": {"image": "concepts/spirit_openai.png", "height": 2.0, "work": "steady"},
   "spirit_2": {"image": "concepts/spirit_google.png", "height": 1.75, "work": "steady"},
   "spirit_3": {"image": "concepts/spirit_xai.png", "height": 1.7, "work": "steady"},
-  "spirit_4": {"image": "concepts/spirit_shell.png", "height": 1.8, "work": "steady"}
+  "spirit_4": {"image": "concepts/spirit_shell.png", "height": 1.8, "work": "steady"},
+  "spirit_5": {"image": "concepts/spirit_docker.png", "height": 2.0, "work": "steady"}
  },
  "town": ["town_treehouse", "town_stump", "town_mushroom", "town_lantern"],
- "seeds": {"spirit_0": 123, "spirit_4": 123}
+ "seeds": {"spirit_0": 123, "spirit_4": 123, "hall_docker": 123}
 }

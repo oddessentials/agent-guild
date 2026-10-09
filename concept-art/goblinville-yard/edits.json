@@ -86,5 +86,19 @@
       "seed": 7,
       "prompt": "Remove all smoke, steam and vapour from the image. Keep the building and everything on it exactly the same, same style, same framing, on a plain flat light grey background."
     }
+  ],
+  "builder_docker": [
+    {
+      "input": "../goblinville-skin/characters/docker/idle.png",
+      "seed": 11,
+      "prompt": "Show this exact same frog-folk dockmaster full body from the top of his cap to his boots: same bright azure blue skin with dark spots, captain's cap, crimson-red overalls, leather gloves, brass steam crane arm with its claw on his left side and the red toolbox in his hand. Remove all steam and smoke. His skin is matte with no shine. He is standing facing the viewer in a relaxed A-pose with his arms held slightly away from his body, evenly lit, on a plain flat light grey background. Same painterly style."
+    }
+  ],
+  "hall_docker": [
+    {
+      "input": "raw/hall_docker-433.png",
+      "seed": 7,
+      "prompt": "Remove all the background scenery, other buildings, sky, water, smoke, steam and vapour, leaving only the dock shed with its steam crane, its crates and its square wooden stilt platform on a plain flat light grey background. Keep the building and everything on it exactly the same, same style, same framing."
+    }
   ]
 }

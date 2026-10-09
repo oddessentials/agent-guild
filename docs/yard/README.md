@@ -61,12 +61,12 @@ colours are fields of `WORLDS` in `web/yard/model.mjs`.
 
 | Skin | World | Session representation |
 | --- | --- | --- |
-| Guild | Stone courtyard, five distinct halls, bronze trim and warm windows | Five fantasy heroes with baby dragon and spirit familiars |
-| Orbital | Station deck in orbit over a planet, with trusses out to solar wings, a docking hub and habitat modules; five provider modules | Five robots with helper drones |
-| Grove | Sunlit glade in an old forest, with a spring, a stream, a lily pond and a village of tree dwellings; five provider tree halls | Five woodland spirits with Guild familiars and Orbital drones as shell helpers |
-| Professional | Busy city of glass, concrete and brick round a paved civic square, with a street grid, traffic and a pocket park; five campus buildings | Five campus staff with small office robots as helpers |
-| Goblinville | Steam-powered town on stilts over a misty bog; five provider workshops on a plank deck | Five goblin-kin builders with creature familiars and clockwork shell helpers |
-| Gnomeland | Timber-and-stone mountain village on a cobbled square, with a lake, a waterfall and mountains beyond; five provider workshops | Five gnome builders with clockwork and creature familiars and clockwork shell helpers |
+| Guild | Stone courtyard, six distinct halls, bronze trim and warm windows | Six fantasy heroes with baby dragon and spirit familiars |
+| Orbital | Station deck in orbit over a planet, with trusses out to solar wings, a docking hub and habitat modules; six provider modules | Six robots with helper drones |
+| Grove | Sunlit glade in an old forest, with a spring, a stream, a lily pond and a village of tree dwellings; six provider tree halls | Six woodland spirits with Guild familiars and Orbital drones as shell helpers |
+| Professional | Busy city of glass, concrete and brick round a paved civic square, with a street grid, traffic and a pocket park; six campus buildings | Six campus staff with small office robots as helpers |
+| Goblinville | Steam-powered town on stilts over a misty bog; six provider workshops on a plank deck | Six goblin-kin builders with creature familiars and clockwork shell helpers |
+| Gnomeland | Timber-and-stone mountain village on a cobbled square, with a lake, a waterfall and mountains beyond; six provider workshops | Six gnome builders with clockwork and creature familiars and clockwork shell helpers |
 
 Running sessions with active output use the `working` clip. Quiet running
 sessions use `resting`; they still say **Running**. Exited sessions use a

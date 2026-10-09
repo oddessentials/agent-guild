@@ -5,6 +5,7 @@
   "gnome_2": {"image": "concepts/builder_google.png", "height": 2.1, "work": "steady"},
   "gnome_3": {"image": "concepts/builder_xai.png", "height": 2.0, "work": "steady"},
   "gnome_4": {"image": "concepts/builder_shell.png", "height": 1.8, "work": "steady"},
+  "gnome_5": {"image": "concepts/builder_docker.png", "height": 2.3, "work": "tinker"},
   "gnome_familiar_0": {"image": "concepts/familiar_flame.png", "height": 1.1},
   "gnome_familiar_1": {"image": "concepts/familiar_leaf.png", "height": 1.0},
   "gnome_familiar_2": {"image": "concepts/familiar_night.png", "height": 1.3},
@@ -16,6 +17,6 @@
  },
  "town": ["town_cottage_a", "town_cottage_b", "town_tower", "town_mill", "town_workshop"],
  "seeds": {"gnome_familiar_1": 123},
- "grey": ["gnome_1", "gnome_3", "gnome_4"],
+ "grey": ["gnome_1", "gnome_3", "gnome_4", "gnome_5"],
  "turn": {"anthropic": -90, "xai": -90}
 }
