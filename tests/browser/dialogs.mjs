@@ -29,6 +29,20 @@ window.fetch=(input,init)=>{
     }))}}),{headers:{'Content-Type':'application/json'}}));
   return demoFetch(input,init);
 };
+// Videos never reach YouTube: a poster becomes a local 320x180 image, or fails while youtubeOffline is
+// set, and a player records the address it was given and loads nothing.
+window.youtubeOffline=false;
+window.youtubeFrames=[];
+const testPoster=Object.assign(document.createElement('canvas'),{width:320,height:180}).toDataURL();
+const imageSrc=Object.getOwnPropertyDescriptor(HTMLImageElement.prototype,'src');
+Object.defineProperty(HTMLImageElement.prototype,'src',{...imageSrc,set(value){
+  imageSrc.set.call(this,String(value).startsWith('https://i.ytimg.com/')?(youtubeOffline?'data:,':testPoster):value);
+}});
+const frameSrc=Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype,'src');
+Object.defineProperty(HTMLIFrameElement.prototype,'src',{...frameSrc,set(value){
+  if(String(value).startsWith('https://www.youtube-nocookie.com/')){youtubeFrames.push(String(value));value='about:blank';}
+  frameSrc.set.call(this,value);
+}});
 window.testInputs=[];
 const DemoSocket=window.WebSocket;
 window.WebSocket=class extends DemoSocket {
@@ -203,6 +217,43 @@ const checks = await withPage({ name: 'dialogs', instrumentation }, async ({ ori
     await evaluate('document.querySelector("#toast").click()');
     await evaluate('window.openFolderError=null');
     pass(`${engine}: a toast shows above an open dialog, under the top bar on a phone, outlives the dialog and is dismissed by a tap`);
+
+    await until(`${engine} Videos button`, () => evaluate('document.querySelector("#videos-open").checkVisibility()'));
+    for (const [width, height] of [[1440, 900], [768, 1024], [390, 844]]) {
+      await resize(width, height);
+      await evaluate('youtubeFrames.length=0;document.querySelector("#videos-open").click()');
+      await until(`${engine} video poster at ${width}`, () => evaluate('document.querySelector("#videos-screen").dataset.state==="ready"'));
+      await settled();
+      const g = await evaluate(`(()=>{
+        const d=document.querySelector('#videos'),r=d.getBoundingClientRect(),s=document.querySelector('#videos-screen').getBoundingClientRect(),items=[...document.querySelectorAll('#videos-list .videos-item')];
+        const last=items.at(-1).getBoundingClientRect(),nav=document.querySelector('.videos-nav');
+        return {inside:r.top>=-1&&r.bottom<=innerHeight+1&&r.left>=-1&&r.right<=innerWidth+1,ratio:Math.round(s.width/s.height*100),screen:Math.round(s.width),
+          overflow:d.scrollWidth>d.clientWidth||document.documentElement.scrollWidth>innerWidth,listReachable:last.bottom<=r.bottom+1||nav.scrollHeight>nav.clientHeight,
+          first:items[0].getAttribute('aria-current'),frames:youtubeFrames.length};
+      })()`);
+      assert.ok(g.inside && g.ratio === 178 && g.screen >= Math.min(width - 32, 340) && !g.overflow && g.listReachable && g.first === 'true' && g.frames === 0,
+        `${engine} videos ${width}: ${JSON.stringify(g)}`);
+      // A video plays only when chosen, and closing the dialog removes the player so the sound stops.
+      const id = await evaluate('(()=>{const item=[...document.querySelectorAll("#videos-list .videos-item")].at(-1);item.click();return item.dataset.id})()');
+      await until(`${engine} player at ${width}`, () => evaluate('Boolean(document.querySelector("#videos-screen iframe"))'));
+      assert.deepEqual(await evaluate('[youtubeFrames,document.querySelector("#videos-screen iframe").referrerPolicy,document.querySelector("#videos-list [aria-current=true]").dataset.id]'),
+        [[`https://www.youtube-nocookie.com/embed/${id}?autoplay=1&rel=0&playsinline=1`], 'strict-origin-when-cross-origin', id]);
+      await closeDialog('#videos', '#videos-close');
+      assert.deepEqual(await evaluate('[document.querySelectorAll("#videos iframe").length,document.activeElement===document.querySelector("#videos-open")]'), [0, true], `${engine} player removed and focus restored`);
+    }
+    // Without YouTube the dialog says so and plays nothing; coming back online loads the poster.
+    await evaluate('youtubeOffline=true;youtubeFrames.length=0;document.querySelector("#videos-open").click()');
+    await until(`${engine} videos offline`, () => evaluate('document.querySelector("#videos-screen").dataset.state==="offline"'));
+    assert.deepEqual(await evaluate('[document.querySelector("#videos-offline").checkVisibility(),document.querySelector("#videos-play").disabled]'), [true, true]);
+    await evaluate('document.querySelectorAll("#videos-list .videos-item")[1].click()');
+    await until(`${engine} videos still offline`, () => evaluate('document.querySelector("#videos-screen").dataset.state==="offline"'));
+    assert.equal(await evaluate('youtubeFrames.length'), 0, 'nothing plays while YouTube is unreachable');
+    await evaluate('youtubeOffline=false;document.querySelector("#videos-retry").focus();dispatchEvent(new Event("online"))');
+    await until(`${engine} videos back online`, () => evaluate('document.querySelector("#videos-screen").dataset.state==="ready"'));
+    assert.deepEqual(await evaluate('[document.querySelector("#videos-offline").checkVisibility(),document.activeElement.dataset.id===document.querySelectorAll("#videos-list .videos-item")[1].dataset.id]'), [false, true],
+      'the poster replaces the message and focus moves to the chosen video');
+    await closeDialog('#videos', '#videos-close');
+    pass(`${engine}: Videos plays a chosen video, stops it on close, and says when YouTube is unreachable, on desktop, tablet and phone`);
 
     await until(`${engine} environment summary`, () => evaluate('document.querySelectorAll(".provider[data-id=shell] .environment-values dd").length===4'));
     for (const [width, height] of [[1440, 900], [768, 1024], [390, 844]]) {

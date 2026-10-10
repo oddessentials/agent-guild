@@ -4268,3 +4268,20 @@ test('Docker Agent sessions come from its SQLite store, titled by name or first 
   fs.writeFileSync(path.join(dir, 'session.db'), 'not a database');
   await assert.rejects(listDockerSessions(dir), /session\.db could not be read/);
 });
+
+test('every video in web/videos.json plays in the page, oldest first', () => {
+  const app = fs.readFileSync(path.join(ROOT_DIR, 'web/app.js'), 'utf8');
+  const categories = Object.keys(Function(`return ${app.match(/const VIDEO_CATEGORIES = (\{.*\});/)[1]}`)());
+  const videoId = new RegExp(app.match(/const VIDEO_ID = \/(.+)\/;/)[1]);
+  const { videos } = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'web/videos.json'), 'utf8'));
+  assert.ok(videos.length > 0);
+  for (const video of videos) {
+    assert.match(video.id, videoId, `${video.title}: a YouTube video id`);
+    assert.ok(video.title.length > 0 && video.title.length <= 120, `${video.id}: a title of 1 to 120 characters`);
+    assert.ok(categories.includes(video.category), `${video.id}: category ${video.category} is one the page shows`);
+    assert.match(video.published, /^\d{4}-\d{2}-\d{2}$/, `${video.id}: a publish date`);
+  }
+  assert.equal(new Set(videos.map((video) => video.id)).size, videos.length, 'no video is listed twice');
+  const dates = videos.map((video) => video.published);
+  assert.deepEqual(dates, [...dates].sort(), 'listed in the order they were published');
+});
