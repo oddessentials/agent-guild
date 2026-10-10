@@ -126,6 +126,28 @@ test('Google history offers narrowing only while the server-filtered results exc
   assert.equal(nodes['history-note'].hidden, true);
 });
 
+test('Google empty history distinguishes active filters from an empty unfiltered history', () => {
+  for (const { filter, cwd, checked, filtered } of [
+    { filter: 'missing conversation', cwd: '', checked: false, filtered: true },
+    { filter: '', cwd: '/other-project', checked: true, filtered: true },
+    { filter: 'missing conversation', cwd: '', checked: true, filtered: true },
+    { filter: '', cwd: '/other-project', checked: false, filtered: false },
+    { filter: '', cwd: '', checked: true, filtered: false },
+    { filter: '   ', cwd: '   ', checked: true, filtered: false },
+  ]) {
+    const { nodes, context } = historyPage({ tool: 'Antigravity CLI', historySource: 'antigravity', historyDetails: true });
+    context.historyView.snapshot = { sessions: [], total: 0 };
+    nodes['history-filter'].value = filter;
+    nodes.cwd.value = cwd;
+    nodes['history-here'].checked = checked;
+    context.renderHistory();
+    const scenario = JSON.stringify({ filter, cwd, checked });
+    assert.equal(nodes['history-note'].textContent, filtered ? 'No session matches the filter.' : 'No Antigravity CLI sessions were found.', scenario);
+    assert.equal(nodes['history-sub'].textContent, filtered ? 'no matching sessions' : 'no sessions found', scenario);
+    assert.equal(nodes['history-note'].hidden, false);
+  }
+});
+
 test('Google resume requires an explicit folder when unknown or ambiguous, and opens a running session directly', () => {
   let choice = null, running = null;
   const starts = [], opened = [], prompts = [];

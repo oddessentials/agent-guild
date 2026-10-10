@@ -3335,12 +3335,14 @@ function renderHistory() {
   const here = $('history-here');
   here.disabled = !working;
   here.parentElement.title = working ? `Only sessions started in ${working}` : 'Set a working folder above to filter by it';
+  const serverFiltered = provider.historyDetails && Boolean(filter || (here.checked && !here.disabled));
   const all = snapshot?.sessions ?? [];
   const shown = provider.historyDetails ? all : all.filter((entry) => (!filter || historyText(entry).includes(filter)) && (!here.checked || here.disabled || sameFolder(entry.cwd, working)));
   const parts = [];
   if ((provider.accounts?.length ?? 0) > 1 && account) parts.push(`${account.label} account`);
   if (snapshot && !snapshot.error) {
-    parts.push(snapshot.total === 0 ? 'no sessions found' : `${snapshot.total} session${snapshot.total === 1 ? '' : 's'}, newest first`);
+    if (snapshot.total === 0) parts.push(serverFiltered ? 'no matching sessions' : 'no sessions found');
+    else parts.push(`${snapshot.total} session${snapshot.total === 1 ? '' : 's'}, newest first`);
     if (shown.length !== snapshot.total) parts.push(`${shown.length} shown`);
   }
   $('history-sub').textContent = parts.join(' · ');
@@ -3350,7 +3352,7 @@ function renderHistory() {
   if (!provider.historySource) note = `Agent Guild cannot list ${provider.tool}'s sessions. Enter the id of one to resume it.`;
   else if (historyView.loading && !snapshot) note = `Reading ${provider.tool}'s sessions…`;
   else if (snapshot?.error) note = `Sessions could not be read: ${snapshot.error}`;
-  else if (snapshot && all.length === 0) note = `No ${provider.tool} sessions were found${account && account.id !== 'default' ? ` for the ${account.label} account` : ''}.`;
+  else if (snapshot && all.length === 0 && !serverFiltered) note = `No ${provider.tool} sessions were found${account && account.id !== 'default' ? ` for the ${account.label} account` : ''}.`;
   else if (snapshot && shown.length === 0) note = 'No session matches the filter.';
   if (snapshot?.note) note = [note, snapshot.note].filter(Boolean).join(' ');
   if (snapshot?.total > all.length) {
