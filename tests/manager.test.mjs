@@ -882,7 +882,7 @@ test('a tool\'s instruction files are listed and opened by index per account', a
   const query = `account=work&cwd=${encodeURIComponent(home)}`;
   const { status, body } = await call('GET', `/providers/anthropic/instructions?${query}`);
   assert.equal(status, 200, JSON.stringify(body));
-  const [file] = body.instructions.scopes[0].files;
+  const [file] = body.instructions.scopes.find((s) => s.id === 'global').files;
   assert.equal(file.path, fs.realpathSync.native(path.join(config, 'CLAUDE.md')), 'the work account reads its own CLAUDE_CONFIG_DIR');
   const read = await call('GET', `/providers/anthropic/instructions/file?${query}&index=${file.index}&path=${encodeURIComponent(file.path)}`);
   assert.deepEqual([read.status, read.body.file.text], [200, '- Answer only what was asked.\n']);

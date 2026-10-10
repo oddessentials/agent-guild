@@ -43,12 +43,18 @@ function readJson(file) {
 }
 
 /** `dir` and every folder above it, outermost first. */
-function foldersDown(dir) {
+function foldersDown(dir, pathApi = path) {
   const folders = [];
-  for (let at = dir; ; at = path.dirname(at)) {
+  for (let at = dir; ; at = pathApi.dirname(at)) {
     folders.unshift(at);
-    if (path.dirname(at) === at) return folders;
+    if (pathApi.dirname(at) === at) return folders;
   }
+}
+
+/** Whether `dir` is `parent` or a folder inside it. */
+function inside(dir, parent) {
+  const rel = path.relative(parent, dir);
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 }
 
 /** The folders of `folders` at or below `ceiling`, or all of them without one. */
@@ -115,16 +121,47 @@ function pathScoped(file) {
   return !['', '[]', '""', "''"].includes(inline) || /^\s*-/.test(lines[at + 1] ?? '');
 }
 
-/** Markdown files anywhere under a `rules` folder, by path, that load at session start. */
-function claudeRules(dir, depth = 0) {
+/**
+ * Markdown files anywhere under a `rules` folder, by path, that load at session start. Each real
+ * folder is read once, so links back to a folder above cannot multiply the walk.
+ */
+function claudeRules(dir, depth = 0, seen = new Set()) {
+  let real;
+  try { real = fs.realpathSync.native(dir); } catch { return []; }
+  if (seen.has(real)) return [];
+  seen.add(real);
   let entries;
   try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return []; }
   entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   return entries.flatMap((entry) => {
     const child = path.join(dir, entry.name);
     if (statFile(child)) return /\.md$/i.test(entry.name) && !pathScoped(child) ? [child] : [];
-    return depth < 8 && isFolder(child) ? claudeRules(child, depth + 1) : [];
+    return depth < 8 && isFolder(child) ? claudeRules(child, depth + 1, seen) : [];
   });
+}
+
+/** The folders Claude Code walks for project files: `cwd` and those above it, but not the filesystem root. */
+export function claudeFolders(cwd, pathApi = path) {
+  return foldersDown(cwd, pathApi).filter((dir) => pathApi.dirname(dir) !== dir);
+}
+
+/**
+ * The folder holding the `.git` nearest `cwd`, or null; a linked `.git` ends the search, as for
+ * Claude Code. The search stops at `ceiling` when there is one.
+ */
+function gitTop(cwd, ceiling) {
+  for (let dir = cwd; ; dir = path.dirname(dir)) {
+    let stat = null;
+    try { stat = fs.lstatSync(path.join(dir, '.git')); } catch { /* keep walking up */ }
+    if (stat?.isSymbolicLink()) return null;
+    if (stat?.isDirectory() || stat?.isFile()) return dir;
+    if (path.dirname(dir) === dir || (ceiling && path.relative(ceiling, dir) === '')) return null;
+  }
+}
+
+/** Where Claude Code keeps company-managed instructions on each system. */
+export function claudeManagedDir(platform) {
+  return platform === 'win32' ? 'C:\\Program Files\\ClaudeCode' : platform === 'darwin' ? '/Library/Application Support/ClaudeCode' : '/etc/claude-code';
 }
 
 function claudeExcludes(config, cwd, platform) {
@@ -140,22 +177,34 @@ function claudeExcludes(config, cwd, platform) {
   };
 }
 
-function claudeRows(env, cwd, platform, ceiling) {
+function claudeRows(env, cwd, platform, ceiling, managedDir) {
   const config = claudeConfigDir(env);
   const excluded = claudeExcludes(config, cwd, platform);
   const keep = (file, scope) => row(file, scope, excluded(file) ? 'Excluded in Claude Code settings.' : null);
-  const rows = [path.join(config, 'CLAUDE.md')].filter(statFile).concat(claudeRules(path.join(config, 'rules'))).map((file) => keep(file, 'global'));
+  // Company-managed files load first, and settings cannot exclude them.
+  const rows = [path.join(managedDir, 'CLAUDE.md')].filter(statFile).concat(claudeRules(path.join(managedDir, '.claude', 'rules')))
+    .map((file) => row(file, 'managed'));
+  rows.push(...[path.join(config, 'CLAUDE.md')].filter(statFile).concat(claudeRules(path.join(config, 'rules'))).map((file) => keep(file, 'global')));
   // Walking through the home folder meets ~/.claude/CLAUDE.md again; a global file is not a project one.
   const global = new Set(rows.map((r) => realPath(r.file)));
-  const found = (files) => files.filter((file) => statFile(file) && !global.has(realPath(file))).map((file) => keep(file, 'project'));
+  // In a worktree inside its main checkout, the main checkout's folders give only CLAUDE.local.md.
+  const top = gitTop(cwd, ceiling);
+  const main = top === null ? null : claudeProjectRoot(top);
+  const nested = top !== null && path.relative(main, top) !== '' && inside(top, main);
+  const found = (files, skipped = null) => files.filter((file) => statFile(file) && !global.has(realPath(file)))
+    .map((file) => (skipped ? row(file, 'project', skipped) : keep(file, 'project')));
   const agents = [];
   let claudeFile = null;
-  for (const dir of within(foldersDown(cwd), ceiling)) {
-    const own = found([path.join(dir, 'CLAUDE.md'), path.join(dir, '.claude', 'CLAUDE.md'), path.join(dir, 'CLAUDE.local.md')]);
+  for (const dir of within(claudeFolders(cwd), ceiling)) {
+    const outside = nested && inside(dir, main) && !inside(dir, top) ? 'Claude Code reads only CLAUDE.local.md from the main checkout in a worktree inside it.' : null;
+    const own = [
+      ...found([path.join(dir, 'CLAUDE.md'), path.join(dir, '.claude', 'CLAUDE.md')], outside),
+      ...found([path.join(dir, 'CLAUDE.local.md')]),
+    ];
     claudeFile ??= own.find((r) => !r.skipped)?.file ?? null;
-    const agentRows = found([path.join(dir, 'AGENTS.md'), path.join(dir, '.claude', 'AGENTS.md')]);
+    const agentRows = found([path.join(dir, 'AGENTS.md'), path.join(dir, '.claude', 'AGENTS.md')], outside);
     agents.push(...agentRows);
-    rows.push(...own, ...agentRows, ...found(claudeRules(path.join(dir, '.claude', 'rules'))));
+    rows.push(...own, ...agentRows, ...found(claudeRules(path.join(dir, '.claude', 'rules')), outside));
   }
   if (claudeFile) {
     for (const r of agents) r.skipped ??= `Claude Code reads ${path.basename(claudeFile)} instead.`;
@@ -383,14 +432,18 @@ export function shortLocation(file, folder, home, pathApi = path) {
 }
 
 export class InstructionFiles {
-  /** `ceiling` (tests only) is the highest folder Claude Code's and Antigravity CLI's walks reach. */
-  constructor({ env = process.env, platform = process.platform, resolveCwd, inspect = grokInspect, ceiling = null, home = os.homedir() }) {
+  /**
+   * `ceiling` (tests only) is the highest folder Claude Code's and Antigravity CLI's walks reach;
+   * `managedDir` (tests only) stands in for Claude Code's company-managed folder.
+   */
+  constructor({ env = process.env, platform = process.platform, resolveCwd, inspect = grokInspect, ceiling = null, home = os.homedir(), managedDir = claudeManagedDir(platform) }) {
     this.env = env;
     this.platform = platform;
     this.resolveCwd = resolveCwd;
     this.inspect = inspect;
     this.ceiling = ceiling;
     this.home = home;
+    this.managedDir = managedDir;
   }
 
   async list(provider, account, cwd) {
@@ -401,7 +454,7 @@ export class InstructionFiles {
     const base = { providerId: provider.id, accountId: account.id, folder, fetchedAt: new Date().toISOString() };
     let resolved;
     try {
-      resolved = source === 'claude' ? claudeRows(env, folder, this.platform, this.ceiling)
+      resolved = source === 'claude' ? claudeRows(env, folder, this.platform, this.ceiling, this.managedDir)
         : source === 'codex' ? codexRows(env, folder, this.platform)
           : source === 'google' ? googleRows(env, folder, this.platform, this.ceiling)
             : await grokRows(env, folder, this.platform, this.inspect, provider.command || 'grok');
@@ -419,7 +472,9 @@ export class InstructionFiles {
       seen.add(key);
       files.push({ index: files.length, path: real, name: path.basename(real), location: shortLocation(real, folder, this.home), scope: r.scope, bytes: stat.size, modified: stat.mtime.toISOString(), skipped: r.skipped, note: r.note });
     }
+    const managed = files.filter((f) => f.scope === 'managed');
     const scopes = [
+      ...(managed.length ? [{ id: 'managed', label: 'Set by your organization', note: null, files: managed }] : []),
       { id: 'global', label: 'Your instructions', note: null, files: files.filter((f) => f.scope === 'global') },
       { id: 'project', label: 'Project', note: resolved.projectNote ?? null, files: files.filter((f) => f.scope === 'project') },
     ];

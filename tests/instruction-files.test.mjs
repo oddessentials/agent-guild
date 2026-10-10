@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { InstructionFiles, globPattern, grokInspect, shortLocation } from '../src/manager/instruction-files.mjs';
+import { InstructionFiles, claudeFolders, globPattern, grokInspect, shortLocation } from '../src/manager/instruction-files.mjs';
 
 const account = { id: 'default', env: {} };
 const provider = (instructions) => ({ id: instructions, tool: instructions, command: instructions, instructions, env: {} });
@@ -46,7 +46,7 @@ test('Claude Code: global files, every folder up the walk, and AGENTS.md only wh
   write('outer/repo/.claude/rules/sub/b.md');
   write('outer/repo/.claude/rules/scoped.md', '---\npaths: src/**/*.ts\n---\n');
   dir('outer/repo/sub');
-  const reader = new InstructionFiles({ env: { CLAUDE_CONFIG_DIR: at('home/.claude') }, resolveCwd: (cwd) => cwd, ceiling: root });
+  const reader = new InstructionFiles({ env: { CLAUDE_CONFIG_DIR: at('home/.claude') }, resolveCwd: (cwd) => cwd, ceiling: root, managedDir: at('no-managed') });
 
   const found = 'Claude Code reads CLAUDE.md instead.';
   const listed = await reader.list(provider('claude'), account, at('outer/repo/sub'));
@@ -79,6 +79,77 @@ test('Claude Code: global files, every folder up the walk, and AGENTS.md only wh
     ['home/excl/CLAUDE.md', 'project', 'Excluded in Claude Code settings.'],
     ['home/excl/AGENTS.md', 'project', null],
   ], 'an excluded CLAUDE.md does not skip AGENTS.md');
+});
+
+test('Claude Code: company-managed files come first, and settings cannot exclude them', async (t) => {
+  const { root, write, at } = fixture(t);
+  write('managed/CLAUDE.md');
+  write('managed/.claude/rules/policy.md');
+  write('managed/.claude/rules/later.md', '---\npaths: src/**\n---\n');
+  write('home/.claude/CLAUDE.md');
+  write('home/.claude/settings.json', JSON.stringify({ claudeMdExcludes: ['**/managed/**'] }));
+  write('proj/CLAUDE.md');
+  const reader = new InstructionFiles({ env: { CLAUDE_CONFIG_DIR: at('home/.claude') }, resolveCwd: (cwd) => cwd, ceiling: root, managedDir: at('managed') });
+  const listed = await reader.list(provider('claude'), account, at('proj'));
+  assert.deepEqual(listed.scopes.map((s) => [s.id, s.label]), [['managed', 'Set by your organization'], ['global', 'Your instructions'], ['project', 'Project']]);
+  assert.deepEqual(rows(listed, root), [
+    ['managed/CLAUDE.md', 'managed', null],
+    ['managed/.claude/rules/policy.md', 'managed', null],
+    ['home/.claude/CLAUDE.md', 'global', null],
+    ['proj/CLAUDE.md', 'project', null],
+  ]);
+  const none = new InstructionFiles({ env: { CLAUDE_CONFIG_DIR: at('home/.claude') }, resolveCwd: (cwd) => cwd, ceiling: root, managedDir: at('no-managed') });
+  assert.deepEqual((await none.list(provider('claude'), account, at('proj'))).scopes.map((s) => s.id), ['global', 'project'], 'no managed section without managed files');
+});
+
+test('Claude Code: in a worktree inside its main checkout, the main checkout gives only CLAUDE.local.md', async (t) => {
+  const { root, write, dir, at } = fixture(t);
+  write('above/CLAUDE.md');
+  const linked = 'above/main/.git/worktrees/x';
+  dir(linked);
+  write('above/main/CLAUDE.md');
+  write('above/main/AGENTS.md');
+  write('above/main/CLAUDE.local.md');
+  write('above/main/.claude/rules/r.md');
+  write('above/main/.claude/worktrees/x/.git', `gitdir: ${at(linked)}\n`);
+  write(`${linked}/commondir`, '../..\n');
+  write(`${linked}/gitdir`, `${at('above/main/.claude/worktrees/x/.git')}\n`);
+  write('above/main/.claude/worktrees/x/CLAUDE.md');
+  const reader = new InstructionFiles({ env: { CLAUDE_CONFIG_DIR: at('home') }, resolveCwd: (cwd) => cwd, ceiling: root, managedDir: at('no-managed') });
+  const outside = 'Claude Code reads only CLAUDE.local.md from the main checkout in a worktree inside it.';
+  const listed = await reader.list(provider('claude'), account, at('above/main/.claude/worktrees/x'));
+  assert.deepEqual(rows(listed, root), [
+    ['above/CLAUDE.md', 'project', null],
+    ['above/main/CLAUDE.md', 'project', outside],
+    ['above/main/CLAUDE.local.md', 'project', null],
+    ['above/main/AGENTS.md', 'project', outside],
+    ['above/main/.claude/rules/r.md', 'project', outside],
+    ['above/main/.claude/worktrees/x/CLAUDE.md', 'project', null],
+  ], 'folders above the main checkout still load; inside it only CLAUDE.local.md does');
+});
+
+test('Claude Code walks up to, but not into, the filesystem root', () => {
+  assert.deepEqual(claudeFolders('E:\\work\\app', path.win32), ['E:\\work', 'E:\\work\\app']);
+  assert.deepEqual(claudeFolders('E:\\', path.win32), []);
+  assert.deepEqual(claudeFolders('/srv/app', path.posix), ['/srv', '/srv/app']);
+});
+
+test('a rules folder that links back to itself is read once', async (t) => {
+  const { root, write, at } = fixture(t);
+  write('repo/.claude/rules/a.md');
+  fs.symlinkSync(at('repo/.claude/rules'), at('repo/.claude/rules/loop1'), 'junction');
+  fs.symlinkSync(at('repo/.claude/rules'), at('repo/.claude/rules/loop2'), 'junction');
+  const reads = [];
+  const readdirSync = fs.readdirSync;
+  t.mock.method(fs, 'readdirSync', function (dir, ...rest) {
+    // The rules walk lists with withFileTypes; the real-name lookup lists names only.
+    if (rest[0]?.withFileTypes && String(dir).startsWith(at('repo/.claude/rules'))) reads.push(String(dir));
+    return readdirSync.call(this, dir, ...rest);
+  });
+  const reader = new InstructionFiles({ env: { CLAUDE_CONFIG_DIR: at('home') }, resolveCwd: (cwd) => cwd, ceiling: root, managedDir: at('no-managed') });
+  const listed = await reader.list(provider('claude'), account, at('repo'));
+  assert.deepEqual(rows(listed, root), [['repo/.claude/rules/a.md', 'project', null]]);
+  assert.deepEqual(reads, [at('repo/.claude/rules')]);
 });
 
 test('a row\'s location starts from a folder name near the working folder, else from home', () => {
@@ -230,7 +301,7 @@ test('a file that cannot be looked at or read never fails the list: a link loop,
   t.mock.method(fs, 'readFileSync', failing(fs.readFileSync, { [at('codex/repo/AGENTS.md')]: 'EACCES' }));
   t.mock.method(fs.promises, 'open', failing(fs.promises.open, { [at('codex/repo/AGENTS.md')]: 'EACCES' }));
 
-  const claude = new InstructionFiles({ env: { CLAUDE_CONFIG_DIR: at('claude/home') }, resolveCwd: (cwd) => cwd, ceiling: at('claude') });
+  const claude = new InstructionFiles({ env: { CLAUDE_CONFIG_DIR: at('claude/home') }, resolveCwd: (cwd) => cwd, ceiling: at('claude'), managedDir: at('claude/managed') });
   const rules = await claude.list(provider('claude'), account, at('claude/repo'));
   assert.deepEqual(rows(rules, at('claude')), [['repo/.claude/rules/a.md', 'project', null]]);
 

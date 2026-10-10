@@ -3597,7 +3597,7 @@ function instructionNodes(snapshot) {
   const nodes = snapshot.scopes.map((scope) => {
     const loaded = scope.files.filter((f) => !f.skipped);
     const section = el('section', 'memory-scope', el('div', 'memory-scope-head', el('h3', null, scope.label)));
-    const note = scope.note ?? (loaded.length ? null : scope.id === 'global' ? 'None set up.' : 'None in this folder or the folders above it.');
+    const note = scope.note ?? (loaded.length ? null : scope.id === 'project' ? 'None in this folder or the folders above it.' : 'None set up.');
     if (note) section.append(el('p', 'memory-note', note));
     section.append(...loaded.map(instructionItem));
     return section;

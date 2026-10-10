@@ -543,7 +543,9 @@ Links are not followed.
 
 The files a tool loads when a session starts in `folder`, resolved with the
 account's home folder, global files first and then project files from the
-outermost folder down. Claude Code, Codex CLI and Antigravity CLI rules are
+outermost folder down. For Claude Code, a `managed` scope ("Set by your
+organization") comes first when the system's managed folder holds a `CLAUDE.md`
+or rules. Claude Code, Codex CLI and Antigravity CLI rules are
 reproduced; Grok Build is asked with `grok inspect --json`. `path` is the
 file's real path, `name` its file name, and `location` its folder in short:
 from the name of `folder` or of a folder at most two above it, else from `~`,
