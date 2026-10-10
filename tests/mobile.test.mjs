@@ -6,10 +6,12 @@ import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { createManagerServer } from '../src/manager/server.mjs';
+import { RUN_TIMEOUT_MS } from '../src/manager/command-resolver.mjs';
+import { PROBE_TIMEOUT_MS } from '../src/manager/session-hooks.mjs';
 import { signInLink } from '../web/remote-access.js';
 import {
-  DEFAULT_FONT_SIZE, FONT_SIZES, STATES, dictatedText, exitLine, folderName, orderSessions, relativeTime, sessionState,
-  sessionSummary, stateLabel, stepFontSize, tokenFromHash, tokenFromInput,
+  DEFAULT_FONT_SIZE, FONT_SIZES, REQUEST_TIMEOUT_MS, START_TIMEOUT_MS, STATES, dictatedText, exitLine, folderName, orderSessions,
+  relativeTime, sessionState, sessionSummary, stateLabel, stepFontSize, tokenFromHash, tokenFromInput,
 } from '../web/mobile/model.js';
 
 const repo = fileURLToPath(new URL('../', import.meta.url));
@@ -133,6 +135,18 @@ test('the phone view is a static page under CSP: no inline scripts, every asset 
   for (const icon of manifest.icons) assert.ok(fs.existsSync(path.join(web, icon.src)), icon.src);
   const css = fs.readFileSync(path.join(web, 'mobile', 'mobile.css'), 'utf8');
   assert.doesNotMatch(css, /url\(\s*["']?\/(?!\/)/, 'the Pages demo copies web/ below a project path');
+});
+
+test('the phone waits for a session start as long as the manager can take over one', () => {
+  // A tool's first session answers after its hook probe, which Codex may run twice; a tmux or herdr session, and a
+  // reattach, after the multiplexer answers. The manager finishes either whether or not the phone still waits, so a
+  // shorter budget would report a session that then appears, and a retry would start a second one.
+  assert.ok(START_TIMEOUT_MS >= 2 * PROBE_TIMEOUT_MS + RUN_TIMEOUT_MS, `${START_TIMEOUT_MS}ms covers two probes of ${PROBE_TIMEOUT_MS}ms and a command of ${RUN_TIMEOUT_MS}ms`);
+  assert.ok(REQUEST_TIMEOUT_MS < START_TIMEOUT_MS, 'every other request is reported sooner, so no button waits long on a dead network');
+  const js = fs.readFileSync(path.join(web, 'mobile', 'mobile.js'), 'utf8');
+  assert.match(js, /api\('POST', '\/sessions', body, \{ timeoutMs: START_TIMEOUT_MS, noAnswer: START_NO_ANSWER \}\)/, 'a start has the start budget and says what a late answer means');
+  assert.match(js, /api\('POST', `\/sessions\/\$\{view\.id\}\/reattach`, undefined, \{\s*timeoutMs: START_TIMEOUT_MS, noAnswer: '[^']+'/, 'a reattach has the start budget and says what a late answer means');
+  assert.match(js, /signal: AbortSignal\.timeout\(timeoutMs\)/, 'and the budget is what the request is given');
 });
 
 test('the manager serves the phone view from its folder, with the manifest type and the same boundary', async (t) => {

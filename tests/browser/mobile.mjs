@@ -8,6 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { until, withDialogClose, withPage } from './chrome.mjs';
+import { START_TIMEOUT_MS } from '../../web/mobile/model.js';
 
 const fixture = fileURLToPath(new URL('../fixtures/fake-tool.mjs', import.meta.url));
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'guild-mobile-test-'));
@@ -277,7 +278,29 @@ try {
     await until('inside beta again', () => evaluate(`document.querySelector('#folder-current').textContent===${JSON.stringify(beta)}`));
     await withDialogClose(evaluate, '#folders', () => tap('#folder-use'));
     assert.equal(await evaluate(`document.querySelector('#new-cwd').value`), beta);
-    await withDialogClose(evaluate, '#new', () => tap('#new-start'));
+    // The manager can take a while over a start (a tool's first session waits for its hook probe). The request is held
+    // here until released: meanwhile the sheet says it is starting, takes no second start, and the request has the
+    // longer budget, so a slow start is never reported as a failure to try again.
+    await evaluate(`(() => {
+      window.budgets = []; window.starts = 0; window.held = null;
+      const timeout = AbortSignal.timeout.bind(AbortSignal);
+      AbortSignal.timeout = (ms) => { budgets.push(ms); return timeout(ms); };
+      const fetch = window.fetch;
+      window.fetch = (url, init) => {
+        if (init?.method !== 'POST' || !String(url).endsWith('/api/v1/sessions')) return fetch(url, init);
+        starts += 1;
+        return new Promise((resolve) => { held = () => { window.fetch = fetch; resolve(fetch(url, init)); }; });
+      };
+    })()`);
+    await tap('#new-start');
+    await until('start held', () => evaluate(`typeof held === 'function'`));
+    assert.deepEqual(await evaluate(`[document.querySelector('#new-start').textContent, document.querySelector('#new-start').disabled, budgets]`), ['Starting…', true, [START_TIMEOUT_MS]]);
+    await evaluate(`{ const cwd = document.querySelector('#new-cwd'); cwd.focus(); cwd.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); }`);
+    await tap('#new-start');
+    assert.equal(await evaluate(`starts`), 1, 'Enter in the folder field and another tap start nothing more while a start is pending');
+    assert.equal(await evaluate(`document.querySelector('#new').open`), true);
+    await withDialogClose(evaluate, '#new', () => evaluate(`held()`));
+    assert.deepEqual(await evaluate(`[document.querySelector('#new-start').textContent, document.querySelector('#new-start').disabled, document.querySelector('#new-error').hidden]`), ['Start', false, true]);
     await until('session started in the chosen folder', () => [...ctx.manager.sessions.values()].some((s) => s.toJSON().cwd === beta));
     await until('terminal opened', () => evaluate(`!document.querySelector('#terminal').hidden`));
     await until('ready in beta', async () => (await screen()).includes(`cwd=${beta}`));

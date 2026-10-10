@@ -9,8 +9,8 @@ import { TerminalControls, bindTerminalViewport } from '/terminal-controls.js';
 import { TerminalCopy } from '/terminal-copy.js';
 import { readRecentFolders, rememberFolder } from '/folders.js';
 import {
-  DEFAULT_FONT_SIZE, FONT_SIZES, dictatedText, exitLine, folderName, orderSessions, relativeTime, sessionState,
-  sessionSummary, stateLabel, stepFontSize, tokenFromHash, tokenFromInput,
+  DEFAULT_FONT_SIZE, FONT_SIZES, REQUEST_TIMEOUT_MS, START_TIMEOUT_MS, dictatedText, exitLine, folderName, orderSessions,
+  relativeTime, sessionState, sessionSummary, stateLabel, stepFontSize, tokenFromHash, tokenFromInput,
 } from '/mobile/model.js';
 
 const $ = (id) => document.getElementById(id);
@@ -23,8 +23,6 @@ const FONT_KEY = 'agentGuild.mobile.fontSize';
 const TERMINAL_FONT = 'ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace';
 const TERMINAL_THEME = { background: '#0f1115', foreground: '#e6e9ef', cursor: '#e6e9ef', selectionBackground: '#3a4050' };
 const RELATIVE_TIME_MS = 30000;
-// A request that has not answered by then is reported, so no button waits on a dead network.
-const REQUEST_TIMEOUT_MS = 15000;
 // A link that has said nothing for a while is asked for a pong; no pong in time means it is dead.
 const PING_AFTER_MS = 20000;
 const PONG_WITHIN_MS = 8000;
@@ -44,19 +42,23 @@ const state = {
 
 // ---- API -----------------------------------------------------------------
 
-async function api(method, path, body) {
+const NO_ANSWER = 'The session manager did not answer in time. Check your connection and try again.';
+
+/**
+ * One request to the manager (REQUEST_TIMEOUT_MS, then `noAnswer`). A request the manager rightly takes longer over,
+ * and goes on with whether or not the phone still waits, passes its own `timeoutMs` and a `noAnswer` that says so.
+ */
+async function api(method, path, body, { timeoutMs = REQUEST_TIMEOUT_MS, noAnswer = NO_ANSWER } = {}) {
   let res;
   try {
     res = await fetch(`/api/v1${path}`, {
       method,
       headers: { Authorization: `Bearer ${state.token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
       body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (err) {
-    throw new Error(err?.name === 'TimeoutError'
-      ? 'The session manager did not answer in time. Check your connection and try again.'
-      : 'The session manager could not be reached. Check your connection and try again.');
+    throw new Error(err?.name === 'TimeoutError' ? noAnswer : 'The session manager could not be reached. Check your connection and try again.');
   }
   if (res.status === 401) throw new AuthError('The access token was rejected.');
   const data = await res.json().catch(() => ({}));
@@ -774,7 +776,10 @@ $('reattach').addEventListener('click', async () => {
   $('menu').close();
   if (!view) return;
   try {
-    const { session } = await api('POST', `/sessions/${view.id}/reattach`);
+    // The manager asks tmux or herdr whether it still has the session before attaching, so this waits as a start does.
+    const { session } = await api('POST', `/sessions/${view.id}/reattach`, undefined, {
+      timeoutMs: START_TIMEOUT_MS, noAnswer: 'The session manager has not answered yet. If it reattached the session, it shows as running.',
+    });
     state.sessions.set(session.id, session);
     renderList();
     syncTerminal();
@@ -783,7 +788,10 @@ $('reattach').addEventListener('click', async () => {
 
 // ---- new session ----------------------------------------------------------------
 
-const newView = { providerId: null };
+// `starting` while a start waits on the manager: the sheet says so and takes no second start meanwhile.
+const newView = { providerId: null, starting: false };
+// A start the manager is still making must not read as one to repeat.
+const START_NO_ANSWER = 'The session manager has not answered yet. If it is still starting the session, it appears in the list when ready; check there before starting another.';
 
 const providerChoices = () => state.providers.filter((provider) => provider.available);
 
@@ -834,7 +842,7 @@ function renderNewOptions() {
   fillSelect($('new-shell'), shells, $('new-shell').value || provider?.defaultShell);
   $('new-existing').hidden = !(provider?.resumable && provider?.historySource);
   $('new-history').hidden = true;
-  $('new-start').disabled = !provider;
+  $('new-start').disabled = !provider || newView.starting;
 }
 
 function renderRecent() {
@@ -860,7 +868,7 @@ function openNew() {
 
 async function startSession({ resume = null, cwd = null } = {}) {
   const provider = state.providers.find((candidate) => candidate.id === newView.providerId);
-  if (!provider) return;
+  if (!provider || newView.starting) return;
   const folder = (cwd ?? $('new-cwd').value).trim();
   // Started here, so sized for here: the tool draws its first screen at about this phone's size, and Fit makes it exact.
   const body = { providerId: provider.id, ...phoneSize() };
@@ -868,10 +876,12 @@ async function startSession({ resume = null, cwd = null } = {}) {
   if (!$('new-shell-row').hidden) body.shell = $('new-shell').value;
   if (folder) body.cwd = folder;
   if (resume) body.resume = resume;
+  newView.starting = true;
   $('new-start').disabled = true;
+  $('new-start').textContent = 'Starting…';
   $('new-error').hidden = true;
   try {
-    const { session } = await api('POST', '/sessions', body);
+    const { session } = await api('POST', '/sessions', body, { timeoutMs: START_TIMEOUT_MS, noAnswer: START_NO_ANSWER });
     state.sessions.set(session.id, session);
     save(CWD_KEY, session.cwd);
     save(RECENT_KEY, JSON.stringify(rememberFolder(readRecentFolders(load(RECENT_KEY)), session.cwd, { caseless: state.platform === 'win32' })));
@@ -883,7 +893,9 @@ async function startSession({ resume = null, cwd = null } = {}) {
     $('new-error').textContent = err.message;
     $('new-error').hidden = false;
   } finally {
+    newView.starting = false;
     $('new-start').disabled = false;
+    $('new-start').textContent = 'Start';
   }
 }
 

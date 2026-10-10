@@ -882,6 +882,15 @@ when the provider has none). `account` is one of the provider's account ids
 (404 `unknown_account` otherwise) and defaults to `default`; the account's
 home folder is created before its first session.
 
+The `201` can take a while. On a tool's first session the manager answers once
+it has probed the tool's hooks, up to 20 seconds and twice that for Codex; a
+tmux or herdr session, like `POST /sessions/:id/reattach`, answers once the
+multiplexer has, up to 15 seconds. Neither request is cancelled by a client
+that stops waiting: the session still starts, and is announced on the events
+socket and listed by `GET /sessions`, so a client that gives up sooner should
+look there rather than send the request again. The phone view waits a minute
+for these two requests and 15 seconds for every other.
+
 `POST /sessions/:id/agents`, `POST /sessions/:id/model`,
 `POST /sessions/:id/tool-session`, `POST /sessions/:id/reporting`, `POST /sessions/:id/shells` and `POST /sessions/:id/docker` also accept the
 per-session report token instead of the API token, in an

@@ -70,7 +70,9 @@ manager's terminal size instead of resizing it, typed input and the six touch
 keys plus Tab, the copy sheet with the screen as selectable text, the one-time
 note before Dictate, Fit, its yielding when another client resizes and its hand-back on leaving the
 terminal, a new session that starts fitted, Stop
-and Remove with their confirmations, a new session through the folder browser,
+and Remove with their confirmations, a new session through the folder browser
+whose start is held back to check that the sheet says it is starting, takes no
+second start meanwhile and gives the request the longer start budget,
 a resumed earlier session, sign-out and sign-in from a pasted link, and that no
 CSP violation or page error occurs. Dictation itself needs a microphone and a
 speech service, so only its gate is checked here; its text handling is unit

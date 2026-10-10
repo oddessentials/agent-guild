@@ -9,7 +9,8 @@ import { compareVersions, probeVersion } from './versions.mjs';
 export const REPORT_COMMAND = 'agent-guild-report --hook';
 export const PLUGIN_NAME = 'agent-guild';
 const MANIFEST_DESCRIPTION = 'Reports to the Agent Guild session it runs in.';
-const PROBE_TIMEOUT_MS = 20000;
+/** How long a hook probe may take. A tool's first session answers only after it, and Codex may be probed twice. */
+export const PROBE_TIMEOUT_MS = 20000;
 const PROBE_RETRY_MS = 5 * 60 * 1000;
 
 const handler = (extra = {}) => ({ type: 'command', command: REPORT_COMMAND, ...extra });

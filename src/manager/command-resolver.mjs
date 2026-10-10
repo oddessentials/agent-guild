@@ -208,6 +208,9 @@ function runInOwnGroup(file, args, { env, cwd, timeoutMs, input }) {
   });
 }
 
+/** How long `runSpec` waits for a command unless told otherwise; a tmux or herdr session start waits this long for the multiplexer. */
+export const RUN_TIMEOUT_MS = 15000;
+
 /**
  * Run a spawn spec to completion without a terminal, with `input` on its
  * stdin. Resolves with its output; rejects with the error carrying stdout
@@ -215,7 +218,7 @@ function runInOwnGroup(file, args, { env, cwd, timeoutMs, input }) {
  * and everything it started are killed outright, for wrappers such as .cmd
  * shims and Docker CLI plugins whose own children would otherwise live on.
  */
-export function runSpec(spec, { env, timeoutMs = 15000, cwd, input, killTree = false } = {}) {
+export function runSpec(spec, { env, timeoutMs = RUN_TIMEOUT_MS, cwd, input, killTree = false } = {}) {
   const tree = killTree && timeoutMs > 0;
   if (tree && process.platform !== 'win32') return runInOwnGroup(spec.file, spec.args, { env, cwd, timeoutMs, input });
   return new Promise((resolve, reject) => {

@@ -108,6 +108,17 @@ export function stepFontSize(current, direction) {
   return FONT_SIZES[Math.min(FONT_SIZES.length - 1, Math.max(0, at + Math.sign(direction)))];
 }
 
+/**
+ * How long a request may go unanswered before the phone reports it, so no button waits on a dead network. Starting or
+ * reattaching a session gets longer: a tool's first session answers after its hook probe (PROBE_TIMEOUT_MS in
+ * session-hooks.mjs, which Codex may run twice), and a tmux or herdr session after the multiplexer answers
+ * (RUN_TIMEOUT_MS in command-resolver.mjs). The manager finishes a start whether or not the phone is still waiting,
+ * so a budget below those would report a session that then appears, and starting again would make a second one.
+ * tests/mobile.test.mjs keeps the two budgets apart.
+ */
+export const REQUEST_TIMEOUT_MS = 15000;
+export const START_TIMEOUT_MS = 60000;
+
 /** The line a terminal shows when its process ends. A tmux or herdr client's exit code says nothing about the session it showed. */
 export function exitLine(session, { exitCode, signal }) {
   if (session?.multiplexer) return '[closed]';
