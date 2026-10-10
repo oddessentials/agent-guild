@@ -7,8 +7,6 @@ const root=fileURLToPath(new URL('../../',import.meta.url));
 const candidates=[process.env.CHROME_PATH,'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe','C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe','/usr/bin/google-chrome','/usr/bin/chromium','/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'];
 export const browserBinary=candidates.find(p=>p&&existsSync(p));
 export const pause=ms=>new Promise(r=>setTimeout(r,ms));
-// Software rendering without a GPU can hold one evaluate past 20 seconds; YARD_CDP_TIMEOUT_MS sets the bound.
-const cdpTimeout=Number(process.env.YARD_CDP_TIMEOUT_MS)||60000;
 export async function until(fn,ms=20000) {
   const start=Date.now();
   while(Date.now()-start<ms){const result=await fn();if(result)return result;await pause(100);}
@@ -44,7 +42,7 @@ export async function openBrowser({width=1440,height=1000,software=process.env.Y
       if(msg.method==='Network.requestWillBeSent')requests.push(msg.params.request);
     }
   };
-  const send=(method,params={})=>new Promise((resolve,reject)=>{const id=++next;const timer=setTimeout(()=>{pending.delete(id);reject(new Error(method+' timed out'));},cdpTimeout);pending.set(id,{resolve,reject,timer});ws.send(JSON.stringify({id,method,params}));});
+  const send=(method,params={})=>new Promise((resolve,reject)=>{const id=++next;const timer=setTimeout(()=>{pending.delete(id);reject(new Error(method+' timed out'));},20000);pending.set(id,{resolve,reject,timer});ws.send(JSON.stringify({id,method,params}));});
   const evaluate=async expression=>{const r=await send('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(r.exceptionDetails)throw new Error(r.exceptionDetails.exception?.description||r.exceptionDetails.text);return r.result.value;};
   await send('Runtime.enable');await send('Page.enable');await send('Network.enable');
   await send('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});
