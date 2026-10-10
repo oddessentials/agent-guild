@@ -61,6 +61,10 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   assert.ok(Math.abs(launcher.left - (await evaluate('document.documentElement.clientWidth')) + launcher.right) < 1, 'centred');
   pass('a wide window gives six full-width provider cards one row, centred past the page column');
 
+  // Containment on body keeps its background from passing to the window, so body paints it over the skin art behind.
+  assert.deepEqual(await evaluate('(()=>{const s=getComputedStyle(document.body);return [s.containerType,s.contain]})()'), ['normal', 'none'], 'body is not contained');
+  pass('the skin art behind the page is not painted over by the body');
+
   await click('#settings');
   await layoutReady();
   await until('settings open', () => evaluate('document.querySelector("#settings-menu").matches(":popover-open")'));

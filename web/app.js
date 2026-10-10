@@ -1489,6 +1489,7 @@ function selectAccount(provider, id) {
   }
   refreshPendingActions();
   notifyViews();
+  refreshInstructionCounts();
 }
 
 /** The shell the user picked for the provider, or null to start its default. */
@@ -1651,6 +1652,12 @@ function buildProvider(provider) {
     memory.textContent = historyLink ? 'History' : 'Memory';
     memory.title = historyLink ? `Read ${provider.tool}'s saved conversations` : `See what ${provider.tool} remembers about the working folder`;
     memory.addEventListener('click', (event) => historyLink ? showHistory(provider, true, event.currentTarget) : showMemory(provider, event.currentTarget));
+    const instructions = node.querySelector('.instructions-link');
+    instructions.hidden = !provider.available || !provider.instructionsSource;
+    instructions.title = `See which instruction files ${provider.tool} reads when a session starts in the working folder`;
+    instructions.addEventListener('click', (event) => showMemory(provider, event.currentTarget, 'instructions'));
+    paintInstructionLink(instructions, provider);
+    if (provider.available && provider.instructionsSource && !instructionCounts.has(instructionKey(provider))) refreshInstructionCounts();
     const install = node.querySelector('.install');
     install.hidden = provider.available || !provider.installable;
     install.title = provider.installCommand ? `Downloads the latest ${provider.tool} release into Docker's plugin folder, in a session.` : `Install ${provider.tool} using npm.${provider.npmNote ? ` ${provider.npmNote}` : ''}`;
@@ -1889,7 +1896,7 @@ function renderHint(hint, provider) {
 function renderVendorLinks(card, provider) {
   const usage = setVendorLink(card.querySelector('.usage-link'), provider.usageUrl, `${provider.vendor} usage console`);
   const billing = setVendorLink(card.querySelector('.billing-link'), provider.billingUrl, `${provider.vendor} billing console`);
-  card.querySelector('.provider-links').hidden = !usage && !billing && card.querySelector('.memory-link').hidden;
+  card.querySelector('.provider-links').hidden = !usage && !billing && [...card.querySelectorAll('.memory-link')].every((link) => link.hidden);
   setVendorLink(card.querySelector('.cloud-link'), provider.cloudUrl, `${provider.vendor} web app`);
 }
 
@@ -3395,7 +3402,8 @@ function resumeById(event) {
 
 // ---- agent memory ---------------------------------------------------------
 
-const memoryView = { providerId: null, accountId: null, cwd: '', snapshot: null, error: null, loading: false, request: 0, selected: null, file: null, fileError: null, fileLoading: false, fileRequest: 0 };
+// The same dialog shows a tool's memory or, as kind 'instructions', the instruction files it loads.
+const memoryView = { kind: 'memory', providerId: null, accountId: null, cwd: '', snapshot: null, error: null, loading: false, request: 0, selected: null, file: null, fileError: null, fileLoading: false, fileRequest: 0 };
 let memoryOpener = null;
 
 function memoryProvider() {
@@ -3404,16 +3412,16 @@ function memoryProvider() {
 
 function memoryQuery(extra = {}) {
   const params = new URLSearchParams({ account: memoryView.accountId, cwd: memoryView.cwd, ...extra });
-  return `/providers/${memoryView.providerId}/memory${extra.path ? '/file' : ''}?${params}`;
+  return `/providers/${memoryView.providerId}/${memoryView.kind}${extra.path ? '/file' : ''}?${params}`;
 }
 
 function sizeText(bytes) {
   return bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${Math.round(bytes / 1024)} KiB` : `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
 }
 
-function showMemory(provider, opener = null) {
+function showMemory(provider, opener = null, kind = 'memory') {
   const account = selectedAccount(provider);
-  Object.assign(memoryView, { providerId: provider.id, accountId: account.id, cwd: $('cwd').value.trim(), snapshot: null, error: null, selected: null, file: null, fileError: null, fileLoading: false });
+  Object.assign(memoryView, { kind, skippedOpen: false, providerId: provider.id, accountId: account.id, cwd: $('cwd').value.trim(), snapshot: null, error: null, selected: null, file: null, fileError: null, fileLoading: false });
   memoryView.fileRequest++;
   renderMemory();
   if (!$('memory').open) {
@@ -3432,16 +3440,19 @@ async function loadMemory() {
   renderMemory();
   let pick = null;
   try {
-    const { memory } = await api('GET', memoryQuery());
+    const reply = await api('GET', memoryQuery());
     if (request !== memoryView.request) return;
-    const files = memory.scopes.flatMap((scope) => scope.files.map((file) => ({ scope: scope.id, path: file.path })));
+    const memory = reply.memory ?? reply.instructions;
+    const files = memory.scopes.flatMap((scope) => scope.files.map((file) => ({ scope: scope.id, path: file.path, index: file.index, skipped: Boolean(file.skipped) })));
     const kept = memoryView.selected && files.find((f) => f.scope === memoryView.selected.scope && f.path === memoryView.selected.path);
-    Object.assign(memoryView, { snapshot: memory, error: null, selected: kept ?? files[0] ?? null });
+    Object.assign(memoryView, { snapshot: memory, error: null, selected: kept ?? files.find((f) => !f.skipped) ?? files[0] ?? null });
+    if (memoryView.kind === 'instructions') setInstructionCount(`${memoryView.providerId}|${memoryView.accountId}|${memoryView.cwd}`, memory.count);
     pick = memoryView.selected;
   } catch (err) {
     if (err instanceof AuthError) return showAuth(err.message);
     if (request !== memoryView.request) return;
-    const error = err.code === 'bad_cwd' ? 'That working folder doesn’t exist — pick another.' : `Memory could not be read: ${err.message}`;
+    const what = memoryView.kind === 'instructions' ? 'Instruction files' : 'Memory';
+    const error = err.code === 'bad_cwd' ? 'That working folder doesn’t exist — pick another.' : `${what} could not be read: ${err.message}`;
     Object.assign(memoryView, { snapshot: null, error, selected: null });
   } finally {
     if (request === memoryView.request) {
@@ -3465,13 +3476,13 @@ async function loadMemoryFile() {
   memoryView.fileLoading = true;
   renderMemoryFile();
   try {
-    const { file } = await api('GET', memoryQuery({ scope: pick.scope, path: pick.path }));
+    const { file } = await api('GET', memoryQuery(memoryView.kind === 'instructions' ? { index: pick.index, path: pick.path } : { scope: pick.scope, path: pick.path }));
     if (request !== memoryView.fileRequest) return;
     Object.assign(memoryView, { file, fileError: null });
   } catch (err) {
     if (err instanceof AuthError) return showAuth(err.message);
     if (request !== memoryView.fileRequest) return;
-    const fileError = err.code === 'memory_file_gone' ? 'This file is gone — refresh.' : `The file could not be read: ${err.message}`;
+    const fileError = err.code === 'memory_file_gone' || err.code === 'instruction_file_gone' ? 'This file is gone — refresh.' : `The file could not be read: ${err.message}`;
     Object.assign(memoryView, { file: null, fileError });
   } finally {
     if (request === memoryView.fileRequest) {
@@ -3481,8 +3492,8 @@ async function loadMemoryFile() {
   }
 }
 
-function selectMemoryFile(scope, path) {
-  memoryView.selected = { scope, path };
+function selectMemoryFile(scope, path, index) {
+  memoryView.selected = { scope, path, index };
   memoryView.fileError = null;
   for (const node of $('memory-list').querySelectorAll('.memory-item')) {
     node.setAttribute('aria-current', String(node.dataset.scope === scope && node.dataset.path === path));
@@ -3521,10 +3532,85 @@ function memoryScopeNode(scope) {
     item.dataset.path = file.path;
     item.title = [file.title, file.path, `changed ${new Date(file.modified).toLocaleString()}`].filter(Boolean).join('\n');
     item.setAttribute('aria-current', String(memoryView.selected?.scope === scope.id && memoryView.selected?.path === file.path));
-    item.addEventListener('click', () => selectMemoryFile(scope.id, file.path));
+    item.addEventListener('click', () => selectMemoryFile(scope.id, file.path, file.index));
     section.append(item);
   }
   return section;
+}
+
+// ---- instruction files ----------------------------------------------------
+
+/** Each card's count of instruction files, by provider, account and working folder. */
+const instructionCounts = new Map();
+let instructionCountTimer = null;
+
+function instructionKey(provider) {
+  return `${provider.id}|${selectedAccount(provider).id}|${$('cwd').value.trim()}`;
+}
+
+function paintInstructionLink(link, provider) {
+  const count = instructionCounts.get(instructionKey(provider));
+  const known = Number.isInteger(count);
+  link.replaceChildren(...['Instructions', known && el('span', 'link-count', String(count))].filter(Boolean));
+  if (known) link.setAttribute('aria-label', `Instructions, ${count === 1 ? '1 file' : `${count} files`} read at session start`);
+  else link.removeAttribute('aria-label');
+}
+
+function setInstructionCount(key, count) {
+  instructionCounts.set(key, count);
+  for (const provider of state.providers) {
+    if (!key.startsWith(`${provider.id}|`)) continue;
+    for (const link of $('providers').querySelectorAll(`.provider[data-id="${provider.id}"] .instructions-link`)) paintInstructionLink(link, provider);
+  }
+}
+
+/** Asks each card's tool again, once typing pauses. A reply for another folder or account never shows. */
+function refreshInstructionCounts() {
+  clearTimeout(instructionCountTimer);
+  instructionCountTimer = setTimeout(() => {
+    for (const provider of state.providers) {
+      if (!provider.available || !provider.instructionsSource) continue;
+      const key = instructionKey(provider);
+      const params = new URLSearchParams({ account: selectedAccount(provider).id, cwd: $('cwd').value.trim() });
+      api('GET', `/providers/${provider.id}/instructions?${params}`)
+        .then(({ instructions }) => setInstructionCount(key, instructions.count), () => setInstructionCount(key, null));
+    }
+  }, 250);
+}
+
+function instructionItem(file) {
+  const reason = file.skipped ?? file.note;
+  const item = el('button', 'memory-item', el('span', 'memory-name', file.name), el('span', 'memory-meta', `${file.location} · ${sizeText(file.bytes)}`),
+    reason && el('span', 'memory-meta memory-reason', reason));
+  item.classList.toggle('skipped', Boolean(file.skipped));
+  item.type = 'button';
+  item.dataset.scope = file.scope;
+  item.dataset.path = file.path;
+  item.title = file.path;
+  item.setAttribute('aria-current', String(memoryView.selected?.path === file.path));
+  item.addEventListener('click', () => selectMemoryFile(file.scope, file.path, file.index));
+  return item;
+}
+
+function instructionNodes(snapshot) {
+  if (snapshot.note) return [el('p', 'memory-note', snapshot.note), button('Try again', loadMemory, 'btn memory-retry')];
+  const nodes = snapshot.scopes.map((scope) => {
+    const loaded = scope.files.filter((f) => !f.skipped);
+    const section = el('section', 'memory-scope', el('div', 'memory-scope-head', el('h3', null, scope.label)));
+    const note = scope.note ?? (loaded.length ? null : scope.id === 'project' ? 'None in this folder or the folders above it.' : 'None set up.');
+    if (note) section.append(el('p', 'memory-note', note));
+    section.append(...loaded.map(instructionItem));
+    return section;
+  });
+  const skipped = snapshot.scopes.flatMap((s) => s.files).filter((f) => f.skipped);
+  if (skipped.length) {
+    const group = el('details', 'instructions-skipped', el('summary', null, `Found but not loaded (${skipped.length})`), ...skipped.map(instructionItem));
+    group.open = memoryView.skippedOpen || skipped.some((f) => f.path === memoryView.selected?.path);
+    group.addEventListener('toggle', () => { memoryView.skippedOpen = group.open; });
+    nodes.push(group);
+  }
+  nodes.push(el('p', 'memory-note instructions-footnote', 'Files a tool opens later in a session aren’t listed.'));
+  return nodes;
 }
 
 function renderMemory() {
@@ -3532,15 +3618,20 @@ function renderMemory() {
   if (!provider) return closeMemory();
   const account = provider.accounts?.find((a) => a.id === memoryView.accountId);
   paintProviderIcon($('memory-icon'), provider);
-  $('memory-title').textContent = `${provider.tool} memory`;
+  const instructions = memoryView.kind === 'instructions';
+  $('memory-title').textContent = `${provider.tool} ${instructions ? 'instructions' : 'memory'}`;
   const folder = memoryView.snapshot?.folder || memoryView.cwd || 'your home folder';
-  $('memory-sub').textContent = [(provider.accounts?.length ?? 0) > 1 && account && `${account.label} account`, folder].filter(Boolean).join(' · ');
+  const count = memoryView.snapshot?.count;
+  const loads = instructions && Number.isInteger(count)
+    ? (count ? `Reads ${count === 1 ? '1 file' : `${count} files`} when a session starts` : 'Reads no instruction files here')
+    : null;
+  $('memory-sub').textContent = [loads, (provider.accounts?.length ?? 0) > 1 && account && `${account.label} account`, folder].filter(Boolean).join(' · ');
   $('memory-sub').title = folder;
   paintPending($('memory-refresh'), memoryView.loading, 'Refresh', 'Reading…');
   const list = $('memory-list');
   if (memoryView.error) list.replaceChildren(el('p', 'memory-note', memoryView.error));
-  else if (!memoryView.snapshot) list.replaceChildren(el('p', 'memory-note', `Reading ${provider.tool}’s memory…`));
-  else list.replaceChildren(...memoryView.snapshot.scopes.map(memoryScopeNode));
+  else if (!memoryView.snapshot) list.replaceChildren(el('p', 'memory-note', `Reading ${provider.tool}’s ${instructions ? 'instruction files' : 'memory'}…`));
+  else list.replaceChildren(...(instructions ? instructionNodes(memoryView.snapshot) : memoryView.snapshot.scopes.map(memoryScopeNode)));
   renderMemoryFile();
 }
 
@@ -3549,6 +3640,7 @@ function renderMemoryFile() {
   const shown = file && selected && file.scope === selected.scope && file.path === selected.path ? file : null;
   $('memory-file').textContent = selected ? selected.path : '';
   $('memory-file').hidden = !selected;
+  $('memory-copy').hidden = !selected || memoryView.kind !== 'instructions';
   let note = '';
   if (fileError) note = fileError;
   else if (fileLoading && !shown) note = 'Reading the file…';
@@ -4165,6 +4257,7 @@ function useFolder(dir) {
   save(CWD_KEY, dir);
   refreshPendingActions();
   notifyViews();
+  refreshInstructionCounts();
   if (dockShows('github')) renderGitHub();
   toast(`New sessions start in ${dir}.`, 4000);
 }
@@ -6476,6 +6569,7 @@ $('history-preview-refresh').addEventListener('click', () => historyPreview.refr
 $('history-preview-more').addEventListener('click', () => historyPreview.more());
 $('memory-close').addEventListener('click', closeMemory);
 $('memory-refresh').addEventListener('click', loadMemory);
+$('memory-copy').addEventListener('click', () => { if (memoryView.selected) copyText(memoryView.selected.path, 'the path'); });
 $('memory').addEventListener('click', (e) => { if (e.target === $('memory')) closeMemory(); });
 $('memory').addEventListener('close', () => {
   // The event comes a task after close(), by when another card may have opened the dialog again.
@@ -6484,7 +6578,7 @@ $('memory').addEventListener('close', () => {
   memoryView.fileRequest++;
   memoryView.loading = false;
   const opener = memoryOpener?.isConnected ? memoryOpener
-    : $('providers').querySelector(`.provider[data-id="${memoryView.providerId}"] .memory-link`);
+    : $('providers').querySelector(`.provider[data-id="${memoryView.providerId}"] .${memoryView.kind === 'instructions' ? 'instructions' : 'memory'}-link`);
   opener?.focus();
   memoryOpener = null;
 });
@@ -6634,6 +6728,8 @@ document.addEventListener('visibilitychange', () => {
   if (branchesVisible() && !viewData('branches')?.error) loadBranches({ resume: true });
 });
 addEventListener('focus', recheckPtyBuild);
+// Files may have changed in an editor while the page was in the background.
+addEventListener('focus', () => refreshInstructionCounts());
 addEventListener('pagehide', () => {
   flushNotes();
   state.pageAway = true;
@@ -6854,6 +6950,17 @@ const scheduleTopbarHeight = () => {
 new ResizeObserver(scheduleTopbarHeight).observe(topbar);
 addEventListener('scroll', scheduleTopbarHeight, { passive: true });
 publishTopbarHeight();
+// The window's width less any scrollbar, which the card row spreads into.
+// Written a frame later and only on change: a write inside the observer would resize what it observes.
+let pageWidth = null;
+const publishPageWidth = () => {
+  const width = `${document.documentElement.clientWidth}px`;
+  if (width === pageWidth) return;
+  pageWidth = width;
+  document.documentElement.style.setProperty('--page-w', width);
+};
+new ResizeObserver(() => requestAnimationFrame(publishPageWidth)).observe(document.documentElement);
+publishPageWidth();
 applyDockLayout();
 
 state.remoteAccessUI = createRemoteAccessUI({ api, getToken: () => state.token, isConnected: () => state.connected, onAuthError: showAuth });
@@ -6867,6 +6974,7 @@ state.environmentUI = createEnvironmentUI({
 $('cwd').addEventListener('input', () => {
   refreshPendingActions();
   notifyViews();
+  refreshInstructionCounts();
   if ($('environment').open) state.environmentUI.sync();
 });
 

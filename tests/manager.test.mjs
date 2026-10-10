@@ -874,6 +874,22 @@ test('a tool\'s memory for the working folder is listed and read per account', a
   assert.equal((await call('GET', `/providers/anthropic/memory?cwd=${encodeURIComponent(path.join(home, 'nope'))}`)).body.error.code, 'bad_cwd');
 });
 
+test('a tool\'s instruction files are listed and opened by index per account', async () => {
+  const { body: listed } = await call('GET', '/providers');
+  assert.equal(listed.providers.find((p) => p.id === 'google').instructionsSource, 'google');
+  const config = path.join(home, 'accounts', 'anthropic', 'work');
+  writeFile(path.join(config, 'CLAUDE.md'), '- Answer only what was asked.\n');
+  const query = `account=work&cwd=${encodeURIComponent(home)}`;
+  const { status, body } = await call('GET', `/providers/anthropic/instructions?${query}`);
+  assert.equal(status, 200, JSON.stringify(body));
+  const [file] = body.instructions.scopes.find((s) => s.id === 'global').files;
+  assert.equal(file.path, fs.realpathSync.native(path.join(config, 'CLAUDE.md')), 'the work account reads its own CLAUDE_CONFIG_DIR');
+  const read = await call('GET', `/providers/anthropic/instructions/file?${query}&index=${file.index}&path=${encodeURIComponent(file.path)}`);
+  assert.deepEqual([read.status, read.body.file.text], [200, '- Answer only what was asked.\n']);
+  const other = await call('GET', `/providers/anthropic/instructions/file?${query}&index=${file.index}&path=${encodeURIComponent(path.join(config, 'settings.json'))}`);
+  assert.deepEqual([other.status, other.body.error.code], [404, 'instruction_file_gone']);
+});
+
 test('the tool\'s own session id is reported over HTTP, in-band, and through hooks', async () => {
   const session = await createFake();
   assert.equal(session.toolSessionId, null);
