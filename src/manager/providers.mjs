@@ -10,7 +10,7 @@ import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { resolveCommand, resolveAllCommands, pathKey, buildSpawnSpec, runSpec } from './command-resolver.mjs';
-import { compareVersions, probeVersion, fetchManifest, latestVersion, latestReleaseTag, DEFAULT_NPM_REGISTRY } from './versions.mjs';
+import { compareVersions, probeVersion, fetchManifest, latestVersion, latestReleaseTag, brewVersion, DEFAULT_NPM_REGISTRY } from './versions.mjs';
 import { CHANNEL_LABELS, classifyInstall, expandHome, formatCommand, homeRelative, knownLaunchers, listInstallations, platformDependency, updateHelpAccepted } from './install-channels.mjs';
 import { copyChannel, linkOnPath, pluginVersion, readPlugin } from './docker-plugin.mjs';
 import { weavePaths } from './shell-env.mjs';
@@ -389,7 +389,7 @@ export class ProviderRegistry extends EventEmitter {
       changed ||= muxChanged;
       const entry = this.versions.get(provider.id) || {
         installed: null, versionStatus: null, versionError: null, installedPath: null, installedMtime: null, installedAt: 0,
-        latest: null, latestAt: 0, probePath: null, probeMtime: null, probeAt: 0, probeOk: null, lastInstall: null, copies: {},
+        latest: null, latestAt: 0, latestSource: null, brewMoved: false, probePath: null, probeMtime: null, probeAt: 0, probeOk: null, lastInstall: null, copies: {},
       };
       const found = this.resolve(provider);
       if (provider.plugin) {
@@ -472,14 +472,31 @@ export class ProviderRegistry extends EventEmitter {
       }
       changed ||= Object.keys(entry.copies).length !== Object.keys(copies).length;
       entry.copies = copies;
-      if (provider.package && lookups && (force || now - entry.latestAt > VERSION_TTL_MS)) {
-        const latest = await latestVersion(provider.package, { registryUrl, fetchImpl: this.fetchImpl });
-        changed ||= latest !== entry.latest;
-        Object.assign(entry, { latest, latestAt: now });
-      } else if (provider.releases && this.checkUpdates && (force || now - entry.latestAt > VERSION_TTL_MS)) {
-        const latest = await latestReleaseTag(provider.releases, { fetchImpl: this.fetchImpl });
-        changed ||= latest !== entry.latest;
-        Object.assign(entry, { latest, latestAt: now });
+      // The latest version comes from wherever the update command installs from: Homebrew's formulae API for a
+      // Homebrew-owned copy (a cask may follow a stable channel behind npm's `latest`), else the npm registry or
+      // the releases page. It is asked again at once when the copy changes hands, not only hourly.
+      const brewOwned = this.checkUpdates && channel?.channel === 'brew' && channel.update ? channel : null;
+      const source = brewOwned ? `brew:${brewOwned.cask ? 'cask' : 'formula'}:${brewOwned.token}` : provider.package && lookups ? 'npm' : provider.releases && this.checkUpdates ? 'releases' : null;
+      if (source && (force || entry.latestSource !== source || now - entry.latestAt > VERSION_TTL_MS)) {
+        let latest = null;
+        let brewMoved = false;
+        if (brewOwned) {
+          const lookup = { env: this.env, fetchImpl: this.fetchImpl };
+          let answer = await brewVersion(brewOwned.token, { cask: brewOwned.cask, ...lookup });
+          // Homebrew moves some formulae to casks (codex was one). The old keg cannot be upgraded, but the cask
+          // says what is current, and updateFor says how to move over.
+          if (answer.found === false && !brewOwned.cask) {
+            answer = await brewVersion(brewOwned.token, { cask: true, ...lookup });
+            brewMoved = answer.found === true;
+          }
+          latest = answer.version;
+        } else if (source === 'npm') {
+          latest = await latestVersion(provider.package, { registryUrl, fetchImpl: this.fetchImpl });
+        } else {
+          latest = await latestReleaseTag(provider.releases, { fetchImpl: this.fetchImpl });
+        }
+        changed ||= latest !== entry.latest || brewMoved !== entry.brewMoved;
+        Object.assign(entry, { latest, latestAt: now, latestSource: source, brewMoved });
       }
       const last = entry.lastInstall;
       if (last && (entry.installed !== last.after || entry.latest !== last.latest || entry.versionStatus !== last.verification)) {
@@ -658,6 +675,12 @@ export class ProviderRegistry extends EventEmitter {
   updateFor(provider, channel = this.channelFor(provider)) {
     if (!channel) return { file: null, args: [], command: null, guidance: null };
     if (!channel.update) return { file: null, args: [], command: null, guidance: channel.guidance };
+    if (channel.channel === 'brew' && this.versions.get(provider.id)?.brewMoved) {
+      return {
+        file: null, args: [], command: null,
+        guidance: `Homebrew moved ${provider.tool} from a formula to a cask, so brew upgrade no longer updates this copy. Run "brew uninstall ${channel.token}", then "brew install --cask ${channel.token}".`,
+      };
+    }
     if (provider.plugin) return { file: null, args: [], command: channel.update.command, guidance: null };
     const args = this.npmArgs(channel.update, this.versions.get(provider.id)?.latest ?? 'latest');
     const command = formatCommand(channel.update.file, args);

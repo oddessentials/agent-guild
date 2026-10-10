@@ -195,7 +195,7 @@ requests carry your code or prompts:
 
 | To | For | How often |
 | --- | --- | --- |
-| npm registry | Version checks | Hourly |
+| npm registry, Homebrew | Version checks | Hourly |
 | Anthropic and OpenAI | Usage meters, with the tool's own sign-in | Every minute while the page is open |
 | OpenRouter | Model list for benchmarks | Every 6 hours |
 | News feeds, Hacker News, arXiv, GitHub | News feed | Every 30 minutes while the page is open |

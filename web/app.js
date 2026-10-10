@@ -1654,8 +1654,11 @@ function buildProvider(provider) {
     install.addEventListener('click', () => installProvider(provider, node));
     const update = node.querySelector('.update');
     update.hidden = !(provider.available && provider.updateCommand && (provider.updateAvailable || checkFailed));
-    if (provider.installChannel !== 'npm') update.textContent = 'Update';
-    else update.textContent = checkFailed ? 'Reinstall' : `Update to ${provider.latestVersion}`;
+    // npm and Homebrew install the version the card names; a native updater picks its own. Only npm's command
+    // reinstalls a copy whose version check failed: brew upgrade leaves a current cask or formula alone.
+    if (!offersExactVersion(provider)) update.textContent = 'Update';
+    else if (checkFailed) update.textContent = provider.installChannel === 'npm' ? 'Reinstall' : 'Update';
+    else update.textContent = `Update to ${provider.latestVersion}`;
     if (provider.installCommand && checkFailed) update.textContent = 'Reinstall';
     update.title = provider.updateCommand ? `Run "${provider.updateCommand}" in a session` : '';
     update.addEventListener('click', () => installProvider(provider, node));
@@ -2944,6 +2947,11 @@ function installNote(provider) {
   return '';
 }
 
+/** Whether `latestVersion` is the version the update command installs: npm's latest, or what Homebrew offers. */
+function offersExactVersion(provider) {
+  return provider.installChannel === 'npm' || provider.installChannel === 'brew';
+}
+
 function providerState(provider) {
   const note = installNote(provider);
   // A plugin whose copies could not be listed is neither installed nor known to be missing.
@@ -2961,7 +2969,7 @@ function providerState(provider) {
   if (provider.installedVersion) parts.push(`v${provider.installedVersion}`);
   else if (provider.versionStatus === 'unavailable') parts.push('Version unavailable');
   if (channel) parts.push(channel);
-  if (provider.updateAvailable) parts.push(`${provider.latestVersion} ${provider.installChannel === 'npm' ? 'available' : 'released'}`);
+  if (provider.updateAvailable) parts.push(`${provider.latestVersion} ${offersExactVersion(provider) ? 'available' : 'released'}`);
   if (note) parts.push(note);
   return parts.join(' · ');
 }
