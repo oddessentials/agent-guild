@@ -827,6 +827,7 @@ export class ProviderRegistry extends EventEmitter {
       usageSource: provider.usage === null ? null : typeof provider.usage === 'string' ? provider.usage : 'command',
       historySource: provider.history === null ? null : typeof provider.history === 'string' ? provider.history : 'command',
       memorySource: provider.memory,
+      historyDetails: provider.history === 'antigravity',
       reporting: provider.reporting,
       reportingEnabled: this.reportingEnabled?.(provider) ?? null,
       reportingNote: this.reportingNote?.(provider) ?? null,

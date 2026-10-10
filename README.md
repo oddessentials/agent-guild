@@ -146,6 +146,7 @@ The first Claude Code usage meter may ask for access to the
 * Several accounts per tool ([accounts](docs/configuration.md#accounts))
 * Model grades and benchmarks for each tool's models
 * Resume a tool's earlier sessions with **Existing…**
+* Read Google's saved conversations with **History**, filtered to the working folder
 * GitHub issues, pull requests, workflow runs, branches and cloning
 * The manager's environment on the Shell card: runtimes, design tools,
   Docker, and the versions a project pins

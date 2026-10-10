@@ -15,7 +15,7 @@ window.fetch=(input,init)=>{
       res.json=()=>read().then(data=>{window.memoryStaleDelivered=true;return data;});
       return res;
     });
-  if(url.pathname.endsWith('/history'))
+  if(url.pathname.endsWith('/history')&&!url.pathname.includes('/google/'))
     return Promise.resolve(new Response(JSON.stringify({history:{total:334,sessions:Array.from({length:200},(_,i)=>({
       id:'saved-'+i,title:'Saved session '+i,cwd:'/work/storefront',updatedAt:'2026-10-04T10:00:00Z'
     }))}}),{headers:{'Content-Type':'application/json'}}));
@@ -45,10 +45,12 @@ const checks = await withPage({ name: 'dialogs', instrumentation }, async ({ ori
       return {height:r.height,body:body.height,scrollable:b.scrollHeight>b.clientHeight,inside:r.top>=-1&&r.bottom<=innerHeight+1,
         footer:footer.bottom<=r.bottom+1,bodyBottom:body.bottom<=r.bottom+1};
     })()`);
+    const loadedHistoryNote = 'Loaded the newest 200 of 334 sessions. Filtering searches these loaded sessions.';
     for (const [width, height] of [[1440, 900], [768, 1024], [390, 844]]) {
       await resize(width, height);
       await evaluate('document.querySelector(".provider[data-id=anthropic] .existing").click()');
       await until(`${engine} history rows`, () => evaluate('document.querySelectorAll("#history-list .history-row").length===200'));
+      assert.equal(await evaluate('document.querySelector("#history-note").textContent'), loadedHistoryNote);
       await settled();
       let g = await geometry('#history');
       assert.ok(g.body > 120 && g.scrollable && g.inside && g.footer, `${engine} ${width}: ${JSON.stringify(g)}`);
@@ -57,16 +59,38 @@ const checks = await withPage({ name: 'dialogs', instrumentation }, async ({ ori
       await evaluate('document.querySelector("#history-filter").value="Saved session 199";document.querySelector("#history-filter").dispatchEvent(new Event("input"))');
       await settled();
       assert.equal(await evaluate('document.querySelectorAll("#history-list .history-row").length'), 1);
+      assert.equal(await evaluate('document.querySelector("#history-note").textContent'), loadedHistoryNote);
       g = await geometry('#history');
       assert.ok(g.body > 30 && g.inside && g.footer, `${engine} filtered: ${JSON.stringify(g)}`);
       if (width > 640) assert.ok(g.height < fullHeight, 'a short list still sizes to its content');
-      await evaluate('document.querySelector("#history-filter").value="no matching session";document.querySelector("#history-filter").dispatchEvent(new Event("input"))');
+      await evaluate('document.querySelector("#history-filter").value="Saved session 333";document.querySelector("#history-filter").dispatchEvent(new Event("input"))');
       await settled();
       assert.equal(await evaluate('document.querySelector("#history-note").checkVisibility()'), true);
+      assert.equal(await evaluate('document.querySelector("#history-note").textContent'), `No session matches the filter. ${loadedHistoryNote}`);
       assert.ok((await geometry('#history')).body > 20, 'the empty state remains visible');
       await closeDialog('#history', '#history-close');
     }
     pass(`${engine}: 200 history rows scroll, and filtered/empty history remains usable on desktop, tablet and phone`);
+
+    // Static demo data only. Completion is the visible response, never an elapsed delay.
+    for (const [width, height] of [[1440, 900], [768, 1024], [390, 844]]) {
+      await resize(width, height);
+      await evaluate('document.querySelector("#cwd").value="/work/storefront";document.querySelector(".provider[data-id=google] .memory-link").click()');
+      await until(`${engine} Google history`, () => evaluate('document.querySelectorAll("#history-list .history-preview-open").length===1'));
+      assert.equal(await evaluate('document.querySelector(".provider[data-id=google] .memory-link").textContent'), 'History');
+      await evaluate('document.querySelector("#history-list .history-preview-open").click()');
+      await until(`${engine} Google saved reply`, () => evaluate('document.querySelector("#history-messages").textContent.includes("The migration plan is ready")'));
+      await settled();
+      const g = await evaluate(`(() => {
+        const d=document.querySelector('#history'),r=d.getBoundingClientRect(),p=document.querySelector('#history-preview').getBoundingClientRect(),m=document.querySelector('#history-messages').getBoundingClientRect();
+        return {inside:r.top>=-1&&r.bottom<=innerHeight+1&&r.right<=innerWidth+1,preview:p.height,messages:m.height,overflow:d.scrollWidth>d.clientWidth};
+      })()`);
+      assert.ok(g.inside && g.preview > 100 && g.messages > 60 && !g.overflow, `${engine} history preview ${width}: ${JSON.stringify(g)}`);
+      assert.equal(await evaluate('document.querySelector("#history-list .history-preview-open").getAttribute("aria-current")'), 'true');
+      await closeDialog('#history', '#history-close');
+      assert.equal(await evaluate('document.activeElement===document.querySelector(".provider[data-id=google] .memory-link")'), true);
+    }
+    pass(`${engine}: Google History reads saved messages for the working folder on desktop, tablet and phone`);
 
     // The first file's reply is held back until a newer file has been chosen and shown. The page
     // handles the released reply in the same microtask run that sets the flag, so once the flag

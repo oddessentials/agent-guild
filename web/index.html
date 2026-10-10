@@ -515,9 +515,20 @@
       <input id="history-filter" type="search" placeholder="Filter by title, folder or id" aria-label="Filter sessions" spellcheck="false" autocomplete="off">
       <label class="history-here"><input id="history-here" type="checkbox"><span>Working folder only</span></label>
     </div>
-    <div class="models-body">
-      <div id="history-list" class="history-list" role="list"></div>
-      <p id="history-note" class="models-note"></p>
+    <div class="history-content">
+      <div class="models-body">
+        <div id="history-list" class="history-list" role="list"></div>
+        <p id="history-note" class="models-note"></p>
+      </div>
+      <section id="history-preview" class="history-preview" aria-label="Conversation preview" hidden>
+        <div class="history-preview-bar">
+          <h3 id="history-preview-title">Select a conversation</h3>
+          <button id="history-preview-refresh" class="btn" type="button">Refresh</button>
+        </div>
+        <p id="history-preview-note" class="models-note" role="status"></p>
+        <div id="history-messages" class="history-messages" tabindex="0" aria-label="Saved messages"></div>
+        <button id="history-preview-more" class="btn" type="button" hidden>Read more</button>
+      </section>
     </div>
     <form id="history-form" class="history-form">
       <label for="history-id">Resume by id</label>

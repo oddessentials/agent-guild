@@ -6,9 +6,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
+import { fileURLToPath } from 'node:url';
 import { resolveCommand, buildSpawnSpec, runSpec } from './command-resolver.mjs';
 import { toIso } from './usage.mjs';
 import { antigravityUserConversation } from '../report/hooks.mjs';
+import { ANTIGRAVITY_ID, transcriptFile, readAntigravityTranscript, historyError } from './antigravity-transcript.mjs';
 
 export const HISTORY_TTL_MS = 5 * 1000;
 export const DEFAULT_LIMIT = 100;
@@ -262,42 +264,106 @@ export function antigravityDir(env = process.env, platform = process.platform) {
   return path.join((platform === 'win32' ? env.USERPROFILE : env.HOME) || os.homedir(), '.gemini', 'antigravity-cli');
 }
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Only local, absolute file URIs; never turn a remote URI into a launch folder. */
+export function antigravityWorkspaces(raw, platform = process.platform) {
+  let values;
+  try { values = JSON.parse(raw); } catch { return []; }
+  if (!Array.isArray(values)) return [];
+  const folders = [];
+  for (const value of values) {
+    try {
+      if (typeof value !== 'string') continue;
+      const url = new URL(value);
+      if (url.protocol !== 'file:' || url.hostname || url.search || url.hash) continue;
+      // The explicit windows option is available on all supported Node 22 releases.
+      const folder = fileURLToPath(url, { windows: platform === 'win32' });
+      if (/\p{Cc}/u.test(folder) || !folder) continue;
+      if (!folders.some((known) => sameHistoryFolder(known, folder, platform))) folders.push(folder);
+    } catch { /* malformed URI or a path for another OS */ }
+  }
+  return folders;
+}
+
+export function sameHistoryFolder(a, b, platform = process.platform) {
+  const api = platform === 'win32' ? path.win32 : path.posix;
+  const normalize = (value) => {
+    if (typeof value !== 'string' || !api.isAbsolute(value)) return null;
+    const normalized = api.normalize(value).replace(platform === 'win32' ? /[\\/]+$/ : /\/+$/, '') || '/';
+    return platform === 'win32' ? normalized.toLowerCase() : normalized;
+  };
+  const left = normalize(a), right = normalize(b);
+  return left !== null && right !== null && left === right;
+}
 
 function antigravityEntry(id, text, stat) {
-  const [first] = parseLines(text ?? '');
+  let first;
+  try { first = JSON.parse((text ?? '').split('\n', 1)[0]); } catch { return null; }
   if (!antigravityUserConversation(first) || typeof first.content !== 'string') return null;
   const request = first.content.match(/<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/)?.[1];
   return cleanEntry({ id, title: promptTitle(request), startedAt: first.created_at, updatedAt: stat.mtime });
 }
 
-/** The folder of each folder's latest conversation; the CLI keeps no folder for the others. */
-async function antigravityFolders(dir) {
+/** Legacy fallback. Multiple cache paths for one id cannot identify a launch folder. */
+async function antigravityFolders(dir, platform) {
   const folders = new Map();
   let latest = null;
   try { latest = JSON.parse(await readText(path.join(dir, 'cache', 'last_conversations.json'))); } catch { /* none yet */ }
   if (!latest || typeof latest !== 'object') return folders;
-  for (const [folder, id] of Object.entries(latest)) if (typeof id === 'string') folders.set(id, folder);
+  for (const [folder, id] of Object.entries(latest)) {
+    if (!ANTIGRAVITY_ID.test(id) || !sameHistoryFolder(folder, folder, platform)) continue;
+    if (folders.has(id) && !sameHistoryFolder(folders.get(id), folder, platform)) folders.set(id, null);
+    else if (!folders.has(id)) folders.set(id, folder);
+  }
   return folders;
 }
 
+// Verified against CLI 1.3.1. This is a disposable index shared with the desktop app.
+// Selecting named columns validates the schema; no raw_summary or conversation blobs are decoded.
+async function antigravitySummaries(dir) {
+  const file = path.join(dir, 'conversation_summaries.db');
+  let db;
+  try {
+    const stat = await fs.promises.lstat(file);
+    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('not a regular database');
+    const { DatabaseSync } = await loadSqlite();
+    db = new DatabaseSync(file, { readOnly: true });
+    const rows = db.prepare(`SELECT conversation_id, title, preview, workspace_uris, app_data_dir,
+      parent_conversation_id, nesting_depth, step_count FROM conversation_summaries`).all();
+    return { rows: new Map(rows.filter((r) => typeof r.conversation_id === 'string').map((r) => [r.conversation_id, r])), note: null };
+  } catch {
+    return { rows: new Map(), note: 'Some session folders and titles may be unavailable. Showing readable local transcripts.' };
+  } finally { db?.close(); }
+}
+
 /** Conversations under `<dir>/brain/<id>/.system_generated/logs/transcript.jsonl`. */
-export async function listAntigravitySessions(dir, memo = new FileMemo()) {
+export async function listAntigravitySessions(dir, memo = new FileMemo(), { platform = process.platform, withStatus = false } = {}) {
   const root = path.join(dir, 'brain');
-  const folders = await antigravityFolders(dir);
+  const folders = await antigravityFolders(dir, platform);
+  const summaries = await antigravitySummaries(dir);
   const entries = [];
   const seen = new Set();
   for (const item of await readDir(root)) {
-    if (!item.isDirectory() || !UUID_RE.test(item.name)) continue;
-    const file = path.join(root, item.name, '.system_generated', 'logs', 'transcript.jsonl');
+    if (!item.isDirectory() || !ANTIGRAVITY_ID.test(item.name)) continue;
+    const summary = summaries.rows.get(item.name);
+    if (summary && (summary.app_data_dir !== 'antigravity-cli' || summary.parent_conversation_id !== ''
+      || summary.nesting_depth !== 0 || !(summary.step_count > 0))) continue;
+    // A cached summary without a readable user transcript is never a resumable history entry.
+    let file;
+    try { file = await transcriptFile(dir, item.name); } catch { continue; }
     const stat = await statFile(file);
     if (!stat) continue;
     seen.add(file);
     const entry = await memo.entry(file, stat, async () => antigravityEntry(item.name, await readHead(file), stat));
-    if (entry) entries.push({ ...entry, cwd: folders.get(entry.id) ?? null });
+    if (entry) {
+      const workspaces = summary ? antigravityWorkspaces(summary.workspace_uris, platform) : [];
+      const cwd = workspaces.length === 1 ? workspaces[0] : workspaces.length ? null : folders.get(entry.id) ?? null;
+      const title = promptTitle(summary?.title) || promptTitle(summary?.preview) || entry.title;
+      entries.push({ ...entry, title, cwd, ...(withStatus ? { workspaces: workspaces.length ? workspaces : cwd ? [cwd] : [] } : {}) });
+    }
   }
   memo.prune(root, seen);
-  return dedupe(entries);
+  const sessions = dedupe(entries);
+  return withStatus ? { sessions, note: sessions.length ? summaries.note : null } : sessions;
 }
 
 // ---- Docker Agent ---------------------------------------------------------
@@ -471,19 +537,33 @@ export class SessionHistory {
     this.cache = new Map();
   }
 
-  static sourceDir(source, env) {
+  static sourceDir(source, env, platform = process.platform) {
     if (source === 'claude') return claudeConfigDir(env);
     if (source === 'codex') return codexHome(env);
-    if (source === 'antigravity') return antigravityDir(env);
+    if (source === 'antigravity') return antigravityDir(env, platform);
     if (source === 'grok') return grokHome(env);
     if (source === 'docker') return dockerAgentDataDir(env);
     return null;
   }
 
-  async list(provider, account = this.registry.account(provider), { limit } = {}) {
+  async list(provider, account = this.registry.account(provider), { limit, cwd, query } = {}) {
     const n = Math.min(MAX_LIMIT, Math.max(1, Math.floor(Number(limit)) || DEFAULT_LIMIT));
     const snapshot = await this.snapshot(provider, account);
-    return { ...snapshot, sessions: snapshot.sessions.slice(0, n) };
+    const search = typeof query === 'string' ? query.trim().toLowerCase().slice(0, 500) : '';
+    const sessions = snapshot.sessions.filter((entry) =>
+      (!cwd || (entry.workspaces ?? [entry.cwd]).some((folder) => sameHistoryFolder(folder, cwd, this.platform)))
+      && (!search || [entry.id, entry.title, ...(entry.workspaces ?? [entry.cwd])].join('\n').toLowerCase().includes(search)));
+    return { ...snapshot, total: sessions.length, sessions: sessions.slice(0, n) };
+  }
+
+  async detail(provider, account, id, cursor) {
+    if (provider.history !== 'antigravity') throw historyError(400, 'history_detail_unsupported', 'This tool has no conversation preview.');
+    if (!ANTIGRAVITY_ID.test(id)) throw historyError(400, 'bad_history_id', 'Invalid conversation id.');
+    // Revalidate membership, even if the client still has an older list open.
+    const snapshot = await this._read(provider, account);
+    if (!snapshot.sessions.some((s) => s.id === id)) throw historyError(404, 'history_unavailable', 'This conversation transcript is unavailable.');
+    const env = { ...this.env, ...provider.env, ...account.env };
+    return readAntigravityTranscript(antigravityDir(env, this.platform), id, cursor);
   }
 
   snapshot(provider, account) {
@@ -504,10 +584,11 @@ export class SessionHistory {
     const base = { providerId: provider.id, accountId: account.id, sessions: [], total: 0, fetchedAt: new Date().toISOString(), error: null };
     const env = { ...this.env, ...provider.env, ...account.env };
     try {
-      const sessions = typeof provider.history === 'string'
-        ? await this.readers[provider.history](SessionHistory.sourceDir(provider.history, env), this.memo)
+      const result = typeof provider.history === 'string'
+        ? await this.readers[provider.history](SessionHistory.sourceDir(provider.history, env, this.platform), this.memo, { platform: this.platform, withStatus: true })
         : await commandHistory(provider.history, env, this.platform);
-      return { ...base, sessions, total: sessions.length };
+      const sessions = Array.isArray(result) ? result : result.sessions;
+      return { ...base, sessions, total: sessions.length, ...(Array.isArray(result) ? {} : { note: result.note }) };
     } catch (err) {
       const message = err instanceof HistoryError ? err.message : `history could not be read: ${err.message}`;
       return { ...base, error: message };

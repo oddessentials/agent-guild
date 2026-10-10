@@ -391,13 +391,14 @@ export function createManagerServer({
       return sendJson(res, 200, changelog.snapshot());
     }
     if (route.startsWith('/github') && github) return handleGitHub(req, res, url, route, method);
-    const historyMatch = route.match(/^\/providers\/([a-z0-9][a-z0-9_-]{0,31})\/history$/);
+    const historyMatch = route.match(/^\/providers\/([a-z0-9][a-z0-9_-]{0,31})\/history(\/detail)?$/);
     if (historyMatch && method === 'GET') {
       const provider = registry.get(historyMatch[1]);
       if (!provider) throw new HttpError(404, `unknown provider "${historyMatch[1]}"`, 'unknown_provider');
       if (!provider.history) throw new HttpError(400, `${provider.tool} has no history source configured`, 'history_unsupported');
       const account = registry.account(provider, url.searchParams.get('account'));
-      return sendJson(res, 200, { history: await history.list(provider, account, { limit: url.searchParams.get('limit') }) });
+      if (historyMatch[2]) return sendJson(res, 200, { detail: await history.detail(provider, account, url.searchParams.get('id'), url.searchParams.get('cursor')) });
+      return sendJson(res, 200, { history: await history.list(provider, account, { limit: url.searchParams.get('limit'), cwd: url.searchParams.get('cwd'), query: url.searchParams.get('q') }) });
     }
     const memoryMatch = memory && route.match(/^\/providers\/([a-z0-9][a-z0-9_-]{0,31})\/memory(\/file)?$/);
     if (memoryMatch && method === 'GET') {
