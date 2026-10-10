@@ -7,8 +7,13 @@ import { until, withDialogClose, withPage } from './chrome.mjs';
 const instrumentation = `<script>
 const demoFetch=window.fetch;
 window.memoryGate=null;
+window.openedFolders=[];
 window.fetch=(input,init)=>{
   const url=new URL(typeof input==='string'?input:input.url,location.href);
+  if(url.pathname.endsWith('/open-folder')){
+    openedFolders.push(JSON.parse(init.body).cwd);
+    return Promise.resolve(new Response('{"ok":true}',{headers:{'Content-Type':'application/json'}}));
+  }
   if(url.pathname.endsWith('/memory/file')&&url.searchParams.get('path')==='topics/checkout.md'&&window.memoryGate)
     return window.memoryGate.then(()=>demoFetch(input,init)).then(res=>{
       const read=res.json.bind(res);
@@ -25,6 +30,12 @@ window.testInputs=[];
 const DemoSocket=window.WebSocket;
 window.WebSocket=class extends DemoSocket {
   send(raw){const m=JSON.parse(raw);if(m.type==='input')testInputs.push(m.data);super.send(raw);}
+  // The demo manager has no file manager; this one offers Finder so Open folder shows.
+  emit(event){
+    const m=typeof event.data==='string'&&JSON.parse(event.data);
+    if(m&&m.type==='hello')event={data:JSON.stringify({...m,folderOpener:{available:true,label:'Finder',reason:null}})};
+    super.emit(event);
+  }
 };
 </script>`;
 
@@ -103,7 +114,13 @@ const checks = await withPage({ name: 'dialogs', instrumentation }, async ({ ori
     await until(`${engine} earlier memory reply`, () => evaluate('window.memoryStaleDelivered'));
     assert.match(await evaluate('document.querySelector("#memory-text").textContent'), /## Commands/, 'an earlier, slower reply does not replace the chosen file');
     assert.equal(await evaluate('document.querySelector("#memory-list [aria-current=true]").dataset.path'), 'topics/testing.md');
+    assert.equal(await evaluate('document.querySelector("#memory-file").textContent+"|"+document.querySelector("#memory-copy").hidden+"|"+document.querySelector("#memory-open").hidden'),
+      '/demo/memory/storefront/topics/testing.md|false|false', 'the full path shows with Copy and Open folder');
+    await evaluate('document.querySelector("#memory-open").click()');
+    await until(`${engine} memory folder opened`, () => evaluate('openedFolders[0]==="/demo/memory/storefront/topics"'));
     await closeDialog('#memory', '#memory-close');
+    // A path segment with no break opportunity must wrap inside the heading, never under its buttons.
+    await evaluate('document.querySelector("#cwd").value="/Users/someone/Projects/AgentGuildWorkspaces/storefront/packages/checkout/src/payments"');
     for (const [width, height] of [[1440, 900], [768, 1024], [390, 844]]) {
       await resize(width, height);
       await evaluate('document.querySelector(".provider[data-id=anthropic] .memory-link").click()');
@@ -111,12 +128,15 @@ const checks = await withPage({ name: 'dialogs', instrumentation }, async ({ ori
       await settled();
       const g = await evaluate(`(()=>{
         const d=document.querySelector('#memory'),r=d.getBoundingClientRect(),t=document.querySelector('#memory-text').getBoundingClientRect(),l=document.querySelector('#memory-list').getBoundingClientRect();
-        return {inside:r.top>=-1&&r.bottom<=innerHeight+1&&r.left>=-1&&r.right<=innerWidth+1,text:t.height,list:l.height,textBottom:t.bottom<=r.bottom+1,overflow:d.scrollWidth>d.clientWidth};
+        const s=document.querySelector('#memory-sub'),h=document.querySelector('#memory .models-heading').getBoundingClientRect(),b=document.querySelector('#memory-refresh').getBoundingClientRect();
+        return {inside:r.top>=-1&&r.bottom<=innerHeight+1&&r.left>=-1&&r.right<=innerWidth+1,text:t.height,list:l.height,textBottom:t.bottom<=r.bottom+1,overflow:d.scrollWidth>d.clientWidth,
+          heading:s.scrollWidth<=s.clientWidth&&h.right<=b.left};
       })()`);
-      assert.ok(g.inside && g.text > 80 && g.list > 60 && g.textBottom && !g.overflow, `${engine} memory ${width}: ${JSON.stringify(g)}`);
+      assert.ok(g.inside && g.text > 80 && g.list > 60 && g.textBottom && !g.overflow && g.heading, `${engine} memory ${width}: ${JSON.stringify(g)}`);
       await closeDialog('#memory', '#memory-close');
       assert.equal(await evaluate('document.activeElement===document.querySelector(".provider[data-id=anthropic] .memory-link")'), true, `${engine} memory focus restored`);
     }
+    await evaluate('document.querySelector("#cwd").value="/work/storefront"');
     // close() queues the dialog's close event, so another card can open it again before that event runs.
     await evaluate('document.querySelector(".provider[data-id=anthropic] .memory-link").click()');
     await until(`${engine} memory before reopening`, () => evaluate('document.querySelectorAll("#memory-list .memory-item").length===2'));

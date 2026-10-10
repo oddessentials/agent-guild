@@ -652,7 +652,7 @@ body:has(#app[hidden]):has(#auth[hidden]):has(#stopped[hidden])::after {
 .models[open] { display: flex; flex-direction: column; }
 .models::backdrop { background: rgba(15, 17, 21, 0.5); }
 .models-bar { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
-.models-heading { flex: 1; min-width: 0; }
+.models-heading { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .models-heading .sub { margin: 2px 0 0; color: var(--muted); font-size: 0.78rem; }
 /* Content supplies the basis for auto-height dialogs; a zero basis collapses in Safari. */
 .models-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 0 14px 14px; }
@@ -878,7 +878,6 @@ a.news-link:visited { color: var(--muted); }
 .memory-scope + .memory-scope { margin-top: 10px; }
 .memory-scope-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 6px 4px; }
 .memory-scope-head h3 { margin: 0; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
-.memory-open { padding: 2px 8px; font-size: 0.75rem; }
 .memory-note { margin: 4px 6px 8px; color: var(--muted); font-size: 0.82rem; line-height: 1.45; }
 .memory-item {
   display: grid; width: 100%; gap: 1px; padding: 6px 8px; border: 0; border-radius: 6px; background: none; color: var(--text);
@@ -896,9 +895,10 @@ a.news-link:visited { color: var(--muted); }
 .instructions-skipped > summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 3px; }
 .instructions-footnote { margin-top: 14px; font-size: 0.75rem; }
 .memory-retry { margin: 0 6px; }
-.memory-file-bar { display: flex; align-items: center; gap: 10px; padding-right: 14px; border-bottom: 1px solid var(--border); }
-.memory-file-bar .memory-file { flex: 1 1 auto; min-width: 0; border-bottom: 0; }
-.memory-copy { flex: none; padding: 2px 10px; font-size: 0.75rem; }
+/* The buttons drop below the path when the bar is too narrow to keep a readable line beside them. */
+.memory-file-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 14px; border-bottom: 1px solid var(--border); }
+.memory-file-bar .memory-file { flex: 1 1 16rem; min-width: 0; padding: 2px 0; border-bottom: 0; }
+.memory-file-bar .btn { flex: none; padding: 2px 10px; font-size: 0.75rem; }
 .memory-view { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .memory-file { margin: 0; padding: 10px 14px; border-bottom: 1px solid var(--border); font-weight: 600; font-size: 0.85rem; overflow-wrap: anywhere; }
 .memory-view .models-note { margin: 10px 14px 0; }

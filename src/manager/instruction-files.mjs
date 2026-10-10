@@ -470,7 +470,7 @@ export class InstructionFiles {
       const stat = statFile(real);
       if (seen.has(key) || !stat) continue;
       seen.add(key);
-      files.push({ index: files.length, path: real, name: path.basename(real), location: shortLocation(real, folder, this.home), scope: r.scope, bytes: stat.size, modified: stat.mtime.toISOString(), skipped: r.skipped, note: r.note });
+      files.push({ index: files.length, path: real, folder: path.dirname(real), name: path.basename(real), location: shortLocation(real, folder, this.home), scope: r.scope, bytes: stat.size, modified: stat.mtime.toISOString(), skipped: r.skipped, note: r.note });
     }
     const managed = files.filter((f) => f.scope === 'managed');
     const scopes = [

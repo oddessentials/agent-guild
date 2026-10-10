@@ -144,6 +144,7 @@ function setConnection(kind, label) {
   $('manager').hidden = !state.connected;
   if (!state.connected) closeMenu($('manager-menu'));
   renderFolderTools();
+  if ($('memory').open) renderMemoryFile();
   $('stop-manager').hidden = !state.connected;
   $('restart-manager').hidden = !state.connected || !state.restartable;
   renderUpgrade();
@@ -3443,7 +3444,7 @@ async function loadMemory() {
     const reply = await api('GET', memoryQuery());
     if (request !== memoryView.request) return;
     const memory = reply.memory ?? reply.instructions;
-    const files = memory.scopes.flatMap((scope) => scope.files.map((file) => ({ scope: scope.id, path: file.path, index: file.index, skipped: Boolean(file.skipped) })));
+    const files = memory.scopes.flatMap((scope) => scope.files.map((file) => memoryPick(scope.id, file)));
     const kept = memoryView.selected && files.find((f) => f.scope === memoryView.selected.scope && f.path === memoryView.selected.path);
     Object.assign(memoryView, { snapshot: memory, error: null, selected: kept ?? files.find((f) => !f.skipped) ?? files[0] ?? null });
     if (memoryView.kind === 'instructions') setInstructionCount(`${memoryView.providerId}|${memoryView.accountId}|${memoryView.cwd}`, memory.count);
@@ -3492,32 +3493,42 @@ async function loadMemoryFile() {
   }
 }
 
-function selectMemoryFile(scope, path, index) {
-  memoryView.selected = { scope, path, index };
+/** A listed file as the dialog keeps it: `path` names it to the manager, `fullPath` and `folder` are where it is on disk. */
+function memoryPick(scope, file) {
+  return { scope, path: file.path, index: file.index, fullPath: file.fullPath ?? file.path, folder: file.folder, skipped: Boolean(file.skipped) };
+}
+
+function selectMemoryFile(scope, file) {
+  memoryView.selected = memoryPick(scope, file);
   memoryView.fileError = null;
   for (const node of $('memory-list').querySelectorAll('.memory-item')) {
-    node.setAttribute('aria-current', String(node.dataset.scope === scope && node.dataset.path === path));
+    node.setAttribute('aria-current', String(node.dataset.scope === scope && node.dataset.path === file.path));
   }
   loadMemoryFile();
 }
 
-async function openMemoryFolder(dir) {
+/** Shares the working folder button's guard, so neither opens a second folder before the first hands off. */
+async function openMemoryFolder() {
+  const dir = memoryView.selected?.folder;
+  if (!dir || !state.folderOpener?.available || state.folderOpening) return;
+  state.folderOpening = true;
+  renderFolderTools();
+  renderMemoryFile();
   try {
     await api('POST', '/open-folder', { cwd: dir });
   } catch (err) {
     if (err instanceof AuthError) showAuth(err.message);
-    else toast(err.message || 'Could not open the folder.');
+    else toast(err.code === 'bad_cwd' ? 'This folder is gone — refresh.' : err.message || 'Could not open the folder.');
+  } finally {
+    state.folderOpening = false;
+    renderFolderTools();
+    renderMemoryFile();
   }
 }
 
 function memoryScopeNode(scope) {
   const head = el('div', 'memory-scope-head', el('h3', null, scope.label));
   if (scope.dir) head.title = scope.dir;
-  if (scope.dir && scope.files.length && state.folderOpener?.available) {
-    const open = button('Open folder', () => openMemoryFolder(scope.dir), 'btn memory-open');
-    open.title = `Open ${scope.dir} in ${state.folderOpener.label}`;
-    head.append(open);
-  }
   const section = el('section', 'memory-scope', head);
   const empty = scope.id === 'global' ? 'No global memory yet.' : 'No memory for this folder yet.';
   const note = scope.note ?? (scope.files.length ? null : empty);
@@ -3532,7 +3543,7 @@ function memoryScopeNode(scope) {
     item.dataset.path = file.path;
     item.title = [file.title, file.path, `changed ${new Date(file.modified).toLocaleString()}`].filter(Boolean).join('\n');
     item.setAttribute('aria-current', String(memoryView.selected?.scope === scope.id && memoryView.selected?.path === file.path));
-    item.addEventListener('click', () => selectMemoryFile(scope.id, file.path, file.index));
+    item.addEventListener('click', () => selectMemoryFile(scope.id, file));
     section.append(item);
   }
   return section;
@@ -3588,7 +3599,7 @@ function instructionItem(file) {
   item.dataset.path = file.path;
   item.title = file.path;
   item.setAttribute('aria-current', String(memoryView.selected?.path === file.path));
-  item.addEventListener('click', () => selectMemoryFile(file.scope, file.path, file.index));
+  item.addEventListener('click', () => selectMemoryFile(file.scope, file));
   return item;
 }
 
@@ -3638,9 +3649,14 @@ function renderMemory() {
 function renderMemoryFile() {
   const { selected, file, fileError, fileLoading } = memoryView;
   const shown = file && selected && file.scope === selected.scope && file.path === selected.path ? file : null;
-  $('memory-file').textContent = selected ? selected.path : '';
+  $('memory-file').textContent = selected ? selected.fullPath : '';
   $('memory-file').hidden = !selected;
-  $('memory-copy').hidden = !selected || memoryView.kind !== 'instructions';
+  $('memory-copy').hidden = !selected;
+  const open = $('memory-open');
+  open.hidden = !selected?.folder || !state.folderOpener?.available;
+  open.disabled = state.folderOpening;
+  open.setAttribute('aria-busy', String(state.folderOpening));
+  if (!open.hidden) open.title = `Open ${selected.folder} in ${state.folderOpener.label}`;
   let note = '';
   if (fileError) note = fileError;
   else if (fileLoading && !shown) note = 'Reading the file…';
@@ -6569,7 +6585,8 @@ $('history-preview-refresh').addEventListener('click', () => historyPreview.refr
 $('history-preview-more').addEventListener('click', () => historyPreview.more());
 $('memory-close').addEventListener('click', closeMemory);
 $('memory-refresh').addEventListener('click', loadMemory);
-$('memory-copy').addEventListener('click', () => { if (memoryView.selected) copyText(memoryView.selected.path, 'the path'); });
+$('memory-copy').addEventListener('click', () => { if (memoryView.selected) copyText(memoryView.selected.fullPath, 'the path'); });
+$('memory-open').addEventListener('click', openMemoryFolder);
 $('memory').addEventListener('click', (e) => { if (e.target === $('memory')) closeMemory(); });
 $('memory').addEventListener('close', () => {
   // The event comes a task after close(), by when another card may have opened the dialog again.

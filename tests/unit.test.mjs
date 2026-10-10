@@ -2265,6 +2265,7 @@ test('a memory file is read only from inside its scope folder', async () => {
   assert.deepEqual([temp.scopes[0].dir, temp.scopes[0].files], [null, []], 'Grok Build keeps no workspace memory in the temporary folder');
   assert.match(temp.scopes[0].note, /temporary folder/);
   assert.deepEqual(listed.scopes[1].files.map((f) => [f.path, f.title]), [['topics/a.md', 'Kept fact'], ['topics/b.md', null]], 'no archive and no links; a title is the heading after any frontmatter');
+  assert.deepEqual([listed.scopes[1].files[0].fullPath, listed.scopes[1].files[0].folder], [path.join(global, 'topics', 'a.md'), path.join(global, 'topics')], 'a file says where it is on disk');
   assert.equal((await reader.read(grok, account, dir, 'global', 'topics/b.md')).text, 'no heading\n');
   for (const bad of ['../../../secret.md', 'topics/../topics/a.md', 'topics\\a.md', 'archive/../topics/a.md', 'topics/a.txt', 'linked/secret.md']) {
     await assert.rejects(reader.read(grok, account, dir, 'global', bad), { code: 'bad_memory_path' }, bad);
