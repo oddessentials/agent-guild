@@ -5862,7 +5862,6 @@ class TerminalView {
     host.replaceChildren(this.el);
     if (!this.opened) {
       this.term.open(this.el);
-      this.term.textarea?.addEventListener('focus', () => this.reclaim());
       this.enableTouchScroll();
       this.opened = true;
     }
@@ -5920,7 +5919,11 @@ class TerminalView {
     this.fitFrame = requestAnimationFrame(() => this.refit());
   }
 
-  /** Coming back to this page's terminal takes it back at this pane's size. */
+  /**
+   * A click in this pane's terminal or a keystroke into it takes the terminal back at this pane's size. Nothing else
+   * does: a window that regains focus, and with it the terminal's text box, is an unlock or a notification as often
+   * as a person at the desk, and would take the size from a phone mid-use.
+   */
   reclaim() {
     if (this.taken) this.refit();
   }
@@ -6859,17 +6862,12 @@ document.addEventListener('visibilitychange', () => {
     flushNotes();
   }
   if (document.visibilityState === 'visible' && state.connected && Date.now() - newsLoadedAt > 60000) loadNews();
-  if (document.visibilityState === 'visible') {
-    recheckPtyBuild();
-    for (const id of state.panes) state.views.get(id)?.reclaim();
-  }
+  if (document.visibilityState === 'visible') recheckPtyBuild();
   if (document.visibilityState === 'visible' && dockShows('github') && githubShownView() === 'actions') loadView('actions');
   else scheduleRuns();
   if (branchesVisible() && !viewData('branches')?.error) loadBranches({ resume: true });
 });
 addEventListener('focus', recheckPtyBuild);
-// Back at the desk after a phone fitted a terminal: the panes take their own size again.
-addEventListener('focus', () => { for (const id of state.panes) state.views.get(id)?.reclaim(); });
 // Files may have changed in an editor while the page was in the background.
 addEventListener('focus', () => refreshInstructionCounts());
 addEventListener('pagehide', () => {

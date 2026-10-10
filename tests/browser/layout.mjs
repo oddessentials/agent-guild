@@ -107,6 +107,10 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   await evaluate(`testSockets.filter(s=>s.url.includes('/sessions/${first}/terminal')).at(-1).onmessage({data:JSON.stringify({type:'resize',cols:40,rows:12})})`);
   await until('drawn at the other size', async () => (await panes())[0].cols === 40 && (await panes())[0].rows === 12);
   assert.equal(await evaluate('testSizes.length'), told, "another client's size is not answered");
+  // Only a person at the desk takes it back. The window regaining focus, and with it the terminal's text box, happens
+  // at every unlock or notification, and must not take the size from a phone mid-use.
+  await evaluate(`{ const box = document.querySelector('.terminal-pane[data-pane="0"] .xterm-helper-textarea'); box.focus(); box.blur(); box.focus(); window.dispatchEvent(new Event('focus')); }`);
+  assert.deepEqual([(await panes())[0].cols, (await panes())[0].rows, await evaluate('testSizes.length')], [40, 12, told], 'focus alone takes nothing back');
   await evaluate('document.querySelector(".terminal-pane[data-pane=\\"0\\"] .xterm").dispatchEvent(new PointerEvent("pointerdown",{bubbles:true}))');
   await until('taken back', async () => (await panes())[0].cols > 40);
   const reclaimed = (await panes())[0];

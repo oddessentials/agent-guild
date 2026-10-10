@@ -940,7 +940,7 @@ Server to client:
 | --- | --- |
 | `{ type: "snapshot", data, cols, rows, session }` | Always first. `data` is a VT escape sequence stream that redraws the current screen and scrollback. Reset the terminal and write it. |
 | `{ type: "data", data }` | Terminal output, in order, directly after the snapshot. |
-| `{ type: "resize", cols, rows }` | A client changed the terminal size, this one included. A client that shows another size should draw at this one until its user returns to it. |
+| `{ type: "resize", cols, rows }` | A client changed the terminal size, this one included. A client that shows another size should draw at this one until its user clicks in it or types into it; a window that merely regains focus is not its user. The manager sends none for a resize that changes nothing. |
 | `{ type: "pong" }` | The answer to a `ping`. |
 | `{ type: "exit", exitCode, signal }` | The process ended. Also sent after the snapshot when attaching to an exited session. |
 | `{ type: "removed" }` | The session was removed. The socket then closes with code 4410. |

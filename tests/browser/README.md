@@ -69,7 +69,8 @@ arrives through live events and reads as quiet, that opening it observes the
 manager's terminal size instead of resizing it, typed input and the six touch
 keys plus Tab, the copy sheet with the screen as selectable text, the one-time
 note before Dictate, Fit, its yielding when another client resizes and its hand-back on leaving the
-terminal, a new session that starts fitted, Stop
+terminal, that a fit and a hand-back which change nothing hide no later resize
+from another client, a new session that starts fitted, Stop
 and Remove with their confirmations, a new session through the folder browser
 whose start is held back to check that the sheet says it is starting, takes no
 second start meanwhile and gives the request the longer start budget,

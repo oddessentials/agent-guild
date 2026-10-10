@@ -144,7 +144,8 @@ reflows it on your computer; drag sideways to see the rest. **Fit to this
 phone** in the session menu resizes it for every attached client, gives the
 size back when you leave the terminal or put the phone away, and stops by
 itself when another client resizes; a session started on the phone starts
-fitted. Back at the computer, a touch on the terminal takes its size back. **Dictate** speaks into the terminal
+fitted. Back at the computer, a click in the terminal or a keystroke into it
+takes its size back, and nothing else does. **Dictate** speaks into the terminal
 and **Copy text…** selects what it shows with the usual touch handles; neither
 presses Enter for you. The phone view starts, stops, resumes and removes
 sessions; installing tools, GitHub, the environment and remote access stay on

@@ -218,6 +218,27 @@ try {
     assert.equal(await evaluate(`document.querySelector('#fit-badge').hidden`), true);
     pass('stopping Fit gives the terminal back the size the manager had');
 
+    // The manager does not echo a resize that changes nothing. A fit and a hand-back that change nothing, because another
+    // client had already set the phone's own fit size, must leave no record that would later hide that client's resize.
+    const rowsShown = () => evaluate(`document.querySelector('#term-host .xterm-rows').children.length`);
+    const other = { cols: 100, rows: fitted.rows === 30 ? 31 : 30 };
+    ctx.manager.get(session.id).resize(fitted.cols, fitted.rows);
+    await until('the fit size, set by another client, is shown', async () => (await rowsShown()) === fitted.rows);
+    await openMenu();
+    await withDialogClose(evaluate, '#menu', () => tap('#fit-toggle'));
+    await until('fitted without a change', () => evaluate(`!document.querySelector('#fit-badge').hidden`));
+    await openMenu();
+    await withDialogClose(evaluate, '#menu', () => tap('#fit-toggle'));
+    await until('fit off without a change', () => evaluate(`document.querySelector('#fit-badge').hidden`));
+    ctx.manager.get(session.id).resize(other.cols, other.rows);
+    await until('another size shown', async () => (await rowsShown()) === other.rows);
+    ctx.manager.get(session.id).resize(fitted.cols, fitted.rows);
+    await until('the fit size set again by another client is shown too', async () => (await rowsShown()) === fitted.rows);
+    assert.equal(await evaluate(`document.querySelector('#fit-badge').hidden`), true);
+    ctx.manager.get(session.id).resize(100, 30);
+    await until('back at the other client\'s size', async () => (await rowsShown()) === 30 && sessionOf(session.id).cols === 100);
+    pass('a fit and a hand-back that change nothing leave no record that hides another client\'s later resize');
+
     await openMenu();
     await withDialogClose(evaluate, '#menu', () => tap('#fit-toggle'));
     await until('fitted once more', () => sessionOf(session.id).cols < 100);
@@ -291,6 +312,20 @@ try {
         starts += 1;
         return new Promise((resolve) => { held = () => { window.fetch = fetch; resolve(fetch(url, init)); }; });
       };
+      // A terminal socket that hands its first messages over late, as a slow link does: the started session's view is
+      // laid out, and its host measured, before the snapshot arrives. A fit sent in that gap would make the snapshot's
+      // older size read as another client's, and the session this phone started would open with Fit switched off.
+      window.nativeSocket = window.WebSocket;
+      window.WebSocket = class extends window.nativeSocket {
+        set onmessage(handler) {
+          let queue = [];
+          super.onmessage = (event) => {
+            if (queue === null) return handler(event);
+            queue.push(event);
+            if (queue.length === 1) setTimeout(() => { const events = queue; queue = null; for (const e of events) handler(e); }, 150);
+          };
+        }
+      };
     })()`);
     await tap('#new-start');
     await until('start held', () => evaluate(`typeof held === 'function'`));
@@ -310,6 +345,7 @@ try {
     assert.deepEqual(JSON.parse(await evaluate(`localStorage.getItem('agentGuild.recentCwds')`)), [beta]);
     assert.equal(await evaluate(`localStorage.getItem('agentGuild.mobile.cwd')`), beta);
     pass('New starts a session sized for the phone in a folder picked with the browser, and remembers the folder for the full page');
+    await evaluate('window.WebSocket = window.nativeSocket');
 
     await tap('#back');
     await until('list again', () => evaluate(`!document.querySelector('#list').hidden && document.querySelector('#terminal').hidden`));
