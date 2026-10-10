@@ -18,7 +18,7 @@ import { hookToReports, claudeStatuslineToReport, formatStatusLine } from '../sr
 import { shimContents, writeReportShims, prependPath, fileUrl, SHIM_NAME, LOADER_NAME } from '../src/manager/report-shims.mjs';
 import { bundleFiles, codexHookArgs, codexTrustArgs, codexHooksFrom, antigravityInstalled, antigravityPluginDir, antigravityConfigFile, antigravityPluginEnabled, helpLists, REPORT_COMMAND, dockerHookArgs, DOCKER_HOOK_FLAGS } from '../src/manager/session-hooks.mjs';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { parseVersion, compareVersions, probeVersion, diagnosticLine, latestVersion } from '../src/manager/versions.mjs';
+import { parseVersion, parseTmuxVersion, compareVersions, probeVersion, diagnosticLine, latestVersion, brewVersion } from '../src/manager/versions.mjs';
 import { SelfUpdate, isDevelopmentBuild } from '../src/manager/self-update.mjs';
 import { glibcVersion, loadPty, ptyBuild, ptyBuildCommand, ptyBuiltHere, ptyDir, ptyProblem, ptyRestartProblem } from '../src/manager/pty.mjs';
 import { launcherPath, MANAGER_ENTRY, ROOT_DIR } from '../src/manager/launch.mjs';
@@ -1350,6 +1350,101 @@ test('versions are parsed, compared and looked up', async () => {
   assert.equal(calls[0], 'https://registry.example/@openai%2fcodex/latest');
   assert.equal(await latestVersion('nothing', { fetchImpl }), null);
   assert.equal(await latestVersion('boom', { fetchImpl: async () => { throw new Error('offline'); } }), null);
+
+  const brewCalls = [];
+  const brewFetch = async (url) => {
+    brewCalls.push(url);
+    if (url.endsWith('/cask/claude-code%40latest.json')) return { ok: true, json: async () => ({ token: 'claude-code@latest', version: '2.1.296' }) };
+    if (url.endsWith('/cask/with-build.json')) return { ok: true, json: async () => ({ version: '1.2.3,4567' }) };
+    if (url.endsWith('/formula/tmux.json')) return { ok: true, json: async () => ({ versions: { stable: '3.5a' } }) };
+    if (url.endsWith('/formula/flaky.json')) return { ok: false, status: 503, json: async () => ({}) };
+    return { ok: false, status: 404, json: async () => ({}) };
+  };
+  assert.deepEqual(await brewVersion('claude-code@latest', { cask: true, env: {}, fetchImpl: brewFetch }), { version: '2.1.296', found: true, error: null });
+  assert.equal(brewCalls[0], 'https://formulae.brew.sh/api/cask/claude-code%40latest.json');
+  assert.equal((await brewVersion('with-build', { cask: true, env: {}, fetchImpl: brewFetch })).version, '1.2.3', 'a cask version with a build number compares by its version');
+  assert.equal((await brewVersion('tmux', { env: {}, fetchImpl: brewFetch, parse: parseTmuxVersion })).version, '3.5a', 'a formula offers its stable version, through the caller\'s parser');
+  assert.equal(brewCalls.at(-1), 'https://formulae.brew.sh/api/formula/tmux.json');
+  assert.deepEqual(await brewVersion('nothing', { cask: true, env: {}, fetchImpl: brewFetch }), { version: null, found: false, error: null }, 'Homebrew has no such cask');
+  const flaky = await brewVersion('flaky', { env: {}, fetchImpl: brewFetch });
+  assert.deepEqual([flaky.version, flaky.found], [null, null], 'a failed lookup is not a missing formula');
+  assert.match(flaky.error, /503/);
+  const offline = await brewVersion('boom', { env: {}, fetchImpl: async () => { throw new Error('offline'); } });
+  assert.deepEqual([offline.version, offline.found, offline.error], [null, null, 'offline']);
+  await brewVersion('tmux', { env: { HOMEBREW_API_DOMAIN: 'https://mirror.example/homebrew/api/' }, fetchImpl: brewFetch });
+  assert.equal(brewCalls.at(-1), 'https://mirror.example/homebrew/api/formula/tmux.json', 'the mirror brew itself reads from HOMEBREW_API_DOMAIN');
+  await brewVersion('tmux', { env: { HOMEBREW_API_DOMAIN: 'not a url' }, fetchImpl: brewFetch });
+  assert.equal(brewCalls.at(-1), 'https://formulae.brew.sh/api/formula/tmux.json', 'a value that is not an address is ignored');
+});
+
+test('a Homebrew-owned copy is compared with the version Homebrew offers, not with npm\'s latest tag', { skip: process.platform === 'win32' && 'Homebrew uses POSIX paths and symlinks' }, async () => {
+  const root = tempDir();
+  const prefix = path.join(root, 'prefix');
+  const bin = path.join(prefix, 'bin');
+  const script = (file, body) => {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+    return file;
+  };
+  const brew = script(path.join(bin, 'brew'), 'exit 0');
+  fs.symlinkSync(script(path.join(prefix, 'Caskroom', 'claude-code', '2.1.286', 'claude'), 'echo "2.1.286 (Claude Code)"'), path.join(bin, 'claude'));
+  fs.symlinkSync(script(path.join(prefix, 'Cellar', 'mytool', '1.4.0', 'bin', 'mytool'), 'echo "mytool 1.4.0"'), path.join(bin, 'mytool'));
+  // Codex from Homebrew's old formula, which has since moved to a cask of the same name.
+  fs.symlinkSync(script(path.join(prefix, 'Cellar', 'codex', '0.162.0', 'bin', 'codex'), 'echo "codex-cli 0.162.0"'), path.join(bin, 'codex'));
+  const userFile = path.join(root, 'providers.json');
+  fs.writeFileSync(userFile, JSON.stringify({ providers: [
+    { id: 'mytool', tool: 'My Tool', command: 'mytool', package: 'mytool-pkg', versionArgs: ['--version'], channels: { brew: { names: ['mytool'] } } },
+  ] }));
+  // The stable cask sits behind npm's latest tag, as Anthropic publishes them.
+  const offered = { 'cask/claude-code': '2.1.286', 'formula/mytool': '1.4.0', 'cask/codex': '0.162.1' };
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(url);
+    const key = Object.keys(offered).find((k) => url === `https://formulae.brew.sh/api/${k}.json`);
+    if (key) return { ok: true, json: async () => (key.startsWith('cask/') ? { token: key.slice(5), version: offered[key] } : { name: key.slice(8), versions: { stable: offered[key] } }) };
+    if (url.endsWith('/latest')) return { ok: true, json: async () => ({ version: '9.9.9' }) };
+    return { ok: false, status: 404, json: async () => ({}) };
+  };
+  const registry = new ProviderRegistry({ userFile, env: { PATH: bin, HOME: root }, platform: process.platform, fetchImpl });
+  const ids = ['anthropic', 'openai', 'mytool'];
+  await registry.refreshVersions({ force: true, ids });
+  const claude = registry.describe(registry.get('anthropic'));
+  assert.deepEqual([claude.installChannel, claude.installedVersion, claude.latestVersion, claude.updateAvailable], ['brew', '2.1.286', '2.1.286', false], 'the cask is current, so no update is offered');
+  assert.equal(claude.updateCommand, `${fs.realpathSync.native(brew)} upgrade --cask claude-code`);
+  const formula = registry.describe(registry.get('mytool'));
+  assert.deepEqual([formula.installChannel, formula.latestVersion, formula.updateAvailable], ['brew', '1.4.0', false], 'a formula is compared with its stable version');
+  assert.equal(formula.updateCommand, `${fs.realpathSync.native(brew)} upgrade mytool`);
+  const codex = registry.describe(registry.get('openai'));
+  assert.deepEqual([codex.installChannel, codex.latestVersion, codex.updateAvailable, codex.updateCommand], ['brew', '0.162.1', true, null], 'the moved formula reports the cask\'s version, with nothing for brew upgrade to do');
+  assert.match(codex.updateGuidance, /moved Codex CLI from a formula to a cask.*brew uninstall codex.*brew install --cask codex/);
+  await assert.rejects(registry.updateSpec(registry.get('openai')), (err) => err.code === 'not_updatable' && /cask/.test(err.message));
+  assert.deepEqual(calls.sort(), [
+    'https://formulae.brew.sh/api/cask/claude-code.json', 'https://formulae.brew.sh/api/cask/codex.json',
+    'https://formulae.brew.sh/api/formula/codex.json', 'https://formulae.brew.sh/api/formula/mytool.json',
+  ], 'npm is not asked about a Homebrew copy; the cask is asked about only once the formula is gone');
+
+  offered['cask/claude-code'] = '2.1.287';
+  await registry.refreshVersions({ ids: ['anthropic'] });
+  assert.equal(registry.describe(registry.get('anthropic')).updateAvailable, false, 'within the hour the answer stands');
+  await registry.refreshVersions({ force: true, ids: ['anthropic'] });
+  const bumped = registry.describe(registry.get('anthropic'));
+  assert.deepEqual([bumped.latestVersion, bumped.updateAvailable], ['2.1.287', true], 'the cask moved on, so brew upgrade installs it');
+
+  delete offered['cask/claude-code'];
+  await registry.refreshVersions({ force: true, ids: ['anthropic'] });
+  const unknown = registry.describe(registry.get('anthropic'));
+  assert.deepEqual([unknown.latestVersion, unknown.updateAvailable], [null, false], 'no answer from Homebrew offers no update');
+
+  offered['cask/codex'] = '0.162.0';
+  await registry.refreshVersions({ force: true, ids: ['openai'] });
+  const current = registry.describe(registry.get('openai'));
+  assert.deepEqual([current.updateAvailable, current.updateCommand], [false, null], 'a moved formula that is still current is quiet');
+  assert.match(current.updateGuidance, /moved/);
+
+  const mirrored = new ProviderRegistry({ userFile, env: { PATH: bin, HOME: root, HOMEBREW_API_DOMAIN: 'https://mirror.example/api' }, platform: process.platform, fetchImpl: async (url) => { calls.push(url); return { ok: false, status: 404, json: async () => ({}) }; } });
+  calls.length = 0;
+  await mirrored.refreshVersions({ force: true, ids: ['anthropic'] });
+  assert.deepEqual(calls, ['https://mirror.example/api/cask/claude-code.json'], 'the lookup follows the Homebrew mirror in the manager\'s environment');
 });
 
 test('the registry lookup matches npm install -g, not a project .npmrc', { skip: !resolveCommand('npm') && 'npm is not installed' }, async () => {

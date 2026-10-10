@@ -76,6 +76,33 @@ export async function latestVersion(pkg, options) {
   return (await fetchManifest(pkg, 'latest', options)).manifest?.version ?? null;
 }
 
+export const FORMULAE_API = 'https://formulae.brew.sh/api';
+
+/** Homebrew's formulae API, or the mirror `brew` itself reads from HOMEBREW_API_DOMAIN. */
+export function formulaeApi(env = process.env) {
+  const domain = String(env?.HOMEBREW_API_DOMAIN || '').trim().replace(/\/+$/, '');
+  return /^https?:\/\/\S+$/.test(domain) ? domain : FORMULAE_API;
+}
+
+/**
+ * The version `brew upgrade` installs for a cask or formula, from Homebrew's formulae API. A cask may follow a
+ * vendor's stable channel while npm's `latest` tag is ahead, so a Homebrew-owned copy is compared with what
+ * Homebrew offers, not with the registry. `found` is false when Homebrew has no such cask or formula (a formula
+ * may have moved to a cask), null when the lookup failed; `error` then says how.
+ */
+export async function brewVersion(token, { cask = false, env = process.env, fetchImpl = fetch, timeoutMs = 10000, parse = parseVersion } = {}) {
+  const url = `${formulaeApi(env)}/${cask ? 'cask' : 'formula'}/${encodeURIComponent(token)}.json`;
+  try {
+    const res = await fetchImpl(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(timeoutMs) });
+    if (res.status === 404) return { version: null, found: false, error: null };
+    if (!res.ok) return { version: null, found: null, error: `the formulae API answered ${res.status ?? 'with an error'}` };
+    const body = await res.json();
+    return { version: parse(cask ? body?.version : body?.versions?.stable) ?? null, found: true, error: null };
+  } catch (err) {
+    return { version: null, found: null, error: err?.name === 'TimeoutError' ? 'the formulae API did not answer in time' : String(err?.message || err) };
+  }
+}
+
 /**
  * The version a "latest release" page redirects to (GitHub's releases/latest answers 302 to the tag's page), or
  * null. No API call, so no rate limit.

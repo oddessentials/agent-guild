@@ -103,10 +103,16 @@ has `resumeArgs`, so one of the tool's own earlier sessions can be resumed by
 id.
 
 `installedVersion` comes from running the tool with its `versionArgs`, and
-`latestVersion` from npm's configured registry, which installs use too
-(`AGENT_GUILD_NPM_REGISTRY` overrides it for both, `AGENT_GUILD_NO_UPDATE_CHECK=1`
-skips the lookup). Both are null until the first check finishes; a
-`providers.updated` event follows.
+`latestVersion` from wherever `updateCommand` installs from: npm's configured
+registry, which installs use too (`AGENT_GUILD_NPM_REGISTRY` overrides it for
+both), or for a Homebrew-owned copy the version its cask or formula offers,
+from Homebrew's formulae API (`HOMEBREW_API_DOMAIN` names a mirror, as for
+`brew`). A cask can follow a tool's stable channel while npm's `latest` tag is
+ahead; the card compares with what `brew upgrade` would install. A formula
+that Homebrew has moved to a cask reports the cask's version with
+`updateGuidance` on how to move over and no `updateCommand`.
+`AGENT_GUILD_NO_UPDATE_CHECK=1` skips the lookups. Both are null until the
+first check finishes; a `providers.updated` event follows.
 `updateAvailable` is true when the latest version is newer, and
 `POST /providers/:id/install` performs the update when `updateCommand` is not null.
 
