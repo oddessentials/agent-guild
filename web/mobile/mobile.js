@@ -229,10 +229,12 @@ class TerminalView {
     this.observed = { cols: session.cols, rows: session.rows };
     this.fitting = fit;
     this.sent = null;
+    /** The manager's size once everything this view sent on this socket is applied. */
+    this.size = null;
     /**
-     * Sizes this view sent while fitting that the manager has not echoed yet, so no echo is read as another client's
-     * resize. Dropped when Fit ends: the manager does not echo a resize that changes nothing, and a record left behind
-     * could hide another client's later resize to that size while this view only observes.
+     * Sizes this view sent that the manager has not echoed yet, so no echo is read as another client's resize. Only a
+     * size that changes `size` is recorded: the manager echoes nothing else, and a record left behind could hide
+     * another client's later resize to that size.
      */
     this.echoes = [];
     /** Whether this socket's snapshot has sized the terminal. Nothing is sent before it, so a fit sent early is never read as a dropped link's. */
@@ -274,6 +276,7 @@ class TerminalView {
     const ws = openSocket(`/sessions/${this.id}/terminal`);
     this.ws = ws;
     this.echoes = [];
+    this.size = null;
     this.sized = false;
     // The snapshot, always first, sizes the terminal, and fits it again while this view fits.
     ws.onopen = () => { if (this.ws === ws) this.retry = 0; };
@@ -295,6 +298,7 @@ class TerminalView {
       if (this.fitting && this.sent && (msg.cols !== this.sent.cols || msg.rows !== this.sent.rows)) this.yieldFit();
       if (!(this.fitting && this.sent)) this.observed = { cols: msg.cols, rows: msg.rows };
       this.term.reset();
+      this.size = { cols: msg.cols, rows: msg.rows };
       this.sized = true;
       if (this.fitting) this.refit({ force: true });
       else this.term.resize(msg.cols, msg.rows);
@@ -325,6 +329,7 @@ class TerminalView {
       this.echoes.splice(0, own + 1);
       return;
     }
+    this.size = { cols, rows };
     if (this.fitting) this.yieldFit();
     this.observed = { cols, rows };
     this.term.resize(cols, rows);
@@ -345,14 +350,22 @@ class TerminalView {
   handBack() {
     if (!this.fitting || !this.sent) return;
     this.sent = null;
-    // Recorded as a fit's size is, so its echo is never read as another client's resize.
-    const size = { cols: this.observed.cols, rows: this.observed.rows };
-    this.echoes.push(size);
-    this.send({ type: 'resize', ...size });
+    this.resize(this.observed);
   }
 
   send(message) {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(message));
+  }
+
+  /**
+   * Asks the manager for a size, recording it so its echo is never read as another client's resize. A size the manager
+   * already has is not sent: it would change nothing and be echoed by nothing.
+   */
+  resize({ cols, rows }) {
+    if (this.ws?.readyState !== WebSocket.OPEN || (cols === this.size?.cols && rows === this.size?.rows)) return;
+    this.size = { cols, rows };
+    this.echoes.push(this.size);
+    this.send({ type: 'resize', cols, rows });
   }
 
   setFitting(on) {
@@ -361,9 +374,10 @@ class TerminalView {
       this.fitting = true;
       this.refit({ force: true });
     } else {
+      // The hand-back's echo, and any fit's still on its way, stay recorded: Fit switched on again before they arrive
+      // must not read them as another client's resize.
       this.handBack();
       this.fitting = false;
-      this.echoes = [];
       this.term.resize(this.observed.cols, this.observed.rows);
     }
     renderFit();
@@ -378,8 +392,7 @@ class TerminalView {
     const { cols, rows } = this.term;
     if (!force && this.sent && cols === this.sent.cols && rows === this.sent.rows) return;
     this.sent = { cols, rows };
-    this.echoes.push(this.sent);
-    this.send({ type: 'resize', cols, rows });
+    this.resize(this.sent);
   }
 
   setFontSize(size) {

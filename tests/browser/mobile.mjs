@@ -239,6 +239,21 @@ try {
     await until('back at the other client\'s size', async () => (await rowsShown()) === 30 && sessionOf(session.id).cols === 100);
     pass('a fit and a hand-back that change nothing leave no record that hides another client\'s later resize');
 
+    // Fit switched off and on again before the manager echoes the hand-back: that echo is this phone's own, so Fit stays
+    // on. The typed line goes after both resizes on the same socket, so its output shows once both echoes are in.
+    await openMenu();
+    await withDialogClose(evaluate, '#menu', () => tap('#fit-toggle'));
+    await until('fitted for the quick toggle', () => sessionOf(session.id).cols < 100);
+    await evaluate(`{ document.querySelector('#toast').hidden = true; const fit = document.querySelector('#fit-toggle'); fit.click(); fit.click(); }`);
+    await typeLine('echo toggled');
+    await until('both echoes in', async () => (await screen()).includes('ECHO:toggled'));
+    assert.deepEqual(await evaluate(`[document.querySelector('#fit-badge').hidden, document.querySelector('#toast').hidden]`), [false, true], 'Fit stays on, with no word of another client');
+    assert.deepEqual([sessionOf(session.id).cols, sessionOf(session.id).rows], [fitted.cols, fitted.rows]);
+    await openMenu();
+    await withDialogClose(evaluate, '#menu', () => tap('#fit-toggle'));
+    await until('size given back after the quick toggle', () => { const s = sessionOf(session.id); return s.cols === 100 && s.rows === 30; });
+    pass('Fit switched off and on again before the manager answers stays on');
+
     await openMenu();
     await withDialogClose(evaluate, '#menu', () => tap('#fit-toggle'));
     await until('fitted once more', () => sessionOf(session.id).cols < 100);
