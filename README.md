@@ -130,6 +130,22 @@ it off; sessions keep running. On a headless server, do this through the SSH
 tunnel above. For another reverse proxy, see
 [configuration](docs/configuration.md#reverse-proxies).
 
+### Phone view
+
+The sign-in link opens the phone view: your sessions as a list, the ones that
+have gone quiet first, and one terminal at a time with Escape, arrow and Enter
+keys on screen. It is the same manager, the same sessions and the same token.
+**Full page** in its menu opens this page, and this page's **Settings → Phone
+view** opens it; it lives at `/mobile/` on any address that reaches the
+manager. Add it to the Home Screen for a full-screen app.
+
+A phone shows a terminal at the size the manager has, so a glance never
+reflows it on your computer; drag sideways to see the rest. **Fit to this
+phone** in the session menu resizes it for every attached client, and stops
+by itself when another client resizes. The phone view starts, stops, resumes
+and removes sessions; installing tools, GitHub, the environment and remote
+access stay on this page.
+
 ### macOS keychain
 
 The first Claude Code usage meter may ask for access to the
@@ -153,6 +169,8 @@ The first Claude Code usage meter may ask for access to the
 * Start the manager when you sign in, on Windows, macOS and Linux
 * Shared notes, a news feed, six skins, light and dark mode
 * The Yard: your tools and sessions as a 3D world, one for each skin
+* A phone view: the same sessions as a plain list and terminal, for a phone's
+  Home Screen ([setup](#phone-view))
 * tmux and herdr sessions that keep running when the manager stops
 
 <img src="docs/images/workspace.webp" alt="Two terminals side by side with the GitHub panel showing the workflow runs of the focused terminal's repository">

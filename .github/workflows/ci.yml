@@ -62,6 +62,10 @@ jobs:
         env:
           CHROME_NO_SANDBOX: '1'
         timeout-minutes: 2
+      - run: node tests/browser/mobile.mjs
+        env:
+          CHROME_NO_SANDBOX: '1'
+        timeout-minutes: 2
       # Chrome only here; the WebKit pass runs in the webkit job.
       - run: node tests/browser/dialogs.mjs
         env:

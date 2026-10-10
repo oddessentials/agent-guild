@@ -37,6 +37,7 @@
         <button id="settings" class="btn settings menu-button" type="button" popovertarget="settings-menu" aria-haspopup="dialog">Settings</button>
         <div id="settings-menu" class="settings-menu menu" popover role="dialog" aria-label="Settings">
           <button id="remote-access-open" class="btn" type="button" aria-haspopup="dialog" hidden>Remote access</button>
+          <a id="phone-view" class="btn phone-view" href="/mobile/">Phone view</a>
           <fieldset id="skin-choices"><legend>Skin</legend></fieldset>
           <fieldset>
             <legend>Mode</legend>
@@ -80,6 +81,7 @@
   </header>
 
   <main id="app" hidden>
+    <a id="phone-offer" class="phone-offer" href="/mobile/">On a phone? The phone view is a simple list and terminal.</a>
     <section class="launcher" aria-labelledby="launch-heading">
       <div class="section-head">
         <h2 id="launch-heading">Start a session</h2>
@@ -158,7 +160,7 @@
     <h2>Open Agent Guild from the launcher</h2>
     <p>This page needs the access token of your local session manager. Run this command and it will open the page for you:</p>
     <pre>agent-guild open</pre>
-    <p>Or paste the token printed by <code>agent-guild url</code>:</p>
+    <p>Or paste the token printed by <code>agent-guild url</code>. On a phone, the <a href="/mobile/">phone view</a> takes the sign-in link from the Remote access settings.</p>
     <form id="auth-form">
       <input id="auth-token" type="password" autocomplete="off" placeholder="Access token" aria-label="Access token">
       <button type="submit" class="btn primary">Connect</button>
@@ -369,7 +371,7 @@
         </div>
       </div>
       <div id="remote-share" class="remote-share" hidden>
-        <p>Connect the other device to Tailscale, then scan this code or open the sign-in link.</p>
+        <p>Connect the other device to Tailscale, then scan this code or open the sign-in link. It opens the phone view, a simple list and terminal; the full page is a tap away there.</p>
         <canvas id="remote-qr" role="img" aria-label="QR code to sign into Agent Guild" hidden></canvas>
         <p id="remote-qr-note" class="sub"></p>
         <label for="remote-signin">Anyone with this code or link can use your terminals.</label>

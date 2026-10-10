@@ -5,11 +5,12 @@
  │  Web page    │ ◀─────────────────────────────────────▶ │     Session manager      │
  └──────────────┘                                          │                          │
  ┌──────────────┐                                          │  SessionManager          │
- │ Future: UE5  │ ◀─────────────── same API ─────────────▶ │   └ Session × N          │
- │ or desktop UI│                                          │      ├ node-pty process  │──▶ claude / codex / agy / grok / docker agent / shell / npm install
- └──────────────┘                                          │      ├ headless xterm    │
-                                                           │      └ agents, model     │◀── agent-guild-report, OSC 7777
-                                                           │  ProviderRegistry        │──▶ tool --version, npm registry
+ │  Phone view  │ ◀─────────────── same API ─────────────▶ │   └ Session × N          │
+ └──────────────┘                                          │      ├ node-pty process  │──▶ claude / codex / agy / grok / docker agent / shell / npm install
+ ┌──────────────┐                                          │      ├ headless xterm    │
+ │ Future: UE5  │ ◀─────────────── same API ─────────────▶ │      └ agents, model     │◀── agent-guild-report, OSC 7777
+ │ or desktop UI│                                          │  ProviderRegistry        │──▶ tool --version, npm registry
+ └──────────────┘                                          │                          │
                                                            │  UsageMonitor            │──▶ vendor usage endpoints
                                                            │  SessionHistory          │──▶ the tools' own session files
                                                            │  ModelStats              │──▶ OpenRouter model list (benchmarks)
@@ -88,6 +89,13 @@
   first, then catches up to the manager's revision.
 * **Web page** (`web/`). Plain HTML, CSS and JavaScript with xterm.js, served
   by the manager. No build step.
+* **Phone view** (`web/mobile/`). A second client of the same API, served by
+  the manager at `/mobile/`: one list and one terminal, no art, installable
+  as a web app. It shares the touch key bar and the viewport module with the
+  page and nothing from `app.js`; [api.md](api.md) is the contract between
+  them. It attaches to a session without resizing it, so a phone never changes
+  the terminal the page shows unless asked to fit, and it owns nothing but the
+  token and a few display preferences.
 * **Launcher** (`bin/agent-guild.mjs`). Starts, stops, restarts and opens.
   Starting a detached manager lives in `launch.mjs`, which the manager also
   uses to start its successor on a restart. While the Linux boot service
@@ -118,4 +126,8 @@ client would:
 4. Open `/api/v1/sessions/:id/terminal` when the player opens a character's
    terminal, and render it with any VT-compatible terminal widget.
 
-Both front ends can run at the same time against the same sessions.
+Both front ends can run at the same time against the same sessions. The phone
+view is such a client already, and a worked example of the etiquette: it
+subscribes to events, attaches terminals, and sends a `resize` only when the
+user asks it to, because the last client to resize sets the size for every
+other client.

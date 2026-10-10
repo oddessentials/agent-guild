@@ -25,6 +25,8 @@ if (!fs.existsSync(path.join(source, 'index.html'))) throw new Error(`web source
 fs.rmSync(out, { recursive: true, force: true });
 fs.mkdirSync(out, { recursive: true });
 fs.cpSync(source, out, { recursive: true });
+// The phone view is not simulated and names its assets from the origin root; the demo is the full page only.
+fs.rmSync(path.join(out, 'mobile'), { recursive: true, force: true });
 
 const vendor = {
   'xterm/xterm.js': '@xterm/xterm/lib/xterm.js',

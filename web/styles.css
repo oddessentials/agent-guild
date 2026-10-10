@@ -495,6 +495,17 @@ main { max-width: calc(1200px + var(--dock-space, 0px)); margin: 0 auto; padding
 }
 .upgrade-note { font-size: 0.85rem; color: var(--warn); }
 
+/* The phone view (web/mobile/) is the same manager's second page: a link in Settings everywhere, and an
+   offer at the top of the page on a narrow touch screen, where this page is usable but not at home. */
+.phone-view { display: block; text-align: center; text-decoration: none; }
+.phone-offer { display: none; }
+@media (pointer: coarse) and (max-width: 700px) {
+  .phone-offer {
+    display: block; margin: -8px 0 0; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--surface); color: var(--text); font-size: 0.9rem; line-height: 1.4; text-decoration: none;
+  }
+}
+
 .empty { color: var(--muted); margin: 8px 0 0; }
 
 body:has(#app[hidden]):has(#auth[hidden]):has(#stopped[hidden])::after {

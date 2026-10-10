@@ -33,6 +33,10 @@ Authorization: Bearer <token>
 WebSocket clients that cannot set headers, such as browsers, pass
 `?token=<token>` in the URL instead.
 
+The manager serves the page at `/` and the phone view at `/mobile/`, both
+from `web/`; a folder's `index.html` answers for the folder. Every page is one
+client of the API below.
+
 The manager rejects requests whose `Host` or browser `Origin` is outside
 its loopback and saved remote-access allowlists. The legacy
 `AGENT_GUILD_ALLOWED_HOSTS` and `AGENT_GUILD_ALLOWED_ORIGINS` variables are
@@ -934,7 +938,7 @@ Client to server:
 | Message | Meaning |
 | --- | --- |
 | `{ type: "input", data }` | Keystrokes or pasted text, exactly as a terminal would send them. |
-| `{ type: "resize", cols, rows }` | Resize the terminal. The last client to resize wins. |
+| `{ type: "resize", cols, rows }` | Resize the terminal. The last client to resize wins, for every attached client, so a client that only watches should render the snapshot's `cols` and `rows` and send none; the phone view sends one only when asked to fit. |
 
 ### Terminal queries: clients must not answer
 

@@ -26,6 +26,19 @@ export function remotePresentation(data) {
   return { title: 'Tailscale connected', text: 'Enable a private address for your running terminals. Your settings will be saved for future launches.', label: 'Enable remote access' };
 }
 
+/**
+ * The link another device signs in with: the phone view at the remote address,
+ * with the token in the fragment, which browsers never send to the server. The
+ * full page is one tap away from there, and the token carries over.
+ */
+export function signInLink(address, token) {
+  const url = new URL(address);
+  url.pathname = '/mobile/';
+  url.search = '';
+  url.hash = new URLSearchParams({ token }).toString();
+  return url.href;
+}
+
 export function createRemoteAccessUI({ api, getToken, isConnected, onAuthError }) {
   const $ = (id) => document.getElementById(id);
   const dialog = $('remote-access');
@@ -159,8 +172,7 @@ export function createRemoteAccessUI({ api, getToken, isConnected, onAuthError }
     if (!data?.url || !getToken() || !isConnected()) return;
     sharing = true;
     const generation = ++shareGeneration;
-    const url = new URL(data.url);
-    url.hash = new URLSearchParams({ token: getToken() }).toString();
+    const url = new URL(signInLink(data.url, getToken()));
     $('remote-signin').value = url.href;
     $('remote-share').hidden = false;
     $('remote-connect').setAttribute('aria-expanded', 'true');

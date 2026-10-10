@@ -35,6 +35,7 @@ const MIME = {
   '.ico': 'image/x-icon',
   '.wav': 'audio/wav',
   '.json': 'application/json; charset=utf-8',
+  '.webmanifest': 'application/manifest+json; charset=utf-8',
   '.glb': 'model/gltf-binary',
   '.gltf': 'model/gltf+json',
 };
@@ -222,9 +223,11 @@ export function createManagerServer({
     res.end(payload);
   }
 
-  function serveFile(req, res, file, { cache = false } = {}) {
+  /** `index` names the file served for a folder, so a second page can live in a folder of its own (`/mobile/`). */
+  function serveFile(req, res, file, { cache = false, index = null } = {}) {
     const notFound = () => sendJson(res, 404, { error: { code: 'not_found', message: 'not found' } });
     fs.stat(file, (statErr, stat) => {
+      if (!statErr && stat.isDirectory() && index) return serveFile(req, res, path.join(file, index), { cache });
       if (statErr || !stat.isFile()) return notFound();
       const etag = `W/"${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}-${policyVersion}"`;
       const headers = {
@@ -262,7 +265,7 @@ export function createManagerServer({
     if (file !== webDir && !file.startsWith(webDir + path.sep)) {
       throw new HttpError(404, 'not found', 'not_found');
     }
-    return serveFile(req, res, file);
+    return serveFile(req, res, file, { index: 'index.html' });
   }
 
   async function handleApi(req, res, url) {

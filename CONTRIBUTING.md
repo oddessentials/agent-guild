@@ -18,6 +18,8 @@ npm test
   local HTTPS proxy with an isolated manager and test certificates. On Windows,
   or if Chrome is not in a standard Linux or macOS location, set
   `CHROME_PATH` to Chrome or Edge.
+* `node tests/browser/mobile.mjs` checks the phone view against an isolated
+  manager and a real pseudo-terminal, at a phone's size with touch input.
 * In a checkout, `launchers/AgentGuild.cmd` (Windows) and
   `launchers/AgentGuild.command` (macOS) start Agent Guild with a
   double-click.
@@ -37,4 +39,10 @@ The page is one client of the manager's local API, documented in
 [docs/api.md](docs/api.md). Another interface, such as a planned Unreal Engine
 guild hall, can drive the same sessions at the same time. See
 [docs/architecture.md](docs/architecture.md).
+
+The phone view in `web/mobile/` is a second client in this repository. It
+imports the touch key bar and the viewport module and nothing from `app.js`,
+and it speaks only what `docs/api.md` describes, so a change to the API is a
+change to both clients. Keep it that way: it is a view of the manager, never
+an owner of anything.
 

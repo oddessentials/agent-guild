@@ -44,6 +44,7 @@ node tests/browser/github.mjs
 node tests/browser/github-branches.mjs
 node tests/browser/environment-scopes.mjs
 node tests/browser/proxy.mjs
+node tests/browser/mobile.mjs
 node tests/browser/dialogs.mjs
 ```
 
@@ -57,6 +58,20 @@ proxy and checks authentication, API writes, events, terminal input/output
 and CSP. It uses the public test key and certificate in `tests/fixtures`;
 certificate errors are ignored only in this disposable browser. It does not
 change the machine's trust store, contact Tailscale or use existing accounts.
+
+## Phone view
+
+`node tests/browser/mobile.mjs` opens `web/mobile/` from the sign-in link
+against an isolated manager and a real PTY, at a phone's size with touch
+emulation. It checks that the token leaves the address bar, that a session
+arrives through live events and reads as quiet, that opening it observes the
+manager's terminal size instead of resizing it, typed input and the six touch
+keys plus Tab, Fit and its hand-back when another client resizes, Stop and
+Remove with their confirmations, a new session through the folder browser, a
+resumed earlier session, sign-out and sign-in from a pasted link, and that no
+CSP violation or page error occurs. `MOBILE_SCREENSHOTS=/path/to/folder` saves
+the list, terminal, menu and sheets. It never contacts a coding tool or the
+network.
 
 ## Touch terminal keys
 

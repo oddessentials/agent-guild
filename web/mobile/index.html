@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <title>Agent Guild</title>
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#f5f6f8" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0f1115" media="(prefers-color-scheme: dark)">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Guild">
+  <link rel="manifest" href="/mobile/manifest.webmanifest">
+  <link rel="icon" href="/brand/favicon.png" type="image/png">
+  <link rel="apple-touch-icon" href="/brand/icon-192.png">
+  <script src="/theme.js"></script>
+  <link rel="stylesheet" href="/vendor/xterm/xterm.css">
+  <link rel="stylesheet" href="/mobile/mobile.css">
+</head>
+<body>
+  <header id="topbar" class="topbar">
+    <div class="brand">
+      <img src="/brand/crest.png" alt="" width="28" height="28">
+      <h1>Agent Guild</h1>
+    </div>
+    <div id="connection" class="connection" role="status" aria-live="polite">
+      <span class="dot"></span><span class="label">Connecting…</span>
+    </div>
+    <button id="more" class="icon-btn" type="button" popovertarget="more-menu" aria-label="Menu" hidden>⋯</button>
+    <div id="more-menu" class="menu" popover>
+      <a id="full-page" class="menu-item" href="/">Full page</a>
+      <button id="theme-toggle" class="menu-item" type="button">Dark mode</button>
+      <button id="sign-out" class="menu-item" type="button">Sign out</button>
+    </div>
+  </header>
+  <p id="notice" class="notice" role="status" aria-live="polite" hidden></p>
+
+  <section id="auth" class="auth" hidden aria-labelledby="auth-heading">
+    <h2 id="auth-heading">Connect to your session manager</h2>
+    <p>On the computer running Agent Guild, choose <strong>Settings → Remote access → Connect another device</strong> and scan the code. Or paste the sign-in link or the access token here.</p>
+    <form id="auth-form">
+      <input id="auth-token" type="password" autocomplete="off" placeholder="Sign-in link or access token" aria-label="Sign-in link or access token">
+      <button type="submit" class="btn primary">Connect</button>
+    </form>
+    <p id="auth-error" class="error" role="alert"></p>
+    <p class="help">On a computer, the <a href="/">full page</a> has every setting.</p>
+  </section>
+
+  <section id="list" class="list" hidden aria-labelledby="list-heading">
+    <div class="list-head">
+      <h2 id="list-heading">Sessions</h2>
+      <button id="new-open" class="btn primary" type="button" aria-haspopup="dialog">New</button>
+    </div>
+    <ol id="sessions" class="sessions" role="list"></ol>
+    <p id="empty" class="empty">No sessions. Start one with New. Sessions keep running when you close this page.</p>
+  </section>
+
+  <section id="terminal" class="terminal-page" hidden role="region" aria-labelledby="terminal-name">
+    <div class="bar">
+      <button id="back" class="icon-btn" type="button" aria-label="Back to sessions">‹</button>
+      <div class="bar-title">
+        <span id="terminal-name" class="title"></span>
+        <span class="sub"><span id="terminal-state" class="state"></span><span id="fit-badge" class="badge" hidden>Fitted</span></span>
+      </div>
+      <button id="key-tab" class="icon-btn mono" type="button" aria-label="Tab">⇥</button>
+      <button id="dictate" class="icon-btn dictate" type="button" aria-label="Dictate" aria-pressed="false" hidden></button>
+      <button id="keyboard" class="icon-btn keyboard" type="button" aria-label="Show keyboard" aria-pressed="false"></button>
+      <button id="menu-open" class="icon-btn" type="button" aria-label="Session menu" aria-haspopup="dialog">⋯</button>
+    </div>
+    <div id="term-host" class="term-host"></div>
+    <div id="terminal-controls" class="terminal-controls" role="group" aria-label="Terminal keys">
+      <button class="terminal-key" type="button" data-key="ArrowLeft" aria-label="Left arrow">←</button>
+      <button class="terminal-key" type="button" data-key="ArrowUp" aria-label="Up arrow">↑</button>
+      <button class="terminal-key" type="button" data-key="ArrowDown" aria-label="Down arrow">↓</button>
+      <button class="terminal-key" type="button" data-key="ArrowRight" aria-label="Right arrow">→</button>
+      <button class="terminal-key" type="button" data-key="Enter">Enter</button>
+      <button class="terminal-key" type="button" data-key="Escape">Esc</button>
+    </div>
+  </section>
+
+  <dialog id="menu" class="sheet" aria-labelledby="menu-title">
+    <h2 id="menu-title">Session</h2>
+    <button id="fit-toggle" class="menu-item" type="button" aria-pressed="false">Fit to this phone</button>
+    <p id="fit-help" class="help"></p>
+    <div class="menu-row">
+      <span>Text size</span>
+      <button id="font-smaller" class="btn" type="button" aria-label="Smaller text">A−</button>
+      <button id="font-larger" class="btn" type="button" aria-label="Larger text">A+</button>
+    </div>
+    <button id="interrupt" class="menu-item" type="button">Send Ctrl+C</button>
+    <button id="reattach" class="menu-item" type="button" hidden>Reattach</button>
+    <button id="stop" class="menu-item danger" type="button">Stop session</button>
+    <button id="remove" class="menu-item danger" type="button" hidden>Remove session</button>
+    <div class="actions"><button id="menu-close" class="btn" type="button">Close</button></div>
+  </dialog>
+
+  <dialog id="confirm" class="sheet" aria-labelledby="confirm-title">
+    <h2 id="confirm-title"></h2>
+    <p id="confirm-text" class="help"></p>
+    <div class="actions">
+      <button id="confirm-yes" class="btn danger" type="button"></button>
+      <button id="confirm-no" class="btn" type="button">Cancel</button>
+    </div>
+  </dialog>
+
+  <dialog id="new" class="sheet" aria-labelledby="new-title">
+    <h2 id="new-title">New session</h2>
+    <div id="new-providers" class="choices" role="radiogroup" aria-label="Tool"></div>
+    <p id="new-none" class="help" hidden>No tool is installed on the manager's computer. Install one from the full page.</p>
+    <label id="new-account-row" class="field" hidden><span>Account</span><select id="new-account"></select></label>
+    <label id="new-shell-row" class="field" hidden><span>Shell</span><select id="new-shell"></select></label>
+    <label class="field" for="new-cwd"><span>Working folder</span></label>
+    <div class="field-row">
+      <input id="new-cwd" type="text" spellcheck="false" autocomplete="off" placeholder="Home folder" aria-label="Working folder">
+      <button id="new-browse" class="btn" type="button" aria-haspopup="dialog">Browse…</button>
+    </div>
+    <div id="new-recent" class="chips" aria-label="Recent folders"></div>
+    <button id="new-existing" class="menu-item" type="button" hidden>Resume an earlier session…</button>
+    <ol id="new-history" class="history" role="list" hidden></ol>
+    <p id="new-error" class="error" role="alert" hidden></p>
+    <div class="actions">
+      <button id="new-start" class="btn primary" type="button">Start</button>
+      <button id="new-cancel" class="btn" type="button">Cancel</button>
+    </div>
+  </dialog>
+
+  <dialog id="folders" class="sheet" aria-labelledby="folders-title">
+    <h2 id="folders-title">Choose a folder</h2>
+    <p id="folder-current" class="path"></p>
+    <div class="actions wrap">
+      <button id="folder-up" class="btn" type="button">Up</button>
+      <button id="folder-home" class="btn" type="button">Home</button>
+      <label class="choice"><input id="folder-hidden" type="checkbox"> Hidden folders</label>
+    </div>
+    <ol id="folder-list" class="folders" role="list"></ol>
+    <p id="folder-status" class="help" role="status"></p>
+    <div class="actions">
+      <button id="folder-use" class="btn primary" type="button">Use this folder</button>
+      <button id="folder-cancel" class="btn" type="button">Cancel</button>
+    </div>
+  </dialog>
+
+  <p id="toast" class="toast" role="status" hidden></p>
+
+  <script src="/vendor/xterm/xterm.js"></script>
+  <script src="/vendor/xterm/addon-fit.js"></script>
+  <script type="module" src="/mobile/mobile.js"></script>
+</body>
+</html>

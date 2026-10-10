@@ -20,6 +20,7 @@ test('the Pages builder makes a portable, complete site without changing web/', 
   execFileSync(process.execPath, [path.join(demo, 'build.mjs'), '--out', out, '--version', '1.2.3']);
   execFileSync(process.execPath, [path.join(demo, 'check.mjs'), out]);
   assert.deepEqual(fs.readFileSync(path.join(repo, 'web', 'index.html')), before);
+  assert.equal(fs.existsSync(path.join(out, 'mobile')), false, 'the phone view is not part of the simulated demo');
   const index = fs.readFileSync(path.join(out, 'index.html'), 'utf8');
   assert.doesNotMatch(index, /\b(?:src|href)=["']\//);
   assert.ok(index.indexOf('./demo-runtime.js') < index.indexOf('./app.js'));
