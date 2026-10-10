@@ -28,6 +28,8 @@ test('Claude Code: global files, every folder up the walk, and AGENTS.md only wh
   const { root, write, dir, at } = fixture(t);
   write('home/.claude/CLAUDE.md');
   write('home/.claude/rules/style.md');
+  write('home/.claude/rules/team/nested.md');
+  write('home/.claude/rules/scoped.md', '---\npaths:\n  - "src/**/*.ts"\n---\nonly with a .ts file\n');
   write('home/.claude/settings.json', JSON.stringify({ claudeMdExcludes: ['**/.claude/rules/skip.md'] }));
   write('home/proj/AGENTS.md');
   write('home/proj/.claude/AGENTS.md');
@@ -39,6 +41,8 @@ test('Claude Code: global files, every folder up the walk, and AGENTS.md only wh
   write('outer/repo/CLAUDE.local.md');
   write('outer/repo/.claude/rules/a.md');
   write('outer/repo/.claude/rules/skip.md');
+  write('outer/repo/.claude/rules/sub/b.md');
+  write('outer/repo/.claude/rules/scoped.md', '---\npaths: src/**/*.ts\n---\n');
   dir('outer/repo/sub');
   const reader = new InstructionFiles({ env: { CLAUDE_CONFIG_DIR: at('home/.claude') }, resolveCwd: (cwd) => cwd, ceiling: root });
 
@@ -47,6 +51,7 @@ test('Claude Code: global files, every folder up the walk, and AGENTS.md only wh
   assert.deepEqual(rows(listed, root), [
     ['home/.claude/CLAUDE.md', 'global', null],
     ['home/.claude/rules/style.md', 'global', null],
+    ['home/.claude/rules/team/nested.md', 'global', null],
     ['outer/CLAUDE.md', 'project', null],
     ['outer/AGENTS.md', 'project', found],
     ['outer/repo/CLAUDE.md', 'project', null],
@@ -54,13 +59,15 @@ test('Claude Code: global files, every folder up the walk, and AGENTS.md only wh
     ['outer/repo/CLAUDE.local.md', 'project', null],
     ['outer/repo/.claude/rules/a.md', 'project', null],
     ['outer/repo/.claude/rules/skip.md', 'project', 'Matches claudeMdExcludes in Claude Code settings.'],
-  ], 'the walk passes the repo root; a CLAUDE.md anywhere skips every AGENTS.md; claudeMdExcludes matches dot folders');
-  assert.equal(listed.count, 7);
+    ['outer/repo/.claude/rules/sub/b.md', 'project', null],
+  ], 'the walk passes the repo root; a CLAUDE.md anywhere skips every AGENTS.md; claudeMdExcludes matches dot folders; rules folders are read recursively; a paths: rule waits for a matching file');
+  assert.equal(listed.count, 9);
 
   const plain = await reader.list(provider('claude'), account, at('home/proj'));
   assert.deepEqual(rows(plain, root), [
     ['home/.claude/CLAUDE.md', 'global', null],
     ['home/.claude/rules/style.md', 'global', null],
+    ['home/.claude/rules/team/nested.md', 'global', null],
     ['home/proj/AGENTS.md', 'project', null],
     ['home/proj/.claude/AGENTS.md', 'project', null],
   ], 'a global CLAUDE.md, met again on the walk through home, does not skip AGENTS.md');

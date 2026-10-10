@@ -3527,6 +3527,7 @@ function memoryScopeNode(scope) {
     const reason = file.skipped ?? file.note;
     const item = el('button', 'memory-item', el('span', 'memory-name', file.title ?? file.path), el('span', 'memory-meta', meta), reason && el('span', 'memory-meta memory-reason', reason));
     item.classList.toggle('skipped', Boolean(file.skipped));
+    item.classList.toggle('full-path', memoryView.kind === 'instructions');
     item.type = 'button';
     item.dataset.scope = scope.id;
     item.dataset.path = file.path;

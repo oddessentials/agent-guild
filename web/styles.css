@@ -885,6 +885,8 @@ a.news-link:visited { color: var(--muted); }
 .memory-meta { color: var(--muted); font-size: 0.72rem; }
 .memory-reason { overflow-wrap: anywhere; }
 .memory-item.skipped .memory-name { color: var(--muted); }
+/* A path is told apart by its end, so instruction rows show all of it. */
+.memory-item.full-path .memory-name { display: block; overflow: visible; }
 .memory-view { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .memory-file { margin: 0; padding: 10px 14px; border-bottom: 1px solid var(--border); font-weight: 600; font-size: 0.85rem; overflow-wrap: anywhere; }
 .memory-view .models-note { margin: 10px 14px 0; }

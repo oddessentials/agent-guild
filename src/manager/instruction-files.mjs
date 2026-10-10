@@ -86,6 +86,35 @@ export function globPattern(glob) {
   try { return new RegExp(`^${out}$`); } catch { return null; }
 }
 
+/** The frontmatter lines at the head of `file`, or [] without frontmatter. */
+function frontmatter(file) {
+  const lines = (readText(file) ?? '').split(/\r?\n/);
+  if (lines[0]?.trim() !== '---') return [];
+  const end = lines.findIndex((line, i) => i > 0 && line.trim() === '---');
+  return end < 0 ? [] : lines.slice(1, end);
+}
+
+/** A rules file with `paths:` loads only once Claude opens a matching file. */
+function pathScoped(file) {
+  const lines = frontmatter(file);
+  const at = lines.findIndex((line) => /^paths\s*:/.test(line));
+  if (at < 0) return false;
+  const inline = lines[at].replace(/^paths\s*:/, '').replace(/#.*$/, '').trim();
+  return !['', '[]', '""', "''"].includes(inline) || /^\s*-/.test(lines[at + 1] ?? '');
+}
+
+/** Markdown files anywhere under a `rules` folder, by path, that load at session start. */
+function claudeRules(dir, depth = 0) {
+  let entries;
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return []; }
+  entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  return entries.flatMap((entry) => {
+    const child = path.join(dir, entry.name);
+    if (statFile(child)) return /\.md$/i.test(entry.name) && !pathScoped(child) ? [child] : [];
+    return depth < 8 && fs.statSync(child, { throwIfNoEntry: false })?.isDirectory() ? claudeRules(child, depth + 1) : [];
+  });
+}
+
 function claudeExcludes(config, cwd, platform) {
   const sources = [path.join(config, 'settings.json'), path.join(cwd, '.claude', 'settings.json'), path.join(cwd, '.claude', 'settings.local.json')];
   const patterns = sources.flatMap((file) => {
@@ -103,7 +132,7 @@ function claudeRows(env, cwd, platform, ceiling) {
   const config = claudeConfigDir(env);
   const excluded = claudeExcludes(config, cwd, platform);
   const keep = (file, scope) => row(file, scope, excluded(file) ? 'Matches claudeMdExcludes in Claude Code settings.' : null);
-  const rows = [path.join(config, 'CLAUDE.md')].filter(statFile).concat(markdownIn(path.join(config, 'rules'))).map((file) => keep(file, 'global'));
+  const rows = [path.join(config, 'CLAUDE.md')].filter(statFile).concat(claudeRules(path.join(config, 'rules'))).map((file) => keep(file, 'global'));
   // Walking through the home folder meets ~/.claude/CLAUDE.md again; a global file is not a project one.
   const global = new Set(rows.map((r) => realPath(r.file)));
   const found = (files) => files.filter((file) => statFile(file) && !global.has(realPath(file))).map((file) => keep(file, 'project'));
@@ -114,7 +143,7 @@ function claudeRows(env, cwd, platform, ceiling) {
     claudeFile ??= own.find((r) => !r.skipped)?.file ?? null;
     const agentRows = found([path.join(dir, 'AGENTS.md'), path.join(dir, '.claude', 'AGENTS.md')]);
     agents.push(...agentRows);
-    rows.push(...own, ...agentRows, ...found(markdownIn(path.join(dir, '.claude', 'rules'))));
+    rows.push(...own, ...agentRows, ...found(claudeRules(path.join(dir, '.claude', 'rules'))));
   }
   if (claudeFile) {
     for (const r of agents) r.skipped ??= `Skipped because ${realPath(claudeFile)} was found.`;
@@ -281,10 +310,8 @@ async function grokRows(env, cwd, platform, inspect, command) {
 
 /** A rule file loads at session start only with `trigger: always_on` in its frontmatter. */
 function alwaysOn(file) {
-  const lines = (readText(file) ?? '').split(/\r?\n/);
-  if (lines[0]?.trim() !== '---') return false;
-  for (let i = 1; i < lines.length && lines[i].trim() !== '---'; i++) {
-    const trigger = /^trigger\s*:\s*["']?([\w-]+)["']?\s*(?:#.*)?$/.exec(lines[i].trim());
+  for (const line of frontmatter(file)) {
+    const trigger = /^trigger\s*:\s*["']?([\w-]+)["']?\s*(?:#.*)?$/.exec(line.trim());
     if (trigger) return trigger[1] === 'always_on';
   }
   return false;
