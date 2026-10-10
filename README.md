@@ -142,9 +142,11 @@ manager. Add it to the Home Screen for a full-screen app.
 A phone shows a terminal at the size the manager has, so a glance never
 reflows it on your computer; drag sideways to see the rest. **Fit to this
 phone** in the session menu resizes it for every attached client, and stops
-by itself when another client resizes. The phone view starts, stops, resumes
-and removes sessions; installing tools, GitHub, the environment and remote
-access stay on this page.
+by itself when another client resizes. **Dictate** speaks into the terminal
+and **Copy text…** selects what it shows with the usual touch handles; neither
+presses Enter for you. The phone view starts, stops, resumes and removes
+sessions; installing tools, GitHub, the environment and remote access stay on
+this page.
 
 ### macOS keychain
 

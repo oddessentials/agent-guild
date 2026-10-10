@@ -6,6 +6,7 @@
 // on purpose, and stops by itself when another client resizes.
 
 import { TerminalControls, bindTerminalViewport } from '/terminal-controls.js';
+import { TerminalCopy } from '/terminal-copy.js';
 import { readRecentFolders, rememberFolder } from '/folders.js';
 import {
   DEFAULT_FONT_SIZE, FONT_SIZES, dictatedText, exitLine, folderName, orderSessions, relativeTime, sessionState,
@@ -56,12 +57,12 @@ function wsUrl(path) {
 
 // ---- small UI -------------------------------------------------------------
 
-function setConnection(kind, text) {
+function setConnection(kind, text, title = text) {
   const el = $('connection');
   el.classList.toggle('ok', kind === 'ok');
   el.classList.toggle('down', kind === 'down');
   el.querySelector('.label').textContent = text;
-  el.title = text;
+  el.title = title;
   controls.refresh();
 }
 
@@ -79,13 +80,15 @@ function toast(text) {
   toastTimer = setTimeout(() => { el.hidden = true; }, 4000);
 }
 
-/** Asks before something that ends or removes a session. Resolves to true for yes. */
-function confirmAction({ title, text, action }) {
+/** Asks before going on. Resolves to true for yes. `danger` marks an action that ends or removes something. */
+function confirmAction({ title, text, action, danger = true }) {
   return new Promise((resolve) => {
     const dialog = $('confirm');
     $('confirm-title').textContent = title;
     $('confirm-text').textContent = text;
     $('confirm-yes').textContent = action;
+    $('confirm-yes').classList.toggle('danger', danger);
+    $('confirm-yes').classList.toggle('primary', !danger);
     dialog.returnValue = '';
     dialog.addEventListener('close', () => resolve(dialog.returnValue === 'yes'), { once: true });
     dialog.showModal();
@@ -397,6 +400,7 @@ function openTerminal(id, { push = true } = {}) {
 function closeTerminal() {
   if (!state.terminal) return;
   stopDictation();
+  terminalCopy.close();
   closeDialogs();
   state.terminal.dispose();
   state.terminal = null;
@@ -459,6 +463,18 @@ function currentTarget() {
 const controls = new TerminalControls({ element: $('terminal-controls'), panel: $('terminal'), getCurrent: currentTarget });
 bindTerminalViewport($('terminal'), $('terminal-controls'));
 
+// xterm.js cannot select text under a finger, so the full page's copy sheet shows the screen as text with the
+// usual touch handles. It opens from the session menu, which closes first so the sheet is the one dialog open.
+const terminalCopy = new TerminalCopy({
+  opener: $('copy-open'), dialog: $('terminal-copy'),
+  getCurrent: () => {
+    $('menu').close();
+    const view = state.terminal;
+    const session = view && state.sessions.get(view.id);
+    return view && session && !view.disposed ? { id: view.id, name: session.name, term: view.term } : null;
+  },
+});
+
 /** A key of this page's own, beside the shared six: it keeps typing focus and the keyboard as they are. */
 function bindKey(id, press) {
   const button = $(id);
@@ -479,8 +495,15 @@ $('keyboard').addEventListener('click', () => {
 });
 
 // ---- dictation ----------------------------------------------------------------
+// The full page's Dictate, behavior for behavior: words arrive as a paste, so a
+// program in bracketed-paste mode takes them as text and Enter is never pressed;
+// interim words show in a preview; Android's recognizer accumulates in
+// continuous mode, so each phrase gets a new one there, with a bounded retry
+// after silence. The first press asks once, as the full page's setting does.
 
 const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+const VOICE_RETRY_DELAYS = [250, 500, 1000];
+const VOICE_NOTE_KEY = 'agentGuild.mobile.voiceNote';
 let dictation = null;
 
 function renderDictate() {
@@ -488,37 +511,127 @@ function renderDictate() {
   $('dictate').setAttribute('aria-pressed', String(Boolean(dictation)));
 }
 
-/** Dictated words go to the terminal as typed text; Enter is never pressed for you. */
-function startDictation() {
+function showPreview(text) {
+  const preview = $('voice-preview');
+  preview.textContent = text;
+  preview.hidden = !text;
+}
+
+/** Dictation belongs to one press, one terminal and one run of its session. */
+function canDictate(current) {
+  const target = currentTarget();
+  return Boolean(target && target.term === current.term && target.run === current.run);
+}
+
+function keepDictating(current) {
+  if (dictation !== current) return false;
+  if (canDictate(current)) return true;
+  stopDictation();
+  return false;
+}
+
+async function startDictation() {
   const target = currentTarget();
   if (!target || dictation || !Recognition) return;
-  const rec = new Recognition();
-  rec.lang = navigator.language || 'en-US';
-  rec.interimResults = false;
-  rec.continuous = true;
-  const current = { rec, term: target.term, first: true };
-  dictation = current;
-  rec.onresult = (event) => {
-    if (dictation !== current) return;
-    for (let i = event.resultIndex; i < event.results.length; i++) {
-      const result = event.results[i];
-      if (!result.isFinal) continue;
-      const text = dictatedText(result[0]?.transcript, current.first);
-      if (!text || currentTarget()?.term !== current.term) continue;
-      current.term.input(text);
-      current.first = false;
-    }
+  if (load(VOICE_NOTE_KEY) !== 'on') {
+    const agreed = await confirmAction({
+      title: 'Dictate into the terminal?',
+      text: 'Your browser may send the audio to its maker, such as Google or Apple, to turn it into text. Nothing is heard until you press Dictate, and Enter is never pressed for you.',
+      action: 'Dictate',
+      danger: false,
+    });
+    if (!agreed) return;
+    save(VOICE_NOTE_KEY, 'on');
+    if (dictation || currentTarget()?.term !== target.term) return;
+  }
+  const current = {
+    term: target.term, run: target.run, lang: navigator.language || 'en-US',
+    android: /Android/i.test(navigator.userAgent || ''), processLocally: false,
+    rec: null, timer: null, first: true, emptyRetries: 0,
   };
-  rec.onend = () => { if (dictation === current) { dictation = null; renderDictate(); } };
-  rec.onerror = () => { if (dictation === current) { dictation = null; renderDictate(); } };
-  try { rec.start(); } catch { dictation = null; }
+  // Registered before the availability check, so another press or leaving the terminal cancels startup too.
+  dictation = current;
   renderDictate();
+  try {
+    if (typeof Recognition.available === 'function') {
+      current.processLocally = await Recognition.available({ langs: [current.lang], processLocally: true }) === 'available';
+    }
+  } catch { /* cloud recognition */ }
+  listenForDictation(current);
+}
+
+function listenForDictation(current) {
+  if (!keepDictating(current)) return;
+  let rec;
+  try {
+    rec = new Recognition();
+    current.rec = rec;
+    rec.lang = current.lang;
+    rec.continuous = !current.android;
+    rec.interimResults = true;
+    if (current.processLocally) rec.processLocally = true;
+  } catch {
+    stopDictation();
+    toast('Voice input could not start.');
+    return;
+  }
+  let committed = 0;
+  let heard = false;
+  rec.onresult = (event) => {
+    if (current.rec !== rec || !keepDictating(current)) return;
+    let interim = '';
+    for (let i = Math.max(event.resultIndex, committed); i < event.results.length; i += 1) {
+      const result = event.results[i];
+      if (!result.isFinal) { interim += result[0].transcript; continue; }
+      committed = i + 1;
+      const text = dictatedText(result[0].transcript, current.first);
+      if (!text) continue;
+      current.term.paste(text);
+      current.first = false;
+      current.emptyRetries = 0;
+      heard = true;
+    }
+    showPreview(interim.trim());
+  };
+  rec.onerror = (event) => {
+    if (current.rec !== rec || !keepDictating(current)) return;
+    if (current.android && event.error === 'no-speech') return; // bounded retry after end
+    stopDictation();
+    if (event.error === 'not-allowed' || event.error === 'service-not-allowed') toast('Voice input needs permission to use the microphone.');
+    else if (event.error === 'network') toast('Voice input could not reach the speech service. Check your connection.');
+    else if (event.error === 'audio-capture') toast('No microphone was found.');
+    else if (event.error === 'language-not-supported') toast(`Voice input does not support ${current.lang}.`);
+    else if (event.error !== 'aborted' && event.error !== 'no-speech') toast('Voice input stopped. Press Dictate to try again.');
+  };
+  rec.onend = () => {
+    if (current.rec !== rec || !keepDictating(current)) return;
+    current.rec = null;
+    showPreview('');
+    if (!current.android) return stopDictation();
+    if (!heard && current.emptyRetries >= VOICE_RETRY_DELAYS.length) {
+      stopDictation();
+      toast('Voice input stopped after repeated silence. Press Dictate to try again.');
+      return;
+    }
+    const delay = heard ? VOICE_RETRY_DELAYS[0] : VOICE_RETRY_DELAYS[current.emptyRetries++];
+    current.timer = setTimeout(() => { current.timer = null; listenForDictation(current); }, delay);
+  };
+  try {
+    rec.start();
+  } catch {
+    if (current.rec !== rec || !keepDictating(current)) return;
+    stopDictation();
+    toast('Voice input could not start.');
+  }
 }
 
 function stopDictation() {
   const current = dictation;
+  if (!current) return;
   dictation = null;
-  try { current?.rec.stop(); } catch { /* already stopped */ }
+  clearTimeout(current.timer);
+  try { current.rec?.abort(); } catch { /* already ended */ }
+  showPreview('');
   renderDictate();
 }
 
@@ -792,7 +905,7 @@ function connectEvents() {
       state.restarting = false;
       state.platform = msg.platform || null;
       notice(null);
-      setConnection('ok', `Connected · Agent Guild ${msg.version}`);
+      setConnection('ok', 'Connected', `Agent Guild ${msg.version}`);
       state.sessions = new Map(msg.sessions.map((session) => [session.id, session]));
       renderList();
       if (state.terminal && !state.sessions.has(state.terminal.id)) closeTerminal();
@@ -846,6 +959,7 @@ function suspendAll() {
   ws?.close();
   state.terminal?.suspend();
   stopDictation();
+  terminalCopy.close();
 }
 
 function resumeAll() {
@@ -937,7 +1051,10 @@ $('sign-out').addEventListener('click', () => {
 });
 
 function renderTheme() {
-  $('theme-toggle').textContent = document.documentElement.dataset.theme === 'dark' ? 'Light mode' : 'Dark mode';
+  const dark = document.documentElement.dataset.theme === 'dark';
+  $('theme-toggle').textContent = dark ? 'Light mode' : 'Dark mode';
+  // An installed app's status bar follows the chosen theme, not only the system's.
+  for (const meta of document.querySelectorAll('meta[name="theme-color"]')) meta.content = dark ? '#0f1115' : '#f5f6f8';
 }
 $('theme-toggle').addEventListener('click', () => {
   const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';

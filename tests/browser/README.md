@@ -66,10 +66,13 @@ against an isolated manager and a real PTY, at a phone's size with touch
 emulation. It checks that the token leaves the address bar, that a session
 arrives through live events and reads as quiet, that opening it observes the
 manager's terminal size instead of resizing it, typed input and the six touch
-keys plus Tab, Fit and its hand-back when another client resizes, Stop and
-Remove with their confirmations, a new session through the folder browser, a
-resumed earlier session, sign-out and sign-in from a pasted link, and that no
-CSP violation or page error occurs. `MOBILE_SCREENSHOTS=/path/to/folder` saves
+keys plus Tab, the copy sheet with the screen as selectable text, the one-time
+note before Dictate, Fit and its hand-back when another client resizes, Stop
+and Remove with their confirmations, a new session through the folder browser,
+a resumed earlier session, sign-out and sign-in from a pasted link, and that no
+CSP violation or page error occurs. Dictation itself needs a microphone and a
+speech service, so only its gate is checked here; its text handling is unit
+tested. `MOBILE_SCREENSHOTS=/path/to/folder` saves
 the list, terminal, menu and sheets. It never contacts a coding tool or the
 network.
 

@@ -41,7 +41,7 @@ guild hall, can drive the same sessions at the same time. See
 [docs/architecture.md](docs/architecture.md).
 
 The phone view in `web/mobile/` is a second client in this repository. It
-imports the touch key bar and the viewport module and nothing from `app.js`,
+imports the touch key bar, the copy sheet and the viewport module and nothing from `app.js`,
 and it speaks only what `docs/api.md` describes, so a change to the API is a
 change to both clients. Keep it that way: it is a view of the manager, never
 an owner of anything.

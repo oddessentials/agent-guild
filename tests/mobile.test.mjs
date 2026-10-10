@@ -125,7 +125,7 @@ test('the phone view is a static page under CSP: no inline scripts, every asset 
   }
   const js = fs.readFileSync(path.join(web, 'mobile', 'mobile.js'), 'utf8');
   const imports = [...js.matchAll(/from '([^']+)'/g)].map((m) => m[1]);
-  assert.deepEqual(imports, ['/terminal-controls.js', '/folders.js', '/mobile/model.js'], 'shares only the touch modules and small pure helpers, never app.js');
+  assert.deepEqual(imports, ['/terminal-controls.js', '/terminal-copy.js', '/folders.js', '/mobile/model.js'], 'shares only the touch modules and small pure helpers, never app.js');
   for (const imported of imports) assert.ok(fs.existsSync(path.join(web, imported)), imported);
   const manifest = JSON.parse(fs.readFileSync(path.join(web, 'mobile', 'manifest.webmanifest'), 'utf8'));
   assert.equal(manifest.start_url, '/mobile/');

@@ -123,6 +123,37 @@ try {
     await until('echo', async () => (await screen()).includes('ECHO:phone-input'));
     pass('typed input reaches the real PTY and output comes back');
 
+    await openMenu();
+    assert.equal(await evaluate(`document.querySelector('#copy-open').hidden`), false);
+    await withDialogClose(evaluate, '#menu', () => tap('#copy-open'));
+    await until('copy sheet', () => evaluate(`document.querySelector('#terminal-copy').open && document.querySelector('#terminal-copy textarea').value.includes('ECHO:phone-input')`));
+    assert.equal(await evaluate(`document.querySelector('#terminal-copy-status').textContent`), 'Touch and hold to select text.');
+    assert.equal(await evaluate(`document.querySelector('#terminal-copy [data-session]').textContent`), 'Phone test');
+    assert.equal(await evaluate(`document.querySelector('#terminal-controls [data-key=Enter]').disabled`), true, 'keys rest while the sheet is open');
+    await fits('#terminal-copy');
+    await capture('copy');
+    await withDialogClose(evaluate, '#terminal-copy', () => tap('#terminal-copy [data-done]'));
+    assert.equal(await evaluate(`document.querySelector('#terminal-copy textarea').value`), '');
+    await until('keys back', () => evaluate(`!document.querySelector('#terminal-controls [data-key=Enter]').disabled`));
+    pass('Copy text… shows the screen as selectable text, rests the keys, and clears when done');
+
+    if (await evaluate('Boolean(window.SpeechRecognition || window.webkitSpeechRecognition)')) {
+      assert.equal(await evaluate(`document.querySelector('#dictate').hidden`), false);
+      await tap('#dictate');
+      await until('dictation note', () => evaluate(`document.querySelector('#confirm').open && document.querySelector('#confirm-title').textContent.startsWith('Dictate')`));
+      assert.deepEqual(await evaluate(`[document.querySelector('#confirm-yes').classList.contains('primary'), document.querySelector('#confirm-yes').classList.contains('danger')]`), [true, false], 'dictating is not destructive');
+      await fits('#confirm');
+      await capture('dictate-note');
+      await withDialogClose(evaluate, '#confirm', () => tap('#confirm-no'));
+      assert.equal(await evaluate(`document.querySelector('#dictate').getAttribute('aria-pressed')`), 'false');
+      assert.equal(await evaluate(`localStorage.getItem('agentGuild.mobile.voiceNote')`), null);
+      assert.equal(await evaluate(`document.querySelector('#voice-preview').hidden`), true);
+      pass('Dictate asks once before anything is heard, and declining starts nothing');
+    } else {
+      assert.equal(await evaluate(`document.querySelector('#dictate').hidden`), true);
+      pass('without a speech API the Dictate button stays out of the way');
+    }
+
     for (const mode of ['normal', 'application']) {
       await typeLine(`keys 14 ${mode}`);
       await until('PTY reading keys', async () => (await screen()).includes(`KEYS-READY:${mode}`));
@@ -172,6 +203,7 @@ try {
     assert.equal(await evaluate(`document.querySelector('#remove').hidden`), true);
     await withDialogClose(evaluate, '#menu', () => tap('#stop'));
     await until('confirmation', () => evaluate(`document.querySelector('#confirm').open`));
+    assert.deepEqual(await evaluate(`[document.querySelector('#confirm-yes').classList.contains('primary'), document.querySelector('#confirm-yes').classList.contains('danger')]`), [false, true], 'stopping is destructive');
     await fits('#confirm');
     await confirmYes();
     await until('exited', () => sessionOf(session.id).status === 'exited');

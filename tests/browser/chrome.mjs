@@ -39,8 +39,21 @@ async function discard(chrome, profile) {
   // the pipe. Stop reading it once Chrome itself has exited: its diagnostics have been used.
   chrome.stderr.destroy();
   // Chrome's helper processes can still be writing the profile after the
-  // browser process exits; retry instead of failing on ENOTEMPTY.
-  fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  // browser process exits, for longer than one call's retries on a busy
+  // runner; keep trying for a while, and leave a temporary folder behind
+  // rather than fail a run whose checks are done over its cleanup.
+  for (let attempt = 0; ; attempt++) {
+    try {
+      fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      return;
+    } catch (error) {
+      if (attempt >= 4) {
+        console.log(`# the browser profile ${profile} could not be removed: ${error.message}`);
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  }
 }
 
 /**

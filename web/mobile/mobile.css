@@ -18,7 +18,12 @@
 
 * { box-sizing: border-box; }
 html, body { height: 100%; }
-body { margin: 0; display: flex; flex-direction: column; min-height: 100dvh; background: var(--bg); color: var(--text); -webkit-text-size-adjust: 100%; }
+/* No pull-to-refresh: a reload mid-session is never what a drag past the top meant. */
+body { margin: 0; display: flex; flex-direction: column; min-height: 100dvh; background: var(--bg); color: var(--text); -webkit-text-size-adjust: 100%; overscroll-behavior-y: none; }
+/* Every control shows its own press instead of the browser's grey flash. */
+button, a, [role="button"] { -webkit-tap-highlight-color: transparent; }
+.btn:active:not(:disabled), .icon-btn:active, .row-button:active, .menu-item:active, .choice-btn:active,
+.history button:active, .folders button:active, .chips .btn:active { opacity: 0.72; }
 h1, h2 { margin: 0; font-weight: 600; }
 h1 { font-size: 1.05rem; }
 h2 { font-size: 1rem; }
@@ -58,6 +63,9 @@ h2 { font-size: 1rem; }
 .icon-btn.dictate[aria-pressed="true"] { color: var(--danger); }
 .icon-btn.dictate[aria-pressed="true"]::before { animation: pulse 1.2s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) {
+  .icon-btn.dictate[aria-pressed="true"]::before { animation: none; opacity: 0.6; }
+}
 
 .menu { position: fixed; inset: auto; margin: 0; padding: 6px; min-width: 200px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text); box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35); }
 .menu:popover-open { display: grid; gap: 2px; }
@@ -130,6 +138,13 @@ a { color: var(--accent); }
 .badge { padding: 1px 6px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 22%, var(--surface)); color: var(--accent); font-weight: 600; }
 .term-host { flex: 1; min-height: 0; overflow: auto; padding: 6px 0 0 6px; touch-action: pan-x; overscroll-behavior: contain; }
 .term-host .xterm { width: max-content; min-width: 100%; touch-action: pan-x; }
+/* Words being heard, above the keys and under the finger's reach, never in the way of a tap. */
+.voice-preview {
+  position: absolute; left: 12px; right: 12px; bottom: calc(72px + env(safe-area-inset-bottom)); max-height: 30%; overflow-y: auto; z-index: 1;
+  padding: 8px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--muted);
+  font-size: 0.9rem; font-style: italic; overflow-wrap: anywhere; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3); pointer-events: none;
+}
+.terminal-page:has(.terminal-controls[hidden]) .voice-preview { bottom: 12px; }
 .terminal-controls {
   flex: none; display: flex; justify-content: center; gap: 4px;
   padding: 6px max(8px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
@@ -153,6 +168,25 @@ a { color: var(--accent); }
 .sheet[open] { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; align-content: start; overflow: auto; }
 .sheet > * { min-width: 0; }
 .sheet::backdrop { background: rgba(0, 0, 0, 0.5); }
+/* The copy sheet is the whole screen: a frozen copy of the terminal as text, where touch selection works. */
+.copy-sheet {
+  width: 100vw; max-width: 100vw; height: 100dvh; max-height: 100dvh; margin: 0; padding: 0; border: 0; border-radius: 0;
+  background: var(--surface); color: var(--text);
+}
+.copy-sheet[open] { display: flex; flex-direction: column; }
+.copy-sheet::backdrop { background: rgba(0, 0, 0, 0.5); }
+.copy-bar, .copy-footer { flex: none; display: flex; align-items: center; gap: 12px; }
+.copy-bar { padding: calc(10px + env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 10px max(12px, env(safe-area-inset-left)); }
+.copy-footer { padding: 10px max(12px, env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
+.copy-heading { flex: 1; min-width: 0; }
+.copy-heading .help { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.copy-footer .help { flex: 1; min-width: 0; }
+.copy-sheet textarea {
+  flex: 1; min-height: 0; width: 100%; resize: none; margin: 0; padding: 12px; border: 0; border-block: 1px solid var(--border); border-radius: 0;
+  background: var(--term-bg); color: #e6e9ef; font: 13px/1.5 var(--font-mono); white-space: pre;
+  user-select: text; -webkit-user-select: text; touch-action: auto; overscroll-behavior: contain;
+}
+.copy-sheet textarea:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 .sheet .actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
 .sheet .actions.wrap { justify-content: flex-start; align-items: center; }
 .sheet .menu-item { padding-left: 4px; }

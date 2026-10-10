@@ -91,9 +91,9 @@
   by the manager. No build step.
 * **Phone view** (`web/mobile/`). A second client of the same API, served by
   the manager at `/mobile/`: one list and one terminal, no art, installable
-  as a web app. It shares the touch key bar and the viewport module with the
-  page and nothing from `app.js`; [api.md](api.md) is the contract between
-  them. It attaches to a session without resizing it, so a phone never changes
+  as a web app. It shares the touch key bar, the copy sheet and the viewport
+  module with the page and nothing from `app.js`; [api.md](api.md) is the
+  contract between them. It attaches to a session without resizing it, so a phone never changes
   the terminal the page shows unless asked to fit, and it owns nothing but the
   token and a few display preferences.
 * **Launcher** (`bin/agent-guild.mjs`). Starts, stops, restarts and opens.

@@ -69,6 +69,7 @@
       <button id="menu-open" class="icon-btn" type="button" aria-label="Session menu" aria-haspopup="dialog">⋯</button>
     </div>
     <div id="term-host" class="term-host"></div>
+    <div id="voice-preview" class="voice-preview" hidden aria-live="polite"></div>
     <div id="terminal-controls" class="terminal-controls" role="group" aria-label="Terminal keys">
       <button class="terminal-key" type="button" data-key="ArrowLeft" aria-label="Left arrow">←</button>
       <button class="terminal-key" type="button" data-key="ArrowUp" aria-label="Up arrow">↑</button>
@@ -88,11 +89,27 @@
       <button id="font-smaller" class="btn" type="button" aria-label="Smaller text">A−</button>
       <button id="font-larger" class="btn" type="button" aria-label="Larger text">A+</button>
     </div>
+    <button id="copy-open" class="menu-item" type="button" aria-haspopup="dialog" hidden>Copy text…</button>
     <button id="interrupt" class="menu-item" type="button">Send Ctrl+C</button>
     <button id="reattach" class="menu-item" type="button" hidden>Reattach</button>
     <button id="stop" class="menu-item danger" type="button">Stop session</button>
     <button id="remove" class="menu-item danger" type="button" hidden>Remove session</button>
     <div class="actions"><button id="menu-close" class="btn" type="button">Close</button></div>
+  </dialog>
+
+  <dialog id="terminal-copy" class="copy-sheet" aria-labelledby="terminal-copy-title">
+    <div class="copy-bar">
+      <div class="copy-heading">
+        <h2 id="terminal-copy-title">Copy terminal text</h2>
+        <p class="help" data-session></p>
+      </div>
+      <button class="btn" type="button" data-done>Done</button>
+    </div>
+    <textarea readonly autofocus wrap="off" spellcheck="false" inputmode="none" aria-label="Terminal text snapshot" aria-describedby="terminal-copy-status"></textarea>
+    <div class="copy-footer">
+      <p id="terminal-copy-status" class="help" role="status"></p>
+      <button class="btn primary" type="button" data-copy disabled>Copy selection</button>
+    </div>
   </dialog>
 
   <dialog id="confirm" class="sheet" aria-labelledby="confirm-title">
