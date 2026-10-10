@@ -119,7 +119,7 @@ test('exit clears an initial or reconnecting badge before the held snapshot comp
       Object.assign(context, { WebSocket: { OPEN: 1 }, terminalControls: { refresh() {} }, dictation: null });
       const callbacks = [];
       const view = Object.assign(runInNewContext(`({${methods}})`, context), {
-        id: plain.id, ws: { readyState: 1 }, status: { hidden: false, textContent: label },
+        id: plain.id, ws: { readyState: 1 }, status: { hidden: false }, statusLabel: { textContent: label },
         term: { reset() {}, resize() {}, write(_data, callback) { if (callback) callbacks.push(callback); } },
         refit() {},
       });
@@ -127,7 +127,7 @@ test('exit clears an initial or reconnecting badge before the held snapshot comp
       assert.equal(view.status.hidden, false, 'the snapshot has not finished');
       view.onMessage({ type: 'exit', exitCode: 0 });
       assert.equal(view.status.hidden, true, `${label}, ${status}`);
-      assert.equal(view.status.textContent, '');
+      assert.equal(view.statusLabel.textContent, '');
       assert.equal(view.shown, true);
       assert.equal(view.inputReady, false);
       assert.equal(callbacks.length, 1);

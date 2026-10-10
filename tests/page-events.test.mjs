@@ -32,7 +32,7 @@ function connect({ changelogOpen = false, githubOpen = false, docked = null } = 
     state: { stopping: false, stopRemaining: null, views: new Map(), eventsRetry: 0, providers: [] },
     sessionsShown: false,
     WebSocket: class {
-      static CONNECTING = 0; static OPEN = 1; static CLOSED = 3;
+      static CONNECTING = 0; static OPEN = 1; static CLOSING = 2; static CLOSED = 3;
       constructor() { this.readyState = 0; sockets.push(this); }
       close() { if (this.readyState === 3) return; this.readyState = 3; this.onclose?.(); }
     },
@@ -68,6 +68,7 @@ function connect({ changelogOpen = false, githubOpen = false, docked = null } = 
     activityFavicon: { setPaused: noop }, terminalCopy: { close: noop },
     flushNotes: noop, stopDictation: noop,
     closePanel: noop, closeModels: noop, closeNews: noop, closeChangelog: noop, closeHistory: noop, closeGitHub: noop,
+    closeMenu: noop,
     managerConnected: () => alerts.push('connected'),
     managerGone: () => alerts.push('gone'),
     managerLoss: { disconnected: () => recovery.push('check'), cancel: () => recovery.push('cancel') },
@@ -298,6 +299,87 @@ function linkPage(hello) {
   page.after = (ms) => { now += ms; page.context.checkLinks(); };
   return page;
 }
+
+// Exercise TerminalView's real connection lifecycle; timers and transport are
+// controlled by the same page harness, so no network or wall-clock wait is needed.
+function addTerminal(page) {
+  const source = app.match(/  connect\(\) \{[^]*?\n  \}/)?.[0];
+  assert.ok(source, 'TerminalView.connect is present');
+  page.context.terminalControls = { refresh() {} };
+  const view = Object.assign(runInNewContext(`({${source}})`, page.context), {
+    id: `terminal-${page.state.views.size}`, retry: 0, sendSize() {}, showLink() {}, onMessage() {},
+  });
+  page.state.views.set(view.id, view);
+  view.connect();
+  const sent = [];
+  view.ws.send = (raw) => sent.push(JSON.parse(raw).type);
+  return { view, ws: view.ws, sent, open: () => { view.ws.readyState = 1; view.ws.onopen(); } };
+}
+
+test('a slow first screen is left to finish, then terminal heartbeats resume independently', () => {
+  const page = linkPage({ heartbeat: true });
+  const events = page.state.eventsSocket;
+  events.send = () => page.send({ type: 'pong' }, events);
+  const terminal = addTerminal(page);
+  terminal.open();
+  for (let i = 0; i < 15; i++) page.after(4000);
+  assert.deepEqual(terminal.sent, [], 'no ping can get stuck behind the first screen');
+  assert.equal(terminal.ws.readyState, 1);
+  // A pong is not the first screen; only a snapshot establishes the terminal.
+  page.send({ type: 'pong' }, terminal.ws);
+  page.after(25000);
+  assert.deepEqual(terminal.sent, []);
+  page.send({ type: 'snapshot' }, terminal.ws);
+  page.after(25000);
+  assert.deepEqual(terminal.sent, ['ping']);
+  page.after(9000);
+  assert.equal(terminal.ws.readyState, 3, 'a silent established terminal recovers on its own');
+  assert.equal(events.readyState, 1);
+});
+
+test('both detected and silent events loss restart loading terminals exactly once', () => {
+  for (const silent of [false, true]) {
+    const page = linkPage({ heartbeat: true });
+    const events = page.state.eventsSocket;
+    const loading = addTerminal(page);
+    loading.open();
+    const live = addTerminal(page);
+    live.open();
+    page.send({ type: 'snapshot' }, live.ws);
+    live.ws.send = () => page.send({ type: 'pong' }, live.ws);
+    const closed = addTerminal(page);
+    closed.ws.close();
+    const disposed = addTerminal(page);
+    disposed.view.disposed = true;
+    disposed.ws.close();
+    const retries = page.timers.length;
+    if (silent) { page.after(25000); page.after(9000); }
+    else events.close();
+    assert.equal(loading.ws.readyState, 3, 'loading terminal follows events loss');
+    assert.equal(live.ws.readyState, 1, 'an established terminal keeps its independent heartbeat');
+    assert.equal(page.timers.length, retries + 2, 'one retry for events and one for the loading terminal');
+    events.drop();
+    loading.ws.drop();
+    closed.ws.drop();
+    disposed.ws.drop();
+    assert.equal(page.timers.length, retries + 2, 'repeat drops, close events and disposed views add no retries');
+  }
+});
+
+test('loading still has an open deadline, and obsolete retry callbacks cannot replace a new socket', () => {
+  const page = linkPage({ heartbeat: true });
+  const events = page.state.eventsSocket;
+  events.send = () => page.send({ type: 'pong' }, events);
+  const terminal = addTerminal(page);
+  page.after(16000);
+  assert.equal(terminal.ws.readyState, 3, 'the handshake deadline still applies');
+  const retry = page.timers.at(-1);
+  terminal.view.connect(); // As when the user retries immediately.
+  const current = terminal.view.ws;
+  retry();
+  terminal.ws.drop();
+  assert.equal(terminal.view.ws, current);
+});
 
 test('a manager that predates the heartbeat is never pinged or dropped for staying quiet', () => {
   const page = linkPage({});

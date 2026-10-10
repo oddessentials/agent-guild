@@ -543,6 +543,10 @@ body:has(#app[hidden]):has(#auth[hidden]):has(#stopped[hidden])::after {
 }
 .panel-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .btn.split, .btn.swap, .btn.text-size { white-space: nowrap; }
+.text-size-menu { min-width: 0; }
+.text-size-menu:popover-open { display: flex; align-items: center; gap: 8px; }
+.text-size-menu .btn { min-width: 44px; min-height: 44px; }
+.text-size-menu output { min-width: 5ch; text-align: center; font-variant-numeric: tabular-nums; }
 .btn.swap { max-width: 14em; overflow: hidden; text-overflow: ellipsis; }
 .session-menu { min-width: 240px; max-width: min(420px, calc(100vw - 16px)); }
 .session-menu .menu-empty { margin: 0; padding: 6px 8px; color: var(--muted); }
@@ -597,9 +601,13 @@ body:has(#app[hidden]):has(#auth[hidden]):has(#stopped[hidden])::after {
 .terminal-host > div { height: 100%; position: relative; }
 /* Says a terminal is not live yet, or no longer: what it shows may be out of date and typing is not sent. */
 .terminal-link {
-  position: absolute; top: 4px; right: 8px; z-index: 5; padding: 3px 10px; pointer-events: none;
+  position: absolute; top: 4px; right: 8px; z-index: 5; padding: 3px 10px;
   border: 1px solid var(--border); border-radius: 999px; background: var(--surface); color: var(--muted); font-size: 0.8rem;
+  display: flex; align-items: center; gap: 8px; animation: terminal-link-in 0s 400ms both;
 }
+.terminal-link:focus-within { animation: none; }
+.terminal-link .terminal-retry { min-height: 44px; padding: 4px 8px; }
+@keyframes terminal-link-in { from { opacity: 0; pointer-events: none; } }
 .terminal-controls {
   flex: none; display: flex; flex-wrap: wrap; justify-content: center; gap: 4px;
   padding: 6px max(8px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));

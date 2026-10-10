@@ -198,13 +198,17 @@
         <button id="panel-swap" class="btn swap" type="button" hidden></button>
         <button id="panel-voice" class="btn voice" type="button" hidden aria-pressed="false" title="Speak into this terminal. Review the text, then press Enter yourself.">Dictate</button>
         <button id="panel-copy" class="btn" type="button" hidden aria-haspopup="dialog" title="Select and copy terminal text">Copy…</button>
-        <button id="panel-text-smaller" class="btn text-size" type="button" aria-label="Smaller terminal text" title="Smaller terminal text">A−</button>
-        <button id="panel-text-larger" class="btn text-size" type="button" aria-label="Larger terminal text" title="Larger terminal text">A+</button>
+        <button id="panel-text-toggle" class="btn text-size" type="button" popovertarget="panel-text-size" aria-haspopup="dialog" aria-label="Terminal text size" title="Terminal text size">Aa</button>
         <button id="panel-stop" class="btn danger" type="button">Stop</button>
         <button id="panel-close" class="btn" type="button" title="Hide the terminals. The sessions keep running.">Hide</button>
       </div>
     </div>
     <div id="panel-sessions" class="session-menu menu" popover role="menu" aria-label="Sessions"></div>
+    <div id="panel-text-size" class="text-size-menu menu" popover role="dialog" aria-label="Terminal text size">
+      <button id="panel-text-smaller" class="btn text-size" type="button" aria-label="Smaller terminal text" title="Smaller terminal text">A−</button>
+      <output id="panel-text-size-value" aria-label="Terminal text size"></output>
+      <button id="panel-text-larger" class="btn text-size" type="button" aria-label="Larger terminal text" title="Larger terminal text">A+</button>
+    </div>
     <div id="terminal-panes" class="terminal-panes">
       <section class="terminal-pane" data-pane="0">
         <div class="pane-head"><span class="pane-name"></span><button class="pane-close" type="button" aria-label="Close this terminal" title="Close this terminal. The session keeps running."></button></div>
