@@ -376,6 +376,8 @@ test('Cards and Yard use the same actions, accounts, dialogs and terminal',optio
   await b.click(inspector+' .remove');await b.wait(`!document.querySelector(${q(session(id))})`);
   assert.equal(f.data.has(id),false);assert.equal(await b.evaluate("document.querySelector('#yard-inspector').children.length"),0);
   await b.click('#yard-news');await b.wait("document.querySelector('#news').open");await b.click('#news-close');
+  // Opening it is checked in dialogs.mjs, which keeps the page away from YouTube.
+  await b.wait("document.querySelector('#yard-videos').checkVisibility()");
   await b.click('#version');await b.wait("document.querySelector('#changelog').open");await b.click('#changelog-close');
 
   await b.click('#github-open');await b.wait("document.querySelector('#github-list .github-action') && !document.querySelector('#github-list .github-action').disabled");

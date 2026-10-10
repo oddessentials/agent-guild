@@ -121,7 +121,7 @@
           <div class="yard-camera" role="group" aria-label="Camera"><button id="yard-zoom-in" type="button" class="btn" aria-label="Zoom in">+</button><button id="yard-zoom-out" type="button" class="btn" aria-label="Zoom out">−</button><button id="yard-fit" type="button" class="btn">Overview</button><button id="yard-focus" type="button" class="btn" disabled>Focus selected</button></div>
           <p id="yard-help">Drag to explore · Scroll to zoom · Select to inspect · Double-click a session to open</p>
         </div>
-        <div class="yard-news"><button id="yard-news" type="button" class="btn">All news</button><a id="yard-headline" target="_blank" rel="noopener noreferrer" hidden></a><span id="yard-news-empty">Your guild is ready.</span></div>
+        <div class="yard-news"><button id="yard-news" type="button" class="btn">All news</button><a id="yard-headline" target="_blank" rel="noopener noreferrer" hidden></a><span id="yard-news-empty">Your guild is ready.</span><button id="yard-videos" type="button" class="btn videos-open" aria-haspopup="dialog" hidden>Videos</button></div>
       </div>
       <aside class="yard-sidebar" aria-label="Yard roster and inspector">
         <div class="yard-roster-heading"><h3>Roster</h3><span id="yard-roster-count"></span></div>
@@ -147,7 +147,10 @@
     <section class="news" aria-labelledby="news-heading">
       <div class="section-head">
         <h2 id="news-heading">Latest news <span id="news-count" class="count"></span></h2>
-        <button id="news-all" class="btn" type="button" aria-haspopup="dialog">All news</button>
+        <div class="section-actions">
+          <button id="videos-open" class="btn videos-open" type="button" aria-haspopup="dialog" hidden>Videos</button>
+          <button id="news-all" class="btn" type="button" aria-haspopup="dialog">All news</button>
+        </div>
       </div>
       <ol id="news-latest" class="news-latest" hidden></ol>
       <p id="news-note" class="empty">Loading news…</p>
@@ -500,6 +503,38 @@
       <p id="changelog-note" class="news-empty" hidden></p>
     </div>
     <p id="changelog-status" class="news-status" hidden></p>
+  </dialog>
+
+  <dialog id="videos" class="models videos" aria-labelledby="videos-title">
+    <div class="models-bar">
+      <div class="models-heading">
+        <h2 id="videos-title">Videos</h2>
+        <p id="videos-sub" class="sub"></p>
+      </div>
+      <button id="videos-close" class="btn" type="button">Close</button>
+    </div>
+    <div class="videos-body">
+      <section class="videos-stage" aria-labelledby="videos-now">
+        <div id="videos-screen" class="videos-screen" data-state="loading">
+          <button id="videos-play" class="videos-play" type="button" disabled><img id="videos-poster" alt=""><span class="videos-play-icon" aria-hidden="true"></span></button>
+          <div id="videos-offline" class="videos-offline" role="status" hidden>
+            <p>Couldn’t reach YouTube. Check your connection.</p>
+            <button id="videos-retry" class="btn" type="button">Retry</button>
+          </div>
+        </div>
+        <div class="videos-caption">
+          <div class="videos-caption-text">
+            <h3 id="videos-now"></h3>
+            <p id="videos-meta" class="news-meta"></p>
+          </div>
+          <a id="videos-youtube" class="console-link" target="_blank" rel="noopener noreferrer" aria-description="Opens in a new tab">Watch on YouTube</a>
+        </div>
+      </section>
+      <nav class="videos-nav" aria-label="All videos">
+        <div id="videos-filters" class="news-filters" role="group" aria-label="Show" hidden></div>
+        <ol id="videos-list" class="videos-list"></ol>
+      </nav>
+    </div>
   </dialog>
 
   <dialog id="history" class="models history" aria-labelledby="history-title">

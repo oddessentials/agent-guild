@@ -48,6 +48,7 @@
 .yard-news .btn { font-size:11px; padding:5px 10px; flex-shrink:0; }
 .yard-news a,.yard-news > span { color:var(--muted); font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .yard-news a:hover { color:var(--text); }
+.yard-news .videos-open { margin-left:auto; }
 .yard-sidebar { min-height:0; overflow:auto; background:var(--surface); border-left:1px solid var(--yard-line); display:flex; flex-direction:column; }
 .yard-roster-heading,.yard-inspector-heading { display:flex; align-items:center; justify-content:space-between; padding:19px 20px 10px; }
 .yard-roster-heading h3,.yard-inspector-heading h3 { margin:0; font-family:var(--font-display); color:var(--heading); font-size:14px; font-weight:500; }

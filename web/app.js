@@ -2809,6 +2809,153 @@ function closeNews() {
   if ($('news').open) $('news').close();
 }
 
+// Trailers and tutorials ship in web/videos.json, oldest first. Nothing reaches YouTube until the
+// dialog opens, and a video plays only once YouTube's image server has answered for its poster.
+const VIDEO_CATEGORIES = { trailers: ['Trailers', 'Trailer'], tutorials: ['Tutorials', 'Tutorial'] };
+const VIDEO_ID = /^[\w-]{11}$/;
+const videosView = { list: [], filter: 'all', selected: null, play: false, poster: 0, opener: null };
+
+async function loadVideos() {
+  try {
+    const res = await fetch('videos.json');
+    if (!res.ok) return;
+    const { videos } = await res.json();
+    videosView.list = (Array.isArray(videos) ? videos : []).filter((video) =>
+      VIDEO_ID.test(video?.id) && typeof video.title === 'string' && VIDEO_CATEGORIES[video.category]);
+  } catch {
+    return;
+  }
+  for (const id of ['videos-open', 'yard-videos']) $(id).hidden = videosView.list.length === 0;
+}
+
+function videoDate(video) {
+  const date = new Date(`${video.published}T12:00:00`);
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+function videoMeta(video) {
+  return [VIDEO_CATEGORIES[video.category][1], videoDate(video)].filter(Boolean).join(' · ');
+}
+
+function shownVideos() {
+  return videosView.list.filter((video) => videosView.filter === 'all' || video.category === videosView.filter);
+}
+
+function renderVideoFilters() {
+  const present = Object.keys(VIDEO_CATEGORIES).filter((id) => videosView.list.some((video) => video.category === id));
+  const filters = $('videos-filters');
+  filters.hidden = present.length < 2;
+  filters.replaceChildren(...(filters.hidden ? [] : [['all', 'All'], ...present.map((id) => [id, VIDEO_CATEGORIES[id][0]])]).map(([id, label]) => {
+    const chip = button(label, () => {
+      videosView.filter = id;
+      for (const other of filters.children) other.setAttribute('aria-pressed', String(other === chip));
+      renderVideoList();
+    }, 'news-filter');
+    chip.setAttribute('aria-pressed', String(id === videosView.filter));
+    return chip;
+  }));
+}
+
+function renderVideoList() {
+  $('videos-list').replaceChildren(...shownVideos().map((video) => {
+    const thumb = el('img', 'videos-thumb');
+    thumb.alt = '';
+    thumb.loading = 'lazy';
+    thumb.src = `https://i.ytimg.com/vi/${video.id}/mqdefault.jpg`;
+    thumb.addEventListener('error', () => { thumb.hidden = true; }, { once: true });
+    const item = el('button', 'videos-item', el('span', 'videos-frame', thumb),
+      el('span', 'videos-item-text', el('span', 'videos-item-title', video.title), el('span', 'news-meta', videoMeta(video))));
+    item.type = 'button';
+    item.dataset.id = video.id;
+    item.addEventListener('click', () => selectVideo(video, true));
+    if (video === videosView.selected) item.setAttribute('aria-current', 'true');
+    return el('li', null, item);
+  }));
+}
+
+function stopVideo() {
+  $('videos-screen').querySelector('iframe')?.remove();
+}
+
+/** Shows the video's poster, trying YouTube's sizes largest first; a missing size answers with a 120px placeholder. */
+function selectVideo(video, play) {
+  stopVideo();
+  Object.assign(videosView, { selected: video, play });
+  for (const item of $('videos-list').querySelectorAll('.videos-item')) {
+    if (item.dataset.id === video.id) item.setAttribute('aria-current', 'true');
+    else item.removeAttribute('aria-current');
+  }
+  $('videos-now').textContent = video.title;
+  $('videos-meta').textContent = videoMeta(video);
+  $('videos-youtube').href = `https://www.youtube.com/watch?v=${video.id}`;
+  $('videos-play').setAttribute('aria-label', `Play ${video.title}`);
+  const request = ++videosView.poster;
+  const sizes = ['maxresdefault', 'hqdefault'];
+  const poster = $('videos-poster');
+  const screen = $('videos-screen');
+  const failed = () => {
+    if (request !== videosView.poster) return;
+    if (sizes.length) return void (poster.src = `https://i.ytimg.com/vi/${video.id}/${sizes.shift()}.jpg`);
+    screen.dataset.state = 'offline';
+    $('videos-play').disabled = true;
+    $('videos-offline').hidden = false;
+  };
+  poster.onload = () => {
+    if (request !== videosView.poster) return;
+    if (poster.naturalWidth <= 120) return failed();
+    screen.dataset.state = 'ready';
+    $('videos-play').disabled = false;
+    if (videosView.play) playVideo();
+  };
+  poster.onerror = failed;
+  screen.dataset.state = 'loading';
+  $('videos-play').disabled = true;
+  $('videos-offline').hidden = true;
+  failed();
+}
+
+function playVideo() {
+  const video = videosView.selected;
+  if (!video || !$('videos').open) return;
+  stopVideo();
+  videosView.play = false;
+  const frame = document.createElement('iframe');
+  frame.title = video.title;
+  frame.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
+  frame.allowFullscreen = true;
+  // YouTube refuses an embed that sends no referrer (error 153), and the page itself sends none.
+  frame.referrerPolicy = 'strict-origin-when-cross-origin';
+  frame.src = `https://www.youtube-nocookie.com/embed/${video.id}?autoplay=1&rel=0&playsinline=1`;
+  $('videos-screen').append(frame);
+  $('videos-screen').dataset.state = 'playing';
+  frame.focus();
+}
+
+function openVideos(e) {
+  if (!videosView.list.length) return;
+  videosView.filter = 'all';
+  // Safari does not focus a clicked button, so the button itself is the opener.
+  videosView.opener = e.currentTarget;
+  $('videos-sub').textContent = `${videosView.list.length} ${videosView.list.length === 1 ? 'video' : 'videos'}`;
+  renderVideoFilters();
+  videosView.selected = null;
+  renderVideoList();
+  $('videos').showModal();
+  selectVideo(videosView.list[0], false);
+  $('videos-close').focus();
+}
+
+/** Retry hides itself, so focus moves to the chosen video rather than falling to the page. */
+function retryVideo() {
+  const focused = $('videos-offline').contains(document.activeElement);
+  selectVideo(videosView.selected, false);
+  if (focused) ($('videos-list').querySelector('[aria-current="true"]') ?? $('videos-close')).focus();
+}
+
+function closeVideos() {
+  if ($('videos').open) $('videos').close();
+}
+
 function tickNews() {
   for (const time of document.querySelectorAll('#news-latest time, #news-list time')) time.textContent = relativeTime(time.dateTime);
   if ($('news').open) renderNewsStatus();
@@ -6819,6 +6966,22 @@ $('notes-text').addEventListener('input', () => { saveNotes(); void scheduleNote
 addEventListener('storage', notesStored);
 // On load, and again for a page back from the back/forward cache, which may have missed another tab's notes.
 addEventListener('pageshow', refreshNotes);
+$('videos-open').addEventListener('click', openVideos);
+$('yard-videos').addEventListener('click', openVideos);
+$('videos-close').addEventListener('click', closeVideos);
+$('videos-play').addEventListener('click', playVideo);
+$('videos-retry').addEventListener('click', retryVideo);
+$('videos').addEventListener('click', (e) => { if (e.target === $('videos')) closeVideos(); });
+addEventListener('online', () => { if ($('videos').open && $('videos-screen').dataset.state === 'offline') retryVideo(); });
+$('videos').addEventListener('close', () => {
+  if ($('videos').open) return;
+  stopVideo();
+  videosView.poster++;
+  const opener = videosView.opener?.checkVisibility() ? videosView.opener : [$('yard-videos'), $('videos-open')].find((node) => node.checkVisibility());
+  opener?.focus();
+  videosView.opener = null;
+});
+loadVideos();
 $('news-all').addEventListener('click', openNews);
 $('news-close').addEventListener('click', closeNews);
 $('news-fresh').addEventListener('click', showFreshNews);
