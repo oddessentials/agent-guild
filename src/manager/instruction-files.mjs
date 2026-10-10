@@ -320,7 +320,7 @@ function alwaysOn(file) {
   return false;
 }
 
-function googleRows(env, cwd, platform) {
+function googleRows(env, cwd, platform, ceiling) {
   const gemini = path.join((platform === 'win32' ? env.USERPROFILE : env.HOME) || os.homedir(), '.gemini');
   const rules = (dir) => markdownIn(path.join(dir, 'rules')).filter(alwaysOn);
   const global = ['GEMINI.md', 'AGENTS.md', path.join('config', 'GEMINI.md'), path.join('config', 'AGENTS.md')]
@@ -328,7 +328,7 @@ function googleRows(env, cwd, platform) {
   let root = cwd;
   for (let dir = cwd; ; dir = path.dirname(dir)) {
     if (exists(path.join(dir, '.git'))) { root = dir; break; }
-    if (path.dirname(dir) === dir) break;
+    if (path.dirname(dir) === dir || (ceiling && path.relative(ceiling, dir) === '')) break;
   }
   const project = foldersDown(cwd).slice(foldersDown(root).length - 1).flatMap((dir) => [
     ...['GEMINI.md', 'AGENTS.md'].map((name) => path.join(dir, name)).filter(statFile),
@@ -373,7 +373,7 @@ export function shortLocation(file, folder, home, pathApi = path) {
 }
 
 export class InstructionFiles {
-  /** `ceiling` (tests only) is the highest folder Claude Code's walk reaches. */
+  /** `ceiling` (tests only) is the highest folder Claude Code's and Antigravity CLI's walks reach. */
   constructor({ env = process.env, platform = process.platform, resolveCwd, inspect = grokInspect, ceiling = null, home = os.homedir() }) {
     this.env = env;
     this.platform = platform;
@@ -393,7 +393,7 @@ export class InstructionFiles {
     try {
       resolved = source === 'claude' ? claudeRows(env, folder, this.platform, this.ceiling)
         : source === 'codex' ? codexRows(env, folder, this.platform)
-          : source === 'google' ? googleRows(env, folder, this.platform)
+          : source === 'google' ? googleRows(env, folder, this.platform, this.ceiling)
             : await grokRows(env, folder, this.platform, this.inspect, provider.command || 'grok');
     } catch (err) {
       if (source !== 'grok') throw err;

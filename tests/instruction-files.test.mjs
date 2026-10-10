@@ -187,7 +187,7 @@ test('Antigravity CLI: all global names, both names per folder up to the repo ro
   write('above/repo/sub/AGENTS.md');
   fs.symlinkSync(at('above/repo/.agents'), at('above/repo/sub/.agent'), 'junction');
   const home = at('home');
-  const reader = new InstructionFiles({ env: { USERPROFILE: home, HOME: home }, resolveCwd: (cwd) => cwd });
+  const reader = new InstructionFiles({ env: { USERPROFILE: home, HOME: home }, resolveCwd: (cwd) => cwd, ceiling: root });
 
   const listed = await reader.list(provider('google'), account, at('above/repo/sub'));
   assert.deepEqual(rows(listed, root), [
