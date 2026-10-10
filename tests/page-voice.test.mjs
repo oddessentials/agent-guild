@@ -59,7 +59,7 @@ function page({ android = false, available, supported = true, enabled = true, pr
   };
   const session = (id) => ({ id, name: id, status: 'running', startedAt: '2026-10-03T10:00:00Z', provider: { tool: 'Shell' } });
   const view = (id) => ({
-    mount: noop, unmount: noop, dispose: noop,
+    mount: noop, unmount: noop, dispose: noop, reclaim: noop,
     term: { paste: (text) => pasted.push({ id, text }), focus: noop, write: noop },
   });
   class Recognition {

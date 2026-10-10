@@ -898,7 +898,9 @@ Messages in both directions are JSON text frames.
 
 ### `GET /api/v1/events`
 
-This socket pushes changes to every session. It is server-to-client only.
+This socket pushes changes to every session. The only message it reads is
+`{ type: "ping" }`, which it answers with `{ type: "pong" }`, so a client can
+tell a live link from a dead one; browsers cannot see WebSocket protocol pings.
 
 | Message | Meaning |
 | --- | --- |
@@ -929,7 +931,8 @@ Server to client:
 | --- | --- |
 | `{ type: "snapshot", data, cols, rows, session }` | Always first. `data` is a VT escape sequence stream that redraws the current screen and scrollback. Reset the terminal and write it. |
 | `{ type: "data", data }` | Terminal output, in order, directly after the snapshot. |
-| `{ type: "resize", cols, rows }` | Another client changed the terminal size. |
+| `{ type: "resize", cols, rows }` | A client changed the terminal size, this one included. A client that shows another size should draw at this one until its user returns to it. |
+| `{ type: "pong" }` | The answer to a `ping`. |
 | `{ type: "exit", exitCode, signal }` | The process ended. Also sent after the snapshot when attaching to an exited session. |
 | `{ type: "removed" }` | The session was removed. The socket then closes with code 4410. |
 
@@ -938,7 +941,8 @@ Client to server:
 | Message | Meaning |
 | --- | --- |
 | `{ type: "input", data }` | Keystrokes or pasted text, exactly as a terminal would send them. |
-| `{ type: "resize", cols, rows }` | Resize the terminal. The last client to resize wins, for every attached client, so a client that only watches should render the snapshot's `cols` and `rows` and send none; the phone view sends one only when asked to fit. |
+| `{ type: "resize", cols, rows }` | Resize the terminal. The last client to resize wins, for every attached client, so a client that only watches should render the snapshot's `cols` and `rows` and send none; the phone view sends one only when asked to fit, and gives the size back when it stops fitting or leaves the terminal. |
+| `{ type: "ping" }` | Answered with `{ type: "pong" }`, as on the events socket. |
 
 ### Terminal queries: clients must not answer
 

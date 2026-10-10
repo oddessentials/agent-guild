@@ -20,8 +20,14 @@ const THEME_KEY = 'agentGuild.theme';
 const RECENT_KEY = 'agentGuild.recentCwds';
 const CWD_KEY = 'agentGuild.mobile.cwd';
 const FONT_KEY = 'agentGuild.mobile.fontSize';
+const TERMINAL_FONT = 'ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace';
 const TERMINAL_THEME = { background: '#0f1115', foreground: '#e6e9ef', cursor: '#e6e9ef', selectionBackground: '#3a4050' };
 const RELATIVE_TIME_MS = 30000;
+// A request that has not answered by then is reported, so no button waits on a dead network.
+const REQUEST_TIMEOUT_MS = 15000;
+// A link that has said nothing for a while is asked for a pong; no pong in time means it is dead.
+const PING_AFTER_MS = 20000;
+const PONG_WITHIN_MS = 8000;
 
 function load(key) { try { return localStorage.getItem(key); } catch { return null; } }
 function save(key, value) {
@@ -31,7 +37,7 @@ function save(key, value) {
 class AuthError extends Error {}
 
 const state = {
-  token: null, connected: false, away: false, revoked: false, stopping: false, restarting: false, platform: null,
+  token: null, connected: false, link: 'wait', away: false, revoked: false, stopping: false, restarting: false, platform: null,
   sessions: new Map(), providers: [], events: null, retry: 0, terminal: null,
   fontSize: FONT_SIZES.includes(Number(load(FONT_KEY))) ? Number(load(FONT_KEY)) : DEFAULT_FONT_SIZE,
 };
@@ -39,20 +45,35 @@ const state = {
 // ---- API -----------------------------------------------------------------
 
 async function api(method, path, body) {
-  const res = await fetch(`/api/v1${path}`, {
-    method,
-    headers: { Authorization: `Bearer ${state.token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  let res;
+  try {
+    res = await fetch(`/api/v1${path}`, {
+      method,
+      headers: { Authorization: `Bearer ${state.token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch (err) {
+    throw new Error(err?.name === 'TimeoutError'
+      ? 'The session manager did not answer in time. Check your connection and try again.'
+      : 'The session manager could not be reached. Check your connection and try again.');
+  }
   if (res.status === 401) throw new AuthError('The access token was rejected.');
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw Object.assign(new Error(data?.error?.message || `Request failed (HTTP ${res.status})`), data?.error);
   return data;
 }
 
-function wsUrl(path) {
+function openSocket(path) {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  return `${proto}://${location.host}/api/v1${path}?token=${encodeURIComponent(state.token)}`;
+  const ws = new WebSocket(`${proto}://${location.host}/api/v1${path}?token=${encodeURIComponent(state.token)}`);
+  // Anything heard proves the link; checkLinks asks a quiet one for a pong.
+  ws.heardAt = Date.now();
+  ws.pingedAt = 0;
+  const heard = () => { ws.heardAt = Date.now(); };
+  ws.addEventListener('open', heard);
+  ws.addEventListener('message', heard);
+  return ws;
 }
 
 // ---- small UI -------------------------------------------------------------
@@ -63,7 +84,9 @@ function setConnection(kind, text, title = text) {
   el.classList.toggle('down', kind === 'down');
   el.querySelector('.label').textContent = text;
   el.title = title;
-  controls.refresh();
+  state.link = kind;
+  renderEmpty();
+  refreshTerminal();
 }
 
 function notice(text) {
@@ -125,7 +148,19 @@ function renderList() {
   for (const [id, li] of known) if (!state.sessions.has(id)) li.remove();
   // append moves a row already in the list, so only the order changes.
   if (rows.some((li, index) => list.children[index] !== li)) list.append(...rows);
-  $('empty').hidden = ordered.length > 0;
+  renderEmpty();
+}
+
+/** Without the manager the list is what was last known, and an empty one says so rather than "No sessions". */
+function renderEmpty() {
+  $('list').classList.toggle('offline', !state.connected);
+  $('new-open').disabled = !state.connected;
+  $('empty').hidden = state.sessions.size > 0;
+  $('empty').textContent = state.connected
+    ? 'No sessions. Start one with New. Sessions keep running when you close this page.'
+    : state.link === 'down'
+      ? 'Not connected to the session manager. This page keeps trying; your sessions keep running.'
+      : 'Connecting to the session manager…';
 }
 
 function rowButton(session) {
@@ -184,25 +219,34 @@ function suppressQueryReplies(term) {
 }
 
 class TerminalView {
-  constructor(session) {
+  /** `fit`: start fitted, for a session this phone started. */
+  constructor(session, { fit = false } = {}) {
     this.id = session.id;
     this.run = session.startedAt;
     /** The size the manager has, kept while this view observes; Fit goes back to it. */
     this.observed = { cols: session.cols, rows: session.rows };
-    this.fitting = false;
+    this.fitting = fit;
     this.sent = null;
+    /** Sizes this view sent that the manager has not echoed yet; a quick second fit must not read the first one's echo as another client's. */
+    this.echoes = [];
     this.ready = false;
     this.disposed = false;
     this.retry = 0;
     this.ws = null;
     this.term = new window.Terminal({
       cols: session.cols, rows: session.rows, cursorBlink: false, scrollback: 5000, allowProposedApi: true,
-      fontFamily: 'ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace', fontSize: state.fontSize, theme: TERMINAL_THEME,
+      fontFamily: TERMINAL_FONT, fontSize: state.fontSize, theme: TERMINAL_THEME,
     });
     this.fit = new window.FitAddon.FitAddon();
     this.term.loadAddon(this.fit);
     suppressQueryReplies(this.term);
-    this.term.onData((data) => this.send({ type: 'input', data }));
+    this.term.onData((data) => {
+      if (this.ready && this.ws?.readyState === WebSocket.OPEN) this.send({ type: 'input', data });
+      // Typing that cannot be delivered is said to be lost, never dropped quietly. Escape sequences are xterm's own reports.
+      else if (!data.startsWith('\x1b')) {
+        toast(state.sessions.get(this.id)?.status === 'running' ? 'Not sent: the terminal is reconnecting.' : 'Not sent: this session has ended.');
+      }
+    });
     this.term.open($('term-host'));
     this.term.textarea?.addEventListener('focus', renderKeyboard);
     this.term.textarea?.addEventListener('blur', renderKeyboard);
@@ -218,20 +262,17 @@ class TerminalView {
     this.ws = null;
     previous?.close();
     this.ready = false;
-    controls.refresh();
-    const ws = new WebSocket(wsUrl(`/sessions/${this.id}/terminal`));
+    refreshTerminal();
+    const ws = openSocket(`/sessions/${this.id}/terminal`);
     this.ws = ws;
-    ws.onopen = () => {
-      if (this.ws !== ws) return;
-      this.retry = 0;
-      this.sent = null;
-      if (this.fitting) this.refit({ force: true });
-    };
+    this.echoes = [];
+    // The snapshot, always first, sizes the terminal, and fits it again while this view fits.
+    ws.onopen = () => { if (this.ws === ws) this.retry = 0; };
     ws.onmessage = (event) => { if (!this.disposed && this.ws === ws) this.onMessage(JSON.parse(event.data)); };
     ws.onclose = (event) => {
       if (this.ws !== ws) return;
       this.ready = false;
-      controls.refresh();
+      refreshTerminal();
       if (this.disposed || state.away || [4403, 4404, 4410].includes(event.code)) return;
       const delay = Math.min(5000, 300 * 2 ** this.retry++);
       setTimeout(() => { if (this.ws === ws) this.connect(); }, delay);
@@ -241,7 +282,9 @@ class TerminalView {
   onMessage(msg) {
     if (msg.type === 'snapshot') {
       this.run = msg.session.startedAt;
-      this.observed = { cols: msg.cols, rows: msg.rows };
+      // Back after a dropped link: still at this view's fit means nobody else resized the terminal meanwhile.
+      if (this.fitting && this.sent && (msg.cols !== this.sent.cols || msg.rows !== this.sent.rows)) this.yieldFit();
+      if (!(this.fitting && this.sent)) this.observed = { cols: msg.cols, rows: msg.rows };
       this.term.reset();
       if (this.fitting) this.refit({ force: true });
       else this.term.resize(msg.cols, msg.rows);
@@ -249,7 +292,7 @@ class TerminalView {
       this.term.write(msg.data, () => {
         if (this.disposed || this.ws !== ws || ws.readyState !== WebSocket.OPEN) return;
         this.ready = msg.session.status === 'running';
-        controls.refresh();
+        refreshTerminal();
       });
     } else if (msg.type === 'data') {
       this.term.write(msg.data);
@@ -257,7 +300,7 @@ class TerminalView {
       this.onResized(msg);
     } else if (msg.type === 'exit') {
       this.ready = false;
-      controls.refresh();
+      refreshTerminal();
       stopDictation();
       this.term.write(`\r\n\x1b[2m${exitLine(state.sessions.get(this.id), msg)}\x1b[0m\r\n`);
     } else if (msg.type === 'removed') {
@@ -267,15 +310,31 @@ class TerminalView {
 
   /** Another client's size, or the echo of this view's own fit. The last client to resize wins, so Fit yields. */
   onResized({ cols, rows }) {
-    if (this.fitting && this.sent && cols === this.sent.cols && rows === this.sent.rows) return;
-    if (this.fitting) {
-      this.fitting = false;
-      this.sent = null;
-      renderFit();
-      toast('Another client resized the terminal; showing its size.');
+    const own = this.echoes.findIndex((size) => size.cols === cols && size.rows === rows);
+    if (own >= 0) {
+      this.echoes.splice(0, own + 1);
+      return;
     }
+    if (this.fitting) this.yieldFit();
     this.observed = { cols, rows };
     this.term.resize(cols, rows);
+  }
+
+  yieldFit() {
+    this.fitting = false;
+    this.sent = null;
+    renderFit();
+    toast('Another client resized the terminal; showing its size.');
+  }
+
+  /**
+   * Gives the terminal back the size it had before this view fitted it, when the view leaves it or the phone
+   * goes to the background, so the computer's screen is whole again. Fit stays on and applies again on return.
+   */
+  handBack() {
+    if (!this.fitting || !this.sent) return;
+    this.sent = null;
+    this.send({ type: 'resize', cols: this.observed.cols, rows: this.observed.rows });
   }
 
   send(message) {
@@ -284,12 +343,13 @@ class TerminalView {
 
   setFitting(on) {
     if (this.fitting === on) return;
-    this.fitting = on;
-    if (on) this.refit({ force: true });
-    else {
-      this.sent = null;
+    if (on) {
+      this.fitting = true;
+      this.refit({ force: true });
+    } else {
+      this.handBack();
+      this.fitting = false;
       this.term.resize(this.observed.cols, this.observed.rows);
-      this.send({ type: 'resize', cols: this.observed.cols, rows: this.observed.rows });
     }
     renderFit();
   }
@@ -297,9 +357,12 @@ class TerminalView {
   refit({ force = false } = {}) {
     if (!this.fitting || this.disposed) return;
     try { this.fit.fit(); } catch { return; }
+    // Between links the snapshot fits again; `sent` is only what the manager has actually been told.
+    if (this.ws?.readyState !== WebSocket.OPEN) return;
     const { cols, rows } = this.term;
     if (!force && this.sent && cols === this.sent.cols && rows === this.sent.rows) return;
     this.sent = { cols, rows };
+    this.echoes.push(this.sent);
     this.send({ type: 'resize', cols, rows });
   }
 
@@ -359,11 +422,12 @@ class TerminalView {
 
   /** The page went to the background: drop the socket; the snapshot brings the screen back on return. */
   suspend() {
+    this.handBack();
     const ws = this.ws;
     this.ws = null;
     ws?.close();
     this.ready = false;
-    controls.refresh();
+    refreshTerminal();
   }
 
   resume() {
@@ -371,6 +435,7 @@ class TerminalView {
   }
 
   dispose() {
+    this.handBack();
     this.disposed = true;
     this.resizeObserver.disconnect();
     const ws = this.ws;
@@ -381,12 +446,12 @@ class TerminalView {
   }
 }
 
-function openTerminal(id, { push = true } = {}) {
+function openTerminal(id, { push = true, fit = false } = {}) {
   const session = state.sessions.get(id);
   if (!session) return;
   if (state.terminal?.id !== id) {
     state.terminal?.dispose();
-    state.terminal = new TerminalView(session);
+    state.terminal = new TerminalView(session, { fit });
   }
   $('list').hidden = true;
   $('terminal').hidden = false;
@@ -425,7 +490,7 @@ function syncTerminal() {
   $('reattach').hidden = !session.multiplexer?.reattachable;
   if (running && session.startedAt !== view.run && view.ws?.readyState === WebSocket.OPEN) view.connect();
   renderFit();
-  controls.refresh();
+  refreshTerminal();
 }
 
 function renderFit() {
@@ -461,6 +526,33 @@ function currentTarget() {
 }
 
 const controls = new TerminalControls({ element: $('terminal-controls'), panel: $('terminal'), getCurrent: currentTarget });
+
+/** The terminal's own link, which the top bar's dot does not cover. An attach takes a moment, so only a lasting gap shows. */
+let linkTimer = null;
+function renderLink() {
+  const view = state.terminal;
+  const session = view && state.sessions.get(view.id);
+  const down = Boolean(view && !view.disposed && session?.status === 'running' && !view.ready);
+  if (!down) {
+    clearTimeout(linkTimer);
+    linkTimer = null;
+    $('terminal-link').hidden = true;
+    return;
+  }
+  if (linkTimer || !$('terminal-link').hidden) return;
+  linkTimer = setTimeout(() => {
+    linkTimer = null;
+    $('terminal-link').textContent = state.revoked
+      ? 'Remote access changed on the manager. Open an enabled address to reconnect.'
+      : 'Reconnecting… What you type is not sent until the terminal is back.';
+    $('terminal-link').hidden = false;
+  }, 1000);
+}
+
+function refreshTerminal() {
+  controls.refresh();
+  renderLink();
+}
 bindTerminalViewport($('terminal'), $('terminal-controls'));
 
 // xterm.js cannot select text under a finger, so the full page's copy sheet shows the screen as text with the
@@ -770,7 +862,8 @@ async function startSession({ resume = null, cwd = null } = {}) {
   const provider = state.providers.find((candidate) => candidate.id === newView.providerId);
   if (!provider) return;
   const folder = (cwd ?? $('new-cwd').value).trim();
-  const body = { providerId: provider.id, cols: 120, rows: 32 };
+  // Started here, so sized for here: the tool draws its first screen at about this phone's size, and Fit makes it exact.
+  const body = { providerId: provider.id, ...phoneSize() };
   if (!$('new-account-row').hidden) body.account = $('new-account').value;
   if (!$('new-shell-row').hidden) body.shell = $('new-shell').value;
   if (folder) body.cwd = folder;
@@ -784,7 +877,7 @@ async function startSession({ resume = null, cwd = null } = {}) {
     save(RECENT_KEY, JSON.stringify(rememberFolder(readRecentFolders(load(RECENT_KEY)), session.cwd, { caseless: state.platform === 'win32' })));
     $('new').close();
     renderList();
-    openTerminal(session.id);
+    openTerminal(session.id, { fit: true });
   } catch (err) {
     if (err instanceof AuthError) return showAuth(err.message);
     $('new-error').textContent = err.message;
@@ -792,6 +885,18 @@ async function startSession({ resume = null, cwd = null } = {}) {
   } finally {
     $('new-start').disabled = false;
   }
+}
+
+/** About the terminal size that fills this phone at the chosen text size, before there is a terminal to measure. */
+function phoneSize() {
+  const context = document.createElement('canvas').getContext('2d');
+  context.font = `${state.fontSize}px ${TERMINAL_FONT}`;
+  const cell = context.measureText('W').width || state.fontSize * 0.6;
+  // The bar above and the keys below take about 120px; a terminal line is about 1.2 times the text size.
+  return {
+    cols: Math.max(20, Math.floor((innerWidth - 12) / cell)),
+    rows: Math.max(10, Math.floor((innerHeight - 120) / (state.fontSize * 1.2))),
+  };
 }
 
 function historyNote(text) {
@@ -889,7 +994,7 @@ $('confirm-no').addEventListener('click', () => $('confirm').close('no'));
 
 function connectEvents() {
   if (state.away || state.revoked || !state.token) return;
-  const ws = new WebSocket(wsUrl('/events'));
+  const ws = openSocket('/events');
   state.events = ws;
   ws.onopen = () => {
     if (state.events !== ws) return;
@@ -941,14 +1046,46 @@ function connectEvents() {
       return;
     }
     setConnection('down', state.stopping ? (state.restarting ? 'Waiting for the manager…' : 'Manager stopped') : 'Reconnecting…');
+    renderEmpty();
     const delay = Math.min(5000, 500 * 2 ** state.retry++);
-    setTimeout(async () => {
+    setTimeout(() => {
       if (state.away || state.events !== ws) return;
-      try { await loadProviders(); } catch (err) { if (err instanceof AuthError) return showAuth(err.message); }
-      if (!state.away && state.events === ws) connectEvents();
+      connectEvents();
+      refreshProviders();
     }, delay);
   };
 }
+
+/**
+ * Asks each quiet link for a pong and replaces one that does not answer: after a move between networks a
+ * socket can stay open on a dead connection for minutes while the page says "Connected". `probe` asks now.
+ */
+function checkLinks({ probe = false } = {}) {
+  if (state.away || document.visibilityState !== 'visible') return;
+  const now = Date.now();
+  for (const [ws, replace] of [[state.events, reconnectEvents], [state.terminal?.ws, () => state.terminal?.connect()]]) {
+    if (ws?.readyState !== WebSocket.OPEN) continue;
+    if (ws.pingedAt > ws.heardAt) {
+      if (now - ws.pingedAt > PONG_WITHIN_MS) replace();
+    } else if (probe || now - ws.heardAt > PING_AFTER_MS) {
+      ws.pingedAt = now;
+      ws.send(JSON.stringify({ type: 'ping' }));
+    }
+  }
+}
+
+function reconnectEvents() {
+  const ws = state.events;
+  state.events = null;
+  ws?.close();
+  state.connected = false;
+  setConnection('down', 'Reconnecting…');
+  connectEvents();
+}
+
+setInterval(checkLinks, 4000);
+addEventListener('online', () => checkLinks({ probe: true }));
+navigator.connection?.addEventListener?.('change', () => checkLinks({ probe: true }));
 
 /** The page is leaving the screen: drop both sockets so the manager sees the phone go, and reconnect on return. */
 function suspendAll() {
@@ -997,6 +1134,17 @@ async function loadProviders() {
   renderNewProviders();
 }
 
+/** Providers, and with them a check of the token, which a refused WebSocket cannot report. Never holds up the list. */
+function refreshProviders() {
+  const token = state.token;
+  loadProviders().catch((err) => {
+    if (!(err instanceof AuthError) || state.token !== token) return;
+    save(TOKEN_KEY, null);
+    state.token = null;
+    showAuth(err.message);
+  });
+}
+
 function showAuth(message = '') {
   closeTerminal();
   closeDialogs();
@@ -1011,25 +1159,18 @@ function showAuth(message = '') {
   setConnection('down', 'Not connected');
 }
 
-async function boot() {
+/** The list shows at once and fills from the events socket; a rejected token goes back to sign-in when the check answers. */
+function boot() {
   $('auth').hidden = true;
   $('auth-error').textContent = '';
   state.revoked = false;
-  try {
-    await loadProviders();
-  } catch (err) {
-    if (err instanceof AuthError) {
-      save(TOKEN_KEY, null);
-      state.token = null;
-      return showAuth(err.message);
-    }
-    setConnection('down', 'Session manager not reachable');
-  }
   save(TOKEN_KEY, state.token);
   $('list').hidden = Boolean(state.terminal);
   $('more').hidden = false;
+  setConnection('wait', 'Connecting…');
   renderList();
   connectEvents();
+  refreshProviders();
 }
 
 $('auth-form').addEventListener('submit', (event) => {

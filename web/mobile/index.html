@@ -53,7 +53,7 @@
       <button id="new-open" class="btn primary" type="button" aria-haspopup="dialog">New</button>
     </div>
     <ol id="sessions" class="sessions" role="list"></ol>
-    <p id="empty" class="empty">No sessions. Start one with New. Sessions keep running when you close this page.</p>
+    <p id="empty" class="empty">Connecting to the session manager…</p>
   </section>
 
   <section id="terminal" class="terminal-page" hidden role="region" aria-labelledby="terminal-name">
@@ -70,6 +70,7 @@
     </div>
     <div id="term-host" class="term-host"></div>
     <div id="voice-preview" class="voice-preview" hidden aria-live="polite"></div>
+    <p id="terminal-link" class="terminal-link" role="status" hidden></p>
     <div id="terminal-controls" class="terminal-controls" role="group" aria-label="Terminal keys">
       <button class="terminal-key" type="button" data-key="ArrowLeft" aria-label="Left arrow">←</button>
       <button class="terminal-key" type="button" data-key="ArrowUp" aria-label="Up arrow">↑</button>

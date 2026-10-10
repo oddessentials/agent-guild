@@ -83,6 +83,21 @@ try {
       assert.ok(measured.left >= 0 && measured.right <= measured.width && !measured.overflow && measured.outside === 0, `${selector} ${JSON.stringify(measured)}`);
     };
 
+    // Without the manager: the list says so instead of "No sessions", and New waits for it.
+    const { identifier: offline } = await send('Page.addScriptToEvaluateOnNewDocument', { source: `
+      window.fetch = () => Promise.reject(new TypeError('offline'));
+      window.WebSocket = class extends WebSocket { constructor(url) { super(String(url).replace(location.host, '127.0.0.1:9')); } };
+    ` });
+    await send('Page.navigate', { url: `${ctx.api.url}/mobile/#token=${ctx.token}` });
+    await until('not connected', () => evaluate(`Boolean(document.querySelector('#empty')?.textContent.startsWith('Not connected') && !document.querySelector('#empty').hidden)`));
+    assert.equal(await evaluate(`document.querySelector('#new-open').disabled`), true);
+    assert.equal(await evaluate(`document.querySelector('#auth').hidden`), true, 'an unreachable manager is not a rejected token');
+    pass('without the manager the list says it is not connected, not that there are no sessions');
+    await send('Page.removeScriptToEvaluateOnNewDocument', { identifier: offline });
+    // A new document: navigating to the same page with only a new fragment would not load it again.
+    await send('Page.navigate', { url: 'about:blank' });
+    await until('blank', () => evaluate('location.href === "about:blank"'));
+
     await send('Page.navigate', { url: `${ctx.api.url}/mobile/#token=${ctx.token}` });
     await until('sessions list', () => evaluate(`document.querySelector('#list')?.hidden===false && document.querySelector('#auth')?.hidden===true`));
     assert.equal(await evaluate('location.hash'), '');
@@ -178,8 +193,11 @@ try {
     await until('fitted badge', () => evaluate(`!document.querySelector('#fit-badge').hidden`));
     const fitted = sessionOf(session.id);
     assert.ok(fitted.cols >= 20 && fitted.rows >= 10, JSON.stringify(fitted));
-    await typeLine('size');
-    await until('PTY sees the phone size', async () => (await screen()).includes(`SIZE:${fitted.cols}x${fitted.rows}`));
+    // A Node child inside ConPTY can keep reporting its old size (see manager.test.mjs); the manager's size is the check there.
+    if (process.platform !== 'win32') {
+      await typeLine('size');
+      await until('PTY sees the phone size', async () => (await screen()).includes(`SIZE:${fitted.cols}x${fitted.rows}`));
+    }
     await capture('fitted');
     pass('Fit resizes the PTY to the phone on purpose and says so');
 
@@ -198,6 +216,17 @@ try {
     await until('size given back', () => { const s = sessionOf(session.id); return s.cols === 100 && s.rows === 30; });
     assert.equal(await evaluate(`document.querySelector('#fit-badge').hidden`), true);
     pass('stopping Fit gives the terminal back the size the manager had');
+
+    await openMenu();
+    await withDialogClose(evaluate, '#menu', () => tap('#fit-toggle'));
+    await until('fitted once more', () => sessionOf(session.id).cols < 100);
+    await tap('#back');
+    await until('size given back on leaving', () => { const s = sessionOf(session.id); return s.cols === 100 && s.rows === 30; });
+    await tap(`${row} .row-button`);
+    await until('terminal again', () => evaluate(`!document.querySelector('#terminal').hidden`));
+    await until('keys ready again', () => evaluate(`!document.querySelector('#terminal-controls [data-key=Enter]').disabled`));
+    assert.equal(await evaluate(`document.querySelector('#fit-badge').hidden`), true);
+    pass('leaving a fitted terminal gives the computer its size back');
 
     await openMenu();
     assert.equal(await evaluate(`document.querySelector('#remove').hidden`), true);
@@ -252,9 +281,12 @@ try {
     await until('session started in the chosen folder', () => [...ctx.manager.sessions.values()].some((s) => s.toJSON().cwd === beta));
     await until('terminal opened', () => evaluate(`!document.querySelector('#terminal').hidden`));
     await until('ready in beta', async () => (await screen()).includes(`cwd=${beta}`));
+    await until('started fitted', () => evaluate(`!document.querySelector('#fit-badge').hidden`));
+    const started = [...ctx.manager.sessions.values()].find((s) => s.toJSON().cwd === beta).toJSON();
+    assert.ok(started.cols < 80, `a session started on the phone is sized for it: ${started.cols}×${started.rows}`);
     assert.deepEqual(JSON.parse(await evaluate(`localStorage.getItem('agentGuild.recentCwds')`)), [beta]);
     assert.equal(await evaluate(`localStorage.getItem('agentGuild.mobile.cwd')`), beta);
-    pass('New starts a session in a folder picked with the browser and remembers it for the full page');
+    pass('New starts a session sized for the phone in a folder picked with the browser, and remembers the folder for the full page');
 
     await tap('#back');
     await until('list again', () => evaluate(`!document.querySelector('#list').hidden && document.querySelector('#terminal').hidden`));

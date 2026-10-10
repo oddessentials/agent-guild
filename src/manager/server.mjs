@@ -652,7 +652,14 @@ export function createManagerServer({
     else hello.notesUnreadable = true;
     safeSend(ws, hello);
     ws.on('close', () => eventClients.delete(ws));
-    ws.on('message', () => { /* events socket is server -> client only */ });
+    // Only a ping is read here: a browser cannot see the protocol pings, so a client that must notice a dead
+    // link (a phone between networks) sends its own and expects a pong.
+    ws.on('message', (raw, isBinary) => {
+      if (isBinary) return;
+      let msg;
+      try { msg = JSON.parse(raw.toString('utf8')); } catch { return; }
+      if (msg.type === 'ping') safeSend(ws, { type: 'pong' });
+    });
   }
 
   function handleTerminal(ws, id) {
@@ -676,6 +683,7 @@ export function createManagerServer({
       try { msg = JSON.parse(raw.toString('utf8')); } catch { return; }
       if (msg.type === 'input' && typeof msg.data === 'string') session.input(msg.data);
       else if (msg.type === 'resize') session.resize(msg.cols, msg.rows);
+      else if (msg.type === 'ping') safeSend(ws, { type: 'pong' });
     });
   }
 

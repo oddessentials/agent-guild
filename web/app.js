@@ -5754,12 +5754,16 @@ class TerminalView {
       return true;
     });
     this.term.onData((data) => {
+      this.reclaim();
       this.send({ type: 'input', data });
     });
+    this.el.addEventListener('pointerdown', () => this.reclaim());
     this.opened = false;
     this.disposed = false;
     this.retry = 0;
     this.sent = { cols: 0, rows: 0 };
+    /** Another client, such as a phone, resized the terminal; this page shows that size until it is used again. */
+    this.taken = false;
     this.resizeObserver = new ResizeObserver(() => this.scheduleFit());
     this.connect();
   }
@@ -5824,6 +5828,13 @@ class TerminalView {
       case 'data':
         this.term.write(msg.data);
         break;
+      case 'resize':
+        // The last client to resize wins. Draw at its size, so the screen stays whole, rather than at this pane's.
+        if (msg.cols === this.sent.cols && msg.rows === this.sent.rows) break;
+        this.taken = true;
+        this.sent = { cols: msg.cols, rows: msg.rows };
+        this.term.resize(msg.cols, msg.rows);
+        break;
       case 'exit':
         this.inputReady = false;
         this.inputSnapshot = null;
@@ -5849,7 +5860,12 @@ class TerminalView {
 
   mount(host, { focus = true } = {}) {
     host.replaceChildren(this.el);
-    if (!this.opened) { this.term.open(this.el); this.enableTouchScroll(); this.opened = true; }
+    if (!this.opened) {
+      this.term.open(this.el);
+      this.term.textarea?.addEventListener('focus', () => this.reclaim());
+      this.enableTouchScroll();
+      this.opened = true;
+    }
     this.resizeObserver.observe(host);
     this.refit();
     if (focus) this.term.focus();
@@ -5904,8 +5920,14 @@ class TerminalView {
     this.fitFrame = requestAnimationFrame(() => this.refit());
   }
 
+  /** Coming back to this page's terminal takes it back at this pane's size. */
+  reclaim() {
+    if (this.taken) this.refit();
+  }
+
   refit() {
     if (!this.el.isConnected) return;
+    this.taken = false;
     try { this.fit.fit(); } catch { /* not measurable yet */ }
     this.sendSize();
   }
@@ -6837,12 +6859,17 @@ document.addEventListener('visibilitychange', () => {
     flushNotes();
   }
   if (document.visibilityState === 'visible' && state.connected && Date.now() - newsLoadedAt > 60000) loadNews();
-  if (document.visibilityState === 'visible') recheckPtyBuild();
+  if (document.visibilityState === 'visible') {
+    recheckPtyBuild();
+    for (const id of state.panes) state.views.get(id)?.reclaim();
+  }
   if (document.visibilityState === 'visible' && dockShows('github') && githubShownView() === 'actions') loadView('actions');
   else scheduleRuns();
   if (branchesVisible() && !viewData('branches')?.error) loadBranches({ resume: true });
 });
 addEventListener('focus', recheckPtyBuild);
+// Back at the desk after a phone fitted a terminal: the panes take their own size again.
+addEventListener('focus', () => { for (const id of state.panes) state.views.get(id)?.reclaim(); });
 // Files may have changed in an editor while the page was in the background.
 addEventListener('focus', () => refreshInstructionCounts());
 addEventListener('pagehide', () => {

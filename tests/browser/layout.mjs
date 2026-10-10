@@ -13,7 +13,9 @@ window.Terminal=class extends RealTerminal {
   write(data,callback){super.write(data,()=>{callback?.();this.testParsed=true;});}
 };
 const DemoSocket=window.WebSocket;
+window.testSockets=[];
 window.WebSocket=class extends DemoSocket {
+  constructor(...args){super(...args);testSockets.push(this);}
   send(data){const m=JSON.parse(data);if(m.type==='resize')testSizes.push({url:this.url,cols:m.cols,rows:m.rows});super.send(data);}
 };
 </script>`;
@@ -99,6 +101,17 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   const sized = await evaluate('testSizes.map(s=>s.url.match(/sessions\\/([^/]+)/)[1]+":"+s.cols)');
   assert.ok(sized.includes(`${first}:${shown[0].cols}`) && sized.includes(`${second}:${shown[1].cols}`), 'each session hears its own size');
   pass('Ctrl+click on a card opens a second terminal beside the first, each sized for its own pane');
+
+  // A phone fits the first session: this page draws at the phone's size, then takes its own back when used again.
+  const told = await evaluate('testSizes.length');
+  await evaluate(`testSockets.filter(s=>s.url.includes('/sessions/${first}/terminal')).at(-1).onmessage({data:JSON.stringify({type:'resize',cols:40,rows:12})})`);
+  await until('drawn at the other size', async () => (await panes())[0].cols === 40 && (await panes())[0].rows === 12);
+  assert.equal(await evaluate('testSizes.length'), told, "another client's size is not answered");
+  await evaluate('document.querySelector(".terminal-pane[data-pane=\\"0\\"] .xterm").dispatchEvent(new PointerEvent("pointerdown",{bubbles:true}))');
+  await until('taken back', async () => (await panes())[0].cols > 40);
+  const reclaimed = (await panes())[0];
+  assert.deepEqual(await evaluate(`testSizes.slice(${told}).map(s=>s.url.match(/sessions\\/([^/]+)/)[1]+":"+s.cols+"x"+s.rows)`), [`${first}:${reclaimed.cols}x${reclaimed.rows}`]);
+  pass('a size set by another client is drawn as is, and a touch on the pane takes the terminal back');
 
   await evaluate('document.querySelector(".terminal-pane[data-pane=\\"0\\"] .terminal-host").dispatchEvent(new PointerEvent("pointerdown",{bubbles:true}))');
   assert.deepEqual((await panes()).map((p) => p.focused), [true, false]);

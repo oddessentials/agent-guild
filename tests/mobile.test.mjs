@@ -158,6 +158,23 @@ test('the manager serves the phone view from its folder, with the manifest type 
   assert.equal((await request(api, '/mobile/', { Host: 'guild.example.ts.net' })).status, 403, 'the same Host policy applies');
 });
 
+test('the events socket answers a ping, so a phone can tell a dead link from a quiet one', async (t) => {
+  const api = await server(t);
+  const ws = new WebSocket(`${api.url.replace('http:', 'ws:')}/api/v1/events?token=test-manager-token`);
+  t.after(() => ws.close());
+  const types = [];
+  const pong = new Promise((resolve) => {
+    ws.onmessage = (event) => {
+      const { type } = JSON.parse(event.data);
+      types.push(type);
+      if (type === 'hello') ws.send(JSON.stringify({ type: 'ping' }));
+      if (type === 'pong') resolve();
+    };
+  });
+  await pong;
+  assert.deepEqual(types, ['hello', 'pong']);
+});
+
 async function server(t, options = {}) {
   const manager = Object.assign(new EventEmitter(), { list: () => [], get: () => { throw Object.assign(new Error('no session'), { status: 404 }); } });
   const registry = Object.assign(new EventEmitter(), { warnings: [] });

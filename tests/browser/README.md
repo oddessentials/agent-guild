@@ -63,11 +63,13 @@ change the machine's trust store, contact Tailscale or use existing accounts.
 
 `node tests/browser/mobile.mjs` opens `web/mobile/` from the sign-in link
 against an isolated manager and a real PTY, at a phone's size with touch
-emulation. It checks that the token leaves the address bar, that a session
+emulation. It checks that an unreachable manager reads as not connected rather than
+as no sessions, that the token leaves the address bar, that a session
 arrives through live events and reads as quiet, that opening it observes the
 manager's terminal size instead of resizing it, typed input and the six touch
 keys plus Tab, the copy sheet with the screen as selectable text, the one-time
-note before Dictate, Fit and its hand-back when another client resizes, Stop
+note before Dictate, Fit, its yielding when another client resizes and its hand-back on leaving the
+terminal, a new session that starts fitted, Stop
 and Remove with their confirmations, a new session through the folder browser,
 a resumed earlier session, sign-out and sign-in from a pasted link, and that no
 CSP violation or page error occurs. Dictation itself needs a microphone and a

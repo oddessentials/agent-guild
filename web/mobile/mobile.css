@@ -113,6 +113,8 @@ a { color: var(--accent); }
 .row.attention .chip { background: color-mix(in srgb, var(--accent) 22%, var(--surface)); color: var(--accent); }
 .row.exited .chip { color: var(--muted); }
 .when { color: var(--muted); font-size: 0.74rem; font-variant-numeric: tabular-nums; }
+/* Without the manager, the rows are what was last known. */
+.list.offline .sessions { opacity: 0.6; }
 .empty { margin: 24px 0; color: var(--muted); font-size: 0.9rem; line-height: 1.5; text-align: center; }
 
 /* The terminal page takes the whole screen. iOS keeps fixed elements at full height under its keyboard, so the
@@ -145,6 +147,13 @@ a { color: var(--accent); }
   font-size: 0.9rem; font-style: italic; overflow-wrap: anywhere; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3); pointer-events: none;
 }
 .terminal-page:has(.terminal-controls[hidden]) .voice-preview { bottom: 12px; }
+/* The terminal's link is down. Over the screen rather than above it, so showing it never changes a fitted size. */
+.terminal-link {
+  position: absolute; left: 12px; right: 12px; bottom: calc(72px + env(safe-area-inset-bottom)); z-index: 2; margin: 0;
+  padding: 8px 12px; border: 1px solid var(--border); border-radius: 10px; background: color-mix(in srgb, var(--warn) 22%, var(--surface));
+  color: var(--text); font-size: 0.9rem; line-height: 1.4; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3); pointer-events: none;
+}
+.terminal-page:has(.terminal-controls[hidden]) .terminal-link { bottom: 12px; }
 .terminal-controls {
   flex: none; display: flex; justify-content: center; gap: 4px;
   padding: 6px max(8px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
