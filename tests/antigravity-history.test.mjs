@@ -108,7 +108,8 @@ test('folder and search filters run before limits, including secondary workspace
   const provider = { id: 'google', history: 'antigravity', env: {} };
   const account = { id: 'default', env: {} };
   const roots = [];
-  const history = new SessionHistory({ registry: {}, platform: 'linux', env: { HOME: f.home }, readers: {
+  // This tests filtering and account isolation, so runner pauses must not expire the fixture cache.
+  const history = new SessionHistory({ registry: {}, platform: 'linux', env: { HOME: f.home }, ttlMs: Infinity, readers: {
     antigravity: async (dir) => {
       roots.push(dir);
       return [{ id: id(1), title: 'Elsewhere', cwd: '/other' }, { id: id(2), title: 'Older', cwd: null, workspaces: ['/work/A', '/work/B'] }, { id: id(3), title: 'Third', cwd: '/work/B' }];
