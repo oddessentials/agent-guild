@@ -6950,6 +6950,17 @@ const scheduleTopbarHeight = () => {
 new ResizeObserver(scheduleTopbarHeight).observe(topbar);
 addEventListener('scroll', scheduleTopbarHeight, { passive: true });
 publishTopbarHeight();
+// The window's width less any scrollbar, which the card row spreads into.
+// Written a frame later and only on change: a write inside the observer would resize what it observes.
+let pageWidth = null;
+const publishPageWidth = () => {
+  const width = `${document.documentElement.clientWidth}px`;
+  if (width === pageWidth) return;
+  pageWidth = width;
+  document.documentElement.style.setProperty('--page-w', width);
+};
+new ResizeObserver(() => requestAnimationFrame(publishPageWidth)).observe(document.documentElement);
+publishPageWidth();
 applyDockLayout();
 
 state.remoteAccessUI = createRemoteAccessUI({ api, getToken: () => state.token, isConnected: () => state.connected, onAuthError: showAuth });

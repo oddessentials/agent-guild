@@ -123,10 +123,11 @@ main { max-width: calc(1200px + var(--dock-space, 0px)); margin: 0 auto; padding
 
 /* Six 220px cards need 1380px, more than main's 1200px column, so the card row alone spreads past the column
    into the window's spare width, centred and never under the dock. Six share the row while each is at least
-   181px wide (the light-theme portraits fill their frame down to about 177px); narrower rows deal three by two. */
-body { container-type: inline-size; }
+   181px wide (the light-theme portraits fill their frame down to about 177px); narrower rows deal three by two.
+   The window width comes from app.js as --page-w: a container on body would keep its background from passing
+   to the window, and body would paint it over the skin art. */
 .launcher {
-  --launch-width: max(100%, min(1380px, 100cqw - 32px - var(--dock-space, 0px)));
+  --launch-width: max(100%, min(1380px, var(--page-w, 100vw) - 32px - var(--dock-space, 0px)));
   container-type: inline-size; width: var(--launch-width); margin-inline: calc((100% - var(--launch-width)) / 2);
 }
 .providers { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
