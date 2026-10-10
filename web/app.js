@@ -132,6 +132,8 @@ function toast(message, ms = 5000, action = null) {
   if (!toastView.held) runToastTimer();
 }
 
+const returnToast = () => { if (!$('toast').hidden) raiseToast(); };
+
 function raiseToast() {
   const el = $('toast');
   const host = [...document.querySelectorAll('dialog')].filter((d) => d.matches(':modal')).pop() ?? document.body;
@@ -139,8 +141,9 @@ function raiseToast() {
   if (el.parentElement !== host) {
     if (el.matches(':popover-open')) el.hidePopover();
     host.append(el);
-    if (host !== document.body) host.addEventListener('close', () => { if (!el.hidden) raiseToast(); }, { once: true });
   }
+  // Every close sends a showing toast back out, a dialog reopened later included; the same listener is added once.
+  if (host !== document.body) host.addEventListener('close', returnToast, { once: true });
   if (!el.matches(':popover-open')) el.showPopover?.();
 }
 

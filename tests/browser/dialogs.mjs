@@ -166,6 +166,20 @@ const checks = await withPage({ name: 'dialogs', instrumentation }, async ({ ori
       await evaluate('document.querySelector("#toast").click()');
       assert.deepEqual(await evaluate(`(()=>{const el=document.querySelector('#toast');return [el.hidden,el.matches(':popover-open')]})()`), [true, false], `${engine} a tap dismisses the toast`);
     }
+    // A toast dismissed inside the dialog stays there; the next one raised after the dialog reopens still outlives it.
+    const raiseInMemory = async (label) => {
+      await evaluate('document.querySelector(".provider[data-id=anthropic] .memory-link").click()');
+      await until(`${engine} memory folder button ${label}`, () => evaluate('Boolean(document.querySelector("#memory .memory-open"))'));
+      await evaluate('document.querySelector("#memory .memory-open").click()');
+      await until(`${engine} toast ${label}`, () => evaluate('!document.querySelector("#toast").hidden'));
+    };
+    await raiseInMemory('before reopening');
+    await evaluate('document.querySelector("#toast").click()');
+    await closeDialog('#memory', '#memory-close');
+    await raiseInMemory('after reopening');
+    await closeDialog('#memory', '#memory-close');
+    assert.deepEqual(await evaluate(`(()=>{const el=document.querySelector('#toast');return [el.parentElement===document.body,el.matches(':popover-open'),el.checkVisibility()]})()`), [true, true, true], `${engine} a toast raised in a reopened dialog outlives it`);
+    await evaluate('document.querySelector("#toast").click()');
     pass(`${engine}: a toast shows above an open dialog, under the top bar on a phone, outlives the dialog and is dismissed by a tap`);
 
     await until(`${engine} environment summary`, () => evaluate('document.querySelectorAll(".provider[data-id=shell] .environment-values dd").length===4'));

@@ -345,11 +345,12 @@ test('Cards and Yard use the same actions, accounts, dialogs and terminal',optio
   assert.equal(f.calls.filter(c=>c[0]==='create').at(-1)[1].cwd,'E:\\projects\\example');
   await closeTerminal(b);
   const creates=f.calls.filter(c=>c[0]==='create').length;
-  await b.click(inspector+' .existing');await b.wait("document.querySelector('#history').open");
+  // The dialog opens before its rows load, so each wait is for the row it clicks.
+  await b.click(inspector+' .existing');await b.wait("document.querySelector('#history-list [data-id=history-1] .history-resume')");
   await b.click('#history-list [data-id="history-1"] .history-resume');await terminalReady(b);
   assert.equal(f.calls.filter(c=>c[0]==='create').length,creates,'history reuses the running session');
   await closeTerminal(b);
-  await b.click(inspector+' .existing');await b.wait("document.querySelector('#history').open");
+  await b.click(inspector+' .existing');await b.wait("document.querySelector('#history-list [data-id=history-missing] .history-resume')");
   await b.click('#history-list [data-id="history-missing"] .history-resume');await terminalReady(b);
   assert.deepEqual(f.calls.filter(c=>c[0]==='create').slice(-2).map(c=>c[1].cwd),['missing','E:\\projects\\parity']);
   await closeTerminal(b);
