@@ -125,6 +125,16 @@ const checks = await withPage({ name: 'dialogs', instrumentation }, async ({ ori
     await closeDialog('#memory', '#memory-close');
     pass(`${engine}: memory lists files, keeps the newest choice over a slower reply, reopens from another card, and fits desktop, tablet and phone`);
 
+    await evaluate('document.querySelector(".provider[data-id=google] .instructions-link").click()');
+    await until(`${engine} instruction files`, () => evaluate('document.querySelectorAll("#memory-list .memory-item").length===3'));
+    assert.equal(await evaluate('document.querySelector("#memory-sub").textContent.split(" · ")[0]'), '2 files load');
+    await evaluate('document.querySelector("#memory-list .memory-item.skipped").click()');
+    await until(`${engine} skipped instruction file`, () => evaluate('document.querySelector("#memory-text").textContent.includes("Shared notes for every coding tool")'));
+    assert.match(await evaluate('document.querySelector("#memory-list .memory-item.skipped .memory-reason").textContent'), /^Skipped because \/work\/storefront\/CLAUDE\.md was found/);
+    await closeDialog('#memory', '#memory-close');
+    assert.equal(await evaluate('document.activeElement===document.querySelector(".provider[data-id=google] .instructions-link")'), true);
+    pass(`${engine}: Instructions counts the files that load, says why one does not, and opens it`);
+
     await until(`${engine} environment summary`, () => evaluate('document.querySelectorAll(".provider[data-id=shell] .environment-values dd").length===4'));
     for (const [width, height] of [[1440, 900], [768, 1024], [390, 844]]) {
       await resize(width, height);

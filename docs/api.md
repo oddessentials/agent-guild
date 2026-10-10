@@ -146,6 +146,8 @@ whether `GET /usage` reports the provider. `historySource` is `claude`,
 `GET /providers/:id/history` can list the tool's earlier sessions.
 `memorySource` is `claude`, `codex`, `grok` or null, and says whether
 `GET /providers/:id/memory` can list what the tool remembers.
+`instructionsSource` is `claude`, `codex`, `grok`, `google` or null, and says whether
+`GET /providers/:id/instructions` can list the instruction files the tool loads.
 `historyDetails` is true for an `antigravity` history source, which also supports
 reading saved messages through `GET /providers/:id/history/detail`.
 `accounts` lists the sign-ins the tool can run under: `default` is the
@@ -517,6 +519,39 @@ no memory there, and `note` says why, or anything else that qualifies the
 scope. A file's `title` is its first `# ` heading, or null. At most 500 files are listed per scope; `truncated` says more exist.
 Links are not followed.
 
+### Instruction files
+
+```json
+{
+  "providerId": "anthropic",
+  "accountId": "default",
+  "folder": "/Users/me/src/app",
+  "count": 2,
+  "note": null,
+  "scopes": [
+    { "id": "global", "label": "Global", "note": null,
+      "files": [{ "index": 0, "path": "/Users/me/.claude/CLAUDE.md", "scope": "global", "bytes": 512, "modified": "2026-10-01T13:49:28.000Z", "skipped": null, "note": null }] },
+    { "id": "project", "label": "Project", "note": null,
+      "files": [
+        { "index": 1, "path": "/Users/me/src/app/CLAUDE.md", "scope": "project", "bytes": 2048, "modified": "2026-10-01T13:49:28.000Z", "skipped": null, "note": null },
+        { "index": 2, "path": "/Users/me/src/app/AGENTS.md", "scope": "project", "bytes": 900, "modified": "2026-10-01T13:49:28.000Z", "skipped": "Skipped because /Users/me/src/app/CLAUDE.md was found.", "note": null }
+      ] }
+  ],
+  "fetchedAt": "2026-10-01T14:00:00.000Z"
+}
+```
+
+The files a tool loads when a session starts in `folder`, resolved with the
+account's home folder, global files first and then project files from the
+outermost folder down. Claude Code, Codex CLI and Antigravity CLI rules are
+reproduced; Grok Build is asked with `grok inspect --json`. `path` is the
+file's real path. `count` is the number of files that load; a file that exists
+but does not load has `skipped` set to the reason, and `note` qualifies a file
+that loads only in part. A scope's `note` says why it lists no files, such as
+an untrusted folder. When Grok Build cannot answer, `count` is null, `scopes`
+is empty and `note` says why. Imported files and files a tool loads later in
+a session are not listed.
+
 ### Session
 
 ```json
@@ -797,6 +832,8 @@ All paths are under `/api/v1`.
 | GET | `/providers/:id/history?account=&limit=&cwd=&q=` | | `{ history }`: a History object for one account (default `default`; 404 `unknown_account`), filtered before the limit (default 100, at most 500). 400 `history_unsupported` when the provider has no `historySource`. |
 | GET | `/providers/:id/history/detail?account=&id=&cursor=` | | `{ detail }`: a bounded page of saved Antigravity messages; see [Saved messages](#saved-messages). |
 | GET | `/providers/:id/memory?account=&cwd=` | | `{ memory }`: a Memory object for one account and the working folder `cwd` (the home folder when empty; 400 `bad_cwd` when it does not exist). 400 `memory_unsupported` when the provider has no `memorySource`. |
+| GET | `/providers/:id/instructions?account=&cwd=` | | `{ instructions }`: an Instruction files object for one account and the working folder `cwd`. 400 `instructions_unsupported` when the provider has no `instructionsSource`. |
+| GET | `/providers/:id/instructions/file?account=&cwd=&index=&path=` | | `{ file: { index, scope, path, bytes, modified, truncated, text } }`: file `index` of a freshly resolved list, its first 512 KiB. 404 `instruction_file_gone` when that entry is no longer `path`; 400 `bad_instruction_path` for a file that is not markdown. |
 | GET | `/providers/:id/memory/file?account=&cwd=&scope=&path=` | | `{ file: { scope, path, bytes, modified, truncated, text } }`: one listed file of a scope, its first 512 KiB. 404 `memory_not_found` for an unknown scope, 404 `memory_file_gone` when the file no longer exists, 400 `bad_memory_path` for a path that is not a markdown file inside the scope's folder. |
 | GET | `/github` | | `{ github }`: a GitHub object. |
 | POST | `/github/sign-in` | | `202 { github }`: starts a device-flow sign-in; the manager polls GitHub and announces the result in `github.updated`. |

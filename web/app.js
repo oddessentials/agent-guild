@@ -1651,6 +1651,10 @@ function buildProvider(provider) {
     memory.textContent = historyLink ? 'History' : 'Memory';
     memory.title = historyLink ? `Read ${provider.tool}'s saved conversations` : `See what ${provider.tool} remembers about the working folder`;
     memory.addEventListener('click', (event) => historyLink ? showHistory(provider, true, event.currentTarget) : showMemory(provider, event.currentTarget));
+    const instructions = node.querySelector('.instructions-link');
+    instructions.hidden = !provider.available || !provider.instructionsSource;
+    instructions.title = `See which instruction files ${provider.tool} loads in the working folder`;
+    instructions.addEventListener('click', (event) => showMemory(provider, event.currentTarget, 'instructions'));
     const install = node.querySelector('.install');
     install.hidden = provider.available || !provider.installable;
     install.title = provider.installCommand ? `Downloads the latest ${provider.tool} release into Docker's plugin folder, in a session.` : `Install ${provider.tool} using npm.${provider.npmNote ? ` ${provider.npmNote}` : ''}`;
@@ -1889,7 +1893,7 @@ function renderHint(hint, provider) {
 function renderVendorLinks(card, provider) {
   const usage = setVendorLink(card.querySelector('.usage-link'), provider.usageUrl, `${provider.vendor} usage console`);
   const billing = setVendorLink(card.querySelector('.billing-link'), provider.billingUrl, `${provider.vendor} billing console`);
-  card.querySelector('.provider-links').hidden = !usage && !billing && card.querySelector('.memory-link').hidden;
+  card.querySelector('.provider-links').hidden = !usage && !billing && [...card.querySelectorAll('.memory-link')].every((link) => link.hidden);
   setVendorLink(card.querySelector('.cloud-link'), provider.cloudUrl, `${provider.vendor} web app`);
 }
 
@@ -3395,7 +3399,8 @@ function resumeById(event) {
 
 // ---- agent memory ---------------------------------------------------------
 
-const memoryView = { providerId: null, accountId: null, cwd: '', snapshot: null, error: null, loading: false, request: 0, selected: null, file: null, fileError: null, fileLoading: false, fileRequest: 0 };
+// The same dialog shows a tool's memory or, as kind 'instructions', the instruction files it loads.
+const memoryView = { kind: 'memory', providerId: null, accountId: null, cwd: '', snapshot: null, error: null, loading: false, request: 0, selected: null, file: null, fileError: null, fileLoading: false, fileRequest: 0 };
 let memoryOpener = null;
 
 function memoryProvider() {
@@ -3404,16 +3409,16 @@ function memoryProvider() {
 
 function memoryQuery(extra = {}) {
   const params = new URLSearchParams({ account: memoryView.accountId, cwd: memoryView.cwd, ...extra });
-  return `/providers/${memoryView.providerId}/memory${extra.path ? '/file' : ''}?${params}`;
+  return `/providers/${memoryView.providerId}/${memoryView.kind}${extra.path ? '/file' : ''}?${params}`;
 }
 
 function sizeText(bytes) {
   return bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${Math.round(bytes / 1024)} KiB` : `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
 }
 
-function showMemory(provider, opener = null) {
+function showMemory(provider, opener = null, kind = 'memory') {
   const account = selectedAccount(provider);
-  Object.assign(memoryView, { providerId: provider.id, accountId: account.id, cwd: $('cwd').value.trim(), snapshot: null, error: null, selected: null, file: null, fileError: null, fileLoading: false });
+  Object.assign(memoryView, { kind, providerId: provider.id, accountId: account.id, cwd: $('cwd').value.trim(), snapshot: null, error: null, selected: null, file: null, fileError: null, fileLoading: false });
   memoryView.fileRequest++;
   renderMemory();
   if (!$('memory').open) {
@@ -3432,16 +3437,18 @@ async function loadMemory() {
   renderMemory();
   let pick = null;
   try {
-    const { memory } = await api('GET', memoryQuery());
+    const reply = await api('GET', memoryQuery());
     if (request !== memoryView.request) return;
-    const files = memory.scopes.flatMap((scope) => scope.files.map((file) => ({ scope: scope.id, path: file.path })));
+    const memory = reply.memory ?? reply.instructions;
+    const files = memory.scopes.flatMap((scope) => scope.files.map((file) => ({ scope: scope.id, path: file.path, index: file.index })));
     const kept = memoryView.selected && files.find((f) => f.scope === memoryView.selected.scope && f.path === memoryView.selected.path);
     Object.assign(memoryView, { snapshot: memory, error: null, selected: kept ?? files[0] ?? null });
     pick = memoryView.selected;
   } catch (err) {
     if (err instanceof AuthError) return showAuth(err.message);
     if (request !== memoryView.request) return;
-    const error = err.code === 'bad_cwd' ? 'That working folder doesn’t exist — pick another.' : `Memory could not be read: ${err.message}`;
+    const what = memoryView.kind === 'instructions' ? 'Instruction files' : 'Memory';
+    const error = err.code === 'bad_cwd' ? 'That working folder doesn’t exist — pick another.' : `${what} could not be read: ${err.message}`;
     Object.assign(memoryView, { snapshot: null, error, selected: null });
   } finally {
     if (request === memoryView.request) {
@@ -3465,13 +3472,13 @@ async function loadMemoryFile() {
   memoryView.fileLoading = true;
   renderMemoryFile();
   try {
-    const { file } = await api('GET', memoryQuery({ scope: pick.scope, path: pick.path }));
+    const { file } = await api('GET', memoryQuery(memoryView.kind === 'instructions' ? { index: pick.index, path: pick.path } : { scope: pick.scope, path: pick.path }));
     if (request !== memoryView.fileRequest) return;
     Object.assign(memoryView, { file, fileError: null });
   } catch (err) {
     if (err instanceof AuthError) return showAuth(err.message);
     if (request !== memoryView.fileRequest) return;
-    const fileError = err.code === 'memory_file_gone' ? 'This file is gone — refresh.' : `The file could not be read: ${err.message}`;
+    const fileError = err.code === 'memory_file_gone' || err.code === 'instruction_file_gone' ? 'This file is gone — refresh.' : `The file could not be read: ${err.message}`;
     Object.assign(memoryView, { file: null, fileError });
   } finally {
     if (request === memoryView.fileRequest) {
@@ -3481,8 +3488,8 @@ async function loadMemoryFile() {
   }
 }
 
-function selectMemoryFile(scope, path) {
-  memoryView.selected = { scope, path };
+function selectMemoryFile(scope, path, index) {
+  memoryView.selected = { scope, path, index };
   memoryView.fileError = null;
   for (const node of $('memory-list').querySelectorAll('.memory-item')) {
     node.setAttribute('aria-current', String(node.dataset.scope === scope && node.dataset.path === path));
@@ -3508,20 +3515,24 @@ function memoryScopeNode(scope) {
     head.append(open);
   }
   const section = el('section', 'memory-scope', head);
-  const empty = scope.id === 'global' ? 'No global memory yet.' : 'No memory for this folder yet.';
+  const empty = memoryView.kind === 'instructions'
+    ? (scope.id === 'global' ? 'No global instruction files.' : 'No instruction files in this folder or above it.')
+    : scope.id === 'global' ? 'No global memory yet.' : 'No memory for this folder yet.';
   const note = scope.note ?? (scope.files.length ? null : empty);
   if (note) section.append(el('p', 'memory-note', note));
   if (scope.truncated) section.append(el('p', 'memory-note', `Showing the first ${scope.files.length} files.`));
   for (const file of scope.files) {
     const folder = file.title && file.path.includes('/') ? file.path.split('/')[0] : null;
-    const meta = [folder, sizeText(file.bytes), relativeTime(file.modified)].filter(Boolean).join(' · ');
-    const item = el('button', 'memory-item', el('span', 'memory-name', file.title ?? file.path), el('span', 'memory-meta', meta));
+    const meta = [file.skipped ? 'Not loaded' : null, folder, sizeText(file.bytes), relativeTime(file.modified)].filter(Boolean).join(' · ');
+    const reason = file.skipped ?? file.note;
+    const item = el('button', 'memory-item', el('span', 'memory-name', file.title ?? file.path), el('span', 'memory-meta', meta), reason && el('span', 'memory-meta memory-reason', reason));
+    item.classList.toggle('skipped', Boolean(file.skipped));
     item.type = 'button';
     item.dataset.scope = scope.id;
     item.dataset.path = file.path;
-    item.title = [file.title, file.path, `changed ${new Date(file.modified).toLocaleString()}`].filter(Boolean).join('\n');
+    item.title = [file.title, file.path, reason, `changed ${new Date(file.modified).toLocaleString()}`].filter(Boolean).join('\n');
     item.setAttribute('aria-current', String(memoryView.selected?.scope === scope.id && memoryView.selected?.path === file.path));
-    item.addEventListener('click', () => selectMemoryFile(scope.id, file.path));
+    item.addEventListener('click', () => selectMemoryFile(scope.id, file.path, file.index));
     section.append(item);
   }
   return section;
@@ -3532,15 +3543,18 @@ function renderMemory() {
   if (!provider) return closeMemory();
   const account = provider.accounts?.find((a) => a.id === memoryView.accountId);
   paintProviderIcon($('memory-icon'), provider);
-  $('memory-title').textContent = `${provider.tool} memory`;
+  const instructions = memoryView.kind === 'instructions';
+  $('memory-title').textContent = `${provider.tool} ${instructions ? 'instructions' : 'memory'}`;
   const folder = memoryView.snapshot?.folder || memoryView.cwd || 'your home folder';
-  $('memory-sub').textContent = [(provider.accounts?.length ?? 0) > 1 && account && `${account.label} account`, folder].filter(Boolean).join(' · ');
+  const count = memoryView.snapshot?.count;
+  const loads = instructions && Number.isInteger(count) ? (count ? `${count} ${count === 1 ? 'file loads' : 'files load'}` : 'No files load') : null;
+  $('memory-sub').textContent = [loads, (provider.accounts?.length ?? 0) > 1 && account && `${account.label} account`, folder].filter(Boolean).join(' · ');
   $('memory-sub').title = folder;
   paintPending($('memory-refresh'), memoryView.loading, 'Refresh', 'Reading…');
   const list = $('memory-list');
   if (memoryView.error) list.replaceChildren(el('p', 'memory-note', memoryView.error));
-  else if (!memoryView.snapshot) list.replaceChildren(el('p', 'memory-note', `Reading ${provider.tool}’s memory…`));
-  else list.replaceChildren(...memoryView.snapshot.scopes.map(memoryScopeNode));
+  else if (!memoryView.snapshot) list.replaceChildren(el('p', 'memory-note', `Reading ${provider.tool}’s ${instructions ? 'instruction files' : 'memory'}…`));
+  else list.replaceChildren(...[memoryView.snapshot.note && el('p', 'memory-note', memoryView.snapshot.note), ...memoryView.snapshot.scopes.map(memoryScopeNode)].filter(Boolean));
   renderMemoryFile();
 }
 
@@ -6484,7 +6498,7 @@ $('memory').addEventListener('close', () => {
   memoryView.fileRequest++;
   memoryView.loading = false;
   const opener = memoryOpener?.isConnected ? memoryOpener
-    : $('providers').querySelector(`.provider[data-id="${memoryView.providerId}"] .memory-link`);
+    : $('providers').querySelector(`.provider[data-id="${memoryView.providerId}"] .${memoryView.kind === 'instructions' ? 'instructions' : 'memory'}-link`);
   opener?.focus();
   memoryOpener = null;
 });

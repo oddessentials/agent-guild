@@ -135,6 +135,8 @@ export function createManagerServer({
   history,
   /** Each tool's memory files for a working folder, or null where the API offers none. */
   memory = null,
+  /** The instruction files each tool loads in a working folder, or null where the API offers none. */
+  instructions = null,
   modelStats,
   news = null,
   changelog = null,
@@ -408,6 +410,15 @@ export function createManagerServer({
       const cwd = url.searchParams.get('cwd') ?? undefined;
       if (!memoryMatch[2]) return sendJson(res, 200, { memory: await memory.list(provider, account, cwd) });
       return sendJson(res, 200, { file: await memory.read(provider, account, cwd, url.searchParams.get('scope'), url.searchParams.get('path')) });
+    }
+    const instructionsMatch = instructions && route.match(/^\/providers\/([a-z0-9][a-z0-9_-]{0,31})\/instructions(\/file)?$/);
+    if (instructionsMatch && method === 'GET') {
+      const provider = registry.get(instructionsMatch[1]);
+      if (!provider) throw new HttpError(404, `unknown provider "${instructionsMatch[1]}"`, 'unknown_provider');
+      const account = registry.account(provider, url.searchParams.get('account'));
+      const cwd = url.searchParams.get('cwd') ?? undefined;
+      if (!instructionsMatch[2]) return sendJson(res, 200, { instructions: await instructions.list(provider, account, cwd) });
+      return sendJson(res, 200, { file: await instructions.read(provider, account, cwd, url.searchParams.get('index'), url.searchParams.get('path')) });
     }
     const reportingMatch = route.match(/^\/providers\/([a-z0-9][a-z0-9_-]{0,31})\/reporting$/);
     if (reportingMatch && method === 'POST' && manager.sessionHooks) {

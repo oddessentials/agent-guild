@@ -10,6 +10,7 @@ import { SessionManager } from './session-manager.mjs';
 import { UsageMonitor } from './usage.mjs';
 import { SessionHistory } from './session-history.mjs';
 import { AgentMemory } from './agent-memory.mjs';
+import { InstructionFiles } from './instruction-files.mjs';
 import { ModelStats } from './model-stats.mjs';
 import { NewsFeed } from './news.mjs';
 import { Changelog } from './changelog.mjs';
@@ -99,6 +100,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
   const usage = new UsageMonitor({ registry, env: baseEnv });
   const history = new SessionHistory({ registry, env: baseEnv });
   const memory = new AgentMemory({ env: baseEnv, resolveCwd: (cwd) => manager.resolveCwd(cwd) });
+  const instructions = new InstructionFiles({ env: baseEnv, resolveCwd: (cwd) => manager.resolveCwd(cwd) });
   const modelStats = new ModelStats({ registry });
   const news = new NewsFeed({ registry });
   const changelog = new Changelog({ latest: () => selfUpdate.latest });
@@ -161,6 +163,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
     usage,
     history,
     memory,
+    instructions,
     modelStats,
     news,
     changelog,

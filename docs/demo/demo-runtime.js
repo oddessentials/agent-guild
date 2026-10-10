@@ -8,7 +8,7 @@
   // Public card fields from config/providers.default.json. Versions below are sample data.
   var about = {
     anthropic: {
-      command: 'claude', package: '@anthropic-ai/claude-code', reporting: 'claude', memory: 'claude',
+      command: 'claude', package: '@anthropic-ai/claude-code', reporting: 'claude', memory: 'claude', instructions: 'claude',
       npmNote: 'npm installs the same native build as Anthropic\'s installer.',
       install: 'curl -fsSL https://claude.ai/install.sh | bash',
       docs: 'https://code.claude.com/docs/en/setup',
@@ -16,7 +16,7 @@
       modelPattern: 'claude-(?:opus|sonnet|haiku|fable|\\d)[a-z0-9.-]*|\\b(?:opus|sonnet|haiku|fable)\\s?\\d+(?:\\.\\d+)?',
     },
     openai: {
-      command: 'codex', package: '@openai/codex', reporting: 'codex', memory: 'codex',
+      command: 'codex', package: '@openai/codex', reporting: 'codex', memory: 'codex', instructions: 'codex',
       npmNote: 'npm installs the native Codex binary.',
       install: 'curl -fsSL https://chatgpt.com/codex/install.sh | sh',
       docs: 'https://github.com/openai/codex',
@@ -24,14 +24,14 @@
       modelPattern: '\\bgpt-\\d[a-z0-9.-]*',
     },
     google: {
-      command: 'agy', package: null, reporting: 'antigravity', reportingEnabled: true,
+      command: 'agy', package: null, reporting: 'antigravity', reportingEnabled: true, instructions: 'google',
       install: 'curl -fsSL https://antigravity.google/cli/install.sh | bash',
       docs: 'https://antigravity.google/docs/cli/install',
       billingUrl: 'https://one.google.com/settings', cloudUrl: 'https://gemini.google.com/',
       modelPattern: '\\bgemini-\\d[a-z0-9.-]*',
     },
     xai: {
-      command: 'grok', package: '@xai-official/grok', reporting: 'grok', memory: 'grok',
+      command: 'grok', package: '@xai-official/grok', reporting: 'grok', memory: 'grok', instructions: 'grok',
       npmNote: 'npm installs the native grok binary into ~/.grok/bin.',
       install: 'curl -fsSL https://x.ai/cli/install.sh | bash',
       docs: 'https://docs.x.ai/build/overview',
@@ -139,6 +139,7 @@
       updateCommand: null, updateGuidance: null, lastInstall: null, installs: [], warnings: [], npmNote: info.npmNote || null,
       usageSource: metered ? 'command' : null, historySource: id === 'shell' ? null : 'command',
       memorySource: info.memory || null,
+      instructionsSource: info.instructions || null,
       historyDetails: id === 'google',
       reporting: info.reporting || null, reportingEnabled: typeof info.reportingEnabled === 'boolean' ? info.reportingEnabled : null, reportingNote: null,
       accounts: id === 'anthropic' ? [{ id: 'default', label: 'Personal' }, { id: 'work', label: 'Work' }] : [{ id: 'default', label: 'Default' }],
@@ -330,6 +331,8 @@
     }
     var memoryMatch = route.match(/^\/providers\/([^/]+)\/memory(\/file)?$/);
     if (memoryMatch && method === 'GET') return providerMemory(memoryMatch[1], url.searchParams, Boolean(memoryMatch[2]));
+    var instructionsMatch = route.match(/^\/providers\/([^/]+)\/instructions(\/file)?$/);
+    if (instructionsMatch && method === 'GET') return providerInstructions(instructionsMatch[1], url.searchParams, Boolean(instructionsMatch[2]));
     var reportingMatch = route.match(/^\/providers\/([^/]+)\/reporting$/);
     if (reportingMatch && method === 'POST') return setReporting(reportingMatch[1], body);
     if (route === '/shutdown' && method === 'POST') return shutdown(body);
@@ -696,6 +699,34 @@
     return json({ memory: {
       providerId: p.id, accountId: params.get('account') || 'default', folder: params.get('cwd') || '/work/storefront', fetchedAt: new Date(now).toISOString(),
       scopes: [{ id: 'project', label: 'This project', dir: '/demo/memory/storefront', note: null, truncated: false, files: files }],
+    } });
+  }
+
+  var instructionFiles = [
+    { path: '/Users/demo/.claude/CLAUDE.md', scope: 'global', skipped: null, text: '# House style\n- Answer only what was asked.\n- Run every CI step before pushing.\n' },
+    { path: '/work/storefront/CLAUDE.md', scope: 'project', skipped: null, text: '# Storefront\n- npm test runs the unit tests.\n- Prices are integers in cents.\n' },
+    { path: '/work/storefront/AGENTS.md', scope: 'project', skipped: 'Skipped because /work/storefront/CLAUDE.md was found.', text: '# Agents\nShared notes for every coding tool.\n' },
+  ];
+
+  function providerInstructions(providerId, params, file) {
+    var p = providers.find(function (item) { return item.id === providerId; });
+    if (!p) return error('unknown provider "' + providerId + '"', 'unknown_provider', 404);
+    if (!p.instructionsSource) return error(p.tool + ' has no instruction files configured', 'instructions_unsupported', 400);
+    var files = instructionFiles.map(function (f, i) {
+      return { index: i, path: f.path, scope: f.scope, bytes: f.text.length, modified: ago((i + 2) * 60 * 60), skipped: f.skipped, note: null };
+    });
+    if (file) {
+      var found = files[Number(params.get('index'))];
+      if (!found || found.path !== params.get('path')) return error('This file is no longer in the list. Refresh it.', 'instruction_file_gone', 404);
+      return json({ file: { index: found.index, scope: found.scope, path: found.path, bytes: found.bytes, modified: found.modified, truncated: false, text: instructionFiles[found.index].text } });
+    }
+    return json({ instructions: {
+      providerId: p.id, accountId: params.get('account') || 'default', folder: params.get('cwd') || '/work/storefront', fetchedAt: new Date(now).toISOString(),
+      count: files.filter(function (f) { return !f.skipped; }).length, note: null,
+      scopes: [
+        { id: 'global', label: 'Global', note: null, files: files.filter(function (f) { return f.scope === 'global'; }) },
+        { id: 'project', label: 'Project', note: null, files: files.filter(function (f) { return f.scope === 'project'; }) },
+      ],
     } });
   }
 
