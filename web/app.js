@@ -105,7 +105,12 @@ function save(key, value) { try { value === null ? localStorage.removeItem(key) 
 
 // ---- helpers --------------------------------------------------------------
 
-let toastTimer;
+const toastView = { timer: 0, left: 0, since: 0, held: false };
+
+/**
+ * The toast is a popover, so it shows above the page and any dialog. A modal dialog makes everything outside
+ * it inert, a popover too, so while one is open the toast is shown from inside the topmost modal dialog.
+ */
 function toast(message, ms = 5000, action = null) {
   const el = $('toast');
   el.replaceChildren(message);
@@ -115,14 +120,54 @@ function toast(message, ms = 5000, action = null) {
     button.className = 'btn toast-action';
     button.textContent = action.label;
     button.addEventListener('click', () => {
-      el.hidden = true;
+      hideToast();
       action.run();
     });
     el.append(button);
   }
   el.hidden = false;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.hidden = true; }, ms);
+  raiseToast();
+  toastView.left = ms;
+  toastView.held = el.matches(':hover, :focus-within');
+  if (!toastView.held) runToastTimer();
+}
+
+function raiseToast() {
+  const el = $('toast');
+  const host = [...document.querySelectorAll('dialog')].filter((d) => d.matches(':modal')).pop() ?? document.body;
+  // Moving a showing popover closes it, so it is shown again in its new place.
+  if (el.parentElement !== host) {
+    if (el.matches(':popover-open')) el.hidePopover();
+    host.append(el);
+    if (host !== document.body) host.addEventListener('close', () => { if (!el.hidden) raiseToast(); }, { once: true });
+  }
+  if (!el.matches(':popover-open')) el.showPopover?.();
+}
+
+function hideToast() {
+  const el = $('toast');
+  clearTimeout(toastView.timer);
+  el.hidden = true;
+  if (el.matches(':popover-open')) el.hidePopover();
+}
+
+function runToastTimer() {
+  clearTimeout(toastView.timer);
+  toastView.since = Date.now();
+  toastView.timer = setTimeout(hideToast, toastView.left);
+}
+
+/** A toast waits while it is pointed at or focused, so its action can be reached. */
+function holdToast(held) {
+  if ($('toast').hidden || held === toastView.held) return;
+  toastView.held = held;
+  if (held) {
+    clearTimeout(toastView.timer);
+    toastView.left = Math.max(0, toastView.left - (Date.now() - toastView.since));
+  } else {
+    toastView.left = Math.max(toastView.left, 2000);
+    runToastTimer();
+  }
 }
 
 /**
@@ -876,6 +921,14 @@ function closeDock({ focusOpener = true } = {}) {
 
 function dockMakesWayForTerminal() {
   if (dockView.panel && !stageBesideDock(innerWidth, clampDockWidth(dockView.width, innerWidth))) closeDock({ focusOpener: false });
+}
+
+/** A Yard selection shows in the sidebar, so a dock lying over the sidebar makes way for it. */
+function dockMakesWayForYard() {
+  if (!dockView.panel) return;
+  const dock = $('dock').getBoundingClientRect();
+  const sidebar = document.querySelector('.yard-sidebar').getBoundingClientRect();
+  if (sidebar.width > 0 && dock.left < sidebar.right - 1) closeDock({ focusOpener: false });
 }
 
 function moveDockTab(e) {
@@ -1672,8 +1725,8 @@ function buildProvider(provider) {
     if (provider.installCommand && checkFailed) update.textContent = 'Reinstall';
     update.title = provider.updateCommand ? `Run "${provider.updateCommand}" in a session` : '';
     update.addEventListener('click', () => installProvider(provider, node));
-    renderHint(hint, provider);
     renderCopies(node.querySelector('.copies'), provider, node);
+    renderHint(hint, provider, node.querySelector('.copies'));
     renderVendorLinks(node, provider);
     renderAccounts(node, provider);
     renderShells(node, provider);
@@ -1871,17 +1924,44 @@ async function manageMultiplexer(provider, tool, kind, copy = null, force = fals
   }
 }
 
-function renderHint(hint, provider) {
+/** Who updates a copy Agent Guild does not, when the card's Installation list already tells the whole story. */
+const MANAGED_UPDATES = {
+  desktop: 'Docker Desktop updates this copy.',
+  system: 'Its system package updates this copy.',
+};
+
+function renderHint(hint, provider, copies) {
   let text = '';
+  let details = false;
   if (provider.pluginError) text = provider.pluginError;
   else if (provider.pluginPending) text = '';
   else if (!provider.available) text = provider.installable ? '' : provider.install || `${provider.command} was not found on PATH.`;
   // A version check that fails with no update on offer shows how to install the tool: `docker agent version` fails without
   // the plugin. The install command replaces the generic update guidance, which would describe the docker binary, not the plugin.
   else if (provider.versionStatus === 'failed') text = [provider.versionError, !provider.updateCommand && (provider.installCommand ? provider.updateGuidance : provider.install || provider.updateGuidance)].filter(Boolean).join(' ');
-  else if (provider.updateAvailable && !provider.updateCommand) text = provider.updateGuidance || '';
+  else if (provider.updateAvailable && !provider.updateCommand) {
+    // The full sentence, path and all, is in the Installation list; the card keeps one short line above its buttons.
+    const managed = MANAGED_UPDATES[provider.installChannel];
+    details = Boolean(managed && !copies.hidden && provider.installs?.some((i) => i.active && i.uninstallGuidance === provider.updateGuidance));
+    text = details ? managed : provider.updateGuidance || '';
+  }
   hint.hidden = !text;
   hint.replaceChildren(text);
+  hint.title = details ? provider.updateGuidance : '';
+  if (details) {
+    const more = document.createElement('button');
+    more.type = 'button';
+    more.className = 'hint-details';
+    more.textContent = 'Details';
+    more.title = 'Show the Installation list';
+    more.addEventListener('click', () => {
+      copies.open = true;
+      const summary = copies.querySelector('summary');
+      summary.focus();
+      summary.scrollIntoView({ block: 'nearest' });
+    });
+    hint.append(' ', more);
+  }
   const docs = text && httpsHref(provider.docs);
   if (!docs) return;
   const link = document.createElement('a');
@@ -1890,7 +1970,7 @@ function renderHint(hint, provider) {
   link.target = '_blank';
   link.rel = 'noopener noreferrer';
   link.textContent = 'Docs';
-  hint.append(' ', link);
+  hint.append(details ? ' · ' : ' ', link);
 }
 
 function renderVendorLinks(card, provider) {
@@ -5839,6 +5919,7 @@ const terminalControls = new TerminalControls({
 });
 bindTerminalViewport($('terminal-panel'), $('terminal-controls'));
 bindVisibleViewport($('dock'), 'dock', { fitted: fitPickerList });
+bindVisibleViewport($('toast'), 'toast');
 
 const terminalCopy = new TerminalCopy({
   opener: $('panel-copy'), dialog: $('terminal-copy'),
@@ -6582,6 +6663,20 @@ $('memory').addEventListener('close', () => {
   opener?.focus();
   memoryOpener = null;
 });
+$('toast').addEventListener('mouseenter', () => holdToast(true));
+$('toast').addEventListener('mouseleave', () => holdToast($('toast').matches(':focus-within')));
+$('toast').addEventListener('focusin', () => holdToast(true));
+$('toast').addEventListener('focusout', (e) => holdToast($('toast').contains(e.relatedTarget) || $('toast').matches(':hover')));
+// A tap on the message dismisses it, unless it selected text to copy; so does a flick upward.
+$('toast').addEventListener('click', (e) => {
+  if (!e.target.closest('button') && !String(getSelection()).trim()) hideToast();
+});
+let toastSwipe = null;
+$('toast').addEventListener('pointerdown', (e) => { toastSwipe = e.pointerType === 'mouse' ? null : e.clientY; });
+$('toast').addEventListener('pointerup', (e) => {
+  if (toastSwipe !== null && toastSwipe - e.clientY > 16) hideToast();
+  toastSwipe = null;
+});
 $('github-open').addEventListener('click', () => openGitHub());
 $('github-toggle').addEventListener('click', firstClick(toggleGitHub));
 $('github-title').addEventListener('click', () => { if (!dockShows('github')) openGitHub(); });
@@ -6989,6 +7084,7 @@ yardUi = initYard({
   }),
   openSession: openPanel,
   openNews,
+  selected: dockMakesWayForYard,
   mountInspector(host, selection) {
     if (!selection) { host.replaceChildren(); return; }
     if (selection.kind === 'provider') {

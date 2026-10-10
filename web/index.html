@@ -597,7 +597,7 @@
 
   <div id="tip" class="tip" aria-hidden="true" hidden><strong id="tip-title"></strong><span id="tip-source"></span><p id="tip-text"></p></div>
 
-  <div id="toast" class="toast" role="alert" hidden></div>
+  <div id="toast" class="toast" role="alert" popover="manual" hidden></div>
 
   <template id="provider-template">
     <article class="provider" role="listitem">
@@ -639,12 +639,12 @@
         <button class="btn multiplexer-refresh" type="button">Refresh</button>
         <div class="multiplexer-list"></div>
       </details>
+      <p class="hint" hidden></p>
       <div class="provider-actions">
         <button class="btn primary new" type="button">New</button>
         <button class="btn existing" type="button">Existing…</button>
         <button class="btn primary install" type="button">Install</button>
         <button class="btn update" type="button"></button>
-        <span class="hint"></span>
       </div>
     </article>
   </template>

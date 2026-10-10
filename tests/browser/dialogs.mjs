@@ -15,6 +15,8 @@ window.fetch=(input,init)=>{
       res.json=()=>read().then(data=>{window.memoryStaleDelivered=true;return data;});
       return res;
     });
+  if(url.pathname.endsWith('/open-folder'))
+    return Promise.resolve(new Response(JSON.stringify({error:{message:'The folder could not be opened.'}}),{status:500,headers:{'Content-Type':'application/json'}}));
   if(url.pathname.endsWith('/history')&&!url.pathname.includes('/google/'))
     return Promise.resolve(new Response(JSON.stringify({history:{total:334,sessions:Array.from({length:200},(_,i)=>({
       id:'saved-'+i,title:'Saved session '+i,cwd:'/work/storefront',updatedAt:'2026-10-04T10:00:00Z'
@@ -25,6 +27,8 @@ window.testInputs=[];
 const DemoSocket=window.WebSocket;
 window.WebSocket=class extends DemoSocket {
   send(raw){const m=JSON.parse(raw);if(m.type==='input')testInputs.push(m.data);super.send(raw);}
+  // A folder opener, so the memory dialog offers Open folder, whose refusal raises a toast inside the dialog.
+  emit(e){const m=typeof e.data==='string'&&JSON.parse(e.data);super.emit(m?.type==='hello'?{...e,data:JSON.stringify({...m,folderOpener:{available:true,label:'Finder'}})}:e);}
 };
 </script>`;
 
@@ -138,6 +142,31 @@ const checks = await withPage({ name: 'dialogs', instrumentation }, async ({ ori
     await closeDialog('#memory', '#memory-close');
     assert.equal(await evaluate('document.activeElement===document.querySelector(".provider[data-id=google] .instructions-link")'), true);
     pass(`${engine}: Instructions shows its count on the card, folds away files that do not load with the reason, and opens them`);
+
+    // A toast raised inside a modal dialog is not inert: it is the topmost thing at its own centre and its
+    // text can be tapped away. On a phone it arrives under the top bar, clear of the browser's bottom toolbar.
+    for (const [width, height] of [[1440, 900], [390, 844]]) {
+      await resize(width, height);
+      await evaluate('document.querySelector(".provider[data-id=anthropic] .memory-link").click()');
+      await until(`${engine} memory folder button at ${width}`, () => evaluate('Boolean(document.querySelector("#memory .memory-open"))'));
+      await evaluate('document.querySelector("#memory .memory-open").click()');
+      await until(`${engine} toast at ${width}`, () => evaluate('!document.querySelector("#toast").hidden'));
+      await settled();
+      const t = await evaluate(`(()=>{
+        const el=document.querySelector('#toast'),r=el.getBoundingClientRect(),hit=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);
+        return {text:el.textContent,open:el.matches(':popover-open'),inDialog:el.parentElement.id,top:hit===el||el.contains(hit),
+          y:r.top,bottom:r.bottom,bar:document.querySelector('.topbar').getBoundingClientRect().bottom,inside:r.left>=0&&r.right<=innerWidth};
+      })()`);
+      assert.equal(t.text, 'The folder could not be opened.');
+      assert.ok(t.open && t.inDialog === 'memory' && t.top && t.inside, `${engine} toast over the dialog at ${width}: ${JSON.stringify(t)}`);
+      if (width <= 640) assert.ok(t.y >= t.bar && t.y < height / 3, `${engine} phone toast under the top bar: ${JSON.stringify(t)}`);
+      else assert.ok(t.bottom > height * 2 / 3, `${engine} desktop toast at the bottom: ${JSON.stringify(t)}`);
+      await closeDialog('#memory', '#memory-close');
+      assert.deepEqual(await evaluate(`(()=>{const el=document.querySelector('#toast');return [el.parentElement===document.body,el.matches(':popover-open')]})()`), [true, true], `${engine} the toast outlives the dialog`);
+      await evaluate('document.querySelector("#toast").click()');
+      assert.deepEqual(await evaluate(`(()=>{const el=document.querySelector('#toast');return [el.hidden,el.matches(':popover-open')]})()`), [true, false], `${engine} a tap dismisses the toast`);
+    }
+    pass(`${engine}: a toast shows above an open dialog, under the top bar on a phone, outlives the dialog and is dismissed by a tap`);
 
     await until(`${engine} environment summary`, () => evaluate('document.querySelectorAll(".provider[data-id=shell] .environment-values dd").length===4'));
     for (const [width, height] of [[1440, 900], [768, 1024], [390, 844]]) {
