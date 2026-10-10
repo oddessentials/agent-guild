@@ -34,6 +34,8 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   const panes = () => evaluate(`[...document.querySelectorAll('.terminal-pane')].filter(p=>p.checkVisibility()).map(p=>{const r=p.getBoundingClientRect();const t=testTerms.find(t=>t.element?.isConnected&&p.contains(t.element));return {pane:p.dataset.pane,focused:p.classList.contains('focused'),left:r.left,top:r.top,width:r.width,height:r.height,cols:t?.cols,rows:t?.rows}})`);
   const reloaded = (label, check) => until(label, () => evaluate('!window.testOldPage').then((fresh) => fresh && check(), () => false));
   const cards = () => evaluate('[...document.querySelectorAll("#sessions .session-card")].map(c=>c.dataset.id)');
+  // Layout boxes, which the cards' entrance animation does not move.
+  const providerGrid = () => evaluate('(()=>{const c=[...document.querySelectorAll("#providers .provider")];return {count:c.length,rows:new Set(c.map(p=>p.offsetTop)).size,narrowest:Math.min(...c.map(p=>p.offsetWidth))}})()');
 
   await size(1440, 900);
   await send('Page.navigate', { url: origin });
@@ -49,6 +51,15 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   assert.equal(await evaluate('document.querySelector("#settings").textContent'), 'Settings');
   await noSideScroll('wide');
   pass('a wide window shows the top bar controls inline on one row');
+
+  const wideGrid = await providerGrid();
+  assert.deepEqual([wideGrid.count, wideGrid.rows], [6, 1], 'six cards share one row');
+  assert.ok(wideGrid.narrowest >= 220, `each card keeps its full width (${wideGrid.narrowest}px)`);
+  const launcher = await box('.launcher');
+  const column = await evaluate('(()=>{const m=getComputedStyle(document.querySelector("main"));return document.querySelector("main").clientWidth-parseFloat(m.paddingLeft)-parseFloat(m.paddingRight)})()');
+  assert.ok(launcher.width > column, `the card row spreads past the page column (${launcher.width} > ${column})`);
+  assert.ok(Math.abs(launcher.left - (await evaluate('document.documentElement.clientWidth')) + launcher.right) < 1, 'centred');
+  pass('a wide window gives six full-width provider cards one row, centred past the page column');
 
   await click('#settings');
   await layoutReady();
@@ -116,6 +127,7 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   assert.ok(stage.right <= dock.left + 1, 'the terminals make room for the dock');
   const content = await evaluate('(()=>{const m=document.querySelector("main");return m.getBoundingClientRect().right-parseFloat(getComputedStyle(m).paddingRight)})()');
   assert.ok(content <= dock.left, 'the cards make room for the dock');
+  assert.ok((await box('.launcher')).right <= dock.left, 'the card row stays clear of the dock');
   assert.equal(await evaluate('document.querySelector("#github-toggle").getAttribute("aria-pressed")'), 'true');
   assert.equal(await evaluate('document.querySelector("#github-title").getAttribute("aria-selected")'), 'true');
   assert.equal((await panes()).length, 2, 'both terminals stay in view');
@@ -158,6 +170,8 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   assert.equal(await evaluate('getComputedStyle(document.documentElement).getPropertyValue("--dock-space").trim()'), '0px', 'the cards stay where they are');
   assert.ok((await box('#terminal-panel')).right <= (await box('#dock')).left + 1, 'the terminals and their controls stay in view');
   await noSideScroll('mid-size with the dock');
+  const midGrid = await providerGrid();
+  assert.deepEqual([midGrid.count, midGrid.rows], [6, 2], 'too narrow for six: three by two, never a lone card');
   await size(900, 800);
   assert.ok((await box('#terminal-panel')).right > (await box('#dock')).left, 'too narrow to share: the dock lies over the terminals');
   await click('#dock-close');

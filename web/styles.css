@@ -121,9 +121,16 @@ main { max-width: calc(1200px + var(--dock-space, 0px)); margin: 0 auto; padding
   .cwd-tool { width: 44px; }
 }
 
-.launcher { container-type: inline-size; }
+/* Six 220px cards need 1380px, more than main's 1200px column, so the card row alone spreads past the column
+   into the window's spare width, centred and never under the dock. Six share the row while each is at least
+   181px wide (the light-theme portraits fill their frame down to about 177px); narrower rows deal three by two. */
+body { container-type: inline-size; }
+.launcher {
+  --launch-width: max(100%, min(1380px, 100cqw - 32px - var(--dock-space, 0px)));
+  container-type: inline-size; width: var(--launch-width); margin-inline: calc((100% - var(--launch-width)) / 2);
+}
 .providers { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
-/* Six cards share the top row once each is at least 180px wide; the light-theme portraits fill their frame down to about 177px. */
+@container (min-width: 684px) { .providers { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @container (min-width: 1150px) { .providers { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
 .provider {
   display: flex; flex-direction: column; gap: 10px; padding: 14px;
