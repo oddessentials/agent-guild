@@ -27,6 +27,15 @@ function readText(file) {
   try { return fs.readFileSync(file, 'utf8'); } catch { return null; }
 }
 
+function readBytes(file) {
+  try { return fs.readFileSync(file); } catch { return null; }
+}
+
+/** Whether `file` is a folder; false for anything that cannot be looked at (no permission, a link loop). */
+function isFolder(file) {
+  try { return fs.statSync(file).isDirectory(); } catch { return false; }
+}
+
 function readJson(file) {
   const text = readText(file);
   if (text === null) return null;
@@ -114,7 +123,7 @@ function claudeRules(dir, depth = 0) {
   return entries.flatMap((entry) => {
     const child = path.join(dir, entry.name);
     if (statFile(child)) return /\.md$/i.test(entry.name) && !pathScoped(child) ? [child] : [];
-    return depth < 8 && fs.statSync(child, { throwIfNoEntry: false })?.isDirectory() ? claudeRules(child, depth + 1) : [];
+    return depth < 8 && isFolder(child) ? claudeRules(child, depth + 1) : [];
   });
 }
 
@@ -274,9 +283,10 @@ function codexRows(env, cwd, platform) {
     if (remaining === 0) {
       rows.push(row(chosen, 'project', config.maxBytes === 0 ? 'Codex is set to read no project files (project_doc_max_bytes is 0).' : `Past Codex’s limit for project files (${sizeWords(config.maxBytes)}).`));
     } else {
-      const data = fs.readFileSync(chosen);
-      const kept = data.subarray(0, remaining);
-      if (!kept.toString('utf8').trim()) rows.push(row(chosen, 'project', 'Empty, so Codex skips it.'));
+      const data = readBytes(chosen);
+      const kept = data?.subarray(0, remaining);
+      if (!data) rows.push(row(chosen, 'project', 'This file can’t be read.'));
+      else if (!kept.toString('utf8').trim()) rows.push(row(chosen, 'project', 'Empty, so Codex skips it.'));
       else {
         rows.push(row(chosen, 'project', null, data.length > remaining ? `Codex reads only the first ${sizeWords(remaining)}, its limit for project files.` : null));
         remaining -= kept.length;
@@ -423,7 +433,12 @@ export class InstructionFiles {
     if (!entry || entry.path !== expected) throw new MemoryError(404, 'instruction_file_gone', 'This file is no longer in the list. Refresh it.');
     if (!/\.md$/i.test(entry.path)) throw new MemoryError(400, 'bad_instruction_path', 'Only markdown files can be read.');
     let handle;
-    try { handle = await fs.promises.open(entry.path, 'r'); } catch { throw new MemoryError(404, 'instruction_file_gone', 'This file is no longer in the list. Refresh it.'); }
+    try {
+      handle = await fs.promises.open(entry.path, 'r');
+    } catch (err) {
+      if (err.code === 'EACCES' || err.code === 'EPERM') throw new MemoryError(403, 'instruction_file_unreadable', 'You don’t have permission to read it.');
+      throw new MemoryError(404, 'instruction_file_gone', 'This file is no longer in the list. Refresh it.');
+    }
     try {
       const stat = await handle.stat();
       const buffer = Buffer.alloc(Math.min(stat.size, MAX_READ_BYTES));

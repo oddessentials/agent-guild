@@ -209,6 +209,41 @@ test('Antigravity CLI: all global names, both names per folder up to the repo ro
     'outside a repository only the working folder is read');
 });
 
+test('a file that cannot be looked at or read never fails the list: a link loop, no permission', async (t) => {
+  const { write, dir, at } = fixture(t);
+  dir('claude/repo/.git');
+  write('claude/repo/.claude/rules/a.md');
+  write('claude/repo/.claude/rules/locked.md');
+  write('claude/repo/.claude/rules/loop');
+  dir('codex/repo/.git');
+  write('codex/repo/AGENTS.md');
+  write('codex/repo/sub/AGENTS.md');
+  dir('codex/home');
+  // The errors Linux gives for a link that points at itself, a file in a folder that can be read but
+  // not entered, and a file whose mode lets it be seen but not opened.
+  const failing = (original, fail) => function (file, ...rest) {
+    const code = fail[String(file)];
+    if (code) throw Object.assign(new Error(`${code}: ${file}`), { code });
+    return original.call(this, file, ...rest);
+  };
+  t.mock.method(fs, 'statSync', failing(fs.statSync, { [at('claude/repo/.claude/rules/loop')]: 'ELOOP', [at('claude/repo/.claude/rules/locked.md')]: 'EACCES' }));
+  t.mock.method(fs, 'readFileSync', failing(fs.readFileSync, { [at('codex/repo/AGENTS.md')]: 'EACCES' }));
+  t.mock.method(fs.promises, 'open', failing(fs.promises.open, { [at('codex/repo/AGENTS.md')]: 'EACCES' }));
+
+  const claude = new InstructionFiles({ env: { CLAUDE_CONFIG_DIR: at('claude/home') }, resolveCwd: (cwd) => cwd, ceiling: at('claude') });
+  const rules = await claude.list(provider('claude'), account, at('claude/repo'));
+  assert.deepEqual(rows(rules, at('claude')), [['repo/.claude/rules/a.md', 'project', null]]);
+
+  const codex = new InstructionFiles({ env: { CODEX_HOME: at('codex/home') }, resolveCwd: (cwd) => cwd });
+  const listed = await codex.list(provider('codex'), account, at('codex/repo/sub'));
+  assert.deepEqual(rows(listed, at('codex')), [
+    ['repo/AGENTS.md', 'project', 'This file can’t be read.'],
+    ['repo/sub/AGENTS.md', 'project', null],
+  ]);
+  assert.equal(listed.count, 1);
+  await assert.rejects(codex.read(provider('codex'), account, at('codex/repo/sub'), '0', at('codex/repo/AGENTS.md')), { status: 403, code: 'instruction_file_unreadable' });
+});
+
 test('a file opens by its index in a fresh list, only while that entry is still the same markdown file', async (t) => {
   const { write, dir, at } = fixture(t);
   dir('repo/.git');
