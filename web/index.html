@@ -550,7 +550,10 @@
     <div class="memory-body">
       <nav id="memory-list" class="memory-list" aria-label="Memory files"></nav>
       <section class="memory-view" aria-live="polite">
-        <p id="memory-file" class="memory-file"></p>
+        <div class="memory-file-bar">
+          <p id="memory-file" class="memory-file"></p>
+          <button id="memory-copy" class="btn memory-copy" type="button" hidden>Copy path</button>
+        </div>
         <p id="memory-file-note" class="models-note" hidden></p>
         <pre id="memory-text" class="memory-text" tabindex="0" aria-label="File contents"></pre>
       </section>

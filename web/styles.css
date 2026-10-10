@@ -279,7 +279,12 @@ body { container-type: inline-size; }
   .tier-c { --tier: #4ade80; --tier-ink: #c6f6d5; }
   .tier-d { --tier: #94a3b8; --tier-ink: #d4dbe4; }
 }
-.provider-links { display: flex; gap: 14px; font-size: 0.78rem; }
+.provider-links { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 14px; row-gap: 4px; font-size: 0.78rem; }
+.provider-links > * { white-space: nowrap; }
+.link-count {
+  display: inline-block; min-width: 1.5em; margin-left: 5px; padding: 0 5px; border-radius: 999px; text-align: center;
+  font-size: 0.7rem; font-weight: 600; line-height: 1.45; color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
 .reporting-row { display: flex; align-items: center; gap: 10px; font-size: 0.78rem; color: var(--muted); }
 .reporting-row .btn { padding: 2px 10px; font-size: 0.75rem; white-space: nowrap; }
 .console-link { color: var(--accent); text-decoration: none; }
@@ -885,8 +890,14 @@ a.news-link:visited { color: var(--muted); }
 .memory-meta { color: var(--muted); font-size: 0.72rem; }
 .memory-reason { overflow-wrap: anywhere; }
 .memory-item.skipped .memory-name { color: var(--muted); }
-/* A path is told apart by its end, so instruction rows show all of it. */
-.memory-item.full-path .memory-name { display: block; overflow: visible; }
+.instructions-skipped { margin-top: 14px; }
+.instructions-skipped > summary { padding: 8px 6px 4px; cursor: pointer; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.instructions-skipped > summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 3px; }
+.instructions-footnote { margin-top: 14px; font-size: 0.75rem; }
+.memory-retry { margin: 0 6px; }
+.memory-file-bar { display: flex; align-items: center; gap: 10px; padding-right: 14px; border-bottom: 1px solid var(--border); }
+.memory-file-bar .memory-file { flex: 1 1 auto; min-width: 0; border-bottom: 0; }
+.memory-copy { flex: none; padding: 2px 10px; font-size: 0.75rem; }
 .memory-view { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .memory-file { margin: 0; padding: 10px 14px; border-bottom: 1px solid var(--border); font-weight: 600; font-size: 0.85rem; overflow-wrap: anywhere; }
 .memory-view .models-note { margin: 10px 14px 0; }

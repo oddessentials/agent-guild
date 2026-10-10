@@ -60,6 +60,9 @@ function markdownIn(dir) {
 
 const row = (file, scope, skipped = null, note = null) => ({ file, scope, skipped, note });
 
+/** A byte count as people read it: "900 bytes", "32 KiB". */
+const sizeWords = (bytes) => (bytes === 1 ? '1 byte' : bytes < 1024 ? `${bytes} bytes` : `${Math.round((bytes / 1024) * 10) / 10} KiB`);
+
 // ---- Claude Code ----------------------------------------------------------
 
 /** A glob as picomatch reads it with `dot: true`: `*`, `**`, `?`, `[...]` and `{a,b}`. */
@@ -131,7 +134,7 @@ function claudeExcludes(config, cwd, platform) {
 function claudeRows(env, cwd, platform, ceiling) {
   const config = claudeConfigDir(env);
   const excluded = claudeExcludes(config, cwd, platform);
-  const keep = (file, scope) => row(file, scope, excluded(file) ? 'Matches claudeMdExcludes in Claude Code settings.' : null);
+  const keep = (file, scope) => row(file, scope, excluded(file) ? 'Excluded in Claude Code settings.' : null);
   const rows = [path.join(config, 'CLAUDE.md')].filter(statFile).concat(claudeRules(path.join(config, 'rules'))).map((file) => keep(file, 'global'));
   // Walking through the home folder meets ~/.claude/CLAUDE.md again; a global file is not a project one.
   const global = new Set(rows.map((r) => realPath(r.file)));
@@ -146,7 +149,7 @@ function claudeRows(env, cwd, platform, ceiling) {
     rows.push(...own, ...agentRows, ...found(claudeRules(path.join(dir, '.claude', 'rules'))));
   }
   if (claudeFile) {
-    for (const r of agents) r.skipped ??= `Skipped because ${realPath(claudeFile)} was found.`;
+    for (const r of agents) r.skipped ??= `Claude Code reads ${path.basename(claudeFile)} instead.`;
   }
   return { rows };
 }
@@ -242,13 +245,13 @@ function codexRows(env, cwd, platform) {
   const blank = (file) => !(readText(file) ?? '').trim();
   if (statFile(override) && !blank(override)) {
     rows.push(row(override, 'global'));
-    if (statFile(global)) rows.push(row(global, 'global', 'AGENTS.override.md is used instead.'));
+    if (statFile(global)) rows.push(row(global, 'global', 'Codex reads AGENTS.override.md instead.'));
   } else {
     if (statFile(override)) rows.push(row(override, 'global', 'Empty, so Codex reads AGENTS.md instead.'));
     if (statFile(global)) rows.push(row(global, 'global', blank(global) ? 'Empty, so Codex skips it.' : null));
   }
   if (codexUntrusted(config.trust, cwd, platform)) {
-    return { rows, projectNote: 'Folder not trusted. config.toml marks it untrusted, so Codex loads no project files here.' };
+    return { rows, projectNote: 'Codex won’t read this project’s files: its config.toml marks the folder untrusted.' };
   }
   let root = null;
   if (config.rootMarkers.length) {
@@ -269,17 +272,17 @@ function codexRows(env, cwd, platform) {
     if (!found.length) continue;
     const [chosen, ...others] = found;
     if (remaining === 0) {
-      rows.push(row(chosen, 'project', config.maxBytes === 0 ? 'project_doc_max_bytes is 0, so Codex loads no project files.' : `Codex stops here: the ${config.maxBytes}-byte project_doc_max_bytes budget is used up.`));
+      rows.push(row(chosen, 'project', config.maxBytes === 0 ? 'Codex is set to read no project files (project_doc_max_bytes is 0).' : `Past Codex’s limit for project files (${sizeWords(config.maxBytes)}).`));
     } else {
       const data = fs.readFileSync(chosen);
       const kept = data.subarray(0, remaining);
       if (!kept.toString('utf8').trim()) rows.push(row(chosen, 'project', 'Empty, so Codex skips it.'));
       else {
-        rows.push(row(chosen, 'project', null, data.length > remaining ? `Codex reads only the first ${remaining} bytes (project_doc_max_bytes).` : null));
+        rows.push(row(chosen, 'project', null, data.length > remaining ? `Codex reads only the first ${sizeWords(remaining)}, its limit for project files.` : null));
         remaining -= kept.length;
       }
     }
-    for (const other of others) rows.push(row(other, 'project', `${path.basename(chosen)} in this folder is used instead.`));
+    for (const other of others) rows.push(row(other, 'project', `Codex reads ${path.basename(chosen)} instead.`));
   }
   return { rows };
 }
@@ -289,21 +292,21 @@ function codexRows(env, cwd, platform) {
 /** `grok inspect --json` run in `cwd`, parsed. Throws with a message for the card when it cannot answer. */
 export async function grokInspect(command, cwd, env, platform = process.platform) {
   const grok = resolveCommand(command, env, platform);
-  if (!grok) throw new Error('Grok Build was not found, so its instruction files could not be listed.');
+  if (!grok) throw new Error('Grok Build couldn’t be found, so its instruction files can’t be listed.');
   let stdout;
   try {
     ({ stdout } = await runSpec(buildSpawnSpec(grok, ['inspect', '--json'], env, platform), { env, cwd, timeoutMs: GROK_INSPECT_TIMEOUT_MS }));
   } catch (err) {
-    throw new Error(err.killed ? `grok inspect did not answer within ${GROK_INSPECT_TIMEOUT_MS / 1000} seconds.` : `grok inspect failed: ${(err.stderr || err.message || '').trim().split('\n')[0]}`);
+    throw new Error(err.killed ? 'Grok Build didn’t answer in time.' : `Grok Build couldn’t list its files: ${(err.stderr || err.message || '').trim().split('\n')[0]}`);
   }
-  try { return JSON.parse(stdout); } catch { throw new Error('grok inspect did not return JSON.'); }
+  try { return JSON.parse(stdout); } catch { throw new Error('Grok Build gave an answer that couldn’t be read.'); }
 }
 
 async function grokRows(env, cwd, platform, inspect, command) {
   const report = await inspect(command, cwd, env, platform);
   const listed = Array.isArray(report?.projectInstructions) ? report.projectInstructions.filter((f) => typeof f?.path === 'string') : [];
   const rows = listed.map((f) => row(path.resolve(cwd, f.path), f.scope === 'global' ? 'global' : 'project'));
-  return { rows, projectNote: report?.projectTrusted === false ? 'Folder not trusted. Grok Build loads no project files here until you trust it.' : null };
+  return { rows, projectNote: report?.projectTrusted === false ? 'Grok Build won’t read this project’s files until you trust the folder.' : null };
 }
 
 // ---- Google (Antigravity CLI) -----------------------------------------------
@@ -351,14 +354,33 @@ function realPath(file) {
   }
 }
 
+/**
+ * Where a file sits, short enough to read at a glance: from the name of the working folder, or of
+ * a folder at most two above it ("app", "proj\.claude\rules"), else under "~", else the folder itself.
+ */
+export function shortLocation(file, folder, home, pathApi = path) {
+  const dir = pathApi.dirname(file);
+  const rel = pathApi.relative(folder, dir);
+  const ups = rel.split(pathApi.sep).filter((part) => part === '..').length;
+  if (!pathApi.isAbsolute(rel) && ups <= 2) {
+    const base = pathApi.resolve(folder, ...Array(ups).fill('..'));
+    return pathApi.join(pathApi.basename(base) || base, pathApi.relative(base, dir));
+  }
+  const fromHome = pathApi.relative(home, dir);
+  if (fromHome === '') return '~';
+  if (!fromHome.startsWith('..') && !pathApi.isAbsolute(fromHome)) return `~${pathApi.sep}${fromHome}`;
+  return dir;
+}
+
 export class InstructionFiles {
   /** `ceiling` (tests only) is the highest folder Claude Code's walk reaches. */
-  constructor({ env = process.env, platform = process.platform, resolveCwd, inspect = grokInspect, ceiling = null }) {
+  constructor({ env = process.env, platform = process.platform, resolveCwd, inspect = grokInspect, ceiling = null, home = os.homedir() }) {
     this.env = env;
     this.platform = platform;
     this.resolveCwd = resolveCwd;
     this.inspect = inspect;
     this.ceiling = ceiling;
+    this.home = home;
   }
 
   async list(provider, account, cwd) {
@@ -385,10 +407,10 @@ export class InstructionFiles {
       const stat = statFile(real);
       if (seen.has(key) || !stat) continue;
       seen.add(key);
-      files.push({ index: files.length, path: real, scope: r.scope, bytes: stat.size, modified: stat.mtime.toISOString(), skipped: r.skipped, note: r.note });
+      files.push({ index: files.length, path: real, name: path.basename(real), location: shortLocation(real, folder, this.home), scope: r.scope, bytes: stat.size, modified: stat.mtime.toISOString(), skipped: r.skipped, note: r.note });
     }
     const scopes = [
-      { id: 'global', label: 'Global', note: null, files: files.filter((f) => f.scope === 'global') },
+      { id: 'global', label: 'Your instructions', note: null, files: files.filter((f) => f.scope === 'global') },
       { id: 'project', label: 'Project', note: resolved.projectNote ?? null, files: files.filter((f) => f.scope === 'project') },
     ];
     return { ...base, count: files.filter((f) => !f.skipped).length, note: null, scopes };

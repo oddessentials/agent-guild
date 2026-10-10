@@ -703,9 +703,9 @@
   }
 
   var instructionFiles = [
-    { path: '/Users/demo/.claude/CLAUDE.md', scope: 'global', skipped: null, text: '# House style\n- Answer only what was asked.\n- Run every CI step before pushing.\n' },
-    { path: '/work/storefront/CLAUDE.md', scope: 'project', skipped: null, text: '# Storefront\n- npm test runs the unit tests.\n- Prices are integers in cents.\n' },
-    { path: '/work/storefront/AGENTS.md', scope: 'project', skipped: 'Skipped because /work/storefront/CLAUDE.md was found.', text: '# Agents\nShared notes for every coding tool.\n' },
+    { path: '/Users/demo/.claude/CLAUDE.md', location: '~/.claude', scope: 'global', skipped: null, text: '# House style\n- Answer only what was asked.\n- Run every CI step before pushing.\n' },
+    { path: '/work/storefront/CLAUDE.md', location: 'storefront', scope: 'project', skipped: null, text: '# Storefront\n- npm test runs the unit tests.\n- Prices are integers in cents.\n' },
+    { path: '/work/storefront/AGENTS.md', location: 'storefront', scope: 'project', skipped: 'Claude Code reads CLAUDE.md instead.', text: '# Agents\nShared notes for every coding tool.\n' },
   ];
 
   function providerInstructions(providerId, params, file) {
@@ -713,7 +713,7 @@
     if (!p) return error('unknown provider "' + providerId + '"', 'unknown_provider', 404);
     if (!p.instructionsSource) return error(p.tool + ' has no instruction files configured', 'instructions_unsupported', 400);
     var files = instructionFiles.map(function (f, i) {
-      return { index: i, path: f.path, scope: f.scope, bytes: f.text.length, modified: ago((i + 2) * 60 * 60), skipped: f.skipped, note: null };
+      return { index: i, path: f.path, name: f.path.split('/').pop(), location: f.location, scope: f.scope, bytes: f.text.length, modified: ago((i + 2) * 60 * 60), skipped: f.skipped, note: null };
     });
     if (file) {
       var found = files[Number(params.get('index'))];
@@ -724,7 +724,7 @@
       providerId: p.id, accountId: params.get('account') || 'default', folder: params.get('cwd') || '/work/storefront', fetchedAt: new Date(now).toISOString(),
       count: files.filter(function (f) { return !f.skipped; }).length, note: null,
       scopes: [
-        { id: 'global', label: 'Global', note: null, files: files.filter(function (f) { return f.scope === 'global'; }) },
+        { id: 'global', label: 'Your instructions', note: null, files: files.filter(function (f) { return f.scope === 'global'; }) },
         { id: 'project', label: 'Project', note: null, files: files.filter(function (f) { return f.scope === 'project'; }) },
       ],
     } });

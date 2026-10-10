@@ -125,15 +125,19 @@ const checks = await withPage({ name: 'dialogs', instrumentation }, async ({ ori
     await closeDialog('#memory', '#memory-close');
     pass(`${engine}: memory lists files, keeps the newest choice over a slower reply, reopens from another card, and fits desktop, tablet and phone`);
 
+    await until(`${engine} instruction count on the card`, () => evaluate('document.querySelector(".provider[data-id=google] .instructions-link .link-count")?.textContent==="2"'));
     await evaluate('document.querySelector(".provider[data-id=google] .instructions-link").click()');
     await until(`${engine} instruction files`, () => evaluate('document.querySelectorAll("#memory-list .memory-item").length===3'));
-    assert.equal(await evaluate('document.querySelector("#memory-sub").textContent.split(" · ")[0]'), '2 files load');
-    await evaluate('document.querySelector("#memory-list .memory-item.skipped").click()');
+    assert.equal(await evaluate('document.querySelector("#memory-sub").textContent.split(" · ")[0]'), 'Reads 2 files when a session starts');
+    assert.equal(await evaluate('document.querySelector(".instructions-skipped").open'), false, 'files that do not load start folded away');
+    await evaluate('document.querySelector(".instructions-skipped > summary").click()');
+    await evaluate('document.querySelector(".instructions-skipped .memory-item").click()');
     await until(`${engine} skipped instruction file`, () => evaluate('document.querySelector("#memory-text").textContent.includes("Shared notes for every coding tool")'));
-    assert.match(await evaluate('document.querySelector("#memory-list .memory-item.skipped .memory-reason").textContent'), /^Skipped because \/work\/storefront\/CLAUDE\.md was found/);
+    assert.equal(await evaluate('document.querySelector(".instructions-skipped .memory-reason").textContent'), 'Claude Code reads CLAUDE.md instead.');
+    assert.equal(await evaluate('document.querySelector("#memory-file").textContent+"|"+document.querySelector("#memory-copy").hidden'), '/work/storefront/AGENTS.md|false');
     await closeDialog('#memory', '#memory-close');
     assert.equal(await evaluate('document.activeElement===document.querySelector(".provider[data-id=google] .instructions-link")'), true);
-    pass(`${engine}: Instructions counts the files that load, says why one does not, and opens it`);
+    pass(`${engine}: Instructions shows its count on the card, folds away files that do not load with the reason, and opens them`);
 
     await until(`${engine} environment summary`, () => evaluate('document.querySelectorAll(".provider[data-id=shell] .environment-values dd").length===4'));
     for (const [width, height] of [[1440, 900], [768, 1024], [390, 844]]) {

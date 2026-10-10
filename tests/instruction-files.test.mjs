@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { InstructionFiles, globPattern, grokInspect } from '../src/manager/instruction-files.mjs';
+import { InstructionFiles, globPattern, grokInspect, shortLocation } from '../src/manager/instruction-files.mjs';
 
 const account = { id: 'default', env: {} };
 const provider = (instructions) => ({ id: instructions, tool: instructions, command: instructions, instructions, env: {} });
@@ -30,7 +30,9 @@ test('Claude Code: global files, every folder up the walk, and AGENTS.md only wh
   write('home/.claude/rules/style.md');
   write('home/.claude/rules/team/nested.md');
   write('home/.claude/rules/scoped.md', '---\npaths:\n  - "src/**/*.ts"\n---\nonly with a .ts file\n');
-  write('home/.claude/settings.json', JSON.stringify({ claudeMdExcludes: ['**/.claude/rules/skip.md'] }));
+  write('home/.claude/settings.json', JSON.stringify({ claudeMdExcludes: ['**/.claude/rules/skip.md', '**/excl/CLAUDE.md'] }));
+  write('home/excl/CLAUDE.md');
+  write('home/excl/AGENTS.md');
   write('home/proj/AGENTS.md');
   write('home/proj/.claude/AGENTS.md');
   write('outer/CLAUDE.md');
@@ -46,7 +48,7 @@ test('Claude Code: global files, every folder up the walk, and AGENTS.md only wh
   dir('outer/repo/sub');
   const reader = new InstructionFiles({ env: { CLAUDE_CONFIG_DIR: at('home/.claude') }, resolveCwd: (cwd) => cwd, ceiling: root });
 
-  const found = `Skipped because ${at('outer/CLAUDE.md')} was found.`;
+  const found = 'Claude Code reads CLAUDE.md instead.';
   const listed = await reader.list(provider('claude'), account, at('outer/repo/sub'));
   assert.deepEqual(rows(listed, root), [
     ['home/.claude/CLAUDE.md', 'global', null],
@@ -58,7 +60,7 @@ test('Claude Code: global files, every folder up the walk, and AGENTS.md only wh
     ['outer/repo/.claude/CLAUDE.md', 'project', null],
     ['outer/repo/CLAUDE.local.md', 'project', null],
     ['outer/repo/.claude/rules/a.md', 'project', null],
-    ['outer/repo/.claude/rules/skip.md', 'project', 'Matches claudeMdExcludes in Claude Code settings.'],
+    ['outer/repo/.claude/rules/skip.md', 'project', 'Excluded in Claude Code settings.'],
     ['outer/repo/.claude/rules/sub/b.md', 'project', null],
   ], 'the walk passes the repo root; a CLAUDE.md anywhere skips every AGENTS.md; claudeMdExcludes matches dot folders; rules folders are read recursively; a paths: rule waits for a matching file');
   assert.equal(listed.count, 9);
@@ -71,6 +73,21 @@ test('Claude Code: global files, every folder up the walk, and AGENTS.md only wh
     ['home/proj/AGENTS.md', 'project', null],
     ['home/proj/.claude/AGENTS.md', 'project', null],
   ], 'a global CLAUDE.md, met again on the walk through home, does not skip AGENTS.md');
+
+  const excluded = await reader.list(provider('claude'), account, at('home/excl'));
+  assert.deepEqual(rows(excluded, root).slice(3), [
+    ['home/excl/CLAUDE.md', 'project', 'Excluded in Claude Code settings.'],
+    ['home/excl/AGENTS.md', 'project', null],
+  ], 'an excluded CLAUDE.md does not skip AGENTS.md');
+});
+
+test('a row\'s location starts from a folder name near the working folder, else from home', () => {
+  const at = (file, folder = 'C:\\Users\\me\\src\\app\\web') => shortLocation(file, folder, 'C:\\Users\\me', path.win32);
+  assert.equal(at('C:\\Users\\me\\src\\app\\web\\CLAUDE.md'), 'web');
+  assert.equal(at('C:\\Users\\me\\src\\app\\web\\.claude\\rules\\a.md'), 'web\\.claude\\rules');
+  assert.equal(at('C:\\Users\\me\\src\\app\\.claude\\rules\\b.md'), 'app\\.claude\\rules');
+  assert.equal(at('C:\\Users\\me\\.claude\\CLAUDE.md'), '~\\.claude');
+  assert.equal(at('D:\\shared\\CLAUDE.md'), 'D:\\shared');
 });
 
 test('claudeMdExcludes globs match as picomatch does with dot: true', () => {
@@ -108,18 +125,18 @@ test('Codex: one global file, one file per folder from the marker root down, wit
     ['codex/AGENTS.override.md', 'global', 'Empty, so Codex reads AGENTS.md instead.'],
     ['codex/AGENTS.md', 'global', null],
     ['above/repo/AGENTS.override.md', 'project', null],
-    ['above/repo/AGENTS.md', 'project', 'AGENTS.override.md in this folder is used instead.'],
+    ['above/repo/AGENTS.md', 'project', 'Codex reads AGENTS.override.md instead.'],
     ['above/repo/sub/TEAM.txt', 'project', null],
-    ['above/repo/sub/leaf/AGENTS.md', 'project', 'Codex stops here: the 10-byte project_doc_max_bytes budget is used up.'],
+    ['above/repo/sub/leaf/AGENTS.md', 'project', 'Past Codex’s limit for project files (10 bytes).'],
   ], 'nothing above the .hg marker; .git is no marker once markers are set; a fallback name loads; the budget runs out');
-  assert.equal(listed.scopes[1].files[2].note, 'Codex reads only the first 1 bytes (project_doc_max_bytes).');
+  assert.equal(listed.scopes[1].files[2].note, 'Codex reads only the first 1 byte, its limit for project files.');
 
   write('untrusted/config.toml', `[projects.'${at('above/repo')}']\ntrust_level = "untrusted"\n`);
   write('untrusted/AGENTS.md');
   const work = { id: 'work', env: { CODEX_HOME: at('untrusted') } };
   const untrusted = await reader.list(provider('codex'), work, at('above/repo'));
   assert.deepEqual(rows(untrusted, root), [['untrusted/AGENTS.md', 'global', null]], 'each account reads its own CODEX_HOME');
-  assert.match(untrusted.scopes[1].note, /^Folder not trusted/);
+  assert.match(untrusted.scopes[1].note, /marks the folder untrusted/);
 });
 
 test('Grok Build: grok inspect decides, with the account\'s GROK_HOME, real file names and a trust note', async (t) => {
@@ -148,12 +165,12 @@ test('Grok Build: grok inspect decides, with the account\'s GROK_HOME, real file
   report = { projectTrusted: false, projectInstructions: [{ path: at('grok/AGENTS.md'), scope: 'global' }] };
   const untrusted = await reader.list(provider('grok'), work, at('proj'));
   assert.equal(untrusted.count, 1);
-  assert.match(untrusted.scopes[1].note, /^Folder not trusted/);
+  assert.match(untrusted.scopes[1].note, /until you trust the folder/);
 
   report = new Error('grok inspect did not answer within 3 seconds.');
   const failed = await reader.list(provider('grok'), work, at('proj'));
   assert.deepEqual([failed.count, failed.note, failed.scopes], [null, 'grok inspect did not answer within 3 seconds.', []]);
-  await assert.rejects(grokInspect('grok', root, { PATH: '' }), /not found/);
+  await assert.rejects(grokInspect('grok', root, { PATH: '' }), /couldn’t be found/);
 });
 
 test('Antigravity CLI: all global names, both names per folder up to the repo root, always_on rules, links once', async (t) => {
@@ -184,6 +201,12 @@ test('Antigravity CLI: all global names, both names per folder up to the repo ro
     ['above/repo/.agents/rules/on.md', 'project', null],
     ['above/repo/sub/AGENTS.md', 'project', null],
   ], 'nothing above the repo root, no rule without trigger: always_on, and a linked rule once');
+
+  write('nogit/GEMINI.md');
+  write('nogit/child/GEMINI.md');
+  const outside = await reader.list(provider('google'), account, at('nogit/child'));
+  assert.deepEqual(rows(outside, root).filter(([, scope]) => scope === 'project'), [['nogit/child/GEMINI.md', 'project', null]],
+    'outside a repository only the working folder is read');
 });
 
 test('a file opens by its index in a fresh list, only while that entry is still the same markdown file', async (t) => {

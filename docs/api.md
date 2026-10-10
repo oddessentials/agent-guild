@@ -529,12 +529,12 @@ Links are not followed.
   "count": 2,
   "note": null,
   "scopes": [
-    { "id": "global", "label": "Global", "note": null,
-      "files": [{ "index": 0, "path": "/Users/me/.claude/CLAUDE.md", "scope": "global", "bytes": 512, "modified": "2026-10-01T13:49:28.000Z", "skipped": null, "note": null }] },
+    { "id": "global", "label": "Your instructions", "note": null,
+      "files": [{ "index": 0, "path": "/Users/me/.claude/CLAUDE.md", "name": "CLAUDE.md", "location": "~/.claude", "scope": "global", "bytes": 512, "modified": "2026-10-01T13:49:28.000Z", "skipped": null, "note": null }] },
     { "id": "project", "label": "Project", "note": null,
       "files": [
-        { "index": 1, "path": "/Users/me/src/app/CLAUDE.md", "scope": "project", "bytes": 2048, "modified": "2026-10-01T13:49:28.000Z", "skipped": null, "note": null },
-        { "index": 2, "path": "/Users/me/src/app/AGENTS.md", "scope": "project", "bytes": 900, "modified": "2026-10-01T13:49:28.000Z", "skipped": "Skipped because /Users/me/src/app/CLAUDE.md was found.", "note": null }
+        { "index": 1, "path": "/Users/me/src/app/CLAUDE.md", "name": "CLAUDE.md", "location": "app", "scope": "project", "bytes": 2048, "modified": "2026-10-01T13:49:28.000Z", "skipped": null, "note": null },
+        { "index": 2, "path": "/Users/me/src/app/AGENTS.md", "name": "AGENTS.md", "location": "app", "scope": "project", "bytes": 900, "modified": "2026-10-01T13:49:28.000Z", "skipped": "Claude Code reads CLAUDE.md instead.", "note": null }
       ] }
   ],
   "fetchedAt": "2026-10-01T14:00:00.000Z"
@@ -545,7 +545,9 @@ The files a tool loads when a session starts in `folder`, resolved with the
 account's home folder, global files first and then project files from the
 outermost folder down. Claude Code, Codex CLI and Antigravity CLI rules are
 reproduced; Grok Build is asked with `grok inspect --json`. `path` is the
-file's real path. `count` is the number of files that load; a file that exists
+file's real path, `name` its file name, and `location` its folder in short:
+from the name of `folder` or of a folder at most two above it, else from `~`,
+else the whole folder. `count` is the number of files that load; a file that exists
 but does not load has `skipped` set to the reason, and `note` qualifies a file
 that loads only in part. A scope's `note` says why it lists no files, such as
 an untrusted folder. When Grok Build cannot answer, `count` is null, `scopes`
