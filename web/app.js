@@ -3345,7 +3345,12 @@ function renderHistory() {
   else if (snapshot && all.length === 0) note = `No ${provider.tool} sessions were found${account && account.id !== 'default' ? ` for the ${account.label} account` : ''}.`;
   else if (snapshot && shown.length === 0) note = 'No session matches the filter.';
   if (snapshot?.note) note = [note, snapshot.note].filter(Boolean).join(' ');
-  if (snapshot?.total > all.length) note = [note, `Showing ${all.length} of ${snapshot.total} sessions. Narrow the filter to find older conversations.`].filter(Boolean).join(' ');
+  if (snapshot?.total > all.length) {
+    const limitNote = provider.historyDetails
+      ? `Showing ${all.length} of ${snapshot.total} sessions. Narrow the filter to find older conversations.`
+      : `Loaded the newest ${all.length} of ${snapshot.total} sessions. Filtering searches these loaded sessions.`;
+    note = [note, limitNote].filter(Boolean).join(' ');
+  }
   $('history-note').textContent = note;
   $('history-note').hidden = !note;
   $('history-filter').disabled = !provider.historySource;

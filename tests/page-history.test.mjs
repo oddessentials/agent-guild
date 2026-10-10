@@ -71,8 +71,61 @@ test('a changed transcript requires refresh; other page failures can retry the s
   assert.equal(preview.state.error, null);
 });
 
-// Exercise the real list loader with explicit promise ordering, not a simulated timer.
+// Exercise the real page functions with fixed data and explicit promise ordering.
 const app = readFileSync(new URL('../web/app.js', import.meta.url), 'utf8');
+
+function historyPage(provider) {
+  const nodes = Object.fromEntries(['history-icon', 'history-title', 'history-filter', 'cwd', 'history-here', 'history-sub', 'history-note']
+    .map((id) => [id, { value: '', checked: false, parentElement: {} }]));
+  const sessions = Array.from({ length: 200 }, (_, i) => ({ id: `saved-${i}`, title: `Saved session ${i}`, cwd: '/work' }));
+  const context = {
+    $: (id) => nodes[id], historyProvider: () => provider,
+    historyView: { accountId: 'default', snapshot: { sessions, total: 334 }, loading: false },
+    paintProviderIcon: () => {}, renderHistorySubmit: () => {},
+    renderHistoryRows: (provider, shown) => { context.shown = shown; },
+  };
+  for (const name of ['renderHistory', 'historyText', 'sameFolder']) {
+    runInNewContext(app.match(new RegExp(`^function ${name}\\([^]*?\\n\\}`, 'm'))[0], context);
+  }
+  return { nodes, context };
+}
+
+test('history filtered on the page explains the loaded limit before, during and after filtering', () => {
+  for (const historySource of ['claude', 'codex', 'grok', 'docker']) {
+    const { nodes, context } = historyPage({ tool: historySource, historySource, historyDetails: false });
+    const limit = 'Loaded the newest 200 of 334 sessions. Filtering searches these loaded sessions.';
+    context.renderHistory();
+    assert.equal(context.shown.length, 200);
+    assert.equal(nodes['history-note'].textContent, limit, historySource);
+    assert.equal(nodes['history-note'].hidden, false);
+    nodes['history-filter'].value = 'Saved session 199';
+    context.renderHistory();
+    assert.equal(context.shown.length, 1);
+    assert.equal(nodes['history-note'].textContent, limit);
+    nodes['history-filter'].value = 'Saved session 333';
+    context.renderHistory();
+    assert.equal(context.shown.length, 0);
+    assert.equal(nodes['history-note'].textContent, `No session matches the filter. ${limit}`);
+    nodes['history-filter'].value = '';
+    context.historyView.snapshot.total = 200;
+    context.renderHistory();
+    assert.equal(nodes['history-note'].textContent, '');
+    assert.equal(nodes['history-note'].hidden, true);
+  }
+});
+
+test('Google history offers narrowing only while the server-filtered results exceed the limit', () => {
+  const { nodes, context } = historyPage({ tool: 'Antigravity CLI', historySource: 'antigravity', historyDetails: true });
+  context.renderHistory();
+  assert.equal(nodes['history-note'].textContent, 'Showing 200 of 334 sessions. Narrow the filter to find older conversations.');
+  nodes['history-filter'].value = 'Saved session 333';
+  context.historyView.snapshot = { sessions: [{ id: 'saved-333', title: 'Saved session 333', cwd: '/work' }], total: 1 };
+  context.renderHistory();
+  assert.equal(context.shown[0].id, 'saved-333');
+  assert.equal(nodes['history-note'].textContent, '');
+  assert.equal(nodes['history-note'].hidden, true);
+});
+
 test('Google resume requires an explicit folder when unknown or ambiguous, and opens a running session directly', () => {
   let choice = null, running = null;
   const starts = [], opened = [], prompts = [];

@@ -45,10 +45,12 @@ const checks = await withPage({ name: 'dialogs', instrumentation }, async ({ ori
       return {height:r.height,body:body.height,scrollable:b.scrollHeight>b.clientHeight,inside:r.top>=-1&&r.bottom<=innerHeight+1,
         footer:footer.bottom<=r.bottom+1,bodyBottom:body.bottom<=r.bottom+1};
     })()`);
+    const loadedHistoryNote = 'Loaded the newest 200 of 334 sessions. Filtering searches these loaded sessions.';
     for (const [width, height] of [[1440, 900], [768, 1024], [390, 844]]) {
       await resize(width, height);
       await evaluate('document.querySelector(".provider[data-id=anthropic] .existing").click()');
       await until(`${engine} history rows`, () => evaluate('document.querySelectorAll("#history-list .history-row").length===200'));
+      assert.equal(await evaluate('document.querySelector("#history-note").textContent'), loadedHistoryNote);
       await settled();
       let g = await geometry('#history');
       assert.ok(g.body > 120 && g.scrollable && g.inside && g.footer, `${engine} ${width}: ${JSON.stringify(g)}`);
@@ -57,12 +59,14 @@ const checks = await withPage({ name: 'dialogs', instrumentation }, async ({ ori
       await evaluate('document.querySelector("#history-filter").value="Saved session 199";document.querySelector("#history-filter").dispatchEvent(new Event("input"))');
       await settled();
       assert.equal(await evaluate('document.querySelectorAll("#history-list .history-row").length'), 1);
+      assert.equal(await evaluate('document.querySelector("#history-note").textContent'), loadedHistoryNote);
       g = await geometry('#history');
       assert.ok(g.body > 30 && g.inside && g.footer, `${engine} filtered: ${JSON.stringify(g)}`);
       if (width > 640) assert.ok(g.height < fullHeight, 'a short list still sizes to its content');
-      await evaluate('document.querySelector("#history-filter").value="no matching session";document.querySelector("#history-filter").dispatchEvent(new Event("input"))');
+      await evaluate('document.querySelector("#history-filter").value="Saved session 333";document.querySelector("#history-filter").dispatchEvent(new Event("input"))');
       await settled();
       assert.equal(await evaluate('document.querySelector("#history-note").checkVisibility()'), true);
+      assert.equal(await evaluate('document.querySelector("#history-note").textContent'), `No session matches the filter. ${loadedHistoryNote}`);
       assert.ok((await geometry('#history')).body > 20, 'the empty state remains visible');
       await closeDialog('#history', '#history-close');
     }
