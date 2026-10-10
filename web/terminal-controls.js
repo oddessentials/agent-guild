@@ -33,6 +33,7 @@ export class TerminalControls {
         const target = this.current();
         if (!target) return;
         this.press = { button, target, pointer: event.pointerId };
+        this.gesture = event.pointerId;
         button.setPointerCapture(event.pointerId);
         button.classList.add('pressed');
       });
@@ -67,6 +68,14 @@ export class TerminalControls {
         if (event.detail === 0 && !event.pointerType) this.activate(button, this.current());
       });
     }
+    // A key held while the terminals hide must not, on release, tap whatever now lies under the finger.
+    addEventListener('pointerdown', () => { this.gesture = null; }, true);
+    addEventListener('click', (event) => {
+      if (this.gesture == null || event.pointerId !== this.gesture || this.element.contains(event.target)) return;
+      this.gesture = null;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }, true);
     addEventListener('blur', () => this.cancel());
     addEventListener('pagehide', () => this.cancel());
     document.addEventListener('visibilitychange', () => { this.cancel(); this.refresh(); });
