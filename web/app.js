@@ -73,6 +73,7 @@ const state = {
   focusedPane: 0,
   activeId: null,
   eventsSocket: null,
+  heartbeat: false,
   eventsRetry: 0,
   pageAway: false,
   managerUnavailable: false,
@@ -1232,8 +1233,8 @@ function shellSummary(shells) {
 
 class AuthError extends Error {}
 
-/** Aborted when the link to the manager is found dead, so no request waits on it. See checkLinks. */
 let requestLink = new AbortController();
+const ANSWER_LOST = 'The connection to the session manager was lost before it answered. Once the page reconnects, check whether that took effect.';
 
 async function api(method, path, body, options = {}) {
   let res;
@@ -1249,12 +1250,13 @@ async function api(method, path, body, options = {}) {
       signal: requestLink.signal,
     });
   } catch (err) {
-    throw new Error(err?.name === 'AbortError'
-      ? 'The connection to the session manager was lost before it answered. Once the page reconnects, check whether that took effect.'
-      : 'The session manager could not be reached. Check your connection and try again.');
+    throw new Error(err?.name === 'AbortError' ? ANSWER_LOST : 'The session manager could not be reached. Check your connection and try again.');
   }
   if (res.status === 401) throw new AuthError('The access token was rejected.');
-  const data = await res.json().catch(() => ({}));
+  let text;
+  try { text = await res.text(); } catch { throw new Error(ANSWER_LOST); }
+  let data = {};
+  try { data = JSON.parse(text); } catch {}
   if (!res.ok) throw Object.assign(new Error(data?.error?.message || `Request failed (HTTP ${res.status})`), data?.error);
   return data;
 }
@@ -6681,6 +6683,7 @@ function connectEvents() {
       if (state.stopping) leaveStopping();
       state.version = msg.version || null;
       state.pid = msg.pid || null;
+      state.heartbeat = msg.heartbeat === true;
       state.restartable = typeof msg.pid === 'number';
       state.launcher = typeof msg.launcher === 'string' ? msg.launcher : null;
       state.folderOpener = msg.folderOpener || null;
@@ -6771,8 +6774,7 @@ function connectEvents() {
   };
 }
 
-// A link that has said nothing for a while is asked for a pong. No pong in time, or a connection that does not
-// open, means it is dead: after a move between networks a socket can stay open on a dead connection for minutes.
+// No pong in time, or a connection that does not open, means a link is dead: after a move between networks a socket can stay open on a dead connection for minutes.
 const PING_AFTER_MS = 20000;
 const PONG_WITHIN_MS = 8000;
 const OPEN_WITHIN_MS = 15000;
@@ -6784,7 +6786,7 @@ function checkLinks({ probe = false } = {}) {
   for (const ws of [state.eventsSocket, ...[...state.views.values()].map((view) => view.ws)]) {
     if (ws?.readyState === WebSocket.CONNECTING) {
       if (now - ws.heardAt > OPEN_WITHIN_MS) ws.drop();
-    } else if (ws?.readyState !== WebSocket.OPEN) {
+    } else if (ws?.readyState !== WebSocket.OPEN || !state.heartbeat) {
       continue;
     } else if (ws.pingedAt > ws.heardAt) {
       if (now - ws.pingedAt > PONG_WITHIN_MS) ws.drop();
@@ -7139,11 +7141,12 @@ addEventListener('pagehide', () => {
   managerLoss.cancel();
   state.eventsSocket?.close();
 });
-addEventListener('pageshow', (event) => {
+addEventListener('pageshow', async (event) => {
   if (!event.persisted) return;
   state.pageAway = false;
   activityFavicon.setPaused(false);
-  connectEvents();
+  try { await loadProviders(); } catch (err) { if (err instanceof AuthError) return showAuth(err.message); }
+  if (!state.pageAway) connectEvents();
 });
 $('version').addEventListener('click', openChangelog);
 $('changelog-close').addEventListener('click', closeChangelog);

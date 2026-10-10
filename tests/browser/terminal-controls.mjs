@@ -90,6 +90,15 @@ const checks = await withPage({ name: 'terminal-controls', instrumentation }, as
   await tap(key('Paste'));
   await until('refusal reported', async () => (await toastText()).includes('did not allow reading the clipboard'));
   assert.deepEqual(await inputs(), ['git status']);
+  await evaluate("testClipboard='echo first\\necho second\\n'");
+  await tap(key('Paste'));
+  await until('several lines refused', async () => (await toastText()).includes('more than one line'));
+  assert.deepEqual(await inputs(), ['git status']);
+  await write('\x1b[?2004h');
+  await tap(key('Paste'));
+  await until('bracketed paste sent', async () => (await inputs()).length > 1);
+  assert.deepEqual(await inputs(), ['git status', '\x1b[200~echo first\recho second\x1b[201~']);
+  await write('\x1b[?2004l');
   pass('Paste sends the clipboard as typed text without Enter, and says why when it cannot');
 
   await write('\x1b[?1h');

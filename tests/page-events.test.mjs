@@ -133,15 +133,15 @@ test('a successful socket handshake cancels a pending loss before the hello arri
   assert.match(page.labels.at(-1), /Connected to session manager/);
 });
 
-test('a silent link is asked for a pong, then dropped with every request waiting on it', () => {
+function linkPage(hello) {
   const linkSource = app.match(/function checkLinks\([^]*?\n\}/)?.[0];
   assert.ok(linkSource, 'checkLinks is present in app.js');
   const page = connect({ changelogOpen: false });
-  page.send(page.hello);
+  page.send({ ...page.hello, ...hello });
   const ws = page.sockets[0];
   ws.readyState = 1;
-  const sent = [];
-  ws.send = (raw) => sent.push(JSON.parse(raw).type);
+  page.sent = [];
+  ws.send = (raw) => page.sent.push(JSON.parse(raw).type);
   let now = ws.heardAt;
   Object.assign(page.context, {
     PING_AFTER_MS: 20000, PONG_WITHIN_MS: 8000, OPEN_WITHIN_MS: 15000,
@@ -150,17 +150,42 @@ test('a silent link is asked for a pong, then dropped with every request waiting
   page.context.WebSocket.CONNECTING = 0;
   page.context.WebSocket.OPEN = 1;
   runInNewContext(linkSource, page.context);
+  page.after = (ms) => { now += ms; page.context.checkLinks(); };
+  return page;
+}
+
+test('a manager that predates the heartbeat is never pinged or dropped for staying quiet', () => {
+  const page = linkPage({});
   const request = page.context.requestLink.signal;
-  now += 10000;
-  page.context.checkLinks();
+  for (let i = 0; i < 10; i++) page.after(10000);
+  assert.deepEqual(page.sent, []);
+  assert.equal(request.aborted, false);
+  assert.deepEqual(page.recovery, []);
+});
+
+test('a silent link is asked for a pong, then dropped with every request waiting on it', () => {
+  const page = linkPage({ heartbeat: true });
+  const { sent } = page;
+  const request = page.context.requestLink.signal;
+  page.after(10000);
   assert.deepEqual(sent, [], 'a link heard from lately is left alone');
-  now += 15000;
-  page.context.checkLinks();
+  page.after(15000);
   assert.deepEqual(sent, ['ping']);
-  now += 9000;
-  page.context.checkLinks();
+  page.after(9000);
   assert.equal(request.aborted, true, 'a request waiting on the dead link ends');
   assert.notEqual(page.context.requestLink.signal, request, 'later requests are not aborted');
   assert.match(page.labels.at(-1), /Trying to reconnect/);
   assert.deepEqual(page.recovery, ['check']);
+});
+
+test('a request cancelled while its answer is still arriving is reported, never taken as an empty success', async () => {
+  const apiSource = app.match(/const ANSWER_LOST = [^\n]*\n/)?.[0] + app.match(/async function api\([^]*?\n\}/)?.[0];
+  assert.ok(apiSource, 'api is present in app.js');
+  const cut = () => Promise.reject(new DOMException('The operation was aborted.', 'AbortError'));
+  const context = {
+    state: { token: 't' }, requestLink: new AbortController(), AuthError: class extends Error {},
+    fetch: async () => ({ status: 200, ok: true, json: cut, text: cut }),
+  };
+  runInNewContext(apiSource, context);
+  await assert.rejects(context.api('POST', '/sessions', {}), /lost before it answered/);
 });

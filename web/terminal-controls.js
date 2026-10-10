@@ -112,7 +112,6 @@ export class TerminalControls {
     if (data !== null) target.term.input(data);
   }
 
-  /** Sends the clipboard's text as typed input. A trailing line break is left off, so Paste never presses Enter. */
   async paste(target) {
     if (!navigator.clipboard?.readText) return this.notify('This page cannot read the clipboard. Browsers allow that only on a secure (https) page.');
     let text;
@@ -123,6 +122,9 @@ export class TerminalControls {
     }
     text = text.replace(/[\r\n]+$/, '');
     if (!text) return this.notify('The clipboard has no text to paste.');
+    if (/[\r\n]/.test(text) && !target.term.modes.bracketedPasteMode) {
+      return this.notify('Not pasted: the clipboard has more than one line, and this program would run each line as it arrives.');
+    }
     if (!sameTarget(target, this.current())) return this.notify('Not pasted: the terminal cannot take input now.');
     target.term.paste(text);
   }

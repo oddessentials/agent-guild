@@ -915,7 +915,7 @@
         self.emit({ data: JSON.stringify({
           type: 'hello', version: version, pid: null, platform: 'darwin', startedAt: startedAt,
           launcher: null, folderOpener: null, remoteAccess: null, upgrade: null,
-          notesRevision: notesDoc.revision, sessions: clone(sessions),
+          notesRevision: notesDoc.revision, sessions: clone(sessions), heartbeat: true,
         }) });
       } else {
         var match = self.url.match(/\/sessions\/([a-f0-9]+)\/terminal/);

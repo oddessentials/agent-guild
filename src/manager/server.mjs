@@ -644,7 +644,7 @@ export function createManagerServer({
 
   function handleEvents(ws, req) {
     eventClients.add(ws);
-    const hello = { type: 'hello', version, pid: process.pid, platform: process.platform, startedAt, launcher, folderOpener: folderOpenerFor(req), remoteAccess: remoteAccess ? { available: true } : null, upgrade: upgradeInfo(), sessions: manager.list() };
+    const hello = { type: 'hello', version, pid: process.pid, platform: process.platform, startedAt, launcher, folderOpener: folderOpenerFor(req), remoteAccess: remoteAccess ? { available: true } : null, upgrade: upgradeInfo(), sessions: manager.list(), heartbeat: true };
     const notesHello = notes.helloRevision();
     if (notesHello.known) hello.notesRevision = notesHello.revision;
     else hello.notesUnreadable = true;
