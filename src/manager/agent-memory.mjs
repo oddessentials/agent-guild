@@ -252,7 +252,7 @@ async function listFiles(dir) {
         if (files.length >= MAX_FILES) { truncated = true; return; }
         try {
           const stat = await fs.promises.stat(child);
-          files.push({ path: childRel, title: await headingOf(child), bytes: stat.size, modified: stat.mtime.toISOString() });
+          files.push({ path: childRel, fullPath: child, folder, title: await headingOf(child), bytes: stat.size, modified: stat.mtime.toISOString() });
         } catch { /* gone since the listing */ }
       }
     }

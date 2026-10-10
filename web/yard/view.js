@@ -40,6 +40,7 @@ export function initYard(controller) {
     if (focus) renderer?.focus(next);
     $('yard-focus').disabled = !next;
     $('yard-deselect').hidden = !next;
+    if (next) controller.selected?.();
   }
   function updateInspector() {
     $('yard-welcome').hidden = Boolean(selected);

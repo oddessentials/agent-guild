@@ -105,7 +105,12 @@ function save(key, value) { try { value === null ? localStorage.removeItem(key) 
 
 // ---- helpers --------------------------------------------------------------
 
-let toastTimer;
+const toastView = { timer: 0, left: 0, since: 0, held: false };
+
+/**
+ * The toast is a popover, so it shows above the page and any dialog. A modal dialog makes everything outside
+ * it inert, a popover too, so while one is open the toast is shown from inside the topmost modal dialog.
+ */
 function toast(message, ms = 5000, action = null) {
   const el = $('toast');
   el.replaceChildren(message);
@@ -115,14 +120,57 @@ function toast(message, ms = 5000, action = null) {
     button.className = 'btn toast-action';
     button.textContent = action.label;
     button.addEventListener('click', () => {
-      el.hidden = true;
+      hideToast();
       action.run();
     });
     el.append(button);
   }
   el.hidden = false;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.hidden = true; }, ms);
+  raiseToast();
+  toastView.left = ms;
+  toastView.held = el.matches(':hover, :focus-within');
+  if (!toastView.held) runToastTimer();
+}
+
+const returnToast = () => { if (!$('toast').hidden) raiseToast(); };
+
+function raiseToast() {
+  const el = $('toast');
+  const host = [...document.querySelectorAll('dialog')].filter((d) => d.matches(':modal')).pop() ?? document.body;
+  // Moving a showing popover closes it, so it is shown again in its new place.
+  if (el.parentElement !== host) {
+    if (el.matches(':popover-open')) el.hidePopover();
+    host.append(el);
+  }
+  // Every close sends a showing toast back out, a dialog reopened later included; the same listener is added once.
+  if (host !== document.body) host.addEventListener('close', returnToast, { once: true });
+  if (!el.matches(':popover-open')) el.showPopover?.();
+}
+
+function hideToast() {
+  const el = $('toast');
+  clearTimeout(toastView.timer);
+  el.hidden = true;
+  if (el.matches(':popover-open')) el.hidePopover();
+}
+
+function runToastTimer() {
+  clearTimeout(toastView.timer);
+  toastView.since = Date.now();
+  toastView.timer = setTimeout(hideToast, toastView.left);
+}
+
+/** A toast waits while it is pointed at or focused, so its action can be reached. */
+function holdToast(held) {
+  if ($('toast').hidden || held === toastView.held) return;
+  toastView.held = held;
+  if (held) {
+    clearTimeout(toastView.timer);
+    toastView.left = Math.max(0, toastView.left - (Date.now() - toastView.since));
+  } else {
+    toastView.left = Math.max(toastView.left, 2000);
+    runToastTimer();
+  }
 }
 
 /**
@@ -144,6 +192,7 @@ function setConnection(kind, label) {
   $('manager').hidden = !state.connected;
   if (!state.connected) closeMenu($('manager-menu'));
   renderFolderTools();
+  if ($('memory').open) renderMemoryFile();
   $('stop-manager').hidden = !state.connected;
   $('restart-manager').hidden = !state.connected || !state.restartable;
   renderUpgrade();
@@ -876,6 +925,14 @@ function closeDock({ focusOpener = true } = {}) {
 
 function dockMakesWayForTerminal() {
   if (dockView.panel && !stageBesideDock(innerWidth, clampDockWidth(dockView.width, innerWidth))) closeDock({ focusOpener: false });
+}
+
+/** A Yard selection shows in the sidebar, so a dock lying over the sidebar makes way for it. */
+function dockMakesWayForYard() {
+  if (!dockView.panel) return;
+  const dock = $('dock').getBoundingClientRect();
+  const sidebar = document.querySelector('.yard-sidebar').getBoundingClientRect();
+  if (sidebar.width > 0 && dock.left < sidebar.right - 1) closeDock({ focusOpener: false });
 }
 
 function moveDockTab(e) {
@@ -1672,8 +1729,8 @@ function buildProvider(provider) {
     if (provider.installCommand && checkFailed) update.textContent = 'Reinstall';
     update.title = provider.updateCommand ? `Run "${provider.updateCommand}" in a session` : '';
     update.addEventListener('click', () => installProvider(provider, node));
-    renderHint(hint, provider);
     renderCopies(node.querySelector('.copies'), provider, node);
+    renderHint(hint, provider, node.querySelector('.copies'));
     renderVendorLinks(node, provider);
     renderAccounts(node, provider);
     renderShells(node, provider);
@@ -1871,17 +1928,44 @@ async function manageMultiplexer(provider, tool, kind, copy = null, force = fals
   }
 }
 
-function renderHint(hint, provider) {
+/** Who updates a copy Agent Guild does not, when the card's Installation list already tells the whole story. */
+const MANAGED_UPDATES = {
+  desktop: 'Docker Desktop updates this copy.',
+  system: 'Its system package updates this copy.',
+};
+
+function renderHint(hint, provider, copies) {
   let text = '';
+  let details = false;
   if (provider.pluginError) text = provider.pluginError;
   else if (provider.pluginPending) text = '';
   else if (!provider.available) text = provider.installable ? '' : provider.install || `${provider.command} was not found on PATH.`;
   // A version check that fails with no update on offer shows how to install the tool: `docker agent version` fails without
   // the plugin. The install command replaces the generic update guidance, which would describe the docker binary, not the plugin.
   else if (provider.versionStatus === 'failed') text = [provider.versionError, !provider.updateCommand && (provider.installCommand ? provider.updateGuidance : provider.install || provider.updateGuidance)].filter(Boolean).join(' ');
-  else if (provider.updateAvailable && !provider.updateCommand) text = provider.updateGuidance || '';
+  else if (provider.updateAvailable && !provider.updateCommand) {
+    // The full sentence, path and all, is in the Installation list; the card keeps one short line above its buttons.
+    const managed = MANAGED_UPDATES[provider.installChannel];
+    details = Boolean(managed && !copies.hidden && provider.installs?.some((i) => i.active && i.uninstallGuidance === provider.updateGuidance));
+    text = details ? managed : provider.updateGuidance || '';
+  }
   hint.hidden = !text;
   hint.replaceChildren(text);
+  hint.title = details ? provider.updateGuidance : '';
+  if (details) {
+    const more = document.createElement('button');
+    more.type = 'button';
+    more.className = 'hint-details';
+    more.textContent = 'Details';
+    more.title = 'Show the Installation list';
+    more.addEventListener('click', () => {
+      copies.open = true;
+      const summary = copies.querySelector('summary');
+      summary.focus();
+      summary.scrollIntoView({ block: 'nearest' });
+    });
+    hint.append(' ', more);
+  }
   const docs = text && httpsHref(provider.docs);
   if (!docs) return;
   const link = document.createElement('a');
@@ -1890,7 +1974,7 @@ function renderHint(hint, provider) {
   link.target = '_blank';
   link.rel = 'noopener noreferrer';
   link.textContent = 'Docs';
-  hint.append(' ', link);
+  hint.append(details ? ' · ' : ' ', link);
 }
 
 function renderVendorLinks(card, provider) {
@@ -3443,7 +3527,7 @@ async function loadMemory() {
     const reply = await api('GET', memoryQuery());
     if (request !== memoryView.request) return;
     const memory = reply.memory ?? reply.instructions;
-    const files = memory.scopes.flatMap((scope) => scope.files.map((file) => ({ scope: scope.id, path: file.path, index: file.index, skipped: Boolean(file.skipped) })));
+    const files = memory.scopes.flatMap((scope) => scope.files.map((file) => memoryPick(scope.id, file)));
     const kept = memoryView.selected && files.find((f) => f.scope === memoryView.selected.scope && f.path === memoryView.selected.path);
     Object.assign(memoryView, { snapshot: memory, error: null, selected: kept ?? files.find((f) => !f.skipped) ?? files[0] ?? null });
     if (memoryView.kind === 'instructions') setInstructionCount(`${memoryView.providerId}|${memoryView.accountId}|${memoryView.cwd}`, memory.count);
@@ -3492,32 +3576,42 @@ async function loadMemoryFile() {
   }
 }
 
-function selectMemoryFile(scope, path, index) {
-  memoryView.selected = { scope, path, index };
+/** A listed file as the dialog keeps it: `path` names it to the manager, `fullPath` and `folder` are where it is on disk. */
+function memoryPick(scope, file) {
+  return { scope, path: file.path, index: file.index, fullPath: file.fullPath ?? file.path, folder: file.folder, skipped: Boolean(file.skipped) };
+}
+
+function selectMemoryFile(scope, file) {
+  memoryView.selected = memoryPick(scope, file);
   memoryView.fileError = null;
   for (const node of $('memory-list').querySelectorAll('.memory-item')) {
-    node.setAttribute('aria-current', String(node.dataset.scope === scope && node.dataset.path === path));
+    node.setAttribute('aria-current', String(node.dataset.scope === scope && node.dataset.path === file.path));
   }
   loadMemoryFile();
 }
 
-async function openMemoryFolder(dir) {
+/** Shares the working folder button's guard, so neither opens a second folder before the first hands off. */
+async function openMemoryFolder() {
+  const dir = memoryView.selected?.folder;
+  if (!dir || !state.folderOpener?.available || state.folderOpening) return;
+  state.folderOpening = true;
+  renderFolderTools();
+  renderMemoryFile();
   try {
     await api('POST', '/open-folder', { cwd: dir });
   } catch (err) {
     if (err instanceof AuthError) showAuth(err.message);
-    else toast(err.message || 'Could not open the folder.');
+    else toast(err.code === 'bad_cwd' ? 'This folder is gone — refresh.' : err.message || 'Could not open the folder.');
+  } finally {
+    state.folderOpening = false;
+    renderFolderTools();
+    renderMemoryFile();
   }
 }
 
 function memoryScopeNode(scope) {
   const head = el('div', 'memory-scope-head', el('h3', null, scope.label));
   if (scope.dir) head.title = scope.dir;
-  if (scope.dir && scope.files.length && state.folderOpener?.available) {
-    const open = button('Open folder', () => openMemoryFolder(scope.dir), 'btn memory-open');
-    open.title = `Open ${scope.dir} in ${state.folderOpener.label}`;
-    head.append(open);
-  }
   const section = el('section', 'memory-scope', head);
   const empty = scope.id === 'global' ? 'No global memory yet.' : 'No memory for this folder yet.';
   const note = scope.note ?? (scope.files.length ? null : empty);
@@ -3532,7 +3626,7 @@ function memoryScopeNode(scope) {
     item.dataset.path = file.path;
     item.title = [file.title, file.path, `changed ${new Date(file.modified).toLocaleString()}`].filter(Boolean).join('\n');
     item.setAttribute('aria-current', String(memoryView.selected?.scope === scope.id && memoryView.selected?.path === file.path));
-    item.addEventListener('click', () => selectMemoryFile(scope.id, file.path, file.index));
+    item.addEventListener('click', () => selectMemoryFile(scope.id, file));
     section.append(item);
   }
   return section;
@@ -3588,7 +3682,7 @@ function instructionItem(file) {
   item.dataset.path = file.path;
   item.title = file.path;
   item.setAttribute('aria-current', String(memoryView.selected?.path === file.path));
-  item.addEventListener('click', () => selectMemoryFile(file.scope, file.path, file.index));
+  item.addEventListener('click', () => selectMemoryFile(file.scope, file));
   return item;
 }
 
@@ -3638,9 +3732,14 @@ function renderMemory() {
 function renderMemoryFile() {
   const { selected, file, fileError, fileLoading } = memoryView;
   const shown = file && selected && file.scope === selected.scope && file.path === selected.path ? file : null;
-  $('memory-file').textContent = selected ? selected.path : '';
+  $('memory-file').textContent = selected ? selected.fullPath : '';
   $('memory-file').hidden = !selected;
-  $('memory-copy').hidden = !selected || memoryView.kind !== 'instructions';
+  $('memory-copy').hidden = !selected;
+  const open = $('memory-open');
+  open.hidden = !selected?.folder || !state.folderOpener?.available;
+  open.disabled = state.folderOpening;
+  open.setAttribute('aria-busy', String(state.folderOpening));
+  if (!open.hidden) open.title = `Open ${selected.folder} in ${state.folderOpener.label}`;
   let note = '';
   if (fileError) note = fileError;
   else if (fileLoading && !shown) note = 'Reading the file…';
@@ -5839,6 +5938,7 @@ const terminalControls = new TerminalControls({
 });
 bindTerminalViewport($('terminal-panel'), $('terminal-controls'));
 bindVisibleViewport($('dock'), 'dock', { fitted: fitPickerList });
+bindVisibleViewport($('toast'), 'toast');
 
 const terminalCopy = new TerminalCopy({
   opener: $('panel-copy'), dialog: $('terminal-copy'),
@@ -6569,7 +6669,8 @@ $('history-preview-refresh').addEventListener('click', () => historyPreview.refr
 $('history-preview-more').addEventListener('click', () => historyPreview.more());
 $('memory-close').addEventListener('click', closeMemory);
 $('memory-refresh').addEventListener('click', loadMemory);
-$('memory-copy').addEventListener('click', () => { if (memoryView.selected) copyText(memoryView.selected.path, 'the path'); });
+$('memory-copy').addEventListener('click', () => { if (memoryView.selected) copyText(memoryView.selected.fullPath, 'the path'); });
+$('memory-open').addEventListener('click', openMemoryFolder);
 $('memory').addEventListener('click', (e) => { if (e.target === $('memory')) closeMemory(); });
 $('memory').addEventListener('close', () => {
   // The event comes a task after close(), by when another card may have opened the dialog again.
@@ -6581,6 +6682,20 @@ $('memory').addEventListener('close', () => {
     : $('providers').querySelector(`.provider[data-id="${memoryView.providerId}"] .${memoryView.kind === 'instructions' ? 'instructions' : 'memory'}-link`);
   opener?.focus();
   memoryOpener = null;
+});
+$('toast').addEventListener('mouseenter', () => holdToast(true));
+$('toast').addEventListener('mouseleave', () => holdToast($('toast').matches(':focus-within')));
+$('toast').addEventListener('focusin', () => holdToast(true));
+$('toast').addEventListener('focusout', (e) => holdToast($('toast').contains(e.relatedTarget) || $('toast').matches(':hover')));
+// A tap on the message dismisses it, unless it selected text to copy; so does a flick upward.
+$('toast').addEventListener('click', (e) => {
+  if (!e.target.closest('button') && !String(getSelection()).trim()) hideToast();
+});
+let toastSwipe = null;
+$('toast').addEventListener('pointerdown', (e) => { toastSwipe = e.pointerType === 'mouse' ? null : e.clientY; });
+$('toast').addEventListener('pointerup', (e) => {
+  if (toastSwipe !== null && toastSwipe - e.clientY > 16) hideToast();
+  toastSwipe = null;
 });
 $('github-open').addEventListener('click', () => openGitHub());
 $('github-toggle').addEventListener('click', firstClick(toggleGitHub));
@@ -6989,6 +7104,7 @@ yardUi = initYard({
   }),
   openSession: openPanel,
   openNews,
+  selected: dockMakesWayForYard,
   mountInspector(host, selection) {
     if (!selection) { host.replaceChildren(); return; }
     if (selection.kind === 'provider') {

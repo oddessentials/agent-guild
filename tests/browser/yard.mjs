@@ -345,11 +345,12 @@ test('Cards and Yard use the same actions, accounts, dialogs and terminal',optio
   assert.equal(f.calls.filter(c=>c[0]==='create').at(-1)[1].cwd,'E:\\projects\\example');
   await closeTerminal(b);
   const creates=f.calls.filter(c=>c[0]==='create').length;
-  await b.click(inspector+' .existing');await b.wait("document.querySelector('#history').open");
+  // The dialog opens before its rows load, so each wait is for the row it clicks.
+  await b.click(inspector+' .existing');await b.wait("document.querySelector('#history-list [data-id=history-1] .history-resume')");
   await b.click('#history-list [data-id="history-1"] .history-resume');await terminalReady(b);
   assert.equal(f.calls.filter(c=>c[0]==='create').length,creates,'history reuses the running session');
   await closeTerminal(b);
-  await b.click(inspector+' .existing');await b.wait("document.querySelector('#history').open");
+  await b.click(inspector+' .existing');await b.wait("document.querySelector('#history-list [data-id=history-missing] .history-resume')");
   await b.click('#history-list [data-id="history-missing"] .history-resume');await terminalReady(b);
   assert.deepEqual(f.calls.filter(c=>c[0]==='create').slice(-2).map(c=>c[1].cwd),['missing','E:\\projects\\parity']);
   await closeTerminal(b);
@@ -511,6 +512,27 @@ test('roster filtering and selection removal preserve keyboard access',options,a
   await b.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});
   await terminalReady(b);
   assert.equal(await b.evaluate("document.querySelector('#panel-title').textContent"),f.data.get(next).name);
+  assert.deepEqual(b.errors,[]);
+});
+
+test('the side panel never covers the Yard sidebar: it docks beside it, or makes way for a selection',options,async t=>{
+  const {f,b}=await setup(t,{yard:true});await ready(b);
+  const layout=()=>b.evaluate(`(()=>{const side=document.querySelector('.yard-sidebar').getBoundingClientRect(),dock=document.querySelector('#dock');
+    const r=dock.getBoundingClientRect(),hit=document.elementFromPoint(side.left+side.width/2,side.top+side.height/2);
+    return {open:!dock.hidden,clear:dock.hidden||side.right<=r.left+1,sidebarOnTop:Boolean(hit?.closest('.yard-sidebar'))};})()`);
+  const id=[...f.data.keys()][0];
+  await b.click('#notes-open');
+  await b.wait("!document.querySelector('#dock').hidden");
+  await nextFrames(b);
+  assert.deepEqual(await layout(),{open:true,clear:true,sidebarOnTop:true},'a wide window docks the panel beside the sidebar');
+  await b.click(session(id));
+  assert.deepEqual(await layout(),{open:true,clear:true,sidebarOnTop:true},'a selection keeps a panel that covers nothing');
+  await b.send('Emulation.setDeviceMetricsOverride',{width:1100,height:900,deviceScaleFactor:1,mobile:false});
+  await nextFrames(b);
+  assert.deepEqual(await layout(),{open:true,clear:false,sidebarOnTop:false},'a mid-size window lays the panel over the sidebar');
+  await b.click(provider('anthropic'));
+  assert.deepEqual(await layout(),{open:false,clear:true,sidebarOnTop:true},'selecting shows the inspector instead');
+  assert.equal(await b.evaluate(`document.querySelector('${inspector} .provider')?.dataset.id`),'anthropic');
   assert.deepEqual(b.errors,[]);
 });
 

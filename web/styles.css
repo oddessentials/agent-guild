@@ -292,15 +292,17 @@ main { max-width: calc(1200px + var(--dock-space, 0px)); margin: 0 auto; padding
 .console-link:hover { text-decoration: underline; }
 .console-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 3px; }
 /* Opens a dialog, so it is a button that reads as the links beside it, without their new-tab mark. */
-.memory-link { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; }
-.memory-link:hover { text-decoration: underline; }
-.memory-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 3px; }
+.memory-link, .hint-details { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; }
+.memory-link:hover, .hint-details:hover { text-decoration: underline; }
+.memory-link:focus-visible, .hint-details:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 3px; }
 .cloud-link { display: block; flex: none; align-self: flex-start; width: 32px; height: 32px; margin: -4px -6px 0 0; border-radius: 8px; color: var(--muted); }
 .cloud-link::before { content: ""; display: block; width: 100%; height: 100%; background: currentColor; mask: var(--icon-cloud) center / 20px no-repeat; }
 .cloud-link:hover { color: var(--accent); }
 .cloud-link:focus-visible { color: var(--accent); outline: 2px solid var(--focus); outline-offset: 0; }
 .provider-actions { margin-top: auto; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-.provider .hint { font-size: 0.78rem; color: var(--muted); overflow-wrap: anywhere; }
+/* A card's note sits with its buttons at the foot of the card, above them. */
+.provider .hint { margin: auto 0 0; font-size: 0.78rem; color: var(--muted); overflow-wrap: anywhere; }
+.provider .hint:not([hidden]) + .provider-actions { margin-top: 0; }
 .provider .copies { font-size: 0.78rem; color: var(--muted); overflow-wrap: anywhere; }
 .provider .copies summary { cursor: pointer; list-style: none; }
 .provider .copies.warned summary { color: var(--warn); }
@@ -652,7 +654,7 @@ body:has(#app[hidden]):has(#auth[hidden]):has(#stopped[hidden])::after {
 .models[open] { display: flex; flex-direction: column; }
 .models::backdrop { background: rgba(15, 17, 21, 0.5); }
 .models-bar { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
-.models-heading { flex: 1; min-width: 0; }
+.models-heading { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .models-heading .sub { margin: 2px 0 0; color: var(--muted); font-size: 0.78rem; }
 /* Content supplies the basis for auto-height dialogs; a zero basis collapses in Safari. */
 .models-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 0 14px 14px; }
@@ -878,7 +880,6 @@ a.news-link:visited { color: var(--muted); }
 .memory-scope + .memory-scope { margin-top: 10px; }
 .memory-scope-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 6px 4px; }
 .memory-scope-head h3 { margin: 0; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
-.memory-open { padding: 2px 8px; font-size: 0.75rem; }
 .memory-note { margin: 4px 6px 8px; color: var(--muted); font-size: 0.82rem; line-height: 1.45; }
 .memory-item {
   display: grid; width: 100%; gap: 1px; padding: 6px 8px; border: 0; border-radius: 6px; background: none; color: var(--text);
@@ -896,9 +897,10 @@ a.news-link:visited { color: var(--muted); }
 .instructions-skipped > summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 3px; }
 .instructions-footnote { margin-top: 14px; font-size: 0.75rem; }
 .memory-retry { margin: 0 6px; }
-.memory-file-bar { display: flex; align-items: center; gap: 10px; padding-right: 14px; border-bottom: 1px solid var(--border); }
-.memory-file-bar .memory-file { flex: 1 1 auto; min-width: 0; border-bottom: 0; }
-.memory-copy { flex: none; padding: 2px 10px; font-size: 0.75rem; }
+/* The buttons drop below the path when the bar is too narrow to keep a readable line beside them. */
+.memory-file-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 14px; border-bottom: 1px solid var(--border); }
+.memory-file-bar .memory-file { flex: 1 1 16rem; min-width: 0; padding: 2px 0; border-bottom: 0; }
+.memory-file-bar .btn { flex: none; padding: 2px 10px; font-size: 0.75rem; }
 .memory-view { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .memory-file { margin: 0; padding: 10px 14px; border-bottom: 1px solid var(--border); font-weight: 600; font-size: 0.85rem; overflow-wrap: anywhere; }
 .memory-view .models-note { margin: 10px 14px 0; }
@@ -1112,9 +1114,17 @@ a.btn.github-out::after {
 .github .github-accounts { border-bottom: 0; padding-bottom: 0; }
 
 .toast {
-  position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 20;
-  max-width: min(640px, calc(100vw - 32px)); padding: 10px 14px; border-radius: var(--radius);
-  background: var(--text); color: var(--bg); font-size: 0.9rem; box-shadow: var(--shadow); white-space: pre-wrap;
+  /* A popover in the top layer, shown from inside an open modal dialog, so it sets everything it inherits.
+     It keeps above an on-screen keyboard, which the page publishes as --toast-viewport-*. */
+  --toast-from: 10px;
+  position: fixed; inset: auto auto calc(var(--toast-viewport-bottom, 0px) + max(20px, env(safe-area-inset-bottom) + 12px)) 50%; transform: translateX(-50%); margin: 0; overflow: visible;
+  width: max-content; max-width: min(640px, calc(100vw - 32px)); padding: 10px 14px; border: 0; border-radius: var(--radius);
+  background: var(--text); color: var(--bg); font-size: 0.9rem; font-weight: 400; line-height: 1.45; text-align: start; box-shadow: var(--shadow); white-space: pre-wrap;
+  cursor: default;
+}
+@media (max-width: 640px) {
+  /* On a phone the bottom edge belongs to the browser's toolbar and the keyboard; banners arrive under the top bar. */
+  .toast { --toast-from: -10px; inset: calc(max(var(--topbar-h, 56px), var(--toast-viewport-top, 0px), env(safe-area-inset-top)) + 8px) auto auto 50%; touch-action: none; }
 }
 
 .toast:not([hidden]) { animation: toast-in 0.25s var(--ease); }
@@ -1126,7 +1136,7 @@ a.btn.github-out::after {
 @keyframes pulse { 50% { opacity: 0.35; } }
 @keyframes ring { 0% { transform: scale(0.85); opacity: 0.8; } 100% { transform: scale(1.3); opacity: 0; } }
 @keyframes stat-fill { from { transform: scaleX(0); } }
-@keyframes toast-in { from { opacity: 0; transform: translate(-50%, 10px); } }
+@keyframes toast-in { from { opacity: 0; transform: translate(-50%, var(--toast-from)); } }
 @keyframes fade-in { from { opacity: 0; } }
 @keyframes splash { from { opacity: 0.3; transform: scale(0.95); } to { opacity: 0.85; transform: scale(1.03); } }
 @keyframes theme-reveal {

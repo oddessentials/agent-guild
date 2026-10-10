@@ -695,7 +695,7 @@
       if (text === undefined) return error('This file is gone. Refresh the list.', 'memory_file_gone', 404);
       return json({ file: { scope: params.get('scope'), path: params.get('path'), bytes: text.length, modified: ago(40 * 60), truncated: false, text: text } });
     }
-    var files = Object.keys(memoryFiles).map(function (path, i) { return { path: path, title: memoryFiles[path].split('\n')[0].slice(2), bytes: memoryFiles[path].length, modified: ago((i + 1) * 40 * 60) }; });
+    var files = Object.keys(memoryFiles).map(function (path, i) { var folders = path.split('/'); folders.pop(); return { path: path, fullPath: '/demo/memory/storefront/' + path, folder: ['/demo/memory/storefront'].concat(folders).join('/'), title: memoryFiles[path].split('\n')[0].slice(2), bytes: memoryFiles[path].length, modified: ago((i + 1) * 40 * 60) }; });
     return json({ memory: {
       providerId: p.id, accountId: params.get('account') || 'default', folder: params.get('cwd') || '/work/storefront', fetchedAt: new Date(now).toISOString(),
       scopes: [{ id: 'project', label: 'This project', dir: '/demo/memory/storefront', note: null, truncated: false, files: files }],
@@ -713,7 +713,7 @@
     if (!p) return error('unknown provider "' + providerId + '"', 'unknown_provider', 404);
     if (!p.instructionsSource) return error(p.tool + ' has no instruction files configured', 'instructions_unsupported', 400);
     var files = instructionFiles.map(function (f, i) {
-      return { index: i, path: f.path, name: f.path.split('/').pop(), location: f.location, scope: f.scope, bytes: f.text.length, modified: ago((i + 2) * 60 * 60), skipped: f.skipped, note: null };
+      return { index: i, path: f.path, folder: f.path.slice(0, f.path.lastIndexOf('/')), name: f.path.split('/').pop(), location: f.location, scope: f.scope, bytes: f.text.length, modified: ago((i + 2) * 60 * 60), skipped: f.skipped, note: null };
     });
     if (file) {
       var found = files[Number(params.get('index'))];

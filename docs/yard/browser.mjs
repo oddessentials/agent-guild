@@ -35,7 +35,10 @@ export async function openBrowser({width=1440,height=1000,software=process.env.Y
   ws.onmessage=({data})=>{
     const msg=JSON.parse(data),p=pending.get(msg.id);
     if(p){pending.delete(msg.id);clearTimeout(p.timer);if(msg.error)p.reject(new Error(msg.error.message));else p.resolve(msg.result);}
-    else {events.push(msg);if(msg.method==='Runtime.exceptionThrown')errors.push(msg.params.exceptionDetails.exception?.description||msg.params.exceptionDetails.text);
+    else {events.push(msg);
+      // A page with running sessions guards navigation; a test that leaves it says yes, as the Cards checks do.
+      if(msg.method==='Page.javascriptDialogOpening'&&msg.params.type==='beforeunload')send('Page.handleJavaScriptDialog',{accept:true}).catch(()=>{});
+      if(msg.method==='Runtime.exceptionThrown')errors.push(msg.params.exceptionDetails.exception?.description||msg.params.exceptionDetails.text);
       if(msg.method==='Network.requestWillBeSent')requests.push(msg.params.request);
     }
   };

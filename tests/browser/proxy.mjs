@@ -315,6 +315,9 @@ try {
     await send('Emulation.clearDeviceMetricsOverride');
     await send('Page.navigate', { url: `${ctx.api.url}/#token=${ctx.token}` });
     await until('local manager connected', () => evaluate(`document.querySelector('#connection')?.classList.contains('ok')`));
+    // The socket shows as connected when it opens; remote access is offered only once the manager's hello arrives.
+    // A click in between opens the dialog without loading its state, so wait until the button is offered.
+    await until('remote access offered', () => evaluate(`!document.querySelector('#remote-access-open').hidden`));
     await evaluate(`document.querySelector('#remote-access-open').click()`);
     await until('fresh enable action', () => evaluate(`document.querySelector('#remote-primary').textContent==='Enable remote access' && !document.querySelector('#remote-primary').disabled`));
     await evaluate(`document.querySelector('#remote-primary').click()`);

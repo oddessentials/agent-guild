@@ -1,5 +1,6 @@
 /* The world is a layout. All controls still inherit the selected skin. */
-:root[data-view="yard"] #app { max-width:none; padding:0; margin:0; gap:0; }
+/* The docked side panel takes its width from the right, as it does from the Cards page, so it never covers the sidebar. */
+:root[data-view="yard"] #app { max-width:none; padding:0 var(--dock-space,0px) 0 0; margin:0; gap:0; }
 :root[data-view="yard"] #app > .launcher { padding:12px 24px; margin:0; border-bottom:1px solid var(--border); background:var(--surface); }
 :root[data-view="yard"] .launcher > .section-head { margin:0; gap:16px; }
 :root[data-view="yard"] #launch-heading { font-size:12px; letter-spacing:.08em; white-space:nowrap; }
