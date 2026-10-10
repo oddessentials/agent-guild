@@ -894,7 +894,10 @@ Messages in both directions are JSON text frames.
 
 ### `GET /api/v1/events`
 
-This socket pushes changes to every session. It is server-to-client only.
+This socket pushes changes to every session. A client sends nothing on it
+but `{ type: "ping" }`, which the manager answers with `{ type: "pong" }`.
+A browser cannot see protocol pings, so a page uses this to notice a link
+that went silent without closing.
 
 | Message | Meaning |
 | --- | --- |
@@ -928,6 +931,7 @@ Server to client:
 | `{ type: "resize", cols, rows }` | Another client changed the terminal size. |
 | `{ type: "exit", exitCode, signal }` | The process ended. Also sent after the snapshot when attaching to an exited session. |
 | `{ type: "removed" }` | The session was removed. The socket then closes with code 4410. |
+| `{ type: "pong" }` | The answer to a client's `ping`. |
 
 Client to server:
 
@@ -935,6 +939,7 @@ Client to server:
 | --- | --- |
 | `{ type: "input", data }` | Keystrokes or pasted text, exactly as a terminal would send them. |
 | `{ type: "resize", cols, rows }` | Resize the terminal. The last client to resize wins. |
+| `{ type: "ping" }` | Ask for a `pong`, to check that the link is alive. |
 
 ### Terminal queries: clients must not answer
 

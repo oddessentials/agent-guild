@@ -542,7 +542,7 @@ body:has(#app[hidden]):has(#auth[hidden]):has(#stopped[hidden])::after {
   background: currentColor; mask: var(--icon-chevron) center / contain no-repeat; transform: rotate(90deg);
 }
 .panel-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.btn.split, .btn.swap { white-space: nowrap; }
+.btn.split, .btn.swap, .btn.text-size { white-space: nowrap; }
 .btn.swap { max-width: 14em; overflow: hidden; text-overflow: ellipsis; }
 .session-menu { min-width: 240px; max-width: min(420px, calc(100vw - 16px)); }
 .session-menu .menu-empty { margin: 0; padding: 6px 8px; color: var(--muted); }
@@ -594,9 +594,14 @@ body:has(#app[hidden]):has(#auth[hidden]):has(#stopped[hidden])::after {
   overflow-wrap: anywhere; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3); pointer-events: none;
 }
 .terminal-host { flex: 1; min-height: 0; padding: 8px 4px 4px 10px; }
-.terminal-host > div { height: 100%; }
+.terminal-host > div { height: 100%; position: relative; }
+/* Says a terminal is not live yet, or no longer: what it shows may be out of date and typing is not sent. */
+.terminal-link {
+  position: absolute; top: 4px; right: 8px; z-index: 5; padding: 3px 10px; pointer-events: none;
+  border: 1px solid var(--border); border-radius: 999px; background: var(--surface); color: var(--muted); font-size: 0.8rem;
+}
 .terminal-controls {
-  flex: none; display: flex; justify-content: center; gap: 4px;
+  flex: none; display: flex; flex-wrap: wrap; justify-content: center; gap: 4px;
   padding: 6px max(8px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
   border-top: 1px solid var(--border); background: var(--surface);
   touch-action: manipulation; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
@@ -606,7 +611,7 @@ body:has(#app[hidden]):has(#auth[hidden]):has(#stopped[hidden])::after {
   font: 600 0.85rem var(--font-mono); touch-action: manipulation;
 }
 .terminal-key[data-key^="Arrow"] { font-size: 1.3rem; }
-.terminal-key[data-key="Enter"] { flex-grow: 1.25; max-width: 80px; }
+.terminal-key:is([data-key="Enter"], [data-key="Paste"]) { flex-grow: 1.25; max-width: 80px; }
 .terminal-key.pressed:not(:disabled) { background: var(--accent-fill); border-color: var(--accent-fill); color: var(--accent-text); transform: translateY(1px); }
 .terminal-key:disabled { cursor: default; }
 .terminal-panel:has(.terminal-controls:not([hidden])) .voice-preview { bottom: calc(72px + env(safe-area-inset-bottom)); }
@@ -1165,11 +1170,13 @@ a.btn.github-out::after {
   /* A popover in the top layer, shown from inside an open modal dialog, so it sets everything it inherits.
      It keeps above an on-screen keyboard, which the page publishes as --toast-viewport-*. */
   --toast-from: 10px;
-  position: fixed; inset: auto auto calc(var(--toast-viewport-bottom, 0px) + max(20px, env(safe-area-inset-bottom) + 12px)) 50%; transform: translateX(-50%); margin: 0; overflow: visible;
+  position: fixed; inset: auto auto calc(var(--toast-viewport-bottom, 0px) + var(--toast-keys, 0px) + max(20px, env(safe-area-inset-bottom) + 12px)) 50%; transform: translateX(-50%); margin: 0; overflow: visible;
   width: max-content; max-width: min(640px, calc(100vw - 32px)); padding: 10px 14px; border: 0; border-radius: var(--radius);
   background: var(--text); color: var(--bg); font-size: 0.9rem; font-weight: 400; line-height: 1.45; text-align: start; box-shadow: var(--shadow); white-space: pre-wrap;
   cursor: default;
 }
+/* Above the touch keys, which a toast would otherwise cover while they are in use. */
+body:has(#terminal-panel:not([hidden]) .terminal-controls:not([hidden])) .toast { --toast-keys: 64px; }
 @media (max-width: 640px) {
   /* On a phone the bottom edge belongs to the browser's toolbar and the keyboard; banners arrive under the top bar. */
   .toast { --toast-from: -10px; inset: calc(max(var(--topbar-h, 56px), var(--toast-viewport-top, 0px), env(safe-area-inset-top)) + 8px) auto auto 50%; touch-action: none; }

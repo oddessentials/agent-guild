@@ -19,7 +19,8 @@ function connect({ changelogOpen, githubOpen = false, docked = null }) {
   const context = {
     state: { stopping: false, stopRemaining: null, views: new Map(), eventsRetry: 0 },
     sessionsShown: false,
-    WebSocket: class { constructor() { sockets.push(this); } },
+    WebSocket: class { constructor() { sockets.push(this); } close() {} },
+    requestLink: new AbortController(), AbortController,
     $: (id) => ({ open: id === 'changelog' && changelogOpen }),
     dockShows: (panel) => panel === 'github' && githubOpen,
     dockView: { panel: githubOpen ? 'github' : null },
@@ -48,7 +49,7 @@ function connect({ changelogOpen, githubOpen = false, docked = null }) {
   };
   runInNewContext(`(${connectSource})()`, context);
   const hello = { type: 'hello', version: '1.2.3', pid: 1, sessions: [], upgrade: null };
-  return { calls, alerts, recovery, labels, state: context.state, send: (msg) => sockets[0].onmessage({ data: JSON.stringify(msg) }), open: () => sockets[0].onopen(), close: () => sockets[0].onclose(), hello };
+  return { context, sockets, calls, alerts, recovery, labels, state: context.state, send: (msg) => sockets[0].onmessage({ data: JSON.stringify(msg) }), open: () => sockets[0].onopen(), close: () => sockets[0].onclose(), hello };
 }
 
 test('a reconnect catches the open What\'s new panel up on a changelog.updated it missed', () => {
@@ -130,4 +131,36 @@ test('a successful socket handshake cancels a pending loss before the hello arri
   page.open();
   assert.deepEqual(page.recovery, ['cancel']);
   assert.match(page.labels.at(-1), /Connected to session manager/);
+});
+
+test('a silent link is asked for a pong, then dropped with every request waiting on it', () => {
+  const linkSource = app.match(/function checkLinks\([^]*?\n\}/)?.[0];
+  assert.ok(linkSource, 'checkLinks is present in app.js');
+  const page = connect({ changelogOpen: false });
+  page.send(page.hello);
+  const ws = page.sockets[0];
+  ws.readyState = 1;
+  const sent = [];
+  ws.send = (raw) => sent.push(JSON.parse(raw).type);
+  let now = ws.heardAt;
+  Object.assign(page.context, {
+    PING_AFTER_MS: 20000, PONG_WITHIN_MS: 8000, OPEN_WITHIN_MS: 15000,
+    Date: { now: () => now }, document: { visibilityState: 'visible' },
+  });
+  page.context.WebSocket.CONNECTING = 0;
+  page.context.WebSocket.OPEN = 1;
+  runInNewContext(linkSource, page.context);
+  const request = page.context.requestLink.signal;
+  now += 10000;
+  page.context.checkLinks();
+  assert.deepEqual(sent, [], 'a link heard from lately is left alone');
+  now += 15000;
+  page.context.checkLinks();
+  assert.deepEqual(sent, ['ping']);
+  now += 9000;
+  page.context.checkLinks();
+  assert.equal(request.aborted, true, 'a request waiting on the dead link ends');
+  assert.notEqual(page.context.requestLink.signal, request, 'later requests are not aborted');
+  assert.match(page.labels.at(-1), /Trying to reconnect/);
+  assert.deepEqual(page.recovery, ['check']);
 });

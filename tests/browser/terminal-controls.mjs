@@ -68,7 +68,7 @@ const checks = await withPage({ name: 'terminal-controls', instrumentation }, as
   await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
   await ready();
   await size(390, 844);
-  assert.deepEqual(await evaluate(`[...document.querySelectorAll('${strip} button')].map(b=>b.dataset.key)`), ['ArrowLeft', 'ArrowUp', 'ArrowDown', 'ArrowRight', 'Enter', 'Escape']);
+  assert.deepEqual(await evaluate(`[...document.querySelectorAll('${strip} button')].map(b=>b.dataset.key)`), ['ArrowLeft', 'ArrowUp', 'ArrowDown', 'ArrowRight', 'Enter', 'Escape', 'Paste']);
   await write('\x1b[?1l');
   await evaluate(`${currentTerm}.focus()`);
   const focusedBefore = await evaluate(`document.activeElement===${currentTerm}.textarea`);
@@ -78,6 +78,19 @@ const checks = await withPage({ name: 'terminal-controls', instrumentation }, as
   assert.deepEqual(await inputs(), ['\x1b[D', '\x1b[A', '\x1b[B', '\x1b[C', '\r', '\x1b']);
   assert.equal(await evaluate(`document.activeElement===${currentTerm}.textarea`), true);
   pass('all six trusted taps send exactly one key and retain typing focus');
+
+  const toastText = () => evaluate('document.querySelector("#toast").hidden ? "" : document.querySelector("#toast").textContent');
+  await evaluate(`window.testClipboard='git status\\n';Object.defineProperty(navigator,'clipboard',{configurable:true,value:{
+    readText:()=>testClipboard===null?Promise.reject(new DOMException('denied','NotAllowedError')):Promise.resolve(testClipboard)}})`);
+  await clear();
+  await tap(key('Paste'));
+  await until('pasted text sent', async () => (await inputs()).length > 0);
+  assert.deepEqual(await inputs(), ['git status'], 'the trailing line break is not sent, so Paste never presses Enter');
+  await evaluate('testClipboard=null');
+  await tap(key('Paste'));
+  await until('refusal reported', async () => (await toastText()).includes('did not allow reading the clipboard'));
+  assert.deepEqual(await inputs(), ['git status']);
+  pass('Paste sends the clipboard as typed text without Enter, and says why when it cannot');
 
   await write('\x1b[?1h');
   await evaluate(`${currentTerm}.blur()`);
@@ -150,15 +163,20 @@ const checks = await withPage({ name: 'terminal-controls', instrumentation }, as
   await clear();
   await evaluate(`window.testHoldSnapshot=true;testSockets[${socketIndex}].close()`);
   assert.equal(await enabled(), false);
+  const link = `${currentTerm}.element.parentElement.querySelector('.terminal-link')`;
+  assert.equal(await evaluate(`${link}.hidden ? '' : ${link}.textContent`), 'Reconnecting…');
+  await evaluate(`${currentTerm}.input('x')`);
+  assert.equal(await toastText(), 'Not sent: the terminal is reconnecting.');
   await tap(key('Enter'));
   await until('reconnected socket awaiting snapshot', () => evaluate('testSockets.some(s=>s.testPending)'));
   assert.equal(await enabled(), false);
   await evaluate('{window.testHoldSnapshot=false;const s=testSockets.find(s=>s.testPending);const event=s.testPending;s.testPending=null;s.emit(event)}');
   await ready();
   assert.deepEqual(await inputs(), [], 'nothing queued for reconnection');
+  assert.equal(await evaluate(`${link}.hidden`), true);
   await tap(key('ArrowDown'));
   assert.deepEqual(await inputs(), ['\x1b[B']);
-  pass('reconnection waits for its snapshot and never replays offline taps');
+  pass('a dropped terminal says it is reconnecting, reports typing it cannot send, and waits for its snapshot');
 
   await clear();
   await evaluate(`{window.testHoldParsed=true;const s=testSockets.findLast(s=>s.readyState===1 && s.url===${JSON.stringify(firstUrl)});s.emit({data:JSON.stringify(s.testSnapshot)})}`);
@@ -263,5 +281,16 @@ const checks = await withPage({ name: 'terminal-controls', instrumentation }, as
   assert.equal(await evaluate('document.querySelector("#terminal-controls").hidden'), false);
   assert.deepEqual(errors, []);
   pass('a touch-capable tablet keeps its controls with a fine primary pointer');
+
+  const font = () => evaluate('testTerms.find(t=>t.element?.isConnected).options.fontSize');
+  const before = await font();
+  await evaluate('document.querySelector("#panel-text-larger").click()');
+  assert.equal(await font(), before + 1);
+  await send('Page.navigate', { url: origin });
+  await until('reloaded page', () => evaluate('Boolean(document.querySelector("#sessions .session-card .open"))'));
+  await evaluate('document.querySelector("#sessions .session-card .open").click()');
+  await ready();
+  assert.equal(await font(), before + 1);
+  pass('the terminal text size changes on request and this device remembers it');
 });
 console.log(`${checks} terminal control checks passed.`);

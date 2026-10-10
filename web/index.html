@@ -141,7 +141,7 @@
       <div id="sessions" class="session-grid" role="list"></div>
       <p id="reorder-status" class="visually-hidden" aria-live="polite"></p>
       <p id="reorder-help" hidden>Drag to move the card, or press the arrow keys, Home or End.</p>
-      <p id="empty" class="empty">No sessions yet. Pick a provider above to start one. Sessions keep running when you close this page.</p>
+      <p id="empty" class="empty" hidden>No sessions yet. Pick a provider above to start one. Sessions keep running when you close this page.</p>
     </section>
 
     <section class="news" aria-labelledby="news-heading">
@@ -198,6 +198,8 @@
         <button id="panel-swap" class="btn swap" type="button" hidden></button>
         <button id="panel-voice" class="btn voice" type="button" hidden aria-pressed="false" title="Speak into this terminal. Review the text, then press Enter yourself.">Dictate</button>
         <button id="panel-copy" class="btn" type="button" hidden aria-haspopup="dialog" title="Select and copy terminal text">Copy…</button>
+        <button id="panel-text-smaller" class="btn text-size" type="button" aria-label="Smaller terminal text" title="Smaller terminal text">A−</button>
+        <button id="panel-text-larger" class="btn text-size" type="button" aria-label="Larger terminal text" title="Larger terminal text">A+</button>
         <button id="panel-stop" class="btn danger" type="button">Stop</button>
         <button id="panel-close" class="btn" type="button" title="Hide the terminals. The sessions keep running.">Hide</button>
       </div>
@@ -221,6 +223,7 @@
       <button class="btn terminal-key" type="button" data-key="ArrowRight" aria-label="Right arrow" title="Right arrow" disabled>→</button>
       <button class="btn terminal-key" type="button" data-key="Enter" title="Send Enter to the terminal" disabled>Enter</button>
       <button class="btn terminal-key" type="button" data-key="Escape" aria-label="Escape" title="Send Escape to the terminal" disabled>Esc</button>
+      <button class="btn terminal-key" type="button" data-key="Paste" title="Paste the clipboard into the terminal" disabled>Paste</button>
     </div>
     <div id="voice-preview" class="voice-preview" hidden aria-live="polite"></div>
   </div>
