@@ -6039,6 +6039,10 @@ class TerminalView {
       case 'exit':
         this.inputReady = false;
         this.inputSnapshot = null;
+        // Exit can arrive before xterm finishes the snapshot. The stream connected,
+        // even though that snapshot must no longer enable input.
+        this.shown = true;
+        this.showLink(null);
         terminalControls.refresh();
         if (dictation?.id === this.id) stopDictation();
         this.term.write(`\r\n\x1b[2m${exitLine(state.sessions.get(this.id), msg)}\x1b[0m\r\n`);
@@ -6662,7 +6666,7 @@ function showManagerUnavailable() {
   }
 }
 
-function connectEvents() {
+function connectEvents(refreshProviders = false) {
   if (state.pageAway || state.remoteRevoked) return;
   const ws = new WebSocket(wsUrl('/events'));
   state.eventsSocket = ws;
@@ -6733,7 +6737,7 @@ function connectEvents() {
     } else if (msg.type === 'providers.updated') {
       state.providers = msg.providers;
       renderProviders();
-      if ($('history').open) renderHistory();
+      renderSessions();
       scheduleStats();
     }
   };
@@ -6766,12 +6770,17 @@ function connectEvents() {
     managerLoss.disconnected();
     // Keep trying: after a stop, a relaunched manager brings the page back by itself.
     const delay = Math.min(5000, 500 * 2 ** state.eventsRetry++);
-    setTimeout(async () => {
+    setTimeout(() => {
       if (state.pageAway || state.eventsSocket !== ws) return;
-      try { await loadProviders(); } catch (err) { if (err instanceof AuthError) return showAuth(err.message); }
-      if (!state.pageAway && state.eventsSocket === ws) connectEvents();
+      connectEvents(true);
     }, delay);
   };
+  // Catch up metadata alongside the socket: an HTTP request can remain pending
+  // through a network change, but must not hold up reconnection or its deadlines.
+  if (refreshProviders) loadProviders(ws).catch((err) => {
+    if (state.pageAway || state.remoteRevoked || state.eventsSocket !== ws) return;
+    if (err instanceof AuthError) showAuth(err.message);
+  });
 }
 
 // No pong in time, or a connection that does not open, means a link is dead: after a move between networks a socket can stay open on a dead connection for minutes.
@@ -6801,10 +6810,18 @@ setInterval(checkLinks, 4000);
 addEventListener('online', () => checkLinks({ probe: true }));
 document.addEventListener('visibilitychange', () => checkLinks({ probe: true }));
 
-async function loadProviders() {
+async function loadProviders(ws = null) {
+  const previous = state.providers;
   const { providers } = await api('GET', '/providers');
+  // A newer event or connection owns the page now; never replace its providers
+  // with a response that began before it.
+  if (ws && (state.pageAway || state.remoteRevoked || state.eventsSocket !== ws || state.providers !== previous)) return;
   state.providers = providers;
   renderProviders();
+  if (ws) {
+    renderSessions(); // Resume and open History also depend on provider metadata.
+    scheduleStats();
+  }
 }
 
 // ---- auth & boot ----------------------------------------------------------
@@ -6824,6 +6841,9 @@ let statsInterval;
 let newsTimer;
 
 function showAuth(message = '') {
+  const ws = state.eventsSocket;
+  state.eventsSocket = null; // Invalidate callbacks and queued retries before closing.
+  ws?.close();
   state.environmentUI?.close();
   state.remoteAccessUI?.setAvailable(null);
   managerLoss.cancel();
@@ -7141,12 +7161,13 @@ addEventListener('pagehide', () => {
   managerLoss.cancel();
   state.eventsSocket?.close();
 });
-addEventListener('pageshow', async (event) => {
+addEventListener('pageshow', (event) => {
   if (!event.persisted) return;
   state.pageAway = false;
   activityFavicon.setPaused(false);
-  try { await loadProviders(); } catch (err) { if (err instanceof AuthError) return showAuth(err.message); }
-  if (!state.pageAway) connectEvents();
+  if (state.remoteRevoked) return;
+  setConnection('down', 'Reconnecting to session manager…');
+  connectEvents(true);
 });
 $('version').addEventListener('click', openChangelog);
 $('changelog-close').addEventListener('click', closeChangelog);

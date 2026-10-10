@@ -193,6 +193,7 @@ const checks = await withPage({ name: 'terminal-controls', instrumentation }, as
   assert.equal(await enabled(), false);
   await evaluate(`{const s=testSockets.findLast(s=>s.readyState===1 && s.url===${JSON.stringify(firstUrl)});s.emit({data:JSON.stringify({type:'exit',exitCode:0})});window.testHoldParsed=false;testSnapshots.splice(0).forEach(fn=>fn())}`);
   assert.equal(await enabled(), false);
+  assert.equal(await evaluate(`${link}.hidden`), true, 'exit and the late snapshot leave no connection badge');
   await tap(key('Enter'));
   assert.deepEqual(await inputs(), []);
   // Restore the simulated session so layout checks can continue.

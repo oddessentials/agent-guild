@@ -197,7 +197,7 @@ test('ordinary updates, reopening the same running panel and other session exits
   p.context.upsertSession({ ...p.context.state.sessions.get('a'), activity: 'active' });
   p.context.openPanel('a');
   p.context.upsertSession({ ...p.context.state.sessions.get('b'), status: 'exited' });
-  p.context.terminalMessage.call({ id: 'b', term: p.context.state.views.get('b').term }, { type: 'exit' });
+  p.context.terminalMessage.call({ id: 'b', term: p.context.state.views.get('b').term, showLink() {} }, { type: 'exit' });
   assert.equal(p.node('panel-voice')['aria-pressed'], 'true');
   assert.equal(rec.aborts, 0);
   say(rec, 'still here');
@@ -218,7 +218,7 @@ test('every departure cancels pending startup, active listening and Android rest
     'pagehide then restored': (p) => { p.fire('pagehide'); p.fire('pageshow', { persisted: true }); },
     'authentication screen': (p) => p.context.showAuth(),
     'manager shutdown': (p) => p.context.enterStopping(),
-    'terminal exit message': (p) => p.context.terminalMessage.call({ id: 'a', term: p.context.state.views.get('a').term }, { type: 'exit' }),
+    'terminal exit message': (p) => p.context.terminalMessage.call({ id: 'a', term: p.context.state.views.get('a').term, showLink() {} }, { type: 'exit' }),
   };
   for (const phase of ['pending', 'listening', 'restarting']) {
     for (const [name, cancel] of Object.entries(cancellations)) {
