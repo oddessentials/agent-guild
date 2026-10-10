@@ -828,6 +828,32 @@ test('past sessions of a provider are listed from its history source', async () 
   assert.equal((await call('GET', '/providers/plain/history?account=nobody')).body.error.code, 'unknown_account');
 });
 
+test('Google history previews are read-only API requests scoped to a known provider, account and conversation', async () => {
+  const provider = ctx.registry.get('google');
+  const previous = provider.history;
+  const id = '10000000-0000-4000-8000-000000000001';
+  const file = path.join(toolHomes.agy, '.gemini', 'antigravity-cli', 'brain', id, '.system_generated', 'logs', 'transcript.jsonl');
+  writeFile(file, [
+    { source: 'USER_EXPLICIT', type: 'USER_INPUT', content: '<USER_REQUEST>Read history</USER_REQUEST>' },
+    { source: 'MODEL', type: 'PLANNER_RESPONSE', content: 'Saved response', thinking: 'not shown' },
+  ].map((r) => JSON.stringify(r)).join('\n') + '\n');
+  provider.history = 'antigravity';
+  try {
+    assert.equal((await call('GET', '/providers')).body.providers.find((p) => p.id === 'google').historyDetails, true);
+    const read = await call('GET', `/providers/google/history/detail?id=${id}`);
+    assert.equal(read.status, 200, JSON.stringify(read.body));
+    assert.deepEqual(read.body.detail.messages, [{ role: 'user', text: 'Read history' }, { role: 'assistant', text: 'Saved response' }]);
+    assert.equal((await call('GET', `/providers/google/history/detail?id=${id}&account=nope`)).body.error.code, 'unknown_account');
+    assert.equal((await call('GET', '/providers/google/history/detail?id=..%2Foutside')).body.error.code, 'bad_history_id');
+    assert.equal((await call('GET', `/providers/plain/history/detail?id=${id}`)).body.error.code, 'history_detail_unsupported');
+    fs.unlinkSync(file);
+    assert.equal((await call('GET', `/providers/google/history/detail?id=${id}`)).status, 404);
+  } finally {
+    provider.history = previous;
+    if (fs.existsSync(file)) fs.unlinkSync(file);
+  }
+});
+
 test('a tool\'s memory for the working folder is listed and read per account', async () => {
   const { body: listed } = await call('GET', '/providers');
   assert.equal(listed.providers.find((p) => p.id === 'anthropic').memorySource, 'claude');

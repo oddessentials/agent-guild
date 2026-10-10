@@ -139,6 +139,7 @@
       updateCommand: null, updateGuidance: null, lastInstall: null, installs: [], warnings: [], npmNote: info.npmNote || null,
       usageSource: metered ? 'command' : null, historySource: id === 'shell' ? null : 'command',
       memorySource: info.memory || null,
+      historyDetails: id === 'google',
       reporting: info.reporting || null, reportingEnabled: typeof info.reportingEnabled === 'boolean' ? info.reportingEnabled : null, reportingNote: null,
       accounts: id === 'anthropic' ? [{ id: 'default', label: 'Personal' }, { id: 'work', label: 'Work' }] : [{ id: 'default', label: 'Default' }],
       modelPattern: info.modelPattern || null, install: info.install || null, docs: info.docs || null,
@@ -318,7 +319,15 @@
     if (route === '/folders' && method === 'POST') return makeFolder(body);
     if (route.indexOf('/github') === 0) return githubRoute(route, method, body, url.searchParams);
     var historyMatch = route.match(/^\/providers\/([^/]+)\/history$/);
-    if (historyMatch && method === 'GET') return providerHistory(historyMatch[1], url.searchParams.get('account'));
+    if (historyMatch && method === 'GET') return providerHistory(historyMatch[1], url.searchParams);
+    if (route === '/providers/google/history/detail' && method === 'GET') {
+      var saved = historyRows('google').find(function (row) { return row.id === url.searchParams.get('id'); });
+      if (!saved) return error('This conversation is unavailable.', 'history_unavailable', 404);
+      return json({ detail: { id: saved.id, messages: [
+        { role: 'user', text: saved.title },
+        { role: 'assistant', text: 'The migration plan is ready. Keep the existing page URLs, move the shared navigation first, and check the generated links before publishing.' },
+      ], nextCursor: null, incomplete: false, omitted: false } });
+    }
     var memoryMatch = route.match(/^\/providers\/([^/]+)\/memory(\/file)?$/);
     if (memoryMatch && method === 'GET') return providerMemory(memoryMatch[1], url.searchParams, Boolean(memoryMatch[2]));
     var reportingMatch = route.match(/^\/providers\/([^/]+)\/reporting$/);
@@ -642,6 +651,7 @@
       ],
       google: [
         ['ses_docs_move', 'Move the docs site to the new static generator', '/work/docs-site', 30 * 60],
+        ['ses_store_docs', 'Document the storefront checkout flow', '/work/storefront', 45 * 60],
       ],
       xai: [
         ['ses_grok_notes', 'Draft the release notes for wallet payments', '/work/storefront', 8 * 60],
@@ -655,13 +665,15 @@
     });
   }
 
-  function providerHistory(providerId, accountId) {
+  function providerHistory(providerId, params) {
     var p = providers.find(function (item) { return item.id === providerId; });
     if (!p) return error('unknown provider "' + providerId + '"', 'unknown_provider', 404);
     if (!p.historySource) return error(p.tool + ' has no history source configured', 'history_unsupported', 400);
     var list = historyRows(p.id);
+    if (params.get('cwd')) list = list.filter(function (row) { return row.cwd === params.get('cwd'); });
+    if (params.get('q')) list = list.filter(function (row) { return [row.title, row.cwd, row.id].join('\n').toLowerCase().includes(params.get('q').toLowerCase()); });
     return json({ history: {
-      providerId: p.id, accountId: accountId || 'default', sessions: list, total: list.length,
+      providerId: p.id, accountId: params.get('account') || 'default', sessions: list, total: list.length,
       fetchedAt: new Date(now).toISOString(), error: null,
     } });
   }

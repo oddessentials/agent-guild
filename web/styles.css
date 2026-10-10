@@ -818,6 +818,24 @@ a.news-link:visited { color: var(--muted); }
 .history-here { display: flex; align-items: center; gap: 6px; font-size: 0.8rem; color: var(--muted); white-space: nowrap; cursor: pointer; }
 .history-here:has(input:disabled) { opacity: 0.6; cursor: default; }
 .history .models-body { padding-top: 6px; }
+.history-content { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.history.has-preview { width: min(1080px, calc(100vw - 32px)); height: min(760px, calc(100dvh - 48px)); }
+.history.has-preview .history-content { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); }
+.history-preview { min-width: 0; min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--border); }
+.history-preview-bar { display: flex; align-items: center; gap: 8px; padding: 10px 14px; }
+.history-preview-bar h3 { flex: 1; min-width: 0; margin: 0; font-size: 0.9rem; overflow-wrap: anywhere; }
+.history-preview .models-note { margin: 0 14px 8px; }
+.history-messages { flex: 1; min-height: 0; overflow: auto; padding: 0 14px 14px; }
+.history-message h4 { margin: 12px 0 4px; font-size: 0.8rem; color: var(--muted); }
+.history-message p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.85rem; line-height: 1.5; }
+.history-preview-open { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; text-align: left; cursor: pointer; }
+.history-preview-open[aria-current="true"] { text-decoration: underline; }
+.history-preview-open:focus-visible, .history-messages:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+#history-preview-more { align-self: flex-start; margin: 8px 14px; }
+@media (max-width: 700px) {
+  .history.has-preview .history-content { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 2fr) minmax(0, 3fr); }
+  .history-preview { border-left: 0; border-top: 1px solid var(--border); }
+}
 .history-row {
   display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 4px 12px;
   padding: 10px 8px; border-bottom: 1px solid var(--border);

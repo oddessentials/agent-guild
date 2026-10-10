@@ -9,6 +9,7 @@ import { highlightParts, rankRepos, recentFirst, remember, repoForOrigin, repoKe
 import { createActivityFavicon, isSessionWorking } from './activity-favicon.js';
 import { createRemoteAccessUI } from './remote-access.js';
 import { createEnvironmentUI } from './environment.js';
+import { createHistoryPreview } from './history-preview.js';
 import { matchFolders, readRecentFolders, rememberFolder } from './folders.js';
 import { initYard } from './yard/view.js';
 
@@ -1643,11 +1644,13 @@ function buildProvider(provider) {
     existing.title = provider.historySource
       ? `Resume one of ${provider.tool}'s own earlier sessions`
       : `Resume one of ${provider.tool}'s own sessions by its id`;
-    existing.addEventListener('click', () => showHistory(provider));
+    existing.addEventListener('click', (event) => showHistory(provider, false, event.currentTarget));
     const memory = node.querySelector('.memory-link');
-    memory.hidden = !provider.available || !provider.memorySource;
-    memory.title = `See what ${provider.tool} remembers about the working folder`;
-    memory.addEventListener('click', () => showMemory(provider));
+    memory.hidden = !provider.available || (!provider.memorySource && !provider.historyDetails);
+    const historyLink = !provider.memorySource && provider.historyDetails;
+    memory.textContent = historyLink ? 'History' : 'Memory';
+    memory.title = historyLink ? `Read ${provider.tool}'s saved conversations` : `See what ${provider.tool} remembers about the working folder`;
+    memory.addEventListener('click', (event) => historyLink ? showHistory(provider, true, event.currentTarget) : showMemory(provider, event.currentTarget));
     const install = node.querySelector('.install');
     install.hidden = provider.available || !provider.installable;
     install.title = provider.installCommand ? `Downloads the latest ${provider.tool} release into Docker's plugin folder, in a session.` : `Install ${provider.tool} using npm.${provider.npmNote ? ` ${provider.npmNote}` : ''}`;
@@ -3057,7 +3060,7 @@ async function installProvider(provider, card, { force = false, path = null } = 
 /**
  * Start a session. A resumed session starts in the folder its transcript
  * names, since Claude Code only finds a session from there;
- * when that folder is gone, the working folder is used instead.
+ * Google asks for a folder when the saved one is gone; other tools use the working folder.
  */
 async function startSession(provider, card, { resume, cwd, account = selectedAccount(provider).id } = {}) {
   const working = $('cwd').value.trim();
@@ -3073,8 +3076,14 @@ async function startSession(provider, card, { resume, cwd, account = selectedAcc
       ({ session } = await api('POST', '/sessions', body));
     } catch (err) {
       if (err.code !== 'bad_cwd' || !cwd) throw err;
-      toast(`${cwd} no longer exists; starting in the working folder instead.`, 8000);
-      ({ session } = await api('POST', '/sessions', { ...body, cwd: working || undefined }));
+      if (resume && provider.historyDetails) {
+        const chosen = prompt(`${cwd} no longer exists. Choose a working folder to resume this conversation:`, working)?.trim();
+        if (!chosen) return;
+        ({ session } = await api('POST', '/sessions', { ...body, cwd: chosen }));
+      } else {
+        toast(`${cwd} no longer exists; starting in the working folder instead.`, 8000);
+        ({ session } = await api('POST', '/sessions', { ...body, cwd: working || undefined }));
+      }
     }
     upsertSession(session);
     rememberRecent('cwd', session.cwd);
@@ -3092,8 +3101,38 @@ async function startSession(provider, card, { resume, cwd, account = selectedAcc
 // ---- session history ------------------------------------------------------
 
 const HISTORY_LIMIT = 200;
-const historyView = { providerId: null, accountId: null, snapshot: null, loading: false };
+const historyView = { providerId: null, accountId: null, snapshot: null, loading: false, request: 0 };
 let historyOpener = null;
+const historyPreview = createHistoryPreview({
+  read: async (target, cursor) => {
+    const query = new URLSearchParams({ account: target.accountId, id: target.id });
+    if (cursor) query.set('cursor', cursor);
+    return (await api('GET', `/providers/${target.providerId}/history/detail?${query}`)).detail;
+  },
+  changed: renderHistoryPreview,
+  authError: (err) => { if (err instanceof AuthError) showAuth(err.message); },
+});
+
+function renderHistoryPreview(view) {
+  $('history-preview-title').textContent = view.target?.title || 'Select a conversation';
+  $('history-preview-refresh').disabled = !view.target || view.loading;
+  $('history-preview-more').hidden = !view.nextCursor;
+  paintPending($('history-preview-more'), view.loading, 'Read more', 'Reading…');
+  const notes = [];
+  if (view.error) notes.push(view.error);
+  else if (view.loading) notes.push('Reading saved messages…');
+  else if (view.target && !view.messages.length) notes.push(view.nextCursor ? 'No visible messages in this part. Continue reading below.' : 'No complete visible messages in this part.');
+  else if (!view.target) notes.push('Read a saved exchange, then resume when you want to continue it.');
+  if (view.omitted) notes.push('Some unreadable or oversized records were omitted.');
+  if (view.incomplete) notes.push('The last record is incomplete. Refresh after the conversation finishes writing.');
+  $('history-preview-note').textContent = notes.join(' ');
+  const messages = $('history-messages');
+  const scroll = messages.scrollTop;
+  messages.replaceChildren(...view.messages.map((message) => el('article', 'history-message',
+    el('h4', null, message.role === 'user' ? 'You' : 'Assistant'), el('p', null, message.text))));
+  messages.scrollTop = view.messages.length ? scroll : 0;
+  for (const node of $('history-list').querySelectorAll('.history-preview-open')) node.setAttribute('aria-current', String(node.dataset.id === view.target?.id));
+}
 
 function historyProvider() {
   return state.providers.find((p) => p.id === historyView.providerId) ?? null;
@@ -3128,16 +3167,20 @@ function runningOn(providerId, accountId, id) {
     s.status === 'running' && s.task === null && s.provider.id === providerId && (s.account?.id ?? 'default') === accountId && toolSessionId(s) === id) ?? null;
 }
 
-function showHistory(provider) {
+function showHistory(provider, workingOnly = false, opener = null) {
   const account = selectedAccount(provider);
-  const same = historyView.providerId === provider.id && historyView.accountId === account.id;
-  if (!same) Object.assign(historyView, { providerId: provider.id, accountId: account.id, snapshot: null, loading: false });
+  Object.assign(historyView, { providerId: provider.id, accountId: account.id, snapshot: null, loading: false });
+  historyView.request++;
+  historyPreview.clear();
   const dialog = $('history');
   $('history-filter').value = '';
   $('history-id').value = '';
+  $('history-here').checked = workingOnly && Boolean($('cwd').value.trim());
+  $('history-preview').hidden = !provider.historyDetails;
+  dialog.classList.toggle('has-preview', Boolean(provider.historyDetails));
   renderHistory();
   if (!dialog.open) {
-    historyOpener = document.activeElement;
+    historyOpener = opener ?? document.activeElement?.closest?.('.memory-link, .existing') ?? null;
     dialog.showModal();
   }
   if (provider.historySource) loadHistory();
@@ -3146,20 +3189,35 @@ function showHistory(provider) {
 
 async function loadHistory() {
   const provider = historyProvider();
-  if (!provider || historyView.loading) return;
+  if (!provider) return;
   const { providerId, accountId } = historyView;
+  const request = ++historyView.request;
   historyView.loading = true;
   renderHistory();
   try {
-    const { history } = await api('GET', `/providers/${providerId}/history?account=${encodeURIComponent(accountId)}&limit=${HISTORY_LIMIT}`);
-    if (historyView.providerId === providerId && historyView.accountId === accountId) historyView.snapshot = history;
+    const query = new URLSearchParams({ account: accountId, limit: HISTORY_LIMIT });
+    if (provider.historyDetails) {
+      if ($('history-here').checked && $('cwd').value.trim()) query.set('cwd', $('cwd').value.trim());
+      if ($('history-filter').value.trim()) query.set('q', $('history-filter').value.trim());
+    }
+    const { history } = await api('GET', `/providers/${providerId}/history?${query}`);
+    if (request !== historyView.request) return;
+    historyView.snapshot = history;
   } catch (err) {
+    if (request !== historyView.request) return;
     if (err instanceof AuthError) return showAuth(err.message);
-    if (historyView.providerId === providerId) historyView.snapshot = { sessions: [], total: 0, error: err.message };
+    historyView.snapshot = { sessions: [], total: 0, error: err.message };
   } finally {
-    historyView.loading = false;
-    renderHistory();
+    if (request === historyView.request) { historyView.loading = false; renderHistory(); }
   }
+}
+
+function historyFiltersChanged() {
+  if (historyProvider()?.historyDetails) {
+    historyView.snapshot = null;
+    historyPreview.clear();
+    loadHistory();
+  } else renderHistory();
 }
 
 function historyText(entry) {
@@ -3185,7 +3243,15 @@ function resumeFromHistory(provider, id, cwd) {
   if (running) {
     closeHistory({ focusOpener: false });
     openPanel(running.id);
-  } else startSession(provider, null, { resume: id, cwd: cwd || undefined, account: historyView.accountId });
+  } else {
+    if (provider.historyDetails && !cwd) {
+      const workspaces = historyEntry(id)?.workspaces ?? [];
+      const reason = workspaces.length > 1 ? `This conversation has several workspaces:\n${workspaces.join('\n')}\n\n` : 'The saved working folder is unknown.\n\n';
+      cwd = prompt(`${reason}Choose a working folder to resume in:`, $('cwd').value.trim())?.trim();
+      if (!cwd) return;
+    }
+    startSession(provider, null, { resume: id, cwd: cwd || undefined, account: historyView.accountId });
+  }
 }
 
 function buildHistoryRow(id) {
@@ -3206,12 +3272,26 @@ function updateHistoryRow(node, provider, entry) {
   const running = runningOn(provider.id, historyView.accountId, entry.id);
   node.classList.toggle('untitled', !entry.title);
   node.classList.toggle('running', Boolean(running));
-  node.querySelector('.history-title').textContent = entry.title ?? 'Untitled session';
-  node.querySelector('.history-title').title = entry.title ?? '';
+  const title = node.querySelector('.history-title');
+  title.title = entry.title ?? '';
+  if (provider.historyDetails) {
+    let preview = title.querySelector('button');
+    if (!preview) {
+      preview = button('', () => {
+        const current = historyEntry(entry.id);
+        if (current) historyPreview.select({ providerId: provider.id, accountId: historyView.accountId, id: entry.id, title: current.title ?? 'Untitled session' });
+      }, 'history-preview-open');
+      preview.dataset.id = entry.id;
+      title.replaceChildren(preview);
+    }
+    preview.textContent = entry.title ?? 'Untitled session';
+    preview.setAttribute('aria-current', String(historyPreview.state.target?.id === entry.id));
+  } else title.textContent = entry.title ?? 'Untitled session';
   const meta = node.querySelector('.history-meta');
   const when = entry.updatedAt ? `updated ${relativeTime(entry.updatedAt)}` : '';
-  meta.textContent = [entry.cwd && folderName(entry.cwd), when, running && `open in Agent Guild as ${running.name}`].filter(Boolean).join(' · ');
-  meta.title = [entry.cwd, entry.startedAt && `started ${new Date(entry.startedAt).toLocaleString()}`].filter(Boolean).join('\n');
+  const folder = entry.cwd ? folderName(entry.cwd) : provider.historyDetails ? (entry.workspaces?.length > 1 ? `${entry.workspaces.length} workspaces` : 'Folder unknown') : null;
+  meta.textContent = [folder, when, running && `open in Agent Guild as ${running.name}`].filter(Boolean).join(' · ');
+  meta.title = [...(entry.workspaces ?? [entry.cwd]), entry.startedAt && `started ${new Date(entry.startedAt).toLocaleString()}`].filter(Boolean).join('\n');
   const action = node.querySelector('.history-resume');
   const key = sessionActionKey(provider.id, historyView.accountId, entry.id);
   paintPending(action, pendingSessionActions.has(key), running ? 'Open' : 'Resume', 'Resuming…');
@@ -3248,12 +3328,12 @@ function renderHistory() {
   here.disabled = !working;
   here.parentElement.title = working ? `Only sessions started in ${working}` : 'Set a working folder above to filter by it';
   const all = snapshot?.sessions ?? [];
-  const shown = all.filter((entry) => (!filter || historyText(entry).includes(filter)) && (!here.checked || here.disabled || sameFolder(entry.cwd, working)));
+  const shown = provider.historyDetails ? all : all.filter((entry) => (!filter || historyText(entry).includes(filter)) && (!here.checked || here.disabled || sameFolder(entry.cwd, working)));
   const parts = [];
   if ((provider.accounts?.length ?? 0) > 1 && account) parts.push(`${account.label} account`);
   if (snapshot && !snapshot.error) {
     parts.push(snapshot.total === 0 ? 'no sessions found' : `${snapshot.total} session${snapshot.total === 1 ? '' : 's'}, newest first`);
-    if (shown.length !== all.length) parts.push(`${shown.length} shown`);
+    if (shown.length !== snapshot.total) parts.push(`${shown.length} shown`);
   }
   $('history-sub').textContent = parts.join(' · ');
   renderHistoryRows(provider, shown);
@@ -3264,6 +3344,8 @@ function renderHistory() {
   else if (snapshot?.error) note = `Sessions could not be read: ${snapshot.error}`;
   else if (snapshot && all.length === 0) note = `No ${provider.tool} sessions were found${account && account.id !== 'default' ? ` for the ${account.label} account` : ''}.`;
   else if (snapshot && shown.length === 0) note = 'No session matches the filter.';
+  if (snapshot?.note) note = [note, snapshot.note].filter(Boolean).join(' ');
+  if (snapshot?.total > all.length) note = [note, `Showing ${all.length} of ${snapshot.total} sessions. Narrow the filter to find older conversations.`].filter(Boolean).join(' ');
   $('history-note').textContent = note;
   $('history-note').hidden = !note;
   $('history-filter').disabled = !provider.historySource;
@@ -3282,6 +3364,9 @@ function renderHistorySubmit() {
 /** Closing to open a session leaves focus with the terminal; otherwise it returns to the opener. */
 function closeHistory({ focusOpener = true } = {}) {
   if (!$('history').open) return;
+  historyView.request++;
+  historyView.loading = false;
+  historyPreview.clear();
   if (!focusOpener) historyOpener = false;
   $('history').close();
 }
@@ -3311,14 +3396,14 @@ function sizeText(bytes) {
   return bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${Math.round(bytes / 1024)} KiB` : `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
 }
 
-function showMemory(provider) {
+function showMemory(provider, opener = null) {
   const account = selectedAccount(provider);
   Object.assign(memoryView, { providerId: provider.id, accountId: account.id, cwd: $('cwd').value.trim(), snapshot: null, error: null, selected: null, file: null, fileError: null, fileLoading: false });
   memoryView.fileRequest++;
   renderMemory();
   if (!$('memory').open) {
-    // Safari does not focus a clicked button, so closing falls back to the card's.
-    memoryOpener = document.activeElement?.closest?.('.memory-link') ?? null;
+    // Safari does not focus a clicked button; keep the actual opener when supplied.
+    memoryOpener = opener ?? document.activeElement?.closest?.('.memory-link') ?? null;
     $('memory').showModal();
   }
   loadMemory();
@@ -6360,6 +6445,10 @@ $('models-close').addEventListener('click', closeModels);
 $('history-close').addEventListener('click', closeHistory);
 $('history').addEventListener('click', (e) => { if (e.target === $('history')) closeHistory(); });
 $('history').addEventListener('close', () => {
+  if ($('history').open) return;
+  historyView.request++;
+  historyView.loading = false;
+  historyPreview.clear();
   if (historyOpener !== false) {
     const opener = historyOpener?.isConnected ? historyOpener
       : $('providers').querySelector(`.provider[data-id="${historyView.providerId}"] .existing`);
@@ -6367,7 +6456,9 @@ $('history').addEventListener('close', () => {
   }
   historyOpener = null;
 });
-$('history-filter').addEventListener('input', renderHistory);
+$('history-filter').addEventListener('input', historyFiltersChanged);
+$('history-preview-refresh').addEventListener('click', () => historyPreview.refresh());
+$('history-preview-more').addEventListener('click', () => historyPreview.more());
 $('memory-close').addEventListener('click', closeMemory);
 $('memory-refresh').addEventListener('click', loadMemory);
 $('memory').addEventListener('click', (e) => { if (e.target === $('memory')) closeMemory(); });
@@ -6465,7 +6556,7 @@ $('github-branches-clear').addEventListener('click', () => {
 });
 $('github-parent').addEventListener('change', () => setCloneParent(cloneParent()));
 $('github-parent-pick').addEventListener('click', firstClick(() => chooseFolder('clone')));
-$('history-here').addEventListener('change', renderHistory);
+$('history-here').addEventListener('change', historyFiltersChanged);
 $('history-id').addEventListener('input', renderHistorySubmit);
 $('history-form').addEventListener('submit', resumeById);
 $('models').addEventListener('click', (e) => { if (e.target === $('models')) closeModels(); });

@@ -67,6 +67,13 @@ Other fields in the built-in file (`channels`, `hooks`, `reporting`,
 `accountEnv`, `multiplexers`, `npmNote`) are for the built-in tools; copy them
 from there if you need them.
 
+Google's built-in `"history": "antigravity"` enables **History** on its card.
+It opens saved conversations for the working folder, with plain-text previews
+and Resume; **Existing…** opens the same browser across folders. Unknown or
+multiple saved folders require an explicit folder choice before resuming.
+This reads Antigravity CLI's local transcripts and does not configure learned
+memory. The other default providers retain their **Memory** entry.
+
 ## Accounts
 
 Run a personal and a work sign-in of the same tool side by side. Claude Code,

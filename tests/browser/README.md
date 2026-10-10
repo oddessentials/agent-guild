@@ -80,6 +80,10 @@ positioned by the OS and need not resize the browser viewport.
 `node tests/browser/dialogs.mjs` verifies a 200-row history list, filtering,
 empty states and shared dialog bodies in Chrome. It checks actual scrollable
 space and footer reachability at desktop, tablet and phone sizes.
+The same check covers Google's History entry, working-folder filter and saved
+message preview using fixed demo responses. Parser, paging, account isolation
+and stale-response tests run under `npm test` with synthetic files and explicitly
+released promises; they do not call a provider or depend on timing delays.
 
 To also run WebKit (as CI does on macOS, where it needs no system packages),
 install the test tools separately from the application's dependencies:

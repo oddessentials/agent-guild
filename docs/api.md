@@ -140,6 +140,8 @@ whether `GET /usage` reports the provider. `historySource` is `claude`,
 `GET /providers/:id/history` can list the tool's earlier sessions.
 `memorySource` is `claude`, `codex`, `grok` or null, and says whether
 `GET /providers/:id/memory` can list what the tool remembers.
+`historyDetails` is true for an `antigravity` history source, which also supports
+reading saved messages through `GET /providers/:id/history/detail`.
 `accounts` lists the sign-ins the tool can run under: `default` is the
 tool's own, and each further one has its own home folder, so it keeps its
 own sign-in and usage. `POST /sessions` takes an account id.
@@ -436,6 +438,48 @@ most `limit` entries of the `total` found. Only the head of each transcript
 is read, and a transcript is read again only when it changed; the list is
 cached for a few seconds. `error` says why nothing could be listed; a tool
 that has never run lists no sessions and no error.
+
+Antigravity history also reads scalar metadata from `conversation_summaries.db`
+in read-only mode (verified against CLI 1.3.1). Each entry has a `workspaces`
+array decoded from local file URIs. A single saved workspace sets `cwd`;
+multiple workspaces leave it null. Saved metadata takes precedence over the
+legacy `last_conversations.json` cache, which supplies a folder only when its
+entries agree. Desktop, sub-agent and empty conversations identified by the
+index are excluded, and every entry requires a readable user transcript.
+An unavailable or incompatible index adds a `note` while readable transcripts
+remain available. No binary conversation or implicit-memory data is decoded.
+
+The optional `cwd` and `q` list parameters filter by workspace and by text
+(title, id or workspace) **before** applying `limit`; `total` counts matching
+entries. Folder matching uses normalized absolute paths, case-insensitively
+on Windows and case-sensitively on other platforms.
+
+#### Saved messages
+
+`GET /providers/:id/history/detail?account=&id=&cursor=` returns:
+
+```json
+{
+  "detail": {
+    "id": "581893e5-a93d-5e49-968b-1c1c277d3255",
+    "messages": [{ "role": "user", "text": "Fix the login bug" }],
+    "nextCursor": null,
+    "incomplete": false,
+    "omitted": false
+  }
+}
+```
+
+Only explicit user requests and visible assistant responses are included;
+thinking, tool payloads and injected context are excluded. Text is rendered
+as plain text. A page reads at most 256 KiB, plus a bounded first-record check.
+Follow `nextCursor` even when a page has no visible messages. Malformed or
+oversized records set `omitted`; a partial final record sets `incomplete` and
+can be retried with Refresh. Cursors pin the transcript revision: 409
+`history_changed` requires restarting without a cursor. Missing or ineligible
+transcripts return 404 `history_unavailable`; invalid ids/cursors return 400
+`bad_history_id`/`bad_history_cursor`. Other history sources return 400
+`history_detail_unsupported`. The selected account determines the provider home.
 
 ### Memory
 
@@ -744,7 +788,8 @@ All paths are under `/api/v1`.
 | GET | `/model-stats` | | Benchmarks for the models of every provider with a `modelPattern`, from OpenRouter's public model list (Artificial Analysis and Design Arena results), cached for 6 hours. `{ retrievedAt, stale, error, stats, pool, providers, models, sessions }`: `stats` describes each benchmark; `providers[id]` is `{ featured, models }`, a provider's model ids newest first; `models[id]` holds a model's name, context and price, and in `stats`, per benchmark, its `value`, `rank`, `level` (0-100, its standing among the models of all configured tools) and `tier` (S 90+, A 75+, B 50+, C 25+, D below); `sessions[id]` is the model id a session's reported model matched, or null. |
 | GET | `/news` | | `{ refreshedAt, refreshing, sources, items }`. `items` are the last 30 days of the built-in feeds, newest first, each `{ id, title, url, discussion, summary, source, sourceId, category, publishedAt }` with `category` `news`, `releases` or `research`. A coding tool's own release feed is included only while that tool is installed. `sources` lists each feed with its `error` and the time it last answered. Feeds that are due are re-read in the background; a `news.updated` event follows. |
 | GET | `/changelog` | | `{ refreshing, okAt, error, releases }`: Agent Guild's own releases from GitHub, newest first, each `{ version, url, publishedAt, sections: [{ title, changes }] }`, where a change is a list of text runs. Re-read hourly in the background; a `changelog.updated` event follows. |
-| GET | `/providers/:id/history?account=&limit=` | | `{ history }`: a History object for one account (default `default`; 404 `unknown_account`), with at most `limit` sessions (default 100, at most 500). 400 `history_unsupported` when the provider has no `historySource`. |
+| GET | `/providers/:id/history?account=&limit=&cwd=&q=` | | `{ history }`: a History object for one account (default `default`; 404 `unknown_account`), filtered before the limit (default 100, at most 500). 400 `history_unsupported` when the provider has no `historySource`. |
+| GET | `/providers/:id/history/detail?account=&id=&cursor=` | | `{ detail }`: a bounded page of saved Antigravity messages; see [Saved messages](#saved-messages). |
 | GET | `/providers/:id/memory?account=&cwd=` | | `{ memory }`: a Memory object for one account and the working folder `cwd` (the home folder when empty; 400 `bad_cwd` when it does not exist). 400 `memory_unsupported` when the provider has no `memorySource`. |
 | GET | `/providers/:id/memory/file?account=&cwd=&scope=&path=` | | `{ file: { scope, path, bytes, modified, truncated, text } }`: one listed file of a scope, its first 512 KiB. 404 `memory_not_found` for an unknown scope, 404 `memory_file_gone` when the file no longer exists, 400 `bad_memory_path` for a path that is not a markdown file inside the scope's folder. |
 | GET | `/github` | | `{ github }`: a GitHub object. |
