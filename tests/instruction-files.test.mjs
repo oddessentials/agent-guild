@@ -50,6 +50,8 @@ test('Claude Code: global files, every folder up the walk, and AGENTS.md only wh
 
   const found = 'Claude Code reads CLAUDE.md instead.';
   const listed = await reader.list(provider('claude'), account, at('outer/repo/sub'));
+  const nested = listed.scopes.flatMap((s) => s.files).find((f) => f.name === 'nested.md');
+  assert.equal(nested.folder, path.dirname(nested.path), 'a file names the folder that holds it');
   assert.deepEqual(rows(listed, root), [
     ['home/.claude/CLAUDE.md', 'global', null],
     ['home/.claude/rules/style.md', 'global', null],
