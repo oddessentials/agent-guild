@@ -48,6 +48,7 @@ async function setup(t,{yard=false,auth=true,source='',width=1440,height=1000}={
   await b.send('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});
   const added=await b.send('Page.addScriptToEvaluateOnNewDocument',{source:`
     localStorage.setItem('agentGuild.theme','dark');
+    localStorage.setItem('agentGuild.skin','guild');
     localStorage.setItem('agentGuild.view',${q(yard?'yard':'cards')});
     window.confirm=()=>true; window.prompt=()=>'Renamed from Yard';
     window.__frames=0;
