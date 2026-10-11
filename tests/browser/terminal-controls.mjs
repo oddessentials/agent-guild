@@ -313,10 +313,13 @@ const checks = await withPage({ name: 'terminal-controls', instrumentation }, as
 
   // Synthetic geometry tests verify our calculations, not an OS keyboard implementation.
   await size(390, 844);
+  await evaluate('Object.assign(document.querySelector("#voice-preview"),{hidden:false,textContent:"add apple pay and google pay to the checkout flow"})');
   await evaluate(`window.testViewport={height:360,offsetTop:0,scale:1};for(const name of ['height','offsetTop','scale'])Object.defineProperty(visualViewport,name,{configurable:true,get:()=>testViewport[name]});visualViewport.dispatchEvent(new Event('resize'))`);
   await layoutReady();
   let g = await geometry();
   assert.ok(g.controlsBottom <= 361 && g.hostHeight >= 120, JSON.stringify(g));
+  assert.ok(g.previewHeight > 0 && g.previewBottom <= g.controlsTop + 1 && g.previewBottom <= 361, 'the dictation preview stays above the keys with the keyboard open');
+  await evaluate('Object.assign(document.querySelector("#voice-preview"),{hidden:true,textContent:""})');
   const hidePoint = await point('#panel-close');
   assert.equal(await evaluate(`document.elementFromPoint(${hidePoint.x},${hidePoint.y})?.id`), 'panel-close', 'Hide stays reachable beside a long session-switch action');
   await capture('phone-keyboard-geometry');
