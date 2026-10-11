@@ -7,6 +7,16 @@ import { until, withDialogClose, withPage } from './chrome.mjs';
 
 const instrumentation = `<script>
 window.testTerms=[];window.testSockets=[];window.testInputs=[];window.testSnapshots=[];
+window.SpeechRecognition=class {
+  constructor(){window.testRecognition=this;this.results=[];}
+  start(){}
+  say(text,isFinal=true){
+    if(this.results.at(-1)?.isFinal===false)this.results.pop();
+    this.results.push(Object.assign([{transcript:text}],{isFinal}));
+    this.onresult({resultIndex:this.results.length-1,results:this.results});
+  }
+  abort(){this.aborted=true;this.say('late result during abort');this.onend?.();}
+};
 const RealTerminal=window.Terminal;
 window.Terminal=class extends RealTerminal {
   constructor(...args){super(...args);testTerms.push(this);}
@@ -114,7 +124,7 @@ const checks = await withPage({ name: 'terminal-controls', instrumentation }, as
   await tap('#panel-text-smaller');
   assert.equal(await evaluate(`${currentTerm}.options.fontSize`), touchFont);
   await escape();
-  assert.deepEqual(await evaluate(`[...document.querySelectorAll('${strip} button')].map(b=>b.dataset.key)`), ['ArrowLeft', 'ArrowUp', 'ArrowDown', 'ArrowRight', 'Tab', 'Enter', 'Escape', 'Interrupt', 'Paste']);
+  assert.deepEqual(await evaluate(`[...document.querySelectorAll('${strip} button')].map(b=>b.dataset.key)`), ['ArrowLeft', 'ArrowUp', 'ArrowDown', 'ArrowRight', 'Tab', 'Enter', 'Escape', 'Interrupt', 'Paste', 'Clear']);
   await write('\x1b[?1l');
   await evaluate(`${currentTerm}.focus()`);
   const focusedBefore = await evaluate(`document.activeElement===${currentTerm}.textarea`);
@@ -146,6 +156,22 @@ const checks = await withPage({ name: 'terminal-controls', instrumentation }, as
   assert.deepEqual(await inputs(), ['git status', '\x1b[200~echo first\recho second\x1b[201~']);
   await write('\x1b[?2004l');
   pass('Paste sends the clipboard as typed text without Enter, and says why when it cannot');
+
+  await evaluate("localStorage.setItem('agentGuild.voice','on');dispatchEvent(new StorageEvent('storage',{key:'agentGuild.voice'}))");
+  for (const typing of [true, false]) {
+    await clear();
+    await evaluate(`document.querySelector('#panel-voice').click();testRecognition.say('discard this dictated draft');testRecognition.say('unfinished words',false);${currentTerm}.${typing ? 'focus' : 'blur'}()`);
+    await rendered();
+    assert.deepEqual(await inputs(), ['discard this dictated draft']);
+    assert.equal(await evaluate('document.querySelector("#voice-preview").hidden'), false);
+    await tap(key('Clear'));
+    await evaluate("testRecognition.say('late final result');testRecognition.onend()");
+    assert.deepEqual(await inputs(), ['discard this dictated draft', '\x05\x15'], 'Clear sends one edit sequence and no late dictated words');
+    assert.deepEqual(await evaluate('[testRecognition.aborted,document.querySelector("#panel-voice").getAttribute("aria-pressed"),document.querySelector("#voice-preview").hidden,document.querySelector("#voice-preview").textContent]'), [true, 'false', true, '']);
+    assert.equal(await evaluate(`document.activeElement===${currentTerm}.textarea`), typing, 'Clear preserves keyboard focus');
+  }
+  await evaluate("localStorage.removeItem('agentGuild.voice');dispatchEvent(new StorageEvent('storage',{key:'agentGuild.voice'}))");
+  pass('Clear stops dictation, ignores late recognition results and preserves keyboard visibility');
 
   await write('\x1b[?1h');
   await evaluate(`${currentTerm}.blur()`);
@@ -207,7 +233,7 @@ const checks = await withPage({ name: 'terminal-controls', instrumentation }, as
   const secondUrl = await evaluate('testInputs.at(-1).url');
   const firstUrl = await evaluate(`testSockets[${socketIndex}].url`);
   assert.notEqual(secondUrl, firstUrl);
-  await down(key('Enter'));
+  await down(key('Clear'));
   await evaluate('document.querySelectorAll(".terminal-pane")[0].dispatchEvent(new PointerEvent("pointerdown",{bubbles:true}))');
   await up();
   assert.equal((await inputs()).length, 1, 'release cannot move to the other pane');
@@ -234,7 +260,7 @@ const checks = await withPage({ name: 'terminal-controls', instrumentation }, as
   assert.equal(await evaluate(`${link}.querySelector('.terminal-link-label').textContent`), 'Reconnecting…');
   await evaluate(`${currentTerm}.input('x')`);
   assert.equal(await toastText(), 'Not sent: the terminal is reconnecting.');
-  await tap(key('Enter'));
+  await tap(key('Clear'));
   await until('reconnected socket awaiting snapshot', () => evaluate('testSockets.some(s=>s.testPending)'));
   assert.equal(await enabled(), false);
   const loadingSocket = await evaluate('testSockets.findLastIndex(s=>s.readyState===1 && s.testPending)');
@@ -306,13 +332,14 @@ const checks = await withPage({ name: 'terminal-controls', instrumentation }, as
     const preview=document.querySelector('#voice-preview').getBoundingClientRect();
     return {panelTop:panel.top,panelBottom:panel.bottom,controlsTop:controls.top,controlsBottom:controls.bottom,hostBottom:host.bottom,hostHeight:host.height,
       previewBottom:preview.bottom,previewHeight:preview.height,
-      buttons:[...document.querySelectorAll('${strip} button')].map(b=>{const r=b.getBoundingClientRect();return {width:r.width,height:r.height,left:r.left,right:r.right}}),
+      buttons:[...document.querySelectorAll('${strip} button')].map(b=>{const r=b.getBoundingClientRect();return {width:r.width,height:r.height,left:r.left,right:r.right,top:r.top}}),
       overflow:document.documentElement.scrollWidth>innerWidth};})()`);
   await evaluate('Object.assign(document.querySelector("#voice-preview"),{hidden:false,textContent:"add apple pay and google pay to the checkout flow"})');
-  for (const [width, height] of [[320, 568], [390, 844], [844, 390], [768, 1024], [1024, 768]]) {
+  for (const [width, height] of [[320, 568], [390, 844], [480, 800], [494, 800], [495, 800], [844, 390], [768, 1024], [1024, 768]]) {
     await size(width, height);
     const g = await geometry();
     assert.equal(g.overflow, false, `${width} no page overflow`);
+    assert.equal(new Set(g.buttons.map(b=>b.top)).size, width <= 494 ? 2 : 1, `${width}: ten keys fit in balanced rows`);
     assert.ok(g.hostBottom <= g.controlsTop + 1, 'controls reserve space below output');
     assert.ok(g.previewHeight > 0 && g.previewBottom <= g.controlsTop + 1, `${width} the dictation preview stays above the keys`);
     assert.ok(g.hostHeight >= 60, `${width}x${height} terminal remains readable`);

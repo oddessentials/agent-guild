@@ -6228,6 +6228,7 @@ function paintTerminalFontSize() {
 const terminalControls = new TerminalControls({
   element: $('terminal-controls'), panel: $('terminal-panel'),
   notify: (message) => toast(message),
+  beforeClear: stopDictation,
   getCurrent: () => {
     const session = state.sessions.get(state.activeId);
     const view = state.views.get(state.activeId);

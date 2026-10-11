@@ -9,17 +9,20 @@ export function terminalKey(key, modes) {
   if (key === 'Escape') return '\x1b';
   if (key === 'Tab') return '\t';
   if (key === 'Interrupt') return '\x03';
+  // Dictation is one logical line: move to its end before deleting back to its start.
+  if (key === 'Clear') return '\x05\x15';
   return null;
 }
 
 const sameTarget = (a, b) => Boolean(a && b && a.term === b.term && a.socket === b.socket && a.run === b.run);
 
-/** Nine ordinary buttons. A gesture belongs to the session and connection where it began. */
+/** Ordinary terminal buttons. A gesture belongs to the session and connection where it began. */
 export class TerminalControls {
-  constructor({ element, panel, getCurrent, notify }) {
+  constructor({ element, panel, getCurrent, notify, beforeClear = () => {} }) {
     this.element = element;
     this.getCurrent = getCurrent;
     this.notify = notify;
+    this.beforeClear = beforeClear;
     this.buttons = [...element.querySelectorAll('button')];
     for (const button of this.buttons) {
       button.addEventListener('pointerdown', (event) => {
@@ -104,6 +107,7 @@ export class TerminalControls {
   activate(button, target) {
     if (!sameTarget(target, this.current())) return;
     if (button.dataset.key === 'Paste') return this.paste(target);
+    if (button.dataset.key === 'Clear') this.beforeClear();
     const data = terminalKey(button.dataset.key, target.term.modes);
     if (data !== null) target.term.input(data);
   }
