@@ -620,7 +620,12 @@ body:has(#app[hidden]):has(#auth[hidden]):has(#stopped[hidden])::after {
   font: 600 0.85rem var(--font-mono); touch-action: manipulation;
 }
 .terminal-key[data-key^="Arrow"] { font-size: 1.3rem; }
-.terminal-key:is([data-key="Enter"], [data-key="Paste"]) { flex-grow: 1.25; max-width: 80px; }
+.terminal-key:is([data-key="Enter"], [data-key="Interrupt"], [data-key="Paste"]) { flex-grow: 1.25; max-width: 80px; }
+@media (max-width: 444px) {
+  .terminal-controls { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .terminal-controls .terminal-key { max-width: none; }
+  .terminal-key[data-key="Enter"] { grid-column: span 2; }
+}
 .terminal-key.pressed:not(:disabled) { background: var(--accent-fill); border-color: var(--accent-fill); color: var(--accent-text); transform: translateY(1px); }
 .terminal-key:disabled { cursor: default; }
 .terminal-panel:has(.terminal-controls:not([hidden])) .voice-preview { bottom: calc(72px + env(safe-area-inset-bottom)); }
@@ -1227,6 +1232,7 @@ body:has(#terminal-panel:not([hidden]) .terminal-controls:not([hidden])) .toast 
   .topbar-end:has(.connection.down) > :not(.connection) { flex: none; }
   .connection.down { min-width: 0; }
   .connection.down .brief { display: block; }
+  :root[data-view="cards"] #app > .sessions { order: -1; }
   .terminal-panel { inset: max(var(--topbar-h, 56px), var(--terminal-viewport-top, 0px)) 0 var(--terminal-viewport-bottom, 0px); border-radius: 0; }
   .session-grid { grid-template-columns: 1fr; }
   .cwd { flex-basis: 100%; }

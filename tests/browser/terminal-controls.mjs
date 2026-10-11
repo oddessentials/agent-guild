@@ -102,16 +102,16 @@ const checks = await withPage({ name: 'terminal-controls', instrumentation }, as
   await tap('#panel-text-smaller');
   assert.equal(await evaluate(`${currentTerm}.options.fontSize`), touchFont);
   await escape();
-  assert.deepEqual(await evaluate(`[...document.querySelectorAll('${strip} button')].map(b=>b.dataset.key)`), ['ArrowLeft', 'ArrowUp', 'ArrowDown', 'ArrowRight', 'Enter', 'Escape', 'Paste']);
+  assert.deepEqual(await evaluate(`[...document.querySelectorAll('${strip} button')].map(b=>b.dataset.key)`), ['ArrowLeft', 'ArrowUp', 'ArrowDown', 'ArrowRight', 'Tab', 'Enter', 'Escape', 'Interrupt', 'Paste']);
   await write('\x1b[?1l');
   await evaluate(`${currentTerm}.focus()`);
   const focusedBefore = await evaluate(`document.activeElement===${currentTerm}.textarea`);
   assert.equal(focusedBefore, true);
   await clear();
-  for (const name of ['ArrowLeft', 'ArrowUp', 'ArrowDown', 'ArrowRight', 'Enter', 'Escape']) await tap(key(name));
-  assert.deepEqual(await inputs(), ['\x1b[D', '\x1b[A', '\x1b[B', '\x1b[C', '\r', '\x1b']);
+  for (const name of ['ArrowLeft', 'ArrowUp', 'ArrowDown', 'ArrowRight', 'Tab', 'Enter', 'Escape', 'Interrupt']) await tap(key(name));
+  assert.deepEqual(await inputs(), ['\x1b[D', '\x1b[A', '\x1b[B', '\x1b[C', '\t', '\r', '\x1b', '\x03']);
   assert.equal(await evaluate(`document.activeElement===${currentTerm}.textarea`), true);
-  pass('all six trusted taps send exactly one key and retain typing focus');
+  pass('all eight trusted taps send exactly one key and retain typing focus');
 
   const toastText = () => evaluate('document.querySelector("#toast").hidden ? "" : document.querySelector("#toast").textContent');
   await evaluate(`window.testClipboard='git status\\n';Object.defineProperty(navigator,'clipboard',{configurable:true,value:{
@@ -276,6 +276,11 @@ const checks = await withPage({ name: 'terminal-controls', instrumentation }, as
     brand:document.querySelector('.brand h1').checkVisibility(),brief:brief.checkVisibility(),text:brief.textContent,fits:brief.scrollWidth<=brief.clientWidth}})()`);
   const connected = await header();
   assert.deepEqual([connected.brand, connected.brief], [true, false]);
+  const sectionOrder = () => evaluate('document.querySelector(".sessions").getBoundingClientRect().top < document.querySelector(".launcher").getBoundingClientRect().top');
+  assert.equal(await sectionOrder(), true, 'a phone shows the sessions before the provider cards');
+  await size(1200, 850);
+  assert.equal(await sectionOrder(), false, 'a desk keeps the provider cards first');
+  await size(390, 844);
   await evaluate('testSockets.findLast(s=>s.readyState===1 && s.url.includes("/events")).close()');
   await until('link reported lost', () => evaluate('document.querySelector("#connection").classList.contains("down")'));
   assert.deepEqual(await header(), { height: connected.height, brand: false, brief: true, text: 'Reconnecting…', fits: true });

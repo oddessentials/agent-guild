@@ -7,12 +7,14 @@ export function terminalKey(key, modes) {
   if (Object.hasOwn(ARROWS, key)) return `\x1b${modes.applicationCursorKeysMode ? 'O' : '['}${ARROWS[key]}`;
   if (key === 'Enter') return '\r';
   if (key === 'Escape') return '\x1b';
+  if (key === 'Tab') return '\t';
+  if (key === 'Interrupt') return '\x03';
   return null;
 }
 
 const sameTarget = (a, b) => Boolean(a && b && a.term === b.term && a.socket === b.socket && a.run === b.run);
 
-/** Seven ordinary buttons. A gesture belongs to the session and connection where it began. */
+/** Nine ordinary buttons. A gesture belongs to the session and connection where it began. */
 export class TerminalControls {
   constructor({ element, panel, getCurrent, notify }) {
     this.element = element;
