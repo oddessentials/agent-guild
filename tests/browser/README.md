@@ -63,12 +63,14 @@ change the machine's trust store, contact Tailscale or use existing accounts.
 `node tests/browser/terminal-controls.mjs` checks the touch keys with the
 real page and xterm. It covers normal/application cursor modes, retained
 focus, keyboard and assistive click activation, Paste from a simulated
-clipboard, canceled gestures, split targeting, delayed snapshots, reconnects,
+clipboard, Clear canceling dictation and ignoring late results, canceled
+gestures, split targeting, delayed snapshots, reconnects,
 responsive layouts in every skin, the delayed connection badge and Retry,
 and the remembered terminal text size through its popover. The badge check
 seeks the CSS animation directly; it does not wait out its display delay.
 `CONTROLS_SCREENSHOTS=/path/to/folder` saves representative layouts. The HTTPS
-proxy check also sends all six keys through a real PTY in both cursor modes.
+proxy check also sends seven keys, including Clear, through a real PTY in
+both cursor modes.
 
 Viewport geometry is simulated: these checks cannot certify a native mobile
 keyboard, IME or screen reader. Physical-device validation should cover iPhone
