@@ -23,8 +23,9 @@
   --radius: 8px;
   --font-display: "Segoe UI Variable Display", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 
-  --page-art: url("page-light.svg");
-  --empty-art: url("ui/empty-state-light.svg");
+  --page-art: image-set(url("page-light.avif") type("image/avif"), url("page-light.webp") type("image/webp"));
+  --page-veil: linear-gradient(rgba(245, 246, 248, 0.84), rgba(245, 246, 248, 0.7) 45%, rgba(245, 246, 248, 0.9));
+  --empty-art: image-set(url("ui/empty-state-light.avif") type("image/avif"), url("ui/empty-state-light.webp") type("image/webp"));
   --art-bg: linear-gradient(160deg, color-mix(in srgb, var(--pc) 13%, #fff), color-mix(in srgb, var(--pc) 4%, #fff));
   --art-locked-bg: linear-gradient(160deg, #eef0f3, #f7f8fa);
   --card-hover-shadow: 0 2px 4px rgba(16, 24, 40, 0.04), 0 8px 20px rgba(16, 24, 40, 0.07);
@@ -33,7 +34,7 @@
 
   body::before {
     content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
-    background: var(--page-art) center top / max(100%, 1600px) auto no-repeat;
+    background: var(--page-veil), var(--page-art) center / cover no-repeat;
   }
   .topbar { background: color-mix(in srgb, var(--surface) 86%, transparent); backdrop-filter: blur(8px); }
   h2 { font-weight: 600; letter-spacing: -0.005em; }
@@ -41,45 +42,39 @@
 
   .provider, .session-card {
     --pc: #7c6cf0;
-    --idle: url("banners/shell/idle.svg");
-    --working: url("banners/shell/working.svg");
-    --locked: url("banners/shell/locked.svg");
-    --mark: url("icons/shell.svg");
+    --idle: image-set(url("objects/shell/light-idle.avif") type("image/avif"), url("objects/shell/light-idle.webp") type("image/webp"));
+    --working: image-set(url("objects/shell/light-working.avif") type("image/avif"), url("objects/shell/light-working.webp") type("image/webp"));
+    --locked: image-set(url("objects/shell/light-locked.avif") type("image/avif"), url("objects/shell/light-locked.webp") type("image/webp"));
   }
   .provider[data-id="anthropic"], .session-card[data-provider="anthropic"] {
     --pc: #d97757;
-    --idle: url("banners/anthropic/idle.svg");
-    --working: url("banners/anthropic/working.svg");
-    --locked: url("banners/anthropic/locked.svg");
-    --mark: url("icons/anthropic.svg");
+    --idle: image-set(url("objects/anthropic/light-idle.avif") type("image/avif"), url("objects/anthropic/light-idle.webp") type("image/webp"));
+    --working: image-set(url("objects/anthropic/light-working.avif") type("image/avif"), url("objects/anthropic/light-working.webp") type("image/webp"));
+    --locked: image-set(url("objects/anthropic/light-locked.avif") type("image/avif"), url("objects/anthropic/light-locked.webp") type("image/webp"));
   }
   .provider[data-id="openai"], .session-card[data-provider="openai"] {
     --pc: #10a37f;
-    --idle: url("banners/openai/idle.svg");
-    --working: url("banners/openai/working.svg");
-    --locked: url("banners/openai/locked.svg");
-    --mark: url("icons/openai.svg");
+    --idle: image-set(url("objects/openai/light-idle.avif") type("image/avif"), url("objects/openai/light-idle.webp") type("image/webp"));
+    --working: image-set(url("objects/openai/light-working.avif") type("image/avif"), url("objects/openai/light-working.webp") type("image/webp"));
+    --locked: image-set(url("objects/openai/light-locked.avif") type("image/avif"), url("objects/openai/light-locked.webp") type("image/webp"));
   }
   .provider[data-id="google"], .session-card[data-provider="google"] {
     --pc: #4285f4;
-    --idle: url("banners/google/idle.svg");
-    --working: url("banners/google/working.svg");
-    --locked: url("banners/google/locked.svg");
-    --mark: url("icons/google.svg");
+    --idle: image-set(url("objects/google/light-idle.avif") type("image/avif"), url("objects/google/light-idle.webp") type("image/webp"));
+    --working: image-set(url("objects/google/light-working.avif") type("image/avif"), url("objects/google/light-working.webp") type("image/webp"));
+    --locked: image-set(url("objects/google/light-locked.avif") type("image/avif"), url("objects/google/light-locked.webp") type("image/webp"));
   }
   .provider[data-id="xai"], .session-card[data-provider="xai"] {
     --pc: #14b8c4;
-    --idle: url("banners/xai/idle.svg");
-    --working: url("banners/xai/working.svg");
-    --locked: url("banners/xai/locked.svg");
-    --mark: url("icons/xai.svg");
+    --idle: image-set(url("objects/xai/light-idle.avif") type("image/avif"), url("objects/xai/light-idle.webp") type("image/webp"));
+    --working: image-set(url("objects/xai/light-working.avif") type("image/avif"), url("objects/xai/light-working.webp") type("image/webp"));
+    --locked: image-set(url("objects/xai/light-locked.avif") type("image/avif"), url("objects/xai/light-locked.webp") type("image/webp"));
   }
   .provider[data-id="docker"], .session-card[data-provider="docker"] {
     --pc: #2496ed;
-    --idle: url("banners/docker/idle.svg");
-    --working: url("banners/docker/working.svg");
-    --locked: url("banners/docker/locked.svg");
-    --mark: url("icons/docker.svg");
+    --idle: image-set(url("objects/docker/light-idle.avif") type("image/avif"), url("objects/docker/light-idle.webp") type("image/webp"));
+    --working: image-set(url("objects/docker/light-working.avif") type("image/avif"), url("objects/docker/light-working.webp") type("image/webp"));
+    --locked: image-set(url("objects/docker/light-locked.avif") type("image/avif"), url("objects/docker/light-locked.webp") type("image/webp"));
   }
 
   .provider-icon[data-provider="anthropic"] { --icon: url("icons/anthropic.svg"); }
@@ -100,9 +95,10 @@
   .provider, .session-card {
     position: relative; isolation: isolate; overflow: hidden;
     border-radius: 10px; padding: 16px;
-    transition: border-color 0.2s, box-shadow 0.2s;
+    transition: border-color 0.2s, box-shadow 0.2s, transform 0.3s var(--ease);
   }
   .provider:hover, .session-card:hover {
+    transform: translateY(-1px);
     border-color: color-mix(in srgb, var(--pc) 38%, var(--border));
     box-shadow: var(--card-hover-shadow);
   }
@@ -110,10 +106,12 @@
     position: absolute; z-index: -1; overflow: hidden; pointer-events: none;
     background: var(--art-bg);
   }
-  .card-art::before { content: ""; position: absolute; inset: 0; background: var(--idle) center / cover no-repeat; }
+  .card-art::before { content: ""; position: absolute; inset: 0; background: var(--idle) center / auto 90% no-repeat; }
+  .provider .card-art::before { transition: transform 0.6s var(--ease); }
+  .provider:hover .card-art::before { transform: translate(calc(var(--px, 0) * -5px), calc(var(--py, 0) * -3px)) scale(1.03); }
 
-  .provider { padding-top: 90px; }
-  .provider .card-art { inset: 0 0 auto 0; height: 72px; border-bottom: 1px solid var(--border); }
+  .provider { padding-top: 136px; }
+  .provider .card-art { inset: 0 0 auto 0; height: 118px; border-bottom: 1px solid var(--border); }
   .provider.unavailable .card-art { background: var(--art-locked-bg); }
   .provider.unavailable .card-art::before { background-image: var(--locked); }
   .provider.unavailable::after {
@@ -121,14 +119,12 @@
     background: url("ui/lock.svg") right 10px top 10px / 24px 24px no-repeat;
   }
 
-  .session-card { min-height: 164px; padding-left: 108px; }
-  .session-card .card-art, .session-card .card-aura { inset: 0 auto 0 0; width: 92px; }
+  .session-card { min-height: 172px; padding-left: 128px; }
+  .session-card .card-art, .session-card .card-aura { inset: 0 auto 0 0; width: 112px; }
   .session-card .card-art { border-right: 1px solid var(--border); }
-  .session-card .card-art::before, .session-card .card-art::after {
-    background: var(--mark) center 16px / 40px 40px no-repeat, var(--idle) center / cover no-repeat;
-  }
+  .session-card .card-art::before, .session-card .card-art::after { background: var(--idle) center 14px / 84% auto no-repeat; }
   .session-card .card-art::after {
-    content: ""; position: absolute; inset: 0; background-image: var(--mark), var(--working);
+    content: ""; position: absolute; inset: 0; background-image: var(--working);
     opacity: 0; transition: opacity 0.5s var(--ease);
   }
   .session-card:has(.status-pill.active) .card-art::after { opacity: 1; }
@@ -206,8 +202,8 @@
   .session-card.enter { animation: professional-rise 0.35s var(--ease) both; }
 
   @media (max-width: 640px) {
-    .session-card { padding-left: 92px; }
-    .session-card .card-art, .session-card .card-aura { width: 76px; }
+    .session-card { padding-left: 108px; }
+    .session-card .card-art, .session-card .card-aura { width: 92px; }
     .level-badge { left: 10px; width: 56px; }
   }
 
@@ -236,13 +232,45 @@
   --focus: #7aa2ff;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
 
-  --page-art: url("page.svg");
-  --empty-art: url("ui/empty-state.svg");
+  --page-art: image-set(url("page.avif") type("image/avif"), url("page.webp") type("image/webp"));
+  --page-veil: linear-gradient(rgba(13, 16, 21, 0.72), rgba(13, 16, 21, 0.58) 45%, rgba(13, 16, 21, 0.82));
+  --empty-art: image-set(url("ui/empty-state.avif") type("image/avif"), url("ui/empty-state.webp") type("image/webp"));
   --art-bg: linear-gradient(160deg, color-mix(in srgb, var(--pc) 18%, #151921), color-mix(in srgb, var(--pc) 5%, #151921));
   --art-locked-bg: linear-gradient(160deg, #1d222b, #161a21);
   --card-hover-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
   --dialog-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
   --meter-2: #5b9cff;
+
+  .provider, .session-card {
+    --idle: image-set(url("objects/shell/dark-idle.avif") type("image/avif"), url("objects/shell/dark-idle.webp") type("image/webp"));
+    --working: image-set(url("objects/shell/dark-working.avif") type("image/avif"), url("objects/shell/dark-working.webp") type("image/webp"));
+    --locked: image-set(url("objects/shell/dark-locked.avif") type("image/avif"), url("objects/shell/dark-locked.webp") type("image/webp"));
+  }
+  .provider[data-id="anthropic"], .session-card[data-provider="anthropic"] {
+    --idle: image-set(url("objects/anthropic/dark-idle.avif") type("image/avif"), url("objects/anthropic/dark-idle.webp") type("image/webp"));
+    --working: image-set(url("objects/anthropic/dark-working.avif") type("image/avif"), url("objects/anthropic/dark-working.webp") type("image/webp"));
+    --locked: image-set(url("objects/anthropic/dark-locked.avif") type("image/avif"), url("objects/anthropic/dark-locked.webp") type("image/webp"));
+  }
+  .provider[data-id="openai"], .session-card[data-provider="openai"] {
+    --idle: image-set(url("objects/openai/dark-idle.avif") type("image/avif"), url("objects/openai/dark-idle.webp") type("image/webp"));
+    --working: image-set(url("objects/openai/dark-working.avif") type("image/avif"), url("objects/openai/dark-working.webp") type("image/webp"));
+    --locked: image-set(url("objects/openai/dark-locked.avif") type("image/avif"), url("objects/openai/dark-locked.webp") type("image/webp"));
+  }
+  .provider[data-id="google"], .session-card[data-provider="google"] {
+    --idle: image-set(url("objects/google/dark-idle.avif") type("image/avif"), url("objects/google/dark-idle.webp") type("image/webp"));
+    --working: image-set(url("objects/google/dark-working.avif") type("image/avif"), url("objects/google/dark-working.webp") type("image/webp"));
+    --locked: image-set(url("objects/google/dark-locked.avif") type("image/avif"), url("objects/google/dark-locked.webp") type("image/webp"));
+  }
+  .provider[data-id="xai"], .session-card[data-provider="xai"] {
+    --idle: image-set(url("objects/xai/dark-idle.avif") type("image/avif"), url("objects/xai/dark-idle.webp") type("image/webp"));
+    --working: image-set(url("objects/xai/dark-working.avif") type("image/avif"), url("objects/xai/dark-working.webp") type("image/webp"));
+    --locked: image-set(url("objects/xai/dark-locked.avif") type("image/avif"), url("objects/xai/dark-locked.webp") type("image/webp"));
+  }
+  .provider[data-id="docker"], .session-card[data-provider="docker"] {
+    --idle: image-set(url("objects/docker/dark-idle.avif") type("image/avif"), url("objects/docker/dark-idle.webp") type("image/webp"));
+    --working: image-set(url("objects/docker/dark-working.avif") type("image/avif"), url("objects/docker/dark-working.webp") type("image/webp"));
+    --locked: image-set(url("objects/docker/dark-locked.avif") type("image/avif"), url("objects/docker/dark-locked.webp") type("image/webp"));
+  }
 
   .tier-s { --tier: #34d399; --tier-ink: #bbf7d0; }
   .tier-a { --tier: #22d3ee; --tier-ink: #cffafe; }
