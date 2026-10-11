@@ -209,6 +209,15 @@ test('a terminal takes a device\'s size only when placed on screen there; otherw
   view.ws = { readyState: 1 };
   snapshot(100, 30);
   assert.deepEqual(sent, ['resize 50x20', 'resize 50x20', 'resize 50x20'], 'and takes the size with its first screen');
+
+  view.unmount();
+  view.el.isConnected = false;
+  view.mount(host, { focus: false });
+  view.ws = { readyState: 1 };
+  parsed();
+  assert.deepEqual(sent.length, 3, 'a link that ended before the output was on screen sends nothing');
+  snapshot(100, 30);
+  assert.deepEqual(sent.length, 4, 'the next link\'s first screen takes the size instead');
 });
 
 test('a touch drag pans a terminal larger than its pane before scrolling the terminal\'s own history', () => {

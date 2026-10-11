@@ -6103,7 +6103,8 @@ class TerminalView {
     this.takeSize = false;
     const ws = this.ws;
     this.term.write('', () => {
-      if (this.disposed || this.ws !== ws) return;
+      if (this.disposed) return;
+      if (this.ws !== ws) { this.takeSize = true; return; } // The next link's first screen takes it.
       try { this.fit.fit(); } catch { this.takeSize = true; return; }
       this.send({ type: 'resize', cols: this.term.cols, rows: this.term.rows });
       paintSizeNote();
