@@ -102,16 +102,16 @@ const checks = await withPage({ name: 'terminal-controls', instrumentation }, as
   await tap('#panel-text-smaller');
   assert.equal(await evaluate(`${currentTerm}.options.fontSize`), touchFont);
   await escape();
-  assert.deepEqual(await evaluate(`[...document.querySelectorAll('${strip} button')].map(b=>b.dataset.key)`), ['ArrowLeft', 'ArrowUp', 'ArrowDown', 'ArrowRight', 'Enter', 'Escape', 'Paste']);
+  assert.deepEqual(await evaluate(`[...document.querySelectorAll('${strip} button')].map(b=>b.dataset.key)`), ['ArrowLeft', 'ArrowUp', 'ArrowDown', 'ArrowRight', 'Tab', 'Enter', 'Escape', 'Interrupt', 'Paste']);
   await write('\x1b[?1l');
   await evaluate(`${currentTerm}.focus()`);
   const focusedBefore = await evaluate(`document.activeElement===${currentTerm}.textarea`);
   assert.equal(focusedBefore, true);
   await clear();
-  for (const name of ['ArrowLeft', 'ArrowUp', 'ArrowDown', 'ArrowRight', 'Enter', 'Escape']) await tap(key(name));
-  assert.deepEqual(await inputs(), ['\x1b[D', '\x1b[A', '\x1b[B', '\x1b[C', '\r', '\x1b']);
+  for (const name of ['ArrowLeft', 'ArrowUp', 'ArrowDown', 'ArrowRight', 'Tab', 'Enter', 'Escape', 'Interrupt']) await tap(key(name));
+  assert.deepEqual(await inputs(), ['\x1b[D', '\x1b[A', '\x1b[B', '\x1b[C', '\t', '\r', '\x1b', '\x03']);
   assert.equal(await evaluate(`document.activeElement===${currentTerm}.textarea`), true);
-  pass('all six trusted taps send exactly one key and retain typing focus');
+  pass('all eight trusted taps send exactly one key and retain typing focus');
 
   const toastText = () => evaluate('document.querySelector("#toast").hidden ? "" : document.querySelector("#toast").textContent');
   await evaluate(`window.testClipboard='git status\\n';Object.defineProperty(navigator,'clipboard',{configurable:true,value:{
@@ -276,6 +276,11 @@ const checks = await withPage({ name: 'terminal-controls', instrumentation }, as
     brand:document.querySelector('.brand h1').checkVisibility(),brief:brief.checkVisibility(),text:brief.textContent,fits:brief.scrollWidth<=brief.clientWidth}})()`);
   const connected = await header();
   assert.deepEqual([connected.brand, connected.brief], [true, false]);
+  const sectionOrder = () => evaluate('document.querySelector(".sessions").getBoundingClientRect().top < document.querySelector(".launcher").getBoundingClientRect().top');
+  assert.equal(await sectionOrder(), true, 'a phone shows the sessions before the provider cards');
+  await size(1200, 850);
+  assert.equal(await sectionOrder(), false, 'a desk keeps the provider cards first');
+  await size(390, 844);
   await evaluate('testSockets.findLast(s=>s.readyState===1 && s.url.includes("/events")).close()');
   await until('link reported lost', () => evaluate('document.querySelector("#connection").classList.contains("down")'));
   assert.deepEqual(await header(), { height: connected.height, brand: false, brief: true, text: 'Reconnecting…', fits: true });
@@ -286,27 +291,35 @@ const checks = await withPage({ name: 'terminal-controls', instrumentation }, as
     const panel=document.querySelector('#terminal-panel').getBoundingClientRect();
     const controls=document.querySelector('${strip}').getBoundingClientRect();
     const host=document.querySelector('.terminal-pane:not([hidden]) .terminal-host').getBoundingClientRect();
+    const preview=document.querySelector('#voice-preview').getBoundingClientRect();
     return {panelTop:panel.top,panelBottom:panel.bottom,controlsTop:controls.top,controlsBottom:controls.bottom,hostBottom:host.bottom,hostHeight:host.height,
+      previewBottom:preview.bottom,previewHeight:preview.height,
       buttons:[...document.querySelectorAll('${strip} button')].map(b=>{const r=b.getBoundingClientRect();return {width:r.width,height:r.height,left:r.left,right:r.right}}),
       overflow:document.documentElement.scrollWidth>innerWidth};})()`);
+  await evaluate('Object.assign(document.querySelector("#voice-preview"),{hidden:false,textContent:"add apple pay and google pay to the checkout flow"})');
   for (const [width, height] of [[320, 568], [390, 844], [844, 390], [768, 1024], [1024, 768]]) {
     await size(width, height);
     const g = await geometry();
     assert.equal(g.overflow, false, `${width} no page overflow`);
     assert.ok(g.hostBottom <= g.controlsTop + 1, 'controls reserve space below output');
+    assert.ok(g.previewHeight > 0 && g.previewBottom <= g.controlsTop + 1, `${width} the dictation preview stays above the keys`);
     assert.ok(g.hostHeight >= 60, `${width}x${height} terminal remains readable`);
     assert.ok(g.controlsBottom <= height + 1);
     for (const b of g.buttons) assert.ok(b.width >= 44 && b.height >= 48 && b.left >= 0 && b.right <= width, JSON.stringify(b));
   }
   await capture('tablet');
+  await evaluate('Object.assign(document.querySelector("#voice-preview"),{hidden:true,textContent:""})');
   pass('phone, landscape and tablet layouts retain touch targets and terminal space');
 
   // Synthetic geometry tests verify our calculations, not an OS keyboard implementation.
   await size(390, 844);
+  await evaluate('Object.assign(document.querySelector("#voice-preview"),{hidden:false,textContent:"add apple pay and google pay to the checkout flow"})');
   await evaluate(`window.testViewport={height:360,offsetTop:0,scale:1};for(const name of ['height','offsetTop','scale'])Object.defineProperty(visualViewport,name,{configurable:true,get:()=>testViewport[name]});visualViewport.dispatchEvent(new Event('resize'))`);
   await layoutReady();
   let g = await geometry();
   assert.ok(g.controlsBottom <= 361 && g.hostHeight >= 120, JSON.stringify(g));
+  assert.ok(g.previewHeight > 0 && g.previewBottom <= g.controlsTop + 1 && g.previewBottom <= 361, 'the dictation preview stays above the keys with the keyboard open');
+  await evaluate('Object.assign(document.querySelector("#voice-preview"),{hidden:true,textContent:""})');
   const hidePoint = await point('#panel-close');
   assert.equal(await evaluate(`document.elementFromPoint(${hidePoint.x},${hidePoint.y})?.id`), 'panel-close', 'Hide stays reachable beside a long session-switch action');
   await capture('phone-keyboard-geometry');

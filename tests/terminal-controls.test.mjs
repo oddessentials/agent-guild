@@ -13,7 +13,9 @@ test('touch keys follow the terminal cursor mode as applications enter and leave
     }
     assert.equal(terminalKey('Enter', term.modes), '\r');
     assert.equal(terminalKey('Escape', term.modes), '\x1b');
+    assert.equal(terminalKey('Tab', term.modes), '\t');
+    assert.equal(terminalKey('Interrupt', term.modes), '\x03');
   }
-  assert.equal(terminalKey('Tab', term.modes), null);
+  assert.equal(terminalKey('Backspace', term.modes), null);
   assert.equal(terminalKey('toString', term.modes), null);
 });
