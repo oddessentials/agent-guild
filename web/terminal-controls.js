@@ -12,11 +12,12 @@ export function terminalKey(key, modes) {
 
 const sameTarget = (a, b) => Boolean(a && b && a.term === b.term && a.socket === b.socket && a.run === b.run);
 
-/** Six ordinary buttons. A gesture belongs to the session and connection where it began. */
+/** Seven ordinary buttons. A gesture belongs to the session and connection where it began. */
 export class TerminalControls {
-  constructor({ element, panel, getCurrent }) {
+  constructor({ element, panel, getCurrent, notify }) {
     this.element = element;
     this.getCurrent = getCurrent;
+    this.notify = notify;
     this.buttons = [...element.querySelectorAll('button')];
     const touch = matchMedia('(any-pointer: coarse)');
     const availability = () => {
@@ -106,8 +107,26 @@ export class TerminalControls {
 
   activate(button, target) {
     if (!sameTarget(target, this.current())) return;
+    if (button.dataset.key === 'Paste') return this.paste(target);
     const data = terminalKey(button.dataset.key, target.term.modes);
     if (data !== null) target.term.input(data);
+  }
+
+  async paste(target) {
+    if (!navigator.clipboard?.readText) return this.notify('This page cannot read the clipboard. Browsers allow that only on a secure (https) page.');
+    let text;
+    try {
+      text = await navigator.clipboard.readText();
+    } catch {
+      return this.notify('The browser did not allow reading the clipboard. Allow clipboard access for this page, then try again.');
+    }
+    text = text.replace(/[\r\n]+$/, '');
+    if (!text) return this.notify('The clipboard has no text to paste.');
+    if (/[\r\n]/.test(text) && !target.term.modes.bracketedPasteMode) {
+      return this.notify('Not pasted: the clipboard has more than one line, and this program would run each line as it arrives.');
+    }
+    if (!sameTarget(target, this.current())) return this.notify('Not pasted: the terminal cannot take input now.');
+    target.term.paste(text);
   }
 }
 

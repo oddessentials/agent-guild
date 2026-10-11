@@ -644,13 +644,19 @@ export function createManagerServer({
 
   function handleEvents(ws, req) {
     eventClients.add(ws);
-    const hello = { type: 'hello', version, pid: process.pid, platform: process.platform, startedAt, launcher, folderOpener: folderOpenerFor(req), remoteAccess: remoteAccess ? { available: true } : null, upgrade: upgradeInfo(), sessions: manager.list() };
+    const hello = { type: 'hello', version, pid: process.pid, platform: process.platform, startedAt, launcher, folderOpener: folderOpenerFor(req), remoteAccess: remoteAccess ? { available: true } : null, upgrade: upgradeInfo(), sessions: manager.list(), heartbeat: true };
     const notesHello = notes.helloRevision();
     if (notesHello.known) hello.notesRevision = notesHello.revision;
     else hello.notesUnreadable = true;
     safeSend(ws, hello);
     ws.on('close', () => eventClients.delete(ws));
-    ws.on('message', () => { /* events socket is server -> client only */ });
+    // A browser cannot see protocol pings, so a page checks that a quiet link is alive with its own.
+    ws.on('message', (raw, isBinary) => {
+      if (isBinary) return;
+      let msg;
+      try { msg = JSON.parse(raw.toString('utf8')); } catch { return; }
+      if (msg?.type === 'ping') safeSend(ws, { type: 'pong' });
+    });
   }
 
   function handleTerminal(ws, id) {
@@ -674,6 +680,7 @@ export function createManagerServer({
       try { msg = JSON.parse(raw.toString('utf8')); } catch { return; }
       if (msg.type === 'input' && typeof msg.data === 'string') session.input(msg.data);
       else if (msg.type === 'resize') session.resize(msg.cols, msg.rows);
+      else if (msg.type === 'ping') safeSend(ws, { type: 'pong' });
     });
   }
 

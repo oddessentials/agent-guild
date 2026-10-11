@@ -106,3 +106,39 @@ test('a closed tmux or herdr panel says closed, not an exit code that means noth
   assert.equal(context.exitLine(exited(plain), { exitCode: 1, signal: null }), '[process exited with code 1]', 'other sessions as before');
   assert.equal(context.exitLine(exited(plain), { exitCode: null, signal: 'SIGKILL' }), '[process exited with signal SIGKILL]');
 });
+
+test('exit clears an initial or reconnecting badge before the held snapshot completes, without enabling input', () => {
+  const methods = ['onMessage', 'showLink'].map((name) => {
+    const found = app.match(new RegExp(`  ${name}\\([^]*?\\n  \\}`))?.[0];
+    assert.ok(found, `${name} is present`);
+    return found;
+  }).join(',\n');
+  for (const label of ['Connecting…', 'Reconnecting…']) {
+    for (const status of ['running', 'exited']) {
+      const { context } = page();
+      Object.assign(context, { WebSocket: { OPEN: 1 }, terminalControls: { refresh() {} }, dictation: null });
+      const callbacks = [];
+      const view = Object.assign(runInNewContext(`({${methods}})`, context), {
+        id: plain.id, ws: { readyState: 1 }, status: { hidden: false }, statusLabel: { textContent: label },
+        term: { reset() {}, resize() {}, write(_data, callback) { if (callback) callbacks.push(callback); } },
+        refit() {},
+      });
+      view.onMessage({ type: 'snapshot', session: { ...plain, status }, data: 'saved output', cols: 80, rows: 24 });
+      assert.equal(view.status.hidden, false, 'the snapshot has not finished');
+      view.onMessage({ type: 'exit', exitCode: 0 });
+      assert.equal(view.status.hidden, true, `${label}, ${status}`);
+      assert.equal(view.statusLabel.textContent, '');
+      assert.equal(view.shown, true);
+      assert.equal(view.inputReady, false);
+      assert.equal(callbacks.length, 1);
+      callbacks[0]();
+      assert.equal(view.inputReady, false, 'a snapshot of a running process cannot undo its exit');
+      // A callback left over from this connection also cannot clear a later connection's badge.
+      view.ws = { readyState: 1 };
+      view.showLink('Reconnecting…');
+      callbacks[0]();
+      assert.equal(view.status.hidden, false);
+      assert.equal(view.inputReady, false);
+    }
+  }
+});

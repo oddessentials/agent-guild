@@ -915,7 +915,7 @@
         self.emit({ data: JSON.stringify({
           type: 'hello', version: version, pid: null, platform: 'darwin', startedAt: startedAt,
           launcher: null, folderOpener: null, remoteAccess: null, upgrade: null,
-          notesRevision: notesDoc.revision, sessions: clone(sessions),
+          notesRevision: notesDoc.revision, sessions: clone(sessions), heartbeat: true,
         }) });
       } else {
         var match = self.url.match(/\/sessions\/([a-f0-9]+)\/terminal/);
@@ -935,9 +935,10 @@
     (this.listeners[type] || []).forEach(function (fn) { fn(event); });
   };
   DemoWebSocket.prototype.send = function (raw) {
-    if (!/\/terminal/.test(this.url)) return;
     try {
       var message = JSON.parse(raw);
+      if (message.type === 'ping') return this.emit({ data: JSON.stringify({ type: 'pong' }) });
+      if (!/\/terminal/.test(this.url)) return;
       if (message.type === 'input' && message.data && !/[\r\n]/.test(message.data)) this.emit({ data: JSON.stringify({ type: 'data', data: message.data }) });
       else if (message.type === 'input' && /[\r\n]/.test(message.data || '')) this.emit({ data: JSON.stringify({ type: 'data', data: '\r\n\u001b[2m[demo only — no command was executed]\u001b[0m\r\n> ' }) });
     } catch (_) { /* ignore malformed demo input */ }

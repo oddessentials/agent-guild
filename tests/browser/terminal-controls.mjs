@@ -41,6 +41,16 @@ const checks = await withPage({ name: 'terminal-controls', instrumentation }, as
   };
   const up = () => send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   const tap = async (selector) => { await down(selector); await up(); };
+  const click = async (selector) => {
+    const p = await point(selector);
+    await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...p, button: 'left', clickCount: 1 });
+    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...p, button: 'left', clickCount: 1 });
+  };
+  const escape = async () => {
+    await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+    await layoutReady();
+  };
   const clear = () => evaluate('testInputs.length=0');
   const inputs = () => evaluate('testInputs.map(m=>m.data)');
   const enabled = () => evaluate(`!document.querySelector('${key('ArrowUp')}').disabled`);
@@ -63,12 +73,31 @@ const checks = await withPage({ name: 'terminal-controls', instrumentation }, as
   await evaluate('document.querySelector("#sessions .session-card .open").click()');
   await until('terminal', () => evaluate('testTerms.some(t=>t.element?.isConnected)'));
   assert.equal(await evaluate(`document.querySelector('${strip}').hidden`), true);
-  pass('mouse-only desktop keeps the existing terminal layout');
+  assert.equal(await evaluate('document.querySelector("#panel-text-toggle").checkVisibility()'), true);
+  await click('#panel-text-toggle');
+  await layoutReady();
+  assert.equal(await evaluate('document.querySelector("#panel-text-size").matches(":popover-open")'), true);
+  assert.equal(await evaluate('document.querySelector("#panel-text-larger").checkVisibility()'), true);
+  await escape();
+  assert.equal(await evaluate('document.querySelector("#panel-text-size").matches(":popover-open")'), false);
+  assert.equal(await evaluate('document.activeElement.id'), 'panel-text-toggle');
+  pass('mouse-only desktop keeps text size accessible in one popover with Escape and focus return');
 
   await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
   await ready();
   await size(390, 844);
-  assert.deepEqual(await evaluate(`[...document.querySelectorAll('${strip} button')].map(b=>b.dataset.key)`), ['ArrowLeft', 'ArrowUp', 'ArrowDown', 'ArrowRight', 'Enter', 'Escape']);
+  assert.equal(await evaluate('document.querySelectorAll(".panel-actions .text-size").length'), 1, 'only one text-size button takes header space');
+  await tap('#panel-text-toggle');
+  await layoutReady();
+  assert.equal(await evaluate('document.querySelector("#panel-text-size").matches(":popover-open")'), true);
+  const touchFont = await evaluate(`${currentTerm}.options.fontSize`);
+  await tap('#panel-text-larger');
+  assert.equal(await evaluate(`${currentTerm}.options.fontSize`), touchFont + 1);
+  assert.equal(await evaluate('document.querySelector("#panel-text-size-value").textContent'), `${touchFont + 1} px`);
+  await tap('#panel-text-smaller');
+  assert.equal(await evaluate(`${currentTerm}.options.fontSize`), touchFont);
+  await escape();
+  assert.deepEqual(await evaluate(`[...document.querySelectorAll('${strip} button')].map(b=>b.dataset.key)`), ['ArrowLeft', 'ArrowUp', 'ArrowDown', 'ArrowRight', 'Enter', 'Escape', 'Paste']);
   await write('\x1b[?1l');
   await evaluate(`${currentTerm}.focus()`);
   const focusedBefore = await evaluate(`document.activeElement===${currentTerm}.textarea`);
@@ -78,6 +107,28 @@ const checks = await withPage({ name: 'terminal-controls', instrumentation }, as
   assert.deepEqual(await inputs(), ['\x1b[D', '\x1b[A', '\x1b[B', '\x1b[C', '\r', '\x1b']);
   assert.equal(await evaluate(`document.activeElement===${currentTerm}.textarea`), true);
   pass('all six trusted taps send exactly one key and retain typing focus');
+
+  const toastText = () => evaluate('document.querySelector("#toast").hidden ? "" : document.querySelector("#toast").textContent');
+  await evaluate(`window.testClipboard='git status\\n';Object.defineProperty(navigator,'clipboard',{configurable:true,value:{
+    readText:()=>testClipboard===null?Promise.reject(new DOMException('denied','NotAllowedError')):Promise.resolve(testClipboard)}})`);
+  await clear();
+  await tap(key('Paste'));
+  await until('pasted text sent', async () => (await inputs()).length > 0);
+  assert.deepEqual(await inputs(), ['git status'], 'the trailing line break is not sent, so Paste never presses Enter');
+  await evaluate('testClipboard=null');
+  await tap(key('Paste'));
+  await until('refusal reported', async () => (await toastText()).includes('did not allow reading the clipboard'));
+  assert.deepEqual(await inputs(), ['git status']);
+  await evaluate("testClipboard='echo first\\necho second\\n'");
+  await tap(key('Paste'));
+  await until('several lines refused', async () => (await toastText()).includes('more than one line'));
+  assert.deepEqual(await inputs(), ['git status']);
+  await write('\x1b[?2004h');
+  await tap(key('Paste'));
+  await until('bracketed paste sent', async () => (await inputs()).length > 1);
+  assert.deepEqual(await inputs(), ['git status', '\x1b[200~echo first\recho second\x1b[201~']);
+  await write('\x1b[?2004l');
+  pass('Paste sends the clipboard as typed text without Enter, and says why when it cannot');
 
   await write('\x1b[?1h');
   await evaluate(`${currentTerm}.blur()`);
@@ -148,17 +199,38 @@ const checks = await withPage({ name: 'terminal-controls', instrumentation }, as
   pass('split controls target the focused pane and cancel gestures across a switch');
 
   await clear();
-  await evaluate(`window.testHoldSnapshot=true;testSockets[${socketIndex}].close()`);
+  const link = `${currentTerm}.element.parentElement.querySelector('.terminal-link')`;
+  // Seek the actual CSS animation: testing a 400ms delay does not need to wait 400ms.
+  assert.deepEqual(await evaluate(`(() => {
+    window.testHoldSnapshot=true;testSockets[${socketIndex}].close();
+    const link=${link};
+    const initial=getComputedStyle(link).opacity;
+    const animation=link.getAnimations().find(a=>a.animationName==='terminal-link-in');
+    if (!animation) return [initial, 'missing animation'];
+    animation.pause(); animation.currentTime=399;
+    const before=getComputedStyle(link).opacity;
+    const beforePointer=getComputedStyle(link.querySelector('button')).pointerEvents;
+    animation.currentTime=400;
+    return [initial, before, beforePointer, getComputedStyle(link).opacity, getComputedStyle(link.querySelector('button')).pointerEvents];
+  })()`), ['0', '0', 'none', '1', 'auto']);
   assert.equal(await enabled(), false);
+  assert.equal(await evaluate(`${link}.querySelector('.terminal-link-label').textContent`), 'Reconnecting…');
+  await evaluate(`${currentTerm}.input('x')`);
+  assert.equal(await toastText(), 'Not sent: the terminal is reconnecting.');
   await tap(key('Enter'));
   await until('reconnected socket awaiting snapshot', () => evaluate('testSockets.some(s=>s.testPending)'));
   assert.equal(await enabled(), false);
-  await evaluate('{window.testHoldSnapshot=false;const s=testSockets.find(s=>s.testPending);const event=s.testPending;s.testPending=null;s.emit(event)}');
+  const loadingSocket = await evaluate('testSockets.findLastIndex(s=>s.readyState===1 && s.testPending)');
+  await click('.focused .terminal-retry');
+  assert.equal(await evaluate(`testSockets[${loadingSocket}].readyState`), 3, 'Retry replaces a terminal-only stalled connection');
+  await until('retried socket awaiting snapshot', () => evaluate(`testSockets.some((s,i)=>i>${loadingSocket} && s.readyState===1 && s.testPending)`));
+  await evaluate('{window.testHoldSnapshot=false;const s=testSockets.findLast(s=>s.readyState===1 && s.testPending);const event=s.testPending;s.testPending=null;s.emit(event)}');
   await ready();
   assert.deepEqual(await inputs(), [], 'nothing queued for reconnection');
+  assert.equal(await evaluate(`${link}.hidden`), true);
   await tap(key('ArrowDown'));
   assert.deepEqual(await inputs(), ['\x1b[B']);
-  pass('reconnection waits for its snapshot and never replays offline taps');
+  pass('the badge waits 400ms, Retry replaces a stalled terminal, and input waits for its snapshot');
 
   await clear();
   await evaluate(`{window.testHoldParsed=true;const s=testSockets.findLast(s=>s.readyState===1 && s.url===${JSON.stringify(firstUrl)});s.emit({data:JSON.stringify(s.testSnapshot)})}`);
@@ -166,6 +238,7 @@ const checks = await withPage({ name: 'terminal-controls', instrumentation }, as
   assert.equal(await enabled(), false);
   await evaluate(`{const s=testSockets.findLast(s=>s.readyState===1 && s.url===${JSON.stringify(firstUrl)});s.emit({data:JSON.stringify({type:'exit',exitCode:0})});window.testHoldParsed=false;testSnapshots.splice(0).forEach(fn=>fn())}`);
   assert.equal(await enabled(), false);
+  assert.equal(await evaluate(`${link}.hidden`), true, 'exit and the late snapshot leave no connection badge');
   await tap(key('Enter'));
   assert.deepEqual(await inputs(), []);
   // Restore the simulated session so layout checks can continue.
@@ -245,11 +318,17 @@ const checks = await withPage({ name: 'terminal-controls', instrumentation }, as
     }
   }
   await clear();
+  await tap('#panel-text-toggle');
+  await layoutReady();
+  assert.equal(await evaluate('document.querySelector("#panel-text-size").matches(":popover-open")'), true);
+  await escape();
   await down(key('Enter'));
+  await evaluate('document.querySelector("#panel-text-toggle").click()');
   await evaluate('document.querySelector("#panel-close").click()');
   await up();
   assert.deepEqual(await inputs(), []);
   assert.equal(await evaluate('document.querySelector("#terminal-panel").hidden'), true);
+  assert.equal(await evaluate('document.querySelector("#panel-text-size").matches(":popover-open")'), false);
   assert.deepEqual(errors, []);
   pass('all skins retain geometry; hiding terminals cancels input; no browser exceptions');
 
@@ -261,7 +340,23 @@ const checks = await withPage({ name: 'terminal-controls', instrumentation }, as
   await ready();
   assert.equal(await evaluate('matchMedia("(any-pointer: coarse)").matches'), false);
   assert.equal(await evaluate('document.querySelector("#terminal-controls").hidden'), false);
+  assert.equal(await evaluate('document.querySelector("#panel-text-toggle").checkVisibility()'), true);
   assert.deepEqual(errors, []);
   pass('a touch-capable tablet keeps its controls with a fine primary pointer');
+
+  const font = () => evaluate('testTerms.find(t=>t.element?.isConnected).options.fontSize');
+  const before = await font();
+  await click('#panel-text-toggle');
+  await layoutReady();
+  assert.equal(await evaluate('document.querySelector("#panel-text-size").matches(":popover-open")'), true);
+  await click('#panel-text-larger');
+  assert.equal(await font(), before + 1);
+  assert.equal(await evaluate('document.querySelector("#panel-text-size-value").textContent'), `${before + 1} px`);
+  await send('Page.navigate', { url: origin });
+  await until('reloaded page', () => evaluate('Boolean(document.querySelector("#sessions .session-card .open"))'));
+  await evaluate('document.querySelector("#sessions .session-card .open").click()');
+  await ready();
+  assert.equal(await font(), before + 1);
+  pass('the terminal text size changes on request and this device remembers it');
 });
 console.log(`${checks} terminal control checks passed.`);

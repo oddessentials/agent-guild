@@ -410,6 +410,19 @@ test('foreign Host and Origin headers are rejected', async () => {
   assert.equal(await new Promise((resolve) => noAuth.once('unexpected-response', (_req, res) => resolve(res.statusCode))), 401);
 });
 
+test('both sockets answer a ping, so a page can notice a link that went silent', async () => {
+  const session = await createFake();
+  const events = new Client(`${base.replace('http', 'ws')}/api/v1/events?token=${token}`);
+  const client = terminal(session.id);
+  await Promise.all([events.opened, client.opened]);
+  const hello = await waitFor(() => events.messages.find((m) => m.type === 'hello'), { label: 'hello' });
+  assert.equal(hello.heartbeat, true, 'the hello says pings are answered');
+  for (const socket of [events, client]) socket.send({ type: 'ping' });
+  await waitFor(() => [events, client].every((socket) => socket.messages.some((m) => m.type === 'pong')), { label: 'pongs' });
+  await Promise.all([events.close(), client.close()]);
+  await call('POST', `/sessions/${session.id}/stop`);
+});
+
 test('the web page and xterm assets are served', async () => {
   const page = await fetch(`${base}/`);
   assert.equal(page.status, 200);

@@ -39,6 +39,7 @@ const DOCK_KEY = 'agentGuild.dock';
 const DOCK_WIDTH_KEY = 'agentGuild.dockWidth';
 const PANES_KEY = 'agentGuild.panes';
 const SPLIT_RATIO_KEY = 'agentGuild.splitRatio';
+const TERMINAL_FONT_KEY = 'agentGuild.terminalFontSize';
 const RELEASES_URL = 'https://github.com/oddessentials/agent-guild/releases';
 const SUPPORT_URL = 'https://oddessentials.ai/donate/?ref=agent-guild';
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -72,6 +73,7 @@ const state = {
   focusedPane: 0,
   activeId: null,
   eventsSocket: null,
+  heartbeat: false,
   eventsRetry: 0,
   pageAway: false,
   managerUnavailable: false,
@@ -102,6 +104,12 @@ const state = {
 
 function load(key) { try { return localStorage.getItem(key); } catch { return null; } }
 function save(key, value) { try { value === null ? localStorage.removeItem(key) : localStorage.setItem(key, value); return true; } catch { return false; } }
+
+const TERMINAL_FONT_MIN = 9;
+const TERMINAL_FONT_MAX = 28;
+const savedTerminalFont = Number.parseInt(load(TERMINAL_FONT_KEY), 10);
+let terminalFontSize = savedTerminalFont >= TERMINAL_FONT_MIN && savedTerminalFont <= TERMINAL_FONT_MAX
+  ? savedTerminalFont : coarsePointer.matches ? 14 : 13;
 
 // ---- helpers --------------------------------------------------------------
 
@@ -179,6 +187,18 @@ function holdToast(held) {
  */
 const firstClick = (run) => (e) => { if (e.detail < 2) run(); };
 
+/** Buttons that act through the session manager. While it cannot be reached they are unavailable rather than left to fail. */
+const MANAGER_ACTIONS = '.provider :is(.new, .existing, .install, .update), .session-card :is(.resume, .rename, .stop, .remove), .history-resume, #panel-stop';
+
+function paintManagerActions(root = document) {
+  for (const button of root.querySelectorAll(MANAGER_ACTIONS)) button.disabled = !state.connected;
+}
+
+/** "No sessions" only from a manager that said so; the connection status says when it cannot be reached. */
+function renderEmpty() {
+  $('empty').hidden = !sessionsShown || !state.connected || state.sessions.size > 0;
+}
+
 function setConnection(kind, label) {
   notifyViews();
   const el = $('connection');
@@ -188,6 +208,8 @@ function setConnection(kind, label) {
   // The manager can only be stopped, restarted or upgraded while the page can reach it.
   state.connected = kind === 'ok';
   terminalControls.refresh();
+  paintManagerActions();
+  renderEmpty();
   state.remoteAccessUI?.connectionChanged();
   $('manager').hidden = !state.connected;
   if (!state.connected) closeMenu($('manager-menu'));
@@ -1211,18 +1233,30 @@ function shellSummary(shells) {
 
 class AuthError extends Error {}
 
+let requestLink = new AbortController();
+const ANSWER_LOST = 'The connection to the session manager was lost before it answered. Once the page reconnects, check whether that took effect.';
+
 async function api(method, path, body, options = {}) {
-  const res = await fetch(`/api/v1${path}`, {
-    method,
-    keepalive: options.keepalive === true,
-    headers: {
-      Authorization: `Bearer ${state.token}`,
-      ...(body ? { 'Content-Type': 'application/json' } : {}),
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  let res;
+  try {
+    res = await fetch(`/api/v1${path}`, {
+      method,
+      keepalive: options.keepalive === true,
+      headers: {
+        Authorization: `Bearer ${state.token}`,
+        ...(body ? { 'Content-Type': 'application/json' } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: requestLink.signal,
+    });
+  } catch (err) {
+    throw new Error(err?.name === 'AbortError' ? ANSWER_LOST : 'The session manager could not be reached. Check your connection and try again.');
+  }
   if (res.status === 401) throw new AuthError('The access token was rejected.');
-  const data = await res.json().catch(() => ({}));
+  let text;
+  try { text = await res.text(); } catch { throw new Error(ANSWER_LOST); }
+  let data = {};
+  try { data = JSON.parse(text); } catch {}
   if (!res.ok) throw Object.assign(new Error(data?.error?.message || `Request failed (HTTP ${res.status})`), data?.error);
   return data;
 }
@@ -1740,6 +1774,7 @@ function buildProvider(provider) {
     renderReportingSetup(node, provider);
     renderModelStats(node, provider);
     renderProviderPending(node, provider);
+    paintManagerActions(node);
     return node;
 }
 
@@ -3541,6 +3576,7 @@ function updateHistoryRow(node, provider, entry) {
   const action = node.querySelector('.history-resume');
   const key = sessionActionKey(provider.id, historyView.accountId, entry.id);
   paintPending(action, pendingSessionActions.has(key), running ? 'Open' : 'Resume', 'Resuming…');
+  paintManagerActions(node);
   action.title = running
     ? `This session is running in Agent Guild as "${running.name}". Open it instead of resuming it twice.`
     : `Resume this ${provider.tool} session${entry.cwd ? ` in ${entry.cwd}` : ''}`;
@@ -5490,6 +5526,7 @@ function updateCard(node, s) {
   resume.hidden = !resumable(s) && !reattachable(s);
   resume.textContent = s.multiplexer ? 'Reattach' : 'Resume';
   renderResumePending(node, s);
+  paintManagerActions(node);
   resume.title = s.multiplexer
     ? `Attach this card to its ${s.multiplexer.label} session again, as ${s.multiplexer.attach} would`
     : `Start ${s.provider.tool} again on this session${id ? ` (${id})` : ''} in ${s.cwd}`;
@@ -5526,7 +5563,7 @@ function renderSessions() {
   });
   const running = sessions.filter((s) => s.status === 'running').length;
   $('session-count').textContent = sessions.length ? `· ${running} running` : '';
-  $('empty').hidden = sessions.length > 0;
+  renderEmpty();
   guardLeaving();
   if (state.activeId) updatePanel();
   if ($('history').open) renderHistory();
@@ -5877,11 +5914,12 @@ function exitLine(s, { exitCode, signal }) {
 class TerminalView {
   constructor(sessionId) {
     this.id = sessionId;
+    this.inputWarningShown = false;
     this.el = document.createElement('div');
     this.term = new window.Terminal({
       cursorBlink: true,
       fontFamily: 'ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace',
-      fontSize: coarsePointer.matches ? 14 : 13,
+      fontSize: terminalFontSize,
       scrollback: 5000,
       macOptionIsMeta: true,
       // Option-drag selects text even while a program reads the mouse, as Shift-drag does elsewhere.
@@ -5901,8 +5939,27 @@ class TerminalView {
       return true;
     });
     this.term.onData((data) => {
-      this.send({ type: 'input', data });
+      const running = state.sessions.get(this.id)?.status === 'running';
+      if (running && this.ws?.readyState === WebSocket.OPEN) return this.send({ type: 'input', data });
+      // Warn once per outage: wheel and mouse reports also arrive here. Ignore focus reports.
+      if (data === '\x1b[I' || data === '\x1b[O') return;
+      if (this.inputWarningShown) return;
+      this.inputWarningShown = true;
+      toast(running ? 'Not sent: the terminal is reconnecting.' : 'Not sent: this session has ended.');
     });
+    this.status = document.createElement('div');
+    this.status.className = 'terminal-link';
+    this.status.setAttribute('role', 'status');
+    this.statusLabel = document.createElement('span');
+    this.statusLabel.className = 'terminal-link-label';
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'btn terminal-retry';
+    retry.textContent = 'Retry';
+    retry.title = 'Reconnect this terminal';
+    retry.addEventListener('click', () => { this.ws?.drop(); this.connect(); });
+    this.status.append(this.statusLabel, retry);
+    this.el.append(this.status);
     this.opened = false;
     this.disposed = false;
     this.retry = 0;
@@ -5929,22 +5986,51 @@ class TerminalView {
 
   connect() {
     if (this.disposed || state.remoteRevoked) return;
+    clearTimeout(this.retryTimer);
     this.inputReady = false;
     this.inputSnapshot = null;
     terminalControls.refresh();
+    this.showLink(this.shown ? 'Reconnecting…' : 'Connecting…');
     const ws = new WebSocket(wsUrl(`/sessions/${this.id}/terminal`));
     this.ws = ws;
-    ws.onopen = () => { this.retry = 0; this.sent = { cols: 0, rows: 0 }; this.sendSize(); };
-    ws.onmessage = (event) => { if (!this.disposed && this.ws === ws) this.onMessage(JSON.parse(event.data)); };
+    ws.loading = true;
+    ws.heardAt = Date.now();
+    ws.onopen = () => {
+      if (this.disposed || this.ws !== ws || ws.ended) return;
+      ws.heardAt = Date.now(); this.retry = 0; this.sent = { cols: 0, rows: 0 }; this.sendSize();
+    };
+    ws.onmessage = (event) => {
+      if (this.disposed || this.ws !== ws || ws.ended) return;
+      ws.heardAt = Date.now();
+      const msg = JSON.parse(event.data);
+      if (msg.type === 'snapshot') ws.loading = false;
+      this.onMessage(msg);
+    };
     ws.onclose = (event) => {
+      if (ws.ended) return;
+      ws.ended = true;
+      ws.loading = false;
       if (this.ws !== ws) return;
       this.inputReady = false;
       this.inputSnapshot = null;
       terminalControls.refresh();
-      if (this.disposed || event.code === 4403 || event.code === 4404 || event.code === 4410) return;
+      if (this.disposed || event?.code === 4403 || event?.code === 4404 || event?.code === 4410) return this.showLink(null);
+      this.showLink('Reconnecting…');
       const delay = Math.min(5000, 300 * 2 ** this.retry++);
-      setTimeout(() => this.connect(), delay);
+      this.retryTimer = setTimeout(() => { if (this.ws === ws) this.connect(); }, delay);
     };
+    // A dead link may take minutes to close by itself; see checkLinks.
+    ws.drop = () => {
+      if (this.disposed || this.ws !== ws || ws.ended || ws.readyState >= WebSocket.CLOSING) return;
+      ws.onclose(); // A later native close event must not schedule another retry.
+      ws.close();
+    };
+  }
+
+  /** Says the terminal is not live: before its first screen arrives, and while its link is down. Null when it is. */
+  showLink(text) {
+    this.status.hidden = !text;
+    this.statusLabel.textContent = text || '';
   }
 
   onMessage(msg) {
@@ -5961,7 +6047,10 @@ class TerminalView {
           this.term.write(msg.data, () => {
             if (this.disposed || this.ws !== ws || ws.readyState !== WebSocket.OPEN || this.inputSnapshot !== msg) return;
             this.inputReady = msg.session.status === 'running';
+            if (this.inputReady) this.inputWarningShown = false;
             this.inputSnapshot = null;
+            this.shown = true;
+            this.showLink(null);
             this.sent = { cols: 0, rows: 0 };
             this.refit();
             terminalControls.refresh();
@@ -5974,6 +6063,10 @@ class TerminalView {
       case 'exit':
         this.inputReady = false;
         this.inputSnapshot = null;
+        // Exit can arrive before xterm finishes the snapshot. The stream connected,
+        // even though that snapshot must no longer enable input.
+        this.shown = true;
+        this.showLink(null);
         terminalControls.refresh();
         if (dictation?.id === this.id) stopDictation();
         this.term.write(`\r\n\x1b[2m${exitLine(state.sessions.get(this.id), msg)}\x1b[0m\r\n`);
@@ -6059,6 +6152,7 @@ class TerminalView {
 
   dispose() {
     this.disposed = true;
+    clearTimeout(this.retryTimer);
     this.inputReady = false;
     this.inputSnapshot = null;
     terminalControls.refresh();
@@ -6071,8 +6165,26 @@ class TerminalView {
 
 // ---- terminal panel -------------------------------------------------------
 
+/** Every terminal on this device shows text at one size, which the device remembers. */
+function setTerminalFontSize(size) {
+  terminalFontSize = Math.min(TERMINAL_FONT_MAX, Math.max(TERMINAL_FONT_MIN, size));
+  save(TERMINAL_FONT_KEY, String(terminalFontSize));
+  for (const view of state.views.values()) {
+    view.term.options.fontSize = terminalFontSize;
+    view.refit();
+  }
+  paintTerminalFontSize();
+}
+
+function paintTerminalFontSize() {
+  $('panel-text-smaller').disabled = terminalFontSize <= TERMINAL_FONT_MIN;
+  $('panel-text-larger').disabled = terminalFontSize >= TERMINAL_FONT_MAX;
+  $('panel-text-size-value').textContent = `${terminalFontSize} px`;
+}
+
 const terminalControls = new TerminalControls({
   element: $('terminal-controls'), panel: $('terminal-panel'),
+  notify: (message) => toast(message),
   getCurrent: () => {
     const session = state.sessions.get(state.activeId);
     const view = state.views.get(state.activeId);
@@ -6154,6 +6266,7 @@ function closePanel() {
   state.activeId = null;
   $('terminal-panel').hidden = true;
   closeMenu($('panel-sessions'));
+  closeMenu($('panel-text-size'));
   renderVoice();
   savePanes();
 }
@@ -6580,24 +6693,28 @@ function showManagerUnavailable() {
   }
 }
 
-function connectEvents() {
+function connectEvents(refreshProviders = false) {
   if (state.pageAway || state.remoteRevoked) return;
   const ws = new WebSocket(wsUrl('/events'));
   state.eventsSocket = ws;
+  ws.heardAt = Date.now();
   ws.onopen = () => {
-    if (state.pageAway || state.eventsSocket !== ws) return;
+    if (state.pageAway || state.eventsSocket !== ws || ws.ended) return;
+    ws.heardAt = Date.now();
     managerLoss.cancel();
     state.eventsRetry = 0;
     setConnection('ok', 'Connected to session manager');
   };
   ws.onmessage = (event) => {
-    if (state.pageAway || state.eventsSocket !== ws) return;
+    if (state.pageAway || state.eventsSocket !== ws || ws.ended) return;
+    ws.heardAt = Date.now();
     const msg = JSON.parse(event.data);
     if (msg.type === 'hello') {
       // The manager is back after a stop or restart; the page picks up where it was.
       if (state.stopping) leaveStopping();
       state.version = msg.version || null;
       state.pid = msg.pid || null;
+      state.heartbeat = msg.heartbeat === true;
       state.restartable = typeof msg.pid === 'number';
       state.launcher = typeof msg.launcher === 'string' ? msg.launcher : null;
       state.folderOpener = msg.folderOpener || null;
@@ -6613,6 +6730,7 @@ function connectEvents() {
       if (!sessionsShown && load(DOCK_KEY) === 'github' && !dockView.panel) openGitHub({ focus: false });
       restorePanes();
       sessionsShown = true;
+      renderEmpty();
       setUpgrade(msg.upgrade, true);
       loadNews();
       // A changelog.updated sent while the socket was down is lost; catch up the open panel.
@@ -6647,11 +6765,21 @@ function connectEvents() {
     } else if (msg.type === 'providers.updated') {
       state.providers = msg.providers;
       renderProviders();
-      if ($('history').open) renderHistory();
+      renderSessions();
       scheduleStats();
     }
   };
+  // A dead link may take minutes to close by itself: stop waiting on it, and on every request made over it.
+  ws.drop = () => {
+    if (state.pageAway || state.eventsSocket !== ws || ws.ended || ws.readyState >= WebSocket.CLOSING) return;
+    requestLink.abort();
+    requestLink = new AbortController();
+    ws.onclose();
+    ws.close();
+  };
   ws.onclose = (event) => {
+    if (ws.ended) return;
+    ws.ended = true;
     if (state.pageAway || state.eventsSocket !== ws) return;
     state.environmentUI?.disconnected();
     if (event?.code === 4403) {
@@ -6660,6 +6788,12 @@ function connectEvents() {
       state.remoteAccessUI?.close();
       setConnection('down', 'Remote access changed. Your terminals are still running. Reopen an enabled address to reconnect.');
       return;
+    }
+    // A first screen can hold a pong behind a large frame. Its events link is
+    // the automatic recovery signal until that screen arrives; Retry also lets
+    // the user recover a terminal whose connection alone has stalled.
+    for (const view of state.views.values()) {
+      if (!view.disposed && view.ws?.loading) view.ws.drop();
     }
     if (state.managerUnavailable) {
       showManagerUnavailable();
@@ -6671,18 +6805,60 @@ function connectEvents() {
     managerLoss.disconnected();
     // Keep trying: after a stop, a relaunched manager brings the page back by itself.
     const delay = Math.min(5000, 500 * 2 ** state.eventsRetry++);
-    setTimeout(async () => {
+    setTimeout(() => {
       if (state.pageAway || state.eventsSocket !== ws) return;
-      try { await loadProviders(); } catch (err) { if (err instanceof AuthError) return showAuth(err.message); }
-      if (!state.pageAway && state.eventsSocket === ws) connectEvents();
+      connectEvents(true);
     }, delay);
   };
+  // Catch up metadata alongside the socket: an HTTP request can remain pending
+  // through a network change, but must not hold up reconnection or its deadlines.
+  if (refreshProviders) loadProviders(ws).catch((err) => {
+    if (state.pageAway || state.remoteRevoked || state.eventsSocket !== ws) return;
+    if (err instanceof AuthError) showAuth(err.message);
+  });
 }
 
-async function loadProviders() {
+// No pong in time, or a connection that does not open, means a link is dead: after a move between networks a socket can stay open on a dead connection for minutes.
+const PING_AFTER_MS = 20000;
+const PONG_WITHIN_MS = 8000;
+const OPEN_WITHIN_MS = 15000;
+
+/** `probe` asks every open link now, as when the page returns or the network changes. */
+function checkLinks({ probe = false } = {}) {
+  if (state.pageAway || document.visibilityState !== 'visible') return;
+  const now = Date.now();
+  for (const ws of [state.eventsSocket, ...[...state.views.values()].map((view) => view.ws)]) {
+    if (ws?.readyState === WebSocket.CONNECTING) {
+      if (now - ws.heardAt > OPEN_WITHIN_MS) ws.drop();
+    } else if (ws?.readyState !== WebSocket.OPEN || !state.heartbeat) {
+      continue;
+    } else if (ws.loading) {
+      continue; // A pong cannot overtake the first screen on this connection.
+    } else if (ws.pingedAt > ws.heardAt) {
+      if (now - ws.pingedAt > PONG_WITHIN_MS) ws.drop();
+    } else if (probe || now - ws.heardAt > PING_AFTER_MS) {
+      ws.pingedAt = now;
+      ws.send(JSON.stringify({ type: 'ping' }));
+    }
+  }
+}
+
+setInterval(checkLinks, 4000);
+addEventListener('online', () => checkLinks({ probe: true }));
+document.addEventListener('visibilitychange', () => checkLinks({ probe: true }));
+
+async function loadProviders(ws = null) {
+  const previous = state.providers;
   const { providers } = await api('GET', '/providers');
+  // A newer event or connection owns the page now; never replace its providers
+  // with a response that began before it.
+  if (ws && (state.pageAway || state.remoteRevoked || state.eventsSocket !== ws || state.providers !== previous)) return;
   state.providers = providers;
   renderProviders();
+  if (ws) {
+    renderSessions(); // Resume and open History also depend on provider metadata.
+    scheduleStats();
+  }
 }
 
 // ---- auth & boot ----------------------------------------------------------
@@ -6702,6 +6878,9 @@ let statsInterval;
 let newsTimer;
 
 function showAuth(message = '') {
+  const ws = state.eventsSocket;
+  state.eventsSocket = null; // Invalidate callbacks and queued retries before closing.
+  ws?.close();
   state.environmentUI?.close();
   state.remoteAccessUI?.setAvailable(null);
   managerLoss.cancel();
@@ -6758,6 +6937,8 @@ $('auth-form').addEventListener('submit', (e) => {
   boot();
 });
 $('panel-close').addEventListener('click', closePanel);
+for (const [id, step] of [['panel-text-smaller', -1], ['panel-text-larger', 1]]) $(id).addEventListener('click', () => setTerminalFontSize(terminalFontSize + step));
+paintTerminalFontSize();
 paneNodes.forEach((pane, index) => {
   pane.querySelector('.pane-close').addEventListener('click', () => closePane(index));
   pane.addEventListener('focusin', () => { if (state.focusedPane !== index) focusPane(index, { focusTerminal: false }); });
@@ -7013,6 +7194,7 @@ addEventListener('pagehide', () => {
   state.pageAway = true;
   activityFavicon.setPaused(true);
   terminalCopy.close();
+  closeMenu($('panel-text-size'));
   stopDictation();
   managerLoss.cancel();
   state.eventsSocket?.close();
@@ -7021,7 +7203,9 @@ addEventListener('pageshow', (event) => {
   if (!event.persisted) return;
   state.pageAway = false;
   activityFavicon.setPaused(false);
-  connectEvents();
+  if (state.remoteRevoked) return;
+  setConnection('down', 'Reconnecting to session manager…');
+  connectEvents(true);
 });
 $('version').addEventListener('click', openChangelog);
 $('changelog-close').addEventListener('click', closeChangelog);
@@ -7124,6 +7308,10 @@ onMenu($('panel-sessions'), (menu) => {
   placeMenu(menu, sessionInvoker());
   (menu.querySelector('.menu-item[aria-current="true"]') ?? menuItems(menu)[0])?.focus();
 }, (menu) => returnFocus(menu, sessionInvoker()));
+onMenu($('panel-text-size'), (menu) => {
+  placeMenu(menu, $('panel-text-toggle'));
+  menu.querySelector('button:not(:disabled)')?.focus();
+}, (menu) => returnFocus(menu, $('panel-text-toggle')));
 for (const menu of [$('manager-menu'), $('panel-sessions')]) menu.addEventListener('keydown', moveInMenu);
 // Recorded only on the click that opens the menu: a click that closes it leaves what the open menu showed.
 const sessionMenuFrom = (mode, invoker) => () => {
@@ -7138,6 +7326,7 @@ window.addEventListener('resize', () => {
   placeMenu($('settings-menu'), $('settings'));
   placeMenu($('manager-menu'), $('manager'));
   placeMenu($('panel-sessions'), sessionInvoker());
+  placeMenu($('panel-text-size'), $('panel-text-toggle'));
 });
 $('providers').addEventListener('animationend', (e) => {
   if (e.target === e.currentTarget.lastElementChild) e.currentTarget.classList.remove('deal');
