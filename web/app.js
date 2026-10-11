@@ -5961,8 +5961,7 @@ class TerminalView {
     this.opened = false;
     this.disposed = false;
     this.retry = 0;
-    this.sent = { cols: 0, rows: 0 };
-    this.resizeObserver = new ResizeObserver(() => this.scheduleFit());
+    this.takeSize = false;
     this.connect();
   }
 
@@ -5995,7 +5994,7 @@ class TerminalView {
     ws.heardAt = Date.now();
     ws.onopen = () => {
       if (this.disposed || this.ws !== ws || ws.ended) return;
-      ws.heardAt = Date.now(); this.retry = 0; this.sent = { cols: 0, rows: 0 }; this.sendSize();
+      ws.heardAt = Date.now(); this.retry = 0;
     };
     ws.onmessage = (event) => {
       if (this.disposed || this.ws !== ws || ws.ended) return;
@@ -6049,14 +6048,16 @@ class TerminalView {
             this.inputSnapshot = null;
             this.shown = true;
             this.showLink(null);
-            this.sent = { cols: 0, rows: 0 };
-            this.refit();
             terminalControls.refresh();
+            this.takeDeviceSize();
           });
         }
         break;
       case 'data':
         this.term.write(msg.data);
+        break;
+      case 'resize':
+        this.term.resize(msg.cols, msg.rows);
         break;
       case 'exit':
         this.inputReady = false;
@@ -6078,18 +6079,28 @@ class TerminalView {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(message));
   }
 
-  sendSize() {
-    const { cols, rows } = this.term;
-    if (terminalSizesHeld || !this.el.isConnected || (cols === this.sent.cols && rows === this.sent.rows)) return;
-    this.sent = { cols, rows };
-    this.send({ type: 'resize', cols, rows });
+  /**
+   * The session's terminal has one size, shared by every device. Placing it on
+   * screen takes this device's size, once its screen is live; nothing else
+   * does, because the program redraws on every resize and a redraw taller than
+   * the screen leaves a copy of it in the scrollback of every device.
+   */
+  place() {
+    this.takeSize = true;
+    this.takeDeviceSize();
+  }
+
+  takeDeviceSize() {
+    if (!this.takeSize || !this.shown || this.inputSnapshot || !this.el.isConnected || this.ws?.readyState !== WebSocket.OPEN) return;
+    try { this.fit.fit(); } catch { return; }
+    this.takeSize = false;
+    this.send({ type: 'resize', cols: this.term.cols, rows: this.term.rows });
   }
 
   mount(host, { focus = true } = {}) {
     host.replaceChildren(this.el);
     if (!this.opened) { this.term.open(this.el); this.enableTouchScroll(); this.opened = true; }
-    this.resizeObserver.observe(host);
-    this.refit();
+    this.place();
     if (focus) this.term.focus();
   }
 
@@ -6102,9 +6113,11 @@ class TerminalView {
    * legacy wheelDeltaY that a constructed WheelEvent leaves at 0.
    */
   enableTouchScroll() {
+    let lastX = null;
     let lastY = null;
     let pending = 0;
     this.el.addEventListener('touchstart', (e) => {
+      lastX = e.touches.length === 1 ? e.touches[0].clientX : null;
       lastY = e.touches.length === 1 ? e.touches[0].clientY : null;
       pending = 0;
     }, { passive: true });
@@ -6112,6 +6125,9 @@ class TerminalView {
       if (lastY === null || e.touches.length !== 1) return;
       e.preventDefault();
       const touch = e.touches[0];
+      // A terminal wider than its pane pans sideways in the pane.
+      this.el.parentElement.scrollLeft += lastX - touch.clientX;
+      lastX = touch.clientX;
       const delta = lastY - touch.clientY;
       lastY = touch.clientY;
       if (this.term.buffer.active.type === 'alternate' || this.term.modes.mouseTrackingMode !== 'none') {
@@ -6133,19 +6149,7 @@ class TerminalView {
   }
 
   unmount() {
-    this.resizeObserver.disconnect();
     this.el.remove();
-  }
-
-  scheduleFit() {
-    cancelAnimationFrame(this.fitFrame);
-    this.fitFrame = requestAnimationFrame(() => this.refit());
-  }
-
-  refit() {
-    if (!this.el.isConnected) return;
-    try { this.fit.fit(); } catch { /* not measurable yet */ }
-    this.sendSize();
   }
 
   dispose() {
@@ -6154,7 +6158,6 @@ class TerminalView {
     this.inputReady = false;
     this.inputSnapshot = null;
     terminalControls.refresh();
-    this.resizeObserver.disconnect();
     this.ws?.close();
     this.term.dispose();
     this.el.remove();
@@ -6167,10 +6170,7 @@ class TerminalView {
 function setTerminalFontSize(size) {
   terminalFontSize = Math.min(TERMINAL_FONT_MAX, Math.max(TERMINAL_FONT_MIN, size));
   save(TERMINAL_FONT_KEY, String(terminalFontSize));
-  for (const view of state.views.values()) {
-    view.term.options.fontSize = terminalFontSize;
-    view.refit();
-  }
+  for (const view of state.views.values()) view.term.options.fontSize = terminalFontSize;
   paintTerminalFontSize();
 }
 
@@ -6208,8 +6208,8 @@ const terminalCopy = new TerminalCopy({
 
 const paneNodes = [...document.querySelectorAll('.terminal-pane')];
 const sessionMenu = { mode: 'switch', invoker: null };
-let terminalSizesHeld = false;
 let panesRestored = false;
+let lastSplit = null;
 let splitRatio = clampRatio(Number.parseFloat(load(SPLIT_RATIO_KEY)));
 
 /** Moves typing into a terminal, except where that would raise an on-screen keyboard over it. */
@@ -6224,7 +6224,8 @@ function typeIn(view) {
 function openPanel(id, { beside = false, restoring = false } = {}) {
   if (!state.sessions.has(id)) return;
   let index = state.panes.indexOf(id);
-  if (index === -1) {
+  const placed = index !== -1;
+  if (!placed) {
     index = !state.panes.length ? 0 : !beside ? state.focusedPane : state.panes.length < 2 ? 1 : 1 - state.focusedPane;
     const replaced = state.panes[index];
     if (replaced) state.views.get(replaced)?.unmount();
@@ -6234,6 +6235,7 @@ function openPanel(id, { beside = false, restoring = false } = {}) {
   $('terminal-panel').hidden = false;
   if (!restoring) dockMakesWayForTerminal();
   focusPane(index, { focusTerminal: !restoring || !dockView.panel });
+  if (placed) state.views.get(id).place();
 }
 
 function focusPane(index, { focusTerminal = true } = {}) {
@@ -6303,7 +6305,16 @@ function layoutPanes() {
     if (shown && view && view.el.parentNode !== host) view.mount(host, { focus: false });
     else if (!shown && view && view.el.parentNode === host) view.unmount();
   });
+  if (split !== lastSplit) {
+    lastSplit = split;
+    takePaneSizes();
+  }
   renderPaneLabels();
+}
+
+/** Arranging the panes (split, unsplit, dragging the splitter) gives each terminal its pane's size. */
+function takePaneSizes() {
+  for (const id of state.panes) state.views.get(id)?.place();
 }
 
 function renderPaneLabels() {
@@ -6343,17 +6354,6 @@ function renderSessionMenu() {
     return item;
   });
   menu.replaceChildren(...(items.length ? items : [el('p', 'menu-empty', 'No other sessions')]));
-}
-
-function holdTerminalSizes() {
-  terminalSizesHeld = true;
-  document.documentElement.classList.add('resizing');
-}
-
-function releaseTerminalSizes() {
-  terminalSizesHeld = false;
-  document.documentElement.classList.remove('resizing');
-  for (const id of state.panes) state.views.get(id)?.refit();
 }
 
 function savePanes() {
@@ -6956,16 +6956,17 @@ bindSplitter($('pane-splitter'), {
   axis: splitAxis,
   start: () => splitRatio,
   move: (delta, from) => {
-    holdTerminalSizes();
+    document.documentElement.classList.add('resizing');
     const box = $('terminal-panes').getBoundingClientRect();
     setSplitRatio(from + delta / Math.max(1, (splitAxis() === 'x' ? box.width : box.height) - 8));
   },
   end: () => {
     save(SPLIT_RATIO_KEY, String(splitRatio));
-    releaseTerminalSizes();
+    document.documentElement.classList.remove('resizing');
+    takePaneSizes();
   },
-  home: () => setSplitRatio(SPLIT_RATIO_MIN),
-  endKey: () => setSplitRatio(1 - SPLIT_RATIO_MIN),
+  home: () => { setSplitRatio(SPLIT_RATIO_MIN); takePaneSizes(); },
+  endKey: () => { setSplitRatio(1 - SPLIT_RATIO_MIN); takePaneSizes(); },
 });
 let terminalLayoutFrame;
 const terminalLayoutObserver = new ResizeObserver(() => {
@@ -7042,13 +7043,13 @@ $('dock').addEventListener('keydown', (e) => {
 bindSplitter($('dock-splitter'), {
   start: () => clampDockWidth(dockView.width, innerWidth),
   move: (delta, from) => {
-    holdTerminalSizes();
+    document.documentElement.classList.add('resizing');
     dockView.width = clampDockWidth(from - delta, innerWidth);
     applyDockLayout();
   },
   end: () => {
     save(DOCK_WIDTH_KEY, String(dockView.width));
-    releaseTerminalSizes();
+    document.documentElement.classList.remove('resizing');
   },
   home: () => { dockView.width = DOCK_MIN; applyDockLayout(); },
   endKey: () => { dockView.width = clampDockWidth(Infinity, innerWidth); applyDockLayout(); },

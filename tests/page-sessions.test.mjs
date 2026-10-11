@@ -121,7 +121,7 @@ test('exit clears an initial or reconnecting badge before the held snapshot comp
       const view = Object.assign(runInNewContext(`({${methods}})`, context), {
         id: plain.id, ws: { readyState: 1 }, status: { hidden: false }, statusLabel: { textContent: label },
         term: { reset() {}, resize() {}, write(_data, callback) { if (callback) callbacks.push(callback); } },
-        refit() {},
+        takeDeviceSize() {},
       });
       view.onMessage({ type: 'snapshot', session: { ...plain, status }, data: 'saved output', cols: 80, rows: 24 });
       assert.equal(view.status.hidden, false, 'the snapshot has not finished');
@@ -141,4 +141,55 @@ test('exit clears an initial or reconnecting badge before the held snapshot comp
       assert.equal(view.inputReady, false);
     }
   }
+});
+
+test('a terminal takes a device\'s size only when placed on screen there; otherwise it follows the session\'s size', () => {
+  const methods = ['onMessage', 'showLink', 'mount', 'unmount', 'place', 'takeDeviceSize'].map((name) => {
+    const found = app.match(new RegExp(`  ${name}\\([^]*?\\n  \\}`))?.[0];
+    assert.ok(found, `${name} is present`);
+    return found;
+  }).join(',\n');
+  const { context } = page();
+  Object.assign(context, { WebSocket: { OPEN: 1 }, terminalControls: { refresh() {} }, dictation: null });
+  const sent = [], resized = [], callbacks = [];
+  const term = {
+    cols: 120, rows: 32,
+    reset() {}, focus() {},
+    resize(cols, rows) { Object.assign(this, { cols, rows }); resized.push(`${cols}x${rows}`); },
+    write(_data, callback) { if (callback) callbacks.push(callback); },
+  };
+  const view = Object.assign(runInNewContext(`({${methods}})`, context), {
+    id: plain.id, ws: { readyState: 1 }, status: { hidden: false }, statusLabel: { textContent: '' },
+    term, fit: { fit() { term.resize(50, 20); } }, el: { isConnected: false, remove() {} },
+    opened: true, takeSize: false, enableTouchScroll() {},
+    send: (message) => sent.push(`${message.type} ${message.cols}x${message.rows}`),
+  });
+  const host = { replaceChildren() { view.el.isConnected = true; } };
+  const snapshot = (cols, rows) => { view.onMessage({ type: 'snapshot', session: { ...plain }, data: '', cols, rows }); callbacks.pop()(); };
+
+  snapshot(120, 32);
+  assert.deepEqual(sent, [], 'a screen that is not on this device sends no size');
+  assert.deepEqual(resized, ['120x32'], 'and shows the session\'s size');
+
+  view.mount(host, { focus: false });
+  assert.deepEqual(sent, ['resize 50x20'], 'placing it on screen takes this device\'s size once');
+
+  view.onMessage({ type: 'resize', cols: 100, rows: 30 });
+  assert.equal(`${term.cols}x${term.rows}`, '100x30', 'another device\'s size is followed');
+  snapshot(100, 30);
+  assert.deepEqual(sent, ['resize 50x20'], 'a reconnection does not take it back');
+
+  view.unmount();
+  view.el.isConnected = false;
+  view.mount(host, { focus: false });
+  assert.deepEqual(sent, ['resize 50x20', 'resize 50x20'], 'opening it again does');
+
+  view.unmount();
+  view.el.isConnected = false;
+  view.ws = { readyState: 0 };
+  view.mount(host, { focus: false });
+  assert.deepEqual(sent, ['resize 50x20', 'resize 50x20'], 'a terminal opened while its link is down waits');
+  view.ws = { readyState: 1 };
+  snapshot(100, 30);
+  assert.deepEqual(sent, ['resize 50x20', 'resize 50x20', 'resize 50x20'], 'and takes the size with its first screen');
 });

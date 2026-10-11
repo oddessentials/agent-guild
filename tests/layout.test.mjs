@@ -137,6 +137,7 @@ function fakePage(t) {
       hidden: false, props, attributes, dataset,
       style: { setProperty: (name, value) => props.set(name, value), removeProperty: (name) => props.delete(name) },
       toggleAttribute: (name, on) => (on ? attributes.add(name) : attributes.delete(name)),
+      querySelectorAll: () => [],
     };
   };
   return {

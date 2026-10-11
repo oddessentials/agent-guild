@@ -148,6 +148,8 @@ const checks = await withPage({
   await closeSheet();
   for (const [width, height] of [[600, 960], [800, 600], [360, 740]]) {
     await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: true });
+    // A terminal keeps its size through a viewport change; opening it again fits it to this screen.
+    await evaluate('document.querySelector("#panel-close").click();document.querySelector("#sessions .session-card .open").click()');
     await layoutReady();
     const anchor = await evaluate(`new Promise(resolve=>{
       const t=${current};

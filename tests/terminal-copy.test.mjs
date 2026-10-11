@@ -87,7 +87,7 @@ test('switch, Hide, session removal and page departure dismiss sensitive copy te
   let closed = 0;
   const listeners = new Map();
   const noop = () => {};
-  const view = { mount: noop, unmount: noop, dispose: noop, term: { focus: noop } };
+  const view = { mount: noop, unmount: noop, place: noop, dispose: noop, term: { focus: noop } };
   const context = {
     state: { panes: ['a'], focusedPane: 0, activeId: 'a', sessions: new Map([['a', {}], ['b', {}]]), views: new Map([['a', view], ['b', view]]) },
     terminalCopy: { close: () => closed++ }, activityFavicon: { setPaused: noop },

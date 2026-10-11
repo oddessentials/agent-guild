@@ -128,9 +128,17 @@ export class TerminalControls {
 
 /** Fit the touch panel to a docked keyboard without changing global page layout. */
 export function bindTerminalViewport(panel, controls) {
+  let lastHeight = null;
   bindVisibleViewport(panel, 'terminal', {
     shown: () => !panel.hidden && !controls.hidden,
     watch: [panel, controls],
-    fitted: (height) => panel.toggleAttribute('data-compact', height !== null && height < 420),
+    fitted: (height) => {
+      panel.toggleAttribute('data-compact', height !== null && height < 420);
+      // A keyboard shrinks the viewport, not the terminal: keep its prompt in view.
+      if (height !== null && lastHeight !== null && height < lastHeight) {
+        for (const host of panel.querySelectorAll('.terminal-host')) host.scrollTop = host.scrollHeight;
+      }
+      lastHeight = height;
+    },
   });
 }

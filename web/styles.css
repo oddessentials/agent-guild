@@ -598,7 +598,7 @@ body:has(#app[hidden]):has(#auth[hidden]):has(#stopped[hidden])::after {
   background: var(--surface); color: var(--muted); font-size: clamp(0.8rem, 1.6vw, 0.95rem); font-style: italic;
   overflow-wrap: anywhere; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3); pointer-events: none;
 }
-.terminal-host { flex: 1; min-height: 0; padding: 8px 4px 4px 10px; }
+.terminal-host { flex: 1; min-height: 0; padding: 8px 4px 4px 10px; overflow: auto; }
 .terminal-host > div { height: 100%; position: relative; }
 /* Says a terminal is not live yet, or no longer: what it shows may be out of date and typing is not sent. */
 .terminal-link {
