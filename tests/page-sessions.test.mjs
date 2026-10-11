@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { isSessionWorking } from '../web/activity-favicon.js';
+import { revealRow } from '../web/layout.js';
 
 const app = readFileSync(new URL('../web/app.js', import.meta.url), 'utf8');
 const source = ['upsertSession', 'statusText', 'stopNote', 'stopSession', 'removeSession', 'reattachable', 'reattachSession', 'resumeCard', 'osc52Text', 'exitLine'].map((name) => {
@@ -218,6 +219,82 @@ test('a terminal takes a device\'s size only when placed on screen there; otherw
   assert.deepEqual(sent.length, 3, 'a link that ended before the output was on screen sends nothing');
   snapshot(100, 30);
   assert.deepEqual(sent.length, 4, 'the next link\'s first screen takes the size instead');
+
+  for (const ended of [{ readyState: 2 }, { readyState: 3 }, { ended: true }]) {
+    view.place();
+    Object.assign(view.ws, ended);
+    const before = [sent.length, resized.length];
+    parsed();
+    assert.deepEqual([sent.length, resized.length], before, 'a link that ended before its replacement neither fits nor sends');
+    view.ws = { readyState: 1 };
+    snapshot(100, 30);
+    assert.equal(sent.length, before[0] + 1, 'the pending size is sent once after the new snapshot');
+    snapshot(100, 30);
+    assert.equal(sent.length, before[0] + 1, 'later snapshots do not take the size again');
+  }
+
+  view.place();
+  view.el.isConnected = false;
+  const before = [sent.length, resized.length];
+  parsed();
+  assert.deepEqual([sent.length, resized.length], before, 'a pane closed before parsing finishes cannot resize the shared terminal');
+  view.mount(host, { focus: false });
+  parsed();
+  assert.equal(sent.length, before[0] + 1);
+
+  view.place();
+  view.disposed = true;
+  const disposed = [sent.length, resized.length];
+  parsed();
+  assert.deepEqual([sent.length, resized.length], disposed);
+});
+
+test('cursor following respects manual panning, history, selection and typing focus', () => {
+  const source = app.match(/  revealCursor\([^]*?\n  \}/)?.[0];
+  assert.ok(source);
+  const { context } = page();
+  const buffer = { cursorY: 4, viewportY: 0, baseY: 0 };
+  const host = { scrollTop: 0, clientHeight: 100, getBoundingClientRect: () => ({ top: 0 }) };
+  const textarea = {};
+  let selected = false;
+  Object.assign(context, { revealRow, document: { activeElement: textarea } });
+  context.state.activeId = plain.id;
+  const view = Object.assign(runInNewContext(`({${source}})`, context), {
+    id: plain.id,
+    term: { buffer: { active: buffer }, textarea, hasSelection: () => selected },
+    el: {
+      isConnected: true, parentElement: host,
+      querySelector: () => ({ firstElementChild: { offsetHeight: 17 } }),
+      getBoundingClientRect: () => ({ top: -host.scrollTop }),
+    },
+  });
+  view.revealCursor();
+  assert.equal(host.scrollTop, 0);
+  buffer.cursorY = 5;
+  view.revealCursor();
+  assert.equal(host.scrollTop, 2, 'only the clipped part of the new cursor row is revealed');
+  buffer.cursorY = 6;
+  view.revealCursor();
+  assert.equal(host.scrollTop, 19);
+
+  host.scrollTop = 0;
+  buffer.cursorY = 7;
+  view.revealCursor();
+  assert.equal(host.scrollTop, 0, 'output does not undo a manual pan away from the cursor');
+  view.revealCursor(true);
+  assert.equal(host.scrollTop, 36, 'typing resumes following');
+
+  for (const blocked of ['history', 'selection', 'blur', 'other pane', 'unmounted', 'disposed']) {
+    host.scrollTop = 0;
+    buffer.baseY = blocked === 'history' ? 10 : 0;
+    selected = blocked === 'selection';
+    context.document.activeElement = blocked === 'blur' ? null : textarea;
+    context.state.activeId = blocked === 'other pane' ? 'other' : plain.id;
+    view.el.isConnected = blocked !== 'unmounted';
+    view.disposed = blocked === 'disposed';
+    view.revealCursor(true);
+    assert.equal(host.scrollTop, 0, blocked);
+  }
 });
 
 test('a touch drag pans a terminal larger than its pane before scrolling the terminal\'s own history', () => {

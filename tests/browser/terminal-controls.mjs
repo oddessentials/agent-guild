@@ -10,9 +10,13 @@ window.testTerms=[];window.testSockets=[];window.testInputs=[];window.testSnapsh
 const RealTerminal=window.Terminal;
 window.Terminal=class extends RealTerminal {
   constructor(...args){super(...args);testTerms.push(this);}
-  write(data,callback){super.write(data,()=>{
-    if(callback && window.testHoldParsed) testSnapshots.push(callback); else callback?.();
-  });}
+  write(data,callback){
+    this.testPendingWrites=(this.testPendingWrites||0)+1;
+    super.write(data,()=>{
+      const complete=()=>{callback?.();this.testPendingWrites--;};
+      if(callback && window.testHoldParsed) testSnapshots.push(complete); else complete();
+    });
+  }
 };
 const DemoSocket=window.WebSocket;
 window.WebSocket=class extends DemoSocket {
@@ -54,7 +58,15 @@ const checks = await withPage({ name: 'terminal-controls', instrumentation }, as
   const clear = () => evaluate('testInputs.length=0');
   const inputs = () => evaluate('testInputs.map(m=>m.data)');
   const enabled = () => evaluate(`!document.querySelector('${key('ArrowUp')}').disabled`);
-  const ready = () => until('terminal keys ready', enabled);
+  const ready = () => until('terminal keys and output ready', async () => await enabled() && await evaluate(`${currentTerm}?.testPendingWrites===0`));
+  const rendered = async () => {
+    await until('terminal output parsed', () => evaluate(`${currentTerm}?.testPendingWrites===0`));
+    await evaluate(`new Promise(resolve=>{
+      const t=${currentTerm};
+      const listener=t.onRender(()=>{listener.dispose();resolve();});
+      t.refresh(0,t.rows-1);
+    })`);
+  };
   const size = async (width, height) => {
     await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: true });
     await layoutReady();
@@ -313,12 +325,50 @@ const checks = await withPage({ name: 'terminal-controls', instrumentation }, as
 
   // Synthetic geometry tests verify our calculations, not an OS keyboard implementation.
   await size(390, 844);
+  await ready();
+  await write('\x1b[2J\x1b[H> ');
+  await evaluate(`${currentTerm}.focus()`);
+  await rendered();
   await evaluate('Object.assign(document.querySelector("#voice-preview"),{hidden:false,textContent:"add apple pay and google pay to the checkout flow"})');
   await evaluate(`window.testViewport={height:360,offsetTop:0,scale:1};for(const name of ['height','offsetTop','scale'])Object.defineProperty(visualViewport,name,{configurable:true,get:()=>testViewport[name]});visualViewport.dispatchEvent(new Event('resize'))`);
   await layoutReady();
   let g = await geometry();
   assert.ok(g.controlsBottom <= 361 && g.hostHeight >= 120, JSON.stringify(g));
   assert.ok(g.previewHeight > 0 && g.previewBottom <= g.controlsTop + 1 && g.previewBottom <= 361, 'the dictation preview stays above the keys with the keyboard open');
+  const cursorGeometry = () => evaluate(`(()=>{
+    const t=${currentTerm},host=t.element.closest('.terminal-host');
+    const row=t.element.querySelector('.xterm-rows').children[t.buffer.active.cursorY].getBoundingClientRect();
+    const box=host.getBoundingClientRect();
+    return {visible:row.top>=box.top-1 && row.bottom<=box.top+host.clientHeight+1,scrollTop:host.scrollTop};
+  })()`);
+  assert.deepEqual(await cursorGeometry(), { visible: true, scrollTop: 0 }, 'a fresh prompt stays at the top when the keyboard opens');
+  const retainedSize = await evaluate(`[${currentTerm}.cols,${currentTerm}.rows]`);
+  await write('\r\n'.repeat(await evaluate(`${currentTerm}.rows-2`)) + '> ');
+  await rendered();
+  assert.equal((await cursorGeometry()).visible, true, 'output follows the active cursor through the clipped rows');
+  await tap(key('Enter'));
+  await rendered();
+  assert.equal((await cursorGeometry()).visible, true, 'Enter keeps the next prompt visible');
+  await tap(key('Enter'));
+  await rendered();
+  assert.equal((await cursorGeometry()).visible, true, 'the last terminal row remains visible as the buffer scrolls');
+  assert.deepEqual(await evaluate(`[${currentTerm}.cols,${currentTerm}.rows]`), retainedSize);
+
+  await evaluate(`${currentTerm}.element.closest('.terminal-host').scrollTop=0`);
+  await write('\r\n> ');
+  await rendered();
+  assert.equal((await cursorGeometry()).scrollTop, 0, 'output respects a manual pan away from the cursor');
+  await send('Input.insertText', { text: 'x' });
+  await rendered();
+  assert.equal((await cursorGeometry()).visible, true, 'typing returns to the prompt');
+  await evaluate(`${currentTerm}.scrollToTop();${currentTerm}.element.closest('.terminal-host').scrollTop=0`);
+  await write('\r\n> ');
+  await rendered();
+  assert.equal((await cursorGeometry()).scrollTop, 0, 'output does not pull the pane out of scrollback');
+  await send('Input.insertText', { text: 'x' });
+  await rendered();
+  assert.equal((await cursorGeometry()).visible, true);
+  pass('a keyboard keeps typing visible while output respects manual panning and scrollback');
   await evaluate('Object.assign(document.querySelector("#voice-preview"),{hidden:true,textContent:""})');
   const hidePoint = await point('#panel-close');
   assert.equal(await evaluate(`document.elementFromPoint(${hidePoint.x},${hidePoint.y})?.id`), 'panel-close', 'Hide stays reachable beside a long session-switch action');

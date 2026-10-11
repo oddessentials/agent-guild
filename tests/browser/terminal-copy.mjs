@@ -9,7 +9,10 @@ window.testTerms=[];window.testMessages=[];
 const RealTerminal=window.Terminal;
 window.Terminal=class extends RealTerminal {
   constructor(...args){super(...args);testTerms.push(this);}
-  write(data,callback){super.write(data,()=>{callback?.();this.testParsed=true;});}
+  write(data,callback){
+    this.testPendingWrites=(this.testPendingWrites||0)+1;
+    super.write(data,()=>{callback?.();this.testPendingWrites--;this.testParsed=true;});
+  }
 };
 const DemoSocket=window.WebSocket;
 window.WebSocket=class extends DemoSocket { send(data){testMessages.push(JSON.parse(data));super.send(data);} };
@@ -40,7 +43,7 @@ const checks = await withPage({
     await send('Page.navigate', { url: origin });
     await until('session cards', () => evaluate('document.querySelectorAll("#sessions .session-card").length >= 2'));
     await evaluate('document.querySelector("#sessions .session-card .open").click()');
-    await until('terminal snapshot parsed', () => evaluate(`Boolean(window.testTerms?.find(t=>t.element?.isConnected)?.testParsed)`));
+    await until('terminal snapshot parsed', () => evaluate(`Boolean(${current}?.testParsed && ${current}.testPendingWrites===0)`));
     await layoutReady();
   };
   await send('Emulation.setDeviceMetricsOverride', { width: 1024, height: 768, deviceScaleFactor: 1, mobile: false });
@@ -150,6 +153,7 @@ const checks = await withPage({
     await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: true });
     // A terminal keeps its size through a viewport change; opening it again fits it to this screen.
     await evaluate('document.querySelector("#panel-close").click();document.querySelector("#sessions .session-card .open").click()');
+    await until('terminal size applied', () => evaluate(`${current}.testPendingWrites===0`));
     await layoutReady();
     const anchor = await evaluate(`new Promise(resolve=>{
       const t=${current};

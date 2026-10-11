@@ -5928,6 +5928,7 @@ class TerminalView {
     this.term.loadAddon(this.fit);
     this.term.loadAddon(new window.WebLinksAddon.WebLinksAddon((_e, uri) => window.open(uri, '_blank', 'noopener,noreferrer')));
     this.term.attachCustomKeyEventHandler((e) => this.handleKey(e));
+    this.term.onRender(() => this.revealCursor());
     suppressQueryReplies(this.term);
     // Programs copy with OSC 52: tmux's copy mode, and herdr where it cannot reach the
     // system clipboard itself. Only the open terminal may write it; nothing reads it.
@@ -5938,7 +5939,10 @@ class TerminalView {
     });
     this.term.onData((data) => {
       const running = state.sessions.get(this.id)?.status === 'running';
-      if (running && this.ws?.readyState === WebSocket.OPEN) return this.send({ type: 'input', data });
+      if (running && this.ws?.readyState === WebSocket.OPEN) {
+        this.revealCursor(true);
+        return this.send({ type: 'input', data });
+      }
       // Warn once per outage: wheel and mouse reports also arrive here. Ignore focus reports.
       if (data === '\x1b[I' || data === '\x1b[O') return;
       if (this.inputWarningShown) return;
@@ -6099,23 +6103,37 @@ class TerminalView {
   }
 
   takeDeviceSize() {
-    if (!this.takeSize || !this.shown || this.inputSnapshot || !this.el.isConnected || this.ws?.readyState !== WebSocket.OPEN) return;
+    if (!this.takeSize || !this.shown || this.inputSnapshot || !this.el.isConnected || this.ws?.readyState !== WebSocket.OPEN || this.ws.ended) return;
     this.takeSize = false;
     const ws = this.ws;
     this.term.write('', () => {
       if (this.disposed) return;
-      if (this.ws !== ws) { this.takeSize = true; return; } // The next link's first screen takes it.
+      if (this.ws !== ws || ws.ended || ws.readyState !== WebSocket.OPEN || !this.el.isConnected) { this.takeSize = true; return; }
       try { this.fit.fit(); } catch { this.takeSize = true; return; }
       this.send({ type: 'resize', cols: this.term.cols, rows: this.term.rows });
       paintSizeNote();
     });
   }
 
-  /** Whether another screen gave this terminal its size: this pane would fit it differently. */
   sizedElsewhere() {
     if (!this.el.isConnected) return false;
     const fit = this.fit.proposeDimensions();
     return Boolean(fit) && (fit.cols !== this.term.cols || fit.rows !== this.term.rows);
+  }
+
+  revealCursor(force = false) {
+    const buffer = this.term.buffer.active;
+    const previousRow = this.cursorRow ?? buffer.cursorY;
+    this.cursorRow = buffer.cursorY;
+    if (this.disposed || !this.el.isConnected || state.activeId !== this.id
+      || document.activeElement !== this.term.textarea || this.term.hasSelection()
+      || buffer.viewportY !== buffer.baseY) return;
+    const host = this.el.parentElement;
+    const cell = this.el.querySelector('.xterm-rows')?.firstElementChild?.offsetHeight || 17;
+    const top = this.el.getBoundingClientRect().top - host.getBoundingClientRect().top + host.scrollTop;
+    const previousScroll = revealRow(host.scrollTop, host.clientHeight, top + previousRow * cell, cell);
+    if (!force && Math.abs(previousScroll - host.scrollTop) > 1) return;
+    host.scrollTop = revealRow(host.scrollTop, host.clientHeight, top + buffer.cursorY * cell, cell);
   }
 
   mount(host, { focus = true } = {}) {
@@ -6220,18 +6238,8 @@ const terminalControls = new TerminalControls({
     return { term: view.term, socket: view.ws, run: session.startedAt, name: session.name };
   },
 });
-// A keyboard shrinks the viewport, not the terminal: each pane scrolls so its cursor row stays in view.
 bindTerminalViewport($('terminal-panel'), $('terminal-controls'), {
-  shrunk: () => {
-    for (const id of state.panes) {
-      const view = state.views.get(id);
-      const host = view?.el.parentElement;
-      if (!host || !view.el.isConnected) continue;
-      const cell = view.el.querySelector('.xterm-rows')?.firstElementChild?.offsetHeight || 17;
-      const top = view.el.getBoundingClientRect().top - host.getBoundingClientRect().top + host.scrollTop + view.term.buffer.active.cursorY * cell;
-      host.scrollTop = revealRow(host.scrollTop, host.clientHeight, top, cell);
-    }
-  },
+  shrunk: () => state.views.get(state.activeId)?.revealCursor(true),
 });
 bindVisibleViewport($('dock'), 'dock', { fitted: fitPickerList });
 bindVisibleViewport($('toast'), 'toast');
