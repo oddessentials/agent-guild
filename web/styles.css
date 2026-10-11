@@ -553,7 +553,7 @@ body:has(#app[hidden]):has(#auth[hidden]):has(#stopped[hidden])::after {
 .session-menu .menu-empty { margin: 0; padding: 6px 8px; color: var(--muted); }
 .terminal-panes {
   --ratio: 0.5;
-  flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr);
+  position: relative; flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr);
 }
 .terminal-panes[data-split="columns"] { grid-template-columns: minmax(0, calc(var(--ratio) * (100% - 8px))) 8px minmax(0, 1fr); }
 .terminal-panes[data-split="rows"] { grid-template-rows: minmax(0, calc(var(--ratio) * (100% - 8px))) 8px minmax(0, 1fr); }
@@ -628,7 +628,6 @@ body:has(#app[hidden]):has(#auth[hidden]):has(#stopped[hidden])::after {
 }
 .terminal-key.pressed:not(:disabled) { background: var(--accent-fill); border-color: var(--accent-fill); color: var(--accent-text); transform: translateY(1px); }
 .terminal-key:disabled { cursor: default; }
-.terminal-panel:has(.terminal-controls:not([hidden])) .voice-preview { bottom: calc(72px + env(safe-area-inset-bottom)); }
 /* A docked keyboard in landscape leaves little height. Keep the session and actions
    available in one header row; Hide still returns to the normal page. */
 .terminal-panel[data-compact] { top: var(--terminal-viewport-top, 0px); }

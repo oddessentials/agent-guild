@@ -291,19 +291,24 @@ const checks = await withPage({ name: 'terminal-controls', instrumentation }, as
     const panel=document.querySelector('#terminal-panel').getBoundingClientRect();
     const controls=document.querySelector('${strip}').getBoundingClientRect();
     const host=document.querySelector('.terminal-pane:not([hidden]) .terminal-host').getBoundingClientRect();
+    const preview=document.querySelector('#voice-preview').getBoundingClientRect();
     return {panelTop:panel.top,panelBottom:panel.bottom,controlsTop:controls.top,controlsBottom:controls.bottom,hostBottom:host.bottom,hostHeight:host.height,
+      previewBottom:preview.bottom,previewHeight:preview.height,
       buttons:[...document.querySelectorAll('${strip} button')].map(b=>{const r=b.getBoundingClientRect();return {width:r.width,height:r.height,left:r.left,right:r.right}}),
       overflow:document.documentElement.scrollWidth>innerWidth};})()`);
+  await evaluate('Object.assign(document.querySelector("#voice-preview"),{hidden:false,textContent:"add apple pay and google pay to the checkout flow"})');
   for (const [width, height] of [[320, 568], [390, 844], [844, 390], [768, 1024], [1024, 768]]) {
     await size(width, height);
     const g = await geometry();
     assert.equal(g.overflow, false, `${width} no page overflow`);
     assert.ok(g.hostBottom <= g.controlsTop + 1, 'controls reserve space below output');
+    assert.ok(g.previewHeight > 0 && g.previewBottom <= g.controlsTop + 1, `${width} the dictation preview stays above the keys`);
     assert.ok(g.hostHeight >= 60, `${width}x${height} terminal remains readable`);
     assert.ok(g.controlsBottom <= height + 1);
     for (const b of g.buttons) assert.ok(b.width >= 44 && b.height >= 48 && b.left >= 0 && b.right <= width, JSON.stringify(b));
   }
   await capture('tablet');
+  await evaluate('Object.assign(document.querySelector("#voice-preview"),{hidden:true,textContent:""})');
   pass('phone, landscape and tablet layouts retain touch targets and terminal space');
 
   // Synthetic geometry tests verify our calculations, not an OS keyboard implementation.
