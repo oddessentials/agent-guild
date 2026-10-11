@@ -163,8 +163,6 @@ export async function withPage({ name, instrumentation = '', headers = () => ({}
       if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text);
       return result.result.value;
     };
-    // Fonts can change header height. Two frames let ResizeObserver and the app's
-    // scheduled fit finish, without assuming a particular machine's speed.
     const layoutReady = () => evaluate('document.fonts.ready.then(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))');
     await send('Page.enable');
     await send('Runtime.enable');

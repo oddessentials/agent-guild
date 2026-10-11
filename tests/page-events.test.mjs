@@ -331,7 +331,7 @@ function addTerminal(page) {
   assert.ok(source, 'TerminalView.connect is present');
   page.context.terminalControls = { refresh() {} };
   const view = Object.assign(runInNewContext(`({${source}})`, page.context), {
-    id: `terminal-${page.state.views.size}`, retry: 0, sendSize() {}, showLink() {}, onMessage() {},
+    id: `terminal-${page.state.views.size}`, retry: 0, showLink() {}, onMessage() {},
   });
   page.state.views.set(view.id, view);
   view.connect();
@@ -354,9 +354,10 @@ test('rejected input warns once until a running snapshot completes, across retri
       onData(callback) { input = callback; }, reset() {}, resize() {},
       write(_data, callback) { if (callback) writes.push(callback); },
     };
-    view.refit = () => {};
+    view.takeDeviceSize = () => {};
+    view.revealCursor = () => {};
     view.send = (message) => delivered.push(message.data);
-    Object.assign(page.context, { view, toast: (message) => warnings.push(message) });
+    Object.assign(page.context, { view, toast: (message) => warnings.push(message), paintSizeNote() {} });
     runInNewContext(`view.onMessage = ({${messageSource}}).onMessage;\n(function() {${inputSource}}).call(view);`, page.context);
     page.state.sessions.set(view.id, { status });
     terminal.open();

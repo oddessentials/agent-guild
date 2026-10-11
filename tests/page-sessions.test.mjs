@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { isSessionWorking } from '../web/activity-favicon.js';
+import { revealRow } from '../web/layout.js';
 
 const app = readFileSync(new URL('../web/app.js', import.meta.url), 'utf8');
 const source = ['upsertSession', 'statusText', 'stopNote', 'stopSession', 'removeSession', 'reattachable', 'reattachSession', 'resumeCard', 'osc52Text', 'exitLine'].map((name) => {
@@ -116,12 +117,12 @@ test('exit clears an initial or reconnecting badge before the held snapshot comp
   for (const label of ['Connecting…', 'Reconnecting…']) {
     for (const status of ['running', 'exited']) {
       const { context } = page();
-      Object.assign(context, { WebSocket: { OPEN: 1 }, terminalControls: { refresh() {} }, dictation: null });
+      Object.assign(context, { WebSocket: { OPEN: 1 }, terminalControls: { refresh() {} }, dictation: null, paintSizeNote() {} });
       const callbacks = [];
       const view = Object.assign(runInNewContext(`({${methods}})`, context), {
         id: plain.id, ws: { readyState: 1 }, status: { hidden: false }, statusLabel: { textContent: label },
         term: { reset() {}, resize() {}, write(_data, callback) { if (callback) callbacks.push(callback); } },
-        refit() {},
+        takeDeviceSize() {},
       });
       view.onMessage({ type: 'snapshot', session: { ...plain, status }, data: 'saved output', cols: 80, rows: 24 });
       assert.equal(view.status.hidden, false, 'the snapshot has not finished');
@@ -141,4 +142,184 @@ test('exit clears an initial or reconnecting badge before the held snapshot comp
       assert.equal(view.inputReady, false);
     }
   }
+});
+
+test('a terminal takes a device\'s size only when placed on screen there; otherwise it follows the session\'s size', () => {
+  const methods = ['onMessage', 'showLink', 'mount', 'unmount', 'place', 'takeDeviceSize', 'sizedElsewhere'].map((name) => {
+    const found = app.match(new RegExp(`  ${name}\\([^]*?\\n  \\}`))?.[0];
+    assert.ok(found, `${name} is present`);
+    return found;
+  }).join(',\n');
+  const { context } = page();
+  Object.assign(context, { WebSocket: { OPEN: 1 }, terminalControls: { refresh() {} }, dictation: null, paintSizeNote() {} });
+  const sent = [], resized = [], callbacks = [];
+  const term = {
+    cols: 120, rows: 32,
+    reset() {}, focus() {},
+    resize(cols, rows) { Object.assign(this, { cols, rows }); resized.push(`${cols}x${rows}`); },
+    write(_data, callback) { if (callback) callbacks.push(callback); },
+  };
+  const view = Object.assign(runInNewContext(`({${methods}})`, context), {
+    id: plain.id, ws: { readyState: 1 }, status: { hidden: false }, statusLabel: { textContent: '' },
+    term, fit: { fit() { term.resize(50, 20); }, proposeDimensions: () => ({ cols: 50, rows: 20 }) }, el: { isConnected: false, remove() {} },
+    opened: true, takeSize: false, enableTouchScroll() {},
+    send: (message) => sent.push(`${message.type} ${message.cols}x${message.rows}`),
+  });
+  const host = { replaceChildren() { view.el.isConnected = true; } };
+  // xterm parses writes in order and calls back after each; the fake does so on demand.
+  const parsed = () => { while (callbacks.length) callbacks.shift()(); };
+  const snapshot = (cols, rows) => { view.onMessage({ type: 'snapshot', session: { ...plain }, data: '', cols, rows }); parsed(); };
+
+  snapshot(120, 32);
+  assert.deepEqual(sent, [], 'a screen that is not on this device sends no size');
+  assert.deepEqual(resized, ['120x32'], 'and shows the session\'s size');
+
+  view.mount(host, { focus: false });
+  assert.deepEqual(sent, [], 'the size is taken once the output already received is on screen');
+  parsed();
+  assert.deepEqual(sent, ['resize 50x20'], 'placing it on screen takes this device\'s size once');
+
+  assert.equal(view.sizedElsewhere(), false);
+  view.onMessage({ type: 'resize', cols: 100, rows: 30 });
+  assert.equal(`${term.cols}x${term.rows}`, '50x20', 'another device\'s size waits for the output before it');
+  parsed();
+  assert.equal(`${term.cols}x${term.rows}`, '100x30', 'then is followed');
+  assert.equal(view.sizedElsewhere(), true, 'and the page can say so');
+  snapshot(100, 30);
+  assert.deepEqual(sent, ['resize 50x20'], 'a reconnection does not take it back');
+
+  view.onMessage({ type: 'resize', cols: 90, rows: 25 });
+  view.ws = { readyState: 1 };
+  snapshot(100, 30);
+  assert.equal(`${term.cols}x${term.rows}`, '100x30', 'a size from a link that ended cannot reach the next link\'s screen');
+
+  view.unmount();
+  view.el.isConnected = false;
+  assert.equal(view.sizedElsewhere(), false, 'a terminal off screen has no screen to fit');
+  view.mount(host, { focus: false });
+  parsed();
+  assert.deepEqual(sent, ['resize 50x20', 'resize 50x20'], 'opening it again does');
+  assert.equal(view.sizedElsewhere(), false);
+
+  view.unmount();
+  view.el.isConnected = false;
+  view.ws = { readyState: 0 };
+  view.mount(host, { focus: false });
+  parsed();
+  assert.deepEqual(sent, ['resize 50x20', 'resize 50x20'], 'a terminal opened while its link is down waits');
+  view.ws = { readyState: 1 };
+  snapshot(100, 30);
+  assert.deepEqual(sent, ['resize 50x20', 'resize 50x20', 'resize 50x20'], 'and takes the size with its first screen');
+
+  view.unmount();
+  view.el.isConnected = false;
+  view.mount(host, { focus: false });
+  view.ws = { readyState: 1 };
+  parsed();
+  assert.deepEqual(sent.length, 3, 'a link that ended before the output was on screen sends nothing');
+  snapshot(100, 30);
+  assert.deepEqual(sent.length, 4, 'the next link\'s first screen takes the size instead');
+
+  for (const ended of [{ readyState: 2 }, { readyState: 3 }, { ended: true }]) {
+    view.place();
+    Object.assign(view.ws, ended);
+    const before = [sent.length, resized.length];
+    parsed();
+    assert.deepEqual([sent.length, resized.length], before, 'a link that ended before its replacement neither fits nor sends');
+    view.ws = { readyState: 1 };
+    snapshot(100, 30);
+    assert.equal(sent.length, before[0] + 1, 'the pending size is sent once after the new snapshot');
+    snapshot(100, 30);
+    assert.equal(sent.length, before[0] + 1, 'later snapshots do not take the size again');
+  }
+
+  view.place();
+  view.el.isConnected = false;
+  const before = [sent.length, resized.length];
+  parsed();
+  assert.deepEqual([sent.length, resized.length], before, 'a pane closed before parsing finishes cannot resize the shared terminal');
+  view.mount(host, { focus: false });
+  parsed();
+  assert.equal(sent.length, before[0] + 1);
+
+  view.place();
+  view.disposed = true;
+  const disposed = [sent.length, resized.length];
+  parsed();
+  assert.deepEqual([sent.length, resized.length], disposed);
+});
+
+test('cursor following respects manual panning, history, selection and typing focus', () => {
+  const source = app.match(/  revealCursor\([^]*?\n  \}/)?.[0];
+  assert.ok(source);
+  const { context } = page();
+  const buffer = { cursorY: 4, viewportY: 0, baseY: 0 };
+  const host = { scrollTop: 0, clientHeight: 100, getBoundingClientRect: () => ({ top: 0 }) };
+  const textarea = {};
+  let selected = false;
+  Object.assign(context, { revealRow, document: { activeElement: textarea } });
+  context.state.activeId = plain.id;
+  const view = Object.assign(runInNewContext(`({${source}})`, context), {
+    id: plain.id,
+    term: { buffer: { active: buffer }, textarea, hasSelection: () => selected },
+    el: {
+      isConnected: true, parentElement: host,
+      querySelector: () => ({ firstElementChild: { offsetHeight: 17 } }),
+      getBoundingClientRect: () => ({ top: -host.scrollTop }),
+    },
+  });
+  view.revealCursor();
+  assert.equal(host.scrollTop, 0);
+  buffer.cursorY = 5;
+  view.revealCursor();
+  assert.equal(host.scrollTop, 2, 'only the clipped part of the new cursor row is revealed');
+  buffer.cursorY = 6;
+  view.revealCursor();
+  assert.equal(host.scrollTop, 19);
+
+  host.scrollTop = 0;
+  buffer.cursorY = 7;
+  view.revealCursor();
+  assert.equal(host.scrollTop, 0, 'output does not undo a manual pan away from the cursor');
+  view.revealCursor(true);
+  assert.equal(host.scrollTop, 36, 'typing resumes following');
+
+  for (const blocked of ['history', 'selection', 'blur', 'other pane', 'unmounted', 'disposed']) {
+    host.scrollTop = 0;
+    buffer.baseY = blocked === 'history' ? 10 : 0;
+    selected = blocked === 'selection';
+    context.document.activeElement = blocked === 'blur' ? null : textarea;
+    context.state.activeId = blocked === 'other pane' ? 'other' : plain.id;
+    view.el.isConnected = blocked !== 'unmounted';
+    view.disposed = blocked === 'disposed';
+    view.revealCursor(true);
+    assert.equal(host.scrollTop, 0, blocked);
+  }
+});
+
+test('a touch drag pans a terminal larger than its pane before scrolling the terminal\'s own history', () => {
+  const source = app.match(/  enableTouchScroll\(\) \{[^]*?\n  \}/)?.[0];
+  assert.ok(source, 'enableTouchScroll is present');
+  const { context } = page();
+  const handlers = {};
+  const scrolled = [];
+  const host = { scrollLeft: 0, scrollTop: 0, scrollHeight: 900, clientHeight: 300 };
+  const view = Object.assign(runInNewContext(`({${source}})`, context), {
+    el: { parentElement: host, addEventListener: (type, fn) => { handlers[type] = fn; }, querySelector: () => null },
+    term: { buffer: { active: { type: 'normal' } }, modes: { mouseTrackingMode: 'none' }, scrollLines: (n) => scrolled.push(n) },
+  });
+  view.enableTouchScroll();
+  const touch = (type, x, y) => handlers[type]({ touches: [{ clientX: x, clientY: y }], preventDefault() {} });
+
+  touch('touchstart', 100, 500);
+  touch('touchmove', 60, 400);
+  assert.deepEqual([host.scrollLeft, host.scrollTop, scrolled], [40, 100, []], 'the pane pans to the rows and columns it clips');
+  touch('touchmove', 60, 0);
+  assert.deepEqual([host.scrollTop, scrolled], [500, [], ], 'and stops where it ends');
+  touch('touchmove', 60, -170);
+  assert.deepEqual([host.scrollTop, scrolled], [600, []], 'the last of the pane is reached first');
+  touch('touchmove', 60, -340);
+  assert.deepEqual([host.scrollTop, scrolled], [600, [10]], 'then the terminal\'s history scrolls');
+  touch('touchmove', 60, -300);
+  assert.deepEqual([host.scrollTop, scrolled], [560, [10]], 'dragging back pans the pane again');
 });

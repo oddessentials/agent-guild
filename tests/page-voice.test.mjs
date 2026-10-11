@@ -59,7 +59,7 @@ function page({ android = false, available, supported = true, enabled = true, pr
   };
   const session = (id) => ({ id, name: id, status: 'running', startedAt: '2026-10-03T10:00:00Z', provider: { tool: 'Shell' } });
   const view = (id) => ({
-    mount: noop, unmount: noop, dispose: noop,
+    mount: noop, unmount: noop, place: noop, dispose: noop,
     term: { paste: (text) => pasted.push({ id, text }), focus: noop, write: noop },
   });
   class Recognition {
@@ -92,7 +92,7 @@ function page({ android = false, available, supported = true, enabled = true, pr
     clearTimeout: (id) => timers.delete(id),
     toast: (message) => messages.push(message),
     paintProviderIcon: noop, toolSessionId: noop, accountLabel: noop, modelText: noop, statusText: noop, modelTitle: noop, renderAgents: noop,
-    renderSessions: () => context.updatePanel(), noticeClone: noop, exitLine: () => '[exited]',
+    renderSessions: () => context.updatePanel(), noticeClone: noop, exitLine: () => '[exited]', paintSizeNote: noop,
     managerLoss: { cancel: noop }, closeModels: noop, closeNews: noop, closeChangelog: noop, closeHistory: noop, closeGitHub: noop,
     terminalCopy: { close: noop }, terminalControls: { cancel: noop, refresh: noop }, typeIn: noop, layoutPanes: noop, renderPaneLabels: noop, savePanes: noop, closeMenu: noop, dockMakesWayForTerminal: noop, followTerminal: noop,
     paneNodes: [0, 1].map(() => ({ contains: () => false })),
