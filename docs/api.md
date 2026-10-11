@@ -935,7 +935,7 @@ Server to client:
 | --- | --- |
 | `{ type: "snapshot", data, cols, rows, generation, owner, session }` | Always first. `owner` says whether this page owns the size, and `generation` counts claims. `data` is a VT escape sequence stream that redraws the current screen and scrollback. Reset the terminal and write it. |
 | `{ type: "data", data }` | Terminal output, in order, directly after the snapshot. |
-| `{ type: "resize", cols, rows, generation, owner }` | The size changed or was claimed. Sent to every client, and to the owner even when its `resize` left the size unchanged. |
+| `{ type: "resize", cols, rows, generation, owner }` | The size changed or was claimed. Sent to every client, and to the page that sent a `resize` even when it left the size unchanged or was refused. |
 | `{ type: "exit", exitCode, signal }` | The process ended. Also sent after the snapshot when attaching to an exited session. |
 | `{ type: "removed" }` | The session was removed. The socket then closes with code 4410. |
 | `{ type: "pong" }` | The answer to a client's `ping`. |
@@ -946,7 +946,7 @@ Client to server:
 | --- | --- |
 | `{ type: "input", data }` | Keystrokes or pasted text, exactly as a terminal would send them. |
 | `{ type: "claim", cols, rows }` | Take the size for this page and set it. Needs `page`. |
-| `{ type: "resize", generation, cols, rows }` | Resize the terminal. Ignored unless this page owns the size and `generation` is the latest. |
+| `{ type: "resize", generation, cols, rows }` | Resize the terminal. Refused unless this page owns the size and `generation` is the latest. |
 | `{ type: "ping" }` | Ask for a `pong`, to check that the link is alive. |
 
 ### Terminal queries: clients must not answer

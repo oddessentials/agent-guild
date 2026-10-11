@@ -144,19 +144,21 @@ test('exit clears an initial or reconnecting badge before the held snapshot comp
   }
 });
 
-test('a terminal is sized only by the page that claimed it, and other pages scale it to fit', () => {
-  const methods = ['onMessage', 'showLink', 'claim', 'followSize', 'layoutChanged', 'fitHere', 'scaleToSize', 'measure', 'sizedElsewhere'].map((name) => {
+function sizingView() {
+  const methods = ['connect', 'onMessage', 'showLink', 'claim', 'followSize', 'layoutChanged', 'fitHere', 'scaleToSize', 'measure', 'sizedElsewhere'].map((name) => {
     const found = app.match(new RegExp(`  ${name}\\([^]*?\\n  \\}`))?.[0];
     assert.ok(found, `${name} is present`);
     return found;
   }).join(',\n');
   const { context } = page();
-  let keyboard = false, dragging = false;
+  const ui = { keyboard: false, dragging: false };
   Object.assign(context, {
-    WebSocket: { OPEN: 1 }, terminalControls: { refresh() {} }, dictation: null, paintSizeNote() {},
-    terminalFontSize: 14, TERMINAL_FONT_MIN: 9, TERMINAL_SCALE_MIN: 0.8,
-    terminalKeyboardShown: () => keyboard,
-    document: { documentElement: { classList: { contains: (name) => name === 'resizing' && dragging } } },
+    WebSocket: Object.assign(class { readyState = 1; }, { OPEN: 1, CLOSING: 2 }),
+    wsUrl: (path) => `ws://manager${path}?token=t`, PAGE_ID: 'page', clearTimeout() {},
+    terminalControls: { refresh() {} }, dictation: null, paintSizeNote() {},
+    terminalFontSize: 14, TERMINAL_FONT_MIN: 9, TERMINAL_SCALE_MIN: 0.8, TERMINAL_COLS_MAX: 1000, TERMINAL_ROWS_MAX: 500,
+    terminalKeyboardShown: () => ui.keyboard,
+    document: { documentElement: { classList: { contains: (name) => name === 'resizing' && ui.dragging } } },
   });
   const sent = [], callbacks = [];
   // The pane holds 1400x700 px; a cell is 0.6em wide and 1.2em tall.
@@ -176,6 +178,11 @@ test('a terminal is sized only by the page that claimed it, and other pages scal
   const parsed = () => { while (callbacks.length) callbacks.shift()(); };
   const snapshot = (cols, rows, owner, generation) => { view.onMessage({ type: 'snapshot', session: { ...plain }, data: '', cols, rows, owner, generation }); parsed(); };
   const resized = (cols, rows, owner, generation) => { view.onMessage({ type: 'resize', cols, rows, owner, generation }); parsed(); };
+  return { context, ui, view, term, pane, sent, parsed, snapshot, resized };
+}
+
+test('a terminal is sized only by the page that claimed it, and other pages scale it to fit', () => {
+  const { ui, view, term, pane, sent, parsed, snapshot, resized } = sizingView();
   const fitted = [Math.floor(1400 / (14 * 0.6)), Math.floor(700 / (14 * 1.2))].join('x');
 
   snapshot(120, 32, false, 0);
@@ -205,14 +212,14 @@ test('a terminal is sized only by the page that claimed it, and other pages scal
   view.layoutChanged();
   assert.equal(sent.length, 4, 'an unchanged grid sends nothing');
 
-  keyboard = true;
+  ui.keyboard = true;
   pane.height = 300;
   view.layoutChanged();
-  dragging = true;
-  keyboard = false;
+  ui.dragging = true;
+  ui.keyboard = false;
   view.layoutChanged();
   assert.equal(sent.length, 4, 'neither an on-screen keyboard nor a drag in progress resizes it');
-  dragging = false;
+  ui.dragging = false;
   pane.height = 700;
   view.layoutChanged();
   assert.equal(sent.length, 4);
@@ -237,6 +244,39 @@ test('a terminal is sized only by the page that claimed it, and other pages scal
   view.ws = { readyState: 1 };
   parsed();
   assert.equal(`${term.cols}x${term.rows}`, '200x60', 'a size from a link that ended cannot reach the next link\'s screen');
+});
+
+test('terminal sizing never waits forever: an older manager, a reconnection, an oversized pane; text size applies offline', () => {
+  const legacy = sizingView();
+  legacy.snapshot(120, 32);
+  legacy.view.claim();
+  legacy.view.claim();
+  assert.deepEqual(legacy.sent, ['resize undefined 166x41', 'resize undefined 166x41'], 'a manager without size ownership gets a plain resize, and nothing waits for its answer');
+
+  const { context, view, term, pane, sent, snapshot, resized } = sizingView();
+  snapshot(120, 32, false, 0);
+  view.claim();
+  resized(166, 41, true, 1);
+  view.connect();
+  pane.width = 1000;
+  view.layoutChanged();
+  snapshot(80, 24, false, 2);
+  assert.deepEqual(sent, ['claim 166x41'], 'nothing is sent between reconnecting and the new screen, and a page that lost the size meanwhile only watches');
+  view.claim();
+  assert.deepEqual(sent.at(-1), 'claim 119x41', 'opening it there again takes the size back');
+  resized(119, 41, true, 3);
+
+  pane.width = 9000;
+  view.layoutChanged();
+  resized(1000, 41, true, 3);
+  view.layoutChanged();
+  assert.deepEqual(sent.slice(2), ['resize 3 1000x41'], 'a pane wider than the manager allows asks once for the widest terminal');
+
+  view.ws = { readyState: 3 };
+  context.terminalFontSize = 18;
+  view.layoutChanged();
+  assert.equal(term.options.fontSize, 18, 'a text size chosen while disconnected applies at once');
+  assert.equal(sent.length, 3);
 });
 
 test('cursor following respects manual panning, history, selection and typing focus', () => {

@@ -108,6 +108,8 @@ function save(key, value) { try { value === null ? localStorage.removeItem(key) 
 const TERMINAL_FONT_MIN = 9;
 const TERMINAL_FONT_MAX = 28;
 const TERMINAL_SCALE_MIN = 0.8;
+const TERMINAL_COLS_MAX = 1000;
+const TERMINAL_ROWS_MAX = 500;
 const PAGE_ID = [...crypto.getRandomValues(new Uint8Array(12))].map((b) => b.toString(16).padStart(2, '0')).join('');
 const savedTerminalFont = Number.parseInt(load(TERMINAL_FONT_KEY), 10);
 let terminalFontSize = savedTerminalFont >= TERMINAL_FONT_MIN && savedTerminalFont <= TERMINAL_FONT_MAX
@@ -5969,6 +5971,7 @@ class TerminalView {
     this.retry = 0;
     this.size = null;
     this.owner = false;
+    this.legacy = false;
     this.generation = 0;
     this.claiming = false;
     this.sizing = false;
@@ -5997,6 +6000,7 @@ class TerminalView {
     clearTimeout(this.retryTimer);
     this.inputReady = false;
     this.inputSnapshot = null;
+    this.size = null;
     this.sizing = false;
     terminalControls.refresh();
     this.showLink(this.shown ? 'Reconnecting…' : 'Connecting…');
@@ -6111,28 +6115,35 @@ class TerminalView {
   followSize(msg) {
     this.size = { cols: msg.cols, rows: msg.rows };
     this.owner = msg.owner === true;
+    this.legacy = typeof msg.owner !== 'boolean';
     this.generation = msg.generation;
   }
 
   layoutChanged() {
-    if (this.disposed || !this.size || !this.el.isConnected || this.ws?.readyState !== WebSocket.OPEN || this.ws.ended) return;
+    if (this.disposed || !this.el.isConnected) return;
     if (this.claiming || this.owner) this.fitHere();
     else this.scaleToSize();
     paintSizeNote();
   }
 
   fitHere() {
-    if (this.sizing || document.documentElement.classList.contains('resizing') || (!this.claiming && terminalKeyboardShown())) return;
     this.term.options.fontSize = terminalFontSize;
+    if (!this.size || this.ws?.readyState !== WebSocket.OPEN || this.ws.ended) return;
+    if (this.sizing || document.documentElement.classList.contains('resizing') || (!this.claiming && terminalKeyboardShown())) return;
     const fit = this.measure();
     if (!(fit?.cols > 0 && fit.rows > 0)) return;
-    if (this.claiming) {
+    const cols = Math.min(fit.cols, TERMINAL_COLS_MAX);
+    const rows = Math.min(fit.rows, TERMINAL_ROWS_MAX);
+    if (this.claiming && this.legacy) {
+      this.claiming = false;
+      this.send({ type: 'resize', cols, rows });
+    } else if (this.claiming) {
       this.claiming = false;
       this.sizing = true;
-      this.send({ type: 'claim', cols: fit.cols, rows: fit.rows });
-    } else if (fit.cols !== this.size.cols || fit.rows !== this.size.rows) {
+      this.send({ type: 'claim', cols, rows });
+    } else if (cols !== this.size.cols || rows !== this.size.rows) {
       this.sizing = true;
-      this.send({ type: 'resize', generation: this.generation, cols: fit.cols, rows: fit.rows });
+      this.send({ type: 'resize', generation: this.generation, cols, rows });
     }
   }
 

@@ -42,9 +42,11 @@ test('only the page that last claimed a terminal sizes it, and only under its la
   assert.deepEqual([desk, phone, watcher].map((v) => [v.messages[0].owner, v.messages[0].generation]), [[false, 0], [false, 0], [false, 0]]);
 
   assert.equal(session.resizeFrom('desk', 0, 100, 30), false, 'a page that never claimed cannot resize');
+  assert.deepEqual(desk.sizes(), ['80x24 0 false'], 'and is answered with the current size, so it does not wait forever');
+  assert.deepEqual([phone.sizes(), watcher.sizes()], [[], []]);
   assert.equal(session.claimSize(null, 100, 30), false, 'a viewer with no page cannot claim');
   assert.equal(session.claimSize('desk', 100, 30), true);
-  assert.deepEqual(desk.sizes(), ['100x30 1 true']);
+  assert.deepEqual(desk.sizes(), ['80x24 0 false', '100x30 1 true']);
   assert.deepEqual(phone.sizes(), ['100x30 1 false']);
   assert.deepEqual(watcher.sizes(), ['100x30 1 false']);
 
@@ -54,7 +56,7 @@ test('only the page that last claimed a terminal sizes it, and only under its la
   assert.equal(session.claimSize('desk', 100, 30), true);
   assert.equal(session.resizeFrom('desk', 2, 130, 40), false, 'so is a resize sent before the owner\'s latest claim');
   assert.equal(session.resizeFrom('desk', 3, 100, 30), true, 'an unchanged size is still answered');
-  assert.deepEqual(desk.sizes(), ['100x30 1 true', '110x30 1 true', '40x20 2 false', '100x30 3 true', '100x30 3 true']);
+  assert.deepEqual(desk.sizes(), ['80x24 0 false', '100x30 1 true', '110x30 1 true', '40x20 2 false', '40x20 2 false', '100x30 3 true', '100x30 3 true', '100x30 3 true']);
   assert.deepEqual(resizes, ['100x30', '110x30', '40x20', '100x30'], 'the PTY is resized only when its size changes');
 
   desk.detach();

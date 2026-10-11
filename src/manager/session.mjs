@@ -366,19 +366,21 @@ export class Session extends EventEmitter {
   }
 
   resizeFrom(page, generation, cols, rows) {
-    if (this.disposed || !page || page !== this.sizeOwner || generation !== this.sizeGeneration) return false;
-    this._setSize(cols, rows);
-    // Sent even when nothing changed: the owner waits for it before sending its next size.
-    this._broadcastSize();
-    return true;
+    if (this.disposed || !page) return false;
+    const accepted = page === this.sizeOwner && generation === this.sizeGeneration;
+    if (accepted) this._setSize(cols, rows);
+    // Answered even when nothing changed or the resize is refused: the page waits for it before sending its next size.
+    this._broadcastSize(accepted ? null : page);
+    return accepted;
   }
 
   _sizeFor(page) {
     return { generation: this.sizeGeneration, owner: Boolean(page) && page === this.sizeOwner };
   }
 
-  _broadcastSize() {
+  _broadcastSize(onlyPage = null) {
     for (const sub of this.subscribers) {
+      if (onlyPage && sub.page !== onlyPage) continue;
       const message = { type: 'resize', cols: this.cols, rows: this.rows, ...this._sizeFor(sub.page) };
       if (sub.pending) sub.pending.push(message);
       else sub.send(message);
