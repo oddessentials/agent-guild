@@ -107,6 +107,10 @@ function save(key, value) { try { value === null ? localStorage.removeItem(key) 
 
 const TERMINAL_FONT_MIN = 9;
 const TERMINAL_FONT_MAX = 28;
+const TERMINAL_SCALE_MIN = 0.8;
+const TERMINAL_COLS_MAX = 1000;
+const TERMINAL_ROWS_MAX = 500;
+const PAGE_ID = [...crypto.getRandomValues(new Uint8Array(12))].map((b) => b.toString(16).padStart(2, '0')).join('');
 const savedTerminalFont = Number.parseInt(load(TERMINAL_FONT_KEY), 10);
 let terminalFontSize = savedTerminalFont >= TERMINAL_FONT_MIN && savedTerminalFont <= TERMINAL_FONT_MAX
   ? savedTerminalFont : coarsePointer.matches ? 14 : 13;
@@ -5965,7 +5969,13 @@ class TerminalView {
     this.opened = false;
     this.disposed = false;
     this.retry = 0;
-    this.takeSize = false;
+    this.size = null;
+    this.owner = false;
+    this.legacy = false;
+    this.generation = 0;
+    this.claiming = false;
+    this.sizing = false;
+    this.fitsHere = false;
     this.connect();
   }
 
@@ -5990,9 +6000,11 @@ class TerminalView {
     clearTimeout(this.retryTimer);
     this.inputReady = false;
     this.inputSnapshot = null;
+    this.size = null;
+    this.sizing = false;
     terminalControls.refresh();
     this.showLink(this.shown ? 'Reconnecting…' : 'Connecting…');
-    const ws = new WebSocket(wsUrl(`/sessions/${this.id}/terminal`));
+    const ws = new WebSocket(`${wsUrl(`/sessions/${this.id}/terminal`)}&page=${PAGE_ID}`);
     this.ws = ws;
     ws.loading = true;
     ws.heardAt = Date.now();
@@ -6014,6 +6026,7 @@ class TerminalView {
       if (this.ws !== ws) return;
       this.inputReady = false;
       this.inputSnapshot = null;
+      this.sizing = false;
       terminalControls.refresh();
       if (this.disposed || event?.code === 4403 || event?.code === 4404 || event?.code === 4410) return this.showLink(null);
       this.showLink('Reconnecting…');
@@ -6043,6 +6056,7 @@ class TerminalView {
         terminalControls.refresh();
         this.term.reset();
         this.term.resize(msg.cols, msg.rows);
+        this.followSize(msg);
         {
           const ws = this.ws;
           this.term.write(msg.data, () => {
@@ -6053,8 +6067,7 @@ class TerminalView {
             this.shown = true;
             this.showLink(null);
             terminalControls.refresh();
-            this.takeDeviceSize();
-            paintSizeNote();
+            this.layoutChanged();
           });
         }
         break;
@@ -6067,7 +6080,9 @@ class TerminalView {
         this.term.write('', () => {
           if (this.disposed || this.ws !== ws) return;
           this.term.resize(msg.cols, msg.rows);
-          paintSizeNote();
+          this.followSize(msg);
+          this.sizing = false;
+          this.layoutChanged();
         });
         break;
       }
@@ -6091,34 +6106,71 @@ class TerminalView {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(message));
   }
 
-  /**
-   * The session's terminal has one size, shared by every device. Placing it on
-   * screen takes this device's size, once its screen is live; nothing else
-   * does, because the program redraws on every resize and a redraw taller than
-   * the screen leaves a copy of it in the scrollback of every device.
-   */
-  place() {
-    this.takeSize = true;
-    this.takeDeviceSize();
+  claim() {
+    this.claiming = true;
+    paintSizeNote();
+    this.layoutChanged();
   }
 
-  takeDeviceSize() {
-    if (!this.takeSize || !this.shown || this.inputSnapshot || !this.el.isConnected || this.ws?.readyState !== WebSocket.OPEN || this.ws.ended) return;
-    this.takeSize = false;
-    const ws = this.ws;
-    this.term.write('', () => {
-      if (this.disposed) return;
-      if (this.ws !== ws || ws.ended || ws.readyState !== WebSocket.OPEN || !this.el.isConnected) { this.takeSize = true; return; }
-      try { this.fit.fit(); } catch { this.takeSize = true; return; }
-      this.send({ type: 'resize', cols: this.term.cols, rows: this.term.rows });
-      paintSizeNote();
-    });
+  followSize(msg) {
+    this.size = { cols: msg.cols, rows: msg.rows };
+    this.owner = msg.owner === true;
+    this.legacy = typeof msg.owner !== 'boolean';
+    this.generation = msg.generation;
+  }
+
+  layoutChanged() {
+    if (this.disposed || !this.el.isConnected) return;
+    if (this.claiming || this.owner) this.fitHere();
+    else this.scaleToSize();
+    paintSizeNote();
+  }
+
+  fitHere() {
+    this.term.options.fontSize = terminalFontSize;
+    if (!this.size || this.ws?.readyState !== WebSocket.OPEN || this.ws.ended) return;
+    if (this.sizing || document.documentElement.classList.contains('resizing') || (!this.claiming && terminalKeyboardShown())) return;
+    const fit = this.measure();
+    if (!(fit?.cols > 0 && fit.rows > 0)) return;
+    const cols = Math.min(fit.cols, TERMINAL_COLS_MAX);
+    const rows = Math.min(fit.rows, TERMINAL_ROWS_MAX);
+    if (this.claiming && this.legacy) {
+      this.claiming = false;
+      this.send({ type: 'resize', cols, rows });
+    } else if (this.claiming) {
+      this.claiming = false;
+      this.sizing = true;
+      this.send({ type: 'claim', cols, rows });
+    } else if (cols !== this.size.cols || rows !== this.size.rows) {
+      this.sizing = true;
+      this.send({ type: 'resize', generation: this.generation, cols, rows });
+    }
+  }
+
+  scaleToSize() {
+    const { cols, rows } = this.term;
+    const least = Math.max(TERMINAL_FONT_MIN, Math.min(terminalFontSize, Math.round(terminalFontSize * TERMINAL_SCALE_MIN)));
+    this.term.options.fontSize = terminalFontSize;
+    let fit = this.measure();
+    this.fitsHere = fit?.cols === cols && fit?.rows === rows;
+    for (let size = terminalFontSize - 1; size >= least && fit && (fit.cols < cols || fit.rows < rows); size--) {
+      this.term.options.fontSize = size;
+      fit = this.measure();
+    }
+  }
+
+  measure() {
+    const host = this.el.parentElement;
+    host.style.overflow = 'hidden';
+    try {
+      return this.fit.proposeDimensions();
+    } finally {
+      host.style.overflow = '';
+    }
   }
 
   sizedElsewhere() {
-    if (!this.el.isConnected) return false;
-    const fit = this.fit.proposeDimensions();
-    return Boolean(fit) && (fit.cols !== this.term.cols || fit.rows !== this.term.rows);
+    return this.el.isConnected && Boolean(this.size) && !this.owner && !this.claiming && !this.fitsHere;
   }
 
   revealCursor(force = false) {
@@ -6138,8 +6190,7 @@ class TerminalView {
 
   mount(host, { focus = true } = {}) {
     host.replaceChildren(this.el);
-    if (!this.opened) { this.term.open(this.el); this.enableTouchScroll(); this.opened = true; }
-    this.place();
+    if (!this.opened) { this.term.open(this.el); this.enableTouchScroll(); terminalLayout.observe(this.el); this.opened = true; }
     if (focus) this.term.focus();
   }
 
@@ -6203,6 +6254,7 @@ class TerminalView {
     this.inputReady = false;
     this.inputSnapshot = null;
     terminalControls.refresh();
+    terminalLayout.unobserve(this.el);
     this.ws?.close();
     this.term.dispose();
     this.el.remove();
@@ -6211,11 +6263,29 @@ class TerminalView {
 
 // ---- terminal panel -------------------------------------------------------
 
+let terminalLayoutFrame;
+const terminalLayout = new ResizeObserver(() => {
+  cancelAnimationFrame(terminalLayoutFrame);
+  terminalLayoutFrame = requestAnimationFrame(() => {
+    layoutPanes();
+    refitTerminals();
+  });
+});
+for (const node of [$('terminal-panel'), $('terminal-controls')]) terminalLayout.observe(node);
+
+function refitTerminals() {
+  for (const view of state.views.values()) view.layoutChanged();
+}
+
+function terminalKeyboardShown() {
+  return Number.parseFloat($('terminal-panel').style.getPropertyValue('--terminal-viewport-bottom')) > 0;
+}
+
 /** Every terminal on this device shows text at one size, which the device remembers. */
 function setTerminalFontSize(size) {
   terminalFontSize = Math.min(TERMINAL_FONT_MAX, Math.max(TERMINAL_FONT_MIN, size));
   save(TERMINAL_FONT_KEY, String(terminalFontSize));
-  for (const view of state.views.values()) view.term.options.fontSize = terminalFontSize;
+  refitTerminals();
   paintTerminalFontSize();
 }
 
@@ -6257,7 +6327,6 @@ const terminalCopy = new TerminalCopy({
 const paneNodes = [...document.querySelectorAll('.terminal-pane')];
 const sessionMenu = { mode: 'switch', invoker: null };
 let panesRestored = false;
-let lastSplit = null;
 let splitRatio = clampRatio(Number.parseFloat(load(SPLIT_RATIO_KEY)));
 
 /** Moves typing into a terminal, except where that would raise an on-screen keyboard over it. */
@@ -6273,6 +6342,7 @@ function openPanel(id, { beside = false, restoring = false } = {}) {
   if (!state.sessions.has(id)) return;
   let index = state.panes.indexOf(id);
   const placed = index !== -1;
+  const wasSplit = state.panes.length === 2;
   if (!placed) {
     index = !state.panes.length ? 0 : !beside ? state.focusedPane : state.panes.length < 2 ? 1 : 1 - state.focusedPane;
     const replaced = state.panes[index];
@@ -6283,7 +6353,9 @@ function openPanel(id, { beside = false, restoring = false } = {}) {
   $('terminal-panel').hidden = false;
   if (!restoring) dockMakesWayForTerminal();
   focusPane(index, { focusTerminal: !restoring || !dockView.panel });
-  if (placed) state.views.get(id).place();
+  if (restoring) return;
+  const split = !wasSplit && state.panes.length === 2;
+  for (const opened of split ? state.panes : [id]) state.views.get(opened)?.claim();
 }
 
 function focusPane(index, { focusTerminal = true } = {}) {
@@ -6353,10 +6425,6 @@ function layoutPanes() {
     if (shown && view && view.el.parentNode !== host) view.mount(host, { focus: false });
     else if (!shown && view && view.el.parentNode === host) view.unmount();
   });
-  if (split !== lastSplit) {
-    lastSplit = split;
-    takePaneSizes();
-  }
   renderPaneLabels();
   paintSizeNote();
 }
@@ -6364,11 +6432,6 @@ function layoutPanes() {
 function paintSizeNote() {
   const view = state.views.get(state.activeId);
   $('panel-size').hidden = !(view?.shown && view.sizedElsewhere());
-}
-
-/** Arranging the panes (split, unsplit, dragging the splitter) gives each terminal its pane's size. */
-function takePaneSizes() {
-  for (const id of state.panes) state.views.get(id)?.place();
 }
 
 function renderPaneLabels() {
@@ -7018,17 +7081,11 @@ bindSplitter($('pane-splitter'), {
   end: () => {
     save(SPLIT_RATIO_KEY, String(splitRatio));
     document.documentElement.classList.remove('resizing');
-    takePaneSizes();
+    refitTerminals();
   },
-  home: () => { setSplitRatio(SPLIT_RATIO_MIN); takePaneSizes(); },
-  endKey: () => { setSplitRatio(1 - SPLIT_RATIO_MIN); takePaneSizes(); },
+  home: () => { setSplitRatio(SPLIT_RATIO_MIN); refitTerminals(); },
+  endKey: () => { setSplitRatio(1 - SPLIT_RATIO_MIN); refitTerminals(); },
 });
-let terminalLayoutFrame;
-const terminalLayoutObserver = new ResizeObserver(() => {
-  cancelAnimationFrame(terminalLayoutFrame);
-  terminalLayoutFrame = requestAnimationFrame(layoutPanes);
-});
-for (const node of [$('terminal-panel'), $('terminal-controls')]) terminalLayoutObserver.observe(node);
 $('panel-voice').addEventListener('click', () => {
   if (dictation) {
     const { id } = dictation;
@@ -7105,6 +7162,7 @@ bindSplitter($('dock-splitter'), {
   end: () => {
     save(DOCK_WIDTH_KEY, String(dockView.width));
     document.documentElement.classList.remove('resizing');
+    refitTerminals();
   },
   home: () => { dockView.width = DOCK_MIN; applyDockLayout(); },
   endKey: () => { dockView.width = clampDockWidth(Infinity, innerWidth); applyDockLayout(); },
@@ -7378,7 +7436,10 @@ const sessionMenuFrom = (mode, invoker) => () => {
 };
 $('panel-switch').addEventListener('click', sessionMenuFrom('switch', $('panel-switch')));
 $('panel-split').addEventListener('click', sessionMenuFrom('beside', $('panel-split')));
-$('panel-swap').addEventListener('click', () => focusPane(1 - state.focusedPane));
+$('panel-swap').addEventListener('click', () => {
+  focusPane(1 - state.focusedPane);
+  state.views.get(state.activeId)?.claim();
+});
 window.addEventListener('resize', () => {
   if (topbarInline(innerWidth)) closeMenu($('topbar-menu'));
   applyDockLayout();

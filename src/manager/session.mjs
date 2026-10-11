@@ -123,6 +123,8 @@ export class Session extends EventEmitter {
       }
     }
     this.subscribers = new Set();
+    this.sizeOwner = null;
+    this.sizeGeneration = 0;
     this._activityTimer = null;
     this._agentTimers = new Map();
     this._killTimer = null;
@@ -267,8 +269,8 @@ export class Session extends EventEmitter {
    * snapshot is being built is queued and delivered right after it.
    * Returns a detach function.
    */
-  attach(send) {
-    const sub = { send, pending: [] };
+  attach(send, { page = null } = {}) {
+    const sub = { send, page, pending: [] };
     this.subscribers.add(sub);
     // Everything written to the mirror before this marker is in the snapshot;
     // everything after it is queued in sub.pending.
@@ -279,6 +281,7 @@ export class Session extends EventEmitter {
         data: this._serializeScreen(),
         cols: this.term.cols,
         rows: this.term.rows,
+        ...this._sizeFor(page),
         session: this.toJSON(),
       });
       const queued = sub.pending;
@@ -353,17 +356,48 @@ export class Session extends EventEmitter {
     this.write(data);
   }
 
-  resize(cols, rows) {
+  claimSize(page, cols, rows) {
+    if (this.disposed || !page) return false;
+    this.sizeOwner = page;
+    this.sizeGeneration++;
+    this._setSize(cols, rows);
+    this._broadcastSize();
+    return true;
+  }
+
+  resizeFrom(page, generation, cols, rows) {
+    if (this.disposed || !page) return false;
+    const accepted = page === this.sizeOwner && generation === this.sizeGeneration;
+    if (accepted) this._setSize(cols, rows);
+    // Answered even when nothing changed or the resize is refused: the page waits for it before sending its next size.
+    this._broadcastSize(accepted ? null : page);
+    return accepted;
+  }
+
+  _sizeFor(page) {
+    return { generation: this.sizeGeneration, owner: Boolean(page) && page === this.sizeOwner };
+  }
+
+  _broadcastSize(onlyPage = null) {
+    for (const sub of this.subscribers) {
+      if (onlyPage && sub.page !== onlyPage) continue;
+      const message = { type: 'resize', cols: this.cols, rows: this.rows, ...this._sizeFor(sub.page) };
+      if (sub.pending) sub.pending.push(message);
+      else sub.send(message);
+    }
+  }
+
+  _setSize(cols, rows) {
     const c = clampDimension(cols, this.cols, 2, 1000);
     const r = clampDimension(rows, this.rows, 1, 500);
     if (c === this.cols && r === this.rows) return;
     this.cols = c;
     this.rows = r;
-    this.term.resize(c, r);
+    // The mirror may still be parsing output written before the resize; the size lands after it, as it did in the PTY.
+    this.term.write('', () => { if (!this.disposed) this.term.resize(c, r); });
     if (this.status === 'running') {
       try { this.pty.resize(c, r); } catch { /* process may be exiting */ }
     }
-    this._broadcast({ type: 'resize', cols: c, rows: r });
   }
 
   /**

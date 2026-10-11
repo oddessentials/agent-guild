@@ -122,7 +122,7 @@ test('exit clears an initial or reconnecting badge before the held snapshot comp
       const view = Object.assign(runInNewContext(`({${methods}})`, context), {
         id: plain.id, ws: { readyState: 1 }, status: { hidden: false }, statusLabel: { textContent: label },
         term: { reset() {}, resize() {}, write(_data, callback) { if (callback) callbacks.push(callback); } },
-        takeDeviceSize() {},
+        followSize() {}, layoutChanged() {},
       });
       view.onMessage({ type: 'snapshot', session: { ...plain, status }, data: 'saved output', cols: 80, rows: 24 });
       assert.equal(view.status.hidden, false, 'the snapshot has not finished');
@@ -144,109 +144,139 @@ test('exit clears an initial or reconnecting badge before the held snapshot comp
   }
 });
 
-test('a terminal takes a device\'s size only when placed on screen there; otherwise it follows the session\'s size', () => {
-  const methods = ['onMessage', 'showLink', 'mount', 'unmount', 'place', 'takeDeviceSize', 'sizedElsewhere'].map((name) => {
+function sizingView() {
+  const methods = ['connect', 'onMessage', 'showLink', 'claim', 'followSize', 'layoutChanged', 'fitHere', 'scaleToSize', 'measure', 'sizedElsewhere'].map((name) => {
     const found = app.match(new RegExp(`  ${name}\\([^]*?\\n  \\}`))?.[0];
     assert.ok(found, `${name} is present`);
     return found;
   }).join(',\n');
   const { context } = page();
-  Object.assign(context, { WebSocket: { OPEN: 1 }, terminalControls: { refresh() {} }, dictation: null, paintSizeNote() {} });
-  const sent = [], resized = [], callbacks = [];
+  const ui = { keyboard: false, dragging: false };
+  Object.assign(context, {
+    WebSocket: Object.assign(class { readyState = 1; }, { OPEN: 1, CLOSING: 2 }),
+    wsUrl: (path) => `ws://manager${path}?token=t`, PAGE_ID: 'page', clearTimeout() {},
+    terminalControls: { refresh() {} }, dictation: null, paintSizeNote() {},
+    terminalFontSize: 14, TERMINAL_FONT_MIN: 9, TERMINAL_SCALE_MIN: 0.8, TERMINAL_COLS_MAX: 1000, TERMINAL_ROWS_MAX: 500,
+    terminalKeyboardShown: () => ui.keyboard,
+    document: { documentElement: { classList: { contains: (name) => name === 'resizing' && ui.dragging } } },
+  });
+  const sent = [], callbacks = [];
+  // The pane holds 1400x700 px; a cell is 0.6em wide and 1.2em tall.
+  const pane = { width: 1400, height: 700 };
   const term = {
-    cols: 120, rows: 32,
+    cols: 120, rows: 32, options: { fontSize: 14 },
     reset() {}, focus() {},
-    resize(cols, rows) { Object.assign(this, { cols, rows }); resized.push(`${cols}x${rows}`); },
+    resize(cols, rows) { Object.assign(this, { cols, rows }); },
     write(_data, callback) { if (callback) callbacks.push(callback); },
   };
+  const fit = { proposeDimensions: () => ({ cols: Math.floor(pane.width / (term.options.fontSize * 0.6)), rows: Math.floor(pane.height / (term.options.fontSize * 1.2)) }) };
   const view = Object.assign(runInNewContext(`({${methods}})`, context), {
     id: plain.id, ws: { readyState: 1 }, status: { hidden: false }, statusLabel: { textContent: '' },
-    term, fit: { fit() { term.resize(50, 20); }, proposeDimensions: () => ({ cols: 50, rows: 20 }) }, el: { isConnected: false, remove() {} },
-    opened: true, takeSize: false, enableTouchScroll() {},
-    send: (message) => sent.push(`${message.type} ${message.cols}x${message.rows}`),
+    term, fit, el: { isConnected: true, parentElement: { style: {} } }, size: null, owner: false, generation: 0, claiming: false, sizing: false,
+    send: (message) => sent.push(message.type === 'claim' ? `claim ${message.cols}x${message.rows}` : `resize ${message.generation} ${message.cols}x${message.rows}`),
   });
-  const host = { replaceChildren() { view.el.isConnected = true; } };
-  // xterm parses writes in order and calls back after each; the fake does so on demand.
   const parsed = () => { while (callbacks.length) callbacks.shift()(); };
-  const snapshot = (cols, rows) => { view.onMessage({ type: 'snapshot', session: { ...plain }, data: '', cols, rows }); parsed(); };
+  const snapshot = (cols, rows, owner, generation) => { view.onMessage({ type: 'snapshot', session: { ...plain }, data: '', cols, rows, owner, generation }); parsed(); };
+  const resized = (cols, rows, owner, generation) => { view.onMessage({ type: 'resize', cols, rows, owner, generation }); parsed(); };
+  return { context, ui, view, term, pane, sent, parsed, snapshot, resized };
+}
 
-  snapshot(120, 32);
-  assert.deepEqual(sent, [], 'a screen that is not on this device sends no size');
-  assert.deepEqual(resized, ['120x32'], 'and shows the session\'s size');
+test('a terminal is sized only by the page that claimed it, and other pages scale it to fit', () => {
+  const { ui, view, term, pane, sent, parsed, snapshot, resized } = sizingView();
+  const fitted = [Math.floor(1400 / (14 * 0.6)), Math.floor(700 / (14 * 1.2))].join('x');
 
-  view.mount(host, { focus: false });
-  assert.deepEqual(sent, [], 'the size is taken once the output already received is on screen');
-  parsed();
-  assert.deepEqual(sent, ['resize 50x20'], 'placing it on screen takes this device\'s size once');
+  snapshot(120, 32, false, 0);
+  assert.deepEqual(sent, [], 'a restored or reloaded page only watches');
+  assert.equal(view.sizedElsewhere(), true, 'and says the terminal is sized for another screen');
 
-  assert.equal(view.sizedElsewhere(), false);
-  view.onMessage({ type: 'resize', cols: 100, rows: 30 });
-  assert.equal(`${term.cols}x${term.rows}`, '50x20', 'another device\'s size waits for the output before it');
-  parsed();
-  assert.equal(`${term.cols}x${term.rows}`, '100x30', 'then is followed');
-  assert.equal(view.sizedElsewhere(), true, 'and the page can say so');
-  snapshot(100, 30);
-  assert.deepEqual(sent, ['resize 50x20'], 'a reconnection does not take it back');
-
-  view.onMessage({ type: 'resize', cols: 90, rows: 25 });
-  view.ws = { readyState: 1 };
-  snapshot(100, 30);
-  assert.equal(`${term.cols}x${term.rows}`, '100x30', 'a size from a link that ended cannot reach the next link\'s screen');
-
-  view.unmount();
-  view.el.isConnected = false;
-  assert.equal(view.sizedElsewhere(), false, 'a terminal off screen has no screen to fit');
-  view.mount(host, { focus: false });
-  parsed();
-  assert.deepEqual(sent, ['resize 50x20', 'resize 50x20'], 'opening it again does');
+  view.claim();
+  assert.deepEqual(sent, [`claim ${fitted}`], 'opening it takes this pane\'s size');
+  view.claim();
+  view.layoutChanged();
+  assert.equal(sent.length, 1, 'nothing more is sent until the manager answers');
+  resized(166, 41, true, 1);
+  assert.equal(`${term.cols}x${term.rows}`, '166x41');
+  assert.deepEqual(sent, [`claim ${fitted}`, 'claim 166x41'], 'a second open while the first was answered claims again');
+  resized(166, 41, true, 2);
   assert.equal(view.sizedElsewhere(), false);
 
-  view.unmount();
-  view.el.isConnected = false;
-  view.ws = { readyState: 0 };
-  view.mount(host, { focus: false });
-  parsed();
-  assert.deepEqual(sent, ['resize 50x20', 'resize 50x20'], 'a terminal opened while its link is down waits');
+  pane.width = 1000;
+  view.layoutChanged();
+  assert.deepEqual(sent.at(-1), 'resize 2 119x41', 'the owner\'s layout refits it, under its latest claim');
+  pane.width = 900;
+  view.layoutChanged();
+  assert.equal(sent.length, 3, 'one resize at a time');
+  resized(119, 41, true, 2);
+  assert.deepEqual(sent.at(-1), 'resize 2 107x41', 'the next goes once the first is answered');
+  resized(107, 41, true, 2);
+  view.layoutChanged();
+  assert.equal(sent.length, 4, 'an unchanged grid sends nothing');
+
+  ui.keyboard = true;
+  pane.height = 300;
+  view.layoutChanged();
+  ui.dragging = true;
+  ui.keyboard = false;
+  view.layoutChanged();
+  assert.equal(sent.length, 4, 'neither an on-screen keyboard nor a drag in progress resizes it');
+  ui.dragging = false;
+  pane.height = 700;
+  view.layoutChanged();
+  assert.equal(sent.length, 4);
+
+  snapshot(107, 41, true, 2);
+  assert.equal(sent.length, 4, 'a reconnection of the owner sends nothing when its pane is unchanged');
+  pane.width = 1400;
+  snapshot(107, 41, true, 2);
+  assert.deepEqual(sent.at(-1), 'resize 2 166x41', 'and fits a pane that changed while it was away');
+  resized(80, 24, false, 3);
+  assert.equal(term.options.fontSize, 14, 'another page\'s smaller terminal keeps this page\'s text size');
+  pane.width = 600;
+  view.layoutChanged();
+  assert.equal(sent.length, 5, 'a page that lost the size never resizes it');
+  assert.equal(term.options.fontSize, 12, 'a terminal wider than the pane shrinks the text until it fits');
+  resized(200, 60, false, 3);
+  assert.equal(term.options.fontSize, 11, 'but not below the readable limit');
+  assert.equal(view.sizedElsewhere(), true);
+
   view.ws = { readyState: 1 };
-  snapshot(100, 30);
-  assert.deepEqual(sent, ['resize 50x20', 'resize 50x20', 'resize 50x20'], 'and takes the size with its first screen');
-
-  view.unmount();
-  view.el.isConnected = false;
-  view.mount(host, { focus: false });
+  view.onMessage({ type: 'resize', cols: 50, rows: 10, owner: true, generation: 9 });
   view.ws = { readyState: 1 };
   parsed();
-  assert.deepEqual(sent.length, 3, 'a link that ended before the output was on screen sends nothing');
-  snapshot(100, 30);
-  assert.deepEqual(sent.length, 4, 'the next link\'s first screen takes the size instead');
+  assert.equal(`${term.cols}x${term.rows}`, '200x60', 'a size from a link that ended cannot reach the next link\'s screen');
+});
 
-  for (const ended of [{ readyState: 2 }, { readyState: 3 }, { ended: true }]) {
-    view.place();
-    Object.assign(view.ws, ended);
-    const before = [sent.length, resized.length];
-    parsed();
-    assert.deepEqual([sent.length, resized.length], before, 'a link that ended before its replacement neither fits nor sends');
-    view.ws = { readyState: 1 };
-    snapshot(100, 30);
-    assert.equal(sent.length, before[0] + 1, 'the pending size is sent once after the new snapshot');
-    snapshot(100, 30);
-    assert.equal(sent.length, before[0] + 1, 'later snapshots do not take the size again');
-  }
+test('terminal sizing never waits forever: an older manager, a reconnection, an oversized pane; text size applies offline', () => {
+  const legacy = sizingView();
+  legacy.snapshot(120, 32);
+  legacy.view.claim();
+  legacy.view.claim();
+  assert.deepEqual(legacy.sent, ['resize undefined 166x41', 'resize undefined 166x41'], 'a manager without size ownership gets a plain resize, and nothing waits for its answer');
 
-  view.place();
-  view.el.isConnected = false;
-  const before = [sent.length, resized.length];
-  parsed();
-  assert.deepEqual([sent.length, resized.length], before, 'a pane closed before parsing finishes cannot resize the shared terminal');
-  view.mount(host, { focus: false });
-  parsed();
-  assert.equal(sent.length, before[0] + 1);
+  const { context, view, term, pane, sent, snapshot, resized } = sizingView();
+  snapshot(120, 32, false, 0);
+  view.claim();
+  resized(166, 41, true, 1);
+  view.connect();
+  pane.width = 1000;
+  view.layoutChanged();
+  snapshot(80, 24, false, 2);
+  assert.deepEqual(sent, ['claim 166x41'], 'nothing is sent between reconnecting and the new screen, and a page that lost the size meanwhile only watches');
+  view.claim();
+  assert.deepEqual(sent.at(-1), 'claim 119x41', 'opening it there again takes the size back');
+  resized(119, 41, true, 3);
 
-  view.place();
-  view.disposed = true;
-  const disposed = [sent.length, resized.length];
-  parsed();
-  assert.deepEqual([sent.length, resized.length], disposed);
+  pane.width = 9000;
+  view.layoutChanged();
+  resized(1000, 41, true, 3);
+  view.layoutChanged();
+  assert.deepEqual(sent.slice(2), ['resize 3 1000x41'], 'a pane wider than the manager allows asks once for the widest terminal');
+
+  view.ws = { readyState: 3 };
+  context.terminalFontSize = 18;
+  view.layoutChanged();
+  assert.equal(term.options.fontSize, 18, 'a text size chosen while disconnected applies at once');
+  assert.equal(sent.length, 3);
 });
 
 test('cursor following respects manual panning, history, selection and typing focus', () => {

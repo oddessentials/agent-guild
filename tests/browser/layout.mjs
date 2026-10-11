@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { until, withPage } from './chrome.mjs';
 
 const instrumentation = `<script>
-window.testTerms=[];window.testSizes=[];window.testActions=[];
+window.testTerms=[];window.testSizes=[];window.testActions=[];window.testSockets=[];
 const demoFetch=window.fetch;
 window.fetch=function(input,init){if(String(input?.url??input).split('?')[0].endsWith('/actions'))testActions.push(Date.now());return demoFetch.call(this,input,init);};
 const RealTerminal=window.Terminal;
@@ -14,7 +14,8 @@ window.Terminal=class extends RealTerminal {
 };
 const DemoSocket=window.WebSocket;
 window.WebSocket=class extends DemoSocket {
-  send(data){const m=JSON.parse(data);if(m.type==='resize')testSizes.push({url:this.url,cols:m.cols,rows:m.rows});super.send(data);}
+  constructor(...args){super(...args);testSockets.push(this);}
+  send(data){const m=JSON.parse(data);if(m.type==='resize'||m.type==='claim')testSizes.push({url:this.url,type:m.type,cols:m.cols,rows:m.rows});super.send(data);}
 };
 </script>`;
 
@@ -34,6 +35,8 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   const panes = () => evaluate(`[...document.querySelectorAll('.terminal-pane')].filter(p=>p.checkVisibility()).map(p=>{const r=p.getBoundingClientRect();const t=testTerms.find(t=>t.element?.isConnected&&p.contains(t.element));return {pane:p.dataset.pane,focused:p.classList.contains('focused'),left:r.left,top:r.top,width:r.width,height:r.height,cols:t?.cols,rows:t?.rows}})`);
   const reloaded = (label, check) => until(label, () => evaluate('!window.testOldPage').then((fresh) => fresh && check(), () => false));
   const cards = () => evaluate('[...document.querySelectorAll("#sessions .session-card")].map(c=>c.dataset.id)');
+  const fitted = (terms = 'testTerms.filter(t=>t.element?.isConnected)') => until('terminals fit their panes', () => evaluate(`${terms}.every(t=>{t.testFit??=(()=>{const f=new FitAddon.FitAddon();t.loadAddon(f);return f;})();const p=t.testFit.proposeDimensions();return t.testParsed&&p.cols===t.cols&&p.rows===t.rows})`));
+  const sizesFor = (id) => evaluate(`testSizes.filter(s=>s.url.includes('/sessions/${id}/')).map(s=>s.type+' '+s.cols+'x'+s.rows)`);
   // Layout boxes, which the cards' entrance animation does not move.
   const providerGrid = () => evaluate('(()=>{const c=[...document.querySelectorAll("#providers .provider")];return {count:c.length,rows:new Set(c.map(p=>p.offsetTop)).size,narrowest:Math.min(...c.map(p=>p.offsetWidth))}})()');
 
@@ -123,9 +126,13 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   assert.equal(await evaluate('document.querySelector("#pane-splitter").getAttribute("aria-valuenow")') > 50, true);
   pass('the divider moves with the keyboard and the sessions are told their new sizes');
 
+  await fitted();
+  const beforeDock = await evaluate('testSizes.length');
   await click('#github-toggle');
   await until('dock', () => visible('#dock'));
   await layoutReady();
+  await fitted();
+  assert.deepEqual(await evaluate(`testSizes.slice(${beforeDock}).map(s=>s.type)`), ['resize', 'resize'], 'opening the dock refits each terminal once');
   const dock = await box('#dock');
   const stage = await box('#terminal-panel');
   assert.ok(stage.right <= dock.left + 1, 'the terminals make room for the dock');
@@ -152,7 +159,29 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   await send('Page.reload');
   await reloaded('restored panes', async () => (await panes()).length === 2);
   assert.deepEqual((await panes()).map((p) => p.focused), [false, true]);
-  pass('a reload brings back both terminals and the focused one');
+  await until('restored output', () => evaluate('testTerms.filter(t=>t.element?.isConnected).every(t=>t.testParsed)'));
+  await layoutReady();
+  assert.deepEqual(await evaluate('testSizes'), [], 'restored terminals do not take the size');
+  pass('a reload brings back both terminals and the focused one, without resizing them');
+
+  const focusedTerm = 'testTerms.find(t=>t.element?.isConnected&&t.element.closest(".terminal-pane.focused"))';
+  await evaluate(`testSockets.filter(s=>s.url.includes('/sessions/${second}/')&&s.readyState===1).at(-1).emit({data:JSON.stringify({type:'resize',cols:300,rows:90,generation:99,owner:false})})`);
+  await until("another page's size", () => evaluate(`${focusedTerm}.cols===300`));
+  await layoutReady();
+  const watched = await evaluate(`(()=>{const t=${focusedTerm},h=t.element.closest('.terminal-host');return {font:t.options.fontSize,note:!document.querySelector('#panel-size').hidden,overflow:h.scrollWidth>h.clientWidth}})()`);
+  assert.deepEqual(watched, { font: 10, note: true, overflow: true }, 'a terminal sized elsewhere shrinks its text to the readable limit, then scrolls');
+  await size(1300, 820);
+  assert.deepEqual(await evaluate('testSizes'), [], 'a page that does not own the size never resizes it');
+  await evaluate(`document.querySelector('#sessions .session-card[data-id="${second}"] .open').click()`);
+  await fitted(`[${focusedTerm}]`);
+  assert.equal((await sizesFor(second)).length, 1);
+  assert.match((await sizesFor(second))[0], /^claim /, 'opening it here claims the size');
+  assert.deepEqual(await evaluate(`[${focusedTerm}.options.fontSize,document.querySelector('#panel-size').hidden]`), [13, true]);
+  await size(1440, 900);
+  await fitted(`[${focusedTerm}]`);
+  assert.match((await sizesFor(second)).at(-1), /^resize /, 'the owner follows its window');
+  assert.deepEqual(await sizesFor(first), [], 'the terminal it does not own stays as it is');
+  pass('a terminal sized by another page stays readable until opened here, and then follows this window');
 
   const dockWidth = async () => (await box('#dock')).width;
   await click('#github-toggle');

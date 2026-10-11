@@ -101,6 +101,11 @@ function readJsonBody(req, max = MAX_BODY) {
   });
 }
 
+function terminalPage(url) {
+  const page = url.searchParams.get('page');
+  return page && /^[A-Za-z0-9_-]{1,64}$/.test(page) ? page : null;
+}
+
 const ENVIRONMENT_SCOPES = new Set(['manager', 'project', 'session', 'launch']);
 
 function environmentResult(environment, method, url, body) {
@@ -659,7 +664,7 @@ export function createManagerServer({
     });
   }
 
-  function handleTerminal(ws, id) {
+  function handleTerminal(ws, id, page) {
     let session;
     try {
       session = manager.get(id);
@@ -671,7 +676,7 @@ export function createManagerServer({
     const detach = session.attach((message) => {
       safeSend(ws, message);
       if (message.type === 'removed') ws.close(4410, 'session removed');
-    });
+    }, { page });
     ws.detachTerminal = detach;
     ws.on('close', detach);
     ws.on('message', (raw, isBinary) => {
@@ -679,7 +684,8 @@ export function createManagerServer({
       let msg;
       try { msg = JSON.parse(raw.toString('utf8')); } catch { return; }
       if (msg.type === 'input' && typeof msg.data === 'string') session.input(msg.data);
-      else if (msg.type === 'resize') session.resize(msg.cols, msg.rows);
+      else if (msg.type === 'claim') session.claimSize(page, msg.cols, msg.rows);
+      else if (msg.type === 'resize') session.resizeFrom(page, msg.generation, msg.cols, msg.rows);
       else if (msg.type === 'ping') safeSend(ws, { type: 'pong' });
     });
   }
@@ -704,7 +710,7 @@ export function createManagerServer({
       ws.isAlive = true;
       ws.on('pong', () => { ws.isAlive = true; });
       ws.on('error', () => {});
-      if (termMatch) handleTerminal(ws, termMatch[1]);
+      if (termMatch) handleTerminal(ws, termMatch[1], terminalPage(url));
       else handleEvents(ws, req);
     });
   });
