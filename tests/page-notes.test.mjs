@@ -197,14 +197,11 @@ test('with storage blocked the notes are never claimed saved, never wiped, and a
   assert.equal(tab.guarded(), false, 'nothing is left to lose');
 });
 
-test('running sessions still guard against leaving whatever the notes do', () => {
+test('running sessions never guard against leaving: they outlive the page', () => {
   const tab = page();
   tab.state.connected = true;
   tab.state.sessions.set('s1', { status: 'running' });
   tab.type('saved');
-  assert.ok(tab.guarded());
-  tab.state.sessions.set('s1', { status: 'exited' });
-  tab.guardLeaving();
   assert.equal(tab.guarded(), false);
 });
 

@@ -74,6 +74,16 @@ export function bindSplitter(handle, { axis = () => 'x', start, move, end, step 
   });
 }
 
+/** Whether this device types through an on-screen keyboard: touch is its primary pointer, or its browser reports touch without any pointer. */
+export function touchTyping() {
+  return matchMedia('(pointer: coarse)').matches || (!matchMedia('(any-pointer: coarse)').matches && navigator.maxTouchPoints > 0);
+}
+
+export function onTouchTyping(apply) {
+  for (const query of ['(pointer: coarse)', '(any-pointer: coarse)']) matchMedia(query).addEventListener('change', () => apply(touchTyping()));
+  apply(touchTyping());
+}
+
 /**
  * Publishes the part of the window an on-screen keyboard leaves visible as
  * `--<name>-viewport-top`, `--<name>-viewport-bottom` and `--<name>-viewport-height`

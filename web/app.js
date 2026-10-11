@@ -4,7 +4,7 @@
 import { SOUNDS, MAX_ALERT_AGE_MS, playOnce, rearmSound, managerLossWatcher, stopWatcher, updateWatcher } from './alerts.js';
 import { TerminalCopy } from './terminal-copy.js';
 import { TerminalControls, bindTerminalViewport } from './terminal-controls.js';
-import { topbarInline, dockMode, clampDockWidth, stageBesideDock, splitMode, clampRatio, bindSplitter, bindVisibleViewport, DOCK_MIN, SPLIT_RATIO_MIN } from './layout.js';
+import { topbarInline, dockMode, clampDockWidth, stageBesideDock, splitMode, clampRatio, bindSplitter, bindVisibleViewport, touchTyping, DOCK_MIN, SPLIT_RATIO_MIN } from './layout.js';
 import { highlightParts, rankRepos, recentFirst, remember, repoForOrigin, repoKey } from './repo-search.js';
 import { createActivityFavicon, isSessionWorking } from './activity-favicon.js';
 import { createRemoteAccessUI } from './remote-access.js';
@@ -199,11 +199,12 @@ function renderEmpty() {
   $('empty').hidden = !sessionsShown || !state.connected || state.sessions.size > 0;
 }
 
-function setConnection(kind, label) {
+function setConnection(kind, label, brief = label) {
   notifyViews();
   const el = $('connection');
   el.className = `connection ${kind}`;
   el.querySelector('.label').textContent = label;
+  el.querySelector('.brief').textContent = brief;
   el.title = label;
   // The manager can only be stopped, restarted or upgraded while the page can reach it.
   state.connected = kind === 'ok';
@@ -218,7 +219,6 @@ function setConnection(kind, label) {
   $('stop-manager').hidden = !state.connected;
   $('restart-manager').hidden = !state.connected || !state.restartable;
   renderUpgrade();
-  guardLeaving();
 }
 
 // ---- the running version --------------------------------------------------
@@ -5564,7 +5564,6 @@ function renderSessions() {
   const running = sessions.filter((s) => s.status === 'running').length;
   $('session-count').textContent = sessions.length ? `· ${running} running` : '';
   renderEmpty();
-  guardLeaving();
   if (state.activeId) updatePanel();
   if ($('history').open) renderHistory();
   if (state.stats && sessions.some((s) => s.model && state.statsFor.get(s.id) !== modelKey(s))) scheduleStats();
@@ -5576,11 +5575,10 @@ function confirmLeaving(event) {
   event.returnValue = true;
 }
 
+/** Sessions outlive the page; only notes that could not be saved are lost with it. */
 function guardLeaving() {
-  const running = state.connected && [...state.sessions.values()].some((s) => s.status === 'running');
-  // Notes that could not be saved are lost with the page.
   const unsaved = notesView.status !== 'saved' && $('notes-text').value !== '';
-  if (running || unsaved) addEventListener('beforeunload', confirmLeaving);
+  if (unsaved) addEventListener('beforeunload', confirmLeaving);
   else removeEventListener('beforeunload', confirmLeaving);
 }
 
@@ -6214,6 +6212,11 @@ let terminalSizesHeld = false;
 let panesRestored = false;
 let splitRatio = clampRatio(Number.parseFloat(load(SPLIT_RATIO_KEY)));
 
+/** Moves typing into a terminal, except where that would raise an on-screen keyboard over it. */
+function typeIn(view) {
+  if (view && !touchTyping()) view.term.focus();
+}
+
 /**
  * `beside`: into the other pane instead of the focused one. Two panes never show the same session, whose terminal has one size.
  * `restoring`: brought back from the last visit, under a dock that was also brought back and stays on top.
@@ -6242,7 +6245,7 @@ function focusPane(index, { focusTerminal = true } = {}) {
   state.activeId = id;
   layoutPanes();
   updatePanel();
-  if (focusTerminal) state.views.get(id)?.term.focus();
+  if (focusTerminal) typeIn(state.views.get(id));
   savePanes();
   followTerminal();
 }
@@ -6443,7 +6446,7 @@ async function startDictation() {
   // Register before awaiting availability so another click or leaving the terminal cancels startup too.
   dictation = current;
   renderVoice();
-  state.views.get(id)?.term.focus();
+  typeIn(state.views.get(id));
   try {
     // Browsers without this API start in the click handler, without an unnecessary await.
     if (typeof Recognition.available === 'function') {
@@ -6607,7 +6610,7 @@ function enterStopping(running = 0, restart = false) {
   } else {
     showStopped('stopping', 'Stopping the session manager…', `${ending}This can take a few seconds.`);
   }
-  setConnection('down', state.restarting ? 'Restarting the session manager…' : 'Stopping the session manager…');
+  setConnection('down', state.restarting ? 'Restarting the session manager…' : 'Stopping the session manager…', state.restarting ? 'Restarting…' : 'Stopping…');
 }
 
 /** The manager is back: a `hello` arrived while the page was waiting out a stop. */
@@ -6676,7 +6679,7 @@ function showManagerStopped() {
     : n > 0 ? `${n} session process${n === 1 ? '' : 'es'} did not confirm exiting in time and may still be running. Check your system's process list.`
     : 'The manager went away before confirming that every session had ended.';
   if (state.restarting) {
-    setConnection('down', 'Restarting the session manager…');
+    setConnection('down', 'Restarting the session manager…', 'Restarting…');
     return showStopped('restarting', 'Restarting the session manager…', `${sessions} Waiting for the new manager; this page reconnects to it by itself.`);
   }
   setConnection('down', 'Session manager stopped');
@@ -6686,7 +6689,7 @@ function showManagerStopped() {
 // ---- events ---------------------------------------------------------------
 
 function showManagerUnavailable() {
-  setConnection('down', 'Manager unavailable. Trying to reconnect…');
+  setConnection('down', 'Manager unavailable. Trying to reconnect…', 'Reconnecting…');
   if (state.stopping) {
     clearTimeout(restartTimer);
     showStopped('stopped', 'Manager unavailable', 'The manager stopped responding before confirming shutdown. Sessions may still be running. This page will reconnect automatically.');
@@ -6786,7 +6789,7 @@ function connectEvents(refreshProviders = false) {
       state.remoteRevoked = true;
       managerLoss.cancel();
       state.remoteAccessUI?.close();
-      setConnection('down', 'Remote access changed. Your terminals are still running. Reopen an enabled address to reconnect.');
+      setConnection('down', 'Remote access changed. Your terminals are still running. Reopen an enabled address to reconnect.', 'Remote access changed');
       return;
     }
     // A first screen can hold a pong behind a large frame. Its events link is
@@ -6800,7 +6803,7 @@ function connectEvents(refreshProviders = false) {
     } else if (state.stopping && state.stopRemaining !== null) {
       showManagerStopped();
     } else {
-      setConnection('down', 'Connection interrupted. Trying to reconnect…');
+      setConnection('down', 'Connection interrupted. Trying to reconnect…', 'Reconnecting…');
     }
     managerLoss.disconnected();
     // Keep trying: after a stop, a relaunched manager brings the page back by itself.
@@ -6913,7 +6916,7 @@ async function boot() {
       save(TOKEN_KEY, null);
       return showAuth(`${err.message} Open the page again with "agent-guild open".`);
     }
-    setConnection('down', 'Session manager not reachable. Run "agent-guild open" to start it.');
+    setConnection('down', 'Session manager not reachable. Run "agent-guild open" to start it.', 'Manager not reachable');
   }
   save(TOKEN_KEY, state.token);
   $('app').hidden = false;
@@ -6974,7 +6977,7 @@ $('panel-voice').addEventListener('click', () => {
   if (dictation) {
     const { id } = dictation;
     stopDictation();
-    state.views.get(id)?.term.focus();
+    typeIn(state.views.get(id));
   } else startDictation();
 });
 $('models-close').addEventListener('click', closeModels);
@@ -7204,7 +7207,7 @@ addEventListener('pageshow', (event) => {
   state.pageAway = false;
   activityFavicon.setPaused(false);
   if (state.remoteRevoked) return;
-  setConnection('down', 'Reconnecting to session manager…');
+  setConnection('down', 'Reconnecting to session manager…', 'Reconnecting…');
   connectEvents(true);
 });
 $('version').addEventListener('click', openChangelog);

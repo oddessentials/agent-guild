@@ -146,7 +146,7 @@ export async function withPage({ name, instrumentation = '', headers = () => ({}
     socket.onmessage = ({ data }) => {
       const message = JSON.parse(data);
       if (message.method === 'Page.javascriptDialogOpening') {
-        // The demo deliberately guards navigation while its simulated sessions run.
+        // Only unsaved notes may guard navigation.
         if (message.params.type !== 'beforeunload') errors.push(`Unexpected ${message.params.type} dialog`);
         send('Page.handleJavaScriptDialog', { accept: true }).catch((error) => errors.push(error.message));
       }
