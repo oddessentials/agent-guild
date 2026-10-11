@@ -356,7 +356,7 @@ test('rejected input warns once until a running snapshot completes, across retri
     };
     view.takeDeviceSize = () => {};
     view.send = (message) => delivered.push(message.data);
-    Object.assign(page.context, { view, toast: (message) => warnings.push(message) });
+    Object.assign(page.context, { view, toast: (message) => warnings.push(message), paintSizeNote() {} });
     runInNewContext(`view.onMessage = ({${messageSource}}).onMessage;\n(function() {${inputSource}}).call(view);`, page.context);
     page.state.sessions.set(view.id, { status });
     terminal.open();

@@ -91,6 +91,13 @@ export function onTouchTyping(apply) {
  * height under its keyboard and pans the page beneath them, so they must fit themselves.
  * `fitted(height)` runs after each update, with null while the element is not shown.
  */
+/** The scroll offset that brings a row into a box's view, moving it as little as possible. */
+export function revealRow(scrollTop, viewHeight, rowTop, rowHeight) {
+  if (rowTop < scrollTop) return rowTop;
+  if (rowTop + rowHeight > scrollTop + viewHeight) return rowTop + rowHeight - viewHeight;
+  return scrollTop;
+}
+
 export function bindVisibleViewport(element, name, { shown = () => !element.hidden, watch = [element], fitted = () => {} } = {}) {
   const viewport = window.visualViewport;
   const props = ['top', 'bottom', 'height'].map((edge) => `--${name}-viewport-${edge}`);

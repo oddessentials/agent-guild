@@ -532,6 +532,7 @@ body:has(#app[hidden]):has(#auth[hidden]):has(#stopped[hidden])::after {
 .panel-title { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1 1 16rem; }
 .panel-title .title { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .panel-title .sub { display: block; color: var(--muted); font-size: 0.78rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.panel-size { flex: none; color: var(--muted); font-size: 0.78rem; white-space: nowrap; }
 .panel-switch {
   min-width: 0; padding: 2px 6px; margin: -2px -6px; border: 0; border-radius: 6px; background: none;
   color: var(--text); font: inherit; text-align: left; cursor: pointer;

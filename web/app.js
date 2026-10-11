@@ -4,7 +4,7 @@
 import { SOUNDS, MAX_ALERT_AGE_MS, playOnce, rearmSound, managerLossWatcher, stopWatcher, updateWatcher } from './alerts.js';
 import { TerminalCopy } from './terminal-copy.js';
 import { TerminalControls, bindTerminalViewport } from './terminal-controls.js';
-import { topbarInline, dockMode, clampDockWidth, stageBesideDock, splitMode, clampRatio, bindSplitter, bindVisibleViewport, touchTyping, DOCK_MIN, SPLIT_RATIO_MIN } from './layout.js';
+import { topbarInline, dockMode, clampDockWidth, stageBesideDock, splitMode, clampRatio, bindSplitter, bindVisibleViewport, revealRow, touchTyping, DOCK_MIN, SPLIT_RATIO_MIN } from './layout.js';
 import { highlightParts, rankRepos, recentFirst, remember, repoForOrigin, repoKey } from './repo-search.js';
 import { createActivityFavicon, isSessionWorking } from './activity-favicon.js';
 import { createRemoteAccessUI } from './remote-access.js';
@@ -6050,15 +6050,23 @@ class TerminalView {
             this.showLink(null);
             terminalControls.refresh();
             this.takeDeviceSize();
+            paintSizeNote();
           });
         }
         break;
       case 'data':
         this.term.write(msg.data);
         break;
-      case 'resize':
-        this.term.resize(msg.cols, msg.rows);
+      case 'resize': {
+        // Writes are queued; the size must land between the output before it and the output after it, as it did in the server's mirror.
+        const ws = this.ws;
+        this.term.write('', () => {
+          if (this.disposed || this.ws !== ws) return;
+          this.term.resize(msg.cols, msg.rows);
+          paintSizeNote();
+        });
         break;
+      }
       case 'exit':
         this.inputReady = false;
         this.inputSnapshot = null;
@@ -6092,9 +6100,21 @@ class TerminalView {
 
   takeDeviceSize() {
     if (!this.takeSize || !this.shown || this.inputSnapshot || !this.el.isConnected || this.ws?.readyState !== WebSocket.OPEN) return;
-    try { this.fit.fit(); } catch { return; }
     this.takeSize = false;
-    this.send({ type: 'resize', cols: this.term.cols, rows: this.term.rows });
+    const ws = this.ws;
+    this.term.write('', () => {
+      if (this.disposed || this.ws !== ws) return;
+      try { this.fit.fit(); } catch { this.takeSize = true; return; }
+      this.send({ type: 'resize', cols: this.term.cols, rows: this.term.rows });
+      paintSizeNote();
+    });
+  }
+
+  /** Whether another screen gave this terminal its size: this pane would fit it differently. */
+  sizedElsewhere() {
+    if (!this.el.isConnected) return false;
+    const fit = this.fit.proposeDimensions();
+    return Boolean(fit) && (fit.cols !== this.term.cols || fit.rows !== this.term.rows);
   }
 
   mount(host, { focus = true } = {}) {
@@ -6125,11 +6145,17 @@ class TerminalView {
       if (lastY === null || e.touches.length !== 1) return;
       e.preventDefault();
       const touch = e.touches[0];
-      // A terminal wider than its pane pans sideways in the pane.
-      this.el.parentElement.scrollLeft += lastX - touch.clientX;
+      const host = this.el.parentElement;
+      // A terminal larger than its pane pans in the pane; its own history scrolls once the pane's edge is reached.
+      host.scrollLeft += lastX - touch.clientX;
       lastX = touch.clientX;
       const delta = lastY - touch.clientY;
       lastY = touch.clientY;
+      const room = delta > 0 ? host.scrollHeight - host.clientHeight - host.scrollTop : host.scrollTop;
+      if (delta && room > 0) {
+        host.scrollTop += Math.sign(delta) * Math.min(Math.abs(delta), room);
+        return;
+      }
       if (this.term.buffer.active.type === 'alternate' || this.term.modes.mouseTrackingMode !== 'none') {
         const target = this.el.querySelector('.xterm-screen') || this.el;
         target.dispatchEvent(new WheelEvent('wheel', {
@@ -6193,7 +6219,19 @@ const terminalControls = new TerminalControls({
     return { term: view.term, socket: view.ws, run: session.startedAt, name: session.name };
   },
 });
-bindTerminalViewport($('terminal-panel'), $('terminal-controls'));
+// A keyboard shrinks the viewport, not the terminal: each pane scrolls so its cursor row stays in view.
+bindTerminalViewport($('terminal-panel'), $('terminal-controls'), {
+  shrunk: () => {
+    for (const id of state.panes) {
+      const view = state.views.get(id);
+      const host = view?.el.parentElement;
+      if (!host || !view.el.isConnected) continue;
+      const cell = view.el.querySelector('.xterm-rows')?.firstElementChild?.offsetHeight || 17;
+      const top = view.el.getBoundingClientRect().top - host.getBoundingClientRect().top + host.scrollTop + view.term.buffer.active.cursorY * cell;
+      host.scrollTop = revealRow(host.scrollTop, host.clientHeight, top, cell);
+    }
+  },
+});
 bindVisibleViewport($('dock'), 'dock', { fitted: fitPickerList });
 bindVisibleViewport($('toast'), 'toast');
 
@@ -6310,6 +6348,12 @@ function layoutPanes() {
     takePaneSizes();
   }
   renderPaneLabels();
+  paintSizeNote();
+}
+
+function paintSizeNote() {
+  const view = state.views.get(state.activeId);
+  $('panel-size').hidden = !(view?.shown && view.sizedElsewhere());
 }
 
 /** Arranging the panes (split, unsplit, dragging the splitter) gives each terminal its pane's size. */
@@ -6386,6 +6430,7 @@ function updatePanel() {
   const stop = $('panel-stop');
   stop.textContent = s.status !== 'running' ? 'Remove' : s.multiplexer ? 'Detach' : 'Stop';
   renderPaneLabels();
+  paintSizeNote();
 }
 
 // ---- voice input ----------------------------------------------------------

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { topbarInline, dockMode, clampDockWidth, stageBesideDock, splitMode, clampRatio, bindSplitter, bindVisibleViewport, DOCK_DEFAULT, DOCK_MIN, DOCK_MAX, WORKSPACE_MIN } from '../web/layout.js';
+import { topbarInline, dockMode, clampDockWidth, stageBesideDock, splitMode, clampRatio, bindSplitter, bindVisibleViewport, revealRow, DOCK_DEFAULT, DOCK_MIN, DOCK_MAX, WORKSPACE_MIN } from '../web/layout.js';
 import { bindTerminalViewport } from '../web/terminal-controls.js';
 
 test('the top bar keeps its controls inline only where they fit on one row', () => {
@@ -137,7 +137,6 @@ function fakePage(t) {
       hidden: false, props, attributes, dataset,
       style: { setProperty: (name, value) => props.set(name, value), removeProperty: (name) => props.delete(name) },
       toggleAttribute: (name, on) => (on ? attributes.add(name) : attributes.delete(name)),
-      querySelectorAll: () => [],
     };
   };
   return {
@@ -204,19 +203,35 @@ test('the terminal panel turns compact above a keyboard and back when it closes'
   const page = fakePage(t);
   const panel = page.element();
   const controls = page.element();
-  bindTerminalViewport(panel, controls);
+  let shrunk = 0;
+  bindTerminalViewport(panel, controls, { shrunk: () => shrunk++ });
   page.frame();
   assert.equal(panel.props.get('--terminal-viewport-bottom'), '0px');
   assert.equal(panel.attributes.has('data-compact'), false);
+  assert.equal(shrunk, 0, 'the first measurement is not a keyboard');
 
   page.viewport.height = 367;
   page.fire('viewport', 'resize');
   page.frame();
   assert.equal(panel.attributes.has('data-compact'), true);
   assert.equal(panel.props.get('--terminal-viewport-bottom'), '433px');
+  assert.equal(shrunk, 1, 'a keyboard opening is');
+
+  page.viewport.height = 800;
+  page.fire('viewport', 'resize');
+  page.frame();
+  assert.equal(shrunk, 1, 'a keyboard closing is not');
 
   page.hide(controls, true);
   page.frame();
   assert.deepEqual(edges(panel, 'terminal').slice(0, 2), [null, null], 'without touch keys the panel keeps its usual place');
   assert.equal(panel.attributes.has('data-compact'), false);
+});
+
+test('a pane scrolls just enough to show the cursor row above a keyboard', () => {
+  assert.equal(revealRow(0, 300, 20, 17), 0, 'a prompt near the top stays where it is');
+  assert.equal(revealRow(0, 300, 600, 17), 317, 'a prompt below the view is brought to its bottom edge');
+  assert.equal(revealRow(500, 300, 20, 17), 20, 'a prompt above the view is brought to its top edge');
+  assert.equal(revealRow(500, 300, 600, 17), 500, 'a visible prompt leaves the view alone');
+  assert.equal(revealRow(100, 300, 10, 400), 10, 'a row taller than the view shows its top');
 });
