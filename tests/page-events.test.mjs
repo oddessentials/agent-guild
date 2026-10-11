@@ -329,7 +329,7 @@ function linkPage(hello) {
 function addTerminal(page) {
   const source = app.match(/  connect\(\) \{[^]*?\n  \}/)?.[0];
   assert.ok(source, 'TerminalView.connect is present');
-  page.context.terminalControls = { refresh() {} };
+  Object.assign(page.context, { terminalControls: { refresh() {} }, PAGE_ID: 'page' });
   const view = Object.assign(runInNewContext(`({${source}})`, page.context), {
     id: `terminal-${page.state.views.size}`, retry: 0, showLink() {}, onMessage() {},
   });
@@ -354,7 +354,8 @@ test('rejected input warns once until a running snapshot completes, across retri
       onData(callback) { input = callback; }, reset() {}, resize() {},
       write(_data, callback) { if (callback) writes.push(callback); },
     };
-    view.takeDeviceSize = () => {};
+    view.followSize = () => {};
+    view.layoutChanged = () => {};
     view.revealCursor = () => {};
     view.send = (message) => delivered.push(message.data);
     Object.assign(page.context, { view, toast: (message) => warnings.push(message), paintSizeNote() {} });

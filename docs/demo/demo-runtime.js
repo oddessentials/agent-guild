@@ -922,7 +922,8 @@
         var current = match && sessions.find(function (item) { return item.id === match[1]; });
         if (!current) return self.close(4404, 'session not found');
         var text = transcripts[current.id] || demoScreen(current);
-        self.emit({ data: JSON.stringify({ type: 'snapshot', data: text, cols: 120, rows: 32, session: clone(current) }) });
+        self.session = current;
+        self.emit({ data: JSON.stringify({ type: 'snapshot', data: text, cols: current.cols, rows: current.rows, generation: current.sizeGeneration || 0, owner: false, session: clone(current) }) });
       }
     }, 20);
   }
@@ -939,6 +940,12 @@
       var message = JSON.parse(raw);
       if (message.type === 'ping') return this.emit({ data: JSON.stringify({ type: 'pong' }) });
       if (!/\/terminal/.test(this.url)) return;
+      var current = this.session;
+      if (current && (message.type === 'claim' || (message.type === 'resize' && message.generation === current.sizeGeneration))) {
+        if (message.type === 'claim') current.sizeGeneration = (current.sizeGeneration || 0) + 1;
+        current.cols = message.cols; current.rows = message.rows;
+        return this.emit({ data: JSON.stringify({ type: 'resize', cols: current.cols, rows: current.rows, generation: current.sizeGeneration, owner: true }) });
+      }
       if (message.type === 'input' && message.data && !/[\r\n]/.test(message.data)) this.emit({ data: JSON.stringify({ type: 'data', data: message.data }) });
       else if (message.type === 'input' && /[\r\n]/.test(message.data || '')) this.emit({ data: JSON.stringify({ type: 'data', data: '\r\n\u001b[2m[demo only — no command was executed]\u001b[0m\r\n> ' }) });
     } catch (_) { /* ignore malformed demo input */ }

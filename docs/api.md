@@ -920,15 +920,22 @@ After a reconnect, treat `hello` as the new source of truth.
 ### `GET /api/v1/sessions/:id/terminal`
 
 This socket is the interactive terminal for one session. Any number of
-clients may attach to the same session.
+clients may attach to the same session. A client that may size the terminal
+adds `page=<id>` to the URL, an id of 1 to 64 letters, digits, `-` or `_` that
+names one page load. The terminal has one size: the page that last sent
+`claim` owns it, and only that page's `resize` messages under its latest claim
+change it. The size stays when the owner disconnects. On Windows, ConPTY
+repaints the whole screen after every resize, starting with one drawn at the
+old size; that repaint can leave copied or missing lines in the scrollback, so
+the page resizes only when the owner's terminal area changes its grid.
 
 Server to client:
 
 | Message | Meaning |
 | --- | --- |
-| `{ type: "snapshot", data, cols, rows, session }` | Always first. `data` is a VT escape sequence stream that redraws the current screen and scrollback. Reset the terminal and write it. |
+| `{ type: "snapshot", data, cols, rows, generation, owner, session }` | Always first. `owner` says whether this page owns the size, and `generation` counts claims. `data` is a VT escape sequence stream that redraws the current screen and scrollback. Reset the terminal and write it. |
 | `{ type: "data", data }` | Terminal output, in order, directly after the snapshot. |
-| `{ type: "resize", cols, rows }` | Another client changed the terminal size. |
+| `{ type: "resize", cols, rows, generation, owner }` | The size changed or was claimed. Sent to every client, and to the owner even when its `resize` left the size unchanged. |
 | `{ type: "exit", exitCode, signal }` | The process ended. Also sent after the snapshot when attaching to an exited session. |
 | `{ type: "removed" }` | The session was removed. The socket then closes with code 4410. |
 | `{ type: "pong" }` | The answer to a client's `ping`. |
@@ -938,7 +945,8 @@ Client to server:
 | Message | Meaning |
 | --- | --- |
 | `{ type: "input", data }` | Keystrokes or pasted text, exactly as a terminal would send them. |
-| `{ type: "resize", cols, rows }` | Resize the terminal. The last client to resize wins. |
+| `{ type: "claim", cols, rows }` | Take the size for this page and set it. Needs `page`. |
+| `{ type: "resize", generation, cols, rows }` | Resize the terminal. Ignored unless this page owns the size and `generation` is the latest. |
 | `{ type: "ping" }` | Ask for a `pong`, to check that the link is alive. |
 
 ### Terminal queries: clients must not answer

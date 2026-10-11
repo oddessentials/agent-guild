@@ -360,7 +360,7 @@ async function waitForQueryResult(client, label) {
   }
 }
 
-const terminal = (id) => new Client(`${base.replace('http', 'ws')}/api/v1/sessions/${id}/terminal?token=${token}`);
+const terminal = (id, page = null) => new Client(`${base.replace('http', 'ws')}/api/v1/sessions/${id}/terminal?token=${token}${page ? `&page=${page}` : ''}`);
 
 const findProvider = async (id) => (await call('GET', '/providers')).body.providers.find((p) => p.id === id);
 
@@ -1165,7 +1165,7 @@ test('a session runs, streams output, accepts input and resizes', async () => {
   assert.equal(session.status, 'running');
   assert.equal(session.cwd, home);
 
-  const client = terminal(session.id);
+  const client = terminal(session.id, 'test-page');
   await client.opened;
   await waitFor(() => client.messages[0], { label: 'snapshot' });
   assert.equal(client.messages[0].type, 'snapshot', 'the first message is always a snapshot');
@@ -1181,7 +1181,8 @@ test('a session runs, streams output, accepts input and resizes', async () => {
   await waitForText(client, session.id, '|term_program=', 'env line');
   assert.ok(client.output.includes(`ENV:${session.id}|fake|${base}|${path.join(home, 'bin')}|tmux=|term_program=|herdr=|home=\r`), client.output);
 
-  client.send({ type: 'resize', cols: 101, rows: 33 });
+  client.send({ type: 'resize', generation: 0, cols: 99, rows: 30 });
+  client.send({ type: 'claim', cols: 101, rows: 33 });
   await waitFor(async () => (await call('GET', `/sessions/${session.id}`)).body.session.cols === 101, { label: 'resize' });
   if (process.platform === 'win32') {
     // ConPTY confirms a resize by emitting CSI 8 ; rows ; cols t. (A Node
@@ -2510,7 +2511,7 @@ test('input that arrives after removal is ignored safely', async () => {
   const managed = ctx.manager.get(session.id);
   await call('DELETE', `/sessions/${session.id}`);
   managed.write('echo too late\r');
-  managed.resize(50, 10);
+  managed.claimSize('page', 50, 10);
   const health = await fetch(`${base}/api/v1/health`);
   assert.equal(health.status, 200);
 });

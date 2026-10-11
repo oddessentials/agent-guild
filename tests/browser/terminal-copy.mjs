@@ -39,6 +39,7 @@ const checks = await withPage({
     await evaluate(`(()=>{const a=${area};const start=a.value.indexOf(${JSON.stringify(text)});if(start<0)throw Error('text not found');a.focus();a.setSelectionRange(start,start+${text.length})})()`);
     await until('Copy enabled', () => evaluate(`!${sheet}.querySelector('[data-copy]').disabled`));
   };
+  const fitted = () => until('terminal fits its pane', () => evaluate(`(()=>{const t=${current};t.testFit??=(()=>{const f=new FitAddon.FitAddon();t.loadAddon(f);return f;})();const p=t.testFit.proposeDimensions();return t.testPendingWrites===0&&p.cols===t.cols&&p.rows===t.rows})()`));
   const load = async () => {
     await send('Page.navigate', { url: origin });
     await until('session cards', () => evaluate('document.querySelectorAll("#sessions .session-card").length >= 2'));
@@ -53,6 +54,7 @@ const checks = await withPage({
   await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
   await until('touch action visible', () => evaluate('!document.querySelector("#panel-copy").hidden'));
   pass('touch capability exposes Copy without UA sniffing');
+  await fitted();
   await send('Browser.setPermission', { permission: { name: 'clipboard-read' }, setting: 'granted', origin });
   await write('FIRST\r\n  quoted\u00a0text 中🙂\r\n\x1b[31mRED\x1b[0m <literal>', true);
   await layoutReady();
@@ -151,10 +153,8 @@ const checks = await withPage({
   await closeSheet();
   for (const [width, height] of [[600, 960], [800, 600], [360, 740]]) {
     await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: true });
-    // A terminal keeps its size through a viewport change; opening it again fits it to this screen.
     await evaluate('document.querySelector("#panel-close").click();document.querySelector("#sessions .session-card .open").click()');
-    await until('terminal size applied', () => evaluate(`${current}.testPendingWrites===0`));
-    await layoutReady();
+    await fitted();
     const anchor = await evaluate(`new Promise(resolve=>{
       const t=${current};
       const chunk=${JSON.stringify(width === 800 ? '中🙂e\u0301\u00a0' : 'abcdefghijklmnopqrstuvwxyz')};
