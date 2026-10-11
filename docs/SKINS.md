@@ -111,7 +111,7 @@ shipped ones are in `ui/`.
 | Grove | [grove-skin](../concept-art/grove-skin/README.md) | Fraunces | A card backdrop behind each portrait, light and dark |
 | Gnomeland | [gnomeland-skin](../concept-art/gnomeland-skin/README.md) | Almendra | SVG frame, lock, level and meter marks |
 | Goblinville | [goblinville-skin](../concept-art/goblinville-skin/README.md) | Germania One | SVG frame, lock, level and meter marks |
-| Professional | [build.mjs](../concept-art/professional-skin/build.mjs) | the system UI font | All SVG, built with `node concept-art/professional-skin/build.mjs`. Portraits are `banners/<tool>/`; no familiars, no frame, and the level badge and meters are CSS |
+| Professional | [professional-skin](../concept-art/professional-skin/README.md) | the system UI font | A glass object per tool rendered with Blender, in `objects/<tool>/` with a light and a dark version of each state; no familiars, no frame, and the level badge and meters are CSS |
 
 ## Slots
 

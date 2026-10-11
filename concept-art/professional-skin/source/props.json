@@ -1,0 +1,19 @@
+{
+  "_style": "Premium architectural visualisation, photoreal, clean modern design, soft natural light, no people, no text, no letters, no logos, no signage, no border.",
+  "backgrounds/page-light": {
+    "seed": 501,
+    "w": 1920,
+    "h": 1088,
+    "workflow": "qwen-image",
+    "upscale": 2,
+    "prompt": "A bright modern office atrium in the late morning, cinematic ultrawide view, floor-to-ceiling glass walls and a tall white ceiling with slender steel columns, pale oak floor and white walls, soft diffuse daylight pouring in from the left with gentle long shadows, a few potted trees far in the background, the centre of the frame mostly empty, calm, airy, high key and very light overall, shallow depth of field so everything is softly out of focus."
+  },
+  "backgrounds/page": {
+    "seed": 502,
+    "w": 1920,
+    "h": 1088,
+    "workflow": "qwen-image",
+    "upscale": 2,
+    "prompt": "An evening view from a high modern office floor, cinematic ultrawide view, floor-to-ceiling glass looking out over a city skyline at dusk, deep slate blue and charcoal tones with small warm points of light from the buildings, a faint reflection of the dark empty office interior in the glass, the centre of the frame mostly quiet dark sky, calm and understated, very dark overall, shallow depth of field so the city lights are soft round bokeh."
+  }
+}
