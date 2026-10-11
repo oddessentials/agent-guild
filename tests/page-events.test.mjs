@@ -9,6 +9,7 @@ const app = readFileSync(new URL('../web/app.js', import.meta.url), 'utf8');
 const connectSource = app.match(/function connectEvents\([^]*?\n\}/)?.[0];
 assert.ok(connectSource, 'connectEvents is present in app.js');
 const lifecycleSource = [
+  /function renderEmpty\([^]*?\n\}/,
   /async function loadProviders\([^]*?\n\}/,
   /function showAuth\([^]*?\n\}/,
   /addEventListener\('pagehide', \(\) => \{[^]*?\n\}\);/,
@@ -26,10 +27,11 @@ function connect({ changelogOpen = false, githubOpen = false, docked = null } = 
   const labels = [];
   const sockets = [];
   const timers = [], requests = [], refreshes = [], renders = [], auth = [];
+  const empty = { hidden: true };
   const listeners = new Map();
   const noop = () => {};
   const context = {
-    state: { stopping: false, stopRemaining: null, views: new Map(), eventsRetry: 0, providers: [] },
+    state: { stopping: false, stopRemaining: null, sessions: new Map(), views: new Map(), eventsRetry: 0, providers: [] },
     sessionsShown: false,
     WebSocket: class {
       static CONNECTING = 0; static OPEN = 1; static CLOSING = 2; static CLOSED = 3;
@@ -39,7 +41,7 @@ function connect({ changelogOpen = false, githubOpen = false, docked = null } = 
     requestLink: new AbortController(), AbortController,
     AuthError: class extends Error {},
     api: () => new Promise((resolve, reject) => requests.push({ resolve, reject })),
-    $: (id) => ({ open: id === 'changelog' && changelogOpen }),
+    $: (id) => id === 'empty' ? empty : ({ open: id === 'changelog' && changelogOpen }),
     dockShows: (panel) => panel === 'github' && githubOpen,
     dockView: { panel: githubOpen ? 'github' : null },
     load: (key) => (key === 'agentGuild.dock' ? docked : null),
@@ -52,8 +54,8 @@ function connect({ changelogOpen = false, githubOpen = false, docked = null } = 
     loadGitHub: () => calls.push('github'),
     setUpgrade: noop,
     renderVersion: noop,
-    setConnection: (kind, label) => { context.state.connected = kind === 'ok'; labels.push(label); },
-    renderSessions: () => renders.push('sessions'),
+    setConnection: (kind, label) => { context.state.connected = kind === 'ok'; labels.push(label); context.renderEmpty(); },
+    renderSessions: () => { renders.push('sessions'); context.renderEmpty(); },
     renderProviders: () => renders.push('providers'),
     renderHistory: () => renders.push('history'),
     scheduleStats: () => renders.push('stats'),
@@ -86,7 +88,7 @@ function connect({ changelogOpen = false, githubOpen = false, docked = null } = 
   context.connectEvents();
   const hello = { type: 'hello', version: '1.2.3', pid: 1, sessions: [], upgrade: null };
   return {
-    context, sockets, calls, alerts, recovery, labels, renders, auth, requests, refreshes, timers, hello, state: context.state,
+    context, sockets, calls, alerts, recovery, labels, renders, auth, requests, refreshes, timers, hello, empty, state: context.state,
     send: (msg, ws = sockets.at(-1)) => ws.onmessage({ data: JSON.stringify(msg) }),
     open: () => { const ws = sockets.at(-1); ws.readyState = 1; ws.onopen(); },
     close: () => sockets.at(-1).close(),
@@ -94,6 +96,28 @@ function connect({ changelogOpen = false, githubOpen = false, docked = null } = 
     retry: () => { assert.ok(timers.length, 'a reconnect is scheduled'); timers.shift()(); },
   };
 }
+
+test('the empty message waits for the first session list and still follows later connections and lists', () => {
+  for (const sessions of [[], [{ id: 'existing' }]]) {
+    const page = connect();
+    page.open();
+    assert.equal(page.empty.hidden, true, 'socket open is not an empty session list');
+    page.close();
+    page.retry();
+    page.open();
+    assert.equal(page.empty.hidden, true, 'a retry before the first hello is still loading');
+    page.send({ ...page.hello, sessions });
+    assert.equal(page.empty.hidden, sessions.length > 0, 'the first hello renders a genuinely empty list too');
+    page.close();
+    assert.equal(page.empty.hidden, true, 'a disconnected manager cannot confirm an empty list');
+    page.retry();
+    page.open();
+    assert.equal(page.empty.hidden, sessions.length > 0, 'reconnect retains the known list');
+    const updated = sessions.length ? [] : [{ id: 'new' }];
+    page.send({ ...page.hello, sessions: updated });
+    assert.equal(page.empty.hidden, updated.length > 0, 'the next hello refreshes the empty message');
+  }
+});
 
 test('a reconnect catches the open What\'s new panel up on a changelog.updated it missed', () => {
   const page = connect({ changelogOpen: true });
@@ -315,6 +339,72 @@ function addTerminal(page) {
   view.ws.send = (raw) => sent.push(JSON.parse(raw).type);
   return { view, ws: view.ws, sent, open: () => { view.ws.readyState = 1; view.ws.onopen(); } };
 }
+
+test('rejected input warns once until a running snapshot completes, across retries and ended sessions', () => {
+  const inputSource = app.match(/    this\.term\.onData\(\(data\) => \{[^]*?\n    \}\);/)?.[0];
+  const messageSource = app.match(/  onMessage\(msg\) \{[^]*?\n  \}/)?.[0];
+  assert.ok(inputSource && messageSource, 'the terminal input and snapshot handlers are present');
+  for (const status of ['running', 'exited']) {
+    const page = linkPage({ heartbeat: true });
+    const terminal = addTerminal(page);
+    const { view } = terminal;
+    const warnings = [], writes = [], delivered = [];
+    let input;
+    view.term = {
+      onData(callback) { input = callback; }, reset() {}, resize() {},
+      write(_data, callback) { if (callback) writes.push(callback); },
+    };
+    view.refit = () => {};
+    view.send = (message) => delivered.push(message.data);
+    Object.assign(page.context, { view, toast: (message) => warnings.push(message) });
+    runInNewContext(`view.onMessage = ({${messageSource}}).onMessage;\n(function() {${inputSource}}).call(view);`, page.context);
+    page.state.sessions.set(view.id, { status });
+    terminal.open();
+    if (status === 'running') view.ws.close();
+    input('\x1b[I'); input('\x1b[O');
+    assert.deepEqual(warnings, [], 'focus reports do not consume the warning');
+    const attempt = () => {
+      for (let i = 0; i < 10; i++) {
+        for (const data of ['\x1b[B', '\x1bOB', '\x1b[<35;10;10M', 'x', 'pasted text']) input(data);
+      }
+    };
+    attempt();
+    assert.deepEqual(warnings, [status === 'running'
+      ? 'Not sent: the terminal is reconnecting.' : 'Not sent: this session has ended.']);
+    assert.deepEqual(delivered, []);
+    const reconnect = () => { view.ws.close(); view.connect(); terminal.open(); };
+    const snapshot = (snapshotStatus) => page.send({
+      type: 'snapshot', session: { status: snapshotStatus }, data: '', cols: 80, rows: 24,
+    }, view.ws);
+    reconnect();
+    snapshot(status);
+    view.ws.close();
+    attempt();
+    assert.equal(warnings.length, 1, 'opening a socket and starting its snapshot do not rearm warnings');
+    reconnect();
+    writes.shift()();
+    view.ws.close();
+    attempt();
+    assert.equal(warnings.length, 1, 'an obsolete snapshot completion does not rearm warnings');
+    if (status === 'exited') {
+      reconnect();
+      snapshot('exited');
+      writes.shift()();
+      attempt();
+      assert.equal(warnings.length, 1, 'a completed ended snapshot does not rearm warnings');
+    }
+    reconnect();
+    page.state.sessions.set(view.id, { status: 'running' });
+    snapshot('running');
+    writes.shift()();
+    input('delivered');
+    assert.deepEqual(delivered, ['delivered']);
+    view.ws.close();
+    attempt();
+    assert.equal(warnings.length, 2, 'a new outage after recovery gets one new warning');
+    assert.equal(warnings.at(-1), 'Not sent: the terminal is reconnecting.');
+  }
+});
 
 test('a slow first screen is left to finish, then terminal heartbeats resume independently', () => {
   const page = linkPage({ heartbeat: true });

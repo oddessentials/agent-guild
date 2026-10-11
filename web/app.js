@@ -196,7 +196,7 @@ function paintManagerActions(root = document) {
 
 /** "No sessions" only from a manager that said so; the connection status says when it cannot be reached. */
 function renderEmpty() {
-  $('empty').hidden = state.sessions.size > 0 || !state.connected;
+  $('empty').hidden = !sessionsShown || !state.connected || state.sessions.size > 0;
 }
 
 function setConnection(kind, label) {
@@ -5914,6 +5914,7 @@ function exitLine(s, { exitCode, signal }) {
 class TerminalView {
   constructor(sessionId) {
     this.id = sessionId;
+    this.inputWarningShown = false;
     this.el = document.createElement('div');
     this.term = new window.Terminal({
       cursorBlink: true,
@@ -5938,10 +5939,13 @@ class TerminalView {
       return true;
     });
     this.term.onData((data) => {
-      if (state.sessions.get(this.id)?.status === 'running' && this.ws?.readyState === WebSocket.OPEN) return this.send({ type: 'input', data });
-      // Typing that cannot be delivered is said to be lost, never dropped quietly. Focus reports are xterm's own.
+      const running = state.sessions.get(this.id)?.status === 'running';
+      if (running && this.ws?.readyState === WebSocket.OPEN) return this.send({ type: 'input', data });
+      // Warn once per outage: wheel and mouse reports also arrive here. Ignore focus reports.
       if (data === '\x1b[I' || data === '\x1b[O') return;
-      toast(state.sessions.get(this.id)?.status === 'running' ? 'Not sent: the terminal is reconnecting.' : 'Not sent: this session has ended.');
+      if (this.inputWarningShown) return;
+      this.inputWarningShown = true;
+      toast(running ? 'Not sent: the terminal is reconnecting.' : 'Not sent: this session has ended.');
     });
     this.status = document.createElement('div');
     this.status.className = 'terminal-link';
@@ -6043,6 +6047,7 @@ class TerminalView {
           this.term.write(msg.data, () => {
             if (this.disposed || this.ws !== ws || ws.readyState !== WebSocket.OPEN || this.inputSnapshot !== msg) return;
             this.inputReady = msg.session.status === 'running';
+            if (this.inputReady) this.inputWarningShown = false;
             this.inputSnapshot = null;
             this.shown = true;
             this.showLink(null);
@@ -6725,6 +6730,7 @@ function connectEvents(refreshProviders = false) {
       if (!sessionsShown && load(DOCK_KEY) === 'github' && !dockView.panel) openGitHub({ focus: false });
       restorePanes();
       sessionsShown = true;
+      renderEmpty();
       setUpgrade(msg.upgrade, true);
       loadNews();
       // A changelog.updated sent while the socket was down is lost; catch up the open panel.

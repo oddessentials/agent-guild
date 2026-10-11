@@ -19,8 +19,8 @@ window.fetch=(input,init)=>{
   }
   if(url.pathname.endsWith('/memory/file')&&url.searchParams.get('path')==='topics/checkout.md'&&window.memoryGate)
     return window.memoryGate.then(()=>demoFetch(input,init)).then(res=>{
-      const read=res.json.bind(res);
-      res.json=()=>read().then(data=>{window.memoryStaleDelivered=true;return data;});
+      const read=res.text.bind(res);
+      res.text=()=>read().then(data=>{window.memoryStaleDelivered=true;return data;});
       return res;
     });
   if(url.pathname.endsWith('/history')&&!url.pathname.includes('/google/'))
