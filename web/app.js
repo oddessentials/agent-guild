@@ -311,7 +311,7 @@ function changeTheme(input) {
 // ---- skin -----------------------------------------------------------------
 
 /** The skins theme.js offers; it applied the saved one before the first paint. */
-const SKINS = window.agentGuildSkins ?? [{ id: 'guild', name: 'Guild' }];
+const SKINS = window.agentGuildSkins ?? [{ id: 'professional', name: 'Professional' }];
 
 function renderSkinChoices() {
   const choices = SKINS.map((skin) => {

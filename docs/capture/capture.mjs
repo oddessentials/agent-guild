@@ -359,7 +359,7 @@ async function takeShots(send, { url, token, sessions }) {
   await click('#settings-menu input[name="theme"][value="dark"]');
   await sleep(2000);
 
-  // The same tools and sessions in the Guild skin's 3D world, above the news.
+  // The same tools and sessions in the default skin's 3D world, above the news.
   await viewport(820);
   await click('#view-yard');
   await waitFor('the yard', `document.getElementById('yard-stage')?.dataset.ready === 'true'`, 60000);
