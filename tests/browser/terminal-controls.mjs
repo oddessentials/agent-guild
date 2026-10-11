@@ -72,6 +72,7 @@ const checks = await withPage({ name: 'terminal-controls', instrumentation }, as
   await until('cards', () => evaluate('document.querySelectorAll("#sessions .session-card").length>=3'));
   await evaluate('document.querySelector("#sessions .session-card .open").click()');
   await until('terminal', () => evaluate('testTerms.some(t=>t.element?.isConnected)'));
+  assert.equal(await evaluate(`document.activeElement===${currentTerm}.textarea`), true, 'a keyboard-and-mouse page types straight away');
   assert.equal(await evaluate(`document.querySelector('${strip}').hidden`), true);
   assert.equal(await evaluate('document.querySelector("#panel-text-toggle").checkVisibility()'), true);
   await click('#panel-text-toggle');
@@ -86,6 +87,10 @@ const checks = await withPage({ name: 'terminal-controls', instrumentation }, as
   await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
   await ready();
   await size(390, 844);
+  await evaluate('document.querySelector("#panel-close").click()');
+  await evaluate('document.querySelector("#sessions .session-card .open").click()');
+  await ready();
+  assert.equal(await evaluate(`document.activeElement===${currentTerm}.textarea`), false, 'a touch screen opens a terminal without raising its keyboard');
   assert.equal(await evaluate('document.querySelectorAll(".panel-actions .text-size").length'), 1, 'only one text-size button takes header space');
   await tap('#panel-text-toggle');
   await layoutReady();
@@ -267,6 +272,16 @@ const checks = await withPage({ name: 'terminal-controls', instrumentation }, as
 
   await size(390, 844);
   await capture('phone');
+  const header = () => evaluate(`(()=>{const brief=document.querySelector('#connection .brief');return {height:document.querySelector('.topbar').getBoundingClientRect().height,
+    brand:document.querySelector('.brand h1').checkVisibility(),brief:brief.checkVisibility(),text:brief.textContent,fits:brief.scrollWidth<=brief.clientWidth}})()`);
+  const connected = await header();
+  assert.deepEqual([connected.brand, connected.brief], [true, false]);
+  await evaluate('testSockets.findLast(s=>s.readyState===1 && s.url.includes("/events")).close()');
+  await until('link reported lost', () => evaluate('document.querySelector("#connection").classList.contains("down")'));
+  assert.deepEqual(await header(), { height: connected.height, brand: false, brief: true, text: 'Reconnecting…', fits: true });
+  await ready();
+  assert.deepEqual(await header(), connected);
+  pass('a phone header says when the link is lost, at its usual height, and comes back');
   const geometry = () => evaluate(`(()=>{
     const panel=document.querySelector('#terminal-panel').getBoundingClientRect();
     const controls=document.querySelector('${strip}').getBoundingClientRect();
@@ -358,5 +373,16 @@ const checks = await withPage({ name: 'terminal-controls', instrumentation }, as
   await ready();
   assert.equal(await font(), before + 1);
   pass('the terminal text size changes on request and this device remembers it');
+
+  await send('Page.addScriptToEvaluateOnNewDocument', { source: `{const real=matchMedia.bind(window);const faked={'(pointer: coarse)':false,'(any-pointer: coarse)':true};
+    window.matchMedia=(query)=>query in faked?{matches:faked[query],media:query,addEventListener(){},removeEventListener(){}}:real(query)}` });
+  await send('Page.navigate', { url: origin });
+  await until('laptop page', () => evaluate('Boolean(document.querySelector("#sessions .session-card .open"))'));
+  await evaluate('document.querySelector("#sessions .session-card .open").click()');
+  await until('terminal', () => evaluate('testTerms.some(t=>t.element?.isConnected)'));
+  assert.deepEqual(await evaluate(`[matchMedia("(any-pointer: coarse)").matches, navigator.maxTouchPoints, document.querySelector("#terminal-controls").hidden,
+    document.querySelector("#panel-copy").hidden, document.activeElement===${currentTerm}.textarea]`), [true, 5, true, true, true]);
+  assert.deepEqual(errors, []);
+  pass('a touch-screen laptop with a mouse keeps its terminal height and types straight away');
 });
 console.log(`${checks} terminal control checks passed.`);

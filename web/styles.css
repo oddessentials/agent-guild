@@ -85,7 +85,8 @@ code, pre { font-family: var(--font-mono); }
 }
 .topbar-end { display: flex; align-items: center; justify-content: flex-end; gap: 14px; flex-wrap: wrap; min-width: 0; }
 .connection { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 0.85rem; }
-.connection .dot { --dot: var(--warn); width: 8px; height: 8px; border-radius: 50%; background: var(--dot); }
+.connection .dot { --dot: var(--warn); flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--dot); }
+.connection .brief { display: none; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .connection.ok .dot { --dot: var(--ok); }
 .connection.down .dot { --dot: var(--danger); }
 
@@ -1221,6 +1222,11 @@ body:has(#terminal-panel:not([hidden]) .terminal-controls:not([hidden])) .toast 
 @media (max-width: 640px) {
   .topbar { padding: 10px 16px; }
   .connection .label { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .topbar:has(.connection.down) :is(h1, .version) { display: none; }
+  .topbar-end:has(.connection.down) { flex: 1 1 auto; flex-wrap: nowrap; }
+  .topbar-end:has(.connection.down) > :not(.connection) { flex: none; }
+  .connection.down { min-width: 0; }
+  .connection.down .brief { display: block; }
   .terminal-panel { inset: max(var(--topbar-h, 56px), var(--terminal-viewport-top, 0px)) 0 var(--terminal-viewport-bottom, 0px); border-radius: 0; }
   .session-grid { grid-template-columns: 1fr; }
   .cwd { flex-basis: 100%; }

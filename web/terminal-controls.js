@@ -1,4 +1,4 @@
-import { bindVisibleViewport } from './layout.js';
+import { bindVisibleViewport, onTouchTyping } from './layout.js';
 
 const ARROWS = { ArrowUp: 'A', ArrowDown: 'B', ArrowRight: 'C', ArrowLeft: 'D' };
 
@@ -19,12 +19,6 @@ export class TerminalControls {
     this.getCurrent = getCurrent;
     this.notify = notify;
     this.buttons = [...element.querySelectorAll('button')];
-    const touch = matchMedia('(any-pointer: coarse)');
-    const availability = () => {
-      element.hidden = !touch.matches && !navigator.maxTouchPoints;
-      this.refresh();
-    };
-    touch.addEventListener('change', availability);
     for (const button of this.buttons) {
       button.addEventListener('pointerdown', (event) => {
         this.cancel();
@@ -85,7 +79,7 @@ export class TerminalControls {
       subtree: true, attributes: true, attributeFilter: ['open'],
     });
     new MutationObserver(() => this.refresh()).observe(panel, { attributes: true, attributeFilter: ['hidden'] });
-    availability();
+    onTouchTyping((touch) => { element.hidden = !touch; this.refresh(); });
   }
 
   current() {

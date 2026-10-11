@@ -55,6 +55,7 @@ const checks = await withPage({
   await layoutReady();
   const geometry = await evaluate(`(()=>{const t=${current};const r=document.querySelector('.terminal-pane.focused .terminal-host').getBoundingClientRect();return [t.cols,t.rows,r.width,r.height]})()`);
   await evaluate('testMessages.length=0');
+  await evaluate(`${current}.blur()`);
   await tap('#panel-copy');
   await until('copy sheet', () => evaluate(`${sheet}.open`));
   const frozen = await evaluate(`${area}.value`);
@@ -79,9 +80,9 @@ const checks = await withPage({
   }
   await closeSheet();
   assert.equal(await evaluate(`${area}.value`), '');
-  assert.equal(await evaluate(`document.activeElement === ${current}.textarea`), true);
+  assert.equal(await evaluate(`document.activeElement === ${current}.textarea`), false, 'Done leaves a closed keyboard closed');
   assert.deepEqual(await evaluate('testMessages'), []);
-  pass('Done clears text and restores terminal focus without writing to the session');
+  pass('Done clears text without raising the keyboard or writing to the session');
   await tap('#panel-copy');
   await closeSheet(async () => {
     await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });

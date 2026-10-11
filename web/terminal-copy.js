@@ -1,4 +1,6 @@
 // A frozen copy surface keeps native touch selection separate from terminal gestures.
+import { onTouchTyping } from './layout.js';
+
 const SELECT_HINT = 'Touch and hold to select text.';
 
 export function captureTerminalText(term) {
@@ -31,14 +33,11 @@ export class TerminalCopy {
     this.status = dialog.querySelector('[role="status"]');
     this.current = null;
     this.attempt = null;
-    const touch = matchMedia('(any-pointer: coarse)');
-    const availability = () => { opener.hidden = !touch.matches && !navigator.maxTouchPoints; };
-    touch.addEventListener('change', availability);
-    availability();
+    onTouchTyping((touch) => { opener.hidden = !touch; });
     opener.addEventListener('click', () => this.open());
     this.copyButton.addEventListener('click', () => this.copy());
-    dialog.querySelector('[data-done]').addEventListener('click', () => this.close(true));
-    dialog.addEventListener('cancel', (event) => { event.preventDefault(); this.close(true); });
+    dialog.querySelector('[data-done]').addEventListener('click', () => this.close());
+    dialog.addEventListener('cancel', (event) => { event.preventDefault(); this.close(); });
     // A programmatic/native close can arrive after the sheet has already reopened.
     dialog.addEventListener('close', () => { if (!dialog.open) this.clear(); });
     this.text.addEventListener('select', () => this.selectionChanged());
@@ -110,11 +109,9 @@ export class TerminalCopy {
     }
   }
 
-  close(restoreFocus = false) {
-    const current = this.current;
+  close() {
     this.clear();
     if (this.dialog.open) this.dialog.close();
-    if (restoreFocus && current && this.getCurrent()?.term === current.term) current.term.focus();
   }
 
   clear() {
