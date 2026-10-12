@@ -126,7 +126,7 @@ const checks = await withPage({ name: 'terminal-controls', instrumentation }, as
   await tap('#panel-text-smaller');
   assert.equal(await evaluate(`${currentTerm}.options.fontSize`), touchFont);
   await escape();
-  assert.deepEqual(await evaluate(`[...document.querySelectorAll('${strip} button')].map(b=>b.dataset.key)`), ['ArrowLeft', 'ArrowUp', 'ArrowDown', 'ArrowRight', 'Tab', 'Enter', 'Escape', 'Interrupt', 'Paste', 'Clear']);
+  assert.deepEqual(await evaluate(`[...document.querySelectorAll('${strip} button')].map(b=>b.dataset.key)`), ['ArrowLeft', 'ArrowUp', 'ArrowDown', 'ArrowRight', 'Tab', 'Clear', 'Escape', 'Interrupt', 'Paste', 'Enter']);
   await write('\x1b[?1l');
   await evaluate(`${currentTerm}.focus()`);
   const focusedBefore = await evaluate(`document.activeElement===${currentTerm}.textarea`);
