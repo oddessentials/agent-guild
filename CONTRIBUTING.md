@@ -9,26 +9,16 @@ npm test
 ```
 
 * The tests start real managers and real pseudo-terminals, using a small fake
-  coding tool in `tests/fixtures`. CI runs them on Windows, macOS and Linux
-  with Node.js 22, 24 and 26, and installs the packed package on x64 and
-  arm64, with npm's bundled version and npm 12, and checks it with
-  `node tests/package/smoke.mjs <npm global prefix>`. On Alpine it checks
-  that `agent-guild` says how to build node-pty and that the package works
-  once it is built; `bash tests/package/musl.sh` runs that check with
-  Docker. CI also checks the boot service in a systemd
-  container (`bash tests/systemd/acceptance.sh <tgz>`), the release plan
-  (`npm ci --ignore-scripts` in `.github/release`, then
-  `node tests/release/plan.mjs`) and the packed tarball
-  (`node tests/package/check-tarball.mjs <tgz>`). The tmux card's test runs
-  only where tmux is installed.
-* The browser checks in `tests/browser` drive the real UI in Chrome; CI runs
-  all but `yard.mjs` on Linux, and `dialogs.mjs` in WebKit on macOS. Run
+  coding tool in `tests/fixtures`. The tmux card's test runs only where tmux
+  is installed.
+* CI also checks the browser UI, the packed package, the Alpine build, the
+  boot service and the release plan. Each step and the command it runs is in
+  [.github/workflows/ci.yml](.github/workflows/ci.yml).
+* The browser checks in `tests/browser` drive the real UI in Chrome. Run
   them in CI order with the sequence in
-  [tests/browser/README.md](tests/browser/README.md). For
-  example, `node tests/browser/proxy.mjs` checks the real UI and terminal
-  through a local HTTPS proxy with an isolated manager and test certificates.
-  On Windows, or if Chrome is not in a standard Linux or macOS location, set
-  `CHROME_PATH` to Chrome or Edge.
+  [tests/browser/README.md](tests/browser/README.md). On Windows, or if
+  Chrome is not in a standard Linux or macOS location, set `CHROME_PATH` to
+  Chrome or Edge.
 * `npm run test:yard` adds the Yard's browser check to its asset tests; CI
   does not run it.
 * In a checkout, `launchers/AgentGuild.cmd` (Windows) and

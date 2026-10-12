@@ -47,12 +47,6 @@ manager's existing safety checks and confirmation.
 preference. `renderer.js` handles geometry, camera and animations;
 `model.mjs` contains presentation-only placements and state mappings.
 
-Failed character/helper downloads are evicted from the asset cache.
-Existing objects can retry when their working/resting/exited state or
-helper appearance changes; rebuilding a world also provides a fresh load
-opportunity. Unchanged snapshots, telemetry and animation frames never
-trigger another attempt. Successful assets and in-flight loads stay shared.
-
 ## Worlds and animation
 
 One renderer and interaction system serves six separately authored worlds,
@@ -208,19 +202,9 @@ Set `YARD_SOFTWARE_GL=1` to use [Chromium's software WebGL fallback](https://chr
 only in these disposable fixture profiles; this never changes the user's
 normal browser settings.
 
-The Yard tests cover request parity between Cards and Yard, terminal/socket
-preservation, accounts/usage, benchmarks, history including missing folders
-and already-running conversations, session actions, GitHub clone/create,
-upgrade, stop/restart, authentication, graphics failure/retry, all skins,
-40 sessions, reduced motion, mobile overflow, reconnect and skin-load races.
-They also cover overlapping New/Resume requests, duplicate submission across
-views, independent install requests and model recovery without retry loops.
-Asset tests verify the shipped GLBs contain anchors, skinning and clips.
-
 `npm test` holds each world to 24 MiB: its GLB, the textures it references,
 its backdrop plates and its sky and surface maps. The release gate is
-195 MiB packed, and the Pages demo's is 215 MiB; the package measured
-188.1 MiB. Run `npm pack` and
+195 MiB packed, and the Pages demo's is 215 MiB. Run `npm pack` and
 `node tests/package/check-tarball.mjs <archive>` after asset changes. Pack on
 Linux/macOS for release: Windows npm archives do not preserve executable
 mode bits on node-pty's macOS spawn helpers, which the gate correctly rejects.
