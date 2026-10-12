@@ -697,6 +697,13 @@ meanwhile; `available` and `pendingVersion` are withheld during that time,
 because the files on disk are mid-replacement, and `POST /upgrade` answers
 409 `upgrade_in_progress`.
 
+After the upgraded manager starts, refresh every open browser page. The
+frontend handles restart events and reads the version from `hello`, but
+reconnecting does not reload its JavaScript. Refreshing is the compatibility
+boundary for manager upgrades; stale frontend code is not guaranteed to work
+with the new manager. Terminal sizing requires a page's claim and its current
+generation; the manager does not accept legacy ownerless resizes.
+
 `ptyBuild` is null where node-pty, the terminal library, runs from the builds
 it comes with: Windows, macOS, and Linux with glibc 2.28 or later. Elsewhere,
 such as Alpine with musl, node-pty is compiled on the computer, and
