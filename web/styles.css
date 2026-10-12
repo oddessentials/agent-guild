@@ -241,14 +241,14 @@ main { max-width: calc(1200px + var(--dock-space, 0px)); margin: 0 auto; padding
 }
 .stat-label { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
 .stat-reading { grid-column: 2 / -1; display: grid; grid-template-columns: subgrid; align-items: center; }
-.info {
+.info, .note-toggle {
   position: relative; flex: none; display: inline-grid; place-items: center; width: 0.9rem; height: 0.9rem; padding: 0;
   border: 0; border-radius: 50%; background: none; color: var(--muted); font-size: 0; cursor: help;
 }
-.info::before { content: ""; position: absolute; inset: 0; background: currentColor; mask: var(--icon-info) center / contain no-repeat; }
-.info::after { content: ""; position: absolute; inset: -6px; }
-.info:hover, .info:focus-visible { color: var(--accent); }
-.info:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.info::before, .note-toggle::before { content: ""; position: absolute; inset: 0; background: currentColor; mask: var(--icon-info) center / contain no-repeat; }
+.info::after, .note-toggle::after { content: ""; position: absolute; inset: -6px; }
+.info:hover, .info:focus-visible, .note-toggle:hover, .note-toggle:focus-visible, .note-toggle[aria-expanded="true"] { color: var(--accent); }
+.info:focus-visible, .note-toggle:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .tip {
   position: fixed; z-index: 30; width: max-content; max-width: min(320px, calc(100vw - 16px)); margin: 0; padding: 9px 11px;
   border-radius: var(--radius); background: var(--text); color: var(--bg); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
@@ -447,6 +447,9 @@ main { max-width: calc(1200px + var(--dock-space, 0px)); margin: 0 auto; padding
 .settings-menu .choice > .voice-input::before { mask-image: var(--icon-mic); }
 .settings-menu .choice > .read-aloud::before { mask-image: var(--icon-sound); }
 .settings-menu .choice > .autostart::before { mask-image: var(--icon-power); }
+.choice-row { display: flex; align-items: center; gap: 4px; padding-right: 8px; }
+.choice-row .choice { flex: 1; }
+.note-toggle { cursor: pointer; }
 .voice-note { margin: 0 8px 6px; max-width: 26ch; color: var(--muted); font-size: 0.75rem; line-height: 1.35; }
 .settings-menu .choice > .startup-boot::before { mask-image: var(--icon-server); }
 .settings-menu .choice > .startup-off::before, .settings-menu .choice > .view-name::before { visibility: hidden; }

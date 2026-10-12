@@ -83,7 +83,7 @@ function page() {
     return nodes.get(id);
   };
   const speech = fakeSpeech();
-  const storage = new Map([['read', 'on']]);
+  const storage = new Map();
   const context = {
     window: { speechSynthesis: speech.synth, SpeechSynthesisUtterance: speech.Utterance },
     createReader, $: node, READ_KEY: 'read',
@@ -175,7 +175,7 @@ test('playback keeps its button when the answer clears, and stops when any tab t
   p.requests[1].resolve({ reply: { id: 2, text: 'Three.' } });
   await settle();
   p.click();
-  p.storage.delete('read');
+  p.storage.set('read', 'off');
   p.context.renderRead();
   assert.equal(p.context.reader.session, null, 'turned off in another tab, the storage event\'s render stops it');
 });
