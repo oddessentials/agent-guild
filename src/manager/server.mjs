@@ -49,6 +49,7 @@ function vendorFiles() {
     '/vendor/xterm/addon-fit.js': path.join(pkgDir('@xterm/addon-fit'), 'lib/addon-fit.js'),
     '/vendor/xterm/addon-web-links.js': path.join(pkgDir('@xterm/addon-web-links'), 'lib/addon-web-links.js'),
     '/vendor/qrcode.mjs': path.join(path.dirname(require.resolve('qrcode-generator')), 'qrcode.mjs'),
+    '/vendor/markdown-it.mjs': path.join(pkgDir('markdown-it'), 'dist/browser/markdown-it.esm.min.mjs'),
   };
 }
 

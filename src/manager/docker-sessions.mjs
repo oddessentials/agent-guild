@@ -99,6 +99,8 @@ export class DockerSessions {
     this._shell(event, name, sid, agentId);
     // A done report for an agent that was never shown only ends its commands, which is all a tab needs.
     if (ending || (!entry.sub && name === 'Stop')) session.reportAgent({ agentId, status: 'done' });
+    // A tab's answer is the user's latest, as the main session's is; a sub-agent's is not.
+    if (!entry.sub && name === 'Stop') session.reportReply({ reply: event.reply ?? null });
     // A sub-agent's session runs once; a tab's runs again at its next prompt, with the role it was given.
     if (name === 'SessionEnd' && entry.sub) this.sessions.delete(sid);
   }

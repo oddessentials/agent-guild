@@ -1,68 +1,48 @@
 // An agent's answer read aloud: every word of its Markdown except fenced code, spoken a chunk at a time.
+import markdownit from './vendor/markdown-it.mjs';
 
 export const CODE_OMITTED = 'Code omitted.';
 // Chrome's network voices stop speaking an utterance after about 15 seconds.
 export const MAX_CHUNK = 200;
 
-const FENCE_OPEN = /^\s*(`{3,}|~{3,})(.*)$/;
-// Blockquote markers and a list item's marker, before a fence inside them.
-const CONTAINER = /^\s*(>\s?)*\s*(([-*+]|\d+[.)])\s+)?/;
-const TABLE_DIVIDER = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
-// A thematic break, or a setext heading's underline.
-const RULE = /^\s*(([-*_])(\s*\2){2,}|=+)\s*$/;
-const CODE_SPAN = /(`+)([^`]|[^`][\s\S]*?[^`])\1(?!`)/g;
+// CommonMark, with GitHub's tables; raw HTML is read as text.
+const markdown = markdownit();
 
-/** Markdown inline syntax dropped from text outside code spans; the words stay. */
-function plainInline(text) {
-  return text
-    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
-    .replace(/<((?:https?|mailto):[^>\s]+)>/g, '$1')
-    .replace(/\*+|~~/g, '')
-    .replace(/(^|[^\p{L}\p{N}_])_+(?=\S)/gu, '$1')
-    .replace(/(\S)_+(?![\p{L}\p{N}_])/gu, '$1');
-}
-
-function plainLine(line) {
-  let out = '';
-  let last = 0;
-  for (const match of line.matchAll(CODE_SPAN)) {
-    out += plainInline(line.slice(last, match.index)) + match[2];
-    last = match.index + match[0].length;
-  }
-  return (out + plainInline(line.slice(last))).replace(/`/g, '');
+/** The words of inline content: text, code spans and image descriptions, a line break where the source had one. */
+function inlineText(token) {
+  return token.children.map((child) => {
+    if (child.type === 'text' || child.type === 'code_inline') return child.content;
+    if (child.type === 'image') return child.content;
+    if (child.type === 'softbreak' || child.type === 'hardbreak') return '\n';
+    return '';
+  }).join('');
 }
 
 /**
- * The words to speak. A fence opens on a line that starts, after any indent, blockquote markers and list marker,
- * with three or more backticks or tildes (a backtick fence's info has no backtick) and closes on a line that is,
- * after the same, the same character, at least as many, and nothing else; an unclosed fence runs to the end. Each
- * fenced block is spoken as CODE_OMITTED.
+ * The words to speak, a line per paragraph line, heading, list item and table row. Each fenced code block is spoken
+ * as CODE_OMITTED; indented code is read as text. An ordered list item keeps its number.
  */
-export function spokenText(markdown) {
+export function spokenText(source) {
   const lines = [];
-  let fence = null;
-  for (const raw of String(markdown).replace(/\r\n?/g, '\n').split('\n')) {
-    const body = raw.replace(CONTAINER, '');
-    if (fence) {
-      const close = body.trim();
-      if (close.length >= fence.length && close === fence[0].repeat(close.length)) fence = null;
-      continue;
-    }
-    const open = body.match(FENCE_OPEN);
-    if (open && !(open[1][0] === '`' && open[2].includes('`'))) {
-      fence = open[1];
+  const push = (text) => lines.push(...text.split('\n').map((line) => line.trim()).filter(Boolean));
+  let number = '';
+  let row = null;
+  for (const token of markdown.parse(String(source), {})) {
+    if (token.type === 'fence') {
+      number = '';
       lines.push(CODE_OMITTED);
-      continue;
+    } else if (token.type === 'code_block') push(token.content);
+    else if (token.type === 'list_item_open') number = token.info ? `${token.info}${token.markup} ` : '';
+    else if (token.type === 'tr_open') row = [];
+    else if (token.type === 'tr_close') {
+      push(row.filter(Boolean).join(', '));
+      row = null;
+    } else if (token.type === 'inline') {
+      const text = inlineText(token).trim();
+      if (row) row.push(text);
+      else push(number + text);
+      number = '';
     }
-    if ((raw.includes('|') && TABLE_DIVIDER.test(raw)) || RULE.test(raw)) continue;
-    let line = raw
-      .replace(/^\s*(>\s?)+/, '')
-      .replace(/^\s*#{1,6}(\s+|$)/, '')
-      .replace(/\s+#+\s*$/, '')
-      .replace(/^\s*[-*+]\s+(\[[ xX]\]\s+)?/, '');
-    if (/^\s*\|/.test(line)) line = line.split('|').map((cell) => cell.trim()).filter(Boolean).join(', ');
-    line = plainLine(line).trim();
-    if (line) lines.push(line);
   }
   return lines.join('\n');
 }

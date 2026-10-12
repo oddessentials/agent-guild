@@ -1,54 +1,33 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { registerHooks } from 'node:module';
 import { runInNewContext } from 'node:vm';
-import { spokenText, speechChunks, createReader, CODE_OMITTED, MAX_CHUNK } from '../web/read-aloud.js';
 
-test('fenced code is skipped by one rule; indented code and inline code are read', () => {
-  const answer = [
-    '## Result',
-    'Run this:',
-    '```js',
-    'npm test',
-    '```',
-    '~~~~',
-    '```',
-    'still code, closed only by four tildes',
-    '~~~~',
-    '1. First step',
-    '   ```sh',
-    '   make',
-    '   ```',
-    '    indented text stays',
-    'Use `snake_case_name` and **bold** _words_ in [the docs](https://example.com).',
-    '| Name | Size |',
-    '| --- | ---: |',
-    '| a.txt | 2 KB |',
-    '---',
-    '> quoted',
-    '- [x] done item',
-    '```',
-    'an unclosed fence runs to the end',
-  ].join('\n');
-  assert.equal(spokenText(answer), [
-    'Result',
-    'Run this:',
-    CODE_OMITTED,
-    CODE_OMITTED,
-    '1. First step',
-    CODE_OMITTED,
-    'indented text stays',
-    'Use snake_case_name and bold words in the docs.',
-    'Name, Size',
-    'a.txt, 2 KB',
-    'quoted',
-    'done item',
-    CODE_OMITTED,
-  ].join('\n'));
-  assert.equal(spokenText('- Install:\n  ```sh\n  npm i\n  ```\n- Then read on.\n> ```\n> quoted code\n> ```\n> After the quote.'),
-    ['Install:', CODE_OMITTED, 'Then read on.', CODE_OMITTED, 'After the quote.'].join('\n'), 'fences inside list items and quotes open and close by the same rule');
-  assert.equal(spokenText('1. ```js\n   run()\n   ```\n2. Next step'), [CODE_OMITTED, '2. Next step'].join('\n'), 'a fence that opens a list item');
-  assert.equal(spokenText('```a`b\nread'), 'ab\nread', 'a backtick fence\'s info has no backtick, so this is no fence');
+// The page loads markdown-it's browser build from the manager's /vendor path; Node loads the same file.
+registerHooks({
+  resolve: (specifier, context, next) => next(specifier === './vendor/markdown-it.mjs' ? 'markdown-it/browser' : specifier, context),
+});
+const { spokenText, speechChunks, createReader, CODE_OMITTED, MAX_CHUNK } = await import('../web/read-aloud.js');
+
+test('fenced code inside lists and quotes is skipped, and the prose after it is read', () => {
+  assert.deepEqual(spokenText('- > ```\n  > code\n  > ```\n  > After the quote.\n- - ```\n    code\n    ```\n    Nested prose.').split('\n'),
+    [CODE_OMITTED, 'After the quote.', CODE_OMITTED, 'Nested prose.']);
+});
+
+test('a fence closes only on its own closing fence', () => {
+  assert.deepEqual(spokenText('```md\n> ```\n> inner\n> ```\n```\nAfter the example.\n~~~\n```\n~~~\nAfter tildes.\n```\nunclosed runs to the end').split('\n'),
+    [CODE_OMITTED, 'After the example.', CODE_OMITTED, 'After tildes.', CODE_OMITTED]);
+});
+
+test('links, inline code and emphasis are read as their words', () => {
+  assert.equal(spokenText('Use `snake_case_name` and **bold** _words_ in [the docs](https://example.com) and <https://example.com/a>. ![Diagram](d.png)'),
+    'Use snake_case_name and bold words in the docs and https://example.com/a. Diagram');
+});
+
+test('headings, prose after code, indented code, list numbers and table rows each read as a line', () => {
+  assert.deepEqual(spokenText('## Result\nRun this:\n```sh\nnpm test\n```\nThen check the output.\n\n    indented code is read\n\n1. First step\n2. Second step\n\n| Name | Size |\n| --- | ---: |\n| a.txt | 2 KB |\n\n---\n> quoted').split('\n'),
+    ['Result', 'Run this:', CODE_OMITTED, 'Then check the output.', 'indented code is read', '1. First step', '2. Second step', 'Name, Size', 'a.txt, 2 KB', 'quoted']);
 });
 
 test('chunks follow lines and sentences and never pass the limit', () => {

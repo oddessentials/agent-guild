@@ -98,8 +98,13 @@ test('a tab runs the main agent: no card, Resume stays, and its commands end wit
   docker.report(shell(tab, 'root', 'PreToolUse', 'c1', 'npm run lint'));
   assert.deepEqual(agents(session), [], 'a session run by the main agent is not a sub-agent');
   assert.equal(shells(session, t), 2, 'its command shows as the terminal\'s activity');
-  docker.report(event(tab, 'root', 'Stop'));
+  docker.report(event(tab, 'root', 'Stop', { reply: 'Tab answer.' }));
   assert.equal(shells(session, t), 1, 'the tab\'s turn ends only the tab\'s command');
+  assert.equal(session.reply.text, 'Tab answer.', 'Read speaks the tab\'s answer');
+  docker.report(event('helper', 'helper', 'SessionStart'));
+  docker.report(event('helper', 'helper', 'Stop', { reply: 'Helper answer.' }));
+  assert.equal(session.reply.text, 'Tab answer.', 'not a sub-agent\'s');
+  docker.report(event('helper', 'helper', 'SessionEnd'));
   docker.report(event(tab, 'root', 'SessionEnd'));
   assert.equal(session.toolSessionId, MAIN);
   docker.report(event(MAIN, 'root', 'Stop'));
