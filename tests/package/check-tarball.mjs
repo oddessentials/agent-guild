@@ -3,8 +3,8 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 
-// web/yard ships the worlds and plates, and every skin a character per provider. The packed package
-// measured 188.1 MiB with the Docker Agent cast; the gate leaves room for art, which is not compressed to fit.
+// web/yard ships the worlds and plates, and every skin a character per provider. The gate leaves room for
+// art, which is not compressed to fit.
 const MAX_PACKED_BYTES = 195 * 1024 * 1024;
 const TOP_LEVEL = new Set(['package.json', 'README.md', 'LICENSE', 'bin', 'src', 'web', 'config', 'examples', 'node_modules']);
 const REQUIRED = ['package.json', 'README.md', 'LICENSE', 'src/manager/main.mjs', 'web/index.html', 'config/providers.default.json'];

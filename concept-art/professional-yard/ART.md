@@ -2,7 +2,7 @@
 
 The Professional yard is an office campus of glass and concrete round a paved
 plaza. Its halls and plates are authored in `concept-art/guild-yard/` (see
-that folder's `ART.md`). Its live cast (six campus staff and four office
+that folder's `ART.md`). Its live cast (campus staff and office
 robots) and the city's vehicles are textured 3D models made from generated images with
 [TRELLIS.2](https://github.com/microsoft/TRELLIS.2) (MIT), running in the
 local image studio's ComfyUI. The robots stand in for both agents and shell

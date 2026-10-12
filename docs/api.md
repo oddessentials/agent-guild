@@ -190,7 +190,7 @@ launch snapshots have `docker` but not `system`; a tmux or herdr session has
   else `{ os, osDetail, arch, hostArch, cpu: { model, threads }, memory, wsl, wslDistributions }`.
 * `docker`: `{ status, version, platform, os, arch, wsl2, context, endpoint, cli, detail }`,
   with `status` `pending`, `running`, `stopped`, `not_found`, `denied`,
-  `remote` or `failed`.
+  `remote` or `failed`. Fields other than `status` may be missing.
 
 Probe output and the environment itself are never returned.
 
@@ -387,8 +387,8 @@ files. When the tool cannot be asked, `count` is null, `scopes` is empty and
 * `activity` is `active` while the terminal is producing output and `quiet`
   after a short pause.
 * `resume` is the id of the tool's own session that was resumed, or null.
-* `task` is `install` for a session that installs, updates or uninstalls the
-  provider's tool, `upgrade` for the session that upgrades the manager (its
+* `task` is `install` for a session that installs, updates or uninstalls a
+  tool, `upgrade` for the session that upgrades the manager (its
   `provider` id is `agent-guild`), `clone` for a `git clone` (its `provider`
   id is `github`), and null for a session that runs the tool itself.
 * `clone` is `{ repo, path, accountId }` for a clone session, else null.
@@ -453,8 +453,8 @@ answers 409 `pty_unavailable` until it is.
 
 ### GitHub
 
-The GitHub accounts signed in to Agent Guild, in `GET /github` and
-`github.updated` events. Tokens never leave the manager.
+The GitHub accounts signed in to Agent Guild, in `GET /github`. Tokens never
+leave the manager.
 
 ```json
 {
@@ -486,8 +486,8 @@ when the user must add `publicKey` on GitHub themselves.
 ### Repository views
 
 Issues, workflow runs and open pull requests of one repository, read with one
-signed-in account. Each list holds the 30 most recently updated items;
-`truncated` is true when GitHub has more. Every `url` is a github.com page.
+signed-in account. Each list holds one page of GitHub's results;
+`truncated` is true when GitHub has more.
 
 ```json
 { "issues": [{ "number": 4, "title": "Dock is too narrow", "body": "Steps", "state": "open", "user": "octo-cat", "comments": 2, "updatedAt": "2026-10-01T00:00:00.000Z", "url": "https://github.com/octo-cat/agent-guild/issues/4" }],
@@ -503,7 +503,7 @@ while GitHub reports Actions operational or its status cannot be read, else `{ s
 from githubstatus.com. 409 `github_sign_in` means the account must sign in
 again.
 
-Branches come a page of up to 100 at a time, as
+Branches come a page at a time, as
 `{ branches, nextPage, defaultBranch, metadataError, fetchedAt, url }`, each
 branch `{ name, sha, protected, url }`. Follow `nextPage` until it is null,
 even after a short or empty page. Only page one has `defaultBranch`;
@@ -561,7 +561,7 @@ All paths are under `/api/v1`.
 | POST | `/environment/refresh` | `{ scope?, cwd?, id? }` | `202` with that scope's snapshot. |
 | GET | `/usage` | | `{ usage: Usage[] }`, one per account of every provider with a `usageSource`. |
 | GET | `/model-stats` | | `{ retrievedAt, stale, error, stats, pool, providers, models, sessions }`: benchmarks for each provider's models, from OpenRouter's public model list. `stats` describes each benchmark; `providers[id]` is `{ featured, models }`; `models[id]` holds a model's name, context, price and, per benchmark, its `value`, `rank`, `place`, `tied`, `of`, `level` (0-100) and `tier` (S to D); `sessions[id]` is the model id a session's model matched, or null. |
-| GET | `/news` | | `{ refreshedAt, refreshing, sources, items }`. `items` are the last 30 days of the built-in feeds, newest first, each `{ id, title, url, discussion, summary, source, sourceId, category, publishedAt }` with `category` `news`, `releases` or `research`. `sources` lists each feed as `{ id, name, category, error, okAt }`. A `news.updated` event follows a refresh. |
+| GET | `/news` | | `{ refreshedAt, refreshing, sources, items }`. `items` are the built-in feeds' recent items, newest first, each `{ id, title, url, discussion, summary, source, sourceId, category, publishedAt }` with `category` `news`, `releases` or `research`. `sources` lists each feed as `{ id, name, category, error, okAt }`. A `news.updated` event follows a refresh. |
 | GET | `/changelog` | | `{ refreshing, okAt, error, releases }`: Agent Guild's own releases, newest first, each `{ version, url, publishedAt, sections: [{ title, changes }] }`, where `title` may be null and a change is a list of text runs. A `changelog.updated` event follows a refresh. |
 | GET | `/providers/:id/history?account=&limit=&cwd=&q=` | | `{ history }`: a History object for one account (default `default`). |
 | GET | `/providers/:id/history/detail?account=&id=&cursor=` | | `{ detail }`; see [Saved messages](#saved-messages). |
@@ -570,7 +570,7 @@ All paths are under `/api/v1`.
 | GET | `/providers/:id/instructions?account=&cwd=` | | `{ instructions }`: an Instruction files object for one account and the working folder `cwd` (the home folder when empty). |
 | GET | `/providers/:id/instructions/file?account=&cwd=&index=&path=` | | `{ file: { index, scope, path, bytes, modified, truncated, text } }`: the start of file `index` of a freshly resolved list. 404 `instruction_file_gone` when that entry is no longer `path`. |
 | GET | `/github` | | `{ github }`: a GitHub object. |
-| POST | `/github/sign-in` | | `202 { github }`: starts a device-flow sign-in; the result arrives in `github.updated`. |
+| POST | `/github/sign-in` | | `202 { github }`: starts a device-flow sign-in; `github.updated` events follow. |
 | DELETE | `/github/sign-in` | | `{ github }`: cancels it. |
 | DELETE | `/github/accounts/:id` | | `{ github }`: forgets the account's sign-in. |
 | POST | `/github/accounts/:id/ssh` | | `{ account }`: sets up the account's SSH key on GitHub. A failure is reported in `account.ssh.error`. |
@@ -591,7 +591,7 @@ All paths are under `/api/v1`.
 | GET | `/sessions/:id/reply` | | `{ reply: { id, text } }`, or `{ reply: null }`: the whole text of the answer `session.reply` names. |
 | PATCH | `/sessions/:id` | `{ name }` | `{ session }`. |
 | POST | `/sessions/:id/stop` | | `{ session }`: ends the process. The session stays listed as exited. |
-| POST | `/sessions/:id/reattach` | | `{ session }`: runs an exited tmux or herdr session's multiplexer client again, keeping the session's id and screen. 409 `multiplexer_session_gone` once the multiplexer no longer has its session. |
+| POST | `/sessions/:id/reattach` | | `{ session }`: runs an exited tmux or herdr session's multiplexer client again, keeping the session's id and screen. 409 `multiplexer_session_gone` while `multiplexer.reattachable` is false. |
 | DELETE | `/sessions/:id` | | `{ ok: true }`: ends the process if needed and removes the session. |
 | POST | `/sessions/:id/agents` | Agent report | `{ agent }`, or `{ agent: null }`. |
 | POST | `/sessions/:id/model` | `{ model, displayName? }` | `{ model }`. Sets the session's model with source `report`. |
@@ -612,9 +612,9 @@ report token instead of the API token, in an `X-Agent-Guild-Report-Token`
 header. The manager gives that token only to the processes inside that
 session.
 
-Request bodies are limited to 64 KB, except `PUT /notes`,
+Request bodies are limited to 64 KiB, except `PUT /notes`,
 `POST /sessions/:id/reply` and `POST /sessions/:id/docker`, which accept
-1 MiB. WebSocket messages are limited to 1 MB.
+1 MiB. Messages a client sends on a WebSocket are limited to 1 MiB.
 
 ## WebSockets
 

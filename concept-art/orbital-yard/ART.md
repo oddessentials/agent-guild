@@ -2,7 +2,7 @@
 
 The Orbital yard is a station deck in orbit, with trusses out to solar wings,
 a docking hub and habitat modules, over a planet and a starfield. Its live
-models (six robots, four drones and six station modules) are textured 3D
+models (the robots, drones and station modules) are textured 3D
 models made from painted images with
 [TRELLIS.2](https://github.com/microsoft/TRELLIS.2) (MIT), running in the
 local image studio's ComfyUI. The drones are also the shell helpers in the

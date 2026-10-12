@@ -162,7 +162,7 @@ The first Claude Code usage meter may ask for access to the
 * The manager's environment on the Shell card: runtimes, design tools,
   Docker, and the versions a project pins
 * Start the manager when you sign in, on Windows, macOS and Linux
-* Shared notes, a news feed, six skins, light and dark mode
+* Shared notes, a news feed, skins, light and dark mode
 * Alert sounds when the manager stops or an update is found
 * **Videos**: Agent Guild's trailers and tutorials
 * The Yard: your tools and sessions as a 3D world, one for each skin

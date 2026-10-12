@@ -2,7 +2,7 @@
 
 The GitHub panel's account selection, issue editing, delayed requests and repository
 picker also have a browser regression check: `node tests/browser/github.mjs`.
-The environment dialog's four scopes, folder edit, session refusal, launch label
+The environment dialog's scopes, folder edit, session refusal, launch label
 and shell-card isolation are checked by `node tests/browser/environment-scopes.mjs`.
 Branch pagination, scroll anchoring, filtering and copy controls are checked by
 `node tests/browser/github-branches.mjs`. `BRANCH_SCREENSHOTS` optionally names
@@ -69,7 +69,7 @@ responsive layouts in every skin, the delayed connection badge and Retry,
 and the remembered terminal text size through its popover. The badge check
 seeks the CSS animation directly; it does not wait out its display delay.
 `CONTROLS_SCREENSHOTS=/path/to/folder` saves representative layouts. The HTTPS
-proxy check also sends seven keys, including Clear, through a real PTY in
+proxy check also sends touch keys, including Clear, through a real PTY in
 both cursor modes.
 
 Viewport geometry is simulated: these checks cannot certify a native mobile

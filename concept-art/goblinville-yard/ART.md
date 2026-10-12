@@ -1,8 +1,8 @@
 # Goblinville Yard art sources
 
 The Goblinville yard is a steam-powered goblin town on stilts over a misty
-bog. Its live models (six builders, four familiars, four shell helpers and
-six provider halls) are textured 3D models made from painted images with
+bog. Its live models (the builders, familiars, shell helpers and provider
+halls) are textured 3D models made from painted images with
 [TRELLIS.2](https://github.com/microsoft/TRELLIS.2) (MIT), running in the
 local image studio's ComfyUI. The surroundings are pre-rendered plates, built
 like the Guild's (see `concept-art/guild-yard/ART.md`).
@@ -64,7 +64,7 @@ cancelled after ten minutes.
 height in `world.json` and decimates it (25,000 triangles for builders, 10,000
 for familiars and helpers). It fits a skeleton from the silhouette: hips,
 spine, chest, neck and head, and for builders arms and legs. Weights are bone
-heat on a voxel proxy, transferred to the model. The five clips (`resting`,
+heat on a voxel proxy, transferred to the model. The clips (`resting`,
 `working`, `waiting`, `done`, `arrival`) are keyed per bone; builders work by
 tinkering or conducting, or, when their hands hold a staff or sit in pockets,
 by a steady lean and nod that leaves the hands still. Textures are 1024 px WebP for builders and 512 px for

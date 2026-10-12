@@ -4,7 +4,7 @@ Sources for `web/skins/goblinville/`: a steam-powered town of goblin builders on
 
 | Step | Command | Writes |
 | --- | --- | --- |
-| Builders | `python source/edits.py [provider[:state] ...]` | `raw/<provider>-<state>/`: the idle builder from `characters.json` (`qwen-image`), then its working and locked states edited from it (`qwen-edit`), so all three are the same figure in the same framing |
+| Builders | `python source/edits.py [provider[:state] ...]` | `raw/<provider>-<state>/`: the idle builder from `characters.json` (`qwen-image`), then its working and locked states edited from it (`qwen-edit`), so every state is the same figure in the same framing |
 | Props | `python source/props.py [name ...]` | `raw/<name>/`: familiars, the empty-state goblin and the page backgrounds from `props.json`; the backgrounds are then upscaled 2x with SeedVR2 into `raw/<name>-up/` |
 | Web art | `python source/build.py [--masks]` | `web/skins/goblinville/`: cut-outs, icons, familiars, backgrounds and the SVG badges, frame and gauge |
 

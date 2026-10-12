@@ -2,8 +2,8 @@
 
 The Grove yard is a sunlit glade in an old forest, where woodland spirits
 live in tree dwellings, with a spring at its centre, a stream behind it
-running into a lily pond, and wooded hills beyond. Its live models (six
-spirits and six provider tree halls) are textured 3D models made from
+running into a lily pond, and wooded hills beyond. Its live models (the
+spirits and provider tree halls) are textured 3D models made from
 painted images with [TRELLIS.2](https://github.com/microsoft/TRELLIS.2)
 (MIT), running in the local image studio's ComfyUI. Its familiars are the
 Guild's (`familiar_*`, see `concept-art/guild-yard/ART.md`) and its shell
@@ -52,7 +52,7 @@ model's textures to `web/yard/assets/maps/`, and the Yard tests.
   and on a mid-grey background. A carved and painted fox shown in
   three-quarter view, its lantern hung round its neck, reconstructed whole
   at seed 123.
-- **Rigging**: all six work with `steady` (a lean and nod with the hands
+- **Rigging**: every spirit works with `steady` (a lean and nod with the hands
   still). The fox wears a cloak, the deer stands on four legs, the water
   spirit's hands are clasped, and `tinker` folded the bird's wings across
   its face and twisted the lantern's body.
