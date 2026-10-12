@@ -903,6 +903,25 @@ test('a tool\'s instruction files are listed and opened by index per account', a
   assert.deepEqual([other.status, other.body.error.code], [404, 'instruction_file_gone']);
 });
 
+test('a turn\'s answer is reported whole with the report token, read by the page, and announced only by its number', async () => {
+  const session = await createFake();
+  const managed = ctx.manager.get(session.id);
+  const route = `/sessions/${session.id}/reply`;
+  const report = (reply) => call('POST', route, { reply }, { Authorization: '', 'X-Agent-Guild-Report-Token': managed.reportToken });
+  assert.equal((await call('POST', route, { reply: 'x' }, { Authorization: '', 'X-Agent-Guild-Report-Token': 'wrong' })).status, 401);
+  const long = 'Every word stays. '.repeat(5000);
+  assert.ok(long.length > 64 * 1024, 'longer than any other report may be');
+  assert.deepEqual((await report(long)).body.reply, { id: 1 });
+  assert.deepEqual((await call('GET', route)).body.reply, { id: 1, text: long.trim() });
+  assert.deepEqual((await call('GET', `/sessions/${session.id}`)).body.session.reply, { id: 1 }, 'session updates carry no text');
+  assert.equal((await call('GET', route, undefined, { Authorization: '' })).status, 401);
+  await report('Second.');
+  assert.deepEqual((await call('GET', route)).body.reply, { id: 2, text: 'Second.' });
+  await report(null);
+  assert.equal((await call('GET', route)).body.reply, null, 'a turn that ended without an answer leaves nothing to read');
+  assert.equal((await report(7)).status, 400);
+});
+
 test('the tool\'s own session id is reported over HTTP, in-band, and through hooks', async () => {
   const session = await createFake();
   assert.equal(session.toolSessionId, null);
@@ -1393,7 +1412,7 @@ test('Antigravity CLI reports its model and conversation once its plugin is turn
 
   const tool = await startTool('google');
   assert.equal(tool.session.reporting.state, 'pending');
-  await waitForText(tool.client, tool.session.id, 'FAKE-AGY READY hooks=1', 'the plugin\'s hook');
+  await waitForText(tool.client, tool.session.id, 'FAKE-AGY READY hooks=2', 'the plugin\'s hooks');
   tool.client.input('prompt');
   await waitForText(tool.client, tool.session.id, 'HOOK PreInvocation EXIT:0 ANSWER:{}', 'the hook answers Antigravity with an empty object');
   const reported = await waitFor(async () => {
@@ -1777,7 +1796,7 @@ test('an Antigravity plugin turned off in Antigravity shows reporting off, and t
   assert.deepEqual(JSON.parse(fs.readFileSync(config, 'utf8')), { ...turnedOff, plugins: { 'agent-guild': { enabled: true } } }, 'the rest of the settings untouched');
   const tool = await startTool('google');
   assert.equal(tool.session.reporting.state, 'pending');
-  await waitForText(tool.client, tool.session.id, 'FAKE-AGY READY hooks=1', 'the hook loaded again');
+  await waitForText(tool.client, tool.session.id, 'FAKE-AGY READY hooks=2', 'the hooks loaded again');
   tool.client.input('prompt');
   await waitFor(async () => (await sessionNow(tool.session.id)).toolSessionId, { label: 'the conversation reported', timeout: 15000 });
   await tool.client.close();

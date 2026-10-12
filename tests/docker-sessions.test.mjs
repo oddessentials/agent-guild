@@ -32,6 +32,8 @@ test('the hook keeps only what the manager needs of a Docker Agent event', () =>
   assert.deepEqual(dockerHookEvent(full), { event: 'PostToolUse', sessionId: MAIN, agentName: 'root', toolName: 'shell', toolUseId: 'call_1', command: 'go test ./...', model: 'openai/gpt-5' });
   assert.deepEqual(dockerHookEvent({ session_id: 'a', hook_event_name: 'session_start', source: 'startup' }), { event: 'SessionStart', sessionId: 'a' }, 'before 1.81.2 there is no agent name');
   assert.equal(dockerHookEvent({ hook_event_name: 'stop' }), null, 'an event with no session is dropped');
+  assert.deepEqual(dockerHookEvent({ session_id: 'a', hook_event_name: 'stop', stop_response: 'All done.' }), { event: 'Stop', sessionId: 'a', reply: 'All done.' }, 'a stop brings its answer');
+  assert.deepEqual(dockerHookEvent({ session_id: 'a', hook_event_name: 'stop' }), { event: 'Stop', sessionId: 'a', reply: null });
   assert.equal(dockerHookEvent({ session_id: 'a' }), null);
   assert.equal(dockerHookEvent('nope'), null);
 });
@@ -47,8 +49,9 @@ test('the named main session reports its commands, turns and model; its hooks ar
   docker.report(shell(MAIN, 'root', 'PostToolUse', 'call_1', 'go test ./...'));
   assert.equal(shells(session, t), 0);
   docker.report(shell(MAIN, 'root', 'PreToolUse', 'call_2', 'sleep 9'));
-  docker.report(event(MAIN, 'root', 'Stop'));
+  docker.report(event(MAIN, 'root', 'Stop', { reply: 'Tests pass.' }));
   assert.equal(shells(session, t), 0, 'the turn\'s end ends its foreground command');
+  assert.equal(session.reply.text, 'Tests pass.', 'the main session\'s answer is the card\'s');
   docker.report(event(MAIN, 'root', 'BeforeLlmCall', { model: 'openai/gpt-5' }));
   assert.deepEqual(session.model, { name: 'openai/gpt-5', displayName: null, source: 'report' });
   docker.report(event(MAIN, 'root', 'PreToolUse', { toolName: 'edit_file', toolUseId: 'call_3' }));
@@ -95,8 +98,13 @@ test('a tab runs the main agent: no card, Resume stays, and its commands end wit
   docker.report(shell(tab, 'root', 'PreToolUse', 'c1', 'npm run lint'));
   assert.deepEqual(agents(session), [], 'a session run by the main agent is not a sub-agent');
   assert.equal(shells(session, t), 2, 'its command shows as the terminal\'s activity');
-  docker.report(event(tab, 'root', 'Stop'));
+  docker.report(event(tab, 'root', 'Stop', { reply: 'Tab answer.' }));
   assert.equal(shells(session, t), 1, 'the tab\'s turn ends only the tab\'s command');
+  assert.equal(session.reply.text, 'Tab answer.', 'Read speaks the tab\'s answer');
+  docker.report(event('helper', 'helper', 'SessionStart'));
+  docker.report(event('helper', 'helper', 'Stop', { reply: 'Helper answer.' }));
+  assert.equal(session.reply.text, 'Tab answer.', 'not a sub-agent\'s');
+  docker.report(event('helper', 'helper', 'SessionEnd'));
   docker.report(event(tab, 'root', 'SessionEnd'));
   assert.equal(session.toolSessionId, MAIN);
   docker.report(event(MAIN, 'root', 'Stop'));

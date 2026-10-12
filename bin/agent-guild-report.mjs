@@ -21,7 +21,7 @@
 
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
-import { hookToReports, dockerHookEvent, claudeStatuslineToReport, formatStatusLine, antigravityUserConversation } from '../src/report/hooks.mjs';
+import { hookToReports, dockerHookEvent, claudeStatuslineToReport, formatStatusLine, antigravityUserConversation, antigravityReply } from '../src/report/hooks.mjs';
 
 // Importing node:http as an ES module costs a hook about 50 ms more than requiring it.
 const http = createRequire(import.meta.url)('node:http');
@@ -68,7 +68,8 @@ function readStdin() {
   });
 }
 
-function send(report, kind = report.shell !== undefined ? 'shells'
+function send(report, kind = report.reply !== undefined ? 'reply'
+  : report.shell !== undefined ? 'shells'
   : report.agentId !== undefined || report.finishForeground === true ? 'agents'
   : report.hello === true ? 'reporting'
   : report.toolSessionId !== undefined ? 'tool-session' : 'model') {
@@ -123,6 +124,30 @@ function firstRecord(file) {
   }
 }
 
+/** The last response of an Antigravity CLI turn, read back from the end of its transcript. */
+function antigravityTranscriptReply(file) {
+  if (typeof file !== 'string') return null;
+  let fd;
+  try {
+    fd = fs.openSync(file, 'r');
+    const size = fs.fstatSync(fd).size;
+    for (let bytes = 256 * 1024; ; bytes *= 4) {
+      const start = Math.max(0, size - bytes);
+      const buffer = Buffer.alloc(size - start);
+      fs.readSync(fd, buffer, 0, buffer.length, start);
+      const lines = buffer.toString('utf8').split('\n');
+      // A window that starts mid-file starts mid-line.
+      if (start > 0) lines.shift();
+      const reply = antigravityReply(lines.map(parseJson));
+      if (reply !== undefined || start === 0) return reply ?? null;
+    }
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
+
 function parseJson(raw) {
   try { return JSON.parse(raw); } catch { return null; }
 }
@@ -148,6 +173,7 @@ async function main() {
     // Antigravity CLI runs the hook in its sub-agents too, each a conversation of its own.
     if (typeof input.conversationId === 'string' && !antigravityUserConversation(firstRecord(input.transcriptPath))) return;
     for (const report of hookToReports(input)) await sendQuietly(report);
+    if (typeof input.conversationId === 'string' && input.hook_event_name === 'Stop') await sendQuietly({ reply: antigravityTranscriptReply(input.transcriptPath) });
     return;
   }
   if (args.claudeStatusline) {

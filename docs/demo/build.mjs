@@ -32,6 +32,7 @@ const vendor = {
   'xterm/addon-fit.js': '@xterm/addon-fit/lib/addon-fit.js',
   'xterm/addon-web-links.js': '@xterm/addon-web-links/lib/addon-web-links.js',
   'qrcode.mjs': 'qrcode-generator/dist/qrcode.mjs',
+  'markdown-it.mjs': 'markdown-it/dist/browser/markdown-it.esm.min.mjs',
 };
 for (const [target, dependency] of Object.entries(vendor)) {
   const from = path.join(modules, ...dependency.split('/'));

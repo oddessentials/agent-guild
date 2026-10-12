@@ -92,6 +92,7 @@ const checks = await withPage({ name: 'terminal-controls', instrumentation }, as
   await size(1200, 850);
   await send('Page.navigate', { url: origin });
   await until('cards', () => evaluate('document.querySelectorAll("#sessions .session-card").length>=3'));
+  assert.equal(await evaluate('document.querySelector("#read-choice").hidden'), false, 'Read aloud can be turned on before any terminal opens');
   await evaluate('document.querySelector("#sessions .session-card .open").click()');
   await until('terminal', () => evaluate('testTerms.some(t=>t.element?.isConnected)'));
   assert.equal(await evaluate(`document.activeElement===${currentTerm}.textarea`), true, 'a keyboard-and-mouse page types straight away');

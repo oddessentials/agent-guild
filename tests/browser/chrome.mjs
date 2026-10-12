@@ -14,6 +14,7 @@ const vendor = {
   '/vendor/xterm/addon-fit.js': '@xterm/addon-fit/lib/addon-fit.js',
   '/vendor/xterm/addon-web-links.js': '@xterm/addon-web-links/lib/addon-web-links.js',
   '/vendor/qrcode.mjs': 'qrcode-generator/dist/qrcode.mjs',
+  '/vendor/markdown-it.mjs': 'markdown-it/dist/browser/markdown-it.esm.min.mjs',
 };
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
