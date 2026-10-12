@@ -60,13 +60,13 @@ export function dockerDropinFile(env = {}, platform = process.platform) {
   return path.join(dir, 'hooks.d', `${PLUGIN_NAME}.yaml`);
 }
 
-// before_llm_call runs before every model call of every Docker Agent session, so the command checks for an Agent Guild
-// session before starting Node. Docker Agent runs hooks in PowerShell on Windows and in $SHELL elsewhere, whatever
-// shell that is, so the check there runs in sh.
+// before_llm_call runs before every model call of every Docker Agent session, so the command starts Node only in a
+// Docker Agent card, or a card with no reporting of its own such as a Shell card. Docker Agent runs hooks in PowerShell
+// on Windows and in $SHELL elsewhere, whatever shell that is, so the check there runs in sh.
 export function dockerDropin(platform = process.platform) {
   const command = platform === 'win32'
-    ? `if ($env:AGENT_GUILD_SESSION_ID) { ${REPORT_COMMAND} }`
-    : `sh -c '[ -z "$AGENT_GUILD_SESSION_ID" ] || exec ${REPORT_COMMAND}'`;
+    ? `if ($env:AGENT_GUILD_SESSION_ID -and [string]$env:AGENT_GUILD_REPORTING -in 'docker', '') { ${REPORT_COMMAND} }`
+    : `sh -c 'case "$AGENT_GUILD_REPORTING" in docker|"") [ -z "$AGENT_GUILD_SESSION_ID" ] || exec ${REPORT_COMMAND};; esac'`;
   return [
     `${DOCKER_DROPIN_MARKER}: it shows the model of each Docker Agent session Agent Guild starts.`,
     '# Turn it off from the Docker Agent card. Outside Agent Guild it does nothing.',

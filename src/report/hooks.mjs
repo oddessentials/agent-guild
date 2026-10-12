@@ -19,8 +19,8 @@
 // - Grok Build skips SubagentStop for a cancelled sub-agent; the SessionEnd
 //   of the sub-agent's own session then closes it, as does a StopCancelled
 //   inside it (its turn limit, no progress or a declined permission).
-// - Docker Agent's events are not translated here: each is sent whole to the
-//   manager, which tells its sessions apart (src/manager/docker-sessions.mjs).
+// - Docker Agent's events are not translated here: the manager tells its
+//   sessions apart (src/manager/docker-sessions.mjs).
 //
 // Shell commands come from the Bash, PowerShell (Claude Code, Codex CLI) and
 // run_terminal_command (Grok Build) tools; Claude Code's Monitor tool is a
@@ -129,6 +129,17 @@ export function dockerHookEvent(input) {
   if (model) out.model = model;
   if (event === 'Stop') out.reply = typeof input.stop_response === 'string' ? input.stop_response : null;
   return out;
+}
+
+/**
+ * Where the reporter sends a hook event, in a session whose AGENT_GUILD_REPORTING is `reporting`: 'docker' (the
+ * manager's Docker Agent route), 'reports' (hookToReports) or null (nowhere). Docker Agent alone names the agent on
+ * its events, from 1.81.2; in another tool's session they come from a Docker Agent run inside it.
+ */
+export function hookRoute(input, reporting) {
+  if (reporting === 'docker') return 'docker';
+  if (typeof input?.agent_name !== 'string') return 'reports';
+  return reporting ? null : 'docker';
 }
 
 /** Reports for one hook event: its sub-agents, shell commands, model and the tool's own session id. */

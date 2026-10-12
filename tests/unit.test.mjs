@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -14,10 +15,10 @@ import { herdrAgentReports, herdrSocket } from '../src/manager/herdr.mjs';
 import { paths } from '../src/manager/config.mjs';
 import { classifyInstall, expandHome, homeRelative, helpDescribes, platformDependency, listInstallations, knownLaunchers, updateHelpAccepted, uninstallPlan } from '../src/manager/install-channels.mjs';
 import { runPlan, encodePlan, removeFile, RUNNER } from '../src/manager/uninstall.mjs';
-import { hookToReports, claudeStatuslineToReport, formatStatusLine, antigravityReply } from '../src/report/hooks.mjs';
+import { hookToReports, hookRoute, claudeStatuslineToReport, formatStatusLine, antigravityReply } from '../src/report/hooks.mjs';
 import { shimContents, writeReportShims, prependPath, fileUrl, SHIM_NAME, LOADER_NAME } from '../src/manager/report-shims.mjs';
-import { bundleFiles, codexHookArgs, codexTrustArgs, codexHooksFrom, antigravityInstalled, antigravityPluginDir, antigravityConfigFile, antigravityPluginEnabled, helpLists, REPORT_COMMAND, dockerHookArgs, DOCKER_HOOK_FLAGS } from '../src/manager/session-hooks.mjs';
-import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { bundleFiles, codexHookArgs, codexTrustArgs, codexHooksFrom, antigravityInstalled, antigravityPluginDir, antigravityConfigFile, antigravityPluginEnabled, helpLists, REPORT_COMMAND, dockerHookArgs, DOCKER_HOOK_FLAGS, dockerDropin } from '../src/manager/session-hooks.mjs';
+import { execFile, execFileSync, spawn, spawnSync } from 'node:child_process';
 import { parseVersion, parseTmuxVersion, compareVersions, probeVersion, diagnosticLine, latestVersion, brewVersion } from '../src/manager/versions.mjs';
 import { SelfUpdate, isDevelopmentBuild } from '../src/manager/self-update.mjs';
 import { glibcVersion, loadPty, ptyBuild, ptyBuildCommand, ptyBuiltHere, ptyDir, ptyProblem, ptyRestartProblem } from '../src/manager/pty.mjs';
@@ -4238,6 +4239,78 @@ test('the Docker Agent hooks example fires pre_tool_use in autonomous mode too',
   assert.ok(blocks.pre_tool_use, 'the example has pre_tool_use hooks');
   assert.equal((blocks.pre_tool_use.match(/^  - /gm) || []).length, (blocks.pre_tool_use.match(/^    preempt_yolo: true$/gm) || []).length, 'every pre_tool_use entry is preempt_yolo');
   assert.deepEqual(Object.keys(blocks), ['pre_tool_use'], 'Docker Agent rejects preempt_yolo on any other event, and the flags cover the rest');
+});
+
+test('Docker Agent\'s hook events reach a Docker Agent or Shell card, never another tool\'s card', async (t) => {
+  const llmCall = { session_id: 'd1', hook_event_name: 'before_llm_call', agent_name: 'root', model_id: 'dmr/ai/qwen2.5:3B-Q4_K_M' };
+  const claudeStart = { session_id: 'c1', hook_event_name: 'SessionStart', source: 'startup', model: 'claude-opus-5-5' };
+  for (const reporting of ['claude', 'codex', 'antigravity', 'grok']) {
+    assert.equal(hookRoute(llmCall, reporting), null, `Docker Agent run inside a ${reporting} card`);
+    assert.equal(hookRoute(claudeStart, reporting), 'reports');
+  }
+  for (const reporting of ['', undefined]) {
+    assert.equal(hookRoute(llmCall, reporting), 'docker', 'Docker Agent run inside a Shell card');
+    assert.equal(hookRoute(claudeStart, reporting), 'reports');
+  }
+  assert.equal(hookRoute(llmCall, 'docker'), 'docker');
+  assert.equal(hookRoute({ session_id: 'd1', hook_event_name: 'session_start' }, 'docker'), 'docker', 'before 1.81.2 Docker Agent names no agent');
+
+  // The reporter itself, against a stand-in manager that keeps the route and body of each request.
+  const received = [];
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', () => {
+      received.push(`${req.url.split('/').pop()} ${body}`);
+      res.end('{}');
+    });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const reporter = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../bin/agent-guild-report.mjs');
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) if (key.startsWith('AGENT_GUILD_')) delete env[key];
+  Object.assign(env, { AGENT_GUILD_URL: `http://127.0.0.1:${server.address().port}`, AGENT_GUILD_SESSION_ID: 'card', AGENT_GUILD_REPORT_TOKEN: 'token' });
+  // The reporter waits for each answer before it exits, so everything it sent has arrived by then.
+  const hook = (reporting, payload) => new Promise((resolve, reject) => {
+    const child = execFile(process.execPath, [reporter, '--hook'], { env: { ...env, AGENT_GUILD_REPORTING: reporting }, timeout: 20000 }, (err) => (err ? reject(err) : resolve(received.splice(0))));
+    child.stdin.end(JSON.stringify(payload));
+  });
+  // Docker Agent run from a Claude Code card's shell tool: its model drop-in, and hooks the user configured.
+  assert.deepEqual(await hook('claude', llmCall), []);
+  assert.deepEqual(await hook('claude', { session_id: 'd1', hook_event_name: 'session_start', agent_name: 'root', source: 'startup' }), [], 'Resume keeps the card\'s own session');
+  assert.deepEqual(await hook('claude', { session_id: 'd1', hook_event_name: 'stop', agent_name: 'root' }), [], 'the card\'s commands keep running');
+  assert.deepEqual(await hook('claude', claudeStart), ['model {"model":"claude-opus-5-5"}', 'reporting {"hello":true}', 'tool-session {"toolSessionId":"c1"}'], 'the card\'s own tool still reports');
+  assert.deepEqual(await hook('', llmCall), ['docker {"event":"BeforeLlmCall","sessionId":"d1","agentName":"root","model":"dmr/ai/qwen2.5:3B-Q4_K_M"}']);
+});
+
+test('Docker Agent\'s model drop-in starts the reporter only in a Docker Agent or Shell card', () => {
+  // The command as Docker Agent reads it: the drop-in's one single-quoted YAML scalar, where '' stands for '.
+  const commandIn = (dropin) => dropin.match(/^ {4}command: '((?:[^']|'')*)'$/m)[1].replaceAll("''", "'");
+  for (const platform of ['win32', 'linux']) assert.match(commandIn(dockerDropin(platform)), /AGENT_GUILD_REPORTING/);
+  // Run as Docker Agent runs it, in PowerShell on Windows and in the user's shell elsewhere, with a stand-in reporter
+  // that notes its arguments.
+  const dir = tempDir();
+  const ran = path.join(dir, 'ran.log');
+  if (process.platform === 'win32') fs.writeFileSync(path.join(dir, `${SHIM_NAME}.cmd`), `@echo off\r\n>>"${ran}" echo %*\r\n`);
+  else fs.writeFileSync(path.join(dir, SHIM_NAME), `#!/bin/sh\necho "$*" >> "${ran}"\n`, { mode: 0o755 });
+  const base = { ...process.env };
+  for (const key of Object.keys(base)) if (key.startsWith('AGENT_GUILD_')) delete base[key];
+  const env = prependPath(base, dir);
+  const [shell, args] = process.platform === 'win32'
+    ? [path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command']]
+    : ['/bin/sh', ['-c']];
+  const command = commandIn(dockerDropin());
+  // A skip must succeed too: execFileSync throws on any other exit code.
+  const reported = (vars) => {
+    fs.rmSync(ran, { force: true });
+    execFileSync(shell, [...args, command], { env: { ...env, ...vars }, stdio: ['ignore', 'pipe', 'pipe'], timeout: 60000, windowsHide: true });
+    return fs.existsSync(ran) ? fs.readFileSync(ran, 'utf8').trim() : null;
+  };
+  assert.equal(reported({ AGENT_GUILD_SESSION_ID: 'card', AGENT_GUILD_REPORTING: 'docker' }), '--hook', 'a Docker Agent card');
+  assert.equal(reported({ AGENT_GUILD_SESSION_ID: 'card', AGENT_GUILD_REPORTING: '' }), '--hook', 'a Shell card');
+  assert.equal(reported({ AGENT_GUILD_SESSION_ID: 'card', AGENT_GUILD_REPORTING: 'claude' }), null, 'Docker Agent run inside a Claude Code card');
+  assert.equal(reported({}), null, 'outside Agent Guild');
 });
 
 test('reading Docker Agent history prints no SQLite experimental warning', async (t) => {
