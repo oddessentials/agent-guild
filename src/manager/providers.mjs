@@ -620,7 +620,7 @@ export class ProviderRegistry extends EventEmitter {
       const update = active.channel === 'download' && provider.install ? { file: null, args: [], command: provider.install } : null;
       return { channel: active.channel, resolvedPath: active.resolvedPath, realPath: active.realPath, update, probe: false, guidance: active.guidance ?? `${provider.tool} at ${active.resolvedPath} was not downloaded by Agent Guild. Update it the way you installed it.` };
     }
-    return classifyInstall({
+    const channel = classifyInstall({
       resolvedPath,
       provider,
       env: { ...this.env, ...provider.env },
@@ -628,6 +628,8 @@ export class ProviderRegistry extends EventEmitter {
       npmOnPath: this.resolveNpm(),
       wingetOnPath: this.resolveWinget(),
     });
+    if (channel.channel !== 'native' || !provider.channels.native?.sharedWithNpm) return channel;
+    return this.installsFor(provider, resolvedPath).find((i) => i.resolvedPath === resolvedPath)?.owner ?? channel;
   }
 
   resolveWinget() {
@@ -820,6 +822,7 @@ export class ProviderRegistry extends EventEmitter {
       updateAvailable: Boolean(installed && latest && compareVersions(latest, installed) > 0),
       installChannel: channel?.channel ?? null,
       updateCommand: update.command,
+      updateViaNpm: Boolean(update.command && channel.channel !== 'npm' && channel.update?.package),
       updateGuidance: update.guidance,
       lastInstall: versions?.lastInstall ?? null,
       installs,
@@ -914,7 +917,7 @@ export class ProviderRegistry extends EventEmitter {
     const args = channel.update.package
       ? this.npmArgs(channel.update, await this.resolveRelease(provider, update.file))
       : update.args;
-    return { spec: buildSpawnSpec(update.file, args, this.env, this.platform), channel: channel.channel };
+    return { spec: buildSpawnSpec(update.file, args, this.env, this.platform), channel: channel.update.package ? 'npm' : channel.channel };
   }
 
   uninstallSpec(provider, copyPath) {

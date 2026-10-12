@@ -1767,7 +1767,10 @@ function buildProvider(provider) {
     else if (checkFailed) update.textContent = provider.installChannel === 'npm' ? 'Reinstall' : 'Update';
     else update.textContent = `Update to ${provider.latestVersion}`;
     if (provider.installCommand && checkFailed) update.textContent = 'Reinstall';
-    update.title = provider.updateCommand ? `Run "${provider.updateCommand}" in a session` : '';
+    if (provider.updateViaNpm) update.textContent = 'Update with npm';
+    update.title = !provider.updateCommand ? ''
+      : provider.updateViaNpm ? `Run "${provider.updateCommand}" in a session. ${provider.tool}'s own updater is not used: npm installs ${provider.tool}, which creates an npm-managed copy.`
+        : `Run "${provider.updateCommand}" in a session`;
     update.addEventListener('click', () => installProvider(provider, node));
     renderCopies(node.querySelector('.copies'), provider, node);
     renderHint(hint, provider, node.querySelector('.copies'));

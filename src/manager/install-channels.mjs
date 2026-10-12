@@ -189,6 +189,10 @@ export function classifyInstall({
 
   const native = channels.native;
   if (native && ownsLocation({ resolvedPath, realPath }, native.paths, env, platform, fsx)) {
+    if (native.sharedWithNpm && provider.package) {
+      if (!npmOnPath) return result('native', { guidance: `${provider.tool} at ${resolvedPath} is updated through npm, but npm was not found.` });
+      return result('native', { update: { file: npmOnPath, args: ['install', '-g'], package: provider.package } });
+    }
     if (native.update.length === 0) {
       return result('native', { guidance: `${provider.tool} at ${resolvedPath} has no update command configured. Update it the way you installed it.` });
     }
@@ -300,6 +304,7 @@ export function listInstallations({
     if (!existing) installs.set(key, { ...install, key, onPath: isOnPath, uninstall: uninstallPlan(install, provider, env, platform, fsx) });
     // A shared native copy also needs its npm owner removed, whichever comes first on PATH.
     else if (install.channel === 'npm' && !existing.uninstall?.run) {
+      if (existing.channel === 'native') existing.owner = install;
       existing.uninstall = uninstallPlan(install, provider, env, platform, fsx);
       if (!existing.uninstall) existing.guidance = install.guidance;
     }

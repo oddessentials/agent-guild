@@ -75,7 +75,8 @@
   var grok = providers[3];
   grok.latestVersion = '0.1.42';
   grok.updateAvailable = true;
-  grok.updateCommand = home + '/.grok/bin/grok update';
+  grok.updateCommand = 'npm install -g @xai-official/grok@0.1.42';
+  grok.updateViaNpm = true;
   providers[0].updateCommand = home + '/.local/bin/claude update';
   providers[1].updateCommand = '/opt/homebrew/bin/brew upgrade codex';
   providers[2].updateCommand = home + '/.local/bin/agy update';
