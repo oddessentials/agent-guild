@@ -792,6 +792,52 @@ test('a native copy that npm shares is updated with npm, as the install button i
   assert.equal(noNpm.guidance, `Grok Build at ${native} is updated through npm, but npm was not found.`);
 });
 
+test('a shared native copy first on PATH is updated by its npm owner, in the owner\'s prefix', async () => {
+  const win = process.platform === 'win32';
+  const script = (dir, name) => {
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, win ? `${name}.cmd` : name);
+    fs.writeFileSync(file, win ? '@echo off\r\nREM node_modules\\mytool-pkg\\bin\\cli.js\r\n' : '#!/bin/sh\n# node_modules/mytool-pkg/bin/cli.js\n', { mode: 0o755 });
+    return file;
+  };
+  const root = tempDir();
+  const nativeDir = path.join(root, 'native');
+  const prefix = path.join(root, 'prefix');
+  const prefixBin = win ? prefix : path.join(prefix, 'bin');
+  const pkgDir = path.join(prefix, ...(win ? [] : ['lib']), 'node_modules', 'mytool-pkg');
+  const otherNpmDir = path.join(root, 'other-npm');
+  script(nativeDir, 'mytool');
+  fs.mkdirSync(pkgDir, { recursive: true });
+  fs.writeFileSync(path.join(pkgDir, 'package.json'), '{}');
+  script(prefixBin, 'mytool');
+  const ownNpm = script(prefixBin, 'npm');
+  const otherNpm = script(otherNpmDir, 'npm');
+  const userFile = path.join(root, 'providers.json');
+  fs.writeFileSync(userFile, JSON.stringify({ providers: [
+    { id: 'mytool', tool: 'My Tool', command: 'mytool', package: 'mytool-pkg', channels: { native: { paths: [nativeDir], sharedWithNpm: true } } },
+  ] }));
+  const base = { PATHEXT: '.EXE;.CMD', ComSpec: process.env.ComSpec, SystemRoot: process.env.SystemRoot, HOME: root, USERPROFILE: root };
+  const registry = (dirs) => new ProviderRegistry({ userFile, env: { ...base, PATH: dirs.join(path.delimiter) }, checkUpdates: false });
+  const lineOf = (spec) => (typeof spec.args === 'string' ? spec.args : [spec.file, ...spec.args].join(' '));
+
+  const owned = registry([otherNpmDir, nativeDir, prefixBin]);
+  const viaOwner = await owned.updateSpec(owned.get('mytool'));
+  assert.equal(viaOwner.channel, 'npm');
+  assert.ok(lineOf(viaOwner.spec).includes(ownNpm), 'the owner\'s npm, not the first npm on PATH');
+  assert.ok(lineOf(viaOwner.spec).includes(`install -g --prefix ${prefix} mytool-pkg@latest`));
+  assert.equal(owned.describe(owned.get('mytool')).updateViaNpm, false, 'the owner is updated; no new npm copy is made');
+
+  const unowned = registry([otherNpmDir, nativeDir]);
+  const viaDefault = await unowned.updateSpec(unowned.get('mytool'));
+  assert.ok(lineOf(viaDefault.spec).includes(otherNpm));
+  assert.ok(lineOf(viaDefault.spec).includes('install -g mytool-pkg@latest'), 'no owner: npm\'s default prefix');
+  assert.equal(unowned.describe(unowned.get('mytool')).updateViaNpm, true);
+
+  fs.rmSync(ownNpm);
+  const stranded = registry([nativeDir, prefixBin]);
+  await assert.rejects(stranded.updateSpec(stranded.get('mytool')), (err) => err.code === 'not_updatable' && err.message.includes(prefix));
+});
+
 test('ownership follows where a tool is really installed, and removal runs that installer', () => {
   const fsx = ({ files = [], links = {}, texts = {} } = {}) => ({
     exists: (f) => files.includes(f),

@@ -304,6 +304,7 @@ export function listInstallations({
     if (!existing) installs.set(key, { ...install, key, onPath: isOnPath, uninstall: uninstallPlan(install, provider, env, platform, fsx) });
     // A shared native copy also needs its npm owner removed, whichever comes first on PATH.
     else if (install.channel === 'npm' && !existing.uninstall?.run) {
+      if (existing.channel === 'native') existing.owner = install;
       existing.uninstall = uninstallPlan(install, provider, env, platform, fsx);
       if (!existing.uninstall) existing.guidance = install.guidance;
     }

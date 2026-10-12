@@ -620,7 +620,7 @@ export class ProviderRegistry extends EventEmitter {
       const update = active.channel === 'download' && provider.install ? { file: null, args: [], command: provider.install } : null;
       return { channel: active.channel, resolvedPath: active.resolvedPath, realPath: active.realPath, update, probe: false, guidance: active.guidance ?? `${provider.tool} at ${active.resolvedPath} was not downloaded by Agent Guild. Update it the way you installed it.` };
     }
-    return classifyInstall({
+    const channel = classifyInstall({
       resolvedPath,
       provider,
       env: { ...this.env, ...provider.env },
@@ -628,6 +628,8 @@ export class ProviderRegistry extends EventEmitter {
       npmOnPath: this.resolveNpm(),
       wingetOnPath: this.resolveWinget(),
     });
+    if (channel.channel !== 'native' || !provider.channels.native?.sharedWithNpm) return channel;
+    return this.installsFor(provider, resolvedPath).find((i) => i.resolvedPath === resolvedPath)?.owner ?? channel;
   }
 
   resolveWinget() {
