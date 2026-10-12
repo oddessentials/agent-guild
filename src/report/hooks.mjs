@@ -108,7 +108,7 @@ function eventName(input) {
 
 /**
  * The part of a Docker Agent hook event the manager needs, or null when the event names no session. The
- * shell tool's command (`tool_input.cmd`) comes along; tool output and messages stay behind.
+ * shell tool's command (`tool_input.cmd`) and a stop's answer come along; tool output and other messages stay behind.
  */
 export function dockerHookEvent(input) {
   if (!input || typeof input !== 'object') return null;
@@ -127,6 +127,7 @@ export function dockerHookEvent(input) {
   if (command !== undefined) out.command = command;
   const model = text(input.model_id);
   if (model) out.model = model;
+  if (event === 'Stop') out.reply = typeof input.stop_response === 'string' ? input.stop_response : null;
   return out;
 }
 
@@ -223,6 +224,11 @@ export function hookToReports(input) {
   if (tasks) reports.push(runningShells(tasks));
   if (!insideSubagent && TURN_BOUNDARY_EVENTS.has(event)) reports.push({ finishForeground: true });
 
+  // The answer that ended the turn; Codex CLI sends null when it has none.
+  const reply = event !== 'Stop' || insideSubagent ? undefined
+    : 'last_assistant_message' in input ? input.last_assistant_message : input.lastAssistantMessage;
+  if (reply !== undefined) reports.push({ reply: typeof reply === 'string' ? reply : null });
+
   const model = insideSubagent || toolEvent || PERMISSION_EVENTS.has(event) ? null : event === 'PostModelSwitch'
     ? text(input.to_model)
     : text(input.model, input.modelId, input.modelName, input.model_id);
@@ -238,6 +244,19 @@ export function hookToReports(input) {
 /** Whether an Antigravity CLI conversation starts with the user's own request; a sub-agent's starts with its parent's message. */
 export function antigravityUserConversation(firstRecord) {
   return firstRecord?.type === 'USER_INPUT' && firstRecord.source === 'USER_EXPLICIT';
+}
+
+/**
+ * The model's last response in an Antigravity CLI turn, from the end of its transcript: null when the turn has none,
+ * undefined when these records reach back past neither a response nor the user's request.
+ */
+export function antigravityReply(records) {
+  for (let i = records.length - 1; i >= 0; i--) {
+    const record = records[i];
+    if (antigravityUserConversation(record)) return null;
+    if (record?.source === 'MODEL' && record.type === 'PLANNER_RESPONSE' && typeof record.content === 'string' && record.content.trim()) return record.content;
+  }
+  return undefined;
 }
 
 /** Model report from the JSON Claude Code feeds to a status line command. */

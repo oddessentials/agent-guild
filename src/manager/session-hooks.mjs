@@ -94,10 +94,11 @@ function antigravityFiles(manifest, platform) {
     ? ['@echo off', `if "%AGENT_GUILD_REPORTING%"=="antigravity" call ${REPORT_COMMAND} --event %1`, 'echo {}', ''].join('\r\n')
     : ['#!/bin/sh', `if [ "$AGENT_GUILD_REPORTING" = antigravity ] && command -v agent-guild-report >/dev/null 2>&1; then ${REPORT_COMMAND} --event "$1"; else cat >/dev/null; fi`, "echo '{}'", ''].join('\n');
   const name = platform === 'win32' ? 'agent-guild-hook.cmd' : 'agent-guild-hook.sh';
-  const command = platform === 'win32' ? `.\\${name} PreInvocation` : `sh ${name} PreInvocation`;
+  const command = (event) => (platform === 'win32' ? `.\\${name} ${event}` : `sh ${name} ${event}`);
+  const hooks = Object.fromEntries(['PreInvocation', 'Stop'].map((event) => [event, [{ type: 'command', command: command(event), timeout: 10 }]]));
   return {
     'plugin.json': `${JSON.stringify(manifest, null, 2)}\n`,
-    'hooks.json': `${JSON.stringify({ [PLUGIN_NAME]: { PreInvocation: [{ type: 'command', command, timeout: 10 }] } }, null, 2)}\n`,
+    'hooks.json': `${JSON.stringify({ [PLUGIN_NAME]: hooks }, null, 2)}\n`,
     [name]: script,
   };
 }

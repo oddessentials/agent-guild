@@ -69,6 +69,11 @@
             <label class="choice"><input id="voice" type="checkbox" name="voice"><span class="voice-input">Voice input</span></label>
             <p class="voice-note">Adds a Dictate button to terminals. Your browser may send the audio to its maker, such as Google or Microsoft, to turn it into text. Nothing is heard until you press Dictate, and Enter is never pressed for you.</p>
           </fieldset>
+          <fieldset id="read-choice" hidden>
+            <legend>Read aloud</legend>
+            <label class="choice"><input id="read-aloud" type="checkbox" name="read-aloud"><span class="read-aloud">Read answers aloud</span></label>
+            <p class="voice-note">Adds a Read button to terminals that speaks the agent's last answer in your device's voice. Code blocks are skipped.</p>
+          </fieldset>
         </div>
         <button id="manager" class="btn manager menu-button" type="button" popovertarget="manager-menu" aria-haspopup="menu" hidden>Manager</button>
         <div id="manager-menu" class="manager-menu menu" popover role="menu" aria-label="Session manager">
@@ -197,6 +202,7 @@
       <div class="panel-actions">
         <button id="panel-split" class="btn split" type="button" popovertarget="panel-sessions" aria-haspopup="menu" title="Show a second session beside this one" hidden>Split</button>
         <button id="panel-swap" class="btn swap" type="button" hidden></button>
+        <button id="panel-read" class="btn read" type="button" hidden aria-pressed="false" title="Read the agent's last answer aloud. Press again to stop.">Read</button>
         <button id="panel-voice" class="btn voice" type="button" hidden aria-pressed="false" title="Speak into this terminal. Review the text, then press Enter yourself.">Dictate</button>
         <button id="panel-copy" class="btn" type="button" hidden aria-haspopup="dialog" title="Select and copy terminal text">Copy…</button>
         <button id="panel-text-toggle" class="btn text-size" type="button" popovertarget="panel-text-size" aria-haspopup="dialog" aria-label="Terminal text size" title="Terminal text size">Aa</button>

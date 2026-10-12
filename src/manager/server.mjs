@@ -19,6 +19,8 @@ import { ptyRestartProblem } from './pty.mjs';
 const require = createRequire(import.meta.url);
 const API = '/api/v1';
 const MAX_BODY = 64 * 1024;
+// A reply, and a Docker Agent stop that carries one, is a whole answer, which Claude Code does not clip.
+const REPLY_BODY_LIMIT = 1024 * 1024;
 const MAX_WS_PAYLOAD = 1024 * 1024;
 const SLOW_CLIENT_BYTES = 8 * 1024 * 1024;
 
@@ -282,10 +284,10 @@ export function createManagerServer({
     // Agent, model and tool-session reports may authenticate with the
     // per-session report token that the manager injects into each tool's
     // environment.
-    const reportMatch = route.match(/^\/sessions\/([a-f0-9]+)\/(agents|model|tool-session|reporting|shells|docker)$/);
+    const reportMatch = route.match(/^\/sessions\/([a-f0-9]+)\/(agents|model|tool-session|reporting|shells|docker|reply)$/);
     if (reportMatch && method === 'POST') {
       const [, id, kind] = reportMatch;
-      const body = await readJsonBody(req);
+      const body = await readJsonBody(req, kind === 'reply' || kind === 'docker' ? REPLY_BODY_LIMIT : MAX_BODY);
       const auth = {
         trusted: timingSafeEqualString(requestToken(req, url), token),
         reportToken: req.headers['x-agent-guild-report-token'],
@@ -296,6 +298,7 @@ export function createManagerServer({
         return sendJson(res, 200, { ok: true });
       }
       if (kind === 'model') return sendJson(res, 200, { model: manager.reportModel(id, body, auth) });
+      if (kind === 'reply') return sendJson(res, 200, { reply: manager.reportReply(id, body, auth) });
       if (kind === 'reporting') return sendJson(res, 200, { reporting: manager.reportHello(id, auth) });
       if (kind === 'shells') {
         manager.reportShell(id, body, auth);
@@ -491,10 +494,11 @@ export function createManagerServer({
       return undefined;
     }
 
-    const sessionMatch = route.match(/^\/sessions\/([a-f0-9]+)(\/stop|\/reattach)?$/);
+    const sessionMatch = route.match(/^\/sessions\/([a-f0-9]+)(\/stop|\/reattach|\/reply)?$/);
     if (sessionMatch) {
       const [, id, action] = sessionMatch;
       if (!action && method === 'GET') return sendJson(res, 200, { session: manager.get(id).toJSON() });
+      if (action === '/reply' && method === 'GET') return sendJson(res, 200, { reply: manager.get(id).reply });
       if (!action && method === 'PATCH') {
         const body = await readJsonBody(req);
         const session = manager.get(id);

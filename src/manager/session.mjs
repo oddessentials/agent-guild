@@ -114,6 +114,8 @@ export class Session extends EventEmitter {
     this.agents = new Map();
     this.model = null;
     this.toolSessionId = null;
+    this.reply = null;
+    this._replies = 0;
     this.modelRegex = null;
     if (opts.provider.modelPattern && this.task === null) {
       try {
@@ -742,6 +744,18 @@ export class Session extends EventEmitter {
     return this.toolSessionId;
   }
 
+  /** The text of the agent's last answer, or null when its last turn ended without one. */
+  reportReply(report) {
+    if (!report || typeof report !== 'object') throw badRequest('reply report must be an object');
+    if (this.status !== 'running') throw Object.assign(new Error('session has exited'), { status: 409 });
+    if (report.reply !== null && typeof report.reply !== 'string') throw badRequest('reply must be a string or null');
+    this._reportingHeard();
+    const text = report.reply?.trim() || null;
+    this.reply = text ? { id: ++this._replies, text } : null;
+    this._changed();
+    return this.reply && { id: this.reply.id };
+  }
+
   reportHello() {
     if (this.status !== 'running') throw Object.assign(new Error('session has exited'), { status: 409 });
     this._reportingHeard();
@@ -817,6 +831,7 @@ export class Session extends EventEmitter {
       attachedClients: this.subscribers.size,
       model: this.model,
       toolSessionId: this.toolSessionId,
+      reply: this.reply && { id: this.reply.id },
       reporting: this.reporting,
       agents: [...this.agents.values()],
       shells: [...this.shells.values()].filter((s) => s.visible).map((s) => ({ id: s.id, kind: s.kind })),

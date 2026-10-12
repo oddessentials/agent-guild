@@ -31,6 +31,7 @@ function connect({ changelogOpen = false, githubOpen = false, docked = null } = 
   const listeners = new Map();
   const noop = () => {};
   const context = {
+    reader: null, replies: new Map(), renderRead: () => {},
     state: { stopping: false, stopRemaining: null, sessions: new Map(), views: new Map(), eventsRetry: 0, providers: [] },
     sessionsShown: false,
     WebSocket: class {

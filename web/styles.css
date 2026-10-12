@@ -445,6 +445,7 @@ main { max-width: calc(1200px + var(--dock-space, 0px)); margin: 0 auto; padding
 .settings-menu .choice > .mode-dark::before { mask-image: var(--icon-moon); }
 .settings-menu .choice > .sound-alerts::before { mask-image: var(--icon-sound); }
 .settings-menu .choice > .voice-input::before { mask-image: var(--icon-mic); }
+.settings-menu .choice > .read-aloud::before { mask-image: var(--icon-sound); }
 .settings-menu .choice > .autostart::before { mask-image: var(--icon-power); }
 .voice-note { margin: 0 8px 6px; max-width: 26ch; color: var(--muted); font-size: 0.75rem; line-height: 1.35; }
 .settings-menu .choice > .startup-boot::before { mask-image: var(--icon-server); }
@@ -585,12 +586,14 @@ body:has(#app[hidden]):has(#auth[hidden]):has(#stopped[hidden])::after {
 .terminal-panes[data-split="columns"] .pane-splitter { cursor: col-resize; }
 .terminal-panes[data-split="rows"] .pane-splitter { cursor: row-resize; }
 :root.resizing, :root.resizing * { user-select: none; -webkit-user-select: none; }
-.btn.voice { white-space: nowrap; }
-.btn.voice::before {
+.btn.voice, .btn.read { white-space: nowrap; }
+.btn.voice::before, .btn.read::before {
   content: ""; display: inline-block; width: 1em; height: 1em; margin-right: 0.35em; vertical-align: -0.15em;
   background: currentColor; mask: var(--icon-mic) center / contain no-repeat;
 }
+.btn.read::before { mask-image: var(--icon-sound); }
 .btn.voice[aria-pressed="true"] { color: var(--danger); border-color: var(--danger); }
+.btn.read[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
 .btn.voice[aria-pressed="true"]::before { animation: voice-pulse 1.2s ease-in-out infinite; }
 @keyframes voice-pulse { 50% { opacity: 0.35; } }
 .voice-preview {

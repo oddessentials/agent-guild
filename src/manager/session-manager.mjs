@@ -747,6 +747,10 @@ export class SessionManager extends EventEmitter {
     return this._reportingSession(id, auth).reportToolSession(report);
   }
 
+  reportReply(id, report, auth) {
+    return this._reportingSession(id, auth).reportReply(report);
+  }
+
   reportHello(id, auth) {
     return this._reportingSession(id, auth).reportHello();
   }

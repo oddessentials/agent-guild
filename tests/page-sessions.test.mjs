@@ -23,6 +23,7 @@ function page({ onApi = () => ({}) } = {}) {
   const requests = [];
   const opened = [];
   const context = {
+    reader: null, replies: new Map(), renderRead: () => {},
     isSessionWorking,
     state: { sessions: new Map() },
     renderSessions() {}, noticeClone() {}, dropSession() {},

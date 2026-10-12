@@ -80,6 +80,7 @@ export class DockerSessions {
     if (sid === this.mainId) {
       this._shell(event, name, sid, null);
       if (name === 'Stop' || name === 'SessionEnd') session.reportAgent({ finishForeground: true });
+      if (name === 'Stop') session.reportReply({ reply: event.reply ?? null });
       const model = text(event.model);
       if (model && (name === 'BeforeLlmCall' || name === 'AfterLlmCall')) session.reportModel({ model });
       return;

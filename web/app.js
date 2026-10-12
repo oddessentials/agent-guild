@@ -10,6 +10,7 @@ import { createActivityFavicon, isSessionWorking } from './activity-favicon.js';
 import { createRemoteAccessUI } from './remote-access.js';
 import { createEnvironmentUI } from './environment.js';
 import { createHistoryPreview } from './history-preview.js';
+import { createReader } from './read-aloud.js';
 import { matchFolders, readRecentFolders, rememberFolder } from './folders.js';
 import { initYard } from './yard/view.js';
 
@@ -33,6 +34,7 @@ const GITHUB_VIEW_KEY = 'agentGuild.githubView';
 const SESSION_ORDER_KEY = 'agentGuild.sessionOrder';
 const SOUND_KEY = 'agentGuild.sound';
 const VOICE_KEY = 'agentGuild.voice';
+const READ_KEY = 'agentGuild.readAloud';
 const NOTES_KEY = 'agentGuild.notes';
 const NOTES_REV_KEY = 'agentGuild.notesRevision';
 const DOCK_KEY = 'agentGuild.dock';
@@ -5602,6 +5604,7 @@ function upsertSession(session) {
 
 function dropSession(id) {
   state.sessions.delete(id);
+  replies.delete(id);
   state.environmentUI?.sessionRemoved(id);
   const view = state.views.get(id);
   const pane = state.panes.indexOf(id);
@@ -6396,6 +6399,7 @@ function closePanel() {
   closeMenu($('panel-sessions'));
   closeMenu($('panel-text-size'));
   renderVoice();
+  renderRead();
   savePanes();
 }
 
@@ -6495,6 +6499,7 @@ function restorePanes() {
 function updatePanel() {
   terminalControls.refresh();
   renderVoice();
+  renderRead();
   const s = state.sessions.get(state.activeId);
   if (!s) return;
   paintProviderIcon($('panel-icon'), s.provider);
@@ -6507,6 +6512,63 @@ function updatePanel() {
   stop.textContent = s.status !== 'running' ? 'Remove' : s.multiplexer ? 'Detach' : 'Stop';
   renderPaneLabels();
   paintSizeNote();
+}
+
+// ---- reading answers aloud -------------------------------------------------
+
+const reader = window.speechSynthesis && window.SpeechSynthesisUtterance
+  ? createReader({ synth: window.speechSynthesis, Utterance: window.SpeechSynthesisUtterance, changed: () => renderRead() })
+  : null;
+/** Each session's last answer, by session id: { id, text }, text null until it loads. Read speaks only a loaded one,
+ * straight from the click, which mobile browsers require. */
+const replies = new Map();
+
+function readOn() {
+  return Boolean(reader) && load(READ_KEY) === 'on';
+}
+
+function loadReply(session) {
+  const id = session.reply?.id;
+  if (!id || replies.get(session.id)?.id === id) return;
+  const entry = { id, text: null };
+  replies.set(session.id, entry);
+  // A failed load leaves Read off until the next answer or a reconnect.
+  api('GET', `/sessions/${session.id}/reply`).then(({ reply }) => {
+    if (replies.get(session.id) !== entry || !reply) return;
+    replies.set(session.id, { id: reply.id, text: reply.text });
+    renderRead();
+  }).catch(() => {});
+}
+
+function renderRead() {
+  $('read-choice').hidden = !reader;
+  $('read-aloud').checked = readOn();
+  // Reading stops with its terminal's pane.
+  if (reader?.session && !state.panes.includes(reader.session)) reader.stop();
+  const session = state.sessions.get(state.activeId);
+  if (readOn() && session) loadReply(session);
+  const reply = session && replies.get(session.id);
+  const reading = Boolean(session) && reader?.session === session.id;
+  const button = $('panel-read');
+  button.hidden = !readOn() || !session?.reply;
+  button.disabled = !reading && !(reply && reply.id === session.reply?.id && reply.text !== null);
+  button.setAttribute('aria-pressed', String(reading));
+}
+
+function changeRead(input) {
+  save(READ_KEY, input.checked ? 'on' : null);
+  if (!input.checked) reader?.stop();
+  renderRead();
+}
+
+function toggleReading() {
+  const session = state.sessions.get(state.activeId);
+  if (!reader || !session) return;
+  if (reader.session === session.id) return reader.stop();
+  const reply = replies.get(session.id);
+  if (!reply || reply.id !== session.reply?.id || reply.text === null) return;
+  stopDictation();
+  reader.read(session.id, reply.text);
 }
 
 // ---- voice input ----------------------------------------------------------
@@ -6564,6 +6626,8 @@ async function startDictation() {
     rec: null, timer: null, first: true, emptyRetries: 0,
   };
   if (!canDictate(current)) return;
+  // The microphone must not hear an answer being read.
+  reader?.stop();
   // Register before awaiting availability so another click or leaving the terminal cancels startup too.
   dictation = current;
   renderVoice();
@@ -6847,6 +6911,8 @@ function connectEvents(refreshProviders = false) {
       renderVersion();
       setConnection('ok', 'Connected to session manager');
       state.sessions = new Map(msg.sessions.map((s) => [s.id, s]));
+      // Answers are numbered per manager run, so a restarted manager's are new ones.
+      replies.clear();
       for (const id of [...state.views.keys()]) if (!state.sessions.has(id)) dropSession(id);
       managerConnected(msg);
       state.environmentUI?.connected(msg.pid);
@@ -7089,6 +7155,7 @@ bindSplitter($('pane-splitter'), {
   home: () => { setSplitRatio(SPLIT_RATIO_MIN); refitTerminals(); },
   endKey: () => { setSplitRatio(1 - SPLIT_RATIO_MIN); refitTerminals(); },
 });
+$('panel-read').addEventListener('click', toggleReading);
 $('panel-voice').addEventListener('click', () => {
   if (dictation) {
     const { id } = dictation;
@@ -7316,6 +7383,7 @@ addEventListener('pagehide', () => {
   terminalCopy.close();
   closeMenu($('panel-text-size'));
   stopDictation();
+  reader?.stop();
   managerLoss.cancel();
   state.eventsSocket?.close();
 });
@@ -7347,6 +7415,7 @@ addEventListener('storage', (e) => {
   if (e.key === CHANGELOG_SEEN_KEY) renderVersion();
   else if (e.key === SOUND_KEY) { $('sound').checked = soundOn(); prepareSounds(); }
   else if (e.key === VOICE_KEY) renderVoice();
+  else if (e.key === READ_KEY) renderRead();
   // Another tab reordered the cards.
   else if (e.key === SESSION_ORDER_KEY && !drag) arrange(parseOrder(e.newValue));
 });
@@ -7394,6 +7463,7 @@ $('settings-menu').addEventListener('change', (e) => {
   else if (e.target.name === 'theme') changeTheme(e.target);
   else if (e.target.name === 'sound') changeSound(e.target);
   else if (e.target.name === 'voice') changeVoice(e.target);
+  else if (e.target.name === 'read-aloud') changeRead(e.target);
   else if (e.target.name === 'autostart') changeAutostart(e.target);
   else if (e.target.name === 'startup') changeStartup(e.target);
 });

@@ -14,7 +14,7 @@ import { herdrAgentReports, herdrSocket } from '../src/manager/herdr.mjs';
 import { paths } from '../src/manager/config.mjs';
 import { classifyInstall, expandHome, homeRelative, helpDescribes, platformDependency, listInstallations, knownLaunchers, updateHelpAccepted, uninstallPlan } from '../src/manager/install-channels.mjs';
 import { runPlan, encodePlan, removeFile, RUNNER } from '../src/manager/uninstall.mjs';
-import { hookToReports, claudeStatuslineToReport, formatStatusLine } from '../src/report/hooks.mjs';
+import { hookToReports, claudeStatuslineToReport, formatStatusLine, antigravityReply } from '../src/report/hooks.mjs';
 import { shimContents, writeReportShims, prependPath, fileUrl, SHIM_NAME, LOADER_NAME } from '../src/manager/report-shims.mjs';
 import { bundleFiles, codexHookArgs, codexTrustArgs, codexHooksFrom, antigravityInstalled, antigravityPluginDir, antigravityConfigFile, antigravityPluginEnabled, helpLists, REPORT_COMMAND, dockerHookArgs, DOCKER_HOOK_FLAGS } from '../src/manager/session-hooks.mjs';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
@@ -2600,6 +2600,23 @@ test('the agent-guild-report launchers run the reporter from any hook shell', ()
   }
 });
 
+test('a main turn\'s Stop brings its answer; a sub-agent\'s or a failed turn\'s does not', () => {
+  const answer = (input) => hookToReports(input).filter((r) => 'reply' in r);
+  assert.deepEqual(answer({ hook_event_name: 'Stop', last_assistant_message: 'Done.' }), [{ reply: 'Done.' }], 'Claude Code');
+  assert.deepEqual(answer({ hook_event_name: 'Stop', turn_id: 't', last_assistant_message: null }), [{ reply: null }], 'Codex CLI, with no answer, clears the last one');
+  assert.deepEqual(answer({ hookEventName: 'stop', hook_event_name: 'Stop', lastAssistantMessage: 'Grok done.' }), [{ reply: 'Grok done.' }], 'Grok Build');
+  assert.deepEqual(answer({ hook_event_name: 'Stop' }), [], 'a version that sends no answer leaves the last one');
+  assert.deepEqual(answer({ hook_event_name: 'Stop', agent_id: 'a1', agent_type: 'Explore', last_assistant_message: 'sub' }), []);
+  assert.deepEqual(answer({ hook_event_name: 'SubagentStop', agent_id: 'a1', last_assistant_message: 'sub' }), []);
+  assert.deepEqual(answer({ hook_event_name: 'StopFailure', lastAssistantMessage: 'API Error: 529' }), [], 'Grok Build puts the error there');
+
+  const user = { type: 'USER_INPUT', source: 'USER_EXPLICIT', content: '<USER_REQUEST>hi</USER_REQUEST>' };
+  const model = (content) => ({ type: 'PLANNER_RESPONSE', source: 'MODEL', ...(content === undefined ? {} : { content }) });
+  assert.equal(antigravityReply([user, model('Looking.'), model(), model('All done.'), model()]), 'All done.', 'a step that only calls tools has no text');
+  assert.equal(antigravityReply([model('Earlier answer.'), user, model()]), null, 'this turn has none');
+  assert.equal(antigravityReply([model(), null]), undefined, 'the window reaches back to neither');
+});
+
 test('hook events and the Claude Code status line report the model', () => {
   assert.deepEqual(hookToReports({ hook_event_name: 'SessionStart', source: 'startup', model: 'claude-opus-5' }), [{ model: 'claude-opus-5' }, { hello: true }]);
   assert.deepEqual(hookToReports({ hook_event_name: 'SessionStart', source: 'startup' }), [{ hello: true }], 'the session start announces the hooks');
@@ -4032,11 +4049,13 @@ test('every reporting bundle runs the reporter, Antigravity\'s through a script 
     assert.deepEqual(bundleFiles('2.0.0', { platform }).antigravity, files);
     const hooks = JSON.parse(files['hooks.json']);
     assert.deepEqual(Object.keys(hooks), ['agent-guild']);
-    assert.deepEqual(Object.keys(hooks['agent-guild']), ['PreInvocation'], 'no PreToolUse or Stop, so no hook ever answers a permission or stop decision');
-    const [{ type, command, timeout }] = hooks['agent-guild'].PreInvocation;
-    assert.deepEqual([type, timeout], ['command', 10]);
-    assert.equal(command, platform === 'win32' ? '.\\agent-guild-hook.cmd PreInvocation' : 'sh agent-guild-hook.sh PreInvocation');
-    assert.ok(!/["'/:]/.test(command), 'cmd /C gets a quoted path wrong, so the command names no path');
+    assert.deepEqual(Object.keys(hooks['agent-guild']), ['PreInvocation', 'Stop'], 'no PreToolUse, so no hook ever answers a permission; Stop brings the turn\'s answer, and its {} lets the turn end');
+    for (const event of ['PreInvocation', 'Stop']) {
+      const [{ type, command, timeout }] = hooks['agent-guild'][event];
+      assert.deepEqual([type, timeout], ['command', 10]);
+      assert.equal(command, platform === 'win32' ? `.\\agent-guild-hook.cmd ${event}` : `sh agent-guild-hook.sh ${event}`);
+      assert.ok(!/["'/:]/.test(command), 'cmd /C gets a quoted path wrong, so the command names no path');
+    }
     const text = files[script];
     assert.ok(text.includes(`${REPORT_COMMAND} --event`));
     assert.ok(text.includes('AGENT_GUILD_REPORTING'), 'it reports only inside an Agent Guild Antigravity session');

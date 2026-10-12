@@ -583,6 +583,7 @@ a session are not listed.
   "attachedClients": 1,
   "model": { "name": "claude-opus-4-5", "displayName": "Opus 4.5", "source": "report" },
   "toolSessionId": "581893e5-a93d-5e49-968b-1c1c277d3255",
+  "reply": { "id": 3 },
   "reporting": { "state": "active", "reason": null },
   "agents": [ /* Agent */ ],
   "shells": [{ "id": "shell-3" }]
@@ -635,6 +636,10 @@ a session are not listed.
   hooks (see [agent-reporting.md](agent-reporting.md)), or null. It names
   the session in `GET /providers/:id/history` and resumes it later; it stays
   after the session exits.
+* `reply` names the answer that ended the agent's last turn by `id`, which
+  counts up from 1 with each answer in this run of the manager, or is null
+  before the first answer and after a turn that ended without one. Its text is
+  read with `GET /sessions/:id/reply`.
 * `reporting` says whether the tool's agent reporting hooks work, or is null
   for a tool Agent Guild supplies no hooks to. `state` is `pending` until the
   hooks announce themselves, `active` once any hook report arrives,
@@ -858,6 +863,7 @@ All paths are under `/api/v1`.
 | GET | `/sessions` | | `{ sessions: Session[] }` |
 | POST | `/sessions` | `{ providerId, account?, shell?, cwd?, cols?, rows?, name?, args?, resume? }` | `201 { session }`. 409 `install_in_progress` while the provider's tool is being installed, updated or uninstalled. 409 `shell_unavailable` when `shell` is not one of the provider's `shells`; 400 `bad_shell` when the provider has none or `shell` is not a string. |
 | GET | `/sessions/:id` | | `{ session }` |
+| GET | `/sessions/:id/reply` | | `{ reply: { id, text } }`, or `{ reply: null }`: the whole text of the answer `session.reply` names. |
 | PATCH | `/sessions/:id` | `{ name }` | `{ session }`. `name` must be a non-empty string; it is trimmed to 80 characters. |
 | POST | `/sessions/:id/stop` | | Ends the process. The session stays listed as exited. |
 | POST | `/sessions/:id/reattach` | | `{ session }`: runs an exited tmux or herdr session's multiplexer client again, keeping the session's id, report token and screen. 400 `not_reattachable` for any other session, 409 `session_running` while it runs, 409 `multiplexer_session_gone` while `multiplexer.reattachable` is false or once the multiplexer no longer has its session. The client starts in the session's `cwd`, or in the home folder once that folder is gone. |
@@ -865,8 +871,9 @@ All paths are under `/api/v1`.
 | POST | `/sessions/:id/agents` | Agent report | `{ agent }`, or `{ agent: null }` after a removal, for a `done` report about an agent that was never reported, or for `{ finishForeground: true }`, which ends the commands of the turn that just ended. |
 | POST | `/sessions/:id/model` | `{ model, displayName? }` | `{ model }`. Sets the session's model with source `report`. |
 | POST | `/sessions/:id/tool-session` | `{ toolSessionId }` | `{ toolSessionId }`. Records the id the tool gave its own session: one printable line of at most 200 characters. 409 once the session has exited. |
+| POST | `/sessions/:id/reply` | `{ reply }` | `{ reply: { id } }`, or `{ reply: null }`. `reply` is the text of the answer that ended the turn, as Markdown, or null for a turn that ended without one. A blank text counts as none. 409 once the session has exited. |
 | POST | `/sessions/:id/reporting` | | `{ reporting }`: the tool's hooks announce themselves, which makes `reporting.state` `active`. |
-| POST | `/sessions/:id/docker` | `{ event, sessionId, agentName?, toolName?, toolUseId?, command?, model? }` | `{ ok }`. One Docker Agent hook event (`event` is its `hook_event_name`, `sessionId` its `session_id`, `command` the shell tool's `cmd`, `model` its `model_id`); the manager tells the main session, its tabs and its sub-agents apart, and turns the event into the agent, shell, model and tool-session reports above. A session not started as Docker Agent (a Shell card it was run in) is treated as one from its first event. 409 once the session has exited. |
+| POST | `/sessions/:id/docker` | `{ event, sessionId, agentName?, toolName?, toolUseId?, command?, model?, reply? }` | `{ ok }`. One Docker Agent hook event (`event` is its `hook_event_name`, `sessionId` its `session_id`, `command` the shell tool's `cmd`, `model` its `model_id`, `reply` a stop's `stop_response`); the manager tells the main session, its tabs and its sub-agents apart, and turns the event into the agent, shell, model, tool-session and reply reports above. A session not started as Docker Agent (a Shell card it was run in) is treated as one from its first event. 409 once the session has exited. |
 | POST | `/sessions/:id/shells` | `{ shell, key \| task, match?, agentId?, persist?, endsWithAgent?, kind?, tasks? }` | `{ ok }`. `shell` is `start`, `end`, `background` (with the tool's `task` id), `waiting` (a permission request, which hides the command), `asked` (one that ends the command with its turn), `running` (`tasks` lists the background tasks still running as `{ id, kind? }`; any other ends, and a listed `monitor` promotes a command while a listed `shell` never demotes a monitor) or `reset` (every command ends). `key` is the tool's call id. `match` is a hash of the command, which pairs a permission request with it; `persist` keeps a command past the end of its turn, and `endsWithAgent` ends a background one with its sub-agent. `kind` is `shell` (default) or `monitor`, a background watch; the session lists each as `{ id, kind }`. |
 | POST | `/shutdown` | `{ force?, restart? }` | `202 { ok, running, restart }`: stops the manager and every session, detaching tmux and herdr sessions rather than ending them. 409 `sessions_running` (with `running`, the count of sessions it would end) while any session other than a tmux or herdr one is running, unless `force` is true. With `restart`, 409 `pty_unavailable` first when the new manager could not run a terminal, which happens when an upgrade replaced a node-pty compiled on this computer (see `ptyBuild` under [Upgrade](#upgrade)); the message says what to run, and nothing is stopped. From the 202 on, `POST /sessions` and `POST /providers/:id/install` answer 503 `manager_stopping`. Events clients get `manager.stopping` first and `manager.stopped` last, after the sessions have ended and before the API closes. With `restart` true, the manager then starts a new manager from the package on disk, on the same port and with the same token, before it exits; the new one runs whatever version is installed, so this is how an upgrade's `pendingVersion` is put to use. Clients reconnect to it as to any manager; its `hello` is the new source of truth. |
 
@@ -879,14 +886,14 @@ when the provider has none). `account` is one of the provider's account ids
 home folder is created before its first session.
 
 `POST /sessions/:id/agents`, `POST /sessions/:id/model`,
-`POST /sessions/:id/tool-session`, `POST /sessions/:id/reporting`, `POST /sessions/:id/shells` and `POST /sessions/:id/docker` also accept the
+`POST /sessions/:id/tool-session`, `POST /sessions/:id/reply`, `POST /sessions/:id/reporting`, `POST /sessions/:id/shells` and `POST /sessions/:id/docker` also accept the
 per-session report token instead of the API token, in an
 `X-Agent-Guild-Report-Token` header. The manager gives that token only to the
 processes inside that session. Without the API token, an unknown session id
 and a wrong report token both return 401.
 
 Request bodies are limited to 64 KB (413 above that), except `PUT /notes`,
-which accepts 1 MiB. WebSocket messages are limited to 1 MB.
+`POST /sessions/:id/reply` and `POST /sessions/:id/docker`, which accept 1 MiB. WebSocket messages are limited to 1 MB.
 
 ## WebSockets
 

@@ -20,6 +20,7 @@ function page() {
   };
   const favicon = { working: false, setWorking(value) { this.working = value; } };
   const context = {
+    reader: null, replies: new Map(), renderRead: () => {},
     isSessionWorking, activityFavicon: favicon,
     state: { sessions: new Map(), views: new Map(), panes: [], pageAway: false },
     cards: new Map(), drag: null, sessionsShown: false, sessionOrder: [],
