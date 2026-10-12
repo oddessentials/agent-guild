@@ -6527,7 +6527,7 @@ const reader = window.speechSynthesis && window.SpeechSynthesisUtterance
 const replies = new Map();
 
 function readOn() {
-  return Boolean(reader) && load(READ_KEY) === 'on';
+  return Boolean(reader) && load(READ_KEY) !== 'off';
 }
 
 function loadReply(session) {
@@ -6561,7 +6561,7 @@ function renderRead() {
 }
 
 function changeRead(input) {
-  save(READ_KEY, input.checked ? 'on' : null);
+  save(READ_KEY, input.checked ? null : 'off');
   renderRead();
 }
 
@@ -6582,7 +6582,7 @@ const VOICE_RETRY_DELAYS = [250, 500, 1000];
 let dictation = null;
 
 function voiceOn() {
-  return Boolean(Recognition) && load(VOICE_KEY) === 'on';
+  return Boolean(Recognition) && load(VOICE_KEY) !== 'off';
 }
 
 function renderVoice() {
@@ -6594,7 +6594,7 @@ function renderVoice() {
 }
 
 function changeVoice(input) {
-  save(VOICE_KEY, input.checked ? 'on' : null);
+  save(VOICE_KEY, input.checked ? null : 'off');
   renderVoice();
 }
 
@@ -7470,6 +7470,13 @@ $('settings-menu').addEventListener('change', (e) => {
   else if (e.target.name === 'read-aloud') changeRead(e.target);
   else if (e.target.name === 'autostart') changeAutostart(e.target);
   else if (e.target.name === 'startup') changeStartup(e.target);
+});
+$('settings-menu').addEventListener('click', (e) => {
+  const toggle = e.target.closest('.note-toggle');
+  if (!toggle) return;
+  const note = $(toggle.getAttribute('aria-controls'));
+  note.hidden = !note.hidden;
+  toggle.setAttribute('aria-expanded', String(!note.hidden));
 });
 /**
  * Runs `opened` once a menu shows and `closed` once it hides. Chrome skips the toggle event of a menu

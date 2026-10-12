@@ -66,13 +66,13 @@
           </fieldset>
           <fieldset id="voice-choice" hidden>
             <legend>Voice</legend>
-            <label class="choice"><input id="voice" type="checkbox" name="voice"><span class="voice-input">Voice input</span></label>
-            <p class="voice-note">Adds a Dictate button to terminals. Your browser may send the audio to its maker, such as Google or Microsoft, to turn it into text. Nothing is heard until you press Dictate, and Enter is never pressed for you.</p>
+            <div class="choice-row"><label class="choice"><input id="voice" type="checkbox" name="voice"><span class="voice-input">Voice input</span></label><button class="note-toggle" type="button" aria-expanded="false" aria-controls="voice-note" aria-label="About voice input"></button></div>
+            <p id="voice-note" class="voice-note" hidden>Adds a Dictate button to terminals. Your browser may send the audio to its maker, such as Google or Microsoft, to turn it into text. Nothing is heard until you press Dictate, and Enter is never pressed for you.</p>
           </fieldset>
           <fieldset id="read-choice" hidden>
             <legend>Read aloud</legend>
-            <label class="choice"><input id="read-aloud" type="checkbox" name="read-aloud"><span class="read-aloud">Read answers aloud</span></label>
-            <p class="voice-note">Adds a Read button to terminals that speaks the agent's last answer in your device's voice. Code blocks are skipped.</p>
+            <div class="choice-row"><label class="choice"><input id="read-aloud" type="checkbox" name="read-aloud"><span class="read-aloud">Read answers aloud</span></label><button class="note-toggle" type="button" aria-expanded="false" aria-controls="read-note" aria-label="About reading answers aloud"></button></div>
+            <p id="read-note" class="voice-note" hidden>Adds a Read button to terminals that speaks the agent's last answer in your device's voice. Code blocks are skipped.</p>
           </fieldset>
         </div>
         <button id="manager" class="btn manager menu-button" type="button" popovertarget="manager-menu" aria-haspopup="menu" hidden>Manager</button>
@@ -234,11 +234,11 @@
       <button class="btn terminal-key" type="button" data-key="ArrowDown" aria-label="Down arrow" title="Down arrow" disabled>↓</button>
       <button class="btn terminal-key" type="button" data-key="ArrowRight" aria-label="Right arrow" title="Right arrow" disabled>→</button>
       <button class="btn terminal-key" type="button" data-key="Tab" title="Send Tab to the terminal" disabled>Tab</button>
-      <button class="btn terminal-key" type="button" data-key="Enter" title="Send Enter to the terminal" disabled>Enter</button>
+      <button class="btn terminal-key" type="button" data-key="Clear" aria-label="Clear input line" title="Stop dictation and clear the input line (Ctrl+E, Ctrl+U)" disabled>Clear</button>
       <button class="btn terminal-key" type="button" data-key="Escape" aria-label="Escape" title="Send Escape to the terminal" disabled>Esc</button>
       <button class="btn terminal-key" type="button" data-key="Interrupt" aria-label="Control C" title="Send Ctrl+C to interrupt the running command" disabled>Ctrl+C</button>
       <button class="btn terminal-key" type="button" data-key="Paste" title="Paste the clipboard into the terminal" disabled>Paste</button>
-      <button class="btn terminal-key" type="button" data-key="Clear" aria-label="Clear input line" title="Stop dictation and clear the input line (Ctrl+E, Ctrl+U)" disabled>Clear</button>
+      <button class="btn terminal-key" type="button" data-key="Enter" title="Send Enter to the terminal" disabled>Enter</button>
     </div>
   </div>
 

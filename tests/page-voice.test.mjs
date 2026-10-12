@@ -46,7 +46,7 @@ function deferred() {
 function page({ android = false, available, supported = true, enabled = true, prefixed = false, language = 'en-GB', constructorError = false, startError = false } = {}) {
   const nodes = new Map(), listeners = new Map(), timers = new Map();
   const instances = [], pasted = [], messages = [], availabilityCalls = [];
-  const storage = new Map(enabled ? [['voice', 'on']] : []);
+  const storage = new Map(enabled ? [] : [['voice', 'off']]);
   const noop = () => {};
   let nextTimer = 0;
   const node = (id) => {
@@ -209,7 +209,7 @@ test('every departure cancels pending startup, active listening and Android rest
   const cancellations = {
     'second click': (p) => p.click(),
     'Voice disabled and reenabled': (p) => { p.context.changeVoice({ checked: false }); p.context.changeVoice({ checked: true }); },
-    'Voice disabled in another tab': (p) => { p.storage.delete('voice'); p.fire('storage', { key: 'voice' }); p.storage.set('voice', 'on'); p.fire('storage', { key: 'voice' }); },
+    'Voice disabled in another tab': (p) => { p.storage.set('voice', 'off'); p.fire('storage', { key: 'voice' }); p.storage.delete('voice'); p.fire('storage', { key: 'voice' }); },
     'close and reopen A': (p) => { p.context.closePanel(); p.context.openPanel('a'); },
     'A to B to A': (p) => { p.context.openPanel('b'); p.context.openPanel('a'); },
     'session exit': (p) => p.context.upsertSession({ ...p.context.state.sessions.get('a'), status: 'exited', exitedAt: '2026-10-03T10:01:00Z' }),

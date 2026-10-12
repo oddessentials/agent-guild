@@ -1,18 +1,20 @@
 """Rig a generated character and give it the Yard's five clips.
 
   blender -b --factory-startup --python rig.py -- IN.glb OUT.glb HEIGHT [--kind builder|familiar]
-      [--work tinker|conduct|steady] [--faces N] [--texture PX]
+      [--work tinker|conduct|steady|pound] [--faces N] [--texture PX] [--prop JSON]
 
 The mesh is scaled to HEIGHT metres, stood on the ground facing -Y (glTF +Z,
 toward the Yard camera), and fitted with a skeleton whose joints come from its
 own silhouette: shoulders from the chest's width, hands from the lowest point
 of each arm, hips and knees from the legs. Weights are Blender's bone heat.
+A held tool (`--prop`) is cut out first so it cannot pass for an arm, then
+follows one hand rigidly; `pound` lifts and drops it, held upright.
 Clips are 72 frames at 24 fps (`arrival` grows in over 18), keyed per bone as
 rotations about world axes so every character moves the same way.
 The mesh is decimated to --faces triangles and textures are written as
 --texture px WebP (25,000 and 1024 by default).
 """
-import bpy, math, sys
+import bpy, json, math, sys
 from mathutils import Vector, Quaternion, Matrix
 
 CLIPS = ('resting', 'working', 'waiting', 'done', 'arrival')
@@ -54,6 +56,79 @@ def normalise(body, height):
     centre = Vector(((lo.x + hi.x) / 2, (lo.y + hi.y) / 2, lo.z))
     body.data.transform(Matrix.Scale(scale, 4) @ Matrix.Translation(-centre))
     body.data.update()
+
+def cut_prop(body, spec):
+    """Separate the prop: the loose part ranked `part` by size (0 is the body,
+    with UV seams welded), or the faces whose centres fall in any of `boxes`."""
+    import bmesh
+    bm = bmesh.new(); bm.from_mesh(body.data); bm.verts.ensure_lookup_table()
+    if 'part' in spec:
+        root = list(range(len(bm.verts)))
+        def find(i):
+            while root[i] != i:
+                root[i] = root[root[i]]; i = root[i]
+            return i
+        def join(a, b):
+            root[find(a)] = find(b)
+        for e in bm.edges:
+            join(e.verts[0].index, e.verts[1].index)
+        at = {}
+        for v in bm.verts:
+            join(v.index, at.setdefault(tuple(round(x, 3) for x in v.co), v.index))
+        groups = {}
+        for v in bm.verts:
+            groups.setdefault(find(v.index), set()).add(v.index)
+        chosen = sorted(groups.values(), key=len, reverse=True)[spec['part']]
+        picked = [f for f in bm.faces if f.verts[0].index in chosen]
+    else:
+        inside = lambda c: any(all(lo[i] <= c[i] <= hi[i] for i in range(3)) for lo, hi in spec['boxes'])
+        picked = [f for f in bm.faces if inside(f.calc_center_median())]
+    for element in (*bm.verts, *bm.edges, *bm.faces):
+        element.select_set(False)
+    for f in picked:
+        f.select_set(True)
+    bm.to_mesh(body.data); bm.free()
+    bpy.ops.object.select_all(action='DESELECT')
+    body.select_set(True); bpy.context.view_layer.objects.active = body
+    bpy.ops.object.mode_set(mode='EDIT')
+    bpy.ops.mesh.separate(type='SELECTED')
+    bpy.ops.object.mode_set(mode='OBJECT')
+    prop = next(o for o in bpy.context.selected_objects if o is not body)
+    print('YARD_PROP faces %d' % len(prop.data.polygons), flush=True)
+    return prop
+
+def plant(prop, j, side):
+    """Stand a tool on its head beside the foot with its handle up through the
+    fist, the head's long side across the body."""
+    import numpy as np
+    co = np.array([v.co for v in prop.data.vertices])
+    centre = co.mean(0)
+    axis = np.linalg.eigh(np.cov((co - centre).T))[1][:, -1]
+    t = (co - centre) @ axis
+    spread = lambda m: np.linalg.norm(co[m] - centre - np.outer(t[m], axis), axis=1).mean()
+    if spread(t < 0) > spread(t > 0):  # the head is the wider end
+        axis, t = -axis, -t
+    head = co[t > t.max() - .25 * (t.max() - t.min())]
+    flat = (head - head.mean(0)) - np.outer((head - head.mean(0)) @ axis, axis)
+    across = np.linalg.eigh(np.cov(flat.T))[1][:, -1]
+    down = Vector(axis).normalized()
+    side_axis = (Vector(across) - Vector(across).project(down)).normalized()
+    frame = Matrix((side_axis, down.cross(side_axis), down)).transposed()  # columns: local x, y, z
+    rotate = (Matrix((X, -Y, -Z)).transposed() @ frame.inverted()).to_4x4()
+    prop.data.transform(rotate @ Matrix.Translation(-Vector(centre)))
+    grip = (j['wrist' + side] + j['hand' + side]) / 2
+    low = min(v.co.z for v in prop.data.vertices)
+    prop.data.transform(Matrix.Translation(Vector((grip.x, grip.y, -low))))
+    prop.data.update()
+
+def bind_prop(body, prop, side):
+    """Join the prop back on, wholly weighted to one hand."""
+    group = prop.vertex_groups.new(name='hand' + side)
+    group.add(range(len(prop.data.vertices)), 1, 'REPLACE')
+    bpy.ops.object.select_all(action='DESELECT')
+    prop.select_set(True); body.select_set(True)
+    bpy.context.view_layer.objects.active = body
+    bpy.ops.object.join()
 
 def slices(body, h0, h1):
     return [v.co for v in body.data.vertices if h0 <= v.co.z < h1]
@@ -200,7 +275,20 @@ def creature(rig, clip, t, f):
     elif clip == 'arrival':
         rig.pose.bones['root'].scale = (min(1, .05 + f / 18),) * 3
 
-def pose(rig, clip, t, f, work):
+def strike(t):
+    """Two blows a loop: a slow lift, a fast drop, then a jolt on impact."""
+    u = t / math.pi % 1
+    if u < .62:
+        lift = (1 - math.cos(math.pi * u / .62)) / 2
+    elif u < .70:
+        lift = 1
+    elif u < .78:
+        lift = 1 - ((u - .70) / .08) ** 2
+    else:
+        lift = 0
+    return lift, math.exp(-((u - .80) / .05) ** 2)
+
+def pose(rig, clip, t, f, work, hand='L'):
     s, c = math.sin(t), math.cos(t)
     for pb in rig.pose.bones:
         pb.rotation_mode = 'QUATERNION'
@@ -221,6 +309,15 @@ def pose(rig, clip, t, f, work):
         if work == 'steady':  # hands stay put: they hold a staff or sit in pockets
             turn(rig, 'spine', X, .06 * k); turn(rig, 'head', X, .12 * math.sin(2 * t + .6))
             turn(rig, 'chest', Z, .06 * s); turn(rig, 'head', Z, .1 * s)
+        elif work == 'pound':  # one hand lifts and drops a tool, keeping it upright
+            lift, jolt = strike(t)
+            other = 'R' if hand == 'L' else 'L'
+            raise_arm, bend = -.2 - .6 * lift, -.6 * lift
+            turn(rig, 'spine', X, -.12 - .08 * lift + .1 * jolt); turn(rig, 'head', X, .06 * jolt - .06 * lift)
+            turn(rig, 'upperArm' + hand, X, raise_arm); turn(rig, 'foreArm' + hand, X, bend)
+            turn(rig, 'hand' + hand, X, -raise_arm - bend)
+            turn(rig, 'upperArm' + other, X, -.25 - .1 * lift); turn(rig, 'foreArm' + other, X, -.5)
+            turn(rig, 'chest', Z, (.08 if hand == 'L' else -.08) * lift)
         elif work == 'conduct':
             turn(rig, 'upperArmL', X, -.7 - .25 * k); turn(rig, 'upperArmL', Y, .25 * s)
             turn(rig, 'foreArmL', X, -.5); turn(rig, 'upperArmR', X, -.35 + .2 * math.sin(2 * t + 1))
@@ -232,7 +329,7 @@ def pose(rig, clip, t, f, work):
         turn(rig, 'hips', Z, .03 * k)
     elif clip == 'waiting':
         turn(rig, 'head', Z, .35 * math.sin(t / 2)); turn(rig, 'head', X, -.05)
-        if work != 'steady':
+        if work not in ('steady', 'pound'):
             turn(rig, 'upperArmL', X, -.25); turn(rig, 'foreArmL', X, -.6)
         turn(rig, 'hips', Y, .03 * math.sin(t / 2))
     elif clip == 'done':
@@ -241,14 +338,16 @@ def pose(rig, clip, t, f, work):
     elif clip == 'arrival':
         rig.pose.bones['root'].scale = (min(1, .05 + f / 18),) * 3
 
-def animate(rig, work):
+def animate(rig, work, hand):
     rig.animation_data_create()
+    # Every frame: a blow drops in about three of them.
+    step = 1 if work == 'pound' else 4
     for clip in CLIPS:
         action = bpy.data.actions.new(clip)
         action.use_fake_user = True
         rig.animation_data.action = action
-        for f in range(0, 73, 4):
-            pose(rig, clip, f / 72 * 2 * math.pi, f, work)
+        for f in range(0, 73, step):
+            pose(rig, clip, f / 72 * 2 * math.pi, f, work, hand)
             for pb in rig.pose.bones:
                 pb.keyframe_insert('rotation_quaternion', frame=f, group=pb.name)
                 pb.keyframe_insert('location', frame=f, group=pb.name)
@@ -277,12 +376,20 @@ def main():
     work = a[a.index('--work') + 1] if '--work' in a else 'tinker'
     faces = int(a[a.index('--faces') + 1]) if '--faces' in a else 25000
     texture = int(a[a.index('--texture') + 1]) if '--texture' in a else 1024
+    spec = json.loads(a[a.index('--prop') + 1]) if '--prop' in a else None
+    hand = spec.get('hand', 'L') if spec else 'L'
     body = load(src)
     decimate(body, faces)
     normalise(body, height)
-    rig = skeleton(joints(body, height, kind), kind)
+    prop = cut_prop(body, spec) if spec else None
+    j = joints(body, height, kind)
+    rig = skeleton(j, kind)
     weights(body, rig)
-    animate(rig, work)
+    if prop:
+        if spec.get('plant'):
+            plant(prop, j, hand)
+        bind_prop(body, prop, hand)
+    animate(rig, work, hand)
     shrink_textures(texture)
     export(out)
 

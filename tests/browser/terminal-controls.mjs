@@ -93,6 +93,7 @@ const checks = await withPage({ name: 'terminal-controls', instrumentation }, as
   await send('Page.navigate', { url: origin });
   await until('cards', () => evaluate('document.querySelectorAll("#sessions .session-card").length>=3'));
   assert.equal(await evaluate('document.querySelector("#read-choice").hidden'), false, 'Read aloud can be turned on before any terminal opens');
+  assert.deepEqual(await evaluate('[document.querySelector("#read-note").hidden,(document.querySelector("#read-choice .note-toggle").click(),document.querySelector("#read-note").hidden),document.querySelector("#read-choice .note-toggle").getAttribute("aria-expanded")]'), [true, false, 'true'], 'a setting\'s note shows only from its info button');
   await evaluate('document.querySelector("#sessions .session-card .open").click()');
   await until('terminal', () => evaluate('testTerms.some(t=>t.element?.isConnected)'));
   assert.equal(await evaluate(`document.activeElement===${currentTerm}.textarea`), true, 'a keyboard-and-mouse page types straight away');
@@ -125,7 +126,7 @@ const checks = await withPage({ name: 'terminal-controls', instrumentation }, as
   await tap('#panel-text-smaller');
   assert.equal(await evaluate(`${currentTerm}.options.fontSize`), touchFont);
   await escape();
-  assert.deepEqual(await evaluate(`[...document.querySelectorAll('${strip} button')].map(b=>b.dataset.key)`), ['ArrowLeft', 'ArrowUp', 'ArrowDown', 'ArrowRight', 'Tab', 'Enter', 'Escape', 'Interrupt', 'Paste', 'Clear']);
+  assert.deepEqual(await evaluate(`[...document.querySelectorAll('${strip} button')].map(b=>b.dataset.key)`), ['ArrowLeft', 'ArrowUp', 'ArrowDown', 'ArrowRight', 'Tab', 'Clear', 'Escape', 'Interrupt', 'Paste', 'Enter']);
   await write('\x1b[?1l');
   await evaluate(`${currentTerm}.focus()`);
   const focusedBefore = await evaluate(`document.activeElement===${currentTerm}.textarea`);
@@ -158,7 +159,6 @@ const checks = await withPage({ name: 'terminal-controls', instrumentation }, as
   await write('\x1b[?2004l');
   pass('Paste sends the clipboard as typed text without Enter, and says why when it cannot');
 
-  await evaluate("localStorage.setItem('agentGuild.voice','on');dispatchEvent(new StorageEvent('storage',{key:'agentGuild.voice'}))");
   for (const typing of [true, false]) {
     await clear();
     await evaluate(`document.querySelector('#panel-voice').click();testRecognition.say('discard this dictated draft');testRecognition.say('unfinished words',false);${currentTerm}.${typing ? 'focus' : 'blur'}()`);
@@ -171,7 +171,7 @@ const checks = await withPage({ name: 'terminal-controls', instrumentation }, as
     assert.deepEqual(await evaluate('[testRecognition.aborted,document.querySelector("#panel-voice").getAttribute("aria-pressed"),document.querySelector("#voice-preview").hidden,document.querySelector("#voice-preview").textContent]'), [true, 'false', true, '']);
     assert.equal(await evaluate(`document.activeElement===${currentTerm}.textarea`), typing, 'Clear preserves keyboard focus');
   }
-  await evaluate("localStorage.removeItem('agentGuild.voice');dispatchEvent(new StorageEvent('storage',{key:'agentGuild.voice'}))");
+  await evaluate("localStorage.setItem('agentGuild.voice','off');dispatchEvent(new StorageEvent('storage',{key:'agentGuild.voice'}))");
   pass('Clear stops dictation, ignores late recognition results and preserves keyboard visibility');
 
   await write('\x1b[?1h');
