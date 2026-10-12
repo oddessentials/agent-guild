@@ -37,6 +37,10 @@ security policy does not allow images embedded in a GLB), and the Yard tests.
   `qwen-edit` on a light background in a relaxed stance, and the OpenAI
   builder's armour made matte with a short wool mantle in place of fur:
   `concepts/builder_openai.png` and `concepts/builder_xai.png`.
+  The OpenAI builder's hammer lies at his feet in the concept and comes out
+  as a loose part of the model, so `world.json` names it as his `prop`:
+  `rig.py` stands it on its head beside his left boot with the handle through
+  his fist, and he works with `pound`, lifting it upright and dropping it.
 - **Familiars** are the skin's `familiars/flame.png`, `night.png` and
   `aether.png`. The leaf familiar's toad reconstructed as broken geometry in
   every variant tried, so it is a moss-shelled clockwork tortoise generated

@@ -53,7 +53,10 @@ model's textures to `web/yard/assets/maps/`, and the Yard tests.
 - **Rigging**: the Google, xAI and shell builders hold a staff, keep their
   hands in their pockets, or wear a ragged robe, so they work with `steady`
   (a lean and nod with the hands still), which keeps their cloth from
-  stretching.
+  stretching. The OpenAI builder's hammer is fused to his fist and would be
+  taken for his hand, so `world.json` boxes it in as a `prop`: it is cut
+  out before the joints are found and follows his left hand rigidly, and he
+  works with `pound`, lifting it upright and dropping it.
 - **Halls, village buildings and shell helpers** are generated from
   `concepts.json`: each entry is a prompt, its seed, a shared style and the
   picked seed as `pick`. Gnome figures and background scenery in the picked

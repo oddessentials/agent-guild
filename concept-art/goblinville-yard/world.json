@@ -1,7 +1,7 @@
 {
  "cast": {
   "goblin_0": {"image": "../goblinville-skin/characters/anthropic/idle.png", "height": 2.05, "work": "tinker"},
-  "goblin_1": {"image": "concepts/builder_openai.png", "height": 2.0, "work": "tinker"},
+  "goblin_1": {"image": "concepts/builder_openai.png", "height": 2.0, "work": "pound", "prop": {"part": 1, "plant": true}},
   "goblin_2": {"image": "../goblinville-skin/characters/google/idle.png", "height": 2.35, "work": "conduct"},
   "goblin_3": {"image": "concepts/builder_xai.png", "height": 1.6, "work": "tinker"},
   "goblin_4": {"image": "../goblinville-skin/characters/shell/idle.png", "height": 1.65, "work": "tinker"},

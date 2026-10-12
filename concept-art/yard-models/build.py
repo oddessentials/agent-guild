@@ -6,8 +6,9 @@
 
 A world's sources are in concept-art/<world>-yard: `world.json` names its
 cast (runtime name: source image, metres tall, and for builders the working
-motion), its town buildings, seeds other than 42, the subjects cut out onto
-grey, and hall turns. Image paths are relative to that folder; halls and town
+motion and any held tool, `prop`, as rig.py's cut_prop and plant read it),
+its town buildings, seeds other than 42, the subjects cut out onto grey, and
+hall turns. Image paths are relative to that folder; halls and town
 buildings come from its concepts/<name>.png.
 
 `models` needs the local image studio's ComfyUI (see trellis.py) and writes
@@ -64,6 +65,8 @@ def cast(name, names):
         # Familiars and helpers stand at under half a metre on screen.
         args += ['--kind', 'builder', '--work', c['work']] if c.get('work') else \
                 ['--kind', 'familiar', '--faces', '10000', '--texture', '512']
+        if 'prop' in c:
+            args += ['--prop', json.dumps(c['prop'])]
         subprocess.run(args, check=True)
 
 def halls(name):
