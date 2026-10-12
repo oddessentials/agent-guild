@@ -6,10 +6,11 @@ editable Blender files are the art sources. Runtime files are in
 
 ## Geometry and motion
 
-`build.py` builds two worlds with five provider halls each. Guild combines
+`build.py` builds two worlds with six provider halls each; Docker Agent's,
+added as an expansion, stands 1.3 times larger than the rest. Guild combines
 stone, oak, bronze and provider-colored roofs. Distinct Guild
 silhouettes identify the keep, citadel, observatory, tower and timber
-workshop at overview scale. Professional's halls are five campus buildings:
+workshop at overview scale. Professional's halls are campus buildings:
 a studio with a timber-finned upper storey, a glass rotunda under a disc
 canopy, a stack of turned glazed volumes, a dark stone tower with a sloped
 crown, and a glass hall under a barrel vault. Their materials (`office`,
@@ -27,7 +28,7 @@ material names; Blender source previews use the authored base materials.
 
 ## Guild characters
 
-The five heroes (`hero_0`–`hero_4`) and four familiars (`familiar_0`–`familiar_3`,
+The six heroes (`hero_0`–`hero_5`) and four familiars (`familiar_0`–`familiar_3`,
 also Grove's helpers) are textured models made from the Guild skin's art
 (`concept-art/default-art-design-v1`) with TRELLIS.2, by the shared pipeline in
 `concept-art/yard-models/` run with the world name `guild`; see

@@ -13,11 +13,20 @@ npm test
   with Node.js 22, 24 and 26, and installs the packed package on x64 and
   arm64. On Alpine it checks that `agent-guild` says how to build node-pty
   and that the package works once it is built; `bash tests/package/musl.sh`
-  runs that check with Docker.
-* `node tests/browser/proxy.mjs` checks the real UI and terminal through a
-  local HTTPS proxy with an isolated manager and test certificates. On Windows,
-  or if Chrome is not in a standard Linux or macOS location, set
+  runs that check with Docker. CI also checks the boot service in a systemd
+  container (`bash tests/systemd/acceptance.sh <tgz>`), the release plan
+  (`node tests/release/plan.mjs`) and the packed tarball
+  (`node tests/package/check-tarball.mjs <tgz>`). The tmux card's test runs
+  only where tmux is installed.
+* The browser checks in `tests/browser` drive the real UI in Chrome; CI runs
+  them on Linux and `dialogs.mjs` in WebKit on macOS. Run them in CI order with
+  the sequence in [tests/browser/README.md](tests/browser/README.md). For
+  example, `node tests/browser/proxy.mjs` checks the real UI and terminal
+  through a local HTTPS proxy with an isolated manager and test certificates.
+  On Windows, or if Chrome is not in a standard Linux or macOS location, set
   `CHROME_PATH` to Chrome or Edge.
+* `npm run test:yard` adds the Yard's browser check to its asset tests; CI
+  does not run it.
 * In a checkout, `launchers/AgentGuild.cmd` (Windows) and
   `launchers/AgentGuild.command` (macOS) start Agent Guild with a
   double-click.

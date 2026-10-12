@@ -7,7 +7,7 @@
 # Agent Guild passes session_start, pre_tool_use, post_tool_use, stop and
 # session_end to every session it starts, and the Docker Agent card's
 # Model reporting switch adds the model. In autonomous mode Docker Agent skips
-# the ordinary pre_tool_use hooks, so a command shows only once it ends.
+# the ordinary pre_tool_use hooks, so without this one a command never shows.
 # preempt_yolo runs this one in every mode, before Docker Agent asks for
 # approval: in the approval modes a command then shows as running while it
 # waits for you.

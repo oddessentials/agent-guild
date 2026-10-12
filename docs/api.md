@@ -44,13 +44,18 @@ See [remote access setup](configuration.md#reverse-proxies).
 
 `GET /api/v1/remote-access` returns `{ remoteAccess }` with the current
 `revision`, `mode`, `busy`, `pending`, `problem` and connection details.
-`POST /api/v1/remote-access/check` refreshes Tailscale status.
+`POST /api/v1/remote-access/check` refreshes Tailscale status and returns
+`{ remoteAccess }`.
 `PUT /api/v1/remote-access` takes the current `revision` and an `action`:
 `enable` (with `adopt: true` to manage a matching existing route), `disable`,
 `custom` (with `hosts` and `origins` arrays), or `forget` (leave an inactive
 route awaiting cleanup in Tailscale). A successful submission returns 202;
-poll until `busy` is null and inspect `problem` for the outcome. Stale
-revisions and concurrent changes return 409. The `remote-access.updated`
+poll until `busy` (`checking`, `enabling`, `disabling` or `saving`) is null
+and inspect `problem` for the outcome. Stale revisions return 409
+`stale_settings` and concurrent changes 409 `remote_busy`; `custom` while a
+Tailscale route is on returns 409 `disable_first`, an unknown action 400
+`bad_action`, bad hosts or origins 400 `bad_settings`, and a stopping manager
+409 `manager_stopping`. The `remote-access.updated`
 event signals a fresh snapshot is available. These endpoints require the
 manager token; report tokens cannot configure access. Revoked WebSockets
 close with code 4403 while their terminal processes keep running.
@@ -85,8 +90,8 @@ Errors use one shape:
   "color": "#D97757",
   "monogram": "A",
   "iconUrl": null,
-  "install": "npm install -g @anthropic-ai/claude-code",
-  "docs": "https://docs.anthropic.com/en/docs/claude-code",
+  "install": "curl -fsSL https://claude.ai/install.sh | bash",
+  "docs": "https://code.claude.com/docs/en/setup",
   "usageUrl": "https://claude.ai/settings/usage",
   "billingUrl": "https://claude.ai/settings/billing",
   "cloudUrl": "https://claude.ai/code",
@@ -107,7 +112,8 @@ id.
 registry, which installs use too (`AGENT_GUILD_NPM_REGISTRY` overrides it for
 both), or for a Homebrew-owned copy the version its cask or formula offers,
 from Homebrew's formulae API (`HOMEBREW_API_DOMAIN` names a mirror, as for
-`brew`). A cask can follow a tool's stable channel while npm's `latest` tag is
+`brew`), or for a tool with `releases` and no `package` the tag its latest-release
+page redirects to. A cask can follow a tool's stable channel while npm's `latest` tag is
 ahead; the card compares with what `brew upgrade` would install. A formula
 that Homebrew has moved to a cask reports the cask's version with
 `updateGuidance` on how to move over and no `updateCommand`.
@@ -115,6 +121,20 @@ that Homebrew has moved to a cask reports the cask's version with
 first check finishes; a `providers.updated` event follows.
 `updateAvailable` is true when the latest version is newer, and
 `POST /providers/:id/install` performs the update when `updateCommand` is not null.
+`updateCommand` is also null while the manager is still checking that the
+copy accepts its update command; install then answers 400 `not_updatable`.
+`versionStatus` is `ok`, `unavailable` (the tool printed no version) or
+`failed`, with `versionError` saying why, and null while the tool is missing.
+`installChannel` is the running copy's `channel`, or null. `lastInstall` is
+the last install, update or uninstall session's result,
+`{ kind, outcome, exitCode, verification, before, after, latest, at }`, with
+`outcome` `installed`, `missing`, `updated`, `unchanged`, `done`, `removed`,
+`remaining` or `failed`, and `at` in epoch milliseconds; it is dropped once the
+versions it recorded change. `warnings` are lines the card shows about the
+copies, such as several being installed. `npmNote` qualifies an npm install,
+or is null. `modelPattern` is the provider's, or null. `reporting` is the
+tool's reporting mode: `claude`, `codex`, `antigravity`, `grok`, `docker`, or
+null.
 
 `installs` lists every copy of the tool that was found, each
 `{ path, displayPath, channel, version, versionStatus, active, newer, onPath, uninstall, uninstallGuidance }`.
@@ -148,6 +168,8 @@ whether `GET /usage` reports the provider. `historySource` is `claude`,
 `GET /providers/:id/memory` can list what the tool remembers.
 `instructionsSource` is `claude`, `codex`, `grok`, `google` or null, and says whether
 `GET /providers/:id/instructions` can list the instruction files the tool loads.
+Antigravity CLI's `instructionsSource` is `google` and its `historySource`
+`antigravity`.
 `historyDetails` is true for an `antigravity` history source, which also supports
 reading saved messages through `GET /providers/:id/history/detail`.
 `accounts` lists the sign-ins the tool can run under: `default` is the
@@ -173,6 +195,8 @@ session's command. A herdr session's agents are the ones herdr reports in
 its panes; its request `args` are added to `herdr` and kept for reattachment,
 including across manager restarts. Older saved cards without arguments
 continue to use the default herdr invocation.
+`multiplexers` is `[]` for every provider but `@shell`; see
+[Multiplexer installations](#multiplexer-installations).
 For a tool whose agent reporting has to be turned on (`reporting` is `antigravity`),
 or whose model reporting does (`docker`, 1.100.0 and later), `reportingEnabled`
 says whether it is. `reportingNote` says why that switch cannot be used, or is null.
@@ -210,6 +234,7 @@ and may set `stale` without replacing the pins. POST reads them again.
 probe the PATH recorded when that session was spawned, in a neutral temporary
 directory. Only PATH, the home folder, the toolchain-manager locations and
 version selectors (for example `RUSTUP_HOME`, `PYENV_ROOT`, `ASDF_DATA_DIR`)
+`PATHEXT`, `SYSTEMROOT`, `XDG_DATA_HOME` and `XDG_CONFIG_HOME`,
 the Windows install folders (`LOCALAPPDATA`, `ProgramFiles`, `ProgramW6432`)
 and the Docker selectors (`DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`)
 are passed to the probe. The response adds `sessionId`, `spawnCwd`, and `availability`.
@@ -236,7 +261,8 @@ and does not set `error`.
 
 Runtimes are ordered Node.js, Python, Go, .NET SDK, R, Rust. Each has `id`,
 `label`, `status`, `version` and `path`. Resolved results also name `command`
-and an optional explanatory `detail`. Status is `pending` before the first
+and an optional explanatory `detail`; a pending row, or a failed one from a
+check that did not finish, has no `command`. Status is `pending` before the first
 check, `ok` for a parsed successful response, `not_found` when no executable
 resolves, `unavailable` when a launcher exists but no local runtime can be
 safely reported, or `failed` when inspection/probing fails (including timeout,
@@ -257,7 +283,8 @@ nor ownership of a reported runtime. POSIX nvm discovery checks `NVM_DIR` or
 execution. There is no whole-disk installation inventory.
 
 Design tools are ordered Blender, FFmpeg, GIMP, Inkscape, ImageMagick. Each
-has `id`, `label`, `status`, `version`, `path`, `command` and `detail`. Status
+has `id`, `label`, `status`, `version`, `path`, `command` and `detail`, except
+that pending rows and failed rows from an unfinished check have no `command`. Status
 is `pending` before the first check, `on_path` when a command resolves on
 PATH, `not_on_path` when the tool is installed only outside PATH, `not_found`,
 or `failed` when the check did not finish. `command` is the PATH command, or
@@ -291,14 +318,15 @@ from the user's `Lxss` registry key without starting WSL; it is `[]` when none
 are registered and null elsewhere or when the key cannot be read.
 
 `docker` is `{ status, version, platform, os, arch, wsl2, context, endpoint,
-cli, detail }`. The engine is chosen as the docker command would choose it:
+cli, detail }`, or only `{ status: "pending" }` before its check and
+`{ status: "failed", detail }` when the check did not finish. The engine is chosen as the docker command would choose it:
 `DOCKER_HOST`, then `DOCKER_CONTEXT`, then `currentContext` in the Docker
 config, then the platform default. The check sends one `GET /version` to a
 local Unix socket or named pipe, with a 1.5 second deadline and a 256 KiB
 limit; no docker process runs. Where systemd starts the engine on demand
 (`docker.socket`, `podman.socket`), this request starts it. Status is
 `pending`, `running` (with `version`, `platform`, `os`, `arch`, and `wsl2`
-when a Linux engine runs in WSL 2),
+true when a Linux engine runs in WSL 2, else false),
 `stopped` (the docker command is on PATH but no engine answered), `not_found`,
 `denied` (the socket or pipe exists but this user cannot open it), `remote`
 (a `tcp://` or `ssh://` engine, never contacted), or `failed` with `detail`.
@@ -330,11 +358,14 @@ without invoking PATH or profile discovery.
 An `@shell` provider also describes `multiplexers[]`. Each entry contains
 `id` (`tmux` or `herdr`), `tool`, `docs`, `checked`, `available`,
 `installable`, `installCommand`, `guidance`, `busy`, `pendingCards`,
-`installs` and `lastInstall`. Before discovery finishes, `checked` is false.
+`installs` and `lastInstall`. Before discovery finishes, `checked` is false
+and the entry has only `id`, `tool`, `docs`, `checked`, `available`,
+`installable`, `installs` and `guidance`.
 `available` means a usable copy is on PATH; an old, off-PATH, or partial copy
 may still appear in `installs`.
 
-Each copy has the provider-copy fields plus `key` (stable installation
+Each copy has the provider-copy fields except `newer`, and `channel` may also
+be `system` (a distribution package), plus `key` (stable installation
 identity), `supported`, `partial`, `latestVersion`, `updateAvailable`,
 `updateCommand` and `updateGuidance`. An uninstall plan's `pathEntries` flag
 indicates that owned user PATH entries are also removed. Never construct
@@ -354,15 +385,19 @@ starts/reattachments for that multiplexer until the process exits and the
 inventory refreshes. Ordinary shells remain available.
 `multiplexer_in_use` (409) applies to tmux, carries `running` and `pending`
 counts, and can be retried with `force: true` after confirmation. Its
-`running` count includes detached cards that can reattach; pending cards
+`running` count is the cards that depend on that installation, including
+detached ones that can reattach; pending cards
 are informational and never block installation.
 
 Herdr Update does not require existing servers or panes to stop.
 Herdr Uninstall refuses with `herdr_running` or `herdr_status_unknown`
-(409) when any server is running or the server listing cannot be safely
-read. `force` never bypasses that check. Unknown copies return `unknown_copy`
-(404); unsupported actions return `not_installable`, `not_updatable` or
-`not_removable` (400).
+(409) when `herdr session list --json` shows any session running, or the copy
+is partial or its listing cannot be read. `force` never bypasses that check.
+Unknown copies return `unknown_copy` (404), an unknown multiplexer
+`unknown_multiplexer` (404) and an unknown provider `unknown_provider` (404);
+unsupported actions return `not_installable`, `not_updatable` or
+`not_removable` (400), and update or uninstall without `path` `bad_request`
+(400).
 
 Operation results and pending-card counts arrive through `providers.updated`.
 Saved cards also remain pending when the session limit is reached. Remove
@@ -406,7 +441,9 @@ asks the vendor's usage
 endpoint; a `command` source runs a program that prints
 `{ plan?, windows: [{ label, usedPercent | remainingPercent, resetsAt? }] }`.
 A window whose share is not a number (missing, null or blank) is left out
-rather than shown as unused. Snapshots are cached for a minute.
+rather than shown as unused. Snapshots are cached for a minute, or five
+minutes after the vendor rate-limited the lookup, when the snapshot also has
+`rateLimited: true`.
 A refused request says which kind of refusal it was: HTTP 401 is a refused
 sign-in, while an HTTP 403 that Cloudflare answers is a block of the request,
 usually because of the network it came from (a VPN, proxy or exit node), and
@@ -436,7 +473,8 @@ keeps them under the account's home folder: Claude Code's
 `sessions/<date>/rollout-*.jsonl` files, Antigravity CLI's
 `brain/<id>/.system_generated/logs/transcript.jsonl` files, Grok Build's
 `sessions/<folder>/<id>/summary.json` and Docker Agent's `session.db`, a
-SQLite database. Sub-agent sessions are left out.
+SQLite database, of which the newest 500 sessions are read. Sub-agent
+sessions are left out.
 `id` is what the tool resumes by (`POST /sessions` with `resume`); `title` is
 the session's name or first prompt, or null; `cwd` is the folder the session
 ran in, or null when the tool did not record it. Claude Code
@@ -498,7 +536,7 @@ transcripts return 404 `history_unavailable`; invalid ids/cursors return 400
   "folder": "/Users/me/src/app",
   "scopes": [
     { "id": "project", "label": "This project", "dir": "/Users/me/.grok/memory-v2/workspaces/app-1c1b5e9a", "note": null, "truncated": false,
-      "files": [{ "path": "topics/build.md", "title": "Build", "bytes": 2048, "modified": "2026-10-01T13:49:28.000Z" }] },
+      "files": [{ "path": "topics/build.md", "fullPath": "/Users/me/.grok/memory-v2/workspaces/app-1c1b5e9a/topics/build.md", "folder": "/Users/me/.grok/memory-v2/workspaces/app-1c1b5e9a/topics", "title": "Build", "bytes": 2048, "modified": "2026-10-01T13:49:28.000Z" }] },
     { "id": "global", "label": "Global", "dir": "/Users/me/.grok/memory-v2/global", "note": null, "truncated": false, "files": [] }
   ],
   "fetchedAt": "2026-10-01T14:00:00.000Z"
@@ -506,17 +544,21 @@ transcripts return 404 `history_unavailable`; invalid ids/cursors return 400
 ```
 
 The markdown files a tool keeps as memory for the working folder `folder`,
-read from the account's home folder. Claude Code has one `project` scope,
+read from the account's home folder. Claude Code has a `project` scope,
 `projects/<project>/memory/`, where `<project>` is the folder of the main
 checkout of the Git repository holding `folder` (so its worktrees share it),
-else `folder`; its `autoMemoryDirectory` setting moves it. Grok Build has a
+else `folder`; its `autoMemoryDirectory` setting moves it. Where file names
+ignore case, each existing folder that matches gets a scope of its own,
+`project`, `project-2` and so on, labelled "This project (<name>)". Grok Build has a
 `project` scope, `memory-v2/workspaces/<name>-<hash>/`, named for the
 repository's `origin` remote (so its clones share it) or else for the
 folder's real path, and a `global` scope; its archive is left out. Codex CLI
 keeps one memory for every folder: the `all` scope, `memories/`, and
 `all-v2`, `memories_v2/`, once that exists. `dir` is null when the tool keeps
 no memory there, and `note` says why, or anything else that qualifies the
-scope. A file's `title` is its first `# ` heading, or null. At most 500 files are listed per scope; `truncated` says more exist.
+scope. A file's `path` is relative to the scope's `dir`, `fullPath` is its
+full path and `folder` the folder that holds it. A file's `title` is its first
+`# ` heading, or null. At most 500 files are listed per scope; `truncated` says more exist.
 Links are not followed.
 
 ### Instruction files
@@ -530,11 +572,11 @@ Links are not followed.
   "note": null,
   "scopes": [
     { "id": "global", "label": "Your instructions", "note": null,
-      "files": [{ "index": 0, "path": "/Users/me/.claude/CLAUDE.md", "name": "CLAUDE.md", "location": "~/.claude", "scope": "global", "bytes": 512, "modified": "2026-10-01T13:49:28.000Z", "skipped": null, "note": null }] },
+      "files": [{ "index": 0, "path": "/Users/me/.claude/CLAUDE.md", "folder": "/Users/me/.claude", "name": "CLAUDE.md", "location": "~/.claude", "scope": "global", "bytes": 512, "modified": "2026-10-01T13:49:28.000Z", "skipped": null, "note": null }] },
     { "id": "project", "label": "Project", "note": null,
       "files": [
-        { "index": 1, "path": "/Users/me/src/app/CLAUDE.md", "name": "CLAUDE.md", "location": "app", "scope": "project", "bytes": 2048, "modified": "2026-10-01T13:49:28.000Z", "skipped": null, "note": null },
-        { "index": 2, "path": "/Users/me/src/app/AGENTS.md", "name": "AGENTS.md", "location": "app", "scope": "project", "bytes": 900, "modified": "2026-10-01T13:49:28.000Z", "skipped": "Claude Code reads CLAUDE.md instead.", "note": null }
+        { "index": 1, "path": "/Users/me/src/app/CLAUDE.md", "folder": "/Users/me/src/app", "name": "CLAUDE.md", "location": "app", "scope": "project", "bytes": 2048, "modified": "2026-10-01T13:49:28.000Z", "skipped": null, "note": null },
+        { "index": 2, "path": "/Users/me/src/app/AGENTS.md", "folder": "/Users/me/src/app", "name": "AGENTS.md", "location": "app", "scope": "project", "bytes": 900, "modified": "2026-10-01T13:49:28.000Z", "skipped": "Claude Code reads CLAUDE.md instead.", "note": null }
       ] }
   ],
   "fetchedAt": "2026-10-01T14:00:00.000Z"
@@ -547,7 +589,8 @@ outermost folder down. For Claude Code, a `managed` scope ("Set by your
 organization") comes first when the system's managed folder holds a `CLAUDE.md`
 or rules. Claude Code, Codex CLI and Antigravity CLI rules are
 reproduced; Grok Build is asked with `grok inspect --json`. `path` is the
-file's real path, `name` its file name, and `location` its folder in short:
+file's real path, `folder` the folder that holds it, `name` its file name,
+`scope` `managed`, `global` or `project`, and `location` its folder in short:
 from the name of `folder` or of a folder at most two above it, else from `~`,
 else the whole folder. `count` is the number of files that load; a file that exists
 but does not load has `skipped` set to the reason, and `note` qualifies a file
@@ -586,7 +629,7 @@ a session are not listed.
   "reply": { "id": 3 },
   "reporting": { "state": "active", "reason": null },
   "agents": [ /* Agent */ ],
-  "shells": [{ "id": "shell-3" }]
+  "shells": [{ "id": "shell-3", "kind": "shell" }]
 }
 ```
 
@@ -650,8 +693,9 @@ a session are not listed.
   cannot take hooks for one session. `reason` explains every state but `active`.
 * `shells` lists the shell commands the tool is running for the model, as
   its hooks report them, once each has run for about 600 ms; each leaves
-  the list when it ends. Every running command is listed; the page draws 16
-  and counts the rest. Nothing about the command itself is included.
+  the list when it ends, each `{ id, kind }` with `kind` `shell` or `monitor`.
+  Every running command is listed; the page draws 16 and counts the rest.
+  Nothing about the command itself is included.
 
 ### Upgrade
 
@@ -674,15 +718,16 @@ The manager's own version check, in `GET /info`, the `hello` message and
 
 `version` is the running manager. `latestVersion` comes from the same npm
 registry as the provider checks, about once an hour, and is null until the
-first check finishes or while the manager is a development build
-(`0.0.0-development`), which is never offered an upgrade. `available` is true
+first check finishes, while version checks are off, or while the manager is a
+development build (`0.0.0-development`), which is never offered an upgrade. `available` is true
 when a newer release exists that is not yet installed; `command` is then
 what `POST /upgrade` runs, or null with `guidance` when npm is not on PATH.
 `pendingVersion` is a newer version whose files are already on disk: the
 manager runs from the package npm replaces in place, so after an upgrade the
 running process is still the old version until it is restarted
 (`POST /shutdown` with `restart`, or `agent-guild restart`). `lastInstall` describes the
-last upgrade session: `{ outcome, exitCode, version, installedVersion, at }`
+last upgrade session: `{ outcome, exitCode, version, installedVersion, at }`,
+`at` in epoch milliseconds,
 with `outcome` `installed`, `failed`, or `unchanged` when npm exited cleanly
 but did not replace the files the manager runs from. It is dropped once a
 newer release appears or the files on disk change. After a `failed`
@@ -693,7 +738,7 @@ holds even once a newer release has replaced the `failed` record, until an
 upgrade completes or the files on disk change. A check that fails keeps
 the release already known. `installing` is true from the start of an upgrade
 session until its npm process has exited, even if the session was removed
-meanwhile; `available` and `pendingVersion` are withheld during that time,
+meanwhile; `available`, `command`, `pendingVersion` and `lastInstall` are withheld during that time,
 because the files on disk are mid-replacement, and `POST /upgrade` answers
 409 `upgrade_in_progress`.
 
@@ -825,61 +870,61 @@ All paths are under `/api/v1`.
 | Method | Path | Body | Result |
 | --- | --- | --- | --- |
 | GET | `/health` | | `{ ok, name, version, pid }`. No token needed. |
-| GET | `/info` | | Manager version, platform, start time, provider config warnings, `upgrade` (an Upgrade object), and `launcher`: the path of the double-click launcher for this platform when the install carries one (a checkout of the repository), else null. `folderOpener` is `{ available, label, reason }` for this client; it is unavailable to clients that reach the manager by any address other than its own loopback ones. |
-| GET | `/folders?path=` | | `{ path, parent, home, segments, roots, entries, truncated, note }`: the subfolders of `path` (blank or `~` for the home folder) on the manager's computer. A missing `path` lists the nearest existing folder above it and names the requested path in `note`. `entries` are `{ name, path, hidden }`, sorted by name, at most 2,000 (`truncated` says when there were more); `segments` and `roots` are `{ name, path }` for the path's parts and the drives or `/`. 409 `folder_unreadable` when the folder cannot be read. |
-| POST | `/folders` | `{ path, name }` | 201 with the `GET /folders` listing of the new folder `name`, made inside the existing folder `path`. 400 `bad_name` when `name` is blank, `.` or `..`, holds a path separator or control character, or (on Windows) holds `<>:"|?*`, ends with a dot or space, or is a reserved device name; 409 `folder_exists` when something already has that name, `folder_missing` when `path` is not an existing folder, `folder_unreadable` or `folder_unwritable` when the host refuses. |
+| GET | `/info` | | `name` (`agent-guild`), manager version, `pid`, platform, start time, provider config warnings, `upgrade` (an Upgrade object), and `launcher`: the path of the double-click launcher for this platform when the install carries one (a checkout of the repository), else null. `folderOpener` is `{ available, label, reason }` for this client; it is unavailable to clients that reach the manager by any address other than its own loopback ones. `remoteAccess` is `{ available: true }` when this manager can configure remote access, else null. |
+| GET | `/folders?path=` | | `{ path, parent, home, segments, roots, entries, truncated, note }`: the subfolders of `path` (blank or `~` for the home folder) on the manager's computer. A missing `path` lists the nearest existing folder above it and names the requested path in `note`. `entries` are `{ name, path, hidden }`, sorted by name, at most 2,000 (`truncated` says when there were more); `segments` and `roots` are `{ name, path }` for the path's parts and the drives or `/`. 409 `folder_unreadable` when the folder cannot be read. 400 `bad_path` for a path holding a NUL character. |
+| POST | `/folders` | `{ path, name }` | 201 with the `GET /folders` listing of the new folder `name`, made inside the existing folder `path`. 400 `bad_name` when `name` is blank, `.` or `..`, holds a path separator or control character, or (on Windows) holds `<>:"|?*`, ends with a dot or space, or is a reserved device name; 409 `folder_exists` when something already has that name, `folder_missing` when `path` is not an existing folder, `folder_unreadable` or `folder_unwritable` when the host refuses. 400 `bad_path` when `path` is missing or blank. |
 | GET | `/autostart` | | `{ autostart: { available, enabled, reason, note?, lastRun?, log? } }`: whether the manager starts when the user signs in to its computer. `reason` says why it is unavailable (WSL, an unsupported system, a data folder set by `AGENT_GUILD_HOME`, or on Linux a path a desktop's startup entry cannot carry), else null. The entry turned off outside Agent Guild (Task Manager's Startup apps, a desktop's startup settings, `launchctl disable`) reads as off. On macOS, `note` explains that System Settings' Login Items switch for the item, which the manager cannot read, also keeps it from starting; on Linux it explains that a desktop session is needed, and warns when this manager was not started from one. While available, `lastRun` is null when off or when the entry has not run at a sign-in since it was turned on, else `{ at, outcome }`: `started` (it started the manager), `running` (a manager already answered), `starting` (it ran under 30 seconds ago and no manager has answered yet) or `failed` (none answered); `log` is the manager log, which records what a macOS or Linux entry ran. On Linux outside WSL the description also has `mode` (`off`, `sign-in`, `boot`, or `both` when a sign-in entry and the systemd unit are both on) and `boot`: `{ available, enabled, reason, note, user, linger, state, commands }`. `available` is false, with `reason`, when the computer has no systemd or the user manager does not answer. `linger` says whether systemd lets the service start before anyone signs in. While the unit is enabled, `state` is what systemd reports: `{ kind: 'running', since, pid }` (the manager answering is the one systemd runs), `{ kind: 'other', since, pid, port }`, `{ kind: 'starting' }`, `{ kind: 'pending' }` (the manager answering was started without systemd and hands over at its next restart), `{ kind: 'stopped', at }`, `{ kind: 'port-in-use', at, port }` or `{ kind: 'failed', at, result, status }`; times are ISO strings or null. `commands` lists the next commands to run: the journal for a failure, and `sudo loginctl enable-linger <user>` without lingering. |
 | PUT | `/autostart` | `{ enabled }` or `{ mode }` | `{ autostart }` as above, after adding or removing the per-user sign-in entry, which runs `agent-guild open --no-browser --sign-in`. Turning it off, or on while it was off, forgets the last sign-in. `mode` (`off`, `sign-in` or `boot`) makes that the one way the manager starts: the new starter is added and confirmed before the other is removed, and no manager is started or stopped; `boot` writes and enables the systemd user unit, which runs `agent-guild start --service`. On Linux `{ enabled: true }` is `sign-in` and `{ enabled: false }` keeps a unit that is on. Other systems refuse `boot`. 400 `bad_request` when `enabled` is not a boolean or `mode` is not one of those, 409 `autostart_unavailable`, 500 `autostart_failed` when the system refuses the change. |
-| POST | `/open-folder` | `{ cwd? }` | `{ ok }`: opens the folder in the computer's file manager. 403 `local_only` from clients that reach the manager by any address other than its own loopback ones. |
+| POST | `/open-folder` | `{ cwd? }` | `{ ok }`: opens the folder in the computer's file manager; `cwd` defaults to the home folder, and a leading `~` is expanded. 403 `local_only` from clients that reach the manager by any address other than its own loopback ones. 400 `bad_cwd` when the folder does not exist, 429 `folder_open_busy` right after another open, 409 `folder_open_unavailable` when no file manager is known and `folder_open_failed` when it does not start. |
 | GET | `/notes` | | `{ notes: { revision, text } }`. One notepad for every client of this manager. `revision` is null until the first save. `text` is at most 100,000 characters. |
-| PUT | `/notes` | `{ revision, text }` | `{ notes }` with a new `revision`. `revision` is the one this edit started from, or null to create the notepad. 500 `notes_unreadable` (on GET too) while the notes file cannot be read; it is left as it is. 409 `stale_notes` when that revision is no longer current; `error.notes` is the current notepad, so a client can retry or adopt it. 400 `notes_too_long` over 100,000 characters, 400 `bad_notes` when `text` is not a string. The body may be up to 1 MiB. A cleared notepad is stored as an empty string; it is not deleted. |
-| POST | `/upgrade` | | `201 { session }`: a session with `task` `upgrade` running the Upgrade `command`. 400 `not_updatable` when no newer release is known, it is already installed on disk, the manager is a development build, or version checks are off. 409 `npm_unavailable` without npm on PATH. 409 `upgrade_in_progress` while one is running. Sessions keep running; the new version is used after the manager restarts. |
+| PUT | `/notes` | `{ revision, text }` | `{ notes }` with a new `revision`. `revision` is the one this edit started from, or null to create the notepad. 500 `notes_unreadable` (on GET too) while the notes file cannot be read; it is left as it is. 409 `stale_notes` when that revision is no longer current; `error.notes` is the current notepad, so a client can retry or adopt it. 400 `notes_too_long` over 100,000 characters, 400 `bad_notes` when `text` is not a string or `revision` is not a revision. The body may be up to 1 MiB. A cleared notepad is stored as an empty string; it is not deleted. |
+| POST | `/upgrade` | | `201 { session }`: a session with `task` `upgrade` running the Upgrade `command`. 400 `not_updatable` when no newer release is known, it is already installed on disk, the manager is a development build, or version checks are off. 409 `npm_unavailable` without npm on PATH. 409 `upgrade_in_progress` while one is running. 503 `manager_stopping` once the manager is stopping. Sessions keep running; the new version is used after the manager restarts. |
 | GET | `/providers` | | `{ providers: Provider[] }` |
 | GET | `/environment?scope=&cwd=&id=` | | Environment snapshot for `scope` (`manager` when omitted, or `project`, `session`, `launch`). `cwd` is required for `project`. `id` is required for `session`. Starts the initial check for that scope without waiting. |
 | POST | `/environment/refresh` | `{ scope?, cwd?, id? }` | `202` with that scope's snapshot; starts or joins its read-only check. `{}` refreshes the manager. |
-| POST | `/providers/reload` | | Re-reads `providers.json`. |
-| POST | `/providers/:id/reporting` | `{ enabled }` | `{ provider }`: turns agent reporting on or off for a tool that needs it, by running the tool's own `plugin install`, `plugin enable` or `plugin uninstall`. An older copy of the Agent Guild plugin is replaced, and one turned off in the tool is turned back on. For Docker Agent it writes or removes `agent-guild.yaml` in its `hooks.d` folder, which reports the model. 400 `not_applicable` for any other tool, 409 `plugin_conflict` when another plugin or file has the same name, 409 `provider_unsupported` when the Docker Agent version loads no `hooks.d` files, 500 or 502 `reporting_setup_failed` when the file or the tool's command fails. |
-| POST | `/providers/:id/install` | `{ force? }` | `201 { session }`: a session running `npm install -g <package>@<version>`, or `updateCommand` when the tool is installed; for a Docker CLI plugin, `installCommand` in both cases, and 409 `provider_unavailable` without docker on PATH. 400 `not_updatable` when an installed tool has no `updateCommand`. 503 `release_unresolved` or 409 `release_incomplete` when the release cannot be read or its platform build is not published; nothing is run. 409 `install_in_progress` while one is already running. 409 `provider_in_use` (with `running`, the session count) while the provider's sessions are running, unless `force` is true. |
-| POST | `/providers/:id/uninstall` | `{ path, force? }` | `201 { session }`: a session that removes the copy at `path`, one of the provider's `installs`. It runs that copy's package manager, or deletes the paths its installer created, the launcher last, so a copy that fails partway with files left is still listed and can be uninstalled again. 400 `bad_request` without `path`, 404 `unknown_copy` when no copy is at `path`, 400 `not_removable` when its `uninstall` is null. 409 `install_in_progress` and `provider_in_use` as for `install`. |
+| POST | `/providers/reload` | | `{ providers, warnings }`: re-reads `providers.json` and checks every tool's versions again. New sessions use the new settings. |
+| POST | `/providers/:id/reporting` | `{ enabled }` | `{ provider }`: turns agent reporting on or off for a tool that needs it, by running the tool's own `plugin install`, `plugin enable` or `plugin uninstall`. An older copy of the Agent Guild plugin is replaced, and one turned off in the tool is turned back on. For Docker Agent it writes or removes `agent-guild.yaml` in its `hooks.d` folder, which reports the model. 400 `bad_request` when `enabled` is not a boolean, 404 `unknown_provider`, 400 `not_applicable` for any other tool, 409 `provider_unavailable` when the tool is not installed, 409 `plugin_conflict` when another plugin or file has the same name, 409 `provider_unsupported` when the Docker Agent version loads no `hooks.d` files, `reporting_setup_failed`: 500 when Docker Agent's file cannot be written, 502 when the tool's plugin command fails; 500 `reporting_unavailable` when this manager cannot set up reporting. |
+| POST | `/providers/:id/install` | `{ force? }` | `201 { session }`: a session running `npm install -g <package>@<version>`, or `updateCommand` when the tool is installed; for a Docker CLI plugin, `installCommand` in both cases, and 409 `provider_unavailable` without docker on PATH. 400 `not_updatable` when an installed tool has no `updateCommand`. 503 `release_unresolved` or 409 `release_incomplete` when the release cannot be read or its platform build is not published; nothing is run. 409 `install_in_progress` while one is already running. 409 `provider_in_use` (with `running`, the session count) while the provider's sessions are running, unless `force` is true. For a Docker CLI plugin, 409 `plugins_unchecked` until docker has listed its copies and `already_installed` while one runs. 400 `not_installable` when the tool has no `package` (or a plugin no `install`), 409 `npm_unavailable` without npm on PATH, 404 `unknown_provider`, 503 `manager_stopping`. |
+| POST | `/providers/:id/uninstall` | `{ path, force? }` | `201 { session }`: a session that removes the copy at `path`, one of the provider's `installs`. It runs that copy's package manager, or deletes the paths its installer created, the launcher last, so a copy that fails partway with files left is still listed and can be uninstalled again. 400 `bad_request` without `path`, 404 `unknown_copy` when no copy is at `path`, 400 `not_removable` when its `uninstall` is null. 409 `install_in_progress` and `provider_in_use`, 404 `unknown_provider` and 503 `manager_stopping` as for `install`. |
 | GET | `/usage` | | `{ usage: Usage[] }`, one per account of every provider with a `usageSource`. |
-| GET | `/model-stats` | | Benchmarks for the models of every provider with a `modelPattern`, from OpenRouter's public model list (Artificial Analysis and Design Arena results), cached for 6 hours. `{ retrievedAt, stale, error, stats, pool, providers, models, sessions }`: `stats` describes each benchmark; `providers[id]` is `{ featured, models }`, a provider's model ids newest first; `models[id]` holds a model's name, context and price, and in `stats`, per benchmark, its `value`, `rank`, `level` (0-100, its standing among the models of all configured tools) and `tier` (S 90+, A 75+, B 50+, C 25+, D below); `sessions[id]` is the model id a session's reported model matched, or null. |
-| GET | `/news` | | `{ refreshedAt, refreshing, sources, items }`. `items` are the last 30 days of the built-in feeds, newest first, each `{ id, title, url, discussion, summary, source, sourceId, category, publishedAt }` with `category` `news`, `releases` or `research`. A coding tool's own release feed is included only while that tool is installed. `sources` lists each feed with its `error` and the time it last answered. Feeds that are due are re-read in the background; a `news.updated` event follows. |
-| GET | `/changelog` | | `{ refreshing, okAt, error, releases }`: Agent Guild's own releases from GitHub, newest first, each `{ version, url, publishedAt, sections: [{ title, changes }] }`, where a change is a list of text runs. Re-read hourly in the background; a `changelog.updated` event follows. |
+| GET | `/model-stats` | | Benchmarks for the models of every provider with a `modelPattern`, from OpenRouter's public model list (Artificial Analysis and Design Arena results), cached for 6 hours. `{ retrievedAt, stale, error, stats, pool, providers, models, sessions }`: `stats` describes each benchmark; `providers[id]` is `{ featured, models }`, a provider's model ids newest first; `pool` is `{ tools }`, the tools whose models the levels compare, or null; `models[id]` holds a model's name, context and price, and in `stats`, per benchmark, its `value`, `rank`, `place`, `tied`, `of`, `level` (0-100, its standing among the models of all configured tools) and `tier` (S 90+, A 75+, B 50+, C 25+, D below); `sessions[id]` is the model id a session's reported model matched; a session with no model is left out. |
+| GET | `/news` | | `{ refreshedAt, refreshing, sources, items }`. `items` are the last 30 days of the built-in feeds, newest first, each `{ id, title, url, discussion, summary, source, sourceId, category, publishedAt }` with `category` `news`, `releases` or `research`. A coding tool's own release feed is included only while that tool is installed. `sources` lists each feed as `{ id, name, category, error, okAt }`, `okAt` the time it last answered. Feeds that are due are re-read in the background; a `news.updated` event follows. |
+| GET | `/changelog` | | `{ refreshing, okAt, error, releases }`: Agent Guild's own releases from GitHub, newest first, each `{ version, url, publishedAt, sections: [{ title, changes }] }`, where `title` may be null and a change is a list of text runs. Re-read hourly in the background; a `changelog.updated` event follows. |
 | GET | `/providers/:id/history?account=&limit=&cwd=&q=` | | `{ history }`: a History object for one account (default `default`; 404 `unknown_account`), filtered before the limit (default 100, at most 500). 400 `history_unsupported` when the provider has no `historySource`. |
-| GET | `/providers/:id/history/detail?account=&id=&cursor=` | | `{ detail }`: a bounded page of saved Antigravity messages; see [Saved messages](#saved-messages). |
-| GET | `/providers/:id/memory?account=&cwd=` | | `{ memory }`: a Memory object for one account and the working folder `cwd` (the home folder when empty; 400 `bad_cwd` when it does not exist). 400 `memory_unsupported` when the provider has no `memorySource`. |
-| GET | `/providers/:id/instructions?account=&cwd=` | | `{ instructions }`: an Instruction files object for one account and the working folder `cwd`. 400 `instructions_unsupported` when the provider has no `instructionsSource`. |
-| GET | `/providers/:id/instructions/file?account=&cwd=&index=&path=` | | `{ file: { index, scope, path, bytes, modified, truncated, text } }`: file `index` of a freshly resolved list, its first 512 KiB. 404 `instruction_file_gone` when that entry is no longer `path`; 400 `bad_instruction_path` for a file that is not markdown. |
-| GET | `/providers/:id/memory/file?account=&cwd=&scope=&path=` | | `{ file: { scope, path, bytes, modified, truncated, text } }`: one listed file of a scope, its first 512 KiB. 404 `memory_not_found` for an unknown scope, 404 `memory_file_gone` when the file no longer exists, 400 `bad_memory_path` for a path that is not a markdown file inside the scope's folder. |
+| GET | `/providers/:id/history/detail?account=&id=&cursor=` | | `{ detail }`: a bounded page of saved Antigravity messages; see [Saved messages](#saved-messages). 400 `history_unsupported` when the provider has no `historySource`, 404 `unknown_account`. |
+| GET | `/providers/:id/memory?account=&cwd=` | | `{ memory }`: a Memory object for one account and the working folder `cwd` (the home folder when empty; 400 `bad_cwd` when it does not exist). 400 `memory_unsupported` when the provider has no `memorySource`. 404 `unknown_account`. |
+| GET | `/providers/:id/instructions?account=&cwd=` | | `{ instructions }`: an Instruction files object for one account and the working folder `cwd` (the home folder when empty; 400 `bad_cwd` when it does not exist). 400 `instructions_unsupported` when the provider has no `instructionsSource`. 404 `unknown_account`. |
+| GET | `/providers/:id/instructions/file?account=&cwd=&index=&path=` | | `{ file: { index, scope, path, bytes, modified, truncated, text } }`: file `index` of a freshly resolved list, its first 512 KiB. 404 `instruction_file_gone` when that entry is no longer `path`; 400 `bad_instruction_path` for a file that is not markdown, 403 `instruction_file_unreadable` when the host refuses to read it. 404 `unknown_account`, and `cwd` as for the list. |
+| GET | `/providers/:id/memory/file?account=&cwd=&scope=&path=` | | `{ file: { scope, path, bytes, modified, truncated, text } }`: one listed file of a scope, its first 512 KiB. 404 `memory_not_found` for an unknown scope or one with no folder, 404 `memory_file_gone` when the file no longer exists, 400 `bad_memory_path` for a path that is not a markdown file inside the scope's folder. |
 | GET | `/github` | | `{ github }`: a GitHub object. |
 | POST | `/github/sign-in` | | `202 { github }`: starts a device-flow sign-in; the manager polls GitHub and announces the result in `github.updated`. |
 | DELETE | `/github/sign-in` | | `{ github }`: cancels it. |
 | DELETE | `/github/accounts/:id` | | `{ github }`: forgets the account's sign-in. Its key stays in the data folder and on GitHub. |
 | GET | `/github/accounts/:id/repos?parent=&refresh=1` | | `{ repos: { accountId, fetchedAt, truncated, owners, parent, repos } }`: the account's repositories, most recently pushed first, each `{ fullName, owner, ownerType, name, private, fork, archived, description, language, pushedAt, url, target, local }`. `owners` is the account's login, then the organizations among the repositories' owners: where a new repository can be created. With `parent` (a folder; 400 `bad_cwd` when it does not exist), `target` is `<parent>/<name>` and `local` is `absent`, `cloned` (a Git repository whose origin is this repository) or `conflict`. Cached for 5 minutes unless `refresh=1`. |
-| POST | `/github/accounts/:id/repos` | `{ owner, name, description?, private?, readme? }` | `201 { repo }`: creates a repository under the account or the organization `owner`, private unless `private` is false, with a README unless `readme` is false. 409 `repo_exists`, 403 `repo_forbidden` when GitHub refuses the owner. |
+| POST | `/github/accounts/:id/repos` | `{ owner, name, description?, private?, readme? }` | `201 { repo }`: creates a repository under the account or the organization `owner`, private unless `private` is false, with a README unless `readme` is false. 409 `repo_exists`, 403 `repo_forbidden` when GitHub refuses the owner, 400 `bad_repo` for a bad owner or name and `bad_description` when `description` is not a string. |
 | GET | `/github/repos?refresh=1` | | `{ repos, truncated, errors, fetchedAt }`: every signed-in account's repositories in one list, most recently pushed first, each a repository as above without `target` and `local`, plus `accountId` and `login`. A repository two accounts can see is listed for each. An account that fails adds `{ accountId, login, code, message }` to `errors` and leaves the others' repositories in place. `fetchedAt` is the oldest account list's time, null without accounts. |
-| GET | `/github/origin?cwd=` | | `{ folder, repo }`: `repo` is the lowercase `owner/name` of the GitHub origin of the Git work tree holding `cwd`, worktrees included, else null. 400 `bad_cwd` when the folder does not exist. |
+| GET | `/github/origin?cwd=` | | `{ folder, repo }`: `repo` is the lowercase `owner/name` of the GitHub origin of the Git work tree holding `cwd`, worktrees included, else null. An empty `cwd` is the home folder. 400 `bad_cwd` when the folder does not exist. |
 | GET | `/github/accounts/:id/repos/:owner/:name/issues?state=` | | Repository issues (see Repository views). `state` is `open` (default), `closed` or `all`; 400 `bad_state` otherwise. |
-| POST | `/github/accounts/:id/repos/:owner/:name/issues` | `{ title, body? }` | `201 { issue }`. 400 `bad_title` for an empty title, `bad_body` when `body` is not a string. The title is cut to 256 characters, the body to 48,000. |
-| PATCH | `/github/accounts/:id/repos/:owner/:name/issues/:number` | `{ title?, body?, state? }` | `{ issue }`. `state` is `open` or `closed`. 400 `bad_issue`, `bad_state`, or `bad_request` when nothing is given. |
+| POST | `/github/accounts/:id/repos/:owner/:name/issues` | `{ title, body? }` | `201 { issue }`. 400 `bad_title` for an empty title or one over 256 characters, `bad_body` when `body` is not a string or is over 48,000 characters. |
+| PATCH | `/github/accounts/:id/repos/:owner/:name/issues/:number` | `{ title?, body?, state? }` | `{ issue }`. `state` is `open` or `closed`. 400 `bad_issue`, `bad_state`, `bad_title` and `bad_body` as for a new issue, or `bad_request` when nothing is given. |
 | GET | `/github/accounts/:id/repos/:owner/:name/actions` | | Workflow runs (see Repository views). |
 | GET | `/github/accounts/:id/repos/:owner/:name/branches?page=` | | Remote branches, up to 100 per page. Follow `nextPage` until null; see Repository views. |
 | GET | `/github/accounts/:id/repos/:owner/:name/pulls` | | Open pull requests (see Repository views). |
 | POST | `/github/accounts/:id/ssh` | | `{ account }`: makes the account's SSH key if it has none, adds it to the account, and checks that GitHub signs it in as this account. A failure is reported in `account.ssh.error`. |
-| POST | `/github/clone` | `{ account, repo, parent }` | `201 { session }`: a session with `task` `clone` running `git clone` for `repo` (owner/name) into `<parent>/<name>` over SSH with the account's key. 409 `ssh_not_ready`, `git_unavailable`, `clone_exists` or `folder_conflict` (both with `target`), or `clone_in_progress`. |
+| POST | `/github/clone` | `{ account, repo, parent }` | `201 { session }`: a session with `task` `clone` running `git clone` for `repo` (owner/name) into `<parent>/<name>` over SSH with the account's key. 409 `ssh_not_ready`, `git_unavailable`, `clone_exists` or `folder_conflict` (both with `target`), or `clone_in_progress`. 400 `bad_cwd` without `parent`, 400 `github_unavailable` when the manager has no GitHub integration, 503 `manager_stopping`. |
 | GET | `/sessions` | | `{ sessions: Session[] }` |
-| POST | `/sessions` | `{ providerId, account?, shell?, cwd?, cols?, rows?, name?, args?, resume? }` | `201 { session }`. 409 `install_in_progress` while the provider's tool is being installed, updated or uninstalled. 409 `shell_unavailable` when `shell` is not one of the provider's `shells`; 400 `bad_shell` when the provider has none or `shell` is not a string. |
+| POST | `/sessions` | `{ providerId, account?, shell?, cwd?, cols?, rows?, name?, args?, resume? }` | `201 { session }`. 409 `install_in_progress` while the provider's tool is being installed, updated or uninstalled. 409 `shell_unavailable` when `shell` is not one of the provider's `shells`; 400 `bad_shell` when the provider has none or `shell` is not a string. 404 `unknown_provider`; 400 `bad_args`, `bad_account`, `bad_resume` or `bad_cwd` for a bad field; 409 `provider_unavailable` when the tool is not installed; 429 `too_many_sessions` at the session limit; 503 `manager_stopping`; 500 `spawn_failed` or `account_unavailable` when the process or the account's folder cannot be made. |
 | GET | `/sessions/:id` | | `{ session }` |
 | GET | `/sessions/:id/reply` | | `{ reply: { id, text } }`, or `{ reply: null }`: the whole text of the answer `session.reply` names. |
-| PATCH | `/sessions/:id` | `{ name }` | `{ session }`. `name` must be a non-empty string; it is trimmed to 80 characters. |
-| POST | `/sessions/:id/stop` | | Ends the process. The session stays listed as exited. |
-| POST | `/sessions/:id/reattach` | | `{ session }`: runs an exited tmux or herdr session's multiplexer client again, keeping the session's id, report token and screen. 400 `not_reattachable` for any other session, 409 `session_running` while it runs, 409 `multiplexer_session_gone` while `multiplexer.reattachable` is false or once the multiplexer no longer has its session. The client starts in the session's `cwd`, or in the home folder once that folder is gone. |
-| DELETE | `/sessions/:id` | | Ends the process if needed and removes the session. |
+| PATCH | `/sessions/:id` | `{ name }` | `{ session }`. `name` must be a non-empty string (400 `bad_name`); it is trimmed to 80 characters. |
+| POST | `/sessions/:id/stop` | | `{ session }`: ends the process. The session stays listed as exited. |
+| POST | `/sessions/:id/reattach` | | `{ session }`: runs an exited tmux or herdr session's multiplexer client again, keeping the session's id, report token and screen. 400 `not_reattachable` for any other session, 409 `session_running` while it runs, 409 `multiplexer_session_gone` while `multiplexer.reattachable` is false or once the multiplexer no longer has its session. 409 `shell_unavailable` when the multiplexer is no longer installed, 503 `manager_stopping`, 500 `spawn_failed`. The client starts in the session's `cwd`, or in the home folder once that folder is gone. |
+| DELETE | `/sessions/:id` | | `{ ok: true }`: ends the process if needed and removes the session. |
 | POST | `/sessions/:id/agents` | Agent report | `{ agent }`, or `{ agent: null }` after a removal, for a `done` report about an agent that was never reported, or for `{ finishForeground: true }`, which ends the commands of the turn that just ended. |
 | POST | `/sessions/:id/model` | `{ model, displayName? }` | `{ model }`. Sets the session's model with source `report`. |
 | POST | `/sessions/:id/tool-session` | `{ toolSessionId }` | `{ toolSessionId }`. Records the id the tool gave its own session: one printable line of at most 200 characters. 409 once the session has exited. |
 | POST | `/sessions/:id/reply` | `{ reply }` | `{ reply: { id } }`, or `{ reply: null }`. `reply` is the text of the answer that ended the turn, as Markdown, or null for a turn that ended without one. A blank text counts as none. 409 once the session has exited. |
-| POST | `/sessions/:id/reporting` | | `{ reporting }`: the tool's hooks announce themselves, which makes `reporting.state` `active`. |
+| POST | `/sessions/:id/reporting` | | `{ reporting }`: the tool's hooks announce themselves, which makes `reporting.state` `active`. 409 once the session has exited. |
 | POST | `/sessions/:id/docker` | `{ event, sessionId, agentName?, toolName?, toolUseId?, command?, model?, reply? }` | `{ ok }`. One Docker Agent hook event (`event` is its `hook_event_name`, `sessionId` its `session_id`, `command` the shell tool's `cmd`, `model` its `model_id`, `reply` a stop's `stop_response`); the manager tells the main session, its tabs and its sub-agents apart, and turns the event into the agent, shell, model, tool-session and reply reports above. A session not started as Docker Agent (a Shell card it was run in) is treated as one from its first event. 409 once the session has exited. |
 | POST | `/sessions/:id/shells` | `{ shell, key \| task, match?, agentId?, persist?, endsWithAgent?, kind?, tasks? }` | `{ ok }`. `shell` is `start`, `end`, `background` (with the tool's `task` id), `waiting` (a permission request, which hides the command), `asked` (one that ends the command with its turn), `running` (`tasks` lists the background tasks still running as `{ id, kind? }`; any other ends, and a listed `monitor` promotes a command while a listed `shell` never demotes a monitor) or `reset` (every command ends). `key` is the tool's call id. `match` is a hash of the command, which pairs a permission request with it; `persist` keeps a command past the end of its turn, and `endsWithAgent` ends a background one with its sub-agent. `kind` is `shell` (default) or `monitor`, a background watch; the session lists each as `{ id, kind }`. |
 | POST | `/shutdown` | `{ force?, restart? }` | `202 { ok, running, restart }`: stops the manager and every session, detaching tmux and herdr sessions rather than ending them. 409 `sessions_running` (with `running`, the count of sessions it would end) while any session other than a tmux or herdr one is running, unless `force` is true. With `restart`, 409 `pty_unavailable` first when the new manager could not run a terminal, which happens when an upgrade replaced a node-pty compiled on this computer (see `ptyBuild` under [Upgrade](#upgrade)); the message says what to run, and nothing is stopped. From the 202 on, `POST /sessions` and `POST /providers/:id/install` answer 503 `manager_stopping`. Events clients get `manager.stopping` first and `manager.stopped` last, after the sessions have ended and before the API closes. With `restart` true, the manager then starts a new manager from the package on disk, on the same port and with the same token, before it exits; the new one runs whatever version is installed, so this is how an upgrade's `pendingVersion` is put to use. Clients reconnect to it as to any manager; its `hello` is the new source of truth. |
@@ -915,7 +960,7 @@ that went silent without closing.
 
 | Message | Meaning |
 | --- | --- |
-| `{ type: "hello", version, pid, platform, startedAt, launcher, folderOpener, upgrade, sessions, notesRevision, notesUnreadable }` | Sent first. The manager's version, pid, platform and start timestamp (together identifying this manager lifetime), its `launcher` path and `folderOpener` (as in `/info`), the full session list and the manager's Upgrade object. `notesRevision` is the notepad's current revision, or null when notes have never been stored. It is omitted when the notes file cannot be read; `notesUnreadable` is then true. The manager reads the file again for each new connection, so fixing or removing it needs no restart. |
+| `{ type: "hello", version, pid, platform, startedAt, launcher, folderOpener, remoteAccess, upgrade, sessions, heartbeat, notesRevision, notesUnreadable }` | Sent first. The manager's version, pid, platform and start timestamp (together identifying this manager lifetime), its `launcher` path, `folderOpener` and `remoteAccess` (as in `/info`), `heartbeat: true` (it answers `ping`), the full session list and the manager's Upgrade object. `notesRevision` is the notepad's current revision, or null when notes have never been stored. It is omitted when the notes file cannot be read; `notesUnreadable` is then true. The manager reads the file again for each new connection, so fixing or removing it needs no restart. |
 | `{ type: "session.created", session }` | A session was started by any client. |
 | `{ type: "session.updated", session }` | Status, activity, agents, name or size changed. |
 | `{ type: "session.removed", sessionId }` | A session was removed. |
@@ -924,6 +969,7 @@ that went silent without closing.
 | `{ type: "news.updated" }` | A news refresh finished; fetch `/news` again. |
 | `{ type: "changelog.updated" }` | A refresh of the release list finished; fetch `/changelog` again. |
 | `{ type: "github.updated" }` | A GitHub sign-in, account or SSH setup changed; fetch `/github` again. |
+| `{ type: "remote-access.updated" }` | The remote access snapshot changed; fetch `/remote-access` again. |
 | `{ type: "notes.updated", notes }` | The notepad was saved. `notes` is `{ revision, text }`. The page that saved it already has this text. |
 | `{ type: "manager.upgrade", upgrade }` | The manager's own version check changed: a newer release was found, or an upgrade session ended. |
 | `{ type: "manager.stopping", running, restart }` | A client asked the manager to stop. `running` sessions are being ended. A client should show that the manager was stopped on purpose, not that it is unreachable. `restart` is true when a new manager will take over; a client should then say it is waiting for that one rather than tell the user how to start one. |
@@ -953,6 +999,7 @@ Server to client:
 | `{ type: "exit", exitCode, signal }` | The process ended. Also sent after the snapshot when attaching to an exited session. |
 | `{ type: "removed" }` | The session was removed. The socket then closes with code 4410. |
 | `{ type: "pong" }` | The answer to a client's `ping`. |
+| `{ type: "error", code: "not_found", message }` | The session does not exist. The socket then closes with code 4404. |
 
 Client to server:
 

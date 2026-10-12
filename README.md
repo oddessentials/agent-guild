@@ -138,8 +138,16 @@ The first Claude Code usage meter may ask for access to the
 ## Features
 
 * Real terminals that survive closing or reloading the page
-* Two terminals side by side with **Split**
-* Install and update each tool from its card
+* Two terminals side by side with **Split**, a text size control, and
+  **Copy…** to select terminal text
+* Touch keys for phones and tablets: arrows, Tab, Enter, Esc, Ctrl+C,
+  Paste and Clear
+* **Dictate** into a terminal and **Read** the agent's last answer aloud
+  (**Settings → Voice** and **Read aloud**)
+* A working-folder picker with recent folders and a folder browser, and a
+  button that opens the folder in your file manager
+* Install and update each tool from its card, and upgrade Agent Guild from
+  the page
 * Helper agents and the model in use, shown on each card
   ([setup per tool](docs/agent-reporting.md))
 * Rate-limit meters for Claude Code and Codex CLI
@@ -147,11 +155,16 @@ The first Claude Code usage meter may ask for access to the
 * Model grades and benchmarks for each tool's models
 * Resume a tool's earlier sessions with **Existing…**
 * Read Google's saved conversations with **History**, filtered to the working folder
+* See what Claude Code, Codex CLI and Grok Build remember with **Memory**, and
+  which instruction files they and Antigravity CLI read in the working folder
+  with **Instructions**
 * GitHub issues, pull requests, workflow runs, branches and cloning
 * The manager's environment on the Shell card: runtimes, design tools,
   Docker, and the versions a project pins
 * Start the manager when you sign in, on Windows, macOS and Linux
 * Shared notes, a news feed, six skins, light and dark mode
+* Alert sounds when the manager stops or an update is found
+* **Videos**: Agent Guild's trailers and tutorials
 * The Yard: your tools and sessions as a 3D world, one for each skin
 * tmux and herdr sessions that keep running when the manager stops
 
@@ -201,7 +214,7 @@ requests carry your code or prompts:
 
 | To | For | How often |
 | --- | --- | --- |
-| npm registry, Homebrew | Version checks | Hourly |
+| npm registry, Homebrew, GitHub releases (Docker Agent) | Version checks | Hourly |
 | Anthropic and OpenAI | Usage meters, with the tool's own sign-in | Every minute while the page is open |
 | OpenRouter | Model list for benchmarks | Every 6 hours |
 | News feeds, Hacker News, arXiv, GitHub | News feed | Every 30 minutes while the page is open |
@@ -209,6 +222,7 @@ requests carry your code or prompts:
 | herdr.dev, Homebrew | Multiplexer version checks | Hourly |
 | GitHub, GitHub Status | GitHub panel | When you use it |
 | Package sources | Installs and updates | When you ask |
+| YouTube | Video thumbnails and playback | When you open Videos |
 
 Failed news, model list and release checks retry after 10 minutes.
 `AGENT_GUILD_NO_UPDATE_CHECK=1` turns off version checks and self-upgrade.

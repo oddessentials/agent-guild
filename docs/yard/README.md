@@ -217,8 +217,10 @@ They also cover overlapping New/Resume requests, duplicate submission across
 views, independent install requests and model recovery without retry loops.
 Asset tests verify the shipped GLBs contain anchors, skinning and clips.
 
-The release gate is 170 MiB packed, and the Pages demo's is 182 MiB; the
-package measured 168.1 MiB. Run `npm pack` and
+`npm test` holds each world to 24 MiB: its GLB, the textures it references,
+its backdrop plates and its sky and surface maps. The release gate is
+195 MiB packed, and the Pages demo's is 215 MiB; the package measured
+167.8 MiB. Run `npm pack` and
 `node tests/package/check-tarball.mjs <archive>` after asset changes. Pack on
 Linux/macOS for release: Windows npm archives do not preserve executable
 mode bits on node-pty's macOS spawn helpers, which the gate correctly rejects.
