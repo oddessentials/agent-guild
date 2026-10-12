@@ -6532,10 +6532,11 @@ function loadReply(session) {
   if (!id || replies.get(session.id)?.id === id) return;
   const entry = { id, text: null };
   replies.set(session.id, entry);
-  // A failed load leaves Read off until the next answer or a reconnect.
+  // A failed load leaves Read off until the next answer or a reconnect, and so does a newer answer than the
+  // session update announced: that update loads it.
   api('GET', `/sessions/${session.id}/reply`).then(({ reply }) => {
-    if (replies.get(session.id) !== entry || !reply) return;
-    replies.set(session.id, { id: reply.id, text: reply.text });
+    if (replies.get(session.id) !== entry || reply?.id !== id) return;
+    entry.text = reply.text;
     renderRead();
   }).catch(() => {});
 }
@@ -6543,21 +6544,21 @@ function loadReply(session) {
 function renderRead() {
   $('read-choice').hidden = !reader;
   $('read-aloud').checked = readOn();
-  // Reading stops with its terminal's pane.
-  if (reader?.session && !state.panes.includes(reader.session)) reader.stop();
+  // Reading stops with its terminal's pane, and when this or another tab turns it off.
+  if (reader?.session && (!readOn() || !state.panes.includes(reader.session))) reader.stop();
   const session = state.sessions.get(state.activeId);
   if (readOn() && session) loadReply(session);
   const reply = session && replies.get(session.id);
   const reading = Boolean(session) && reader?.session === session.id;
   const button = $('panel-read');
-  button.hidden = !readOn() || !session?.reply;
+  // While reading, the button is how it stops, whatever the session's answer is now.
+  button.hidden = !reading && (!readOn() || !session?.reply);
   button.disabled = !reading && !(reply && reply.id === session.reply?.id && reply.text !== null);
   button.setAttribute('aria-pressed', String(reading));
 }
 
 function changeRead(input) {
   save(READ_KEY, input.checked ? 'on' : null);
-  if (!input.checked) reader?.stop();
   renderRead();
 }
 
@@ -7549,6 +7550,7 @@ applyTheme(currentTheme());
 renderSkinChoices();
 $('sound').checked = soundOn();
 renderVoice();
+renderRead();
 // Follow the system setting until the user picks a theme.
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
   if (!load(THEME_KEY)) applyTheme(e.matches ? 'dark' : 'light');

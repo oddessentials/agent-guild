@@ -45,6 +45,9 @@ test('fenced code is skipped by one rule; indented code and inline code are read
     'done item',
     CODE_OMITTED,
   ].join('\n'));
+  assert.equal(spokenText('- Install:\n  ```sh\n  npm i\n  ```\n- Then read on.\n> ```\n> quoted code\n> ```\n> After the quote.'),
+    ['Install:', CODE_OMITTED, 'Then read on.', CODE_OMITTED, 'After the quote.'].join('\n'), 'fences inside list items and quotes open and close by the same rule');
+  assert.equal(spokenText('1. ```js\n   run()\n   ```\n2. Next step'), [CODE_OMITTED, '2. Next step'].join('\n'), 'a fence that opens a list item');
   assert.equal(spokenText('```a`b\nread'), 'ab\nread', 'a backtick fence\'s info has no backtick, so this is no fence');
 });
 
@@ -111,7 +114,7 @@ function page() {
     stopDictation: () => { context.dictationStopped = true; },
   };
   runInNewContext(`${readSource}\n${clickSource}\nglobalThis.reader = reader;\nglobalThis.replies = replies;`, context);
-  return { context, node, speech, requests, click: () => listeners.get('panel-read:click')() };
+  return { context, node, speech, requests, storage, click: () => listeners.get('panel-read:click')() };
 }
 
 const settle = () => new Promise((resolve) => setImmediate(resolve));
@@ -159,4 +162,41 @@ test('Read waits for its answer to load, then speaks straight from the click', a
   p.context.state.panes = [];
   p.context.renderRead();
   assert.equal(p.context.reader.session, null, 'reading stops when its terminal leaves the screen');
+});
+
+test('a load that sees a newer answer than the session update waits for that update', async () => {
+  const p = page();
+  p.context.renderRead();
+  p.requests[0].resolve({ reply: { id: 2, text: 'Newer answer.' } });
+  await settle();
+  p.context.renderRead();
+  assert.equal(p.requests.length, 1, 'no new load until the session update moves on');
+  assert.equal(p.node('panel-read').disabled, true);
+  p.context.state.sessions.set('a', { id: 'a', reply: { id: 2 } });
+  p.context.renderRead();
+  assert.equal(p.requests.length, 2);
+});
+
+test('playback keeps its button when the answer clears, and stops when any tab turns reading off', async () => {
+  const p = page();
+  p.context.renderRead();
+  p.requests[0].resolve({ reply: { id: 1, text: 'One. Two.' } });
+  await settle();
+  p.click();
+  p.context.state.sessions.set('a', { id: 'a', reply: null });
+  p.context.renderRead();
+  const button = p.node('panel-read');
+  assert.deepEqual([button.hidden, button.disabled, button['aria-pressed']], [false, false, 'true'], 'a turn without an answer leaves the way to stop');
+  p.click();
+  assert.equal(p.context.reader.session, null);
+  assert.equal(button.hidden, true);
+
+  p.context.state.sessions.set('a', { id: 'a', reply: { id: 2 } });
+  p.context.renderRead();
+  p.requests[1].resolve({ reply: { id: 2, text: 'Three.' } });
+  await settle();
+  p.click();
+  p.storage.delete('read');
+  p.context.renderRead();
+  assert.equal(p.context.reader.session, null, 'turned off in another tab, the storage event\'s render stops it');
 });

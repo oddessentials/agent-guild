@@ -5,6 +5,8 @@ export const CODE_OMITTED = 'Code omitted.';
 export const MAX_CHUNK = 200;
 
 const FENCE_OPEN = /^\s*(`{3,}|~{3,})(.*)$/;
+// Blockquote markers and a list item's marker, before a fence inside them.
+const CONTAINER = /^\s*(>\s?)*\s*(([-*+]|\d+[.)])\s+)?/;
 const TABLE_DIVIDER = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
 // A thematic break, or a setext heading's underline.
 const RULE = /^\s*(([-*_])(\s*\2){2,}|=+)\s*$/;
@@ -31,20 +33,22 @@ function plainLine(line) {
 }
 
 /**
- * The words to speak. A fence opens on a line that starts, after any indent, with three or more backticks or tildes
- * (a backtick fence's info has no backtick) and closes on a line of the same character, at least as many, and
- * nothing else; an unclosed fence runs to the end. Each fenced block is spoken as CODE_OMITTED.
+ * The words to speak. A fence opens on a line that starts, after any indent, blockquote markers and list marker,
+ * with three or more backticks or tildes (a backtick fence's info has no backtick) and closes on a line that is,
+ * after the same, the same character, at least as many, and nothing else; an unclosed fence runs to the end. Each
+ * fenced block is spoken as CODE_OMITTED.
  */
 export function spokenText(markdown) {
   const lines = [];
   let fence = null;
   for (const raw of String(markdown).replace(/\r\n?/g, '\n').split('\n')) {
+    const body = raw.replace(CONTAINER, '');
     if (fence) {
-      const close = raw.trim();
+      const close = body.trim();
       if (close.length >= fence.length && close === fence[0].repeat(close.length)) fence = null;
       continue;
     }
-    const open = raw.match(FENCE_OPEN);
+    const open = body.match(FENCE_OPEN);
     if (open && !(open[1][0] === '`' && open[2].includes('`'))) {
       fence = open[1];
       lines.push(CODE_OMITTED);
