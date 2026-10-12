@@ -6,7 +6,7 @@ import os from 'node:os';
 import net from 'node:net';
 import http from 'node:http';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
 import { waitForTerminalReady } from './fixtures/terminal-ready.mjs';
@@ -32,6 +32,23 @@ function runWith(runEnv, ...args) {
       resolve({ code: error ? error.code : 0, stdout, stderr });
     });
   });
+}
+
+/** A stand-in manager process (fixtures/fake-manager.mjs), stopped by the test when it outlives it. */
+async function fakeManager(t, home, version, mode) {
+  const child = spawn(process.execPath, [path.join(here, 'fixtures', 'fake-manager.mjs'), home, version, ...(mode ? [mode] : [])], { stdio: ['ignore', 'pipe', 'inherit'] });
+  const exited = new Promise((resolve) => child.once('exit', resolve));
+  t.after(async () => { if (child.exitCode === null) { child.kill(); await exited; } });
+  const port = await new Promise((resolve, reject) => {
+    let out = '';
+    child.stdout.on('data', (chunk) => { out += chunk; if (out.includes('\n')) resolve(Number(out)); });
+    child.once('exit', () => reject(new Error('the fake manager exited before listening')));
+  });
+  return { port, pid: child.pid, exited };
+}
+
+function running(pid) {
+  try { process.kill(pid, 0); return true; } catch { return false; }
 }
 
 async function launcher(t) {
@@ -265,7 +282,16 @@ test('restart starts a manager when none runs, and replaces a running one on the
   assert.match(stopped.stdout, /stopped/);
 });
 
-test('restart keeps an ephemeral port, and starts the manager itself when the old one only stops', async () => {
+test('stop says stopped only once the manager has exited, though it missed health checks while stopping', async (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-launcher-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }));
+  const fake = await fakeManager(t, home, '0.0.1', 'slow');
+  const stopped = await runWith({ ...env, AGENT_GUILD_HOME: home, AGENT_GUILD_PORT: String(fake.port) }, 'stop');
+  assert.match(stopped.stdout, /Session manager stopped/);
+  assert.equal(running(fake.pid), false, 'the manager had exited');
+});
+
+test('restart keeps an ephemeral port, and starts the manager itself when the old one only stops', async (t) => {
   // AGENT_GUILD_PORT=0: the successor must listen where the old manager did, not on another free port.
   const zeroHome = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-launcher-'));
   const zeroEnv = { ...env, AGENT_GUILD_HOME: zeroHome, AGENT_GUILD_PORT: '0' };
@@ -290,22 +316,9 @@ test('restart keeps an ephemeral port, and starts the manager itself when the ol
   // A manager from before restarts (the one still running after an upgrade)
   // answers a shutdown without `restart` and starts nothing.
   const oldHome = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-launcher-'));
-  const old = http.createServer((req, res) => {
-    if (req.url === '/api/v1/shutdown') {
-      res.writeHead(202, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, running: 0 }));
-      // As a real manager: the runtime file goes with it.
-      fs.rmSync(path.join(oldHome, 'manager.json'), { force: true });
-      setImmediate(() => { old.closeAllConnections(); old.close(); });
-      return;
-    }
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, name: 'agent-guild', version: '0.0.1', pid: process.pid }));
-  });
-  await new Promise((resolve) => old.listen(0, '127.0.0.1', resolve));
-  const oldPort = old.address().port;
   // Found through its runtime file, as with an ephemeral port setting; the successor must keep that port.
-  fs.writeFileSync(path.join(oldHome, 'manager.json'), JSON.stringify({ pid: process.pid, port: oldPort, url: `http://127.0.0.1:${oldPort}` }));
+  const old = await fakeManager(t, oldHome, '0.0.1');
+  const oldPort = old.port;
   // Another manager answers at the port the environment names; it is not the one being restarted.
   const other = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -319,14 +332,12 @@ test('restart keeps an ephemeral port, and starts the manager itself when the ol
     assert.match(restarted.stdout, new RegExp(`Session manager restarted at http://127\\.0\\.0\\.1:${oldPort}.* \\(was 0\\.0\\.1\\)`));
     const runtimeNow = JSON.parse(fs.readFileSync(path.join(oldHome, 'manager.json'), 'utf8'));
     assert.equal(runtimeNow.port, oldPort, 'the new manager took over the port, not the one the environment names');
-    assert.notEqual(runtimeNow.pid, process.pid);
+    assert.notEqual(runtimeNow.pid, old.pid);
     assert.match((await runWith(oldEnv, 'stop')).stdout, /stopped/);
   } finally {
     // The configured port deliberately belongs to the other server. Once the
     // runtime file is gone, cleanup must still address this fixture's port.
     await runWith({ ...oldEnv, AGENT_GUILD_PORT: String(oldPort) }, 'stop');
-    old.closeAllConnections();
-    await new Promise((resolve) => old.close(resolve));
     other.closeAllConnections();
     await new Promise((resolve) => other.close(resolve));
     fs.rmSync(oldHome, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });

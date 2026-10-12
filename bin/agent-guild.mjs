@@ -181,24 +181,38 @@ async function requestShutdown(url, { restart = false } = {}) {
   return { running, restart: body.restart === true };
 }
 
-/** Resolves to true once nothing answers at `url`, false when it still does after `timeoutMs`. */
-async function waitForStop(url, timeoutMs = 6000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 150));
-    if (!(await health(url, 300))) return true;
+function running(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    // A process of another user cannot be signalled, but runs.
+    return err.code === 'EPERM';
   }
-  return false;
+}
+
+/**
+ * Resolves to true once the manager's process has exited, false when it still runs after `timeoutMs`. A manager
+ * ending its sessions (up to 6.5 s) can miss a health check, so only its exit shows it has stopped.
+ */
+async function waitForExit(pid, timeoutMs = 15000) {
+  const deadline = Date.now() + timeoutMs;
+  while (running(pid)) {
+    if (Date.now() >= deadline) return false;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return true;
 }
 
 async function cmdStop() {
   const url = baseUrl();
-  if (!(await health(url))) {
+  const h = await health(url);
+  if (!h) {
     console.log('Session manager is not running.');
     return;
   }
   await requestShutdown(url);
-  console.log(await waitForStop(url) ? 'Session manager stopped.' : 'Stop requested; the manager is still shutting down.');
+  console.log(await waitForExit(h.pid) ? 'Session manager stopped.' : 'Stop requested; the manager is still shutting down.');
 }
 
 async function cmdRestart() {
@@ -214,7 +228,7 @@ async function cmdRestart() {
   if (!restart) {
     // A manager from before restarts stops without starting a successor,
     // which is the case right after an upgrade: start one here instead.
-    if (!(await waitForStop(url, 15000))) throw new Error('the session manager did not stop, so it could not be restarted.');
+    if (!(await waitForExit(before.pid))) throw new Error('the session manager did not stop, so it could not be restarted.');
     // On the port the old one served, which an ephemeral port setting would otherwise lose.
     const { url: started, version } = await ensureManager({ port: portOf(url) });
     const changed = version !== before.version ? `, now Agent Guild ${version} (was ${before.version})` : '';
