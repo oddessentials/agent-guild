@@ -188,6 +188,11 @@ The first Claude Code usage meter may ask for access to the
 Sessions end when the manager stops or the computer restarts. tmux and herdr
 sessions survive a manager stop.
 
+After upgrading Agent Guild and restarting the manager, refresh every open
+Agent Guild browser page to load the new frontend. Pages reconnect
+automatically, but keep their loaded JavaScript until refreshed. Refreshing
+is required for compatibility with the upgraded manager.
+
 ## Privacy
 
 The manager listens on `127.0.0.1` only. Remote access goes through a private
