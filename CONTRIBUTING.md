@@ -11,16 +11,20 @@ npm test
 * The tests start real managers and real pseudo-terminals, using a small fake
   coding tool in `tests/fixtures`. CI runs them on Windows, macOS and Linux
   with Node.js 22, 24 and 26, and installs the packed package on x64 and
-  arm64. On Alpine it checks that `agent-guild` says how to build node-pty
-  and that the package works once it is built; `bash tests/package/musl.sh`
-  runs that check with Docker. CI also checks the boot service in a systemd
+  arm64, with npm's bundled version and npm 12, and checks it with
+  `node tests/package/smoke.mjs <npm global prefix>`. On Alpine it checks
+  that `agent-guild` says how to build node-pty and that the package works
+  once it is built; `bash tests/package/musl.sh` runs that check with
+  Docker. CI also checks the boot service in a systemd
   container (`bash tests/systemd/acceptance.sh <tgz>`), the release plan
-  (`node tests/release/plan.mjs`) and the packed tarball
+  (`npm ci --ignore-scripts` in `.github/release`, then
+  `node tests/release/plan.mjs`) and the packed tarball
   (`node tests/package/check-tarball.mjs <tgz>`). The tmux card's test runs
   only where tmux is installed.
 * The browser checks in `tests/browser` drive the real UI in Chrome; CI runs
-  them on Linux and `dialogs.mjs` in WebKit on macOS. Run them in CI order with
-  the sequence in [tests/browser/README.md](tests/browser/README.md). For
+  all but `yard.mjs` on Linux, and `dialogs.mjs` in WebKit on macOS. Run
+  them in CI order with the sequence in
+  [tests/browser/README.md](tests/browser/README.md). For
   example, `node tests/browser/proxy.mjs` checks the real UI and terminal
   through a local HTTPS proxy with an isolated manager and test certificates.
   On Windows, or if Chrome is not in a standard Linux or macOS location, set
@@ -36,7 +40,8 @@ npm test
   `D:\code` or `/work`. It needs Chrome or Edge and leaves any running
   manager alone. See the comment at the top of the script for options.
 * Pull request titles follow
-  [Conventional Commits](https://www.conventionalcommits.org/). Merging to
+  [Conventional Commits](https://www.conventionalcommits.org/), and a CI
+  check refuses one that does not. Merging to
   `main` publishes a release to npm and GitHub when it includes a `feat`,
   `fix`, `perf`, `revert` or breaking change. A `!` after the type, as in
   `feat!:`, marks a breaking change and releases the next major version.

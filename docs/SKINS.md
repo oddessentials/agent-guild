@@ -15,7 +15,9 @@ pass.
    `professional`.
 2. **Give it a Yard world** *(tested)*. Add an entry to `WORLDS` in
    `web/yard/model.mjs`, with a hall for every tool, its `characters` and its
-   `helpers.agent` and `helpers.shell`, within 24 MiB. See
+   `helpers.agent` and `helpers.shell`. The world's model, the textures it
+   references, its backdrop plates and its sky and surface maps stay within
+   24 MiB; characters and helpers do not count. See
    [the yard](yard/README.md).
 3. **Link its stylesheet** *(tested)* in `web/index.html`, with the other
    skins, exactly as `<link rel="stylesheet" href="/skins/<id>/skin.css">`.

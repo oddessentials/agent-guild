@@ -53,7 +53,8 @@ route awaiting cleanup in Tailscale). A successful submission returns 202;
 poll until `busy` (`checking`, `enabling`, `disabling` or `saving`) is null
 and inspect `problem` for the outcome. Stale revisions return 409
 `stale_settings` and concurrent changes 409 `remote_busy`; `custom` while a
-Tailscale route is on returns 409 `disable_first`, an unknown action 400
+Tailscale route is on or pending returns 409 `disable_first`, an unknown
+action, or `forget` for anything but an inactive route awaiting cleanup, 400
 `bad_action`, bad hosts or origins 400 `bad_settings`, and a stopping manager
 409 `manager_stopping`. The `remote-access.updated`
 event signals a fresh snapshot is available. These endpoints require the
@@ -130,7 +131,7 @@ the last install, update or uninstall session's result,
 `{ kind, outcome, exitCode, verification, before, after, latest, at }`, with
 `outcome` `installed`, `missing`, `updated`, `unchanged`, `done`, `removed`,
 `remaining` or `failed`, and `at` in epoch milliseconds; it is dropped once the
-versions it recorded change. `warnings` are lines the card shows about the
+versions or the `versionStatus` it recorded change. `warnings` are lines the card shows about the
 copies, such as several being installed. `npmNote` qualifies an npm install,
 or is null. `modelPattern` is the provider's, or null. `reporting` is the
 tool's reporting mode: `claude`, `codex`, `antigravity`, `grok`, `docker`, or
@@ -233,8 +234,8 @@ and may set `stale` without replacing the pins. POST reads them again.
 `GET /environment?scope=session&id=<hex>` and `{ "scope": "session", "id": "<hex>" }`
 probe the PATH recorded when that session was spawned, in a neutral temporary
 directory. Only PATH, the home folder, the toolchain-manager locations and
-version selectors (for example `RUSTUP_HOME`, `PYENV_ROOT`, `ASDF_DATA_DIR`)
-`PATHEXT`, `SYSTEMROOT`, `XDG_DATA_HOME` and `XDG_CONFIG_HOME`,
+version selectors (for example `RUSTUP_HOME`, `PYENV_ROOT`, `ASDF_DATA_DIR`),
+`PATHEXT`, `SYSTEMROOT`, `XDG_DATA_HOME`, `XDG_CONFIG_HOME`,
 the Windows install folders (`LOCALAPPDATA`, `ProgramFiles`, `ProgramW6432`)
 and the Docker selectors (`DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`)
 are passed to the probe. The response adds `sessionId`, `spawnCwd`, and `availability`.
@@ -284,7 +285,7 @@ execution. There is no whole-disk installation inventory.
 
 Design tools are ordered Blender, FFmpeg, GIMP, Inkscape, ImageMagick. Each
 has `id`, `label`, `status`, `version`, `path`, `command` and `detail`, except
-that pending rows and failed rows from an unfinished check have no `command`. Status
+that pending rows have no `command` or `detail`, and failed rows from an unfinished check no `command`. Status
 is `pending` before the first check, `on_path` when a command resolves on
 PATH, `not_on_path` when the tool is installed only outside PATH, `not_found`,
 or `failed` when the check did not finish. `command` is the PATH command, or
@@ -360,7 +361,7 @@ An `@shell` provider also describes `multiplexers[]`. Each entry contains
 `installable`, `installCommand`, `guidance`, `busy`, `pendingCards`,
 `installs` and `lastInstall`. Before discovery finishes, `checked` is false
 and the entry has only `id`, `tool`, `docs`, `checked`, `available`,
-`installable`, `installs` and `guidance`.
+`installable`, `installs`, `guidance`, `busy` and `pendingCards`.
 `available` means a usable copy is on PATH; an old, off-PATH, or partial copy
 may still appear in `installs`.
 
@@ -549,7 +550,8 @@ read from the account's home folder. Claude Code has a `project` scope,
 checkout of the Git repository holding `folder` (so its worktrees share it),
 else `folder`; its `autoMemoryDirectory` setting moves it. Where file names
 ignore case, each existing folder that matches gets a scope of its own,
-`project`, `project-2` and so on, labelled "This project (<name>)". Grok Build has a
+`project`, `project-2` and so on, labelled "This project (<name>)" when
+there is more than one. Grok Build has a
 `project` scope, `memory-v2/workspaces/<name>-<hash>/`, named for the
 repository's `origin` remote (so its clones share it) or else for the
 folder's real path, and a `global` scope; its archive is left out. Codex CLI
@@ -738,7 +740,7 @@ holds even once a newer release has replaced the `failed` record, until an
 upgrade completes or the files on disk change. A check that fails keeps
 the release already known. `installing` is true from the start of an upgrade
 session until its npm process has exited, even if the session was removed
-meanwhile; `available`, `command`, `pendingVersion` and `lastInstall` are withheld during that time,
+meanwhile; `available`, `command`, `guidance`, `pendingVersion`, `lastInstall` and `ptyBuild` are withheld during that time,
 because the files on disk are mid-replacement, and `POST /upgrade` answers
 409 `upgrade_in_progress`.
 
@@ -883,11 +885,11 @@ All paths are under `/api/v1`.
 | GET | `/environment?scope=&cwd=&id=` | | Environment snapshot for `scope` (`manager` when omitted, or `project`, `session`, `launch`). `cwd` is required for `project`. `id` is required for `session`. Starts the initial check for that scope without waiting. |
 | POST | `/environment/refresh` | `{ scope?, cwd?, id? }` | `202` with that scope's snapshot; starts or joins its read-only check. `{}` refreshes the manager. |
 | POST | `/providers/reload` | | `{ providers, warnings }`: re-reads `providers.json` and checks every tool's versions again. New sessions use the new settings. |
-| POST | `/providers/:id/reporting` | `{ enabled }` | `{ provider }`: turns agent reporting on or off for a tool that needs it, by running the tool's own `plugin install`, `plugin enable` or `plugin uninstall`. An older copy of the Agent Guild plugin is replaced, and one turned off in the tool is turned back on. For Docker Agent it writes or removes `agent-guild.yaml` in its `hooks.d` folder, which reports the model. 400 `bad_request` when `enabled` is not a boolean, 404 `unknown_provider`, 400 `not_applicable` for any other tool, 409 `provider_unavailable` when the tool is not installed, 409 `plugin_conflict` when another plugin or file has the same name, 409 `provider_unsupported` when the Docker Agent version loads no `hooks.d` files, `reporting_setup_failed`: 500 when Docker Agent's file cannot be written, 502 when the tool's plugin command fails; 500 `reporting_unavailable` when this manager cannot set up reporting. |
-| POST | `/providers/:id/install` | `{ force? }` | `201 { session }`: a session running `npm install -g <package>@<version>`, or `updateCommand` when the tool is installed; for a Docker CLI plugin, `installCommand` in both cases, and 409 `provider_unavailable` without docker on PATH. 400 `not_updatable` when an installed tool has no `updateCommand`. 503 `release_unresolved` or 409 `release_incomplete` when the release cannot be read or its platform build is not published; nothing is run. 409 `install_in_progress` while one is already running. 409 `provider_in_use` (with `running`, the session count) while the provider's sessions are running, unless `force` is true. For a Docker CLI plugin, 409 `plugins_unchecked` until docker has listed its copies and `already_installed` while one runs. 400 `not_installable` when the tool has no `package` (or a plugin no `install`), 409 `npm_unavailable` without npm on PATH, 404 `unknown_provider`, 503 `manager_stopping`. |
+| POST | `/providers/:id/reporting` | `{ enabled }` | `{ provider }`: turns agent reporting on or off for a tool that needs it, by running the tool's own `plugin install`, `plugin enable` or `plugin uninstall`. An older copy of the Agent Guild plugin is replaced, and one turned off in the tool is turned back on. For Docker Agent it writes or removes `agent-guild.yaml` in its `hooks.d` folder, which reports the model. 400 `bad_request` when `enabled` is not a boolean, 404 `unknown_provider`, 400 `not_applicable` for any other tool, 409 `provider_unavailable` when Antigravity CLI is not installed, 409 `plugin_conflict` when another plugin or file has the same name, 409 `provider_unsupported` when the Docker Agent version loads no `hooks.d` files or no version was found, `reporting_setup_failed`: 500 when Docker Agent's file cannot be written, 502 when the tool's plugin command fails; 500 `reporting_unavailable` when this manager cannot set up reporting. |
+| POST | `/providers/:id/install` | `{ force? }` | `201 { session }`: a session running `npm install -g <package>@<version>`, or `updateCommand` when the tool is installed; for a Docker CLI plugin, `installCommand` in both cases, and 409 `provider_unavailable` without docker on PATH. 400 `not_updatable` when an installed tool has no `updateCommand`. 503 `release_unresolved` or 409 `release_incomplete` when the release cannot be read or its platform build is not published; nothing is run. 409 `install_in_progress` while one is already running. 409 `provider_in_use` (with `running`, the session count) while the provider's sessions are running, unless `force` is true. For a Docker CLI plugin, 409 `plugins_unchecked` until docker has listed its copies, or when that listing failed, and `already_installed` when docker already has a copy it runs. 400 `not_installable` when the tool has no `package` (or a plugin no `install`), 409 `npm_unavailable` without npm on PATH, 404 `unknown_provider`, 503 `manager_stopping`. |
 | POST | `/providers/:id/uninstall` | `{ path, force? }` | `201 { session }`: a session that removes the copy at `path`, one of the provider's `installs`. It runs that copy's package manager, or deletes the paths its installer created, the launcher last, so a copy that fails partway with files left is still listed and can be uninstalled again. 400 `bad_request` without `path`, 404 `unknown_copy` when no copy is at `path`, 400 `not_removable` when its `uninstall` is null. 409 `install_in_progress` and `provider_in_use`, 404 `unknown_provider` and 503 `manager_stopping` as for `install`. |
 | GET | `/usage` | | `{ usage: Usage[] }`, one per account of every provider with a `usageSource`. |
-| GET | `/model-stats` | | Benchmarks for the models of every provider with a `modelPattern`, from OpenRouter's public model list (Artificial Analysis and Design Arena results), cached for 6 hours. `{ retrievedAt, stale, error, stats, pool, providers, models, sessions }`: `stats` describes each benchmark; `providers[id]` is `{ featured, models }`, a provider's model ids newest first; `pool` is `{ tools }`, the tools whose models the levels compare, or null; `models[id]` holds a model's name, context and price, and in `stats`, per benchmark, its `value`, `rank`, `place`, `tied`, `of`, `level` (0-100, its standing among the models of all configured tools) and `tier` (S 90+, A 75+, B 50+, C 25+, D below); `sessions[id]` is the model id a session's reported model matched; a session with no model is left out. |
+| GET | `/model-stats` | | Benchmarks for the models of every provider with a `modelPattern`, from OpenRouter's public model list (Artificial Analysis and Design Arena results), cached for 6 hours. `{ retrievedAt, stale, error, stats, pool, providers, models, sessions }`: `stats` describes each benchmark; `providers[id]` is `{ featured, models }`, a provider's model ids newest first; `pool` is `{ tools }`, the tools whose models the levels compare, or null; `models[id]` holds a model's name, context and price, and in `stats`, per benchmark, its `value`, `rank`, `place`, `tied`, `of`, `level` (0-100, its standing among the models of all configured tools) and `tier` (S 90+, A 75+, B 50+, C 25+, D below); `sessions[id]` is the model id a session's reported model matched, or null; a session with no model is left out. |
 | GET | `/news` | | `{ refreshedAt, refreshing, sources, items }`. `items` are the last 30 days of the built-in feeds, newest first, each `{ id, title, url, discussion, summary, source, sourceId, category, publishedAt }` with `category` `news`, `releases` or `research`. A coding tool's own release feed is included only while that tool is installed. `sources` lists each feed as `{ id, name, category, error, okAt }`, `okAt` the time it last answered. Feeds that are due are re-read in the background; a `news.updated` event follows. |
 | GET | `/changelog` | | `{ refreshing, okAt, error, releases }`: Agent Guild's own releases from GitHub, newest first, each `{ version, url, publishedAt, sections: [{ title, changes }] }`, where `title` may be null and a change is a list of text runs. Re-read hourly in the background; a `changelog.updated` event follows. |
 | GET | `/providers/:id/history?account=&limit=&cwd=&q=` | | `{ history }`: a History object for one account (default `default`; 404 `unknown_account`), filtered before the limit (default 100, at most 500). 400 `history_unsupported` when the provider has no `historySource`. |
@@ -911,9 +913,9 @@ All paths are under `/api/v1`.
 | GET | `/github/accounts/:id/repos/:owner/:name/branches?page=` | | Remote branches, up to 100 per page. Follow `nextPage` until null; see Repository views. |
 | GET | `/github/accounts/:id/repos/:owner/:name/pulls` | | Open pull requests (see Repository views). |
 | POST | `/github/accounts/:id/ssh` | | `{ account }`: makes the account's SSH key if it has none, adds it to the account, and checks that GitHub signs it in as this account. A failure is reported in `account.ssh.error`. |
-| POST | `/github/clone` | `{ account, repo, parent }` | `201 { session }`: a session with `task` `clone` running `git clone` for `repo` (owner/name) into `<parent>/<name>` over SSH with the account's key. 409 `ssh_not_ready`, `git_unavailable`, `clone_exists` or `folder_conflict` (both with `target`), or `clone_in_progress`. 400 `bad_cwd` without `parent`, 400 `github_unavailable` when the manager has no GitHub integration, 503 `manager_stopping`. |
+| POST | `/github/clone` | `{ account, repo, parent }` | `201 { session }`: a session with `task` `clone` running `git clone` for `repo` (owner/name) into `<parent>/<name>` over SSH with the account's key. 409 `ssh_not_ready`, `git_unavailable`, `clone_exists` or `folder_conflict` (both with `target`), or `clone_in_progress`. 400 `bad_cwd` without `parent`, 503 `manager_stopping`. |
 | GET | `/sessions` | | `{ sessions: Session[] }` |
-| POST | `/sessions` | `{ providerId, account?, shell?, cwd?, cols?, rows?, name?, args?, resume? }` | `201 { session }`. 409 `install_in_progress` while the provider's tool is being installed, updated or uninstalled. 409 `shell_unavailable` when `shell` is not one of the provider's `shells`; 400 `bad_shell` when the provider has none or `shell` is not a string. 404 `unknown_provider`; 400 `bad_args`, `bad_account`, `bad_resume` or `bad_cwd` for a bad field; 409 `provider_unavailable` when the tool is not installed; 429 `too_many_sessions` at the session limit; 503 `manager_stopping`; 500 `spawn_failed` or `account_unavailable` when the process or the account's folder cannot be made. |
+| POST | `/sessions` | `{ providerId, account?, shell?, cwd?, cols?, rows?, name?, args?, resume? }` | `201 { session }`. 409 `install_in_progress` while the provider's tool is being installed, updated or uninstalled. 409 `shell_unavailable` when `shell` is not one of the provider's `shells`; 400 `bad_shell` when the provider has none or `shell` is not a string. 404 `unknown_provider` or `unknown_account`; 400 `bad_args`, `bad_account`, `bad_resume` or `bad_cwd` for a bad field, and `resume_unsupported` for a `resume` the tool cannot take; 409 `provider_unavailable` when the tool is not installed; 429 `too_many_sessions` at the session limit; 503 `manager_stopping`; 500 `spawn_failed` or `account_unavailable` when the process or the account's folder cannot be made. |
 | GET | `/sessions/:id` | | `{ session }` |
 | GET | `/sessions/:id/reply` | | `{ reply: { id, text } }`, or `{ reply: null }`: the whole text of the answer `session.reply` names. |
 | PATCH | `/sessions/:id` | `{ name }` | `{ session }`. `name` must be a non-empty string (400 `bad_name`); it is trimmed to 80 characters. |

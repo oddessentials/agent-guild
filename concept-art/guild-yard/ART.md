@@ -9,12 +9,15 @@ editable Blender files are the art sources. Runtime files are in
 `build.py` builds two worlds with six provider halls each; Docker Agent's,
 added as an expansion, stands 1.3 times larger than the rest. Guild combines
 stone, oak, bronze and provider-colored roofs. Distinct Guild
-silhouettes identify the keep, citadel, observatory, tower and timber
-workshop at overview scale. Professional's halls are campus buildings:
-a studio with a timber-finned upper storey, a glass rotunda under a disc
-canopy, a stack of turned glazed volumes, a dark stone tower with a sloped
-crown, and a glass hall under a barrel vault. Their materials (`office`,
-`white`, `officeDark`, `woodLight` and the provider colours) take
+silhouettes identify the keep, citadel, observatory, tower, timber
+workshop and Docker Agent's harbour warehouse (a broad stone store with a
+timber jib crane) at overview scale. Professional's halls are campus
+buildings: a studio with a timber-finned upper storey, a glass rotunda under
+a disc canopy, a stack of turned glazed volumes, a dark stone tower with a
+sloped crown, a glass hall under a barrel vault, and Docker Agent's depot, a
+ribbed shed with loading bays and shipping containers on its roof. Their
+materials (`office`, `white`, `officeDark`, `woodLight` and the provider
+colours) take
 the Poly Haven sets in `SURFACES` of `env/professional_env.py`; the glass and
 lit `window` panes keep their authored materials.
 
@@ -52,7 +55,7 @@ committed.
   made matte charcoal felt, keeping its cyan circuit traces; the smoke wraith
   is a solid figure in a violet wool robe with a bright trim and the chevron
   in its dark hood; and the Google portrait stays two figures, holding hands,
-  as one model, with the star floating between them left out. All five work
+  as one model, with the star floating between them left out. All six work
   by the steady lean and nod: their arms are folded, joined or in pockets,
   and the sorcerer's wide sleeves stretched into his robe when he conducted.
 - **Familiars**: the flame and leaf dragons are the skin's sprites as they

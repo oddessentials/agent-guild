@@ -14,7 +14,7 @@ or put Agent Guild behind a proxy.
 | File | Holds |
 | --- | --- |
 | `auth-token` | The access token |
-| `manager.json` | The running manager's port, process and version |
+| `manager.json` | The running manager's process id, host, port, URL, version and start time |
 | `providers.json` | Your tool settings, if you create it |
 | `remote-access.json` | Remote access settings |
 | `notes.json` | The shared notes |

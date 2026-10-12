@@ -52,7 +52,7 @@ model's textures to `web/yard/assets/maps/`, and the Yard tests.
   and on a mid-grey background. A carved and painted fox shown in
   three-quarter view, its lantern hung round its neck, reconstructed whole
   at seed 123.
-- **Rigging**: all five work with `steady` (a lean and nod with the hands
+- **Rigging**: all six work with `steady` (a lean and nod with the hands
   still). The fox wears a cloak, the deer stands on four legs, the water
   spirit's hands are clasped, and `tinker` folded the bird's wings across
   its face and twisted the lantern's body.

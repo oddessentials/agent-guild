@@ -30,11 +30,12 @@
   would break on truncation. The mirror is also the terminal of record: it
   answers the program's terminal queries exactly once, so tools that ask for
   the cursor position work with no page open and get no duplicate replies
-  with several pages open. `pty.mjs` loads node-pty, and says how to build it
-  where its bundled builds do not load.
+  with several pages open. `pty.mjs` loads node-pty, and where its bundled
+  builds do not load says why: on Linux without glibc, such as Alpine, how to
+  build it; on glibc older than 2.28, the version Agent Guild needs.
 * **SessionManager** (`session-manager.mjs`). Owns every session: starts each
-  with its tool's command, account and environment, and stops, renames and
-  reattaches them. The API server and any other front end talk to it.
+  with its tool's command, account and environment, and stops and reattaches
+  them. The API server and any other front end talk to it.
 * **Stopping a session.** On macOS and Linux the process gets a hang-up
   signal, then a forced kill after a grace period. On Windows the process
   tree is ended at once, as node-pty's own Windows kill does; there is no
@@ -60,9 +61,10 @@
   command-line flags, the Claude Code, Antigravity CLI and Grok Build plugins
   in the data folder's `reporting/`, or Docker Agent's model drop-in. Puts
   `agent-guild-report` launchers first on the session's PATH. The reporter
-  turns hook events into agent, model, command and turn reports; Docker
-  Agent's events go whole to `docker-sessions.mjs`, which tells its tabs and
-  sub-agents apart. See [agent-reporting.md](agent-reporting.md).
+  turns hook events into agent, model, command and turn reports; it passes
+  the parts of a Docker Agent event the manager needs, untranslated, to
+  `docker-sessions.mjs`, which tells its tabs and sub-agents apart. See
+  [agent-reporting.md](agent-reporting.md).
 * **Shells and multiplexers** (`shells.mjs`, `multiplexers.mjs`, `herdr.mjs`,
   `multiplexer-paths.mjs`). The shells, tmux and herdr the Shell card can
   start, their installations, and the agents herdr sees in its panes.
@@ -130,7 +132,8 @@
   launcher asks systemctl, and a supervised manager exits with code 75 for
   systemd to start the next one, or 78 when its port is taken, which systemd
   does not retry. **When I sign in** (`autostart.mjs`) adds a per-user entry
-  on Windows, macOS and Linux that runs `agent-guild open --no-browser`.
+  on Windows, macOS and Linux that runs
+  `agent-guild open --no-browser --sign-in`.
 
 ## Lifetimes
 
