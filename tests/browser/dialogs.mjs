@@ -229,9 +229,10 @@ const checks = await withPage({ name: 'dialogs', instrumentation }, async ({ ori
         const last=items.at(-1).getBoundingClientRect(),nav=document.querySelector('.videos-nav');
         return {inside:r.top>=-1&&r.bottom<=innerHeight+1&&r.left>=-1&&r.right<=innerWidth+1,ratio:Math.round(s.width/s.height*100),screen:Math.round(s.width),
           overflow:d.scrollWidth>d.clientWidth||document.documentElement.scrollWidth>innerWidth,listReachable:last.bottom<=r.bottom+1||nav.scrollHeight>nav.clientHeight,
-          first:items[0].getAttribute('aria-current'),frames:youtubeFrames.length};
+          first:items[0].getAttribute('aria-current'),frames:youtubeFrames.length,kinds:items.map((i)=>i.querySelector('.news-meta').textContent.split(' · ')[0])};
       })()`);
-      assert.ok(g.inside && g.ratio === 178 && g.screen >= Math.min(width - 32, 340) && !g.overflow && g.listReachable && g.first === 'true' && g.frames === 0,
+      assert.ok(g.inside && g.ratio === 178 && g.screen >= Math.min(width - 32, 340) && !g.overflow && g.listReachable && g.first === 'true' && g.frames === 0
+        && g.kinds[0] === 'Tutorial' && g.kinds.lastIndexOf('Tutorial') < g.kinds.indexOf('Trailer'),
         `${engine} videos ${width}: ${JSON.stringify(g)}`);
       // A video plays only when chosen, and closing the dialog removes the player so the sound stops.
       const id = await evaluate('(()=>{const item=[...document.querySelectorAll("#videos-list .videos-item")].at(-1);item.click();return item.dataset.id})()');

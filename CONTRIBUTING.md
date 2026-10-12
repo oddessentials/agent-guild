@@ -29,7 +29,10 @@ npm test
 * Pull request titles follow
   [Conventional Commits](https://www.conventionalcommits.org/). Merging to
   `main` publishes a release to npm and GitHub when it includes a `feat`,
-  `fix`, `perf`, `revert` or breaking change.
+  `fix`, `perf`, `revert` or breaking change. A `!` after the type, as in
+  `feat!:`, marks a breaking change and releases the next major version.
+  The title is the whole squash commit, so a `BREAKING CHANGE` footer in the
+  description does not count.
 
 ## Other front ends
 

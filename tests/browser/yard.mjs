@@ -48,6 +48,7 @@ async function setup(t,{yard=false,auth=true,source='',width=1440,height=1000}={
   await b.send('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});
   const added=await b.send('Page.addScriptToEvaluateOnNewDocument',{source:`
     localStorage.setItem('agentGuild.theme','dark');
+    localStorage.setItem('agentGuild.skin','guild');
     localStorage.setItem('agentGuild.view',${q(yard?'yard':'cards')});
     window.confirm=()=>true; window.prompt=()=>'Renamed from Yard';
     window.__frames=0;
@@ -170,7 +171,7 @@ test('Resume shares one pending action across cards, Yard and history without bl
   await b.click(inspector+' .existing');await b.wait(`document.querySelector(${q(missing)})`);
   await b.click(missing);await until(()=>pending.length===4);
   pending[2].finish();await terminalReady(b);await closeTerminal(b);
-  await b.click(inspector+' .existing');await b.wait("document.querySelector('#history').open");
+  await b.click(inspector+' .existing');await b.wait(`document.querySelector(${q(history)}) && document.querySelector(${q(missing)})`);
   assert.equal(await disabled(history),true,'Work completion leaves Personal pending');
   assert.equal(await disabled(missing),true,'one conversation cannot clear another');
   pending[1].finish(Object.assign(new Error('Fixture resume failed'),{status:400,code:'fixture_failure'}));

@@ -1,7 +1,10 @@
 {
   "videos": [
     { "id": "ziT62WtXQ1M", "title": "Agent Guild Trailer", "category": "trailers", "published": "2026-10-01" },
-    { "id": "Zttp-vs_6z0", "title": "Agent Guild - The Yard Update", "category": "trailers", "published": "2026-10-07" },
-    { "id": "mEEI3cuOGzU", "title": "Docker-Agent Joins Agent Guild v0.47.0", "category": "trailers", "published": "2026-10-09" }
+    { "id": "Zttp-vs_6z0", "title": "Agent Guild - The Yard Update v0.38.0", "category": "trailers", "published": "2026-10-07" },
+    { "id": "mEEI3cuOGzU", "title": "Docker-Agent Joins Agent Guild v0.47.0", "category": "trailers", "published": "2026-10-09" },
+    { "id": "XPSRCpiHokk", "title": "01 - Installation (Windows)", "category": "tutorials", "published": "2026-10-11" },
+    { "id": "5DRFbKgGoUk", "title": "01 - Installation (Linux Headless)", "category": "tutorials", "published": "2026-10-11" },
+    { "id": "QXIH4pv8CDk", "title": "02 - Claude and Codex Install", "category": "tutorials", "published": "2026-10-11" }
   ]
 }

@@ -1,4 +1,4 @@
-/* The Guild skin: the default. Fantasy guild-hall art and a parchment-and-gold palette.
+/* The Guild skin: fantasy guild-hall art and a parchment-and-gold palette.
    Everything here applies only while <html data-skin="guild">; docs/SKINS.md lists every slot. */
 
 :where(:root[data-skin="guild"]) {

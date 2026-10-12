@@ -26,12 +26,18 @@ export async function startFixture({port=0}={}) {
   const wrapped=s=>({
     toJSON:()=>s,
     rename(name){s.name=name;calls.push(['rename',s.id,name]);update(s);},
-    attach(send){if(!terminals.has(s.id))terminals.set(s.id,new Set());terminals.get(s.id).add(send);
-      send({type:'snapshot',data:'\x1b[38;2;209;177;112mAgent Guild · isolated Yard preview\x1b[0m\r\n\r\n'+s.name+'\r\nThis is a fixture terminal. No coding tool is running.\r\n\r\n> ',cols:120,rows:32,session:s});
-      return ()=>terminals.get(s.id)?.delete(send);},
-    input(text){for(const send of terminals.get(s.id)||[])send({type:'data',data:text});},
-    resize(cols,rows){s.cols=cols;s.rows=rows;},
+    attach(send,{page=null}={}){const sub={send,page};terminal(s).subs.add(sub);
+      send({type:'snapshot',data:'\x1b[38;2;209;177;112mAgent Guild · isolated Yard preview\x1b[0m\r\n\r\n'+s.name+'\r\nThis is a fixture terminal. No coding tool is running.\r\n\r\n> ',cols:s.cols,rows:s.rows,...sizeFor(s,page),session:s});
+      return ()=>terminals.get(s.id)?.subs.delete(sub);},
+    input(text){for(const {send} of terminals.get(s.id)?.subs||[])send({type:'data',data:text});},
+    claimSize(page,cols,rows){if(!page)return false;const t=terminal(s);t.owner=page;t.generation++;Object.assign(s,{cols,rows});broadcastSize(s);return true;},
+    resizeFrom(page,generation,cols,rows){if(!page)return false;const t=terminal(s),accepted=page===t.owner&&generation===t.generation;
+      if(accepted)Object.assign(s,{cols,rows});broadcastSize(s,accepted?null:page);return accepted;},
   });
+  // The manager's terminal sizing: the page that last claimed a terminal owns its size, and every resize is answered.
+  const terminal=s=>{if(!terminals.has(s.id))terminals.set(s.id,{subs:new Set(),owner:null,generation:0});return terminals.get(s.id);};
+  const sizeFor=(s,page)=>({generation:terminal(s).generation,owner:Boolean(page)&&page===terminal(s).owner});
+  const broadcastSize=(s,onlyPage=null)=>{for(const {send,page} of terminal(s).subs)if(!onlyPage||page===onlyPage)send({type:'resize',cols:s.cols,rows:s.rows,...sizeFor(s,page)});};
   function add(body={},emit=true) {
     const p=providers.find(p=>p.id===body.providerId)||{id:body.providerId||'github',vendor:'Agent Guild',tool:body.task||'Task',color:'#cab47e'};
     const id=(next++).toString(16).padStart(12,'0');

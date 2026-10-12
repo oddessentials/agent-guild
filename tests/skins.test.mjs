@@ -56,6 +56,13 @@ test('theme.js lists skins with unique, valid ids', () => {
   for (const skin of list) assert.match(skin.id, /^[a-z][a-z0-9-]*$/, skin.id);
 });
 
+test('a page with no saved skin starts in Professional', () => {
+  const document = { documentElement: { dataset: {} } };
+  runInNewContext(readFileSync(new URL('theme.js', web), 'utf8'),
+    { window: { matchMedia: () => ({ matches: false }) }, document, localStorage: { getItem: () => null } });
+  assert.equal(document.documentElement.dataset.skin, 'professional');
+});
+
 for (const { id } of list) {
   const file = new URL(`skins/${id}/skin.css`, web);
 

@@ -10,8 +10,8 @@ pass.
 
 1. **Register it** *(tested)*. Add `{ id: '<id>', name: '<Menu label>' }` to
    the `skins` list in `web/theme.js`. The id is lowercase letters, digits and
-   hyphens, starting with a letter. List order is menu order; the first entry
-   is the default.
+   hyphens, starting with a letter. List order is menu order. `defaultSkin` in
+   the same file names the skin a new page starts with.
 2. **Give it a Yard world** *(tested)*. Add an entry to `WORLDS` in
    `web/yard/model.mjs`, with a hall for every tool. See
    [the yard](yard/README.md).
@@ -106,7 +106,7 @@ shipped ones are in `ui/`.
 
 | Skin | Sources | Display font | Notes |
 | --- | --- | --- | --- |
-| Guild, the default | [default-art-design-v1](../concept-art/default-art-design-v1) | the brand font | Build with `python source/build.py` from the pack. PNG frames and gems |
+| Guild | [default-art-design-v1](../concept-art/default-art-design-v1) | the brand font | Build with `python source/build.py` from the pack. PNG frames and gems |
 | Orbital | [orbital-skin](../concept-art/orbital-skin/README.md) | Exo 2 | SVG lock, level and meter marks |
 | Grove | [grove-skin](../concept-art/grove-skin/README.md) | Fraunces | A card backdrop behind each portrait, light and dark |
 | Gnomeland | [gnomeland-skin](../concept-art/gnomeland-skin/README.md) | Almendra | SVG frame, lock, level and meter marks |

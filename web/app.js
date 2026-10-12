@@ -311,7 +311,7 @@ function changeTheme(input) {
 // ---- skin -----------------------------------------------------------------
 
 /** The skins theme.js offers; it applied the saved one before the first paint. */
-const SKINS = window.agentGuildSkins ?? [{ id: 'guild', name: 'Guild' }];
+const SKINS = window.agentGuildSkins ?? [{ id: 'professional', name: 'Professional' }];
 
 function renderSkinChoices() {
   const choices = SKINS.map((skin) => {
@@ -2848,9 +2848,10 @@ function closeNews() {
   if ($('news').open) $('news').close();
 }
 
-// Trailers and tutorials ship in web/videos.json, oldest first. Nothing reaches YouTube until the
-// dialog opens, and a video plays only once YouTube's image server has answered for its poster.
-const VIDEO_CATEGORIES = { trailers: ['Trailers', 'Trailer'], tutorials: ['Tutorials', 'Tutorial'] };
+// Trailers and tutorials ship in web/videos.json, oldest first, and the page lists tutorials first. Nothing
+// reaches YouTube until the dialog opens, and a video plays only once YouTube's image server has answered for
+// its poster.
+const VIDEO_CATEGORIES = { tutorials: ['Tutorials', 'Tutorial'], trailers: ['Trailers', 'Trailer'] };
 const VIDEO_ID = /^[\w-]{11}$/;
 const videosView = { list: [], filter: 'all', selected: null, play: false, poster: 0, opener: null };
 
@@ -2861,6 +2862,8 @@ async function loadVideos() {
     const { videos } = await res.json();
     videosView.list = (Array.isArray(videos) ? videos : []).filter((video) =>
       VIDEO_ID.test(video?.id) && typeof video.title === 'string' && VIDEO_CATEGORIES[video.category]);
+    const order = Object.keys(VIDEO_CATEGORIES);
+    videosView.list.sort((a, b) => order.indexOf(a.category) - order.indexOf(b.category));
   } catch {
     return;
   }
