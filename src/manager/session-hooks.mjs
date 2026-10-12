@@ -69,7 +69,7 @@ export function dockerDropin(platform = process.platform) {
     : `sh -c 'case "$AGENT_GUILD_REPORTING" in docker|"") [ -z "$AGENT_GUILD_SESSION_ID" ] || exec ${REPORT_COMMAND};; esac'`;
   return [
     `${DOCKER_DROPIN_MARKER}: it shows the model of each Docker Agent session Agent Guild starts.`,
-    '# Turn it off from the Docker Agent card. Outside Agent Guild it does nothing.',
+    '# Turn it off from the Docker Agent card. Outside a Docker Agent or Shell card it does nothing.',
     'before_llm_call:',
     '  - type: command',
     `    command: '${command.replaceAll("'", "''")}'`,
