@@ -66,7 +66,8 @@ const checks = await withPage({ name: 'dialogs', instrumentation }, async ({ ori
       await evaluate('Promise.allSettled([...document.querySelectorAll("dialog[open]")].flatMap(d=>d.getAnimations({subtree:true})).filter(a=>a.effect?.getTiming().iterations!==Infinity).map(a=>a.finished))');
       await settle();
     };
-    await until(`${engine} provider cards`, () => evaluate('Boolean(document.querySelector(".provider[data-id=anthropic] .existing"))'));
+    // Cards show before the events link opens, with their manager buttons disabled until it does.
+    await until(`${engine} provider cards connected`, () => evaluate('document.querySelector(".provider[data-id=anthropic] .existing")?.disabled===false'));
     const geometry = (selector) => evaluate(`(()=>{
       const d=document.querySelector(${JSON.stringify(selector)}),b=d.querySelector('.models-body');
       const r=d.getBoundingClientRect(),body=b.getBoundingClientRect(),footer=d.lastElementChild.getBoundingClientRect();
