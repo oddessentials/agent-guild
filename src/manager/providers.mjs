@@ -820,6 +820,7 @@ export class ProviderRegistry extends EventEmitter {
       updateAvailable: Boolean(installed && latest && compareVersions(latest, installed) > 0),
       installChannel: channel?.channel ?? null,
       updateCommand: update.command,
+      updateViaNpm: Boolean(update.command && channel.channel !== 'npm' && channel.update?.package),
       updateGuidance: update.guidance,
       lastInstall: versions?.lastInstall ?? null,
       installs,
@@ -914,7 +915,7 @@ export class ProviderRegistry extends EventEmitter {
     const args = channel.update.package
       ? this.npmArgs(channel.update, await this.resolveRelease(provider, update.file))
       : update.args;
-    return { spec: buildSpawnSpec(update.file, args, this.env, this.platform), channel: channel.channel };
+    return { spec: buildSpawnSpec(update.file, args, this.env, this.platform), channel: channel.update.package ? 'npm' : channel.channel };
   }
 
   uninstallSpec(provider, copyPath) {

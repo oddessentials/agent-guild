@@ -777,6 +777,21 @@ test('shared npm and native copies have the same uninstall plan in either PATH o
   }
 });
 
+test('a native copy that npm shares is updated with npm, as the install button installs it', () => {
+  const provider = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'config/providers.default.json'), 'utf8')).providers.find((p) => p.id === 'xai');
+  const home = 'C:\\Users\\a';
+  const native = 'C:\\Users\\a\\.grok\\bin\\grok.exe';
+  const fsx = { exists: (p) => p === native, isFile: (p) => p === native, isLink: () => false, realpath: (p) => p, readText: () => '' };
+  const opts = { resolvedPath: native, provider, env: { USERPROFILE: home }, platform: 'win32', fsx };
+  const copy = classifyInstall({ ...opts, npmOnPath: 'C:\\node\\npm.cmd' });
+  assert.equal(copy.channel, 'native');
+  assert.deepEqual(copy.update, { file: 'C:\\node\\npm.cmd', args: ['install', '-g'], package: '@xai-official/grok' });
+  assert.equal(copy.probe, false);
+  const noNpm = classifyInstall(opts);
+  assert.equal(noNpm.update, null);
+  assert.equal(noNpm.guidance, `Grok Build at ${native} is updated through npm, but npm was not found.`);
+});
+
 test('ownership follows where a tool is really installed, and removal runs that installer', () => {
   const fsx = ({ files = [], links = {}, texts = {} } = {}) => ({
     exists: (f) => files.includes(f),

@@ -189,6 +189,10 @@ export function classifyInstall({
 
   const native = channels.native;
   if (native && ownsLocation({ resolvedPath, realPath }, native.paths, env, platform, fsx)) {
+    if (native.sharedWithNpm && provider.package) {
+      if (!npmOnPath) return result('native', { guidance: `${provider.tool} at ${resolvedPath} is updated through npm, but npm was not found.` });
+      return result('native', { update: { file: npmOnPath, args: ['install', '-g'], package: provider.package } });
+    }
     if (native.update.length === 0) {
       return result('native', { guidance: `${provider.tool} at ${resolvedPath} has no update command configured. Update it the way you installed it.` });
     }
