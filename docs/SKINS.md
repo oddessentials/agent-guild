@@ -47,8 +47,9 @@ pass.
    styles `.cwd input` includes `.notes-text`, so the notes field matches the
    working-folder field.
 8. **Give every tool its own art** *(tested)*. Each tool but `shell` has its
-   own `.provider[data-id="…"], .session-card[data-provider="…"] {` block and
-   its own `.provider-icon[data-provider="…"] {` block, as in [Files](#files).
+   own `.provider[data-id="…"], .session-card[data-provider="…"] {` block, as
+   in [Files](#files), and its own `.provider-icon[data-provider="…"] {` block,
+   as in [Slots](#slots).
 9. **Ship its art** *(tested)*. Use at least one image by a URL relative to
    `skin.css`, and every such URL must resolve to a file. `data:`, `https:`
    and root-relative URLs do not count.

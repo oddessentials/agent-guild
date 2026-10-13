@@ -2,8 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 
-// docs/api.md is read by people building other front ends. These checks keep its routes and codes
-// in step with the server, so a route or error code cannot be renamed or removed behind the doc's back.
+// docs/api.md is read by people building other front ends. These checks fail when a fixed-path route
+// is missing from the doc, or when the doc names a code that no source file uses.
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 const doc = read('docs/api.md');

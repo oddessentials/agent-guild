@@ -9,8 +9,8 @@ npm test
 ```
 
 * The tests start real managers and real pseudo-terminals, using a small fake
-  coding tool in `tests/fixtures`. The tmux card's test runs only where tmux
-  is installed.
+  coding tool in `tests/fixtures`. The tmux card's tests run only where tmux
+  3.2 or later is installed.
 * CI also checks the browser UI, the packed package, the Alpine build, the
   boot service and the release plan. Each step and the command it runs is in
   [.github/workflows/ci.yml](.github/workflows/ci.yml).
