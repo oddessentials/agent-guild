@@ -659,7 +659,7 @@ Server to client:
 | --- | --- |
 | `{ type: "snapshot", data, cols, rows, generation, owner, session }` | Always first. `owner` says whether this page owns the size, and `generation` counts claims. `data` is a VT escape sequence stream that redraws the current screen and scrollback. Reset the terminal and write it. |
 | `{ type: "data", data }` | Terminal output, in order, directly after the snapshot. |
-| `{ type: "resize", cols, rows, generation, owner }` | The size changed or was claimed. |
+| `{ type: "resize", cols, rows, generation, owner }` | The size changed or was claimed, or this page's own `resize` was refused or changed nothing. |
 | `{ type: "exit", exitCode, signal }` | The process ended. Also sent after the snapshot when attaching to an exited session. |
 | `{ type: "removed" }` | The session was removed. The socket then closes with code 4410. |
 | `{ type: "pong" }` | The answer to a client's `ping`. |
@@ -681,7 +681,7 @@ example "where is the cursor?" (`CSI 6 n`). The manager answers these once
 per session from its own copy of the screen, whether zero or many clients
 are attached. A client that renders the terminal must therefore not answer
 them itself, or the program receives duplicate replies as keyboard input.
-A client built on xterm.js can copy `suppressQueryReplies` from `web/app.js`.
+The queries it answers are the ones `suppressQueryReplies` in `web/app.js` blocks.
 
 Close codes: `4404` means the session does not exist, `4410` means it was
 removed, and `4008` means the client fell too far behind. After a `4008` or a
