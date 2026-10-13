@@ -7170,7 +7170,7 @@ function showManagerUnavailable() {
   }
 }
 
-function connectEvents(refreshProviders = false) {
+function connectEvents() {
   if (state.pageAway || state.remoteRevoked) return;
   const ws = new WebSocket(wsUrl('/events'));
   state.eventsSocket = ws;
@@ -7216,6 +7216,10 @@ function connectEvents(refreshProviders = false) {
       if ($('changelog').open) loadChangelog();
       if (dockShows('github')) loadGitHub();
       catchUpNotes(msg.notesRevision, msg.notesUnreadable === true);
+      loadProviders(ws).catch((err) => {
+        if (state.pageAway || state.remoteRevoked || state.eventsSocket !== ws) return;
+        if (err instanceof AuthError) showAuth(err.message);
+      });
     } else if (msg.type === 'notes.updated') {
       applyServerNotes(msg.notes);
     } else if (msg.type === 'environment.updated') {
@@ -7286,15 +7290,9 @@ function connectEvents(refreshProviders = false) {
     const delay = Math.min(5000, 500 * 2 ** state.eventsRetry++);
     setTimeout(() => {
       if (state.pageAway || state.eventsSocket !== ws) return;
-      connectEvents(true);
+      connectEvents();
     }, delay);
   };
-  // Catch up metadata alongside the socket: an HTTP request can remain pending
-  // through a network change, but must not hold up reconnection or its deadlines.
-  if (refreshProviders) loadProviders(ws).catch((err) => {
-    if (state.pageAway || state.remoteRevoked || state.eventsSocket !== ws) return;
-    if (err instanceof AuthError) showAuth(err.message);
-  });
 }
 
 // No pong in time, or a connection that does not open, means a link is dead: after a move between networks a socket can stay open on a dead connection for minutes.
@@ -7691,7 +7689,7 @@ addEventListener('pageshow', (event) => {
   activityFavicon.setPaused(false);
   if (state.remoteRevoked) return;
   setConnection('down', 'Reconnecting to session manager…', 'Reconnecting…');
-  connectEvents(true);
+  connectEvents();
 });
 $('version').addEventListener('click', openChangelog);
 $('changelog-close').addEventListener('click', closeChangelog);
