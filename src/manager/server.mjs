@@ -13,6 +13,7 @@ import { createFolderOpener } from './folder-opener.mjs';
 import { createFolderBrowser } from './folder-browser.mjs';
 import { normalizeAccess } from './access-policy.mjs';
 import { NOTES_BODY_LIMIT, createNotesStore } from './notes.mjs';
+import { createAccountEditor } from './accounts.mjs';
 import { MODES as AUTOSTART_MODES } from './autostart.mjs';
 import { ptyRestartProblem } from './pty.mjs';
 
@@ -173,6 +174,11 @@ export function createManagerServer({
   /** Why a manager started from the files on disk could not run a terminal, or null; a stand-in in tests. */
   nextManagerProblem = ptyRestartProblem,
 }) {
+  let listedProviders = null;
+  const accounts = createAccountEditor({
+    registry,
+    inUse: (providerId, accountId) => [...manager.sessions.values()].some((s) => s.status === 'running' && s.provider.id === providerId && s.account?.id === accountId),
+  });
   let access = normalizeAccess({ hosts: extraHosts, origins: extraOrigins });
   let policyVersion = 0;
   const headersForAccess = () => ({
@@ -383,12 +389,12 @@ export function createManagerServer({
     }
     if (route === '/providers' && method === 'GET') {
       registry.refreshVersions().catch(() => {});
-      return sendJson(res, 200, { providers: registry.list() });
+      return sendJson(res, 200, { providers: registry.list(), revision: registry.revision });
     }
     if (route === '/providers/reload' && method === 'POST') {
       registry.reload();
       registry.refreshVersions({ force: true }).catch(() => {});
-      return sendJson(res, 200, { providers: registry.list(), warnings: registry.warnings });
+      return sendJson(res, 200, { providers: registry.list(), revision: registry.revision, warnings: registry.warnings });
     }
     if (route === '/usage' && method === 'GET') {
       return sendJson(res, 200, { usage: await usage.all() });
@@ -403,6 +409,15 @@ export function createManagerServer({
       return sendJson(res, 200, changelog.snapshot());
     }
     if (route.startsWith('/github') && github) return handleGitHub(req, res, url, route, method);
+    const accountsMatch = route.match(/^\/providers\/([a-z0-9][a-z0-9_-]{0,31})\/accounts(?:\/([a-z0-9][a-z0-9_-]{0,31}))?$/);
+    if (accountsMatch) {
+      const [, providerId, accountId] = accountsMatch;
+      // A change reloads the tools, which broadcasts the new list; the reply reuses that list.
+      const changed = (status, { account, dir, changed }) => sendJson(res, status, { account, dir, providers: changed ? listedProviders : registry.list(), revision: registry.revision });
+      if (!accountId && method === 'POST') return changed(201, accounts.add(providerId, await readJsonBody(req)));
+      if (accountId && method === 'PATCH') return changed(200, accounts.rename(providerId, accountId, await readJsonBody(req)));
+      if (accountId && method === 'DELETE') return changed(200, accounts.remove(providerId, accountId, { revision: url.searchParams.get('revision') }));
+    }
     const historyMatch = route.match(/^\/providers\/([a-z0-9][a-z0-9_-]{0,31})\/history(\/detail)?$/);
     if (historyMatch && method === 'GET') {
       const provider = registry.get(historyMatch[1]);
@@ -643,7 +658,10 @@ export function createManagerServer({
     ]).then(() => clearTimeout(timer));
   }
   manager.on('event', broadcast);
-  registry.on('updated', () => broadcast({ type: 'providers.updated', providers: registry.list() }));
+  registry.on('updated', () => {
+    listedProviders = registry.list();
+    broadcast({ type: 'providers.updated', providers: listedProviders, revision: registry.revision });
+  });
   const environmentUpdated = (snapshot) => broadcast({ type: 'environment.updated', environment: snapshot ?? environment.snapshot() });
   environment?.on('updated', environmentUpdated);
   selfUpdate?.on('updated', () => broadcast({ type: 'manager.upgrade', upgrade: upgradeInfo() }));
