@@ -59,8 +59,9 @@ function disposeWorld(root) {
   for(const environment of Object.values(root?.userData.environments||{}))environment.dispose();
 }
 export class YardRenderer {
-  constructor(host,labels,{select,open,error=noop}) {
-    this.host=host;this.labels=labels;this.onSelect=select;this.onOpen=open;this.onError=error;
+  // clock gives the time staging is judged at; tests pass a fixed one.
+  constructor(host,labels,{select,open,error=noop,clock=Date.now}) {
+    this.host=host;this.labels=labels;this.onSelect=select;this.onOpen=open;this.onError=error;this.clock=clock;
     this.scene=new T.Scene();this.units=new Map();this.halls=new Map();this.slots=new Map();this.cache=new Map();
     this.loadingManager=new T.LoadingManager();
     this.providers=[];this.sessions=[];this.selected=null;this.world=null;this.skin=null;this.request=0;this.worldRequest=0;this.pending=null;
@@ -382,7 +383,7 @@ export class YardRenderer {
     }
     // Where every session goes (model.mjs stage). A quiet session leaves for
     // the plaza at a time its own data gives, so the next change is timed, not polled.
-    const now=Date.now();
+    const now=this.clock();
     this.staged=stage(sessions,providers,now,this.staged);
     clearTimeout(this.stageTimer);
     const next=nextStagingChange(sessions,now);
@@ -674,22 +675,24 @@ export class YardRenderer {
   tick(time) {
     this.frame=0;if(!this.active||this.disposed)return;
     const dt=this.lastTime?Math.min((time-this.lastTime)/1000,.05):0;this.lastTime=time;
-    if(!this.reduced) {
-      for(const unit of this.units.values()) {
-        this.advance(unit,dt);
-        // Characters out of view animate five times a second, enough to stay
-        // in step for when the camera comes back to them.
-        let step=dt;
-        if(unit.label.hidden){unit.lag=(unit.lag||0)+dt;if(unit.lag<.2)continue;step=unit.lag;}
-        unit.lag=0;
-        for(const mixer of unit.mixers)mixer.update(step);
-        for(const helper of unit.helpers)helper.mixer.update(step);
-      }
-      this.updateSparks(dt);
-    }
+    if(!this.reduced)this.step(dt);
     if(this.dirty)this.positionLabels();
     if(!this.reduced||this.dirty){this.renderer.render(this.scene,this.camera);this.dirty=false;}
     if(!this.reduced)this.schedule();
+  }
+  // Advances walks, turns, helpers, clips and sparks by dt seconds, without drawing.
+  step(dt) {
+    for(const unit of this.units.values()) {
+      this.advance(unit,dt);
+      // Characters out of view animate five times a second, enough to stay
+      // in step for when the camera comes back to them.
+      let step=dt;
+      if(unit.label.hidden){unit.lag=(unit.lag||0)+dt;if(unit.lag<.2)continue;step=unit.lag;}
+      unit.lag=0;
+      for(const mixer of unit.mixers)mixer.update(step);
+      for(const helper of unit.helpers)helper.mixer.update(step);
+    }
+    this.updateSparks(dt);
   }
   drawOnce() { if(this.active)this.schedule(); }
   removeUnit(unit) {

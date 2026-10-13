@@ -313,42 +313,53 @@ test('failed character and helper downloads recover on state changes without ret
   assert.deepEqual(b.errors,[]);
 });
 
+// Deterministic: the renderer runs on a fixed clock and is never started, so
+// no animation frame runs; the test advances it with step() in fixed steps.
 test('characters walk to where their sessions\' states put them, arrive from their hall, and snap into place with reduced motion',options,async t=>{
   const {f,b}=await setup(t);
-  await b.send('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'no-preference'}]});
-  const sessions=[...f.data.values()].slice(0,3).map(s=>({...s,activity:'active',agents:[],shells:[]}));
+  const T0=Date.parse('2026-10-13T12:00:00.000Z'),iso=ms=>new Date(T0-ms).toISOString();
+  const sessions=[...f.data.values()].slice(0,3).map(s=>({...s,activity:'active',lastOutputAt:iso(0),createdAt:iso(3600000),agents:[],shells:[]}));
   await b.evaluate(`(async()=>{
     const {YardRenderer}=await import('/yard/renderer.js');
     window.__model=await import('/yard/model.mjs');
     const host=document.createElement('div'),labels=document.createElement('div');
     host.style.cssText='position:fixed;width:900px;height:700px;top:0;left:0';host.append(labels);document.body.append(host);
-    window.__renderer=new YardRenderer(host,labels,{select(){},open(){}});
+    window.__renderer=new YardRenderer(host,labels,{select(){},open(){},clock:()=>${T0}});
     window.__sessions=${q(sessions)};window.__providers=${q(f.providers)};
-    await __renderer.setWorld('guild','dark');__renderer.update(__providers,__sessions);__renderer.setActive(true);
-    window.__at=id=>{const p=__renderer.units.get(id).root.position;return [Math.round(p.x*1000)/1000,Math.round(p.z*1000)/1000];};
+    await __renderer.setWorld('guild','dark');__renderer.update(__providers,__sessions);
+    window.__at=id=>{const p=__renderer.units.get(id).root.position;return [p.x,p.z];};
     window.__place=id=>{const p=__renderer.staged.places.get(id);return [p.x,p.z];};
+    // Steps until the character stops, at most 4000 times; returns the count.
+    window.__walk=id=>{let n=0;while(__renderer.units.get(id).moving&&n<4000){__renderer.step(.05);n++;}return n;};
+    // How many 0.05 s steps a walk along a route at a speed takes.
+    window.__steps=(from,path,speed)=>{let d=0,a=from;for(const p of path){d+=Math.hypot(p.x-a.x,p.z-a.z);a=p;}return Math.ceil(d/speed/.05);};
   })()`);
-  const id=sessions[0].id;
+  const id=sessions[0].id,unit=`__renderer.units.get(${q(id)})`;
   await b.wait('[...__renderer.units.values()].every(u=>u.loaded)');
   assert.deepEqual(await b.evaluate(`__at(${q(id)})`),await b.evaluate(`__place(${q(id)})`),'sessions open at their stations');
-  assert.equal(await b.evaluate(`__renderer.units.get(${q(id)}).clip`),'work_0','a working session plays its work');
-  // Quiet long enough: the character walks to a rest spot round the plaza.
-  await b.evaluate(`__sessions[0].activity='quiet';__sessions[0].lastOutputAt=new Date(Date.now()-60000).toISOString();__renderer.update(__providers,__sessions)`);
-  assert.equal(await b.evaluate(`__renderer.staged.places.get(${q(id)}).mode`),'rest');
-  await b.wait(`__renderer.units.get(${q(id)}).moving && __renderer.units.get(${q(id)}).clip==='walk'`);
-  await b.wait(`!__renderer.units.get(${q(id)}).moving`,30000);
+  assert.equal(await b.evaluate(`${unit}.clip`),'work_0','a working session plays its work');
+  // Quiet for a minute: the character walks to a rest spot round the plaza.
+  const walk=await b.evaluate(`(()=>{
+    const from={x:${unit}.root.position.x,z:${unit}.root.position.z};
+    __sessions[0].activity='quiet';__sessions[0].lastOutputAt=${q(iso(60000))};__renderer.update(__providers,__sessions);
+    const u=${unit},expected=__steps(from,u.path,u.speed),mode=__renderer.staged.places.get(${q(id)}).mode,clip=u.clip,moving=u.moving;
+    return {mode,clip,moving,expected,taken:__walk(${q(id)})};
+  })()`);
+  assert.equal(walk.mode,'rest');
+  assert.equal(walk.moving,true);
+  assert.equal(walk.clip,'walk');
+  assert.ok(walk.taken===walk.expected||walk.taken===walk.expected+1,`a walk of ${walk.expected} steps took ${walk.taken}`);
   assert.deepEqual(await b.evaluate(`__at(${q(id)})`),await b.evaluate(`__place(${q(id)})`),'it arrives at its rest spot');
-  assert.ok((await b.evaluate(`__renderer.units.get(${q(id)}).clip`)).startsWith('idle_'),'and rests there');
-  // A session that starts while the Yard is open steps out of its hall's door.
-  await b.evaluate(`__sessions.push({...__sessions[1],id:'arrival',createdAt:new Date().toISOString()});__renderer.update(__providers,__sessions)`);
-  const door=await b.evaluate(`(d=>[d.x,d.z])(__model.doorFor(__sessions.at(-1),__providers))`);
-  const start=await b.evaluate(`__at('arrival')`);
-  assert.ok(Math.hypot(start[0]-door[0],start[1]-door[1])<.6,'a new session starts at its door');
-  await b.wait(`__renderer.units.get('arrival').loaded && !__renderer.units.get('arrival').moving`,30000);
+  assert.equal(await b.evaluate(`${unit}.clip`),await b.evaluate(`__model.clipFor(${q(id)},'rest',0)`),'and rests there');
+  // A session created a second ago steps out of its hall's door.
+  await b.evaluate(`__sessions.push({...__sessions[1],id:'arrival',createdAt:${q(iso(1000))}});__renderer.update(__providers,__sessions)`);
+  assert.deepEqual(await b.evaluate(`__at('arrival')`),await b.evaluate(`(d=>[d.x,d.z])(__model.doorFor(__sessions.at(-1),__providers))`),'a new session starts at its door');
+  await b.wait(`__renderer.units.get('arrival').loaded`);
+  assert.ok(await b.evaluate(`__walk('arrival')`)<4000,'and reaches its place');
   assert.deepEqual(await b.evaluate(`__at('arrival')`),await b.evaluate(`__place('arrival')`));
   // Reduced motion: a change of place is immediate, with no walk.
-  await b.evaluate(`__renderer.setReducedMotion(true);__sessions[0].activity='active';__renderer.update(__providers,__sessions)`);
-  assert.equal(await b.evaluate(`__renderer.units.get(${q(id)}).moving`),false);
+  await b.evaluate(`__renderer.setReducedMotion(true);__sessions[0].activity='active';__sessions[0].lastOutputAt=${q(iso(0))};__renderer.update(__providers,__sessions)`);
+  assert.equal(await b.evaluate(`${unit}.moving`),false);
   assert.deepEqual(await b.evaluate(`__at(${q(id)})`),await b.evaluate(`__place(${q(id)})`),'reduced motion places it at once');
   await b.evaluate('__renderer.dispose()');
   assert.deepEqual(b.errors,[]);
