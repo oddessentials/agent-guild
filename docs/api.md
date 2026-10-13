@@ -681,7 +681,7 @@ example "where is the cursor?" (`CSI 6 n`). The manager answers these once
 per session from its own copy of the screen, whether zero or many clients
 are attached. A client that renders the terminal must therefore not answer
 them itself, or the program receives duplicate replies as keyboard input.
-The queries it answers are the ones `suppressQueryReplies` in `web/app.js` blocks.
+A client built on xterm.js can copy `suppressQueryReplies` from `web/app.js`.
 
 Close codes: `4404` means the session does not exist, `4410` means it was
 removed, and `4008` means the client fell too far behind. After a `4008` or a
