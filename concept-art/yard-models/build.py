@@ -192,15 +192,16 @@ def sheets(name, names):
         print(out / f'{key}.png', flush=True)
 
 def godot(name, names):
-    """Import the shipped cast into a scratch copy of godot/ and run check.gd."""
+    """Import the shipped cast, un-quantized, into a scratch copy of godot/ and run check.gd."""
     _, spec, _ = world(name)
     keys = [k for k in spec['cast'] if not names or k in names]
     project = ROOT / f'.cache/{name}-yard/godot'
     shutil.rmtree(project, ignore_errors=True)
     shutil.copytree(HERE / 'godot', project)
     (project / 'maps').mkdir()
+    # Godot 4 does not import KHR_mesh_quantization, which the web copies use.
+    subprocess.run(['node', str(ROOT / 'scripts/dequantize-yard.mjs'), str(project), *[str(ASSETS / f'{k}.glb') for k in keys]], check=True)
     for key in keys:
-        shutil.copyfile(ASSETS / f'{key}.glb', project / f'{key}.glb')
         for texture in (ASSETS / 'maps').glob(f'{key}-*'):
             shutil.copyfile(texture, project / 'maps' / texture.name)
     exe = os.environ.get('GODOT', 'godot')

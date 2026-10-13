@@ -86,7 +86,11 @@ Every character and helper model (`web/yard/assets/<prefix><n>.glb`) carries:
   coordinates (glTF, metres).
 
 `concept-art/yard-models/rig.py` makes these; [the Yard guide](README.md)
-says how to rebuild them.
+says how to rebuild them. The web copies are quantized with
+`KHR_mesh_quantization`, which Godot 4 does not import: a Godot client takes
+them through `scripts/dequantize-yard.mjs` (the cast build's `godot` step
+does, and checks every model imports with the humanoid profile's bones and
+the contract clips).
 
 ## Changing the contract
 
