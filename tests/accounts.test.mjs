@@ -1,0 +1,345 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { ProviderRegistry, ID_RE } from '../src/manager/providers.mjs';
+import { accountIdFor, checkLabel, createAccountEditor, editAccountsText } from '../src/manager/accounts.mjs';
+import { SessionManager } from '../src/manager/session-manager.mjs';
+
+function tempDir(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-accounts-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
+
+function setup(t, contents, { inUse = () => false } = {}) {
+  const dir = tempDir(t);
+  const userFile = path.join(dir, 'providers.json');
+  if (contents !== undefined) fs.writeFileSync(userFile, typeof contents === 'string' ? contents : JSON.stringify(contents, null, 2));
+  const accountsDir = path.join(dir, 'accounts');
+  const registry = new ProviderRegistry({ userFile, env: { PATH: '', HOME: dir }, platform: 'linux', checkUpdates: false, accountsDir });
+  const editor = createAccountEditor({ registry, inUse });
+  const read = () => JSON.parse(fs.readFileSync(userFile, 'utf8'));
+  const accounts = (id) => registry.get(id).accounts.map(({ id: accountId, label }) => ({ id: accountId, label }));
+  return { dir, userFile, accountsDir, registry, editor, read, accounts };
+}
+
+function refused(fn, status, code) {
+  assert.throws(fn, (err) => {
+    assert.equal(err.code, code, err.message);
+    assert.equal(err.status, status);
+    return true;
+  });
+}
+
+test('an account id comes from its label, is unique, never "default", and is a valid id', () => {
+  const none = new Set();
+  assert.equal(accountIdFor('Work', none), 'work');
+  assert.equal(accountIdFor('  Side project!  ', none), 'side-project');
+  assert.equal(accountIdFor('Café Équipe', none), 'cafe-equipe');
+  assert.equal(accountIdFor('仕事', none), 'account');
+  assert.equal(accountIdFor('Default', none), 'default-2');
+  assert.equal(accountIdFor('Work', new Set(['work', 'work-2'])), 'work-3');
+  const long = accountIdFor('A very long account name that goes on', new Set(['a-very-long-account-name']));
+  assert.equal(long, 'a-very-long-account-name-2');
+  for (const label of ['Work', '--x--', 'Ünïcödé', '仕事', 'a'.repeat(40), 'trailing dash -----------------x']) {
+    assert.match(accountIdFor(label, new Set(['work', 'account'])), ID_RE, label);
+  }
+});
+
+test('a label is trimmed, bounded, free of control characters and unique ignoring case', () => {
+  const accounts = [{ id: 'default', label: 'Default' }, { id: 'work', label: 'Work' }];
+  assert.equal(checkLabel('  Side  ', accounts), 'Side');
+  assert.equal(checkLabel('a'.repeat(40), accounts), 'a'.repeat(40));
+  assert.equal(checkLabel('work', accounts, 'work'), 'work', 'an account may keep its own name in another case');
+  refused(() => checkLabel('   ', accounts), 400, 'bad_label');
+  refused(() => checkLabel('a'.repeat(41), accounts), 400, 'bad_label');
+  refused(() => checkLabel('Tab\there', accounts), 400, 'bad_label');
+  refused(() => checkLabel(7, accounts), 400, 'bad_label');
+  refused(() => checkLabel(' WORK ', accounts), 409, 'duplicate_label');
+  refused(() => checkLabel('default', accounts, 'work'), 409, 'duplicate_label');
+});
+
+test('editing the accounts text keeps every other part of the file', () => {
+  const add = (accounts) => [...accounts, { id: 'x', label: 'X' }];
+  assert.deepEqual(JSON.parse(editAccountsText(null, 'anthropic', 'linux', add)), { providers: [{ id: 'anthropic', accounts: [{ id: 'x', label: 'X' }] }] });
+
+  const original = {
+    note: 'kept',
+    providers: [
+      { id: 'openai', usage: null, accounts: ['shared'] },
+      { id: 'anthropic', usage: null, extra: { nested: [1, 2] } },
+      { id: 'anthropic', accounts: [{ id: 'work', label: 'Work', dir: '~/.claude-work', future: true }] },
+      { id: 'anthropic', color: '#123456' },
+    ],
+  };
+  const edited = JSON.parse(editAccountsText(JSON.stringify(original), 'anthropic', 'linux', add));
+  const expected = structuredClone(original);
+  expected.providers[2].accounts.push({ id: 'x', label: 'X' });
+  assert.deepEqual(edited, expected, 'the last entry with accounts is the one in effect, and only it changes');
+
+  const bare = JSON.parse(editAccountsText(JSON.stringify([{ id: 'xai', usage: null }]), 'xai', 'linux', add));
+  assert.deepEqual(bare, [{ id: 'xai', usage: null, accounts: [{ id: 'x', label: 'X' }] }], 'a file that is a bare list stays one');
+
+  const appended = JSON.parse(editAccountsText(JSON.stringify({ providers: [{ id: 'openai' }] }), 'xai', 'linux', add));
+  assert.deepEqual(appended.providers, [{ id: 'openai' }, { id: 'xai', accounts: [{ id: 'x', label: 'X' }] }]);
+  assert.match(editAccountsText(null, 'xai', 'linux', add), /\n$/);
+});
+
+test('a file this cannot edit safely is refused, never rewritten', () => {
+  const same = (accounts) => accounts;
+  refused(() => editAccountsText('{ "providers": [', 'anthropic', 'linux', same), 409, 'providers_file_invalid');
+  refused(() => editAccountsText('{ "tools": [] }', 'anthropic', 'linux', same), 409, 'providers_file_invalid');
+  refused(() => editAccountsText('null', 'anthropic', 'linux', same), 409, 'providers_file_invalid');
+  refused(() => editAccountsText(JSON.stringify({ providers: [{ id: 'anthropic', accounts: 'work' }] }), 'anthropic', 'linux', same), 409, 'providers_file_invalid');
+  const perPlatform = JSON.stringify({ providers: [{ id: 'anthropic', linux: { accounts: [{ id: 'work' }] } }] });
+  refused(() => editAccountsText(perPlatform, 'anthropic', 'linux', same), 409, 'accounts_per_platform');
+  assert.doesNotThrow(() => editAccountsText(perPlatform, 'anthropic', 'win32', same), 'another platform\'s accounts do not apply here');
+});
+
+test('accounts set for this platform in an earlier entry are refused, unless a later entry replaces that block', () => {
+  const add = (accounts) => [...accounts, { id: 'x', label: 'X' }];
+  const split = JSON.stringify({ providers: [
+    { id: 'anthropic', linux: { accounts: [{ id: 'work' }] } },
+    { id: 'anthropic', accounts: [] },
+  ] });
+  refused(() => editAccountsText(split, 'anthropic', 'linux', add), 409, 'accounts_per_platform');
+  for (const block of [{}, null]) {
+    const shadowed = { providers: [
+      { id: 'anthropic', linux: { accounts: [{ id: 'work' }] }, accounts: [] },
+      { id: 'anthropic', linux: block },
+    ] };
+    const edited = JSON.parse(editAccountsText(JSON.stringify(shadowed), 'anthropic', 'linux', add));
+    assert.deepEqual(edited.providers[0].accounts, [{ id: 'x', label: 'X' }], 'the later block is the one in effect');
+  }
+});
+
+test('adding an account writes providers.json, reloads the tools and changes the revision', (t) => {
+  const { registry, editor, read, accounts, userFile } = setup(t);
+  assert.equal(registry.revision, null, 'no file, no revision');
+  const updates = [];
+  registry.on('updated', () => updates.push(registry.revision));
+
+  const added = editor.add('anthropic', { label: ' Work ', revision: null });
+  assert.deepEqual(added, { account: { id: 'work', label: 'Work' }, dir: null, changed: true });
+  assert.deepEqual(read(), { providers: [{ id: 'anthropic', accounts: [{ id: 'work', label: 'Work' }] }] });
+  assert.deepEqual(accounts('anthropic'), [{ id: 'default', label: 'Default' }, { id: 'work', label: 'Work' }]);
+  assert.match(registry.revision, /^[0-9a-f]{32}$/);
+  assert.deepEqual(updates, [registry.revision], 'every open page hears of the change once');
+  assert.deepEqual(fs.readdirSync(path.dirname(userFile)), ['providers.json'], 'no temporary file is left behind');
+
+  const second = editor.add('anthropic', { label: 'work two', revision: registry.revision });
+  assert.equal(second.account.id, 'work-two');
+  refused(() => editor.add('anthropic', { label: 'WORK', revision: registry.revision }), 409, 'duplicate_label');
+  refused(() => editor.add('google', { label: 'Work', revision: registry.revision }), 409, 'accounts_unsupported');
+  refused(() => editor.add('shell', { label: 'Work', revision: registry.revision }), 409, 'accounts_unsupported');
+  refused(() => editor.add('nobody', { label: 'Work', revision: registry.revision }), 404, 'unknown_provider');
+  refused(() => editor.add('anthropic', { label: 'Work', revision: 7 }), 400, 'bad_revision');
+});
+
+test('a change made from an older view of the file is refused, and the tools reload from the file', (t) => {
+  const { registry, editor, userFile, accounts } = setup(t, { providers: [{ id: 'openai', accounts: [{ id: 'work', label: 'Work' }] }] });
+  const loaded = registry.revision;
+  refused(() => editor.add('openai', { label: 'Side', revision: null }), 409, 'stale_accounts');
+  refused(() => editor.add('openai', { label: 'Side', revision: 'f'.repeat(32) }), 409, 'stale_accounts');
+  assert.equal(registry.revision, loaded, 'nothing changed on disk, so nothing reloads');
+
+  const handEdited = JSON.stringify({ providers: [{ id: 'openai', accounts: [{ id: 'work', label: 'Job' }] }] });
+  fs.writeFileSync(userFile, handEdited);
+  refused(() => editor.rename('openai', 'work', { label: 'Office', revision: loaded }), 409, 'stale_accounts');
+  assert.equal(fs.readFileSync(userFile, 'utf8'), handEdited, 'the hand edit is kept as written');
+  assert.notEqual(registry.revision, loaded, 'the tools now reflect the hand edit');
+  assert.deepEqual(accounts('openai'), [{ id: 'default', label: 'Default' }, { id: 'work', label: 'Job' }]);
+  editor.rename('openai', 'work', { label: 'Office', revision: registry.revision });
+  assert.deepEqual(accounts('openai'), [{ id: 'default', label: 'Default' }, { id: 'work', label: 'Office' }]);
+});
+
+test('a manager without a providers.json path refuses account changes', () => {
+  const registry = new ProviderRegistry({ env: { PATH: '' }, platform: 'linux', checkUpdates: false });
+  const editor = createAccountEditor({ registry, inUse: () => false });
+  refused(() => editor.add('anthropic', { label: 'Work', revision: null }), 409, 'accounts_unsupported');
+});
+
+test('a broken providers.json is reported and left exactly as it was', (t) => {
+  const broken = '{ "providers": [ { "id": "anthropic", ';
+  const { registry, editor, userFile } = setup(t, broken);
+  refused(() => editor.add('anthropic', { label: 'Work', revision: registry.revision }), 409, 'providers_file_invalid');
+  assert.equal(fs.readFileSync(userFile, 'utf8'), broken);
+});
+
+test('renaming keeps the id, so the account keeps its folder; the default can be renamed', (t) => {
+  const { registry, editor, read, accounts } = setup(t, { providers: [{ id: 'xai', usage: null, accounts: ['shared', { id: 'work', label: 'Work', dir: '/elsewhere' }] }] });
+  const before = registry.account(registry.get('xai'), 'work').dir;
+  editor.rename('xai', 'work', { label: 'Office', revision: registry.revision });
+  editor.rename('xai', 'shared', { label: 'Team', revision: registry.revision });
+  editor.rename('xai', 'default', { label: 'Personal', revision: registry.revision });
+  assert.deepEqual(read(), { providers: [{ id: 'xai', usage: null, accounts: [
+    { id: 'shared', label: 'Team' }, { id: 'work', label: 'Office', dir: '/elsewhere' }, { id: 'default', label: 'Personal' },
+  ] }] });
+  assert.deepEqual(accounts('xai'), [{ id: 'default', label: 'Personal' }, { id: 'shared', label: 'Team' }, { id: 'work', label: 'Office' }]);
+  assert.equal(registry.account(registry.get('xai'), 'work').dir, before);
+
+  const bytes = fs.readFileSync(registry.userFile, 'utf8');
+  const revision = registry.revision;
+  assert.deepEqual(editor.rename('xai', 'work', { label: ' Office ', revision }), { account: { id: 'work', label: 'Office' }, dir: null, changed: false });
+  assert.equal(fs.readFileSync(registry.userFile, 'utf8'), bytes, 'an unchanged name writes nothing');
+  assert.equal(registry.revision, revision);
+  refused(() => editor.rename('xai', 'nope', { label: 'X', revision }), 404, 'unknown_account');
+  refused(() => editor.rename('xai', 'work', { label: 'team', revision }), 409, 'duplicate_label');
+});
+
+test('renaming an account listed twice changes the name in effect', (t) => {
+  const { registry, editor, read, accounts } = setup(t, { providers: [{ id: 'xai', usage: null, accounts: [
+    { id: 'work', label: 'Work' }, { id: 'work', label: 'Shadow' }, { id: 'default', label: 'Old' }, { id: 'default', label: 'Mine' },
+  ] }] });
+  assert.deepEqual(accounts('xai'), [{ id: 'default', label: 'Mine' }, { id: 'work', label: 'Work' }]);
+  editor.rename('xai', 'work', { label: 'Office', revision: registry.revision });
+  editor.rename('xai', 'default', { label: 'Personal', revision: registry.revision });
+  assert.deepEqual(accounts('xai'), [{ id: 'default', label: 'Personal' }, { id: 'work', label: 'Office' }]);
+  assert.deepEqual(read().providers[0].accounts, [
+    { id: 'work', label: 'Office' }, { id: 'work', label: 'Shadow' }, { id: 'default', label: 'Old' }, { id: 'default', label: 'Personal' },
+  ]);
+});
+
+test('removing an account keeps its folder, and is refused for the default or while a session uses it', (t) => {
+  let running = true;
+  const { registry, editor, read, accountsDir } = setup(t, { providers: [{ id: 'anthropic', accounts: [{ id: 'work', label: 'Work' }, 'side'] }] }, {
+    inUse: (providerId, accountId) => running && providerId === 'anthropic' && accountId === 'work',
+  });
+  const folder = path.join(accountsDir, 'anthropic', 'work');
+  fs.mkdirSync(folder, { recursive: true });
+  fs.writeFileSync(path.join(folder, '.credentials.json'), '{}');
+
+  refused(() => editor.remove('anthropic', 'default', { revision: registry.revision }), 409, 'default_account');
+  refused(() => editor.remove('anthropic', 'nope', { revision: registry.revision }), 404, 'unknown_account');
+  refused(() => editor.remove('anthropic', 'work', { revision: registry.revision }), 409, 'account_in_use');
+  running = false;
+  const removed = editor.remove('anthropic', 'work', { revision: registry.revision });
+  assert.deepEqual(removed, { account: { id: 'work', label: 'Work' }, dir: path.posix.join(accountsDir, 'anthropic', 'work'), changed: true });
+  assert.deepEqual(read(), { providers: [{ id: 'anthropic', accounts: ['side'] }] });
+  assert.ok(fs.existsSync(path.join(folder, '.credentials.json')), 'the sign-in stays on disk');
+
+  const again = editor.add('anthropic', { label: 'Work', revision: registry.revision });
+  assert.equal(again.account.id, 'work', 'adding the name again finds the same folder');
+});
+
+function launching(t, contents) {
+  const fixture = setup(t, contents);
+  let release;
+  const launches = [];
+  const sessionHooks = {
+    launch: (provider) => {
+      launches.push(provider.id);
+      return new Promise((resolve) => { release = () => resolve({ args: [], reporting: null }); });
+    },
+  };
+  const manager = new SessionManager({ registry: fixture.registry, baseEnv: {}, getApiUrl: () => '', sessionHooks });
+  const spawned = [];
+  fixture.registry.spawnSpec = () => ({});
+  manager._spawn = (options) => {
+    spawned.push(options);
+    return { setModel() {}, reportToolSession() {} };
+  };
+  const start = (account) => manager.create({ providerId: 'anthropic', cwd: fixture.dir, account });
+  return { ...fixture, manager, launches, spawned, start, release: () => release() };
+}
+
+test('an account removed while its session is launching stops the launch', async (t) => {
+  const f = launching(t, { providers: [{ id: 'anthropic', accounts: [{ id: 'work', label: 'Work' }] }] });
+  const started = f.start('work');
+  assert.deepEqual(f.launches, ['anthropic']);
+  f.editor.remove('anthropic', 'work', { revision: f.registry.revision });
+  f.release();
+  await assert.rejects(started, (err) => err.code === 'unknown_account' && err.status === 404);
+  assert.deepEqual(f.spawned, []);
+  assert.equal(f.manager.sessions.size, 0);
+});
+
+test('an account renamed while its session is launching starts under its new name', async (t) => {
+  const f = launching(t, { providers: [{ id: 'anthropic', accounts: [{ id: 'work', label: 'Work' }] }] });
+  const started = f.start('work');
+  f.editor.rename('anthropic', 'work', { label: 'Office', revision: f.registry.revision });
+  f.release();
+  await started;
+  assert.equal(f.spawned.length, 1);
+  assert.equal(f.spawned[0].account.id, 'work');
+  assert.equal(f.spawned[0].account.label, 'Office');
+  assert.equal(f.spawned[0].name, 'Claude Code · Office');
+});
+
+test('a tool turned off while its session is launching stops the launch', async (t) => {
+  const f = launching(t, { providers: [{ id: 'anthropic', accounts: [{ id: 'work', label: 'Work' }] }] });
+  const started = f.start('work');
+  fs.writeFileSync(f.userFile, JSON.stringify({ providers: [{ id: 'anthropic', enabled: false }] }));
+  f.registry.reload();
+  f.release();
+  await assert.rejects(started, (err) => err.code === 'unknown_provider' && err.status === 404);
+  assert.deepEqual(f.spawned, []);
+});
+
+test('an unknown account is refused before the tool is probed', async (t) => {
+  const f = launching(t, { providers: [{ id: 'anthropic', accounts: [{ id: 'work', label: 'Work' }] }] });
+  await assert.rejects(f.start('nope'), (err) => err.code === 'unknown_account' && err.status === 404);
+  assert.deepEqual(f.launches, []);
+});
+
+test('an edit keeps the permissions of providers.json, and a new one is private, whatever the umask', { skip: process.platform === 'win32' }, (t) => {
+  const umask = process.umask(0o077);
+  t.after(() => process.umask(umask));
+  for (const mode of [0o600, 0o644]) {
+    const { registry, editor, userFile } = setup(t, { providers: [] });
+    fs.chmodSync(userFile, mode);
+    editor.add('anthropic', { label: 'Work', revision: registry.revision });
+    assert.equal(fs.statSync(userFile).mode & 0o777, mode);
+  }
+  const { registry, editor, userFile } = setup(t);
+  editor.add('anthropic', { label: 'Work', revision: registry.revision });
+  assert.equal(fs.statSync(userFile).mode & 0o777, 0o600);
+});
+
+test('an edit writes through a linked providers.json, and a link to nothing is refused', { skip: process.platform === 'win32' }, (t) => {
+  const { dir, registry, editor, userFile, accounts } = setup(t);
+  const target = path.join(dir, 'dotfiles', 'providers.json');
+  fs.mkdirSync(path.dirname(target));
+  fs.writeFileSync(target, JSON.stringify({ providers: [] }));
+  fs.symlinkSync(target, userFile);
+  registry.reload();
+  editor.add('anthropic', { label: 'Work', revision: registry.revision });
+  assert.ok(fs.lstatSync(userFile).isSymbolicLink(), 'the link stays a link');
+  assert.deepEqual(JSON.parse(fs.readFileSync(target, 'utf8')), { providers: [{ id: 'anthropic', accounts: [{ id: 'work', label: 'Work' }] }] });
+  assert.deepEqual(accounts('anthropic'), [{ id: 'default', label: 'Default' }, { id: 'work', label: 'Work' }]);
+
+  fs.rmSync(target);
+  registry.reload();
+  refused(() => editor.add('anthropic', { label: 'Side', revision: registry.revision }), 409, 'providers_file_unreadable');
+  assert.ok(fs.lstatSync(userFile).isSymbolicLink(), 'the link is left as it was');
+  assert.equal(fs.existsSync(target), false);
+});
+
+test('a new account never shares the folder of an existing one', (t) => {
+  const added = (platform, accountsDir, accounts, label) => {
+    const dir = tempDir(t);
+    const userFile = path.join(dir, 'providers.json');
+    fs.writeFileSync(userFile, JSON.stringify({ providers: [{ id: 'anthropic', accounts }] }));
+    const registry = new ProviderRegistry({ userFile, env: { PATH: '', HOME: dir }, platform, checkUpdates: false, accountsDir });
+    const editor = createAccountEditor({ registry, inUse: () => false });
+    const { account } = editor.add('anthropic', { label, revision: registry.revision });
+    const provider = registry.get('anthropic');
+    const folders = registry.accountsFor(provider).map((a) => a.dir).filter(Boolean);
+    return { id: account.id, folders, own: registry.account(provider, account.id).dir };
+  };
+  const posix = added('linux', '/data/accounts', [{ id: 'work', label: 'Work', dir: 'personal' }], 'Personal');
+  assert.equal(posix.id, 'personal-2', 'a relative dir names a folder under accounts/<tool>');
+  assert.equal(posix.folders.filter((f) => f === posix.own).length, 1);
+
+  const absolute = added('linux', '/data/accounts', [{ id: 'work', label: 'Work', dir: '/data/accounts/anthropic/side' }], 'Side');
+  assert.equal(absolute.id, 'side-2');
+
+  for (const platform of ['win32', 'darwin', 'linux']) {
+    const root = platform === 'win32' ? 'C:\\data\\accounts' : '/data/accounts';
+    assert.equal(added(platform, root, [{ id: 'work', label: 'Work', dir: 'Personal' }], 'personal').id, 'personal-2', `${platform}: a folder differing only in case counts as the same`);
+  }
+  const windows = added('win32', 'C:\\data\\accounts', [{ id: 'work', label: 'Work', dir: 'C:/Data/Accounts/anthropic/Side/' }], 'side');
+  assert.equal(windows.id, 'side-2', 'a Windows dir may use either slash and end in one');
+});

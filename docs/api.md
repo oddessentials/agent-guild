@@ -126,7 +126,8 @@ the tool. `historyDetails` is true when `GET /providers/:id/history/detail`
 can read saved messages. `accounts` lists the sign-ins the tool can run
 under: `default` is the tool's own, and each further one has its own home
 folder, so it keeps its own sign-in and usage. `POST /sessions` takes an
-account id.
+account id. `accountsEditable` is true when accounts can be added, renamed
+and removed through `/providers/:id/accounts`.
 
 `shells` is null except for the `@shell` provider, where it lists the
 installed shells, each `{ id, label, path, multiplexer }`, and `defaultShell`
@@ -552,8 +553,11 @@ All paths are under `/api/v1`.
 | GET | `/notes` | | `{ notes: { revision, text } }`. One notepad for every client of this manager. `revision` is null until the first save. |
 | PUT | `/notes` | `{ revision, text }` | `{ notes }` with a new `revision`. `revision` is the one this edit started from, or null to create the notepad. 409 `stale_notes` when that revision is no longer current; `error.notes` is the current notepad, so a client can retry or adopt it. |
 | POST | `/upgrade` | | `201 { session }`: a session with `task` `upgrade` running the Upgrade `command`. Sessions keep running; the new version is used after the manager restarts. |
-| GET | `/providers` | | `{ providers: Provider[] }` |
-| POST | `/providers/reload` | | `{ providers, warnings }`: re-reads `providers.json` and checks every tool's versions again. New sessions use the new settings. |
+| GET | `/providers` | | `{ providers: Provider[], revision }`. `revision` identifies the contents of `providers.json`, or is null when there is no file. |
+| POST | `/providers/reload` | | `{ providers, revision, warnings }`: re-reads `providers.json` and checks every tool's versions again. New sessions use the new settings. |
+| POST | `/providers/:id/accounts` | `{ label, revision }` | `201 { account, dir, providers, revision }`: adds an account to `providers.json`. Its id is made from `label` and does not change. |
+| PATCH | `/providers/:id/accounts/:account` | `{ label, revision }` | `{ account, dir, providers, revision }`: renames an account, including `default`. |
+| DELETE | `/providers/:id/accounts/:account?revision=` | | `{ account, dir, providers, revision }`: removes an account from `providers.json`. Its home folder, `dir`, stays on disk. 409 `default_account` for `default`; 409 `account_in_use` while a running session uses it. |
 | POST | `/providers/:id/reporting` | `{ enabled }` | `{ provider }`: turns agent or model reporting on or off for a tool that has `reportingEnabled`. |
 | POST | `/providers/:id/install` | `{ force? }` | `201 { session }`: a session that installs or updates the tool. 409 `provider_in_use` (with `running`, the session count) while the provider's sessions are running; retry with `force: true` after the user confirms. |
 | POST | `/providers/:id/uninstall` | `{ path, force? }` | `201 { session }`: a session that removes the copy at `path`, one of the provider's `installs`. `force` as for `install`. |
@@ -631,7 +635,7 @@ but `{ type: "ping" }`, which the manager answers with `{ type: "pong" }`.
 | `{ type: "session.created", session }` | A session was started by any client. |
 | `{ type: "session.updated", session }` | Status, activity, agents, name or size changed. |
 | `{ type: "session.removed", sessionId }` | A session was removed. |
-| `{ type: "providers.updated", providers }` | The provider list changed. |
+| `{ type: "providers.updated", providers, revision }` | The provider list changed. |
 | `{ type: "environment.updated", environment }` | An environment check started or finished. |
 | `{ type: "news.updated" }` | Fetch `/news` again. |
 | `{ type: "changelog.updated" }` | Fetch `/changelog` again. |

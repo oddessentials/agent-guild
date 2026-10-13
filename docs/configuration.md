@@ -101,11 +101,14 @@ Codex CLI and Grok Build support this.
 }
 ```
 
-* Each account appears as a chip on the card, with its own sign-in, meters
-  and sessions.
+* Each account appears as a chip on the card, with its own sign-in and
+  sessions.
 * Without `dir`, the account lives in `accounts/<tool id>/<account id>` in the
   data folder; a relative `dir` is under `accounts/<tool id>/`.
 * Sign in from the first session of a new account.
+* The **Accounts** icon on the tool's card adds, renames and removes
+  accounts and saves them in `providers.json`. Removing one leaves its
+  folder and sign-in on disk.
 * `default` is the tool's own sign-in; only its `label` can change.
 
 ## Environment variables

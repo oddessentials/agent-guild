@@ -8,6 +8,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { resolveCommand, resolveAllCommands, pathKey, buildSpawnSpec, runSpec } from './command-resolver.mjs';
 import { compareVersions, probeVersion, fetchManifest, latestVersion, latestReleaseTag, brewVersion, DEFAULT_NPM_REGISTRY } from './versions.mjs';
@@ -22,7 +23,7 @@ import { reconcileHerdrPath } from './multiplexer-paths.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULTS_FILE = path.resolve(here, '../../config/providers.default.json');
-const ID_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
+export const ID_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 const PLATFORM_KEYS = ['win32', 'darwin', 'linux'];
 const REPORTING_MODES = new Set(['claude', 'codex', 'antigravity', 'grok', 'docker']);
 const VERSION_TTL_MS = 60 * 60 * 1000;
@@ -109,7 +110,7 @@ function normalizeHooks(raw) {
   return { path: parts.join('/'), example: raw.example };
 }
 
-const DEFAULT_ACCOUNT = 'default';
+export const DEFAULT_ACCOUNT = 'default';
 
 function normalizeAccounts(raw, id, homeVar, warnings) {
   const accounts = [{ id: DEFAULT_ACCOUNT, label: 'Default', dir: null }];
@@ -232,9 +233,12 @@ export function loadProviders({ userFile, platform = process.platform } = {}) {
 
   for (const entry of readJson(DEFAULTS_FILE).providers) add(entry, 'defaults');
 
+  let revision = null;
   if (userFile && fs.existsSync(userFile)) {
     try {
-      const user = readJson(userFile);
+      const bytes = fs.readFileSync(userFile);
+      revision = fileRevision(bytes);
+      const user = JSON.parse(bytes.toString('utf8'));
       const list = Array.isArray(user) ? user : user.providers;
       if (!Array.isArray(list)) throw new Error('expected a "providers" array');
       for (const entry of list) add(entry, userFile);
@@ -244,7 +248,12 @@ export function loadProviders({ userFile, platform = process.platform } = {}) {
   }
 
   const providers = order.map((id) => normalize(byId.get(id), platform, warnings)).filter((p) => p.enabled);
-  return { providers, warnings };
+  return { providers, warnings, revision };
+}
+
+/** Identifies the exact contents of providers.json; null when there is no file. */
+export function fileRevision(bytes) {
+  return bytes === null ? null : createHash('sha256').update(bytes).digest('hex').slice(0, 32);
 }
 
 /** Weave a PATH read from the registry or a login shell into `env`. True when PATH changed. */
@@ -303,14 +312,18 @@ export class ProviderRegistry extends EventEmitter {
     this.reload();
   }
 
-  reload() {
-    const { providers, warnings } = loadProviders({ userFile: this.userFile, platform: this.platform });
+  /** `accountsOnly` keeps what was discovered about each tool, for a change to nothing but its accounts. */
+  reload({ accountsOnly = false } = {}) {
+    const { providers, warnings, revision } = loadProviders({ userFile: this.userFile, platform: this.platform });
     this.providers = providers;
     this.warnings = warnings;
-    this._npmRegistry = null;
-    this._installs.clear();
-    this._shells.clear();
-    this.multiplexers.inventory.clear();
+    this.revision = revision;
+    if (!accountsOnly) {
+      this._npmRegistry = null;
+      this._installs.clear();
+      this._shells.clear();
+      this.multiplexers.inventory.clear();
+    }
     for (const w of warnings) console.warn(`[providers] ${w}`);
     this.emit('updated');
   }
@@ -837,6 +850,7 @@ export class ProviderRegistry extends EventEmitter {
       reportingEnabled: this.reportingEnabled?.(provider) ?? null,
       reportingNote: this.reportingNote?.(provider) ?? null,
       accounts: provider.accounts.map((account) => ({ id: account.id, label: account.label })),
+      accountsEditable: Boolean(provider.homeVar),
       shells: shells?.shells.map((shell) => ({ id: shell.id, label: shell.label, path: shell.path, multiplexer: Boolean(shell.multiplexer) })) ?? null,
       defaultShell: shells?.defaultId ?? null,
       multiplexers: this.multiplexers.describe(provider).map((m) => ({ ...m, ...this.multiplexerState?.(provider.id, m.id) })),

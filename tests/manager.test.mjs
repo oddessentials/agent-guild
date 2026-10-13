@@ -1179,6 +1179,61 @@ test('a session runs under the account picked, in that account\'s own home folde
   assert.equal((await call('POST', '/sessions', { providerId: 'fake', account: 'work', cwd: home })).status, 404, 'other providers have only the default account');
 });
 
+test('accounts are added, renamed and removed through the API without touching the rest of providers.json', async () => {
+  const file = path.join(home, 'providers.json');
+  const original = fs.readFileSync(file);
+  const others = (parsed) => parsed.providers.filter((p) => p.id !== 'multi');
+  const multi = (body) => body.providers.find((p) => p.id === 'multi');
+  try {
+    const listed = (await call('GET', '/providers')).body;
+    assert.match(listed.revision, /^[0-9a-f]{32}$/);
+    assert.equal(multi(listed).accountsEditable, true);
+    assert.equal(listed.providers.find((p) => p.id === 'fake').accountsEditable, false);
+
+    const unsupported = await call('POST', '/providers/fake/accounts', { label: 'Side', revision: listed.revision });
+    assert.deepEqual([unsupported.status, unsupported.body.error.code], [409, 'accounts_unsupported']);
+    const stale = await call('POST', '/providers/multi/accounts', { label: 'Side', revision: 'f'.repeat(32) });
+    assert.deepEqual([stale.status, stale.body.error.code], [409, 'stale_accounts']);
+    const duplicate = await call('POST', '/providers/multi/accounts', { label: ' work ', revision: listed.revision });
+    assert.deepEqual([duplicate.status, duplicate.body.error.code], [409, 'duplicate_label']);
+    assert.deepEqual(fs.readFileSync(file), original, 'refusals write nothing');
+
+    const added = await call('POST', '/providers/multi/accounts', { label: ' Side project ', revision: listed.revision });
+    assert.equal(added.status, 201, JSON.stringify(added.body));
+    assert.deepEqual(added.body.account, { id: 'side-project', label: 'Side project' });
+    assert.deepEqual(multi(added.body).accounts.map((a) => a.id), ['default', 'work', 'kept', 'side-project']);
+    assert.notEqual(added.body.revision, listed.revision);
+    assert.deepEqual((await call('GET', '/providers')).body.revision, added.body.revision);
+    assert.deepEqual(others(JSON.parse(fs.readFileSync(file, 'utf8'))), others(JSON.parse(original)));
+
+    const renamed = await call('PATCH', '/providers/multi/accounts/side-project', { label: 'Side', revision: added.body.revision });
+    assert.equal(renamed.status, 200, JSON.stringify(renamed.body));
+    assert.deepEqual(multi(renamed.body).accounts.at(-1), { id: 'side-project', label: 'Side' });
+    const reused = await call('PATCH', '/providers/multi/accounts/side-project', { label: 'Again', revision: added.body.revision });
+    assert.deepEqual([reused.status, reused.body.error.code], [409, 'stale_accounts']);
+
+    const session = (await call('POST', '/sessions', { providerId: 'multi', account: 'side-project', cwd: home })).body.session;
+    assert.deepEqual(session.account, { id: 'side-project', label: 'Side' });
+    const revision = renamed.body.revision;
+    const busy = await call('DELETE', `/providers/multi/accounts/side-project?revision=${revision}`);
+    assert.deepEqual([busy.status, busy.body.error.code], [409, 'account_in_use']);
+    await call('DELETE', `/sessions/${session.id}`);
+    const removed = await call('DELETE', `/providers/multi/accounts/side-project?revision=${revision}`);
+    assert.equal(removed.status, 200, JSON.stringify(removed.body));
+    assert.equal(removed.body.dir, path.join(home, 'accounts', 'multi', 'side-project'));
+    assert.ok(fs.existsSync(removed.body.dir), 'the account folder stays');
+    assert.deepEqual(multi(removed.body).accounts.map((a) => a.id), ['default', 'work', 'kept']);
+
+    const fallback = await call('DELETE', `/providers/multi/accounts/default?revision=${removed.body.revision}`);
+    assert.deepEqual([fallback.status, fallback.body.error.code], [409, 'default_account']);
+    const unknown = await call('DELETE', `/providers/multi/accounts/nope?revision=${removed.body.revision}`);
+    assert.deepEqual([unknown.status, unknown.body.error.code], [404, 'unknown_account']);
+  } finally {
+    fs.writeFileSync(file, original);
+    ctx.registry.reload({ accountsOnly: true });
+  }
+});
+
 test('a session runs, streams output, accepts input and resizes', async () => {
   const session = await createFake();
   assert.equal(session.status, 'running');

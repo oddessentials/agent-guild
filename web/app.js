@@ -61,6 +61,7 @@ function notifyViews() {
 const state = {
   token: null,
   providers: [],
+  providersRevision: null,
   usage: new Map(),
   accounts: {},
   shellPicks: {},
@@ -1570,6 +1571,25 @@ function wsUrl(path) {
 
 // ---- providers ------------------------------------------------------------
 
+/** `revision` identifies the providers.json the list came from; account changes must name it. */
+function setProviders({ providers, revision = null }) {
+  state.providers = providers;
+  state.providersRevision = revision;
+  renderAccountsDialog();
+}
+
+async function settleProviders(result, previous, ws = null) {
+  const gone = () => ws && (state.pageAway || state.remoteRevoked || state.eventsSocket !== ws);
+  for (let tries = 0; state.providers !== previous; tries++) {
+    if (tries === 3 || gone()) return false;
+    previous = state.providers;
+    try { result = await api('GET', '/providers'); } catch { return false; }
+  }
+  if (gone()) return false;
+  setProviders(result);
+  return true;
+}
+
 function selectedAccount(provider) {
   const accounts = provider.accounts || [];
   return accounts.find((a) => a.id === state.accounts[provider.id]) || accounts[0] || { id: 'default', label: 'Default' };
@@ -1677,6 +1697,247 @@ function renderAccounts(card, provider) {
   });
 }
 
+// ---- accounts dialog --------------------------------------------------------
+
+const accountsView = { providerId: null, opened: 0, busy: false, removing: null, errors: new Map(), status: '' };
+let accountsOpener = null;
+
+function accountsShowing(opened) {
+  return $('accounts').open && accountsView.opened === opened;
+}
+
+function accountsProvider() {
+  const provider = state.providers.find((p) => p.id === accountsView.providerId);
+  return provider?.accountsEditable ? provider : null;
+}
+
+function accountInUse(sessions, providerId, accountId) {
+  return sessions.some((s) => s.status === 'running' && s.provider.id === providerId && (s.account?.id ?? 'default') === accountId);
+}
+
+function accountLabelProblem(label, accounts, exceptId = null) {
+  const trimmed = label.trim();
+  if (!trimmed) return 'Enter a name for the account.';
+  if (trimmed.length > 40) return 'Use at most 40 characters.';
+  if (/\p{Cc}/u.test(trimmed)) return 'The account name cannot contain control characters.';
+  const folded = trimmed.toLocaleLowerCase('en-US');
+  if (accounts.some((a) => a.id !== exceptId && a.label.toLocaleLowerCase('en-US') === folded)) return `There is already an account named ${trimmed}.`;
+  return null;
+}
+
+function showAccounts(provider, opener = null) {
+  Object.assign(accountsView, { providerId: provider.id, opened: accountsView.opened + 1, busy: false, removing: null, status: '' });
+  accountsView.errors.clear();
+  $('accounts-new').value = '';
+  $('accounts-list').replaceChildren();
+  renderAccountsDialog();
+  if (!$('accounts').open) {
+    // Safari does not focus a clicked button; keep the actual opener when supplied.
+    accountsOpener = opener ?? document.activeElement?.closest?.('.accounts-link') ?? null;
+    $('accounts').showModal();
+  }
+}
+
+function closeAccounts() {
+  if ($('accounts').open) $('accounts').close();
+}
+
+function accountRow(accountId) {
+  const name = el('input', 'account-name');
+  Object.assign(name, { type: 'text', maxLength: 40, autocomplete: 'off', spellcheck: false, id: `accounts-name-${accountId}` });
+  const error = el('p', 'accounts-error');
+  error.id = `accounts-error-${accountId}`;
+  name.setAttribute('aria-describedby', error.id);
+  const rename = button('Rename', () => renameAccount(row), 'btn account-rename');
+  const remove = button('Remove', () => {
+    accountsView.removing = accountId;
+    accountsView.errors.delete(accountId);
+    renderAccountsDialog();
+    confirmRemove.focus();
+  }, 'btn account-remove');
+  const confirmRemove = button('Remove', () => removeAccount(row), 'btn danger');
+  const cancel = button('Cancel', () => {
+    accountsView.removing = null;
+    renderAccountsDialog();
+    remove.focus();
+  });
+  const row = el('li', 'account-row',
+    el('div', 'account-main', name, rename, remove),
+    el('p', 'account-note'),
+    error,
+    el('div', 'account-confirm', el('p', 'account-confirm-text'), confirmRemove, cancel));
+  row.dataset.account = accountId;
+  name.addEventListener('input', () => {
+    accountsView.errors.delete(accountId);
+    renderAccountsDialog();
+  });
+  name.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' || event.isComposing) return;
+    event.preventDefault();
+    renameAccount(row);
+  });
+  return row;
+}
+
+function paintAccountRow(row, provider, account) {
+  const name = row.querySelector('.account-name');
+  const edited = row.dataset.saved !== undefined && name.value !== row.dataset.saved;
+  row.dataset.saved = account.label;
+  if (!edited) name.value = account.label;
+  name.disabled = accountsView.busy;
+  name.setAttribute('aria-label', `Name of the ${account.label} account`);
+  const inUse = accountInUse([...state.sessions.values()], provider.id, account.id);
+  row.querySelector('.account-rename').disabled = accountsView.busy || name.value.trim() === account.label;
+  const remove = row.querySelector('.account-remove');
+  // The default account keeps the button's space, so every name field lines up.
+  remove.classList.toggle('reserved', account.id === 'default');
+  remove.disabled = account.id === 'default' || accountsView.busy || inUse;
+  const notes = [
+    account.id === 'default' && `${provider.tool}'s own sign-in`,
+    usageFor(provider, account)?.signedIn === false && 'Signed out',
+    inUse && account.id !== 'default' && 'In use by a running session, so it cannot be removed',
+  ].filter(Boolean);
+  const note = row.querySelector('.account-note');
+  note.textContent = notes.join(' · ');
+  note.hidden = !notes.length;
+  const error = accountsView.errors.get(account.id) ?? '';
+  const errorNode = row.querySelector('.accounts-error');
+  errorNode.textContent = error;
+  errorNode.hidden = !error;
+  name.setAttribute('aria-invalid', String(Boolean(error)));
+  const confirm = row.querySelector('.account-confirm');
+  confirm.hidden = accountsView.removing !== account.id || inUse;
+  confirm.querySelector('.account-confirm-text').textContent = `Remove ${account.label}? Its folder and sign-in stay on this computer.`;
+  for (const control of confirm.querySelectorAll('button')) control.disabled = accountsView.busy;
+}
+
+function renderAccountsDialog() {
+  if (accountsView.providerId === null) return;
+  const provider = accountsProvider();
+  if (!provider) return closeAccounts();
+  paintProviderIcon($('accounts-icon'), provider);
+  $('accounts-title').textContent = `${provider.tool} accounts`;
+  $('accounts-sub').textContent = 'Each account has its own sign-in, usage, history and settings. Pick one on the card before pressing New.';
+  const list = $('accounts-list');
+  const rows = new Map([...list.children].map((row) => [row.dataset.account, row]));
+  const wanted = provider.accounts.map((account) => {
+    const row = rows.get(account.id) ?? accountRow(account.id);
+    paintAccountRow(row, provider, account);
+    return row;
+  });
+  if (wanted.length !== list.children.length || wanted.some((row, i) => list.children[i] !== row)) list.replaceChildren(...wanted);
+  const addError = accountsView.errors.get('') ?? '';
+  $('accounts-add-error').textContent = addError;
+  $('accounts-add-error').hidden = !addError;
+  $('accounts-new').setAttribute('aria-invalid', String(Boolean(addError)));
+  $('accounts-new').disabled = accountsView.busy;
+  $('accounts-add-button').disabled = accountsView.busy;
+  $('accounts-status').textContent = accountsView.status;
+  $('accounts-status').hidden = !accountsView.status;
+}
+
+/** Sends one change at a time. Returns the manager's reply, or null after showing why it failed under `key`. */
+async function changeAccounts(key, method, path, body = null) {
+  const opened = accountsView.opened;
+  const previous = state.providers;
+  accountsView.busy = true;
+  accountsView.errors.delete(key);
+  accountsView.status = '';
+  renderAccountsDialog();
+  try {
+    const result = await api(method, path, body);
+    if (await settleProviders(result, previous)) {
+      renderProviders();
+      renderSessions();
+    }
+    return result;
+  } catch (err) {
+    if (err instanceof AuthError) {
+      showAuth(err.message);
+      return null;
+    }
+    if (err.code === 'stale_accounts') loadProviders(state.eventsSocket).catch(() => {});
+    if (accountsShowing(opened)) accountsView.errors.set(key, err.message);
+    return null;
+  } finally {
+    if (accountsShowing(opened)) {
+      accountsView.busy = false;
+      renderAccountsDialog();
+    }
+  }
+}
+
+function accountsPath(provider, accountId = null) {
+  return `/providers/${encodeURIComponent(provider.id)}/accounts${accountId === null ? '' : `/${encodeURIComponent(accountId)}`}`;
+}
+
+async function addAccount() {
+  const provider = accountsProvider();
+  if (!provider || accountsView.busy) return;
+  const input = $('accounts-new');
+  const problem = accountLabelProblem(input.value, provider.accounts);
+  if (problem) {
+    accountsView.errors.set('', problem);
+    renderAccountsDialog();
+    return input.focus();
+  }
+  const opened = accountsView.opened;
+  const result = await changeAccounts('', 'POST', accountsPath(provider), { label: input.value.trim(), revision: state.providersRevision });
+  if (result) {
+    const fresh = state.providers.find((p) => p.id === provider.id);
+    if (fresh) selectAccount(fresh, result.account.id);
+    loadUsage();
+  }
+  if (!accountsShowing(opened)) return;
+  if (!result) return input.focus();
+  input.value = '';
+  accountsView.status = `Added ${result.account.label} and picked it on the card. Press New there to start a session and sign in.`;
+  renderAccountsDialog();
+  input.focus();
+}
+
+async function renameAccount(row) {
+  const provider = accountsProvider();
+  if (!provider || accountsView.busy) return;
+  const id = row.dataset.account;
+  const name = row.querySelector('.account-name');
+  const current = provider.accounts.find((a) => a.id === id);
+  if (!current || name.value.trim() === current.label) return;
+  const problem = accountLabelProblem(name.value, provider.accounts, id);
+  if (problem) {
+    accountsView.errors.set(id, problem);
+    renderAccountsDialog();
+    return name.focus();
+  }
+  const opened = accountsView.opened;
+  const result = await changeAccounts(id, 'PATCH', accountsPath(provider, id), { label: name.value.trim(), revision: state.providersRevision });
+  if (!accountsShowing(opened)) return;
+  if (!result) return name.focus();
+  name.value = result.account.label;
+  row.dataset.saved = result.account.label;
+  accountsView.status = `Renamed ${current.label} to ${result.account.label}.`;
+  renderAccountsDialog();
+  name.focus();
+}
+
+async function removeAccount(row) {
+  const provider = accountsProvider();
+  if (!provider || accountsView.busy) return;
+  const id = row.dataset.account;
+  const revision = state.providersRevision === null ? '' : `?revision=${encodeURIComponent(state.providersRevision)}`;
+  const opened = accountsView.opened;
+  const result = await changeAccounts(id, 'DELETE', `${accountsPath(provider, id)}${revision}`);
+  if (!accountsShowing(opened)) return;
+  accountsView.removing = null;
+  if (!result) {
+    renderAccountsDialog();
+    return row.querySelector('.account-remove')?.focus();
+  }
+  accountsView.status = `Removed ${result.account.label}. Its folder and sign-in are kept at ${result.dir}.`;
+  renderAccountsDialog();
+  $('accounts-new').focus();
+}
+
 // Docker Agent reports its agents and commands with no setup; the switch adds its model.
 const REPORTING_SWITCH = {
   docker: {
@@ -1754,6 +2015,11 @@ function buildProvider(provider) {
     instructions.title = `See which instruction files ${provider.tool} reads when a session starts in the working folder`;
     instructions.addEventListener('click', (event) => showMemory(provider, event.currentTarget, 'instructions'));
     paintInstructionLink(instructions, provider);
+    const accountsLink = node.querySelector('.accounts-link');
+    accountsLink.hidden = !provider.available || !provider.accountsEditable;
+    accountsLink.title = `Add, rename or remove ${provider.tool} accounts`;
+    accountsLink.setAttribute('aria-label', `${provider.tool} accounts`);
+    accountsLink.addEventListener('click', (event) => showAccounts(provider, event.currentTarget));
     if (provider.available && provider.instructionsSource && !instructionCounts.has(instructionKey(provider))) refreshInstructionCounts();
     const install = node.querySelector('.install');
     install.hidden = provider.available || !provider.installable;
@@ -1891,9 +2157,7 @@ function renderMultiplexers(card, provider) {
   refresh.addEventListener('click', async () => {
     refresh.disabled = true;
     try {
-      const result = await api('POST', '/providers/reload', {});
-      state.providers = result.providers;
-      renderProviders();
+      await reloadProviders();
     } catch (err) {
       if (err instanceof AuthError) showAuth(err.message);
       else toast(err.message, 10000);
@@ -1948,6 +2212,12 @@ function renderMultiplexers(card, provider) {
   }));
 }
 
+async function reloadProviders() {
+  const previous = state.providers;
+  await settleProviders(await api('POST', '/providers/reload', {}), previous);
+  renderProviders();
+}
+
 async function manageMultiplexer(provider, tool, kind, copy = null, force = false) {
   // Busy state also comes from the manager, covering other tabs and refreshes.
   tool.busy = true;
@@ -1965,8 +2235,8 @@ async function manageMultiplexer(provider, tool, kind, copy = null, force = fals
   } finally {
     // A successful operation stays busy until the manager sends fresh state.
     try {
-      const result = await api('GET', '/providers');
-      state.providers = result.providers;
+      const previous = state.providers;
+      await settleProviders(await api('GET', '/providers'), previous);
     } catch { tool.busy = false; }
     renderProviders();
   }
@@ -2026,6 +2296,7 @@ function renderVendorLinks(card, provider) {
   const billing = setVendorLink(card.querySelector('.billing-link'), provider.billingUrl, `${provider.vendor} billing console`);
   card.querySelector('.provider-links').hidden = !usage && !billing && [...card.querySelectorAll('.memory-link')].every((link) => link.hidden);
   setVendorLink(card.querySelector('.cloud-link'), provider.cloudUrl, `${provider.vendor} web app`);
+  card.querySelector('.head-tools').hidden = [...card.querySelectorAll('.head-tools > *')].every((tool) => tool.hidden);
 }
 
 /** Point a link at an https URL, or hide it. Returns whether it is shown. */
@@ -5414,7 +5685,8 @@ function modelTitle(s) {
 function accountLabel(s) {
   if (!s.account) return '';
   const provider = state.providers.find((p) => p.id === s.provider.id);
-  return (provider?.accounts?.length ?? 0) > 1 || s.account.id !== 'default' ? s.account.label : '';
+  const label = provider?.accounts?.find((a) => a.id === s.account.id)?.label ?? s.account.label;
+  return (provider?.accounts?.length ?? 0) > 1 || s.account.id !== 'default' ? label : '';
 }
 
 function statusText(s) {
@@ -5602,6 +5874,7 @@ function upsertSession(session) {
   if (known?.status === 'exited' && session.status !== 'exited' && !(Date.parse(session.startedAt) > Date.parse(known.exitedAt))) return;
   state.sessions.set(session.id, session);
   renderSessions();
+  renderAccountsDialog();
   noticeClone(session);
 }
 
@@ -5614,6 +5887,7 @@ function dropSession(id) {
   if (pane !== -1) closePane(pane, { focusTerminal: paneNodes[pane].contains(document.activeElement) });
   if (view) { view.dispose(); state.views.delete(id); }
   renderSessions();
+  renderAccountsDialog();
 }
 
 /** What happens to a running session when it is stopped, for the confirmation. */
@@ -6770,6 +7044,21 @@ async function stopManager({ force = false, restart = false } = {}) {
   }
 }
 
+function closeDialogs() {
+  closePanel();
+  closeModels();
+  closeNews();
+  closeChangelog();
+  closeVideos();
+  closeHistory();
+  closeGitHub();
+  closeAccounts();
+  closeMemory();
+  if ($('folder-browser').open) $('folder-browser').close();
+  state.environmentUI?.close();
+  state.remoteAccessUI?.close();
+}
+
 /** How long to wait for a restarted manager before telling the user how to start one by hand. */
 const RESTART_WAIT_MS = 30000;
 let restartTimer;
@@ -6780,12 +7069,7 @@ function enterStopping(running = 0, restart = false) {
   if (state.stopping) return;
   state.stopping = true;
   state.stopRemaining = null;
-  closePanel();
-  closeModels();
-  closeNews();
-  closeChangelog();
-  closeHistory();
-  closeGitHub();
+  closeDialogs();
   for (const view of state.views.values()) view.dispose();
   state.views.clear();
   state.sessions.clear();
@@ -6958,7 +7242,7 @@ function connectEvents(refreshProviders = false) {
     } else if (msg.type === 'session.removed') {
       dropSession(msg.sessionId);
     } else if (msg.type === 'providers.updated') {
-      state.providers = msg.providers;
+      setProviders(msg);
       renderProviders();
       renderSessions();
       scheduleStats();
@@ -7044,11 +7328,7 @@ document.addEventListener('visibilitychange', () => checkLinks({ probe: true }))
 
 async function loadProviders(ws = null) {
   const previous = state.providers;
-  const { providers } = await api('GET', '/providers');
-  // A newer event or connection owns the page now; never replace its providers
-  // with a response that began before it.
-  if (ws && (state.pageAway || state.remoteRevoked || state.eventsSocket !== ws || state.providers !== previous)) return;
-  state.providers = providers;
+  if (!await settleProviders(await api('GET', '/providers'), previous, ws)) return;
   renderProviders();
   if (ws) {
     renderSessions(); // Resume and open History also depend on provider metadata.
@@ -7076,15 +7356,9 @@ function showAuth(message = '') {
   const ws = state.eventsSocket;
   state.eventsSocket = null; // Invalidate callbacks and queued retries before closing.
   ws?.close();
-  state.environmentUI?.close();
   state.remoteAccessUI?.setAvailable(null);
   managerLoss.cancel();
-  closePanel();
-  closeModels();
-  closeNews();
-  closeChangelog();
-  closeHistory();
-  closeGitHub();
+  closeDialogs();
   $('app').hidden = true;
   $('terminal-panel').hidden = true;
   $('stopped').hidden = true;
@@ -7186,6 +7460,25 @@ $('history').addEventListener('close', () => {
 $('history-filter').addEventListener('input', historyFiltersChanged);
 $('history-preview-refresh').addEventListener('click', () => historyPreview.refresh());
 $('history-preview-more').addEventListener('click', () => historyPreview.more());
+$('accounts-close').addEventListener('click', closeAccounts);
+$('accounts').addEventListener('click', (e) => { if (e.target === $('accounts')) closeAccounts(); });
+$('accounts-add').addEventListener('submit', (event) => {
+  event.preventDefault();
+  addAccount();
+});
+$('accounts-new').addEventListener('input', () => {
+  if (accountsView.errors.delete('')) renderAccountsDialog();
+});
+$('accounts').addEventListener('close', () => {
+  // The event comes a task after close(), by when another card may have opened the dialog again.
+  if ($('accounts').open) return;
+  const opener = accountsOpener?.isConnected ? accountsOpener
+    : $('providers').querySelector(`.provider[data-id="${accountsView.providerId}"] .accounts-link`);
+  Object.assign(accountsView, { providerId: null, busy: false, removing: null, status: '' });
+  accountsView.errors.clear();
+  opener?.focus();
+  accountsOpener = null;
+});
 $('memory-close').addEventListener('click', closeMemory);
 $('memory-refresh').addEventListener('click', loadMemory);
 $('memory-copy').addEventListener('click', () => { if (memoryView.selected) copyText(memoryView.selected.fullPath, 'the path'); });

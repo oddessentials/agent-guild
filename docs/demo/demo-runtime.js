@@ -144,6 +144,7 @@
       historyDetails: id === 'google',
       reporting: info.reporting || null, reportingEnabled: typeof info.reportingEnabled === 'boolean' ? info.reportingEnabled : null, reportingNote: null,
       accounts: id === 'anthropic' ? [{ id: 'default', label: 'Personal' }, { id: 'work', label: 'Work' }] : [{ id: 'default', label: 'Default' }],
+      accountsEditable: id === 'anthropic' || id === 'openai' || id === 'xai',
       modelPattern: info.modelPattern || null, install: info.install || null, docs: info.docs || null,
       usageUrl: info.usageUrl || null, billingUrl: info.billingUrl || null, cloudUrl: info.cloudUrl || null,
       available: true, resolvedPath: '/demo/bin/' + id,
@@ -336,6 +337,8 @@
     if (instructionsMatch && method === 'GET') return providerInstructions(instructionsMatch[1], url.searchParams, Boolean(instructionsMatch[2]));
     var reportingMatch = route.match(/^\/providers\/([^/]+)\/reporting$/);
     if (reportingMatch && method === 'POST') return setReporting(reportingMatch[1], body);
+    var accountsMatch = route.match(/^\/providers\/([^/]+)\/accounts(?:\/([^/]+))?$/);
+    if (accountsMatch) return changeAccounts(accountsMatch[1], accountsMatch[2] ? decodeURIComponent(accountsMatch[2]) : null, method, body);
     if (route === '/shutdown' && method === 'POST') return shutdown(body);
     if (route === '/sessions' && method === 'POST') {
       if (closing) return error('the session manager is stopping', 'manager_stopping', 503);
@@ -740,6 +743,47 @@
     p.reportingEnabled = body.enabled;
     announce({ type: 'providers.updated', providers: clone(providers) });
     return json({ provider: clone(p) });
+  }
+
+  function changeAccounts(providerId, accountId, method, body) {
+    var p = providers.find(function (item) { return item.id === providerId; });
+    if (!p) return error('unknown provider "' + providerId + '"', 'unknown_provider', 404);
+    if (!p.accountsEditable) return error(p.tool + ' keeps a single sign-in.', 'accounts_unsupported', 409);
+    var account = accountId === null ? null : p.accounts.find(function (a) { return a.id === accountId; });
+    if (accountId !== null && !account) return error(p.tool + ' has no account "' + accountId + '"', 'unknown_account', 404);
+    var label = typeof body.label === 'string' ? body.label.trim() : '';
+    var named = function () {
+      if (!label) return error('Enter a name for the account.', 'bad_label');
+      if (label.length > 40) return error('Use at most 40 characters.', 'bad_label');
+      var taken = p.accounts.some(function (a) { return a !== account && a.label.toLowerCase() === label.toLowerCase(); });
+      return taken ? error('There is already an account named ' + label + '.', 'duplicate_label', 409) : null;
+    };
+    var reply = function (status, changed, dir) {
+      announce({ type: 'providers.updated', providers: clone(providers), revision: null });
+      return json({ account: clone(changed), dir: dir, providers: clone(providers), revision: null }, status);
+    };
+    if (accountId === null && method === 'POST') {
+      var refused = named();
+      if (refused) return refused;
+      var base = label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 24) || 'account';
+      var id = base;
+      for (var n = 2; id === 'default' || p.accounts.some(function (a) { return a.id === id; }); n++) id = base + '-' + n;
+      var added = { id: id, label: label };
+      p.accounts.push(added);
+      return reply(201, added, null);
+    }
+    if (account && method === 'PATCH') {
+      var invalid = named();
+      if (invalid) return invalid;
+      account.label = label;
+      return reply(200, account, null);
+    }
+    if (account && method === 'DELETE') {
+      if (account.id === 'default') return error('The default account is ' + p.tool + "'s own sign-in and cannot be removed.", 'default_account', 409);
+      p.accounts = p.accounts.filter(function (a) { return a !== account; });
+      return reply(200, account, '/demo/accounts/' + p.id + '/' + account.id);
+    }
+    return error('This action is unavailable in the simulated demo.', 'demo_only', 409);
   }
 
   function runningCount() {
