@@ -6232,8 +6232,9 @@ class TerminalView {
       lastY = touch.clientY;
       const room = delta > 0 ? host.scrollHeight - host.clientHeight - host.scrollTop : host.scrollTop;
       if (delta && room > 0) {
+        const before = host.scrollTop;
         host.scrollTop += Math.sign(delta) * Math.min(Math.abs(delta), room);
-        return;
+        if (host.scrollTop !== before) return;
       }
       if (this.term.buffer.active.type === 'alternate' || this.term.modes.mouseTrackingMode !== 'none') {
         const target = this.el.querySelector('.xterm-screen') || this.el;
