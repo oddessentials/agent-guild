@@ -58,7 +58,8 @@ export function editAccountsText(text, providerId, platform, change, file = 'pro
     entry = { id: providerId };
     list.push(entry);
   }
-  if (entry[platform] && typeof entry[platform] === 'object' && Object.hasOwn(entry[platform], 'accounts')) {
+  const block = entries.findLast((e) => Object.hasOwn(e, platform))?.[platform];
+  if (block && typeof block === 'object' && Object.hasOwn(block, 'accounts')) {
     throw refusal(409, 'accounts_per_platform', `${file} sets this tool's accounts under "${platform}". Edit them there by hand.`);
   }
   const accounts = entry.accounts ?? [];
@@ -140,7 +141,8 @@ export function createAccountEditor({ registry, inUse }) {
         const account = { id: accountId, label: name };
         if (name === existing.label) return { account };
         const text = write((accounts) => {
-          const at = accounts.findLastIndex((entry) => entryId(entry) === accountId);
+          const match = (entry) => entryId(entry) === accountId;
+          const at = accountId === DEFAULT_ACCOUNT ? accounts.findLastIndex(match) : accounts.findIndex(match);
           if (at < 0) return [...accounts, account];
           const entry = accounts[at];
           return accounts.map((item, i) => (i === at ? (typeof entry === 'string' ? account : { ...entry, label: name }) : item));

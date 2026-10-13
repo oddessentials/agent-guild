@@ -1687,8 +1687,12 @@ function renderAccounts(card, provider) {
 
 // ---- accounts dialog --------------------------------------------------------
 
-const accountsView = { providerId: null, busy: false, removing: null, errors: new Map(), status: '' };
+const accountsView = { providerId: null, opened: 0, busy: false, removing: null, errors: new Map(), status: '' };
 let accountsOpener = null;
+
+function accountsShowing(opened) {
+  return $('accounts').open && accountsView.opened === opened;
+}
 
 function accountsProvider() {
   const provider = state.providers.find((p) => p.id === accountsView.providerId);
@@ -1710,7 +1714,7 @@ function accountLabelProblem(label, accounts, exceptId = null) {
 }
 
 function showAccounts(provider, opener = null) {
-  Object.assign(accountsView, { providerId: provider.id, busy: false, removing: null, status: '' });
+  Object.assign(accountsView, { providerId: provider.id, opened: accountsView.opened + 1, busy: false, removing: null, status: '' });
   accountsView.errors.clear();
   $('accounts-new').value = '';
   $('accounts-list').replaceChildren();
@@ -1822,6 +1826,7 @@ function renderAccountsDialog() {
 
 /** Sends one change at a time. Returns the manager's reply, or null after showing why it failed under `key`. */
 async function changeAccounts(key, method, path, body = null) {
+  const opened = accountsView.opened;
   accountsView.busy = true;
   accountsView.errors.delete(key);
   accountsView.status = '';
@@ -1838,11 +1843,13 @@ async function changeAccounts(key, method, path, body = null) {
       return null;
     }
     if (err.code === 'stale_accounts') loadProviders().catch(() => {});
-    accountsView.errors.set(key, err.message);
+    if (accountsShowing(opened)) accountsView.errors.set(key, err.message);
     return null;
   } finally {
-    accountsView.busy = false;
-    renderAccountsDialog();
+    if (accountsShowing(opened)) {
+      accountsView.busy = false;
+      renderAccountsDialog();
+    }
   }
 }
 
@@ -1860,14 +1867,18 @@ async function addAccount() {
     renderAccountsDialog();
     return input.focus();
   }
+  const opened = accountsView.opened;
   const result = await changeAccounts('', 'POST', accountsPath(provider), { label: input.value.trim(), revision: state.providersRevision });
+  if (result) {
+    const fresh = state.providers.find((p) => p.id === provider.id);
+    if (fresh) selectAccount(fresh, result.account.id);
+    loadUsage();
+  }
+  if (!accountsShowing(opened)) return;
   if (!result) return input.focus();
   input.value = '';
-  const fresh = state.providers.find((p) => p.id === provider.id);
-  if (fresh) selectAccount(fresh, result.account.id);
   accountsView.status = `Added ${result.account.label} and picked it on the card. Press New there to start a session and sign in.`;
   renderAccountsDialog();
-  loadUsage();
   input.focus();
 }
 
@@ -1884,7 +1895,9 @@ async function renameAccount(row) {
     renderAccountsDialog();
     return name.focus();
   }
+  const opened = accountsView.opened;
   const result = await changeAccounts(id, 'PATCH', accountsPath(provider, id), { label: name.value.trim(), revision: state.providersRevision });
+  if (!accountsShowing(opened)) return;
   if (!result) return name.focus();
   name.value = result.account.label;
   row.dataset.saved = result.account.label;
@@ -1898,7 +1911,9 @@ async function removeAccount(row) {
   if (!provider || accountsView.busy) return;
   const id = row.dataset.account;
   const revision = state.providersRevision === null ? '' : `?revision=${encodeURIComponent(state.providersRevision)}`;
+  const opened = accountsView.opened;
   const result = await changeAccounts(id, 'DELETE', `${accountsPath(provider, id)}${revision}`);
+  if (!accountsShowing(opened)) return;
   accountsView.removing = null;
   if (!result) {
     renderAccountsDialog();

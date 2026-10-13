@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { ProviderRegistry, ID_RE } from '../src/manager/providers.mjs';
 import { accountIdFor, checkLabel, createAccountEditor, editAccountsText } from '../src/manager/accounts.mjs';
+import { SessionManager } from '../src/manager/session-manager.mjs';
 
 function tempDir(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-accounts-'));
@@ -97,6 +98,23 @@ test('a file this cannot edit safely is refused, never rewritten', () => {
   assert.doesNotThrow(() => editAccountsText(perPlatform, 'anthropic', 'win32', same), 'another platform\'s accounts do not apply here');
 });
 
+test('accounts set for this platform in an earlier entry are refused, unless a later entry replaces that block', () => {
+  const add = (accounts) => [...accounts, { id: 'x', label: 'X' }];
+  const split = JSON.stringify({ providers: [
+    { id: 'anthropic', linux: { accounts: [{ id: 'work' }] } },
+    { id: 'anthropic', accounts: [] },
+  ] });
+  refused(() => editAccountsText(split, 'anthropic', 'linux', add), 409, 'accounts_per_platform');
+  for (const block of [{}, null]) {
+    const shadowed = { providers: [
+      { id: 'anthropic', linux: { accounts: [{ id: 'work' }] }, accounts: [] },
+      { id: 'anthropic', linux: block },
+    ] };
+    const edited = JSON.parse(editAccountsText(JSON.stringify(shadowed), 'anthropic', 'linux', add));
+    assert.deepEqual(edited.providers[0].accounts, [{ id: 'x', label: 'X' }], 'the later block is the one in effect');
+  }
+});
+
 test('adding an account writes providers.json, reloads the tools and changes the revision', (t) => {
   const { registry, editor, read, accounts, userFile } = setup(t);
   assert.equal(registry.revision, null, 'no file, no revision');
@@ -171,6 +189,19 @@ test('renaming keeps the id, so the account keeps its folder; the default can be
   refused(() => editor.rename('xai', 'work', { label: 'team', revision }), 409, 'duplicate_label');
 });
 
+test('renaming an account listed twice changes the name in effect', (t) => {
+  const { registry, editor, read, accounts } = setup(t, { providers: [{ id: 'xai', usage: null, accounts: [
+    { id: 'work', label: 'Work' }, { id: 'work', label: 'Shadow' }, { id: 'default', label: 'Old' }, { id: 'default', label: 'Mine' },
+  ] }] });
+  assert.deepEqual(accounts('xai'), [{ id: 'default', label: 'Mine' }, { id: 'work', label: 'Work' }]);
+  editor.rename('xai', 'work', { label: 'Office', revision: registry.revision });
+  editor.rename('xai', 'default', { label: 'Personal', revision: registry.revision });
+  assert.deepEqual(accounts('xai'), [{ id: 'default', label: 'Personal' }, { id: 'work', label: 'Office' }]);
+  assert.deepEqual(read().providers[0].accounts, [
+    { id: 'work', label: 'Office' }, { id: 'work', label: 'Shadow' }, { id: 'default', label: 'Old' }, { id: 'default', label: 'Personal' },
+  ]);
+});
+
 test('removing an account keeps its folder, and is refused for the default or while a session uses it', (t) => {
   let running = true;
   const { registry, editor, read, accountsDir } = setup(t, { providers: [{ id: 'anthropic', accounts: [{ id: 'work', label: 'Work' }, 'side'] }] }, {
@@ -191,4 +222,64 @@ test('removing an account keeps its folder, and is refused for the default or wh
 
   const again = editor.add('anthropic', { label: 'Work', revision: registry.revision });
   assert.equal(again.account.id, 'work', 'adding the name again finds the same folder');
+});
+
+function launching(t, contents) {
+  const fixture = setup(t, contents);
+  let release;
+  const launches = [];
+  const sessionHooks = {
+    launch: (provider) => {
+      launches.push(provider.id);
+      return new Promise((resolve) => { release = () => resolve({ args: [], reporting: null }); });
+    },
+  };
+  const manager = new SessionManager({ registry: fixture.registry, baseEnv: {}, getApiUrl: () => '', sessionHooks });
+  const spawned = [];
+  fixture.registry.spawnSpec = () => ({});
+  manager._spawn = (options) => {
+    spawned.push(options);
+    return { setModel() {}, reportToolSession() {} };
+  };
+  const start = (account) => manager.create({ providerId: 'anthropic', cwd: fixture.dir, account });
+  return { ...fixture, manager, launches, spawned, start, release: () => release() };
+}
+
+test('an account removed while its session is launching stops the launch', async (t) => {
+  const f = launching(t, { providers: [{ id: 'anthropic', accounts: [{ id: 'work', label: 'Work' }] }] });
+  const started = f.start('work');
+  assert.deepEqual(f.launches, ['anthropic']);
+  f.editor.remove('anthropic', 'work', { revision: f.registry.revision });
+  f.release();
+  await assert.rejects(started, (err) => err.code === 'unknown_account' && err.status === 404);
+  assert.deepEqual(f.spawned, []);
+  assert.equal(f.manager.sessions.size, 0);
+});
+
+test('an account renamed while its session is launching starts under its new name', async (t) => {
+  const f = launching(t, { providers: [{ id: 'anthropic', accounts: [{ id: 'work', label: 'Work' }] }] });
+  const started = f.start('work');
+  f.editor.rename('anthropic', 'work', { label: 'Office', revision: f.registry.revision });
+  f.release();
+  await started;
+  assert.equal(f.spawned.length, 1);
+  assert.equal(f.spawned[0].account.id, 'work');
+  assert.equal(f.spawned[0].account.label, 'Office');
+  assert.equal(f.spawned[0].name, 'Claude Code · Office');
+});
+
+test('a tool turned off while its session is launching stops the launch', async (t) => {
+  const f = launching(t, { providers: [{ id: 'anthropic', accounts: [{ id: 'work', label: 'Work' }] }] });
+  const started = f.start('work');
+  fs.writeFileSync(f.userFile, JSON.stringify({ providers: [{ id: 'anthropic', enabled: false }] }));
+  f.registry.reload();
+  f.release();
+  await assert.rejects(started, (err) => err.code === 'unknown_provider' && err.status === 404);
+  assert.deepEqual(f.spawned, []);
+});
+
+test('an unknown account is refused before the tool is probed', async (t) => {
+  const f = launching(t, { providers: [{ id: 'anthropic', accounts: [{ id: 'work', label: 'Work' }] }] });
+  await assert.rejects(f.start('nope'), (err) => err.code === 'unknown_account' && err.status === 404);
+  assert.deepEqual(f.launches, []);
 });
