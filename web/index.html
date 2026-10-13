@@ -613,6 +613,27 @@
     </div>
   </dialog>
 
+  <dialog id="accounts" class="models accounts-dialog" aria-labelledby="accounts-title">
+    <div class="models-bar">
+      <span id="accounts-icon" class="provider-icon small"></span>
+      <div class="models-heading">
+        <h2 id="accounts-title"></h2>
+        <p id="accounts-sub" class="sub"></p>
+      </div>
+      <button id="accounts-close" class="btn" type="button">Close</button>
+    </div>
+    <div class="models-body">
+      <ul id="accounts-list" class="accounts-list" aria-label="Accounts"></ul>
+      <p id="accounts-status" class="models-note" aria-live="polite"></p>
+    </div>
+    <form id="accounts-add" class="history-form accounts-add" novalidate>
+      <label for="accounts-new">New account</label>
+      <input id="accounts-new" type="text" maxlength="40" autocomplete="off" spellcheck="false" placeholder="Name, such as Work" aria-describedby="accounts-add-error">
+      <button id="accounts-add-button" class="btn primary" type="submit">Add</button>
+      <p id="accounts-add-error" class="accounts-error" hidden></p>
+    </form>
+  </dialog>
+
   <dialog id="folder-browser" class="models folder-browser" aria-labelledby="folder-title">
     <div class="models-bar">
       <div class="models-heading">
@@ -662,7 +683,10 @@
           <span class="tool"></span>
           <span class="state"></span>
         </span>
-        <a class="cloud-link" target="_blank" rel="noopener noreferrer" hidden></a>
+        <span class="head-tools">
+          <a class="cloud-link" target="_blank" rel="noopener noreferrer" hidden></a>
+          <button class="accounts-link" type="button" aria-haspopup="dialog" aria-label="Accounts" hidden></button>
+        </span>
       </div>
       <div class="accounts" role="tablist" aria-label="Accounts" hidden></div>
       <div class="shells" role="tablist" aria-label="Shells" hidden></div>

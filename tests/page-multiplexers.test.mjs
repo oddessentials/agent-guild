@@ -40,7 +40,7 @@ function page(tools, respond = null) {
       if (route === '/providers/reload') return { providers: [provider] };
       return respond ? respond(body) : { session: { id: 'operation' } };
     },
-    upsertSession() {}, openPanel: (id) => opened.push(id), renderProviders() {},
+    upsertSession() {}, openPanel: (id) => opened.push(id), renderProviders() {}, setProviders() {},
     toast: (message) => errors.push(message), AuthError: class extends Error {}, showAuth() {},
   };
   vm.runInNewContext('const openCopies = new Set(); const openMultiplexers = new Set();\n' + functions, context);

@@ -92,7 +92,7 @@ function page({ android = false, available, supported = true, enabled = true, pr
     clearTimeout: (id) => timers.delete(id),
     toast: (message) => messages.push(message),
     paintProviderIcon: noop, toolSessionId: noop, accountLabel: noop, modelText: noop, statusText: noop, modelTitle: noop, renderAgents: noop,
-    renderSessions: () => context.updatePanel(), noticeClone: noop, exitLine: () => '[exited]', paintSizeNote: noop,
+    renderSessions: () => context.updatePanel(), noticeClone: noop, renderAccountsDialog: noop, exitLine: () => '[exited]', paintSizeNote: noop,
     managerLoss: { cancel: noop }, closeModels: noop, closeNews: noop, closeChangelog: noop, closeHistory: noop, closeGitHub: noop,
     terminalCopy: { close: noop }, terminalControls: { cancel: noop, refresh: noop }, typeIn: noop, layoutPanes: noop, renderPaneLabels: noop, savePanes: noop, closeMenu: noop, dockMakesWayForTerminal: noop, followTerminal: noop,
     paneNodes: [0, 1].map(() => ({ contains: () => false })),

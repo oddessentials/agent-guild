@@ -26,7 +26,7 @@ function page({ onApi = () => ({}) } = {}) {
     reader: null, replies: new Map(), renderRead: () => {},
     isSessionWorking,
     state: { sessions: new Map() },
-    renderSessions() {}, noticeClone() {}, dropSession() {},
+    renderSessions() {}, noticeClone() {}, dropSession() {}, renderAccountsDialog() {},
     openPanel: (id) => opened.push(id),
     toast(message) { assert.fail(message); },
     confirm: (message) => { confirms.push(message); return true; },

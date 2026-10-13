@@ -11,6 +11,7 @@ assert.ok(connectSource, 'connectEvents is present in app.js');
 const lifecycleSource = [
   /function renderEmpty\([^]*?\n\}/,
   /async function loadProviders\([^]*?\n\}/,
+  /function setProviders\([^]*?\n\}/,
   /function showAuth\([^]*?\n\}/,
   /addEventListener\('pagehide', \(\) => \{[^]*?\n\}\);/,
   /addEventListener\('pageshow', (?:async )?\(event\) => \{[^]*?\n\}\);/,
@@ -58,6 +59,7 @@ function connect({ changelogOpen = false, githubOpen = false, docked = null } = 
     setConnection: (kind, label) => { context.state.connected = kind === 'ok'; labels.push(label); context.renderEmpty(); },
     renderSessions: () => { renders.push('sessions'); context.renderEmpty(); },
     renderProviders: () => renders.push('providers'),
+    renderAccountsDialog: noop,
     renderHistory: () => renders.push('history'),
     scheduleStats: () => renders.push('stats'),
     dropSession: noop,
