@@ -4,7 +4,7 @@ Sources for `web/skins/gnomeland/`: a village of gnome builders, one per provide
 
 | Step | Command | Writes |
 | --- | --- | --- |
-| Gnomes | `python source/edits.py [provider[:state] ...]` | `raw/<provider>-<state>/`: the idle gnome from `characters.json` (`qwen-image`), then its working and locked states edited from it (`qwen-edit`), so all three are the same figure in the same framing |
+| Gnomes | `python source/edits.py [provider[:state] ...]` | `raw/<provider>-<state>/`: the idle gnome from `characters.json` (`qwen-image`), then its working and locked states edited from it (`qwen-edit`), so every state is the same figure in the same framing |
 | Props | `python source/props.py [name ...]` | `raw/<name>/`: helper familiars, the empty-state gnome and the page backgrounds from `props.json`; the backgrounds are then upscaled 2x with SeedVR2 into `raw/<name>-up/` |
 | Web art | `python source/build.py [--masks]` | `web/skins/gnomeland/`: cut-outs, icons, familiars, backgrounds and the SVG badges and frame |
 

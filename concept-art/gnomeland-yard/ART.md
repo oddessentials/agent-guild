@@ -2,7 +2,7 @@
 
 The Gnomeland yard is a timber-and-stone mountain village of gnome builders,
 with a lake, a waterfall off a cliff and mountains beyond. Its live models
-(five builders, four familiars, four shell helpers and five provider halls)
+(the builders, familiars, shell helpers and provider halls)
 are textured 3D models made from painted images with
 [TRELLIS.2](https://github.com/microsoft/TRELLIS.2) (MIT), running in the
 local image studio's ComfyUI. The surroundings are pre-rendered plates, built

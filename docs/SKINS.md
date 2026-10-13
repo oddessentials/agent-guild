@@ -11,9 +11,14 @@ pass.
 1. **Register it** *(tested)*. Add `{ id: '<id>', name: '<Menu label>' }` to
    the `skins` list in `web/theme.js`. The id is lowercase letters, digits and
    hyphens, starting with a letter. List order is menu order. `defaultSkin` in
-   the same file names the skin a new page starts with.
+   the same file names the skin a new page starts with, currently
+   `professional`.
 2. **Give it a Yard world** *(tested)*. Add an entry to `WORLDS` in
-   `web/yard/model.mjs`, with a hall for every tool. See
+   `web/yard/model.mjs`, with a hall for every tool, its `characters` and its
+   `helpers.agent` and `helpers.shell`. The world's model, the textures it
+   references, its backdrop plates and its sky and surface maps stay within
+   the size budget `tests/yard.test.mjs` sets; characters and helpers do not
+   count. See
    [the yard](yard/README.md).
 3. **Link its stylesheet** *(tested)* in `web/index.html`, with the other
    skins, exactly as `<link rel="stylesheet" href="/skins/<id>/skin.css">`.
@@ -41,11 +46,15 @@ pass.
 7. **Style `.notes-text` with `.cwd input`** *(tested)*. Any selector list that
    styles `.cwd input` includes `.notes-text`, so the notes field matches the
    working-folder field.
-8. **Ship its art** *(tested)*. Use at least one image by a URL relative to
+8. **Give every tool its own art** *(tested)*. Each tool but `shell` has its
+   own `.provider[data-id="…"], .session-card[data-provider="…"] {` block, as
+   in [Files](#files), and its own `.provider-icon[data-provider="…"] {` block,
+   as in [Slots](#slots).
+9. **Ship its art** *(tested)*. Use at least one image by a URL relative to
    `skin.css`, and every such URL must resolve to a file. `data:`, `https:`
    and root-relative URLs do not count.
-9. **Keep the sources** of the art, and the script that builds the shipped
-   files, in `concept-art/`.
+10. **Keep the sources** of the art, and the script that builds the shipped
+    files, in `concept-art/`.
 
 ## Leave these alone
 
@@ -68,10 +77,9 @@ Paths are relative to `web/skins/<id>/`. Each picture is a `.webp` with an
 image-set(url("page.avif") type("image/avif"), url("page.webp") type("image/webp"))
 ```
 
-The tools are `shell`, `anthropic`, `openai`, `google` and `xai`. Each has an
-`idle`, `working` and `locked` portrait. `docker` has no portraits yet: its
-cards take the skin's default rule, and its icon is the lettered badge. Agent
-avatars are `flame`, `leaf`, `night` and `aether`; the page picks one per
+The tools are `shell`, `anthropic`, `openai`, `google`, `xai` and `docker`.
+Each has an `idle`, `working` and `locked` portrait. Agent avatars are
+`flame`, `leaf`, `night` and `aether`; the page picks one per
 agent.
 
 ```text
@@ -111,7 +119,7 @@ shipped ones are in `ui/`.
 | Grove | [grove-skin](../concept-art/grove-skin/README.md) | Fraunces | A card backdrop behind each portrait, light and dark |
 | Gnomeland | [gnomeland-skin](../concept-art/gnomeland-skin/README.md) | Almendra | SVG frame, lock, level and meter marks |
 | Goblinville | [goblinville-skin](../concept-art/goblinville-skin/README.md) | Germania One | SVG frame, lock, level and meter marks |
-| Professional | [professional-skin](../concept-art/professional-skin/README.md) | the system UI font | A glass object per tool rendered with Blender, in `objects/<tool>/` with a light and a dark version of each state; no familiars, no frame, and the level badge and meters are CSS |
+| Professional | [professional-skin](../concept-art/professional-skin/README.md) | the system UI font | A glass object per tool rendered with Blender, in `objects/<tool>/` with a light and a dark version of each state; SVG tool icons, a light and a dark empty state; no familiars, no frame, and the level badge and meters are CSS |
 
 ## Slots
 

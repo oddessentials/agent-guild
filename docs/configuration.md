@@ -14,16 +14,22 @@ or put Agent Guild behind a proxy.
 | File | Holds |
 | --- | --- |
 | `auth-token` | The access token |
+| `manager.json` | The running manager's process id, host, port, URL, version and start time |
 | `providers.json` | Your tool settings, if you create it |
 | `remote-access.json` | Remote access settings |
+| `notes.json` | The shared notes |
+| `multiplexers.json` | The tmux and herdr cards a restarted manager brings back |
 | `manager.log` | The log of a manager started in the background |
 | `accounts/` | Home folders of extra accounts |
 | `github/` | GitHub sign-ins and SSH keys |
+| `bin/` | The `agent-guild-report` launchers put first on each session's PATH |
+| `reporting/` | The hook plugins Claude Code, Antigravity CLI and Grok Build load |
 
 ## providers.json
 
 Create `providers.json` in the data folder. Entries merge with the built-in
-tools by `id`; a field you set replaces the built-in value. See
+tools by `id`; a field you set replaces the built-in value. The file may also
+be the bare array. See
 [examples/providers.json](../examples/providers.json) and the built-in tools in
 [config/providers.default.json](../config/providers.default.json).
 
@@ -37,8 +43,9 @@ tools by `id`; a field you set replaces the built-in value. See
 }
 ```
 
-Edits apply after `agent-guild restart` (this ends running sessions). Invalid
-values are ignored; a file that cannot be read is reported in `manager.log`.
+Edits apply after `agent-guild restart` (this ends running sessions), or to
+new sessions at once with `POST /api/v1/providers/reload` ([API](api.md)).
+Invalid values are ignored; a file that cannot be read is reported in `manager.log`.
 
 | Field | Meaning |
 | --- | --- |
@@ -59,8 +66,8 @@ values are ignored; a file that cannot be read is reported in `manager.log`.
 | `accounts` | Extra sign-ins; see [Accounts](#accounts) |
 | `color`, `monogram`, `icon` | Card appearance; `icon` is a URL path |
 | `install`, `docs` | Shown when the tool is not installed; for a `plugin`, `install` is the command **Install** and **Update** run |
-| `plugin` | The Docker CLI plugin the tool is (`"agent"` for `docker agent`): the card lists the plugin's copies as `docker info` finds them, offers to remove a downloaded one, and runs `install` to add or update it |
-| `releases` | `https://` URL of a "latest release" page that redirects to the release's tag (GitHub's `releases/latest`); its version is the update check for a `plugin` |
+| `plugin` | The Docker CLI plugin the tool is (`"agent"` for `docker agent`): the card lists the plugin's copies as `docker info` finds them, offers to remove a downloaded one, and runs `install` to add or update it. Ignored unless `command` is `docker` |
+| `releases` | `https://` URL of a "latest release" page that redirects to the release's tag (GitHub's `releases/latest`); its version is the update check for a tool without `package` |
 | `usageUrl`, `billingUrl`, `cloudUrl` | `https://` links on the card; `null` hides one |
 | `win32`, `darwin`, `linux` | Fields that apply on one platform only |
 
@@ -73,7 +80,7 @@ It opens saved conversations for the working folder, with plain-text previews
 and Resume; **Existing…** opens the same browser across folders. Unknown or
 multiple saved folders require an explicit folder choice before resuming.
 This reads Antigravity CLI's local transcripts and does not configure learned
-memory. The other default providers retain their **Memory** entry.
+memory. Claude Code, Codex CLI and Grok Build keep their **Memory** entry.
 
 ## Accounts
 
@@ -97,7 +104,7 @@ Codex CLI and Grok Build support this.
 * Each account appears as a chip on the card, with its own sign-in, meters
   and sessions.
 * Without `dir`, the account lives in `accounts/<tool id>/<account id>` in the
-  data folder.
+  data folder; a relative `dir` is under `accounts/<tool id>/`.
 * Sign in from the first session of a new account.
 * `default` is the tool's own sign-in; only its `label` can change.
 

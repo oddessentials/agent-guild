@@ -8,8 +8,8 @@ report these through hooks or the `agent-guild-report` command.
 | Tool | Setup |
 | --- | --- |
 | Claude Code, Codex CLI, Grok Build | Automatic when the installed version can load hooks for one session. Otherwise the card says so; add the hooks yourself below. |
-| Antigravity CLI | Turn on **Agent reporting** on its card. Reports the model and each turn's answer, not helper agents. |
-| Docker Agent | Automatic from 1.55.0. Reports from the first prompt: its sub-agents (`transfer_task`, background agents; from 1.81.2, which names the agent on each event), shell commands in its approval modes, and turns. For the model, turn on **Model reporting** on its card (1.100.0 and later). A shell command Docker Agent runs without asking (every command in autonomous mode, and the ones its balanced and restricted modes classify as safe, or that you allowed for the session) fires no `pre_tool_use` for Agent Guild's hooks, so it shows only with the hook below. Its matching `post_tool_use` fires, and the card ignores it. Resume opens the first session that runs a prompt: the one Agent Guild started or resumed (from 1.81.2 it names that session, so Resume works before the first prompt), unless a tab opened with `/new` before the first prompt ran it. A sub-agent is a session first heard from under another agent's name while another session's run is in progress (from its `session_start` to its `session_end`); the launch agent is the one named on the first event. Later tabs (`/new`, `/fork`, `/sessions`) start with the agent Docker Agent was launched with, so they are not shown as sub-agents and do not move Resume; a skill that agent runs, or a sub-agent with its name, counts as that agent's own work, as does an agent switched to before the first prompt. A tab prompted under another agent's name while another tab's run is in progress shows as a sub-agent until it ends. Docker Agent run inside a Shell card, with the hooks below configured in its own settings, reports the same way from 1.81.2. Docker Agent run inside another tool's card reports nothing to that card. |
+| Antigravity CLI | Turn on **Agent reporting** on its card. Reports the model, its conversation (for Resume) and each turn's answer, not helper agents. |
+| Docker Agent | Automatic from 1.55.0. Reports from the first prompt: its sub-agents (`transfer_task`, background agents; from 1.81.2, which names the agent on each event), shell commands in its approval modes, and turns. For the model, turn on **Model reporting** on its card (1.100.0 and later). A shell command Docker Agent runs without asking (every command in autonomous mode, and the ones its balanced and restricted modes classify as safe, or that you allowed for the session) fires no `pre_tool_use` for Agent Guild's hooks, so it shows only with the hook below. Its matching `post_tool_use` fires, and the card ignores it. Resume opens the first session that runs a prompt: the one Agent Guild started or resumed (from 1.81.2 it names that session, so Resume works before the first prompt), unless a tab opened with `/new` before the first prompt ran it. A sub-agent is a session first heard from under another agent's name while another session's run is in progress (from its `session_start` to its `session_end`); the launch agent is the one named on the first event. Later tabs (`/new`, `/fork`, `/sessions`) start with the agent Docker Agent was launched with, so they are not shown as sub-agents and do not move Resume; a skill that agent runs, or a sub-agent with its name, counts as that agent's own work, as does an agent switched to before the first prompt. A tab prompted under another agent's name while another tab's run is in progress shows as a sub-agent until it ends. Docker Agent run inside a Shell card, with the hooks below configured in its own settings, reports the same way from 1.81.2, and **Model reporting** shows its model there too. From 1.81.2, Docker Agent run inside another tool's card reports nothing to that card. |
 
 The end of each main turn also brings the agent's answer, which the terminal's
 **Read** button speaks (**Read answers aloud** in Settings, on by default): Claude
@@ -51,7 +51,10 @@ agent-guild-report --session <the tool's own session id>
 | `--model`, `--display-name` | The model in use |
 | `--session` | The tool's own session id. The card shows it, and uses it to resume the session after it ends. |
 | `--hook` | Read a Claude Code, Codex CLI, Antigravity CLI, Grok Build or Docker Agent hook event from stdin |
+| `--event` | With `--hook`, the event's name, for an event that does not name itself |
 | `--claude-statusline` | Use as Claude Code's status line command |
+| `--passthrough` | With `--claude-statusline`, print the JSON it reads instead of a status line |
+| `-h`, `--help` | Print the usage |
 
 Report `working` before `done`; a `done` for an unknown agent is ignored.
 
@@ -75,6 +78,8 @@ The JSON takes the same fields: `agentId`, `name`, `status`, `detail`, `kind`,
 | `AGENT_GUILD_PROVIDER` | The tool's id, e.g. `anthropic` |
 | `AGENT_GUILD_URL` | The manager's address |
 | `AGENT_GUILD_REPORT_TOKEN` | A token that can only report for this session |
+| `AGENT_GUILD_REPORTING` | The tool's reporting mode (`claude`, `codex`, `antigravity`, `grok` or `docker`), empty for a tool with none |
+| `AGENT_GUILD_NODE` | The Node.js that runs the manager |
 
 ## Model without a report
 

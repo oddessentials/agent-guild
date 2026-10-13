@@ -6,14 +6,18 @@ editable Blender files are the art sources. Runtime files are in
 
 ## Geometry and motion
 
-`build.py` builds two worlds with five provider halls each. Guild combines
+`build.py` builds two worlds with a hall for each provider; Docker Agent's,
+added as an expansion, stands 1.3 times larger than the rest. Guild combines
 stone, oak, bronze and provider-colored roofs. Distinct Guild
-silhouettes identify the keep, citadel, observatory, tower and timber
-workshop at overview scale. Professional's halls are five campus buildings:
-a studio with a timber-finned upper storey, a glass rotunda under a disc
-canopy, a stack of turned glazed volumes, a dark stone tower with a sloped
-crown, and a glass hall under a barrel vault. Their materials (`office`,
-`white`, `officeDark`, `woodLight` and the provider colours) take
+silhouettes identify the keep, citadel, observatory, tower, timber
+workshop and Docker Agent's harbour warehouse (a broad stone store with a
+timber jib crane) at overview scale. Professional's halls are campus
+buildings: a studio with a timber-finned upper storey, a glass rotunda under
+a disc canopy, a stack of turned glazed volumes, a dark stone tower with a
+sloped crown, a glass hall under a barrel vault, and Docker Agent's depot, a
+ribbed shed with loading bays and shipping containers on its roof. Their
+materials (`office`, `white`, `officeDark`, `woodLight` and the provider
+colours) take
 the Poly Haven sets in `SURFACES` of `env/professional_env.py`; the glass and
 lit `window` panes keep their authored materials.
 
@@ -27,7 +31,7 @@ material names; Blender source previews use the authored base materials.
 
 ## Guild characters
 
-The five heroes (`hero_0`–`hero_4`) and four familiars (`familiar_0`–`familiar_3`,
+The heroes (`hero_*`) and familiars (`familiar_*`,
 also Grove's helpers) are textured models made from the Guild skin's art
 (`concept-art/default-art-design-v1`) with TRELLIS.2, by the shared pipeline in
 `concept-art/yard-models/` run with the world name `guild`; see
@@ -51,7 +55,7 @@ committed.
   made matte charcoal felt, keeping its cyan circuit traces; the smoke wraith
   is a solid figure in a violet wool robe with a bright trim and the chevron
   in its dark hood; and the Google portrait stays two figures, holding hands,
-  as one model, with the star floating between them left out. All five work
+  as one model, with the star floating between them left out. Every hero works
   by the steady lean and nod: their arms are folded, joined or in pockets,
   and the sorcerer's wide sleeves stretched into his robe when he conducted.
 - **Familiars**: the flame and leaf dragons are the skin's sprites as they
@@ -148,7 +152,7 @@ beyond, each an asphalt ribbon with granite kerbs, paved sidewalks, a dashed
 centre line, crosswalks and traffic signals at every junction. The blocks
 between are filled by `parcels()` with buildings modelled in the script: a
 curtain wall drawn by a shader (mullions and spandrels in Poly Haven
-concrete, brick or plaster over reflective glass, in six styles) above a
+concrete, brick or plaster over reflective glass, in several styles) above a
 glazed ground floor, with a parapet and roof plant. Buildings grow taller up
 the screen, from low shopfronts with awnings and signs in front of the
 square to towers with a setback crown and a beacon behind it, and every one

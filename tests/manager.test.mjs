@@ -1626,7 +1626,7 @@ test('a tool whose hooks are turned off keeps running and shows that it is not r
 });
 
 test('an untouched Codex hooks file from earlier versions goes only where the session gets the same hooks', async () => {
-  const seeded = fs.readFileSync(path.join(here, '..', 'examples', 'codex-hooks.json'));
+  const seeded = fs.readFileSync(path.join(here, 'fixtures', 'seeded-codex-hooks.json'));
   const supplied = path.join(home, 'accounts', 'openai', 'work', 'hooks.json');
   const refused = path.join(home, 'accounts', 'codexbroken', 'work', 'hooks.json');
   writeFile(supplied, seeded);
@@ -1641,7 +1641,7 @@ test('an untouched Codex hooks file from earlier versions goes only where the se
 });
 
 test('a Claude Code account keeps the settings file earlier versions seeded, status line and all', async () => {
-  const seeded = fs.readFileSync(path.join(here, '..', 'examples', 'claude-code-settings.json'));
+  const seeded = fs.readFileSync(path.join(here, 'fixtures', 'seeded-claude-settings.json'));
   const file = path.join(home, 'accounts', 'anthropic', 'work', 'settings.json');
   writeFile(file, seeded);
   const tool = await startTool('anthropic', { account: 'work' });

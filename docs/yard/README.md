@@ -47,26 +47,20 @@ manager's existing safety checks and confirmation.
 preference. `renderer.js` handles geometry, camera and animations;
 `model.mjs` contains presentation-only placements and state mappings.
 
-Failed character/helper downloads are evicted from the asset cache.
-Existing objects can retry when their working/resting/exited state or
-helper appearance changes; rebuilding a world also provides a fresh load
-opportunity. Unchanged snapshots, telemetry and animation frames never
-trigger another attempt. Successful assets and in-flight loads stay shared.
-
 ## Worlds and animation
 
-One renderer and interaction system serves six separately authored worlds,
-one for each skin. Each world's model, characters, helpers, plates and light
+One renderer and interaction system serves a separately authored world for
+each skin. Each world's model, characters, helpers, plates and light
 colours are fields of `WORLDS` in `web/yard/model.mjs`.
 
 | Skin | World | Session representation |
 | --- | --- | --- |
-| Guild | Stone courtyard, six distinct halls, bronze trim and warm windows | Six fantasy heroes with baby dragon and spirit familiars |
-| Orbital | Station deck in orbit over a planet, with trusses out to solar wings, a docking hub and habitat modules; six provider modules | Six robots with helper drones |
-| Grove | Sunlit glade in an old forest, with a spring, a stream, a lily pond and a village of tree dwellings; six provider tree halls | Six woodland spirits with Guild familiars and Orbital drones as shell helpers |
-| Professional | Busy city of glass, concrete and brick round a paved civic square, with a street grid, traffic and a pocket park; six campus buildings | Six campus staff with small office robots as helpers |
-| Goblinville | Steam-powered town on stilts over a misty bog; six provider workshops on a plank deck | Six goblin-kin builders with creature familiars and clockwork shell helpers |
-| Gnomeland | Timber-and-stone mountain village on a cobbled square, with a lake, a waterfall and mountains beyond; six provider workshops | Six gnome builders with clockwork and creature familiars and clockwork shell helpers |
+| Guild | Stone courtyard, a distinct hall per provider, bronze trim and warm windows | Fantasy heroes with baby dragon and spirit familiars |
+| Orbital | Station deck in orbit over a planet, with trusses out to solar wings, a docking hub and habitat modules; a module per provider | Robots with helper drones |
+| Grove | Sunlit glade in an old forest, with a spring, a stream, a lily pond and a village of tree dwellings; a tree hall per provider | Woodland spirits with Guild familiars and Orbital drones as shell helpers |
+| Professional | Busy city of glass, concrete and brick round a paved civic square, with a street grid, traffic and a pocket park; a campus building per provider | Campus staff with small office robots as helpers |
+| Goblinville | Steam-powered town on stilts over a misty bog; a workshop per provider on a plank deck | Goblin-kin builders with creature familiars and clockwork shell helpers |
+| Gnomeland | Timber-and-stone mountain village on a cobbled square, with a lake, a waterfall and mountains beyond; a workshop per provider | Gnome builders with clockwork and creature familiars and clockwork shell helpers |
 
 Running sessions with active output use the `working` clip. Quiet running
 sessions use `resting`; they still say **Running**. Exited sessions use a
@@ -78,8 +72,8 @@ scene never invents tasks, progress or helpers.
 Every session has a roster entry and a stable scene slot, including custom
 providers, clone and upgrade tasks. Large groups extend beyond the central
 courtyard and can be reached using **Focus selected** or camera panning.
-Up to six companions are drawn around each character to keep its silhouette
-readable. The full helper count and every helper detail remain available in
+Only a few companions are drawn around each character, to keep its
+silhouette readable. The full helper count and every helper detail remain available in
 the inspector. This is a visual density limit, not a session or API limit.
 
 ## Controls and rendering
@@ -115,7 +109,7 @@ the regression tests do not establish a universal frame-rate guarantee.
 The Guild and Professional halls were authored in
 [`concept-art/guild-yard/build.py`](../../concept-art/guild-yard/build.py)
 using Blender 5.2, with an editable `guild.blend` alongside it. Models use metres,
-glTF Y-up, named provider anchors and five animation clips: `resting`,
+glTF Y-up, named provider anchors and the animation clips `resting`,
 `working`, `waiting`, `done` and `arrival`. Arrival is available in the art
 set; live sessions currently enter in their reported working/resting pose.
 
@@ -208,17 +202,11 @@ Set `YARD_SOFTWARE_GL=1` to use [Chromium's software WebGL fallback](https://chr
 only in these disposable fixture profiles; this never changes the user's
 normal browser settings.
 
-The Yard tests cover request parity between Cards and Yard, terminal/socket
-preservation, accounts/usage, benchmarks, history including missing folders
-and already-running conversations, session actions, GitHub clone/create,
-upgrade, stop/restart, authentication, graphics failure/retry, all skins,
-40 sessions, reduced motion, mobile overflow, reconnect and skin-load races.
-They also cover overlapping New/Resume requests, duplicate submission across
-views, independent install requests and model recovery without retry loops.
-Asset tests verify the shipped GLBs contain anchors, skinning and clips.
-
-The release gate is 170 MiB packed, and the Pages demo's is 182 MiB; the
-package measured 168.1 MiB. Run `npm pack` and
+`npm test` holds each world to a size budget: its GLB, the textures it
+references, its backdrop plates and its sky and surface maps. The packed
+package and the Pages demo have size gates of their own, in
+`tests/package/check-tarball.mjs` and `docs/demo/check.mjs`; each names its
+limit when it fails. Run `npm pack` and
 `node tests/package/check-tarball.mjs <archive>` after asset changes. Pack on
 Linux/macOS for release: Windows npm archives do not preserve executable
 mode bits on node-pty's macOS spawn helpers, which the gate correctly rejects.

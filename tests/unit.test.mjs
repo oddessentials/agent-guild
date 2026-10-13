@@ -4134,6 +4134,17 @@ test('every reporting bundle runs the reporter, Antigravity\'s through a script 
   }
 });
 
+test('the hook examples add the hooks Agent Guild adds itself', () => {
+  const example = (name) => JSON.parse(fs.readFileSync(new URL(`../examples/${name}`, import.meta.url), 'utf8')).hooks;
+  const bundles = bundleFiles('1.2.3', { platform: 'linux' });
+  assert.deepEqual(example('claude-code-settings.json'), JSON.parse(bundles.claude['hooks/hooks.json']).hooks);
+  assert.deepEqual(example('grok-hooks.json'), JSON.parse(bundles.grok['hooks/hooks.json']).hooks);
+  const codex = example('codex-hooks.json');
+  const flags = codexHookArgs().filter((a, i) => i % 2 === 1).map((a) => [a.slice('hooks.'.length, a.indexOf('=')), a.match(/matcher='([^']*)'/)?.[1]]);
+  assert.deepEqual(Object.entries(codex).map(([event, [group]]) => [event, group.matcher]), flags);
+  assert.ok(Object.values(codex).every(([group]) => group.hooks.every((h) => h.command === REPORT_COMMAND)));
+});
+
 test('Codex hook overrides avoid double quotes, and trust only the handlers Codex lists as ours', () => {
   const args = codexHookArgs();
   assert.deepEqual(args.filter((a, i) => i % 2 === 0), Array(10).fill('-c'));
