@@ -28,7 +28,7 @@ function connect({ changelogOpen = false, githubOpen = false, docked = null } = 
   const recovery = [];
   const labels = [];
   const sockets = [];
-  const timers = [], requests = [], refreshes = [], renders = [], auth = [];
+  const timers = [], requests = [], checks = [], refreshes = [], renders = [], auth = [];
   const empty = { hidden: true };
   const listeners = new Map();
   const noop = () => {};
@@ -43,7 +43,7 @@ function connect({ changelogOpen = false, githubOpen = false, docked = null } = 
     },
     requestLink: new AbortController(), AbortController,
     AuthError: class extends Error {},
-    api: () => new Promise((resolve, reject) => requests.push({ resolve, reject })),
+    api: (method, path) => new Promise((resolve, reject) => (path === '/sessions' ? checks : requests).push({ resolve, reject })),
     $: (id) => id === 'empty' ? empty : ({ open: id === 'changelog' && changelogOpen }),
     dockShows: (panel) => panel === 'github' && githubOpen,
     dockView: { panel: githubOpen ? 'github' : null },
@@ -92,7 +92,7 @@ function connect({ changelogOpen = false, githubOpen = false, docked = null } = 
   context.connectEvents();
   const hello = { type: 'hello', version: '1.2.3', pid: 1, sessions: [], upgrade: null };
   return {
-    context, sockets, calls, alerts, recovery, labels, renders, auth, requests, refreshes, timers, hello, empty, state: context.state,
+    context, sockets, calls, alerts, recovery, labels, renders, auth, requests, checks, refreshes, timers, hello, empty, state: context.state,
     send: (msg, ws = sockets.at(-1)) => ws.onmessage({ data: JSON.stringify(msg) }),
     open: () => { const ws = sockets.at(-1); ws.readyState = 1; ws.onopen(); },
     close: () => sockets.at(-1).close(),
@@ -301,17 +301,53 @@ test('a current auth failure closes the socket and cancels its queued retry', as
     const page = connect();
     page.close();
     page.retry();
-    page.send(page.hello);
     const socket = page.state.eventsSocket;
-    if (closed) page.close(); // The socket can drop before HTTP's 401 arrives.
-    page.requests[0].reject(new page.context.AuthError('rejected token'));
-    await assert.rejects(page.refreshes[0], /rejected token/);
+    if (closed) {
+      page.close(); // A rejected WebSocket handshake can arrive before HTTP's 401.
+      page.checks.at(-1).reject(new page.context.AuthError('rejected token'));
+      await new Promise(setImmediate);
+    } else {
+      page.send(page.hello);
+      page.requests[0].reject(new page.context.AuthError('rejected token'));
+      await assert.rejects(page.refreshes[0], /rejected token/);
+    }
     assert.deepEqual(page.auth, ['rejected token']);
     assert.equal(page.state.eventsSocket, null);
     assert.equal(socket.readyState, 3);
     assert.equal(page.state.connected, false);
     for (const retry of page.timers.splice(0)) retry();
     assert.equal(page.sockets.length, 2, 'authentication waits for user input');
+  }
+});
+
+test('a socket that closes before hello checks the sign-in; a manager that is down shows no sign-in and is retried', async () => {
+  const page = connect();
+  page.close();
+  assert.equal(page.checks.length, 1);
+  page.checks[0].reject(new Error('network unavailable'));
+  await new Promise(setImmediate);
+  assert.deepEqual(page.auth, []);
+  page.retry();
+  assert.equal(page.sockets.length, 2, 'the retry still happens');
+});
+
+test('a socket that said hello is not checked when it closes', () => {
+  const page = connect();
+  page.send(page.hello);
+  page.close();
+  assert.equal(page.checks.length, 0);
+});
+
+test('a rejected sign-in check is ignored once the page went away, remote access was revoked, or a newer socket said hello', async () => {
+  for (const after of ['pagehide', 'revoked', 'greeted']) {
+    const page = connect();
+    page.close();
+    if (after === 'pagehide') page.fire('pagehide');
+    else if (after === 'revoked') page.state.remoteRevoked = true;
+    else { page.retry(); page.send(page.hello); }
+    page.checks[0].reject(new page.context.AuthError('old token'));
+    await new Promise(setImmediate);
+    assert.deepEqual(page.auth, [], after);
   }
 });
 
@@ -568,4 +604,22 @@ test('a refresh that is asking again is dropped once its socket is replaced', as
   page.requests[1].resolve({ providers: [{ id: 'obsolete' }] });
   await page.refreshes[0];
   assert.equal(page.state.providers, current);
+});
+
+test('a sign-in check sent with an old token cannot undo signing in with a new one', async () => {
+  const page = connect();
+  page.state.token = 'old';
+  page.close();
+  page.retry();
+  page.close();
+  page.checks[0].reject(new page.context.AuthError('rejected token'));
+  await new Promise(setImmediate);
+  assert.deepEqual(page.auth, ['rejected token']);
+  page.state.token = 'new';
+  page.context.connectEvents();
+  const socket = page.state.eventsSocket;
+  page.checks[1].reject(new page.context.AuthError('rejected token'));
+  await new Promise(setImmediate);
+  assert.deepEqual(page.auth, ['rejected token'], 'no second sign-in prompt');
+  assert.equal(page.state.eventsSocket, socket, 'the new socket keeps connecting');
 });

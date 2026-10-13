@@ -7187,6 +7187,7 @@ function connectEvents() {
     ws.heardAt = Date.now();
     const msg = JSON.parse(event.data);
     if (msg.type === 'hello') {
+      ws.greeted = true;
       // The manager is back after a stop or restart; the page picks up where it was.
       if (state.stopping) leaveStopping();
       state.version = msg.version || null;
@@ -7271,6 +7272,13 @@ function connectEvents() {
       state.remoteAccessUI?.close();
       setConnection('down', 'Remote access changed. Your terminals are still running. Reopen an enabled address to reconnect.', 'Remote access changed');
       return;
+    }
+    if (!ws.greeted) {
+      const token = state.token;
+      api('GET', '/sessions').catch((err) => {
+        if (state.token !== token || state.pageAway || state.remoteRevoked || state.eventsSocket?.greeted) return;
+        if (err instanceof AuthError) showAuth(err.message);
+      });
     }
     // A first screen can hold a pong behind a large frame. Its events link is
     // the automatic recovery signal until that screen arrives; Retry also lets
