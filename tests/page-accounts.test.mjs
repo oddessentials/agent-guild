@@ -54,7 +54,7 @@ test('a session card names its account as the account is called now', () => {
 
 const dialogSource = [
   app.match(/const accountsView = [^\n]*\n/)?.[0],
-  ...['setProviders', 'accountsShowing', 'accountsProvider', 'showAccounts', 'changeAccounts', 'accountsPath', 'addAccount', 'renameAccount', 'removeAccount'].map((name) => {
+  ...['setProviders', 'settleProviders', 'accountsShowing', 'accountsProvider', 'showAccounts', 'changeAccounts', 'accountsPath', 'addAccount', 'renameAccount', 'removeAccount'].map((name) => {
     const found = app.match(new RegExp(`(?:async )?function ${name}\\([^]*?\\n\\}`))?.[0];
     assert.ok(found, `${name} is present`);
     return found;
@@ -85,7 +85,6 @@ function dialogPage() {
   class AuthError extends Error {}
   const state = {
     providersRevision: 'r1',
-    providersEvents: 0,
     eventsSocket: { id: 'events' },
     providers: [{ id: 'anthropic', tool: 'Claude Code', accountsEditable: true, accounts: [{ id: 'default', label: 'Default' }, { id: 'work', label: 'Work' }] }],
   };
@@ -116,14 +115,9 @@ function dialogPage() {
     return { dataset: { account: id }, querySelector: (sel) => (sel === '.account-name' ? name : sel === '.account-remove' ? remove : null) };
   };
   const reply = (accounts, account) => ({ providers: [{ ...state.providers[0], accounts }], revision: 'r2', account, dir: '/kept' });
-  // What a providers.updated event does to the page.
-  const update = (accounts, revision) => {
-    state.providersEvents++;
-    api.setProviders({ providers: [{ ...state.providers[0], accounts }], revision });
-  };
-  // What another request's reply does to the page, without an event.
-  const replied = (accounts, revision) => api.setProviders({ providers: [{ ...state.providers[0], accounts }], revision });
-  return { ...api, AuthError, state, calls, replies, focused, element, open, escape, row, reply, update, replied };
+  // What a providers.updated event, or another request's reply, does to the page.
+  const update = (accounts, revision) => api.setProviders({ providers: [{ ...state.providers[0], accounts }], revision });
+  return { ...api, AuthError, state, calls, replies, focused, element, open, escape, row, reply, update };
 }
 
 test('a reply that arrives after the dialog was reopened leaves the new dialog alone', async () => {
@@ -193,6 +187,8 @@ test('an older change finishing does not end the reopened dialog\'s own change',
   assert.equal(p.accountsView.status, '');
   const renamed = [{ id: 'default', label: 'Default' }, { id: 'work', label: 'Office' }, { id: 'side', label: 'Side' }];
   p.replies[1].resolve(p.reply(renamed, { id: 'work', label: 'Office' }));
+  await new Promise(setImmediate);
+  p.replies[2].resolve(p.reply(renamed));
   await renaming;
   assert.equal(p.accountsView.busy, false);
   assert.equal(p.accountsView.status, 'Renamed Work to Office.');
@@ -228,37 +224,75 @@ test('a change in the dialog that stays open still reports there', async () => {
   assert.deepEqual(p.focused, ['remove-work']);
 });
 
-test('a reply never replaces a newer list of tools', async () => {
+const ACCOUNTS = {
+  before: [{ id: 'default', label: 'Default' }, { id: 'work', label: 'Work' }],
+  added: [{ id: 'default', label: 'Default' }, { id: 'work', label: 'Work' }, { id: 'side', label: 'Side' }],
+  later: [{ id: 'default', label: 'Default' }, { id: 'work', label: 'Team' }, { id: 'side', label: 'Side' }],
+};
+const gets = (p) => p.calls.api.filter((call) => call.method === 'GET').length;
+
+test('with nothing changed meanwhile, a reply is adopted without asking again', async () => {
   const p = dialogPage();
   p.open();
   const adding = p.addAccount();
-  const added = [{ id: 'default', label: 'Default' }, { id: 'work', label: 'Work' }, { id: 'side', label: 'Side' }];
-  p.update(added, 'r2');
-  const renamed = [{ id: 'default', label: 'Default' }, { id: 'work', label: 'Office' }, { id: 'side', label: 'Side' }];
-  p.update(renamed, 'r3');
-  p.replies[0].resolve(p.reply(added, { id: 'side', label: 'Side' }));
+  p.replies[0].resolve(p.reply(ACCOUNTS.added, { id: 'side', label: 'Side' }));
   await adding;
-  assert.deepEqual(p.state.providers[0].accounts, renamed);
-  assert.equal(p.state.providersRevision, 'r3');
-  assert.deepEqual(p.calls.selected, ['anthropic/side'], 'the card still picks the added account');
-  assert.equal(p.accountsView.status, 'Added Side and picked it on the card. Press New there to start a session and sign in.');
-
-  const removing = p.removeAccount(p.row('side', 'Side'));
-  const removed = [{ id: 'default', label: 'Default' }, { id: 'work', label: 'Office' }];
-  p.replies[1].resolve({ ...p.reply(removed, { id: 'side', label: 'Side' }), revision: 'r4' });
-  await removing;
-  assert.deepEqual(p.state.providers[0].accounts, removed, 'with no newer update, the reply is the newest list');
-  assert.equal(p.state.providersRevision, 'r4');
+  assert.equal(gets(p), 0);
+  assert.deepEqual(p.state.providers[0].accounts, ACCOUNTS.added);
+  assert.equal(p.state.providersRevision, 'r2');
 });
 
-test('a reply is kept when only another request changed the tools meanwhile, as while reconnecting', async () => {
+test('when the tools changed while a reply was pending, the page asks again and shows the newest list, whatever arrived first', async () => {
+  const orders = {
+    'a newer list arrived first': (p) => p.update(ACCOUNTS.later, 'r3'),
+    'an older list arrived first': (p) => p.update(ACCOUNTS.before, 'r1'),
+  };
+  for (const [order, meanwhile] of Object.entries(orders)) {
+    const p = dialogPage();
+    p.open();
+    const adding = p.addAccount();
+    meanwhile(p);
+    const shown = p.state.providers;
+    p.replies[0].resolve(p.reply(ACCOUNTS.added, { id: 'side', label: 'Side' }));
+    await new Promise(setImmediate);
+    assert.equal(p.state.providers, shown, `${order}: the reply is not applied before asking again`);
+    assert.equal(gets(p), 1, order);
+    p.replies[1].resolve({ providers: [{ ...p.state.providers[0], accounts: ACCOUNTS.later }], revision: 'r3' });
+    await adding;
+    assert.deepEqual(p.state.providers[0].accounts, ACCOUNTS.later, order);
+    assert.equal(p.state.providersRevision, 'r3', order);
+    assert.deepEqual(p.calls.selected, ['anthropic/side'], `${order}: the card still picks the added account`);
+    assert.equal(p.accountsView.status, 'Added Side and picked it on the card. Press New there to start a session and sign in.', order);
+  }
+});
+
+test('a change that succeeded is reported as done even when asking again fails, and the page keeps the list it has', async () => {
   const p = dialogPage();
   p.open();
   const adding = p.addAccount();
-  p.replied([{ id: 'default', label: 'Default' }, { id: 'work', label: 'Work' }], 'r1');
-  const added = [{ id: 'default', label: 'Default' }, { id: 'work', label: 'Work' }, { id: 'side', label: 'Side' }];
-  p.replies[0].resolve(p.reply(added, { id: 'side', label: 'Side' }));
+  p.update(ACCOUNTS.later, 'r3');
+  const shown = p.state.providers;
+  p.replies[0].resolve(p.reply(ACCOUNTS.added, { id: 'side', label: 'Side' }));
+  await new Promise(setImmediate);
+  p.replies[1].reject(new Error('offline'));
   await adding;
-  assert.deepEqual(p.state.providers[0].accounts, added);
-  assert.equal(p.state.providersRevision, 'r2');
+  assert.equal(p.state.providers, shown);
+  assert.equal(p.accountsView.errors.size, 0);
+  assert.equal(p.accountsView.status, 'Added Side and picked it on the card. Press New there to start a session and sign in.');
+});
+
+test('asking again stops after three tries while the tools keep changing', async () => {
+  const p = dialogPage();
+  p.open();
+  const adding = p.addAccount();
+  p.update(ACCOUNTS.before, 'r1');
+  p.replies[0].resolve(p.reply(ACCOUNTS.added, { id: 'side', label: 'Side' }));
+  for (let tries = 1; tries <= 3; tries++) {
+    await new Promise(setImmediate);
+    p.update(ACCOUNTS.later, `changing ${tries}`);
+    p.replies[tries].resolve(p.reply(ACCOUNTS.added));
+  }
+  await adding;
+  assert.equal(gets(p), 3);
+  assert.equal(p.state.providersRevision, 'changing 3', 'the page keeps the list it has');
 });

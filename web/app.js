@@ -62,7 +62,6 @@ const state = {
   token: null,
   providers: [],
   providersRevision: null,
-  providersEvents: 0,
   usage: new Map(),
   accounts: {},
   shellPicks: {},
@@ -1579,6 +1578,18 @@ function setProviders({ providers, revision = null }) {
   renderAccountsDialog();
 }
 
+async function settleProviders(result, previous, ws = null) {
+  const gone = () => ws && (state.pageAway || state.remoteRevoked || state.eventsSocket !== ws);
+  for (let tries = 0; state.providers !== previous; tries++) {
+    if (tries === 3 || gone()) return false;
+    previous = state.providers;
+    try { result = await api('GET', '/providers'); } catch { return false; }
+  }
+  if (gone()) return false;
+  setProviders(result);
+  return true;
+}
+
 function selectedAccount(provider) {
   const accounts = provider.accounts || [];
   return accounts.find((a) => a.id === state.accounts[provider.id]) || accounts[0] || { id: 'default', label: 'Default' };
@@ -1828,15 +1839,14 @@ function renderAccountsDialog() {
 /** Sends one change at a time. Returns the manager's reply, or null after showing why it failed under `key`. */
 async function changeAccounts(key, method, path, body = null) {
   const opened = accountsView.opened;
-  const events = state.providersEvents;
+  const previous = state.providers;
   accountsView.busy = true;
   accountsView.errors.delete(key);
   accountsView.status = '';
   renderAccountsDialog();
   try {
     const result = await api(method, path, body);
-    if (state.providersEvents === events) {
-      setProviders(result);
+    if (await settleProviders(result, previous)) {
       renderProviders();
       renderSessions();
     }
@@ -2203,9 +2213,8 @@ function renderMultiplexers(card, provider) {
 }
 
 async function reloadProviders() {
-  const events = state.providersEvents;
-  const result = await api('POST', '/providers/reload', {});
-  if (state.providersEvents === events) setProviders(result);
+  const previous = state.providers;
+  await settleProviders(await api('POST', '/providers/reload', {}), previous);
   renderProviders();
 }
 
@@ -2226,9 +2235,8 @@ async function manageMultiplexer(provider, tool, kind, copy = null, force = fals
   } finally {
     // A successful operation stays busy until the manager sends fresh state.
     try {
-      const events = state.providersEvents;
-      const result = await api('GET', '/providers');
-      if (state.providersEvents === events) setProviders(result);
+      const previous = state.providers;
+      await settleProviders(await api('GET', '/providers'), previous);
     } catch { tool.busy = false; }
     renderProviders();
   }
@@ -7234,7 +7242,6 @@ function connectEvents(refreshProviders = false) {
     } else if (msg.type === 'session.removed') {
       dropSession(msg.sessionId);
     } else if (msg.type === 'providers.updated') {
-      state.providersEvents++;
       setProviders(msg);
       renderProviders();
       renderSessions();
@@ -7321,11 +7328,7 @@ document.addEventListener('visibilitychange', () => checkLinks({ probe: true }))
 
 async function loadProviders(ws = null) {
   const previous = state.providers;
-  const result = await api('GET', '/providers');
-  // A newer event or connection owns the page now; never replace its providers
-  // with a response that began before it.
-  if (ws && (state.pageAway || state.remoteRevoked || state.eventsSocket !== ws || state.providers !== previous)) return;
-  setProviders(result);
+  if (!await settleProviders(await api('GET', '/providers'), previous, ws)) return;
   renderProviders();
   if (ws) {
     renderSessions(); // Resume and open History also depend on provider metadata.

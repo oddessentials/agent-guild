@@ -12,6 +12,7 @@ const lifecycleSource = [
   /function renderEmpty\([^]*?\n\}/,
   /async function loadProviders\([^]*?\n\}/,
   /function setProviders\([^]*?\n\}/,
+  /async function settleProviders\([^]*?\n\}/,
   /function showAuth\([^]*?\n\}/,
   /addEventListener\('pagehide', \(\) => \{[^]*?\n\}\);/,
   /addEventListener\('pageshow', (?:async )?\(event\) => \{[^]*?\n\}\);/,
@@ -33,7 +34,7 @@ function connect({ changelogOpen = false, githubOpen = false, docked = null } = 
   const noop = () => {};
   const context = {
     reader: null, replies: new Map(), renderRead: () => {},
-    state: { stopping: false, stopRemaining: null, sessions: new Map(), views: new Map(), eventsRetry: 0, providers: [], providersEvents: 0 },
+    state: { stopping: false, stopRemaining: null, sessions: new Map(), views: new Map(), eventsRetry: 0, providers: [] },
     sessionsShown: false,
     WebSocket: class {
       static CONNECTING = 0; static OPEN = 1; static CLOSING = 2; static CLOSED = 3;
@@ -235,7 +236,7 @@ test('restoration and subsequent retries connect without waiting for provider re
   assert.deepEqual(page.renders, [], 'the previous connection cannot repaint');
 });
 
-test('a newer provider event wins over the pending refresh on the same socket', async () => {
+test('a provider event during a refresh makes it ask again rather than apply its older reply', async () => {
   const page = connect();
   page.close();
   page.retry();
@@ -243,9 +244,13 @@ test('a newer provider event wins over the pending refresh on the same socket', 
   const current = page.state.providers;
   page.renders.length = 0;
   page.requests[0].resolve({ providers: [{ id: 'older' }] });
+  await new Promise(setImmediate);
+  assert.equal(page.state.providers, current, 'the older reply is never shown');
+  assert.equal(page.requests.length, 2);
+  const newest = [{ id: 'newest' }];
+  page.requests[1].resolve({ providers: newest });
   await page.refreshes[0];
-  assert.equal(page.state.providers, current);
-  assert.deepEqual(page.renders, []);
+  assert.equal(page.state.providers, newest);
 });
 
 test('departure, revocation and obsolete sockets ignore late refresh results and auth failures', async () => {
@@ -512,12 +517,32 @@ test('a request cancelled while its answer is still arriving is reported, never 
   await assert.rejects(context.api('POST', '/sessions', {}), /lost before it answered/);
 });
 
-test('a providers.updated event counts, so a reply that began before it does not replace its list', () => {
+test('a refresh asks again when another reply changed the tools meanwhile, so an older reply landing first cannot keep its list', async () => {
   const page = connect();
-  page.send(page.hello);
-  const providers = [{ id: 'anthropic', accounts: [] }];
-  page.send({ type: 'providers.updated', providers, revision: 'r2' });
-  assert.equal(page.state.providersEvents, 1);
-  assert.equal(JSON.stringify(page.state.providers), JSON.stringify(providers));
-  assert.equal(page.state.providersRevision, 'r2');
+  page.close();
+  page.retry();
+  page.context.setProviders({ providers: [{ id: 'older' }], revision: 'r2' });
+  page.requests[0].resolve({ providers: [{ id: 'newer' }], revision: 'r3' });
+  await new Promise(setImmediate);
+  assert.equal(page.requests.length, 2, 'the refresh asks again');
+  const newest = [{ id: 'newer' }];
+  page.requests[1].resolve({ providers: newest, revision: 'r3' });
+  await page.refreshes[0];
+  assert.equal(page.state.providers, newest);
+  assert.equal(page.state.providersRevision, 'r3');
+});
+
+test('a refresh that is asking again is dropped once its socket is replaced', async () => {
+  const page = connect();
+  page.close();
+  page.retry();
+  page.context.setProviders({ providers: [{ id: 'other' }] });
+  page.requests[0].resolve({ providers: [{ id: 'first' }] });
+  await new Promise(setImmediate);
+  assert.equal(page.requests.length, 2);
+  page.context.connectEvents();
+  const current = page.state.providers;
+  page.requests[1].resolve({ providers: [{ id: 'obsolete' }] });
+  await page.refreshes[0];
+  assert.equal(page.state.providers, current);
 });
