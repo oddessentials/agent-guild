@@ -170,7 +170,7 @@ The first Claude Code usage meter may ask for access to the
 
 <img src="docs/images/workspace.webp" alt="Two terminals side by side with the GitHub panel showing the workflow runs of the focused terminal's repository">
 
-<img src="docs/images/yard.webp" alt="The Guild Yard: a 3D courtyard with a hall for each coding tool, its sessions' characters outside, and the roster and inspector beside it">
+<img src="docs/images/yard.webp" alt="The Yard in the Professional skin: a 3D campus with a building for each coding tool, its sessions' characters outside, and the roster and inspector beside it">
 
 <table>
   <tr>
