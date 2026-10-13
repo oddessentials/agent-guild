@@ -138,7 +138,7 @@ export function bindTerminalViewport(panel, controls, { shrunk = () => {} } = {}
     watch: [panel, controls],
     fitted: (height) => {
       panel.toggleAttribute('data-compact', height !== null && height < 420);
-      if (height !== null && lastHeight !== null && height < lastHeight) shrunk();
+      if (height !== null && lastHeight !== null && lastHeight - height >= 1) shrunk();
       lastHeight = height;
     },
   });

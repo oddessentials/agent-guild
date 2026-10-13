@@ -105,7 +105,8 @@ export function bindVisibleViewport(element, name, { shown = () => !element.hidd
     const top = viewport?.offsetTop || 0;
     const height = viewport?.height ?? innerHeight;
     element.style.setProperty(props[0], `${top}px`);
-    element.style.setProperty(props[1], `${Math.max(0, innerHeight - top - height)}px`);
+    const bottom = innerHeight - top - height;
+    element.style.setProperty(props[1], `${bottom >= 1 ? bottom : 0}px`);
     element.style.setProperty(props[2], `${height}px`);
     fitted(height);
   };

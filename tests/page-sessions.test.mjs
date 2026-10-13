@@ -353,4 +353,13 @@ test('a touch drag pans a terminal larger than its pane before scrolling the ter
   assert.deepEqual([host.scrollTop, scrolled], [600, [10]], 'then the terminal\'s history scrolls');
   touch('touchmove', 60, -300);
   assert.deepEqual([host.scrollTop, scrolled], [560, [10]], 'dragging back pans the pane again');
+
+  let top = 316.8888854980469;
+  Object.defineProperties(host, {
+    scrollHeight: { value: 744 }, clientHeight: { value: 427 },
+    scrollTop: { get: () => top, set: (value) => { top = Math.min(316.8888854980469, Math.max(0, value)); } },
+  });
+  touch('touchstart', 60, 500);
+  touch('touchmove', 60, 330);
+  assert.deepEqual(scrolled, [10, 10], 'a sliver of room the pane cannot scroll into does not stop the history scrolling');
 });

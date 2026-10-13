@@ -222,6 +222,12 @@ test('the terminal panel turns compact above a keyboard and back when it closes'
   page.frame();
   assert.equal(shrunk, 1, 'a keyboard closing is not');
 
+  page.viewport.height = 799.889;
+  page.fire('viewport', 'resize');
+  page.frame();
+  assert.equal(panel.props.get('--terminal-viewport-bottom'), '0px', 'a fractional pixel ratio\'s sub-pixel gap is not a keyboard');
+  assert.equal(shrunk, 1, 'nor is its sub-pixel shrink');
+
   page.hide(controls, true);
   page.frame();
   assert.deepEqual(edges(panel, 'terminal').slice(0, 2), [null, null], 'without touch keys the panel keeps its usual place');
