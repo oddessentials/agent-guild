@@ -1,9 +1,16 @@
 import * as T from './vendor/engine.js';
-import { WORLDS, PROVIDER_ORDER, characterIndex, CAMERA, SUN, minZoom, clampPan, viewBasis, providerPositions, layoutSessions, sessionPose, familiarPose, hash } from './model.mjs';
+import { WORLDS, PROVIDER_ORDER, characterIndex, CAMERA, SUN, minZoom, clampPan, viewBasis, providerPositions, sessionPose, familiarPose, hash,
+  stage, nextStagingChange, doorFor, arrives, route, clipFor, helperOffset } from './model.mjs';
 
 const ASSETS = new URL('./assets/', import.meta.url);
 const vector = new T.Vector3();
 const noop = () => {};
+// How fast characters turn to a new heading, in radians a second, and how
+// long a clip change blends.
+const TURN = 7, FADE = .3;
+// Models rigged before the staging contract name their clips differently.
+const LEGACY = { walk: 'working', idle_0: 'resting', idle_1: 'resting', idle_2: 'resting', pause: 'resting', work_0: 'working', work_1: 'working', idle: 'resting', move: 'working' };
+const angleTo = (from, to) => { let d = (to - from) % (2 * Math.PI); if (d > Math.PI) d -= 2 * Math.PI; if (d < -Math.PI) d += 2 * Math.PI; return d; };
 function helpersFor(session) {
   return [
     ...(session.agents||[]).map(a=>({id:a.id,name:a.name,pose:familiarPose(a),shell:false})),
@@ -57,6 +64,7 @@ export class YardRenderer {
     this.scene=new T.Scene();this.units=new Map();this.halls=new Map();this.slots=new Map();this.cache=new Map();
     this.loadingManager=new T.LoadingManager();
     this.providers=[];this.sessions=[];this.selected=null;this.world=null;this.skin=null;this.request=0;this.worldRequest=0;this.pending=null;
+    this.staged=null;this.seen=new Set();this.stageTimer=0;this.sparks=[];
     this.active=false;this.reduced=false;this.disposed=false;this.frame=0;this.lastTime=0;this.dirty=true;
     this.renderer=new T.WebGLRenderer({antialias:true,alpha:true,powerPreference:'low-power'});
     this.renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));
@@ -372,20 +380,33 @@ export class YardRenderer {
     for(const [id,item]of this.halls)if(!ids.has(id)) {
       item.label.remove();if(item.custom)this.world.remove(item.root);this.halls.delete(id);
     }
-    this.slots=layoutSessions(sessions,providers,this.slots);
+    // Where every session goes (model.mjs stage). A quiet session leaves for
+    // the plaza at a time its own data gives, so the next change is timed, not polled.
+    const now=Date.now();
+    this.staged=stage(sessions,providers,now,this.staged);
+    clearTimeout(this.stageTimer);
+    const next=nextStagingChange(sessions,now);
+    if(next!==null)this.stageTimer=setTimeout(()=>{if(!this.disposed)this.update(this.providers,this.sessions);},Math.max(50,next-now+50));
     const live=new Set(sessions.map(s=>s.id));
     for(const [id,item]of this.units)if(!live.has(id)){this.removeUnit(item);this.units.delete(id);}
     for(const session of sessions) {
       let unit=this.units.get(session.id);
+      const place=this.staged.places.get(session.id);
       if(!unit) {
         const root=new T.Group();root.userData.entity={kind:'session',id:session.id};
         const ring=new T.Mesh(new T.RingGeometry(.53,.58,40),new T.MeshBasicMaterial({color:session.provider.color||0xd4bd86,transparent:true,opacity:.4,side:T.DoubleSide,depthWrite:false}));
         ring.rotation.x=-Math.PI/2;ring.position.y=.19;root.add(ring);
-        unit={root,ring,label:this.label('session',session.id),mixers:[],helpers:[],pose:null,revision:0,loaded:false};
-        this.units.set(session.id,unit);this.scene.add(root);
+        const crew=new T.Group();crew.userData.entity={kind:'session',id:session.id};
+        unit={root,crew,ring,label:this.label('session',session.id),mixers:[],helpers:[],pose:null,revision:0,loaded:false,
+          path:[],heading:place.face,mode:null,clipCount:0,clip:null,action:null,moving:false,target:null};
+        // A session that has just started steps out of its hall; the rest,
+        // and any this renderer has already shown, are at their places.
+        const start=!this.seen.has(session.id)&&arrives(session,now)?doorFor(session,providers):place;
+        root.position.set(start.x,.17,start.z);
+        this.units.set(session.id,unit);this.scene.add(root);this.scene.add(crew);
       }
-      const slot=this.slots.get(session.id);unit.root.position.set(slot.x,.17,slot.z);
       unit.session=session;
+      this.goTo(unit,place);
       // Only visible state transitions grant another load opportunity. Routine
       // snapshots, telemetry and animation frames must not retry failed assets.
       const loadState=JSON.stringify([sessionPose(session),helpersFor(session)]);
@@ -400,8 +421,9 @@ export class YardRenderer {
       unit.label.dataset.status=sessionPose(session);
       unit.label.style.setProperty('--unit-color',session.provider.color||'#d0ba82');
       unit.label.setAttribute('aria-label',session.name+', '+unit.label.children[1].textContent);
-      if(unit.loaded)this.pose(unit,sessionPose(session));
+      unit.ring.material.opacity=place.mode==='work'?.65:place.mode==='done'?.15:.35;
     }
+    for(const id of live)this.seen.add(id);
     this.select(this.selected);this.dirty=true;this.drawOnce();
   }
   async loadUnit(unit,session) {
@@ -414,32 +436,147 @@ export class YardRenderer {
       const asset=await this.asset(prefix+index);
       if(this.disposed||generation!==this.request||!unit.root.parent)return;
       const model=T.cloneSkeleton(asset.scene);
-      model.rotation.y=-.3;
+      model.rotation.y=unit.heading;
       model.traverse(n=>{if(n.isMesh){n.castShadow=true;n.receiveShadow=true;}});
       unit.root.add(model);unit.model=model;unit.loaded=true;
       unit.label.title='';
+      // The walk's stride and cycle, and where blows land, as rig.py wrote them.
+      let yard=null;asset.scene.traverse(n=>{if(n.userData?.yard)yard=n.userData.yard;});
+      unit.speed=yard?.stride&&yard?.cycle?yard.stride/yard.cycle:1;
+      unit.events=yard?.events||[];
       const mixer=new T.AnimationMixer(model);unit.mixers.push(mixer);
       unit.animations=new Map(asset.animations.map(clip=>[clip.name,mixer.clipAction(clip)]));
-      this.pose(unit,sessionPose(unit.session||session));
+      mixer.addEventListener('finished',()=>{if(unit.mixers[0]===mixer)this.nextClip(unit);});
+      unit.clip=null;this.play(unit);
       this.helpers(unit,unit.session||session);this.dirty=true;this.drawOnce();
     } catch(err){
       if(!this.disposed&&generation===this.request&&unit.root.parent){console.warn('Yard character unavailable:',err.message);unit.label.title='Character art unavailable. Session controls remain available.';}
     } finally {unit.loading=false;}
   }
-  pose(unit,pose) {
-    if(unit.pose===pose)return;
-    unit.pose=pose;
-    if(unit.animations) {
-      const next=unit.animations.get(pose==='exited'?'done':pose);
-      if(next&&next!==unit.action) {
-        next.reset().play();
-        if(unit.action) { if(this.reduced)unit.action.stop();else unit.action.crossFadeTo(next,.25,false); }
-        unit.action=next;
-        if(this.reduced)unit.mixers[0].update(.15);
+  // A new place: walk there round the halls, or appear there when motion is reduced.
+  goTo(unit,place) {
+    const target=unit.target;
+    unit.mode=place.mode;
+    if(target&&target.x===place.x&&target.z===place.z){unit.target=place;if(!unit.moving)this.play(unit);return;}
+    unit.target=place;
+    const at={x:unit.root.position.x,z:unit.root.position.z};
+    if(this.reduced||Math.hypot(place.x-at.x,place.z-at.z)<.05)this.arrive(unit);
+    else {unit.path=route(at,place,this.providers);unit.moving=true;}
+    this.play(unit);
+  }
+  // Straight to its place, helpers with it.
+  arrive(unit) {
+    const place=unit.target;
+    unit.root.position.set(place.x,.17,place.z);unit.path=[];unit.heading=place.face;unit.moving=false;
+    if(unit.model)unit.model.rotation.y=unit.heading;
+    for(const helper of unit.helpers)helper.model.position.set(place.x+helper.offset.x,.27,place.z+helper.offset.z);
+  }
+  // The clip a character should be playing now: the walk while it moves,
+  // otherwise its mode's seeded sequence (model.mjs clipFor).
+  play(unit) {
+    if(!unit.animations)return;
+    if(unit.moving){this.crossTo(unit,'walk',T.LoopRepeat);return;}
+    const mode=unit.mode||'pause';
+    if(unit.clip&&unit.clipMode===mode&&unit.clip!=='walk')return;
+    unit.clipMode=mode;unit.clipCount=0;
+    this.crossTo(unit,clipFor(unit.session.id,mode,unit.clipCount),T.LoopOnce);
+  }
+  nextClip(unit) {
+    if(unit.moving||!unit.animations)return;
+    unit.clipCount++;
+    const name=clipFor(unit.session.id,unit.clipMode,unit.clipCount);
+    if(name===unit.clip){unit.action.reset().play();return;}
+    this.crossTo(unit,name,T.LoopOnce);
+  }
+  crossTo(unit,name,loop) {
+    const action=unit.animations.get(name)||unit.animations.get(LEGACY[name])||unit.animations.values().next().value;
+    unit.clip=name;
+    if(!action||action===unit.action)return;
+    action.reset();action.setLoop(loop,Infinity);action.clampWhenFinished=false;action.play();
+    if(unit.action){if(this.reduced)unit.action.stop();else unit.action.crossFadeTo(action,FADE,false);}
+    unit.action=action;unit.eventTime=0;
+    if(this.reduced)unit.mixers[0].update(.15);
+    this.dirty=true;
+  }
+  // Moves a walking character along its path at its stride's speed, turning
+  // smoothly, and turns a standing one to face its place.
+  advance(unit,dt) {
+    const root=unit.root.position;
+    let want=unit.target?.face??unit.heading;
+    if(unit.moving&&unit.path.length) {
+      let step=unit.speed*dt;
+      while(step>0&&unit.path.length){
+        const next=unit.path[0],dx=next.x-root.x,dz=next.z-root.z,d=Math.hypot(dx,dz);
+        if(d>1e-4)want=Math.atan2(dx,dz);
+        if(d<=step){root.x=next.x;root.z=next.z;unit.path.shift();step-=d;}
+        else {root.x+=dx/d*step;root.z+=dz/d*step;step=0;}
       }
+      if(!unit.path.length){unit.moving=false;this.play(unit);}
+      this.dirty=true;
     }
-    unit.ring.material.opacity=pose==='working'?.65:pose==='exited'?.15:.35;
-    unit.root.visible=true;
+    const turn=angleTo(unit.heading,want);
+    if(Math.abs(turn)>1e-3){
+      unit.heading+=Math.sign(turn)*Math.min(Math.abs(turn),TURN*dt);
+      if(unit.model)unit.model.rotation.y=unit.heading;
+      this.dirty=true;
+    }
+    // Helpers trail their character, closing most of the gap in a second.
+    const pull=1-Math.exp(-4*dt);
+    for(const helper of unit.helpers){
+      const tx=root.x+helper.offset.x,tz=root.z+helper.offset.z,p=helper.model.position;
+      const dx=tx-p.x,dz=tz-p.z,far=Math.hypot(dx,dz);
+      p.x+=dx*pull;p.z+=dz*pull;
+      if(far>.05)helper.model.rotation.y=Math.atan2(dx,dz);
+      const moving=far>.08;
+      if(moving!==helper.moving){helper.moving=moving;this.helperClip(helper,moving?'move':helper.pose);}
+      if(far>1e-3)this.dirty=true;
+    }
+    this.fire(unit);
+  }
+  // Sparks where a blow lands, at the moment rig.py recorded.
+  fire(unit) {
+    if(!unit.events?.length||!unit.action||unit.moving)return;
+    const time=unit.action.time,last=unit.eventTime??0;unit.eventTime=time;
+    for(const event of unit.events){
+      if(event.clip!==unit.clip)continue;
+      const crossed=last<=time?event.time>last&&event.time<=time:event.time>last||event.time<=time;
+      if(!crossed)continue;
+      const c=Math.cos(unit.heading),s=Math.sin(unit.heading),[x,y,z]=event.at;
+      this.spark(unit.root.position.x+x*c+z*s,unit.root.position.y+y,unit.root.position.z-x*s+z*c,unit.session.provider.color);
+    }
+  }
+  spark(x,y,z,color) {
+    if(this.sparks.length>=24)return;
+    const count=14,positions=new Float32Array(count*3),velocity=[];
+    for(let i=0;i<count;i++){
+      positions.set([x,y+.05,z],i*3);
+      const a=i/count*Math.PI*2+Math.random()*.4,r=1.2+Math.random()*1.4;
+      velocity.push([Math.cos(a)*r,1.6+Math.random()*2.2,Math.sin(a)*r]);
+    }
+    const geometry=new T.BufferGeometry();geometry.setAttribute('position',new T.BufferAttribute(positions,3));
+    const material=new T.PointsMaterial({color:0xffc46b,size:.09,transparent:true,opacity:1,blending:T.AdditiveBlending,depthWrite:false});
+    const points=new T.Points(geometry,material);points.frustumCulled=false;
+    this.scene.add(points);this.sparks.push({points,velocity,age:0});
+  }
+  updateSparks(dt) {
+    for(const spark of [...this.sparks]){
+      spark.age+=dt;
+      const array=spark.points.geometry.attributes.position.array;
+      spark.velocity.forEach((v,i)=>{v[1]-=9*dt;array[i*3]+=v[0]*dt;array[i*3+1]=Math.max(.02,array[i*3+1]+v[1]*dt);array[i*3+2]+=v[2]*dt;});
+      spark.points.geometry.attributes.position.needsUpdate=true;
+      spark.points.material.opacity=Math.max(0,1-spark.age/.55);
+      if(spark.age>.55){this.scene.remove(spark.points);spark.points.geometry.dispose();spark.points.material.dispose();this.sparks.splice(this.sparks.indexOf(spark),1);}
+    }
+    if(this.sparks.length)this.dirty=true;
+  }
+  helperClip(helper,name) {
+    const clip=helper.clips.find(c=>c.name===name)||helper.clips.find(c=>c.name===LEGACY[name])||helper.clips[0];
+    if(!clip)return;
+    const action=helper.mixer.clipAction(clip);
+    if(action===helper.action)return;
+    action.reset().play();
+    if(helper.action){if(this.reduced)helper.action.stop();else helper.action.crossFadeTo(action,FADE,false);}
+    helper.action=action;
   }
   async helpers(unit,session) {
     const agents=helpersFor(session);
@@ -447,7 +584,7 @@ export class YardRenderer {
     if(unit.helperSignature===signature)return;
     unit.helperSignature=signature;
     const rev=++unit.revision,generation=this.request;
-    for(const helper of unit.helpers){unit.root.remove(helper.model);helper.mixer?.stopAllAction();helper.mixer?.uncacheRoot(helper.model);disposeSkeletons(helper.model);}
+    for(const helper of unit.helpers){unit.crew.remove(helper.model);helper.mixer?.stopAllAction();helper.mixer?.uncacheRoot(helper.model);disposeSkeletons(helper.model);}
     unit.helpers=[];
     const kinds=WORLDS[this.skin].helpers;
     // The full helper count and all helper details remain in the canonical inspector.
@@ -457,14 +594,14 @@ export class YardRenderer {
         const asset=await this.asset((agent.shell?kinds.shell:kinds.agent)+(hash(agent.name||agent.id)%4));
         if(this.disposed||generation!==this.request||rev!==unit.revision||!unit.root.parent)return;
         const model=T.cloneSkeleton(asset.scene);
-        const angle=(i/Math.min(agents.length,6))*Math.PI*2;
-        model.scale.setScalar(.45);model.position.set(Math.cos(angle)*.82,.10,Math.sin(angle)*.72);
-        unit.root.add(model);
+        const offset=helperOffset(i,agents.length);
+        model.scale.setScalar(.45);model.position.set(unit.root.position.x+offset.x,.27,unit.root.position.z+offset.z);
+        unit.crew.add(model);
         const mixer=new T.AnimationMixer(model);
-        const clip=asset.animations.find(c=>c.name===(agent.pose==='idle'?'resting':agent.pose))||asset.animations[0];
-        if(clip)mixer.clipAction(clip).play();
+        const helper={model,mixer,offset,pose:agent.pose,clips:asset.animations,moving:false,action:null};
+        this.helperClip(helper,agent.pose);
         mixer.update(.3+(hash(agent.id)%40)/10);
-        unit.helpers.push({model,mixer,angle,pose:agent.pose});
+        unit.helpers.push(helper);
         this.dirty=true;this.drawOnce();
       } catch {
         // The next state transition can rebuild this incomplete squad. Routine
@@ -488,21 +625,25 @@ export class YardRenderer {
     const rect=this.canvas.getBoundingClientRect();
     this.pointer.set((event.clientX-rect.left)/rect.width*2-1,-(event.clientY-rect.top)/rect.height*2+1);
     this.ray.setFromCamera(this.pointer,this.camera);
-    const hits=this.ray.intersectObjects([...this.halls.values(),...this.units.values()].map(i=>i.root),true);
+    const hits=this.ray.intersectObjects([...this.halls.values(),...this.units.values()].flatMap(i=>i.crew?[i.root,i.crew]:[i.root]),true);
     for(const hit of hits) { for(let node=hit.object;node;node=node.parent) if(node.userData.entity)return node.userData.entity; }
     return null;
   }
+  // Runs every frame while anyone walks, so it reads every label's size
+  // before writing any position: one layout, not one per label.
   positionLabels() {
     const w=this.host.clientWidth,h=this.host.clientHeight,placed=[];
-    for(const item of [...this.halls.values(),...this.units.values()]) {
+    const items=[...this.halls.values(),...this.units.values()];
+    const sizes=items.map(item=>[item.label.offsetWidth||120,item.label.offsetHeight||28]);
+    for(const [i,item] of items.entries()) {
       const hall=item.label.dataset.kind==='provider';
       vector.copy(item.root.position);vector.y+=hall?.5:2.4;
       if(hall)vector.z+=2.1;
       vector.project(this.camera);
       const hidden=vector.z<-1||vector.z>1||Math.abs(vector.x)>1.1||Math.abs(vector.y)>1.1;
-      item.label.hidden=hidden;
+      if(item.label.hidden!==hidden)item.label.hidden=hidden;
       if(hidden)continue;
-      const lw=item.label.offsetWidth||120,lh=item.label.offsetHeight||28;
+      const [lw,lh]=sizes[i];
       let x=(vector.x*.5+.5)*w,y=(-vector.y*.5+.5)*h;
       for(let tries=0;tries<12;tries++){
         const overlap=placed.find(r=>Math.abs(x-r.x)<(lw+r.w)/2+4 && y>r.y-r.h-5 && y-lh<r.y+5);
@@ -516,6 +657,7 @@ export class YardRenderer {
   }
   setReducedMotion(value) {
     this.reduced=value;
+    if(value)for(const unit of this.units.values())if(unit.moving&&unit.target){this.arrive(unit);this.play(unit);}
     this.dirty=true;this.drawOnce();
   }
   setActive(value) {
@@ -534,9 +676,16 @@ export class YardRenderer {
     const dt=this.lastTime?Math.min((time-this.lastTime)/1000,.05):0;this.lastTime=time;
     if(!this.reduced) {
       for(const unit of this.units.values()) {
-        for(const mixer of unit.mixers)mixer.update(dt);
-        for(const helper of unit.helpers)helper.mixer.update(dt);
+        this.advance(unit,dt);
+        // Characters out of view animate five times a second, enough to stay
+        // in step for when the camera comes back to them.
+        let step=dt;
+        if(unit.label.hidden){unit.lag=(unit.lag||0)+dt;if(unit.lag<.2)continue;step=unit.lag;}
+        unit.lag=0;
+        for(const mixer of unit.mixers)mixer.update(step);
+        for(const helper of unit.helpers)helper.mixer.update(step);
       }
+      this.updateSparks(dt);
     }
     if(this.dirty)this.positionLabels();
     if(!this.reduced||this.dirty){this.renderer.render(this.scene,this.camera);this.dirty=false;}
@@ -547,13 +696,14 @@ export class YardRenderer {
     unit.revision++;
     for(const mixer of unit.mixers){mixer.stopAllAction();mixer.uncacheRoot(mixer.getRoot());}
     for(const helper of unit.helpers){helper.mixer.stopAllAction();helper.mixer.uncacheRoot(helper.model);}
-    disposeSkeletons(unit.root);
-    this.scene.remove(unit.root);unit.label.remove();unit.ring.geometry.dispose();unit.ring.material.dispose();
+    disposeSkeletons(unit.root);disposeSkeletons(unit.crew);
+    this.scene.remove(unit.root);this.scene.remove(unit.crew);unit.label.remove();unit.ring.geometry.dispose();unit.ring.material.dispose();
   }
   clearUnits() { for(const unit of this.units.values())this.removeUnit(unit);this.units.clear(); }
   dispose() {
     if(this.disposed)return;
-    this.disposed=true;this.request++;this.worldRequest++;cancelAnimationFrame(this.frame);
+    this.disposed=true;this.request++;this.worldRequest++;cancelAnimationFrame(this.frame);clearTimeout(this.stageTimer);
+    for(const spark of this.sparks){spark.points.geometry.dispose();spark.points.material.dispose();}this.sparks=[];
     this.loadingManager.abort();this.pending?.close();this.pending=null;
     this.resizeObserver.disconnect();this.controls.dispose();this.clearUnits();
     for(const item of this.halls.values())item.label.remove();this.halls.clear();

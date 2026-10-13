@@ -62,14 +62,22 @@ colours are fields of `WORLDS` in `web/yard/model.mjs`.
 | Goblinville | Steam-powered town on stilts over a misty bog; a workshop per provider on a plank deck | Goblin-kin builders with creature familiars and clockwork shell helpers |
 | Gnomeland | Timber-and-stone mountain village on a cobbled square, with a lake, a waterfall and mountains beyond; a workshop per provider | Gnome builders with clockwork and creature familiars and clockwork shell helpers |
 
-Running sessions with active output use the `working` clip. Quiet running
-sessions use `resting`; they still say **Running**. Exited sessions use a
-subdued `done` pose and say **Exited**. Familiar poses come from reported
-working, waiting, idle and done states. Shell helpers represent actual
-reported shell commands and monitors: a command works, a monitor rests. The
-scene never invents tasks, progress or helpers.
+Characters stage their sessions' reported states, as the
+[staging contract](CONTRACT.md) sets out. A running session with active
+output works at its station in front of its hall. Once quiet it pauses there,
+and after 20 seconds of quiet it walks round the halls to the plaza's
+centrepiece to rest with the others; it still says **Running**. An exited
+session winds down at its station and says **Exited**. A session started
+while the Yard is open steps out of its hall's door. Each character plays its
+mode's clips in a sequence seeded by its session, so a crew never moves in
+step, and helpers trail their character as it walks. Familiar poses come from
+reported working, waiting, idle and done states. Shell helpers represent
+actual reported shell commands and monitors: a command works, a monitor
+rests. The scene never invents tasks, progress or helpers: every move
+follows a state the manager already reports. A hammer blow throws sparks
+where the model says it lands.
 
-Every session has a roster entry and a stable scene slot, including custom
+Every session has a roster entry and a stable station, including custom
 providers, clone and upgrade tasks. Large groups extend beyond the central
 courtyard and can be reached using **Focus selected** or camera panning.
 Only a few companions are drawn around each character, to keep its
@@ -109,9 +117,11 @@ the regression tests do not establish a universal frame-rate guarantee.
 The Guild and Professional halls were authored in
 [`concept-art/guild-yard/build.py`](../../concept-art/guild-yard/build.py)
 using Blender 5.2, with an editable `guild.blend` alongside it. Models use metres,
-glTF Y-up, named provider anchors and the animation clips `resting`,
-`working`, `waiting`, `done` and `arrival`. Arrival is available in the art
-set; live sessions currently enter in their reported working/resting pose.
+glTF Y-up and named provider anchors. Every character and helper is rigged to
+the contract skeleton and carries the contract clips
+([CONTRACT.md](CONTRACT.md)), made by
+[`concept-art/yard-models/rig.py`](../../concept-art/yard-models/rig.py) for
+every world.
 
 The [art source notes](../../concept-art/guild-yard/ART.md) record how each
 model and plate was made.
@@ -172,6 +182,40 @@ downloads its Poly Haven sources into `.cache/polyhaven`, pinned by the
 checksums in `env/polyhaven.lock.json`. Change the camera in `model.mjs`
 only together with a plate re-render.
 
+### Rigging and clips
+
+`rig.py` rigs every character and helper to the contract skeleton and bakes
+its clips. Joints come from each model's silhouette and its skin from bone
+heat. Arm weights stay near the arm, below the crotch each leg owns its side
+(a robe hangs from the hips instead), and skin that fuses a hanging hand to
+the thigh or one leg to the other is cut so neither tears when the limb moves.
+Clips are posed in Python with anticipation, overlap and settle, and legs
+are solved by IK, so planted feet stay put and the walk's stance foot keeps
+pace with the character. Each world's `world.json` gives a character's height,
+working motion (`tinker`, `conduct`, `steady` or `pound`), any held tool
+(`prop`), a `gait` other than a walk (`waddle` for small round characters,
+`glide` for those with no legs to speak of), `robe`, and the `busy` hand
+that holds something modelled in, which gestures leave alone.
+
+```sh
+cd concept-art/yard-models
+python build.py goblinville recast        # rig again from the shipped models; no GPU or TRELLIS needed
+python build.py goblinville cast          # rig from the generated TRELLIS.2 sources in .cache
+python build.py goblinville sheets goblin_1
+cd ../.. && npm run optimize:yard goblin_1
+```
+
+`recast` and `cast` write `rig.py`'s checks for each model to
+`.cache/<world>-yard/rig/<name>.json` and name the clips that fail them: more
+than 1% of the surface stretched past three times its area, or a planted foot
+sliding more than 2% of the character's height. A clip that tears at full
+reach is baked again with its arms moving less (60%, then 30%) before it
+counts as failing; the report records the reach each clip shipped with.
+`recast` keeps the shipped textures byte for byte. `sheets` draws contact sheets for a spot check.
+Set `BLENDER` to the Blender executable when it is not on the Windows path
+`build.py` names. A model that keeps failing its checks is one to make again
+from its source image on the image studio's GPU.
+
 The optimization step welds duplicate vertices, deduplicates data and uses
 [glTF Transform quantization](https://gltf-transform.dev/functions/quantize)
 to reduce precision below the visible detail of these miniatures. Hall
@@ -190,6 +234,9 @@ node --test --test-concurrency=1 tests/browser/yard.mjs
 
 The preview prints a local URL and uses the real static/API/WebSocket server
 with in-memory provider, account, history, GitHub and session fixtures.
+`YARD_PREVIEW_CYCLE=1 npm run preview:yard` also turns the fixture sessions'
+output on and off on a fixed schedule, so staging can be watched: characters
+work, pause, walk to the plaza to rest and back, and new sessions arrive.
 It never starts coding tools, accesses personal accounts, clones a repository
 or stops a real manager. Browser captures and test profiles live in ignored
 `.cache/` directories. Set `CHROME_PATH` if Chrome/Edge is not in a standard

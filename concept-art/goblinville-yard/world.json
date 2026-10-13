@@ -2,10 +2,10 @@
  "cast": {
   "goblin_0": {"image": "../goblinville-skin/characters/anthropic/idle.png", "height": 2.05, "work": "tinker"},
   "goblin_1": {"image": "concepts/builder_openai.png", "height": 2.0, "work": "pound", "prop": {"part": 1, "plant": true}},
-  "goblin_2": {"image": "../goblinville-skin/characters/google/idle.png", "height": 2.35, "work": "conduct"},
+  "goblin_2": {"image": "../goblinville-skin/characters/google/idle.png", "height": 2.35, "work": "conduct", "busy": "R"},
   "goblin_3": {"image": "concepts/builder_xai.png", "height": 1.6, "work": "tinker"},
-  "goblin_4": {"image": "../goblinville-skin/characters/shell/idle.png", "height": 1.65, "work": "tinker"},
-  "goblin_5": {"image": "concepts/builder_docker.png", "height": 2.4, "work": "tinker"},
+  "goblin_4": {"image": "../goblinville-skin/characters/shell/idle.png", "height": 1.65, "work": "tinker", "robe": true},
+  "goblin_5": {"image": "concepts/builder_docker.png", "height": 2.4, "work": "tinker", "busy": "L"},
   "goblin_familiar_0": {"image": "../goblinville-skin/familiars/flame.png", "height": 1.1},
   "goblin_familiar_1": {"image": "concepts/familiar_leaf.png", "height": 1.2},
   "goblin_familiar_2": {"image": "../goblinville-skin/familiars/night.png", "height": 1.3},

@@ -313,6 +313,47 @@ test('failed character and helper downloads recover on state changes without ret
   assert.deepEqual(b.errors,[]);
 });
 
+test('characters walk to where their sessions\' states put them, arrive from their hall, and snap into place with reduced motion',options,async t=>{
+  const {f,b}=await setup(t);
+  await b.send('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'no-preference'}]});
+  const sessions=[...f.data.values()].slice(0,3).map(s=>({...s,activity:'active',agents:[],shells:[]}));
+  await b.evaluate(`(async()=>{
+    const {YardRenderer}=await import('/yard/renderer.js');
+    window.__model=await import('/yard/model.mjs');
+    const host=document.createElement('div'),labels=document.createElement('div');
+    host.style.cssText='position:fixed;width:900px;height:700px;top:0;left:0';host.append(labels);document.body.append(host);
+    window.__renderer=new YardRenderer(host,labels,{select(){},open(){}});
+    window.__sessions=${q(sessions)};window.__providers=${q(f.providers)};
+    await __renderer.setWorld('guild','dark');__renderer.update(__providers,__sessions);__renderer.setActive(true);
+    window.__at=id=>{const p=__renderer.units.get(id).root.position;return [Math.round(p.x*1000)/1000,Math.round(p.z*1000)/1000];};
+    window.__place=id=>{const p=__renderer.staged.places.get(id);return [p.x,p.z];};
+  })()`);
+  const id=sessions[0].id;
+  await b.wait('[...__renderer.units.values()].every(u=>u.loaded)');
+  assert.deepEqual(await b.evaluate(`__at(${q(id)})`),await b.evaluate(`__place(${q(id)})`),'sessions open at their stations');
+  assert.equal(await b.evaluate(`__renderer.units.get(${q(id)}).clip`),'work_0','a working session plays its work');
+  // Quiet long enough: the character walks to a rest spot round the plaza.
+  await b.evaluate(`__sessions[0].activity='quiet';__sessions[0].lastOutputAt=new Date(Date.now()-60000).toISOString();__renderer.update(__providers,__sessions)`);
+  assert.equal(await b.evaluate(`__renderer.staged.places.get(${q(id)}).mode`),'rest');
+  await b.wait(`__renderer.units.get(${q(id)}).moving && __renderer.units.get(${q(id)}).clip==='walk'`);
+  await b.wait(`!__renderer.units.get(${q(id)}).moving`,30000);
+  assert.deepEqual(await b.evaluate(`__at(${q(id)})`),await b.evaluate(`__place(${q(id)})`),'it arrives at its rest spot');
+  assert.ok((await b.evaluate(`__renderer.units.get(${q(id)}).clip`)).startsWith('idle_'),'and rests there');
+  // A session that starts while the Yard is open steps out of its hall's door.
+  await b.evaluate(`__sessions.push({...__sessions[1],id:'arrival',createdAt:new Date().toISOString()});__renderer.update(__providers,__sessions)`);
+  const door=await b.evaluate(`(d=>[d.x,d.z])(__model.doorFor(__sessions.at(-1),__providers))`);
+  const start=await b.evaluate(`__at('arrival')`);
+  assert.ok(Math.hypot(start[0]-door[0],start[1]-door[1])<.6,'a new session starts at its door');
+  await b.wait(`__renderer.units.get('arrival').loaded && !__renderer.units.get('arrival').moving`,30000);
+  assert.deepEqual(await b.evaluate(`__at('arrival')`),await b.evaluate(`__place('arrival')`));
+  // Reduced motion: a change of place is immediate, with no walk.
+  await b.evaluate(`__renderer.setReducedMotion(true);__sessions[0].activity='active';__renderer.update(__providers,__sessions)`);
+  assert.equal(await b.evaluate(`__renderer.units.get(${q(id)}).moving`),false);
+  assert.deepEqual(await b.evaluate(`__at(${q(id)})`),await b.evaluate(`__place(${q(id)})`),'reduced motion places it at once');
+  await b.evaluate('__renderer.dispose()');
+  assert.deepEqual(b.errors,[]);
+});
+
 test('Cards and Yard use the same actions, accounts, dialogs and terminal',options,async t=>{
   const {f,b}=await setup(t);
   await b.wait("document.querySelector('#providers .usage .meter')");

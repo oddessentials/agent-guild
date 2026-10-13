@@ -1,0 +1,6 @@
+; A throwaway Godot 4 project that checks Yard models against the contract
+; (docs/yard/CONTRACT.md). See check.gd.
+config_version=5
+
+[application]
+config/name="Yard contract check"

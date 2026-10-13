@@ -3,7 +3,7 @@ import { readdir, stat, readFile, writeFile, mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { NodeIO, Logger } from '@gltf-transform/core';
 import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
-import { dedup, weld, quantize } from '@gltf-transform/functions';
+import { dedup, weld, quantize, resample } from '@gltf-transform/functions';
 import { PROVIDER_ORDER } from '../web/yard/model.mjs';
 
 const directory=new URL('../web/yard/assets/',import.meta.url);
@@ -75,6 +75,8 @@ for(const name of (await readdir(directory)).filter(name=>name.endsWith('.glb')&
   }
   await document.transform(
     weld({cleanup:false}),
+    // Baked clips carry a key every frame; drop the ones a straight blend between neighbours reproduces.
+    resample({tolerance:1e-4}),
     dedup({keepUniqueNames:true}),
     quantize({pattern:/^(POSITION|NORMAL|TANGENT|WEIGHTS_\d+)$/,quantizePosition:14,quantizeNormal:10,quantizeWeight:8}),
   );

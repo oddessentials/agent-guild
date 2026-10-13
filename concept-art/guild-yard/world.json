@@ -1,10 +1,10 @@
 {
  "cast": {
-  "hero_0": {"image": "concepts/hero_anthropic.png", "height": 2.0, "work": "steady"},
-  "hero_1": {"image": "concepts/hero_openai.png", "height": 2.1, "work": "steady"},
-  "hero_2": {"image": "concepts/hero_google.png", "height": 1.95, "work": "steady"},
+  "hero_0": {"image": "concepts/hero_anthropic.png", "height": 2.0, "work": "steady", "robe": true},
+  "hero_1": {"image": "concepts/hero_openai.png", "height": 2.1, "work": "steady", "busy": "R"},
+  "hero_2": {"image": "concepts/hero_google.png", "height": 1.95, "work": "steady", "robe": true, "gait": "glide"},
   "hero_3": {"image": "concepts/hero_xai.png", "height": 2.0, "work": "steady"},
-  "hero_4": {"image": "concepts/hero_shell.png", "height": 2.1, "work": "steady"},
+  "hero_4": {"image": "concepts/hero_shell.png", "height": 2.1, "work": "steady", "robe": true},
   "hero_5": {"image": "concepts/hero_docker.png", "height": 2.5, "work": "steady"},
   "familiar_0": {"image": "../default-art-design-v1/familiars/flame.png", "height": 1.1},
   "familiar_1": {"image": "../default-art-design-v1/familiars/leaf.png", "height": 1.1},

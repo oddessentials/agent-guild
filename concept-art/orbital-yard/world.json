@@ -1,8 +1,8 @@
 {
  "cast": {
-  "robot_0": {"image": "concepts/robot_anthropic.png", "height": 1.9, "work": "steady"},
-  "robot_1": {"image": "concepts/robot_openai.png", "height": 2.0, "work": "steady"},
-  "robot_2": {"image": "concepts/robot_google.png", "height": 1.85, "work": "steady"},
+  "robot_0": {"image": "concepts/robot_anthropic.png", "height": 1.9, "work": "steady", "robe": true},
+  "robot_1": {"image": "concepts/robot_openai.png", "height": 2.0, "work": "steady", "busy": "R"},
+  "robot_2": {"image": "concepts/robot_google.png", "height": 1.85, "work": "steady", "robe": true, "gait": "glide"},
   "robot_3": {"image": "concepts/robot_xai.png", "height": 2.0, "work": "steady"},
   "robot_4": {"image": "concepts/robot_shell.png", "height": 1.85, "work": "tinker"},
   "robot_5": {"image": "concepts/robot_docker.png", "height": 2.3, "work": "tinker"},

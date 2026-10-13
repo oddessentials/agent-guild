@@ -40,7 +40,10 @@ security policy does not allow images embedded in a GLB), and the Yard tests.
   The OpenAI builder's hammer lies at his feet in the concept and comes out
   as a loose part of the model, so `world.json` names it as his `prop`:
   `rig.py` stands it on its head beside his left boot with the handle through
-  his fist, and he works with `pound`, lifting it upright and dropping it.
+  his fist and gives it to the PropLeft socket. He works with `pound`: a
+  two-handed overhead swing, winding up behind the shoulder and landing in
+  front with the knees taking the blow, twice a loop, and he walks with it on
+  his shoulder.
 - **Familiars** are the skin's `familiars/flame.png`, `night.png` and
   `aether.png`. The leaf familiar's toad reconstructed as broken geometry in
   every variant tried, so it is a moss-shelled clockwork tortoise generated
@@ -66,12 +69,15 @@ cancelled after ten minutes.
 
 `rig.py` stands each model on the ground facing the camera, scales it to its
 height in `world.json` and decimates it (25,000 triangles for builders, 10,000
-for familiars and helpers). It fits a skeleton from the silhouette: hips,
-spine, chest, neck and head, and for builders arms and legs. Weights are bone
-heat on a voxel proxy, transferred to the model. The clips (`resting`,
-`working`, `waiting`, `done`, `arrival`) are keyed per bone; builders work by
-tinkering or conducting, or, when their hands hold a staff or sit in pockets,
-by a steady lean and nod that leaves the hands still. Textures are 1024 px WebP for builders and 512 px for
+for familiars and helpers). It fits the contract skeleton
+([docs/yard/CONTRACT.md](../../docs/yard/CONTRACT.md)) from the silhouette:
+the trunk, and for builders arms and legs. Weights are bone heat on a voxel
+proxy, transferred to the model, then cleaned up so cloth parts in a stride
+and a raised arm does not tear the coat. The contract clips are posed in
+Python and baked, legs by IK; builders work by tinkering, conducting or
+pounding, or, when their hands hold a staff or sit in pockets, by a steady
+lean and nod. The [Yard guide](../../docs/yard/README.md#rigging-and-clips)
+covers rebuilding them. Textures are 1024 px WebP for builders and 512 px for
 familiars and helpers.
 
 `halls.py` stands each hall on the deck within a 5.2 m footprint and 5.5 m
