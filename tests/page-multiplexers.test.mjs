@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 
 const app = fs.readFileSync(new URL('../web/app.js', import.meta.url), 'utf8');
-const functions = ['renderCopies', 'renderMultiplexers', 'manageMultiplexer', 'installNote'].map((name) => {
+const functions = ['renderCopies', 'renderMultiplexers', 'manageMultiplexer', 'reloadProviders', 'setProviders', 'installNote'].map((name) => {
   const found = app.match(new RegExp('(?:async )?function ' + name + '\\([^]*?\\n\\}'))?.[0];
   assert.ok(found);
   return found;
@@ -32,7 +32,7 @@ function page(tools, respond = null) {
   const requests = [], confirmations = [], errors = [], opened = [];
   const context = {
     document: { createElement: (tag) => new Element(tag) },
-    CHANNEL_LABELS: { native: 'native', brew: 'Homebrew' }, state: { providers: [provider] },
+    CHANNEL_LABELS: { native: 'native', brew: 'Homebrew' }, state: { providers: [provider], providersRevision: 'r1', providersEvents: 0 },
     confirm: (message) => { confirmations.push(message); return true; },
     api: async (method, route, body) => {
       if (method === 'GET') return { providers: [provider] };
@@ -40,7 +40,7 @@ function page(tools, respond = null) {
       if (route === '/providers/reload') return { providers: [provider] };
       return respond ? respond(body) : { session: { id: 'operation' } };
     },
-    upsertSession() {}, openPanel: (id) => opened.push(id), renderProviders() {}, setProviders() {},
+    upsertSession() {}, openPanel: (id) => opened.push(id), renderProviders() {}, renderAccountsDialog() {},
     toast: (message) => errors.push(message), AuthError: class extends Error {}, showAuth() {},
   };
   vm.runInNewContext('const openCopies = new Set(); const openMultiplexers = new Set();\n' + functions, context);
@@ -114,4 +114,80 @@ test('Refresh requests forced rediscovery through the existing reload route', as
   p.render();
   await p.host.querySelector('.multiplexer-refresh').click();
   assert.deepEqual(p.requests, [{ method: 'POST', route: '/providers/reload', body: {} }]);
+});
+
+function event(p, providers, revision) {
+  p.context.state.providersEvents++;
+  p.context.setProviders({ providers, revision });
+}
+
+function held(p) {
+  const replies = [];
+  p.context.api = (method, route, body) => new Promise((resolve, reject) => replies.push({ method, route, body, resolve, reject }));
+  return replies;
+}
+
+test('a Refresh reply never replaces a newer list of tools', async () => {
+  const p = page([{ id: 'herdr', tool: 'herdr', installs: [] }]);
+  const replies = held(p);
+  const older = { providers: [{ id: 'shell', multiplexers: [] }], revision: 'r2' };
+  const refreshing = p.context.reloadProviders();
+  const newer = [{ id: 'shell', multiplexers: [{ id: 'herdr', tool: 'herdr', installs: [] }] }];
+  event(p, newer, 'r3');
+  replies[0].resolve(older);
+  await refreshing;
+  assert.equal(p.context.state.providers, newer);
+  assert.equal(p.context.state.providersRevision, 'r3');
+
+  const again = p.context.reloadProviders();
+  replies[1].resolve(older);
+  await again;
+  assert.equal(p.context.state.providers, older.providers, 'with no newer update, the reply is the newest list');
+  assert.equal(p.context.state.providersRevision, 'r2');
+});
+
+test('a multiplexer operation never replaces a newer list of tools, and a failed reload clears busy', async () => {
+  const tool = { id: 'herdr', tool: 'herdr', installs: [copy()] };
+  const p = page([tool]);
+  const replies = held(p);
+  const operating = p.context.manageMultiplexer(p.provider, tool, 'update', copy());
+  replies[0].resolve({ session: { id: 'operation' } });
+  await new Promise(setImmediate);
+  assert.deepEqual(replies.map((r) => `${r.method} ${r.route}`), ['POST /providers/shell/multiplexers/herdr/update', 'GET /providers']);
+  const newer = [{ id: 'shell', multiplexers: [{ ...tool, busy: true }] }];
+  event(p, newer, 'r3');
+  replies[1].resolve({ providers: [{ id: 'shell', multiplexers: [] }], revision: 'r2' });
+  await operating;
+  assert.equal(p.context.state.providers, newer);
+  assert.equal(p.context.state.providersRevision, 'r3');
+
+  const failing = p.context.manageMultiplexer(p.provider, tool, 'update', copy());
+  replies[2].resolve({ session: { id: 'operation' } });
+  await new Promise(setImmediate);
+  assert.equal(tool.busy, true);
+  replies[3].reject(new Error('offline'));
+  await failing;
+  assert.equal(tool.busy, false);
+});
+
+test('a reply is kept when only another request changed the tools meanwhile, as while reconnecting', async () => {
+  const tool = { id: 'herdr', tool: 'herdr', installs: [copy()] };
+  const p = page([tool]);
+  const replies = held(p);
+  const before = { providers: [{ id: 'shell', multiplexers: [] }], revision: 'r1' };
+  const after = { providers: [{ id: 'shell', multiplexers: [tool] }], revision: 'r2' };
+
+  const refreshing = p.context.reloadProviders();
+  p.context.setProviders(before);
+  replies[0].resolve(after);
+  await refreshing;
+  assert.equal(p.context.state.providers, after.providers, 'Refresh');
+
+  const operating = p.context.manageMultiplexer(p.provider, tool, 'update', copy());
+  replies[1].resolve({ session: { id: 'operation' } });
+  await new Promise(setImmediate);
+  p.context.setProviders(before);
+  replies[2].resolve(after);
+  await operating;
+  assert.equal(p.context.state.providers, after.providers, 'an operation');
 });

@@ -33,7 +33,7 @@ function connect({ changelogOpen = false, githubOpen = false, docked = null } = 
   const noop = () => {};
   const context = {
     reader: null, replies: new Map(), renderRead: () => {},
-    state: { stopping: false, stopRemaining: null, sessions: new Map(), views: new Map(), eventsRetry: 0, providers: [] },
+    state: { stopping: false, stopRemaining: null, sessions: new Map(), views: new Map(), eventsRetry: 0, providers: [], providersEvents: 0 },
     sessionsShown: false,
     WebSocket: class {
       static CONNECTING = 0; static OPEN = 1; static CLOSING = 2; static CLOSED = 3;
@@ -72,7 +72,7 @@ function connect({ changelogOpen = false, githubOpen = false, docked = null } = 
     addEventListener: (type, callback) => listeners.set(type, callback),
     activityFavicon: { setPaused: noop }, terminalCopy: { close: noop },
     flushNotes: noop, stopDictation: noop,
-    closePanel: noop, closeModels: noop, closeNews: noop, closeChangelog: noop, closeHistory: noop, closeGitHub: noop, closeAccounts: noop,
+    closeDialogs: noop,
     closeMenu: noop,
     managerConnected: () => alerts.push('connected'),
     managerGone: () => alerts.push('gone'),
@@ -510,4 +510,14 @@ test('a request cancelled while its answer is still arriving is reported, never 
   };
   runInNewContext(apiSource, context);
   await assert.rejects(context.api('POST', '/sessions', {}), /lost before it answered/);
+});
+
+test('a providers.updated event counts, so a reply that began before it does not replace its list', () => {
+  const page = connect();
+  page.send(page.hello);
+  const providers = [{ id: 'anthropic', accounts: [] }];
+  page.send({ type: 'providers.updated', providers, revision: 'r2' });
+  assert.equal(page.state.providersEvents, 1);
+  assert.equal(JSON.stringify(page.state.providers), JSON.stringify(providers));
+  assert.equal(page.state.providersRevision, 'r2');
 });

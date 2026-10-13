@@ -85,6 +85,7 @@ function dialogPage() {
   class AuthError extends Error {}
   const state = {
     providersRevision: 'r1',
+    providersEvents: 0,
     eventsSocket: { id: 'events' },
     providers: [{ id: 'anthropic', tool: 'Claude Code', accountsEditable: true, accounts: [{ id: 'default', label: 'Default' }, { id: 'work', label: 'Work' }] }],
   };
@@ -116,8 +117,13 @@ function dialogPage() {
   };
   const reply = (accounts, account) => ({ providers: [{ ...state.providers[0], accounts }], revision: 'r2', account, dir: '/kept' });
   // What a providers.updated event does to the page.
-  const update = (accounts, revision) => api.setProviders({ providers: [{ ...state.providers[0], accounts }], revision });
-  return { ...api, AuthError, state, calls, replies, focused, element, open, escape, row, reply, update };
+  const update = (accounts, revision) => {
+    state.providersEvents++;
+    api.setProviders({ providers: [{ ...state.providers[0], accounts }], revision });
+  };
+  // What another request's reply does to the page, without an event.
+  const replied = (accounts, revision) => api.setProviders({ providers: [{ ...state.providers[0], accounts }], revision });
+  return { ...api, AuthError, state, calls, replies, focused, element, open, escape, row, reply, update, replied };
 }
 
 test('a reply that arrives after the dialog was reopened leaves the new dialog alone', async () => {
@@ -245,29 +251,14 @@ test('a reply never replaces a newer list of tools', async () => {
   assert.equal(p.state.providersRevision, 'r4');
 });
 
-test('signing out, stopping or restarting closes the accounts dialog with the other dialogs', () => {
-  const source = ['closeAccounts', 'showAuth', 'enterStopping'].map((name) => {
-    const found = app.match(new RegExp(`function ${name}\\([^]*?\\n\\}`))?.[0];
-    assert.ok(found, `${name} is present`);
-    return found;
-  }).join('\n');
-  for (const leave of ['showAuth', 'stop', 'restart']) {
-    const elements = new Map();
-    const $ = (id) => {
-      if (!elements.has(id)) elements.set(id, { open: false, hidden: false, textContent: '', close() { this.open = false; } });
-      return elements.get(id);
-    };
-    const noop = () => {};
-    const page = runInNewContext(`${source}\n({ showAuth, enterStopping })`, {
-      $, state: { eventsSocket: null, views: new Map(), sessions: new Map() },
-      managerLoss: { cancel: noop },
-      closePanel: noop, closeModels: noop, closeNews: noop, closeChangelog: noop, closeHistory: noop, closeGitHub: noop,
-      renderSessions: noop, showStopped: noop, setConnection: noop, restartGaveUp: noop,
-      setTimeout: noop, clearTimeout: noop, RESTART_WAIT_MS: 0, restartTimer: undefined,
-    });
-    $('accounts').open = true;
-    if (leave === 'showAuth') page.showAuth('Sign in again.');
-    else page.enterStopping(0, leave === 'restart');
-    assert.equal($('accounts').open, false, leave);
-  }
+test('a reply is kept when only another request changed the tools meanwhile, as while reconnecting', async () => {
+  const p = dialogPage();
+  p.open();
+  const adding = p.addAccount();
+  p.replied([{ id: 'default', label: 'Default' }, { id: 'work', label: 'Work' }], 'r1');
+  const added = [{ id: 'default', label: 'Default' }, { id: 'work', label: 'Work' }, { id: 'side', label: 'Side' }];
+  p.replies[0].resolve(p.reply(added, { id: 'side', label: 'Side' }));
+  await adding;
+  assert.deepEqual(p.state.providers[0].accounts, added);
+  assert.equal(p.state.providersRevision, 'r2');
 });

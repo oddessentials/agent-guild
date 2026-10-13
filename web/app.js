@@ -62,6 +62,7 @@ const state = {
   token: null,
   providers: [],
   providersRevision: null,
+  providersEvents: 0,
   usage: new Map(),
   accounts: {},
   shellPicks: {},
@@ -1827,14 +1828,14 @@ function renderAccountsDialog() {
 /** Sends one change at a time. Returns the manager's reply, or null after showing why it failed under `key`. */
 async function changeAccounts(key, method, path, body = null) {
   const opened = accountsView.opened;
-  const previous = state.providers;
+  const events = state.providersEvents;
   accountsView.busy = true;
   accountsView.errors.delete(key);
   accountsView.status = '';
   renderAccountsDialog();
   try {
     const result = await api(method, path, body);
-    if (state.providers === previous) {
+    if (state.providersEvents === events) {
       setProviders(result);
       renderProviders();
       renderSessions();
@@ -2146,8 +2147,7 @@ function renderMultiplexers(card, provider) {
   refresh.addEventListener('click', async () => {
     refresh.disabled = true;
     try {
-      setProviders(await api('POST', '/providers/reload', {}));
-      renderProviders();
+      await reloadProviders();
     } catch (err) {
       if (err instanceof AuthError) showAuth(err.message);
       else toast(err.message, 10000);
@@ -2202,6 +2202,13 @@ function renderMultiplexers(card, provider) {
   }));
 }
 
+async function reloadProviders() {
+  const events = state.providersEvents;
+  const result = await api('POST', '/providers/reload', {});
+  if (state.providersEvents === events) setProviders(result);
+  renderProviders();
+}
+
 async function manageMultiplexer(provider, tool, kind, copy = null, force = false) {
   // Busy state also comes from the manager, covering other tabs and refreshes.
   tool.busy = true;
@@ -2219,7 +2226,9 @@ async function manageMultiplexer(provider, tool, kind, copy = null, force = fals
   } finally {
     // A successful operation stays busy until the manager sends fresh state.
     try {
-      setProviders(await api('GET', '/providers'));
+      const events = state.providersEvents;
+      const result = await api('GET', '/providers');
+      if (state.providersEvents === events) setProviders(result);
     } catch { tool.busy = false; }
     renderProviders();
   }
@@ -7027,6 +7036,21 @@ async function stopManager({ force = false, restart = false } = {}) {
   }
 }
 
+function closeDialogs() {
+  closePanel();
+  closeModels();
+  closeNews();
+  closeChangelog();
+  closeVideos();
+  closeHistory();
+  closeGitHub();
+  closeAccounts();
+  closeMemory();
+  if ($('folder-browser').open) $('folder-browser').close();
+  state.environmentUI?.close();
+  state.remoteAccessUI?.close();
+}
+
 /** How long to wait for a restarted manager before telling the user how to start one by hand. */
 const RESTART_WAIT_MS = 30000;
 let restartTimer;
@@ -7037,13 +7061,7 @@ function enterStopping(running = 0, restart = false) {
   if (state.stopping) return;
   state.stopping = true;
   state.stopRemaining = null;
-  closePanel();
-  closeModels();
-  closeNews();
-  closeChangelog();
-  closeHistory();
-  closeGitHub();
-  closeAccounts();
+  closeDialogs();
   for (const view of state.views.values()) view.dispose();
   state.views.clear();
   state.sessions.clear();
@@ -7216,6 +7234,7 @@ function connectEvents(refreshProviders = false) {
     } else if (msg.type === 'session.removed') {
       dropSession(msg.sessionId);
     } else if (msg.type === 'providers.updated') {
+      state.providersEvents++;
       setProviders(msg);
       renderProviders();
       renderSessions();
@@ -7334,16 +7353,9 @@ function showAuth(message = '') {
   const ws = state.eventsSocket;
   state.eventsSocket = null; // Invalidate callbacks and queued retries before closing.
   ws?.close();
-  state.environmentUI?.close();
   state.remoteAccessUI?.setAvailable(null);
   managerLoss.cancel();
-  closePanel();
-  closeModels();
-  closeNews();
-  closeChangelog();
-  closeHistory();
-  closeGitHub();
-  closeAccounts();
+  closeDialogs();
   $('app').hidden = true;
   $('terminal-panel').hidden = true;
   $('stopped').hidden = true;

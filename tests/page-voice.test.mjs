@@ -16,7 +16,7 @@ test('dictated text is a single line that never submits', () => {
 });
 
 const voiceSource = app.slice(app.indexOf('const Recognition ='), app.indexOf('// ---- stopping the manager'));
-const panelSource = ['openPanel', 'focusPane', 'closePane', 'closePanel', 'updatePanel', 'upsertSession', 'dropSession', 'showAuth', 'enterStopping'].map((name) => {
+const panelSource = ['openPanel', 'focusPane', 'closePane', 'closePanel', 'updatePanel', 'upsertSession', 'dropSession', 'showAuth', 'enterStopping', 'closeDialogs'].map((name) => {
   const found = app.match(new RegExp(`function ${name}\\([^]*?\\n\\}`))?.[0];
   assert.ok(found, `${name} is present`);
   return found;
@@ -93,7 +93,7 @@ function page({ android = false, available, supported = true, enabled = true, pr
     toast: (message) => messages.push(message),
     paintProviderIcon: noop, toolSessionId: noop, accountLabel: noop, modelText: noop, statusText: noop, modelTitle: noop, renderAgents: noop,
     renderSessions: () => context.updatePanel(), noticeClone: noop, renderAccountsDialog: noop, exitLine: () => '[exited]', paintSizeNote: noop,
-    managerLoss: { cancel: noop }, closeModels: noop, closeNews: noop, closeChangelog: noop, closeHistory: noop, closeGitHub: noop, closeAccounts: noop,
+    managerLoss: { cancel: noop }, closeModels: noop, closeNews: noop, closeChangelog: noop, closeHistory: noop, closeGitHub: noop, closeAccounts: noop, closeVideos: noop, closeMemory: noop,
     terminalCopy: { close: noop }, terminalControls: { cancel: noop, refresh: noop }, typeIn: noop, layoutPanes: noop, renderPaneLabels: noop, savePanes: noop, closeMenu: noop, dockMakesWayForTerminal: noop, followTerminal: noop,
     paneNodes: [0, 1].map(() => ({ contains: () => false })),
     activityFavicon: { setPaused: noop },
