@@ -7170,7 +7170,7 @@ function showManagerUnavailable() {
   }
 }
 
-function connectEvents(refreshProviders = false) {
+function connectEvents() {
   if (state.pageAway || state.remoteRevoked) return;
   const ws = new WebSocket(wsUrl('/events'));
   state.eventsSocket = ws;
@@ -7187,6 +7187,7 @@ function connectEvents(refreshProviders = false) {
     ws.heardAt = Date.now();
     const msg = JSON.parse(event.data);
     if (msg.type === 'hello') {
+      ws.greeted = true;
       // The manager is back after a stop or restart; the page picks up where it was.
       if (state.stopping) leaveStopping();
       state.version = msg.version || null;
@@ -7216,6 +7217,10 @@ function connectEvents(refreshProviders = false) {
       if ($('changelog').open) loadChangelog();
       if (dockShows('github')) loadGitHub();
       catchUpNotes(msg.notesRevision, msg.notesUnreadable === true);
+      loadProviders(ws).catch((err) => {
+        if (state.pageAway || state.remoteRevoked || state.eventsSocket !== ws) return;
+        if (err instanceof AuthError) showAuth(err.message);
+      });
     } else if (msg.type === 'notes.updated') {
       applyServerNotes(msg.notes);
     } else if (msg.type === 'environment.updated') {
@@ -7268,6 +7273,13 @@ function connectEvents(refreshProviders = false) {
       setConnection('down', 'Remote access changed. Your terminals are still running. Reopen an enabled address to reconnect.', 'Remote access changed');
       return;
     }
+    if (!ws.greeted) {
+      const token = state.token;
+      api('GET', '/sessions').catch((err) => {
+        if (state.token !== token || state.pageAway || state.remoteRevoked || state.eventsSocket?.greeted) return;
+        if (err instanceof AuthError) showAuth(err.message);
+      });
+    }
     // A first screen can hold a pong behind a large frame. Its events link is
     // the automatic recovery signal until that screen arrives; Retry also lets
     // the user recover a terminal whose connection alone has stalled.
@@ -7286,15 +7298,9 @@ function connectEvents(refreshProviders = false) {
     const delay = Math.min(5000, 500 * 2 ** state.eventsRetry++);
     setTimeout(() => {
       if (state.pageAway || state.eventsSocket !== ws) return;
-      connectEvents(true);
+      connectEvents();
     }, delay);
   };
-  // Catch up metadata alongside the socket: an HTTP request can remain pending
-  // through a network change, but must not hold up reconnection or its deadlines.
-  if (refreshProviders) loadProviders(ws).catch((err) => {
-    if (state.pageAway || state.remoteRevoked || state.eventsSocket !== ws) return;
-    if (err instanceof AuthError) showAuth(err.message);
-  });
 }
 
 // No pong in time, or a connection that does not open, means a link is dead: after a move between networks a socket can stay open on a dead connection for minutes.
@@ -7691,7 +7697,7 @@ addEventListener('pageshow', (event) => {
   activityFavicon.setPaused(false);
   if (state.remoteRevoked) return;
   setConnection('down', 'Reconnecting to session manager…', 'Reconnecting…');
-  connectEvents(true);
+  connectEvents();
 });
 $('version').addEventListener('click', openChangelog);
 $('changelog-close').addEventListener('click', closeChangelog);

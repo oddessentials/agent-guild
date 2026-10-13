@@ -28,7 +28,7 @@ function connect({ changelogOpen = false, githubOpen = false, docked = null } = 
   const recovery = [];
   const labels = [];
   const sockets = [];
-  const timers = [], requests = [], refreshes = [], renders = [], auth = [];
+  const timers = [], requests = [], checks = [], refreshes = [], renders = [], auth = [];
   const empty = { hidden: true };
   const listeners = new Map();
   const noop = () => {};
@@ -43,7 +43,7 @@ function connect({ changelogOpen = false, githubOpen = false, docked = null } = 
     },
     requestLink: new AbortController(), AbortController,
     AuthError: class extends Error {},
-    api: () => new Promise((resolve, reject) => requests.push({ resolve, reject })),
+    api: (method, path) => new Promise((resolve, reject) => (path === '/sessions' ? checks : requests).push({ resolve, reject })),
     $: (id) => id === 'empty' ? empty : ({ open: id === 'changelog' && changelogOpen }),
     dockShows: (panel) => panel === 'github' && githubOpen,
     dockView: { panel: githubOpen ? 'github' : null },
@@ -92,7 +92,7 @@ function connect({ changelogOpen = false, githubOpen = false, docked = null } = 
   context.connectEvents();
   const hello = { type: 'hello', version: '1.2.3', pid: 1, sessions: [], upgrade: null };
   return {
-    context, sockets, calls, alerts, recovery, labels, renders, auth, requests, refreshes, timers, hello, empty, state: context.state,
+    context, sockets, calls, alerts, recovery, labels, renders, auth, requests, checks, refreshes, timers, hello, empty, state: context.state,
     send: (msg, ws = sockets.at(-1)) => ws.onmessage({ data: JSON.stringify(msg) }),
     open: () => { const ws = sockets.at(-1); ws.readyState = 1; ws.onopen(); },
     close: () => sockets.at(-1).close(),
@@ -204,42 +204,61 @@ test('a successful socket handshake cancels a pending loss before the hello arri
   assert.match(page.labels.at(-1), /Connected to session manager/);
 });
 
-test('restoration and subsequent retries connect without waiting for provider responses', async () => {
+test('restoration and retries connect without waiting for provider responses, and fetch the tools only once the manager says hello', async () => {
   const page = connect();
   page.open();
+  assert.equal(page.requests.length, 0, 'nothing is fetched before hello');
   page.send(page.hello);
+  assert.equal(page.requests.length, 1, 'the first hello fetches the tools, as the page loaded them before its socket');
   page.fire('pagehide');
   page.fire('pageshow', { persisted: true });
   assert.equal(page.sockets.length, 2, 'restoration starts a socket immediately');
   assert.equal(page.state.connected, false, 'the old Connected status is cleared');
   assert.match(page.labels.at(-1), /Reconnecting/);
-  assert.equal(page.requests.length, 1);
+  assert.equal(page.requests.length, 1, 'restoration waits for hello before fetching');
   page.open();
   page.send(page.hello);
   assert.equal(page.state.connected, true, 'hello is processed with providers still pending');
+  assert.equal(page.requests.length, 2);
   page.close();
   page.retry();
   assert.equal(page.sockets.length, 3, 'an ordinary retry also starts immediately');
-  assert.equal(page.requests.length, 2);
+  assert.equal(page.requests.length, 2, 'a retry waits for hello before fetching');
   page.open();
   page.send(page.hello);
+  assert.equal(page.requests.length, 3);
   page.renders.length = 0;
   const current = [{ id: 'current' }];
-  page.requests[1].resolve({ providers: current });
-  await page.refreshes[1];
+  page.requests[2].resolve({ providers: current });
+  await page.refreshes[2];
   assert.equal(page.state.providers, current);
   assert.deepEqual(page.renders, ['providers', 'sessions', 'stats'], 'dependent controls catch up after hello');
   page.renders.length = 0;
+  page.requests[1].resolve({ providers: [{ id: 'obsolete' }] });
   page.requests[0].resolve({ providers: [{ id: 'obsolete' }] });
-  await page.refreshes[0];
+  await Promise.all(page.refreshes.slice(0, 2));
   assert.equal(page.state.providers, current);
-  assert.deepEqual(page.renders, [], 'the previous connection cannot repaint');
+  assert.deepEqual(page.renders, [], 'previous connections cannot repaint');
+});
+
+test('a change made before the new socket was registered is in the tools fetched after its hello', async () => {
+  const page = connect();
+  page.close();
+  page.retry();
+  assert.equal(page.requests.length, 0);
+  page.send(page.hello);
+  const changed = [{ id: 'changed while reconnecting' }];
+  page.requests[0].resolve({ providers: changed, revision: 'r2' });
+  await page.refreshes[0];
+  assert.equal(page.state.providers, changed);
+  assert.equal(page.state.providersRevision, 'r2');
 });
 
 test('a provider event during a refresh makes it ask again rather than apply its older reply', async () => {
   const page = connect();
   page.close();
   page.retry();
+  page.send(page.hello);
   page.send({ type: 'providers.updated', providers: [{ id: 'newer' }] });
   const current = page.state.providers;
   page.renders.length = 0;
@@ -259,6 +278,7 @@ test('departure, revocation and obsolete sockets ignore late refresh results and
       const page = connect();
       page.close();
       page.retry();
+      page.send(page.hello);
       const current = page.state.providers;
       if (leave === 'pagehide') page.fire('pagehide');
       else if (leave === 'revoked') page.state.remoteRevoked = true;
@@ -282,15 +302,52 @@ test('a current auth failure closes the socket and cancels its queued retry', as
     page.close();
     page.retry();
     const socket = page.state.eventsSocket;
-    if (closed) page.close(); // A rejected WebSocket handshake can arrive before HTTP's 401.
-    page.requests[0].reject(new page.context.AuthError('rejected token'));
-    await assert.rejects(page.refreshes[0], /rejected token/);
+    if (closed) {
+      page.close(); // A rejected WebSocket handshake can arrive before HTTP's 401.
+      page.checks.at(-1).reject(new page.context.AuthError('rejected token'));
+      await new Promise(setImmediate);
+    } else {
+      page.send(page.hello);
+      page.requests[0].reject(new page.context.AuthError('rejected token'));
+      await assert.rejects(page.refreshes[0], /rejected token/);
+    }
     assert.deepEqual(page.auth, ['rejected token']);
     assert.equal(page.state.eventsSocket, null);
     assert.equal(socket.readyState, 3);
     assert.equal(page.state.connected, false);
     for (const retry of page.timers.splice(0)) retry();
     assert.equal(page.sockets.length, 2, 'authentication waits for user input');
+  }
+});
+
+test('a socket that closes before hello checks the sign-in; a manager that is down shows no sign-in and is retried', async () => {
+  const page = connect();
+  page.close();
+  assert.equal(page.checks.length, 1);
+  page.checks[0].reject(new Error('network unavailable'));
+  await new Promise(setImmediate);
+  assert.deepEqual(page.auth, []);
+  page.retry();
+  assert.equal(page.sockets.length, 2, 'the retry still happens');
+});
+
+test('a socket that said hello is not checked when it closes', () => {
+  const page = connect();
+  page.send(page.hello);
+  page.close();
+  assert.equal(page.checks.length, 0);
+});
+
+test('a rejected sign-in check is ignored once the page went away, remote access was revoked, or a newer socket said hello', async () => {
+  for (const after of ['pagehide', 'revoked', 'greeted']) {
+    const page = connect();
+    page.close();
+    if (after === 'pagehide') page.fire('pagehide');
+    else if (after === 'revoked') page.state.remoteRevoked = true;
+    else { page.retry(); page.send(page.hello); }
+    page.checks[0].reject(new page.context.AuthError('old token'));
+    await new Promise(setImmediate);
+    assert.deepEqual(page.auth, [], after);
   }
 });
 
@@ -521,6 +578,7 @@ test('a refresh asks again when another reply changed the tools meanwhile, so an
   const page = connect();
   page.close();
   page.retry();
+  page.send(page.hello);
   page.context.setProviders({ providers: [{ id: 'older' }], revision: 'r2' });
   page.requests[0].resolve({ providers: [{ id: 'newer' }], revision: 'r3' });
   await new Promise(setImmediate);
@@ -536,6 +594,7 @@ test('a refresh that is asking again is dropped once its socket is replaced', as
   const page = connect();
   page.close();
   page.retry();
+  page.send(page.hello);
   page.context.setProviders({ providers: [{ id: 'other' }] });
   page.requests[0].resolve({ providers: [{ id: 'first' }] });
   await new Promise(setImmediate);
@@ -545,4 +604,22 @@ test('a refresh that is asking again is dropped once its socket is replaced', as
   page.requests[1].resolve({ providers: [{ id: 'obsolete' }] });
   await page.refreshes[0];
   assert.equal(page.state.providers, current);
+});
+
+test('a sign-in check sent with an old token cannot undo signing in with a new one', async () => {
+  const page = connect();
+  page.state.token = 'old';
+  page.close();
+  page.retry();
+  page.close();
+  page.checks[0].reject(new page.context.AuthError('rejected token'));
+  await new Promise(setImmediate);
+  assert.deepEqual(page.auth, ['rejected token']);
+  page.state.token = 'new';
+  page.context.connectEvents();
+  const socket = page.state.eventsSocket;
+  page.checks[1].reject(new page.context.AuthError('rejected token'));
+  await new Promise(setImmediate);
+  assert.deepEqual(page.auth, ['rejected token'], 'no second sign-in prompt');
+  assert.equal(page.state.eventsSocket, socket, 'the new socket keeps connecting');
 });
