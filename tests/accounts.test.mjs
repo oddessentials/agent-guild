@@ -283,3 +283,63 @@ test('an unknown account is refused before the tool is probed', async (t) => {
   await assert.rejects(f.start('nope'), (err) => err.code === 'unknown_account' && err.status === 404);
   assert.deepEqual(f.launches, []);
 });
+
+test('an edit keeps the permissions of providers.json, and a new one is private, whatever the umask', { skip: process.platform === 'win32' }, (t) => {
+  const umask = process.umask(0o077);
+  t.after(() => process.umask(umask));
+  for (const mode of [0o600, 0o644]) {
+    const { registry, editor, userFile } = setup(t, { providers: [] });
+    fs.chmodSync(userFile, mode);
+    editor.add('anthropic', { label: 'Work', revision: registry.revision });
+    assert.equal(fs.statSync(userFile).mode & 0o777, mode);
+  }
+  const { registry, editor, userFile } = setup(t);
+  editor.add('anthropic', { label: 'Work', revision: registry.revision });
+  assert.equal(fs.statSync(userFile).mode & 0o777, 0o600);
+});
+
+test('an edit writes through a linked providers.json, and a link to nothing is refused', { skip: process.platform === 'win32' }, (t) => {
+  const { dir, registry, editor, userFile, accounts } = setup(t);
+  const target = path.join(dir, 'dotfiles', 'providers.json');
+  fs.mkdirSync(path.dirname(target));
+  fs.writeFileSync(target, JSON.stringify({ providers: [] }));
+  fs.symlinkSync(target, userFile);
+  registry.reload();
+  editor.add('anthropic', { label: 'Work', revision: registry.revision });
+  assert.ok(fs.lstatSync(userFile).isSymbolicLink(), 'the link stays a link');
+  assert.deepEqual(JSON.parse(fs.readFileSync(target, 'utf8')), { providers: [{ id: 'anthropic', accounts: [{ id: 'work', label: 'Work' }] }] });
+  assert.deepEqual(accounts('anthropic'), [{ id: 'default', label: 'Default' }, { id: 'work', label: 'Work' }]);
+
+  fs.rmSync(target);
+  registry.reload();
+  refused(() => editor.add('anthropic', { label: 'Side', revision: registry.revision }), 409, 'providers_file_unreadable');
+  assert.ok(fs.lstatSync(userFile).isSymbolicLink(), 'the link is left as it was');
+  assert.equal(fs.existsSync(target), false);
+});
+
+test('a new account never shares the folder of an existing one', (t) => {
+  const added = (platform, accountsDir, accounts, label) => {
+    const dir = tempDir(t);
+    const userFile = path.join(dir, 'providers.json');
+    fs.writeFileSync(userFile, JSON.stringify({ providers: [{ id: 'anthropic', accounts }] }));
+    const registry = new ProviderRegistry({ userFile, env: { PATH: '', HOME: dir }, platform, checkUpdates: false, accountsDir });
+    const editor = createAccountEditor({ registry, inUse: () => false });
+    const { account } = editor.add('anthropic', { label, revision: registry.revision });
+    const provider = registry.get('anthropic');
+    const folders = registry.accountsFor(provider).map((a) => a.dir).filter(Boolean);
+    return { id: account.id, folders, own: registry.account(provider, account.id).dir };
+  };
+  const posix = added('linux', '/data/accounts', [{ id: 'work', label: 'Work', dir: 'personal' }], 'Personal');
+  assert.equal(posix.id, 'personal-2', 'a relative dir names a folder under accounts/<tool>');
+  assert.equal(posix.folders.filter((f) => f === posix.own).length, 1);
+
+  const absolute = added('linux', '/data/accounts', [{ id: 'work', label: 'Work', dir: '/data/accounts/anthropic/side' }], 'Side');
+  assert.equal(absolute.id, 'side-2');
+
+  for (const platform of ['win32', 'darwin', 'linux']) {
+    const root = platform === 'win32' ? 'C:\\data\\accounts' : '/data/accounts';
+    assert.equal(added(platform, root, [{ id: 'work', label: 'Work', dir: 'Personal' }], 'personal').id, 'personal-2', `${platform}: a folder differing only in case counts as the same`);
+  }
+  const windows = added('win32', 'C:\\data\\accounts', [{ id: 'work', label: 'Work', dir: 'C:/Data/Accounts/anthropic/Side/' }], 'side');
+  assert.equal(windows.id, 'side-2', 'a Windows dir may use either slash and end in one');
+});

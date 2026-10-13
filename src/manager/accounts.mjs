@@ -76,14 +76,32 @@ function readBytes(file) {
 }
 
 function writeAtomic(file, contents) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const next = `${file}.${randomUUID()}.tmp`;
+  let target = file;
+  let mode = 0o600;
   try {
-    fs.writeFileSync(next, contents, { flag: 'wx' });
-    fs.renameSync(next, file);
+    target = fs.realpathSync(file);
+    mode = fs.statSync(target).mode & 0o777;
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw refusal(500, 'providers_file_unreadable', `${file} could not be read: ${err.message}`);
+    let link = false;
+    try { link = fs.lstatSync(file).isSymbolicLink(); } catch { /* no file yet */ }
+    if (link) throw refusal(409, 'providers_file_unreadable', `${file} is a link to a file that does not exist. Fix or remove it, then try again.`);
+  }
+  fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
+  const next = `${target}.${randomUUID()}.tmp`;
+  let descriptor;
+  try {
+    descriptor = fs.openSync(next, 'wx', mode);
+    fs.writeFileSync(descriptor, contents);
+    fs.fsyncSync(descriptor);
+    fs.closeSync(descriptor);
+    descriptor = undefined;
+    fs.renameSync(next, target);
   } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
     try { fs.unlinkSync(next); } catch { /* renamed, or never created */ }
   }
+  try { fs.chmodSync(target, mode); } catch { /* not supported on Windows */ }
 }
 
 /**
@@ -126,7 +144,13 @@ export function createAccountEditor({ registry, inUse }) {
         const name = checkLabel(label, provider.accounts);
         let account;
         const text = write((accounts) => {
-          const taken = new Set([...provider.accounts.map((a) => a.id), ...accounts.map(entryId)]);
+          const ids = new Set([...provider.accounts.map((a) => a.id), ...accounts.map(entryId)]);
+          // Case is ignored on every platform: macOS and Windows folders usually ignore it, and a needless suffix is harmless.
+          const p = registry.platform === 'win32' ? path.win32 : path.posix;
+          const folder = (dir) => p.normalize(dir).replace(/[\\/]+$/, '').toLowerCase();
+          const dirs = new Set(registry.accountsFor(provider).filter((a) => a.dir).map((a) => folder(a.dir)));
+          const shared = (id) => dirs.has(folder(registry.accountFor(provider, { id }).dir));
+          const taken = { has: (id) => ids.has(id) || shared(id) };
           account = { id: accountIdFor(name, taken), label: name };
           return [...accounts, account];
         });

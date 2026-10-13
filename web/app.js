@@ -1827,22 +1827,25 @@ function renderAccountsDialog() {
 /** Sends one change at a time. Returns the manager's reply, or null after showing why it failed under `key`. */
 async function changeAccounts(key, method, path, body = null) {
   const opened = accountsView.opened;
+  const previous = state.providers;
   accountsView.busy = true;
   accountsView.errors.delete(key);
   accountsView.status = '';
   renderAccountsDialog();
   try {
     const result = await api(method, path, body);
-    setProviders(result);
-    renderProviders();
-    renderSessions();
+    if (state.providers === previous) {
+      setProviders(result);
+      renderProviders();
+      renderSessions();
+    }
     return result;
   } catch (err) {
     if (err instanceof AuthError) {
       showAuth(err.message);
       return null;
     }
-    if (err.code === 'stale_accounts') loadProviders().catch(() => {});
+    if (err.code === 'stale_accounts') loadProviders(state.eventsSocket).catch(() => {});
     if (accountsShowing(opened)) accountsView.errors.set(key, err.message);
     return null;
   } finally {
@@ -7040,6 +7043,7 @@ function enterStopping(running = 0, restart = false) {
   closeChangelog();
   closeHistory();
   closeGitHub();
+  closeAccounts();
   for (const view of state.views.values()) view.dispose();
   state.views.clear();
   state.sessions.clear();
@@ -7339,6 +7343,7 @@ function showAuth(message = '') {
   closeChangelog();
   closeHistory();
   closeGitHub();
+  closeAccounts();
   $('app').hidden = true;
   $('terminal-panel').hidden = true;
   $('stopped').hidden = true;

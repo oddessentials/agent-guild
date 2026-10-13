@@ -54,7 +54,7 @@ test('a session card names its account as the account is called now', () => {
 
 const dialogSource = [
   app.match(/const accountsView = [^\n]*\n/)?.[0],
-  ...['accountsShowing', 'accountsProvider', 'showAccounts', 'changeAccounts', 'accountsPath', 'addAccount', 'renameAccount', 'removeAccount'].map((name) => {
+  ...['setProviders', 'accountsShowing', 'accountsProvider', 'showAccounts', 'changeAccounts', 'accountsPath', 'addAccount', 'renameAccount', 'removeAccount'].map((name) => {
     const found = app.match(new RegExp(`(?:async )?function ${name}\\([^]*?\\n\\}`))?.[0];
     assert.ok(found, `${name} is present`);
     return found;
@@ -81,10 +81,11 @@ function dialogPage() {
     return elements.get(id);
   };
   const replies = [];
-  const calls = { api: [], providers: [], selected: [], auth: [], reloads: 0, usage: 0 };
+  const calls = { api: [], selected: [], auth: [], reloads: [], usage: 0 };
   class AuthError extends Error {}
   const state = {
     providersRevision: 'r1',
+    eventsSocket: { id: 'events' },
     providers: [{ id: 'anthropic', tool: 'Claude Code', accountsEditable: true, accounts: [{ id: 'default', label: 'Default' }, { id: 'work', label: 'Work' }] }],
   };
   const context = {
@@ -95,16 +96,15 @@ function dialogPage() {
       calls.api.push({ method, path, body });
       return new Promise((resolve, reject) => replies.push({ resolve, reject }));
     },
-    setProviders: (result) => { calls.providers.push(result); state.providers = result.providers; },
     renderProviders() {}, renderSessions() {}, renderAccountsDialog() {},
     showAuth: (message) => calls.auth.push(message),
-    loadProviders: async () => { calls.reloads++; },
+    loadProviders: async (ws) => { calls.reloads.push(ws); },
     selectAccount: (provider, id) => calls.selected.push(`${provider.id}/${id}`),
     loadUsage: () => { calls.usage++; },
     accountLabelProblem: () => null,
     encodeURIComponent,
   };
-  const api = runInNewContext(`${dialogSource}\n({ accountsView, showAccounts, addAccount, renameAccount, removeAccount })`, context);
+  const api = runInNewContext(`${dialogSource}\n({ accountsView, setProviders, showAccounts, addAccount, renameAccount, removeAccount })`, context);
   const dialog = element('accounts');
   const open = () => api.showAccounts(state.providers[0]);
   // Escape closes the dialog without closeAccounts(); the close event follows.
@@ -115,7 +115,9 @@ function dialogPage() {
     return { dataset: { account: id }, querySelector: (sel) => (sel === '.account-name' ? name : sel === '.account-remove' ? remove : null) };
   };
   const reply = (accounts, account) => ({ providers: [{ ...state.providers[0], accounts }], revision: 'r2', account, dir: '/kept' });
-  return { ...api, AuthError, state, calls, replies, focused, element, open, escape, row, reply };
+  // What a providers.updated event does to the page.
+  const update = (accounts, revision) => api.setProviders({ providers: [{ ...state.providers[0], accounts }], revision });
+  return { ...api, AuthError, state, calls, replies, focused, element, open, escape, row, reply, update };
 }
 
 test('a reply that arrives after the dialog was reopened leaves the new dialog alone', async () => {
@@ -166,7 +168,7 @@ test('a refusal that arrives after the dialog was reopened shows nowhere, and a 
   p.open();
   p.replies[2].reject(Object.assign(new Error('The accounts changed elsewhere.'), { code: 'stale_accounts' }));
   await stale;
-  assert.equal(p.calls.reloads, 1, 'the tools still reload');
+  assert.deepEqual(p.calls.reloads, [p.state.eventsSocket], 'the tools still reload, unless a newer update arrives first');
   assert.equal(p.accountsView.errors.size, 0);
 });
 
@@ -218,4 +220,54 @@ test('a change in the dialog that stays open still reports there', async () => {
   assert.equal(p.accountsView.errors.get('work'), 'A running session uses the Work account.');
   assert.equal(p.accountsView.busy, false);
   assert.deepEqual(p.focused, ['remove-work']);
+});
+
+test('a reply never replaces a newer list of tools', async () => {
+  const p = dialogPage();
+  p.open();
+  const adding = p.addAccount();
+  const added = [{ id: 'default', label: 'Default' }, { id: 'work', label: 'Work' }, { id: 'side', label: 'Side' }];
+  p.update(added, 'r2');
+  const renamed = [{ id: 'default', label: 'Default' }, { id: 'work', label: 'Office' }, { id: 'side', label: 'Side' }];
+  p.update(renamed, 'r3');
+  p.replies[0].resolve(p.reply(added, { id: 'side', label: 'Side' }));
+  await adding;
+  assert.deepEqual(p.state.providers[0].accounts, renamed);
+  assert.equal(p.state.providersRevision, 'r3');
+  assert.deepEqual(p.calls.selected, ['anthropic/side'], 'the card still picks the added account');
+  assert.equal(p.accountsView.status, 'Added Side and picked it on the card. Press New there to start a session and sign in.');
+
+  const removing = p.removeAccount(p.row('side', 'Side'));
+  const removed = [{ id: 'default', label: 'Default' }, { id: 'work', label: 'Office' }];
+  p.replies[1].resolve({ ...p.reply(removed, { id: 'side', label: 'Side' }), revision: 'r4' });
+  await removing;
+  assert.deepEqual(p.state.providers[0].accounts, removed, 'with no newer update, the reply is the newest list');
+  assert.equal(p.state.providersRevision, 'r4');
+});
+
+test('signing out, stopping or restarting closes the accounts dialog with the other dialogs', () => {
+  const source = ['closeAccounts', 'showAuth', 'enterStopping'].map((name) => {
+    const found = app.match(new RegExp(`function ${name}\\([^]*?\\n\\}`))?.[0];
+    assert.ok(found, `${name} is present`);
+    return found;
+  }).join('\n');
+  for (const leave of ['showAuth', 'stop', 'restart']) {
+    const elements = new Map();
+    const $ = (id) => {
+      if (!elements.has(id)) elements.set(id, { open: false, hidden: false, textContent: '', close() { this.open = false; } });
+      return elements.get(id);
+    };
+    const noop = () => {};
+    const page = runInNewContext(`${source}\n({ showAuth, enterStopping })`, {
+      $, state: { eventsSocket: null, views: new Map(), sessions: new Map() },
+      managerLoss: { cancel: noop },
+      closePanel: noop, closeModels: noop, closeNews: noop, closeChangelog: noop, closeHistory: noop, closeGitHub: noop,
+      renderSessions: noop, showStopped: noop, setConnection: noop, restartGaveUp: noop,
+      setTimeout: noop, clearTimeout: noop, RESTART_WAIT_MS: 0, restartTimer: undefined,
+    });
+    $('accounts').open = true;
+    if (leave === 'showAuth') page.showAuth('Sign in again.');
+    else page.enterStopping(0, leave === 'restart');
+    assert.equal($('accounts').open, false, leave);
+  }
 });

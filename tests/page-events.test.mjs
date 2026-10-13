@@ -72,7 +72,7 @@ function connect({ changelogOpen = false, githubOpen = false, docked = null } = 
     addEventListener: (type, callback) => listeners.set(type, callback),
     activityFavicon: { setPaused: noop }, terminalCopy: { close: noop },
     flushNotes: noop, stopDictation: noop,
-    closePanel: noop, closeModels: noop, closeNews: noop, closeChangelog: noop, closeHistory: noop, closeGitHub: noop,
+    closePanel: noop, closeModels: noop, closeNews: noop, closeChangelog: noop, closeHistory: noop, closeGitHub: noop, closeAccounts: noop,
     closeMenu: noop,
     managerConnected: () => alerts.push('connected'),
     managerGone: () => alerts.push('gone'),
