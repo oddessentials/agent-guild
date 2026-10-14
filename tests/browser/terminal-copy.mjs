@@ -39,7 +39,16 @@ const checks = await withPage({
     await evaluate(`(()=>{const a=${area};const start=a.value.indexOf(${JSON.stringify(text)});if(start<0)throw Error('text not found');a.focus();a.setSelectionRange(start,start+${text.length})})()`);
     await until('Copy enabled', () => evaluate(`!${sheet}.querySelector('[data-copy]').disabled`));
   };
-  const fitted = () => until('terminal fits its pane', () => evaluate(`(()=>{const t=${current};t.testFit??=(()=>{const f=new FitAddon.FitAddon();t.loadAddon(f);return f;})();const p=t.testFit.proposeDimensions();return t.testPendingWrites===0&&p.cols===t.cols&&p.rows===t.rows})()`));
+  const fitted = () => {
+    let last = null;
+    return until('terminal fits its settled pane', async () => {
+      await layoutReady();
+      const now = await evaluate(`(()=>{const t=${current};t.testFit??=(()=>{const f=new FitAddon.FitAddon();t.loadAddon(f);return f;})();const p=t.testFit.proposeDimensions();const r=t.element.closest('.terminal-host').getBoundingClientRect();return JSON.stringify([t.testPendingWrites===0&&p.cols===t.cols&&p.rows===t.rows,r.top,r.width,r.height,t.cols,t.rows])})()`);
+      const settled = now === last && now.startsWith('[true');
+      last = now;
+      return settled;
+    });
+  };
   const load = async () => {
     await send('Page.navigate', { url: origin });
     await until('session cards', () => evaluate('document.querySelectorAll("#sessions .session-card").length >= 2'));
