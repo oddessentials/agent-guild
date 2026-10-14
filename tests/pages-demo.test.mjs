@@ -23,6 +23,7 @@ test('the Pages builder makes a portable, complete site without changing web/', 
   const index = fs.readFileSync(path.join(out, 'index.html'), 'utf8');
   assert.doesNotMatch(index, /\b(?:src|href)=["']\//);
   assert.ok(index.indexOf('./demo-runtime.js') < index.indexOf('./app.js'));
+  assert.match(index, /<script src="\.\/theme\.js"><\/script>\n  <script src="\.\/demo-bookmark\.js"><\/script>/);
   assert.match(index, /<meta property="og:image" content="https:\/\/oddessentials\.github\.io\/agent-guild\/social\.png">/);
   assert.match(index, /<meta name="twitter:card" content="summary_large_image">/);
   const config = fs.readFileSync(path.join(out, 'demo-config.js'), 'utf8');
@@ -34,6 +35,44 @@ test('the Pages builder makes a portable, complete site without changing web/', 
 
   fs.appendFileSync(path.join(out, 'styles.css'), '\n.x { background: url(/brand/crest.png); }\n');
   assert.throws(() => execFileSync(process.execPath, [path.join(demo, 'check.mjs'), out], { stdio: 'pipe' }), /origin-root url\(\)/);
+});
+
+function openBookmark(search, saved = {}) {
+  const storage = new Map(Object.entries(saved));
+  const root = { dataset: {} };
+  const context = {
+    URLSearchParams,
+    location: { search },
+    document: { documentElement: root },
+    localStorage: { getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, String(value)), removeItem: (key) => storage.delete(key) },
+    matchMedia: () => ({ matches: false }),
+  };
+  context.window = context;
+  for (const file of [path.join(repo, 'web', 'theme.js'), path.join(demo, 'demo-bookmark.js')]) {
+    vm.runInNewContext(fs.readFileSync(file, 'utf8'), context, { filename: path.basename(file) });
+  }
+  return { shown: { ...root.dataset }, saved: Object.fromEntries(storage) };
+}
+
+test('a demo bookmark opens its skin, view and theme whatever the visitor saved, keeps them, and closes restored terminals and panels', () => {
+  const saved = { 'agentGuild.skin': 'guild', 'agentGuild.view': 'cards', 'agentGuild.theme': 'light' };
+  const skins = fs.readFileSync(path.join(repo, 'web', 'theme.js'), 'utf8').match(/\{ id: '[a-z]+'/g).map((m) => m.slice(7, -1));
+  assert.equal(skins.length, 6);
+  for (const skin of skins) for (const view of ['cards', 'yard']) for (const theme of ['light', 'dark']) {
+    const opened = openBookmark(`?skin=${skin}&view=${view}&theme=${theme}`, saved);
+    assert.deepEqual(opened.shown, { skin, view, theme });
+    assert.deepEqual(opened.saved, { 'agentGuild.skin': skin, 'agentGuild.view': view, 'agentGuild.theme': theme });
+  }
+  assert.deepEqual(openBookmark('?view=yard', saved).shown, { skin: 'guild', view: 'yard', theme: 'light' });
+  const refused = openBookmark('?skin=nope&view=map&theme=sepia', saved);
+  assert.deepEqual(refused.shown, { skin: 'guild', view: 'cards', theme: 'light' });
+  assert.deepEqual(refused.saved, saved);
+  assert.deepEqual(openBookmark('', {}).shown, { skin: 'professional', view: 'cards', theme: 'light' });
+
+  const open = { ...saved, 'agentGuild.panes': '{"panes":["a11ce001"],"focused":"a11ce001"}', 'agentGuild.dock': 'notes' };
+  assert.deepEqual(openBookmark('?view=yard', open).saved, { ...saved, 'agentGuild.view': 'yard' });
+  assert.deepEqual(openBookmark('?view=map', open).saved, open);
+  assert.deepEqual(openBookmark('', open).saved, open);
 });
 
 test('the demo runtime handles initial API calls and opens event and terminal sockets', async (t) => {

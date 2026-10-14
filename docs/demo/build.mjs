@@ -44,6 +44,7 @@ for (const [target, dependency] of Object.entries(vendor)) {
 }
 
 fs.copyFileSync(path.join(here, 'demo-runtime.js'), path.join(out, 'demo-runtime.js'));
+fs.copyFileSync(path.join(here, 'demo-bookmark.js'), path.join(out, 'demo-bookmark.js'));
 fs.copyFileSync(path.join(here, 'social.png'), path.join(out, 'social.png'));
 const catalog = JSON.parse(fs.readFileSync(path.join(here, 'models.json'), 'utf8'));
 const { providers } = JSON.parse(fs.readFileSync(path.join(repo, 'config', 'providers.default.json'), 'utf8'));
@@ -59,6 +60,8 @@ index = index.replace(
   '<script src="./demo-config.js"></script>\n  <script src="./demo-runtime.js"></script>\n  <script type="module" src="./app.js"></script>',
 );
 if (!index.includes('./demo-runtime.js')) throw new Error('could not insert the demo runtime before app.js');
+index = index.replace('<script src="./theme.js"></script>', '<script src="./theme.js"></script>\n  <script src="./demo-bookmark.js"></script>');
+if (!index.includes('./demo-bookmark.js')) throw new Error('could not insert the demo bookmark after theme.js');
 // Link previews need absolute URLs, so these name the published Pages site.
 const site = 'https://oddessentials.github.io/agent-guild/';
 const summary = 'Try the Agent Guild web client in your browser. The sessions are simulated; nothing runs on your computer.';
