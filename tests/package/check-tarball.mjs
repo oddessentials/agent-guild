@@ -3,11 +3,10 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 
-// web/yard ships the worlds and plates, and every skin a character per provider. The gate leaves room for
-// art, which is not compressed to fit.
-const MAX_PACKED_BYTES = 320 * 1024 * 1024;
+// npm's registry refused a 316 MB package. The Yard's art ships as a release pack instead; the skins stay.
+const MAX_PACKED_BYTES = 100 * 1024 * 1024;
 const TOP_LEVEL = new Set(['package.json', 'README.md', 'LICENSE', 'bin', 'src', 'web', 'config', 'examples', 'node_modules']);
-const REQUIRED = ['package.json', 'README.md', 'LICENSE', 'src/manager/main.mjs', 'web/index.html', 'config/providers.default.json'];
+const REQUIRED = ['package.json', 'README.md', 'LICENSE', 'src/manager/main.mjs', 'web/index.html', 'web/yard/art.json', 'config/providers.default.json'];
 const PACKAGE_ROOT = /^((?:node_modules\/(?:@[^/]+\/)?[^/]+\/)+)package\.json$/;
 
 function paxPath(body) {
@@ -86,6 +85,14 @@ export function checkPackage({ entries, lock, version = null }) {
   const manifest = manifestEntry ? JSON.parse(manifestEntry.body.toString('utf8')) : {};
   for (const rel of [...REQUIRED, ...Object.values(manifest.bin || {})]) {
     if (!files.has(rel)) problems.push(`${rel} is missing`);
+  }
+  if ([...files.keys()].some((rel) => rel.startsWith('web/yard/assets/'))) problems.push('web/yard/assets is in the package; the Yard art ships as the release pack');
+  const art = files.get('web/yard/art.json');
+  if (art) {
+    let url = null;
+    try { url = JSON.parse(art.body.toString('utf8')).archive?.url ?? null; } catch {}
+    if (typeof url !== 'string') problems.push('web/yard/art.json names no art pack');
+    else if (version !== null && !url.includes(`/releases/download/v${version}/yard-art-`)) problems.push(`web/yard/art.json names ${url}, not a pack on the v${version} release`);
   }
   if (manifestEntry) {
     const name = lock.packages[''].name;

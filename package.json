@@ -27,6 +27,7 @@
     "bin/",
     "src/",
     "web/",
+    "!web/yard/assets/",
     "config/",
     "examples/"
   ],

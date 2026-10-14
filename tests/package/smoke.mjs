@@ -8,8 +8,9 @@ const args = process.argv.slice(2);
 const versionAt = args.indexOf('--version');
 const expectedVersion = versionAt === -1 ? null : args[versionAt + 1];
 const prefixArg = args.find((arg, i) => !arg.startsWith('--') && (versionAt === -1 || i !== versionAt + 1));
+const downloadArt = args.includes('--yard-art');
 if (!prefixArg || (versionAt !== -1 && !expectedVersion)) {
-  console.error('Usage: node tests/package/smoke.mjs <global prefix> [--version X.Y.Z]');
+  console.error('Usage: node tests/package/smoke.mjs <global prefix> [--version X.Y.Z] [--yard-art]');
   process.exit(2);
 }
 
@@ -122,6 +123,21 @@ try {
     if (res.status !== 200 || bytes === 0) throw new Error(`page asset ${asset}: HTTP ${res.status}, ${bytes} bytes`);
   }
   pass('the page and its assets are served', `${assets.length} files`);
+
+  const art = (await api('GET', '/yard-art')).body.yardArt;
+  const glb = () => fetch(`${base}/yard/assets/guild.glb`).then(async (res) => ({ status: res.status, bytes: (await res.arrayBuffer()).byteLength }));
+  check(art?.state === 'missing' && (await glb()).status === 404, 'the Yard art is a download, not part of the package', `${(art?.size / 1048576).toFixed(1)} MB`);
+  if (downloadArt) {
+    await api('POST', '/yard-art/download');
+    const deadline = Date.now() + 20 * 60000;
+    let now = art;
+    while (!['ready', 'failed', 'cancelled'].includes(now?.state) && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      now = (await api('GET', '/yard-art')).body.yardArt;
+    }
+    const served = await glb();
+    check(now?.state === 'ready' && served.status === 200 && served.bytes > 0, 'the Yard art downloads from the release and is served', now?.error ?? `${served.bytes} bytes`);
+  }
 
   const providers = await api('GET', '/providers');
   const shell = providers.body.providers?.find((provider) => provider.id === 'shell');

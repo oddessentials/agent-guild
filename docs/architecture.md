@@ -44,6 +44,7 @@ All under `src/manager` unless noted.
 | Starting, stopping and autostart | `bin/agent-guild.mjs`, `launch.mjs`, `autostart.mjs`, `systemd-service.mjs` |
 | `agent-guild doctor` | `doctor.mjs` |
 | Web page | `web/`: plain HTML, CSS and JavaScript with xterm.js, no build step |
+| The Yard's art pack | `yard-art.mjs`, `scripts/yard-pack.mjs` ([yard/README.md](yard/README.md)) |
 
 ## Lifetimes
 

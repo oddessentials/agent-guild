@@ -1022,7 +1022,7 @@
         eventSockets.push(self);
         self.emit({ data: JSON.stringify({
           type: 'hello', version: version, pid: null, platform: 'darwin', startedAt: startedAt,
-          launcher: null, folderOpener: null, remoteAccess: { available: true }, upgrade: null,
+          launcher: null, folderOpener: null, remoteAccess: { available: true }, upgrade: null, yardArt: { state: 'ready', source: 'pack' },
           notesRevision: notesDoc.revision, sessions: clone(sessions), heartbeat: true,
         }) });
       } else {

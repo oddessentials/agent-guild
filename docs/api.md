@@ -566,6 +566,9 @@ All paths are under `/api/v1`.
 | GET | `/usage` | | `{ usage: Usage[] }`, one per account of every provider with a `usageSource`. |
 | GET | `/model-stats` | | `{ retrievedAt, stale, error, stats, pool, providers, models, sessions }`: benchmarks for each provider's models, from OpenRouter's public model list. `stats` describes each benchmark; `providers[id]` is `{ featured, models }`; `models[id]` holds a model's name, context, price and, per benchmark, its `value`, `rank`, `place`, `tied`, `of`, `level` (0-100) and `tier` (S to D); `sessions[id]` is the model id a session's model matched, or null. |
 | GET | `/news` | | `{ refreshedAt, refreshing, sources, items }`. `items` are the built-in feeds' recent items, newest first, each `{ id, title, url, discussion, summary, source, sourceId, category, publishedAt }` with `category` `news`, `releases` or `research`. `sources` lists each feed as `{ id, name, category, error, okAt }`. A `news.updated` event follows a refresh. |
+| GET | `/yard-art` | | `{ yardArt }`: the Yard's art. `state` is `ready`, `missing`, `downloading` (with `received` bytes), `installing`, `failed` or `unavailable` (each with `error`), or `cancelled`; `size` is the pack's size in bytes. A checkout serves `web/yard/assets` and is always `ready`. `/yard/assets/` answers 404 until the art is `ready`. |
+| POST | `/yard-art/download` | | `202 { yardArt }`: starts the one download of the art pack named by the package, unless it is running or installed. Progress and the outcome arrive as `yard-art.updated`. |
+| POST | `/yard-art/cancel` | | `{ yardArt }`: stops the download for every client; the state becomes `cancelled`. |
 | GET | `/changelog` | | `{ refreshing, okAt, error, releases }`: Agent Guild's own releases, newest first, each `{ version, url, publishedAt, sections: [{ title, changes }] }`, where `title` may be null and a change is a list of text runs. A `changelog.updated` event follows a refresh. |
 | GET | `/providers/:id/history?account=&limit=&cwd=&q=` | | `{ history }`: a History object for one account (default `default`). |
 | GET | `/providers/:id/history/detail?account=&id=&cursor=` | | `{ detail }`; see [Saved messages](#saved-messages). |
@@ -631,13 +634,14 @@ but `{ type: "ping" }`, which the manager answers with `{ type: "pong" }`.
 
 | Message | Meaning |
 | --- | --- |
-| `{ type: "hello", version, pid, platform, startedAt, launcher, folderOpener, remoteAccess, upgrade, sessions, heartbeat, notesRevision, notesUnreadable }` | Sent first: the manager (as in `/info`), the full session list and the notepad's revision. |
+| `{ type: "hello", version, pid, platform, startedAt, launcher, folderOpener, remoteAccess, upgrade, yardArt, sessions, heartbeat, notesRevision, notesUnreadable }` | Sent first: the manager (as in `/info`), the full session list and the notepad's revision. |
 | `{ type: "session.created", session }` | A session was started by any client. |
 | `{ type: "session.updated", session }` | Status, activity, agents, name or size changed. |
 | `{ type: "session.removed", sessionId }` | A session was removed. |
 | `{ type: "providers.updated", providers, revision }` | The provider list changed. |
 | `{ type: "environment.updated", environment }` | An environment check started or finished. |
 | `{ type: "news.updated" }` | Fetch `/news` again. |
+| `{ type: "yard-art.updated", yardArt }` | The Yard's art changed state or made download progress, as in `/yard-art`. |
 | `{ type: "changelog.updated" }` | Fetch `/changelog` again. |
 | `{ type: "github.updated" }` | Fetch `/github` again. |
 | `{ type: "remote-access.updated" }` | Fetch `/remote-access` again. |
