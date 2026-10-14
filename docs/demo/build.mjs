@@ -5,6 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { describeCatalog, indexCatalog, parseCatalog } from '../../src/manager/model-stats.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, '../..');
@@ -43,8 +44,12 @@ for (const [target, dependency] of Object.entries(vendor)) {
 }
 
 fs.copyFileSync(path.join(here, 'demo-runtime.js'), path.join(out, 'demo-runtime.js'));
+fs.copyFileSync(path.join(here, 'demo-bookmark.js'), path.join(out, 'demo-bookmark.js'));
 fs.copyFileSync(path.join(here, 'social.png'), path.join(out, 'social.png'));
-fs.writeFileSync(path.join(out, 'demo-config.js'), `window.AGENT_GUILD_DEMO_VERSION=${JSON.stringify(version)};\n`);
+const catalog = JSON.parse(fs.readFileSync(path.join(here, 'models.json'), 'utf8'));
+const { providers } = JSON.parse(fs.readFileSync(path.join(repo, 'config', 'providers.default.json'), 'utf8'));
+const stats = describeCatalog({ index: indexCatalog(parseCatalog(catalog)), retrievedAt: catalog.retrievedAt, stale: false, error: null }, providers);
+fs.writeFileSync(path.join(out, 'demo-config.js'), `window.AGENT_GUILD_DEMO_VERSION=${JSON.stringify(version)};\nwindow.AGENT_GUILD_DEMO_MODEL_STATS=${JSON.stringify(stats)};\n`);
 fs.writeFileSync(path.join(out, '.nojekyll'), '');
 
 const indexFile = path.join(out, 'index.html');
@@ -55,6 +60,8 @@ index = index.replace(
   '<script src="./demo-config.js"></script>\n  <script src="./demo-runtime.js"></script>\n  <script type="module" src="./app.js"></script>',
 );
 if (!index.includes('./demo-runtime.js')) throw new Error('could not insert the demo runtime before app.js');
+index = index.replace('<script src="./theme.js"></script>', '<script src="./theme.js"></script>\n  <script src="./demo-bookmark.js"></script>');
+if (!index.includes('./demo-bookmark.js')) throw new Error('could not insert the demo bookmark after theme.js');
 // Link previews need absolute URLs, so these name the published Pages site.
 const site = 'https://oddessentials.github.io/agent-guild/';
 const summary = 'Try the Agent Guild web client in your browser. The sessions are simulated; nothing runs on your computer.';

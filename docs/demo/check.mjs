@@ -7,7 +7,7 @@ import path from 'node:path';
 
 const dir = path.resolve(process.argv[2] || 'docs/.pages');
 const required = [
-  '.nojekyll', 'index.html', 'app.js', 'activity-favicon.js', 'terminal-copy.js', 'layout.js', 'repo-search.js', 'folders.js', 'theme.js', 'styles.css', 'demo-config.js', 'demo-runtime.js', 'social.png',
+  '.nojekyll', 'index.html', 'app.js', 'activity-favicon.js', 'terminal-copy.js', 'layout.js', 'repo-search.js', 'folders.js', 'theme.js', 'styles.css', 'demo-config.js', 'demo-runtime.js', 'demo-bookmark.js', 'social.png',
   'vendor/xterm/xterm.js', 'vendor/xterm/xterm.css', 'vendor/xterm/addon-fit.js', 'vendor/xterm/addon-web-links.js',
   'remote-access.js', 'vendor/qrcode.mjs', 'read-aloud.js', 'vendor/markdown-it.mjs',
   'yard/view.js', 'yard/renderer.js', 'yard/vendor/engine.js', 'yard/assets/guild.glb', 'yard/assets/guild/plates.json',
@@ -20,6 +20,7 @@ if (fs.existsSync(path.join(dir, 'index.html'))) {
   if (/\b(?:src|href)=["']\//.test(index)) problems.push('index.html contains an origin-root asset URL');
   if (index.indexOf('./demo-runtime.js') > index.indexOf('./app.js')) problems.push('demo runtime does not load before app.js');
   if (!index.includes('./demo-runtime.js')) problems.push('index.html does not load the demo runtime');
+  if (!index.includes('<script src="./theme.js"></script>\n  <script src="./demo-bookmark.js"></script>')) problems.push('demo bookmark does not load right after theme.js');
   if (!/<meta property="og:image" content="https:\/\/[^"]+\/social\.png">/.test(index)) problems.push('index.html has no absolute og:image for social.png');
 }
 

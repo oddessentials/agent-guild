@@ -6,7 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
-import { describeCatalog } from '../src/manager/model-stats.mjs';
+import { describeCatalog, indexCatalog, parseCatalog } from '../src/manager/model-stats.mjs';
 import { GitHub } from '../src/manager/github.mjs';
 import { createViews } from '../src/manager/github-views.mjs';
 
@@ -23,15 +23,56 @@ test('the Pages builder makes a portable, complete site without changing web/', 
   const index = fs.readFileSync(path.join(out, 'index.html'), 'utf8');
   assert.doesNotMatch(index, /\b(?:src|href)=["']\//);
   assert.ok(index.indexOf('./demo-runtime.js') < index.indexOf('./app.js'));
+  assert.match(index, /<script src="\.\/theme\.js"><\/script>\n  <script src="\.\/demo-bookmark\.js"><\/script>/);
   assert.match(index, /<meta property="og:image" content="https:\/\/oddessentials\.github\.io\/agent-guild\/social\.png">/);
   assert.match(index, /<meta name="twitter:card" content="summary_large_image">/);
-  assert.match(fs.readFileSync(path.join(out, 'demo-config.js'), 'utf8'), /1\.2\.3/);
+  const config = fs.readFileSync(path.join(out, 'demo-config.js'), 'utf8');
+  assert.match(config, /1\.2\.3/);
+  assert.match(config, /window\.AGENT_GUILD_DEMO_MODEL_STATS=\{"retrievedAt":"2026-10-13T00:00:00\.000Z"/);
   const styles = fs.readFileSync(path.join(out, 'styles.css'), 'utf8');
   assert.doesNotMatch(styles, /url\(\s*["']?\/(?!\/)/, 'fonts and images resolve below the project path');
   assert.match(styles, /url\("\.\/fonts\/cinzel\.woff2"\)/);
 
   fs.appendFileSync(path.join(out, 'styles.css'), '\n.x { background: url(/brand/crest.png); }\n');
   assert.throws(() => execFileSync(process.execPath, [path.join(demo, 'check.mjs'), out], { stdio: 'pipe' }), /origin-root url\(\)/);
+});
+
+function openBookmark(search, saved = {}) {
+  const storage = new Map(Object.entries(saved));
+  const root = { dataset: {} };
+  const context = {
+    URLSearchParams,
+    location: { search },
+    document: { documentElement: root },
+    localStorage: { getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, String(value)), removeItem: (key) => storage.delete(key) },
+    matchMedia: () => ({ matches: false }),
+  };
+  context.window = context;
+  for (const file of [path.join(repo, 'web', 'theme.js'), path.join(demo, 'demo-bookmark.js')]) {
+    vm.runInNewContext(fs.readFileSync(file, 'utf8'), context, { filename: path.basename(file) });
+  }
+  return { shown: { ...root.dataset }, saved: Object.fromEntries(storage) };
+}
+
+test('a demo bookmark opens its skin, view and theme whatever the visitor saved, keeps them, and closes restored terminals and panels', () => {
+  const saved = { 'agentGuild.skin': 'guild', 'agentGuild.view': 'cards', 'agentGuild.theme': 'light' };
+  const skins = fs.readFileSync(path.join(repo, 'web', 'theme.js'), 'utf8').match(/\{ id: '[a-z]+'/g).map((m) => m.slice(7, -1));
+  assert.equal(skins.length, 6);
+  for (const skin of skins) for (const view of ['cards', 'yard']) for (const theme of ['light', 'dark']) {
+    const opened = openBookmark(`?skin=${skin}&view=${view}&theme=${theme}`, saved);
+    assert.deepEqual(opened.shown, { skin, view, theme });
+    assert.deepEqual(opened.saved, { 'agentGuild.skin': skin, 'agentGuild.view': view, 'agentGuild.theme': theme });
+  }
+  assert.deepEqual(openBookmark('?view=yard', saved).shown, { skin: 'guild', view: 'yard', theme: 'light' });
+  const refused = openBookmark('?skin=nope&view=map&theme=sepia', saved);
+  assert.deepEqual(refused.shown, { skin: 'guild', view: 'cards', theme: 'light' });
+  assert.deepEqual(refused.saved, saved);
+  assert.deepEqual(openBookmark('', {}).shown, { skin: 'professional', view: 'cards', theme: 'light' });
+
+  const open = { ...saved, 'agentGuild.panes': '{"panes":["a11ce001"],"focused":"a11ce001"}', 'agentGuild.dock': 'notes' };
+  assert.deepEqual(openBookmark('?view=yard', open).saved, { ...saved, 'agentGuild.view': 'yard' });
+  assert.deepEqual(openBookmark('?view=map', open).saved, open);
+  assert.deepEqual(openBookmark('', open).saved, open);
 });
 
 test('the demo runtime handles initial API calls and opens event and terminal sockets', async (t) => {
@@ -50,7 +91,7 @@ test('the demo runtime handles initial API calls and opens event and terminal so
     localStorage: { setItem: (key, value) => storage.set(key, value) },
     document: {
       body: { prepend: (node) => elements.push(node) }, head: { append: (node) => elements.push(node) },
-      createElement: (tag) => ({ tag, setAttribute() {} }),
+      createElement: (tag) => ({ tag, setAttribute() {} }), querySelector: () => null,
     },
     AGENT_GUILD_DEMO_VERSION: '2.3.4',
   };
@@ -80,7 +121,7 @@ test('the demo runtime handles initial API calls and opens event and terminal so
   assert.match(terminal[0].data, /interactive demo/i);
 });
 
-function loadDemo() {
+function loadDemo(globals = {}) {
   const runtime = fs.readFileSync(path.join(demo, 'demo-runtime.js'), 'utf8');
   class Response {
     constructor(body, init = {}) { this.body = body; this.status = init.status || 200; this.ok = this.status < 400; }
@@ -91,8 +132,9 @@ function loadDemo() {
     location: { href: 'https://example.test/agent-guild/', pathname: '/agent-guild/' },
     fetch: () => { throw new Error('demo API escaped to the network'); },
     localStorage: { setItem() {} },
-    document: { body: { prepend() {} }, head: { append() {} }, createElement: (tag) => ({ tag, setAttribute() {} }) },
+    document: { body: { prepend() {} }, head: { append() {} }, createElement: (tag) => ({ tag, setAttribute() {} }), querySelector: () => null },
     AGENT_GUILD_DEMO_VERSION: '2.3.4',
+    ...globals,
   };
   context.window = context;
   vm.runInNewContext(runtime, context, { filename: 'demo-runtime.js' });
@@ -121,12 +163,74 @@ test('the demo simulates multiplexer install, update, uninstall and reinstall wi
   }
 });
 
-test('the demo answers model stats in the manager\'s shape', async () => {
-  const { call } = loadDemo();
+test('the demo answers model stats as the manager would for its sample catalog and sessions', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const catalog = JSON.parse(fs.readFileSync(path.join(demo, 'models.json'), 'utf8'));
+  const { providers } = JSON.parse(fs.readFileSync(path.join(repo, 'config', 'providers.default.json'), 'utf8'));
+  const source = { index: indexCatalog(parseCatalog(catalog)), retrievedAt: catalog.retrievedAt, stale: false, error: null };
+  const { context, call } = loadDemo({ AGENT_GUILD_DEMO_MODEL_STATS: describeCatalog(source, providers) });
+  const events = [];
+  const socket = new context.WebSocket('wss://example.test/api/v1/events?token=demo');
+  socket.onmessage = ({ data }) => events.push(JSON.parse(data));
+  t.mock.timers.tick(40);
   const { body } = await call('GET', '/model-stats');
-  const real = describeCatalog({ index: null, retrievedAt: null, stale: false, error: null }, []);
-  assert.deepEqual(Object.keys(body).sort(), Object.keys(real).sort());
-  assert.deepEqual(body.sessions, {});
+  assert.deepEqual(body, describeCatalog(source, providers, events[0].sessions));
+  for (const id of ['anthropic', 'openai', 'google', 'xai']) assert.ok(body.providers[id], `${id} has benchmarks`);
+  assert.equal(Object.values(body.sessions).filter(Boolean).length, 4);
+
+  const empty = await loadDemo().call('GET', '/model-stats');
+  assert.deepEqual(Object.keys(empty.body).sort(), Object.keys(describeCatalog({ index: null, retrievedAt: null, stale: false, error: null }, [])).sort());
+});
+
+test('the demo serves each running agent session\'s last answer for Read', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { context, call } = loadDemo();
+  const events = [];
+  const socket = new context.WebSocket('wss://example.test/api/v1/events?token=demo');
+  socket.onmessage = ({ data }) => events.push(JSON.parse(data));
+  t.mock.timers.tick(40);
+  const answered = events[0].sessions.filter((s) => s.reply);
+  assert.ok(answered.length >= 3);
+  for (const s of answered) {
+    const { body } = await call('GET', `/sessions/${s.id}/reply`);
+    assert.equal(body.reply.id, s.reply.id);
+    assert.match(body.reply.text, /\w/);
+  }
+  const quiet = events[0].sessions.find((s) => !s.reply);
+  assert.deepEqual((await call('GET', `/sessions/${quiet.id}/reply`)).body, { reply: null });
+});
+
+test('the demo simulates remote access through Tailscale and a custom proxy', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { context, call } = loadDemo();
+  const events = [];
+  const socket = new context.WebSocket('wss://example.test/api/v1/events?token=demo');
+  socket.onmessage = ({ data }) => events.push(JSON.parse(data));
+  t.mock.timers.tick(40);
+  assert.deepEqual(events[0].remoteAccess, { available: true });
+
+  const off = (await call('GET', '/remote-access')).body.remoteAccess;
+  assert.equal(off.mode, 'off');
+  assert.equal(off.url, null);
+  assert.equal(off.tailscale.connected, true);
+  assert.equal((await call('PUT', '/remote-access', { revision: 'old', action: 'enable' })).body.error.code, 'stale_settings');
+
+  const enabled = await call('PUT', '/remote-access', { revision: off.revision, action: 'enable' });
+  assert.equal(enabled.status, 202);
+  assert.equal(enabled.body.remoteAccess.mode, 'tailscale');
+  assert.match(enabled.body.remoteAccess.url, /^https:\/\/[^/]+\.ts\.net$/);
+  assert.equal(enabled.body.remoteAccess.connection.ok, true);
+  t.mock.timers.tick(40);
+  assert.equal(events.at(-1).type, 'remote-access.updated');
+
+  const refused = await call('PUT', '/remote-access', { revision: enabled.body.remoteAccess.revision, action: 'custom', hosts: ['a.example'], origins: [] });
+  assert.equal(refused.body.error.code, 'disable_first');
+  const disabled = (await call('PUT', '/remote-access', { revision: enabled.body.remoteAccess.revision, action: 'disable' })).body.remoteAccess;
+  assert.equal(disabled.mode, 'off');
+  const custom = (await call('PUT', '/remote-access', { revision: disabled.revision, action: 'custom', hosts: ['guild.example'], origins: ['https://guild.example'] })).body.remoteAccess;
+  assert.equal(custom.mode, 'custom');
+  assert.deepEqual(custom.hosts, ['guild.example']);
+  assert.equal((await call('POST', '/remote-access/check')).body.remoteAccess.mode, 'custom');
 });
 
 /** The real GitHub and its views, signed in with one account, against canned GitHub answers. */
