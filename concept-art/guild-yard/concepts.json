@@ -1,0 +1,9 @@
+{
+  "_station": "Highly detailed stylized 3D render of a single piece of furniture from a fantasy adventurers' guild courtyard, premium animated film look, chunky solid forms, carved dark oak, dressed pale stone and bronze trim, every surface matte with no glossy reflections, seen from an elevated three-quarter view from the front right, the whole object fully visible and isolated and centered on a perfectly flat, uniform, untextured medium grey background, even soft studio lighting, no ground, no shadow, no people, no smoke, no fire, no candles, no glow effects, no text, no letters, no logos, no border.",
+  "station": {
+    "seed": 1601,
+    "prompt": "A scholar's lectern: a sturdy carved dark oak lectern on a square dressed stone base, a wide gently sloping reading top facing the viewer with a thick closed leather-bound book lying on it, bronze corner fittings and a bronze book clasp, a small shelf under the top holding two rolled scrolls.",
+    "style": "_station",
+    "pick": 1601
+  }
+}

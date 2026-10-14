@@ -100,5 +100,40 @@
       "seed": 7,
       "prompt": "Remove all the background scenery, other buildings, sky, water, smoke, steam and vapour, leaving only the dock shed with its steam crane, its crates and its square wooden stilt platform on a plain flat light grey background. Keep the building and everything on it exactly the same, same style, same framing."
     }
+  ],
+  "builder_openai_apose": [
+    {
+      "input": "concepts/builder_openai.png",
+      "seed": 47,
+      "prompt": "Change only the pose to a relaxed A-pose, as for a 3D character rig: both arms hang straight and are angled about 40 degrees out from the sides, with a wide gap of plain background, at least as wide as a hand, between each sleeve and the body all the way from armpit to hand, and the feet stand a little apart with a clear gap between the legs. Both hands are open and empty. The big war hammer stands upright on its head on the ground beside his right foot, its handle pointing up, not touching him. Keep the face, outfit, colours, materials, proportions, framing and lighting exactly the same, full length, facing the viewer, on a perfectly flat, uniform, untextured medium grey background with no noise, pattern, gradient or shadow."
+    }
+  ],
+  "builder_xai_apose": [
+    {
+      "input": "concepts/builder_xai.png",
+      "seed": 23,
+      "prompt": "Change only the pose to a relaxed A-pose, as for a 3D character rig: both arms hang straight and are angled about 25 degrees out from the sides, so plain background shows clearly between each arm and the body all the way from armpit to hand, and the feet stand a little apart with a clear gap between the legs. Both hands are open and empty, and the long coat hangs open so it does not cover the arms. Keep the face, outfit, colours, materials, proportions, framing and lighting exactly the same, full length, facing the viewer, on a perfectly flat, uniform, untextured medium grey background with no noise, pattern, gradient or shadow."
+    }
+  ],
+  "builder_shell_apose": [
+    {
+      "input": "../goblinville-skin/characters/shell/idle.png",
+      "seed": 47,
+      "prompt": "Change only the pose to a relaxed A-pose, as for a 3D character rig: both arms hang straight and are angled about 40 degrees out from the sides, with a wide gap of plain background, at least as wide as a hand, between each sleeve and the body all the way from armpit to hand, and the feet stand a little apart with a clear gap between the legs. The hooded cloak is a short shoulder cape that ends above the elbows, so it does not cover the arms or hang beside them. His right hand holds the glowing lantern by its handle, hanging clear of his body; his left hand is open. There is no smoke or mist. Keep the face, outfit, colours, materials, proportions, framing and lighting exactly the same, full length, facing the viewer, on a perfectly flat, uniform, untextured medium grey background with no noise, pattern, gradient or shadow."
+    }
+  ],
+  "builder_docker_apose": [
+    {
+      "input": "concepts/builder_docker.png",
+      "seed": 11,
+      "prompt": "Change only the pose to a relaxed A-pose, as for a 3D character rig: both arms hang straight and are angled about 25 degrees out from the sides, so plain background shows clearly between each arm and the body all the way from armpit to hand, and the feet stand a little apart with a clear gap between the legs. His right hand is open and empty, and his mechanical claw arm hangs out to the side, clear of his body; there is no toolbox. Keep the face, outfit, colours, materials, proportions, framing and lighting exactly the same, full length, facing the viewer, on a perfectly flat, uniform, untextured medium grey background with no noise, pattern, gradient or shadow."
+    }
+  ],
+  "station": [
+    {
+      "input": "raw/station-1645.png",
+      "prompt": "Keep the exact same single object unchanged in shape, proportions, colours and detail, and place it alone on a perfectly flat, uniform, untextured medium grey background, with no floor, no shadow, no plants or objects around it.",
+      "seed": 7
+    }
   ]
 }

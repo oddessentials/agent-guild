@@ -48,5 +48,11 @@
     "style": "_prop",
     "pick": 1114
   },
-  "_prop": "Highly detailed stylized 3D render of a single piece of equipment from a friendly toy-like space station, premium animated film look, chunky rounded forms, crisp panel lines, centered and fully visible, seen from an elevated three-quarter view from the front right, isolated on a pure flat light grey background, even soft studio lighting, every surface matte with no glossy reflections, no transparency, no glow effects, no ground, no space background, no stars, no people, no robots, no smoke, no fire, no text, no letters, no logos, no border."
+  "_prop": "Highly detailed stylized 3D render of a single piece of equipment from a friendly toy-like space station, premium animated film look, chunky rounded forms, crisp panel lines, centered and fully visible, seen from an elevated three-quarter view from the front right, isolated on a pure flat light grey background, even soft studio lighting, every surface matte with no glossy reflections, no transparency, no glow effects, no ground, no space background, no stars, no people, no robots, no smoke, no fire, no text, no letters, no logos, no border.",
+  "station": {
+    "seed": 1611,
+    "prompt": "A station control console: a waist-high chunky rounded white pedestal desk with grey panel lines, a sloped control panel facing the viewer with big chunky matte buttons in orange, teal and yellow and two stubby levers, a small raised screen panel at the back shown as a flat matte dark charcoal panel, fully visible on its own.",
+    "style": "_prop",
+    "pick": 1612
+  }
 }

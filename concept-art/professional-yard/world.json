@@ -3,32 +3,36 @@
   "staff_0": {
    "image": "concepts/staff_anthropic.png",
    "height": 2.0,
-   "work": "conduct"
+   "work": "conduct",
+   "busy": "L"
   },
   "staff_1": {
    "image": "concepts/staff_openai.png",
    "height": 2.05,
-   "work": "tinker"
+   "work": "tinker",
+   "busy": "L"
   },
   "staff_2": {
    "image": "concepts/staff_google.png",
    "height": 1.95,
-   "work": "tinker"
+   "work": "tinker",
+   "busy": "L"
   },
   "staff_3": {
-   "image": "concepts/staff_xai.png",
+   "image": "concepts/staff_xai_apose.png",
    "height": 2.05,
    "work": "tinker"
   },
   "staff_4": {
-   "image": "concepts/staff_shell.png",
+   "image": "concepts/staff_shell_apose.png",
    "height": 2.0,
    "work": "tinker"
   },
   "staff_5": {
    "image": "concepts/staff_docker.png",
    "height": 2.3,
-   "work": "tinker"
+   "work": "tinker",
+   "busy": "L"
   },
   "bot_0": {
    "image": "concepts/bot_courier.png",
@@ -58,5 +62,10 @@
   "car_taxi",
   "city_bus",
   "delivery_van"
- ]
+ ],
+ "grey": [
+  "staff_4",
+  "staff_3"
+ ],
+ "station": {"surface": 1.0}
 }

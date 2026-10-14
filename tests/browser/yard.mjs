@@ -313,6 +313,113 @@ test('failed character and helper downloads recover on state changes without ret
   assert.deepEqual(b.errors,[]);
 });
 
+// Deterministic: the renderer runs on a fixed clock and is never started, so
+// no animation frame runs; the test advances it with step() in fixed steps.
+test('characters walk to where their sessions\' states put them, arrive from their hall, and snap into place with reduced motion',options,async t=>{
+  const {f,b}=await setup(t);
+  const T0=Date.parse('2026-10-13T12:00:00.000Z'),iso=ms=>new Date(T0-ms).toISOString();
+  const sessions=[...f.data.values()].slice(0,3).map(s=>({...s,activity:'active',lastOutputAt:iso(0),createdAt:iso(3600000),agents:[],shells:[]}));
+  await b.evaluate(`(async()=>{
+    const {YardRenderer}=await import('/yard/renderer.js');
+    window.__model=await import('/yard/model.mjs');
+    const host=document.createElement('div'),labels=document.createElement('div');
+    host.style.cssText='position:fixed;width:900px;height:700px;top:0;left:0';host.append(labels);document.body.append(host);
+    window.__renderer=new YardRenderer(host,labels,{select(){},open(){},clock:()=>${T0}});
+    window.__sessions=${q(sessions)};window.__providers=${q(f.providers)};
+    await __renderer.setWorld('guild','dark');__renderer.update(__providers,__sessions);
+    window.__at=id=>{const p=__renderer.units.get(id).root.position;return [p.x,p.z];};
+    window.__place=id=>{const p=__renderer.staged.places.get(id);return [p.x,p.z];};
+    // Steps until the character stops, at most 4000 times; returns the count.
+    window.__walk=id=>{let n=0;while(__renderer.units.get(id).moving&&n<4000){__renderer.step(.05);n++;}return n;};
+    // How many 0.05 s steps a walk along a route at a speed takes.
+    window.__steps=(from,path,speed)=>{let d=0,a=from;for(const p of path){d+=Math.hypot(p.x-a.x,p.z-a.z);a=p;}return Math.ceil(d/speed/.05);};
+  })()`);
+  const id=sessions[0].id,unit=`__renderer.units.get(${q(id)})`;
+  await b.wait('[...__renderer.units.values()].every(u=>u.loaded)');
+  assert.deepEqual(await b.evaluate(`__at(${q(id)})`),await b.evaluate(`__place(${q(id)})`),'sessions open at their stations');
+  assert.equal(await b.evaluate(`${unit}.clip`),'work_0','a working session plays its work');
+  // Quiet for a minute: the character walks to a rest spot round the plaza.
+  const walk=await b.evaluate(`(()=>{
+    const from={x:${unit}.root.position.x,z:${unit}.root.position.z};
+    __sessions[0].activity='quiet';__sessions[0].lastOutputAt=${q(iso(60000))};__renderer.update(__providers,__sessions);
+    const u=${unit},expected=__steps(from,u.path,u.speed),mode=__renderer.staged.places.get(${q(id)}).mode,clip=u.clip,moving=u.moving;
+    return {mode,clip,moving,expected,taken:__walk(${q(id)})};
+  })()`);
+  assert.equal(walk.mode,'rest');
+  assert.equal(walk.moving,true);
+  assert.equal(walk.clip,'walk');
+  assert.ok(walk.taken===walk.expected||walk.taken===walk.expected+1,`a walk of ${walk.expected} steps took ${walk.taken}`);
+  assert.deepEqual(await b.evaluate(`__at(${q(id)})`),await b.evaluate(`__place(${q(id)})`),'it arrives at its rest spot');
+  assert.equal(await b.evaluate(`${unit}.clip`),await b.evaluate(`__model.clipFor(${q(id)},'rest',0)`),'and rests there');
+  // A session created a second ago steps out of its hall's door.
+  await b.evaluate(`__sessions.push({...__sessions[1],id:'arrival',createdAt:${q(iso(1000))}});__renderer.update(__providers,__sessions)`);
+  assert.deepEqual(await b.evaluate(`__at('arrival')`),await b.evaluate(`(d=>[d.x,d.z])(__model.doorFor(__sessions.at(-1),__providers))`),'a new session starts at its door');
+  await b.wait(`__renderer.units.get('arrival').loaded`);
+  assert.ok(await b.evaluate(`__walk('arrival')`)<4000,'and reaches its place');
+  assert.deepEqual(await b.evaluate(`__at('arrival')`),await b.evaluate(`__place('arrival')`));
+  // Reduced motion: a change of place is immediate, with no walk.
+  await b.evaluate(`__renderer.setReducedMotion(true);__sessions[0].activity='active';__sessions[0].lastOutputAt=${q(iso(0))};__renderer.update(__providers,__sessions)`);
+  assert.equal(await b.evaluate(`${unit}.moving`),false);
+  assert.deepEqual(await b.evaluate(`__at(${q(id)})`),await b.evaluate(`__place(${q(id)})`),'reduced motion places it at once');
+  await b.evaluate('__renderer.dispose()');
+  assert.deepEqual(b.errors,[]);
+});
+
+// Deterministic like the walk check: a fixed clock, no animation frames, and
+// step() in fixed steps.
+test('station props come and go with their sessions, halls glow and smoke with their working crews, and resting characters glance at each other',options,async t=>{
+  const {f,b}=await setup(t);
+  const T0=Date.parse('2026-10-13T12:00:00.000Z'),iso=ms=>new Date(T0-ms).toISOString();
+  // Two Claude Code sessions working, one Codex session quiet.
+  const sessions=[...f.data.values()].slice(0,3).map((s,i)=>({...s,activity:i<2?'active':'quiet',lastOutputAt:iso(i<2?0:5000),createdAt:iso(3600000),agents:[],shells:[]}));
+  await b.evaluate(`(async()=>{
+    const {YardRenderer}=await import('/yard/renderer.js');
+    window.__model=await import('/yard/model.mjs');
+    const host=document.createElement('div'),labels=document.createElement('div');
+    host.style.cssText='position:fixed;width:900px;height:700px;top:0;left:0';host.append(labels);document.body.append(host);
+    window.__renderer=new YardRenderer(host,labels,{select(){},open(){},clock:()=>${T0}});
+    window.__sessions=${q(sessions)};window.__providers=${q(f.providers)};
+    await __renderer.setWorld('guild','dark');__renderer.update(__providers,__sessions);
+    window.__steps=n=>{for(let i=0;i<n;i++)__renderer.step(.05);};
+    window.__hall=id=>{const h=__renderer.halls.get(id);return {level:h.level,glow:Math.max(...h.glows.map(m=>m.emissiveIntensity))};};
+  })()`);
+  await b.wait('__renderer.props.size===3 && [...__renderer.props.values()].every(p=>p.model) && [...__renderer.units.values()].every(u=>u.loaded)');
+  assert.deepEqual(await b.evaluate(`__sessions.map(s=>{const p=__renderer.props.get(s.id).root,slot=__renderer.staged.slots.get(s.id);
+    const want=__model.stationProp({x:Math.round(slot.x*1000)/1000,z:Math.round(slot.z*1000)/1000},s.id);
+    return [p.position.x===want.x,p.position.z===want.z,p.rotation.y===want.face];})`),sessions.map(()=>[true,true,true]),'each station has its prop, where the contract puts it');
+  assert.equal(await b.evaluate(`__renderer.frame`),0,'nothing animates while rendering is paused');
+  const idle=await b.evaluate(`__hall('openai')`);
+  await b.evaluate('__steps(40)');
+  const busy=await b.evaluate(`__hall('anthropic')`);
+  assert.equal(busy.level,1,'two working sessions light their hall fully');
+  assert.ok(busy.glow>idle.glow,'and it glows brighter than a hall with nobody working');
+  assert.equal(await b.evaluate(`__hall('openai').level`),0);
+  assert.ok(await b.evaluate('__renderer.effects.live')>0,'its chimney smokes');
+  // Both quiet: the glow fades out and the last smoke clears.
+  await b.evaluate(`for(const s of __sessions)Object.assign(s,{activity:'quiet',lastOutputAt:${q(iso(1000))}});__renderer.update(__providers,__sessions)`);
+  await b.evaluate('__steps(10)');
+  const fading=await b.evaluate(`__hall('anthropic').level`);
+  assert.ok(fading>0&&fading<1,'the glow fades rather than snapping off');
+  await b.evaluate('__steps(150)');
+  assert.deepEqual(await b.evaluate(`[__hall('anthropic').level,__renderer.effects.live]`),[0,0]);
+  // The two pausing Claude Code characters stand side by side and glance at each other.
+  const glance=await b.evaluate(`[__renderer.units.get(__sessions[0].id).lookYaw,__model.lookTarget(__sessions[0].id,__renderer.staged.places)]`);
+  assert.equal(glance[1],sessions[1].id);
+  assert.ok(Math.abs(glance[0])>.05,'a pausing character turns its head to its neighbour');
+  // Working again under reduced motion: the glow is there at once, with no smoke.
+  await b.evaluate(`__renderer.setReducedMotion(true);for(const s of __sessions.slice(0,2))s.activity='active';__renderer.update(__providers,__sessions)`);
+  assert.deepEqual(await b.evaluate(`[__hall('anthropic').level,__renderer.effects.live]`),[1,0]);
+  // A session that ends takes its prop with it; a world switch releases the prop model.
+  await b.evaluate(`__sessions.pop();__renderer.update(__providers,__sessions)`);
+  assert.equal(await b.evaluate('__renderer.props.size'),2);
+  assert.equal(await b.evaluate(`__renderer.scene.children.filter(c=>c.userData.prop).length`),2);
+  await b.evaluate(`__renderer.setWorld('orbital','dark')`);
+  await b.wait(`__renderer.skin==='orbital' && [...__renderer.props.values()].every(p=>p.model)`);
+  assert.equal(await b.evaluate(`__renderer.cache.has('guild_station')`),false,'the old world prop is released');
+  await b.evaluate('__renderer.dispose()');
+  assert.deepEqual(b.errors,[]);
+});
+
 test('Cards and Yard use the same actions, accounts, dialogs and terminal',options,async t=>{
   const {f,b}=await setup(t);
   await b.wait("document.querySelector('#providers .usage .meter')");

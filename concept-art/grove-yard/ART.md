@@ -25,6 +25,7 @@ holds Grove's `world.json` (cast, village dwellings and seeds other than 42),
 | Models | `python build.py grove models [name ...]` | `.cache/grove-yard/models/<name>.glb` with TRELLIS.2 (`trellis.py`) |
 | Cast | `python build.py grove cast [name ...]` | `web/yard/assets/spirit_*.glb`: rigged and animated (`rig.py`) |
 | Halls | `python build.py grove halls` | `web/yard/assets/grove.glb` (`halls.py`) |
+| Props | `python build.py grove props` | `web/yard/assets/grove_station.glb`: the station prop stood on the ground at its working height (`props.py`) |
 | Plates | `blender -b --factory-startup --python concept-art/guild-yard/env/plates.py -- grove` | `web/yard/assets/grove/` |
 | Sky | `blender -b --factory-startup --python concept-art/guild-yard/env/surfaces.py -- grove` | `web/yard/assets/grove/surfaces.json` and skies |
 
@@ -73,6 +74,17 @@ model's textures to `web/yard/assets/maps/`, and the Yard tests.
 - **Docker Agent's boathouse** stands in a broad mossy stump rather than
   under a crown: its spreading oak canopy came back as a flat card at seed
   123 and shattered as clumps, and a topiary dome restage read as a bowl.
+- **Station prop**: a worktable stump, its sawn top set with wooden bowls, a
+  clay pot and a saw. It is the `station` entry in `concepts.json`, generated
+  with `hidream-o1` (three seeds from 1621, picked by contact sheet as
+  `pick`), restaged onto flat medium grey with `qwen-edit` (the `station`
+  entry in `edits.json`), made with TRELLIS.2 at 1024 shape voxels, 60,000
+  faces and 2048 textures, as the halls are, and checked from four sides. The
+  first prompt asked for a wide low stump, too broad for a station at a 1 m
+  surface; the pick, 1624, is from a second prompt for a stump as wide as it
+  is tall. Its sawn top stands at 0.67 m for a 2 m figure (`station.surface`),
+  the height at which it fits its 1 x 0.85 m footprint; it is 0.89 x 0.85 x
+  0.74 m.
 
 ## Plates
 

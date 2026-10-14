@@ -86,5 +86,26 @@
    "seed": 5,
    "prompt": "Replace the background with a perfectly flat, uniform, untextured medium grey with no noise, pattern, gradient or shadow. Keep the subject, its pose, framing and lighting exactly the same."
   }
+ ],
+ "staff_shell_apose": [
+  {
+   "input": "concepts/staff_shell.png",
+   "seed": 11,
+   "prompt": "Change only the pose to a relaxed A-pose, as for a 3D character rig: both arms hang straight and are angled about 25 degrees out from the sides, so plain background shows clearly between each arm and the body all the way from armpit to hand, and the feet stand a little apart with a clear gap between the legs. Both hands are open and empty; the tools stay in the pouches of his tool belt. Keep the face, outfit, colours, materials, proportions, framing and lighting exactly the same, full length, facing the viewer, on a perfectly flat, uniform, untextured medium grey background with no noise, pattern, gradient or shadow."
+  }
+ ],
+ "staff_xai_apose": [
+  {
+   "input": "concepts/staff_xai.png",
+   "seed": 31,
+   "prompt": "Change only the pose to a relaxed A-pose, as for a 3D character rig: both arms hang straight and are angled about 40 degrees out from the sides, with a wide gap of plain background, at least as wide as a hand, between each sleeve and the body all the way from armpit to hand, and the feet stand a little apart with a clear gap between the legs. Both hands are open and empty, and the open jacket hangs straight so it does not touch the arms. Keep the face, outfit, colours, materials, proportions, framing and lighting exactly the same, full length, facing the viewer, on a perfectly flat, uniform, untextured medium grey background with no noise, pattern, gradient or shadow."
+  }
+ ],
+ "station": [
+  {
+   "input": "raw/station-1637.png",
+   "prompt": "Keep the exact same single object unchanged in shape, proportions, colours and detail, and place it alone on a perfectly flat, uniform, untextured medium grey background, with no floor, no shadow, no plants or objects around it.",
+   "seed": 7
+  }
  ]
 }

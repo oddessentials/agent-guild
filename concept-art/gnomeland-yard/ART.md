@@ -23,6 +23,7 @@ out onto grey), `concepts.json` and `edits.json`.
 | Models | `python build.py gnomeland models [name ...]` | `.cache/gnomeland-yard/models/<name>.glb` with TRELLIS.2 (`trellis.py`) |
 | Cast | `python build.py gnomeland cast [name ...]` | `web/yard/assets/gnome_*.glb`: rigged and animated (`rig.py`) |
 | Halls | `python build.py gnomeland halls` | `web/yard/assets/gnomeland.glb` (`halls.py`) |
+| Props | `python build.py gnomeland props` | `web/yard/assets/gnomeland_station.glb`: the station prop stood on the ground at its working height (`props.py`) |
 | Plates | `blender -b --factory-startup --python concept-art/guild-yard/env/plates.py -- gnomeland` | `web/yard/assets/gnomeland/` |
 | Sky | `blender -b --factory-startup --python concept-art/guild-yard/env/surfaces.py -- gnomeland` | `web/yard/assets/gnomeland/surfaces.json` and skies |
 
@@ -53,10 +54,14 @@ model's textures to `web/yard/assets/maps/`, and the Yard tests.
 - **Rigging**: the Google, xAI and shell builders hold a staff, keep their
   hands in their pockets, or wear a ragged robe, so they work with `steady`
   (a lean and nod with the hands still), which keeps their cloth from
-  stretching. The OpenAI builder's hammer is fused to his fist and would be
-  taken for his hand, so `world.json` boxes it in as a `prop`: it is cut
-  out before the joints are found and follows his left hand rigidly, and he
-  works with `pound`, lifting it upright and dropping it.
+  stretching. The Anthropic, OpenAI and Docker builders work with their
+  hands, so they are restaged again in an A-pose, arms clear of the body
+  (`builder_<provider>_apose` in `edits.json`): a hand that hangs against the
+  coat reconstructs fused to it and drags it along. The OpenAI builder's
+  hammer stands on its head beside his boot there, two loose parts of the
+  model that `world.json` names as his `prop`; it is cut out before the
+  joints are found and follows his left hand rigidly, and he works with
+  `pound`, swinging it up over his shoulder and down.
 - **Halls, village buildings and shell helpers** are generated from
   `concepts.json`: each entry is a prompt, its seed, a shared style and the
   picked seed as `pick`. Gnome figures and background scenery in the picked
@@ -65,6 +70,18 @@ model's textures to `web/yard/assets/maps/`, and the Yard tests.
   reconstruction shattered. The picks are in `concepts/`. The Anthropic and
   xAI halls are turned so their rune front and round-window gable face the
   camera (`turn` in `world.json`).
+- **Station prop**: a black anvil on a round iron-banded oak stump, hammers
+  and chisels on a strap round it and a coil of copper wire. It is the
+  `station` entry in `concepts.json`, generated with `hidream-o1` (three seeds
+  from 1651, picked by contact sheet as `pick`), restaged onto flat medium
+  grey with `qwen-edit` (the `station` entry in `edits.json`), made with
+  TRELLIS.2 at 1024 shape voxels, 60,000 faces and 2048 textures, as the halls
+  are, and checked from four sides. The first prompt asked for a workbench,
+  too broad for a station; the pick, 1655, is from a second prompt for an
+  anvil station. The first restage dropped the stump, so the edit names
+  everything that stays. The anvil face stands at 0.75 m for a 2 m figure
+  (`station.surface`), the height at which it fits its footprint; it is 0.87 x
+  0.85 x 0.80 m.
 
 ## Plates
 

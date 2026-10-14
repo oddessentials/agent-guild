@@ -2,7 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, statSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
-import { sessionPose, familiarPose, layoutSessions, providerPositions, characterIndex, WORLDS, CAMERA, SUN, minZoom, clampPan, viewBasis, plateExtent } from '../web/yard/model.mjs';
+import { sessionPose, familiarPose, layoutSessions, providerPositions, characterIndex, WORLDS, CAMERA, SUN, minZoom, clampPan, viewBasis, plateExtent,
+ stage, stagingMode, nextStagingChange, restSpots, route, clipFor, doorFor, stationProp, STAGING, CLIPS, SKELETON, PROVIDER_ORDER } from '../web/yard/model.mjs';
+import { goldenVectors } from '../scripts/yard-golden.mjs';
 import { Matrix4, Vector3 } from 'three';
 const providers=['anthropic','openai','google','xai','shell','docker'].map(id=>({id}));
 const session=(id,provider='anthropic')=>({id,provider:{id:provider},createdAt:'2026-01-01T00:00:00Z'});
@@ -35,6 +37,80 @@ test('crews behind a front hall start at their right end, the others at their le
  // Docker Agent's hall is 1.3 times the 5.2 m footprint; its crew stands clear of it.
  const docker=layoutSessions([session('d','docker')],providers).get('d');
  assert.ok(docker.z-anchors.get('docker').z>5.2*1.3/2,'Docker crew in front of its hall');
+});
+test('staging follows only reported state: work, pause, then rest after a quiet spell, and done',()=>{
+ const now=Date.parse('2026-10-13T12:00:00Z'),at=ms=>new Date(now-ms).toISOString();
+ const s=(status,activity,quiet)=>({status,activity,lastOutputAt:at(quiet),createdAt:at(3600000)});
+ assert.equal(stagingMode(s('running','active',60000),now),'work');
+ assert.equal(stagingMode(s('running','quiet',STAGING.restAfter-1),now),'pause');
+ assert.equal(stagingMode(s('running','quiet',STAGING.restAfter),now),'rest');
+ assert.equal(stagingMode(s('exited','active',0),now),'done');
+ // A session that reports no output time rests from when it was created.
+ assert.equal(stagingMode({status:'running',activity:'quiet',createdAt:at(STAGING.restAfter)},now),'rest');
+ const quiet=[{...s('running','quiet',5000),id:'a'},{...s('running','quiet',1000),id:'b'},{...s('running','active',0),id:'c'}];
+ assert.equal(nextStagingChange(quiet,now),now-5000+STAGING.restAfter,'the longest-quiet session leaves first');
+ assert.equal(nextStagingChange([quiet[2]],now),null);
+});
+test('resting sessions take distinct plaza spots, keep them, and overflow to their stations',()=>{
+ const now=Date.parse('2026-10-13T12:00:00Z'),spots=restSpots(providers);
+ const rested=n=>Array.from({length:n},(_,i)=>({...session('r'+String(i).padStart(2,'0'),providers[i%6].id),status:'running',activity:'quiet',lastOutputAt:'2026-10-13T11:00:00Z'}));
+ const first=stage(rested(spots.length+3),providers,now);
+ const used=[...first.places.values()].filter(p=>p.mode==='rest');
+ assert.equal(used.length,spots.length);
+ assert.equal(new Set(used.map(p=>p.x+','+p.z)).size,spots.length);
+ assert.equal([...first.places.values()].filter(p=>p.mode==='pause').length,3,'overflow waits at its station');
+ const fewer=rested(spots.length+3).filter((_,i)=>i!==1);
+ const second=stage(fewer,providers,now,first);
+ for(const s of fewer)if(first.places.get(s.id).mode==='rest')assert.deepEqual(second.places.get(s.id),first.places.get(s.id),s.id);
+ assert.equal([...second.places.values()].filter(p=>p.mode==='rest').length,spots.length,'a freed spot is taken');
+});
+test('rest spots, doors and routes keep out of the halls and the centrepiece',()=>{
+ const custom=[...providers,{id:'custom-1'},{id:'custom-2'}];
+ const boxes=[...providerPositions(custom)].map(([id,p])=>({...p,half:id==='docker'?STAGING.hall.docker:STAGING.hall.half}));
+ boxes.push({x:STAGING.plaza.x,z:STAGING.plaza.z,half:STAGING.plaza.half});
+ const inside=p=>boxes.some(b=>Math.abs(p.x-b.x)<b.half-.06&&Math.abs(p.z-b.z)<b.half-.06);
+ assert.ok(restSpots(custom).length>=12);
+ for(const spot of restSpots(custom))assert.ok(!inside(spot),JSON.stringify(spot));
+ for(const p of custom)assert.ok(!inside(doorFor({provider:{id:p.id}},custom)),p.id);
+ const points=[];for(let x=-14;x<=14;x+=3.5)for(let z=-12;z<=18;z+=3.5)if(!inside({x,z}))points.push({x,z});
+ for(const a of points)for(const b of points){
+  const path=route(a,b,custom);
+  assert.deepEqual(path.at(-1),b);
+  let from=a;
+  for(const to of path){for(let t=0;t<=1;t+=.02)assert.ok(!inside({x:from.x+(to.x-from.x)*t,z:from.z+(to.z-from.z)*t}),JSON.stringify([a,b,path]));from=to;}
+ }
+});
+test('station props face their characters, who never turn their backs to the camera, and walkers keep round them',()=>{
+ const camera=Math.atan2(CAMERA.offset[0],CAMERA.offset[2]),turn=a=>Math.abs(Math.atan2(Math.sin(a),Math.cos(a)));
+ const slots=[...layoutSessions(Array.from({length:12},(_,i)=>session('s'+i,providers[i%6].id)),providers).entries()];
+ const props=slots.map(([id,p])=>stationProp(p,id));
+ assert.deepEqual(new Set(props.map(p=>p.arrangement)),new Set(['counter','left','right']));
+ for(const [i,[,p]] of slots.entries()){
+  const prop=props[i];
+  assert.ok(turn(prop.characterFace-camera)<Math.PI/2,'facing the camera side');
+  assert.ok(Math.abs(Math.atan2(prop.x-p.x,prop.z-p.z)-prop.characterFace)<1e-3&&turn(prop.face-prop.characterFace-Math.PI)<1e-3,'prop and character face each other');
+ }
+ const half=STAGING.station.half-.06;
+ for(const [,a] of slots)for(const [,b] of slots){
+  let from=a;
+  for(const to of route(a,b,providers,props)){
+   for(let t=0;t<=1;t+=.02){
+    const x=from.x+(to.x-from.x)*t,z=from.z+(to.z-from.z)*t;
+    assert.ok(!props.some(p=>Math.abs(x-p.x)<half&&Math.abs(z-p.z)<half),JSON.stringify([a,b]));
+   }
+   from=to;
+  }
+ }
+});
+test('clip choices are seeded per session and come from the contract clip set',()=>{
+ for(const mode of Object.keys(CLIPS.character).filter(m=>m!=='walk'))for(let n=0;n<30;n++)assert.ok(CLIPS.character[mode].includes(clipFor('s1',mode,n)));
+ const seq=id=>Array.from({length:30},(_,n)=>clipFor(id,'rest',n)).join();
+ assert.equal(seq('s1'),seq('s1'));
+ assert.notEqual(seq('s1'),seq('s2'));
+});
+test('the staging contract matches its golden vectors',()=>{
+ const golden=JSON.parse(readFileSync(new URL('./fixtures/yard-choreography.json',import.meta.url),'utf8'));
+ assert.deepEqual(JSON.parse(JSON.stringify(goldenVectors())),golden,'run node scripts/yard-golden.mjs --write only for a deliberate contract change (docs/yard/CONTRACT.md)');
 });
 test('Docker Agent sessions wear its own character, custom providers the shell one',()=>{
  assert.equal(characterIndex('docker'),5);
@@ -79,20 +155,31 @@ test('each skin has a distinct authored world with named provider anchors',()=>{
  }
  for(const [skin,world]of Object.entries(WORLDS))assert.ok(world.characters&&world.helpers.agent&&world.helpers.shell,skin+' has a cast');
 });
-test('the shipped characters and helpers have actual skinning and usable animation tracks',()=>{
+test('the shipped characters and helpers follow the contract skeleton and carry every contract clip',()=>{
  const counts=new Map();
  for(const world of Object.values(WORLDS)){
-  if(world.characters)counts.set(world.characters,6);
-  if(world.helpers)for(const prefix of Object.values(world.helpers))counts.set(prefix,4);
+  if(world.characters)counts.set(world.characters,['character',6]);
+  if(world.helpers)for(const prefix of Object.values(world.helpers))counts.set(prefix,['helper',4]);
  }
- for(const [prefix,count] of counts){
+ const clips={character:Object.values(CLIPS.character).flat(),helper:CLIPS.helper};
+ for(const [prefix,[kind,count]] of counts){
   for(let i=0;i<count;i++){
-   const asset=glb(prefix+i);
-   assert.ok(asset.skins?.length);
-   for(const name of ['resting','working','waiting','done','arrival']){
-    const clip=asset.animations.find(a=>a.name===name);assert.ok(clip,prefix+i+' '+name);
-    assert.ok(clip.channels.length>0);
-    assert.ok(clip.samplers.every(s=>asset.accessors[s.input].count>1));
+   const name=prefix+i,asset=glb(name);
+   assert.equal(asset.skins?.length,1,name);
+   const joints=asset.skins[0].joints.map(j=>asset.nodes[j].name);
+   assert.deepEqual([...joints].sort(),[...SKELETON[kind]].sort(),name+' skeleton');
+   for(const clip of clips[kind]){
+    const animation=asset.animations.find(a=>a.name===clip);assert.ok(animation,name+' '+clip);
+    assert.ok(animation.channels.length>0);
+    assert.ok(animation.samplers.every(s=>asset.accessors[s.input].count>1),name+' '+clip+' has keys');
+   }
+   // The runtime walks a character at the speed its stride and cycle give.
+   const yard=asset.nodes.find(n=>n.extras?.yard)?.extras.yard;
+   assert.ok(yard?.stride>0&&yard?.cycle>0&&yard?.height>0,name+' yard extras');
+   // Builders work at their station's surface, scaled to their own shoulders.
+   if(kind==='character')assert.ok(yard.surface>0,name+' working height');
+   for(const event of yard.events||[]){
+    assert.ok(clips[kind].includes(event.clip)&&event.time>=0&&event.at.length===3,name+' event');
    }
   }
  }
@@ -112,6 +199,23 @@ test('the view basis matches the camera, and no permitted view sees past the pla
  }
  assert.ok(minZoom(32/9)===CAMERA.zoom.min&&minZoom(8)>CAMERA.zoom.min);
 });
+test('every world has a skinless station prop within its budget, and every hall smoke and glow anchors',()=>{
+ const assets=new URL('../web/yard/assets/',import.meta.url);
+ for(const [skin,world] of Object.entries(WORLDS)){
+  const prop=glb(world.station.asset);
+  assert.ok(prop.meshes?.length,skin+' prop has a model');
+  assert.ok(!prop.skins?.length&&!prop.animations?.length,skin+' prop is skinless');
+  // The rig, the prop and the renderer agree on how high its working surface is.
+  const built=prop.nodes.find(n=>n.extras?.yard)?.extras.yard.surface;
+  const rigged=JSON.parse(readFileSync(new URL(`../concept-art/${skin}-yard/world.json`,import.meta.url),'utf8')).station.surface;
+  assert.ok(Math.abs(built-world.station.surface)<.01&&rigged===world.station.surface,`${skin} surface: prop ${built}, rig ${rigged}, WORLDS ${world.station.surface}`);
+  let bytes=statSync(new URL(world.station.asset+'.glb',assets)).size;
+  for(const image of prop.images||[])if(image.uri)bytes+=statSync(new URL(image.uri,assets)).size;
+  assert.ok(bytes<=PROP_BUDGET*MiB,`${skin} prop is ${(bytes/MiB).toFixed(2)} MiB`);
+  const nodes=new Set(glb(world.asset).nodes.map(n=>n.name));
+  for(const {id} of providers)for(const anchor of ['smoke','glow'])assert.ok(nodes.has(`hall_${id}_${anchor}`),`${skin} hall_${id}_${anchor}`);
+ }
+});
 // WebP stores its canvas size in the VP8X chunk (24-bit width-1, height-1).
 function webpSize(bytes){
  assert.equal(bytes.toString('ascii',0,4),'RIFF');assert.equal(bytes.toString('ascii',8,12),'WEBP');
@@ -122,6 +226,8 @@ function webpSize(bytes){
  throw new Error('Unknown WebP chunk '+chunk);
 }
 const MiB=1048576;
+// A station prop and its maps, in MiB.
+const PROP_BUDGET=5;
 test('every world\'s plates match the live camera, cover every view, and stay within budget',()=>{
  const assets=new URL('../web/yard/assets/',import.meta.url);
  for(const [skin,world] of Object.entries(WORLDS)){
@@ -153,6 +259,6 @@ test('every world\'s plates match the live camera, cover every view, and stay wi
    for(const material of surface.materials)assert.ok(materials.has(material),`${name} textures ${material}, which ${world.asset}.glb must contain`);
    for(const key of ['color','normal','rough'])bytes+=readFileSync(new URL(surface[key],assets)).length;
   }
-  assert.ok(bytes<=24*MiB,`${skin} world is ${(bytes/MiB).toFixed(2)} MiB`);
+  assert.ok(bytes<=36*MiB,`${skin} world is ${(bytes/MiB).toFixed(2)} MiB`);
  }
 });

@@ -1,0 +1,4 @@
+*.glb
+*.import
+maps/
+.godot/

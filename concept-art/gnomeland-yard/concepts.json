@@ -79,5 +79,12 @@
     "style": "_helper_style",
     "prompt": "A small walking lantern: a squat four-sided brass and oak lantern housing with solid carved panels and a pointed copper roof like a gnome hat, a large violet glowing crystal inside behind open fretwork, standing on three thin jointed brass legs, a little carry handle on top.",
     "pick": 905
+  },
+  "_station": "Highly detailed stylized 3D render of a single workshop fixture from a gnome craftsmen's mountain village, premium animated film look, chunky solid forms, warm oak, rough fieldstone and wrought iron, every surface matte with no glossy reflections, seen from an elevated three-quarter view from the front right, the whole object fully visible and isolated and centered on a perfectly flat, uniform, untextured medium grey background, even soft studio lighting, no ground, no shadow, no people, no smoke, no fire, no sparks, no glow effects, no text, no letters, no logos, no border.",
+  "station": {
+    "seed": 1654,
+    "prompt": "A gnome smith's anvil station: a small black iron anvil standing on a thick round oak stump banded with iron, about waist high and no wider than it is tall, a few chisels and hammers hanging from a leather strap round the stump, a coil of copper wire resting on the anvil's heel.",
+    "style": "_station",
+    "pick": 1655
   }
 }

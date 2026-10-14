@@ -91,5 +91,12 @@
   "style": "_vehicle_style",
   "prompt": "A small boxy delivery van painted matte slate blue with a tall cargo body and small flat windows.",
   "pick": 351
+ },
+ "_station": "Highly detailed stylized 3D render of a single piece of office furniture from a friendly modern tech campus, premium animated film look, chunky rounded forms, every surface matte with no glossy reflections, screens as flat matte dark charcoal panels with no reflections and nothing shown on them, seen from an elevated three-quarter view from the front right, the whole object fully visible and isolated and centered on a perfectly flat, uniform, untextured medium grey background, even soft studio lighting, no ground, no shadow, no people, no chair, no text, no letters, no logos, no border.",
+ "station": {
+  "seed": 1637,
+  "prompt": "A modern standing workstation shaped like a narrow podium: a slim upright cabinet of light oak and white panels at standing height, its small square top holding one computer monitor on a short stand with its screen facing the viewer and a slim keyboard in front of it, a small potted plant on a little side shelf, the whole piece about as wide as it is deep and much taller than it is wide.",
+  "style": "_station",
+  "pick": 1637
  }
 }

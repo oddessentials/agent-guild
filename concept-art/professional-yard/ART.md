@@ -22,6 +22,7 @@ holds the cast in `world.json`, the prompts in `concepts.json`, the edits in
 | Edits | `python edits.py professional [name ...]` | `raw/edit/<name>-<step>.png` with `qwen-edit`, from `edits.json`; the results replace `concepts/<name>.png` |
 | Models | `python build.py professional models [name ...]` | `.cache/professional-yard/models/<name>.glb` with TRELLIS.2 |
 | Cast | `python build.py professional cast [name ...]` | `web/yard/assets/staff_*.glb` and `bot_*.glb`, rigged and animated |
+| Props | `python build.py professional props` | `web/yard/assets/professional_station.glb`: the station prop stood on the ground at its working height (`props.py`) |
 
 `raw/` and the TRELLIS.2 models are not committed; the concept picks and
 runtime models are. Then run `npm run optimize:yard` and the Yard tests.
@@ -42,7 +43,9 @@ for each subject and one picked.
   prompts ask for a relaxed A-pose so `rig.py` finds the arms in the
   silhouette, for matte fabrics, and for mid-tone trousers rather than
   black, which bakes as an unreadable silhouette. Identity is carried by big
-  colour blocks: badges and emblems do not survive the bake.
+  colour blocks: badges and emblems do not survive the bake. The xAI and
+  shell staff, whose arms still touched the jacket and tool belt, are
+  restaged with arms further out (`staff_<provider>_apose` in `edits.json`).
 - **Office robots** (`bot_0`–`bot_3`) are a wheeled courier with an orange
   band, a one-piece concierge with green trim, a round floor sweeper with a
   blue top and a two-wheeled butler with a purple chest carrying a tray. Each
@@ -63,3 +66,13 @@ for each subject and one picked.
   it shattered at four seeds and in two candidates, so it was replaced by the
   chunky one-piece concierge (`bot_concierge` in `concepts.json`), which
   reconstructed first time.
+- **Station prop**: a narrow standing workstation of light oak and white
+  panels, a monitor on its top and a keyboard on a tray below. It is the
+  `station` entry in `concepts.json`, generated with `hidream-o1` (three seeds
+  from 1631, picked by contact sheet as `pick`), restaged onto flat medium
+  grey with `qwen-edit` (the `station` entry in `edits.json`), made with
+  TRELLIS.2 at 1024 shape voxels, 60,000 faces and 2048 textures, as the halls
+  are, and checked from four sides. Two prompts for a standing desk came back
+  as wide desks, too broad for a station; the pick, 1637, is from a third
+  prompt for a narrow podium. Its top stands at 1 m for a 2 m figure; it is
+  0.73 x 0.58 x 1.38 m.

@@ -317,6 +317,16 @@ def campus_hall(index):
    for k in range(11):s.box((x-1.0+k*.2,-1.17,z),(.04,.05,.95),'officeDark' if c=='white' else 'iron',.006)
  return s
 
+# Where each hall's smoke rises (its highest chimney, tower or roof vent) and
+# where its glow shows (the front centre at door height), in the hall's own
+# coordinates, by hall index.
+SMOKE={'guild':[(1.4,.8,5.0),(0,.6,5.65),(0,0,5.2),(1,.6,5.6),(1,1,4.2),(0,0,4.6)],
+ 'professional':[(-.3,.5,4.3),(0,.1,4.5),(-.4,.15,4.75),(-.6,.3,5.7),(0,.1,3.55),(0,.3,4.6)]}
+FRONT={'guild':[-1.18,-1.38,-1.52,-1.2,-1.33,-1.33],'professional':[-1.73,-1.68,-1.45,-1.77,-1.63,-1.47]}
+def anchor(name,parent,location):
+ empty=bpy.data.objects.new(name,None);empty.empty_display_size=.3
+ bpy.context.collection.objects.link(empty);empty.parent=parent;empty.location=location
+ return empty
 def environment(skin):
  # The ground and surroundings are pre-rendered plates (env/); the glTF carries only the halls.
  clear(); bpy.context.collection.objects.link(bpy.data.objects.new('courtyard',None))
@@ -324,7 +334,10 @@ def environment(skin):
   sculpt=guild_hall(i) if skin=='guild' else campus_hall(i)
   obj=sculpt.object('hall_'+id);obj.location=(x,y,0)
   # Docker Agent arrived as an expansion, and its hall stands larger than the rest.
+  size=1.3 if id=='docker' else 1
   if id=='docker':obj.data.transform(Matrix.Scale(1.3,4))
+  anchor('hall_'+id+'_smoke',obj,Vector(SMOKE[skin][i])*size)
+  anchor('hall_'+id+'_glow',obj,Vector((0,FRONT[skin][i]-.2,1.1))*size)
  export(skin,save=skin=='guild')
 
 WORLDS=['guild','professional']

@@ -3,7 +3,7 @@ import { readdir, stat, readFile, writeFile, mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { NodeIO, Logger } from '@gltf-transform/core';
 import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
-import { dedup, weld, quantize } from '@gltf-transform/functions';
+import { dedup, weld, quantize, resample } from '@gltf-transform/functions';
 import { PROVIDER_ORDER } from '../web/yard/model.mjs';
 
 const directory=new URL('../web/yard/assets/',import.meta.url);
@@ -64,6 +64,8 @@ for(const name of (await readdir(directory)).filter(name=>name.endsWith('.glb')&
     for(const parent of parents){parent.removeChild(node);parent.addChild(anchor);}
     node.setTranslation([0,0,0]).setRotation([0,0,0,1]).setScale([1,1,1]);
     anchor.addChild(node);
+    // The hall's smoke and glow anchors move up too, out of reach of quantization.
+    for(const child of node.listChildren()){node.removeChild(child);anchor.addChild(child);}
   }
   // Preserve named hall transforms, the renderer's anchors, and skeletal clips.
   // Rounding sub-millimetre position noise also makes the release archive smaller.
@@ -75,6 +77,8 @@ for(const name of (await readdir(directory)).filter(name=>name.endsWith('.glb')&
   }
   await document.transform(
     weld({cleanup:false}),
+    // Baked clips carry a key every frame; drop the ones a straight blend between neighbours reproduces.
+    resample({tolerance:1e-4}),
     dedup({keepUniqueNames:true}),
     quantize({pattern:/^(POSITION|NORMAL|TANGENT|WEIGHTS_\d+)$/,quantizePosition:14,quantizeNormal:10,quantizeWeight:8}),
   );
