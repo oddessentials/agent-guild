@@ -200,7 +200,9 @@
         source: 'report',
       },
       toolSessionId: 'demo-' + id, reply: replies[id] ? { id: 1 } : null, reporting: providerId === 'shell' ? null : { state: 'active', reason: null },
-      agents: (agents || []).map(function (name, i) { return { id: id + '-agent-' + i, name: name, status: i % 2 ? 'waiting' : 'working', detail: null }; }),
+      agents: (agents || []).map(function (agent, i) {
+        return { id: id + '-agent-' + i, name: agent.name || agent, status: agent.status || (i % 2 ? 'waiting' : 'working'), detail: null };
+      }),
       shells: providerId === 'shell' ? [{ id: id + '-shell' }] : [],
       multiplexer: null,
     };
@@ -212,12 +214,19 @@
     '600d0003': 'The docs site builds with the new static generator: 86 pages, the same URLs as before, and the shared navigation moved first.',
   };
   var sessions = [
-    session('a11ce001', 'anthropic', 'Checkout: wallet payments', 'storefront', { name: 'claude-fable-5-1', displayName: 'Claude Fable 5.1' }, ['Explore', 'Test writer', 'Reviewer']),
+    session('a11ce001', 'anthropic', 'Checkout: wallet payments', 'storefront', { name: 'claude-fable-5-1', displayName: 'Claude Fable 5.1' }, ['Explore', 'Test writer', { name: 'Reviewer', status: 'done' }]),
+    session('ba7c0007', 'anthropic', 'Order confirmation emails', 'storefront', { name: 'claude-fable-5-1', displayName: 'Claude Fable 5.1' }, [{ name: 'Planner', status: 'idle' }]),
     session('c0de0002', 'openai', 'Gateway rate limits', 'api-gateway', { name: 'gpt-6-astra', displayName: 'GPT-6 Astra' }, ['Worker', 'Tests']),
     session('600d0003', 'google', 'Docs site migration', 'docs-site', { name: 'gemini-3.8-flash', displayName: 'Gemini 3.8 Flash' }, ['Researcher']),
     session('d0c4e006', 'docker', 'Docs upgrade notes', 'docs-site', { name: 'openai/gpt-5', displayName: 'GPT-5' }, []),
     session('5he11004'.replace('h', 'b'), 'shell', 'Storefront dev server', 'storefront', null, []),
   ];
+  sessions.forEach(function (s) {
+    if (['openai', 'google', 'shell'].indexOf(s.provider.id) === -1) return;
+    s.activity = 'quiet';
+    s.lastOutputAt = new Date(now - 4 * 60 * 1000).toISOString();
+    if (s.provider.id === 'shell') s.shells.push({ id: s.id + '-monitor', kind: 'monitor' });
+  });
   var detached = session('7e110005', 'shell', 'Storefront in tmux', 'storefront', null, []);
   detached.status = 'exited';
   detached.activity = 'quiet';
@@ -226,6 +235,7 @@
   detached.multiplexer = { label: 'tmux', attach: 'tmux attach -t guild-storefront', reattachable: true };
   sessions.push(detached);
   var eventSockets = [];
+  var outputTurn = 0, outputTimer = null;
   var transcripts = {};
   var catalog = window.AGENT_GUILD_DEMO_MODEL_STATS || { retrievedAt: null, stale: false, error: null, stats: [], pool: null, providers: {}, models: {}, sessions: {} };
 
@@ -243,6 +253,26 @@
   }
 
   function clone(value) { return JSON.parse(JSON.stringify(value)); }
+
+  function fresh(made) {
+    made.createdAt = made.startedAt = made.lastOutputAt = new Date().toISOString();
+    return made;
+  }
+
+  function nextOutput() {
+    outputTimer = null;
+    if (closing) return;
+    var live = sessions.filter(function (s) { return s.status === 'running' && s.task === null; });
+    var s = live[outputTurn++ % (live.length || 1)];
+    if (s) {
+      var quiet = s.activity === 'active';
+      s.activity = quiet ? 'quiet' : 'active';
+      s.lastOutputAt = new Date(Date.now() - (quiet ? 2500 : 0)).toISOString();
+      announce({ type: 'session.updated', session: clone(s) });
+    }
+    outputTimer = setTimeout(nextOutput, 7000);
+  }
+
   function json(body, status) {
     return Promise.resolve(new Response(JSON.stringify(body), { status: status || 200, headers: { 'Content-Type': 'application/json' } }));
   }
@@ -364,7 +394,7 @@
       if (closing) return error('the session manager is stopping', 'manager_stopping', 503);
       var id = Math.random().toString(16).slice(2, 10).padEnd(8, '0');
       var p = providers.find(function (item) { return item.id === body.providerId; }) || shellCard;
-      var made = session(id, p.id, body.name || p.tool + ' demo', String(body.cwd || 'demo').replace(/^.*[\\/]/, ''), p.id === 'shell' ? null : 'Demo model', []);
+      var made = fresh(session(id, p.id, body.name || p.tool + ' demo', String(body.cwd || 'demo').replace(/^.*[\\/]/, ''), p.id === 'shell' ? null : 'Demo model', []));
       sessions.push(made); announce({ type: 'session.created', session: clone(made) });
       return json({ session: clone(made) }, 201);
     }
@@ -874,7 +904,7 @@
       current.activity = 'quiet';
       current.exitCode = null;
       current.exitedAt = null;
-      current.startedAt = new Date().toISOString();
+      current.startedAt = current.lastOutputAt = new Date().toISOString();
       announce({ type: 'session.updated', session: clone(current) });
     }
     return json({ session: clone(current) });
@@ -897,7 +927,7 @@
     }
     var channel = p.installChannel || 'native';
     var id = Math.random().toString(16).slice(2, 10).padEnd(8, '0');
-    var made = session(id, p.id, updating ? 'Update ' + p.tool + ' (' + (labels[channel] || channel) + ')' : 'Install ' + p.tool, 'demo', null, []);
+    var made = fresh(session(id, p.id, updating ? 'Update ' + p.tool + ' (' + (labels[channel] || channel) + ')' : 'Install ' + p.tool, 'demo', null, []));
     made.cwd = home;
     made.task = 'install';
     made.reporting = null;
@@ -937,7 +967,7 @@
     if (kind !== 'install' && !tool.installs.some(function (c) { return c.path === body.path; })) return error('Installation not found.', 'unknown_copy', 404);
     if (kind === 'install' && !tool.installable) return error('Already installed.', 'not_installable', 400);
     var id = Math.random().toString(16).slice(2, 10).padEnd(8, '0');
-    var made = session(id, 'shell', kind.charAt(0).toUpperCase() + kind.slice(1) + ' ' + toolId, 'demo', null, []);
+    var made = fresh(session(id, 'shell', kind.charAt(0).toUpperCase() + kind.slice(1) + ' ' + toolId, 'demo', null, []));
     made.task = 'install'; made.reporting = null;
     tool.busy = true;
     transcripts[id] = 'Simulated ' + kind + ' of ' + toolId + '\r\nNo commands are run on your computer.\r\n';
@@ -976,7 +1006,7 @@
       return json({ error: { message: running + ' ' + p.tool + ' session(s) are running; removing the tool now may break them', code: 'provider_in_use', running: running } }, 409);
     }
     var id = Math.random().toString(16).slice(2, 10).padEnd(8, '0');
-    var made = session(id, p.id, 'Uninstall ' + p.tool + ' (' + labels[c.channel] + ')', 'demo', null, []);
+    var made = fresh(session(id, p.id, 'Uninstall ' + p.tool + ' (' + labels[c.channel] + ')', 'demo', null, []));
     made.cwd = home; made.task = 'install'; made.reporting = null; made.toolSessionId = null;
     transcripts[id] = uninstallTranscript(c);
     sessions.push(made); announce({ type: 'session.created', session: clone(made) });
@@ -1020,6 +1050,7 @@
       self.readyState = DemoWebSocket.OPEN; self.emit({ type: 'open' });
       if (/\/events(?:\?|$)/.test(self.url)) {
         eventSockets.push(self);
+        if (window.AGENT_GUILD_DEMO_ACTIVITY && !outputTimer) outputTimer = setTimeout(nextOutput, 7000);
         self.emit({ data: JSON.stringify({
           type: 'hello', version: version, pid: null, platform: 'darwin', startedAt: startedAt,
           launcher: null, folderOpener: null, remoteAccess: { available: true }, upgrade: null, yardArt: { state: 'ready', source: 'pack' },
@@ -1062,6 +1093,7 @@
     if (this.readyState === DemoWebSocket.CLOSED) return;
     this.readyState = DemoWebSocket.CLOSED;
     eventSockets = eventSockets.filter(function (item) { return item !== this; }, this);
+    if (!eventSockets.length) { clearTimeout(outputTimer); outputTimer = null; }
     this.emit({ type: 'close', code: code || 1000, reason: reason || '' });
   };
   window.WebSocket = DemoWebSocket;
