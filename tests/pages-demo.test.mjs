@@ -9,6 +9,7 @@ import vm from 'node:vm';
 import { describeCatalog, indexCatalog, parseCatalog } from '../src/manager/model-stats.mjs';
 import { GitHub } from '../src/manager/github.mjs';
 import { createViews } from '../src/manager/github-views.mjs';
+import { arrives, doorFor, familiarPose, hallActivity, lookTarget, stage } from '../web/yard/model.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const demo = path.join(repo, 'docs', 'demo');
@@ -176,7 +177,7 @@ test('the demo answers model stats as the manager would for its sample catalog a
   const { body } = await call('GET', '/model-stats');
   assert.deepEqual(body, describeCatalog(source, providers, events[0].sessions));
   for (const id of ['anthropic', 'openai', 'google', 'xai']) assert.ok(body.providers[id], `${id} has benchmarks`);
-  assert.equal(Object.values(body.sessions).filter(Boolean).length, 4);
+  assert.equal(Object.values(body.sessions).filter(Boolean).length, 5);
 
   const empty = await loadDemo().call('GET', '/model-stats');
   assert.deepEqual(Object.keys(empty.body).sort(), Object.keys(describeCatalog({ index: null, retrievedAt: null, stale: false, error: null }, [])).sort());
@@ -289,7 +290,7 @@ test('the demo answers GitHub in the manager\'s shapes, signed in with repositor
   const sessions = await new Promise((resolve) => {
     const { context } = loadDemo();
     const socket = new context.WebSocket('wss://example.test/api/v1/events');
-    socket.onmessage = ({ data }) => resolve(JSON.parse(data).sessions);
+    socket.onmessage = ({ data }) => { socket.close(); resolve(JSON.parse(data).sessions); };
   });
   for (const s of sessions.filter((item) => item.provider.id !== 'shell')) {
     assert.ok((await call('GET', `/github/origin?cwd=${encodeURIComponent(s.cwd)}`)).body.repo, `${s.name} sits in a demo repository`);
@@ -377,7 +378,7 @@ test('the demo lists removable copies and simulates uninstalling one', async (t)
   const busy = await call('POST', '/providers/anthropic/uninstall', { path: claude.installs[1].path });
   assert.equal(busy.status, 409);
   assert.equal(busy.body.error.code, 'provider_in_use');
-  assert.equal(busy.body.error.running, 1);
+  assert.equal(busy.body.error.running, 2);
   assert.equal((await call('POST', '/providers/xai/uninstall', { path: '/nowhere' })).body.error.code, 'unknown_copy');
 
   const events = [];
@@ -520,6 +521,50 @@ test('the demo can reattach tmux, update Grok and stop while sessions are runnin
   assert.equal(stopped.body.restart, false);
   t.mock.timers.tick(0);
   assert.equal(events.some((event) => event.type === 'manager.stopped' && event.remaining === 0), true);
+});
+
+test('the demo Yard plays every staging mode, glance, hall level and helper pose, and new sessions arrive from their door', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.parse('2026-10-14T12:00:00Z') });
+  const { context, call } = loadDemo({ Date });
+  const providers = (await call('GET', '/providers')).body.providers;
+  const sessions = new Map();
+  const socket = new context.WebSocket('wss://example.test/api/v1/events');
+  socket.onmessage = ({ data }) => {
+    const event = JSON.parse(data);
+    if (event.type === 'hello') for (const s of event.sessions) sessions.set(s.id, s);
+    if (event.type === 'session.created' || event.type === 'session.updated') sessions.set(event.session.id, event.session);
+  };
+  t.mock.timers.tick(40);
+  const all = [...sessions.values()];
+  assert.deepEqual(new Set(all.flatMap((s) => s.agents.map(familiarPose))), new Set(['working', 'waiting', 'idle', 'done']));
+  assert.deepEqual(new Set(all.flatMap((s) => s.shells.map((shell) => shell.kind || 'shell'))), new Set(['shell', 'monitor']));
+
+  const seen = new Set(), worked = new Set(), rested = new Set();
+  let staged = null;
+  for (let step = 0; step < 240; step++) {
+    staged = stage([...sessions.values()], providers, Date.now(), staged);
+    for (const [id, place] of staged.places) {
+      seen.add(place.mode);
+      if (place.mode === 'work') worked.add(id);
+      if (place.mode === 'rest') rested.add(id);
+      if (lookTarget(id, staged.places)) seen.add('glance:' + place.mode);
+    }
+    for (const p of providers) seen.add('hall:' + hallActivity([...sessions.values()], p.id));
+    t.mock.timers.tick(500);
+  }
+  for (const want of ['work', 'pause', 'rest', 'done', 'glance:pause', 'glance:rest', 'hall:off', 'hall:low', 'hall:high']) assert.ok(seen.has(want), want);
+  const running = all.filter((s) => s.status === 'running').map((s) => s.id);
+  assert.deepEqual([...worked].filter((id) => running.includes(id)).sort(), running.sort());
+  assert.deepEqual([...rested].filter((id) => running.includes(id)).sort(), running.sort());
+
+  const made = (await call('POST', '/sessions', { providerId: 'xai', cwd: '/work/storefront' })).body.session;
+  assert.equal(arrives(made, Date.now()), true);
+  assert.notDeepEqual(doorFor(made, providers), { x: 0, z: 0 });
+
+  socket.close();
+  const before = JSON.stringify([...sessions.values()]);
+  t.mock.timers.tick(60000);
+  assert.equal(JSON.stringify([...sessions.values()]), before, 'the demo stops simulating output once no page listens');
 });
 
 test('the release workflow gates Pages on the release and grants deployment-only permissions', () => {
