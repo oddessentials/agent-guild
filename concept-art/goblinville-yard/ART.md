@@ -87,8 +87,8 @@ lean and nod. The [Yard guide](../../docs/yard/README.md#rigging-and-clips)
 covers rebuilding them.
 
 `halls.py` stands each hall on the deck within a 5.2 m footprint and 5.5 m
-height, at the anchors `concept-art/guild-yard/build.py` uses for every world, decimated to 35,000
-triangles with 2048 px colour and 1024 px other maps. TRELLIS.2 squares each
+height, at the anchors `concept-art/guild-yard/build.py` uses for every world, keeping
+the triangles and textures TRELLIS.2 made. TRELLIS.2 squares each
 model to its axes with the concept's front facing the camera, so the Yard sees
 the front and right side, as the concepts show them; `turn` in `world.json`
 turns a hall whose best side is elsewhere. Warm and glowing texels become an emissive map, which

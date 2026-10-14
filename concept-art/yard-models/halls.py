@@ -9,8 +9,8 @@ TRELLIS.2 squares a model to its axes with the concept's front facing -Y, so
 unturned, the Yard camera sees the front and right side, as the concepts show
 them. It is placed at its provider's anchor as `hall_<provider>`, as
 concept-art/guild-yard/build.py places every world's halls. Warm window
-texels become an emissive map, which the renderer brightens at dusk. Textures
-are written as WebP.
+texels become an emissive map, which the renderer brightens at dusk. Halls
+keep the triangles and textures TRELLIS.2 made; textures are written as WebP.
 """
 import bpy, json, math, sys
 import numpy as np
@@ -24,8 +24,6 @@ MODELS = ROOT / f'.cache/{WORLD}-yard/models'
 OUT = ROOT / f'web/yard/assets/{WORLD}.glb'
 FOOTPRINT = 5.2
 HEIGHT = 5.5
-FACES = 35000  # triangles per hall; baked normals keep the fine detail
-TEXTURE = 2048  # base colour; other maps are half this
 # Blender positions, as concept-art/guild-yard/build.py's environment() places halls.
 ANCHORS = [('anthropic', -7, 5), ('openai', 0, 7), ('google', 7, 5), ('xai', -8, -3), ('shell', 8, -3), ('docker', -10, -11)]
 # Docker Agent arrived as an expansion, and its hall stands larger than the rest.
@@ -72,10 +70,6 @@ def hall(provider):
     centre = Vector(((lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, lo[2]))
     obj.data.transform(Matrix.Rotation(math.radians(TURN.get(provider, 0)), 4, 'Z') @ Matrix.Scale(scale, 4) @ Matrix.Translation(-centre))
     obj.name = obj.data.name = 'hall_' + provider
-    mod = obj.modifiers.new('decimate', 'DECIMATE')
-    mod.ratio = min(1, FACES / len(obj.data.polygons))
-    bpy.context.view_layer.objects.active = obj
-    bpy.ops.object.modifier_apply(modifier='decimate')
     for i, m in enumerate(obj.data.materials):
         m.name = f'hall_{provider}_{i}'
         bsdf = next(n for n in m.node_tree.nodes if n.type == 'BSDF_PRINCIPLED')
@@ -83,13 +77,6 @@ def hall(provider):
         if not link:
             continue
         base = link[0].from_node.image
-        # Colour carries the detail; normal, roughness and occlusion read at half size.
-        for node in m.node_tree.nodes:
-            if node.type != 'TEX_IMAGE' or not node.image:
-                continue
-            size = TEXTURE if node.image is base else TEXTURE // 2
-            if node.image.size[0] > size:
-                node.image.scale(size, size)
         glow = m.node_tree.nodes.new('ShaderNodeTexImage')
         glow.image = emissive(base)
         uv = link[0].from_node.inputs['Vector'].links

@@ -216,6 +216,6 @@ test('every world\'s plates match the live camera, cover every view, and stay wi
    for(const material of surface.materials)assert.ok(materials.has(material),`${name} textures ${material}, which ${world.asset}.glb must contain`);
    for(const key of ['color','normal','rough'])bytes+=readFileSync(new URL(surface[key],assets)).length;
   }
-  assert.ok(bytes<=24*MiB,`${skin} world is ${(bytes/MiB).toFixed(2)} MiB`);
+  assert.ok(bytes<=36*MiB,`${skin} world is ${(bytes/MiB).toFixed(2)} MiB`);
  }
 });
