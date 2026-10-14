@@ -177,7 +177,10 @@ jobs:
           if [ "$state" = false ]; then
             echo "Release $tag already exists."
           elif [ "$state" = true ]; then
-            gh release edit "$tag" --verify-tag --draft=false
+            if ! gh release edit "$tag" --verify-tag --draft=false; then
+              echo "::error::npm already has $VERSION, but release $tag is still a draft, so installs cannot download its Yard art yet. Re-run this job to make the release public."
+              exit 1
+            fi
           else
             echo "::error::There is no draft release $tag to publish."
             exit 1
