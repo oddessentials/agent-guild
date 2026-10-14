@@ -382,6 +382,9 @@ test('station props come and go with their sessions, halls glow and smoke with t
     await __renderer.setWorld('guild','dark');__renderer.update(__providers,__sessions);
     window.__steps=n=>{for(let i=0;i<n;i++)__renderer.step(.05);};
     window.__hall=id=>{const h=__renderer.halls.get(id);return {level:h.level,glow:Math.max(...h.glows.map(m=>m.emissiveIntensity))};};
+    const T=await import('/yard/vendor/engine.js'),body=new T.Quaternion(),head=new T.Quaternion(),ahead=new T.Vector3();
+    window.__headYaw=id=>{const u=__renderer.units.get(id);u.model.updateMatrixWorld(true);u.model.getWorldQuaternion(body);u.lookBones.head.getWorldQuaternion(head);
+      ahead.set(0,0,1).applyQuaternion(body.invert().multiply(head));return Math.atan2(ahead.x,ahead.z);};
   })()`);
   await b.wait('__renderer.props.size===3 && [...__renderer.props.values()].every(p=>p.model) && [...__renderer.units.values()].every(u=>u.loaded)');
   assert.deepEqual(await b.evaluate(`__sessions.map(s=>{const p=__renderer.props.get(s.id).root,slot=__renderer.staged.slots.get(s.id);
@@ -406,9 +409,15 @@ test('station props come and go with their sessions, halls glow and smoke with t
   const glance=await b.evaluate(`[__renderer.units.get(__sessions[0].id).lookYaw,__model.lookTarget(__sessions[0].id,__renderer.staged.places)]`);
   assert.equal(glance[1],sessions[1].id);
   assert.ok(Math.abs(glance[0])>.05,'a pausing character turns its head to its neighbour');
-  // Working again under reduced motion: the glow is there at once, with no smoke.
+  // The head holds the glance, within the contract's limit and the clip's own sway, frame after frame.
+  const [limit,turns]=await b.evaluate(`[__model.STAGING.look.yaw,Array.from({length:60},()=>(__renderer.step(.05),__headYaw(__sessions[0].id)))]`);
+  assert.ok(turns.every(yaw=>Math.abs(yaw)<limit+.3),'the head never turns past its glance');
+  assert.ok(turns.every(yaw=>Math.sign(yaw)===Math.sign(glance[0])&&Math.abs(yaw)>.3),'and keeps looking at its neighbour');
+  // Working again under reduced motion: the glow is there at once, with no smoke, and no glance.
   await b.evaluate(`__renderer.setReducedMotion(true);for(const s of __sessions.slice(0,2))s.activity='active';__renderer.update(__providers,__sessions)`);
   assert.deepEqual(await b.evaluate(`[__hall('anthropic').level,__renderer.effects.live]`),[1,0]);
+  assert.ok(await b.evaluate(`(u=>{const neck=u.lookBones.neck,track=u.action.getClip().tracks.find(t=>t.name==='Neck.quaternion');
+    const [x,y,z,w]=track.createInterpolant().evaluate(u.action.time);return Math.abs(neck.quaternion.x*x+neck.quaternion.y*y+neck.quaternion.z*z+neck.quaternion.w*w)>.99999;})(__renderer.units.get(__sessions[0].id))`),'the neck comes back from its glance to where the clip holds it');
   // A session that ends takes its prop with it; a world switch releases the prop model.
   await b.evaluate(`__sessions.pop();__renderer.update(__providers,__sessions)`);
   assert.equal(await b.evaluate('__renderer.props.size'),2);

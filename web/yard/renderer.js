@@ -656,6 +656,8 @@ export class YardRenderer {
   // names, easing in and out, within the contract's limits. The clip has
   // just posed the bones; the turn goes on top, about the model's own up
   // and right axes, the neck taking its share and the head the rest.
+  // unlook takes it off again before the next clip update, since the mixer
+  // leaves a bone whose clip value has not changed as it stands.
   look(unit,dt) {
     if(!unit.lookBones)return;
     const {yaw:maxYaw,pitch:maxPitch,neck}=STAGING.look;
@@ -670,6 +672,8 @@ export class YardRenderer {
     const ease=1-Math.exp(-3*dt);
     unit.lookYaw+=(yaw-unit.lookYaw)*ease;unit.lookPitch+=(pitch-unit.lookPitch)*ease;
     if(Math.abs(unit.lookYaw)<1e-4&&Math.abs(unit.lookPitch)<1e-4)return;
+    unit.lookPose??=[new T.Quaternion(),new T.Quaternion()];
+    unit.lookPose[0].copy(unit.lookBones.neck.quaternion);unit.lookPose[1].copy(unit.lookBones.head.quaternion);unit.looking=true;
     unit.model.updateMatrixWorld(true);
     const model=lookModel.copy(unit.model.matrixWorld).invert();
     for(const [bone,share] of [[unit.lookBones.neck,neck],[unit.lookBones.head,1-neck]]){
@@ -679,6 +683,10 @@ export class YardRenderer {
       bone.updateMatrixWorld(true);
     }
     this.dirty=true;
+  }
+  unlook(unit) {
+    if(!unit.looking)return;
+    unit.lookBones.neck.quaternion.copy(unit.lookPose[0]);unit.lookBones.head.quaternion.copy(unit.lookPose[1]);unit.looking=false;
   }
   // A new place: walk there round the halls, or appear there when motion is reduced.
   goTo(unit,place) {
@@ -884,6 +892,7 @@ export class YardRenderer {
   }
   setReducedMotion(value) {
     this.reduced=value;
+    if(value)for(const unit of this.units.values()){this.unlook(unit);unit.lookYaw=0;unit.lookPitch=0;}
     if(value)for(const unit of this.units.values())if(unit.moving&&unit.target){this.arrive(unit);this.play(unit);}
     // Reduced motion shows each hall's glow as it stands, and no effects.
     if(value){for(const item of this.halls.values())item.level=item.target;this.glow();this.stillEffects();}
@@ -918,6 +927,7 @@ export class YardRenderer {
       let step=dt;
       if(unit.label.hidden){unit.lag=(unit.lag||0)+dt;if(unit.lag<.2)continue;step=unit.lag;}
       unit.lag=0;
+      this.unlook(unit);
       for(const mixer of unit.mixers)mixer.update(step);
       for(const helper of unit.helpers)helper.mixer.update(step);
       this.look(unit,step);
