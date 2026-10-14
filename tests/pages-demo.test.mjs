@@ -30,6 +30,7 @@ test('the Pages builder makes a portable, complete site without changing web/', 
   const config = fs.readFileSync(path.join(out, 'demo-config.js'), 'utf8');
   assert.match(config, /1\.2\.3/);
   assert.match(config, /window\.AGENT_GUILD_DEMO_MODEL_STATS=\{"retrievedAt":"2026-10-13T00:00:00\.000Z"/);
+  assert.match(config, /^window\.AGENT_GUILD_DEMO_ACTIVITY=true;$/m);
   const styles = fs.readFileSync(path.join(out, 'styles.css'), 'utf8');
   assert.doesNotMatch(styles, /url\(\s*["']?\/(?!\/)/, 'fonts and images resolve below the project path');
   assert.match(styles, /url\("\.\/fonts\/cinzel\.woff2"\)/);
@@ -290,7 +291,7 @@ test('the demo answers GitHub in the manager\'s shapes, signed in with repositor
   const sessions = await new Promise((resolve) => {
     const { context } = loadDemo();
     const socket = new context.WebSocket('wss://example.test/api/v1/events');
-    socket.onmessage = ({ data }) => { socket.close(); resolve(JSON.parse(data).sessions); };
+    socket.onmessage = ({ data }) => resolve(JSON.parse(data).sessions);
   });
   for (const s of sessions.filter((item) => item.provider.id !== 'shell')) {
     assert.ok((await call('GET', `/github/origin?cwd=${encodeURIComponent(s.cwd)}`)).body.repo, `${s.name} sits in a demo repository`);
@@ -525,7 +526,7 @@ test('the demo can reattach tmux, update Grok and stop while sessions are runnin
 
 test('the demo Yard plays every staging mode, glance, hall level and helper pose, and new sessions arrive from their door', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.parse('2026-10-14T12:00:00Z') });
-  const { context, call } = loadDemo({ Date });
+  const { context, call } = loadDemo({ Date, AGENT_GUILD_DEMO_ACTIVITY: true });
   const providers = (await call('GET', '/providers')).body.providers;
   const sessions = new Map();
   const socket = new context.WebSocket('wss://example.test/api/v1/events');
@@ -565,6 +566,17 @@ test('the demo Yard plays every staging mode, glance, hall level and helper pose
   const before = JSON.stringify([...sessions.values()]);
   t.mock.timers.tick(60000);
   assert.equal(JSON.stringify([...sessions.values()]), before, 'the demo stops simulating output once no page listens');
+});
+
+test('without the Pages config, demo sessions keep their state', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.parse('2026-10-14T12:00:00Z') });
+  const { context } = loadDemo({ Date });
+  const events = [];
+  const socket = new context.WebSocket('wss://example.test/api/v1/events');
+  socket.onmessage = ({ data }) => events.push(JSON.parse(data));
+  t.mock.timers.tick(40);
+  t.mock.timers.tick(600000);
+  assert.deepEqual(events.map((event) => event.type), ['hello']);
 });
 
 test('the release workflow gates Pages on the release and grants deployment-only permissions', () => {

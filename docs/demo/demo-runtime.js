@@ -1050,7 +1050,7 @@
       self.readyState = DemoWebSocket.OPEN; self.emit({ type: 'open' });
       if (/\/events(?:\?|$)/.test(self.url)) {
         eventSockets.push(self);
-        if (!outputTimer) outputTimer = setTimeout(nextOutput, 7000);
+        if (window.AGENT_GUILD_DEMO_ACTIVITY && !outputTimer) outputTimer = setTimeout(nextOutput, 7000);
         self.emit({ data: JSON.stringify({
           type: 'hello', version: version, pid: null, platform: 'darwin', startedAt: startedAt,
           launcher: null, folderOpener: null, remoteAccess: { available: true }, upgrade: null, yardArt: { state: 'ready', source: 'pack' },
