@@ -156,9 +156,7 @@ def cast(name, names, shipped=False):
         report = reports / f'{key}.json'
         args = [BLENDER, '-b', '--factory-startup', '--python', str(HERE / 'rig.py'), '--',
                 str(source), str(ASSETS / f'{key}.glb'), str(c['height']), '--report', str(report)]
-        # Familiars and helpers stand at under half a metre on screen.
-        args += ['--kind', 'builder', '--work', c['work']] if c.get('work') else \
-                ['--kind', 'familiar', '--faces', '10000', '--texture', '512']
+        args += ['--kind', 'builder', '--work', c['work']] if c.get('work') else ['--kind', 'familiar']
         if 'prop' in c:
             args += ['--prop', json.dumps(c['prop'])]
         if c.get('gait'):
@@ -171,9 +169,7 @@ def cast(name, names, shipped=False):
         if shipped and not keep_textures(ASSETS / f'{key}.glb', source, reports / 'maps'):
             print(key, 'textures re-encoded: the shipped ones could not be matched', flush=True)
         result = json.loads(report.read_text())
-        # rig.py's limits: under one percent of the surface torn, and a
-        # planted foot sliding under 2% of the character's height.
-        bad = [clip for clip, e in result['clips'].items() if e['torn'] >= .01 or e.get('footSlide', 0) >= .02 * result['height']]
+        bad = [clip for clip, e in result['clips'].items() if not e['ok']]
         print(key, 'ok' if not bad else 'check ' + ', '.join(bad), flush=True)
         if bad:
             failed.append(key)

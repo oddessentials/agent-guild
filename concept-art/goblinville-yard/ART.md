@@ -37,11 +37,17 @@ security policy does not allow images embedded in a GLB), and the Yard tests.
   `qwen-edit` on a light background in a relaxed stance, and the OpenAI
   builder's armour made matte with a short wool mantle in place of fur:
   `concepts/builder_openai.png` and `concepts/builder_xai.png`.
-  The OpenAI builder's hammer lies at his feet in the concept and comes out
-  as a loose part of the model, so `world.json` names it as his `prop`:
-  `rig.py` stands it on its head beside his left boot with the handle through
-  his fist and gives it to the PropLeft socket. He works with `pound`: a
-  two-handed overhead swing, winding up behind the shoulder and landing in
+  The builders who work with their hands (OpenAI, xAI, shell and Docker) are
+  restaged again in an A-pose, arms clear of the body
+  (`builder_<provider>_apose` in `edits.json`): a hand that hangs against a
+  coat or cloak reconstructs fused to it and drags it along. The shell
+  builder's cloak becomes a short cape for it, and the Docker builder's
+  toolbox is left out; his mechanical claw arm stays as modelled (`busy`).
+  The OpenAI builder's hammer stands on its head beside his boot, touching
+  it, so `world.json` names its loose head part and boxes in the rest as his
+  `prop`: `rig.py` stands it beside his left boot with the handle through his
+  fist and gives it to the PropLeft socket. He works with `pound`: the hammer
+  swung up over the shoulder, the wrist carrying it past the arm, and down in
   front with the knees taking the blow, twice a loop, and he walks with it on
   his shoulder.
 - **Familiars** are the skin's `familiars/flame.png`, `night.png` and
@@ -67,9 +73,10 @@ Background removal is BiRefNet (MIT) where no mask is given. The seed is 42
 unless `seeds` in `world.json` names another. Each job frees the GPU first and is
 cancelled after ten minutes.
 
-`rig.py` stands each model on the ground facing the camera, scales it to its
-height in `world.json` and decimates it (25,000 triangles for builders, 10,000
-for familiars and helpers). It fits the contract skeleton
+`rig.py` stands each model on the ground facing the camera and scales it to
+its height in `world.json`, keeping the triangles and textures TRELLIS.2 made
+(50,000 and 2048 px for builders, 30,000 and 1024 px for familiars and
+helpers). It fits the contract skeleton
 ([docs/yard/CONTRACT.md](../../docs/yard/CONTRACT.md)) from the silhouette:
 the trunk, and for builders arms and legs. Weights are bone heat on a voxel
 proxy, transferred to the model, then cleaned up so cloth parts in a stride
@@ -77,8 +84,7 @@ and a raised arm does not tear the coat. The contract clips are posed in
 Python and baked, legs by IK; builders work by tinkering, conducting or
 pounding, or, when their hands hold a staff or sit in pockets, by a steady
 lean and nod. The [Yard guide](../../docs/yard/README.md#rigging-and-clips)
-covers rebuilding them. Textures are 1024 px WebP for builders and 512 px for
-familiars and helpers.
+covers rebuilding them.
 
 `halls.py` stands each hall on the deck within a 5.2 m footprint and 5.5 m
 height, at the anchors `concept-art/guild-yard/build.py` uses for every world, decimated to 35,000

@@ -58,7 +58,10 @@ model's textures to `web/yard/assets/maps/`, and the Yard tests.
   drones lost their painted eyes, so a second edit paints each a bold iris.
 - **Rigging**: the Anthropic, OpenAI and Google robots wear robes or cloaks
   and the xAI robot keeps its hands in its pockets, so they work with
-  `steady` (a lean and nod with the hands still); the shell robot tinkers.
+  `steady` (a lean and nod with the hands still); the shell robot tinkers,
+  and so does the Docker robot, restaged in an A-pose with its claws clear of
+  its body (`robot_docker_apose` in `edits.json`) so they move without
+  dragging its plating.
 - **Station modules and props** are generated from `concepts.json`: each
   entry is a prompt, its seed, a shared style and the picked seed as `pick`,
   chosen by contact sheet. Each module carries its provider's colour in bold

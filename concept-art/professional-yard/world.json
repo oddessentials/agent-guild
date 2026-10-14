@@ -19,12 +19,12 @@
    "busy": "L"
   },
   "staff_3": {
-   "image": "concepts/staff_xai.png",
+   "image": "concepts/staff_xai_apose.png",
    "height": 2.05,
    "work": "tinker"
   },
   "staff_4": {
-   "image": "concepts/staff_shell.png",
+   "image": "concepts/staff_shell_apose.png",
    "height": 2.0,
    "work": "tinker"
   },
@@ -62,5 +62,9 @@
   "car_taxi",
   "city_bus",
   "delivery_van"
+ ],
+ "grey": [
+  "staff_4",
+  "staff_3"
  ]
 }

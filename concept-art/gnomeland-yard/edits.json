@@ -144,5 +144,26 @@
       "seed": 7,
       "prompt": "Remove all the background scenery, sky, trees, other buildings and the ground around the building, leaving only the building, its roof crane and its crates on a plain flat light grey background. Keep the building and everything on it exactly the same, same style, same framing."
     }
+  ],
+  "builder_anthropic_apose": [
+    {
+      "input": "concepts/builder_anthropic.png",
+      "seed": 31,
+      "prompt": "Change only the pose to a relaxed A-pose, as for a 3D character rig: both arms hang straight and are angled about 40 degrees out from the sides, with a wide gap of plain background, at least as wide as a hand, between each sleeve and the body all the way from armpit to hand, and the feet stand a little apart with a clear gap between the legs. Both hands are open and relaxed, palms toward the legs. Keep the face, outfit, colours, materials, proportions, framing and lighting exactly the same, full length, facing the viewer, on a perfectly flat, uniform, untextured medium grey background with no noise, pattern, gradient or shadow."
+    }
+  ],
+  "builder_openai_apose": [
+    {
+      "input": "concepts/builder_openai.png",
+      "seed": 23,
+      "prompt": "Change only the pose to a relaxed A-pose, as for a 3D character rig: both arms hang straight and are angled about 25 degrees out from the sides, so plain background shows clearly between each arm and the body all the way from armpit to hand, and the feet stand a little apart with a clear gap between the legs. Both hands are open and empty. The big war hammer stands upright on its head on the ground beside his right foot, its handle pointing up, not touching him. Keep the face, outfit, colours, materials, proportions, framing and lighting exactly the same, full length, facing the viewer, on a perfectly flat, uniform, untextured medium grey background with no noise, pattern, gradient or shadow."
+    }
+  ],
+  "builder_docker_apose": [
+    {
+      "input": "concepts/builder_docker.png",
+      "seed": 31,
+      "prompt": "Change only the pose to a relaxed A-pose, as for a 3D character rig: both arms hang straight and are angled about 40 degrees out from the sides, with a wide gap of plain background, at least as wide as a hand, between each sleeve and the body all the way from armpit to hand, and the feet stand a little apart with a clear gap between the legs. His right hand is open and empty; his left hand holds the iron hook, hanging clear of his body. The coil of rope stays on his shoulder. Keep the face, outfit, colours, materials, proportions, framing and lighting exactly the same, full length, facing the viewer, on a perfectly flat, uniform, untextured medium grey background with no noise, pattern, gradient or shadow."
+    }
   ]
 }

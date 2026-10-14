@@ -186,16 +186,26 @@ only together with a plate re-render.
 
 `rig.py` rigs every character and helper to the contract skeleton and bakes
 its clips. Joints come from each model's silhouette and its skin from bone
-heat. Arm weights stay near the arm, below the crotch each leg owns its side
-(a robe hangs from the hips instead), and skin that fuses a hanging hand to
-the thigh or one leg to the other is cut so neither tears when the limb moves.
+heat. A hand is found at the end of an arm followed down from the armpit
+while it hangs clear of the body, so legs standing apart are not taken for
+arms, and the shoulders sit where that arm's centre line meets the body, under
+any hat or crest. Arm weights stay near the arm and the head keeps only its
+own sphere, so a hood's back or a pack follows the chest. Below the crotch
+each leg owns its side (a robe hangs from the hips instead), and above it the
+legs' hold fades out by the hip joint. Skin that fuses a moving hand to the
+thigh, or one leg to the other, is cut so neither tears when the limb moves.
+An arm modelled held out from the body hangs closer in every clip, short of
+touching it. Arms joined to what they hold (a `steady` character's staff,
+folded arms or pockets, and a `busy` hand) stay as modelled in every clip;
+the trunk and head carry the motion, and a trunk bend that pulls at them is
+eased like a reaching arm.
 Clips are posed in Python with anticipation, overlap and settle, and legs
 are solved by IK, so planted feet stay put and the walk's stance foot keeps
 pace with the character. Each world's `world.json` gives a character's height,
 working motion (`tinker`, `conduct`, `steady` or `pound`), any held tool
 (`prop`), a `gait` other than a walk (`waddle` for small round characters,
 `glide` for those with no legs to speak of), `robe`, and the `busy` hand
-that holds something modelled in, which gestures leave alone.
+that holds something modelled in.
 
 ```sh
 cd concept-art/yard-models
@@ -207,14 +217,23 @@ cd ../.. && npm run optimize:yard goblin_1
 
 `recast` and `cast` write `rig.py`'s checks for each model to
 `.cache/<world>-yard/rig/<name>.json` and name the clips that fail them: more
-than 1% of the surface stretched past three times its area, or a planted foot
-sliding more than 2% of the character's height. A clip that tears at full
-reach is baked again with its arms moving less (60%, then 30%) before it
-counts as failing; the report records the reach each clip shipped with.
+than 3% of any part of the body (an arm, a hand, a leg with its foot, the
+trunk or the head) in triangles whose longest edge stretches past twice
+its length, or a planted foot sliding more than 2% of the character's height.
+Each part is measured on its own, so a torn arm cannot hide in the rest of
+the body; a small part is measured against no less than 2% of the body. A
+clip that tears at full reach is baked again with its arms moving less (60%,
+then 30%), and a walk with a shorter stride (80%, then 60%) and less twist,
+before it counts as failing; the report records the reach each clip shipped
+with, and the stride the model carries follows its walk.
 `recast` keeps the shipped textures byte for byte. `sheets` draws contact sheets for a spot check.
 Set `BLENDER` to the Blender executable when it is not on the Windows path
-`build.py` names. A model that keeps failing its checks is one to make again
-from its source image on the image studio's GPU.
+`build.py` names. Models keep the triangles and textures TRELLIS.2 made;
+nothing is decimated or downscaled to meet a size. A model that keeps failing
+its checks is one to make again from its source image on the image studio's
+GPU: generated figures with arms hanging against the body fuse them to it, so
+characters whose hands work are restaged in an A-pose first, arms clear of
+the body (the `_apose` entries in each world's `edits.json`).
 
 The optimization step welds duplicate vertices, deduplicates data and uses
 [glTF Transform quantization](https://gltf-transform.dev/functions/quantize)

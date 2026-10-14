@@ -42,7 +42,9 @@ for each subject and one picked.
   prompts ask for a relaxed A-pose so `rig.py` finds the arms in the
   silhouette, for matte fabrics, and for mid-tone trousers rather than
   black, which bakes as an unreadable silhouette. Identity is carried by big
-  colour blocks: badges and emblems do not survive the bake.
+  colour blocks: badges and emblems do not survive the bake. The xAI and
+  shell staff, whose arms still touched the jacket and tool belt, are
+  restaged with arms further out (`staff_<provider>_apose` in `edits.json`).
 - **Office robots** (`bot_0`–`bot_3`) are a wheeled courier with an orange
   band, a one-piece concierge with green trim, a round floor sweeper with a
   blue top and a two-wheeled butler with a purple chest carrying a tray. Each

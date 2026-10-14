@@ -3,7 +3,7 @@
 
   blender -b --factory-startup --python rig.py -- IN.glb OUT.glb HEIGHT [--kind builder|familiar]
       [--work tinker|conduct|steady|pound] [--gait walk|waddle|glide] [--robe] [--busy L|R]
-      [--faces N] [--texture PX] [--prop JSON] [--report FILE]
+      [--prop JSON] [--report FILE]
 
 IN is a generated TRELLIS.2 model, or a shipped Yard model. A shipped model's
 old skeleton and clips are removed, and a held tool is found again as the loose
@@ -12,21 +12,23 @@ part that was wholly weighted to one hand.
 The mesh is scaled to HEIGHT metres, stood on the ground facing -Y (glTF +Z,
 toward the Yard camera), and fitted with the contract skeleton, named after
 Godot's humanoid profile, at joints taken from its own silhouette: shoulders
-from the chest's width, hands from the lowest point of each arm, hips and knees
-from the legs. Weights are Blender's bone heat. A held tool (`--prop`) is cut
-out first so it cannot pass for an arm, then rides a PropLeft or PropRight
-socket bone in that hand. `--robe` lets the middle of a robe hang from the
-hips; `--busy` names a hand holding something modelled in, which gestures
-leave alone.
+from the chest's width, hands from the end of each arm (followed down from the
+armpit when it hangs clear of the body), hips and knees from the legs. An arm
+modelled held out from the body hangs closer in every clip. Weights are
+Blender's bone heat. A held tool (`--prop`) is cut out first so it cannot pass
+for an arm, then rides a PropLeft or PropRight socket bone in that hand.
+`--robe` lets the middle of a robe hang from the hips; `--busy` names a hand
+holding something modelled in, which stays as modelled, as both arms of a
+`steady` character do.
 
 Clips are posed in Python and baked to keys, at 24 fps. Legs are solved with
 two-bone IK, so planted feet stay put while the hips sway and the walk's
 stance foot moves back at exactly the speed the character walks; the stride
 and cycle are written into the model as `yard` extras for the runtime. Work
 clips that strike something record the moment and place as `events`.
-The mesh is decimated to --faces triangles and textures are written as
---texture px WebP (25,000 and 1024 by default). --report writes the automated
-checks: foot sliding, joint stretch and how far a held tool strays from its hand.
+The mesh and textures keep the detail they were generated with; textures are
+written as WebP. --report writes the automated checks: foot sliding, and how
+much of each part of the body tears in each clip.
 """
 import bpy, json, math, sys
 import numpy as np
@@ -69,25 +71,15 @@ def load(path):
     return body, shipped
 
 
-def decimate(body, faces):
-    """Collapse to about `faces` triangles; baked normals keep the fine detail."""
-    count = len(body.data.polygons)
-    if count <= faces:
-        return
-    mod = body.modifiers.new('decimate', 'DECIMATE')
-    mod.ratio = faces / count
-    bpy.context.view_layer.objects.active = body
-    bpy.ops.object.modifier_apply(modifier='decimate')
-
-
-def normalise(body, height):
+def normalise(body, height, prop=None):
     co = [v.co for v in body.data.vertices]
     lo = Vector([min(c[i] for c in co) for i in range(3)])
     hi = Vector([max(c[i] for c in co) for i in range(3)])
     scale = height / (hi.z - lo.z)
     centre = Vector(((lo.x + hi.x) / 2, (lo.y + hi.y) / 2, lo.z))
-    body.data.transform(Matrix.Scale(scale, 4) @ Matrix.Translation(-centre))
-    body.data.update()
+    for o in (body, prop) if prop else (body,):
+        o.data.transform(Matrix.Scale(scale, 4) @ Matrix.Translation(-centre))
+        o.data.update()
 
 
 def loose_parts(bm):
@@ -129,24 +121,23 @@ def separate(body, picked):
 
 
 def cut_prop(body, spec):
-    """Separate the prop: the loose part ranked `part` by size (0 is the body),
-    or the faces whose centres fall in any of `boxes`."""
+    """Separate the prop: the loose parts ranked `part` by size (0 is the
+    body), and the faces whose centres fall in any of `boxes`."""
     import bmesh
     bm = bmesh.new(); bm.from_mesh(body.data); bm.verts.ensure_lookup_table()
-    if 'part' in spec:
-        chosen = loose_parts(bm)[spec['part']]
-        picked = [f.index for f in bm.faces if f.verts[0].index in chosen]
-    else:
-        inside = lambda c: any(all(lo[i] <= c[i] <= hi[i] for i in range(3)) for lo, hi in spec['boxes'])
-        picked = [f.index for f in bm.faces if inside(f.calc_center_median())]
+    part = spec.get('part', [])
+    parts = loose_parts(bm) if part != [] else []
+    chosen = set().union(*(parts[i] for i in (part if isinstance(part, list) else [part])))
+    inside = lambda c: any(all(lo[i] <= c[i] <= hi[i] for i in range(3)) for lo, hi in spec.get('boxes', []))
+    picked = [f.index for f in bm.faces if f.verts[0].index in chosen or inside(f.calc_center_median())]
     bm.free()
     return separate(body, picked)
 
 
 def shipped_prop(body):
-    """A shipped model's tool: the loose parts that were wholly one hand's."""
+    """A shipped model's tool: the loose parts that were wholly one socket's."""
     import bmesh
-    hands = {g.index: g.name for g in body.vertex_groups if g.name in ('handL', 'handR')}
+    hands = {g.index: g.name[4] for g in body.vertex_groups if g.name in ('PropLeft', 'PropRight')}
     if not hands:
         return None, None
     held = {}
@@ -159,7 +150,7 @@ def shipped_prop(body):
     if not parts:
         bm.free()
         return None, None
-    side = held[next(iter(parts[0]))][-1]
+    side = held[next(iter(parts[0]))]
     chosen = set().union(*parts)
     picked = [f.index for f in bm.faces if f.verts[0].index in chosen]
     bm.free()
@@ -195,6 +186,68 @@ def slices(body, h0, h1):
     return [v.co for v in body.data.vertices if h0 <= v.co.z < h1]
 
 
+def free_arm(body, side, h):
+    """The lowest vertices of an arm that hangs clear of the body, followed
+    down from the armpit as the outermost band of the front silhouette while a
+    gap parts it from the rest. Below the hips the legs also stand apart from
+    each other, so the lowest point outside the hips would be a knee. None
+    when the arm touches the body (generated models often fuse them)."""
+    co = np.array([v.co[:] for v in body.data.vertices])
+    co = co[side * co[:, 0] > 0]
+    step, cell = .01 * h, .008 * h
+    track, touching = [], 0
+    for z in np.arange(.74 * h, .15 * h, -step):
+        band = co[(co[:, 2] < z) & (co[:, 2] >= z - step)]
+        if not len(band):
+            break
+        cells = np.unique(np.floor(side * band[:, 0] / cell).astype(int))
+        runs = np.split(cells, np.where(np.diff(cells) > 2)[0] + 1)
+        outer = runs[-1]
+        lo, hi = outer[0] * cell, (outer[-1] + 1) * cell
+        apart = len(runs) > 1
+        # A band that soon breaks off was a sliver of sparse vertices near
+        # the armpit, not an arm: start again lower down.
+        short = track and track[0][0] - z < .05 * h
+        if track and hi < track[-1][1] - .04 * h:
+            if short:
+                track = []
+                continue
+            break  # the arm ended: the outermost band is now a leg or a hem
+        if track and not apart:
+            if track[0][0] - z < .1 * h:
+                track = []  # the arm parts from the body lower down
+                continue
+            touching += 1
+            if touching > 3:
+                return None  # the hand rests on the body
+            continue  # brushing a pouch or a fold on the way down
+        touching = 0
+        if apart:
+            # The body is the widest band inside; between it and the outermost
+            # band, narrow bands are the same arm, broken up by sparse vertices.
+            body_run = max(runs[:-1], key=len)
+            edge = (body_run[-1] + 1) * cell
+            inner = min(r[0] * cell for r in runs if r[0] * cell > edge)
+            track.append((z, hi, lo, edge, inner))
+    if not track or track[0][0] - track[-1][0] < .08 * h:
+        return None
+    z, hi, lo, edge, inner = track[-1]
+    # The hand: the arm's width over its last few slices, so a narrowing
+    # fingertip still finds the whole hand.
+    near = [s for s in track if s[0] < z + .06 * h]
+    left, right = min(s[4] for s in near), max(s[1] for s in near)
+    end = [Vector(c) for c in co if z - step <= c[2] < z + .06 * h and left <= side * c[0] <= right]
+    # Where the arm joins the body: its centre line, followed back up past
+    # where it parts from the body, meets the body's edge. Shoulders sit
+    # there, under any hat or crest that makes a share of the height wrong.
+    z = np.array([s[0] for s in track]); x = np.array([(s[4] + s[1]) / 2 for s in track])
+    slope, at = np.polyfit(z, x, 1)
+    body_edge = float(np.median([s[3] for s in track]))
+    root = track[0][0] if slope >= 0 else (body_edge - at) / slope
+    shoulder = min(.74 * h, max(track[0][0], root + .03 * h))
+    return (end, max(0.0, inner - edge - .02 * h), shoulder) if len(end) >= 20 else None
+
+
 def joints(body, height, kind):
     """Joint positions from the silhouette, as fractions of height where the
     silhouette cannot say."""
@@ -209,17 +262,22 @@ def joints(body, height, kind):
          'head': Vector((0, 0, .84 * h)), 'top': Vector((0, 0, h))}
     if kind == 'familiar':
         return j
+    free = {side: free_arm(body, side, h) for side in (1, -1)}
+    found = [f[2] for f in free.values() if f]
+    level = sum(found) / len(found) if found else .74 * h
     for side, name in ((1, 'L'), (-1, 'R')):
-        arm = [c for c in body.data.vertices if side * c.co.x > torso * 1.05 and .2 * h < c.co.z < .66 * h]
-        arm = [v.co for v in arm]
-        if len(arm) < 50:
-            arm = [c for c in slices(body, .25 * h, .6 * h) if side * c.x > torso * .8]
-        low = sorted(arm, key=lambda c: c.z)[:max(20, len(arm) // 12)]
+        low, j['room' + name] = free[side][:2] if free[side] else (None, 0.0)
+        if not low:
+            arm = [c for c in body.data.vertices if side * c.co.x > torso * 1.05 and .2 * h < c.co.z < .66 * h]
+            arm = [v.co for v in arm]
+            if len(arm) < 50:
+                arm = [c for c in slices(body, .25 * h, .6 * h) if side * c.x > torso * .8]
+            low = sorted(arm, key=lambda c: c.z)[:max(20, len(arm) // 12)]
         hand = sum(low, Vector()) / len(low)
         hand.z += .03 * h
-        shoulder = Vector((side * width * .72, 0, .74 * h))
+        shoulder = Vector((side * width * .72, 0, level))
         elbow = (shoulder + hand) / 2 + Vector((side * .02 * h, .04 * h, 0))
-        j['clavicle' + name] = Vector((side * width * .16, 0, .75 * h))
+        j['clavicle' + name] = Vector((side * width * .16, 0, shoulder.z + .01 * h))
         j['shoulder' + name], j['elbow' + name], j['wrist' + name] = shoulder, elbow, hand
         j['hand' + name] = hand + (hand - elbow).normalized() * .07 * h
         x = side * max(torso * .45, .06 * h)
@@ -264,7 +322,7 @@ def skeleton(j, kind):
     return rig
 
 
-def weights(body, rig, robe=False):
+def weights(body, rig, robe=False, still=()):
     """Bone heat on a closed voxel proxy, copied to the real mesh by nearest
     surface, so open or self-intersecting generated geometry still weights.
     Bone heat needs a clean enough solid: finer proxies are tried first.
@@ -330,7 +388,24 @@ def weights(body, rig, robe=False):
     bpy.ops.object.parent_set(type='ARMATURE_NAME')  # keeps the transferred groups
     body.vertex_groups.active_index = 0
     bpy.ops.object.mode_set(mode='OBJECT')
-    # Anything the proxy missed follows its nearest bone.
+    claim_strays(body, rig)
+    keep_arms_to_arms(body, rig)
+    keep_head_to_head(body, rig)
+    smooth(body)
+    split_legs(body, rig, robe)
+    # Normalise and limit to four influences for glTF.
+    bpy.context.view_layer.objects.active = body
+    bpy.ops.object.vertex_group_limit_total(group_select_mode='ALL', limit=4)
+    bpy.ops.object.vertex_group_normalize_all(group_select_mode='ALL', lock_active=False)
+    if 'LeftUpperArm' in rig.data.bones:
+        unfuse(body, robe, still)
+    # The clean-ups can leave a vertex with no weight, which the exporter
+    # would bind to an extra bone outside the contract skeleton.
+    claim_strays(body, rig)
+
+
+def claim_strays(body, rig):
+    """A vertex nothing weights follows its nearest bone."""
     from mathutils.geometry import intersect_point_line
     segments = [(b.name, b.head_local, b.tail_local) for b in rig.data.bones if b.name != 'Root' and not b.name.startswith('Prop')]
     for v in body.data.vertices:
@@ -339,15 +414,28 @@ def weights(body, rig, robe=False):
                 point, t = intersect_point_line(v.co, seg[1], seg[2])
                 return (v.co - (seg[1] if t < 0 else seg[2] if t > 1 else point)).length
             body.vertex_groups[min(segments, key=gap)[0]].add([v.index], 1, 'REPLACE')
-    keep_arms_to_arms(body, rig)
-    smooth(body)
-    split_legs(body, rig, robe)
-    # Normalise and limit to four influences for glTF.
-    bpy.context.view_layer.objects.active = body
-    bpy.ops.object.vertex_group_limit_total(group_select_mode='ALL', limit=4)
-    bpy.ops.object.vertex_group_normalize_all(group_select_mode='ALL', lock_active=False)
-    if 'LeftUpperArm' in rig.data.bones:
-        unfuse(body, robe)
+
+
+def keep_head_to_head(body, rig):
+    """Bone heat lets the head claim a hood's back, a pack or a crest that
+    touches it, which tears when the head turns or nods. The head and neck
+    keep only what lies within the head's own sphere; the rest goes to the
+    upper chest."""
+    head = rig.data.bones['Head']
+    centre = (head.head_local + head.tail_local) / 2
+    radius = head.length
+    chest = body.vertex_groups['UpperChest']
+    groups = {body.vertex_groups[n].index: body.vertex_groups[n] for n in ('Head', 'Neck')}
+    for v in body.data.vertices:
+        if (v.co - centre).length <= radius:
+            continue
+        moved = 0.0
+        for g in list(v.groups):
+            if g.group in groups and g.weight > 0:
+                moved += g.weight
+                groups[g.group].remove([v.index])
+        if moved:
+            chest.add([v.index], moved, 'ADD')
 
 
 def keep_arms_to_arms(body, rig):
@@ -381,7 +469,9 @@ def keep_arms_to_arms(body, rig):
 def split_legs(body, rig, robe):
     """Below the crotch each leg owns its own side. Trousers then part
     cleanly in a stride instead of tearing at the inseam. A robe or skirt,
-    which joins the legs, lets its middle follow the hips instead."""
+    which joins the legs, lets its middle follow the hips instead. Above the
+    crotch the legs' hold fades out by the hip joint, so a stride does not
+    pull at the belt."""
     if 'LeftUpperLeg' not in rig.data.bones:
         return
     h = max(v.co.z for v in body.data.vertices)
@@ -390,8 +480,15 @@ def split_legs(body, rig, robe):
     groups = {g.name: g for g in body.vertex_groups}
     legs = [n for n in groups if any(n.endswith(k) for k in ('UpperLeg', 'LowerLeg', 'Foot', 'Toes'))]
     index = {groups[n].index: n for n in legs}
+    hip = rig.data.bones['LeftUpperLeg'].head_local.z
     for v in body.data.vertices:
         if v.co.z > crotch:
+            fade = min(1.0, (v.co.z - crotch) / max(hip - crotch, 1e-6))
+            for g in list(v.groups):
+                name = index.get(g.group)
+                if name and g.weight > 0:
+                    groups[name].add([v.index], g.weight * (1 - fade), 'REPLACE')
+                    groups['Hips'].add([v.index], g.weight * fade, 'ADD')
             continue
         own = 'Left' if v.co.x > 0 else 'Right'
         for g in list(v.groups):
@@ -410,19 +507,21 @@ def split_legs(body, rig, robe):
                 groups[twin].add([v.index], w, 'ADD')
 
 
-def unfuse(body, robe):
+def unfuse(body, robe, still=()):
     """Generated models often fuse a hanging hand to the thigh, or one leg to
     the other, with a skin of triangles that tears once the limb moves. Cut
-    those bridges: the faces joining a forearm or hand to the hips or a leg,
-    and, unless a robe joins them by design, the left leg to the right.
-    Where they met, the limbs touched, so the cut is out of sight."""
+    those bridges: the faces joining a moving forearm or hand to the hips or
+    a leg, and, unless a robe joins them by design, the left leg to the right.
+    Where they met, the limbs touched, so the cut is out of sight. An arm that
+    stays as modelled keeps its skin: cut, it would leave a hole in a sleeve
+    or robe that shows in every pose."""
     import bmesh
     groups = {g.index: g.name for g in body.vertex_groups}
     def owner(v):
         best = max(v.groups, key=lambda g: g.weight, default=None)
         return groups.get(best.group, '') if best else ''
     owners = [owner(v) for v in body.data.vertices]
-    arm = lambda n: n.endswith('LowerArm') or n.endswith('Hand')
+    arm = lambda n: (n.endswith('LowerArm') or n.endswith('Hand')) and not n.startswith(still)
     low = lambda n: n == 'Hips' or n.endswith('UpperLeg') or n.endswith('LowerLeg')
     leg = lambda n: n.endswith('UpperLeg') or n.endswith('LowerLeg') or n.endswith('Foot')
     bm = bmesh.new(); bm.from_mesh(body.data); bm.faces.ensure_lookup_table()
@@ -467,10 +566,11 @@ class Pose:
     """One frame's pose, built in a fixed order: trunk rotations, hips offset,
     arms, then legs by IK and props last."""
 
-    def __init__(self, rig, reach=1.0):
+    def __init__(self, rig, reach=1.0, still=()):
         # reach scales how far the arms move from rest: animate() lowers it
-        # for a clip that tears the model at full reach.
-        self.rig, self.reach = rig, reach
+        # for a clip that tears the model at full reach. Arms on the `still`
+        # sides stay as modelled.
+        self.rig, self.reach, self.still = rig, reach, tuple(still)
         for pb in rig.pose.bones:
             pb.rotation_mode = 'QUATERNION'
             pb.rotation_quaternion = Quaternion()
@@ -480,12 +580,16 @@ class Pose:
     def has(self, name):
         return name in self.rig.pose.bones
 
-    def turn(self, name, axis, angle):
+    def turn(self, name, axis, angle, reach=True):
         """Rotate a bone about a world axis, composed onto what it has."""
         pb = self.rig.pose.bones.get(name)
         if not pb or not angle:
             return
-        if name.endswith(('Arm', 'Hand', 'Shoulder')):
+        if name.startswith(self.still) and name.endswith(('Arm', 'Hand', 'Shoulder')):
+            return
+        # Still arms are often joined to the body below the chest, so a bend
+        # of the trunk pulls at them as a moving arm would.
+        if reach and (name.endswith(('Arm', 'Hand', 'Shoulder')) or self.still and name in ('Spine', 'Chest', 'UpperChest')):
             angle *= self.reach
         local = self.rig.data.bones[name].matrix_local.to_3x3().inverted() @ axis
         pb.rotation_quaternion = Quaternion(local, angle) @ pb.rotation_quaternion
@@ -541,6 +645,8 @@ class Pose:
 
     def arm(self, side, wrist, pole=Vector((0, .3, -1))):
         """Two-bone IK for an arm: wrist at `wrist`, elbow toward `pole`."""
+        if side in self.still:
+            return
         upper, lower = side + 'UpperArm', side + 'LowerArm'
         b1, b2 = self.rig.data.bones[upper], self.rig.data.bones[lower]
         rest = self.rig.data.bones[side + 'Hand'].head_local
@@ -585,20 +691,38 @@ def keys(u, points):
     return points[0][1]
 
 
+def still_sides(work, busy, prop_side):
+    """Arms modelled holding something (a staff, folded, in pockets, or a hand
+    round a tablet) are joined to what they hold, so they stay as modelled;
+    moving them would tear it. A tool on a socket moves with its hand."""
+    return ('Left', 'Right') if work == 'steady' else (busy,) if busy and not prop_side else ()
+
+
 class Character:
     """Rest measurements a clip poses against."""
 
-    def __init__(self, rig, height, work, prop_side, busy=None, gait='walk', robe=False):
+    def __init__(self, rig, height, work, prop_side, busy=None, gait='walk', robe=False, room=None):
         self.rig, self.h, self.work, self.prop, self.gait = rig, height, work, prop_side, gait
         # The hand that holds something, a tool socket's or one modelled in.
         self.busy = {'L': 'Left', 'R': 'Right'}[prop_side] if prop_side else busy
         self.free = 'Left' if self.busy == 'Right' else 'Right'
+        self.still = still_sides(work, busy, prop_side)
         bones = rig.data.bones
         self.humanoid = 'LeftUpperLeg' in bones
+        self.settle = {}
         if self.humanoid:
             self.ankle = {s: bones[s + 'Foot'].head_local.copy() for _, s, _ in SIDES}
-            self.wrist = {s: bones[s + 'Hand'].head_local.copy() for _, s, _ in SIDES}
             self.shoulder = {s: bones[s + 'UpperArm'].head_local.copy() for _, s, _ in SIDES}
+            self.wrist = {}
+            for _, s, sign in SIDES:
+                # An arm modelled held out from the body (`room` metres clear
+                # of it at the hand) hangs closer in every clip, short of
+                # touching; poses aim from where it then hangs.
+                arm = bones[s + 'Hand'].head_local - self.shoulder[s]
+                out = math.atan2(sign * arm.x, -arm.z)
+                angle = min((room or {}).get(s, 0) / arm.length, max(0, out - .12))
+                self.settle[s] = sign * angle
+                self.wrist[s] = self.shoulder[s] + Matrix.Rotation(sign * angle, 3, Y) @ arm
             self.leg = bones['LeftUpperLeg'].length + bones['LeftLowerLeg'].length
         # A long robe shortens the stride.
         self.step = STEPS[gait] * height * (.75 if robe and gait == 'walk' else 1)
@@ -637,13 +761,13 @@ def clip_walk(c, p, u):
     waddle = c.gait == 'waddle'
     bob = (.012 if waddle else .018) * h
     p.shift('Hips', ((.03 if waddle else .012) * h * wave(u, 1, 0), 0, -bob * math.cos(4 * math.pi * (u - .06))))
-    p.turn('Hips', Z, .07 * wave(u, 1, .25))
+    p.turn('Hips', Z, .07 * p.reach * wave(u, 1, .25))
     # A waddle rolls the whole body over each foot.
-    p.turn('Hips', Y, (.11 if waddle else .025) * wave(u, 1, 0))
+    p.turn('Hips', Y, (.11 if waddle else .025) * p.reach * wave(u, 1, 0))
     if waddle:
         p.turn('Chest', Y, -.05 * wave(u, 1, .05))
     p.turn('Spine', X, .05)
-    p.turn('Chest', Z, -.09 * wave(u, 1, .25))
+    p.turn('Chest', Z, -.09 * p.reach * wave(u, 1, .25))
     p.turn('Neck', Z, .05 * wave(u, 1, .25))
     p.turn('Head', X, -.03 + .02 * math.cos(4 * math.pi * (u - .1)))
     swing = .4 if c.work not in ('steady',) else .18
@@ -860,33 +984,28 @@ def work_conduct(c, p, u, variant):
 
 
 def work_steady(c, p, u, variant):
-    """Holding steady (a staff, or hands at rest): focus shows in the trunk and
-    head, small corrections and nods; the variant raises a hand, holds it as
-    if casting, and lets it fall."""
+    """Holding steady (a staff, arms folded, hands in pockets): the arms stay
+    as modelled, so focus shows in the trunk and head, small corrections and
+    nods; the variant draws itself up to look out over the work, holds, and
+    settles back."""
     h = c.h
     p.turn('Spine', X, .07); p.turn('Head', X, .16)
     if variant == 0:
         p.turn('Spine', X, .05 * wave(u, 2)); p.turn('Head', X, .1 * wave(u, 2, .15))
         p.turn('Chest', Z, .07 * wave(u, 1)); p.turn('Head', Z, .12 * wave(u, 1, .1))
         p.shift('Hips', (.012 * h * wave(u, 1, .3), 0, -.006 * h * abs(wave(u, 2))))
-        c.hang(p, u, 2, 1.5)
     else:
-        side = c.free
-        sign = 1 if side == 'Left' else -1
-        raise_ = keys(u, [(0, 0), (.12, -.1), (.3, 1), (.62, 1), (.78, 0)])
-        high = c.shoulder[side] + Vector((sign * .05 * h, -.22 * h, .12 * h))
-        p.arm(side, c.wrist[side].lerp(high, max(0, raise_)), Vector((sign, .3, -.8)))
-        p.turn(side + 'Hand', X, -.5 * max(0, raise_))
-        p.turn('Spine', X, -.08 * raise_); p.turn('Head', X, -.2 * raise_)
-        hold = max(0, raise_) * wave(u, 6)
-        p.turn('Chest', Z, .03 * hold)
-        p.shift('Hips', (0, .01 * h * raise_, -.008 * h * abs(raise_)))
+        rise = keys(u, [(0, 0), (.12, -.1), (.3, 1), (.62, 1), (.78, 0)])
+        p.turn('Spine', X, -.08 * rise); p.turn('Head', X, -.2 * rise)
+        scan = max(0, rise) * wave(u, 1.5, .1)
+        p.turn('Chest', Z, .05 * scan); p.turn('Head', Z, .2 * scan)
+        p.shift('Hips', (0, .01 * h * rise, .004 * h * max(0, rise)))
     c.breathe(p, u, 2, .8)
     c.plant(p)
 
 
 def work_pound(c, p, u, variant):
-    """A sledge swung overhead: wind up behind the shoulder with the weight back,
+    """A sledge swung up over the shoulder: wind up with the weight back,
     a held beat, the fast drop with the knees taking the blow, the jolt of
     impact, then the lift back to the start. The variant rests the hammer,
     wipes a brow and checks the work."""
@@ -895,11 +1014,13 @@ def work_pound(c, p, u, variant):
     other = 'Right' if side == 'Left' else 'Left'
     if variant == 0:
         # Two blows a loop. `a` is the hand's angle about the shoulder from
-        # straight down, forward positive: low in front at the blow, high
-        # behind the head at the top of the swing.
+        # straight down, forward positive: low in front at the blow, at the
+        # shoulder at the top of the swing, where the wrist carries the hammer
+        # on up over it. Arms raised overhead stretch the shoulders, and any
+        # cape or pauldron on them, past what skinning can follow.
         v = (u * 2) % 1
-        a = keys(v, [(0, .75), (.08, .62), (.42, 2.85), (.5, 2.95), (.6, .5), (.66, .58), (.82, .82)])
-        up = max(0, (a - .75) / 2.2)
+        a = keys(v, [(0, .75), (.08, .62), (.42, 1.65), (.5, 1.75), (.6, .5), (.66, .58), (.82, .82)])
+        up = max(0, (a - .75) / 1.0)
         drop = max(0, (.75 - a) / .25)
         jolt = math.exp(-((v - .6) / .035) ** 2)
         shoulder = c.shoulder[side]
@@ -911,14 +1032,17 @@ def work_pound(c, p, u, variant):
         p.turn('Head', X, .1 * drop - .14 * up + .06 * jolt)
         p.shift('Hips', (sign * .01 * h * up, .025 * h * up, -.03 * h * drop - .015 * h * jolt))
         p.arm(side, hand, Vector((sign * .8, .25, -.6)))
-        p.turn('Prop' + side, X, .7 * up - .35 * drop)
-        # The other hand takes the handle below the first.
+        p.turn('Prop' + side, X, 1.6 * up - .35 * drop)
+        # The other hand takes the handle below the first for the blow and
+        # lets go as the hammer rises, so it is not dragged over the shoulder.
         p.update()
-        p.arm(other, rig_point(p.rig, 'Prop' + side, Vector((0, .1 * h, 0))), Vector((-sign * .8, .25, -.7)))
+        grip = rig_point(p.rig, 'Prop' + side, Vector((0, .1 * h, 0)))
+        free = c.shoulder[other] + Vector((sign * .06 * h, -.16 * h, -.22 * h))
+        p.arm(other, grip.lerp(free, min(1, up * 2.5)), Vector((-sign * .8, .25, -.7)))
     else:
         wipe = keys(u, [(0, 0), (.15, 0), (.3, 1), (.45, 1), (.55, 0)])
         look = keys(u, [(0, 0), (.55, 0), (.7, 1), (.9, 1)])
-        brow = Vector((-sign * .03 * h, c.shoulder[other].y - .1 * h, .86 * h))
+        brow = Vector((-sign * .03 * h, c.shoulder[other].y - .1 * h, c.shoulder[other].z + .12 * h))
         p.arm(other, c.wrist[other].lerp(brow, wipe), Vector((-sign, .2, -.6)))
         p.turn(other + 'Hand', Z, -sign * .6 * wipe * wave(u, 4))
         p.turn('Head', X, -.12 * wipe + .25 * look); p.turn('Spine', X, .12 * look)
@@ -977,13 +1101,18 @@ def clips_for(c):
 
 def animate(rig, c, body=None):
     """Bake every clip. A clip that tears the model at full reach is baked
-    again with the arms moving less (REACH), so no clip ships torn when a
-    gentler one would not be."""
+    again with the arms moving less (REACH), and a walk with a shorter stride
+    and less twist, so no clip ships torn when a gentler one would not be."""
     rig.animation_data_create()
     c.reach = {}
+    step = c.step
     for name, frames, fn in clips_for(c):
         c.loop_frames = frames
         for reach in REACH if body is not None else REACH[:1]:
+            if name == 'walk':
+                # The stride is written into the model, so feet keep pace.
+                c.step = step * STRIDE[reach]
+                c.speed = 2 * c.step / c.cycle
             old = bpy.data.actions.get(name)
             if old:
                 bpy.data.actions.remove(old)
@@ -991,7 +1120,9 @@ def animate(rig, c, body=None):
             action.use_fake_user = True
             rig.animation_data.action = action
             for f in range(frames + 1):
-                p = Pose(rig, reach)
+                p = Pose(rig, reach, c.still)
+                for s, angle in c.settle.items():
+                    p.turn(s + 'UpperArm', Y, angle, reach=False)
                 fn(c, p, (f % frames) / frames)
                 p.update()
                 for pb in rig.pose.bones:
@@ -999,8 +1130,7 @@ def animate(rig, c, body=None):
                     if pb.name in ('Hips', 'Root'):
                         pb.keyframe_insert('location', frame=f, group=pb.name)
             action.frame_range = (0, frames)
-            # A swung tool is the clip itself; its reach is not reduced.
-            if body is None or (name == 'work_0' and c.work == 'pound') or tearing(rig, body, action)[0] < TORN:
+            if body is None or tearing(rig, body, action)[0] < TORN:
                 break
         c.reach[name] = reach
         if name == 'work_0' and c.work == 'pound':
@@ -1009,8 +1139,9 @@ def animate(rig, c, body=None):
     Pose(rig)
 
 
-# Arm reach tried in turn for a clip that tears.
+# Arm reach tried in turn for a clip that tears, and the walk's stride with it.
 REACH = (1.0, .6, .3)
+STRIDE = {1.0: 1.0, .6: .8, .3: .6}
 
 
 def impact(rig, c, action, frames):
@@ -1036,51 +1167,77 @@ def impact(rig, c, action, frames):
 # ---------------------------------------------------------------- checks
 
 def check(rig, body, c, report):
-    """Foot sliding in the walk, and in every clip the share of the surface
-    torn (triangles stretched past TEAR times their rest area, which shows as
-    spikes) and pinched (squeezed under a TEARth, the inside of a bent elbow
-    or knee, which a fold hides)."""
+    """Foot sliding in the walk, and in every clip the share of each part of
+    the body (an arm, a hand, a leg with its foot, the trunk, the head)
+    torn: triangles whose longest edge stretches past STRETCH times its rest
+    length, which shows as a smear or a spike."""
     result = {'height': c.h, 'stride': round(2 * c.step, 4), 'cycle': c.cycle, 'gait': c.gait, 'clips': {}}
     for action in bpy.data.actions:
         rig.animation_data.action = action
         frames = int(action.frame_range[1])
-        worst, pinched = tearing(rig, body, action)
-        entry = {'torn': round(worst, 5), 'pinched': round(pinched, 5), 'reach': c.reach.get(action.name, 1.0)}
+        worst, part = tearing(rig, body, action)
+        entry = {'torn': round(worst, 5), 'part': part, 'reach': c.reach.get(action.name, 1.0)}
         if action.name == 'walk' and c.gait != 'glide':
             entry['footSlide'] = foot_slide(rig, c, frames)
+        entry['ok'] = worst < TORN and entry.get('footSlide', 0) < .02 * c.h
         result['clips'][action.name] = entry
     rig.animation_data.action = None
     bpy.context.scene.frame_set(0)
-    result['ok'] = all(e['torn'] < TORN and e.get('footSlide', 0) < .02 * c.h for e in result['clips'].values())
+    result['ok'] = all(e['ok'] for e in result['clips'].values())
     with open(report, 'w') as f:
         json.dump(result, f, indent=1)
     print('YARD_QA', json.dumps(result), flush=True)
 
 
-# A triangle stretched past three times its rest area shows as a spike;
-# torn over more than one percent of the surface, a model needs fixing.
-TEAR, TORN = 3.0, .01
+# An edge stretched past twice its length shows as a smear. A part of the
+# body torn over more than TORN of its surface needs fixing. Measured over
+# the whole body instead, a torn arm hides in the rest.
+STRETCH, TORN, FLOOR = 2.0, .03, .02
+PARTS = {'Shoulder': 'arm', 'UpperArm': 'arm', 'LowerArm': 'arm', 'Hand': 'hand',
+         'UpperLeg': 'leg', 'LowerLeg': 'leg', 'Foot': 'leg', 'Toes': 'leg'}
+
+
+def part_of(bone):
+    if bone in ('Neck', 'Head'):
+        return 'head'
+    if bone.startswith('Prop'):
+        return None  # a held tool is rigid
+    for suffix, part in PARTS.items():
+        if bone.endswith(suffix):
+            return part + bone[0]
+    return 'trunk'
 
 
 def tearing(rig, body, action):
-    """The largest share of the surface torn, and pinched, at a dozen moments of a clip."""
+    """The largest share of any part of the body torn at 16 moments of a
+    clip, and which part."""
     rig.animation_data.action = None
     Pose(rig).update()
-    tris, rest = triangles(body)
+    tris, rest, rest_area = triangles(body)
+    names = {g.index: g.name for g in body.vertex_groups}
+    owner = [names.get(max(v.groups, key=lambda g: g.weight).group) if len(v.groups) else None
+             for v in body.data.vertices]
+    parts = np.array([part_of(owner[t[0]] or 'Hips') or '' for t in tris])
     rig.animation_data.action = action
     frames = int(action.frame_range[1])
-    worst, pinched = 0.0, 0.0
-    bpy.context.scene.frame_set(0)
-    for f in range(0, frames, max(1, frames // 12)):
+    worst, which = 0.0, ''
+    for f in range(0, frames, max(1, frames // 16)):
         bpy.context.scene.frame_set(f)
-        _, area = triangles(body, tris)
-        ratio = area / np.maximum(rest, 1e-12)
-        worst = max(worst, float(rest[ratio > TEAR].sum() / rest.sum()))
-        pinched = max(pinched, float(rest[ratio < 1 / TEAR].sum() / rest.sum()))
-    return worst, pinched
+        _, edges, _ = triangles(body, tris)
+        torn = (edges / np.maximum(rest, 1e-9)).max(1) > STRETCH
+        for part in set(parts) - {''}:
+            m = parts == part
+            # A small part (a hand, or a patch a model's hand bone holds) is
+            # measured against no less than FLOOR of the body, so a few
+            # stretched triangles in it are not read as a torn limb.
+            share = float(rest_area[m & torn].sum() / max(rest_area[m].sum(), FLOOR * rest_area.sum()))
+            if share > worst:
+                worst, which = share, part
+    return worst, which
 
 
 def triangles(body, tris=None):
+    """Triangles, their edge lengths and their areas."""
     depsgraph = bpy.context.evaluated_depsgraph_get()
     mesh = body.evaluated_get(depsgraph).to_mesh()
     co = np.empty(len(mesh.vertices) * 3); mesh.vertices.foreach_get('co', co); co = co.reshape(-1, 3)
@@ -1090,7 +1247,8 @@ def triangles(body, tris=None):
         mesh.loop_triangles.foreach_get('vertices', tris); tris = tris.reshape(-1, 3)
     body.evaluated_get(depsgraph).to_mesh_clear()
     a, b, d = co[tris[:, 0]], co[tris[:, 1]], co[tris[:, 2]]
-    return tris, np.linalg.norm(np.cross(b - a, d - a), axis=1) / 2
+    edges = np.stack([np.linalg.norm(b - a, axis=1), np.linalg.norm(d - b, axis=1), np.linalg.norm(a - d, axis=1)], 1)
+    return tris, edges, np.linalg.norm(np.cross(b - a, d - a), axis=1) / 2
 
 
 def foot_slide(rig, c, frames):
@@ -1115,12 +1273,6 @@ def foot_slide(rig, c, frames):
 
 # ---------------------------------------------------------------- output
 
-def shrink_textures(size):
-    for img in bpy.data.images:
-        if img.size[0] > size:
-            img.scale(size, size)
-
-
 def export(rig, c, path):
     # Only the rig and its mesh ship; nothing a step left behind.
     for o in list(bpy.context.scene.objects):
@@ -1142,37 +1294,37 @@ def main():
     src, out, height = a[0], a[1], float(a[2])
     kind = a[a.index('--kind') + 1] if '--kind' in a else 'builder'
     work = a[a.index('--work') + 1] if '--work' in a else 'tinker'
-    faces = int(a[a.index('--faces') + 1]) if '--faces' in a else 25000
-    texture = int(a[a.index('--texture') + 1]) if '--texture' in a else 1024
     spec = json.loads(a[a.index('--prop') + 1]) if '--prop' in a else None
     report = a[a.index('--report') + 1] if '--report' in a else None
     gait = a[a.index('--gait') + 1] if '--gait' in a else 'walk'
     busy = {'L': 'Left', 'R': 'Right'}.get(a[a.index('--busy') + 1]) if '--busy' in a else None
     robe = '--robe' in a
     body, shipped = load(src)
-    decimate(body, faces)
-    normalise(body, height)
     prop, side = (None, None)
-    if shipped and spec and 'boxes' not in spec:
-        # A shipped model's tool is found again by its weights; one cut by
-        # boxes is cut by the same boxes, the shipped mesh standing as rig.py left it.
+    if shipped and spec:
+        # A shipped model's tool is found again by its socket's weights. A
+        # planted tool stands beside the body, so the body alone is centred.
         prop, side = shipped_prop(body)
-    elif spec:
-        prop, side = cut_prop(body, spec), spec.get('hand', 'L')
+        normalise(body, height, prop)
+    else:
+        normalise(body, height)
+        if spec:
+            prop, side = cut_prop(body, spec), spec.get('hand', 'L')
     for g in list(body.vertex_groups):
         body.vertex_groups.remove(g)
     j = joints(body, height, kind)
     rig = skeleton(j, kind)
-    weights(body, rig, robe)
+    still = still_sides(work, busy, side if prop else None)
+    weights(body, rig, robe, still)
     if prop:
         if spec and spec.get('plant') and not shipped:
             plant(prop, j, side)
         bind_prop(body, prop, side)
-    c = Character(rig, height, work, side if prop else None, busy, gait, robe)
+    c = Character(rig, height, work, side if prop else None, busy, gait, robe,
+                  {s: j.get('room' + k, 0) for k, s, _ in SIDES})
     animate(rig, c, bpy.data.objects['character'])
     if report:
         check(rig, bpy.data.objects['character'], c, report)
-    shrink_textures(texture)
     export(rig, c, out)
 
 
