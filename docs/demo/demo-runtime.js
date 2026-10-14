@@ -199,17 +199,22 @@
         displayName: typeof model === 'string' ? model : (model.displayName || model.name),
         source: 'report',
       },
-      toolSessionId: 'demo-' + id, reporting: providerId === 'shell' ? null : { state: 'active', reason: null },
+      toolSessionId: 'demo-' + id, reply: replies[id] ? { id: 1 } : null, reporting: providerId === 'shell' ? null : { state: 'active', reason: null },
       agents: (agents || []).map(function (name, i) { return { id: id + '-agent-' + i, name: name, status: i % 2 ? 'waiting' : 'working', detail: null }; }),
       shells: providerId === 'shell' ? [{ id: id + '-shell' }] : [],
       multiplexer: null,
     };
   }
 
+  var replies = {
+    a11ce001: 'Wallet payments now go through the new checkout step. Apple Pay and Google Pay share one handler, a declined wallet falls back to the card form, and the checkout tests pass.',
+    c0de0002: 'The gateway now limits each API key to 100 requests a minute and answers 429 with a Retry-After header. The middleware tests pass.',
+    '600d0003': 'The docs site builds with the new static generator: 86 pages, the same URLs as before, and the shared navigation moved first.',
+  };
   var sessions = [
-    session('a11ce001', 'anthropic', 'Checkout: wallet payments', 'storefront', { name: 'claude-sonnet-4-5', displayName: 'Claude Sonnet 4.5' }, ['Explore', 'Test writer', 'Reviewer']),
-    session('c0de0002', 'openai', 'Gateway rate limits', 'api-gateway', { name: 'gpt-5-codex', displayName: 'GPT-5 Codex' }, ['Worker', 'Tests']),
-    session('600d0003', 'google', 'Docs site migration', 'docs-site', { name: 'gemini-2.5-pro', displayName: 'Gemini 2.5 Pro' }, ['Researcher']),
+    session('a11ce001', 'anthropic', 'Checkout: wallet payments', 'storefront', { name: 'claude-fable-5-1', displayName: 'Claude Fable 5.1' }, ['Explore', 'Test writer', 'Reviewer']),
+    session('c0de0002', 'openai', 'Gateway rate limits', 'api-gateway', { name: 'gpt-6-astra', displayName: 'GPT-6 Astra' }, ['Worker', 'Tests']),
+    session('600d0003', 'google', 'Docs site migration', 'docs-site', { name: 'gemini-3.8-flash', displayName: 'Gemini 3.8 Flash' }, ['Researcher']),
     session('d0c4e006', 'docker', 'Docs upgrade notes', 'docs-site', { name: 'openai/gpt-5', displayName: 'GPT-5' }, []),
     session('5he11004'.replace('h', 'b'), 'shell', 'Storefront dev server', 'storefront', null, []),
   ];
@@ -222,6 +227,20 @@
   sessions.push(detached);
   var eventSockets = [];
   var transcripts = {};
+  var catalog = window.AGENT_GUILD_DEMO_MODEL_STATS || { retrievedAt: null, stale: false, error: null, stats: [], pool: null, providers: {}, models: {}, sessions: {} };
+
+  function modelStats() {
+    var result = clone(catalog);
+    sessions.forEach(function (s) {
+      if (!s.model) return;
+      var name = s.model.name.toLowerCase();
+      if (name.indexOf('/') !== -1) { result.sessions[s.id] = result.models[name] ? name : null; return; }
+      var names = [name, name.replace(/(\d+)-(\d+)(?=$|-)/g, '$1.$2')];
+      var listed = result.providers[s.provider.id] ? result.providers[s.provider.id].models : [];
+      result.sessions[s.id] = listed.find(function (id) { return names.indexOf(id.slice(id.indexOf('/') + 1)) !== -1; }) || null;
+    });
+    return result;
+  }
 
   function clone(value) { return JSON.parse(JSON.stringify(value)); }
   function json(body, status) {
@@ -306,6 +325,7 @@
     }
     if (route === '/notes' && method === 'GET') return json({ notes: { revision: notesDoc.revision, text: notesDoc.text } });
     if (route === '/notes' && method === 'PUT') return saveNotes(body);
+    if (route.indexOf('/remote-access') === 0) return remoteRoute(route, method, body);
     if (route === '/providers' && method === 'GET') return json({ providers: clone(providers) });
     if (route === '/environment' && method === 'GET') return demoEnvironment(url, false, {});
     if (route === '/environment/refresh' && method === 'POST') return demoEnvironment(url, true, body);
@@ -315,7 +335,7 @@
       { providerId: 'anthropic', accountId: 'work', signedIn: true, plan: 'team', windows: [{ label: '5 hours', usedPercent: 18, resetsAt: new Date(now + 3 * 3600000).toISOString() }] },
       { providerId: 'openai', accountId: 'default', signedIn: true, plan: 'plus', windows: [{ label: 'Weekly', usedPercent: 43, resetsAt: new Date(now + 3 * 86400000).toISOString() }] },
     ] });
-    if (route === '/model-stats' && method === 'GET') return json({ retrievedAt: new Date(now).toISOString(), stale: false, error: null, stats: [], pool: null, providers: {}, models: {}, sessions: {} });
+    if (route === '/model-stats' && method === 'GET') return json(modelStats());
     if (route === '/news' && method === 'GET') return json(newsSnapshot());
     if (route === '/changelog' && method === 'GET') return json(changelogSnapshot());
     if (route === '/folders' && method === 'GET') return json(folderListing(url.searchParams.get('path')));
@@ -354,17 +374,60 @@
     if (installMatch && method === 'POST') return installTool(installMatch[1], body);
     var removal = route.match(/^\/providers\/([^/]+)\/uninstall$/);
     if (removal && method === 'POST') return uninstall(removal[1], body);
-    var match = route.match(/^\/sessions\/([a-f0-9]+)(?:\/(stop|reattach))?$/);
+    var match = route.match(/^\/sessions\/([a-f0-9]+)(?:\/(stop|reattach|reply))?$/);
     if (match) {
       var at = sessions.findIndex(function (item) { return item.id === match[1]; });
       if (at < 0) return error('demo session not found', 'not_found', 404);
       if (method === 'PATCH') { sessions[at].name = String(body.name || sessions[at].name); announce({ type: 'session.updated', session: clone(sessions[at]) }); return json({ session: clone(sessions[at]) }); }
       if (method === 'POST' && match[2] === 'stop') { sessions[at].status = 'exited'; sessions[at].activity = 'quiet'; sessions[at].exitedAt = new Date().toISOString(); announce({ type: 'session.updated', session: clone(sessions[at]) }); return json({ session: clone(sessions[at]) }); }
       if (method === 'POST' && match[2] === 'reattach') return reattach(sessions[at]);
+      if (method === 'GET' && match[2] === 'reply') return json({ reply: replies[match[1]] ? { id: 1, text: replies[match[1]] } : null });
       if (method === 'DELETE') { sessions.splice(at, 1); announce({ type: 'session.removed', sessionId: match[1] }); return json({}); }
     }
     return error('This action is unavailable in the simulated demo.', 'demo_only', 409);
   };
+
+  var remoteHost = 'demo-mac.tail0000.ts.net';
+  var remote = { revision: 1, source: 'default', mode: 'off', hosts: [], origins: [], checkedAt: null };
+
+  function remoteView() {
+    var on = remote.mode === 'tailscale';
+    return {
+      available: true, revision: String(remote.revision), source: remote.source, mode: remote.mode,
+      hosts: remote.hosts.slice(), origins: remote.origins.slice(), url: on ? 'https://' + remoteHost : null,
+      busy: null, pending: null, problem: null,
+      tailscale: { connected: true, version: '1.90.1', hostname: remoteHost, httpsReady: true },
+      command: null, candidate: { url: 'https://' + remoteHost, existing: false },
+      connection: on ? { ok: true, checkedAt: remote.checkedAt } : null,
+    };
+  }
+
+  function remoteRoute(route, method, body) {
+    if (route === '/remote-access' && method === 'GET') return json({ remoteAccess: remoteView() });
+    if (route === '/remote-access/check' && method === 'POST') {
+      if (remote.mode === 'tailscale') remote.checkedAt = new Date().toISOString();
+      return json({ remoteAccess: remoteView() });
+    }
+    if (route !== '/remote-access' || method !== 'PUT') return error('This action is unavailable in the simulated demo.', 'demo_only', 409);
+    if (body.revision !== String(remote.revision)) return error('Remote access changed in another tab. Review the current settings and try again.', 'stale_settings', 409);
+    if (body.action === 'enable') {
+      Object.assign(remote, { mode: 'tailscale', hosts: [remoteHost], origins: ['https://' + remoteHost], checkedAt: new Date().toISOString() });
+    } else if (body.action === 'disable') {
+      Object.assign(remote, { mode: 'off', hosts: [], origins: [], checkedAt: null });
+    } else if (body.action === 'custom') {
+      if (remote.mode === 'tailscale') return error('Disable the Tailscale connection before changing custom proxy settings.', 'disable_first', 409);
+      var list = function (value) { return Array.isArray(value) ? value.filter(function (v) { return typeof v === 'string' && v; }) : []; };
+      remote.hosts = list(body.hosts);
+      remote.origins = list(body.origins);
+      remote.mode = remote.hosts.length || remote.origins.length ? 'custom' : 'off';
+    } else {
+      return error('Choose a valid remote-access action.', 'bad_action', 400);
+    }
+    remote.revision += 1;
+    remote.source = 'saved';
+    announce({ type: 'remote-access.updated' });
+    return json({ remoteAccess: remoteView() }, 202);
+  }
 
   // A signed-in GitHub account whose repositories hold the demo sessions' folders.
   var githubAccount = {
@@ -959,7 +1022,7 @@
         eventSockets.push(self);
         self.emit({ data: JSON.stringify({
           type: 'hello', version: version, pid: null, platform: 'darwin', startedAt: startedAt,
-          launcher: null, folderOpener: null, remoteAccess: null, upgrade: null,
+          launcher: null, folderOpener: null, remoteAccess: { available: true }, upgrade: null,
           notesRevision: notesDoc.revision, sessions: clone(sessions), heartbeat: true,
         }) });
       } else {
@@ -1009,8 +1072,16 @@
   notice.setAttribute('role', 'note');
   notice.innerHTML = '<strong>Interactive demo</strong> — sessions and usage are simulated; no CLI tools or commands are running. <a href="https://github.com/oddessentials/agent-guild#quick-start">Install Agent Guild</a>';
   document.body.prepend(notice);
+  var remoteBody = document.querySelector('#remote-access .remote-body');
+  if (remoteBody) {
+    var remoteNote = document.createElement('p');
+    remoteNote.className = 'demo-remote-note';
+    remoteNote.setAttribute('role', 'note');
+    remoteNote.textContent = 'Simulated: this demo has no Tailscale connection. The address, QR code and sign-in link do not reach any computer.';
+    remoteBody.prepend(remoteNote);
+  }
   var style = document.createElement('style');
   // Like the page header, the notice sits below the terminal's compact touch view.
-  style.textContent = '.demo-notice{position:relative;z-index:5;padding:.55rem 1rem;text-align:center;background:#312e81;color:#fff;font:600 14px/1.4 system-ui,sans-serif}.demo-notice a{color:#fff;text-decoration:underline}.demo-notice+header{position:sticky}';
+  style.textContent = '.demo-notice{position:relative;z-index:5;padding:.55rem 1rem;text-align:center;background:#312e81;color:#fff;font:600 14px/1.4 system-ui,sans-serif}.demo-notice a{color:#fff;text-decoration:underline}.demo-notice+header{position:sticky}.demo-remote-note{margin:0;padding:.5rem .75rem;border-radius:6px;background:#312e81;color:#fff;font:600 13px/1.4 system-ui,sans-serif}';
   document.head.append(style);
 }());
