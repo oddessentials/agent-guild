@@ -178,11 +178,12 @@ jobs:
       - id: pack
         run: |
           mkdir "$RUNNER_TEMP/package"
-          npm pack --pack-destination "$RUNNER_TEMP/package"
           version=$(node -p "require('./package.json').version")
+          node scripts/yard-pack.mjs --out "$RUNNER_TEMP/package" --url-base "https://github.com/$GITHUB_REPOSITORY/releases/download/v$version/"
+          npm pack --pack-destination "$RUNNER_TEMP/package"
           node tests/package/check-tarball.mjs "$RUNNER_TEMP"/package/*.tgz --version "$version"
           cd "$RUNNER_TEMP/package"
-          sha256sum -- *.tgz > SHA256SUMS
+          sha256sum -- *.tgz yard-art-*.tar.gz > SHA256SUMS
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

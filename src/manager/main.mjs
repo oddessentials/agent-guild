@@ -16,6 +16,7 @@ import { NewsFeed } from './news.mjs';
 import { Changelog } from './changelog.mjs';
 import { GitHub } from './github.mjs';
 import { createManagerServer } from './server.mjs';
+import { YardArt } from './yard-art.mjs';
 import { loadPty } from './pty.mjs';
 import { createNotesStore } from './notes.mjs';
 import { RemoteAccess, loadRemoteAccess } from './remote-access.mjs';
@@ -180,6 +181,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
     autostart,
     notes: createNotesStore(paths.notes),
     launcher: launcherPath(),
+    yardArt: new YardArt({ webDir, dir: paths.yardArt }),
     onShutdownRequest: ({ restart = false } = {}) => shutdown('requested via API', { restart }).then((code) => process.exit(code)),
   });
   remoteAccess.attach({ apply: (access) => api.setAccessPolicy(access), getTarget: () => api.url });

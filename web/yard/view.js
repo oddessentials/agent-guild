@@ -77,8 +77,52 @@ export function initYard(controller) {
     clearTimeout(swapReveal);
     $('yard-loading').hidden = true;
   }
+  // The art downloads once, through the manager; every page shows the same download.
+  let artRequested = null, artError = null;
+  function artAction(action) {
+    artError = null;
+    const art = controller.yardArt();
+    // The error stands until the manager reports the art again.
+    controller.yardArtAction(action).catch((err) => { if (controller.yardArt() === art) { artError = { art, message: err.message }; showArt(); } });
+    if (!$('yard-download').hidden) showArt();
+  }
+  function showArt() {
+    if (artError && artError.art !== controller.yardArt()) artError = null;
+    const art = artError ? { ...artError.art, state: 'failed', error: artError.message } : controller.yardArt() || { state: 'waiting' };
+    const busy = art.state === 'downloading' || art.state === 'installing';
+    const total = art.size ? megabytes(art.size) : '';
+    hideLoading();
+    $('yard-failure').hidden = true;
+    $('yard-download').hidden = false;
+    $('yard-download-title').textContent = {
+      installing: 'Installing the Yard', failed: 'The Yard could not be downloaded', cancelled: 'Download cancelled', unavailable: 'The Yard is unavailable', waiting: 'Preparing your yard…',
+    }[art.state] || 'Downloading the Yard';
+    $('yard-download-text').textContent = art.state === 'failed' || art.state === 'unavailable' ? art.error
+      : art.state === 'installing' ? 'Checking and unpacking the art…'
+        : art.state === 'waiting' ? ''
+          : `The Yard’s 3D art is a one-time ${total} download.${busy ? ' Everything else keeps working meanwhile.' : ''}`;
+    const progress = $('yard-download-progress');
+    progress.hidden = !busy;
+    if (art.state === 'downloading' && art.size) { progress.max = art.size; progress.value = art.received || 0; }
+    else progress.removeAttribute('value');
+    $('yard-download-size').textContent = art.state === 'downloading' && total ? `${megabytes(art.received || 0)} of ${total}` : '';
+    const retryShown = !$('yard-download-retry').hidden;
+    const cancelFocused = document.activeElement === $('yard-download-cancel');
+    $('yard-download-cancel').hidden = !busy;
+    $('yard-download-retry').hidden = art.state !== 'failed' && art.state !== 'cancelled';
+    if (cancelFocused && !retryShown && !$('yard-download-retry').hidden) $('yard-download-retry').focus();
+  }
+  // Until the manager can serve the art, the download screen stands in for the scene.
+  function artReady() {
+    const art = controller.yardArt();
+    if (art?.state === 'ready') { $('yard-download').hidden = true; return true; }
+    if (art?.state === 'missing' && artRequested !== art && snapshot.connected) { artRequested = art; artAction('download'); }
+    showArt();
+    return false;
+  }
   async function ensureScene() {
     if (disposed || renderer || loading || failed || view !== 'yard' || $('app').hidden) return;
+    if (!artReady()) return;
     const attempt = ++sceneAttempt;
     showLoading('Preparing your yard…', 'scene');
     $('yard-loading').hidden = false;
@@ -233,6 +277,9 @@ export function initYard(controller) {
   $('view-yard').addEventListener('change',() => { if (skinAllowsYard()) setView('yard'); });
   $('yard-cards').addEventListener('click',() => { setView('cards'); ($('settings').checkVisibility() ? $('settings') : $('menu-toggle')).focus(); });
   $('yard-retry').addEventListener('click',() => { failed=false; ensureScene(); });
+  $('yard-download-cancel').addEventListener('click',() => artAction('cancel'));
+  $('yard-download-retry').addEventListener('click',() => artAction('download'));
+  $('yard-download-cards').addEventListener('click',() => { setView('cards'); ($('settings').checkVisibility() ? $('settings') : $('menu-toggle')).focus(); });
   $('yard-swap-retry').addEventListener('click',() => {
     if ($('yard-swap-failure').contains(document.activeElement)) $('yard-stage').focus();
     $('yard-swap-failure').hidden = true;

@@ -16,6 +16,7 @@ import { NOTES_BODY_LIMIT, createNotesStore } from './notes.mjs';
 import { createAccountEditor } from './accounts.mjs';
 import { MODES as AUTOSTART_MODES } from './autostart.mjs';
 import { ptyRestartProblem } from './pty.mjs';
+import { YardArt } from './yard-art.mjs';
 
 const require = createRequire(import.meta.url);
 const API = '/api/v1';
@@ -173,6 +174,8 @@ export function createManagerServer({
   onShutdownRequest = () => {},
   /** Why a manager started from the files on disk could not run a terminal, or null; a stand-in in tests. */
   nextManagerProblem = ptyRestartProblem,
+  /** The Yard's art; without a data folder, only a checkout's. */
+  yardArt = new YardArt({ webDir }),
 }) {
   let listedProviders = null;
   const accounts = createAccountEditor({
@@ -273,8 +276,14 @@ export function createManagerServer({
       throw new HttpError(400, 'malformed path', 'bad_path');
     }
     if (rel.includes('\0')) throw new HttpError(404, 'not found', 'not_found');
-    const file = path.resolve(webDir, rel);
-    if (file !== webDir && !file.startsWith(webDir + path.sep)) {
+    let root = webDir;
+    if (rel.startsWith('yard/assets/')) {
+      root = yardArt.assetsDir();
+      if (!root) throw new HttpError(404, 'The Yard’s art is not installed.', 'not_found');
+      rel = rel.slice('yard/assets/'.length);
+    }
+    const file = path.resolve(root, rel);
+    if (file !== root && !file.startsWith(root + path.sep)) {
       throw new HttpError(404, 'not found', 'not_found');
     }
     return serveFile(req, res, file);
@@ -348,6 +357,10 @@ export function createManagerServer({
       if (typeof enabled !== 'boolean') throw new HttpError(400, 'enabled must be true or false', 'bad_request');
       return sendJson(res, 200, { autostart: await autostart.set(enabled) });
     }
+
+    if (route === '/yard-art' && method === 'GET') return sendJson(res, 200, { yardArt: yardArt.snapshot() });
+    if (route === '/yard-art/download' && method === 'POST') return sendJson(res, 202, { yardArt: yardArt.start() });
+    if (route === '/yard-art/cancel' && method === 'POST') return sendJson(res, 200, { yardArt: yardArt.cancel() });
 
     if (route === '/info' && method === 'GET') {
       selfUpdate?.refresh().catch(() => {});
@@ -669,10 +682,11 @@ export function createManagerServer({
   changelog?.on('updated', () => broadcast({ type: 'changelog.updated' }));
   github?.on('updated', () => broadcast({ type: 'github.updated' }));
   remoteAccess?.on('updated', () => broadcast({ type: 'remote-access.updated' }));
+  yardArt.on('updated', (status) => broadcast({ type: 'yard-art.updated', yardArt: status }));
 
   function handleEvents(ws, req) {
     eventClients.add(ws);
-    const hello = { type: 'hello', version, pid: process.pid, platform: process.platform, startedAt, launcher, folderOpener: folderOpenerFor(req), remoteAccess: remoteAccess ? { available: true } : null, upgrade: upgradeInfo(), sessions: manager.list(), heartbeat: true };
+    const hello = { type: 'hello', version, pid: process.pid, platform: process.platform, startedAt, launcher, folderOpener: folderOpenerFor(req), remoteAccess: remoteAccess ? { available: true } : null, upgrade: upgradeInfo(), yardArt: yardArt.snapshot(), sessions: manager.list(), heartbeat: true };
     const notesHello = notes.helloRevision();
     if (notesHello.known) hello.notesRevision = notesHello.revision;
     else hello.notesUnreadable = true;

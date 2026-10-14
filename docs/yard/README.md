@@ -105,6 +105,13 @@ camera, Enter opens the selected session and Escape clears selection.
 Ordinary buttons and the roster support keyboard navigation.
 
 The engine and GLBs load only after an authenticated app displays Yard.
+A checkout serves `web/yard/assets` directly. The npm package carries only
+`web/yard/art.json`, written by `scripts/yard-pack.mjs` when CI packs, which
+names the art pack on the release. The first time the Yard opens, the manager
+downloads that pack once for every page, checks it against the manifest, and
+keeps it in the data folder's `yard-art/` under its content id, so upgrades
+with the same art and offline use need no download. Until then the Yard shows
+the download's progress with Cancel and Retry.
 The engine is bundled locally, and all assets use same-origin URLs. There
 is no CDN, runtime compiler, WASM decoder or Unreal runtime. WebGL2 failure
 leaves the roster and inspector available, with Retry and Cards controls.

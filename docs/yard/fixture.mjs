@@ -5,7 +5,7 @@ import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { createManagerServer } from '../../src/manager/server.mjs';
 
-export async function startFixture({port=0}={}) {
+export async function startFixture({port=0,yardArt}={}) {
   const calls=[],data=new Map(),terminals=new Map();
   let next=16;
   const now=()=>new Date().toISOString();
@@ -96,7 +96,7 @@ export async function startFixture({port=0}={}) {
     agents:i===0?[{id:'a1',name:'Explorer',status:'working',detail:'Reading the project'},{id:'a2',name:'Reviewer',status:'waiting',detail:'Waiting for input'}]:i===1?[{id:'a3',name:'Designer',status:'working'}]:[],
     shells:i===4?[{id:'sh1'}]:[]},false));
   const token=randomBytes(24).toString('hex');
-  const api=createManagerServer({manager,registry,usage,history,modelStats,news,changelog,github,selfUpdate,token,port,webDir:fileURLToPath(new URL('../../web',import.meta.url)),version:'1.0.0',
+  const api=createManagerServer({manager,registry,usage,history,modelStats,news,changelog,github,selfUpdate,token,port,webDir:fileURLToPath(new URL('../../web',import.meta.url)),version:'1.0.0',...(yardArt?{yardArt}:{}),
     onShutdownRequest:({restart})=>{calls.push(['shutdown',restart]);manager.emit('event',{type:'manager.stopped',remaining:0,restart});if(restart){data.clear();manager.closing=false;setTimeout(()=>manager.emit('event',{type:'hello',version:'1.1.0',pid:process.pid,sessions:[],upgrade:null}),100);}}
   });
   await api.listen();

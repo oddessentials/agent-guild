@@ -50,6 +50,7 @@ function goodPackage({ manifest = {}, without = [], extra = [] } = {}) {
     ['bin/app.mjs', ['bin']],
     ['src/manager/main.mjs', ['main']],
     ['web/index.html', ['page']],
+    ['web/yard/art.json', [JSON.stringify({ archive: { url: 'https://github.com/o/r/releases/download/v1.2.3/yard-art-0123456789abcdef.tar.gz' } })]],
     ['config/providers.default.json', ['{}']],
     ['node_modules/dep/package.json', [JSON.stringify({ version: '1.0.0' })]],
     ['node_modules/dep/lib/package.json', [JSON.stringify({ type: 'commonjs' })]],
@@ -95,7 +96,12 @@ test('the package check names every way a tarball can be wrong', () => {
   assert.deepEqual(problems({ without: ['LICENSE', 'bin/app.mjs'] }), ['LICENSE is missing', 'bin/app.mjs is missing']);
   assert.deepEqual(problems({ manifest: { name: 'other', private: true } }),
     ['the package is named other, not @scope/app', 'the package is marked private']);
-  assert.deepEqual(problems({}, '1.2.4'), ['the package is version 1.2.3, not 1.2.4']);
+  assert.deepEqual(problems({}, '1.2.4'), [
+    'web/yard/art.json names https://github.com/o/r/releases/download/v1.2.3/yard-art-0123456789abcdef.tar.gz, not a pack on the v1.2.4 release',
+    'the package is version 1.2.3, not 1.2.4',
+  ]);
+  assert.deepEqual(problems({ extra: [['web/yard/assets/guild.glb', ['glb']]] }), ['web/yard/assets is in the package; the Yard art ships as the release pack']);
+  assert.deepEqual(problems({ without: ['web/yard/art.json'] }), ['web/yard/art.json is missing']);
 
   assert.deepEqual(problems({ without: ['node_modules/@scope/other/package.json'] }),
     ['node_modules/@scope/other is in the lockfile but not in the package']);

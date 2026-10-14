@@ -7198,6 +7198,7 @@ function connectEvents() {
       state.folderOpener = msg.folderOpener || null;
       state.platform = msg.platform || null;
       state.remoteAccessUI?.setAvailable(msg.remoteAccess);
+      state.yardArt = msg.yardArt || null;
       renderVersion();
       setConnection('ok', 'Connected to session manager');
       state.sessions = new Map(msg.sessions.map((s) => [s.id, s]));
@@ -7227,6 +7228,9 @@ function connectEvents() {
       state.environmentUI?.updated(msg.environment);
     } else if (msg.type === 'remote-access.updated') {
       state.remoteAccessUI?.updated();
+    } else if (msg.type === 'yard-art.updated') {
+      state.yardArt = msg.yardArt;
+      notifyViews();
     } else if (msg.type === 'news.updated') {
       loadNews();
     } else if (msg.type === 'github.updated') {
@@ -7962,6 +7966,9 @@ yardUi = initYard({
   openSession: openPanel,
   openNews,
   selected: dockMakesWayForYard,
+  yardArt: () => state.yardArt,
+  // The new state arrives as yard-art.updated, ordered with the progress events.
+  yardArtAction: (action) => api('POST', `/yard-art/${action}`),
   mountInspector(host, selection) {
     if (!selection) { host.replaceChildren(); return; }
     if (selection.kind === 'provider') {
