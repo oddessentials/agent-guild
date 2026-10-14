@@ -104,5 +104,12 @@
       "seed": 11,
       "prompt": "Remove the canopy and branches: the great gnarled sea-oak is cut off a little above the boathouse roof into a broad, thick, hollow old stump with a smooth thick cap of moss on its top and a few small ferns, with no leaves and no branches above it. Keep the boathouse built into the stump with its azure-blue doors and shutters, round warm windows, crimson-red crate, coil of rope and spreading roots. Render it as a highly detailed stylized 3D model with chunky solid rounded forms and matte surfaces, the whole dwelling and its roots fully visible and centred with empty space round it, on a plain flat even light grey background with no texture, no shadow and no scenery."
     }
+  ],
+  "station": [
+    {
+      "input": "raw/station-1624.png",
+      "prompt": "Keep the exact same single object unchanged in shape, proportions, colours and detail, and place it alone on a perfectly flat, uniform, untextured medium grey background, with no floor, no shadow, no plants or objects around it.",
+      "seed": 7
+    }
   ]
 }

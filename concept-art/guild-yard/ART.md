@@ -21,6 +21,11 @@ colours) take
 the Poly Haven sets in `SURFACES` of `env/professional_env.py`; the glass and
 lit `window` panes keep their authored materials.
 
+Each hall carries two empties the renderer uses while its crew works:
+`hall_<provider>_smoke` at its highest chimney, tower or roof vent, and
+`hall_<provider>_glow` at the front centre at door height (`SMOKE` and
+`FRONT` in `build.py`).
+
 The other worlds' halls and every world's characters are TRELLIS.2 models
 from `concept-art/<world>-yard`.
 
@@ -69,6 +74,17 @@ TRELLIS.2 bakes albedo without lighting, so glows (runes, seams, chevrons)
 come out as plain paint or are lost, and flat painted emblems are dropped or
 garbled: a chevron on the wraith's chest, glowing or matte, did not survive
 three tries, and was left out.
+
+**Station prop**: a carved oak lectern on a dressed stone base, a closed book
+on its sloping top and scrolls on a shelf below. It is the `station` entry in
+`concepts.json`, generated with `hidream-o1` (three seeds from 1601, picked by
+contact sheet as `pick`), restaged onto flat medium grey with `qwen-edit` (the
+`station` entry in `edits.json`), made with TRELLIS.2 at 1024 shape voxels,
+60,000 faces and 2048 textures, as the halls are, and checked from four sides.
+Its working surface stands at 1 m for a 2 m figure (`station.surface` in
+`world.json`); it is 0.71 x 0.64 x 1.01 m. A forge was passed over: TRELLIS.2
+shatters fire and glow. Run `python build.py guild models station` and `props`
+in `concept-art/yard-models`.
 
 ### Reconstruction trials
 
@@ -169,4 +185,3 @@ is Poly Haven CC0 (trees, shrubs, planters, benches, café sets, street
 lamps, hydrants, bins, paving, asphalt, granite, concrete, brick and
 plaster), pinned in `env/polyhaven.lock.json`; the park lawn is the Guild's
 generated `meadow` texture.
-

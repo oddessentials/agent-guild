@@ -365,6 +365,61 @@ test('characters walk to where their sessions\' states put them, arrive from the
   assert.deepEqual(b.errors,[]);
 });
 
+// Deterministic like the walk check: a fixed clock, no animation frames, and
+// step() in fixed steps.
+test('station props come and go with their sessions, halls glow and smoke with their working crews, and resting characters glance at each other',options,async t=>{
+  const {f,b}=await setup(t);
+  const T0=Date.parse('2026-10-13T12:00:00.000Z'),iso=ms=>new Date(T0-ms).toISOString();
+  // Two Claude Code sessions working, one Codex session quiet.
+  const sessions=[...f.data.values()].slice(0,3).map((s,i)=>({...s,activity:i<2?'active':'quiet',lastOutputAt:iso(i<2?0:5000),createdAt:iso(3600000),agents:[],shells:[]}));
+  await b.evaluate(`(async()=>{
+    const {YardRenderer}=await import('/yard/renderer.js');
+    window.__model=await import('/yard/model.mjs');
+    const host=document.createElement('div'),labels=document.createElement('div');
+    host.style.cssText='position:fixed;width:900px;height:700px;top:0;left:0';host.append(labels);document.body.append(host);
+    window.__renderer=new YardRenderer(host,labels,{select(){},open(){},clock:()=>${T0}});
+    window.__sessions=${q(sessions)};window.__providers=${q(f.providers)};
+    await __renderer.setWorld('guild','dark');__renderer.update(__providers,__sessions);
+    window.__steps=n=>{for(let i=0;i<n;i++)__renderer.step(.05);};
+    window.__hall=id=>{const h=__renderer.halls.get(id);return {level:h.level,glow:Math.max(...h.glows.map(m=>m.emissiveIntensity))};};
+  })()`);
+  await b.wait('__renderer.props.size===3 && [...__renderer.props.values()].every(p=>p.model) && [...__renderer.units.values()].every(u=>u.loaded)');
+  assert.deepEqual(await b.evaluate(`__sessions.map(s=>{const p=__renderer.props.get(s.id).root,slot=__renderer.staged.slots.get(s.id);
+    const want=__model.stationProp({x:Math.round(slot.x*1000)/1000,z:Math.round(slot.z*1000)/1000},s.id);
+    return [p.position.x===want.x,p.position.z===want.z,p.rotation.y===want.face];})`),sessions.map(()=>[true,true,true]),'each station has its prop, where the contract puts it');
+  assert.equal(await b.evaluate(`__renderer.frame`),0,'nothing animates while rendering is paused');
+  const idle=await b.evaluate(`__hall('openai')`);
+  await b.evaluate('__steps(40)');
+  const busy=await b.evaluate(`__hall('anthropic')`);
+  assert.equal(busy.level,1,'two working sessions light their hall fully');
+  assert.ok(busy.glow>idle.glow,'and it glows brighter than a hall with nobody working');
+  assert.equal(await b.evaluate(`__hall('openai').level`),0);
+  assert.ok(await b.evaluate('__renderer.effects.live')>0,'its chimney smokes');
+  // Both quiet: the glow fades out and the last smoke clears.
+  await b.evaluate(`for(const s of __sessions)Object.assign(s,{activity:'quiet',lastOutputAt:${q(iso(1000))}});__renderer.update(__providers,__sessions)`);
+  await b.evaluate('__steps(10)');
+  const fading=await b.evaluate(`__hall('anthropic').level`);
+  assert.ok(fading>0&&fading<1,'the glow fades rather than snapping off');
+  await b.evaluate('__steps(150)');
+  assert.deepEqual(await b.evaluate(`[__hall('anthropic').level,__renderer.effects.live]`),[0,0]);
+  // The two pausing Claude Code characters stand side by side and glance at each other.
+  const glance=await b.evaluate(`[__renderer.units.get(__sessions[0].id).lookYaw,__model.lookTarget(__sessions[0].id,__renderer.staged.places)]`);
+  assert.equal(glance[1],sessions[1].id);
+  assert.ok(Math.abs(glance[0])>.05,'a pausing character turns its head to its neighbour');
+  // Working again under reduced motion: the glow is there at once, with no smoke.
+  await b.evaluate(`__renderer.setReducedMotion(true);for(const s of __sessions.slice(0,2))s.activity='active';__renderer.update(__providers,__sessions)`);
+  assert.deepEqual(await b.evaluate(`[__hall('anthropic').level,__renderer.effects.live]`),[1,0]);
+  // A session that ends takes its prop with it; a world switch releases the prop model.
+  await b.evaluate(`__sessions.pop();__renderer.update(__providers,__sessions)`);
+  assert.equal(await b.evaluate('__renderer.props.size'),2);
+  assert.equal(await b.evaluate(`__renderer.scene.children.filter(c=>c.userData.prop).length`),2);
+  await b.evaluate(`__renderer.setWorld('orbital','dark')`);
+  await b.wait(`__renderer.skin==='orbital' && [...__renderer.props.values()].every(p=>p.model)`);
+  assert.equal(await b.evaluate(`__renderer.cache.has('guild_station')`),false,'the old world prop is released');
+  await b.evaluate('__renderer.dispose()');
+  assert.deepEqual(b.errors,[]);
+});
+
 test('Cards and Yard use the same actions, accounts, dialogs and terminal',options,async t=>{
   const {f,b}=await setup(t);
   await b.wait("document.querySelector('#providers .usage .meter')");

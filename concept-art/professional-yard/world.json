@@ -66,5 +66,6 @@
  "grey": [
   "staff_4",
   "staff_3"
- ]
+ ],
+ "station": {"surface": 1.0}
 }

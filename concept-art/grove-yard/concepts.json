@@ -54,5 +54,11 @@
     "prompt": "A tall old Japanese stone garden lantern of weathered grey granite: a square base, a slender pillar, a square firebox with an open window and a wide upturned stone cap with a round finial, patches of green moss on its cap and base.",
     "style": "_prop",
     "pick": 1314
+  },
+  "station": {
+    "seed": 1624,
+    "prompt": "A worktable stump: a tall old tree stump about as wide as it is tall, with a flat smooth sawn top used as a worktable, short thick roots at its foot, two carved wooden bowls, a small clay pot and a bundle of herbs on its top, a few patches of moss on its bark, fully visible on its own.",
+    "style": "_prop",
+    "pick": 1624
   }
 }

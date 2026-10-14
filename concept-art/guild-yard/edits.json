@@ -74,5 +74,12 @@
       "seed": 11,
       "prompt": "Zoom out to show this exact same armoured harbour warlord full length from the top of his head to his boots: same face, grey hair and beard, same bright azure-blue plate armour etched with runes and edged in gold, crimson padded chest, belt and gauntlets, the big iron anchor slung across his back. Change his black cloak to a matte deep navy wool cloak. He is standing facing the viewer in a relaxed A-pose with his arms held slightly away from his body and his hands open, with no floating chests, no glowing aura, no glowing eyes, no sparks or runes floating around him, every surface matte with no shine, evenly lit, on a plain flat light grey background. Same painterly style."
     }
+  ],
+  "station": [
+    {
+      "input": "raw/station-1601.png",
+      "prompt": "Keep the exact same single object unchanged in shape, proportions, colours and detail, and place it alone on a perfectly flat, uniform, untextured medium grey background, with no floor, no shadow, no plants or objects around it.",
+      "seed": 7
+    }
   ]
 }

@@ -8,7 +8,10 @@ metres tall (times SIZE for an oversized hall), and turned by `turn` in concept-
 TRELLIS.2 squares a model to its axes with the concept's front facing -Y, so
 unturned, the Yard camera sees the front and right side, as the concepts show
 them. It is placed at its provider's anchor as `hall_<provider>`, as
-concept-art/guild-yard/build.py places every world's halls. Warm window
+concept-art/guild-yard/build.py places every world's halls, with an empty
+`hall_<provider>_smoke` at the highest point of its roof and
+`hall_<provider>_glow` at the front centre at door height, where the
+renderer shows its crew at work. Warm window
 texels become an emissive map, which the renderer brightens at dusk. Halls
 keep the triangles and textures TRELLIS.2 made; textures are written as WebP.
 """
@@ -70,6 +73,17 @@ def hall(provider):
     centre = Vector(((lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, lo[2]))
     obj.data.transform(Matrix.Rotation(math.radians(TURN.get(provider, 0)), 4, 'Z') @ Matrix.Scale(scale, 4) @ Matrix.Translation(-centre))
     obj.name = obj.data.name = 'hall_' + provider
+    # Smoke rises from the highest point of the roof; the glow shows at the
+    # front centre at door height.
+    co = np.array([v.co[:] for v in obj.data.vertices])
+    top = co[co[:, 2].argmax()]
+    door = co[(np.abs(co[:, 0]) < .6) & (co[:, 2] > .5) & (co[:, 2] < 1.7)]
+    front = door[:, 1].min() if len(door) else co[:, 1].min()
+    for name, at in (('smoke', top), ('glow', (0, front - .15, 1.1))):
+        empty = bpy.data.objects.new(f'hall_{provider}_{name}', None)
+        bpy.context.collection.objects.link(empty)
+        empty.parent = obj
+        empty.location = Vector(at)
     for i, m in enumerate(obj.data.materials):
         m.name = f'hall_{provider}_{i}'
         bsdf = next(n for n in m.node_tree.nodes if n.type == 'BSDF_PRINCIPLED')

@@ -20,6 +20,7 @@ town buildings, seeds and hall turns), `concepts.json` and `edits.json`.
 | Models | `python build.py goblinville models [name ...]` | `.cache/goblinville-yard/models/<name>.glb` with TRELLIS.2 (`trellis.py`) |
 | Cast | `python build.py goblinville cast [name ...]` | `web/yard/assets/goblin_*.glb`: rigged and animated (`rig.py`) |
 | Halls | `python build.py goblinville halls` | `web/yard/assets/goblinville.glb` (`halls.py`) |
+| Props | `python build.py goblinville props` | `web/yard/assets/goblinville_station.glb`: the station prop stood on the ground at its working height (`props.py`) |
 | Plates | `blender -b --factory-startup --python concept-art/guild-yard/env/plates.py -- goblinville` | `web/yard/assets/goblinville/` |
 | Sky | `blender -b --factory-startup --python concept-art/guild-yard/env/surfaces.py -- goblinville` | `web/yard/assets/goblinville/surfaces.json` and skies |
 
@@ -58,6 +59,16 @@ security policy does not allow images embedded in a GLB), and the Yard tests.
   `concepts.json`: each entry is a prompt, its seed and a shared style. Smoke
   and steam reconstruct as stray fragments, so the picked halls and buildings
   had them removed with `qwen-edit`. The picks are in `concepts/`.
+- **Station prop**: a squat riveted anvil on an iron-banded timber block, a
+  brass vice on one side and spanners on hooks. It is the `station` entry in
+  `concepts.json`, generated with `hidream-o1` (three seeds from 1641, picked
+  by contact sheet as `pick`), restaged onto flat medium grey with `qwen-edit`
+  (the `station` entry in `edits.json`), made with TRELLIS.2 at 1024 shape
+  voxels, 60,000 faces and 2048 textures, as the halls are, and checked from
+  four sides. The first prompt asked for a workbench, too broad for a station;
+  the pick, 1645, is from a second prompt for an anvil station no wider than
+  it is tall. The anvil face stands at 1 m for a 2 m figure, where the
+  builders' hands work and the hammer lands; it is 0.90 x 0.81 x 1.01 m.
 
 ## Models
 

@@ -8,5 +8,6 @@
   "spirit_5": {"image": "concepts/spirit_docker.png", "height": 2.0, "work": "steady", "gait": "glide"}
  },
  "town": ["town_treehouse", "town_stump", "town_mushroom", "town_lantern"],
- "seeds": {"spirit_0": 123, "spirit_4": 123, "hall_docker": 123}
+ "seeds": {"spirit_0": 123, "spirit_4": 123, "hall_docker": 123},
+ "station": {"surface": 0.67}
 }

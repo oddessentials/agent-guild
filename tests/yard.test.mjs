@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, statSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { sessionPose, familiarPose, layoutSessions, providerPositions, characterIndex, WORLDS, CAMERA, SUN, minZoom, clampPan, viewBasis, plateExtent,
- stage, stagingMode, nextStagingChange, restSpots, route, clipFor, doorFor, STAGING, CLIPS, SKELETON } from '../web/yard/model.mjs';
+ stage, stagingMode, nextStagingChange, restSpots, route, clipFor, doorFor, stationProp, STAGING, CLIPS, SKELETON, PROVIDER_ORDER } from '../web/yard/model.mjs';
 import { goldenVectors } from '../scripts/yard-golden.mjs';
 import { Matrix4, Vector3 } from 'three';
 const providers=['anthropic','openai','google','xai','shell','docker'].map(id=>({id}));
@@ -80,6 +80,28 @@ test('rest spots, doors and routes keep out of the halls and the centrepiece',()
   for(const to of path){for(let t=0;t<=1;t+=.02)assert.ok(!inside({x:from.x+(to.x-from.x)*t,z:from.z+(to.z-from.z)*t}),JSON.stringify([a,b,path]));from=to;}
  }
 });
+test('station props face their characters, who never turn their backs to the camera, and walkers keep round them',()=>{
+ const camera=Math.atan2(CAMERA.offset[0],CAMERA.offset[2]),turn=a=>Math.abs(Math.atan2(Math.sin(a),Math.cos(a)));
+ const slots=[...layoutSessions(Array.from({length:12},(_,i)=>session('s'+i,providers[i%6].id)),providers).entries()];
+ const props=slots.map(([id,p])=>stationProp(p,id));
+ assert.deepEqual(new Set(props.map(p=>p.arrangement)),new Set(['counter','left','right']));
+ for(const [i,[,p]] of slots.entries()){
+  const prop=props[i];
+  assert.ok(turn(prop.characterFace-camera)<Math.PI/2,'facing the camera side');
+  assert.ok(Math.abs(Math.atan2(prop.x-p.x,prop.z-p.z)-prop.characterFace)<1e-3&&turn(prop.face-prop.characterFace-Math.PI)<1e-3,'prop and character face each other');
+ }
+ const half=STAGING.station.half-.06;
+ for(const [,a] of slots)for(const [,b] of slots){
+  let from=a;
+  for(const to of route(a,b,providers,props)){
+   for(let t=0;t<=1;t+=.02){
+    const x=from.x+(to.x-from.x)*t,z=from.z+(to.z-from.z)*t;
+    assert.ok(!props.some(p=>Math.abs(x-p.x)<half&&Math.abs(z-p.z)<half),JSON.stringify([a,b]));
+   }
+   from=to;
+  }
+ }
+});
 test('clip choices are seeded per session and come from the contract clip set',()=>{
  for(const mode of Object.keys(CLIPS.character).filter(m=>m!=='walk'))for(let n=0;n<30;n++)assert.ok(CLIPS.character[mode].includes(clipFor('s1',mode,n)));
  const seq=id=>Array.from({length:30},(_,n)=>clipFor(id,'rest',n)).join();
@@ -154,6 +176,8 @@ test('the shipped characters and helpers follow the contract skeleton and carry 
    // The runtime walks a character at the speed its stride and cycle give.
    const yard=asset.nodes.find(n=>n.extras?.yard)?.extras.yard;
    assert.ok(yard?.stride>0&&yard?.cycle>0&&yard?.height>0,name+' yard extras');
+   // Builders work at their station's surface, scaled to their own shoulders.
+   if(kind==='character')assert.ok(yard.surface>0,name+' working height');
    for(const event of yard.events||[]){
     assert.ok(clips[kind].includes(event.clip)&&event.time>=0&&event.at.length===3,name+' event');
    }
@@ -175,6 +199,23 @@ test('the view basis matches the camera, and no permitted view sees past the pla
  }
  assert.ok(minZoom(32/9)===CAMERA.zoom.min&&minZoom(8)>CAMERA.zoom.min);
 });
+test('every world has a skinless station prop within its budget, and every hall smoke and glow anchors',()=>{
+ const assets=new URL('../web/yard/assets/',import.meta.url);
+ for(const [skin,world] of Object.entries(WORLDS)){
+  const prop=glb(world.station.asset);
+  assert.ok(prop.meshes?.length,skin+' prop has a model');
+  assert.ok(!prop.skins?.length&&!prop.animations?.length,skin+' prop is skinless');
+  // The rig, the prop and the renderer agree on how high its working surface is.
+  const built=prop.nodes.find(n=>n.extras?.yard)?.extras.yard.surface;
+  const rigged=JSON.parse(readFileSync(new URL(`../concept-art/${skin}-yard/world.json`,import.meta.url),'utf8')).station.surface;
+  assert.ok(Math.abs(built-world.station.surface)<.01&&rigged===world.station.surface,`${skin} surface: prop ${built}, rig ${rigged}, WORLDS ${world.station.surface}`);
+  let bytes=statSync(new URL(world.station.asset+'.glb',assets)).size;
+  for(const image of prop.images||[])if(image.uri)bytes+=statSync(new URL(image.uri,assets)).size;
+  assert.ok(bytes<=PROP_BUDGET*MiB,`${skin} prop is ${(bytes/MiB).toFixed(2)} MiB`);
+  const nodes=new Set(glb(world.asset).nodes.map(n=>n.name));
+  for(const {id} of providers)for(const anchor of ['smoke','glow'])assert.ok(nodes.has(`hall_${id}_${anchor}`),`${skin} hall_${id}_${anchor}`);
+ }
+});
 // WebP stores its canvas size in the VP8X chunk (24-bit width-1, height-1).
 function webpSize(bytes){
  assert.equal(bytes.toString('ascii',0,4),'RIFF');assert.equal(bytes.toString('ascii',8,12),'WEBP');
@@ -185,6 +226,8 @@ function webpSize(bytes){
  throw new Error('Unknown WebP chunk '+chunk);
 }
 const MiB=1048576;
+// A station prop and its maps, in MiB.
+const PROP_BUDGET=5;
 test('every world\'s plates match the live camera, cover every view, and stay within budget',()=>{
  const assets=new URL('../web/yard/assets/',import.meta.url);
  for(const [skin,world] of Object.entries(WORLDS)){

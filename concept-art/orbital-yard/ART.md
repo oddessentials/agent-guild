@@ -24,6 +24,7 @@ onto grey), `concepts.json` and `edits.json`.
 | Models | `python build.py orbital models [name ...]` | `.cache/orbital-yard/models/<name>.glb` with TRELLIS.2 (`trellis.py`) |
 | Cast | `python build.py orbital cast [name ...]` | `web/yard/assets/robot_*.glb` and `drone_*.glb`: rigged and animated (`rig.py`) |
 | Halls | `python build.py orbital halls` | `web/yard/assets/orbital.glb` (`halls.py`) |
+| Props | `python build.py orbital props` | `web/yard/assets/orbital_station.glb`: the station prop stood on the ground at its working height (`props.py`) |
 | Plates | `blender -b --factory-startup --python concept-art/guild-yard/env/plates.py -- orbital` | `web/yard/assets/orbital/` |
 | Sky | `blender -b --factory-startup --python concept-art/guild-yard/env/surfaces.py -- orbital` | `web/yard/assets/orbital/surfaces.json` and skies |
 
@@ -70,6 +71,14 @@ model's textures to `web/yard/assets/maps/`, and the Yard tests.
   hooded dome with a chevron door. The shuttle, dish and crane stand on pads
   beside the deck in the plates; a cargo stack hung TRELLIS.2 past its
   ten-minute limit twice, so the plates' cargo containers are modelled.
+- **Station prop**: a chunky white control console with a sloped panel of big
+  buttons and two levers and a raised screen hood. It is the `station` entry
+  in `concepts.json`, generated with `hidream-o1` (three seeds from 1611,
+  picked by contact sheet as `pick`), restaged onto flat medium grey with
+  `qwen-edit` (the `station` entry in `edits.json`), made with TRELLIS.2 at
+  1024 shape voxels, 60,000 faces and 2048 textures, as the halls are, and
+  checked from four sides. Its working surface stands at 1 m for a 2 m figure;
+  it is 0.89 x 0.83 x 1.01 m.
 
 ## Plates
 

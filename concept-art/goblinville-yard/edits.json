@@ -128,5 +128,12 @@
       "seed": 11,
       "prompt": "Change only the pose to a relaxed A-pose, as for a 3D character rig: both arms hang straight and are angled about 25 degrees out from the sides, so plain background shows clearly between each arm and the body all the way from armpit to hand, and the feet stand a little apart with a clear gap between the legs. His right hand is open and empty, and his mechanical claw arm hangs out to the side, clear of his body; there is no toolbox. Keep the face, outfit, colours, materials, proportions, framing and lighting exactly the same, full length, facing the viewer, on a perfectly flat, uniform, untextured medium grey background with no noise, pattern, gradient or shadow."
     }
+  ],
+  "station": [
+    {
+      "input": "raw/station-1645.png",
+      "prompt": "Keep the exact same single object unchanged in shape, proportions, colours and detail, and place it alone on a perfectly flat, uniform, untextured medium grey background, with no floor, no shadow, no plants or objects around it.",
+      "seed": 7
+    }
   ]
 }

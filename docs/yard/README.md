@@ -77,6 +77,17 @@ rests. The scene never invents tasks, progress or helpers: every move
 follows a state the manager already reports. A hammer blow throws sparks
 where the model says it lands.
 
+Every session has a workstation at its station, made for its world: a
+lectern in the Guild, a console on Orbital, a worktable stump in the Grove,
+a standing desk on the campus, and an anvil in Goblinville and Gnomeland. It
+stands there while the session exists, in front of the character or to one
+side, and walkers go round it. A hall whose crew is working lights up and
+gives off its world's effect (chimney smoke in the Guild, Goblinville and
+Gnomeland, vent steam on Orbital and the campus roofs, fireflies round the
+Grove's trees), more with two or more at work, and fades when they stop.
+Characters pausing or resting glance at whoever stands nearest, or at the
+selected character when it is close.
+
 Every session has a roster entry and a stable station, including custom
 providers, clone and upgrade tasks. Large groups extend beyond the central
 courtyard and can be reached using **Focus selected** or camera panning.
@@ -189,10 +200,16 @@ its clips. Joints come from each model's silhouette and its skin from bone
 heat. A hand is found at the end of an arm followed down from the armpit
 while it hangs clear of the body, so legs standing apart are not taken for
 arms, and the shoulders sit where that arm's centre line meets the body, under
-any hat or crest. Arm weights stay near the arm and the head keeps only its
-own sphere, so a hood's back or a pack follows the chest. Below the crotch
-each leg owns its side (a robe hangs from the hips instead), and above it the
-legs' hold fades out by the hip joint. Skin that fuses a moving hand to the
+any hat or crest. The neck is where the front silhouette pinches in on both
+sides under the head, so a tall hat, helmet, hood or beard is carried by the
+head rather than taken for it; the trunk's joints divide the hips to the neck.
+The head is the surface joined to the face above the neck, with any piece
+wholly above it over the head (hair, hat, ears), and it turns as one piece a
+little above the neck, so the face cannot shear; a staff held up beside the
+head, or a sword or hammer slung on the back, stays with the body. Arm
+weights stay near the arm. Below the crotch
+each leg owns its side (a robe hangs from the hips instead, as much above
+the crotch as below), and above it the legs' hold fades out by the hip joint. Skin that fuses a moving hand to the
 thigh, or one leg to the other, is cut so neither tears when the limb moves.
 An arm modelled held out from the body hangs closer in every clip, short of
 touching it. Arms joined to what they hold (a `steady` character's staff,
@@ -201,7 +218,11 @@ the trunk and head carry the motion, and a trunk bend that pulls at them is
 eased like a reaching arm.
 Clips are posed in Python with anticipation, overlap and settle, and legs
 are solved by IK, so planted feet stay put and the walk's stance foot keeps
-pace with the character. Each world's `world.json` gives a character's height,
+pace with the character. Hands that work at something (`tinker`, and a
+`pound` hammer's blow) work at the world's station surface: `station.surface`
+in `world.json` is that height for a 2 m figure, and rig.py scales it by each
+character's shoulder height and writes the result as the model's
+`yard.surface`. Each world's `world.json` gives a character's height,
 working motion (`tinker`, `conduct`, `steady` or `pound`), any held tool
 (`prop`), a `gait` other than a walk (`waddle` for small round characters,
 `glide` for those with no legs to speak of), `robe`, and the `busy` hand
@@ -215,15 +236,31 @@ python build.py goblinville sheets goblin_1
 cd ../.. && npm run optimize:yard goblin_1
 ```
 
+Each world's station prop is generated like its town buildings: its prompt is
+the `station` entry in `concepts.json`, its pick is restaged onto flat grey by
+`edits.py` (the `station` entry in `edits.json`), and `build.py WORLD models
+station` makes it with TRELLIS.2. `build.py WORLD props` stands it on the
+ground with its working surface at `station.surface` and writes
+`web/yard/assets/<world>_station.glb`; then `npm run optimize:yard
+<world>_station`. Halls carry `hall_<provider>_smoke` and
+`hall_<provider>_glow` anchors: `halls.py` places them on generated halls (at
+the roof's highest point, and the front centre at door height), and
+`concept-art/guild-yard/build.py` on Guild's and Professional's. Optimize a
+rebuilt world by name: `npm run optimize:yard` with no names re-quantizes
+every model.
+
 `recast` and `cast` write `rig.py`'s checks for each model to
 `.cache/<world>-yard/rig/<name>.json` and name the clips that fail them: more
 than 3% of any part of the body (an arm, a hand, a leg with its foot, the
 trunk or the head) in triangles whose longest edge stretches past twice
 its length, or a planted foot sliding more than 2% of the character's height.
+A character is also checked with its head turned to the glance limits
+([CONTRACT.md](CONTRACT.md#glances)): 0.7 rad either way and 0.3 rad up and
+down, and both together (`look` in the report).
 Each part is measured on its own, so a torn arm cannot hide in the rest of
 the body; a small part is measured against no less than 2% of the body. A
-clip that tears at full reach is baked again with its arms moving less (60%,
-then 30%), and a walk with a shorter stride (80%, then 60%) and less twist,
+clip that tears at full reach is baked again with its arms and trunk moving
+less (60%, then 30%), and a walk with a shorter stride (80%, then 60%) and less twist,
 before it counts as failing; the report records the reach each clip shipped
 with, and the stride the model carries follows its walk.
 `recast` keeps the shipped textures byte for byte. `sheets` draws contact sheets for a spot check.
@@ -269,7 +306,8 @@ only in these disposable fixture profiles; this never changes the user's
 normal browser settings.
 
 `npm test` holds each world to a size budget: its GLB, the textures it
-references, its backdrop plates and its sky and surface maps. The packed
+references, its backdrop plates and its sky and surface maps, and its station
+prop to a budget of its own. The packed
 package and the Pages demo have size gates of their own, in
 `tests/package/check-tarball.mjs` and `docs/demo/check.mjs`; each names its
 limit when it fails. Run `npm pack` and

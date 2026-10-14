@@ -165,5 +165,12 @@
       "seed": 31,
       "prompt": "Change only the pose to a relaxed A-pose, as for a 3D character rig: both arms hang straight and are angled about 40 degrees out from the sides, with a wide gap of plain background, at least as wide as a hand, between each sleeve and the body all the way from armpit to hand, and the feet stand a little apart with a clear gap between the legs. His right hand is open and empty; his left hand holds the iron hook, hanging clear of his body. The coil of rope stays on his shoulder. Keep the face, outfit, colours, materials, proportions, framing and lighting exactly the same, full length, facing the viewer, on a perfectly flat, uniform, untextured medium grey background with no noise, pattern, gradient or shadow."
     }
+  ],
+  "station": [
+    {
+      "input": "raw/station-1655.png",
+      "prompt": "Keep this whole anvil station exactly as it is, the iron anvil and the round banded oak stump under it with the hanging hammers, chisels and the coil of copper wire, unchanged in shape, proportions, colours and detail, and replace only the background with a perfectly flat, uniform, untextured medium grey, with no floor and no shadow.",
+      "seed": 7
+    }
   ]
 }

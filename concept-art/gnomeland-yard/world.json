@@ -18,5 +18,6 @@
  "town": ["town_cottage_a", "town_cottage_b", "town_tower", "town_mill", "town_workshop"],
  "seeds": {"gnome_familiar_1": 123},
  "grey": ["gnome_0", "gnome_1", "gnome_3", "gnome_4", "gnome_5"],
- "turn": {"anthropic": -90, "xai": -90}
+ "turn": {"anthropic": -90, "xai": -90},
+ "station": {"surface": 0.75}
 }

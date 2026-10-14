@@ -64,6 +64,8 @@ for(const name of (await readdir(directory)).filter(name=>name.endsWith('.glb')&
     for(const parent of parents){parent.removeChild(node);parent.addChild(anchor);}
     node.setTranslation([0,0,0]).setRotation([0,0,0,1]).setScale([1,1,1]);
     anchor.addChild(node);
+    // The hall's smoke and glow anchors move up too, out of reach of quantization.
+    for(const child of node.listChildren()){node.removeChild(child);anchor.addChild(child);}
   }
   // Preserve named hall transforms, the renderer's anchors, and skeletal clips.
   // Rounding sub-millimetre position noise also makes the release archive smaller.

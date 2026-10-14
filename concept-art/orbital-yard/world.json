@@ -12,5 +12,6 @@
   "drone_3": {"image": "concepts/drone_aether.png", "height": 1.1}
  },
  "town": ["town_shuttle", "town_dish", "town_crane"],
- "grey": ["robot_1", "robot_3", "robot_4", "robot_5"]
+ "grey": ["robot_1", "robot_3", "robot_4", "robot_5"],
+ "station": {"surface": 1.0}
 }

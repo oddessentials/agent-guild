@@ -5,17 +5,20 @@
   python build.py WORLD recast [name ...]   rig the cast again from its shipped models,
                                             without the generated sources
   python build.py WORLD sheets [name ...]   contact sheets of the cast's clips, for spot checks
-  python build.py WORLD godot [name ...]    check the cast imports and retargets in Godot 4
+  python build.py WORLD godot [name ...]    check the cast and the station prop import in Godot 4
   python build.py WORLD halls               assemble web/yard/assets/<world>.glb
+  python build.py WORLD props               stand the station prop up as web/yard/assets/<world>_station.glb
 
 A world's sources are in concept-art/<world>-yard: `world.json` names its
 cast (runtime name: source image, metres tall, and for builders the working
 motion, any held tool, `prop`, as rig.py's cut_prop and plant read it, the
 `gait` when it is not a walk, `robe` and the `busy` hand that holds something
 modelled in),
-its town buildings, seeds other than 42, the subjects cut out onto grey, and
-hall turns. Image paths are relative to that folder; halls and town
-buildings come from its concepts/<name>.png.
+its town buildings, seeds other than 42, the subjects cut out onto grey, hall
+turns, and its `station` prop: the working surface height for a 2 m figure
+(`surface`, which rig.py scales by each builder's shoulder height) and the
+prop's largest `footprint`. Image paths are relative to that folder; halls,
+town buildings and the station prop come from its concepts/<name>.png.
 
 `models` needs the local image studio's ComfyUI (see trellis.py) and writes
 .cache/<world>-yard/models/<name>.glb; existing files are kept unless named.
@@ -31,6 +34,8 @@ ROOT = HERE.parents[1]
 ASSETS = ROOT / 'web/yard/assets'
 BLENDER = os.environ.get('BLENDER', 'E:/Program Files/Blender Foundation/Blender 5.2/blender.exe')
 PROVIDERS = ['anthropic', 'openai', 'google', 'xai', 'shell', 'docker']
+# How far a station's prop stands from its character: STAGING.station.gap in web/yard/model.mjs.
+GAP = .75
 
 def world(name):
     folder = ROOT / 'concept-art' / f'{name}-yard'
@@ -51,6 +56,9 @@ def models(name, names):
     jobs.update({f'hall_{p}': (folder / f'concepts/hall_{p}.png', 60000, 2048, 1024) for p in PROVIDERS
                  if (folder / f'concepts/hall_{p}.png').exists()})
     jobs.update({t: (folder / f'concepts/{t}.png', 40000, 2048, 1024) for t in spec.get('town', [])})
+    # The station prop is seen as close as the builders who work at it.
+    if (folder / 'concepts/station.png').exists():
+        jobs['station'] = (folder / 'concepts/station.png', 60000, 2048, 1024)
     for key, (image, faces, texture, resolution) in jobs.items():
         out = out_dir / f'{key}.glb'
         if (names and key not in names) or (not names and out.exists()):
@@ -165,11 +173,15 @@ def cast(name, names, shipped=False):
             args += ['--robe']
         if c.get('busy'):
             args += ['--busy', c['busy']]
+        if c.get('work') and 'station' in spec:
+            args += ['--surface', str(spec['station']['surface'])]
         subprocess.run(args, check=True, stdout=subprocess.DEVNULL)
         if shipped and not keep_textures(ASSETS / f'{key}.glb', source, reports / 'maps'):
             print(key, 'textures re-encoded: the shipped ones could not be matched', flush=True)
         result = json.loads(report.read_text())
         bad = [clip for clip, e in result['clips'].items() if not e['ok']]
+        if not result.get('look', {}).get('ok', True):
+            bad.append('look')
         print(key, 'ok' if not bad else 'check ' + ', '.join(bad), flush=True)
         if bad:
             failed.append(key)
@@ -177,20 +189,23 @@ def cast(name, names, shipped=False):
         print('For a spot check: python build.py', name, 'sheets', *failed)
 
 def sheets(name, names):
+    """Contact sheets, with the world's station prop at the builders' station clips."""
     _, spec, _ = world(name)
     out = ROOT / f'.cache/{name}-yard/sheets'
     out.mkdir(parents=True, exist_ok=True)
-    for key in spec['cast']:
+    prop = ASSETS / f'{name}_station.glb'
+    for key, c in spec['cast'].items():
         if names and key not in names:
             continue
+        extra = ['--prop', str(prop), str(spec['station']['surface']), str(GAP)] if c.get('work') and prop.exists() else []
         subprocess.run([BLENDER, '-b', '--factory-startup', '--python', str(HERE / 'sheet.py'), '--',
-                        str(ASSETS / f'{key}.glb'), str(out / f'{key}.png')], check=True, stdout=subprocess.DEVNULL)
+                        str(ASSETS / f'{key}.glb'), str(out / f'{key}.png'), *extra], check=True, stdout=subprocess.DEVNULL)
         print(out / f'{key}.png', flush=True)
 
 def godot(name, names):
-    """Import the shipped cast, un-quantized, into a scratch copy of godot/ and run check.gd."""
+    """Import the shipped cast and station prop, un-quantized, into a scratch copy of godot/ and run check.gd."""
     _, spec, _ = world(name)
-    keys = [k for k in spec['cast'] if not names or k in names]
+    keys = [k for k in [*spec['cast'], f'{name}_station'] if not names or k in names]
     project = ROOT / f'.cache/{name}-yard/godot'
     shutil.rmtree(project, ignore_errors=True)
     shutil.copytree(HERE / 'godot', project)
@@ -213,7 +228,11 @@ def godot(name, names):
 def halls(name):
     subprocess.run([BLENDER, '-b', '--factory-startup', '--python', str(HERE / 'halls.py'), '--', name], check=True)
 
+def props(name):
+    subprocess.run([BLENDER, '-b', '--factory-startup', '--python', str(HERE / 'props.py'), '--', name], check=True)
+
 if __name__ == '__main__':
     name, step, names = sys.argv[1], sys.argv[2], sys.argv[3:]
     {'models': lambda: models(name, names), 'cast': lambda: cast(name, names), 'recast': lambda: cast(name, names, True),
-     'sheets': lambda: sheets(name, names), 'godot': lambda: godot(name, names), 'halls': lambda: halls(name)}[step]()
+     'sheets': lambda: sheets(name, names), 'godot': lambda: godot(name, names), 'halls': lambda: halls(name),
+     'props': lambda: props(name)}[step]()

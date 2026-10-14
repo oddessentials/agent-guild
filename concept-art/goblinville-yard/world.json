@@ -19,5 +19,6 @@
  "town": ["town_house_a", "town_house_b", "town_house_c", "water_tower", "crane", "factory"],
  "seeds": {"factory": 7},
  "grey": ["goblin_1", "goblin_3", "goblin_4", "goblin_5"],
- "turn": {"openai": 90}
+ "turn": {"openai": 90},
+ "station": {"surface": 1.0}
 }

@@ -91,5 +91,12 @@
     "style": "_familiar_style",
     "prompt": "A small stout clockwork tortoise with a high domed shell of riveted brass plates overgrown with a thick cushion of green moss and tiny clover, a calm wise face with round brass goggles pushed up on its head, sturdy scaled legs with brass knee guards, a little leather tool strap with a wrench across its shell.",
     "pick": 701
+  },
+  "_station": "Highly detailed stylized 3D render of a single workshop fixture from a steam-powered goblin town, premium animated film look, chunky solid forms, weathered timber, riveted iron, brass and copper, every surface matte with no glossy reflections, seen from an elevated three-quarter view from the front right, the whole object fully visible and isolated and centered on a perfectly flat, uniform, untextured medium grey background, even soft studio lighting, no ground, no shadow, no people, no smoke, no steam, no fire, no sparks, no glow effects, no text, no letters, no logos, no border.",
+  "station": {
+    "seed": 1644,
+    "prompt": "A goblin smith's anvil station: a squat iron anvil bolted on top of a thick riveted timber block reinforced with iron bands, standing about waist high and no wider than it is tall, a brass vice clamped to one side of the block, a pair of tongs and a spanner hanging from hooks on its front, a few copper rivets on the anvil face.",
+    "style": "_station",
+    "pick": 1645
   }
 }
