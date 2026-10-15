@@ -23,7 +23,7 @@ or put Agent Guild behind a proxy.
 | `accounts/` | Home folders of extra accounts |
 | `github/` | GitHub sign-ins and SSH keys |
 | `bin/` | The `agent-guild-report` launchers put first on each session's PATH |
-| `reporting/` | The hook plugins Claude Code, Antigravity CLI and Grok Build load |
+| `reporting/` | The hook plugins Claude Code and Antigravity CLI load |
 | `yard-art/` | The Yard's 3D art, downloaded from the release the first time the Yard opens. Deleting it, or the data folder, removes it. |
 
 ## providers.json

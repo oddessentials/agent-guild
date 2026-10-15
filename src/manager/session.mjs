@@ -19,6 +19,9 @@ const MODEL_SOURCE_RANK = { args: 0, screen: 1, report: 2 };
 const SCREEN_SCAN_DELAY_MS = 400;
 const SCREEN_SCAN_MAX_DELAY_MS = 2000;
 const MAX_TOOL_SESSION_ID = 200;
+const COMPACTIONS = new Set(['manual', 'auto']);
+const RESET_SOURCES = new Set(['clear', 'startup', 'new']);
+const MAX_COMPACTION_KEYS = 16;
 const REPORTING_STATES = new Set(['pending', 'active', 'unavailable', 'setup_required', 'unsupported']);
 const SHELL_EVENTS = new Set(['start', 'waiting', 'asked', 'background', 'end', 'running', 'reset']);
 // A shell command, or a monitor: a watch the tool keeps in the background and reacts to.
@@ -116,6 +119,10 @@ export class Session extends EventEmitter {
     this.toolSessionId = null;
     this.reply = null;
     this._replies = 0;
+    this.context = { compactions: count(opts.context?.compactions), resets: count(opts.context?.resets) };
+    this.compactionRepeatMs = opts.compactionRepeatMs ?? 2000;
+    this._compactionKeys = [];
+    this._compactedAt = -Infinity;
     this.modelRegex = null;
     if (opts.provider.modelPattern && this.task === null) {
       try {
@@ -738,10 +745,33 @@ export class Session extends EventEmitter {
     const id = String(report.toolSessionId ?? '').trim();
     if (!id || id.length > MAX_TOOL_SESSION_ID || /\p{Cc}/u.test(id)) throw badRequest(`toolSessionId must be a printable id of at most ${MAX_TOOL_SESSION_ID} characters`);
     if (this.toolSessionId !== id) {
+      if (this.toolSessionId && RESET_SOURCES.has(report.source)) this.context.resets++;
       this.toolSessionId = id;
       this._changed();
     }
     return this.toolSessionId;
+  }
+
+  /** A compaction of the tool's context, counted once however many of its hooks report it. */
+  reportContext(report) {
+    if (!report || typeof report !== 'object') throw badRequest('context report must be an object');
+    if (this.status !== 'running') throw Object.assign(new Error('session has exited'), { status: 409 });
+    if (!COMPACTIONS.has(report.compaction)) throw badRequest('compaction must be manual or auto');
+    const key = report.key === undefined || report.key === null ? null : String(report.key).trim();
+    if (key !== null && (!key || key.length > MAX_TOOL_SESSION_ID || /\p{Cc}/u.test(key))) throw badRequest(`key must be a printable id of at most ${MAX_TOOL_SESSION_ID} characters`);
+    this._reportingHeard();
+    if (key !== null) {
+      if (this._compactionKeys.includes(key)) return this.context;
+      this._compactionKeys = [...this._compactionKeys.slice(1 - MAX_COMPACTION_KEYS), key];
+    } else {
+      const now = Date.now();
+      const repeat = now - this._compactedAt < this.compactionRepeatMs;
+      this._compactedAt = now;
+      if (repeat) return this.context;
+    }
+    this.context.compactions++;
+    this._changed();
+    return this.context;
   }
 
   /** The text of the agent's last answer, or null when its last turn ended without one. */
@@ -831,12 +861,17 @@ export class Session extends EventEmitter {
       attachedClients: this.subscribers.size,
       model: this.model,
       toolSessionId: this.toolSessionId,
+      context: { ...this.context },
       reply: this.reply && { id: this.reply.id },
       reporting: this.reporting,
       agents: [...this.agents.values()],
       shells: [...this.shells.values()].filter((s) => s.visible).map((s) => ({ id: s.id, kind: s.kind })),
     };
   }
+}
+
+function count(value) {
+  return Number.isSafeInteger(value) && value > 0 ? value : 0;
 }
 
 function badRequest(message) {

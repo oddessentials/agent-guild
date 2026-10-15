@@ -19,7 +19,7 @@
 
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
-import { hookToReports, hookRoute, dockerHookEvent, claudeStatuslineToReport, formatStatusLine, antigravityUserConversation, antigravityReply } from '../src/report/hooks.mjs';
+import { hookToReports, hookRoute, dockerHookEvent, claudeStatuslineToReport, formatStatusLine, antigravityUserConversation, antigravityReply, claudeCompactBoundary } from '../src/report/hooks.mjs';
 
 // Importing node:http as an ES module costs a hook about 50 ms more than requiring it.
 const http = createRequire(import.meta.url)('node:http');
@@ -66,7 +66,8 @@ function readStdin() {
   });
 }
 
-function send(report, kind = report.reply !== undefined ? 'reply'
+function send(report, kind = report.compaction !== undefined ? 'context'
+  : report.reply !== undefined ? 'reply'
   : report.shell !== undefined ? 'shells'
   : report.agentId !== undefined || report.finishForeground === true ? 'agents'
   : report.hello === true ? 'reporting'
@@ -146,6 +147,35 @@ function antigravityTranscriptReply(file) {
   }
 }
 
+// Claude Code writes the compaction record a moment after its PostCompact hook starts.
+async function claudeCompaction(file, since) {
+  if (typeof file !== 'string') return null;
+  for (let waited = 0; waited <= 3000; waited += 250) {
+    if (waited) await new Promise((resolve) => setTimeout(resolve, 250));
+    const key = claudeCompactBoundary(tailRecords(file, 1024 * 1024), since);
+    if (key) return key;
+  }
+  return null;
+}
+
+function tailRecords(file, bytes) {
+  let fd;
+  try {
+    fd = fs.openSync(file, 'r');
+    const size = fs.fstatSync(fd).size;
+    const start = Math.max(0, size - bytes);
+    const buffer = Buffer.alloc(size - start);
+    fs.readSync(fd, buffer, 0, buffer.length, start);
+    const lines = buffer.toString('utf8').split('\n');
+    if (start > 0) lines.shift();
+    return lines.map(parseJson);
+  } catch {
+    return [];
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
+
 function parseJson(raw) {
   try { return JSON.parse(raw); } catch { return null; }
 }
@@ -170,7 +200,13 @@ async function main() {
     }
     // Antigravity CLI runs the hook in its sub-agents too, each a conversation of its own.
     if (typeof input.conversationId === 'string' && !antigravityUserConversation(firstRecord(input.transcriptPath))) return;
-    for (const report of hookToReports(input)) await sendQuietly(report);
+    for (const report of hookToReports(input)) {
+      if (report.transcript === undefined) await sendQuietly(report);
+      else {
+        const key = await claudeCompaction(report.transcript, performance.timeOrigin - 2000);
+        if (key) await sendQuietly({ compaction: report.compaction, key });
+      }
+    }
     if (typeof input.conversationId === 'string' && input.hook_event_name === 'Stop') await sendQuietly({ reply: antigravityTranscriptReply(input.transcriptPath) });
     return;
   }

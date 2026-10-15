@@ -374,6 +374,7 @@ files. When the tool cannot be asked, `count` is null, `scopes` is empty and
   "attachedClients": 1,
   "model": { "name": "claude-opus-4-5", "displayName": "Opus 4.5", "source": "report" },
   "toolSessionId": "581893e5-a93d-5e49-968b-1c1c277d3255",
+  "context": { "compactions": 2, "resets": 0 },
   "reply": { "id": 3 },
   "reporting": { "state": "active", "reason": null },
   "agents": [ /* Agent */ ],
@@ -405,6 +406,8 @@ files. When the tool cannot be asked, `count` is null, `scopes` is empty and
   `source` is `report`, `screen` or `args`.
 * `toolSessionId` is the id the tool gave its own session, or null. It names
   the session in `GET /providers/:id/history`.
+* `context` counts the times the tool compacted its context and started over
+  in a new session (`/clear`, `/new`) since the card started.
 * `reply` names the answer that ended the agent's last turn by `id`, or is
   null. Its text is read with `GET /sessions/:id/reply`.
 * `reporting` says whether the tool's reporting hooks work, or is null for a
@@ -602,7 +605,8 @@ All paths are under `/api/v1`.
 | DELETE | `/sessions/:id` | | `{ ok: true }`: ends the process if needed and removes the session. |
 | POST | `/sessions/:id/agents` | Agent report | `{ agent }`, or `{ agent: null }`. |
 | POST | `/sessions/:id/model` | `{ model, displayName? }` | `{ model }`. Sets the session's model with source `report`. |
-| POST | `/sessions/:id/tool-session` | `{ toolSessionId }` | `{ toolSessionId }`. Records the id the tool gave its own session. |
+| POST | `/sessions/:id/tool-session` | `{ toolSessionId, source? }` | `{ toolSessionId }`. Records the id the tool gave its own session. A new id with `source` `clear`, `startup` or `new` counts a reset. |
+| POST | `/sessions/:id/context` | `{ compaction, key? }` | `{ context }`. Counts a compaction, `manual` or `auto`. A repeated `key`, or with none a report within 2 s of the last, is the same one. |
 | POST | `/sessions/:id/reply` | `{ reply }` | `{ reply: { id } }`, or `{ reply: null }`. `reply` is the text of the answer that ended the turn, as Markdown, or null. |
 | POST | `/sessions/:id/reporting` | | `{ reporting }`: the tool's hooks announce themselves. |
 | POST | `/sessions/:id/docker` | `{ event, sessionId, agentName?, toolName?, toolUseId?, command?, model?, reply? }` | `{ ok }`. One Docker Agent hook event. |
@@ -614,7 +618,7 @@ All paths are under `/api/v1`.
 id or name of one of the tool's own sessions. `account` defaults to `default`.
 
 The `POST /sessions/:id/…` report routes (`agents`, `model`, `tool-session`,
-`reply`, `reporting`, `docker` and `shells`) also accept the per-session
+`context`, `reply`, `reporting`, `docker` and `shells`) also accept the per-session
 report token instead of the API token, in an `X-Agent-Guild-Report-Token`
 header. The manager gives that token only to the processes inside that
 session.

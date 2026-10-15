@@ -1945,6 +1945,11 @@ const REPORTING_SWITCH = {
     off: (p) => `Stop showing the model of new ${p.tool} sessions, and remove Agent Guild's hook file from ${p.tool}'s hooks.d folder.`,
     on: (p) => `Show the model of new ${p.tool} sessions: Agent Guild adds a hook file to ${p.tool}'s hooks.d folder. ${p.tool} runs it before each model call; outside Agent Guild it does nothing.`,
   },
+  grok: {
+    what: 'Agent reporting',
+    off: (p) => `Remove Agent Guild's hooks from ${p.tool}'s hooks folder. New sessions stop reporting their agents and commands.`,
+    on: (p) => `Add Agent Guild's hooks to ${p.tool}'s hooks folder, so new sessions show their agents and commands and can be resumed. ${p.tool} runs them in every session; outside Agent Guild they do nothing.`,
+  },
   antigravity: {
     what: 'Agent reporting',
     off: (p) => `Remove the Agent Guild plugin from ${p.tool}. New sessions stop reporting their model.`,
@@ -5768,6 +5773,13 @@ function sessionLevel(s) {
   return Number.isFinite(hours) ? Math.max(0, Math.floor(hours)) + 1 : 1;
 }
 
+function contextText(s) {
+  const times = (n) => (n === 1 ? 'once' : n === 2 ? 'twice' : `${n} times`);
+  const { compactions = 0, resets = 0 } = s.context || {};
+  const parts = [compactions && `compacted ${times(compactions)}`, resets && `reset ${times(resets)}`].filter(Boolean);
+  return parts.length ? `Context ${parts.join(', ')}` : '';
+}
+
 function updateCard(node, s) {
   node.dataset.provider = s.provider.id;
   paintProviderIcon(node.querySelector('.provider-icon'), s.provider);
@@ -5775,7 +5787,8 @@ function updateCard(node, s) {
   const badge = node.querySelector('.level-badge');
   if (badge.textContent && Number(badge.textContent) < level) badge.classList.add('level-up');
   badge.textContent = level;
-  badge.title = `Level ${level}`;
+  const context = contextText(s);
+  badge.title = context ? `Level ${level}\n${context}` : `Level ${level}`;
   node.querySelector('.name').textContent = s.name;
   node.querySelector('.drag-handle').setAttribute('aria-label', `Move ${s.name}`);
   const id = toolSessionId(s);
@@ -5818,7 +5831,7 @@ function updateCard(node, s) {
   const accountName = accountLabel(s) ? `, ${accountLabel(s)} account` : '';
   const shells = shellSummary(s.shells || []);
   const reportingNote = s.status === 'running' && REPORTING_TEXT[s.reporting?.state] ? `, agent reporting: ${REPORTING_TEXT[s.reporting.state]}` : '';
-  node.setAttribute('aria-label', `${s.name}, ${s.provider.vendor}${accountName}${modelLabel}, ${statusText(s)}, ${s.agents.length} agents${shells ? `, ${shells}` : ''}${reportingNote}`);
+  node.setAttribute('aria-label', `${s.name}, ${s.provider.vendor}${accountName}${modelLabel}, ${statusText(s)}, ${s.agents.length} agents${shells ? `, ${shells}` : ''}${context ? `, ${context.toLowerCase()}` : ''}${reportingNote}`);
 }
 
 function renderSessions() {

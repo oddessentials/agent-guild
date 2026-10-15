@@ -196,6 +196,15 @@ export function hookToReports(input) {
     return reports;
   }
 
+  if (event === 'PostCompact') {
+    if (subagentId || text(input.subagent_type, input.subagentType)) return reports;
+    const report = { compaction: text(input.trigger, input.source) === 'manual' ? 'manual' : 'auto' };
+    // Claude Code sends a sub-agent's compaction as the session's; only the session's own lands in its transcript.
+    if ('compact_summary' in input) report.transcript = text(input.transcript_path);
+    reports.push(report);
+    return reports;
+  }
+
   const toolName = text(input.tool_name, input.toolName);
   const toolEvent = TOOL_START_EVENTS.has(event) || TOOL_END_EVENTS.has(event);
   const shell = (toolEvent || PERMISSION_EVENTS.has(event)) && SHELL_TOOLS.has(toolName) ? shellReport(event, input, toolName, subagentId) : null;
@@ -248,7 +257,8 @@ export function hookToReports(input) {
   if (!insideSubagent && event === 'SessionStart') reports.push({ hello: true });
 
   const toolSessionId = insideSubagent ? null : text(input.session_id, input.sessionId, input.conversationId);
-  if (toolSessionId && (event === 'SessionStart' || event === 'PreInvocation')) reports.push({ toolSessionId });
+  const source = event === 'SessionStart' ? text(input.source) : null;
+  if (toolSessionId && (event === 'SessionStart' || event === 'PreInvocation')) reports.push(source ? { toolSessionId, source } : { toolSessionId });
   return reports;
 }
 
@@ -268,6 +278,16 @@ export function antigravityReply(records) {
     if (record?.source === 'MODEL' && record.type === 'PLANNER_RESPONSE' && typeof record.content === 'string' && record.content.trim()) return record.content;
   }
   return undefined;
+}
+
+/** The id of the session's own compaction record in these Claude Code transcript records written at or after `since` (ms). */
+export function claudeCompactBoundary(records, since) {
+  for (let i = records.length - 1; i >= 0; i--) {
+    const record = records[i];
+    if (record?.type !== 'system' || record.subtype !== 'compact_boundary' || record.isSidechain === true) continue;
+    if (typeof record.uuid === 'string' && Date.parse(record.timestamp) >= since) return record.uuid;
+  }
+  return null;
 }
 
 /** Model report from the JSON Claude Code feeds to a status line command. */

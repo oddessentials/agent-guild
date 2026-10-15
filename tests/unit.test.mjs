@@ -15,9 +15,9 @@ import { herdrAgentReports, herdrSocket } from '../src/manager/herdr.mjs';
 import { paths } from '../src/manager/config.mjs';
 import { classifyInstall, expandHome, homeRelative, helpDescribes, platformDependency, listInstallations, knownLaunchers, updateHelpAccepted, uninstallPlan } from '../src/manager/install-channels.mjs';
 import { runPlan, encodePlan, removeFile, RUNNER } from '../src/manager/uninstall.mjs';
-import { hookToReports, hookRoute, claudeStatuslineToReport, formatStatusLine, antigravityReply } from '../src/report/hooks.mjs';
+import { hookToReports, hookRoute, claudeStatuslineToReport, formatStatusLine, antigravityReply, claudeCompactBoundary } from '../src/report/hooks.mjs';
 import { shimContents, writeReportShims, prependPath, fileUrl, SHIM_NAME, LOADER_NAME } from '../src/manager/report-shims.mjs';
-import { bundleFiles, codexHookArgs, codexTrustArgs, codexHooksFrom, antigravityInstalled, antigravityPluginDir, antigravityConfigFile, antigravityPluginEnabled, helpLists, REPORT_COMMAND, dockerHookArgs, DOCKER_HOOK_FLAGS, dockerDropin } from '../src/manager/session-hooks.mjs';
+import { bundleFiles, grokFiles, grokHooks, grokHooksState, codexHookArgs, codexTrustArgs, codexHooksFrom, antigravityInstalled, antigravityPluginDir, antigravityConfigFile, antigravityPluginEnabled, helpLists, REPORT_COMMAND, dockerHookArgs, DOCKER_HOOK_FLAGS, dockerDropin } from '../src/manager/session-hooks.mjs';
 import { execFile, execFileSync, spawn, spawnSync } from 'node:child_process';
 import { parseVersion, parseTmuxVersion, compareVersions, probeVersion, diagnosticLine, latestVersion, brewVersion } from '../src/manager/versions.mjs';
 import { SelfUpdate, isDevelopmentBuild } from '../src/manager/self-update.mjs';
@@ -2662,6 +2662,54 @@ test('the agent-guild-report launchers run the reporter from any hook shell', ()
   }
 });
 
+test('a compaction is reported for the main session only, as each tool sends it', () => {
+  const claude = { session_id: 's', transcript_path: '/t/s.jsonl', cwd: '/w', prompt_id: 'p', hook_event_name: 'PostCompact', trigger: 'manual', compact_summary: 'Summary' };
+  assert.deepEqual(hookToReports(claude), [{ compaction: 'manual', transcript: '/t/s.jsonl' }], 'Claude Code: confirmed against its transcript');
+  assert.deepEqual(hookToReports({ ...claude, trigger: 'auto', agent_type: 'reviewer' }), [{ compaction: 'auto', transcript: '/t/s.jsonl' }], 'a session started with --agent');
+  assert.deepEqual(hookToReports({ ...claude, transcript_path: undefined }), [{ compaction: 'manual', transcript: null }]);
+  const codex = { session_id: 'c', turn_id: 't', transcript_path: '/t/c.jsonl', cwd: '/w', hook_event_name: 'PostCompact', model: 'gpt-5.5', trigger: 'auto' };
+  assert.deepEqual(hookToReports(codex), [{ compaction: 'auto' }], 'Codex CLI');
+  assert.deepEqual(hookToReports({ ...codex, agent_id: 'a1', agent_type: 'explorer' }), [], 'a Codex sub-agent');
+  const grok = { hookEventName: 'post_compact', hook_event_name: 'PostCompact', sessionId: 'g', session_id: 'g', source: 'manual', transcriptPath: '/t/g.jsonl' };
+  assert.deepEqual(hookToReports(grok), [{ compaction: 'manual' }], 'Grok Build');
+  assert.deepEqual(hookToReports({ ...grok, subagentType: 'explore' }), [], 'a Grok Build sub-agent');
+
+  const since = Date.parse('2026-10-15T11:28:29.000Z');
+  const boundary = (uuid, timestamp, extra = {}) => ({ type: 'system', subtype: 'compact_boundary', uuid, timestamp, isSidechain: false, ...extra });
+  assert.equal(claudeCompactBoundary([boundary('old', '2026-10-15T11:20:00.000Z'), { type: 'assistant' }, null], since), null, 'an earlier compaction');
+  assert.equal(claudeCompactBoundary([boundary('sub', '2026-10-15T11:28:29.451Z', { isSidechain: true })], since), null, 'a sub-agent\'s');
+  assert.equal(claudeCompactBoundary([boundary('old', '2026-10-15T11:20:00.000Z'), boundary('new', '2026-10-15T11:28:29.451Z'), { type: 'user' }], since), 'new');
+});
+
+test('the reporter sends a Claude Code compaction once its transcript records it', async (t) => {
+  const received = [];
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', () => {
+      received.push(`${req.url.split('/').pop()} ${body}`);
+      res.end('{}');
+    });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ag-compact-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const transcript = path.join(dir, 's.jsonl');
+  const record = (r) => `${JSON.stringify(r)}\n`;
+  fs.writeFileSync(transcript, record({ type: 'user' }) + record({ type: 'system', subtype: 'compact_boundary', uuid: 'b1', timestamp: new Date(Date.now() + 60_000).toISOString(), isSidechain: false }));
+  const reporter = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../bin/agent-guild-report.mjs');
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) if (key.startsWith('AGENT_GUILD_')) delete env[key];
+  Object.assign(env, { AGENT_GUILD_URL: `http://127.0.0.1:${server.address().port}`, AGENT_GUILD_SESSION_ID: 'card', AGENT_GUILD_REPORT_TOKEN: 'token' });
+  const hook = (reporting, payload) => new Promise((resolve, reject) => {
+    const child = execFile(process.execPath, [reporter, '--hook'], { env: { ...env, AGENT_GUILD_REPORTING: reporting }, timeout: 20000 }, (err) => (err ? reject(err) : resolve(received.splice(0))));
+    child.stdin.end(JSON.stringify(payload));
+  });
+  assert.deepEqual(await hook('claude', { session_id: 's', transcript_path: transcript, hook_event_name: 'PostCompact', trigger: 'manual', compact_summary: 'x' }), ['context {"compaction":"manual","key":"b1"}']);
+  assert.deepEqual(await hook('codex', { session_id: 'c', turn_id: 't', hook_event_name: 'PostCompact', trigger: 'auto' }), ['context {"compaction":"auto"}']);
+});
+
 test('a main turn\'s Stop brings its answer; a sub-agent\'s or a failed turn\'s does not', () => {
   const answer = (input) => hookToReports(input).filter((r) => 'reply' in r);
   assert.deepEqual(answer({ hook_event_name: 'Stop', last_assistant_message: 'Done.' }), [{ reply: 'Done.' }], 'Claude Code');
@@ -2694,11 +2742,11 @@ test('hook events and the Claude Code status line report the model', () => {
   assert.deepEqual(hookToReports({ hookEventName: 'user_prompt_submit', hook_event_name: 'UserPromptSubmit', subagentType: 'reviewer', modelId: 'grok-build' }), []);
   assert.deepEqual(hookToReports({ hook_event_name: 'SessionStart', agent_type: 'security-reviewer', model: 'claude-opus-5' }), [{ model: 'claude-opus-5' }, { hello: true }], 'a session started with --agent is still the main session');
   // Grok Build's real SessionStart carries no model: the card uses the screen scan.
-  assert.deepEqual(hookToReports({ hookEventName: 'session_start', hook_event_name: 'SessionStart', sessionId: 's', cwd: '/w', source: 'new' }), [{ hello: true }, { toolSessionId: 's' }]);
+  assert.deepEqual(hookToReports({ hookEventName: 'session_start', hook_event_name: 'SessionStart', sessionId: 's', cwd: '/w', source: 'new' }), [{ hello: true }, { toolSessionId: 's', source: 'new' }]);
 
   // The tool's own session id comes with the event that opens the session, and only for the main session.
   assert.deepEqual(hookToReports({ hook_event_name: 'SessionStart', session_id: '550e8400-e29b-41d4-a716-446655440000', source: 'resume', model: 'claude-opus-5' }),
-    [{ model: 'claude-opus-5' }, { hello: true }, { toolSessionId: '550e8400-e29b-41d4-a716-446655440000' }]);
+    [{ model: 'claude-opus-5' }, { hello: true }, { toolSessionId: '550e8400-e29b-41d4-a716-446655440000', source: 'resume' }]);
   assert.deepEqual(hookToReports({ hook_event_name: 'SessionStart', session_id: 'child', agent_id: 'c1', agent_type: 'explorer' }), [], 'a sub-agent\'s session is not the tool session');
   assert.deepEqual(hookToReports({ hook_event_name: 'UserPromptSubmit', turn_id: 't1', session_id: 's', prompt: 'hi' }), [{ finishForeground: true }], 'later events do not repeat the id');
 
@@ -3034,7 +3082,7 @@ test('tmux cards are kept across restarts, and come back closed with their own i
   const store = { load: () => structuredClone(saved), save: (cards) => { saved = structuredClone(cards); } };
   const baseEnv = { PATH: process.env.PATH, TMUX_ALIVE: alive };
   const first = new SessionManager({ registry, baseEnv, getApiUrl: () => 'http://127.0.0.1:1', store });
-  t.mock.method(first, '_spawn', (options) => Object.assign(new EventEmitter(), options, { createdAt: '2026-10-03T09:00:00.000Z', setModel() {} }));
+  t.mock.method(first, '_spawn', (options) => Object.assign(new EventEmitter(), options, { createdAt: '2026-10-03T09:00:00.000Z', context: { compactions: 0, resets: 0 }, setModel() {} }));
   const kept = await first.create({ providerId: 'shell', shell: 'tmux', cwd: project, name: 'Kept' });
   await first.create({ providerId: 'shell', shell: 'tmux', cwd: project, name: 'Gone' });
   assert.deepEqual(saved.map((card) => card.name), ['Kept', 'Gone']);
@@ -3042,6 +3090,9 @@ test('tmux cards are kept across restarts, and come back closed with their own i
   kept.name = 'Kept, renamed';
   kept.emit('changed');
   assert.equal(saved[0].name, 'Kept, renamed', 'a rename is kept');
+  kept.context = { compactions: 2, resets: 1 };
+  kept.emit('changed');
+  assert.deepEqual(saved[0].context, { compactions: 2, resets: 1 }, 'so are its context counts');
   fs.writeFileSync(alive, `${saved[0].muxName}\n`); // tmux still has the first card's session, not the second's
 
   // A manager stopped while it asks tmux about the cards leaves them all for the next one.
@@ -3058,6 +3109,7 @@ test('tmux cards are kept across restarts, and come back closed with their own i
     [kept.id, 'Kept, renamed', 'exited', '2026-10-03T09:00:00.000Z', project, { label: 'tmux', attach: `tmux attach -t ${saved[0].muxName}`, reattachable: true }],
   ]);
   assert.equal(next.get(kept.id).reportToken, kept.reportToken, 'with its own report token, which tools inside still hold');
+  assert.deepEqual(next.get(kept.id).context, { compactions: 2, resets: 1 });
   assert.deepEqual(saved.map((card) => card.id), [kept.id], 'a card whose session is gone is forgotten');
   // Reattach waits until the manager has found tmux still has the session, as the page does.
   const back = next.get(kept.id);
@@ -4086,7 +4138,7 @@ test('every reporting bundle runs the reporter, Antigravity\'s through a script 
   const unix = bundleFiles('1.2.3', { platform: 'linux' });
   const commands = (files) => [...JSON.stringify(JSON.parse(files['hooks/hooks.json'])).matchAll(/"command":"((?:[^"\\]|\\.)*)"/g)].map((m) => JSON.parse(`"${m[1]}"`));
   const claude = JSON.parse(unix.claude['hooks/hooks.json']).hooks;
-  assert.deepEqual(Object.keys(claude), ['SessionStart', 'UserPromptSubmit', 'SubagentStart', 'SubagentStop', 'PostModelSwitch', 'PreToolUse', 'PermissionRequest', 'PermissionDenied', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'StopFailure']);
+  assert.deepEqual(Object.keys(claude), ['SessionStart', 'UserPromptSubmit', 'SubagentStart', 'SubagentStop', 'PostModelSwitch', 'PreToolUse', 'PermissionRequest', 'PermissionDenied', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'StopFailure', 'PostCompact']);
   assert.equal(claude.PreToolUse[0].matcher, 'Bash|PowerShell|Monitor', 'only shell commands and monitors pay for the tool hooks');
   assert.equal(claude.PermissionRequest[0].matcher, 'Bash|PowerShell|Monitor');
   assert.equal(claude.PermissionDenied[0].matcher, 'Bash|PowerShell|Monitor', 'auto mode denies a command after its PreToolUse');
@@ -4095,12 +4147,17 @@ test('every reporting bundle runs the reporter, Antigravity\'s through a script 
   assert.equal(claude.StopFailure[0].matcher, undefined, 'every API error ends the turn');
   assert.deepEqual(Object.keys(claude).filter((event) => claude[event][0].hooks[0].async !== true), ['SubagentStart', 'PreToolUse'], 'only a start holds Claude Code up, so it reaches the manager before its end');
   assert.equal(claude.SessionStart[0].matcher, undefined);
-  assert.equal(JSON.parse(unix.grok['hooks/hooks.json']).hooks.PreToolUse[0].matcher, 'run_terminal_command');
-  assert.ok(Object.keys(JSON.parse(unix.grok['hooks/hooks.json']).hooks).includes('StopFailure'), 'Grok Build fires StopFailure instead of Stop on an API error');
   assert.ok(commands(unix.claude).every((c) => c === REPORT_COMMAND));
-  assert.ok(commands(unix.grok).every((c) => c === REPORT_COMMAND));
   assert.equal(JSON.parse(unix.claude['.claude-plugin/plugin.json']).name, 'agent-guild');
-  assert.equal(JSON.parse(unix.grok['.grok-plugin/plugin.json']).name, 'agent-guild');
+  for (const platform of ['win32', 'linux']) {
+    const files = grokFiles(platform);
+    const script = platform === 'win32' ? 'agent-guild-hook.cmd' : 'agent-guild-hook.sh';
+    assert.deepEqual(Object.keys(files), [script, 'agent-guild.json'], 'the script is written before the hooks that run it');
+    const grok = JSON.parse(files['agent-guild.json']).hooks;
+    assert.equal(grok.PreToolUse[0].matcher, 'run_terminal_command');
+    assert.ok(Object.keys(grok).includes('StopFailure'), 'Grok Build fires StopFailure instead of Stop on an API error');
+    assert.ok(Object.values(grok).flat().every((group) => group.hooks.every((h) => h.command === script)), 'Grok Build runs the script beside the hooks file');
+  }
   for (const platform of ['win32', 'linux']) {
     const files = bundleFiles('1.2.3', { platform }).antigravity;
     const script = platform === 'win32' ? 'agent-guild-hook.cmd' : 'agent-guild-hook.sh';
@@ -4134,11 +4191,43 @@ test('every reporting bundle runs the reporter, Antigravity\'s through a script 
   }
 });
 
+test('Agent Guild tells its Grok Build hooks from an older version of them and from a file of the user\'s own', () => {
+  const dir = tempDir();
+  const files = grokFiles('linux');
+  assert.equal(grokHooksState(dir, files), null);
+  for (const [name, contents] of Object.entries(files)) fs.writeFileSync(path.join(dir, name), contents);
+  assert.equal(grokHooksState(dir, files), 'current');
+  fs.writeFileSync(path.join(dir, 'agent-guild.json'), JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'agent-guild-hook.sh' }] }] } }));
+  assert.equal(grokHooksState(dir, files), 'stale');
+  fs.writeFileSync(path.join(dir, 'agent-guild.json'), JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'my-own.sh' }] }] } }));
+  assert.equal(grokHooksState(dir, files), 'other');
+  fs.writeFileSync(path.join(dir, 'agent-guild.json'), 'not json');
+  assert.equal(grokHooksState(dir, files), 'other');
+});
+
+test('Grok Build\'s hook script reports only inside an Agent Guild Grok Build session', { skip: process.platform === 'win32' }, () => {
+  const dir = tempDir();
+  const script = path.join(dir, 'agent-guild-hook.sh');
+  fs.writeFileSync(script, grokFiles('linux')['agent-guild-hook.sh'], { mode: 0o755 });
+  const bin = path.join(dir, 'bin');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'agent-guild-report'), '#!/bin/sh\necho "reported $*: $(cat)"\n', { mode: 0o755 });
+  const run = (env) => spawnSync(script, [], { env: { PATH: `${bin}:/usr/bin:/bin`, ...env }, input: '{"hook_event_name":"Stop"}', encoding: 'utf8' });
+  const inside = run({ AGENT_GUILD_REPORTING: 'grok' });
+  assert.deepEqual([inside.status, inside.stdout], [0, 'reported --hook: {"hook_event_name":"Stop"}\n']);
+  for (const env of [{}, { AGENT_GUILD_REPORTING: 'claude' }, { AGENT_GUILD_REPORTING: '' }]) {
+    const outside = run(env);
+    assert.deepEqual([outside.status, outside.stdout, outside.stderr], [0, '', ''], JSON.stringify(env));
+  }
+  const missing = spawnSync(script, [], { env: { PATH: '/usr/bin:/bin', AGENT_GUILD_REPORTING: 'grok' }, input: '{}', encoding: 'utf8' });
+  assert.deepEqual([missing.status, missing.stdout, missing.stderr], [0, '', ''], 'a session whose reporter is gone shows Grok Build no failure');
+});
+
 test('the hook examples add the hooks Agent Guild adds itself', () => {
   const example = (name) => JSON.parse(fs.readFileSync(new URL(`../examples/${name}`, import.meta.url), 'utf8')).hooks;
   const bundles = bundleFiles('1.2.3', { platform: 'linux' });
   assert.deepEqual(example('claude-code-settings.json'), JSON.parse(bundles.claude['hooks/hooks.json']).hooks);
-  assert.deepEqual(example('grok-hooks.json'), JSON.parse(bundles.grok['hooks/hooks.json']).hooks);
+  assert.deepEqual(example('grok-hooks.json'), grokHooks());
   const codex = example('codex-hooks.json');
   const flags = codexHookArgs().filter((a, i) => i % 2 === 1).map((a) => [a.slice('hooks.'.length, a.indexOf('=')), a.match(/matcher='([^']*)'/)?.[1]]);
   assert.deepEqual(Object.entries(codex).map(([event, [group]]) => [event, group.matcher]), flags);
@@ -4147,8 +4236,8 @@ test('the hook examples add the hooks Agent Guild adds itself', () => {
 
 test('Codex hook overrides avoid double quotes, and trust only the handlers Codex lists as ours', () => {
   const args = codexHookArgs();
-  assert.deepEqual(args.filter((a, i) => i % 2 === 0), Array(10).fill('-c'));
-  assert.deepEqual(args.filter((a, i) => i % 2 === 1).map((a) => a.split('=')[0]), ['hooks.SessionStart', 'hooks.UserPromptSubmit', 'hooks.SubagentStart', 'hooks.SubagentStop', 'hooks.PreToolUse', 'hooks.PermissionRequest', 'hooks.PostToolUse', 'hooks.Stop', 'hooks.Interrupt', 'hooks.SessionEnd']);
+  assert.deepEqual(args.filter((a, i) => i % 2 === 0), Array(11).fill('-c'));
+  assert.deepEqual(args.filter((a, i) => i % 2 === 1).map((a) => a.split('=')[0]), ['hooks.SessionStart', 'hooks.UserPromptSubmit', 'hooks.SubagentStart', 'hooks.SubagentStop', 'hooks.PreToolUse', 'hooks.PermissionRequest', 'hooks.PostToolUse', 'hooks.Stop', 'hooks.Interrupt', 'hooks.SessionEnd', 'hooks.PostCompact']);
   assert.match(args[9], /^hooks\.PreToolUse=\[\{hooks=/, 'every tool call: a multi_agent_v2 follow-up starts with any tool');
   assert.match(args[11], /^hooks\.PermissionRequest=\[\{matcher='Bash',/);
   assert.match(args[13], /^hooks\.PostToolUse=\[\{matcher='Bash',/);
@@ -4159,7 +4248,7 @@ test('Codex hook overrides avoid double quotes, and trust only the handlers Code
     key: `/<session-flags>/config.toml:${eventName}:0:0`, eventName, command: REPORT_COMMAND, source: 'sessionFlags', enabled: true,
     currentHash: `sha256:${eventName}`, trustStatus: 'untrusted', ...extra,
   });
-  const all = [hook('sessionStart'), hook('userPromptSubmit'), hook('subagentStart'), hook('subagentStop'), hook('preToolUse'), hook('permissionRequest'), hook('postToolUse'), hook('stop'), hook('interrupt'), hook('sessionEnd')];
+  const all = [hook('sessionStart'), hook('userPromptSubmit'), hook('subagentStart'), hook('subagentStop'), hook('preToolUse'), hook('permissionRequest'), hook('postToolUse'), hook('stop'), hook('interrupt'), hook('sessionEnd'), hook('postCompact')];
   const listed = codexHooksFrom({ data: [{ hooks: [...all, hook('subagentStart', { source: 'user', key: 'user-key', command: 'mine' })] }] });
   assert.deepEqual(listed.map((h) => h.key), all.map((h) => h.key), 'the user\'s own hooks are never trusted by us');
   assert.equal(codexHooksFrom({ data: [{ hooks: all.slice(1) }] }), null, 'a missing handler means Codex did not load ours');
@@ -4352,7 +4441,7 @@ test('Docker Agent\'s hook events reach a Docker Agent or Shell card, never anot
   assert.deepEqual(await hook('claude', llmCall), []);
   assert.deepEqual(await hook('claude', { session_id: 'd1', hook_event_name: 'session_start', agent_name: 'root', source: 'startup' }), [], 'Resume keeps the card\'s own session');
   assert.deepEqual(await hook('claude', { session_id: 'd1', hook_event_name: 'stop', agent_name: 'root' }), [], 'the card\'s commands keep running');
-  assert.deepEqual(await hook('claude', claudeStart), ['model {"model":"claude-opus-5-5"}', 'reporting {"hello":true}', 'tool-session {"toolSessionId":"c1"}'], 'the card\'s own tool still reports');
+  assert.deepEqual(await hook('claude', claudeStart), ['model {"model":"claude-opus-5-5"}', 'reporting {"hello":true}', 'tool-session {"toolSessionId":"c1","source":"startup"}'], 'the card\'s own tool still reports');
   assert.deepEqual(await hook('', llmCall), ['docker {"event":"BeforeLlmCall","sessionId":"d1","agentName":"root","model":"dmr/ai/qwen2.5:3B-Q4_K_M"}']);
 });
 
