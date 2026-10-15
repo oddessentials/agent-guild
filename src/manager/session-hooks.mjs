@@ -13,7 +13,6 @@ const PROBE_TIMEOUT_MS = 20000;
 const PROBE_RETRY_MS = 5 * 60 * 1000;
 
 const handler = (extra = {}) => ({ type: 'command', command: REPORT_COMMAND, ...extra });
-const groups = (events, extra) => Object.fromEntries(events.map((event) => [event, [{ ...extra?.[event]?.group, hooks: [handler(extra?.[event]?.handler)] }]]));
 
 const shellEvents = (events, matcher) => Object.fromEntries(events.map((event) => [event, { group: { matcher } }]));
 
@@ -32,6 +31,12 @@ const claudeHooks = () => Object.fromEntries(CLAUDE_EVENTS.map((event) => [event
   hooks: [handler(CLAUDE_BLOCKING.has(event) ? {} : { async: true })],
 }]]));
 const GROK_EVENTS = ['SessionStart', 'SubagentStart', 'SubagentStop', 'StopCancelled', 'StopFailure', 'SessionEnd', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'PostCompact'];
+const GROK_EXTRA = { SessionEnd: { handler: { timeout: 10 } }, ...shellEvents(['PreToolUse', 'PostToolUse', 'PostToolUseFailure'], 'run_terminal_command') };
+export const grokHooks = (command = REPORT_COMMAND) => Object.fromEntries(GROK_EVENTS.map((event) => [event, [{
+  ...GROK_EXTRA[event]?.group,
+  hooks: [{ ...handler(GROK_EXTRA[event]?.handler), command }],
+}]]));
+const GROK_HOOKS_FILE = `${PLUGIN_NAME}.json`;
 
 // Docker Agent takes one hook command per event on its command line. These flags cover the session's own
 // shell commands and turns, and its sub-agents, each of which runs in a session of its own. The model needs a
@@ -103,6 +108,31 @@ function antigravityFiles(manifest, platform) {
   };
 }
 
+// Grok Build loads every hooks file in its home's hooks folder into every session, also those started outside Agent
+// Guild, and runs a command that names a file beside it without a shell. So the hook is a script there that reports
+// only inside an Agent Guild Grok Build session.
+export function grokFiles(platform = process.platform) {
+  const name = platform === 'win32' ? 'agent-guild-hook.cmd' : 'agent-guild-hook.sh';
+  const script = platform === 'win32'
+    ? ['@echo off', `if "%AGENT_GUILD_REPORTING%"=="grok" call ${REPORT_COMMAND}`, ''].join('\r\n')
+    : ['#!/bin/sh', `if [ "$AGENT_GUILD_REPORTING" = grok ] && command -v agent-guild-report >/dev/null 2>&1; then exec ${REPORT_COMMAND}; fi`, 'cat >/dev/null', ''].join('\n');
+  return { [name]: script, [GROK_HOOKS_FILE]: `${JSON.stringify({ hooks: grokHooks(name) }, null, 2)}\n` };
+}
+
+/** "current" when a hooks folder holds this version's Grok Build hooks, "stale" when an older version of ours, "other" or null. */
+export function grokHooksState(dir, files) {
+  const hooks = readOr(path.join(dir, GROK_HOOKS_FILE), null);
+  if (hooks === null) return null;
+  if (Object.entries(files).every(([name, contents]) => readOr(path.join(dir, name), null) === contents)) return 'current';
+  const script = Object.keys(files).find((name) => name !== GROK_HOOKS_FILE);
+  try {
+    const commands = Object.values(JSON.parse(hooks).hooks).flat().flatMap((group) => group.hooks.map((h) => h.command));
+    return commands.length > 0 && commands.every((command) => command === script) ? 'stale' : 'other';
+  } catch {
+    return 'other';
+  }
+}
+
 export function bundleFiles(version, { platform = process.platform } = {}) {
   const json = (value) => `${JSON.stringify(value, null, 2)}\n`;
   const manifest = { name: PLUGIN_NAME, version, description: MANIFEST_DESCRIPTION };
@@ -112,12 +142,6 @@ export function bundleFiles(version, { platform = process.platform } = {}) {
       'hooks/hooks.json': json({ hooks: claudeHooks() }),
     },
     antigravity: antigravityFiles({ name: PLUGIN_NAME, description: MANIFEST_DESCRIPTION }, platform),
-    grok: {
-      '.grok-plugin/plugin.json': json(manifest),
-      'hooks/hooks.json': json({
-        hooks: groups(GROK_EVENTS, { SessionEnd: { handler: { timeout: 10 } }, ...shellEvents(['PreToolUse', 'PostToolUse', 'PostToolUseFailure'], 'run_terminal_command') }),
-      }),
-    },
   };
 }
 
@@ -305,7 +329,7 @@ export class SessionHooks {
 
   warm() {
     for (const provider of this.registry.providers) {
-      if (['claude', 'codex', 'grok', 'docker'].includes(provider.reporting)) this._probe(provider).catch(() => {});
+      if (['claude', 'codex', 'docker'].includes(provider.reporting)) this._probe(provider).catch(() => {});
     }
   }
 
@@ -371,17 +395,26 @@ export class SessionHooks {
    * `resume` and `args` are the session's own.
    */
   async launch(provider, options = null) {
-    const { resume = null, args = [] } = options ?? {};
+    const { resume = null, args = [], account = null } = options ?? {};
     const mode = provider.reporting;
     if (!mode) return { args: [], reporting: null };
     const tool = provider.tool;
+    const off = { args: [], reporting: { state: 'setup_required', reason: `Agent reporting is off for ${tool}. Turn it on from the ${tool} card; it applies to new sessions.` } };
+    if (mode === 'grok') {
+      const dir = this._grokDir(provider, account);
+      const state = grokHooksState(dir, this._grokFiles());
+      if (state === 'other') return { args: [], reporting: { state: 'unavailable', reason: `${path.join(dir, GROK_HOOKS_FILE)} was not written by Agent Guild, so ${tool} cannot report agents. Remove it, then turn on Agent reporting from the ${tool} card.` } };
+      if (!state) return off;
+      // Hooks an older Agent Guild wrote are brought up to date; they were turned on, and stay on.
+      if (state === 'stale') {
+        try { this._writeGrok(dir); } catch (err) { console.warn(`[reporting] could not update ${dir}: ${err.message}`); }
+      }
+      return { args: [], reporting: pending(tool, 'starts its session') };
+    }
     if (!this.bundles) {
       return { args: [], reporting: { state: 'unavailable', reason: `Agent Guild could not write its reporting hooks, so ${tool} cannot report agents.` } };
     }
-    if (mode === 'antigravity') {
-      if (this.enabled(provider)) return { args: [], reporting: pending(tool, 'runs its first prompt') };
-      return { args: [], reporting: { state: 'setup_required', reason: `Agent reporting is off for ${tool}. Turn it on from the ${tool} card; it applies to new sessions.` } };
-    }
+    if (mode === 'antigravity') return this.enabled(provider) ? { args: [], reporting: pending(tool, 'runs its first prompt') } : off;
     const probe = await this._probe(provider);
     if (mode === 'codex') {
       if (probe?.args?.length) return { args: probe.args, reporting: pending(tool, 'runs its first prompt') };
@@ -415,8 +448,7 @@ export class SessionHooks {
         },
       };
     }
-    const dir = mode === 'claude' ? this.bundles.claude : this.bundles.grok;
-    if (probe?.pluginDir) return { args: ['--plugin-dir', dir], reporting: pending(tool, 'starts its session') };
+    if (probe?.pluginDir) return { args: ['--plugin-dir', this.bundles.claude], reporting: pending(tool, 'starts its session') };
     if (probe?.error) {
       return { args: [], reporting: { state: 'unavailable', reason: `Could not check whether ${tool} can load Agent Guild's reporting hooks (${probe.error}).` } };
     }
@@ -436,12 +468,20 @@ export class SessionHooks {
       const state = this._dropinState(provider);
       return state === 'other' ? null : Boolean(state);
     }
+    if (provider.reporting === 'grok') {
+      const states = this._grokDirs(provider).map((dir) => grokHooksState(dir, this._grokFiles()));
+      return states.includes('other') ? null : states.every(Boolean);
+    }
     if (provider.reporting !== 'antigravity' || !this.bundles) return null;
     return this._installed(provider) === 'current' && this._pluginEnabled(provider);
   }
 
   /** Why the card's reporting switch cannot be used, or null. */
   note(provider) {
+    if (provider.reporting === 'grok') {
+      const other = this._grokDirs(provider).find((dir) => grokHooksState(dir, this._grokFiles()) === 'other');
+      return other ? `Agent reporting is off: ${path.join(other, GROK_HOOKS_FILE)} was not written by Agent Guild. Remove it to turn agent reporting on here.` : null;
+    }
     if (provider.reporting !== 'docker') return null;
     if (!this.probes.get(provider.id)?.version) return null;
     if (!this._dockerDropins(provider)) return `Model reporting needs ${provider.tool} ${DOCKER_DROPIN_VERSION} or later.`;
@@ -492,6 +532,52 @@ export class SessionHooks {
     return this.enabled(provider);
   }
 
+  _grokFiles() {
+    return grokFiles(this.registry.platform);
+  }
+
+  /** The hooks folder of the Grok Build home an account's sessions use. */
+  _grokDir(provider, account) {
+    const env = { ...this.registry.env, ...provider.env, ...account?.env };
+    const home = env[provider.homeVar] || path.join((this.registry.platform === 'win32' ? env.USERPROFILE : env.HOME) || os.homedir(), '.grok');
+    return path.join(home, 'hooks');
+  }
+
+  _grokDirs(provider) {
+    return [...new Set((this.registry.accountsFor?.(provider) ?? [null]).map((account) => this._grokDir(provider, account)))];
+  }
+
+  _writeGrok(dir) {
+    fs.mkdirSync(dir, { recursive: true });
+    // Grok Build reads the folder when a session starts, so each file appears whole or not at all, the script first.
+    for (const [name, contents] of Object.entries(this._grokFiles())) {
+      const file = path.join(dir, name);
+      const temp = `${file}.${process.pid}.tmp`;
+      fs.writeFileSync(temp, contents, { mode: name === GROK_HOOKS_FILE ? 0o644 : 0o755 });
+      fs.renameSync(temp, file);
+    }
+  }
+
+  _setGrok(provider, enabled) {
+    const dirs = this._grokDirs(provider).map((dir) => [dir, grokHooksState(dir, this._grokFiles())]);
+    const other = dirs.find(([, state]) => state === 'other');
+    if (other && enabled) {
+      throw Object.assign(new Error(`${path.join(other[0], GROK_HOOKS_FILE)} was not written by Agent Guild. Remove it to turn on agent reporting.`), { status: 409, code: 'plugin_conflict' });
+    }
+    for (const [dir, state] of dirs) {
+      try {
+        if (enabled && state !== 'current') this._writeGrok(dir);
+        if (!enabled && (state === 'current' || state === 'stale')) {
+          for (const name of Object.keys(this._grokFiles()).reverse()) fs.rmSync(path.join(dir, name), { force: true });
+          try { fs.rmdirSync(dir); } catch { /* not empty, or not ours to remove */ }
+        }
+      } catch (err) {
+        throw Object.assign(new Error(`Agent Guild could not ${enabled ? 'write' : 'remove'} its hooks in ${dir}: ${err.message}`), { status: 500, code: 'reporting_setup_failed' });
+      }
+    }
+    return this.enabled(provider);
+  }
+
   _installed(provider) {
     return antigravityInstalled(antigravityPluginDir({ ...this.registry.env, ...provider.env }, this.registry.platform), this.bundles.antigravity);
   }
@@ -502,6 +588,7 @@ export class SessionHooks {
 
   async setEnabled(provider, enabled) {
     if (provider.reporting === 'docker') return this._setDockerModel(provider, enabled);
+    if (provider.reporting === 'grok') return this._setGrok(provider, enabled);
     if (provider.reporting !== 'antigravity') throw Object.assign(new Error(`${provider.tool} needs no setup for agent reporting`), { status: 400, code: 'not_applicable' });
     if (!this.bundles) throw Object.assign(new Error('Agent Guild could not write its reporting hooks'), { status: 500, code: 'reporting_unavailable' });
     const resolved = this.registry.resolve(provider);

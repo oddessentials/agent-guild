@@ -14,7 +14,8 @@
 //           `plugin disable` turned them off in ~/.gemini/config/config.json; hooks run in
 //           the plugin's folder (on Windows through cmd /C, which gets a quoted path wrong), take
 //           no event name, and must print a JSON object
-//   grok    --plugin-dir <dir>, accepted only when FAKE_GROK_PLUGIN_DIR=1, and $GROK_HOME/hooks/*.json
+//   grok    $GROK_HOME/hooks/*.json, where a command that names a file beside its hooks file runs that file;
+//           --plugin-dir is refused, as by every Grok Build release
 // FAKE_CODEX_LOADS_NONE=1 makes Codex's hooks/list answer without our hooks.
 // FAKE_DOCKER_NO_PLUGIN=1 makes docker's --help answer as the Docker CLI does without the agent plugin: its own
 // help, no hook flags, exit 0, and `docker info` lists no agent plugin. FAKE_DOCKER_VERSION sets the version
@@ -96,7 +97,7 @@ const DOCKER_HOOK_FLAGS = ['--hook-session-start', '--hook-pre-tool-use', '--hoo
 
 if (argv.includes('--help')) {
   out(`Usage: ${tool} [options]`);
-  if (tool === 'claude' || (tool === 'grok' && process.env.FAKE_GROK_PLUGIN_DIR === '1')) out('  --plugin-dir <path>   Load a plugin for this session only');
+  if (tool === 'claude') out('  --plugin-dir <path>   Load a plugin for this session only');
   if (tool === 'docker' && dockerPluginPresent) for (const name of DOCKER_HOOK_FLAGS) out(`      ${name} stringArray   Add a hook command (repeatable)`);
   out('  -h, --help            Show help');
   process.exit(0);
@@ -108,7 +109,7 @@ const flag = (name) => {
   return values;
 };
 
-if (tool === 'grok' && argv.includes('--plugin-dir') && process.env.FAKE_GROK_PLUGIN_DIR !== '1') {
+if (tool === 'grok' && argv.includes('--plugin-dir')) {
   process.stderr.write("error: unexpected argument '--plugin-dir' found\n");
   process.exit(2);
 }
@@ -227,9 +228,10 @@ function discover() {
     const event = (name) => name.slice('--hook-'.length).replace(/(?:^|-)([a-z])/g, (_m, c) => c.toUpperCase());
     return DOCKER_HOOK_FLAGS.flatMap((name) => flag(name).map((command) => ({ event: event(name), command })));
   }
-  const home = process.env.GROK_HOME || path.join(os.homedir(), '.grok');
-  const files = fs.existsSync(path.join(home, 'hooks')) ? fs.readdirSync(path.join(home, 'hooks')).filter((f) => f.endsWith('.json')) : [];
-  return [...pluginHooks(flag('--plugin-dir')), ...files.flatMap((f) => settingsHooks(path.join(home, 'hooks', f)))];
+  const dir = path.join(process.env.GROK_HOME || path.join(os.homedir(), '.grok'), 'hooks');
+  const files = fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => f.endsWith('.json')) : [];
+  const beside = (command) => (fs.existsSync(path.join(dir, command)) ? `"${path.join(dir, command)}"` : command);
+  return files.flatMap((f) => settingsHooks(path.join(dir, f))).map((h) => ({ ...h, command: beside(h.command) }));
 }
 
 function shellFor(command) {

@@ -17,7 +17,7 @@ import { classifyInstall, expandHome, homeRelative, helpDescribes, platformDepen
 import { runPlan, encodePlan, removeFile, RUNNER } from '../src/manager/uninstall.mjs';
 import { hookToReports, hookRoute, claudeStatuslineToReport, formatStatusLine, antigravityReply, claudeCompactBoundary } from '../src/report/hooks.mjs';
 import { shimContents, writeReportShims, prependPath, fileUrl, SHIM_NAME, LOADER_NAME } from '../src/manager/report-shims.mjs';
-import { bundleFiles, codexHookArgs, codexTrustArgs, codexHooksFrom, antigravityInstalled, antigravityPluginDir, antigravityConfigFile, antigravityPluginEnabled, helpLists, REPORT_COMMAND, dockerHookArgs, DOCKER_HOOK_FLAGS, dockerDropin } from '../src/manager/session-hooks.mjs';
+import { bundleFiles, grokFiles, grokHooks, grokHooksState, codexHookArgs, codexTrustArgs, codexHooksFrom, antigravityInstalled, antigravityPluginDir, antigravityConfigFile, antigravityPluginEnabled, helpLists, REPORT_COMMAND, dockerHookArgs, DOCKER_HOOK_FLAGS, dockerDropin } from '../src/manager/session-hooks.mjs';
 import { execFile, execFileSync, spawn, spawnSync } from 'node:child_process';
 import { parseVersion, parseTmuxVersion, compareVersions, probeVersion, diagnosticLine, latestVersion, brewVersion } from '../src/manager/versions.mjs';
 import { SelfUpdate, isDevelopmentBuild } from '../src/manager/self-update.mjs';
@@ -4147,12 +4147,17 @@ test('every reporting bundle runs the reporter, Antigravity\'s through a script 
   assert.equal(claude.StopFailure[0].matcher, undefined, 'every API error ends the turn');
   assert.deepEqual(Object.keys(claude).filter((event) => claude[event][0].hooks[0].async !== true), ['SubagentStart', 'PreToolUse'], 'only a start holds Claude Code up, so it reaches the manager before its end');
   assert.equal(claude.SessionStart[0].matcher, undefined);
-  assert.equal(JSON.parse(unix.grok['hooks/hooks.json']).hooks.PreToolUse[0].matcher, 'run_terminal_command');
-  assert.ok(Object.keys(JSON.parse(unix.grok['hooks/hooks.json']).hooks).includes('StopFailure'), 'Grok Build fires StopFailure instead of Stop on an API error');
   assert.ok(commands(unix.claude).every((c) => c === REPORT_COMMAND));
-  assert.ok(commands(unix.grok).every((c) => c === REPORT_COMMAND));
   assert.equal(JSON.parse(unix.claude['.claude-plugin/plugin.json']).name, 'agent-guild');
-  assert.equal(JSON.parse(unix.grok['.grok-plugin/plugin.json']).name, 'agent-guild');
+  for (const platform of ['win32', 'linux']) {
+    const files = grokFiles(platform);
+    const script = platform === 'win32' ? 'agent-guild-hook.cmd' : 'agent-guild-hook.sh';
+    assert.deepEqual(Object.keys(files), [script, 'agent-guild.json'], 'the script is written before the hooks that run it');
+    const grok = JSON.parse(files['agent-guild.json']).hooks;
+    assert.equal(grok.PreToolUse[0].matcher, 'run_terminal_command');
+    assert.ok(Object.keys(grok).includes('StopFailure'), 'Grok Build fires StopFailure instead of Stop on an API error');
+    assert.ok(Object.values(grok).flat().every((group) => group.hooks.every((h) => h.command === script)), 'Grok Build runs the script beside the hooks file');
+  }
   for (const platform of ['win32', 'linux']) {
     const files = bundleFiles('1.2.3', { platform }).antigravity;
     const script = platform === 'win32' ? 'agent-guild-hook.cmd' : 'agent-guild-hook.sh';
@@ -4186,11 +4191,43 @@ test('every reporting bundle runs the reporter, Antigravity\'s through a script 
   }
 });
 
+test('Agent Guild tells its Grok Build hooks from an older version of them and from a file of the user\'s own', () => {
+  const dir = tempDir();
+  const files = grokFiles('linux');
+  assert.equal(grokHooksState(dir, files), null);
+  for (const [name, contents] of Object.entries(files)) fs.writeFileSync(path.join(dir, name), contents);
+  assert.equal(grokHooksState(dir, files), 'current');
+  fs.writeFileSync(path.join(dir, 'agent-guild.json'), JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'agent-guild-hook.sh' }] }] } }));
+  assert.equal(grokHooksState(dir, files), 'stale');
+  fs.writeFileSync(path.join(dir, 'agent-guild.json'), JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'my-own.sh' }] }] } }));
+  assert.equal(grokHooksState(dir, files), 'other');
+  fs.writeFileSync(path.join(dir, 'agent-guild.json'), 'not json');
+  assert.equal(grokHooksState(dir, files), 'other');
+});
+
+test('Grok Build\'s hook script reports only inside an Agent Guild Grok Build session', { skip: process.platform === 'win32' }, () => {
+  const dir = tempDir();
+  const script = path.join(dir, 'agent-guild-hook.sh');
+  fs.writeFileSync(script, grokFiles('linux')['agent-guild-hook.sh'], { mode: 0o755 });
+  const bin = path.join(dir, 'bin');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'agent-guild-report'), '#!/bin/sh\necho "reported $*: $(cat)"\n', { mode: 0o755 });
+  const run = (env) => spawnSync(script, [], { env: { PATH: `${bin}:/usr/bin:/bin`, ...env }, input: '{"hook_event_name":"Stop"}', encoding: 'utf8' });
+  const inside = run({ AGENT_GUILD_REPORTING: 'grok' });
+  assert.deepEqual([inside.status, inside.stdout], [0, 'reported --hook: {"hook_event_name":"Stop"}\n']);
+  for (const env of [{}, { AGENT_GUILD_REPORTING: 'claude' }, { AGENT_GUILD_REPORTING: '' }]) {
+    const outside = run(env);
+    assert.deepEqual([outside.status, outside.stdout, outside.stderr], [0, '', ''], JSON.stringify(env));
+  }
+  const missing = spawnSync(script, [], { env: { PATH: '/usr/bin:/bin', AGENT_GUILD_REPORTING: 'grok' }, input: '{}', encoding: 'utf8' });
+  assert.deepEqual([missing.status, missing.stdout, missing.stderr], [0, '', ''], 'a session whose reporter is gone shows Grok Build no failure');
+});
+
 test('the hook examples add the hooks Agent Guild adds itself', () => {
   const example = (name) => JSON.parse(fs.readFileSync(new URL(`../examples/${name}`, import.meta.url), 'utf8')).hooks;
   const bundles = bundleFiles('1.2.3', { platform: 'linux' });
   assert.deepEqual(example('claude-code-settings.json'), JSON.parse(bundles.claude['hooks/hooks.json']).hooks);
-  assert.deepEqual(example('grok-hooks.json'), JSON.parse(bundles.grok['hooks/hooks.json']).hooks);
+  assert.deepEqual(example('grok-hooks.json'), grokHooks());
   const codex = example('codex-hooks.json');
   const flags = codexHookArgs().filter((a, i) => i % 2 === 1).map((a) => [a.slice('hooks.'.length, a.indexOf('=')), a.match(/matcher='([^']*)'/)?.[1]]);
   assert.deepEqual(Object.entries(codex).map(([event, [group]]) => [event, group.matcher]), flags);

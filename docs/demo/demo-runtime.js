@@ -31,7 +31,7 @@
       modelPattern: '\\bgemini-\\d[a-z0-9.-]*',
     },
     xai: {
-      command: 'grok', package: '@xai-official/grok', reporting: 'grok', memory: 'grok', instructions: 'grok',
+      command: 'grok', package: '@xai-official/grok', reporting: 'grok', reportingEnabled: true, memory: 'grok', instructions: 'grok',
       npmNote: 'npm installs the native grok binary into ~/.grok/bin.',
       install: 'curl -fsSL https://x.ai/cli/install.sh | bash',
       docs: 'https://docs.x.ai/build/overview',

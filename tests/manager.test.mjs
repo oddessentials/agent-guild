@@ -141,6 +141,12 @@ process.env.CLAUDE_CONFIG_DIR = toolHomes.claude;
 process.env.CODEX_HOME = toolHomes.codex;
 process.env.GROK_HOME = toolHomes.grok;
 const claudeHooksOff = path.join(home, 'tool-homes', 'claude-hooks-off');
+// A Grok Build home whose Agent reporting is on, as its card's switch leaves it.
+const grokHooked = path.join(home, 'tool-homes', 'grok-hooked');
+for (const [name, contents] of Object.entries((await import('../src/manager/session-hooks.mjs')).grokFiles())) {
+  writeFile(path.join(grokHooked, 'hooks', name), contents);
+  fs.chmodSync(path.join(grokHooked, 'hooks', name), 0o755);
+}
 writeFile(path.join(claudeHooksOff, 'settings.json'), JSON.stringify({ disableAllHooks: true }));
 
 function snapshot(dir) {
@@ -223,7 +229,7 @@ fs.writeFileSync(path.join(home, 'providers.json'), JSON.stringify({
       id: 'codexbroken', vendor: 'Test', tool: 'Codex Changed', command: 'codex', reporting: 'codex', env: { FAKE_CODEX_REJECT: '1' },
       homeVar: 'CODEX_HOME', hooks: { path: 'hooks.json', example: 'codex-hooks.json' }, accounts: [{ id: 'work', label: 'Work' }],
     },
-    { id: 'grokplugins', vendor: 'Test', tool: 'Grok Next', command: 'grok', reporting: 'grok', env: { FAKE_GROK_PLUGIN_DIR: '1' } },
+    { id: 'grokhooked', vendor: 'Test', tool: 'Grok Hooked', command: 'grok', reporting: 'grok', homeVar: 'GROK_HOME', env: { GROK_HOME: grokHooked } },
   ],
 }));
 
@@ -1527,19 +1533,48 @@ test('the Antigravity hook answers with an empty object and reports only into an
   await call('DELETE', `/sessions/${session.id}`);
 });
 
-test('Grok Build reports sub-agents through --plugin-dir where it accepts it, and says when it cannot', async () => {
-  const old = await startTool('xai');
-  assert.equal(old.session.reporting.state, 'unsupported');
-  assert.match(old.session.reporting.reason, /cannot load hooks for a single session/);
-  await waitForText(old.client, old.session.id, 'FAKE-GROK READY hooks=0', 'Grok started without --plugin-dir');
-  await old.client.close();
-  await call('DELETE', `/sessions/${old.session.id}`);
+test('Grok Build reports through the hooks its card\'s switch adds to Grok Build\'s hooks folder', async (t) => {
+  const grok = async () => (await call('GET', '/providers')).body.providers.find((p) => p.id === 'xai');
+  const hooks = path.join(toolHomes.grok, 'hooks');
+  assert.equal((await grok()).reportingEnabled, false);
+  const before = await startTool('xai');
+  assert.equal(before.session.reporting.state, 'setup_required');
+  assert.match(before.session.reporting.reason, /Turn it on/);
+  await waitForText(before.client, before.session.id, 'FAKE-GROK READY hooks=0', 'Grok started with no hooks, and no --plugin-dir');
+  await before.client.close();
+  await call('DELETE', `/sessions/${before.session.id}`);
 
-  const tool = await startTool('grokplugins');
+  t.after(() => call('POST', '/providers/xai/reporting', { enabled: false }));
+  const on = await call('POST', '/providers/xai/reporting', { enabled: true });
+  assert.equal(on.status, 200, JSON.stringify(on.body));
+  assert.equal(on.body.provider.reportingEnabled, true);
+  assert.deepEqual(fs.readdirSync(hooks).sort(), [win ? 'agent-guild-hook.cmd' : 'agent-guild-hook.sh', 'agent-guild.json']);
+
+  const tool = await startTool('xai');
+  assert.equal(tool.session.reporting.state, 'pending');
   await waitFor(reportingIs(tool.session.id, 'active'), { label: 'the session start hook', timeout: 15000 });
   await followSubagent(tool, 'grok-1', 'reviewer');
+  assert.ok(!stripAnsi(tool.client.output).includes('STDERR'), 'the hook ran cleanly');
   await tool.client.close();
   await call('DELETE', `/sessions/${tool.session.id}`);
+
+  const off = await call('POST', '/providers/xai/reporting', { enabled: false });
+  assert.equal(off.body.provider.reportingEnabled, false);
+  assert.ok(!fs.existsSync(hooks), 'the folder goes with Agent Guild\'s files');
+
+  // A hooks file of that name that Agent Guild did not write is the user's own.
+  const theirs = path.join(hooks, 'agent-guild.json');
+  writeFile(theirs, '{"hooks":{}}\n');
+  t.after(() => fs.rmSync(hooks, { recursive: true, force: true }));
+  assert.equal((await call('POST', '/providers/xai/reporting', { enabled: true })).status, 409);
+  assert.equal((await grok()).reportingEnabled, null);
+  assert.match((await grok()).reportingNote, /was not written by Agent Guild/);
+  const blocked = await startTool('xai');
+  assert.equal(blocked.session.reporting.state, 'unavailable');
+  await blocked.client.close();
+  await call('DELETE', `/sessions/${blocked.session.id}`);
+  assert.equal((await call('POST', '/providers/xai/reporting', { enabled: false })).status, 200);
+  assert.equal(fs.readFileSync(theirs, 'utf8'), '{"hooks":{}}\n', 'left as it was');
 });
 
 test('Docker Agent reports its shell commands and its sub-agents through the hook flags added after `agent run`', async () => {
@@ -1642,7 +1677,7 @@ test('once a session has exited nothing shows it running again, whichever tool i
   const runs = {
     anthropic: (tool) => working(tool, false, 'Explore'),
     openai: (tool) => working(tool, true, 'explorer'),
-    grokplugins: (tool) => working(tool, false, 'reviewer'),
+    grokhooked: (tool) => working(tool, false, 'reviewer'),
     google: async () => {},
     shell: async () => {},
   };
@@ -1715,7 +1750,7 @@ test('a Claude Code account keeps the settings file earlier versions seeded, sta
 });
 
 test('the reporting probes start with the manager, before any session asks', () => {
-  for (const id of ['anthropic', 'openai', 'xai', 'docker']) assert.ok(probesAtStart.has(id), `${id} was being probed when the manager came up`);
+  for (const id of ['anthropic', 'openai', 'docker']) assert.ok(probesAtStart.has(id), `${id} was being probed when the manager came up`);
 });
 
 test('a Codex probe that loads no hooks is asked again, not trusted for good', async () => {
@@ -2100,7 +2135,7 @@ test('a Claude Code sub-agent stopped with TaskStop leaves the card, and neither
 });
 
 test('Grok Build shell commands show from its hooks where it takes them', async () => {
-  const tool = await startTool('grokplugins');
+  const tool = await startTool('grokhooked');
   await waitFor(reportingIs(tool.session.id, 'active'), { label: 'hooks', timeout: 15000 });
   tool.client.input('shell build hold fg make');
   await waitFor(shellCountIs(tool.session.id, 1), { label: 'running command' });

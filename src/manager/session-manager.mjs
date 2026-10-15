@@ -130,9 +130,9 @@ export class SessionManager extends EventEmitter {
     if (shell !== undefined && shell !== null && typeof shell !== 'string') throw httpError(400, 'shell must be a string', 'bad_shell');
     const resumeId = cleanResumeId(resume);
     const workDir = this.resolveCwd(cwd);
-    this.registry.account(provider, account);
+    const chosen = this.registry.account(provider, account);
     const runShell = this.registry.shellFor(provider, shell);
-    const hooks = this.sessionHooks ? await this.sessionHooks.launch(provider, { resume: resumeId, args: args || [] }) : { args: [], reporting: null };
+    const hooks = this.sessionHooks ? await this.sessionHooks.launch(provider, { resume: resumeId, args: args || [], account: chosen }) : { args: [], reporting: null };
     // Checked after the await, so an install that started meanwhile, or an account removed or renamed meanwhile, is seen.
     if (this.installing.has(provider.id) || this.installsRunningFor(provider.id) > 0) {
       throw httpError(409, `${provider.tool} is being installed, updated or removed; start it once that finishes`, 'install_in_progress');

@@ -1945,6 +1945,11 @@ const REPORTING_SWITCH = {
     off: (p) => `Stop showing the model of new ${p.tool} sessions, and remove Agent Guild's hook file from ${p.tool}'s hooks.d folder.`,
     on: (p) => `Show the model of new ${p.tool} sessions: Agent Guild adds a hook file to ${p.tool}'s hooks.d folder. ${p.tool} runs it before each model call; outside Agent Guild it does nothing.`,
   },
+  grok: {
+    what: 'Agent reporting',
+    off: (p) => `Remove Agent Guild's hooks from ${p.tool}'s hooks folder. New sessions stop reporting their agents and commands.`,
+    on: (p) => `Add Agent Guild's hooks to ${p.tool}'s hooks folder, so new sessions show their agents and commands and can be resumed. ${p.tool} runs them in every session; outside Agent Guild they do nothing.`,
+  },
   antigravity: {
     what: 'Agent reporting',
     off: (p) => `Remove the Agent Guild plugin from ${p.tool}. New sessions stop reporting their model.`,
