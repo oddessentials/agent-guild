@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 
 const app = readFileSync(new URL('../web/app.js', import.meta.url), 'utf8');
+const html = readFileSync(new URL('../web/index.html', import.meta.url), 'utf8');
 const source = app.slice(app.indexOf('const AUTOSTART_NOTE ='), app.indexOf('function changeSound('));
 
 /** Just enough of an element for the startup setting: text, flags, children and click listeners. */
@@ -95,11 +96,13 @@ test('a failed status read remains visible and can recover when settings are reo
   await view.loadAutostart();
   assert.equal(view.node('autostart-choice').hidden, false);
   assert.equal(view.node('autostart').disabled, true);
-  assert.match(view.node('autostart-note').textContent, /Connection lost/);
+  assert.match(view.node('autostart-reason').textContent, /Connection lost/);
+  assert.equal(view.node('autostart-reason').hidden, false);
   failing = false;
   await view.loadAutostart();
   assert.equal(view.node('autostart').disabled, false);
-  assert.doesNotMatch(view.node('autostart-note').textContent, /Connection lost/);
+  assert.equal(view.node('autostart-reason').textContent, '');
+  assert.equal(view.node('autostart-reason').hidden, true);
 });
 
 test('a manager without the startup API hides the setting', async () => {
@@ -139,15 +142,20 @@ test('older status responses cannot overwrite a newer change or read', async () 
   assert.equal(reopened.messages.length, 0);
 });
 
-test('the note is the reason when there is one, else the manager\'s note for its system, else the default', () => {
+test('the note is the manager\'s note for its system, else the default, and a reason shows beside it', () => {
   const view = page(async () => ({}));
   const note = view.node('autostart-note');
+  const reason = view.node('autostart-reason');
   view.renderAutostart({ available: true, enabled: true, reason: null, note: 'macOS also lists it.' });
   assert.equal(note.textContent, 'macOS also lists it.');
+  assert.equal(reason.hidden, true);
   view.renderAutostart({ available: true, enabled: true, reason: 'Could not update the sign-in entry', note: 'macOS also lists it.' });
-  assert.equal(note.textContent, 'Could not update the sign-in entry');
+  assert.equal(note.textContent, 'macOS also lists it.');
+  assert.equal(reason.textContent, 'Could not update the sign-in entry');
+  assert.equal(reason.hidden, false);
   view.renderAutostart({ available: true, enabled: false, reason: null });
   assert.equal(note.textContent, source.match(/const AUTOSTART_NOTE = '([^']+)'/)[1]);
+  assert.equal(reason.hidden, true);
 });
 
 test('while on, the setting says what the entry did at the last sign-in it ran at', () => {
@@ -175,6 +183,14 @@ test('while on, the setting says what the entry did at the last sign-in it ran a
   }
 });
 
+test('every startup explanation starts collapsed behind its own info button, and problems have their own line', () => {
+  for (const id of ['autostart-note', 'startup-off-note', 'startup-sign-in-note', 'startup-boot-note']) {
+    assert.match(html, new RegExp(`<p id="${id}" class="voice-note" hidden></p>`), id);
+    assert.match(html, new RegExp(`<button class="note-toggle" type="button" aria-expanded="false" aria-controls="${id}" aria-label="[^"]+"></button>`), id);
+  }
+  assert.match(html, /<p id="autostart-reason" class="voice-note" hidden><\/p>/);
+});
+
 /** A Linux description: `mode`, with the service's side in `boot`. */
 const linux = (mode, boot = {}, extra = {}) => ({
   available: true, enabled: mode === 'sign-in' || mode === 'both', reason: null, note: 'Sign-in note.', lastRun: null, log: '/home/a/.config/agent-guild/manager.log', mode,
@@ -190,12 +206,19 @@ test('linux: the setting is one choice of three, with the chosen one checked and
     assert.equal(view.node('startup-modes').hidden, false);
     for (const value of ['off', 'sign-in', 'boot']) assert.equal(view.node(`startup-${value}`).checked, value === mode, `${mode}: ${value}`);
   }
-  assert.equal(view.node('autostart-note').textContent, 'Boot note.');
-  view.renderAutostart(linux('off'));
-  assert.match(view.node('autostart-note').textContent, /^The session manager starts when you run agent-guild open/);
+  for (const mode of ['off', 'sign-in', 'boot']) {
+    view.renderAutostart(linux(mode));
+    assert.match(view.node('startup-off-note').textContent, /^The session manager starts when you run agent-guild open/);
+    assert.equal(view.node('startup-sign-in-note').textContent, 'Sign-in note.');
+    assert.equal(view.node('startup-boot-note').textContent, 'Boot note.');
+    assert.equal(view.node('autostart-reason').hidden, true);
+  }
   view.renderAutostart(linux('sign-in'));
-  assert.equal(view.node('autostart-note').textContent, 'Sign-in note.');
   assert.equal(view.node('autostart-run').textContent, 'Has not run at a sign-in yet.');
+  view.renderAutostart(linux('boot', { reason: 'Could not update the systemd unit' }));
+  assert.equal(view.node('startup-boot-note').textContent, 'Boot note.');
+  assert.equal(view.node('autostart-reason').textContent, 'Could not update the systemd unit');
+  assert.equal(view.node('autostart-reason').hidden, false);
   // Another system's description goes back to the checkbox.
   view.renderAutostart({ available: true, enabled: true, reason: null });
   assert.equal(view.node('autostart-single').hidden, false);
@@ -206,7 +229,8 @@ test('linux: both starters on checks neither and asks for one', () => {
   const view = page(async () => ({}));
   view.renderAutostart(linux('both', { state: { kind: 'pending' }, commands: ['sudo loginctl enable-linger ana'] }));
   for (const value of ['off', 'sign-in', 'boot']) assert.equal(view.node(`startup-${value}`).checked, false);
-  assert.equal(view.node('autostart-note').textContent, 'A sign-in entry and the systemd service are both on. Choose one.');
+  assert.equal(view.node('autostart-reason').textContent, 'A sign-in entry and the systemd service are both on. Choose one.');
+  assert.equal(view.node('autostart-reason').hidden, false);
 });
 
 test('linux: a boot choice systemd cannot offer is disabled, and says why under any mode', () => {
