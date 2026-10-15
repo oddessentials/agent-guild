@@ -77,7 +77,8 @@ function shellReport(event, input, toolName, subagentId) {
   return { shell: 'end', key };
 }
 
-// Claude Code reports a background task ending as a prompt of <task-notification> blocks.
+// Claude Code reports a background task ending as a prompt of <task-notification> blocks. A monitor's events, and its
+// expiry, come the same way with no status: the monitor runs on, or the turn's list of live tasks ends it.
 function taskNotifications(prompt) {
   if (typeof prompt !== 'string' || !/^\s*<task-notification>/.test(prompt)) return null;
   return [...prompt.matchAll(/<task-notification>([\s\S]*?)<\/task-notification>/g)].map(([, body]) => {
@@ -176,7 +177,7 @@ export function hookToReports(input) {
     // It also brings each background task's end; a sub-agent's task id is its agent id, and one stopped with TaskStop
     // gets no SubagentStop.
     for (const { taskId, toolUseId, status } of taskNotifications(input.prompt) ?? []) {
-      if (!taskId || LIVE_TASKS.has(status)) continue;
+      if (!taskId || !status || LIVE_TASKS.has(status)) continue;
       reports.push({ shell: 'end', task: taskId.slice(0, 128), ...(toolUseId ? { key: toolUseId.slice(0, 128) } : {}) });
       if (FINISHED_TASKS.has(status)) reports.push({ agentId: `hook-${taskId}`, status: 'done' });
     }
