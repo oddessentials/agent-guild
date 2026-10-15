@@ -38,6 +38,24 @@ npm test
   The title is the whole squash commit, so a `BREAKING CHANGE` footer in the
   description does not count.
 
+## Contributor agreement
+
+Agent Guild's license is in [LICENSE](LICENSE). By opening a pull request,
+you agree that:
+
+* The contribution is your own work, or you have the right to submit it.
+  Any third-party material in it is named in the pull request with its
+  license.
+* You give Odd Essentials a perpetual, worldwide, royalty-free and
+  irrevocable license to use, copy, change, distribute, sublicense and sell
+  your contribution, including in paid products, and to release it under
+  any license.
+* You give Odd Essentials the same license to any of your patents that the
+  contribution uses.
+* This covers code, documentation and art alike, including skins,
+  characters, buildings and companions.
+* You keep the copyright in your contribution.
+
 ## Other front ends
 
 The page is one client of the manager's local API, documented in

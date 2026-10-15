@@ -7,7 +7,6 @@
   <a href="https://github.com/oddessentials/agent-guild/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/oddessentials/agent-guild/release.yml?branch=main&label=release" alt="Release status"></a>
   <img src="https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-e8c47c" alt="Windows, macOS and Linux">
   <img src="https://img.shields.io/node/v/@oddessentials/agent-guild?color=4cc38a" alt="Node.js version">
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/oddessentials/agent-guild?color=a67cf6" alt="License"></a>
   <a href="https://www.youtube.com/watch?v=ziT62WtXQ1M"><img src="https://img.shields.io/badge/trailer-watch%20on%20YouTube-e5534b?logo=youtube&logoColor=white" alt="Watch the Agent Guild trailer on YouTube"></a>
   <a href="https://oddessentials.ai/donate/?ref=agent-guild"><img src="https://img.shields.io/badge/support-buy%20the%20lab%20a%20beer-f2a93b" alt="Support Agent Guild: buy the lab a beer"></a>
 </p>
@@ -236,7 +235,7 @@ Failed news, model list and release checks retry after 10 minutes.
 
 ## Support
 
-Agent Guild is free and open source. If it saves you time,
+Agent Guild is free to use. If it saves you time,
 [buy the lab a beer](https://oddessentials.ai/donate/?ref=agent-guild). It is a tip, not a
 tax-deductible donation, and it changes nothing about the software.
 
