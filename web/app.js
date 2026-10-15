@@ -5768,6 +5768,13 @@ function sessionLevel(s) {
   return Number.isFinite(hours) ? Math.max(0, Math.floor(hours)) + 1 : 1;
 }
 
+function contextText(s) {
+  const times = (n) => (n === 1 ? 'once' : n === 2 ? 'twice' : `${n} times`);
+  const { compactions = 0, resets = 0 } = s.context || {};
+  const parts = [compactions && `compacted ${times(compactions)}`, resets && `reset ${times(resets)}`].filter(Boolean);
+  return parts.length ? `Context ${parts.join(', ')}` : '';
+}
+
 function updateCard(node, s) {
   node.dataset.provider = s.provider.id;
   paintProviderIcon(node.querySelector('.provider-icon'), s.provider);
@@ -5775,7 +5782,8 @@ function updateCard(node, s) {
   const badge = node.querySelector('.level-badge');
   if (badge.textContent && Number(badge.textContent) < level) badge.classList.add('level-up');
   badge.textContent = level;
-  badge.title = `Level ${level}`;
+  const context = contextText(s);
+  badge.title = context ? `Level ${level}\n${context}` : `Level ${level}`;
   node.querySelector('.name').textContent = s.name;
   node.querySelector('.drag-handle').setAttribute('aria-label', `Move ${s.name}`);
   const id = toolSessionId(s);
@@ -5818,7 +5826,7 @@ function updateCard(node, s) {
   const accountName = accountLabel(s) ? `, ${accountLabel(s)} account` : '';
   const shells = shellSummary(s.shells || []);
   const reportingNote = s.status === 'running' && REPORTING_TEXT[s.reporting?.state] ? `, agent reporting: ${REPORTING_TEXT[s.reporting.state]}` : '';
-  node.setAttribute('aria-label', `${s.name}, ${s.provider.vendor}${accountName}${modelLabel}, ${statusText(s)}, ${s.agents.length} agents${shells ? `, ${shells}` : ''}${reportingNote}`);
+  node.setAttribute('aria-label', `${s.name}, ${s.provider.vendor}${accountName}${modelLabel}, ${statusText(s)}, ${s.agents.length} agents${shells ? `, ${shells}` : ''}${context ? `, ${context.toLowerCase()}` : ''}${reportingNote}`);
 }
 
 function renderSessions() {

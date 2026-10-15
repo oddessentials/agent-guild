@@ -102,6 +102,16 @@
           }
         ]
       }
+    ],
+    "PostCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agent-guild-report --hook"
+          }
+        ]
+      }
     ]
   }
 }

@@ -118,3 +118,72 @@ test('session levels retain their boundaries and older-manager fallbacks', (t) =
     assert.equal(level({ ...base, ...fields }), expected, name);
   }
 });
+
+const contextSource = app.match(/function contextText\(s\) \{[^]*?\n\}/)?.[0];
+assert.ok(contextSource, 'contextText is present in app.js');
+const contextText = (session) => runInNewContext(`(${contextSource})`)(session);
+
+test('the level badge names the compactions and resets a session has had, and nothing before the first', () => {
+  assert.equal(contextText({}), '', 'a manager without counts');
+  assert.equal(contextText({ context: { compactions: 0, resets: 0 } }), '');
+  assert.equal(contextText({ context: { compactions: 1, resets: 0 } }), 'Context compacted once');
+  assert.equal(contextText({ context: { compactions: 2, resets: 1 } }), 'Context compacted twice, reset once');
+  assert.equal(contextText({ context: { compactions: 0, resets: 3 } }), 'Context reset 3 times');
+});
+
+test('a compaction counts once however many hooks report it', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: START });
+  const { session, exit } = createSession(t);
+  session.compactionRepeatMs = 2000;
+  const counts = () => session.toJSON().context;
+  assert.deepEqual(counts(), { compactions: 0, resets: 0 });
+  session.reportContext({ compaction: 'manual', key: 'b1' });
+  session.reportContext({ compaction: 'manual', key: 'b1' });
+  assert.equal(counts().compactions, 1, 'the same transcript record twice');
+  session.reportContext({ compaction: 'auto', key: 'b2' });
+  assert.equal(counts().compactions, 2);
+  session.reportContext({ compaction: 'auto' });
+  t.mock.timers.setTime(START + 1999);
+  session.reportContext({ compaction: 'auto' });
+  assert.equal(counts().compactions, 3, 'a second hook delivering the same event');
+  t.mock.timers.setTime(START + 10_000);
+  session.reportContext({ compaction: 'auto' });
+  assert.equal(counts().compactions, 4);
+  for (const bad of [null, {}, { compaction: 'other' }, { compaction: 'auto', key: '' }, { compaction: 'auto', key: 'a\nb' }]) {
+    assert.throws(() => session.reportContext(bad), { status: 400 });
+  }
+  exit(0);
+  assert.throws(() => session.reportContext({ compaction: 'auto' }), { status: 409 });
+  assert.equal(counts().compactions, 4, 'the count outlives the process');
+});
+
+test('a reset is a new tool session the tool started over in, not its first, a resume or a fork', (t) => {
+  const { session } = createSession(t);
+  const resets = () => session.toJSON().context.resets;
+  session.reportToolSession({ toolSessionId: 's1', source: 'startup' });
+  assert.equal(resets(), 0, 'the first session');
+  session.reportToolSession({ toolSessionId: 's1', source: 'compact' });
+  session.reportToolSession({ toolSessionId: 's2', source: 'clear' });
+  session.reportToolSession({ toolSessionId: 's2', source: 'clear' });
+  assert.equal(resets(), 1, 'Claude Code and Codex CLI /clear, delivered twice');
+  session.reportToolSession({ toolSessionId: 's3', source: 'startup' });
+  session.reportToolSession({ toolSessionId: 's4', source: 'new' });
+  assert.equal(resets(), 3, 'Codex CLI /new, Grok Build /clear and /new');
+  for (const source of ['resume', 'load', 'fork', undefined]) session.reportToolSession({ toolSessionId: `other-${source}`, source });
+  assert.equal(resets(), 3);
+});
+
+test('a restored card keeps its counts, and only counts', (t) => {
+  t.mock.method(pty, 'spawn', () => ({ pid: 0, onData() {}, onExit() {}, write() {}, resize() {}, kill() {} }));
+  const make = (context) => {
+    const session = new Session({
+      id: 'restored', provider: { id: 'fake', vendor: 'Test', tool: 'Fake Tool' }, spawnSpec: { file: 'mocked-pty', args: [] },
+      cwd: process.cwd(), env: {}, cols: 80, rows: 24, reportToken: 'test', context,
+    });
+    t.after(() => session.dispose());
+    return session.toJSON().context;
+  };
+  assert.deepEqual(make({ compactions: 3, resets: 1 }), { compactions: 3, resets: 1 });
+  assert.deepEqual(make({ compactions: -1, resets: '2' }), { compactions: 0, resets: 0 });
+  assert.deepEqual(make('junk'), { compactions: 0, resets: 0 });
+});

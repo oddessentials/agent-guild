@@ -237,8 +237,9 @@ export class SessionManager extends EventEmitter {
     this._saveCards();
     session.on('exit', () => this._checkMultiplexer(session, tracked));
     session.on('changed', () => {
-      if (card.name === session.name) return;
+      if (card.name === session.name && (card.context?.compactions ?? 0) === session.context.compactions && (card.context?.resets ?? 0) === session.context.resets) return;
       card.name = session.name;
+      card.context = { ...session.context };
       this._saveCards();
     });
   }
@@ -300,6 +301,7 @@ export class SessionManager extends EventEmitter {
       provider, spawnSpec: null, cwd: typeof card.cwd === 'string' ? card.cwd : os.homedir(), name: card.name, account,
       id: card.id, reportToken: card.reportToken, dropEnv: mux.dropEnv, extraEnv: shell.env,
       createdAt: typeof card.createdAt === 'string' && !Number.isNaN(Date.parse(card.createdAt)) ? card.createdAt : undefined,
+      context: card.context,
       multiplexer: { label: shell.label, attach: shell.multiplexer.attach.replaceAll('{name}', card.muxName), reattachable: true },
     });
     this._track(session, { spawnSpec, mux, shell, card: { ...card, name: session.name, cwd: session.cwd, createdAt: session.createdAt } });
@@ -670,7 +672,7 @@ export class SessionManager extends EventEmitter {
   _spawn({
     provider, description = this.registry.describe(provider), spawnSpec, cwd, cols, rows, name, resume = null, task = null, installKind = null, installPath = null, account = null,
     extraEnv = null, dropEnv = null, clone = null, reporting = null, multiplexer = null,
-    id = newId(), reportToken = crypto.randomBytes(16).toString('hex'), createdAt, multiplexerInstall = null,
+    id = newId(), reportToken = crypto.randomBytes(16).toString('hex'), createdAt, context = null, multiplexerInstall = null,
   }) {
     this._assertCanSpawn();
     const env = this._sessionEnv({ id, reportToken, provider, account, extraEnv, dropEnv });
@@ -695,6 +697,7 @@ export class SessionManager extends EventEmitter {
         reporting,
         multiplexer,
         createdAt,
+        context,
       });
     } catch (err) {
       throw httpError(500, `could not start ${provider.tool}: ${err.message}`, 'spawn_failed');
@@ -748,6 +751,10 @@ export class SessionManager extends EventEmitter {
 
   reportToolSession(id, report, auth) {
     return this._reportingSession(id, auth).reportToolSession(report);
+  }
+
+  reportContext(id, report, auth) {
+    return this._reportingSession(id, auth).reportContext(report);
   }
 
   reportReply(id, report, auth) {

@@ -199,7 +199,7 @@
         displayName: typeof model === 'string' ? model : (model.displayName || model.name),
         source: 'report',
       },
-      toolSessionId: 'demo-' + id, reply: replies[id] ? { id: 1 } : null, reporting: providerId === 'shell' ? null : { state: 'active', reason: null },
+      toolSessionId: 'demo-' + id, context: { compactions: id === 'a11ce001' ? 2 : 0, resets: 0 }, reply: replies[id] ? { id: 1 } : null, reporting: providerId === 'shell' ? null : { state: 'active', reason: null },
       agents: (agents || []).map(function (agent, i) {
         return { id: id + '-agent-' + i, name: agent.name || agent, status: agent.status || (i % 2 ? 'waiting' : 'working'), detail: null };
       }),

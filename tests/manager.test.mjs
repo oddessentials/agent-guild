@@ -941,10 +941,17 @@ test('the tool\'s own session id is reported over HTTP, in-band, and through hoo
   client.input(`hook ${process.platform === 'win32' ? 'cmd' : 'sh'} ${JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'hooked-2', source: 'startup' })}`);
   await waitForText(client, session.id, 'HOOK-EXIT:0', 'hook exit');
   await waitFor(() => ctx.manager.get(session.id).toolSessionId === 'hooked-2', { label: 'hook tool session id' });
+  assert.deepEqual((await call('GET', `/sessions/${session.id}`)).body.session.context, { compactions: 0, resets: 1 }, 'the tool started over in a new session');
+  const context = `/sessions/${session.id}/context`;
+  assert.equal((await call('POST', context, { compaction: 'auto' }, { Authorization: '', 'X-Agent-Guild-Report-Token': 'wrong' })).status, 401);
+  const compacted = await call('POST', context, { compaction: 'manual', key: 'b1' }, { Authorization: '', 'X-Agent-Guild-Report-Token': managed.reportToken });
+  assert.deepEqual([compacted.status, compacted.body.context], [200, { compactions: 1, resets: 1 }]);
+  assert.equal((await call('POST', context, { compaction: 'sideways' })).status, 400);
   await client.close();
   await call('POST', `/sessions/${session.id}/stop`);
   await waitFor(async () => (await call('GET', `/sessions/${session.id}`)).body.session.status === 'exited', { label: 'exit' });
   assert.equal((await call('POST', route, { toolSessionId: 'late' })).status, 409, 'an exited session takes no reports');
+  assert.equal((await call('POST', context, { compaction: 'auto' })).status, 409);
   assert.equal((await call('GET', `/sessions/${session.id}`)).body.session.toolSessionId, 'hooked-2', 'the id outlives the process');
   await call('DELETE', `/sessions/${session.id}`);
 });
@@ -1406,7 +1413,7 @@ test('a Default Claude Code session reports sub-agents through a plugin loaded f
   assert.equal(tool.session.reporting.state, 'pending');
   await waitFor(reportingIs(tool.session.id, 'active'), { label: 'the session start hook', timeout: 15000 });
   await followSubagent(tool, 'claude-1', 'Explore');
-  assert.match(stripAnsi(tool.client.output), /FAKE-CLAUDE READY hooks=13/, 'the plugin hooks load beside the user\'s own');
+  assert.match(stripAnsi(tool.client.output), /FAKE-CLAUDE READY hooks=14/, 'the plugin hooks load beside the user\'s own');
   assert.match(fs.readFileSync(userHookLog, 'utf8'), /claude-user/, 'the user\'s own hook still runs');
   await tool.client.close();
   await call('DELETE', `/sessions/${tool.session.id}`);
@@ -1423,7 +1430,7 @@ test('a Default Codex CLI session reports sub-agents through trusted hooks passe
   await followSubagent(tool, 'codex-1', 'explorer');
   const output = stripAnsi(tool.client.output);
   assert.ok(!output.includes('CODEX-UNTRUSTED'), 'every Agent Guild hook is trusted for the session');
-  assert.match(output, /FAKE-CODEX READY hooks=11/);
+  assert.match(output, /FAKE-CODEX READY hooks=12/);
   assert.match(fs.readFileSync(userHookLog, 'utf8'), /codex-user/, 'the user\'s own hooks still run');
   await tool.client.close();
   await call('DELETE', `/sessions/${tool.session.id}`);

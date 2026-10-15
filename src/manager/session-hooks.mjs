@@ -20,10 +20,10 @@ const shellEvents = (events, matcher) => Object.fromEntries(events.map((event) =
 // Shell commands and monitors are the only tool calls reported. StopFailure (an API error) ends a turn like Stop, and
 // PermissionDenied (auto mode) ends a command that PreToolUse started, since no PostToolUse follows a denial.
 const CLAUDE_SHELL_TOOLS = 'Bash|PowerShell|Monitor';
-const CLAUDE_EVENTS = ['SessionStart', 'UserPromptSubmit', 'SubagentStart', 'SubagentStop', 'PostModelSwitch', 'PreToolUse', 'PermissionRequest', 'PermissionDenied', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'StopFailure'];
+const CLAUDE_EVENTS = ['SessionStart', 'UserPromptSubmit', 'SubagentStart', 'SubagentStop', 'PostModelSwitch', 'PreToolUse', 'PermissionRequest', 'PermissionDenied', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'StopFailure', 'PostCompact'];
 const CLAUDE_MATCHERS = { PreToolUse: CLAUDE_SHELL_TOOLS, PermissionRequest: CLAUDE_SHELL_TOOLS, PermissionDenied: CLAUDE_SHELL_TOOLS, PostToolUse: `${CLAUDE_SHELL_TOOLS}|TaskStop`, PostToolUseFailure: CLAUDE_SHELL_TOOLS };
 const CLAUDE_BLOCKING = new Set(['SubagentStart', 'PreToolUse']);
-export const CODEX_EVENTS = ['SessionStart', 'UserPromptSubmit', 'SubagentStart', 'SubagentStop', 'PreToolUse', 'PermissionRequest', 'PostToolUse', 'Stop', 'Interrupt', 'SessionEnd'];
+export const CODEX_EVENTS = ['SessionStart', 'UserPromptSubmit', 'SubagentStart', 'SubagentStop', 'PreToolUse', 'PermissionRequest', 'PostToolUse', 'Stop', 'Interrupt', 'SessionEnd', 'PostCompact'];
 const CODEX_MATCHERS = { PermissionRequest: 'Bash', PostToolUse: 'Bash' };
 
 // Only the start of a sub-agent or a command holds Claude Code up, so the start reaches the manager before its end.
@@ -31,7 +31,7 @@ const claudeHooks = () => Object.fromEntries(CLAUDE_EVENTS.map((event) => [event
   ...(CLAUDE_MATCHERS[event] ? { matcher: CLAUDE_MATCHERS[event] } : {}),
   hooks: [handler(CLAUDE_BLOCKING.has(event) ? {} : { async: true })],
 }]]));
-const GROK_EVENTS = ['SessionStart', 'SubagentStart', 'SubagentStop', 'StopCancelled', 'StopFailure', 'SessionEnd', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Stop'];
+const GROK_EVENTS = ['SessionStart', 'SubagentStart', 'SubagentStop', 'StopCancelled', 'StopFailure', 'SessionEnd', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'PostCompact'];
 
 // Docker Agent takes one hook command per event on its command line. These flags cover the session's own
 // shell commands and turns, and its sub-agents, each of which runs in a session of its own. The model needs a
