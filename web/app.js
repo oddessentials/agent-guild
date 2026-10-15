@@ -447,6 +447,11 @@ function renderStartupCommands(commands = []) {
   box.hidden = commands.length === 0;
 }
 
+function renderStartupReason(text) {
+  $('autostart-reason').textContent = text || '';
+  $('autostart-reason').hidden = !text;
+}
+
 /** Linux: one choice of off, sign-in or boot, with what the chosen one is doing now. */
 function renderStartupModes(autostart) {
   const { mode, boot } = autostart;
@@ -455,22 +460,23 @@ function renderStartupModes(autostart) {
     input.checked = value === mode;
     input.disabled = !autostart.available || (value === 'boot' && !boot?.available);
   }
-  let note;
+  $('startup-off-note').textContent = STARTUP_OFF_NOTE;
+  $('startup-sign-in-note').textContent = autostart.note || AUTOSTART_NOTE;
+  $('startup-boot-note').textContent = boot?.note ?? '';
+  let reason = '';
   let run = { text: '', outcome: '' };
   if (mode === 'both') {
-    note = 'A sign-in entry and the systemd service are both on. Choose one.';
+    reason = 'A sign-in entry and the systemd service are both on. Choose one.';
   } else if (mode === 'boot') {
-    note = boot.reason || boot.note;
+    reason = boot.reason;
     run = startupBootStatus(boot);
   } else if (mode === 'sign-in') {
-    note = autostart.reason || autostart.note || AUTOSTART_NOTE;
+    reason = autostart.reason;
     run = { text: autostartRun(autostart), outcome: autostart.lastRun?.outcome ?? 'none' };
-  } else {
-    note = STARTUP_OFF_NOTE;
   }
   // Why the boot choice is greyed out, whichever mode is chosen.
   if (boot && !boot.available && mode !== 'boot') run = { text: boot.reason, outcome: '' };
-  $('autostart-note').textContent = note;
+  renderStartupReason(reason);
   $('autostart-run').textContent = run.text;
   $('autostart-run').hidden = !run.text;
   $('autostart-run').dataset.outcome = run.outcome;
@@ -487,7 +493,8 @@ function renderAutostart(autostart) {
   renderStartupCommands([]);
   $('autostart').checked = Boolean(autostart?.enabled);
   $('autostart').disabled = !autostart?.available;
-  $('autostart-note').textContent = autostart?.reason || autostart?.note || AUTOSTART_NOTE;
+  $('autostart-note').textContent = autostart?.note || AUTOSTART_NOTE;
+  renderStartupReason(autostart?.reason);
   const run = autostartRun(autostart);
   $('autostart-run').textContent = run;
   $('autostart-run').hidden = !run;

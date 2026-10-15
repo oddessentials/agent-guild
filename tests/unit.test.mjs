@@ -4364,6 +4364,11 @@ test('a Claude Code task notification ends the sub-agent it names, and is no tur
   assert.deepEqual(hookToReports({ hook_event_name: 'UserPromptSubmit', prompt: `${prompt}\n${prompt.replaceAll('a7', 'b8').replace('toolu_1', 'toolu_2').replace('killed', 'completed')}` }),
     [{ shell: 'end', task: 'a7', key: 'toolu_1' }, { agentId: 'hook-a7', status: 'done' }, { shell: 'end', task: 'b8', key: 'toolu_2' }, { agentId: 'hook-b8', status: 'done' }]);
   assert.deepEqual(hookToReports({ hook_event_name: 'UserPromptSubmit', prompt: prompt.replace('killed', 'running') }), []);
+  const event = (text) => `<task-notification>\n<task-id>m7</task-id>\n<summary>Monitor event: "batch milestones"</summary>\n<event>${text}</event>\nIf this event is something the user would act on now, send a PushNotification. Routine or benign output doesn't need one.\n</task-notification>`;
+  assert.deepEqual(hookToReports({ hook_event_name: 'UserPromptSubmit', session_id: 's', prompt: event('WORLD 1 done') }), [], 'a monitor event leaves the monitor running');
+  assert.deepEqual(hookToReports({ hook_event_name: 'UserPromptSubmit', session_id: 's', prompt: event('[Monitor expired after 30m with no events delivered. Re-arm it if you still need the watch.]') }), [], 'the turn\'s list of live tasks ends an expired monitor');
+  const exited = '<task-notification>\n<task-id>m7</task-id>\n<tool-use-id>toolu_m</tool-use-id>\n<output-file>/tmp/t/m7.output</output-file>\n<status>completed</status>\n<summary>Monitor "batch milestones" ended without producing output (exit 0)</summary>\n</task-notification>';
+  assert.deepEqual(hookToReports({ hook_event_name: 'UserPromptSubmit', session_id: 's', prompt: exited }), [{ shell: 'end', task: 'm7', key: 'toolu_m' }, { agentId: 'hook-m7', status: 'done' }]);
   // Claude Code fires it at once for a prompt typed while a turn still runs, so none is a turn boundary; Codex CLI's is.
   assert.deepEqual(hookToReports({ hook_event_name: 'UserPromptSubmit', session_id: 's', prompt_id: 'p2', permission_mode: 'default', prompt: 'fix the <task-notification> parser' }), []);
   assert.deepEqual(hookToReports({ hook_event_name: 'UserPromptSubmit', turn_id: 't2', prompt: 'next' }), [{ finishForeground: true }]);

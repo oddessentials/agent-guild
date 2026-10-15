@@ -54,13 +54,19 @@
           </fieldset>
           <fieldset id="autostart-choice" hidden>
             <legend>Startup</legend>
-            <label id="autostart-single" class="choice"><input id="autostart" type="checkbox" name="autostart"><span class="autostart">Launch at sign-in</span></label>
-            <div id="startup-modes" hidden>
-              <label class="choice"><input id="startup-off" type="radio" name="startup" value="off"><span class="startup-off">Only when I start it</span></label>
-              <label class="choice"><input id="startup-sign-in" type="radio" name="startup" value="sign-in"><span class="autostart">When I sign in</span></label>
-              <label class="choice"><input id="startup-boot" type="radio" name="startup" value="boot"><span class="startup-boot">When the computer starts</span></label>
+            <div id="autostart-single">
+              <div class="choice-row"><label class="choice"><input id="autostart" type="checkbox" name="autostart"><span class="autostart">Launch at sign-in</span></label><button class="note-toggle" type="button" aria-expanded="false" aria-controls="autostart-note" aria-label="About launching at sign-in"></button></div>
+              <p id="autostart-note" class="voice-note" hidden></p>
             </div>
-            <p id="autostart-note" class="voice-note"></p>
+            <div id="startup-modes" hidden>
+              <div class="choice-row"><label class="choice"><input id="startup-off" type="radio" name="startup" value="off"><span class="startup-off">Only when I start it</span></label><button class="note-toggle" type="button" aria-expanded="false" aria-controls="startup-off-note" aria-label="About starting it yourself"></button></div>
+              <p id="startup-off-note" class="voice-note" hidden></p>
+              <div class="choice-row"><label class="choice"><input id="startup-sign-in" type="radio" name="startup" value="sign-in"><span class="autostart">When I sign in</span></label><button class="note-toggle" type="button" aria-expanded="false" aria-controls="startup-sign-in-note" aria-label="About starting at sign-in"></button></div>
+              <p id="startup-sign-in-note" class="voice-note" hidden></p>
+              <div class="choice-row"><label class="choice"><input id="startup-boot" type="radio" name="startup" value="boot"><span class="startup-boot">When the computer starts</span></label><button class="note-toggle" type="button" aria-expanded="false" aria-controls="startup-boot-note" aria-label="About starting with the computer"></button></div>
+              <p id="startup-boot-note" class="voice-note" hidden></p>
+            </div>
+            <p id="autostart-reason" class="voice-note" hidden></p>
             <p id="autostart-run" class="voice-note autostart-run" role="status" hidden></p>
             <div id="startup-commands" class="startup-commands" hidden></div>
           </fieldset>
