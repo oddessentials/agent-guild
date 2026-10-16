@@ -586,6 +586,8 @@ def weights(body, rig, robe=False, still=(), head=None):
     keep_arms_to_arms(body, rig)
     keep_head_to_head(body, rig, head)
     smooth(body)
+    if head is not None:
+        shape_head(body, rig, head)
     split_legs(body, rig, robe)
     # Normalise and limit to four influences for glTF.
     bpy.context.view_layer.objects.active = body
@@ -644,6 +646,35 @@ def keep_head_to_head(body, rig, part=None):
                 groups[g.group].remove([v.index])
         if moved:
             chest.add([v.index], moved, 'ADD')
+
+
+LIMBS = ('Shoulder', 'Arm', 'Hand', 'Leg', 'Foot', 'Toes')
+
+
+def shape_head(body, rig, part):
+    """Every layer of the head turns by the same rule: from the neck up, its
+    weights blend from bone heat to ones set by height alone, all the neck's
+    up to the head joint, then rising to all the head's over 0.1 of the
+    height. Walls weighted apart by bone heat would slide past each other.
+    What bone heat gives a limb (a hunched shoulder) stays, as does the hips'
+    hold below the head joint."""
+    neck, head = rig.data.bones['Neck'].head_local.z, rig.data.bones['Head'].head_local.z
+    h = (head - neck) / .04
+    floor = neck - .01 * h
+    groups = {g.name: g for g in body.vertex_groups}
+    for v in body.data.vertices:
+        if not part[v.index]:
+            continue
+        own = {body.vertex_groups[g.group].name: g.weight for g in v.groups}
+        total = sum(own.values()) or 1
+        keep = sum(w for n, w in own.items() if n.endswith(LIMBS) or (n in ('Hips', 'Root') and v.co.z < head)) / total
+        t = (1 - keep) ** 2 * min(1.0, max(0.0, (v.co.z - floor) / (head - floor)))
+        rise = min(1.0, max(0.0, (v.co.z - head) / (.1 * h)))
+        own = {n: w * (1 - t) for n, w in own.items()}
+        own['Head'] = own.get('Head', 0) + t * rise
+        own['Neck'] = own.get('Neck', 0) + t * (1 - rise)
+        for name, w in own.items():
+            groups[name].add([v.index], w, 'REPLACE')
 
 
 def keep_arms_to_arms(body, rig):
