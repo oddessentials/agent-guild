@@ -797,12 +797,6 @@ def split_legs(body, rig, robe):
                 groups[twin].add([v.index], w, 'ADD')
 
 
-# A leg-to-leg face whose longest edge passes WEB times the median edge
-# spans a gap between the legs; a shorter one is cloth that crosses the
-# centre line (a coat, an apron, a panel).
-WEB = 6.0
-
-
 SEAM_BAND = .05
 
 
@@ -919,13 +913,13 @@ def unfuse(body, robe, still=()):
     """Generated models often fuse a hanging hand to the thigh, or one leg to
     the other, with a skin of triangles that tears once the limb moves. Cut
     those bridges: the faces joining a moving forearm or hand to the hips or
-    a leg, and, unless a robe joins them by design, a web between the left
-    leg and the right. Where they met, the limbs touched, so the cut is out
-    of sight. Cloth crossing the centre line between the legs (a coat, an
-    apron, a panel) is ripped instead: each face goes whole to one leg and
-    the seam's vertices are split, then mend_seam gives both sides of the
-    seam the same mix of the legs, so the cloth stays shut and the stride
-    stretches it over a band. An arm that stays as modelled keeps its skin: cut, it would leave a hole
+    a leg. Where they met, the limbs touched, so the cut is out of sight.
+    Surface joining the left leg to the right (a coat, an apron, a panel,
+    the body between the legs) is ripped instead, unless a robe joins them by
+    design: each face goes whole to one leg and the seam's vertices are
+    split, then mend_seam gives both sides of the seam the same mix of the
+    legs, so the surface stays shut and the stride stretches it over a band.
+    An arm that stays as modelled keeps its skin: cut, it would leave a hole
     in a sleeve or robe that shows in every pose. Returns what the checks
     need: the faces cut away, which side of each cut each corner is on, a
     patch where each ripped face would be if it joined both legs, and the
@@ -942,10 +936,6 @@ def unfuse(body, robe, still=()):
     low = lambda n: n == 'Hips' or n.endswith('UpperLeg') or n.endswith('LowerLeg')
     leg = lambda n: n.endswith('UpperLeg') or n.endswith('LowerLeg') or n.endswith('Foot')
     co = np.array([v.co[:] for v in body.data.vertices])
-    pairs = np.empty(len(body.data.edges) * 2, dtype=np.int64)
-    body.data.edges.foreach_get('vertices', pairs)
-    pairs = pairs.reshape(-1, 2)
-    median = float(np.median(np.linalg.norm(co[pairs[:, 0]] - co[pairs[:, 1]], axis=1))) if len(pairs) else 0.0
     bm = bmesh.new(); bm.from_mesh(body.data); bm.faces.ensure_lookup_table(); bm.verts.ensure_lookup_table()
     cut, tris, sides, rip = [], [], [], {}
     for f in bm.faces:
@@ -953,15 +943,10 @@ def unfuse(body, robe, still=()):
         if any(arm(n) for n in names) and any(low(n) for n in names):
             side = [arm(owners[v.index]) for v in f.verts]
         elif not robe and any(leg(n) and n.startswith('Left') for n in names) and any(leg(n) and n.startswith('Right') for n in names):
-            longest = max((a.co - b.co).length for a, b in zip(f.verts, f.verts[1:] + f.verts[:1]))
-            if longest <= WEB * median:
-                left = sum(owners[v.index].startswith('Left') for v in f.verts)
-                right = sum(owners[v.index].startswith('Right') for v in f.verts)
-                rip[f.index] = 'Left' if left > right or (left == right and f.calc_center_median().x > 0) else 'Right'
-                continue
-            side = [owners[v.index].startswith('Left') for v in f.verts]
-        else:
-            continue
+            left = sum(owners[v.index].startswith('Left') for v in f.verts)
+            right = sum(owners[v.index].startswith('Right') for v in f.verts)
+            rip[f.index] = 'Left' if left > right or (left == right and f.calc_center_median().x > 0) else 'Right'
+        continue
         cut.append(f)
         for i in range(1, len(f.verts) - 1):
             tris.append([f.verts[k].index for k in (0, i, i + 1)])

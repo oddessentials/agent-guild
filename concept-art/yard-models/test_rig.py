@@ -239,8 +239,30 @@ def test_a_busy_hand_eases_into_the_leg_it_touches():
     assert jump < .5, 'a busy hand meets the leg in one row of edges'
 
 
+def test_coarse_surface_between_the_legs_is_not_cut():
+    """A skirt whose centre faces are many times longer than the rest (a coarse
+    body between the legs) keeps every face: it is ripped, not cut as a web."""
+    import bmesh
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    bm = bmesh.new()
+    bmesh.ops.create_cube(bm, size=1)
+    bmesh.ops.subdivide_edges(bm, edges=bm.edges[:], cuts=15, use_grid_fill=True)
+    for v in bm.verts:
+        if abs(v.co.x) > 1e-6:
+            v.co.x += .5 if v.co.x > 0 else -.5
+    mesh = bpy.data.meshes.new('skirt'); bm.to_mesh(mesh); bm.free()
+    body = bpy.data.objects.new('skirt', mesh); bpy.context.scene.collection.objects.link(body)
+    groups = {n: body.vertex_groups.new(name=n) for n in ('Hips', 'LeftUpperLeg', 'RightUpperLeg')}
+    for v in mesh.vertices:
+        groups['LeftUpperLeg' if v.co.x > 1e-6 else 'RightUpperLeg'].add([v.index], 1, 'REPLACE')
+    faces = len(mesh.polygons)
+    rig.unfuse(body, robe=False)
+    assert len(body.data.polygons) == faces, 'long faces between the legs were cut as a web'
+
+
 test_both_walls_of_the_head_are_the_heads()
 test_a_tail_and_a_slung_rods_walls_are_not_the_heads()
+test_coarse_surface_between_the_legs_is_not_cut()
 test_a_busy_hand_eases_into_the_leg_it_touches()
 test_cloth_across_the_legs_stays_whole_and_shut()
 test_a_gap_that_opens_only_in_motion_is_not_a_hole()
