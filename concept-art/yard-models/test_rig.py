@@ -239,9 +239,9 @@ def test_a_busy_hand_eases_into_the_leg_it_touches():
     assert jump < .5, 'a busy hand meets the leg in one row of edges'
 
 
-def test_a_moving_hands_bridge_to_the_hips_is_cut():
-    """A strip whose left half is a free hand and right half the hips loses the
-    faces joining them."""
+def test_a_moving_hands_bridge_to_the_hips_is_kept():
+    """A strip whose left half is a free hand and right half the hips keeps
+    every face: a cut would show as a slit, the stretch does not."""
     bpy.ops.wm.read_factory_settings(use_empty=True)
     bpy.ops.mesh.primitive_grid_add(x_subdivisions=20, y_subdivisions=6, size=1, rotation=(math.pi / 2, 0, 0))
     strip = bpy.context.active_object
@@ -251,7 +251,7 @@ def test_a_moving_hands_bridge_to_the_hips_is_cut():
         groups['LeftHand' if v.co.x < 0 else 'Hips'].add([v.index], 1, 'REPLACE')
     faces = len(strip.data.polygons)
     cut = rig.unfuse(strip, robe=False)
-    assert len(strip.data.polygons) < faces and len(cut['cut']), 'the bridge from a moving hand to the hips was not cut'
+    assert len(strip.data.polygons) == faces and not len(cut['cut']), 'the bridge from a moving hand to the hips was cut'
 
 
 def test_coarse_surface_between_the_legs_is_not_cut():
@@ -285,7 +285,7 @@ def test_the_cast_rigs_on_one_thread():
 test_both_walls_of_the_head_are_the_heads()
 test_a_tail_and_a_slung_rods_walls_are_not_the_heads()
 test_coarse_surface_between_the_legs_is_not_cut()
-test_a_moving_hands_bridge_to_the_hips_is_cut()
+test_a_moving_hands_bridge_to_the_hips_is_kept()
 test_the_cast_rigs_on_one_thread()
 test_a_busy_hand_eases_into_the_leg_it_touches()
 test_cloth_across_the_legs_stays_whole_and_shut()

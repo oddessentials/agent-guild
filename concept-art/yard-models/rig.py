@@ -910,19 +910,17 @@ def share_twins(body):
 
 
 def unfuse(body, robe, still=()):
-    """Generated models often fuse a hanging hand to the thigh, or one leg to
-    the other, with a skin of triangles that tears once the limb moves. Cut
-    those bridges: the faces joining a moving forearm or hand to the hips or
-    a leg. Where they met, the limbs touched, so the cut is out of sight.
-    Surface joining the left leg to the right (a coat, an apron, a panel,
-    the body between the legs) is ripped instead, unless a robe joins them by
-    design: each face goes whole to one leg and the seam's vertices are
-    split, then mend_seam gives both sides of the seam the same mix of the
-    legs, so the surface stays shut and the stride stretches it over a band.
-    An arm that stays as modelled keeps its skin: cut, it would leave a hole
-    in a sleeve or robe that shows in every pose. Returns what the checks
-    need: the faces cut away, which side of each cut each corner is on, a
-    patch where each ripped face would be if it joined both legs, and the
+    """Generated models often fuse one leg to the other, and a hanging hand
+    to the thigh, with a skin of triangles that stretches once the limb
+    moves. Nothing is cut: a cut leaves a slit or shreds a viewer sees at
+    rest and in every clip, where the stretched skin, held under the tear
+    limit by the clips' reach, does not show. Surface joining the left leg
+    to the right (a coat, an apron, a panel, the body between the legs) is
+    ripped, unless a robe joins them by design: each face goes whole to one
+    leg and the seam's vertices are split, then mend_seam gives both sides of
+    the seam the same mix of the legs, so the surface stays shut and the
+    stride stretches it over a band. Returns what the checks need: the faces
+    cut away (none), which side of each cut each corner is on, and the
     vertices split apart."""
     import bmesh
     from mathutils.kdtree import KDTree
@@ -931,17 +929,13 @@ def unfuse(body, robe, still=()):
         best = max(v.groups, key=lambda g: g.weight, default=None)
         return groups.get(best.group, '') if best else ''
     owners = [owner(v) for v in body.data.vertices]
-    arm = lambda n: (n.endswith('LowerArm') or n.endswith('Hand')) and not n.startswith(still)
-    low = lambda n: n == 'Hips' or n.endswith('UpperLeg') or n.endswith('LowerLeg')
     leg = lambda n: n.endswith('UpperLeg') or n.endswith('LowerLeg') or n.endswith('Foot')
     co = np.array([v.co[:] for v in body.data.vertices])
     bm = bmesh.new(); bm.from_mesh(body.data); bm.faces.ensure_lookup_table(); bm.verts.ensure_lookup_table()
     cut, tris, sides, rip = [], [], [], {}
     for f in bm.faces:
         names = {owners[v.index] for v in f.verts}
-        if any(arm(n) for n in names) and any(low(n) for n in names):
-            side = [arm(owners[v.index]) for v in f.verts]
-        elif not robe and any(leg(n) and n.startswith('Left') for n in names) and any(leg(n) and n.startswith('Right') for n in names):
+        if not robe and any(leg(n) and n.startswith('Left') for n in names) and any(leg(n) and n.startswith('Right') for n in names):
             left = sum(owners[v.index].startswith('Left') for v in f.verts)
             right = sum(owners[v.index].startswith('Right') for v in f.verts)
             rip[f.index] = 'Left' if left > right or (left == right and f.calc_center_median().x > 0) else 'Right'
