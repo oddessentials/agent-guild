@@ -1,9 +1,9 @@
 {
  "cast": {
-  "goblin_0": {"image": "../goblinville-skin/characters/anthropic/idle.png", "height": 2.05, "work": "tinker"},
-  "goblin_1": {"image": "concepts/builder_openai_apose.png", "height": 2.0, "work": "pound",
+  "goblin_0": {"image": "../goblinville-skin/characters/anthropic/idle.png", "height": 2.05, "work": "steady"},
+  "goblin_1": {"image": "concepts/builder_openai_apose.png", "height": 2.0, "work": "steady",
    "prop": {"part": 2, "boxes": [[[0.5, -0.42, 0], [0.8, -0.03, 0.24]], [[0.47, -0.31, 0.22], [0.65, -0.15, 0.64]]], "plant": true}},
-  "goblin_2": {"image": "../goblinville-skin/characters/google/idle.png", "height": 2.35, "work": "conduct", "busy": "R"},
+  "goblin_2": {"image": "../goblinville-skin/characters/google/idle.png", "height": 2.35, "work": "tinker", "busy": "R"},
   "goblin_3": {"image": "concepts/builder_xai_apose.png", "height": 1.6, "work": "tinker"},
   "goblin_4": {"image": "concepts/builder_shell_apose.png", "height": 1.65, "work": "tinker", "robe": true},
   "goblin_5": {"image": "concepts/builder_docker_apose.png", "height": 2.4, "work": "tinker", "busy": "L"},

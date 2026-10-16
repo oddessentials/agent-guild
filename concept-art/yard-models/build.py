@@ -12,8 +12,10 @@
 A world's sources are in concept-art/<world>-yard: `world.json` names its
 cast (runtime name: source image, metres tall, and for builders the working
 motion, any held tool, `prop`, as rig.py's cut_prop and plant read it, the
-`gait` when it is not a walk, `robe` and the `busy` hand that holds something
-modelled in),
+`gait` when it is not a walk, `robe`, the `busy` hand that holds something
+modelled in, the `neck` and `hips` shares of the height where its silhouette
+misleads the rig, and `look`, a narrower glance for a head that tears at the
+usual one),
 its town buildings, seeds other than 42, the subjects cut out onto grey, hall
 turns, and its `station` prop: the working surface height for a 2 m figure
 (`surface`, which rig.py scales by each builder's shoulder height) and the
@@ -33,6 +35,9 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 ASSETS = ROOT / 'web/yard/assets'
 BLENDER = os.environ.get('BLENDER', 'E:/Program Files/Blender Foundation/Blender 5.2/blender.exe')
+# Bone heat's solve is threaded with OpenMP, and its sums come out a float
+# step apart from run to run; on one thread a model rigs to the same bytes.
+BLENDER_ENV = {**os.environ, 'OMP_NUM_THREADS': '1'}
 PROVIDERS = ['anthropic', 'openai', 'google', 'xai', 'shell', 'docker']
 # How far a station's prop stands from its character: STAGING.station.gap in web/yard/model.mjs.
 GAP = .75
@@ -173,9 +178,14 @@ def cast(name, names, shipped=False):
             args += ['--robe']
         if c.get('busy'):
             args += ['--busy', c['busy']]
+        for joint in ('neck', 'hips'):
+            if c.get(joint):
+                args += ['--' + joint, str(c[joint])]
+        if c.get('look'):
+            args += ['--look', json.dumps(c['look'])]
         if c.get('work') and 'station' in spec:
             args += ['--surface', str(spec['station']['surface'])]
-        subprocess.run(args, check=True, stdout=subprocess.DEVNULL)
+        subprocess.run(args, check=True, stdout=subprocess.DEVNULL, env=BLENDER_ENV)
         if shipped and not keep_textures(ASSETS / f'{key}.glb', source, reports / 'maps'):
             print(key, 'textures re-encoded: the shipped ones could not be matched', flush=True)
         result = json.loads(report.read_text())

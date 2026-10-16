@@ -9,7 +9,7 @@
   "staff_1": {
    "image": "concepts/staff_openai.png",
    "height": 2.05,
-   "work": "tinker",
+   "work": "steady",
    "busy": "L"
   },
   "staff_2": {
@@ -26,8 +26,7 @@
   "staff_4": {
    "image": "concepts/staff_shell_apose.png",
    "height": 2.0,
-   "work": "tinker"
-  },
+   "work": "tinker", "look": {"yaw": 0.3}},
   "staff_5": {
    "image": "concepts/staff_docker.png",
    "height": 2.3,

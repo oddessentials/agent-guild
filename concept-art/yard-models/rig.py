@@ -3,7 +3,7 @@
 
   blender -b --factory-startup --python rig.py -- IN.glb OUT.glb HEIGHT [--kind builder|familiar]
       [--work tinker|conduct|steady|pound] [--gait walk|waddle|glide] [--robe] [--busy L|R]
-      [--prop JSON] [--report FILE]
+      [--prop JSON] [--neck SHARE] [--hips SHARE] [--look JSON] [--report FILE]
 
 IN is a generated TRELLIS.2 model, or a shipped Yard model. A shipped model's
 old skeleton and clips are removed, and a held tool is found again as the loose
@@ -19,7 +19,9 @@ Blender's bone heat. A held tool (`--prop`) is cut out first so it cannot pass
 for an arm, then rides a PropLeft or PropRight socket bone in that hand.
 `--robe` lets the middle of a robe hang from the hips; `--busy` names a hand
 holding something modelled in, which stays as modelled, as both arms of a
-`steady` character do.
+`steady` character do. `--look` narrows the glance a client may turn this
+head to (`{"yaw": rad, "pitch": rad}`), which the checks use and the model
+carries as `yard.look`.
 
 Clips are posed in Python and baked to keys, at 24 fps. Legs are solved with
 two-bone IK, so planted feet stay put while the hips sway and the walk's
@@ -27,8 +29,13 @@ stance foot moves back at exactly the speed the character walks; the stride
 and cycle are written into the model as `yard` extras for the runtime. Work
 clips that strike something record the moment and place as `events`.
 The mesh and textures keep the detail they were generated with; textures are
-written as WebP. --report writes the automated checks: foot sliding, and how
-much of each part of the body tears in each clip.
+written as WebP. --report writes the automated checks: foot sliding, how
+much of each part of the body tears in each clip, how far the head's layers
+and the surface split at UV seams come apart, and whether any cut the rig
+makes opens into view (none does today: nothing is cut, see unfuse). The
+glance checks run at the contract's limits or the narrower ones --look
+gives. The layers check runs on characters only: on helpers it reads
+geometry that is not a head (#270).
 """
 import bpy, json, math, sys
 import numpy as np
@@ -320,9 +327,10 @@ def find_neck(body, h):
 
 def head_part(body, neck, h):
     """Which vertices are the head: the piece of surface above the neck
-    (pieces joined without passing below it) that holds the face, and every
-    piece wholly above the neck whose middle lies over it, within the widest
-    run of the silhouette round the centre line. A hat, hood, hair, ears or
+    (pieces joined without passing below it) that shows the face, the walls
+    hidden inside it, and every piece wholly above the neck whose middle lies
+    over it, within the widest run of the silhouette round the centre line.
+    A hat, hood, hair, ears or
     a beard's top come with it; a staff held up beside the head sits off to
     the side, and a sword or a hammer slung on the back carries on below the
     neck, so they stay with the body."""
@@ -360,9 +368,46 @@ def head_part(body, neck, h):
             whole[ra] = rb
     surface = np.array([top(i) for i in range(len(co))])
     below = set(surface[~up])
-    face = up & (np.abs(co[:, 0]) <= .1 * h) & (co[:, 2] <= neck + .15 * h)
-    ids, counts = np.unique(labels[face], return_counts=True)
+    from mathutils.bvhtree import BVHTree
+    from mathutils.kdtree import KDTree
+    body.data.calc_loop_triangles()
+    tris = np.empty(len(body.data.loop_triangles) * 3, dtype=np.int64)
+    body.data.loop_triangles.foreach_get('vertices', tris)
+    tris = tris.reshape(-1, 3)
+    bvh = BVHTree.FromPolygons([Vector(c) for c in co], tris.tolist())
+    # The face: of the pieces carrying on below the neck, the one rays from
+    # the front reach most over the middle of the head, through a visor or
+    # a mask wholly above it; a tail or a pack behind is hidden by the head.
+    hits = []
+    far = co[:, 1].min() - h
+    for x in np.arange(-.1, .1, .005) * h:
+        for z in np.arange(neck, neck + .15 * h, .005 * h):
+            start = Vector((x, far, z))
+            while (hit := bvh.ray_cast(start, Y))[2] is not None and up[tris[hit[2]][0]]:
+                if surface[tris[hit[2]][0]] in below:
+                    hits.append(labels[tris[hit[2]][0]])
+                    break
+                start = hit[0] + Y * 1e-4 * h
+    ids, counts = np.unique(hits, return_counts=True)
     main = ids[np.argmax(counts)] if len(ids) else -1
+    seen = visible(body, co, up)
+    # Generated heads often have walls inside the visible one, each carrying
+    # on below the neck: mostly hidden, closed in on every side over the
+    # skull and lying under the face's piece, they are the head's.
+    skull = co[:, 2] > neck + .04 * h
+    outside = np.flatnonzero(up & seen)
+    kd = KDTree(len(outside))
+    for n, i in enumerate(outside):
+        kd.insert(co[i], n)
+    kd.balance()
+    around = [Vector(d).normalized() for d in [(1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)] +
+              [(x, y, z) for x in (1, -1) for y in (1, -1) for z in (1, -1)]]
+    hidden = {}
+    for label in np.unique(labels[up]):
+        over = up & (labels == label) & skull
+        hidden[label] = over.any() and seen[over].mean() < .5 and np.mean(
+            [labels[outside[kd.find(co[i])[1]]] == main for i in np.flatnonzero(over)]) >= .5 and np.mean(
+            [all(bvh.ray_cast(Vector(co[i]) + d * 1e-4 * h, d)[0] is not None for d in around) for i in np.flatnonzero(over)]) >= .9
     # The head's half width: the run of the silhouette holding the centre
     # line, widest over the rows above the neck.
     cell, half = .006 * h, .05 * h
@@ -377,25 +422,52 @@ def head_part(body, neck, h):
     part = np.zeros(len(co), bool)
     for label in np.unique(labels[up]):
         piece = up & (labels == label)
-        # Beside the face's own piece, a piece that carries on below the neck
-        # (a sword or a hammer slung on the back, a cape) is not the head's.
-        if label == main or (abs(co[piece, 0].mean()) <= half and surface[np.flatnonzero(piece)[0]] not in below):
+        # Beside the face's own piece, a piece seen from outside that carries
+        # on below the neck (a sword or a hammer slung on the back, a cape) is
+        # not the head's.
+        if label == main or (abs(co[piece, 0].mean()) <= half and (hidden[label] or surface[np.flatnonzero(piece)[0]] not in below)):
             part |= piece
     return part
 
 
-def joints(body, height, kind):
+def visible(body, co, where):
+    """Which vertices a ray from outside reaches first, over the region `where`."""
+    from mathutils.bvhtree import BVHTree
+    body.data.calc_loop_triangles()
+    tris = np.empty(len(body.data.loop_triangles) * 3, dtype=np.int64)
+    body.data.loop_triangles.foreach_get('vertices', tris)
+    tris = tris.reshape(-1, 3)
+    bvh = BVHTree.FromPolygons([Vector(c) for c in co], tris.tolist())
+    centre = Vector(co[where].mean(0))
+    radius = float(np.linalg.norm(co[where] - co[where].mean(0), axis=1).max())
+    far = float(np.linalg.norm(co - co[where].mean(0), axis=1).max()) + radius
+    seen = np.zeros(len(co), bool)
+    for el in np.linspace(-1.2, 1.4, 12):
+        for az in np.linspace(0, 2 * math.pi, 48, endpoint=False):
+            d = Vector((math.cos(el) * math.cos(az), math.cos(el) * math.sin(az), math.sin(el)))
+            side = d.cross(Z).normalized() if abs(d.z) < .999 else X.copy()
+            up = side.cross(d)
+            for a in np.linspace(-1, 1, 9) * radius:
+                for b in np.linspace(-1, 1, 9) * radius:
+                    hit = bvh.ray_cast(centre + d * far + side * a + up * b, -d)[2]
+                    if hit is not None:
+                        seen[tris[hit]] = True
+    return seen
+
+
+def joints(body, height, kind, neck=None, hip=None):
     """Joint positions from the silhouette. The neck is where the outline
     pinches in under the head (find_neck), so a tall hat or helmet is carried
-    by the head instead of holding it; the trunk's joints divide the hips to
-    the neck in fixed shares."""
+    by the head instead of holding it, unless `neck` gives its share of the
+    height; the trunk's joints divide the hips to the neck in fixed shares.
+    The legs leave the body at 0.48 of the height unless `hip` says."""
     h = height
     j = {'root': Vector((0, 0, 0)), 'hips': Vector((0, 0, .50 * h)), 'spine': Vector((0, 0, .57 * h)),
          'chest': Vector((0, 0, .64 * h)), 'upperChest': Vector((0, 0, .71 * h)), 'neck': Vector((0, 0, .80 * h)),
          'head': Vector((0, 0, .84 * h)), 'top': Vector((0, 0, h))}
     if kind == 'familiar':
         return j
-    neck = find_neck(body, h)
+    neck = neck * h if neck else find_neck(body, h)
     co = [v.co for v in body.data.vertices if abs(v.co.z - neck) < .015 * h]
     y = sorted(c.y for c in co)[len(co) // 2] if co else 0.0
     # A big head on a short body leaves the trunk at least 0.15 of the height.
@@ -431,7 +503,7 @@ def joints(body, height, kind):
         j['shoulder' + name], j['elbow' + name], j['wrist' + name] = shoulder, elbow, hand
         j['hand' + name] = hand + (hand - elbow).normalized() * .07 * h
         x = side * max(torso * .45, .06 * h)
-        j['hip' + name] = Vector((x, 0, .48 * h))
+        j['hip' + name] = Vector((x, 0, (hip or .48) * h))
         j['knee' + name] = Vector((x, -.02 * h, .26 * h))
         j['ankle' + name] = Vector((x, .01 * h, .06 * h))
         j['ball' + name] = Vector((x, -.07 * h, .025 * h))
@@ -542,16 +614,22 @@ def weights(body, rig, robe=False, still=(), head=None):
     keep_arms_to_arms(body, rig)
     keep_head_to_head(body, rig, head)
     smooth(body)
+    if head is not None:
+        shape_head(body, rig, head)
+    else:
+        cover_walls(body, rig)
     split_legs(body, rig, robe)
     # Normalise and limit to four influences for glTF.
     bpy.context.view_layer.objects.active = body
     bpy.ops.object.vertex_group_limit_total(group_select_mode='ALL', limit=4)
     bpy.ops.object.vertex_group_normalize_all(group_select_mode='ALL', lock_active=False)
-    if 'LeftUpperArm' in rig.data.bones:
-        unfuse(body, robe, still)
+    cut = unfuse(body, robe, still) if 'LeftUpperArm' in rig.data.bones else None
+    if len(still) == 1 and not robe and 'LeftUpperArm' in rig.data.bones:
+        ease_still_hands(body, still)
     # The clean-ups can leave a vertex with no weight, which the exporter
     # would bind to an extra bone outside the contract skeleton.
     claim_strays(body, rig)
+    return cut
 
 
 def claim_strays(body, rig):
@@ -594,12 +672,66 @@ def keep_head_to_head(body, rig, part=None):
                 skull.add([v.index], rigid, 'REPLACE')
             continue
         moved = 0.0
-        for g in list(v.groups):
-            if g.group in groups and g.weight > 0:
-                moved += g.weight
-                groups[g.group].remove([v.index])
+        for group, weight in [(g.group, g.weight) for g in v.groups]:
+            if group in groups and weight > 0:
+                moved += weight
+                groups[group].remove([v.index])
         if moved:
             chest.add([v.index], moved, 'ADD')
+
+
+def cover_walls(body, rig):
+    """Generated helpers often have walls inside their visible surface; each
+    takes the weights of the visible surface nearest it, so they move as one."""
+    from mathutils.kdtree import KDTree
+    co = np.array([v.co[:] for v in body.data.vertices])
+    seen = visible(body, co, np.ones(len(co), bool))
+    skin, walls = np.flatnonzero(seen), np.flatnonzero(~seen)
+    if not len(skin) or not len(walls):
+        return
+    kd = KDTree(len(skin))
+    for n, i in enumerate(skin):
+        kd.insert(co[i], n)
+    kd.balance()
+    own = [[(g.group, g.weight) for g in v.groups] for v in body.data.vertices]
+    for i in walls:
+        source = skin[kd.find(co[i])[1]]
+        for group in body.vertex_groups:
+            group.remove([int(i)])
+        for group, weight in own[source]:
+            body.vertex_groups[group].add([int(i)], weight, 'REPLACE')
+
+
+LIMBS = ('Shoulder', 'Arm', 'Hand', 'Leg', 'Foot', 'Toes')
+
+
+def shape_head(body, rig, part):
+    """Every layer of the head turns by the same rule: from the neck up, its
+    weights blend from bone heat to ones set by height alone, all the neck's
+    up to the head joint, then rising to all the head's over 0.1 of the
+    height, or longer for surface far from the neck (a snout, a brim),
+    which a turn would otherwise shear. Walls weighted apart by bone heat
+    would slide past each other. What bone heat gives a limb (a hunched
+    shoulder) stays, as does the hips' hold below the head joint."""
+    neck_bone = rig.data.bones['Neck'].head_local
+    neck, head = neck_bone.z, rig.data.bones['Head'].head_local.z
+    h = (head - neck) / .04
+    floor = neck - .01 * h
+    groups = {g.name: g for g in body.vertex_groups}
+    for v in body.data.vertices:
+        if not part[v.index]:
+            continue
+        own = {body.vertex_groups[g.group].name: g.weight for g in v.groups}
+        total = sum(own.values()) or 1
+        keep = sum(w for n, w in own.items() if n.endswith(LIMBS) or (n in ('Hips', 'Root') and v.co.z < head)) / total
+        t = (1 - keep) ** 2 * min(1.0, max(0.0, (v.co.z - floor) / (head - floor)))
+        out = math.hypot(v.co.x - neck_bone.x, v.co.y - neck_bone.y)
+        rise = min(1.0, max(0.0, (v.co.z - head) / max(.1 * h, .45 * out)))
+        own = {n: w * (1 - t) for n, w in own.items()}
+        own['Head'] = own.get('Head', 0) + t * rise
+        own['Neck'] = own.get('Neck', 0) + t * (1 - rise)
+        for name, w in own.items():
+            groups[name].add([v.index], w, 'REPLACE')
 
 
 def keep_arms_to_arms(body, rig):
@@ -618,14 +750,14 @@ def keep_arms_to_arms(body, rig):
         low = bones[2].tail_local.z - .04 * h
         for v in body.data.vertices:
             moved = 0.0
-            for g in list(v.groups):
-                if g.group not in groups or g.weight <= 0:
+            for group, weight in [(g.group, g.weight) for g in v.groups]:
+                if group not in groups or weight <= 0:
                     continue
                 near = min((v.co - (lambda r: r[0] if 0 <= r[1] <= 1 else (b.head_local if r[1] < 0 else b.tail_local))(
                     intersect_point_line(v.co, b.head_local, b.tail_local))).length for b in bones)
                 if v.co.z < low or near > .09 * h:
-                    moved += g.weight
-                    groups[g.group].remove([v.index])
+                    moved += weight
+                    groups[group].remove([v.index])
             if moved:
                 hips.add([v.index], moved, 'ADD')
 
@@ -651,18 +783,17 @@ def split_legs(body, rig, robe):
         if v.co.z > crotch:
             # Above the crotch a robe stays at least as much the hips' as below.
             fade = max(share, min(1.0, (v.co.z - crotch) / max(hip - crotch, 1e-6)))
-            for g in list(v.groups):
-                name = index.get(g.group)
-                if name and g.weight > 0:
-                    groups[name].add([v.index], g.weight * (1 - fade), 'REPLACE')
-                    groups['Hips'].add([v.index], g.weight * fade, 'ADD')
+            for group, w in [(g.group, g.weight) for g in v.groups]:
+                name = index.get(group)
+                if name and w > 0:
+                    groups[name].add([v.index], w * (1 - fade), 'REPLACE')
+                    groups['Hips'].add([v.index], w * fade, 'ADD')
             continue
         own = 'Left' if v.co.x > 0 else 'Right'
-        for g in list(v.groups):
-            name = index.get(g.group)
-            if not name or g.weight <= 0:
+        for group, w in [(g.group, g.weight) for g in v.groups]:
+            name = index.get(group)
+            if not name or w <= 0:
                 continue
-            w = g.weight
             if robe:
                 groups[name].add([v.index], w * (1 - share), 'REPLACE')
                 groups['Hips'].add([v.index], w * share, 'ADD')
@@ -672,45 +803,254 @@ def split_legs(body, rig, robe):
                 groups[twin].add([v.index], w, 'ADD')
 
 
+SEAM_BAND = .05
+
+
+def mend_seam(body):
+    """Where a rip leaves vertices at one place on both legs (the vertices it
+    split, and twins a UV seam had already split), they take the same mix
+    of both legs, so the seam stays shut; over SEAM_BAND of the height away
+    from it each side's own leg takes over again."""
+    from mathutils.kdtree import KDTree
+    co = np.array([v.co[:] for v in body.data.vertices])
+    h = co[:, 2].max() - co[:, 2].min()
+    index = {g.index: g.name for g in body.vertex_groups}
+    def side(v):
+        held = {'Left': 0.0, 'Right': 0.0}
+        for g in v.groups:
+            name = index[g.group]
+            if name.endswith(('UpperLeg', 'LowerLeg', 'Foot', 'Toes')):
+                held['Left' if name.startswith('Left') else 'Right'] += g.weight
+        return max(held, key=held.get) if any(held.values()) else None
+    sides = [side(v) for v in body.data.vertices]
+    node = twins(body)
+    both = {}
+    for i, n in enumerate(node):
+        if sides[i]:
+            both.setdefault(n, set()).add(sides[i])
+    seam = [i for i, n in enumerate(node) if len(both.get(n, ())) > 1]
+    if not seam:
+        return
+    kd = KDTree(len(seam))
+    for n, i in enumerate(seam):
+        kd.insert(co[i], n)
+    kd.balance()
+    groups = {g.name: g for g in body.vertex_groups}
+    legs = ('UpperLeg', 'LowerLeg', 'Foot', 'Toes')
+    for v in body.data.vertices:
+        d = kd.find(v.co)[2]
+        if d >= SEAM_BAND * h:
+            continue
+        own = .5 + .5 * d / (SEAM_BAND * h)
+        held = [(index[g.group], g.weight) for g in v.groups if g.weight > 0 and index[g.group].endswith(legs)]
+        for name, w in held:
+            groups[name].add([v.index], w * own, 'REPLACE')
+        for name, w in held:
+            other = 'Right' + name[4:] if name.startswith('Left') else 'Left' + name[5:]
+            groups[other].add([v.index], w * (1 - own), 'ADD')
+
+
+def ease_still_hands(body, still):
+    """A busy hand (one holding something modelled in, so it stays as
+    modelled while the other arm moves) keeps its skin where it touches a leg;
+    over SEAM_BAND of the height round that touch the skin eases toward
+    the mean of the touch, so a stride stretches a band instead of a row."""
+    from mathutils.kdtree import KDTree
+    index = {g.index: g.name for g in body.vertex_groups}
+    def owner(v):
+        best = max(v.groups, key=lambda g: g.weight, default=None)
+        return index.get(best.group, '') if best else ''
+    owners = [owner(v) for v in body.data.vertices]
+    hand = lambda n: n.startswith(still) and n.endswith(('LowerArm', 'Hand'))
+    leg = lambda n: n.endswith(('UpperLeg', 'LowerLeg'))
+    touch = set()
+    for p in body.data.polygons:
+        names = [owners[i] for i in p.vertices]
+        if any(hand(n) for n in names) and any(leg(n) for n in names):
+            touch.update(p.vertices)
+    if not touch:
+        return
+    touch = sorted(touch)
+    co = np.array([v.co[:] for v in body.data.vertices])
+    h = co[:, 2].max() - co[:, 2].min()
+    w = np.zeros((len(co), len(body.vertex_groups)))
+    for v in body.data.vertices:
+        for g in v.groups:
+            w[v.index, g.group] = g.weight
+    mean = w[touch].mean(0)
+    kd = KDTree(len(touch))
+    for n, i in enumerate(touch):
+        kd.insert(co[i], n)
+    kd.balance()
+    for v in body.data.vertices:
+        d = kd.find(v.co)[2]
+        if d >= SEAM_BAND * h:
+            continue
+        t = 1 - d / (SEAM_BAND * h)
+        new = t * mean + (1 - t) * w[v.index]
+        for k, group in enumerate(body.vertex_groups):
+            if new[k] > 1e-6:
+                group.add([v.index], float(new[k]), 'REPLACE')
+            elif w[v.index, k]:
+                group.remove([v.index])
+
+
+def share_twins(body):
+    """Vertices at one place take the same weights, so a UV seam the rip
+    reweighted on one side only stays shut."""
+    node = twins(body)
+    n, groups = len(node), body.vertex_groups
+    w = np.zeros((n, len(groups)))
+    for v in body.data.vertices:
+        for g in v.groups:
+            w[v.index, g.group] = g.weight
+    shared = np.zeros((node.max() + 1, len(groups)))
+    np.add.at(shared, node, w)
+    shared = (shared / np.bincount(node)[:, None])[node]
+    for i in np.flatnonzero(np.abs(shared - w).max(1) > 0):
+        for k, group in enumerate(groups):
+            if shared[i, k] > 1e-6:
+                group.add([int(i)], float(shared[i, k]), 'REPLACE')
+            elif w[i, k]:
+                group.remove([int(i)])
+
+
 def unfuse(body, robe, still=()):
-    """Generated models often fuse a hanging hand to the thigh, or one leg to
-    the other, with a skin of triangles that tears once the limb moves. Cut
-    those bridges: the faces joining a moving forearm or hand to the hips or
-    a leg, and, unless a robe joins them by design, the left leg to the right.
-    Where they met, the limbs touched, so the cut is out of sight. An arm that
-    stays as modelled keeps its skin: cut, it would leave a hole in a sleeve
-    or robe that shows in every pose."""
+    """Generated models often fuse one leg to the other, and a hanging hand
+    to the thigh, with a skin of triangles that stretches once the limb
+    moves. Nothing is cut: a cut leaves a slit or shreds a viewer sees at
+    rest and in every clip, where the stretched skin, held under the tear
+    limit by the clips' reach, does not show. Surface joining the left leg
+    to the right (a coat, an apron, a panel, the body between the legs) is
+    ripped, unless a robe joins them by design: each face goes whole to one
+    leg and the seam's vertices are split, then mend_seam gives both sides of
+    the seam the same mix of the legs, so the surface stays shut and the
+    stride stretches it over a band. Returns what the checks need, in the
+    shape a cutting rule would fill: the faces cut away (always none now)
+    with the side each corner is on, and the vertices split apart."""
     import bmesh
+    from mathutils.kdtree import KDTree
     groups = {g.index: g.name for g in body.vertex_groups}
     def owner(v):
         best = max(v.groups, key=lambda g: g.weight, default=None)
         return groups.get(best.group, '') if best else ''
     owners = [owner(v) for v in body.data.vertices]
-    arm = lambda n: (n.endswith('LowerArm') or n.endswith('Hand')) and not n.startswith(still)
-    low = lambda n: n == 'Hips' or n.endswith('UpperLeg') or n.endswith('LowerLeg')
     leg = lambda n: n.endswith('UpperLeg') or n.endswith('LowerLeg') or n.endswith('Foot')
-    bm = bmesh.new(); bm.from_mesh(body.data); bm.faces.ensure_lookup_table()
-    cut = []
+    co = np.array([v.co[:] for v in body.data.vertices])
+    bm = bmesh.new(); bm.from_mesh(body.data); bm.faces.ensure_lookup_table(); bm.verts.ensure_lookup_table()
+    cut, tris, sides, rip = [], [], [], {}
     for f in bm.faces:
         names = {owners[v.index] for v in f.verts}
-        if any(arm(n) for n in names) and any(low(n) for n in names):
-            cut.append(f)
-        elif not robe and any(leg(n) and n.startswith('Left') for n in names) and any(leg(n) and n.startswith('Right') for n in names):
-            cut.append(f)
+        if not robe and any(leg(n) and n.startswith('Left') for n in names) and any(leg(n) and n.startswith('Right') for n in names):
+            left = sum(owners[v.index].startswith('Left') for v in f.verts)
+            right = sum(owners[v.index].startswith('Right') for v in f.verts)
+            rip[f.index] = 'Left' if left > right or (left == right and f.calc_center_median().x > 0) else 'Right'
+            continue
+        else:
+            continue
+        cut.append(f)
+        for i in range(1, len(f.verts) - 1):
+            tris.append([f.verts[k].index for k in (0, i, i + 1)])
+            sides.append([side[k] for k in (0, i, i + 1)])
+    def side_of(f):
+        if f.index in rip:
+            return rip[f.index]
+        left = sum(owners[v.index].startswith('Left') for v in f.verts)
+        right = sum(owners[v.index].startswith('Right') for v in f.verts)
+        return 'Left' if left > right else 'Right' if right > left else None
+    seam = {e for i in rip for e in bm.faces[i].edges
+            if len({side_of(g) for g in e.link_faces} - {None}) > 1}
+    ripped = [bm.faces[i] for i in rip]
+    side_ripped = [rip[f.index] for f in ripped]
+    before = len(bm.verts)
     bmesh.ops.delete(bm, geom=cut, context='FACES_ONLY')
+    bmesh.ops.split_edges(bm, edges=[e for e in seam if e.is_valid])
+    bm.verts.index_update()
+    corners = {}
+    for f, s_ in zip(ripped, side_ripped):
+        for v in f.verts:
+            corners.setdefault(v.index, []).append(s_)
+    split = []
+    if len(bm.verts) > before:
+        kd = KDTree(before)
+        for v in bm.verts[:before]:
+            kd.insert(v.co, v.index)
+        kd.balance()
+        split = [(kd.find(v.co)[1], v.index) for v in bm.verts[before:]]
     bm.to_mesh(body.data); bm.free(); body.data.update()
-    print('YARD_UNFUSE faces %d' % len(cut), flush=True)
+    vgroups = {g.name: g for g in body.vertex_groups}
+    index = {g.index: g.name for g in body.vertex_groups}
+    for i, ss in corners.items():
+        own = max(set(ss), key=ss.count)
+        other = 'Right' if own == 'Left' else 'Left'
+        for name, w in [(index[g.group], g.weight) for g in body.data.vertices[i].groups]:
+            if name.startswith(other) and name.endswith(('UpperLeg', 'LowerLeg', 'Foot', 'Toes')) and w > 0:
+                vgroups[name].remove([i])
+                vgroups[own + name[len(other):]].add([i], w, 'ADD')
+    if rip:
+        mend_seam(body)
+        share_twins(body)
+    print('YARD_UNFUSE faces %d ripped %d' % (len(cut), len(rip)), flush=True)
+    return {'cut': np.array(tris, dtype=np.int64).reshape(-1, 3), 'sides': np.array(sides, bool).reshape(-1, 3), 'split': split}
 
 
 def smooth(body):
     """A few passes of weight smoothing soften the seams bone heat leaves at
     the shoulders and hips, so a raised arm or a stride bends the cloth around
-    the joint instead of creasing it."""
-    bpy.ops.object.select_all(action='DESELECT')
-    body.select_set(True); bpy.context.view_layer.objects.active = body
-    bpy.ops.object.mode_set(mode='WEIGHT_PAINT')
-    bpy.ops.object.vertex_group_smooth(group_select_mode='ALL', factor=.5, repeat=6, expand=0)
-    bpy.ops.object.mode_set(mode='OBJECT')
+    the joint instead of creasing it. Twins split at a UV seam are smoothed
+    as one vertex, so the seam stays shut."""
+    n, groups = len(body.data.vertices), body.vertex_groups
+    node = twins(body)
+    m = node.max() + 1
+    w = np.zeros((n, len(groups)))
+    for v in body.data.vertices:
+        for g in v.groups:
+            w[v.index, g.group] = g.weight
+    shared = np.zeros((m, len(groups)))
+    np.add.at(shared, node, w)
+    shared /= np.bincount(node, minlength=m)[:, None]
+    edges = np.empty(len(body.data.edges) * 2, dtype=np.int64)
+    body.data.edges.foreach_get('vertices', edges)
+    pairs = np.unique(np.sort(node[edges.reshape(-1, 2)], 1), axis=0)
+    a, b = pairs[pairs[:, 0] != pairs[:, 1]].T
+    count = np.bincount(a, minlength=m) + np.bincount(b, minlength=m)
+    for _ in range(6):
+        total = np.stack([np.bincount(a, shared[b, k], m) + np.bincount(b, shared[a, k], m) for k in range(len(groups))], 1)
+        mean = np.where(count[:, None] > 0, total / np.maximum(count, 1)[:, None], shared)
+        shared += .5 * (mean - shared)
+    w = shared[node]
+    for k, group in enumerate(groups):
+        group.remove(range(n))
+        for i in np.flatnonzero(w[:, k] > 1e-4):
+            group.add([int(i)], float(w[i, k]), 'REPLACE')
+
+
+def twins(body):
+    """For each vertex, one index shared by every vertex at its place (twins
+    split at a UV seam)."""
+    from mathutils.kdtree import KDTree
+    n = len(body.data.vertices)
+    kd = KDTree(n)
+    for v in body.data.vertices:
+        kd.insert(v.co, v.index)
+    kd.balance()
+    node = np.arange(n)
+    for v in body.data.vertices:
+        if node[v.index] == v.index:
+            for _, i, _ in kd.find_range(v.co, 1e-5):
+                node[i] = v.index
+    return np.unique(node, return_inverse=True)[1]
+
+
+def weld(body):
+    """Put twins at exactly one place, so every rule placing a vertex by
+    where it is (which leg, the head's floor) treats them alike."""
+    node = twins(body)
+    first = np.full(node.max() + 1, -1)
+    for i in range(len(node) - 1, -1, -1):
+        first[node[i]] = i
+    for v in body.data.vertices:
+        v.co = body.data.vertices[int(first[node[v.index]])].co.copy()
 
 
 def bind_prop(body, prop, side):
@@ -866,8 +1206,10 @@ def still_sides(work, busy, prop_side):
 class Character:
     """Rest measurements a clip poses against."""
 
-    def __init__(self, rig, height, work, prop_side, busy=None, gait='walk', robe=False, room=None, surface=None):
+    def __init__(self, rig, height, work, prop_side, busy=None, gait='walk', robe=False, room=None, surface=None, look=None):
         self.rig, self.h, self.work, self.prop, self.gait = rig, height, work, prop_side, gait
+        # The glance limits a client may turn this head to, narrowed by --look.
+        self.look = {'yaw': min(LOOK_YAW, (look or {}).get('yaw', LOOK_YAW)), 'pitch': min(LOOK_PITCH, (look or {}).get('pitch', LOOK_PITCH))}
         # The height of the working surface in front of it, in metres, if any.
         self.surface = surface
         # The arm's angle from straight down at a hammer's blow, and how far
@@ -1350,8 +1692,8 @@ def animate(rig, c, body=None):
 
 
 # Arm reach tried in turn for a clip that tears, and the walk's stride with it.
-REACH = (1.0, .6, .3)
-STRIDE = {1.0: 1.0, .6: .8, .3: .6}
+REACH = (1.0, .8, .6, .45, .3, .15)
+STRIDE = {1.0: 1.0, .8: .9, .6: .8, .45: .7, .3: .6, .15: .5}
 
 
 def impact(rig, c, action, frames):
@@ -1369,24 +1711,40 @@ def impact(rig, c, action, frames):
 
 # ---------------------------------------------------------------- checks
 
-def check(rig, body, c, report):
+def check(rig, body, c, report, cut=None):
     """Foot sliding in the walk, and in every clip the share of each part of
     the body (an arm, a hand, a leg with its foot, the trunk, the head)
     torn: triangles whose longest edge stretches past STRETCH times its rest
-    length, which shows as a smear or a spike."""
+    length, which shows as a smear or a spike; how far twins split at UV
+    seams come apart (Seams); how much of any surface unfuse cut away opens
+    into view (Holes, a guard: unfuse cuts nothing today); and for a
+    character, how far the head's layers come apart (Layers)."""
     result = {'height': c.h, 'stride': round(2 * c.step, 4), 'cycle': c.cycle, 'gait': c.gait, 'clips': {}}
+    layers = Layers(rig, body) if c.humanoid else None
+    seams = Seams(rig, body, cut['split'] if cut else ())
+    holes = Holes(rig, body, cut['cut'], cut['sides']) if cut and len(cut['cut']) else None
     for action in bpy.data.actions:
         rig.animation_data.action = action
         frames = int(action.frame_range[1])
         worst, part = tearing(rig, body, action)
+        apart = layers.apart(clip_poses(rig, action)) if layers else 0.0
         entry = {'torn': round(worst, 5), 'part': part, 'reach': c.reach.get(action.name, 1.0)}
+        if layers:
+            entry['apart'] = round(apart, 4)
         if action.name == 'walk' and c.gait != 'glide':
             entry['footSlide'] = foot_slide(rig, c, frames)
-        entry['ok'] = worst < TORN and entry.get('footSlide', 0) < .02 * c.h
+        entry['seams'] = round(seams.apart(clip_poses(rig, action)), 4)
+        entry['holes'] = round(holes.open(clip_poses(rig, action)), 5) if holes else 0.0
+        entry['ok'] = (worst < TORN and apart < APART and entry['seams'] < SEAM and entry['holes'] < HOLE and
+                       entry.get('footSlide', 0) < .02 * c.h)
         result['clips'][action.name] = entry
     if c.humanoid:
-        worst, part = look_tearing(rig, body)
-        result['look'] = {'torn': round(worst, 5), 'part': part, 'ok': worst < TORN}
+        worst, part = look_tearing(rig, body, c.look)
+        apart = layers.apart(look_poses(rig, **c.look))
+        gap = seams.apart(look_poses(rig, **c.look))
+        hole = holes.open(look_poses(rig, **c.look)) if holes else 0.0
+        result['look'] = {'torn': round(worst, 5), 'part': part, 'apart': round(apart, 4), 'seams': round(gap, 4),
+                          'holes': round(hole, 5), 'ok': worst < TORN and apart < APART and gap < SEAM and hole < HOLE}
     rig.animation_data.action = None
     bpy.context.scene.frame_set(0)
     result['ok'] = all(e['ok'] for e in result['clips'].values()) and result.get('look', {}).get('ok', True)
@@ -1414,16 +1772,19 @@ def part_of(bone):
     return 'trunk'
 
 
+def clip_poses(rig, action):
+    """16 moments of a clip."""
+    frames = int(action.frame_range[1])
+    rig.animation_data.action = action
+    for f in range(0, frames, max(1, frames // 16)):
+        bpy.context.scene.frame_set(f)
+        yield
+
+
 def tearing(rig, body, action):
     """The largest share of any part of the body torn at 16 moments of a
     clip, and which part."""
-    frames = int(action.frame_range[1])
-    def poses():
-        rig.animation_data.action = action
-        for f in range(0, frames, max(1, frames // 16)):
-            bpy.context.scene.frame_set(f)
-            yield
-    return torn(rig, body, poses())
+    return torn(rig, body, clip_poses(rig, action))
 
 
 # Where a client turns a character's head to look at someone (CONTRACT.md):
@@ -1432,21 +1793,220 @@ def tearing(rig, body, action):
 LOOK_YAW, LOOK_PITCH, LOOK_NECK = .7, .3, .4
 
 
-def look_tearing(rig, body):
+def look_poses(rig, yaw=LOOK_YAW, pitch=LOOK_PITCH):
+    """The head turned to the look-at limits, at rest, or to narrower ones."""
+    rig.animation_data.action = None
+    for y in (-yaw, 0, yaw):
+        for x in (-pitch, 0, pitch):
+            p = Pose(rig)
+            for bone, share in (('Neck', LOOK_NECK), ('Head', 1 - LOOK_NECK)):
+                p.turn(bone, Z, share * y, reach=False)
+                p.turn(bone, X, share * x, reach=False)
+            p.update()
+            yield
+    Pose(rig).update()
+
+
+def look_tearing(rig, body, look=None):
     """The largest share of any part torn with the head turned to the
     look-at limits, at rest, and which part."""
-    def poses():
+    return torn(rig, body, look_poses(rig, **(look or {})))
+
+
+# A head whose surface layers move as one shows the same surface from every
+# view fixed to it; more than APART of those views reaching surface hidden
+# inside the model at rest means a layer has come apart.
+APART = .05
+ENCLOSING = [Vector(d).normalized() for d in [(1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)] +
+             [(x, y, z) for x in (1, -1) for y in (1, -1) for z in (1, -1)]]
+
+
+class Layers:
+    """Rays fixed in the head bone's frame, aimed at the head from all round,
+    and where each lands at rest."""
+
+    def __init__(self, rig, body):
+        from mathutils.bvhtree import BVHTree
         rig.animation_data.action = None
-        for yaw in (-LOOK_YAW, 0, LOOK_YAW):
-            for pitch in (-LOOK_PITCH, 0, LOOK_PITCH):
-                p = Pose(rig)
-                for bone, share in (('Neck', LOOK_NECK), ('Head', 1 - LOOK_NECK)):
-                    p.turn(bone, Z, share * yaw, reach=False)
-                    p.turn(bone, X, share * pitch, reach=False)
-                p.update()
-                yield
         Pose(rig).update()
-    return torn(rig, body, poses())
+        self.rig, self.body = rig, body
+        self.tris = triangles(body)[0]
+        co = positions(body)
+        h = co[:, 2].max() - co[:, 2].min()
+        frame = rig.pose.bones['Head'].matrix.copy()
+        above = co[:, 2] > frame.translation.z + .05 * h
+        centre = Vector(co[above].mean(0))
+        radius = float(np.linalg.norm(co[above] - co[above].mean(0), axis=1).max())
+        far = float(np.linalg.norm(co - co[above].mean(0), axis=1).max()) + radius
+        bvh = BVHTree.FromPolygons([Vector(c) for c in co], self.tris.tolist())
+        middle = co[self.tris].mean(1)
+        self.enclosed = np.zeros(len(self.tris), bool)
+        for t in np.flatnonzero(np.linalg.norm(middle - co[above].mean(0), axis=1) < 1.3 * radius):
+            m = Vector(middle[t])
+            self.enclosed[t] = all(bvh.ray_cast(m + d * 1e-4 * h, d)[0] is not None for d in ENCLOSING)
+        inverse = frame.inverted()
+        self.rays = []
+        for el in np.linspace(-.5, 1.3, 10):
+            for az in np.linspace(0, 2 * math.pi, 40, endpoint=False):
+                d = Vector((math.cos(el) * math.cos(az), math.cos(el) * math.sin(az), math.sin(el)))
+                side = d.cross(Z).normalized() if abs(d.z) < .999 else X.copy()
+                up = side.cross(d)
+                for a in np.linspace(-.6, .6, 7) * radius:
+                    for b in np.linspace(-.6, .6, 7) * radius:
+                        self.rays.append((inverse @ (centre + d * far + side * a + up * b), inverse.to_3x3() @ -d))
+        rest = self.cast(bvh, frame)
+        self.on = (rest >= 0) & (middle[np.maximum(rest, 0), 2] > frame.translation.z + .05 * h) & ~self.enclosed[np.maximum(rest, 0)]
+
+    def cast(self, bvh, frame):
+        turn = frame.to_3x3()
+        return np.array([-1 if hit[2] is None else hit[2] for hit in (bvh.ray_cast(frame @ o, turn @ d) for o, d in self.rays)])
+
+    def apart(self, poses):
+        """Over the poses a generator steps through, the largest share of the
+        rays on the head that reach hidden surface."""
+        from mathutils.bvhtree import BVHTree
+        worst = 0.0
+        for _ in poses:
+            bvh = BVHTree.FromPolygons([Vector(c) for c in positions(self.body)], self.tris.tolist())
+            hit = self.cast(bvh, self.rig.pose.bones['Head'].matrix)
+            worst = max(worst, float((self.on & (hit >= 0) & self.enclosed[np.maximum(hit, 0)]).sum() / max(self.on.sum(), 1)))
+        return worst
+
+
+# Surface split at a UV seam is shut if its twins stay within SEAM of the
+# height of each other.
+SEAM = .002
+
+
+class Seams:
+    """Twins split at UV seams, outside a held tool and the vertices unfuse
+    split apart, which every pose must keep together."""
+
+    def __init__(self, rig, body, split=()):
+        rig.animation_data.action = None
+        Pose(rig).update()
+        self.body = body
+        node = twins(body)
+        props = {g.index for g in body.vertex_groups if g.name.startswith('Prop')}
+        held = np.array([any(g.group in props and g.weight > 0 for g in v.groups) for v in body.data.vertices])
+        order = np.argsort(node, kind='stable')
+        same = node[order][1:] == node[order][:-1]
+        self.pairs = np.stack([order[:-1][same], order[1:][same]], 1)
+        self.pairs = self.pairs[~held[self.pairs].any(1)]
+        parted = np.zeros(len(node), bool)
+        for a, b in split:
+            parted[[a, b]] = True
+        self.pairs = self.pairs[~parted[self.pairs].any(1)]
+        co = positions(body)
+        self.h = co[:, 2].max() - co[:, 2].min()
+
+    def apart(self, poses):
+        """Over the poses a generator steps through, the widest gap between twins, as a share of the height."""
+        worst = 0.0
+        for _ in poses:
+            co = positions(self.body)
+            if len(self.pairs):
+                worst = max(worst, float(np.linalg.norm(co[self.pairs[:, 0]] - co[self.pairs[:, 1]], axis=1).max() / self.h))
+        return worst
+
+
+HOLE, REACH_HOLE = .0005, .05
+VIEWS = [Vector((math.cos(el) * math.cos(az), math.cos(el) * math.sin(az), math.sin(el)))
+         for el in (.1, .55) for az in np.linspace(0, 2 * math.pi, 16, endpoint=False)]
+
+
+class Holes:
+    """Where unfuse cut a face away, each side of the cut keeps a patch of the
+    face that moves as that side's skin does. A patch seen from outside with
+    the inside of the model or its back behind it is a hole a viewer sees,
+    and so is one with nothing behind it that already showed nothing at
+    rest (a slit); one that shows nothing only once the sides move apart is
+    the gap between two parts."""
+
+    def __init__(self, rig, body, cut, sides):
+        from mathutils.bvhtree import BVHTree
+        from mathutils.kdtree import KDTree
+        rig.animation_data.action = None
+        Pose(rig).update()
+        self.rig, self.body = rig, body
+        co = positions(body)
+        self.h = co[:, 2].max() - co[:, 2].min()
+        self.tris = triangles(body)[0]
+        self.bones = [g.name for g in body.vertex_groups]
+        w = np.zeros((len(co), len(self.bones)))
+        for v in body.data.vertices:
+            for g in v.groups:
+                w[v.index, g.group] = g.weight
+        area = np.linalg.norm(np.cross(co[cut[:, 1]] - co[cut[:, 0]], co[cut[:, 2]] - co[cut[:, 0]]), axis=1) / 2
+        rest, skin, share = [], [], []
+        for t, s, a in zip(cut, sides, area):
+            for side in (s, ~s):
+                if side.any():
+                    rest.append(co[t].mean(0))
+                    skin.append(w[t[side]].mean(0))
+                    share.append(a * side.sum() / 3)
+        self.rest, self.share = np.array(rest).reshape(-1, 3), np.array(share)
+        skin = np.array(skin).reshape(-1, len(self.bones))
+        self.skin = skin / np.maximum(skin.sum(1, keepdims=True), 1e-9)
+        # Inner walls face outward too: a triangle closed in on every side at
+        # rest, near the cut, is inside the model.
+        whole = np.concatenate([self.tris, cut.reshape(-1, 3)])
+        bvh = BVHTree.FromPolygons([Vector(c) for c in co], whole.tolist())
+        kd = KDTree(len(self.rest))
+        for i, p in enumerate(self.rest):
+            kd.insert(p, i)
+        kd.balance()
+        middle = co[self.tris].mean(1)
+        self.inside = np.zeros(len(self.tris), bool)
+        for t in range(len(self.tris)):
+            if kd.find(middle[t])[2] < .06 * self.h:
+                m = Vector(middle[t])
+                self.inside[t] = all(bvh.ray_cast(m + d * 1e-4 * self.h, d)[0] is not None for d in ENCLOSING)
+        self.through = self.cast(BVHTree.FromPolygons([Vector(c) for c in co], self.tris.tolist()), self.rest)[1]
+
+    def cast(self, bvh, at):
+        """For each patch point and view, whether it is seen with the inside or
+        a back behind it, and whether it is seen with nothing behind it."""
+        far, eps = 4 * self.h, .003 * self.h
+        inside = np.zeros((len(at), len(VIEWS)), bool)
+        through = np.zeros((len(at), len(VIEWS)), bool)
+        for n, p in enumerate(at):
+            for k, d in enumerate(VIEWS):
+                hit = bvh.ray_cast(Vector(p) + d * far, -d)
+                if hit[0] is None:
+                    through[n, k] = True
+                elif hit[3] >= far - eps:
+                    inside[n, k] = hit[1].dot(d) < 0 or self.inside[hit[2]]
+        return inside, through
+
+    def open(self, poses):
+        """Over the poses a generator steps through, the most open patch area
+        one view sees within REACH_HOLE of the height of one point (a slit or
+        a hole, not every crevice of the model added up), as a share of the
+        height squared."""
+        from mathutils.bvhtree import BVHTree
+        from mathutils.kdtree import KDTree
+        worst = 0.0
+        for _ in poses:
+            co = positions(self.body)
+            bvh = BVHTree.FromPolygons([Vector(c) for c in co], self.tris.tolist())
+            moves = np.stack([np.array(self.rig.pose.bones[b].matrix @ self.rig.data.bones[b].matrix_local.inverted())
+                              if b in self.rig.pose.bones else np.eye(4) for b in self.bones])
+            rest = np.concatenate([self.rest, np.ones((len(self.rest), 1))], 1)
+            at = np.einsum('sb,bij,sj->si', self.skin, moves, rest)[:, :3]
+            inside, through = self.cast(bvh, at)
+            opened = inside | (through & self.through)
+            kd = KDTree(len(at))
+            for n, p in enumerate(at):
+                kd.insert(p, n)
+            kd.balance()
+            for k in range(len(VIEWS)):
+                for n in np.flatnonzero(opened[:, k]):
+                    near = [i for _, i, _ in kd.find_range(at[n], REACH_HOLE * self.h)]
+                    score = float(self.share[near][opened[near, k]].sum() / self.h ** 2)
+                    if score > worst:
+                        worst, self.points = score, (at, opened[:, k], VIEWS[k])
+        return worst
 
 
 def torn(rig, body, poses):
@@ -1472,6 +2032,14 @@ def torn(rig, body, poses):
             if share > worst:
                 worst, which = share, part
     return worst, which
+
+
+def positions(body):
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    mesh = body.evaluated_get(depsgraph).to_mesh()
+    co = np.empty(len(mesh.vertices) * 3); mesh.vertices.foreach_get('co', co)
+    body.evaluated_get(depsgraph).to_mesh_clear()
+    return co.reshape(-1, 3)
 
 
 def triangles(body, tris=None):
@@ -1520,6 +2088,8 @@ def export(rig, c, path):
                    'events': c.events}
     if c.surface:
         rig['yard']['surface'] = round(c.surface, 4)
+    if c.look != {'yaw': LOOK_YAW, 'pitch': LOOK_PITCH}:
+        rig['yard']['look'] = c.look
     bpy.context.scene.frame_set(0)
     bpy.ops.export_scene.gltf(filepath=path, export_format='GLB', export_animations=True,
                               export_animation_mode='ACTIONS', export_force_sampling=True,
@@ -1540,6 +2110,9 @@ def main():
     busy = {'L': 'Left', 'R': 'Right'}.get(a[a.index('--busy') + 1]) if '--busy' in a else None
     robe = '--robe' in a
     surface = float(a[a.index('--surface') + 1]) if '--surface' in a else None
+    neck = float(a[a.index('--neck') + 1]) if '--neck' in a else None
+    hip = float(a[a.index('--hips') + 1]) if '--hips' in a else None
+    look = json.loads(a[a.index('--look') + 1]) if '--look' in a else None
     body, shipped = load(src)
     prop, side = (None, None)
     if shipped and spec:
@@ -1556,10 +2129,11 @@ def main():
             centre(body, prop)
     for g in list(body.vertex_groups):
         body.vertex_groups.remove(g)
-    j = joints(body, height, kind)
+    weld(body)
+    j = joints(body, height, kind, neck, hip)
     rig = skeleton(j, kind)
     still = still_sides(work, busy, side if prop else None)
-    weights(body, rig, robe, still, j.get('headPart'))
+    cut = weights(body, rig, robe, still, j.get('headPart'))
     if prop:
         if spec and spec.get('plant') and not shipped:
             plant(prop, j, side)
@@ -1569,10 +2143,10 @@ def main():
     if surface and kind != 'familiar':
         surface *= (j['shoulderL'].z + j['shoulderR'].z) / 2 / 1.5
     c = Character(rig, height, work, side if prop else None, busy, gait, robe,
-                  {s: j.get('room' + k, 0) for k, s, _ in SIDES}, surface if kind != 'familiar' else None)
+                  {s: j.get('room' + k, 0) for k, s, _ in SIDES}, surface if kind != 'familiar' else None, look)
     animate(rig, c, bpy.data.objects['character'])
     if report:
-        check(rig, bpy.data.objects['character'], c, report)
+        check(rig, bpy.data.objects['character'], c, report, cut)
     export(rig, c, out)
 
 

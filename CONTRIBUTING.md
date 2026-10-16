@@ -55,6 +55,21 @@ you agree that:
 * This covers code, documentation and art alike, including skins,
   characters, buildings and companions.
 * You keep the copyright in your contribution.
+## Yard models (rig.py)
+
+Changes to `concept-art/yard-models/rig.py` or `build.py` need the rig's own
+regression tests, which run inside Blender 5.2 (the version `build.py` is
+pinned to) and are not part of CI:
+
+```sh
+"E:/Program Files/Blender Foundation/Blender 5.2/blender.exe" -b --factory-startup --python concept-art/yard-models/test_rig.py
+```
+
+It prints `test_rig ok`. Then recast every world (`python build.py <world> cast`
+for the six worlds), optimize (`npm run optimize:yard`), and run `npm run
+test:yard` and `tests/yard-art.test.mjs` against the optimized assets. Casting
+rigs with Blender's bone heat on one OpenMP thread (`build.py` sets
+`OMP_NUM_THREADS=1`); on more threads the same model exports different bytes.
 
 ## Other front ends
 
