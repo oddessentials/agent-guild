@@ -1748,9 +1748,11 @@ VIEWS = [Vector((math.cos(el) * math.cos(az), math.cos(el) * math.sin(az), math.
 
 class Holes:
     """Where unfuse cut a face away, each side of the cut keeps a patch of the
-    face that moves as that side's skin does. A patch seen from outside, with
-    the inside of the model, its back or nothing behind it, is a hole a
-    viewer sees."""
+    face that moves as that side's skin does. A patch seen from outside with
+    the inside of the model or its back behind it is a hole a viewer sees,
+    and so is one with nothing behind it that already showed nothing at
+    rest (a slit); one that shows nothing only once the sides move apart is
+    the gap between two parts."""
 
     def __init__(self, rig, body, cut, sides):
         from mathutils.bvhtree import BVHTree
@@ -1791,6 +1793,22 @@ class Holes:
             if kd.find(middle[t])[2] < .06 * self.h:
                 m = Vector(middle[t])
                 self.inside[t] = all(bvh.ray_cast(m + d * 1e-4 * self.h, d)[0] is not None for d in ENCLOSING)
+        self.through = self.cast(BVHTree.FromPolygons([Vector(c) for c in co], self.tris.tolist()), self.rest)[1]
+
+    def cast(self, bvh, at):
+        """For each patch point and view, whether it is seen with the inside or
+        a back behind it, and whether it is seen with nothing behind it."""
+        far, eps = 4 * self.h, .003 * self.h
+        inside = np.zeros((len(at), len(VIEWS)), bool)
+        through = np.zeros((len(at), len(VIEWS)), bool)
+        for n, p in enumerate(at):
+            for k, d in enumerate(VIEWS):
+                hit = bvh.ray_cast(Vector(p) + d * far, -d)
+                if hit[0] is None:
+                    through[n, k] = True
+                elif hit[3] >= far - eps:
+                    inside[n, k] = hit[1].dot(d) < 0 or self.inside[hit[2]]
+        return inside, through
 
     def open(self, poses):
         """Over the poses a generator steps through, the most open patch area
@@ -1800,7 +1818,6 @@ class Holes:
         from mathutils.bvhtree import BVHTree
         from mathutils.kdtree import KDTree
         worst = 0.0
-        far, eps = 4 * self.h, .003 * self.h
         for _ in poses:
             co = positions(self.body)
             bvh = BVHTree.FromPolygons([Vector(c) for c in co], self.tris.tolist())
@@ -1808,13 +1825,8 @@ class Holes:
                               if b in self.rig.pose.bones else np.eye(4) for b in self.bones])
             rest = np.concatenate([self.rest, np.ones((len(self.rest), 1))], 1)
             at = np.einsum('sb,bij,sj->si', self.skin, moves, rest)[:, :3]
-            opened = np.zeros((len(at), len(VIEWS)), bool)
-            for n, p in enumerate(at):
-                for k, d in enumerate(VIEWS):
-                    hit = bvh.ray_cast(Vector(p) + d * far, -d)
-                    if hit[0] is not None and hit[3] < far - eps:
-                        continue
-                    opened[n, k] = hit[0] is None or hit[1].dot(d) < 0 or self.inside[hit[2]]
+            inside, through = self.cast(bvh, at)
+            opened = inside | (through & self.through)
             kd = KDTree(len(at))
             for n, p in enumerate(at):
                 kd.insert(p, n)

@@ -1,7 +1,7 @@
 """blender -b --factory-startup --python test_rig.py"""
-import bmesh, bpy, os, sys
+import bmesh, bpy, math, os, sys
 import numpy as np
-from mathutils import Vector
+from mathutils import Matrix, Vector
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import rig
@@ -153,8 +153,55 @@ def test_a_cut_out_of_sight_is_not_a_hole():
     assert rig.Holes(arm, body, tris, sides).open(at_rest(arm)) == 0, 'a cut hidden inside another wall is a hole'
 
 
+def test_a_gap_that_opens_only_in_motion_is_not_a_hole():
+    """Two plates joined by a cut strip, hidden inside a closed box at rest,
+    slide out of it apart: between them is the gap between two parts."""
+    import bmesh
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    bm = bmesh.new()
+    bmesh.ops.create_cube(bm, size=1)
+    box = len(bm.verts)
+    bmesh.ops.create_grid(bm, x_segments=20, y_segments=10, size=.2)
+    plate = [v for v in bm.verts[box:]]
+    bmesh.ops.rotate(bm, verts=plate, cent=(0, 0, 0), matrix=Matrix.Rotation(math.pi / 2, 3, 'X'))
+    bm.verts.ensure_lookup_table(); bm.faces.ensure_lookup_table()
+    cut = [f for f in bm.faces if all(v.index >= box for v in f.verts) and abs(f.calc_center_median().x) < .015]
+    tris, sides = [], []
+    for f in cut:
+        vs = [v.index for v in f.verts]
+        for i in range(1, len(vs) - 1):
+            tris.append([vs[0], vs[i], vs[i + 1]])
+            sides.append([bm.verts[k].co.x > 0 for k in (vs[0], vs[i], vs[i + 1])])
+    bmesh.ops.delete(bm, geom=cut, context='FACES_ONLY')
+    xs = [(v.index, v.co.x) for v in bm.verts]
+    mesh = bpy.data.meshes.new('parts'); bm.to_mesh(mesh); bm.free()
+    body = bpy.data.objects.new('parts', mesh); bpy.context.scene.collection.objects.link(body)
+    data = bpy.data.armatures.new('rig')
+    arm = bpy.data.objects.new('rig', data)
+    bpy.context.scene.collection.objects.link(arm)
+    bpy.context.view_layer.objects.active = arm
+    bpy.ops.object.mode_set(mode='EDIT')
+    for name, x in (('Hips', 0), ('LeftHand', .1), ('RightHand', -.1)):
+        bone = data.edit_bones.new(name); bone.head, bone.tail = (x, 0, 0), (x, 0, .1)
+    bpy.ops.object.mode_set(mode='OBJECT')
+    arm.animation_data_create()
+    groups = {n: body.vertex_groups.new(name=n) for n in ('Hips', 'LeftHand', 'RightHand')}
+    for i, x in xs:
+        groups['Hips' if i < box else 'LeftHand' if x > 0 else 'RightHand'].add([i], 1, 'REPLACE')
+    body.modifiers.new('rig', 'ARMATURE').object = arm
+    holes = rig.Holes(arm, body, np.array(tris), np.array(sides))
+
+    def apart():
+        arm.pose.bones['RightHand'].location = arm.data.bones['RightHand'].matrix_local.to_3x3().inverted() @ Vector((-2, 0, 0))
+        arm.pose.bones['LeftHand'].location = arm.data.bones['LeftHand'].matrix_local.to_3x3().inverted() @ Vector((2, 0, 0))
+        bpy.context.view_layer.update()
+        yield
+    assert holes.open(apart()) == 0, 'the gap between two parts moved apart is a hole'
+
+
 test_both_walls_of_the_head_are_the_heads()
 test_a_tail_and_a_slung_rods_walls_are_not_the_heads()
+test_a_gap_that_opens_only_in_motion_is_not_a_hole()
 test_smoothing_keeps_a_uv_seam_shut()
 test_a_slit_cut_in_sight_is_a_hole()
 test_a_cut_out_of_sight_is_not_a_hole()
