@@ -931,7 +931,6 @@ def unfuse(body, robe, still=()):
         best = max(v.groups, key=lambda g: g.weight, default=None)
         return groups.get(best.group, '') if best else ''
     owners = [owner(v) for v in body.data.vertices]
-    held = [{groups[g.group]: g.weight for g in v.groups} for v in body.data.vertices]
     arm = lambda n: (n.endswith('LowerArm') or n.endswith('Hand')) and not n.startswith(still)
     low = lambda n: n == 'Hips' or n.endswith('UpperLeg') or n.endswith('LowerLeg')
     leg = lambda n: n.endswith('UpperLeg') or n.endswith('LowerLeg') or n.endswith('Foot')
@@ -946,7 +945,9 @@ def unfuse(body, robe, still=()):
             left = sum(owners[v.index].startswith('Left') for v in f.verts)
             right = sum(owners[v.index].startswith('Right') for v in f.verts)
             rip[f.index] = 'Left' if left > right or (left == right and f.calc_center_median().x > 0) else 'Right'
-        continue
+            continue
+        else:
+            continue
         cut.append(f)
         for i in range(1, len(f.verts) - 1):
             tris.append([f.verts[k].index for k in (0, i, i + 1)])
@@ -957,14 +958,6 @@ def unfuse(body, robe, still=()):
         left = sum(owners[v.index].startswith('Left') for v in f.verts)
         right = sum(owners[v.index].startswith('Right') for v in f.verts)
         return 'Left' if left > right else 'Right' if right > left else None
-    patches = []
-    for i, s_ in rip.items():
-        f = bm.faces[i]
-        skin = {}
-        for v in f.verts:
-            for name, w in held[v.index].items():
-                skin[name] = skin.get(name, 0) + w / len(f.verts)
-        patches.append((np.array(f.calc_center_median()[:]), f.calc_area(), skin))
     seam = {e for i in rip for e in bm.faces[i].edges
             if len({side_of(g) for g in e.link_faces} - {None}) > 1}
     ripped = [bm.faces[i] for i in rip]
@@ -998,8 +991,7 @@ def unfuse(body, robe, still=()):
         mend_seam(body)
         share_twins(body)
     print('YARD_UNFUSE faces %d ripped %d' % (len(cut), len(rip)), flush=True)
-    return {'cut': np.array(tris, dtype=np.int64).reshape(-1, 3), 'sides': np.array(sides, bool).reshape(-1, 3),
-            'patches': patches, 'split': split}
+    return {'cut': np.array(tris, dtype=np.int64).reshape(-1, 3), 'sides': np.array(sides, bool).reshape(-1, 3), 'split': split}
 
 
 def smooth(body):
@@ -1728,7 +1720,7 @@ def check(rig, body, c, report, cut=None):
     result = {'height': c.h, 'stride': round(2 * c.step, 4), 'cycle': c.cycle, 'gait': c.gait, 'clips': {}}
     layers = Layers(rig, body) if c.humanoid else None
     seams = Seams(rig, body, cut['split'] if cut else ())
-    holes = Holes(rig, body, cut['cut'], cut['sides'], cut['patches']) if cut and (len(cut['cut']) or cut['patches']) else None
+    holes = Holes(rig, body, cut['cut'], cut['sides']) if cut and len(cut['cut']) else None
     for action in bpy.data.actions:
         rig.animation_data.action = action
         frames = int(action.frame_range[1])
@@ -1929,7 +1921,7 @@ class Holes:
     rest (a slit); one that shows nothing only once the sides move apart is
     the gap between two parts."""
 
-    def __init__(self, rig, body, cut, sides, patches=()):
+    def __init__(self, rig, body, cut, sides):
         from mathutils.bvhtree import BVHTree
         from mathutils.kdtree import KDTree
         rig.animation_data.action = None
@@ -1951,11 +1943,6 @@ class Holes:
                     rest.append(co[t].mean(0))
                     skin.append(w[t[side]].mean(0))
                     share.append(a * side.sum() / 3)
-        # A ripped face's patch lies where it would be if it joined both sides.
-        for centre, a, held in patches:
-            rest.append(centre)
-            skin.append([held.get(name, 0.0) for name in self.bones])
-            share.append(a)
         self.rest, self.share = np.array(rest).reshape(-1, 3), np.array(share)
         skin = np.array(skin).reshape(-1, len(self.bones))
         self.skin = skin / np.maximum(skin.sum(1, keepdims=True), 1e-9)

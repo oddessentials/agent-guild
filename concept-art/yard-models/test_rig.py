@@ -239,6 +239,21 @@ def test_a_busy_hand_eases_into_the_leg_it_touches():
     assert jump < .5, 'a busy hand meets the leg in one row of edges'
 
 
+def test_a_moving_hands_bridge_to_the_hips_is_cut():
+    """A strip whose left half is a free hand and right half the hips loses the
+    faces joining them."""
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    bpy.ops.mesh.primitive_grid_add(x_subdivisions=20, y_subdivisions=6, size=1, rotation=(math.pi / 2, 0, 0))
+    strip = bpy.context.active_object
+    bpy.ops.object.transform_apply(rotation=True)
+    groups = {n: strip.vertex_groups.new(name=n) for n in ('Hips', 'LeftHand', 'LeftUpperLeg')}
+    for v in strip.data.vertices:
+        groups['LeftHand' if v.co.x < 0 else 'Hips'].add([v.index], 1, 'REPLACE')
+    faces = len(strip.data.polygons)
+    cut = rig.unfuse(strip, robe=False)
+    assert len(strip.data.polygons) < faces and len(cut['cut']), 'the bridge from a moving hand to the hips was not cut'
+
+
 def test_coarse_surface_between_the_legs_is_not_cut():
     """A skirt whose centre faces are many times longer than the rest (a coarse
     body between the legs) keeps every face: it is ripped, not cut as a web."""
@@ -263,6 +278,7 @@ def test_coarse_surface_between_the_legs_is_not_cut():
 test_both_walls_of_the_head_are_the_heads()
 test_a_tail_and_a_slung_rods_walls_are_not_the_heads()
 test_coarse_surface_between_the_legs_is_not_cut()
+test_a_moving_hands_bridge_to_the_hips_is_cut()
 test_a_busy_hand_eases_into_the_leg_it_touches()
 test_cloth_across_the_legs_stays_whole_and_shut()
 test_a_gap_that_opens_only_in_motion_is_not_a_hole()
