@@ -610,6 +610,8 @@ def weights(body, rig, robe=False, still=(), head=None):
     smooth(body)
     if head is not None:
         shape_head(body, rig, head)
+    else:
+        cover_walls(body, rig)
     split_legs(body, rig, robe)
     # Normalise and limit to four influences for glTF.
     bpy.context.view_layer.objects.active = body
@@ -668,6 +670,28 @@ def keep_head_to_head(body, rig, part=None):
                 groups[group].remove([v.index])
         if moved:
             chest.add([v.index], moved, 'ADD')
+
+
+def cover_walls(body, rig):
+    """Generated helpers often have walls inside their visible surface; each
+    takes the weights of the visible surface nearest it, so they move as one."""
+    from mathutils.kdtree import KDTree
+    co = np.array([v.co[:] for v in body.data.vertices])
+    seen = visible(body, co, np.ones(len(co), bool))
+    skin, walls = np.flatnonzero(seen), np.flatnonzero(~seen)
+    if not len(skin) or not len(walls):
+        return
+    kd = KDTree(len(skin))
+    for n, i in enumerate(skin):
+        kd.insert(co[i], n)
+    kd.balance()
+    own = [[(g.group, g.weight) for g in v.groups] for v in body.data.vertices]
+    for i in walls:
+        source = skin[kd.find(co[i])[1]]
+        for group in body.vertex_groups:
+            group.remove([int(i)])
+        for group, weight in own[source]:
+            body.vertex_groups[group].add([int(i)], weight, 'REPLACE')
 
 
 LIMBS = ('Shoulder', 'Arm', 'Hand', 'Leg', 'Foot', 'Toes')
