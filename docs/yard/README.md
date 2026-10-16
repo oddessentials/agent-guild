@@ -210,8 +210,9 @@ arms, and the shoulders sit where that arm's centre line meets the body, under
 any hat or crest. The neck is where the front silhouette pinches in on both
 sides under the head, so a tall hat, helmet, hood or beard is carried by the
 head rather than taken for it; the trunk's joints divide the hips to the neck.
-The head is the surface joined to the face above the neck, with any piece
-wholly above it over the head (hair, hat, ears), and it turns as one piece a
+The head is the surface that shows the face above the neck, any wall hidden
+inside it, and any piece wholly above it over the head (hair, hat, ears); it
+turns as one piece a
 little above the neck, so the face cannot shear; a staff held up beside the
 head, or a sword or hammer slung on the back, stays with the body. Arm
 weights stay near the arm. Below the crotch
@@ -263,7 +264,9 @@ trunk or the head) in triangles whose longest edge stretches past twice
 its length, or a planted foot sliding more than 2% of the character's height.
 A character is also checked with its head turned to the glance limits
 ([CONTRACT.md](CONTRACT.md#glances)): 0.7 rad either way and 0.3 rad up and
-down, and both together (`look` in the report).
+down, and both together (`look` in the report). In every clip and at those
+limits, more than 5% of rays fixed to the head reaching surface hidden inside
+the model at rest (`apart`) means a layer of the head has come apart.
 Each part is measured on its own, so a torn arm cannot hide in the rest of
 the body; a small part is measured against no less than 2% of the body. A
 clip that tears at full reach is baked again with its arms and trunk moving
