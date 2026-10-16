@@ -27,8 +27,9 @@ stance foot moves back at exactly the speed the character walks; the stride
 and cycle are written into the model as `yard` extras for the runtime. Work
 clips that strike something record the moment and place as `events`.
 The mesh and textures keep the detail they were generated with; textures are
-written as WebP. --report writes the automated checks: foot sliding, and how
-much of each part of the body tears in each clip.
+written as WebP. --report writes the automated checks: foot sliding, how
+much of each part of the body tears in each clip, and how far the head's
+layers and the surface split at UV seams come apart.
 """
 import bpy, json, math, sys
 import numpy as np
@@ -660,10 +661,10 @@ def keep_head_to_head(body, rig, part=None):
                 skull.add([v.index], rigid, 'REPLACE')
             continue
         moved = 0.0
-        for g in list(v.groups):
-            if g.group in groups and g.weight > 0:
-                moved += g.weight
-                groups[g.group].remove([v.index])
+        for group, weight in [(g.group, g.weight) for g in v.groups]:
+            if group in groups and weight > 0:
+                moved += weight
+                groups[group].remove([v.index])
         if moved:
             chest.add([v.index], moved, 'ADD')
 
@@ -675,7 +676,7 @@ def shape_head(body, rig, part):
     """Every layer of the head turns by the same rule: from the neck up, its
     weights blend from bone heat to ones set by height alone, all the neck's
     up to the head joint, then rising to all the head's over 0.1 of the
-    height, or longer for surface far in front of the neck (a snout),
+    height, or longer for surface far from the neck (a snout, a brim),
     which a turn would otherwise shear. Walls weighted apart by bone heat
     would slide past each other. What bone heat gives a limb (a hunched
     shoulder) stays, as does the hips' hold below the head joint."""
@@ -691,7 +692,7 @@ def shape_head(body, rig, part):
         total = sum(own.values()) or 1
         keep = sum(w for n, w in own.items() if n.endswith(LIMBS) or (n in ('Hips', 'Root') and v.co.z < head)) / total
         t = (1 - keep) ** 2 * min(1.0, max(0.0, (v.co.z - floor) / (head - floor)))
-        out = neck_bone.y - v.co.y
+        out = math.hypot(v.co.x - neck_bone.x, v.co.y - neck_bone.y)
         rise = min(1.0, max(0.0, (v.co.z - head) / max(.1 * h, .45 * out)))
         own = {n: w * (1 - t) for n, w in own.items()}
         own['Head'] = own.get('Head', 0) + t * rise
@@ -716,14 +717,14 @@ def keep_arms_to_arms(body, rig):
         low = bones[2].tail_local.z - .04 * h
         for v in body.data.vertices:
             moved = 0.0
-            for g in list(v.groups):
-                if g.group not in groups or g.weight <= 0:
+            for group, weight in [(g.group, g.weight) for g in v.groups]:
+                if group not in groups or weight <= 0:
                     continue
                 near = min((v.co - (lambda r: r[0] if 0 <= r[1] <= 1 else (b.head_local if r[1] < 0 else b.tail_local))(
                     intersect_point_line(v.co, b.head_local, b.tail_local))).length for b in bones)
                 if v.co.z < low or near > .09 * h:
-                    moved += g.weight
-                    groups[g.group].remove([v.index])
+                    moved += weight
+                    groups[group].remove([v.index])
             if moved:
                 hips.add([v.index], moved, 'ADD')
 
@@ -749,18 +750,17 @@ def split_legs(body, rig, robe):
         if v.co.z > crotch:
             # Above the crotch a robe stays at least as much the hips' as below.
             fade = max(share, min(1.0, (v.co.z - crotch) / max(hip - crotch, 1e-6)))
-            for g in list(v.groups):
-                name = index.get(g.group)
-                if name and g.weight > 0:
-                    groups[name].add([v.index], g.weight * (1 - fade), 'REPLACE')
-                    groups['Hips'].add([v.index], g.weight * fade, 'ADD')
+            for group, w in [(g.group, g.weight) for g in v.groups]:
+                name = index.get(group)
+                if name and w > 0:
+                    groups[name].add([v.index], w * (1 - fade), 'REPLACE')
+                    groups['Hips'].add([v.index], w * fade, 'ADD')
             continue
         own = 'Left' if v.co.x > 0 else 'Right'
-        for g in list(v.groups):
-            name = index.get(g.group)
-            if not name or g.weight <= 0:
+        for group, w in [(g.group, g.weight) for g in v.groups]:
+            name = index.get(group)
+            if not name or w <= 0:
                 continue
-            w = g.weight
             if robe:
                 groups[name].add([v.index], w * (1 - share), 'REPLACE')
                 groups['Hips'].add([v.index], w * share, 'ADD')
@@ -803,12 +803,60 @@ def unfuse(body, robe, still=()):
 def smooth(body):
     """A few passes of weight smoothing soften the seams bone heat leaves at
     the shoulders and hips, so a raised arm or a stride bends the cloth around
-    the joint instead of creasing it."""
-    bpy.ops.object.select_all(action='DESELECT')
-    body.select_set(True); bpy.context.view_layer.objects.active = body
-    bpy.ops.object.mode_set(mode='WEIGHT_PAINT')
-    bpy.ops.object.vertex_group_smooth(group_select_mode='ALL', factor=.5, repeat=6, expand=0)
-    bpy.ops.object.mode_set(mode='OBJECT')
+    the joint instead of creasing it. Twins split at a UV seam are smoothed
+    as one vertex, so the seam stays shut."""
+    n, groups = len(body.data.vertices), body.vertex_groups
+    node = twins(body)
+    m = node.max() + 1
+    w = np.zeros((n, len(groups)))
+    for v in body.data.vertices:
+        for g in v.groups:
+            w[v.index, g.group] = g.weight
+    shared = np.zeros((m, len(groups)))
+    np.add.at(shared, node, w)
+    shared /= np.bincount(node, minlength=m)[:, None]
+    edges = np.empty(len(body.data.edges) * 2, dtype=np.int64)
+    body.data.edges.foreach_get('vertices', edges)
+    pairs = np.unique(np.sort(node[edges.reshape(-1, 2)], 1), axis=0)
+    a, b = pairs[pairs[:, 0] != pairs[:, 1]].T
+    count = np.bincount(a, minlength=m) + np.bincount(b, minlength=m)
+    for _ in range(6):
+        total = np.stack([np.bincount(a, shared[b, k], m) + np.bincount(b, shared[a, k], m) for k in range(len(groups))], 1)
+        mean = np.where(count[:, None] > 0, total / np.maximum(count, 1)[:, None], shared)
+        shared += .5 * (mean - shared)
+    w = shared[node]
+    for k, group in enumerate(groups):
+        group.remove(range(n))
+        for i in np.flatnonzero(w[:, k] > 1e-4):
+            group.add([int(i)], float(w[i, k]), 'REPLACE')
+
+
+def twins(body):
+    """For each vertex, one index shared by every vertex at its place (twins
+    split at a UV seam)."""
+    from mathutils.kdtree import KDTree
+    n = len(body.data.vertices)
+    kd = KDTree(n)
+    for v in body.data.vertices:
+        kd.insert(v.co, v.index)
+    kd.balance()
+    node = np.arange(n)
+    for v in body.data.vertices:
+        if node[v.index] == v.index:
+            for _, i, _ in kd.find_range(v.co, 1e-5):
+                node[i] = v.index
+    return np.unique(node, return_inverse=True)[1]
+
+
+def weld(body):
+    """Put twins at exactly one place, so every rule placing a vertex by
+    where it is (which leg, the head's floor) treats them alike."""
+    node = twins(body)
+    first = np.full(node.max() + 1, -1)
+    for i in range(len(node) - 1, -1, -1):
+        first[node[i]] = i
+    for v in body.data.vertices:
+        v.co = body.data.vertices[int(first[node[v.index]])].co.copy()
 
 
 def bind_prop(body, prop, side):
@@ -1471,10 +1519,12 @@ def check(rig, body, c, report):
     """Foot sliding in the walk, and in every clip the share of each part of
     the body (an arm, a hand, a leg with its foot, the trunk, the head)
     torn: triangles whose longest edge stretches past STRETCH times its rest
-    length, which shows as a smear or a spike; and for a character, how far
-    the head's layers come apart (Layers)."""
+    length, which shows as a smear or a spike; how far twins split at UV
+    seams come apart (Seams); and for a character, how far the head's layers
+    come apart (Layers)."""
     result = {'height': c.h, 'stride': round(2 * c.step, 4), 'cycle': c.cycle, 'gait': c.gait, 'clips': {}}
     layers = Layers(rig, body) if c.humanoid else None
+    seams = Seams(rig, body)
     for action in bpy.data.actions:
         rig.animation_data.action = action
         frames = int(action.frame_range[1])
@@ -1485,12 +1535,15 @@ def check(rig, body, c, report):
             entry['apart'] = round(apart, 4)
         if action.name == 'walk' and c.gait != 'glide':
             entry['footSlide'] = foot_slide(rig, c, frames)
-        entry['ok'] = worst < TORN and apart < APART and entry.get('footSlide', 0) < .02 * c.h
+        entry['seams'] = round(seams.apart(clip_poses(rig, action)), 4)
+        entry['ok'] = worst < TORN and apart < APART and entry['seams'] < SEAM and entry.get('footSlide', 0) < .02 * c.h
         result['clips'][action.name] = entry
     if c.humanoid:
         worst, part = look_tearing(rig, body)
         apart = layers.apart(look_poses(rig))
-        result['look'] = {'torn': round(worst, 5), 'part': part, 'apart': round(apart, 4), 'ok': worst < TORN and apart < APART}
+        gap = seams.apart(look_poses(rig))
+        result['look'] = {'torn': round(worst, 5), 'part': part, 'apart': round(apart, 4), 'seams': round(gap, 4),
+                          'ok': worst < TORN and apart < APART and gap < SEAM}
     rig.animation_data.action = None
     bpy.context.scene.frame_set(0)
     result['ok'] = all(e['ok'] for e in result['clips'].values()) and result.get('look', {}).get('ok', True)
@@ -1619,6 +1672,38 @@ class Layers:
         return worst
 
 
+# Surface split at a UV seam is shut if its twins stay within SEAM of the
+# height of each other.
+SEAM = .002
+
+
+class Seams:
+    """Twins split at UV seams, outside a held tool, which every pose must keep together."""
+
+    def __init__(self, rig, body):
+        rig.animation_data.action = None
+        Pose(rig).update()
+        self.body = body
+        node = twins(body)
+        props = {g.index for g in body.vertex_groups if g.name.startswith('Prop')}
+        held = np.array([any(g.group in props and g.weight > 0 for g in v.groups) for v in body.data.vertices])
+        order = np.argsort(node, kind='stable')
+        same = node[order][1:] == node[order][:-1]
+        self.pairs = np.stack([order[:-1][same], order[1:][same]], 1)
+        self.pairs = self.pairs[~held[self.pairs].any(1)]
+        co = positions(body)
+        self.h = co[:, 2].max() - co[:, 2].min()
+
+    def apart(self, poses):
+        """Over the poses a generator steps through, the widest gap between twins, as a share of the height."""
+        worst = 0.0
+        for _ in poses:
+            co = positions(self.body)
+            if len(self.pairs):
+                worst = max(worst, float(np.linalg.norm(co[self.pairs[:, 0]] - co[self.pairs[:, 1]], axis=1).max() / self.h))
+        return worst
+
+
 def torn(rig, body, poses):
     """Over the poses a generator steps through, the largest share of any
     part of the body torn, and which part."""
@@ -1734,6 +1819,7 @@ def main():
             centre(body, prop)
     for g in list(body.vertex_groups):
         body.vertex_groups.remove(g)
+    weld(body)
     j = joints(body, height, kind)
     rig = skeleton(j, kind)
     still = still_sides(work, busy, side if prop else None)

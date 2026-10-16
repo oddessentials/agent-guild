@@ -78,6 +78,26 @@ def test_a_tail_and_a_slung_rods_walls_are_not_the_heads():
     assert not part[up & rod_inner].any(), "the rod's hidden wall is the head"
 
 
+def test_smoothing_keeps_a_uv_seam_shut():
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    bpy.ops.mesh.primitive_grid_add(x_subdivisions=8, y_subdivisions=8, size=1)
+    sheet = bpy.context.active_object
+    bm = bmesh.new(); bm.from_mesh(sheet.data)
+    bmesh.ops.split_edges(bm, edges=[e for e in bm.edges if all(abs(v.co.x) < 1e-6 for v in e.verts)])
+    bm.to_mesh(sheet.data); bm.free()
+    left, right = sheet.vertex_groups.new(name='Left'), sheet.vertex_groups.new(name='Right')
+    for v in sheet.data.vertices:
+        (left if v.co.x < 0 or (abs(v.co.x) < 1e-6 and v.index % 2) else right).add([v.index], 1, 'REPLACE')
+    rig.smooth(sheet)
+    weight = lambda v: [next((g.weight for g in v.groups if g.group == k), 0) for k in (0, 1)]
+    seam = [v for v in sheet.data.vertices if abs(v.co.x) < 1e-6]
+    twins = {}
+    for v in seam:
+        twins.setdefault(tuple(round(c, 5) for c in v.co), []).append(weight(v))
+    assert all(len(w) == 2 and np.allclose(w[0], w[1]) for w in twins.values()), 'twins at a UV seam are weighted apart'
+
+
 test_both_walls_of_the_head_are_the_heads()
 test_a_tail_and_a_slung_rods_walls_are_not_the_heads()
+test_smoothing_keeps_a_uv_seam_shut()
 print('test_rig ok')
