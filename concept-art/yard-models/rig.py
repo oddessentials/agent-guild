@@ -30,8 +30,12 @@ and cycle are written into the model as `yard` extras for the runtime. Work
 clips that strike something record the moment and place as `events`.
 The mesh and textures keep the detail they were generated with; textures are
 written as WebP. --report writes the automated checks: foot sliding, how
-much of each part of the body tears in each clip, and how far the head's
-layers and the surface split at UV seams come apart.
+much of each part of the body tears in each clip, how far the head's layers
+and the surface split at UV seams come apart, and whether any cut the rig
+makes opens into view (none does today: nothing is cut, see unfuse). The
+glance checks run at the contract's limits or the narrower ones --look
+gives. The layers check runs on characters only: on helpers it reads
+geometry that is not a head (#270).
 """
 import bpy, json, math, sys
 import numpy as np
@@ -921,9 +925,9 @@ def unfuse(body, robe, still=()):
     ripped, unless a robe joins them by design: each face goes whole to one
     leg and the seam's vertices are split, then mend_seam gives both sides of
     the seam the same mix of the legs, so the surface stays shut and the
-    stride stretches it over a band. Returns what the checks need: the faces
-    cut away (none), which side of each cut each corner is on, and the
-    vertices split apart."""
+    stride stretches it over a band. Returns what the checks need, in the
+    shape a cutting rule would fill: the faces cut away (always none now)
+    with the side each corner is on, and the vertices split apart."""
     import bmesh
     from mathutils.kdtree import KDTree
     groups = {g.index: g.name for g in body.vertex_groups}
@@ -1712,9 +1716,9 @@ def check(rig, body, c, report, cut=None):
     the body (an arm, a hand, a leg with its foot, the trunk, the head)
     torn: triangles whose longest edge stretches past STRETCH times its rest
     length, which shows as a smear or a spike; how far twins split at UV
-    seams come apart (Seams); how much of what unfuse cut away opens into
-    view (Holes); and for a character, how far the head's layers come apart
-    (Layers)."""
+    seams come apart (Seams); how much of any surface unfuse cut away opens
+    into view (Holes, a guard: unfuse cuts nothing today); and for a
+    character, how far the head's layers come apart (Layers)."""
     result = {'height': c.h, 'stride': round(2 * c.step, 4), 'cycle': c.cycle, 'gait': c.gait, 'clips': {}}
     layers = Layers(rig, body) if c.humanoid else None
     seams = Seams(rig, body, cut['split'] if cut else ())
