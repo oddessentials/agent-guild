@@ -326,7 +326,8 @@ def head_part(body, neck, h):
     A hat, hood, hair, ears or
     a beard's top come with it; a staff held up beside the head sits off to
     the side, and a sword or a hammer slung on the back carries on below the
-    neck, so they stay with the body."""
+    neck, so they stay with the body. Also which of it are hidden walls,
+    and the face's piece."""
     co = np.array([v.co[:] for v in body.data.vertices])
     floor = neck - .01 * h
     up = co[:, 2] >= floor
@@ -378,9 +379,8 @@ def head_part(body, neck, h):
               [(x, y, z) for x in (1, -1) for y in (1, -1) for z in (1, -1)]]
     hidden = {}
     for label in np.unique(labels[up]):
-        piece = up & (labels == label)
-        over = piece & (skull if (skull & piece).any() else up)
-        hidden[label] = seen[over].mean() < .5 and np.mean(
+        over = up & (labels == label) & skull
+        hidden[label] = over.any() and seen[over].mean() < .5 and np.mean(
             [all(bvh.ray_cast(Vector(co[i]) + d * 1e-4 * h, d)[0] is not None for d in around) for i in np.flatnonzero(over)]) >= .9
     # The head's half width: the run of the silhouette holding the centre
     # line, widest over the rows above the neck.
@@ -393,7 +393,7 @@ def head_part(body, neck, h):
             runs = np.split(cells, np.flatnonzero(np.diff(cells) > 2) + 1)
             run = min(runs, key=lambda r: 0 if r[0] <= 0 <= r[-1] else min(abs(r[0]), abs(r[-1])))
             half = max(half, -run[0] * cell, (run[-1] + 1) * cell)
-    part = np.zeros(len(co), bool)
+    part, walls = np.zeros(len(co), bool), np.zeros(len(co), bool)
     for label in np.unique(labels[up]):
         piece = up & (labels == label)
         # Beside the face's own piece, a piece seen from outside that carries
@@ -401,7 +401,9 @@ def head_part(body, neck, h):
         # not the head's.
         if label == main or (abs(co[piece, 0].mean()) <= half and (hidden[label] or surface[np.flatnonzero(piece)[0]] not in below)):
             part |= piece
-    return part
+            if label != main and hidden[label]:
+                walls |= piece
+    return part, walls, up & (labels == main)
 
 
 def visible(body, co, where):
@@ -585,7 +587,7 @@ def weights(body, rig, robe=False, still=(), head=None):
     bpy.ops.object.mode_set(mode='OBJECT')
     claim_strays(body, rig)
     keep_arms_to_arms(body, rig)
-    keep_head_to_head(body, rig, head)
+    keep_head_to_head(body, rig, head[0] if head else None)
     smooth(body)
     split_legs(body, rig, robe)
     # Normalise and limit to four influences for glTF.
@@ -597,8 +599,8 @@ def weights(body, rig, robe=False, still=(), head=None):
     # The clean-ups can leave a vertex with no weight, which the exporter
     # would bind to an extra bone outside the contract skeleton.
     claim_strays(body, rig)
-    if head is not None:
-        hold_head(body, head)
+    if head:
+        hold_head(body, *head)
 
 
 def claim_strays(body, rig):
@@ -760,38 +762,26 @@ def smooth(body):
     bpy.ops.object.mode_set(mode='OBJECT')
 
 
-def hold_head(body, region):
-    """Over the head, a surface split at a UV seam shares its weights, and
-    a wall hidden inside takes those of the nearest surface that can be seen,
-    so the head's layers move as one."""
+def hold_head(body, part, walls, face):
+    """Each of the head's hidden walls takes the weights of the face's piece
+    nearest it, so the walls move as one."""
     from mathutils.kdtree import KDTree
+    outer = np.flatnonzero(face)
+    if not len(outer) or not walls.any():
+        return
     mesh = body.data
     co = np.array([v.co[:] for v in mesh.vertices])
+    tree = KDTree(len(outer))
+    for k, i in enumerate(outer):
+        tree.insert(co[i], k)
+    tree.balance()
     groups = list(body.vertex_groups)
-    w = np.zeros((len(co), len(groups)))
-    for v in mesh.vertices:
-        for g in v.groups:
-            w[v.index, g.group] = g.weight
-    _, node, twins = np.unique(co, axis=0, return_inverse=True, return_counts=True)
-    node = node.ravel()
-    shared = np.zeros((len(twins), len(groups)))
-    np.add.at(shared, node, w)
-    held = np.where(region[:, None], (shared / twins[:, None])[node], w)
-    seen = visible(body, co, region)
-    open_ = np.flatnonzero(region & seen)
-    if len(open_):
-        tree = KDTree(len(open_))
-        for k, i in enumerate(open_):
-            tree.insert(co[i], k)
-        tree.balance()
-        for i in np.flatnonzero(region & ~seen):
-            held[i] = held[open_[tree.find(co[i])[1]]]
-    for i in np.flatnonzero(np.abs(held - w).max(1) > 1e-6):
-        for gi, g in enumerate(groups):
-            if held[i, gi] > 0:
-                g.add([int(i)], float(held[i, gi]), 'REPLACE')
-            elif w[i, gi] > 0:
-                g.remove([int(i)])
+    for i in np.flatnonzero(walls):
+        source = mesh.vertices[int(outer[tree.find(co[i])[1]])]
+        for g in groups:
+            g.remove([int(i)])
+        for g in source.groups:
+            groups[g.group].add([int(i)], g.weight, 'REPLACE')
 
 
 def bind_prop(body, prop, side):
