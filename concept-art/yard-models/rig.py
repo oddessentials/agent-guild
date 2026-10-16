@@ -617,11 +617,11 @@ def weights(body, rig, robe=False, still=(), head=None):
     bpy.context.view_layer.objects.active = body
     bpy.ops.object.vertex_group_limit_total(group_select_mode='ALL', limit=4)
     bpy.ops.object.vertex_group_normalize_all(group_select_mode='ALL', lock_active=False)
-    if 'LeftUpperArm' in rig.data.bones:
-        unfuse(body, robe, still)
+    cut = unfuse(body, robe, still) if 'LeftUpperArm' in rig.data.bones else None
     # The clean-ups can leave a vertex with no weight, which the exporter
     # would bind to an extra bone outside the contract skeleton.
     claim_strays(body, rig)
+    return cut
 
 
 def claim_strays(body, rig):
@@ -813,16 +813,23 @@ def unfuse(body, robe, still=()):
     low = lambda n: n == 'Hips' or n.endswith('UpperLeg') or n.endswith('LowerLeg')
     leg = lambda n: n.endswith('UpperLeg') or n.endswith('LowerLeg') or n.endswith('Foot')
     bm = bmesh.new(); bm.from_mesh(body.data); bm.faces.ensure_lookup_table()
-    cut = []
+    cut, tris, sides = [], [], []
     for f in bm.faces:
         names = {owners[v.index] for v in f.verts}
         if any(arm(n) for n in names) and any(low(n) for n in names):
-            cut.append(f)
+            side = [arm(owners[v.index]) for v in f.verts]
         elif not robe and any(leg(n) and n.startswith('Left') for n in names) and any(leg(n) and n.startswith('Right') for n in names):
-            cut.append(f)
+            side = [owners[v.index].startswith('Left') for v in f.verts]
+        else:
+            continue
+        cut.append(f)
+        for i in range(1, len(f.verts) - 1):
+            tris.append([f.verts[k].index for k in (0, i, i + 1)])
+            sides.append([side[k] for k in (0, i, i + 1)])
     bmesh.ops.delete(bm, geom=cut, context='FACES_ONLY')
     bm.to_mesh(body.data); bm.free(); body.data.update()
     print('YARD_UNFUSE faces %d' % len(cut), flush=True)
+    return np.array(tris, dtype=np.int64).reshape(-1, 3), np.array(sides, bool).reshape(-1, 3)
 
 
 def smooth(body):
@@ -1540,16 +1547,18 @@ def impact(rig, c, action, frames):
 
 # ---------------------------------------------------------------- checks
 
-def check(rig, body, c, report):
+def check(rig, body, c, report, cut=None):
     """Foot sliding in the walk, and in every clip the share of each part of
     the body (an arm, a hand, a leg with its foot, the trunk, the head)
     torn: triangles whose longest edge stretches past STRETCH times its rest
     length, which shows as a smear or a spike; how far twins split at UV
-    seams come apart (Seams); and for a character, how far the head's layers
-    come apart (Layers)."""
+    seams come apart (Seams); how much of what unfuse cut away opens into
+    view (Holes); and for a character, how far the head's layers come apart
+    (Layers)."""
     result = {'height': c.h, 'stride': round(2 * c.step, 4), 'cycle': c.cycle, 'gait': c.gait, 'clips': {}}
     layers = Layers(rig, body) if c.humanoid else None
     seams = Seams(rig, body)
+    holes = Holes(rig, body, *cut) if cut is not None and len(cut[0]) else None
     for action in bpy.data.actions:
         rig.animation_data.action = action
         frames = int(action.frame_range[1])
@@ -1561,14 +1570,17 @@ def check(rig, body, c, report):
         if action.name == 'walk' and c.gait != 'glide':
             entry['footSlide'] = foot_slide(rig, c, frames)
         entry['seams'] = round(seams.apart(clip_poses(rig, action)), 4)
-        entry['ok'] = worst < TORN and apart < APART and entry['seams'] < SEAM and entry.get('footSlide', 0) < .02 * c.h
+        entry['holes'] = round(holes.open(clip_poses(rig, action)), 5) if holes else 0.0
+        entry['ok'] = (worst < TORN and apart < APART and entry['seams'] < SEAM and entry['holes'] < HOLE and
+                       entry.get('footSlide', 0) < .02 * c.h)
         result['clips'][action.name] = entry
     if c.humanoid:
         worst, part = look_tearing(rig, body)
         apart = layers.apart(look_poses(rig))
         gap = seams.apart(look_poses(rig))
+        hole = holes.open(look_poses(rig)) if holes else 0.0
         result['look'] = {'torn': round(worst, 5), 'part': part, 'apart': round(apart, 4), 'seams': round(gap, 4),
-                          'ok': worst < TORN and apart < APART and gap < SEAM}
+                          'holes': round(hole, 5), 'ok': worst < TORN and apart < APART and gap < SEAM and hole < HOLE}
     rig.animation_data.action = None
     bpy.context.scene.frame_set(0)
     result['ok'] = all(e['ok'] for e in result['clips'].values()) and result.get('look', {}).get('ok', True)
@@ -1729,6 +1741,93 @@ class Seams:
         return worst
 
 
+HOLE, REACH_HOLE = .0005, .05
+VIEWS = [Vector((math.cos(el) * math.cos(az), math.cos(el) * math.sin(az), math.sin(el)))
+         for el in (.1, .55) for az in np.linspace(0, 2 * math.pi, 16, endpoint=False)]
+
+
+class Holes:
+    """Where unfuse cut a face away, each side of the cut keeps a patch of the
+    face that moves as that side's skin does. A patch seen from outside, with
+    the inside of the model, its back or nothing behind it, is a hole a
+    viewer sees."""
+
+    def __init__(self, rig, body, cut, sides):
+        from mathutils.bvhtree import BVHTree
+        from mathutils.kdtree import KDTree
+        rig.animation_data.action = None
+        Pose(rig).update()
+        self.rig, self.body = rig, body
+        co = positions(body)
+        self.h = co[:, 2].max() - co[:, 2].min()
+        self.tris = triangles(body)[0]
+        self.bones = [g.name for g in body.vertex_groups]
+        w = np.zeros((len(co), len(self.bones)))
+        for v in body.data.vertices:
+            for g in v.groups:
+                w[v.index, g.group] = g.weight
+        area = np.linalg.norm(np.cross(co[cut[:, 1]] - co[cut[:, 0]], co[cut[:, 2]] - co[cut[:, 0]]), axis=1) / 2
+        rest, skin, share = [], [], []
+        for t, s, a in zip(cut, sides, area):
+            for side in (s, ~s):
+                if side.any():
+                    rest.append(co[t].mean(0))
+                    skin.append(w[t[side]].mean(0))
+                    share.append(a * side.sum() / 3)
+        self.rest, self.share = np.array(rest), np.array(share)
+        skin = np.array(skin)
+        self.skin = skin / np.maximum(skin.sum(1, keepdims=True), 1e-9)
+        # Inner walls face outward too: a triangle closed in on every side at
+        # rest, near the cut, is inside the model.
+        whole = np.concatenate([self.tris, cut])
+        bvh = BVHTree.FromPolygons([Vector(c) for c in co], whole.tolist())
+        kd = KDTree(len(self.rest))
+        for i, p in enumerate(self.rest):
+            kd.insert(p, i)
+        kd.balance()
+        middle = co[self.tris].mean(1)
+        self.inside = np.zeros(len(self.tris), bool)
+        for t in range(len(self.tris)):
+            if kd.find(middle[t])[2] < .06 * self.h:
+                m = Vector(middle[t])
+                self.inside[t] = all(bvh.ray_cast(m + d * 1e-4 * self.h, d)[0] is not None for d in ENCLOSING)
+
+    def open(self, poses):
+        """Over the poses a generator steps through, the most open patch area
+        one view sees within REACH_HOLE of the height of one point (a slit or
+        a hole, not every crevice of the model added up), as a share of the
+        height squared."""
+        from mathutils.bvhtree import BVHTree
+        from mathutils.kdtree import KDTree
+        worst = 0.0
+        far, eps = 4 * self.h, .003 * self.h
+        for _ in poses:
+            co = positions(self.body)
+            bvh = BVHTree.FromPolygons([Vector(c) for c in co], self.tris.tolist())
+            moves = np.stack([np.array(self.rig.pose.bones[b].matrix @ self.rig.data.bones[b].matrix_local.inverted())
+                              if b in self.rig.pose.bones else np.eye(4) for b in self.bones])
+            rest = np.concatenate([self.rest, np.ones((len(self.rest), 1))], 1)
+            at = np.einsum('sb,bij,sj->si', self.skin, moves, rest)[:, :3]
+            opened = np.zeros((len(at), len(VIEWS)), bool)
+            for n, p in enumerate(at):
+                for k, d in enumerate(VIEWS):
+                    hit = bvh.ray_cast(Vector(p) + d * far, -d)
+                    if hit[0] is not None and hit[3] < far - eps:
+                        continue
+                    opened[n, k] = hit[0] is None or hit[1].dot(d) < 0 or self.inside[hit[2]]
+            kd = KDTree(len(at))
+            for n, p in enumerate(at):
+                kd.insert(p, n)
+            kd.balance()
+            for k in range(len(VIEWS)):
+                for n in np.flatnonzero(opened[:, k]):
+                    near = [i for _, i, _ in kd.find_range(at[n], REACH_HOLE * self.h)]
+                    score = float(self.share[near][opened[near, k]].sum() / self.h ** 2)
+                    if score > worst:
+                        worst, self.points = score, (at, opened[:, k], VIEWS[k])
+        return worst
+
+
 def torn(rig, body, poses):
     """Over the poses a generator steps through, the largest share of any
     part of the body torn, and which part."""
@@ -1850,7 +1949,7 @@ def main():
     j = joints(body, height, kind, neck, hip)
     rig = skeleton(j, kind)
     still = still_sides(work, busy, side if prop else None)
-    weights(body, rig, robe, still, j.get('headPart'))
+    cut = weights(body, rig, robe, still, j.get('headPart'))
     if prop:
         if spec and spec.get('plant') and not shipped:
             plant(prop, j, side)
@@ -1863,7 +1962,7 @@ def main():
                   {s: j.get('room' + k, 0) for k, s, _ in SIDES}, surface if kind != 'familiar' else None)
     animate(rig, c, bpy.data.objects['character'])
     if report:
-        check(rig, bpy.data.objects['character'], c, report)
+        check(rig, bpy.data.objects['character'], c, report, cut)
     export(rig, c, out)
 
 

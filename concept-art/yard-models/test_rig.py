@@ -97,7 +97,65 @@ def test_smoothing_keeps_a_uv_seam_shut():
     assert all(len(w) == 2 and np.allclose(w[0], w[1]) for w in twins.values()), 'twins at a UV seam are weighted apart'
 
 
+def cut_box(covered):
+    """A closed 1 m box on one bone with a 4 cm slit cut down its front wall,
+    as unfuse cuts; `covered` closes a larger box round it that is not cut."""
+    import bmesh
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    bm = bmesh.new()
+    bmesh.ops.create_cube(bm, size=1)
+    bmesh.ops.subdivide_edges(bm, edges=bm.edges[:], cuts=24, use_grid_fill=True)
+    if covered:
+        outer = bmesh.new()
+        bmesh.ops.create_cube(outer, size=1.2)
+        mesh = bpy.data.meshes.new('outer'); outer.to_mesh(mesh); outer.free()
+        bm.from_mesh(mesh)
+    bmesh.ops.translate(bm, verts=bm.verts[:], vec=(0, 0, .6))
+    bm.verts.ensure_lookup_table(); bm.faces.ensure_lookup_table()
+    cut = [f for f in bm.faces if f.calc_center_median().y < -.49 and f.calc_center_median().y > -.51
+           and abs(f.calc_center_median().x) < .02 and .3 < f.calc_center_median().z < .9]
+    tris, sides = [], []
+    for f in cut:
+        vs = [v.index for v in f.verts]
+        for i in range(1, len(vs) - 1):
+            tris.append([vs[0], vs[i], vs[i + 1]])
+            sides.append([bm.verts[k].co.x > 0 for k in (vs[0], vs[i], vs[i + 1])])
+    bmesh.ops.delete(bm, geom=cut, context='FACES_ONLY')
+    mesh = bpy.data.meshes.new('box'); bm.to_mesh(mesh); bm.free()
+    body = bpy.data.objects.new('box', mesh); bpy.context.scene.collection.objects.link(body)
+    data = bpy.data.armatures.new('rig')
+    arm = bpy.data.objects.new('rig', data)
+    bpy.context.scene.collection.objects.link(arm)
+    bpy.context.view_layer.objects.active = arm
+    bpy.ops.object.mode_set(mode='EDIT')
+    bone = data.edit_bones.new('Hips'); bone.head, bone.tail = (0, 0, .3), (0, 0, .6)
+    bpy.ops.object.mode_set(mode='OBJECT')
+    arm.animation_data_create()
+    body.vertex_groups.new(name='Hips').add(range(len(mesh.vertices)), 1, 'REPLACE')
+    body.modifiers.new('rig', 'ARMATURE').object = arm
+    return arm, body, np.array(tris), np.array(sides)
+
+
+def at_rest(arm):
+    bpy.context.view_layer.update()
+    yield
+
+
+def test_a_slit_cut_in_sight_is_a_hole():
+    arm, body, tris, sides = cut_box(covered=False)
+    assert len(tris), 'the fixture cut nothing'
+    assert rig.Holes(arm, body, tris, sides).open(at_rest(arm)) >= rig.HOLE, 'a slit cut in a wall in sight passes'
+
+
+def test_a_cut_out_of_sight_is_not_a_hole():
+    arm, body, tris, sides = cut_box(covered=True)
+    assert len(tris), 'the fixture cut nothing'
+    assert rig.Holes(arm, body, tris, sides).open(at_rest(arm)) == 0, 'a cut hidden inside another wall is a hole'
+
+
 test_both_walls_of_the_head_are_the_heads()
 test_a_tail_and_a_slung_rods_walls_are_not_the_heads()
 test_smoothing_keeps_a_uv_seam_shut()
+test_a_slit_cut_in_sight_is_a_hole()
+test_a_cut_out_of_sight_is_not_a_hole()
 print('test_rig ok')
