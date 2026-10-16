@@ -275,10 +275,18 @@ def test_coarse_surface_between_the_legs_is_not_cut():
     assert len(body.data.polygons) == faces, 'long faces between the legs were cut as a web'
 
 
+def test_the_cast_rigs_on_one_thread():
+    """build.py rigs with OpenMP on one thread: on more, bone heat's sums land a
+    float step apart between runs and the same model exports different bytes."""
+    import build
+    assert build.BLENDER_ENV.get('OMP_NUM_THREADS') == '1'
+
+
 test_both_walls_of_the_head_are_the_heads()
 test_a_tail_and_a_slung_rods_walls_are_not_the_heads()
 test_coarse_surface_between_the_legs_is_not_cut()
 test_a_moving_hands_bridge_to_the_hips_is_cut()
+test_the_cast_rigs_on_one_thread()
 test_a_busy_hand_eases_into_the_leg_it_touches()
 test_cloth_across_the_legs_stays_whole_and_shut()
 test_a_gap_that_opens_only_in_motion_is_not_a_hole()

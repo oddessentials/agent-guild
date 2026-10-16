@@ -34,6 +34,9 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 ASSETS = ROOT / 'web/yard/assets'
 BLENDER = os.environ.get('BLENDER', 'E:/Program Files/Blender Foundation/Blender 5.2/blender.exe')
+# Bone heat's solve is threaded with OpenMP, and its sums come out a float
+# step apart from run to run; on one thread a model rigs to the same bytes.
+BLENDER_ENV = {**os.environ, 'OMP_NUM_THREADS': '1'}
 PROVIDERS = ['anthropic', 'openai', 'google', 'xai', 'shell', 'docker']
 # How far a station's prop stands from its character: STAGING.station.gap in web/yard/model.mjs.
 GAP = .75
@@ -179,7 +182,7 @@ def cast(name, names, shipped=False):
                 args += ['--' + joint, str(c[joint])]
         if c.get('work') and 'station' in spec:
             args += ['--surface', str(spec['station']['surface'])]
-        subprocess.run(args, check=True, stdout=subprocess.DEVNULL)
+        subprocess.run(args, check=True, stdout=subprocess.DEVNULL, env=BLENDER_ENV)
         if shipped and not keep_textures(ASSETS / f'{key}.glb', source, reports / 'maps'):
             print(key, 'textures re-encoded: the shipped ones could not be matched', flush=True)
         result = json.loads(report.read_text())
