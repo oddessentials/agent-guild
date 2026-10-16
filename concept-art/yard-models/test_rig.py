@@ -222,8 +222,26 @@ def test_cloth_across_the_legs_stays_whole_and_shut():
     assert all(all(w == ws[0] for w in ws) for ws in at.values()), 'the seam opens: one place, two sets of weights'
 
 
+def test_a_busy_hand_eases_into_the_leg_it_touches():
+    """A strip whose left half is a busy hand and right half a thigh: no edge
+    across the touch jumps from all hand to all leg."""
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    bpy.ops.mesh.primitive_grid_add(x_subdivisions=40, y_subdivisions=10, size=1, rotation=(math.pi / 2, 0, 0))
+    strip = bpy.context.active_object
+    bpy.ops.object.transform_apply(rotation=True)
+    groups = {n: strip.vertex_groups.new(name=n) for n in ('Hips', 'LeftHand', 'LeftUpperLeg')}
+    for v in strip.data.vertices:
+        groups['LeftHand' if v.co.x < 0 else 'LeftUpperLeg'].add([v.index], 1, 'REPLACE')
+    rig.ease_still_hands(strip, ('Left',))
+    hand = groups['LeftHand'].index
+    w = [next((g.weight for g in v.groups if g.group == hand), 0) for v in strip.data.vertices]
+    jump = max(abs(w[e.vertices[0]] - w[e.vertices[1]]) for e in strip.data.edges)
+    assert jump < .5, 'a busy hand meets the leg in one row of edges'
+
+
 test_both_walls_of_the_head_are_the_heads()
 test_a_tail_and_a_slung_rods_walls_are_not_the_heads()
+test_a_busy_hand_eases_into_the_leg_it_touches()
 test_cloth_across_the_legs_stays_whole_and_shut()
 test_a_gap_that_opens_only_in_motion_is_not_a_hole()
 test_smoothing_keeps_a_uv_seam_shut()

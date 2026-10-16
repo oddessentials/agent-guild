@@ -618,6 +618,8 @@ def weights(body, rig, robe=False, still=(), head=None):
     bpy.ops.object.vertex_group_limit_total(group_select_mode='ALL', limit=4)
     bpy.ops.object.vertex_group_normalize_all(group_select_mode='ALL', lock_active=False)
     cut = unfuse(body, robe, still) if 'LeftUpperArm' in rig.data.bones else None
+    if len(still) == 1 and not robe and 'LeftUpperArm' in rig.data.bones:
+        ease_still_hands(body, still)
     # The clean-ups can leave a vertex with no weight, which the exporter
     # would bind to an extra bone outside the contract skeleton.
     claim_strays(body, rig)
@@ -846,6 +848,51 @@ def mend_seam(body):
         for name, w in held:
             other = 'Right' + name[4:] if name.startswith('Left') else 'Left' + name[5:]
             groups[other].add([v.index], w * (1 - own), 'ADD')
+
+
+def ease_still_hands(body, still):
+    """A busy hand (one holding something modelled in, so it stays as
+    modelled while the other arm moves) keeps its skin where it touches a leg;
+    over SEAM_BAND of the height round that touch the skin eases toward
+    the mean of the touch, so a stride stretches a band instead of a row."""
+    from mathutils.kdtree import KDTree
+    index = {g.index: g.name for g in body.vertex_groups}
+    def owner(v):
+        best = max(v.groups, key=lambda g: g.weight, default=None)
+        return index.get(best.group, '') if best else ''
+    owners = [owner(v) for v in body.data.vertices]
+    hand = lambda n: n.startswith(still) and n.endswith(('LowerArm', 'Hand'))
+    leg = lambda n: n.endswith(('UpperLeg', 'LowerLeg'))
+    touch = set()
+    for p in body.data.polygons:
+        names = [owners[i] for i in p.vertices]
+        if any(hand(n) for n in names) and any(leg(n) for n in names):
+            touch.update(p.vertices)
+    if not touch:
+        return
+    touch = sorted(touch)
+    co = np.array([v.co[:] for v in body.data.vertices])
+    h = co[:, 2].max() - co[:, 2].min()
+    w = np.zeros((len(co), len(body.vertex_groups)))
+    for v in body.data.vertices:
+        for g in v.groups:
+            w[v.index, g.group] = g.weight
+    mean = w[touch].mean(0)
+    kd = KDTree(len(touch))
+    for n, i in enumerate(touch):
+        kd.insert(co[i], n)
+    kd.balance()
+    for v in body.data.vertices:
+        d = kd.find(v.co)[2]
+        if d >= SEAM_BAND * h:
+            continue
+        t = 1 - d / (SEAM_BAND * h)
+        new = t * mean + (1 - t) * w[v.index]
+        for k, group in enumerate(body.vertex_groups):
+            if new[k] > 1e-6:
+                group.add([v.index], float(new[k]), 'REPLACE')
+            elif w[v.index, k]:
+                group.remove([v.index])
 
 
 def share_twins(body):
