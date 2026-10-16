@@ -199,8 +199,32 @@ def test_a_gap_that_opens_only_in_motion_is_not_a_hole():
     assert holes.open(apart()) == 0, 'the gap between two parts moved apart is a hole'
 
 
+def test_cloth_across_the_legs_stays_whole_and_shut():
+    """A closed skirt held by the left leg on one side of the centre line and
+    the right on the other: unfuse keeps all of it and every place on its
+    seam keeps one set of weights."""
+    import bmesh
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    bm = bmesh.new()
+    bmesh.ops.create_cube(bm, size=1)
+    bmesh.ops.subdivide_edges(bm, edges=bm.edges[:], cuts=15, use_grid_fill=True)
+    mesh = bpy.data.meshes.new('skirt'); bm.to_mesh(mesh); bm.free()
+    body = bpy.data.objects.new('skirt', mesh); bpy.context.scene.collection.objects.link(body)
+    groups = {n: body.vertex_groups.new(name=n) for n in ('Hips', 'LeftUpperLeg', 'RightUpperLeg')}
+    for v in mesh.vertices:
+        groups['LeftUpperLeg' if v.co.x > 1e-6 else 'RightUpperLeg'].add([v.index], 1, 'REPLACE')
+    faces = len(mesh.polygons)
+    rig.unfuse(body, robe=False)
+    assert len(body.data.polygons) == faces, 'cloth across the legs was cut'
+    at = {}
+    for v in body.data.vertices:
+        at.setdefault(tuple(round(c, 5) for c in v.co), []).append(sorted((g.group, round(g.weight, 4)) for g in v.groups))
+    assert all(all(w == ws[0] for w in ws) for ws in at.values()), 'the seam opens: one place, two sets of weights'
+
+
 test_both_walls_of_the_head_are_the_heads()
 test_a_tail_and_a_slung_rods_walls_are_not_the_heads()
+test_cloth_across_the_legs_stays_whole_and_shut()
 test_a_gap_that_opens_only_in_motion_is_not_a_hole()
 test_smoothing_keeps_a_uv_seam_shut()
 test_a_slit_cut_in_sight_is_a_hole()

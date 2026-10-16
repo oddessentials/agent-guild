@@ -795,30 +795,123 @@ def split_legs(body, rig, robe):
                 groups[twin].add([v.index], w, 'ADD')
 
 
+# A leg-to-leg face whose longest edge passes WEB times the median edge
+# spans a gap between the legs; a shorter one is cloth that crosses the
+# centre line (a coat, an apron, a panel).
+WEB = 6.0
+
+
+SEAM_BAND = .05
+
+
+def mend_seam(body):
+    """Where a rip leaves vertices at one place on both legs (the vertices it
+    split, and twins a UV seam had already split), they take the same mix
+    of both legs, so the seam stays shut; over SEAM_BAND of the height away
+    from it each side's own leg takes over again."""
+    from mathutils.kdtree import KDTree
+    co = np.array([v.co[:] for v in body.data.vertices])
+    h = co[:, 2].max() - co[:, 2].min()
+    index = {g.index: g.name for g in body.vertex_groups}
+    def side(v):
+        held = {'Left': 0.0, 'Right': 0.0}
+        for g in v.groups:
+            name = index[g.group]
+            if name.endswith(('UpperLeg', 'LowerLeg', 'Foot', 'Toes')):
+                held['Left' if name.startswith('Left') else 'Right'] += g.weight
+        return max(held, key=held.get) if any(held.values()) else None
+    sides = [side(v) for v in body.data.vertices]
+    node = twins(body)
+    both = {}
+    for i, n in enumerate(node):
+        if sides[i]:
+            both.setdefault(n, set()).add(sides[i])
+    seam = [i for i, n in enumerate(node) if len(both.get(n, ())) > 1]
+    if not seam:
+        return
+    kd = KDTree(len(seam))
+    for n, i in enumerate(seam):
+        kd.insert(co[i], n)
+    kd.balance()
+    groups = {g.name: g for g in body.vertex_groups}
+    legs = ('UpperLeg', 'LowerLeg', 'Foot', 'Toes')
+    for v in body.data.vertices:
+        d = kd.find(v.co)[2]
+        if d >= SEAM_BAND * h:
+            continue
+        own = .5 + .5 * d / (SEAM_BAND * h)
+        held = [(index[g.group], g.weight) for g in v.groups if g.weight > 0 and index[g.group].endswith(legs)]
+        for name, w in held:
+            groups[name].add([v.index], w * own, 'REPLACE')
+        for name, w in held:
+            other = 'Right' + name[4:] if name.startswith('Left') else 'Left' + name[5:]
+            groups[other].add([v.index], w * (1 - own), 'ADD')
+
+
+def share_twins(body):
+    """Vertices at one place take the same weights, so a UV seam the rip
+    reweighted on one side only stays shut."""
+    node = twins(body)
+    n, groups = len(node), body.vertex_groups
+    w = np.zeros((n, len(groups)))
+    for v in body.data.vertices:
+        for g in v.groups:
+            w[v.index, g.group] = g.weight
+    shared = np.zeros((node.max() + 1, len(groups)))
+    np.add.at(shared, node, w)
+    shared = (shared / np.bincount(node)[:, None])[node]
+    for i in np.flatnonzero(np.abs(shared - w).max(1) > 0):
+        for k, group in enumerate(groups):
+            if shared[i, k] > 1e-6:
+                group.add([int(i)], float(shared[i, k]), 'REPLACE')
+            elif w[i, k]:
+                group.remove([int(i)])
+
+
 def unfuse(body, robe, still=()):
     """Generated models often fuse a hanging hand to the thigh, or one leg to
     the other, with a skin of triangles that tears once the limb moves. Cut
     those bridges: the faces joining a moving forearm or hand to the hips or
-    a leg, and, unless a robe joins them by design, the left leg to the right.
-    Where they met, the limbs touched, so the cut is out of sight. An arm that
-    stays as modelled keeps its skin: cut, it would leave a hole in a sleeve
-    or robe that shows in every pose."""
+    a leg, and, unless a robe joins them by design, a web between the left
+    leg and the right. Where they met, the limbs touched, so the cut is out
+    of sight. Cloth crossing the centre line between the legs (a coat, an
+    apron, a panel) is ripped instead: each face goes whole to one leg and
+    the seam's vertices are split, then mend_seam gives both sides of the
+    seam the same mix of the legs, so the cloth stays shut and the stride
+    stretches it over a band. An arm that stays as modelled keeps its skin: cut, it would leave a hole
+    in a sleeve or robe that shows in every pose. Returns what the checks
+    need: the faces cut away, which side of each cut each corner is on, a
+    patch where each ripped face would be if it joined both legs, and the
+    vertices split apart."""
     import bmesh
+    from mathutils.kdtree import KDTree
     groups = {g.index: g.name for g in body.vertex_groups}
     def owner(v):
         best = max(v.groups, key=lambda g: g.weight, default=None)
         return groups.get(best.group, '') if best else ''
     owners = [owner(v) for v in body.data.vertices]
+    held = [{groups[g.group]: g.weight for g in v.groups} for v in body.data.vertices]
     arm = lambda n: (n.endswith('LowerArm') or n.endswith('Hand')) and not n.startswith(still)
     low = lambda n: n == 'Hips' or n.endswith('UpperLeg') or n.endswith('LowerLeg')
     leg = lambda n: n.endswith('UpperLeg') or n.endswith('LowerLeg') or n.endswith('Foot')
-    bm = bmesh.new(); bm.from_mesh(body.data); bm.faces.ensure_lookup_table()
-    cut, tris, sides = [], [], []
+    co = np.array([v.co[:] for v in body.data.vertices])
+    pairs = np.empty(len(body.data.edges) * 2, dtype=np.int64)
+    body.data.edges.foreach_get('vertices', pairs)
+    pairs = pairs.reshape(-1, 2)
+    median = float(np.median(np.linalg.norm(co[pairs[:, 0]] - co[pairs[:, 1]], axis=1))) if len(pairs) else 0.0
+    bm = bmesh.new(); bm.from_mesh(body.data); bm.faces.ensure_lookup_table(); bm.verts.ensure_lookup_table()
+    cut, tris, sides, rip = [], [], [], {}
     for f in bm.faces:
         names = {owners[v.index] for v in f.verts}
         if any(arm(n) for n in names) and any(low(n) for n in names):
             side = [arm(owners[v.index]) for v in f.verts]
         elif not robe and any(leg(n) and n.startswith('Left') for n in names) and any(leg(n) and n.startswith('Right') for n in names):
+            longest = max((a.co - b.co).length for a, b in zip(f.verts, f.verts[1:] + f.verts[:1]))
+            if longest <= WEB * median:
+                left = sum(owners[v.index].startswith('Left') for v in f.verts)
+                right = sum(owners[v.index].startswith('Right') for v in f.verts)
+                rip[f.index] = 'Left' if left > right or (left == right and f.calc_center_median().x > 0) else 'Right'
+                continue
             side = [owners[v.index].startswith('Left') for v in f.verts]
         else:
             continue
@@ -826,10 +919,55 @@ def unfuse(body, robe, still=()):
         for i in range(1, len(f.verts) - 1):
             tris.append([f.verts[k].index for k in (0, i, i + 1)])
             sides.append([side[k] for k in (0, i, i + 1)])
+    def side_of(f):
+        if f.index in rip:
+            return rip[f.index]
+        left = sum(owners[v.index].startswith('Left') for v in f.verts)
+        right = sum(owners[v.index].startswith('Right') for v in f.verts)
+        return 'Left' if left > right else 'Right' if right > left else None
+    patches = []
+    for i, s_ in rip.items():
+        f = bm.faces[i]
+        skin = {}
+        for v in f.verts:
+            for name, w in held[v.index].items():
+                skin[name] = skin.get(name, 0) + w / len(f.verts)
+        patches.append((np.array(f.calc_center_median()[:]), f.calc_area(), skin))
+    seam = {e for i in rip for e in bm.faces[i].edges
+            if len({side_of(g) for g in e.link_faces} - {None}) > 1}
+    ripped = [bm.faces[i] for i in rip]
+    side_ripped = [rip[f.index] for f in ripped]
+    before = len(bm.verts)
     bmesh.ops.delete(bm, geom=cut, context='FACES_ONLY')
+    bmesh.ops.split_edges(bm, edges=[e for e in seam if e.is_valid])
+    bm.verts.index_update()
+    corners = {}
+    for f, s_ in zip(ripped, side_ripped):
+        for v in f.verts:
+            corners.setdefault(v.index, []).append(s_)
+    split = []
+    if len(bm.verts) > before:
+        kd = KDTree(before)
+        for v in bm.verts[:before]:
+            kd.insert(v.co, v.index)
+        kd.balance()
+        split = [(kd.find(v.co)[1], v.index) for v in bm.verts[before:]]
     bm.to_mesh(body.data); bm.free(); body.data.update()
-    print('YARD_UNFUSE faces %d' % len(cut), flush=True)
-    return np.array(tris, dtype=np.int64).reshape(-1, 3), np.array(sides, bool).reshape(-1, 3)
+    vgroups = {g.name: g for g in body.vertex_groups}
+    index = {g.index: g.name for g in body.vertex_groups}
+    for i, ss in corners.items():
+        own = max(set(ss), key=ss.count)
+        other = 'Right' if own == 'Left' else 'Left'
+        for name, w in [(index[g.group], g.weight) for g in body.data.vertices[i].groups]:
+            if name.startswith(other) and name.endswith(('UpperLeg', 'LowerLeg', 'Foot', 'Toes')) and w > 0:
+                vgroups[name].remove([i])
+                vgroups[own + name[len(other):]].add([i], w, 'ADD')
+    if rip:
+        mend_seam(body)
+        share_twins(body)
+    print('YARD_UNFUSE faces %d ripped %d' % (len(cut), len(rip)), flush=True)
+    return {'cut': np.array(tris, dtype=np.int64).reshape(-1, 3), 'sides': np.array(sides, bool).reshape(-1, 3),
+            'patches': patches, 'split': split}
 
 
 def smooth(body):
@@ -1557,8 +1695,8 @@ def check(rig, body, c, report, cut=None):
     (Layers)."""
     result = {'height': c.h, 'stride': round(2 * c.step, 4), 'cycle': c.cycle, 'gait': c.gait, 'clips': {}}
     layers = Layers(rig, body) if c.humanoid else None
-    seams = Seams(rig, body)
-    holes = Holes(rig, body, *cut) if cut is not None and len(cut[0]) else None
+    seams = Seams(rig, body, cut['split'] if cut else ())
+    holes = Holes(rig, body, cut['cut'], cut['sides'], cut['patches']) if cut and (len(cut['cut']) or cut['patches']) else None
     for action in bpy.data.actions:
         rig.animation_data.action = action
         frames = int(action.frame_range[1])
@@ -1715,9 +1853,10 @@ SEAM = .002
 
 
 class Seams:
-    """Twins split at UV seams, outside a held tool, which every pose must keep together."""
+    """Twins split at UV seams, outside a held tool and the vertices unfuse
+    split apart, which every pose must keep together."""
 
-    def __init__(self, rig, body):
+    def __init__(self, rig, body, split=()):
         rig.animation_data.action = None
         Pose(rig).update()
         self.body = body
@@ -1728,6 +1867,10 @@ class Seams:
         same = node[order][1:] == node[order][:-1]
         self.pairs = np.stack([order[:-1][same], order[1:][same]], 1)
         self.pairs = self.pairs[~held[self.pairs].any(1)]
+        parted = np.zeros(len(node), bool)
+        for a, b in split:
+            parted[[a, b]] = True
+        self.pairs = self.pairs[~parted[self.pairs].any(1)]
         co = positions(body)
         self.h = co[:, 2].max() - co[:, 2].min()
 
@@ -1754,7 +1897,7 @@ class Holes:
     rest (a slit); one that shows nothing only once the sides move apart is
     the gap between two parts."""
 
-    def __init__(self, rig, body, cut, sides):
+    def __init__(self, rig, body, cut, sides, patches=()):
         from mathutils.bvhtree import BVHTree
         from mathutils.kdtree import KDTree
         rig.animation_data.action = None
@@ -1776,12 +1919,17 @@ class Holes:
                     rest.append(co[t].mean(0))
                     skin.append(w[t[side]].mean(0))
                     share.append(a * side.sum() / 3)
-        self.rest, self.share = np.array(rest), np.array(share)
-        skin = np.array(skin)
+        # A ripped face's patch lies where it would be if it joined both sides.
+        for centre, a, held in patches:
+            rest.append(centre)
+            skin.append([held.get(name, 0.0) for name in self.bones])
+            share.append(a)
+        self.rest, self.share = np.array(rest).reshape(-1, 3), np.array(share)
+        skin = np.array(skin).reshape(-1, len(self.bones))
         self.skin = skin / np.maximum(skin.sum(1, keepdims=True), 1e-9)
         # Inner walls face outward too: a triangle closed in on every side at
         # rest, near the cut, is inside the model.
-        whole = np.concatenate([self.tris, cut])
+        whole = np.concatenate([self.tris, cut.reshape(-1, 3)])
         bvh = BVHTree.FromPolygons([Vector(c) for c in co], whole.tolist())
         kd = KDTree(len(self.rest))
         for i, p in enumerate(self.rest):
