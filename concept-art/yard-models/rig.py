@@ -366,10 +366,22 @@ def head_part(body, neck, h):
     ids, counts = np.unique(labels[face & seen], return_counts=True)
     main = ids[np.argmax(counts)] if len(ids) else -1
     # Generated heads often have walls inside the visible one, each carrying
-    # on below the neck; mostly hidden over the skull, they are the head's.
+    # on below the neck: mostly hidden, and closed in on every side over the
+    # skull, they are the head's.
+    from mathutils.bvhtree import BVHTree
     skull = co[:, 2] > neck + .04 * h
-    hidden = {label: seen[up & (labels == label) & (skull if (skull & (labels == label)).any() else up)].mean() < .5
-              for label in np.unique(labels[up])}
+    body.data.calc_loop_triangles()
+    tris = np.empty(len(body.data.loop_triangles) * 3, dtype=np.int64)
+    body.data.loop_triangles.foreach_get('vertices', tris)
+    bvh = BVHTree.FromPolygons([Vector(c) for c in co], tris.reshape(-1, 3).tolist())
+    around = [Vector(d).normalized() for d in [(1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)] +
+              [(x, y, z) for x in (1, -1) for y in (1, -1) for z in (1, -1)]]
+    hidden = {}
+    for label in np.unique(labels[up]):
+        piece = up & (labels == label)
+        over = piece & (skull if (skull & piece).any() else up)
+        hidden[label] = seen[over].mean() < .5 and np.mean(
+            [all(bvh.ray_cast(Vector(co[i]) + d * 1e-4 * h, d)[0] is not None for d in around) for i in np.flatnonzero(over)]) >= .9
     # The head's half width: the run of the silhouette holding the centre
     # line, widest over the rows above the neck.
     cell, half = .006 * h, .05 * h
@@ -585,8 +597,8 @@ def weights(body, rig, robe=False, still=(), head=None):
     # The clean-ups can leave a vertex with no weight, which the exporter
     # would bind to an extra bone outside the contract skeleton.
     claim_strays(body, rig)
-    if 'LeftUpperArm' in rig.data.bones:
-        hold_head(body, rig)
+    if head is not None:
+        hold_head(body, head)
 
 
 def claim_strays(body, rig):
@@ -748,14 +760,13 @@ def smooth(body):
     bpy.ops.object.mode_set(mode='OBJECT')
 
 
-def hold_head(body, rig):
-    """Around the head, a surface split at a UV seam shares its weights, and
+def hold_head(body, region):
+    """Over the head, a surface split at a UV seam shares its weights, and
     a wall hidden inside takes those of the nearest surface that can be seen,
     so the head's layers move as one."""
     from mathutils.kdtree import KDTree
     mesh = body.data
     co = np.array([v.co[:] for v in mesh.vertices])
-    region = co[:, 2] >= rig.data.bones['Neck'].head_local.z - .01 * co[:, 2].max()
     groups = list(body.vertex_groups)
     w = np.zeros((len(co), len(groups)))
     for v in mesh.vertices:
