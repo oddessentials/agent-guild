@@ -3,7 +3,7 @@
 
   blender -b --factory-startup --python rig.py -- IN.glb OUT.glb HEIGHT [--kind builder|familiar]
       [--work tinker|conduct|steady|pound] [--gait walk|waddle|glide] [--robe] [--busy L|R]
-      [--prop JSON] [--report FILE]
+      [--prop JSON] [--neck SHARE] [--hips SHARE] [--report FILE]
 
 IN is a generated TRELLIS.2 model, or a shipped Yard model. A shipped model's
 old skeleton and clips are removed, and a held tool is found again as the loose
@@ -449,18 +449,19 @@ def visible(body, co, where):
     return seen
 
 
-def joints(body, height, kind):
+def joints(body, height, kind, neck=None, hip=None):
     """Joint positions from the silhouette. The neck is where the outline
     pinches in under the head (find_neck), so a tall hat or helmet is carried
-    by the head instead of holding it; the trunk's joints divide the hips to
-    the neck in fixed shares."""
+    by the head instead of holding it, unless `neck` gives its share of the
+    height; the trunk's joints divide the hips to the neck in fixed shares.
+    The legs leave the body at 0.48 of the height unless `hip` says."""
     h = height
     j = {'root': Vector((0, 0, 0)), 'hips': Vector((0, 0, .50 * h)), 'spine': Vector((0, 0, .57 * h)),
          'chest': Vector((0, 0, .64 * h)), 'upperChest': Vector((0, 0, .71 * h)), 'neck': Vector((0, 0, .80 * h)),
          'head': Vector((0, 0, .84 * h)), 'top': Vector((0, 0, h))}
     if kind == 'familiar':
         return j
-    neck = find_neck(body, h)
+    neck = neck * h if neck else find_neck(body, h)
     co = [v.co for v in body.data.vertices if abs(v.co.z - neck) < .015 * h]
     y = sorted(c.y for c in co)[len(co) // 2] if co else 0.0
     # A big head on a short body leaves the trunk at least 0.15 of the height.
@@ -496,7 +497,7 @@ def joints(body, height, kind):
         j['shoulder' + name], j['elbow' + name], j['wrist' + name] = shoulder, elbow, hand
         j['hand' + name] = hand + (hand - elbow).normalized() * .07 * h
         x = side * max(torso * .45, .06 * h)
-        j['hip' + name] = Vector((x, 0, .48 * h))
+        j['hip' + name] = Vector((x, 0, (hip or .48) * h))
         j['knee' + name] = Vector((x, -.02 * h, .26 * h))
         j['ankle' + name] = Vector((x, .01 * h, .06 * h))
         j['ball' + name] = Vector((x, -.07 * h, .025 * h))
@@ -1803,6 +1804,8 @@ def main():
     busy = {'L': 'Left', 'R': 'Right'}.get(a[a.index('--busy') + 1]) if '--busy' in a else None
     robe = '--robe' in a
     surface = float(a[a.index('--surface') + 1]) if '--surface' in a else None
+    neck = float(a[a.index('--neck') + 1]) if '--neck' in a else None
+    hip = float(a[a.index('--hips') + 1]) if '--hips' in a else None
     body, shipped = load(src)
     prop, side = (None, None)
     if shipped and spec:
@@ -1820,7 +1823,7 @@ def main():
     for g in list(body.vertex_groups):
         body.vertex_groups.remove(g)
     weld(body)
-    j = joints(body, height, kind)
+    j = joints(body, height, kind, neck, hip)
     rig = skeleton(j, kind)
     still = still_sides(work, busy, side if prop else None)
     weights(body, rig, robe, still, j.get('headPart'))
