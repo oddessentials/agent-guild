@@ -41,5 +41,43 @@ def test_both_walls_of_the_head_are_the_heads():
     assert part[skull & ~walls].all(), 'the hidden wall is not the head'
 
 
+def add_walled(build, inset):
+    """A closed solid from `build`, with a copy `inset` inside it; vertex index ranges of both."""
+    scene = bpy.context.scene.objects
+    before = set(scene)
+    build()
+    piece = next(o for o in scene if o not in before)
+    bm = bmesh.new(); bm.from_mesh(piece.data)
+    outer = len(bm.verts)
+    inner = bmesh.ops.duplicate(bm, geom=list(bm.verts) + list(bm.edges) + list(bm.faces))['geom']
+    bm.normal_update()
+    for v in (g for g in inner if isinstance(g, bmesh.types.BMVert)):
+        v.co -= v.normal * inset
+    bm.to_mesh(piece.data); bm.free()
+    return piece, outer, len(piece.data.vertices)
+
+
+def test_a_tail_and_a_slung_rods_walls_are_not_the_heads():
+    body, outer = two_walled_figure()
+    head = len(body.data.vertices)
+    bpy.ops.mesh.primitive_uv_sphere_add(segments=128, ring_count=64, radius=.2, location=(0, .75, 1.55))
+    rod, rod_outer, rod_all = add_walled(lambda: bpy.ops.mesh.primitive_cube_add(size=1, location=(.2, .4, 1.3), scale=(.08, .08, 1.6)), .01)
+    for o in bpy.context.scene.objects:
+        o.select_set(True)
+    bpy.context.view_layer.objects.active = body
+    bpy.ops.object.join()
+    bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+    co = np.array([v.co[:] for v in body.data.vertices])
+    part = rig.head_part(body, 1.5, 2.05)
+    up = co[:, 2] > 1.6
+    index = np.arange(len(co))
+    tail = (index >= head) & (np.linalg.norm(co - (0, .75, 1.55), axis=1) < .21)
+    rod_inner = (index >= head) & ~tail & (np.abs(co[:, 0] - .2) < .038) & (np.abs(co[:, 1] - .4) < .038)
+    assert part[up & (index < outer)].all(), 'the face is not the head'
+    assert not part[tail].any(), 'the tail is the head'
+    assert not part[up & rod_inner].any(), "the rod's hidden wall is the head"
+
+
 test_both_walls_of_the_head_are_the_heads()
+test_a_tail_and_a_slung_rods_walls_are_not_the_heads()
 print('test_rig ok')

@@ -361,25 +361,45 @@ def head_part(body, neck, h):
             whole[ra] = rb
     surface = np.array([top(i) for i in range(len(co))])
     below = set(surface[~up])
-    face = up & (np.abs(co[:, 0]) <= .1 * h) & (co[:, 2] <= neck + .15 * h)
-    seen = visible(body, co, up)
-    ids, counts = np.unique(labels[face & seen], return_counts=True)
-    main = ids[np.argmax(counts)] if len(ids) else -1
-    # Generated heads often have walls inside the visible one, each carrying
-    # on below the neck: mostly hidden, and closed in on every side over the
-    # skull, they are the head's.
     from mathutils.bvhtree import BVHTree
-    skull = co[:, 2] > neck + .04 * h
+    from mathutils.kdtree import KDTree
     body.data.calc_loop_triangles()
     tris = np.empty(len(body.data.loop_triangles) * 3, dtype=np.int64)
     body.data.loop_triangles.foreach_get('vertices', tris)
-    bvh = BVHTree.FromPolygons([Vector(c) for c in co], tris.reshape(-1, 3).tolist())
+    tris = tris.reshape(-1, 3)
+    bvh = BVHTree.FromPolygons([Vector(c) for c in co], tris.tolist())
+    # The face: of the pieces carrying on below the neck, the one rays from
+    # the front reach most over the middle of the head, through a visor or
+    # a mask wholly above it; a tail or a pack behind is hidden by the head.
+    hits = []
+    far = co[:, 1].min() - h
+    for x in np.arange(-.1, .1, .005) * h:
+        for z in np.arange(neck, neck + .15 * h, .005 * h):
+            start = Vector((x, far, z))
+            while (hit := bvh.ray_cast(start, Y))[2] is not None and up[tris[hit[2]][0]]:
+                if surface[tris[hit[2]][0]] in below:
+                    hits.append(labels[tris[hit[2]][0]])
+                    break
+                start = hit[0] + Y * 1e-4 * h
+    ids, counts = np.unique(hits, return_counts=True)
+    main = ids[np.argmax(counts)] if len(ids) else -1
+    seen = visible(body, co, up)
+    # Generated heads often have walls inside the visible one, each carrying
+    # on below the neck: mostly hidden, closed in on every side over the
+    # skull and lying under the face's piece, they are the head's.
+    skull = co[:, 2] > neck + .04 * h
+    outside = np.flatnonzero(up & seen)
+    kd = KDTree(len(outside))
+    for n, i in enumerate(outside):
+        kd.insert(co[i], n)
+    kd.balance()
     around = [Vector(d).normalized() for d in [(1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)] +
               [(x, y, z) for x in (1, -1) for y in (1, -1) for z in (1, -1)]]
     hidden = {}
     for label in np.unique(labels[up]):
         over = up & (labels == label) & skull
         hidden[label] = over.any() and seen[over].mean() < .5 and np.mean(
+            [labels[outside[kd.find(co[i])[1]]] == main for i in np.flatnonzero(over)]) >= .5 and np.mean(
             [all(bvh.ray_cast(Vector(co[i]) + d * 1e-4 * h, d)[0] is not None for d in around) for i in np.flatnonzero(over)]) >= .9
     # The head's half width: the run of the silhouette holding the centre
     # line, widest over the rows above the neck.
@@ -655,10 +675,12 @@ def shape_head(body, rig, part):
     """Every layer of the head turns by the same rule: from the neck up, its
     weights blend from bone heat to ones set by height alone, all the neck's
     up to the head joint, then rising to all the head's over 0.1 of the
-    height. Walls weighted apart by bone heat would slide past each other.
-    What bone heat gives a limb (a hunched shoulder) stays, as does the hips'
-    hold below the head joint."""
-    neck, head = rig.data.bones['Neck'].head_local.z, rig.data.bones['Head'].head_local.z
+    height, or longer for surface far in front of the neck (a snout),
+    which a turn would otherwise shear. Walls weighted apart by bone heat
+    would slide past each other. What bone heat gives a limb (a hunched
+    shoulder) stays, as does the hips' hold below the head joint."""
+    neck_bone = rig.data.bones['Neck'].head_local
+    neck, head = neck_bone.z, rig.data.bones['Head'].head_local.z
     h = (head - neck) / .04
     floor = neck - .01 * h
     groups = {g.name: g for g in body.vertex_groups}
@@ -669,7 +691,8 @@ def shape_head(body, rig, part):
         total = sum(own.values()) or 1
         keep = sum(w for n, w in own.items() if n.endswith(LIMBS) or (n in ('Hips', 'Root') and v.co.z < head)) / total
         t = (1 - keep) ** 2 * min(1.0, max(0.0, (v.co.z - floor) / (head - floor)))
-        rise = min(1.0, max(0.0, (v.co.z - head) / (.1 * h)))
+        out = neck_bone.y - v.co.y
+        rise = min(1.0, max(0.0, (v.co.z - head) / max(.1 * h, .45 * out)))
         own = {n: w * (1 - t) for n, w in own.items()}
         own['Head'] = own.get('Head', 0) + t * rise
         own['Neck'] = own.get('Neck', 0) + t * (1 - rise)
