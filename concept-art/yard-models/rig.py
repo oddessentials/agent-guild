@@ -1497,8 +1497,8 @@ def animate(rig, c, body=None):
 
 
 # Arm reach tried in turn for a clip that tears, and the walk's stride with it.
-REACH = (1.0, .6, .3, .15)
-STRIDE = {1.0: 1.0, .6: .8, .3: .6, .15: .5}
+REACH = (1.0, .8, .6, .45, .3, .15)
+STRIDE = {1.0: 1.0, .8: .9, .6: .8, .45: .7, .3: .6, .15: .5}
 
 
 def impact(rig, c, action, frames):
