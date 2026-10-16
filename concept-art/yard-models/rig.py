@@ -326,8 +326,7 @@ def head_part(body, neck, h):
     A hat, hood, hair, ears or
     a beard's top come with it; a staff held up beside the head sits off to
     the side, and a sword or a hammer slung on the back carries on below the
-    neck, so they stay with the body. Also which of it are hidden walls,
-    and the face's piece."""
+    neck, so they stay with the body."""
     co = np.array([v.co[:] for v in body.data.vertices])
     floor = neck - .01 * h
     up = co[:, 2] >= floor
@@ -393,7 +392,7 @@ def head_part(body, neck, h):
             runs = np.split(cells, np.flatnonzero(np.diff(cells) > 2) + 1)
             run = min(runs, key=lambda r: 0 if r[0] <= 0 <= r[-1] else min(abs(r[0]), abs(r[-1])))
             half = max(half, -run[0] * cell, (run[-1] + 1) * cell)
-    part, walls = np.zeros(len(co), bool), np.zeros(len(co), bool)
+    part = np.zeros(len(co), bool)
     for label in np.unique(labels[up]):
         piece = up & (labels == label)
         # Beside the face's own piece, a piece seen from outside that carries
@@ -401,9 +400,7 @@ def head_part(body, neck, h):
         # not the head's.
         if label == main or (abs(co[piece, 0].mean()) <= half and (hidden[label] or surface[np.flatnonzero(piece)[0]] not in below)):
             part |= piece
-            if label != main and hidden[label]:
-                walls |= piece
-    return part, walls, up & (labels == main)
+    return part
 
 
 def visible(body, co, where):
@@ -587,7 +584,7 @@ def weights(body, rig, robe=False, still=(), head=None):
     bpy.ops.object.mode_set(mode='OBJECT')
     claim_strays(body, rig)
     keep_arms_to_arms(body, rig)
-    keep_head_to_head(body, rig, head[0] if head else None)
+    keep_head_to_head(body, rig, head)
     smooth(body)
     split_legs(body, rig, robe)
     # Normalise and limit to four influences for glTF.
@@ -599,8 +596,6 @@ def weights(body, rig, robe=False, still=(), head=None):
     # The clean-ups can leave a vertex with no weight, which the exporter
     # would bind to an extra bone outside the contract skeleton.
     claim_strays(body, rig)
-    if head:
-        hold_head(body, *head)
 
 
 def claim_strays(body, rig):
@@ -760,28 +755,6 @@ def smooth(body):
     bpy.ops.object.mode_set(mode='WEIGHT_PAINT')
     bpy.ops.object.vertex_group_smooth(group_select_mode='ALL', factor=.5, repeat=6, expand=0)
     bpy.ops.object.mode_set(mode='OBJECT')
-
-
-def hold_head(body, part, walls, face):
-    """Each of the head's hidden walls takes the weights of the face's piece
-    nearest it, so the walls move as one."""
-    from mathutils.kdtree import KDTree
-    outer = np.flatnonzero(face)
-    if not len(outer) or not walls.any():
-        return
-    mesh = body.data
-    co = np.array([v.co[:] for v in mesh.vertices])
-    tree = KDTree(len(outer))
-    for k, i in enumerate(outer):
-        tree.insert(co[i], k)
-    tree.balance()
-    groups = list(body.vertex_groups)
-    for i in np.flatnonzero(walls):
-        source = mesh.vertices[int(outer[tree.find(co[i])[1]])]
-        for g in groups:
-            g.remove([int(i)])
-        for g in source.groups:
-            groups[g.group].add([int(i)], g.weight, 'REPLACE')
 
 
 def bind_prop(body, prop, side):

@@ -34,7 +34,7 @@ def two_walled_figure():
 def test_both_walls_of_the_head_are_the_heads():
     body, outer = two_walled_figure()
     co = np.array([v.co[:] for v in body.data.vertices])
-    part = rig.head_part(body, 1.5, 2.05)[0]
+    part = rig.head_part(body, 1.5, 2.05)
     skull = co[:, 2] > 1.6
     walls = np.arange(len(co)) < outer
     assert part[skull & walls].all(), 'the visible wall is not the head'
