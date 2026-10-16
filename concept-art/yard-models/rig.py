@@ -3,7 +3,7 @@
 
   blender -b --factory-startup --python rig.py -- IN.glb OUT.glb HEIGHT [--kind builder|familiar]
       [--work tinker|conduct|steady|pound] [--gait walk|waddle|glide] [--robe] [--busy L|R]
-      [--prop JSON] [--neck SHARE] [--hips SHARE] [--report FILE]
+      [--prop JSON] [--neck SHARE] [--hips SHARE] [--look JSON] [--report FILE]
 
 IN is a generated TRELLIS.2 model, or a shipped Yard model. A shipped model's
 old skeleton and clips are removed, and a held tool is found again as the loose
@@ -19,7 +19,9 @@ Blender's bone heat. A held tool (`--prop`) is cut out first so it cannot pass
 for an arm, then rides a PropLeft or PropRight socket bone in that hand.
 `--robe` lets the middle of a robe hang from the hips; `--busy` names a hand
 holding something modelled in, which stays as modelled, as both arms of a
-`steady` character do.
+`steady` character do. `--look` narrows the glance a client may turn this
+head to (`{"yaw": rad, "pitch": rad}`), which the checks use and the model
+carries as `yard.look`.
 
 Clips are posed in Python and baked to keys, at 24 fps. Legs are solved with
 two-bone IK, so planted feet stay put while the hips sway and the walk's
@@ -1200,8 +1202,10 @@ def still_sides(work, busy, prop_side):
 class Character:
     """Rest measurements a clip poses against."""
 
-    def __init__(self, rig, height, work, prop_side, busy=None, gait='walk', robe=False, room=None, surface=None):
+    def __init__(self, rig, height, work, prop_side, busy=None, gait='walk', robe=False, room=None, surface=None, look=None):
         self.rig, self.h, self.work, self.prop, self.gait = rig, height, work, prop_side, gait
+        # The glance limits a client may turn this head to, narrowed by --look.
+        self.look = {'yaw': min(LOOK_YAW, (look or {}).get('yaw', LOOK_YAW)), 'pitch': min(LOOK_PITCH, (look or {}).get('pitch', LOOK_PITCH))}
         # The height of the working surface in front of it, in metres, if any.
         self.surface = surface
         # The arm's angle from straight down at a hammer's blow, and how far
@@ -1731,10 +1735,10 @@ def check(rig, body, c, report, cut=None):
                        entry.get('footSlide', 0) < .02 * c.h)
         result['clips'][action.name] = entry
     if c.humanoid:
-        worst, part = look_tearing(rig, body)
-        apart = layers.apart(look_poses(rig))
-        gap = seams.apart(look_poses(rig))
-        hole = holes.open(look_poses(rig)) if holes else 0.0
+        worst, part = look_tearing(rig, body, c.look)
+        apart = layers.apart(look_poses(rig, **c.look))
+        gap = seams.apart(look_poses(rig, **c.look))
+        hole = holes.open(look_poses(rig, **c.look)) if holes else 0.0
         result['look'] = {'torn': round(worst, 5), 'part': part, 'apart': round(apart, 4), 'seams': round(gap, 4),
                           'holes': round(hole, 5), 'ok': worst < TORN and apart < APART and gap < SEAM and hole < HOLE}
     rig.animation_data.action = None
@@ -1785,24 +1789,24 @@ def tearing(rig, body, action):
 LOOK_YAW, LOOK_PITCH, LOOK_NECK = .7, .3, .4
 
 
-def look_poses(rig):
-    """The head turned to the look-at limits, at rest."""
+def look_poses(rig, yaw=LOOK_YAW, pitch=LOOK_PITCH):
+    """The head turned to the look-at limits, at rest, or to narrower ones."""
     rig.animation_data.action = None
-    for yaw in (-LOOK_YAW, 0, LOOK_YAW):
-        for pitch in (-LOOK_PITCH, 0, LOOK_PITCH):
+    for y in (-yaw, 0, yaw):
+        for x in (-pitch, 0, pitch):
             p = Pose(rig)
             for bone, share in (('Neck', LOOK_NECK), ('Head', 1 - LOOK_NECK)):
-                p.turn(bone, Z, share * yaw, reach=False)
-                p.turn(bone, X, share * pitch, reach=False)
+                p.turn(bone, Z, share * y, reach=False)
+                p.turn(bone, X, share * x, reach=False)
             p.update()
             yield
     Pose(rig).update()
 
 
-def look_tearing(rig, body):
+def look_tearing(rig, body, look=None):
     """The largest share of any part torn with the head turned to the
     look-at limits, at rest, and which part."""
-    return torn(rig, body, look_poses(rig))
+    return torn(rig, body, look_poses(rig, **(look or {})))
 
 
 # A head whose surface layers move as one shows the same surface from every
@@ -2080,6 +2084,8 @@ def export(rig, c, path):
                    'events': c.events}
     if c.surface:
         rig['yard']['surface'] = round(c.surface, 4)
+    if c.look != {'yaw': LOOK_YAW, 'pitch': LOOK_PITCH}:
+        rig['yard']['look'] = c.look
     bpy.context.scene.frame_set(0)
     bpy.ops.export_scene.gltf(filepath=path, export_format='GLB', export_animations=True,
                               export_animation_mode='ACTIONS', export_force_sampling=True,
@@ -2102,6 +2108,7 @@ def main():
     surface = float(a[a.index('--surface') + 1]) if '--surface' in a else None
     neck = float(a[a.index('--neck') + 1]) if '--neck' in a else None
     hip = float(a[a.index('--hips') + 1]) if '--hips' in a else None
+    look = json.loads(a[a.index('--look') + 1]) if '--look' in a else None
     body, shipped = load(src)
     prop, side = (None, None)
     if shipped and spec:
@@ -2132,7 +2139,7 @@ def main():
     if surface and kind != 'familiar':
         surface *= (j['shoulderL'].z + j['shoulderR'].z) / 2 / 1.5
     c = Character(rig, height, work, side if prop else None, busy, gait, robe,
-                  {s: j.get('room' + k, 0) for k, s, _ in SIDES}, surface if kind != 'familiar' else None)
+                  {s: j.get('room' + k, 0) for k, s, _ in SIDES}, surface if kind != 'familiar' else None, look)
     animate(rig, c, bpy.data.objects['character'])
     if report:
         check(rig, bpy.data.objects['character'], c, report, cut)

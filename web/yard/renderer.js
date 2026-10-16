@@ -1,6 +1,6 @@
 import * as T from './vendor/engine.js';
 import { WORLDS, PROVIDER_ORDER, characterIndex, CAMERA, SUN, minZoom, clampPan, viewBasis, providerPositions, sessionPose, familiarPose, hash,
-  stage, nextStagingChange, doorFor, arrives, route, clipFor, helperOffset, stationProp, hallActivity, lookTarget, STAGING } from './model.mjs';
+  stage, nextStagingChange, doorFor, arrives, route, clipFor, helperOffset, stationProp, hallActivity, lookTarget, lookLimits, STAGING } from './model.mjs';
 
 const ASSETS = new URL('./assets/', import.meta.url);
 const vector = new T.Vector3();
@@ -466,7 +466,7 @@ export class YardRenderer {
       // The walk's stride and cycle, and where blows land, as rig.py wrote them.
       let yard=null;asset.scene.traverse(n=>{if(n.userData?.yard)yard=n.userData.yard;});
       unit.speed=yard?.stride&&yard?.cycle?yard.stride/yard.cycle:1;
-      unit.events=yard?.events||[];unit.height=yard?.height;unit.surface=yard?.surface;
+      unit.events=yard?.events||[];unit.height=yard?.height;unit.surface=yard?.surface;unit.look=lookLimits(yard);
       const neck=model.getObjectByName('Neck'),head=model.getObjectByName('Head');
       unit.lookBones=neck&&head&&model.getObjectByName('LeftUpperLeg')?{neck,head}:null;
       this.scaleProp(unit.session?.id||session.id);
@@ -660,7 +660,7 @@ export class YardRenderer {
   // leaves a bone whose clip value has not changed as it stands.
   look(unit,dt) {
     if(!unit.lookBones)return;
-    const {yaw:maxYaw,pitch:maxPitch,neck}=STAGING.look;
+    const {yaw:maxYaw,pitch:maxPitch,neck}=unit.look||STAGING.look;
     let yaw=0,pitch=0;
     const target=!unit.moving&&this.staged?lookTarget(unit.session.id,this.staged.places,this.selected?.kind==='session'?this.selected.id:null):null;
     const other=target&&this.units.get(target);

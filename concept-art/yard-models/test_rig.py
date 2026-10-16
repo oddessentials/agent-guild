@@ -282,7 +282,31 @@ def test_the_cast_rigs_on_one_thread():
     assert build.BLENDER_ENV.get('OMP_NUM_THREADS') == '1'
 
 
+def test_a_narrower_glance_turns_the_head_less():
+    """look_poses turns a two-bone neck and head to the limits it is given,
+    not the contract's."""
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    data = bpy.data.armatures.new('rig')
+    arm = bpy.data.objects.new('rig', data)
+    bpy.context.scene.collection.objects.link(arm)
+    bpy.context.view_layer.objects.active = arm
+    bpy.ops.object.mode_set(mode='EDIT')
+    neck = data.edit_bones.new('Neck'); neck.head, neck.tail = (0, 0, 1.5), (0, 0, 1.6)
+    head = data.edit_bones.new('Head'); head.head, head.tail = (0, 0, 1.6), (0, 0, 1.9); head.parent = neck
+    bpy.ops.object.mode_set(mode='OBJECT')
+    arm.animation_data_create()
+    def widest(**limits):
+        turns = []
+        for _ in rig.look_poses(arm, **limits):
+            across = arm.pose.bones['Head'].matrix.to_3x3() @ Vector((1, 0, 0))
+            turns.append(abs(math.atan2(across.y, across.x)))
+        return max(turns)
+    assert abs(widest(yaw=.3, pitch=.1) - .3) < 1e-3, 'a yaw limit of 0.3 is not honoured'
+    assert abs(widest() - rig.LOOK_YAW) < 1e-3, 'the contract limit is not the default'
+
+
 test_both_walls_of_the_head_are_the_heads()
+test_a_narrower_glance_turns_the_head_less()
 test_a_tail_and_a_slung_rods_walls_are_not_the_heads()
 test_coarse_surface_between_the_legs_is_not_cut()
 test_a_moving_hands_bridge_to_the_hips_is_kept()

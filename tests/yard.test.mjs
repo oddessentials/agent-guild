@@ -2,12 +2,18 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, statSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
-import { sessionPose, familiarPose, layoutSessions, providerPositions, characterIndex, WORLDS, CAMERA, SUN, minZoom, clampPan, viewBasis, plateExtent,
+import { sessionPose, familiarPose, layoutSessions, providerPositions, characterIndex, lookLimits, WORLDS, CAMERA, SUN, minZoom, clampPan, viewBasis, plateExtent,
  stage, stagingMode, nextStagingChange, restSpots, route, clipFor, doorFor, stationProp, STAGING, CLIPS, SKELETON, PROVIDER_ORDER } from '../web/yard/model.mjs';
 import { goldenVectors } from '../scripts/yard-golden.mjs';
 import { Matrix4, Vector3 } from 'three';
 const providers=['anthropic','openai','google','xai','shell','docker'].map(id=>({id}));
 const session=(id,provider='anthropic')=>({id,provider:{id:provider},createdAt:'2026-01-01T00:00:00Z'});
+
+test('a model narrows its glance with yard.look but never widens it',()=>{
+  assert.deepEqual(lookLimits(undefined),{yaw:.7,pitch:.3,neck:.4});
+  assert.deepEqual(lookLimits({look:{yaw:.3}}),{yaw:.3,pitch:.3,neck:.4});
+  assert.deepEqual(lookLimits({look:{yaw:1.2,pitch:.9}}),{yaw:.7,pitch:.3,neck:.4});
+});
 
 test('visual poses preserve running/quiet vs exited and reported helper states',()=>{
  assert.equal(sessionPose({status:'running',activity:'active'}),'working');

@@ -333,6 +333,12 @@ export function hallActivity(sessions, providerId) {
   const working = sessions.filter(s => s.provider.id === providerId && s.status !== 'exited' && s.activity === 'active').length;
   return working === 0 ? 'off' : working === 1 ? 'low' : 'high';
 }
+// How far a character's head may turn to look: STAGING.look, or less where
+// the model's own `yard.look` extras (rig.py's --look) narrow it.
+export function lookLimits(yard) {
+  const own = yard?.look || {};
+  return { yaw: Math.min(STAGING.look.yaw, own.yaw ?? Infinity), pitch: Math.min(STAGING.look.pitch, own.pitch ?? Infinity), neck: STAGING.look.neck };
+}
 // Whom a resting or pausing character looks at: the selected session when
 // it is within range, otherwise the nearest other within range (by id on a
 // tie), or null. places is stage()'s.

@@ -13,8 +13,9 @@ A world's sources are in concept-art/<world>-yard: `world.json` names its
 cast (runtime name: source image, metres tall, and for builders the working
 motion, any held tool, `prop`, as rig.py's cut_prop and plant read it, the
 `gait` when it is not a walk, `robe`, the `busy` hand that holds something
-modelled in, and the `neck` and `hips` shares of the height where its silhouette
-misleads the rig),
+modelled in, the `neck` and `hips` shares of the height where its silhouette
+misleads the rig, and `look`, a narrower glance for a head that tears at the
+usual one),
 its town buildings, seeds other than 42, the subjects cut out onto grey, hall
 turns, and its `station` prop: the working surface height for a 2 m figure
 (`surface`, which rig.py scales by each builder's shoulder height) and the
@@ -180,6 +181,8 @@ def cast(name, names, shipped=False):
         for joint in ('neck', 'hips'):
             if c.get(joint):
                 args += ['--' + joint, str(c[joint])]
+        if c.get('look'):
+            args += ['--look', json.dumps(c['look'])]
         if c.get('work') and 'station' in spec:
             args += ['--surface', str(spec['station']['surface'])]
         subprocess.run(args, check=True, stdout=subprocess.DEVNULL, env=BLENDER_ENV)

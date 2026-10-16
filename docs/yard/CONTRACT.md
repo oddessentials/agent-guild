@@ -107,8 +107,10 @@ A client turns the character's `Neck` and `Head` toward it after the clip
 has posed them, about the model's own up and right axes, the neck taking
 `STAGING.look.neck` (40%) of the turn and the head the rest, at most
 `STAGING.look.yaw` (0.7 rad) either way and `STAGING.look.pitch` (0.3 rad)
-up or down, easing in and out. A walking character does not look. With
-reduced motion a character does not glance.
+up or down, easing in and out. A model whose head tears at those limits
+carries narrower ones as `yard.look` (`{"yaw", "pitch"}`, in radians), and a
+client turns it no further (`lookLimits(yard)`). A walking character does
+not look. With reduced motion a character does not glance.
 
 ## Clip choices
 
