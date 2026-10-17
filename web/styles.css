@@ -1343,6 +1343,7 @@ body:has(#terminal-panel:not([hidden]) .terminal-controls:not([hidden])) .toast 
   color: var(--muted); font-size: 0.78rem; overflow-wrap: anywhere; user-select: all;
 }
 .flags-command span { display: inline-block; max-width: 100%; }
+.flags-command[hidden] { display: none; }
 .flags-actions { display: flex; justify-content: flex-end; gap: 8px; }
 @media (pointer: coarse), (max-width: 640px) {
   .flag-toggle { min-height: 44px; align-items: center; }

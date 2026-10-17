@@ -89,19 +89,24 @@ function fakeTool(dir) {
   fs.writeFileSync(script, `import fs from 'node:fs';
 import { spawn } from 'node:child_process';
 fs.appendFileSync(process.env.FAKE_RUNS, process.argv.slice(2).join(' ') + '\\n');
-const mode = process.env.FAKE_MODE;
+const mode = fs.readFileSync(process.env.FAKE_MODE_FILE, 'utf8');
+const help = 'Usage:\\n  --effort <level>   Effort level\\n  --yolo             Approve everything\\n';
 if (mode === 'hang' || mode === 'flood') {
   const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
   fs.writeFileSync(process.env.FAKE_CHILD, String(child.pid));
   setInterval(() => {}, 1000);
+  process.stdout.write(help);
   if (mode === 'flood') process.stdout.write('x'.repeat(64 * 1024));
 }
 else if (mode === 'silent') process.exit(3);
-else {
-  const text = 'Usage:\\n  --effort <level>   Effort level\\n  --yolo             Approve everything\\n';
-  if (mode === 'stderr') { process.stderr.write(text); process.exit(1); }
-  process.stdout.write(text);
+else if (mode === 'diagnostic') {
+  process.stderr.write("error: unexpected argument '--effort' found\\n\\n  --effort is not allowed here\\n\\nUsage: tool [OPTIONS]\\n");
+  process.exit(2);
 }
+else if (mode === 'usage') process.stdout.write('Usage: tool [OPTIONS]\\n');
+else if (mode === 'changed') process.stdout.write('Usage:\\n  --gone             Now offered\\n  --yolo             Approve everything\\n');
+else if (mode === 'stderr') { process.stderr.write(help); process.exit(1); }
+else process.stdout.write(help);
 `);
   return script;
 }
@@ -110,15 +115,24 @@ function registryFor(mode) {
   const dir = tempDir();
   const runs = path.join(dir, 'runs.txt');
   const child = path.join(dir, 'child.pid');
+  const modeFile = path.join(dir, 'mode.txt');
   fs.writeFileSync(runs, '');
+  fs.writeFileSync(modeFile, mode);
   const userFile = path.join(dir, 'providers.json');
   fs.writeFileSync(userFile, JSON.stringify({ providers: [{
-    id: 'fake', tool: 'Fake', command: process.execPath, args: [fakeTool(dir), 'run'], env: { FAKE_RUNS: runs, FAKE_MODE: mode, FAKE_CHILD: child },
+    id: 'fake', tool: 'Fake', command: process.execPath, args: [fakeTool(dir), 'run'], env: { FAKE_RUNS: runs, FAKE_MODE_FILE: modeFile, FAKE_CHILD: child },
     launchFlags: ['--effort', '--yolo !', '--gone'], launchFlagExamples: { '--effort': 'max' },
   }] }));
   const registry = new ProviderRegistry({ userFile, env: { PATH: path.dirname(process.execPath) }, checkUpdates: false });
-  return { registry, provider: registry.get('fake'), runs: () => fs.readFileSync(runs, 'utf8').trim().split('\n').filter(Boolean), child: () => Number(fs.readFileSync(child, 'utf8')) };
+  return {
+    registry, provider: registry.get('fake'),
+    runs: () => fs.readFileSync(runs, 'utf8').trim().split('\n').filter(Boolean),
+    child: () => Number(fs.readFileSync(child, 'utf8')),
+    setMode: (next) => fs.writeFileSync(modeFile, next),
+  };
 }
+
+const names = (result) => result.flags.map((f) => f.flag);
 
 test('the help is read once from the copy that runs, after the provider\'s own args', async () => {
   const { registry, provider, runs } = registryFor('stdout');
@@ -134,10 +148,42 @@ test('the help is read once from the copy that runs, after the provider\'s own a
 
 test('help printed to stderr by a tool that exits with an error is still read', async () => {
   const { registry, provider } = registryFor('stderr');
-  assert.deepEqual((await registry.launchFlags(provider)).flags.map((f) => f.flag), ['--effort', '--yolo']);
+  assert.deepEqual(names(await registry.launchFlags(provider)), ['--effort', '--yolo']);
 });
 
-test('a help read that fails, hangs or floods says why and is tried again next time', async () => {
+test('a failed run that only mentions a flag is an error, tried again until the tool recovers', async () => {
+  const tool = registryFor('diagnostic');
+  assert.deepEqual(await tool.registry.launchFlags(tool.provider), { flags: [], error: 'Could not read Fake\'s help: error: unexpected argument \'--effort\' found' });
+  await tool.registry.launchFlags(tool.provider);
+  assert.equal(tool.runs().length, 2, 'the error is not kept');
+  tool.setMode('stdout');
+  assert.deepEqual(names(await tool.registry.launchFlags(tool.provider)), ['--effort', '--yolo']);
+  await tool.registry.launchFlags(tool.provider);
+  assert.equal(tool.runs().length, 3, 'the recovered help is kept');
+});
+
+test('help that lists none of the offered flags is not kept', async () => {
+  const tool = registryFor('usage');
+  assert.deepEqual(await tool.registry.launchFlags(tool.provider), { flags: [], error: null });
+  await tool.registry.launchFlags(tool.provider);
+  assert.equal(tool.runs().length, 2);
+});
+
+test('a Docker CLI plugin\'s help is read again each time, one read shared while it runs', async () => {
+  const tool = registryFor('stdout');
+  const plugin = { ...tool.provider, plugin: 'agent' };
+  const [one, two] = await Promise.all([tool.registry.launchFlags(plugin), tool.registry.launchFlags(plugin)]);
+  assert.deepEqual([names(one), names(two)], [['--effort', '--yolo'], ['--effort', '--yolo']]);
+  assert.equal(tool.runs().length, 1);
+  tool.setMode('changed');
+  assert.deepEqual(names(await tool.registry.launchFlags(plugin)), ['--yolo', '--gone'], 'a flag the plugin dropped goes, a new one appears');
+  assert.equal(tool.runs().length, 2);
+  assert.deepEqual(names(await tool.registry.launchFlags(tool.provider)), ['--yolo', '--gone']);
+  tool.setMode('stdout');
+  assert.deepEqual(names(await tool.registry.launchFlags(tool.provider)), ['--yolo', '--gone'], 'a plain tool keeps its help while its copy is unchanged');
+});
+
+test('a help read that fails, hangs or floods says why and is tried again next time, even after printing help', async () => {
   const silent = registryFor('silent');
   const result = await silent.registry.launchFlags(silent.provider);
   assert.deepEqual(result.flags, []);
@@ -147,12 +193,12 @@ test('a help read that fails, hangs or floods says why and is tried again next t
 
   const hang = registryFor('hang');
   const slow = await new LaunchFlags(hang.registry, { timeoutMs: 1000 }).list(hang.provider);
-  assert.equal(slow.error, 'Could not read Fake\'s help: it took longer than 1 second');
+  assert.deepEqual(slow, { flags: [], error: 'Could not read Fake\'s help: it took longer than 1 second' });
   await gone(hang.child(), 'a help read that timed out');
 
   const flood = registryFor('flood');
   const big = await new LaunchFlags(flood.registry, { maxBytes: 1024, timeoutMs: 20000 }).list(flood.provider);
-  assert.equal(big.error, 'Could not read Fake\'s help: it printed more than 1 KB');
+  assert.deepEqual(big, { flags: [], error: 'Could not read Fake\'s help: it printed more than 1 KB' });
   await gone(flood.child(), 'a help read that printed too much');
 });
 

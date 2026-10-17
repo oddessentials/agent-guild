@@ -85,15 +85,25 @@ export class LaunchFlags {
     try { mtime = fs.statSync(resolved).mtimeMs; } catch { /* read it anyway */ }
     const key = JSON.stringify([resolved, mtime, this.registry.versions?.get(provider.id)?.installed ?? null, provider.args, provider.launchFlags]);
     const cached = this.cache.get(provider.id);
-    if (cached?.key === key && !cached.failed) return cached.promise;
-    const entry = { key, failed: false };
+    if (cached?.key === key && !cached.failed && !(provider.plugin && cached.done)) return cached.promise;
+    const entry = { key, failed: false, done: false };
     entry.promise = this._help(provider, resolved).then(
-      (help) => ({ flags: offeredFlags(help, provider.launchFlags), error: null }),
+      ({ text, clean }) => {
+        const flags = offeredFlags(text, provider.launchFlags);
+        const described = flags.some((f) => f.about);
+        if (!clean && !described) {
+          entry.failed = true;
+          const said = text.split(/\r?\n/).map((line) => line.trim()).find(Boolean);
+          return { flags: [], error: `Could not read ${provider.tool}'s help: ${said ?? 'it ended with an error'}` };
+        }
+        if (!flags.length) entry.failed = true;
+        return { flags: clean ? flags : flags.filter((f) => f.about), error: null };
+      },
       (err) => {
         entry.failed = true;
         return { flags: [], error: `Could not read ${provider.tool}'s help: ${err.message}` };
       },
-    );
+    ).finally(() => { entry.done = true; });
     this.cache.set(provider.id, entry);
     return entry.promise;
   }
@@ -101,15 +111,14 @@ export class LaunchFlags {
   async _help(provider, resolved) {
     const env = { ...this.registry.env, ...provider.env };
     const spec = buildSpawnSpec(resolved, [...provider.args, '--help'], env, this.registry.platform);
-    let out;
     try {
-      out = await runSpec(spec, { env, timeoutMs: this.timeoutMs, killTree: true, maxBuffer: this.maxBytes });
+      const out = await runSpec(spec, { env, timeoutMs: this.timeoutMs, killTree: true, maxBuffer: this.maxBytes });
+      return { text: `${out.stdout ?? ''}\n${out.stderr ?? ''}`, clean: true };
     } catch (err) {
       if (err.killed) throw new Error(`it took longer than ${this.timeoutMs / 1000} second${this.timeoutMs === 1000 ? '' : 's'}`);
       if (err.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') throw new Error(`it printed more than ${Math.round(this.maxBytes / 1024)} KB`);
-      if (!`${err.stdout ?? ''}${err.stderr ?? ''}`.trim()) throw err;
-      out = err;
+      if (typeof err.code !== 'number') throw err;
+      return { text: `${err.stdout ?? ''}\n${err.stderr ?? ''}`, clean: false };
     }
-    return `${out.stdout ?? ''}\n${out.stderr ?? ''}`;
   }
 }

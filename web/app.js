@@ -1723,6 +1723,26 @@ function riskyFlag(provider, flag) {
   return Boolean(provider.launchFlags?.find?.((f) => f.flag === flag)?.risky);
 }
 
+function offersFlag(provider, flag) {
+  return Boolean(provider.launchFlags?.some?.((f) => f.flag === flag));
+}
+
+function currentFlags(provider, list) {
+  return (list?.flags ?? []).filter((f) => offersFlag(provider, f.flag));
+}
+
+function unavailableReason(provider, flag, list) {
+  if (!offersFlag(provider, flag)) return `Agent Guild no longer offers ${flag} for ${provider.tool}.`;
+  if (!list?.flags) return null;
+  if (list.error) return list.error;
+  return list.flags.some((f) => f.flag === flag) ? null : `${provider.tool}'s help no longer lists ${flag}.`;
+}
+
+function unavailableReasons(provider, flags, list) {
+  const unavailable = flags.filter((flag) => unavailableReason(provider, flag, list));
+  return { count: unavailable.length, text: [...new Set(unavailable.map((flag) => unavailableReason(provider, flag, list)))].join(' ') };
+}
+
 function flagProblem(provider, flag, value) {
   if (flag.value === 'required' && !value) return `${flag.flag} needs a value.`;
   if (!value || flag.value === 'none' || provider.launchFlagsEquals) return null;
@@ -1741,12 +1761,13 @@ async function launchArgs(provider) {
   const picks = flagPicks(provider);
   const picked = Object.keys(picks);
   if (!picked.length) return [];
-  const { flags, error } = await loadFlags(provider);
-  const missing = picked.filter((flag) => !flags.some((f) => f.flag === flag));
-  if (missing.length) {
-    const reason = error ?? `${provider.tool}'s help no longer lists ${missing.join(', ')}.`;
-    throw new Error(`${reason} The session was not started; remove ${missing.length > 1 ? 'those flags' : 'that flag'} under Flags to start without ${missing.length > 1 ? 'them' : 'it'}.`);
+  const list = picked.some((flag) => offersFlag(provider, flag)) ? await loadFlags(provider) : { flags: [], error: null };
+  const unavailable = unavailableReasons(provider, picked, list);
+  if (unavailable.count) {
+    const many = unavailable.count > 1;
+    throw new Error(`${unavailable.text} The session was not started; remove ${many ? 'those flags' : 'that flag'} under Flags to start without ${many ? 'them' : 'it'}.`);
   }
+  const flags = currentFlags(provider, list);
   const problems = flags.filter((f) => f.flag in picks).map((f) => flagProblem(provider, f, picks[f.flag])).filter(Boolean);
   if (problems.length) throw new Error(`${problems.join(' ')} Change it under Flags, or remove the flag.`);
   return flags.filter((f) => f.flag in picks).flatMap((f) => flagArgs(provider, f, picks[f.flag]));
@@ -1754,16 +1775,17 @@ async function launchArgs(provider) {
 
 function renderLaunchFlags(card, provider) {
   const line = card.querySelector('.launch-flags');
-  line.hidden = !provider.available || !provider.launchFlags?.length;
-  if (line.hidden) return;
   const order = (flag) => {
-    const at = provider.launchFlags.findIndex((f) => f.flag === flag);
+    const at = provider.launchFlags?.findIndex?.((f) => f.flag === flag) ?? -1;
     return at < 0 ? Infinity : at;
   };
   const picks = Object.entries(flagPicks(provider)).sort(([a], [b]) => order(a) - order(b));
+  line.hidden = !picks.length && (!provider.available || !provider.launchFlags?.length);
+  if (line.hidden) return;
   const list = flagLists.get(provider.id);
-  if (picks.length && !list) loadFlags(provider).catch(() => {});
-  const missing = picks.some(([flag]) => list?.flags && !list.flags.some((f) => f.flag === flag));
+  if (!list && picks.some(([flag]) => offersFlag(provider, flag))) loadFlags(provider).catch(() => {});
+  const unavailable = unavailableReasons(provider, picks.map(([flag]) => flag), list);
+  const missing = unavailable.count > 0;
   const summary = picks.map(([flag, value]) => flagText(flag, value)).join(' · ');
   line.querySelector('.launch-flags-label').textContent = picks.length ? `Flags · ${picks.length}` : 'Add launch flags';
   line.querySelector('.launch-flags-summary').textContent = summary;
@@ -1772,7 +1794,7 @@ function renderLaunchFlags(card, provider) {
   line.classList.toggle('risky', risky);
   line.classList.toggle('missing', missing);
   line.title = missing
-    ? `${list.error ?? `${provider.tool}'s help no longer lists a picked flag.`} Sessions do not start until it is removed.`
+    ? `${unavailable.text} Sessions do not start until ${unavailable.count > 1 ? 'they are' : 'it is'} removed.`
     : summary ? `New, Resume and Existing… start ${provider.tool} with ${summary}` : `Pick flags for new and resumed ${provider.tool} sessions`;
   line.setAttribute('aria-label', `${provider.tool} launch flags: ${missing ? 'a picked flag is unavailable, ' : ''}${summary || 'none'}${risky ? ', one skips approvals' : ''}`);
 }
@@ -1785,7 +1807,7 @@ function showFlags(provider, opener = null) {
     flagsOpener = opener ?? document.activeElement?.closest?.('.launch-flags') ?? null;
     $('flags').showModal();
   }
-  loadFlags(provider).catch((err) => { if (err instanceof AuthError) showAuth(err.message); });
+  if (provider.launchFlags?.length) loadFlags(provider).catch((err) => { if (err instanceof AuthError) showAuth(err.message); });
 }
 
 function closeFlags() {
@@ -1871,12 +1893,13 @@ function renderFlagsCommand(provider) {
   const picks = flagPicks(provider);
   const command = String(provider.command || '').split(/[\\/]/).pop();
   const words = [command, ...(provider.args ?? [])].map(shellWord);
-  for (const flag of list?.flags ?? []) {
+  for (const flag of currentFlags(provider, list)) {
     if (!(flag.flag in picks)) continue;
     const value = picks[flag.flag];
     words.push(...(flagProblem(provider, flag, value) ? [flag.flag, `<${flag.placeholder.replace(/^<|>$/g, '') || 'value'}>`] : flagArgs(provider, flag, value).map(shellWord)));
   }
   $('flags-command').replaceChildren(...words.flatMap((word, i) => [i ? ' ' : '', el('span', null, word)]));
+  $('flags-command').hidden = !provider.launchFlags?.length;
   $('flags-clear').disabled = !Object.keys(picks).length;
 }
 
@@ -1885,21 +1908,26 @@ function renderFlagsDialog() {
   if (!provider) return closeFlags();
   paintProviderIcon($('flags-icon'), provider);
   $('flags-title').textContent = `${provider.tool} launch flags`;
-  $('flags-sub').textContent = `New, Resume and Existing… use these. Descriptions come from ${provider.tool}'s own help.`;
+  $('flags-sub').textContent = provider.launchFlags?.length
+    ? `New, Resume and Existing… use these. Descriptions come from ${provider.tool}'s own help.`
+    : `Remove the flags saved for ${provider.tool}; it offers none now.`;
   const list = flagLists.get(provider.id);
   const picks = flagPicks(provider);
-  const rows = (list?.flags ?? []).map((flag) => flagRow(provider, flag));
-  for (const flag of Object.keys(picks).filter((f) => list?.flags && !list.flags.some((x) => x.flag === f))) {
+  const offered = currentFlags(provider, list);
+  const rows = offered.map((flag) => flagRow(provider, flag));
+  for (const flag of Object.keys(picks)) {
+    const reason = unavailableReason(provider, flag, list);
+    if (!reason) continue;
     const row = el('li', 'flag-row missing',
-      el('span', 'flag-text', el('code', 'flag-name', flagText(flag, picks[flag])),
-        el('span', 'flag-about', `${list.error ?? `${provider.tool}'s help no longer lists ${flag}.`} Sessions do not start while it is picked.`)),
+      el('span', 'flag-text', el('code', 'flag-name', flagText(flag, picks[flag])), el('span', 'flag-about', `${reason} Sessions do not start while it is picked.`)),
       button('Remove', () => setFlagPick(provider, flag, null)));
     row.dataset.flag = flag;
     rows.push(row);
   }
   $('flags-list').replaceChildren(...rows);
-  $('flags-status').textContent = !list || (!list.flags && list.pending) ? `Reading ${provider.tool}'s help…`
-    : list.error ?? (list.flags.length ? '' : `${provider.tool}'s help lists none of the flags Agent Guild offers.`);
+  $('flags-status').textContent = !provider.launchFlags?.length ? `Agent Guild offers no flags for ${provider.tool}.`
+    : !list || (!list.flags && list.pending) ? `Reading ${provider.tool}'s help…`
+      : list.error ?? (offered.length ? '' : `${provider.tool}'s help lists none of the flags Agent Guild offers.`);
   renderFlagsCommand(provider);
 }
 
@@ -7741,8 +7769,8 @@ $('flags').addEventListener('click', (e) => { if (e.target === $('flags')) close
 $('flags').addEventListener('close', () => {
   if ($('flags').open) return;
   hideTip();
-  const opener = flagsOpener?.isConnected ? flagsOpener
-    : $('providers').querySelector(`.provider[data-id="${flagsView.providerId}"] .launch-flags`);
+  const card = $('providers').querySelector(`.provider[data-id="${flagsView.providerId}"]`);
+  const opener = [flagsOpener, card?.querySelector('.launch-flags'), card?.querySelector('.new')].find((node) => node?.isConnected && !node.hidden);
   flagsView.providerId = null;
   opener?.focus();
   flagsOpener = null;
