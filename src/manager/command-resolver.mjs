@@ -168,7 +168,7 @@ export function buildSpawnSpec(resolvedPath, args = [], env = process.env, platf
  * Run a file in its own process group, which execFile cannot do, and at the
  * time limit SIGKILL the whole group. Settles as execFile would.
  */
-function runInOwnGroup(file, args, { env, cwd, timeoutMs, input }) {
+function runInOwnGroup(file, args, { env, cwd, timeoutMs, input, maxBuffer }) {
   return new Promise((resolve, reject) => {
     let child;
     try {
@@ -197,8 +197,14 @@ function runInOwnGroup(file, args, { env, cwd, timeoutMs, input }) {
       child.stdout.destroy();
       child.stderr.destroy();
     }, timeoutMs);
-    child.stdout.setEncoding('utf8').on('data', (chunk) => { stdout += chunk; });
-    child.stderr.setEncoding('utf8').on('data', (chunk) => { stderr += chunk; });
+    const overflow = () => {
+      end();
+      child.stdout.destroy();
+      child.stderr.destroy();
+      finish(maxBufferError());
+    };
+    child.stdout.setEncoding('utf8').on('data', (chunk) => { stdout += chunk; if (stdout.length > maxBuffer) overflow(); });
+    child.stderr.setEncoding('utf8').on('data', (chunk) => { stderr += chunk; if (stderr.length > maxBuffer) overflow(); });
     child.on('error', finish);
     child.on('close', (code, signal) => {
       if (code === 0 && !timedOut) return finish(null);
@@ -208,18 +214,23 @@ function runInOwnGroup(file, args, { env, cwd, timeoutMs, input }) {
   });
 }
 
+function maxBufferError() {
+  return Object.assign(new RangeError('stdout or stderr maxBuffer length exceeded'), { code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' });
+}
+
 /**
  * Run a spawn spec to completion without a terminal, with `input` on its
  * stdin. Resolves with its output; rejects with the error carrying stdout
- * and stderr. At the time limit the child gets SIGTERM; with `killTree`, it
- * and everything it started are killed outright, for wrappers such as .cmd
- * shims and Docker CLI plugins whose own children would otherwise live on.
+ * and stderr. At the time limit, or past `maxBuffer` on either stream, the
+ * child is ended; with `killTree`, it and everything it started are killed
+ * outright, for wrappers such as .cmd shims and Docker CLI plugins whose own
+ * children would otherwise live on.
  */
-export function runSpec(spec, { env, timeoutMs = 15000, cwd, input, killTree = false } = {}) {
+export function runSpec(spec, { env, timeoutMs = 15000, cwd, input, killTree = false, maxBuffer = 1024 * 1024 } = {}) {
   const tree = killTree && timeoutMs > 0;
-  if (tree && process.platform !== 'win32') return runInOwnGroup(spec.file, spec.args, { env, cwd, timeoutMs, input });
+  if (tree && process.platform !== 'win32') return runInOwnGroup(spec.file, spec.args, { env, cwd, timeoutMs, input, maxBuffer });
   return new Promise((resolve, reject) => {
-    const opts = { env, cwd, timeout: tree ? 0 : timeoutMs, windowsHide: true, maxBuffer: 1024 * 1024 };
+    const opts = { env, cwd, timeout: tree ? 0 : timeoutMs, windowsHide: true, maxBuffer: tree ? Infinity : maxBuffer };
     let args = spec.args;
     if (typeof args === 'string') {
       opts.windowsVerbatimArguments = true;
@@ -227,20 +238,35 @@ export function runSpec(spec, { env, timeoutMs = 15000, cwd, input, killTree = f
     }
     let timer = null;
     let timedOut = false;
+    let overflowed = false;
     try {
       const child = execFile(spec.file, args, opts, (err, stdout, stderr) => {
         clearTimeout(timer);
-        if (err) reject(Object.assign(err, { stdout, stderr }, timedOut && { killed: true }));
+        if (overflowed) reject(Object.assign(maxBufferError(), { stdout, stderr }));
+        else if (err) reject(Object.assign(err, { stdout, stderr }, timedOut && { killed: true }));
         else resolve({ stdout, stderr });
       });
       // taskkill /T finds the children through the wrapper, so it runs before the wrapper goes.
       if (tree && child.pid) {
-        timer = setTimeout(() => {
-          timedOut = true;
+        const stop = () => {
+          clearTimeout(timer);
           killWindowsTree(child.pid);
           child.stdout?.destroy();
           child.stderr?.destroy();
+        };
+        timer = setTimeout(() => {
+          timedOut = true;
+          stop();
         }, timeoutMs);
+        for (const stream of [child.stdout, child.stderr]) {
+          let length = 0;
+          stream?.on('data', (chunk) => {
+            length += chunk.length;
+            if (length <= maxBuffer || overflowed || timedOut) return;
+            overflowed = true;
+            stop();
+          });
+        }
       }
       if (input !== undefined) child.stdin.end(input);
     } catch (err) {

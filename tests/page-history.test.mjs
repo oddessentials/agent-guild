@@ -193,7 +193,7 @@ test('a missing Google resume folder retries only with the chosen folder and rel
       },
       prompt: (message, defaultValue) => { prompts.push({ message, defaultValue }); return choice; },
       upsertSession: () => {}, rememberRecent: () => {}, closeHistory: () => {},
-      openPanel: (id) => opened.push(id), AuthError: class extends Error {},
+      openPanel: (id) => opened.push(id), AuthError: class extends Error {}, launchArgs: async () => [],
       showAuth: () => assert.fail('unexpected auth error'), toast: () => assert.fail('unexpected automatic fallback'),
     };
     runInNewContext(app.match(/^async function startSession\([^]*?\n\}/m)[0], context);

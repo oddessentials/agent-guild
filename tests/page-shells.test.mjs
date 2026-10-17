@@ -48,6 +48,7 @@ function picker(saved = '{}') {
     },
     upsertSession() {}, rememberRecent() {}, closeHistory() {}, openPanel() {},
     AuthError: class extends Error {},
+    launchArgs: async () => [],
     toast(message) { assert.fail(message); },
   };
   runInNewContext(source, context);

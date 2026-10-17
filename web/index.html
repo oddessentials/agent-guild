@@ -641,6 +641,28 @@
     </form>
   </dialog>
 
+  <dialog id="flags" class="models flags-dialog" aria-labelledby="flags-title">
+    <div class="models-bar">
+      <span id="flags-icon" class="provider-icon small"></span>
+      <div class="models-heading">
+        <h2 id="flags-title"></h2>
+        <p id="flags-sub" class="sub"></p>
+      </div>
+      <button id="flags-close" class="btn" type="button">Close</button>
+    </div>
+    <div class="models-body">
+      <ul id="flags-list" class="flags-list" aria-label="Flags"></ul>
+      <p id="flags-status" class="models-note" aria-live="polite"></p>
+    </div>
+    <div class="flags-footer">
+      <code id="flags-command" class="flags-command"></code>
+      <div class="flags-actions">
+        <button id="flags-clear" class="btn" type="button">Clear all</button>
+        <button id="flags-done" class="btn primary" type="button">Done</button>
+      </div>
+    </div>
+  </dialog>
+
   <dialog id="folder-browser" class="models folder-browser" aria-labelledby="folder-title">
     <div class="models-bar">
       <div class="models-heading">
@@ -697,6 +719,7 @@
       </div>
       <div class="accounts" role="tablist" aria-label="Accounts" hidden></div>
       <div class="shells" role="tablist" aria-label="Shells" hidden></div>
+      <button class="launch-flags" type="button" aria-haspopup="dialog" hidden><span class="launch-flags-label"></span><span class="launch-flags-summary"></span></button>
       <div class="environment-summary" hidden>
         <button class="environment-open" type="button" aria-haspopup="dialog">Environment details</button>
         <dl class="environment-values"></dl>

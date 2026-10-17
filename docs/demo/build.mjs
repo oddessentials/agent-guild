@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describeCatalog, indexCatalog, parseCatalog } from '../../src/manager/model-stats.mjs';
+import { normalizeLaunchFlags, offeredFlags } from '../../src/manager/launch-flags.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, '../..');
@@ -53,7 +54,11 @@ fs.copyFileSync(path.join(here, 'social.png'), path.join(out, 'social.png'));
 const catalog = JSON.parse(fs.readFileSync(path.join(here, 'models.json'), 'utf8'));
 const { providers } = JSON.parse(fs.readFileSync(path.join(repo, 'config', 'providers.default.json'), 'utf8'));
 const stats = describeCatalog({ index: indexCatalog(parseCatalog(catalog)), retrievedAt: catalog.retrievedAt, stale: false, error: null }, providers);
-fs.writeFileSync(path.join(out, 'demo-config.js'), `window.AGENT_GUILD_DEMO_VERSION=${JSON.stringify(version)};\nwindow.AGENT_GUILD_DEMO_MODEL_STATS=${JSON.stringify(stats)};\nwindow.AGENT_GUILD_DEMO_ACTIVITY=true;\n`);
+const flags = Object.fromEntries(providers.filter((p) => p.launchFlags).map((p) => [p.id, {
+  equals: p.launchFlagsEquals === true,
+  flags: offeredFlags(fs.readFileSync(path.join(repo, 'tests', 'fixtures', 'help', `${p.command}.txt`), 'utf8'), normalizeLaunchFlags(p.launchFlags, p.id, [], p.launchFlagExamples ?? null)),
+}]));
+fs.writeFileSync(path.join(out, 'demo-config.js'), `window.AGENT_GUILD_DEMO_VERSION=${JSON.stringify(version)};\nwindow.AGENT_GUILD_DEMO_MODEL_STATS=${JSON.stringify(stats)};\nwindow.AGENT_GUILD_DEMO_FLAGS=${JSON.stringify(flags)};\nwindow.AGENT_GUILD_DEMO_ACTIVITY=true;\n`);
 fs.writeFileSync(path.join(out, '.nojekyll'), '');
 
 const indexFile = path.join(out, 'index.html');

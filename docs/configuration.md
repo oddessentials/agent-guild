@@ -58,6 +58,9 @@ Invalid values are ignored; a file that cannot be read is reported in `manager.l
 | `package` | npm package name; enables **Install** and update checks |
 | `versionArgs` | Arguments that print the version, e.g. `["--version"]` |
 | `resumeArgs` | Arguments that resume a session, `{id}` for its id; enables **Existing…** |
+| `launchFlags` | Flags the card's **Flags** dialog offers, such as `"--model"`. The tool's own `--help` must list a flag for it to show, and gives its description. Add ` <value>` when the help does not show that the flag takes a value, and ` !` to mark a flag that skips approvals. Your list replaces the built-in one |
+| `launchFlagExamples` | An example value per flag, shown in the dialog, such as `{ "--config": "model_reasoning_effort=high" }` |
+| `launchFlagsEquals` | `true` when the tool reads `--flag=value`; only then can a flag's value start with `-` |
 | `usage` | `"claude"`, `"codex"`, `{ "command", "args" }` of a program printing `{ "plan", "windows": [{ "label", "usedPercent", "resetsAt" }] }`, or `null` |
 | `history` | `"claude"`, `"codex"`, `"antigravity"`, `"grok"`, `"docker"`, `{ "command", "args" }` of a program printing `{ "sessions": [{ "id", "title", "cwd", "startedAt", "updatedAt" }] }`, or `null` |
 | `memory` | `"claude"`, `"codex"`, `"grok"` or `null`; enables **Memory** |

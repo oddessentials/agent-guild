@@ -20,6 +20,7 @@ import { RUNNER, encodePlan } from './uninstall.mjs';
 import { paths } from './config.mjs';
 import { MultiplexerRegistry } from './multiplexers.mjs';
 import { reconcileHerdrPath } from './multiplexer-paths.mjs';
+import { LaunchFlags, normalizeLaunchFlags } from './launch-flags.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULTS_FILE = path.resolve(here, '../../config/providers.default.json');
@@ -176,6 +177,8 @@ function normalize(raw, platform, warnings) {
     modelPattern: merged.modelPattern ? String(merged.modelPattern) : null,
     args: Array.isArray(merged.args) ? merged.args.map(String) : [],
     resumeArgs: Array.isArray(merged.resumeArgs) ? merged.resumeArgs.map(String) : [],
+    launchFlags: normalizeLaunchFlags(merged.launchFlags, merged.id, warnings, merged.launchFlagExamples ?? null),
+    launchFlagsEquals: merged.launchFlagsEquals === true,
     env: normalizeEnv(merged.env),
     homeVar,
     accountEnv: normalizeEnv(merged.accountEnv),
@@ -303,6 +306,7 @@ export class ProviderRegistry extends EventEmitter {
     this._installs = new Map();
     this._shells = new Map();
     this.versions = new Map();
+    this.flags = new LaunchFlags(this);
     this._refreshing = null;
     this._npmRegistry = null;
     this.reportingEnabled = null;
@@ -824,6 +828,8 @@ export class ProviderRegistry extends EventEmitter {
       package: provider.package,
       args: provider.args,
       resumable: provider.resumeArgs.length > 0,
+      launchFlags: provider.launchFlags.map(({ flag, risky }) => ({ flag, risky })),
+      launchFlagsEquals: provider.launchFlagsEquals,
       installable: provider.plugin ? Boolean(commandPath && !resolvedPath && !pluginError && !pluginPending && provider.install) : Boolean(provider.package && this.resolveNpm()),
       installCommand: provider.plugin && provider.install ? provider.install : null,
       pluginError,
@@ -871,6 +877,10 @@ export class ProviderRegistry extends EventEmitter {
 
   list() {
     return this.providers.map((p) => this.describe(p));
+  }
+
+  launchFlags(provider) {
+    return this.flags.list(provider);
   }
 
   /**
