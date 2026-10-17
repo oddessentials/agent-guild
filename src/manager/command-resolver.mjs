@@ -215,11 +215,11 @@ function runInOwnGroup(file, args, { env, cwd, timeoutMs, input }) {
  * and everything it started are killed outright, for wrappers such as .cmd
  * shims and Docker CLI plugins whose own children would otherwise live on.
  */
-export function runSpec(spec, { env, timeoutMs = 15000, cwd, input, killTree = false } = {}) {
+export function runSpec(spec, { env, timeoutMs = 15000, cwd, input, killTree = false, maxBuffer = 1024 * 1024 } = {}) {
   const tree = killTree && timeoutMs > 0;
   if (tree && process.platform !== 'win32') return runInOwnGroup(spec.file, spec.args, { env, cwd, timeoutMs, input });
   return new Promise((resolve, reject) => {
-    const opts = { env, cwd, timeout: tree ? 0 : timeoutMs, windowsHide: true, maxBuffer: 1024 * 1024 };
+    const opts = { env, cwd, timeout: tree ? 0 : timeoutMs, windowsHide: true, maxBuffer };
     let args = spec.args;
     if (typeof args === 'string') {
       opts.windowsVerbatimArguments = true;

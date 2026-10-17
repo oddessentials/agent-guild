@@ -441,6 +441,12 @@ export function createManagerServer({
       if (historyMatch[2]) return sendJson(res, 200, { detail: await history.detail(provider, account, url.searchParams.get('id'), url.searchParams.get('cursor')) });
       return sendJson(res, 200, { history: await history.list(provider, account, { limit: url.searchParams.get('limit'), cwd: url.searchParams.get('cwd'), query: url.searchParams.get('q') }) });
     }
+    const flagsMatch = route.match(/^\/providers\/([a-z0-9][a-z0-9_-]{0,31})\/flags$/);
+    if (flagsMatch && method === 'GET') {
+      const provider = registry.get(flagsMatch[1]);
+      if (!provider) throw new HttpError(404, `unknown provider "${flagsMatch[1]}"`, 'unknown_provider');
+      return sendJson(res, 200, await registry.launchFlags(provider));
+    }
     const memoryMatch = memory && route.match(/^\/providers\/([a-z0-9][a-z0-9_-]{0,31})\/memory(\/file)?$/);
     if (memoryMatch && method === 'GET') {
       const provider = registry.get(memoryMatch[1]);

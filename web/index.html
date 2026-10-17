@@ -641,6 +641,21 @@
     </form>
   </dialog>
 
+  <dialog id="flags" class="models flags-dialog" aria-labelledby="flags-title">
+    <div class="models-bar">
+      <span id="flags-icon" class="provider-icon small"></span>
+      <div class="models-heading">
+        <h2 id="flags-title"></h2>
+        <p id="flags-sub" class="sub"></p>
+      </div>
+      <button id="flags-close" class="btn" type="button">Close</button>
+    </div>
+    <div class="models-body">
+      <ul id="flags-list" class="flags-list" aria-label="Flags"></ul>
+      <p id="flags-status" class="models-note" aria-live="polite"></p>
+    </div>
+  </dialog>
+
   <dialog id="folder-browser" class="models folder-browser" aria-labelledby="folder-title">
     <div class="models-bar">
       <div class="models-heading">
@@ -697,6 +712,7 @@
       </div>
       <div class="accounts" role="tablist" aria-label="Accounts" hidden></div>
       <div class="shells" role="tablist" aria-label="Shells" hidden></div>
+      <div class="launch-flags" role="group" aria-label="Launch flags" hidden></div>
       <div class="environment-summary" hidden>
         <button class="environment-open" type="button" aria-haspopup="dialog">Environment details</button>
         <dl class="environment-values"></dl>
@@ -727,6 +743,7 @@
       <div class="provider-actions">
         <button class="btn primary new" type="button">New</button>
         <button class="btn existing" type="button">Existing…</button>
+        <button class="btn flags" type="button" aria-haspopup="dialog">Flags…</button>
         <button class="btn primary install" type="button">Install</button>
         <button class="btn update" type="button"></button>
       </div>

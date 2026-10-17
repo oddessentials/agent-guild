@@ -7,7 +7,7 @@ const app = readFileSync(new URL('../web/app.js', import.meta.url), 'utf8');
 const html = readFileSync(new URL('../web/index.html', import.meta.url), 'utf8');
 const dialogs = [...html.matchAll(/<dialog id="([a-z-]+)"/g)].map((m) => m[1]);
 
-const source = ['closeDialogs', 'closeModels', 'closeNews', 'closeChangelog', 'closeVideos', 'closeAccounts', 'closeMemory', 'showAuth', 'enterStopping'].map((name) => {
+const source = ['closeDialogs', 'closeModels', 'closeNews', 'closeChangelog', 'closeVideos', 'closeAccounts', 'closeFlags', 'closeMemory', 'showAuth', 'enterStopping'].map((name) => {
   const found = app.match(new RegExp(`function ${name}\\([^]*?\\n\\}`))?.[0];
   assert.ok(found, `${name} is present`);
   return found;

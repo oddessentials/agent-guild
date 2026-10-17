@@ -156,7 +156,7 @@ main { max-width: calc(1200px + var(--dock-space, 0px)); margin: 0 auto; padding
 .provider .state.update-available { color: var(--warn); }
 .provider.unavailable .state { color: var(--muted); }
 .provider .update { color: var(--warn); border-color: var(--warn); }
-.provider .accounts, .provider .shells { display: flex; flex-wrap: wrap; gap: 6px; }
+.provider .accounts, .provider .shells, .provider .launch-flags { display: flex; flex-wrap: wrap; gap: 6px; }
 .account-chip {
   font: inherit; font-size: 0.75rem; font-weight: 600; padding: 2px 10px; border-radius: 999px; cursor: pointer;
   border: 1px solid var(--border); background: var(--surface-2); color: var(--muted); max-width: 100%;
@@ -166,6 +166,9 @@ main { max-width: calc(1200px + var(--dock-space, 0px)); margin: 0 auto; padding
 .account-chip:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 .account-chip[aria-selected="true"] { background: var(--accent-fill); border-color: var(--accent-fill); color: var(--accent-text); }
 .account-chip.unsigned { border-style: dashed; }
+.flag-chip { font-family: var(--font-mono); font-weight: 500; }
+.flag-chip::after { content: " ×"; }
+.flag-chip.missing { border-color: var(--danger); color: var(--danger); text-decoration: line-through; }
 .provider .usage { display: grid; gap: 4px; }
 .provider .usage:empty { display: none; }
 /* Spent portrait: the art stills and a danger wash sits inside the frame. The card stays usable. */
@@ -258,7 +261,7 @@ main { max-width: calc(1200px + var(--dock-space, 0px)); margin: 0 auto; padding
 .tip strong { font-weight: 600; }
 .tip span { margin-left: 6px; font-size: 0.72rem; opacity: 0.75; }
 .tip span::before { content: "· "; }
-.tip p { margin: 4px 0 0; }
+.tip p { margin: 4px 0 0; white-space: pre-line; }
 .stat-bar { height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
 .stat-fill { display: block; width: 0; height: 100%; border-radius: 3px; background: var(--tier); }
 .stat-value, .model-index { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--text); }
@@ -1298,6 +1301,22 @@ body:has(#terminal-panel:not([hidden]) .terminal-controls:not([hidden])) .toast 
 #folder-status.error { color: var(--danger); }
 .accounts-dialog { width: min(560px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); }
 .accounts-list { margin: 0; padding: 0; list-style: none; }
+.flags-dialog { width: min(560px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); }
+.flags-list { margin: 0; padding: 0; list-style: none; }
+.flag-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.flag-main { display: flex; align-items: center; gap: 8px; flex: 1 1 220px; min-width: 0; }
+.flag-name { display: inline-flex; align-items: center; gap: 8px; min-width: 0; cursor: pointer; }
+.flag-name code, .flag-row.missing code { overflow-wrap: anywhere; }
+.flag-value {
+  flex: 1 1 180px; min-width: 0; padding: 6px 10px; border-radius: var(--radius); border: 1px solid var(--border);
+  background: var(--surface); color: var(--text); font: inherit; font-size: 0.85rem;
+}
+.flag-value:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.flag-value[aria-invalid="true"] { border-color: var(--danger); }
+.flag-note { flex-basis: 100%; margin: 0; font-size: 0.78rem; color: var(--danger); }
+@media (pointer: coarse), (max-width: 640px) {
+  .flag-value, .flag-row .btn { min-height: 44px; }
+}
 .account-row { display: grid; gap: 6px; padding: 12px 0; border-bottom: 1px solid var(--border); }
 .account-main { display: flex; align-items: center; gap: 8px; }
 .account-name, .accounts-add input {
