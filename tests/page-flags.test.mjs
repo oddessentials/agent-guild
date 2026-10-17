@@ -7,14 +7,17 @@ const app = readFileSync(new URL('../web/app.js', import.meta.url), 'utf8');
 const source = [
   'const flagLists = new Map();',
   'const flagsView = { providerId: null };',
-  ...['flagPicks', 'setFlagPick', 'loadFlags', 'flagText', 'launchArgs', 'renderLaunchFlags', 'sessionActionKey', 'startSession', 'resumeCard', 'resumeFromHistory'].map((name) => {
+  ...['flagPicks', 'refreshFlagCards', 'setFlagPicks', 'setFlagPick', 'loadFlags', 'flagText', 'riskyFlag', 'flagArgs', 'launchArgs', 'renderLaunchFlags', 'sessionActionKey', 'startSession', 'resumeCard', 'resumeFromHistory'].map((name) => {
     const found = app.match(new RegExp(`(?:async )?function ${name}\\([^]*?\\n\\}`))?.[0];
     assert.ok(found, `${name} is present in app.js`);
     return found;
   }),
 ].join('\n');
 
-const provider = { id: 'anthropic', tool: 'Claude Code', available: true, launchFlags: true, accounts: [{ id: 'default' }] };
+const provider = {
+  id: 'anthropic', tool: 'Claude Code', available: true, accounts: [{ id: 'default' }],
+  launchFlags: [{ flag: '--model', risky: false }, { flag: '--dangerously-skip-permissions', risky: true }, { flag: '--worktree', risky: false }, { flag: '--effort', risky: false }],
+};
 const OFFERED = [
   { flag: '--model', value: 'required', about: 'Model' },
   { flag: '--dangerously-skip-permissions', value: 'none', about: 'Bypass' },
@@ -31,9 +34,12 @@ function page({ saved = {}, flags = { flags: OFFERED, error: null } } = {}) {
     replaceChildren(...children) { this.children = children; },
     setAttribute(key, value) { this.attributes[key] = value; },
   });
-  const host = nodes();
-  const toggle = nodes();
-  const card = { dataset: { id: provider.id }, querySelector: (selector) => (selector === '.flags' ? toggle : host) };
+  const label = nodes();
+  const summary = nodes();
+  const classes = new Set();
+  const line = { ...nodes(), classList: { toggle: (name, on) => (on ? classes.add(name) : classes.delete(name)), contains: (name) => classes.has(name) },
+    querySelector: (selector) => (selector === '.launch-flags-label' ? label : summary) };
+  const card = { dataset: { id: provider.id }, querySelector: () => line };
   const session = { provider: { id: provider.id }, account: { id: 'default' }, cwd: '/work/old', toolSessionId: 'tool-1' };
   const context = {
     state: { flagPicks: JSON.parse(storage.get('agentGuild.flags')), providers: [provider], sessions: new Map([['card-1', session]]) },
@@ -44,6 +50,7 @@ function page({ saved = {}, flags = { flags: OFFERED, error: null } } = {}) {
     document: { querySelectorAll: () => [card] },
     button: (label, onClick, className) => ({ ...nodes(), label, onClick, className, click: onClick }),
     renderFlagsDialog() {},
+    renderFlagsCommand() {},
     selectedAccount: () => ({ id: 'default' }),
     pickedShell: () => null,
     $: () => ({ value: '/work/project' }),
@@ -63,7 +70,7 @@ function page({ saved = {}, flags = { flags: OFFERED, error: null } } = {}) {
   };
   runInNewContext(source, context);
   const starts = () => requests.filter((r) => r.route === '/sessions');
-  return { context, storage, requests, starts, toasts, host, toggle, card };
+  return { context, storage, requests, starts, toasts, line, label, summary, card };
 }
 
 test('picked flags reach every start: New, a card\'s Resume and Existing…', async () => {
@@ -103,11 +110,12 @@ test('a flag the help no longer lists keeps its pick and stops the start, saying
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(p.starts(), []);
   assert.equal(p.toasts.length, 2);
-  assert.match(p.toasts[0], /^Claude Code's help no longer lists --bg\. The session was not started/);
+  assert.match(p.toasts[0], /^Claude Code's help no longer lists --bg\. The session was not started; remove that flag under Flags/);
   assert.deepEqual(JSON.parse(p.storage.get('agentGuild.flags')), saved);
   p.context.renderLaunchFlags(p.card, provider);
-  assert.deepEqual(p.host.children.map((chip) => chip.label), ['--effort max', '--bg']);
-  assert.match(p.host.children[1].title, /no longer lists --bg/);
+  assert.equal(p.summary.textContent, '--effort max · --bg');
+  assert.ok(p.line.classList.contains('missing'));
+  assert.match(p.line.title, /no longer lists a picked flag/);
 });
 
 test('a help that cannot be read keeps every pick and stops the start with the reason', async () => {
@@ -126,16 +134,19 @@ test('a flag that needs a value does not start without one', async () => {
   assert.match(p.toasts[0], /--effort needs a value/);
 });
 
-test('chips show the picks and remove one when clicked; the button hides without flags', () => {
+test('the card line summarises the picks, warns about a risky one, and hides without flags', () => {
   const p = page({ saved: { anthropic: { '--effort': 'max', '--model': 'opus' } } });
   p.context.renderLaunchFlags(p.card, provider);
-  assert.equal(p.toggle.hidden, false);
-  assert.deepEqual(p.host.children.map((chip) => chip.label), ['--effort max', '--model opus']);
-  p.host.children[0].click();
-  assert.deepEqual(JSON.parse(p.storage.get('agentGuild.flags')), { anthropic: { '--model': 'opus' } });
-  p.host.children[0].click();
+  assert.equal(p.line.hidden, false);
+  assert.deepEqual([p.label.textContent, p.summary.textContent], ['Flags · 2', '--model opus · --effort max']);
+  assert.ok(p.line.classList.contains('picked'));
+  assert.ok(!p.line.classList.contains('risky'));
+  p.context.setFlagPick(provider, '--dangerously-skip-permissions', '');
+  assert.ok(p.line.classList.contains('risky'));
+  assert.equal(p.line.attributes['aria-label'], 'Claude Code launch flags: --model opus · --dangerously-skip-permissions · --effort max', 'in the provider\'s order');
+  p.context.setFlagPicks(provider, {});
   assert.deepEqual(JSON.parse(p.storage.get('agentGuild.flags')), {});
-  assert.equal(p.host.hidden, true);
-  p.context.renderLaunchFlags(p.card, { ...provider, launchFlags: false });
-  assert.equal(p.toggle.hidden, true);
+  assert.deepEqual([p.label.textContent, p.summary.textContent, p.line.classList.contains('picked')], ['Add launch flags', '', false]);
+  p.context.renderLaunchFlags(p.card, { ...provider, launchFlags: [] });
+  assert.equal(p.line.hidden, true);
 });

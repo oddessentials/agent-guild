@@ -3,7 +3,7 @@ import { buildSpawnSpec, runSpec } from './command-resolver.mjs';
 
 export const HELP_TIMEOUT_MS = 10000;
 export const HELP_MAX_BYTES = 256 * 1024;
-const ENTRY_RE = /^(--?[A-Za-z0-9][\w-]*)( <value>)?$/;
+const ENTRY_RE = /^(--?[A-Za-z0-9][\w-]*)((?: <value>| !)*)$/;
 
 export function normalizeLaunchFlags(raw, id, warnings) {
   if (raw === undefined || raw === null) return [];
@@ -18,7 +18,7 @@ export function normalizeLaunchFlags(raw, id, warnings) {
       warnings.push(`provider "${id}": skipped launch flag ${JSON.stringify(entry)}`);
       continue;
     }
-    if (!flags.some((f) => f.flag === match[1])) flags.push({ flag: match[1], value: Boolean(match[2]) });
+    if (!flags.some((f) => f.flag === match[1])) flags.push({ flag: match[1], value: match[2].includes('<value>'), risky: match[2].includes('!') });
   }
   return flags;
 }
@@ -50,13 +50,13 @@ export function helpEntry(help, flag) {
     if (text.startsWith('- ')) paragraphs.push([]);
     paragraphs.at(-1).push(text);
   }
-  return { value, about: paragraphs.map((p) => p.join(' ')).filter(Boolean).join('\n') };
+  return { value, placeholder, about: paragraphs.map((p) => p.join(' ')).filter(Boolean).join('\n') };
 }
 
 export function offeredFlags(help, entries) {
-  return entries.flatMap(({ flag, value }) => {
+  return entries.flatMap(({ flag, value, risky }) => {
     const entry = helpEntry(help, flag);
-    return entry ? [{ flag, value: value ? 'required' : entry.value, about: entry.about }] : [];
+    return entry ? [{ flag, value: value ? 'required' : entry.value, placeholder: entry.placeholder, about: entry.about, risky }] : [];
   });
 }
 

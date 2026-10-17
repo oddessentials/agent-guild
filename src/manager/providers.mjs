@@ -827,7 +827,7 @@ export class ProviderRegistry extends EventEmitter {
       package: provider.package,
       args: provider.args,
       resumable: provider.resumeArgs.length > 0,
-      launchFlags: provider.launchFlags.length > 0,
+      launchFlags: provider.launchFlags.map(({ flag, risky }) => ({ flag, risky })),
       installable: provider.plugin ? Boolean(commandPath && !resolvedPath && !pluginError && !pluginPending && provider.install) : Boolean(provider.package && this.resolveNpm()),
       installCommand: provider.plugin && provider.install ? provider.install : null,
       pluginError,

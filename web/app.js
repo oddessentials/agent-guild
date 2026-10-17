@@ -1678,17 +1678,27 @@ function flagPicks(provider) {
   return state.flagPicks[provider.id] ?? {};
 }
 
-function setFlagPick(provider, flag, value, { fromDialog = false } = {}) {
-  const picks = { ...flagPicks(provider) };
-  if (value === null) delete picks[flag];
-  else picks[flag] = value;
-  if (Object.keys(picks).length) state.flagPicks[provider.id] = picks;
-  else delete state.flagPicks[provider.id];
-  save(FLAGS_KEY, JSON.stringify(state.flagPicks));
+function refreshFlagCards(provider) {
   for (const card of document.querySelectorAll('.provider[data-id]')) {
     if (card.dataset.id === provider.id) renderLaunchFlags(card, provider);
   }
-  if (!fromDialog && flagsView.providerId === provider.id) renderFlagsDialog();
+}
+
+function setFlagPicks(provider, picks, { fromDialog = false } = {}) {
+  if (Object.keys(picks).length) state.flagPicks[provider.id] = picks;
+  else delete state.flagPicks[provider.id];
+  save(FLAGS_KEY, JSON.stringify(state.flagPicks));
+  refreshFlagCards(provider);
+  if (flagsView.providerId !== provider.id) return;
+  if (fromDialog) renderFlagsCommand(provider);
+  else renderFlagsDialog();
+}
+
+function setFlagPick(provider, flag, value, options) {
+  const picks = { ...flagPicks(provider) };
+  if (value === null) delete picks[flag];
+  else picks[flag] = value;
+  setFlagPicks(provider, picks, options);
 }
 
 async function loadFlags(provider) {
@@ -1700,15 +1710,23 @@ async function loadFlags(provider) {
   const result = await pending;
   if (flagLists.get(provider.id)?.pending !== pending) return result;
   flagLists.set(provider.id, { flags: result.flags, error: result.error ?? null });
-  for (const card of document.querySelectorAll('.provider[data-id]')) {
-    if (card.dataset.id === provider.id) renderLaunchFlags(card, provider);
-  }
+  refreshFlagCards(provider);
   if (flagsView.providerId === provider.id) renderFlagsDialog();
   return result;
 }
 
 function flagText(flag, value) {
   return value ? `${flag} ${value}` : flag;
+}
+
+function riskyFlag(provider, flag) {
+  return Boolean(provider.launchFlags?.find?.((f) => f.flag === flag)?.risky);
+}
+
+function flagArgs(flag, value) {
+  if (flag.value === 'none') return [flag.flag];
+  if (flag.value === 'required') return [flag.flag, value];
+  return value ? [`${flag.flag}=${value}`] : [flag.flag];
 }
 
 async function launchArgs(provider) {
@@ -1719,37 +1737,35 @@ async function launchArgs(provider) {
   const missing = picked.filter((flag) => !flags.some((f) => f.flag === flag));
   if (missing.length) {
     const reason = error ?? `${provider.tool}'s help no longer lists ${missing.join(', ')}.`;
-    throw new Error(`${reason} The session was not started; remove ${missing.length > 1 ? 'those flags' : 'that flag'} under Flags… to start without ${missing.length > 1 ? 'them' : 'it'}.`);
+    throw new Error(`${reason} The session was not started; remove ${missing.length > 1 ? 'those flags' : 'that flag'} under Flags to start without ${missing.length > 1 ? 'them' : 'it'}.`);
   }
   const empty = flags.filter((f) => f.value === 'required' && f.flag in picks && !picks[f.flag]).map((f) => f.flag);
-  if (empty.length) throw new Error(`${empty.join(', ')} needs a value; add it under Flags… or remove the flag.`);
-  return flags.filter((f) => f.flag in picks).flatMap((f) => {
-    const value = picks[f.flag];
-    if (f.value === 'none') return [f.flag];
-    if (f.value === 'required') return [f.flag, value];
-    return value ? [`${f.flag}=${value}`] : [f.flag];
-  });
+  if (empty.length) throw new Error(`${empty.join(', ')} needs a value; add it under Flags or remove the flag.`);
+  return flags.filter((f) => f.flag in picks).flatMap((f) => flagArgs(f, picks[f.flag]));
 }
 
 function renderLaunchFlags(card, provider) {
-  const host = card.querySelector('.launch-flags');
-  const toggle = card.querySelector('.flags');
-  toggle.hidden = !provider.available || !provider.launchFlags;
-  const picks = Object.entries(flagPicks(provider));
-  host.hidden = toggle.hidden || !picks.length;
-  if (host.hidden) return host.replaceChildren();
+  const line = card.querySelector('.launch-flags');
+  line.hidden = !provider.available || !provider.launchFlags?.length;
+  if (line.hidden) return;
+  const order = (flag) => {
+    const at = provider.launchFlags.findIndex((f) => f.flag === flag);
+    return at < 0 ? Infinity : at;
+  };
+  const picks = Object.entries(flagPicks(provider)).sort(([a], [b]) => order(a) - order(b));
   const list = flagLists.get(provider.id);
-  if (!list) loadFlags(provider).catch(() => {});
-  host.replaceChildren(...picks.map(([flag, value]) => {
-    const missing = Boolean(list?.flags && !list.flags.some((f) => f.flag === flag));
-    const chip = button(flagText(flag, value), () => setFlagPick(provider, flag, null), 'account-chip flag-chip');
-    chip.classList.toggle('missing', missing);
-    chip.setAttribute('aria-label', `Remove ${flagText(flag, value)}`);
-    chip.title = missing
-      ? `${list.error ?? `${provider.tool}'s help no longer lists ${flag}.`} Sessions do not start while it is picked. Click to remove it.`
-      : `New, Resume and Existing… start ${provider.tool} with ${flagText(flag, value)}. Click to remove it.`;
-    return chip;
-  }));
+  if (picks.length && !list) loadFlags(provider).catch(() => {});
+  const missing = picks.some(([flag]) => list?.flags && !list.flags.some((f) => f.flag === flag));
+  const summary = picks.map(([flag, value]) => flagText(flag, value)).join(' · ');
+  line.querySelector('.launch-flags-label').textContent = picks.length ? `Flags · ${picks.length}` : 'Add launch flags';
+  line.querySelector('.launch-flags-summary').textContent = summary;
+  line.classList.toggle('picked', picks.length > 0);
+  line.classList.toggle('risky', picks.some(([flag]) => riskyFlag(provider, flag)));
+  line.classList.toggle('missing', missing);
+  line.title = missing
+    ? `${list.error ?? `${provider.tool}'s help no longer lists a picked flag.`} Sessions do not start until it is removed.`
+    : summary ? `New, Resume and Existing… start ${provider.tool} with ${summary}` : `Pick flags for new and resumed ${provider.tool} sessions`;
+  line.setAttribute('aria-label', `${provider.tool} launch flags: ${missing ? 'a picked flag is unavailable, ' : ''}${summary || 'none'}`);
 }
 
 function showFlags(provider, opener = null) {
@@ -1757,7 +1773,7 @@ function showFlags(provider, opener = null) {
   $('flags-list').replaceChildren();
   renderFlagsDialog();
   if (!$('flags').open) {
-    flagsOpener = opener ?? document.activeElement?.closest?.('.flags') ?? null;
+    flagsOpener = opener ?? document.activeElement?.closest?.('.launch-flags') ?? null;
     $('flags').showModal();
   }
   loadFlags(provider).catch((err) => { if (err instanceof AuthError) showAuth(err.message); });
@@ -1772,32 +1788,67 @@ function flagRow(provider, flag) {
   const id = `flag-${flag.flag.replace(/^-+/, '')}`;
   const check = el('input');
   Object.assign(check, { type: 'checkbox', id, checked: flag.flag in picks });
-  const label = el('label', 'flag-name', check, el('code', null, flag.flag));
-  label.htmlFor = id;
+  const about = el('span', 'flag-about', flag.about.split('\n')[0]);
+  about.id = `${id}-about`;
+  check.setAttribute('aria-describedby', about.id);
+  const toggle = el('label', 'flag-toggle', check, el('span', 'flag-text', el('code', 'flag-name', flag.flag), about));
+  toggle.htmlFor = id;
   const info = el('button', 'info');
   info.type = 'button';
   info.dataset.flag = flag.flag;
   info.setAttribute('aria-label', `About ${flag.flag}`);
-  const row = el('li', 'flag-row', el('div', 'flag-main', label, info));
+  const row = el('li', 'flag-row', toggle, info);
+  row.dataset.flag = flag.flag;
+  row.classList.toggle('risky', Boolean(flag.risky));
   let input = null;
   if (flag.value !== 'none') {
     input = el('input', 'flag-value');
-    Object.assign(input, { type: 'text', value: picks[flag.flag] ?? '', autocomplete: 'off', spellcheck: false, placeholder: flag.value === 'required' ? 'Value' : 'Value (optional)' });
+    const hint = flag.placeholder || 'Value';
+    Object.assign(input, {
+      type: 'text', value: picks[flag.flag] ?? '', autocomplete: 'off', spellcheck: false, enterKeyHint: 'done',
+      placeholder: flag.value === 'required' ? hint : `${hint} (optional)`,
+    });
+    input.setAttribute('autocapitalize', 'off');
+    input.setAttribute('autocorrect', 'off');
     input.setAttribute('aria-label', `${flag.flag} value`);
+    input.addEventListener('keydown', (event) => { if (event.key === 'Enter') input.blur(); });
     row.append(input);
   }
-  const paint = () => input?.setAttribute('aria-invalid', String(flag.value === 'required' && check.checked && !input.value.trim()));
+  const paint = () => {
+    row.classList.toggle('checked', check.checked);
+    if (!input) return;
+    input.hidden = !check.checked;
+    input.setAttribute('aria-invalid', String(flag.value === 'required' && check.checked && !input.value.trim()));
+  };
   input?.addEventListener('input', () => {
-    if (input.value.trim()) check.checked = true;
-    if (check.checked) setFlagPick(provider, flag.flag, input.value.trim(), { fromDialog: true });
+    setFlagPick(provider, flag.flag, input.value.trim(), { fromDialog: true });
     paint();
   });
   check.addEventListener('change', () => {
     setFlagPick(provider, flag.flag, check.checked ? input?.value.trim() ?? '' : null, { fromDialog: true });
     paint();
+    if (check.checked) input?.focus();
   });
   paint();
   return row;
+}
+
+function shellWord(word) {
+  return /^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replaceAll("'", "'\\''")}'`;
+}
+
+function renderFlagsCommand(provider) {
+  const list = flagLists.get(provider.id);
+  const picks = flagPicks(provider);
+  const command = String(provider.command || '').split(/[\\/]/).pop();
+  const words = [command, ...(provider.args ?? [])].map(shellWord);
+  for (const flag of list?.flags ?? []) {
+    if (!(flag.flag in picks)) continue;
+    const value = picks[flag.flag];
+    words.push(...(flag.value === 'required' && !value ? [flag.flag, `<${flag.placeholder.replace(/^<|>$/g, '') || 'value'}>`] : flagArgs(flag, value).map(shellWord)));
+  }
+  $('flags-command').replaceChildren(...words.flatMap((word, i) => [i ? ' ' : '', el('span', null, word)]));
+  $('flags-clear').disabled = !Object.keys(picks).length;
 }
 
 function renderFlagsDialog() {
@@ -1805,24 +1856,22 @@ function renderFlagsDialog() {
   if (!provider) return closeFlags();
   paintProviderIcon($('flags-icon'), provider);
   $('flags-title').textContent = `${provider.tool} launch flags`;
-  $('flags-sub').textContent = `New, Resume and Existing… start ${provider.tool} with the flags picked here. Each one is described by ${provider.tool}'s own help.`;
+  $('flags-sub').textContent = `New, Resume and Existing… use these. Descriptions come from ${provider.tool}'s own help.`;
   const list = flagLists.get(provider.id);
   const picks = flagPicks(provider);
-  const rows = (list?.flags ?? []).map((flag) => {
-    const row = flagRow(provider, flag);
-    row.dataset.flag = flag.flag;
-    return row;
-  });
+  const rows = (list?.flags ?? []).map((flag) => flagRow(provider, flag));
   for (const flag of Object.keys(picks).filter((f) => list?.flags && !list.flags.some((x) => x.flag === f))) {
     const row = el('li', 'flag-row missing',
-      el('div', 'flag-main', el('code', null, flagText(flag, picks[flag])), button('Remove', () => setFlagPick(provider, flag, null))),
-      el('p', 'flag-note', `${list.error ?? `${provider.tool}'s help no longer lists ${flag}.`} Sessions do not start while it is picked.`));
+      el('span', 'flag-text', el('code', 'flag-name', flagText(flag, picks[flag])),
+        el('span', 'flag-about', `${list.error ?? `${provider.tool}'s help no longer lists ${flag}.`} Sessions do not start while it is picked.`)),
+      button('Remove', () => setFlagPick(provider, flag, null)));
     row.dataset.flag = flag;
     rows.push(row);
   }
   $('flags-list').replaceChildren(...rows);
   $('flags-status').textContent = !list || (!list.flags && list.pending) ? `Reading ${provider.tool}'s help…`
     : list.error ?? (list.flags.length ? '' : `${provider.tool}'s help lists none of the flags Agent Guild offers.`);
+  renderFlagsCommand(provider);
 }
 
 function usageFor(provider, account = selectedAccount(provider)) {
@@ -2173,7 +2222,7 @@ function buildProvider(provider) {
       ? `Resume one of ${provider.tool}'s own earlier sessions`
       : `Resume one of ${provider.tool}'s own sessions by its id`;
     existing.addEventListener('click', (event) => showHistory(provider, false, event.currentTarget));
-    node.querySelector('.flags').addEventListener('click', (event) => showFlags(provider, event.currentTarget));
+    node.querySelector('.launch-flags').addEventListener('click', (event) => showFlags(provider, event.currentTarget));
     const memory = node.querySelector('.memory-link');
     memory.hidden = !provider.available || (!provider.memorySource && !provider.historyDetails);
     const historyLink = !provider.memorySource && provider.historyDetails;
@@ -7654,12 +7703,17 @@ $('history-preview-refresh').addEventListener('click', () => historyPreview.refr
 $('history-preview-more').addEventListener('click', () => historyPreview.more());
 $('accounts-close').addEventListener('click', closeAccounts);
 $('flags-close').addEventListener('click', closeFlags);
+$('flags-done').addEventListener('click', closeFlags);
+$('flags-clear').addEventListener('click', () => {
+  const provider = state.providers.find((p) => p.id === flagsView.providerId);
+  if (provider) setFlagPicks(provider, {});
+});
 $('flags').addEventListener('click', (e) => { if (e.target === $('flags')) closeFlags(); });
 $('flags').addEventListener('close', () => {
   if ($('flags').open) return;
   hideTip();
   const opener = flagsOpener?.isConnected ? flagsOpener
-    : $('providers').querySelector(`.provider[data-id="${flagsView.providerId}"] .flags`);
+    : $('providers').querySelector(`.provider[data-id="${flagsView.providerId}"] .launch-flags`);
   flagsView.providerId = null;
   opener?.focus();
   flagsOpener = null;

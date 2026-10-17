@@ -4,6 +4,7 @@
   'use strict';
 
   var version = window.AGENT_GUILD_DEMO_VERSION || '0.0.0-demo';
+  var launchFlags = window.AGENT_GUILD_DEMO_FLAGS || {};
   var now = Date.now();
   // Public card fields from config/providers.default.json. Versions below are sample data.
   var about = {
@@ -39,7 +40,7 @@
       modelPattern: '\\bgrok-(?:build|\\d)[a-z0-9.-]*',
     },
     docker: {
-      command: 'docker', package: null, reporting: 'docker', reportingEnabled: false,
+      command: 'docker', args: ['agent', 'run'], package: null, reporting: 'docker', reportingEnabled: false,
       install: 'sh -c \'d="${DOCKER_CONFIG:-$HOME/.docker}/cli-plugins" && mkdir -p "$d" && curl -fsSL "https://github.com/docker/docker-agent/releases/latest/download/docker-agent-$(uname -s | tr "[:upper:]" "[:lower:]")-$(uname -m | sed "s/x86_64/amd64/;s/aarch64/arm64/")" -o "$d/.docker-agent.download" && chmod +x "$d/.docker-agent.download" && mv -f "$d/.docker-agent.download" "$d/docker-agent"\'',
       docs: 'https://docker.github.io/docker-agent/getting-started/installation/',
       // The card installs the plugin itself, with that command: it is the download in ~/.docker/cli-plugins.
@@ -133,7 +134,8 @@
     var info = about[id] || {};
     return {
       id: id, vendor: vendor, tool: tool, color: color, monogram: monogram, iconUrl: null,
-      command: info.command || id, package: info.package || null, args: [], resumable: id !== 'shell', installable: Boolean(info.package),
+      command: info.command || id, package: info.package || null, args: info.args || [], resumable: id !== 'shell', installable: Boolean(info.package),
+      launchFlags: (launchFlags[id] || []).map(function (f) { return { flag: f.flag, risky: f.risky }; }),
       installCommand: info.plugin ? info.install : null, pluginError: null, pluginPending: false,
       installedVersion: id === 'shell' ? null : '1.0.0', versionStatus: 'ok', versionError: null,
       latestVersion: id === 'shell' ? null : '1.0.0', updateAvailable: false, installChannel: null,
@@ -381,6 +383,8 @@
         { role: 'assistant', text: 'The migration plan is ready. Keep the existing page URLs, move the shared navigation first, and check the generated links before publishing.' },
       ], nextCursor: null, incomplete: false, omitted: false } });
     }
+    var flagsMatch = route.match(/^\/providers\/([^/]+)\/flags$/);
+    if (flagsMatch && method === 'GET') return json({ flags: clone(launchFlags[flagsMatch[1]] || []), error: null });
     var memoryMatch = route.match(/^\/providers\/([^/]+)\/memory(\/file)?$/);
     if (memoryMatch && method === 'GET') return providerMemory(memoryMatch[1], url.searchParams, Boolean(memoryMatch[2]));
     var instructionsMatch = route.match(/^\/providers\/([^/]+)\/instructions(\/file)?$/);

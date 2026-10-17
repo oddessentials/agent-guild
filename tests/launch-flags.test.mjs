@@ -53,14 +53,21 @@ test('every built-in launch flag is found in its tool\'s real help, with its val
   assert.equal(helpEntry(help('docker'), '--worktree').value, 'optional');
   assert.equal(helpEntry(help('claude'), '--no-such-flag'), null);
   assert.ok(defaults.every((p) => p.command !== '@shell' || p.launchFlags.length === 0));
+  assert.deepEqual(defaults.flatMap((p) => p.launchFlags.filter((f) => f.risky).map((f) => `${p.command} ${f.flag}`)), [
+    'claude --dangerously-skip-permissions', 'codex --dangerously-bypass-approvals-and-sandbox', 'agy --dangerously-skip-permissions',
+    'grok --always-approve', 'docker --yolo',
+  ]);
+  assert.deepEqual(['--effort', '--allowedTools', '--strict-mcp-config'].map((flag) => helpEntry(help('claude'), flag).placeholder), ['<level>', '<tools...>', '']);
+  assert.deepEqual([helpEntry(help('codex'), '--sandbox').placeholder, helpEntry(help('docker'), '--safety').placeholder, helpEntry(help('agy'), '--effort').placeholder], ['<SANDBOX_MODE>', 'string', '']);
 });
 
 test('launchFlags entries are flags, optionally marked as taking a value', () => {
   const warnings = [];
-  assert.deepEqual(normalizeLaunchFlags(['--effort <value>', '--yolo', '-c', '--yolo', 'rm -rf', 7, '--x <other>'], 'p', warnings), [
-    { flag: '--effort', value: true }, { flag: '--yolo', value: false }, { flag: '-c', value: false },
+  assert.deepEqual(normalizeLaunchFlags(['--effort <value>', '--yolo !', '-c', '--yolo', 'rm -rf', 7, '--x <other>', '--y <value> !', '--z!'], 'p', warnings), [
+    { flag: '--effort', value: true, risky: false }, { flag: '--yolo', value: false, risky: true }, { flag: '-c', value: false, risky: false },
+    { flag: '--y', value: true, risky: true },
   ]);
-  assert.equal(warnings.length, 3);
+  assert.equal(warnings.length, 4);
   assert.deepEqual(normalizeLaunchFlags(undefined, 'p', warnings), []);
   assert.deepEqual(normalizeLaunchFlags('--yolo', 'p', warnings), []);
   assert.match(warnings.at(-1), /must be a list/);
@@ -91,7 +98,7 @@ function registryFor(mode) {
   const userFile = path.join(dir, 'providers.json');
   fs.writeFileSync(userFile, JSON.stringify({ providers: [{
     id: 'fake', tool: 'Fake', command: process.execPath, args: [fakeTool(dir), 'run'], env: { FAKE_RUNS: runs, FAKE_MODE: mode },
-    launchFlags: ['--effort', '--yolo', '--gone'],
+    launchFlags: ['--effort', '--yolo !', '--gone'],
   }] }));
   const registry = new ProviderRegistry({ userFile, env: { PATH: path.dirname(process.execPath) }, checkUpdates: false });
   return { registry, provider: registry.get('fake'), runs: () => fs.readFileSync(runs, 'utf8').trim().split('\n').filter(Boolean) };
@@ -99,9 +106,12 @@ function registryFor(mode) {
 
 test('the help is read once from the copy that runs, after the provider\'s own args', async () => {
   const { registry, provider, runs } = registryFor('stdout');
-  assert.equal(registry.describe(provider).launchFlags, true);
+  assert.deepEqual(registry.describe(provider).launchFlags, [{ flag: '--effort', risky: false }, { flag: '--yolo', risky: true }, { flag: '--gone', risky: false }]);
   const first = await registry.launchFlags(provider);
-  assert.deepEqual(first, { flags: [{ flag: '--effort', value: 'required', about: 'Effort level' }, { flag: '--yolo', value: 'none', about: 'Approve everything' }], error: null });
+  assert.deepEqual(first, { flags: [
+    { flag: '--effort', value: 'required', placeholder: '<level>', about: 'Effort level', risky: false },
+    { flag: '--yolo', value: 'none', placeholder: '', about: 'Approve everything', risky: true },
+  ], error: null });
   assert.deepEqual(await registry.launchFlags(provider), first);
   assert.deepEqual(runs(), ['run --help']);
 });
@@ -137,7 +147,7 @@ test('a provider without launchFlags, or not installed, reads no help', async ()
   ] }));
   const registry = new ProviderRegistry({ userFile, env: { PATH: path.dirname(process.execPath) }, checkUpdates: false });
   assert.deepEqual(await registry.launchFlags(registry.get('bare')), { flags: [], error: null });
-  assert.equal(registry.describe(registry.get('bare')).launchFlags, false);
+  assert.deepEqual(registry.describe(registry.get('bare')).launchFlags, []);
   assert.deepEqual(await registry.launchFlags(registry.get('missing')), { flags: [], error: 'Missing is not installed.' });
 });
 
