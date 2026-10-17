@@ -1723,9 +1723,17 @@ function riskyFlag(provider, flag) {
   return Boolean(provider.launchFlags?.find?.((f) => f.flag === flag)?.risky);
 }
 
-function flagArgs(flag, value) {
+function flagProblem(provider, flag, value) {
+  if (flag.value === 'required' && !value) return `${flag.flag} needs a value.`;
+  if (!value || flag.value === 'none' || provider.launchFlagsEquals) return null;
+  if (flag.value === 'optional') return `Agent Guild cannot pass a value to ${flag.flag}: it has not confirmed that ${provider.tool} reads ${flag.flag}=value.`;
+  if (value.startsWith('-')) return `Agent Guild cannot pass a value starting with "-" to ${flag.flag}: ${provider.tool} could read it as another flag.`;
+  return null;
+}
+
+function flagArgs(provider, flag, value) {
   if (flag.value === 'none') return [flag.flag];
-  if (flag.value === 'required') return [flag.flag, value];
+  if (flag.value === 'required' && !value.startsWith('-')) return [flag.flag, value];
   return value ? [`${flag.flag}=${value}`] : [flag.flag];
 }
 
@@ -1739,9 +1747,9 @@ async function launchArgs(provider) {
     const reason = error ?? `${provider.tool}'s help no longer lists ${missing.join(', ')}.`;
     throw new Error(`${reason} The session was not started; remove ${missing.length > 1 ? 'those flags' : 'that flag'} under Flags to start without ${missing.length > 1 ? 'them' : 'it'}.`);
   }
-  const empty = flags.filter((f) => f.value === 'required' && f.flag in picks && !picks[f.flag]).map((f) => f.flag);
-  if (empty.length) throw new Error(`${empty.join(', ')} needs a value; add it under Flags or remove the flag.`);
-  return flags.filter((f) => f.flag in picks).flatMap((f) => flagArgs(f, picks[f.flag]));
+  const problems = flags.filter((f) => f.flag in picks).map((f) => flagProblem(provider, f, picks[f.flag])).filter(Boolean);
+  if (problems.length) throw new Error(`${problems.join(' ')} Change it under Flags, or remove the flag.`);
+  return flags.filter((f) => f.flag in picks).flatMap((f) => flagArgs(provider, f, picks[f.flag]));
 }
 
 function renderLaunchFlags(card, provider) {
@@ -1760,12 +1768,13 @@ function renderLaunchFlags(card, provider) {
   line.querySelector('.launch-flags-label').textContent = picks.length ? `Flags · ${picks.length}` : 'Add launch flags';
   line.querySelector('.launch-flags-summary').textContent = summary;
   line.classList.toggle('picked', picks.length > 0);
-  line.classList.toggle('risky', picks.some(([flag]) => riskyFlag(provider, flag)));
+  const risky = picks.some(([flag]) => riskyFlag(provider, flag));
+  line.classList.toggle('risky', risky);
   line.classList.toggle('missing', missing);
   line.title = missing
     ? `${list.error ?? `${provider.tool}'s help no longer lists a picked flag.`} Sessions do not start until it is removed.`
     : summary ? `New, Resume and Existing… start ${provider.tool} with ${summary}` : `Pick flags for new and resumed ${provider.tool} sessions`;
-  line.setAttribute('aria-label', `${provider.tool} launch flags: ${missing ? 'a picked flag is unavailable, ' : ''}${summary || 'none'}`);
+  line.setAttribute('aria-label', `${provider.tool} launch flags: ${missing ? 'a picked flag is unavailable, ' : ''}${summary || 'none'}${risky ? ', one skips approvals' : ''}`);
 }
 
 function showFlags(provider, opener = null) {
@@ -1788,10 +1797,20 @@ function flagRow(provider, flag) {
   const id = `flag-${flag.flag.replace(/^-+/, '')}`;
   const check = el('input');
   Object.assign(check, { type: 'checkbox', id, checked: flag.flag in picks });
-  const about = el('span', 'flag-about', flag.about.split('\n')[0]);
+  const name = el('code', 'flag-name', flag.flag);
+  name.id = `${id}-name`;
+  const risk = flag.risky ? el('span', 'visually-hidden', 'skips approvals') : null;
+  if (risk) risk.id = `${id}-risk`;
+  check.setAttribute('aria-labelledby', [name.id, risk?.id].filter(Boolean).join(' '));
+  const about = el('span', 'flag-about', flag.about);
   about.id = `${id}-about`;
   check.setAttribute('aria-describedby', about.id);
-  const toggle = el('label', 'flag-toggle', check, el('span', 'flag-text', el('code', 'flag-name', flag.flag), about));
+  const example = flag.example ? el('span', 'flag-example', 'Example: ', el('code', null, flag.example)) : null;
+  if (example) {
+    example.id = `${id}-example`;
+    check.setAttribute('aria-describedby', `${about.id} ${example.id}`);
+  }
+  const toggle = el('label', 'flag-toggle', check, el('span', 'flag-text', el('span', null, name, risk), about, example));
   toggle.htmlFor = id;
   const info = el('button', 'info');
   info.type = 'button';
@@ -1803,7 +1822,7 @@ function flagRow(provider, flag) {
   let input = null;
   if (flag.value !== 'none') {
     input = el('input', 'flag-value');
-    const hint = flag.placeholder || 'Value';
+    const hint = flag.example || flag.placeholder || 'Value';
     Object.assign(input, {
       type: 'text', value: picks[flag.flag] ?? '', autocomplete: 'off', spellcheck: false, enterKeyHint: 'done',
       placeholder: flag.value === 'required' ? hint : `${hint} (optional)`,
@@ -1814,11 +1833,21 @@ function flagRow(provider, flag) {
     input.addEventListener('keydown', (event) => { if (event.key === 'Enter') input.blur(); });
     row.append(input);
   }
+  const problem = el('p', 'flag-problem');
+  problem.id = `${id}-problem`;
+  if (input) {
+    input.setAttribute('aria-describedby', problem.id);
+    row.append(problem);
+  }
   const paint = () => {
     row.classList.toggle('checked', check.checked);
     if (!input) return;
     input.hidden = !check.checked;
-    input.setAttribute('aria-invalid', String(flag.value === 'required' && check.checked && !input.value.trim()));
+    const value = input.value.trim();
+    const shown = check.checked && value ? flagProblem(provider, flag, value) : null;
+    input.setAttribute('aria-invalid', String(check.checked && Boolean(flagProblem(provider, flag, value))));
+    problem.textContent = shown ?? '';
+    problem.hidden = !shown;
   };
   input?.addEventListener('input', () => {
     setFlagPick(provider, flag.flag, input.value.trim(), { fromDialog: true });
@@ -1845,7 +1874,7 @@ function renderFlagsCommand(provider) {
   for (const flag of list?.flags ?? []) {
     if (!(flag.flag in picks)) continue;
     const value = picks[flag.flag];
-    words.push(...(flag.value === 'required' && !value ? [flag.flag, `<${flag.placeholder.replace(/^<|>$/g, '') || 'value'}>`] : flagArgs(flag, value).map(shellWord)));
+    words.push(...(flagProblem(provider, flag, value) ? [flag.flag, `<${flag.placeholder.replace(/^<|>$/g, '') || 'value'}>`] : flagArgs(provider, flag, value).map(shellWord)));
   }
   $('flags-command').replaceChildren(...words.flatMap((word, i) => [i ? ' ' : '', el('span', null, word)]));
   $('flags-clear').disabled = !Object.keys(picks).length;

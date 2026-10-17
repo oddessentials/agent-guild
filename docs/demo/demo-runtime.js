@@ -135,7 +135,8 @@
     return {
       id: id, vendor: vendor, tool: tool, color: color, monogram: monogram, iconUrl: null,
       command: info.command || id, package: info.package || null, args: info.args || [], resumable: id !== 'shell', installable: Boolean(info.package),
-      launchFlags: (launchFlags[id] || []).map(function (f) { return { flag: f.flag, risky: f.risky }; }),
+      launchFlags: (launchFlags[id] ? launchFlags[id].flags : []).map(function (f) { return { flag: f.flag, risky: f.risky }; }),
+      launchFlagsEquals: Boolean(launchFlags[id] && launchFlags[id].equals),
       installCommand: info.plugin ? info.install : null, pluginError: null, pluginPending: false,
       installedVersion: id === 'shell' ? null : '1.0.0', versionStatus: 'ok', versionError: null,
       latestVersion: id === 'shell' ? null : '1.0.0', updateAvailable: false, installChannel: null,
@@ -384,7 +385,7 @@
       ], nextCursor: null, incomplete: false, omitted: false } });
     }
     var flagsMatch = route.match(/^\/providers\/([^/]+)\/flags$/);
-    if (flagsMatch && method === 'GET') return json({ flags: clone(launchFlags[flagsMatch[1]] || []), error: null });
+    if (flagsMatch && method === 'GET') return json({ flags: clone(launchFlags[flagsMatch[1]] ? launchFlags[flagsMatch[1]].flags : []), error: null });
     var memoryMatch = route.match(/^\/providers\/([^/]+)\/memory(\/file)?$/);
     if (memoryMatch && method === 'GET') return providerMemory(memoryMatch[1], url.searchParams, Boolean(memoryMatch[2]));
     var instructionsMatch = route.match(/^\/providers\/([^/]+)\/instructions(\/file)?$/);

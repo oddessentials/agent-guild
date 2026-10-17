@@ -7,7 +7,7 @@ const app = readFileSync(new URL('../web/app.js', import.meta.url), 'utf8');
 const source = [
   'const flagLists = new Map();',
   'const flagsView = { providerId: null };',
-  ...['flagPicks', 'refreshFlagCards', 'setFlagPicks', 'setFlagPick', 'loadFlags', 'flagText', 'riskyFlag', 'flagArgs', 'launchArgs', 'renderLaunchFlags', 'sessionActionKey', 'startSession', 'resumeCard', 'resumeFromHistory'].map((name) => {
+  ...['flagPicks', 'refreshFlagCards', 'setFlagPicks', 'setFlagPick', 'loadFlags', 'flagText', 'riskyFlag', 'flagProblem', 'flagArgs', 'launchArgs', 'renderLaunchFlags', 'sessionActionKey', 'startSession', 'resumeCard', 'resumeFromHistory'].map((name) => {
     const found = app.match(new RegExp(`(?:async )?function ${name}\\([^]*?\\n\\}`))?.[0];
     assert.ok(found, `${name} is present in app.js`);
     return found;
@@ -15,7 +15,7 @@ const source = [
 ].join('\n');
 
 const provider = {
-  id: 'anthropic', tool: 'Claude Code', available: true, accounts: [{ id: 'default' }],
+  id: 'anthropic', tool: 'Claude Code', available: true, accounts: [{ id: 'default' }], launchFlagsEquals: true,
   launchFlags: [{ flag: '--model', risky: false }, { flag: '--dangerously-skip-permissions', risky: true }, { flag: '--worktree', risky: false }, { flag: '--effort', risky: false }],
 };
 const OFFERED = [
@@ -131,7 +131,7 @@ test('a flag that needs a value does not start without one', async () => {
   const p = page({ saved: { anthropic: { '--effort': '' } } });
   await p.context.startSession(provider, null);
   assert.deepEqual(p.starts(), []);
-  assert.match(p.toasts[0], /--effort needs a value/);
+  assert.match(p.toasts[0], /^--effort needs a value\. Change it under Flags, or remove the flag\.$/);
 });
 
 test('the card line summarises the picks, warns about a risky one, and hides without flags', () => {
@@ -143,10 +143,31 @@ test('the card line summarises the picks, warns about a risky one, and hides wit
   assert.ok(!p.line.classList.contains('risky'));
   p.context.setFlagPick(provider, '--dangerously-skip-permissions', '');
   assert.ok(p.line.classList.contains('risky'));
-  assert.equal(p.line.attributes['aria-label'], 'Claude Code launch flags: --model opus · --dangerously-skip-permissions · --effort max', 'in the provider\'s order');
+  assert.equal(p.line.attributes['aria-label'], 'Claude Code launch flags: --model opus · --dangerously-skip-permissions · --effort max, one skips approvals', 'in the provider\'s order');
   p.context.setFlagPicks(provider, {});
   assert.deepEqual(JSON.parse(p.storage.get('agentGuild.flags')), {});
   assert.deepEqual([p.label.textContent, p.summary.textContent, p.line.classList.contains('picked')], ['Add launch flags', '', false]);
   p.context.renderLaunchFlags(p.card, { ...provider, launchFlags: [] });
   assert.equal(p.line.hidden, true);
+});
+
+test('a value starting with "-" is joined to its flag only for a tool known to read --flag=value', async () => {
+  const p = page({ saved: { anthropic: { '--effort': '-x', '--model': 'opus' } } });
+  await p.context.startSession(provider, null);
+  assert.deepEqual(p.starts()[0].body.args, ['--model', 'opus', '--effort=-x']);
+
+  const unconfirmed = { ...provider, launchFlagsEquals: false };
+  const q = page({ saved: { anthropic: { '--effort': '-x' } } });
+  await q.context.startSession(unconfirmed, null);
+  assert.deepEqual(q.starts(), []);
+  assert.equal(q.toasts[0], 'Agent Guild cannot pass a value starting with "-" to --effort: Claude Code could read it as another flag. Change it under Flags, or remove the flag.');
+
+  const r = page({ saved: { anthropic: { '--worktree': 'feat' } } });
+  await r.context.startSession(unconfirmed, null);
+  assert.deepEqual(r.starts(), []);
+  assert.match(r.toasts[0], /^Agent Guild cannot pass a value to --worktree: it has not confirmed that Claude Code reads --worktree=value\./);
+
+  const bare = page({ saved: { anthropic: { '--worktree': '', '--effort': 'max' } } });
+  await bare.context.startSession(unconfirmed, null);
+  assert.deepEqual(bare.starts()[0].body.args, ['--worktree', '--effort', 'max']);
 });

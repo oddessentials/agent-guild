@@ -5,7 +5,7 @@ export const HELP_TIMEOUT_MS = 10000;
 export const HELP_MAX_BYTES = 256 * 1024;
 const ENTRY_RE = /^(--?[A-Za-z0-9][\w-]*)((?: <value>| !)*)$/;
 
-export function normalizeLaunchFlags(raw, id, warnings) {
+export function normalizeLaunchFlags(raw, id, warnings, examples = null) {
   if (raw === undefined || raw === null) return [];
   if (!Array.isArray(raw)) {
     warnings.push(`provider "${id}": ignored launchFlags; it must be a list`);
@@ -19,6 +19,15 @@ export function normalizeLaunchFlags(raw, id, warnings) {
       continue;
     }
     if (!flags.some((f) => f.flag === match[1])) flags.push({ flag: match[1], value: match[2].includes('<value>'), risky: match[2].includes('!') });
+  }
+  if (examples !== null && (typeof examples !== 'object' || Array.isArray(examples))) {
+    warnings.push(`provider "${id}": ignored launchFlagExamples; it must map flags to examples`);
+    return flags;
+  }
+  for (const [flag, example] of Object.entries(examples ?? {})) {
+    const entry = flags.find((f) => f.flag === flag);
+    if (entry && typeof example === 'string' && example.trim()) entry.example = example.trim();
+    else warnings.push(`provider "${id}": ignored the launchFlagExamples entry for ${JSON.stringify(flag)}`);
   }
   return flags;
 }
@@ -54,9 +63,9 @@ export function helpEntry(help, flag) {
 }
 
 export function offeredFlags(help, entries) {
-  return entries.flatMap(({ flag, value, risky }) => {
+  return entries.flatMap(({ flag, value, risky, example = null }) => {
     const entry = helpEntry(help, flag);
-    return entry ? [{ flag, value: value ? 'required' : entry.value, placeholder: entry.placeholder, about: entry.about, risky }] : [];
+    return entry ? [{ flag, value: value ? 'required' : entry.value, placeholder: entry.placeholder, about: entry.about, risky, example }] : [];
   });
 }
 
@@ -94,9 +103,9 @@ export class LaunchFlags {
     const spec = buildSpawnSpec(resolved, [...provider.args, '--help'], env, this.registry.platform);
     let out;
     try {
-      out = await runSpec(spec, { env, timeoutMs: this.timeoutMs, maxBuffer: this.maxBytes });
+      out = await runSpec(spec, { env, timeoutMs: this.timeoutMs, killTree: true, maxBuffer: this.maxBytes });
     } catch (err) {
-      if (err.killed) throw new Error(`it took longer than ${this.timeoutMs / 1000} seconds`);
+      if (err.killed) throw new Error(`it took longer than ${this.timeoutMs / 1000} second${this.timeoutMs === 1000 ? '' : 's'}`);
       if (err.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') throw new Error(`it printed more than ${Math.round(this.maxBytes / 1024)} KB`);
       if (!`${err.stdout ?? ''}${err.stderr ?? ''}`.trim()) throw err;
       out = err;

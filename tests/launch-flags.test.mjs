@@ -57,6 +57,9 @@ test('every built-in launch flag is found in its tool\'s real help, with its val
     'claude --dangerously-skip-permissions', 'codex --dangerously-bypass-approvals-and-sandbox', 'agy --dangerously-skip-permissions',
     'grok --always-approve', 'docker --yolo',
   ]);
+  assert.ok(defaults.filter((p) => p.launchFlags.length).every((p) => p.launchFlagsEquals), 'every built-in tool with flags reads --flag=value');
+  assert.equal(defaults.find((p) => p.command === '@shell').launchFlagsEquals, false);
+  assert.equal(offeredFlags(help('codex'), byCommand('codex').launchFlags).find((f) => f.flag === '--config').example, 'model_reasoning_effort=high');
   assert.deepEqual(['--effort', '--allowedTools', '--strict-mcp-config'].map((flag) => helpEntry(help('claude'), flag).placeholder), ['<level>', '<tools...>', '']);
   assert.deepEqual([helpEntry(help('codex'), '--sandbox').placeholder, helpEntry(help('docker'), '--safety').placeholder, helpEntry(help('agy'), '--effort').placeholder], ['<SANDBOX_MODE>', 'string', '']);
 });
@@ -71,16 +74,28 @@ test('launchFlags entries are flags, optionally marked as taking a value', () =>
   assert.deepEqual(normalizeLaunchFlags(undefined, 'p', warnings), []);
   assert.deepEqual(normalizeLaunchFlags('--yolo', 'p', warnings), []);
   assert.match(warnings.at(-1), /must be a list/);
+  const noted = [];
+  assert.deepEqual(normalizeLaunchFlags(['--config', '--yolo'], 'p', noted, { '--config': ' key=1 ', '--missing': 'x', '--yolo': 3 }), [
+    { flag: '--config', value: false, risky: false, example: 'key=1' }, { flag: '--yolo', value: false, risky: false },
+  ]);
+  assert.equal(noted.length, 2);
+  assert.deepEqual(normalizeLaunchFlags(['--config'], 'p', noted, ['--config']), [{ flag: '--config', value: false, risky: false }]);
+  assert.match(noted.at(-1), /launchFlagExamples; it must map flags/);
   assert.deepEqual(offeredFlags(help('agy'), [{ flag: '--effort', value: false }]).map((f) => f.value), ['none']);
 });
 
 function fakeTool(dir) {
   const script = path.join(dir, 'tool.mjs');
   fs.writeFileSync(script, `import fs from 'node:fs';
+import { spawn } from 'node:child_process';
 fs.appendFileSync(process.env.FAKE_RUNS, process.argv.slice(2).join(' ') + '\\n');
 const mode = process.env.FAKE_MODE;
-if (mode === 'hang') setInterval(() => {}, 1000);
-else if (mode === 'flood') process.stdout.write('x'.repeat(64 * 1024));
+if (mode === 'hang' || mode === 'flood') {
+  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+  fs.writeFileSync(process.env.FAKE_CHILD, String(child.pid));
+  setInterval(() => {}, 1000);
+  if (mode === 'flood') process.stdout.write('x'.repeat(64 * 1024));
+}
 else if (mode === 'silent') process.exit(3);
 else {
   const text = 'Usage:\\n  --effort <level>   Effort level\\n  --yolo             Approve everything\\n';
@@ -94,14 +109,15 @@ else {
 function registryFor(mode) {
   const dir = tempDir();
   const runs = path.join(dir, 'runs.txt');
+  const child = path.join(dir, 'child.pid');
   fs.writeFileSync(runs, '');
   const userFile = path.join(dir, 'providers.json');
   fs.writeFileSync(userFile, JSON.stringify({ providers: [{
-    id: 'fake', tool: 'Fake', command: process.execPath, args: [fakeTool(dir), 'run'], env: { FAKE_RUNS: runs, FAKE_MODE: mode },
-    launchFlags: ['--effort', '--yolo !', '--gone'],
+    id: 'fake', tool: 'Fake', command: process.execPath, args: [fakeTool(dir), 'run'], env: { FAKE_RUNS: runs, FAKE_MODE: mode, FAKE_CHILD: child },
+    launchFlags: ['--effort', '--yolo !', '--gone'], launchFlagExamples: { '--effort': 'max' },
   }] }));
   const registry = new ProviderRegistry({ userFile, env: { PATH: path.dirname(process.execPath) }, checkUpdates: false });
-  return { registry, provider: registry.get('fake'), runs: () => fs.readFileSync(runs, 'utf8').trim().split('\n').filter(Boolean) };
+  return { registry, provider: registry.get('fake'), runs: () => fs.readFileSync(runs, 'utf8').trim().split('\n').filter(Boolean), child: () => Number(fs.readFileSync(child, 'utf8')) };
 }
 
 test('the help is read once from the copy that runs, after the provider\'s own args', async () => {
@@ -109,8 +125,8 @@ test('the help is read once from the copy that runs, after the provider\'s own a
   assert.deepEqual(registry.describe(provider).launchFlags, [{ flag: '--effort', risky: false }, { flag: '--yolo', risky: true }, { flag: '--gone', risky: false }]);
   const first = await registry.launchFlags(provider);
   assert.deepEqual(first, { flags: [
-    { flag: '--effort', value: 'required', placeholder: '<level>', about: 'Effort level', risky: false },
-    { flag: '--yolo', value: 'none', placeholder: '', about: 'Approve everything', risky: true },
+    { flag: '--effort', value: 'required', placeholder: '<level>', about: 'Effort level', risky: false, example: 'max' },
+    { flag: '--yolo', value: 'none', placeholder: '', about: 'Approve everything', risky: true, example: null },
   ], error: null });
   assert.deepEqual(await registry.launchFlags(provider), first);
   assert.deepEqual(runs(), ['run --help']);
@@ -130,13 +146,25 @@ test('a help read that fails, hangs or floods says why and is tried again next t
   assert.equal(silent.runs().length, 2);
 
   const hang = registryFor('hang');
-  const slow = await new LaunchFlags(hang.registry, { timeoutMs: 300 }).list(hang.provider);
-  assert.equal(slow.error, 'Could not read Fake\'s help: it took longer than 0.3 seconds');
+  const slow = await new LaunchFlags(hang.registry, { timeoutMs: 1000 }).list(hang.provider);
+  assert.equal(slow.error, 'Could not read Fake\'s help: it took longer than 1 second');
+  await gone(hang.child(), 'a help read that timed out');
 
   const flood = registryFor('flood');
-  const big = await new LaunchFlags(flood.registry, { maxBytes: 1024 }).list(flood.provider);
+  const big = await new LaunchFlags(flood.registry, { maxBytes: 1024, timeoutMs: 20000 }).list(flood.provider);
   assert.equal(big.error, 'Could not read Fake\'s help: it printed more than 1 KB');
+  await gone(flood.child(), 'a help read that printed too much');
 });
+
+async function gone(pid, label) {
+  assert.ok(pid > 0, `${label} started a child`);
+  const alive = () => {
+    try { process.kill(pid, 0); return true; } catch (err) { return err.code === 'EPERM'; }
+  };
+  const deadline = Date.now() + 10000;
+  while (alive() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(alive(), false, `${label} leaves no process behind`);
+}
 
 test('a provider without launchFlags, or not installed, reads no help', async () => {
   const dir = tempDir();

@@ -170,7 +170,7 @@ test('only folders chosen in the browser or started in successfully become recen
     $: () => field, CWD_KEY: 'agentGuild.cwd', selectedAccount: () => ({ id: 'default' }), pickedShell: () => null,
     pendingSessionActions: new Set(), refreshPendingActions() {},
     api: async () => { if (answer instanceof Error) throw answer; return { session: answer }; },
-    upsertSession() {}, closeHistory() {}, openPanel() {}, toast() {}, AuthError: class extends Error {},
+    upsertSession() {}, closeHistory() {}, openPanel() {}, toast() {}, AuthError: class extends Error {}, launchArgs: async () => [],
   });
   const started = starting({ id: 'a', cwd: 'C:/Work/Guild' });
   await started.context.startSession({ id: 'fake' }, null);

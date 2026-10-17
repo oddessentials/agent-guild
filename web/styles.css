@@ -178,7 +178,7 @@ main { max-width: calc(1200px + var(--dock-space, 0px)); margin: 0 auto; padding
 .launch-flags:not(.picked) .launch-flags-summary { display: none; }
 .launch-flags.picked { border-style: solid; background: var(--surface-2); color: var(--text); }
 .launch-flags.risky { border-color: var(--warn); }
-.launch-flags.risky .launch-flags-label::before { content: "⚠ "; color: var(--warn); }
+.launch-flags.risky .launch-flags-label::before { content: "⚠ " / ""; color: var(--warn); }
 .launch-flags.missing { border-color: var(--danger); }
 .launch-flags.missing .launch-flags-label { color: var(--danger); }
 .provider .usage { display: grid; gap: 4px; }
@@ -1320,8 +1320,10 @@ body:has(#terminal-panel:not([hidden]) .terminal-controls:not([hidden])) .toast 
 .flag-toggle input { flex: none; width: 16px; height: 16px; margin: 2px 0 0; accent-color: var(--accent); }
 .flag-text { display: grid; gap: 2px; min-width: 0; }
 .flag-name { font-size: 0.85rem; font-weight: 500; overflow-wrap: anywhere; }
-.flag-about { color: var(--muted); font-size: 0.78rem; line-height: 1.35; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
-.flag-row.risky .flag-name::before { content: "⚠ "; color: var(--warn); }
+.flag-about { color: var(--muted); font-size: 0.78rem; line-height: 1.35; white-space: pre-line; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.flag-example { color: var(--muted); font-size: 0.78rem; }
+.flag-example code { color: var(--text); }
+.flag-row.risky .flag-name::before { content: "⚠ " / ""; color: var(--warn); }
 .flag-row.risky.checked { background: color-mix(in srgb, var(--warn) 10%, transparent); margin: 0 -14px; padding: 8px 14px; }
 .flag-row.missing .flag-name { color: var(--danger); }
 .flag-row.missing .flag-about { color: var(--danger); -webkit-line-clamp: unset; }
@@ -1333,6 +1335,8 @@ body:has(#terminal-panel:not([hidden]) .terminal-controls:not([hidden])) .toast 
 .flag-value[hidden] { display: none; }
 .flag-value:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 .flag-value[aria-invalid="true"] { border-color: var(--danger); }
+.flag-problem { grid-column: 1 / -1; margin: 0 0 0 26px; color: var(--danger); font-size: 0.78rem; }
+.flag-problem[hidden] { display: none; }
 .flags-footer { display: grid; gap: 10px; padding: 10px 14px; border-top: 1px solid var(--border); }
 .flags-command {
   display: block; max-height: 4.5em; overflow: auto; padding: 6px 10px; border-radius: var(--radius); background: var(--surface-2);
@@ -1345,6 +1349,7 @@ body:has(#terminal-panel:not([hidden]) .terminal-controls:not([hidden])) .toast 
   .flag-toggle input { width: 20px; height: 20px; margin: 0; }
   .flag-value, .flag-row .btn, .flags-actions .btn { min-height: 44px; }
   .flag-value { margin-left: 30px; font-size: 16px; }
+  .flag-problem { margin-left: 30px; }
   .launch-flags { min-height: 44px; }
 }
 @media (max-width: 640px) {
