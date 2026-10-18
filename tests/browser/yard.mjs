@@ -678,6 +678,132 @@ test('a stalled world times out, aborts its request and can be retried',options,
   assert.deepEqual(b.errors,[]);
 });
 
+// Deterministic: a fixed clock, viewport and camera, layouts run by hand,
+// and animation driven by tick() at fixed timestamps.
+test('a crowd hides the tags it cannot fit, counts them on its hall, and lists them from there',options,async t=>{
+  const {f,b}=await setup(t);
+  const T0=Date.parse('2026-10-13T12:00:00.000Z'),iso=ms=>new Date(T0-ms).toISOString();
+  const base=[...f.data.values()][0];
+  const sessions=Array.from({length:16},(_,i)=>({...base,id:'crowd'+i,name:'Crowd '+i,activity:'active',lastOutputAt:iso(0),createdAt:iso(3600000),agents:[],shells:[]}));
+  await b.evaluate(`(async()=>{
+    const {YardRenderer}=await import('/yard/renderer.js');
+    const host=document.createElement('div'),labels=document.createElement('div');
+    host.style.cssText='position:fixed;width:900px;height:700px;top:0;left:0';labels.className='yard-labels';host.append(labels);document.body.append(host);
+    window.__opened=[];
+    window.__renderer=new YardRenderer(host,labels,{select(s){__renderer.select(s);},open(id){__opened.push(id);},clock:()=>${T0}});
+    window.__sessions=${q(sessions)};window.__providers=${q(f.providers)};
+    await __renderer.setWorld('guild','dark');__renderer.update(__providers,__sessions);
+    window.__hall=__renderer.halls.get(${q(base.provider.id)});
+    window.__shown=el=>el.style.visibility!=='hidden';
+    window.__hidden=()=>[...__renderer.units.entries()].filter(([,u])=>!__shown(u.label)&&!u.offscreen).map(([id])=>id);
+    window.__layout=()=>{
+      __renderer.positionLabels();
+      const r=__renderer,box=el=>el.getBoundingClientRect(),hits=(a,c)=>a.left<c.right&&c.left<a.right&&a.top<c.bottom&&c.top<a.bottom;
+      const tags=[...r.halls.values()].flatMap(i=>[{el:i.label,keep:true},{el:i.chip,keep:true}])
+        .concat([...r.units.entries()].map(([id,u])=>({el:u.label,keep:r.selected?.id===id,unit:u}))).filter(x=>__shown(x.el));
+      const overlaps=[],far=[];
+      for(const [i,a]of tags.entries())for(const c of tags.slice(i+1))if(!(a.keep&&c.keep)&&hits(box(a.el),box(c.el)))overlaps.push([a.el.textContent,c.el.textContent]);
+      for(const x of tags)if(x.unit&&!x.keep){
+        const v=x.unit.root.position.clone();v.y+=2.4;v.project(r.camera);
+        const rise=(-v.y*.5+.5)*700-box(x.el).bottom;
+        if(rise>2*(box(x.el).height+6)+.5)far.push([x.el.textContent,rise]);
+      }
+      const chip=box(__hall.chip);
+      return {overlaps,far,hidden:__hidden(),shown:[...r.units.values()].filter(u=>__shown(u.label)).length,
+        chip:__shown(__hall.chip)?__hall.chip.textContent:'',chipInside:chip.left>=0&&chip.right<=900&&chip.top>=0&&chip.bottom<=700,
+        hall:__shown(__hall.label)};
+    };
+  })()`);
+  await b.wait('[...__renderer.units.values()].every(u=>u.loaded)');
+  const crowded=async what=>{
+    const l=await b.evaluate('__layout()');
+    assert.ok(l.hidden.length>0&&l.shown>0,`${what}: some tags show and some hide: ${q(l)}`);
+    assert.deepEqual(l.overlaps,[],`${what}: no tag overlaps a character's tag or the chip`);
+    assert.deepEqual(l.far,[],`${what}: every shown tag stays near its character`);
+    assert.ok(l.hall&&l.chipInside,`${what}: the hall's tag and chip show on screen`);
+    assert.equal(l.chip,'+'+l.hidden.length,`${what}: the chip counts the hidden tags`);
+    return l;
+  };
+  const overview=await crowded('overview');
+  await b.evaluate('__renderer.camera.zoom=__renderer.controls.minZoom;__renderer.camera.updateProjectionMatrix()');
+  await crowded('furthest zoom-out');
+  await b.evaluate('__renderer.overview()');
+  // The selected tag shows even where it was crowded out.
+  const chosen=overview.hidden[0];
+  await b.evaluate(`__renderer.select({kind:'session',id:${q(chosen)}})`);
+  const lit=await crowded('selected');
+  assert.ok(!lit.hidden.includes(chosen),'the selected tag shows');
+  await b.evaluate('__renderer.select(null);__layout()');
+
+  // A crowd-hidden character animates every frame, as a shown one does; only
+  // an off-screen one waits for 0.2 s.
+  const cadence=await b.evaluate(`(()=>{
+    const r=__renderer,hid=r.units.get(__hidden()[0]),shown=[...r.units.values()].find(u=>__shown(u.label));
+    r.active=true;r.schedule=()=>{};r.lastTime=0;r.tick(1000);
+    const time=u=>u.mixers[0].time,before=[time(hid),time(shown)];
+    r.tick(1050);r.tick(1100);
+    const crowd=[time(hid)-before[0],time(shown)-before[1]];
+    r.controls.target.x+=500;r.camera.position.x+=500;r.camera.updateMatrixWorld();r.dirty=true;r.tick(1150);
+    const off=time(hid),offscreen=hid.offscreen;
+    r.tick(1200);r.tick(1250);r.tick(1300);const waited=time(hid)-off;r.tick(1350);const caught=time(hid)-off;
+    r.active=false;delete r.schedule;r.overview();
+    return {crowd,offscreen,waited,caught};
+  })()`);
+  assert.ok(Math.abs(cadence.crowd[0]-.1)<1e-9&&Math.abs(cadence.crowd[1]-.1)<1e-9,`crowd-hidden and shown characters both advance each frame: ${q(cadence)}`);
+  assert.ok(cadence.offscreen&&cadence.waited===0&&Math.abs(cadence.caught-.2)<1e-9,`an off-screen character catches up every 0.2 s: ${q(cadence)}`);
+  const hidden=(await b.evaluate('__layout()')).hidden;
+
+  // The chip opens a list of the hidden sessions, by keyboard and by click.
+  const state=()=>b.evaluate(`(()=>{const list=__renderer.list,a=document.activeElement,box=list.getBoundingClientRect();return {
+    open:!list.hidden,expanded:__hall.chip.getAttribute('aria-expanded'),controls:__hall.chip.getAttribute('aria-controls')===list.id,
+    rows:[...list.children].map(row=>row.children[0].children[0].textContent),
+    focus:a===__hall.chip?'chip':a===document.body?'body':list.contains(a)?'row'+[...list.children].findIndex(r=>r.contains(a))+':'+a.className:a.className,
+    inside:list.hidden||(box.left>=0&&box.right<=900&&box.top>=0&&box.bottom<=700),bounded:list.clientHeight<=240};})()`);
+  const key=async(k,code,vk)=>{
+    await b.send('Input.dispatchKeyEvent',{type:'keyDown',key:k,code,windowsVirtualKeyCode:vk,...(k==='Enter'?{text:'\r'}:{})});
+    await b.send('Input.dispatchKeyEvent',{type:'keyUp',key:k,code,windowsVirtualKeyCode:vk});
+  };
+  const names=hidden.map(id=>sessions.find(s=>s.id===id).name);
+  await b.evaluate('__hall.chip.focus()');
+  await key('Enter','Enter',13);
+  let s=await state();
+  assert.deepEqual(s,{open:true,expanded:'true',controls:true,rows:names,focus:'row0:yard-crowd-pick',inside:true,bounded:true},'Enter on the chip opens the list and moves focus into it');
+  await key('Escape','Escape',27);
+  s=await state();
+  assert.deepEqual([s.open,s.expanded,s.focus],[false,'false','chip'],'Escape closes it and returns focus to the chip');
+  await b.evaluate('__hall.chip.click()');
+  await key('Tab','Tab',9);
+  s=await state();
+  assert.equal(s.focus,'row0:yard-crowd-open','each row has its own terminal button');
+  // A rename updates its row in place; when the focused session leaves, focus
+  // moves to the row that takes its place.
+  await b.evaluate(`__sessions=__sessions.map(x=>x.id===${q(hidden[1])}?{...x,name:'Renamed'}:x);__renderer.update(__providers,__sessions);__renderer.positionLabels()`);
+  s=await state();
+  assert.equal(s.rows[1],'Renamed','a renamed session updates its row');
+  assert.equal(s.focus,'row0:yard-crowd-open','and focus stays put');
+  await b.evaluate(`__sessions=__sessions.filter(x=>x.id!==${q(hidden[0])});__renderer.update(__providers,__sessions);__renderer.positionLabels()`);
+  s=await state();
+  assert.equal(s.rows[0],'Renamed','the session that left drops from the list');
+  assert.equal(s.focus,'row0:yard-crowd-open','focus moves to the row now in its place');
+  await key('Enter','Enter',13);
+  s=await state();
+  assert.deepEqual([s.open,await b.evaluate('__opened')],[false,[hidden[1]]],'Open terminal opens that session and closes the list');
+  // Picking a session selects it, shows its tag by its character and focuses it.
+  await b.evaluate('__hall.chip.click()');
+  await key('Enter','Enter',13);
+  s=await state();
+  assert.equal(s.open,false,'picking a session closes the list');
+  assert.deepEqual(await b.evaluate(`[__renderer.selected?.id,__shown(__renderer.units.get(${q(hidden[1])}).label),document.activeElement===__renderer.units.get(${q(hidden[1])}).label]`),[hidden[1],true,true],'and selects it, showing and focusing its tag');
+  // A click on the stage closes it too.
+  await b.evaluate('__hall.chip.click()');
+  assert.equal((await state()).open,true);
+  await b.send('Input.dispatchMouseEvent',{type:'mousePressed',x:20,y:680,button:'left',clickCount:1});
+  await b.send('Input.dispatchMouseEvent',{type:'mouseReleased',x:20,y:680,button:'left',clickCount:1});
+  assert.equal((await state()).open,false,'a click on the stage closes the list');
+  await b.evaluate('__renderer.dispose()');
+  assert.deepEqual(b.errors,[]);
+});
+
 test('loading shows progress for the first world and for a swap, then clears',options,async t=>{
   const {b}=await setup(t,{yard:true,source:`
     const originalFetch=window.fetch;

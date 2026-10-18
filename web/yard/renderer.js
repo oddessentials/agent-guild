@@ -20,6 +20,10 @@ const GLOW = { off: 0, low: .55, high: 1 }, GLOW_GAIN = { light: .9, dark: 2.2 }
 // fronts, and a generated hall's baked glow map.
 const glows = m => m.name === 'window' || m.name === 'magic' || m.name === 'officeGlass' || m.emissiveMap;
 const PARTICLES = 640;
+// How many tags' heights a character's tag may rise above its character
+// before it hides: any higher, it reads as another's.
+const RISE = 2, CHIP_GAP = 4;
+let crowdLists = 0;
 const angleTo = (from, to) => { let d = (to - from) % (2 * Math.PI); if (d > Math.PI) d -= 2 * Math.PI; if (d < -Math.PI) d += 2 * Math.PI; return d; };
 function helpersFor(session) {
   return [
@@ -78,6 +82,15 @@ export class YardRenderer {
     this.staged=null;this.seen=new Set();this.stageTimer=0;this.sparks=[];
     this.props=new Map();this.propSpots=[];this.station=null;this.effects=null;
     this.active=false;this.reduced=false;this.disposed=false;this.frame=0;this.lastTime=0;this.dirty=true;
+    this.crowd=null;this.rows=new Map();
+    this.list=Object.assign(document.createElement('div'),{className:'yard-crowd-list',id:'yard-crowd-list-'+(++crowdLists),hidden:true});
+    this.list.setAttribute('role','group');
+    this.list.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();e.stopPropagation();this.closeCrowd(true);}});
+    this.list.addEventListener('focusout',e=>{
+      const to=e.relatedTarget;
+      if(to&&!this.list.contains(to)&&to!==this.halls.get(this.crowd)?.chip)this.closeCrowd(false);
+    });
+    labels.append(this.list);
     this.renderer=new T.WebGLRenderer({antialias:true,alpha:true,powerPreference:'low-power'});
     this.renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));
     this.renderer.outputColorSpace=T.SRGBColorSpace;
@@ -109,7 +122,7 @@ export class YardRenderer {
     this.onClick=e=>{
       if(!this.down||Math.hypot(e.clientX-this.down.x,e.clientY-this.down.y)>5)return;
       const item=this.pick(e);
-      this.onSelect(item);
+      this.closeCrowd(false);this.onSelect(item);
     };
     this.onDouble=e=>{const item=this.pick(e);if(item?.kind==='session')this.onOpen(item.id);};
     this.canvas.addEventListener('pointerdown',this.onPointerDown);
@@ -160,7 +173,8 @@ export class YardRenderer {
     this.request++;
     this.clearUnits();
     this.clearProps();this.releaseStation();this.releaseEffects();
-    for(const item of this.halls.values())item.label.remove();
+    this.closeCrowd(false);
+    for(const item of this.halls.values()){item.label.remove();item.chip.remove();}
     this.halls.clear();
     if(this.world){this.scene.remove(this.world);disposeWorld(this.world);}
     this.world=loaded.scene;this.skin=skin;this.scene.add(this.world);
@@ -364,6 +378,66 @@ export class YardRenderer {
     el.addEventListener('dblclick',e=>{e.stopPropagation();if(kind==='session')this.onOpen(id);});
     this.labels.append(el);return el;
   }
+  chip(id) {
+    const el=document.createElement('button');el.type='button';el.className='yard-crowd';el.style.visibility='hidden';
+    el.setAttribute('aria-expanded','false');el.setAttribute('aria-controls',this.list.id);
+    el.addEventListener('click',e=>{e.stopPropagation();if(this.crowd===id)this.closeCrowd(true);else this.openCrowd(id);});
+    el.addEventListener('keydown',e=>{if(e.key==='Escape'&&this.crowd===id){e.preventDefault();e.stopPropagation();this.closeCrowd(true);}});
+    this.labels.append(el);return el;
+  }
+  openCrowd(id) {
+    this.closeCrowd(false);
+    const hall=this.halls.get(id);
+    if(!hall)return;
+    this.crowd=id;this.list.hidden=false;hall.chip.setAttribute('aria-expanded','true');
+    this.list.setAttribute('aria-label','Hidden '+hall.label.children[0].textContent+' sessions');
+    this.positionLabels();
+    this.list.querySelector('button')?.focus();
+  }
+  closeCrowd(refocus) {
+    const hall=this.halls.get(this.crowd);
+    this.crowd=null;this.list.hidden=true;
+    for(const row of this.rows.values())row.remove();
+    this.rows.clear();
+    if(!hall)return;
+    hall.chip.setAttribute('aria-expanded','false');
+    if(refocus)hall.chip.focus();
+  }
+  crowdRow(id) {
+    const row=document.createElement('div');row.className='yard-crowd-row';
+    const pick=document.createElement('button');pick.type='button';pick.className='yard-crowd-pick';
+    pick.append(Object.assign(document.createElement('span'),{className:'label-name'}),Object.assign(document.createElement('span'),{className:'label-state'}));
+    const open=document.createElement('button');open.type='button';open.className='yard-crowd-open';open.textContent='Open terminal';
+    pick.addEventListener('click',e=>{
+      e.stopPropagation();this.closeCrowd(false);this.onSelect({kind:'session',id});this.positionLabels();
+      const unit=this.units.get(id);
+      if(unit&&unit.label.style.visibility!=='hidden')unit.label.focus();
+    });
+    open.addEventListener('click',e=>{e.stopPropagation();this.closeCrowd(false);this.onOpen(id);});
+    row.append(pick,open);this.rows.set(id,row);return row;
+  }
+  // Keeps each row's buttons, so focus stays on them; a focused row that
+  // leaves passes focus to the row now in its place.
+  syncCrowd(hidden,active) {
+    if(this.crowd===null)return;
+    const hall=this.halls.get(this.crowd),ids=hidden.get(this.crowd)||[];
+    if(!ids.length||hall.chip.style.visibility==='hidden') {
+      const inside=this.list.contains(active)||hall.chip===active;
+      this.closeCrowd(false);
+      if(inside)(hall.label.style.visibility!=='hidden'?hall.label:this.host).focus();
+      return;
+    }
+    const was=[...this.list.children].findIndex(row=>row.contains(active)),part=was<0?0:[...this.list.children[was].children].indexOf(active);
+    const lost=was>=0&&!ids.includes([...this.rows].find(([,row])=>row===this.list.children[was])[0]);
+    for(const [id,row]of this.rows)if(!ids.includes(id)){row.remove();this.rows.delete(id);}
+    ids.forEach((id,i)=>{
+      const row=this.rows.get(id)||this.crowdRow(id),label=this.units.get(id).label,name=label.children[0].textContent,state=label.children[1].textContent;
+      row.children[0].children[0].textContent=name;row.children[0].children[1].textContent=state;
+      row.children[0].setAttribute('aria-label',name+', '+state);row.children[1].setAttribute('aria-label','Open terminal for '+name);
+      if(this.list.children[i]!==row)this.list.insertBefore(row,this.list.children[i]||null);
+    });
+    if(lost)this.list.children[Math.min(was,ids.length-1)].children[part].focus();
+  }
   update(providers,sessions) {
     this.providers=providers;this.sessions=sessions;
     if(!this.world||this.disposed)return;
@@ -381,7 +455,7 @@ export class YardRenderer {
           root=this.world.getObjectByName('hall_shell').clone(true);
           root.visible=true;root.name='custom_'+p.id;this.world.add(root);custom=true;
         }
-        item={root,label:this.label('provider',p.id),custom,glows:this.ownGlow(root),level:0,target:0,emitted:0,
+        item={id:p.id,root,label:this.label('provider',p.id),chip:this.chip(p.id),custom,glows:this.ownGlow(root),level:0,target:0,emitted:0,
           smoke:root.getObjectByName('hall_'+(custom?'shell':p.id)+'_smoke')};this.halls.set(p.id,item);
         root.userData.entity={kind:'provider',id:p.id};
       }
@@ -397,7 +471,8 @@ export class YardRenderer {
       item.label.setAttribute('aria-label',p.tool+', '+item.label.children[1].textContent);
     }
     for(const [id,item]of this.halls)if(!ids.has(id)) {
-      item.label.remove();this.halls.delete(id);
+      if(this.crowd===id)this.closeCrowd(false);
+      item.label.remove();item.chip.remove();this.halls.delete(id);
       // A custom hall's own glow materials share their textures with the shell hall's.
       if(item.custom){this.world.remove(item.root);for(const m of item.glows)m.dispose();}
     }
@@ -846,6 +921,8 @@ export class YardRenderer {
     }));
   }
   select(selection) {
+    const key=s=>s?s.kind+':'+s.id:'';
+    if(key(selection)!==key(this.selected))this.closeCrowd(false);
     this.selected=selection;
     for(const [id,item]of this.halls) item.label.setAttribute('aria-pressed',String(selection?.kind==='provider'&&selection.id===id));
     for(const [id,item]of this.units) {
@@ -866,29 +943,78 @@ export class YardRenderer {
   }
   // Runs every frame while anyone walks, so it reads every label's size
   // before writing any position: one layout, not one per label.
+  // The selected tag is placed first and the rest make way for it. A
+  // character's tag that would rise more than RISE tags above its character,
+  // or still overlaps a placed tag, hides and is counted on its hall's chip.
+  // Halls and the selected tag always show, so only they may overlap, and
+  // only each other.
   positionLabels() {
-    const w=this.host.clientWidth,h=this.host.clientHeight,placed=[];
-    const items=[...this.halls.values(),...this.units.values()];
-    const sizes=items.map(item=>[item.label.offsetWidth||120,item.label.offsetHeight||28]);
-    for(const [i,item] of items.entries()) {
+    const w=this.host.clientWidth,h=this.host.clientHeight,active=document.activeElement,sel=this.selected;
+    const chosen=sel?.kind==='provider'?this.halls.get(sel.id):sel?.kind==='session'?this.units.get(sel.id):null;
+    const tags=[...this.halls.values(),...this.units.values()].map(item=>{
       const hall=item.label.dataset.kind==='provider';
       vector.copy(item.root.position);vector.y+=hall?.5:2.4;
       if(hall)vector.z+=2.1;
       vector.project(this.camera);
-      const hidden=vector.z<-1||vector.z>1||Math.abs(vector.x)>1.1||Math.abs(vector.y)>1.1;
-      if(item.label.hidden!==hidden)item.label.hidden=hidden;
-      if(hidden)continue;
-      const [lw,lh]=sizes[i];
-      let x=(vector.x*.5+.5)*w,y=(-vector.y*.5+.5)*h;
-      for(let tries=0;tries<12;tries++){
-        const overlap=placed.find(r=>Math.abs(x-r.x)<(lw+r.w)/2+4 && y>r.y-r.h-5 && y-lh<r.y+5);
-        if(!overlap)break;
-        y=overlap.y-overlap.h-6;
+      return {item,hall,lit:item===chosen,off:vector.z<-1||vector.z>1||Math.abs(vector.x)>1.1||Math.abs(vector.y)>1.1,
+        px:(vector.x*.5+.5)*w,py:(-vector.y*.5+.5)*h,w:item.label.offsetWidth||120,h:item.label.offsetHeight||28,
+        cw:hall?item.chip.offsetWidth||28:0,ch:hall?item.chip.offsetHeight||22:0};
+    }).sort((a,b)=>b.lit-a.lit);
+    const layout=chips=>{
+      const placed=[],hidden=new Map();
+      for(const t of tags) {
+        t.shown=false;
+        if(t.off)continue;
+        t.chip=chips.has(t.item);
+        const fw=t.chip?t.w+CHIP_GAP+t.cw:t.w,fh=t.chip?Math.max(t.h,t.ch):t.h;
+        let l=t.px-t.w/2,y=t.py;
+        for(let tries=0;tries<12;tries++){
+          const overlap=placed.find(r=>l<r.r+4&&r.l<l+fw+4&&y>r.t-5&&y-fh<r.b+5);
+          if(!overlap)break;
+          y=overlap.t-6;
+        }
+        l=Math.max(5,Math.min(w-fw-5,l));y=Math.max(fh+6,y);
+        const rect={l,r:l+fw,t:y-fh,b:y};
+        if(!t.hall&&!t.lit&&(t.py-y>RISE*(t.h+6)||placed.some(r=>r.l<rect.r&&rect.l<r.r&&r.t<rect.b&&rect.t<r.b))) {
+          const id=t.item.session.provider.id;
+          hidden.set(id,[...(hidden.get(id)||[]),t.item.session.id]);
+          continue;
+        }
+        placed.push(rect);Object.assign(t,{shown:true,l,y,fh});
       }
-      x=Math.max(lw/2+5,Math.min(w-lw/2-5,x));y=Math.max(lh+6,y);
-      placed.push({x,y,w:lw,h:lh});
-      item.label.style.left=x+'px';item.label.style.top=y+'px';
+      return hidden;
+    };
+    // A chip takes room, which can hide more tags, so halls gain chips until
+    // none needs one it lacks: at most one more layout per hall.
+    let chips=new Set(),hidden;
+    for(;;) {
+      hidden=layout(chips);
+      const next=new Set(chips);
+      for(const t of tags)if(t.hall&&t.shown&&hidden.has(t.item.id))next.add(t.item);
+      if(next.size===chips.size)break;
+      chips=next;
     }
+    for(const t of tags) {
+      const {label,chip}=t.item,shown=t.shown?'':'hidden';
+      if(label.style.visibility!==shown)label.style.visibility=shown;
+      if(!t.hall)t.item.offscreen=t.off;
+      if(t.shown){label.style.left=t.l+t.w/2+'px';label.style.top=t.y+'px';}
+      if(!t.hall)continue;
+      const count=t.shown&&t.chip?hidden.get(t.item.id)?.length||0:0;
+      chip.style.visibility=count?'':'hidden';
+      if(!count)continue;
+      chip.style.left=t.l+t.w+CHIP_GAP+'px';chip.style.top=t.y-t.fh/2+'px';
+      if(chip.textContent!=='+'+count) {
+        chip.textContent='+'+count;
+        chip.setAttribute('aria-label',count+' more '+label.children[0].textContent+(count===1?' session':' sessions'));
+      }
+    }
+    this.syncCrowd(hidden,active);
+    if(this.crowd===null)return;
+    const chip=this.halls.get(this.crowd).chip,lw=this.list.offsetWidth,lh=this.list.offsetHeight;
+    const cl=parseFloat(chip.style.left),ct=parseFloat(chip.style.top),half=chip.offsetHeight/2;
+    this.list.style.left=Math.max(6,Math.min(w-lw-6,cl))+'px';
+    this.list.style.top=Math.max(6,ct+half+4+lh<=h-6?ct+half+4:ct-half-4-lh)+'px';
   }
   setReducedMotion(value) {
     this.reduced=value;
@@ -925,7 +1051,7 @@ export class YardRenderer {
       // Characters out of view animate five times a second, enough to stay
       // in step for when the camera comes back to them.
       let step=dt;
-      if(unit.label.hidden){unit.lag=(unit.lag||0)+dt;if(unit.lag<.2)continue;step=unit.lag;}
+      if(unit.offscreen){unit.lag=(unit.lag||0)+dt;if(unit.lag<.2)continue;step=unit.lag;}
       unit.lag=0;
       this.unlook(unit);
       for(const mixer of unit.mixers)mixer.update(step);
@@ -951,7 +1077,7 @@ export class YardRenderer {
     this.releaseEffects();this.clearProps();
     this.loadingManager.abort();this.pending?.close();this.pending=null;
     this.resizeObserver.disconnect();this.controls.dispose();this.clearUnits();
-    for(const item of this.halls.values())item.label.remove();this.halls.clear();
+    for(const item of this.halls.values()){item.label.remove();item.chip.remove();}this.halls.clear();this.list.remove();
     disposeWorld(this.world);
     for(const entry of this.cache.values())entry.then(a=>disposeTree(a.scene)).catch(noop);this.cache.clear();
     this.sun.shadow.map?.dispose();
