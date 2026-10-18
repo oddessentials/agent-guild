@@ -685,22 +685,25 @@ test('a crowd hides the tags it cannot fit, counts them on its hall, and lists t
   const T0=Date.parse('2026-10-13T12:00:00.000Z'),iso=ms=>new Date(T0-ms).toISOString();
   const base=[...f.data.values()][0];
   const sessions=Array.from({length:16},(_,i)=>({...base,id:'crowd'+i,name:'Crowd '+i,activity:'active',lastOutputAt:iso(0),createdAt:iso(3600000),agents:[],shells:[]}));
+  // Clones have no hall, so no chip to count them.
+  sessions.push(...Array.from({length:6},(_,i)=>({...sessions[0],id:'clone'+i,name:'Clone '+i,provider:{id:'github',vendor:'GitHub',tool:'Git',color:'#24292f'}})));
   await b.evaluate(`(async()=>{
     const {YardRenderer}=await import('/yard/renderer.js');
     const host=document.createElement('div'),labels=document.createElement('div');
-    host.style.cssText='position:fixed;width:900px;height:700px;top:0;left:0';labels.className='yard-labels';host.append(labels);document.body.append(host);
+    host.style.cssText='position:fixed;width:900px;height:700px;top:0;left:0';labels.className='yard-labels';host.append(labels);document.body.append(host);window.__host=host;
     window.__opened=[];
     window.__renderer=new YardRenderer(host,labels,{select(s){__renderer.select(s);},open(id){__opened.push(id);},clock:()=>${T0}});
     window.__sessions=${q(sessions)};window.__providers=${q(f.providers)};
     await __renderer.setWorld('guild','dark');__renderer.update(__providers,__sessions);
     window.__hall=__renderer.halls.get(${q(base.provider.id)});
     window.__shown=el=>el.style.visibility!=='hidden';
-    window.__hidden=()=>[...__renderer.units.entries()].filter(([,u])=>!__shown(u.label)&&!u.offscreen).map(([id])=>id);
+    window.__hidden=()=>[...__renderer.units.entries()].filter(([,u])=>!__shown(u.label)&&!u.offscreen).map(([id])=>id).filter(id=>id.startsWith('crowd'));
+    window.__clones=()=>[...__renderer.units.entries()].filter(([id,u])=>id.startsWith('clone')&&!__shown(u.label)).map(([id])=>id);
     window.__layout=()=>{
       __renderer.positionLabels();
       const r=__renderer,box=el=>el.getBoundingClientRect(),hits=(a,c)=>a.left<c.right&&c.left<a.right&&a.top<c.bottom&&c.top<a.bottom;
       const tags=[...r.halls.values()].flatMap(i=>[{el:i.label,keep:true},{el:i.chip,keep:true}])
-        .concat([...r.units.entries()].map(([id,u])=>({el:u.label,keep:r.selected?.id===id,unit:u}))).filter(x=>__shown(x.el));
+        .concat([...r.units.entries()].map(([id,u])=>({el:u.label,keep:r.selected?.id===id||!r.halls.has(u.session.provider.id),unit:u}))).filter(x=>__shown(x.el));
       const overlaps=[],far=[];
       for(const [i,a]of tags.entries())for(const c of tags.slice(i+1))if(!(a.keep&&c.keep)&&hits(box(a.el),box(c.el)))overlaps.push([a.el.textContent,c.el.textContent]);
       for(const x of tags)if(x.unit&&!x.keep){
@@ -711,7 +714,7 @@ test('a crowd hides the tags it cannot fit, counts them on its hall, and lists t
       const chip=box(__hall.chip);
       return {overlaps,far,hidden:__hidden(),shown:[...r.units.values()].filter(u=>__shown(u.label)).length,
         chip:__shown(__hall.chip)?__hall.chip.textContent:'',chipInside:chip.left>=0&&chip.right<=900&&chip.top>=0&&chip.bottom<=700,
-        hall:__shown(__hall.label)};
+        hall:__shown(__hall.label),clones:__clones()};
     };
   })()`);
   await b.wait('[...__renderer.units.values()].every(u=>u.loaded)');
@@ -722,6 +725,7 @@ test('a crowd hides the tags it cannot fit, counts them on its hall, and lists t
     assert.deepEqual(l.far,[],`${what}: every shown tag stays near its character`);
     assert.ok(l.hall&&l.chipInside,`${what}: the hall's tag and chip show on screen`);
     assert.equal(l.chip,'+'+l.hidden.length,`${what}: the chip counts the hidden tags`);
+    assert.deepEqual(l.clones,[],`${what}: sessions with no hall keep their tags`);
     return l;
   };
   const overview=await crowded('overview');
@@ -768,6 +772,11 @@ test('a crowd hides the tags it cannot fit, counts them on its hall, and lists t
   await key('Enter','Enter',13);
   let s=await state();
   assert.deepEqual(s,{open:true,expanded:'true',controls:true,rows:names,focus:'row0:yard-crowd-pick',inside:true,bounded:true},'Enter on the chip opens the list and moves focus into it');
+  assert.equal(await b.evaluate(`(()=>{
+    const camera=Object.assign(document.createElement('div'),{className:'yard-camera'});camera.style.inset='0';__host.append(camera);
+    const row=__renderer.list.children[0].getBoundingClientRect(),hit=document.elementFromPoint(row.left+row.width/2,row.top+row.height/2);
+    camera.remove();return __renderer.list.contains(hit);
+  })()`),true,'the list shows above the camera controls');
   await key('Escape','Escape',27);
   s=await state();
   assert.deepEqual([s.open,s.expanded,s.focus],[false,'false','chip'],'Escape closes it and returns focus to the chip');

@@ -90,7 +90,7 @@ export class YardRenderer {
       const to=e.relatedTarget;
       if(to&&!this.list.contains(to)&&to!==this.halls.get(this.crowd)?.chip)this.closeCrowd(false);
     });
-    labels.append(this.list);
+    host.append(this.list);
     this.renderer=new T.WebGLRenderer({antialias:true,alpha:true,powerPreference:'low-power'});
     this.renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));
     this.renderer.outputColorSpace=T.SRGBColorSpace;
@@ -946,8 +946,8 @@ export class YardRenderer {
   // The selected tag is placed first and the rest make way for it. A
   // character's tag that would rise more than RISE tags above its character,
   // or still overlaps a placed tag, hides and is counted on its hall's chip.
-  // Halls and the selected tag always show, so only they may overlap, and
-  // only each other.
+  // Halls, the selected tag and sessions with no hall to count them always
+  // show and are placed next, so only they may overlap, and only each other.
   positionLabels() {
     const w=this.host.clientWidth,h=this.host.clientHeight,active=document.activeElement,sel=this.selected;
     const chosen=sel?.kind==='provider'?this.halls.get(sel.id):sel?.kind==='session'?this.units.get(sel.id):null;
@@ -956,10 +956,10 @@ export class YardRenderer {
       vector.copy(item.root.position);vector.y+=hall?.5:2.4;
       if(hall)vector.z+=2.1;
       vector.project(this.camera);
-      return {item,hall,lit:item===chosen,off:vector.z<-1||vector.z>1||Math.abs(vector.x)>1.1||Math.abs(vector.y)>1.1,
+      return {item,hall,lit:item===chosen,keep:hall||item===chosen||!this.halls.has(item.session.provider.id),off:vector.z<-1||vector.z>1||Math.abs(vector.x)>1.1||Math.abs(vector.y)>1.1,
         px:(vector.x*.5+.5)*w,py:(-vector.y*.5+.5)*h,w:item.label.offsetWidth||120,h:item.label.offsetHeight||28,
         cw:hall?item.chip.offsetWidth||28:0,ch:hall?item.chip.offsetHeight||22:0};
-    }).sort((a,b)=>b.lit-a.lit);
+    }).sort((a,b)=>b.lit-a.lit||b.hall-a.hall||b.keep-a.keep);
     const layout=chips=>{
       const placed=[],hidden=new Map();
       for(const t of tags) {
@@ -975,7 +975,7 @@ export class YardRenderer {
         }
         l=Math.max(5,Math.min(w-fw-5,l));y=Math.max(fh+6,y);
         const rect={l,r:l+fw,t:y-fh,b:y};
-        if(!t.hall&&!t.lit&&(t.py-y>RISE*(t.h+6)||placed.some(r=>r.l<rect.r&&rect.l<r.r&&r.t<rect.b&&rect.t<r.b))) {
+        if(!t.keep&&(t.py-y>RISE*(t.h+6)||placed.some(r=>r.l<rect.r&&rect.l<r.r&&r.t<rect.b&&rect.t<r.b))) {
           const id=t.item.session.provider.id;
           hidden.set(id,[...(hidden.get(id)||[]),t.item.session.id]);
           continue;
