@@ -428,7 +428,7 @@ The manager's own version check, in `GET /info`, the `hello` message and
   "version": "1.2.0",
   "latestVersion": "1.3.0",
   "available": true,
-  "command": "/usr/local/bin/npm install -g @oddessentials/agent-guild@1.3.0",
+  "command": "/usr/local/bin/npm install -g --prefix /usr/local @oddessentials/agent-guild@1.3.0",
   "guidance": null,
   "pendingVersion": null,
   "installing": false,

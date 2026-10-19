@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFile, spawn } from 'node:child_process';
+import { prependPath } from './report-shims.mjs';
 
 function isExecutableFile(file, platform) {
   try {
@@ -165,6 +166,17 @@ export function buildSpawnSpec(resolvedPath, args = [], env = process.env, platf
 }
 
 /**
+ * npm's scripts run whichever `node` comes first on PATH, so where a Node.js
+ * sits beside this npm, its folder goes first on the child's PATH (`pathFirst`).
+ */
+export function npmSpawnSpec(npm, args, env = process.env, platform = process.platform) {
+  const p = platform === 'win32' ? path.win32 : path.posix;
+  const dir = p.dirname(npm);
+  const node = p.join(dir, platform === 'win32' ? 'node.exe' : 'node');
+  return { ...buildSpawnSpec(npm, args, env, platform), ...(fs.existsSync(node) && { pathFirst: dir }) };
+}
+
+/**
  * Run a file in its own process group, which execFile cannot do, and at the
  * time limit SIGKILL the whole group. Settles as execFile would.
  */
@@ -227,6 +239,7 @@ function maxBufferError() {
  * children would otherwise live on.
  */
 export function runSpec(spec, { env, timeoutMs = 15000, cwd, input, killTree = false, maxBuffer = 1024 * 1024 } = {}) {
+  if (spec.pathFirst) env = prependPath(env || process.env, spec.pathFirst);
   const tree = killTree && timeoutMs > 0;
   if (tree && process.platform !== 'win32') return runInOwnGroup(spec.file, spec.args, { env, cwd, timeoutMs, input, maxBuffer });
   return new Promise((resolve, reject) => {

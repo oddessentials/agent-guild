@@ -88,6 +88,25 @@ function npmPrefixAt(prefix, segments, platform, fsx) {
   return { prefix, pkgDir, npm: fsx.exists(npm) ? npm : null };
 }
 
+/** The npm installed with a Node.js, in the same folder, or null. */
+export function npmBesideNode(execPath, platform = process.platform, fsx = defaultFsx) {
+  const m = pathModule(platform);
+  const npm = m.join(m.dirname(execPath), platform === 'win32' ? 'npm.cmd' : 'npm');
+  return fsx.isFile(npm) ? npm : null;
+}
+
+/** The npm global prefix whose install of `pkg` holds `packageFile`, with that prefix's own npm or null; null when it is not one. */
+export function npmOwner(packageFile, pkg, platform = process.platform, fsx = defaultFsx) {
+  const m = pathModule(platform);
+  const segments = pkg.split('/');
+  const tail = [...(platform === 'win32' ? [] : ['lib']), 'node_modules', ...segments];
+  let prefix = m.dirname(packageFile);
+  for (let i = 0; i < tail.length; i++) prefix = m.dirname(prefix);
+  if (!samePath(m.join(prefix, ...tail), m.dirname(packageFile), platform)) return null;
+  const owner = npmPrefixAt(prefix, segments, platform, fsx);
+  return owner && fsx.readText(packageFile).match(/"name"\s*:\s*"([^"]*)"/)?.[1] === pkg ? owner : null;
+}
+
 function npmBeside({ resolvedPath, realPath, pkg, platform, fsx }) {
   const m = pathModule(platform);
   const segments = pkg.split('/');

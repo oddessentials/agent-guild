@@ -6,14 +6,14 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { resolveCommand, resolveAllCommands, buildSpawnSpec, quoteForCmd } from '../src/manager/command-resolver.mjs';
-import { mergePathLists, parsePathFromEnvOutput, parseEnvOutput, macLocale, resolveBaseEnv, weavePaths, parseRegValue, expandWindowsVars, readWindowsPath, trimPathExt, probeLoginShell } from '../src/manager/shell-env.mjs';
+import { resolveCommand, resolveAllCommands, buildSpawnSpec, npmSpawnSpec, quoteForCmd, runSpec } from '../src/manager/command-resolver.mjs';
+import { mergePathLists, parsePathFromEnvOutput, parseEnvOutput, macLocale, resolveBaseEnv, weavePaths, parseRegValue, expandWindowsVars, readWindowsPath, trimPathExt, probeLoginShell, appendPaths, addRuntimePaths, npmGlobalPrefix } from '../src/manager/shell-env.mjs';
 import { mergeEnv, cleanResumeId, modelFromArgs, SessionManager } from '../src/manager/session-manager.mjs';
 import { loadProviders, ProviderRegistry } from '../src/manager/providers.mjs';
 import { detectShells, tmuxNewSession, tmuxSupported } from '../src/manager/shells.mjs';
 import { herdrAgentReports, herdrSocket } from '../src/manager/herdr.mjs';
 import { paths } from '../src/manager/config.mjs';
-import { classifyInstall, expandHome, homeRelative, helpDescribes, platformDependency, listInstallations, knownLaunchers, updateHelpAccepted, uninstallPlan } from '../src/manager/install-channels.mjs';
+import { classifyInstall, expandHome, formatCommand, homeRelative, helpDescribes, platformDependency, listInstallations, knownLaunchers, npmOwner, updateHelpAccepted, uninstallPlan } from '../src/manager/install-channels.mjs';
 import { runPlan, encodePlan, removeFile, RUNNER } from '../src/manager/uninstall.mjs';
 import { hookToReports, hookRoute, claudeStatuslineToReport, formatStatusLine, antigravityReply, claudeCompactBoundary } from '../src/report/hooks.mjs';
 import { shimContents, writeReportShims, prependPath, fileUrl, SHIM_NAME, LOADER_NAME } from '../src/manager/report-shims.mjs';
@@ -3183,7 +3183,14 @@ test('the npm registry lookup waits for PATH discovery in flight', async () => {
 
 test('the manager checks its own release and knows when a restart is needed', async () => {
   const dir = tempDir();
-  const packageFile = path.join(dir, 'package.json');
+  const win = process.platform === 'win32';
+  const packageFile = path.join(dir, ...(win ? [] : ['lib']), 'node_modules', '@scope', 'app', 'package.json');
+  const npm = path.join(dir, ...(win ? ['npm.cmd'] : ['bin', 'npm']));
+  fs.mkdirSync(path.dirname(packageFile), { recursive: true });
+  fs.mkdirSync(path.dirname(npm), { recursive: true });
+  fs.writeFileSync(npm, '');
+  const args = (version) => ['install', '-g', '--prefix', dir, `@scope/app@${version}`];
+  const command = (version) => formatCommand(npm, args(version));
   const writeVersion = (version) => fs.writeFileSync(packageFile, JSON.stringify({ name: '@scope/app', version }));
   writeVersion('1.0.0');
   const calls = [];
@@ -3192,13 +3199,13 @@ test('the manager checks its own release and knows when a restart is needed', as
     checkUpdates: true,
     registryUrl: null,
     env: {},
-    platform: 'linux',
+    platform: process.platform,
     fetchImpl: async (url) => { calls.push(url); if (!latest) throw new Error('offline'); return { ok: true, json: async () => ({ version: latest }) }; },
     npmRegistryUrl: async () => 'https://registry.example',
-    resolveNpm: () => '/usr/bin/npm',
+    resolveNpm: () => assert.fail('the first npm on PATH may belong to another prefix'),
     npmArgs: ProviderRegistry.prototype.npmArgs,
   };
-  const self = new SelfUpdate({ pkg: '@scope/app', version: '1.0.0', packageFile, registry });
+  const self = new SelfUpdate({ pkg: '@scope/app', version: '1.0.0', packageFile, registry, execPath: path.join(dir, 'no-node', 'node') });
   let updates = 0;
   self.on('updated', () => updates++);
   assert.equal(self.describe().available, false, 'nothing is on offer before the first check');
@@ -3209,7 +3216,7 @@ test('the manager checks its own release and knows when a restart is needed', as
   assert.equal(info.version, '1.0.0');
   assert.equal(info.latestVersion, '1.1.0');
   assert.equal(info.available, true);
-  assert.equal(info.command, '/usr/bin/npm install -g @scope/app@1.1.0');
+  assert.equal(info.command, command('1.1.0'), 'the npm of the prefix that holds the running copy');
   assert.equal(info.pendingVersion, null);
   assert.equal(updates, 1);
   await self.refresh();
@@ -3217,7 +3224,7 @@ test('the manager checks its own release and knows when a restart is needed', as
   await self.refresh({ force: true });
   assert.equal(calls.length, 2);
   assert.equal(updates, 1, 'no event when nothing changed');
-  assert.deepEqual(await self.spec(), { spec: { file: '/usr/bin/npm', args: ['install', '-g', '@scope/app@1.1.0'] }, version: '1.1.0' });
+  assert.deepEqual(await self.spec(), { spec: buildSpawnSpec(npm, args('1.1.0'), {}, process.platform), version: '1.1.0' });
 
   // A check that fails keeps the release already known.
   latest = null;
@@ -3287,7 +3294,7 @@ test('the manager checks its own release and knows when a restart is needed', as
   assert.equal(info.lastInstall.outcome, 'failed');
   assert.equal(info.pendingVersion, null, 'no restart advice after an interrupted install');
   assert.equal(info.available, true, 'the same release stays on offer');
-  assert.equal(info.command, '/usr/bin/npm install -g @scope/app@1.1.0');
+  assert.equal(info.command, command('1.1.0'));
   assert.equal((await self.spec()).version, '1.1.0', 'the retry is accepted');
   // A newer release supersedes the failure record, not the suspicion.
   latest = '1.2.0';
@@ -3296,7 +3303,7 @@ test('the manager checks its own release and knows when a restart is needed', as
   assert.equal(info.lastInstall, null);
   assert.equal(info.pendingVersion, null, 'the unfinished files are still not advertised');
   assert.equal(info.available, true);
-  assert.equal(info.command, '/usr/bin/npm install -g @scope/app@1.2.0');
+  assert.equal(info.command, command('1.2.0'));
   latest = '1.1.0';
   await self.refresh({ force: true });
   self.beginInstall();
@@ -3306,14 +3313,28 @@ test('the manager checks its own release and knows when a restart is needed', as
   assert.equal(info.pendingVersion, '1.1.0', 'a completed retry restores the restart advice');
   assert.equal(info.available, false);
 
-  // Without npm there is guidance instead of a command.
+  // A prefix without its own npm is upgraded by the npm beside the manager's Node.js; with neither there is guidance.
   writeVersion('1.0.0');
-  registry.resolveNpm = () => null;
+  fs.rmSync(npm);
   info = self.describe();
   assert.equal(info.available, true);
   assert.equal(info.command, null);
-  assert.match(info.guidance, /npm install -g @scope\/app@1\.1\.0/);
+  assert.ok(info.guidance.includes(formatCommand('npm', args('1.1.0'))), info.guidance);
   await assert.rejects(self.spec(), { code: 'npm_unavailable' });
+  const runtimeNpm = path.join(dir, 'node-home', win ? 'npm.cmd' : 'npm');
+  fs.mkdirSync(path.dirname(runtimeNpm));
+  fs.writeFileSync(runtimeNpm, '');
+  self.execPath = path.join(dir, 'node-home', win ? 'node.exe' : 'node');
+  assert.equal(self.describe().command, formatCommand(runtimeNpm, args('1.1.0')));
+
+  // Package files outside a global npm prefix are never upgraded by an npm that would install elsewhere.
+  const loose = path.join(tempDir(), 'package.json');
+  fs.writeFileSync(loose, JSON.stringify({ name: '@scope/app', version: '1.0.0' }));
+  const elsewhere = new SelfUpdate({ pkg: '@scope/app', version: '1.0.0', packageFile: loose, registry, execPath: self.execPath });
+  await elsewhere.refresh();
+  assert.equal(elsewhere.describe().command, null);
+  assert.match(elsewhere.describe().guidance, /not a global npm install/);
+  await assert.rejects(elsewhere.spec(), { code: 'not_npm_install' });
 
   // Development builds and disabled checks never ask the registry.
   assert.equal(isDevelopmentBuild('0.0.0-development'), true);
@@ -3330,6 +3351,67 @@ test('the manager checks its own release and knows when a restart is needed', as
   assert.equal(calls.length, before);
   assert.equal(off.describe().latestVersion, null);
   await assert.rejects(off.spec(), { code: 'not_updatable', message: /AGENT_GUILD_NO_UPDATE_CHECK/ });
+});
+
+test('the npm prefix that owns a package is read from where its files are', () => {
+  const files = new Set([
+    '/home/u/.npm-global/lib/node_modules/@scope/app/package.json',
+    '/opt/n/lib/node_modules/@scope/app/package.json', '/opt/n/bin/npm',
+    'C:\\n\\node_modules\\@scope\\app\\package.json', 'C:\\n\\npm.cmd',
+  ]);
+  const fsx = { exists: (f) => files.has(f), readText: () => '{ "name": "@scope/app", "version": "1.0.0" }' };
+  assert.deepEqual(npmOwner('/home/u/.npm-global/lib/node_modules/@scope/app/package.json', '@scope/app', 'linux', fsx),
+    { prefix: '/home/u/.npm-global', pkgDir: '/home/u/.npm-global/lib/node_modules/@scope/app', npm: null });
+  assert.equal(npmOwner('/opt/n/lib/node_modules/@scope/app/package.json', '@scope/app', 'darwin', fsx).npm, '/opt/n/bin/npm');
+  assert.deepEqual(npmOwner('C:\\n\\node_modules\\@scope\\app\\package.json', '@scope/app', 'win32', fsx),
+    { prefix: 'C:\\n', pkgDir: 'C:\\n\\node_modules\\@scope\\app', npm: 'C:\\n\\npm.cmd' });
+  assert.equal(npmOwner('/srv/app/package.json', '@scope/app', 'linux', fsx), null, 'a checkout or bundle');
+  assert.equal(npmOwner('/opt/n/lib/node_modules/@scope/app/package.json', '@scope/other', 'linux', fsx), null);
+  assert.equal(npmOwner('/opt/n/lib/node_modules/@scope/app/package.json', '@scope/app', 'linux', { ...fsx, readText: () => '{ "name": "@scope/fork" }' }), null);
+  assert.equal(npmOwner('/opt/m/lib/node_modules/@scope/app/package.json', '@scope/app', 'linux', fsx), null, 'no package files there');
+});
+
+test('the running Node.js and its npm global prefix are added to the end of PATH where missing', async () => {
+  const fsx = { isFile: (f) => f === '/opt/node/bin/npm' || f === 'C:\\tools\\node\\npm.cmd' };
+  const asked = [];
+  const env = { PATH: '/usr/bin:/opt/node/bin/' };
+  await addRuntimePaths(env, { execPath: '/opt/node/bin/node', platform: 'linux', fsx, prefixOf: async (npm) => { asked.push(npm); return '/home/u/.npm-global'; } });
+  assert.equal(env.PATH, '/usr/bin:/opt/node/bin/:/home/u/.npm-global/bin', 'existing entries keep their order and are not repeated');
+  assert.deepEqual(asked, ['/opt/node/bin/npm']);
+  const unverified = { PATH: '/usr/bin' };
+  await addRuntimePaths(unverified, { execPath: '/opt/node/bin/node', platform: 'linux', fsx, prefixOf: async () => null });
+  assert.equal(unverified.PATH, '/usr/bin:/opt/node/bin');
+  const noNpm = { PATH: '/usr/bin' };
+  await addRuntimePaths(noNpm, { execPath: '/srv/node/node', platform: 'linux', fsx, prefixOf: () => assert.fail('asked an npm that is not there') });
+  assert.equal(noNpm.PATH, '/usr/bin:/srv/node');
+  const win = { Path: 'C:\\Windows\\System32;C:\\TOOLS\\NODE\\' };
+  await addRuntimePaths(win, { execPath: 'C:\\tools\\node\\node.exe', platform: 'win32', fsx, prefixOf: async () => 'C:\\Users\\u\\AppData\\Roaming\\npm' });
+  assert.equal(win.Path, 'C:\\Windows\\System32;C:\\TOOLS\\NODE\\;C:\\Users\\u\\AppData\\Roaming\\npm');
+  assert.equal(appendPaths('', ['/a', '/a/']), '/a');
+});
+
+test('npm\'s global prefix counts only as an existing absolute folder', async () => {
+  const dir = tempDir();
+  const win = process.platform === 'win32';
+  const npm = path.join(dir, win ? 'npm.cmd' : 'npm');
+  const says = (text) => fs.writeFileSync(npm, win ? `@echo off\r\necho ${text}\r\n` : `#!/bin/sh\necho '${text}'\n`, { mode: 0o755 });
+  says(dir);
+  assert.equal(await npmGlobalPrefix(npm, process.env), dir);
+  says('relative');
+  assert.equal(await npmGlobalPrefix(npm, process.env), null);
+  says(path.join(dir, 'gone'));
+  assert.equal(await npmGlobalPrefix(npm, process.env), null);
+});
+
+test('an npm runs on the Node.js beside it, whatever node comes first on PATH', async () => {
+  const dir = tempDir();
+  const win = process.platform === 'win32';
+  const npm = path.join(dir, win ? 'npm.cmd' : 'npm');
+  assert.equal(npmSpawnSpec(npm, ['-v']).pathFirst, undefined, 'no Node.js beside it');
+  fs.writeFileSync(path.join(dir, win ? 'node.exe' : 'node'), '');
+  assert.equal(npmSpawnSpec(npm, ['-v']).pathFirst, dir);
+  const { stdout } = await runSpec({ file: process.execPath, args: ['-p', 'process.env[Object.keys(process.env).find((k) => k.toUpperCase() === "PATH")].split(require("path").delimiter)[0]'], pathFirst: dir }, { env: process.env });
+  assert.equal(stdout.trim(), dir);
 });
 
 test('the upgrade description says when node-pty is compiled on this computer, except while npm runs', () => {

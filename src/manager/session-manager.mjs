@@ -675,7 +675,8 @@ export class SessionManager extends EventEmitter {
     id = newId(), reportToken = crypto.randomBytes(16).toString('hex'), createdAt, context = null, multiplexerInstall = null,
   }) {
     this._assertCanSpawn();
-    const env = this._sessionEnv({ id, reportToken, provider, account, extraEnv, dropEnv });
+    let env = this._sessionEnv({ id, reportToken, provider, account, extraEnv, dropEnv });
+    if (spawnSpec?.pathFirst) env = prependPath(env, spawnSpec.pathFirst, { platform: this.registry.platform });
 
     let session;
     try {

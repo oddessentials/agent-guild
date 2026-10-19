@@ -3,10 +3,11 @@
 // the new version is used once the manager is restarted.
 
 import fs from 'node:fs';
+import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { compareVersions, fetchManifest } from './versions.mjs';
-import { formatCommand } from './install-channels.mjs';
-import { buildSpawnSpec } from './command-resolver.mjs';
+import { formatCommand, npmBesideNode, npmOwner } from './install-channels.mjs';
+import { npmSpawnSpec } from './command-resolver.mjs';
 import { ptyBuild } from './pty.mjs';
 
 const CHECK_TTL_MS = 60 * 60 * 1000;
@@ -39,12 +40,14 @@ export class SelfUpdate extends EventEmitter {
    * @param {string} opts.pkg            the manager's npm package name
    * @param {string} opts.version        the running version
    * @param {string|null} [opts.packageFile]  the package.json the manager runs from; read again after an install
-   * @param {import('./providers.mjs').ProviderRegistry} opts.registry  for the registry URL, npm, and fetch
+   * @param {import('./providers.mjs').ProviderRegistry} opts.registry  for the registry URL, npm arguments and fetch
    * @param {() => ({ command: string, built: boolean }|null)} [opts.ptyBuild]  node-pty's build on this computer; a stand-in in tests
+   * @param {string} [opts.execPath]  the manager's Node.js, whose npm upgrades a prefix that has none of its own
    */
-  constructor({ pkg, version, packageFile = null, registry, ptyBuild: readPtyBuild = ptyBuild }) {
+  constructor({ pkg, version, packageFile = null, registry, ptyBuild: readPtyBuild = ptyBuild, execPath = process.execPath }) {
     super();
     this.pkg = pkg;
+    this.execPath = execPath;
     this.version = version;
     this.packageFile = packageFile;
     this.registry = registry;
@@ -124,14 +127,24 @@ export class SelfUpdate extends EventEmitter {
     return this._diskSuspect(installed) || compareVersions(this.latest, installed || this.version) > 0;
   }
 
-  args() {
-    return this.registry.npmArgs({ args: ['install', '-g'], package: this.pkg }, this.latest);
-  }
-
-  /** The npm command that performs the upgrade, or null without npm on PATH or a known release. */
-  command() {
-    const npm = this.registry.resolveNpm();
-    return npm && this.latest ? formatCommand(npm, this.args()) : null;
+  /**
+   * The npm and arguments that upgrade the copy that runs, in the global
+   * prefix it was installed into, or `{ error }` when that cannot be
+   * established: an npm that installs elsewhere would leave it unchanged.
+   */
+  _plan() {
+    const { platform } = this.registry;
+    const owner = this.packageFile ? npmOwner(this.packageFile, this.pkg, platform) : null;
+    if (!owner) {
+      const where = this.packageFile ? ` from ${path.dirname(this.packageFile)}` : '';
+      return { error: refusal(409, 'not_npm_install', `Agent Guild runs${where}, which is not a global npm install, so it cannot upgrade itself. Update it the way you installed it.`) };
+    }
+    const args = this.registry.npmArgs({ args: ['install', '-g', '--prefix', owner.prefix], package: this.pkg }, this.latest);
+    const npm = owner.npm || npmBesideNode(this.execPath, platform);
+    if (!npm) {
+      return { error: refusal(409, 'npm_unavailable', `npm was not found in ${owner.prefix} or beside the manager's Node.js (${this.execPath}). Run: ${formatCommand('npm', args)}`) };
+    }
+    return { npm, args };
   }
 
   /** Public description, sent in `/info`, `hello` and `manager.upgrade`. */
@@ -148,13 +161,13 @@ export class SelfUpdate extends EventEmitter {
     const installed = this.installedVersion();
     this._pruneLastInstall(installed);
     const available = this.available(installed);
-    const command = available ? this.command() : null;
+    const plan = available ? this._plan() : null;
     return {
       version: this.version,
       latestVersion: this.latest,
       available,
-      command,
-      guidance: available && !command ? `npm was not found on PATH. Install Node.js from https://nodejs.org, then run: npm install -g ${this.pkg}@${this.latest}` : null,
+      command: plan?.npm ? formatCommand(plan.npm, plan.args) : null,
+      guidance: plan?.error?.message ?? null,
       pendingVersion: this.pendingVersion(installed),
       installing: false,
       lastInstall: this.lastInstall,
@@ -180,12 +193,9 @@ export class SelfUpdate extends EventEmitter {
         ? `Agent Guild ${this.latest} is the latest release${this.pendingVersion(installed) ? ' and is installed; restart the manager to use it' : ''}.`
         : `Could not read the latest Agent Guild release${this.error ? `: ${this.error}` : ''}. Nothing was changed.`);
     }
-    const npm = this.registry.resolveNpm();
-    if (!npm) {
-      throw refusal(409, 'npm_unavailable', 'npm was not found on PATH. Install Node.js from https://nodejs.org and restart the session manager.');
-    }
-    // buildSpawnSpec wraps npm.cmd in cmd.exe on Windows, which a PTY needs.
-    return { spec: buildSpawnSpec(npm, this.args(), this.registry.env, this.registry.platform), version: this.latest };
+    const plan = this._plan();
+    if (plan.error) throw plan.error;
+    return { spec: npmSpawnSpec(plan.npm, plan.args, this.registry.env, this.registry.platform), version: this.latest };
   }
 
   /** An upgrade session started; hold the lock until finishInstall. Emits "updated". */

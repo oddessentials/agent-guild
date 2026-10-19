@@ -237,8 +237,9 @@ const { startManager } = await import('../src/manager/main.mjs');
 const { SessionManager } = await import('../src/manager/session-manager.mjs');
 const { multiplexerStore } = await import('../src/manager/config.mjs');
 
-// The manager runs as a released version, from package files an upgrade can replace.
-const packageFile = path.join(home, 'package.json');
+// The manager runs as a released version, from package files in a global npm prefix that an upgrade can replace.
+const packageFile = path.join(npmPrefix, ...(win ? [] : ['lib']), 'node_modules', '@oddessentials', 'agent-guild', 'package.json');
+fs.mkdirSync(path.dirname(packageFile), { recursive: true });
 fs.writeFileSync(packageFile, JSON.stringify({ name: '@oddessentials/agent-guild', version: '1.0.0' }));
 
 let ctx;
@@ -248,7 +249,7 @@ let token;
 
 before(async () => {
   ctx = await startManager({
-    version: '1.0.0', packageFile, sessionDefaults: { doneAgentLingerMs: 200, activityIdleMs: 200, killGraceMs: 500, reportingTimeoutMs: 1500 },
+    version: '1.0.0', packageFile, execPath: path.join(home, 'runtime', win ? 'node.exe' : 'node'), sessionDefaults: { doneAgentLingerMs: 200, activityIdleMs: 200, killGraceMs: 500, reportingTimeoutMs: 1500 },
     github: { apiUrl: fakeGitHub.url, webUrl: fakeGitHub.url, statusUrl: fakeGitHub.url, clientId: 'test-client' },
   });
   probesAtStart = new Set(ctx.manager.sessionHooks.probes.keys());
@@ -471,7 +472,8 @@ test('the manager offers its own upgrade in a visible npm session', async () => 
   }, { label: 'self version check' });
   assert.equal(info.latestVersion, '9.9.9');
   assert.equal(info.available, true);
-  assert.ok(info.command.endsWith(`install -g @oddessentials/agent-guild@9.9.9 --registry ${process.env.AGENT_GUILD_NPM_REGISTRY}`), info.command);
+  assert.ok(info.command.startsWith(path.join(npmBinDir, win ? 'npm.cmd' : 'npm')), `the npm of the prefix that holds the running copy: ${info.command}`);
+  assert.ok(info.command.endsWith(`install -g --prefix ${npmPrefix} @oddessentials/agent-guild@9.9.9 --registry ${process.env.AGENT_GUILD_NPM_REGISTRY}`), info.command);
   assert.equal(info.pendingVersion, null);
   assert.equal(info.lastInstall, null);
 
@@ -482,7 +484,7 @@ test('the manager offers its own upgrade in a visible npm session', async () => 
   assert.equal(body.session.provider.id, 'agent-guild');
   const client = terminal(body.session.id);
   await client.opened;
-  await waitForText(client, body.session.id, `FAKE-NPM install -g @oddessentials/agent-guild@9.9.9 --registry ${process.env.AGENT_GUILD_NPM_REGISTRY}`, 'npm output');
+  await waitForText(client, body.session.id, 'FAKE-NPM-OWNER install -g --prefix', 'npm output');
   await waitFor(() => client.messages.find((m) => m.type === 'exit'), { label: 'npm exit' });
   const result = await waitFor(() => events.messages.find((m) => m.type === 'manager.upgrade' && m.upgrade.lastInstall), { label: 'manager.upgrade' });
   assert.equal(result.upgrade.lastInstall.outcome, 'unchanged', 'the fake npm did not replace the package files');

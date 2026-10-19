@@ -13,7 +13,9 @@
 import fs from 'node:fs';
 import { execFile, spawn, spawnSync } from 'node:child_process';
 import path from 'node:path';
-import { endWithProcess, killGroup } from './command-resolver.mjs';
+import { endWithProcess, killGroup, npmSpawnSpec, pathKey, runSpec } from './command-resolver.mjs';
+import { defaultFsx, npmBesideNode } from './install-channels.mjs';
+import { stableExecPath } from './autostart.mjs';
 
 const START = '__AGENT_GUILD_PATH_START__';
 const END = '__AGENT_GUILD_PATH_END__';
@@ -136,10 +138,6 @@ export function macLocale({ read = readAppleLocale, exists = (name) => fs.exists
   return /^[A-Za-z]+_[A-Za-z]+$/.test(region) && exists(name) ? name : 'en_US.UTF-8';
 }
 
-/**
- * Returns a copy of process.env whose PATH also contains the login shell's
- * PATH entries. Set AGENT_GUILD_SKIP_SHELL_ENV=1 to disable the lookup.
- */
 export function trimPathExt(env, platform = process.platform) {
   if (platform !== 'win32') return env;
   const key = Object.keys(env).find((k) => k.toUpperCase() === 'PATHEXT');
@@ -156,6 +154,43 @@ export async function resolveBaseEnv({ platform = process.platform, env: source 
   const shell = await shellEnv({ shell: env.SHELL, env }) || {};
   if (shell.PATH) env.PATH = mergePathLists(shell.PATH, env.PATH);
   if (platform === 'darwin') for (const name of LOCALE_VARS) if (shell[name]) env[name] = shell[name];
+  return env;
+}
+
+/** `current` with each of `dirs` it does not hold yet appended, so existing entries keep their order. */
+export function appendPaths(current, dirs, { delimiter = path.delimiter, caseInsensitive = process.platform === 'win32' } = {}) {
+  const id = (entry) => (caseInsensitive ? entry.toLowerCase() : entry).replace(/(?<=.)[\\/]+$/, '');
+  const out = (current || '').split(delimiter).filter(Boolean);
+  const seen = new Set(out.map(id));
+  for (const dir of dirs) if (dir && !seen.has(id(dir))) { seen.add(id(dir)); out.push(dir); }
+  return out.join(delimiter);
+}
+
+/** The global prefix `npm prefix -g` reports, when it is an existing absolute folder; else null. */
+export async function npmGlobalPrefix(npm, env, platform = process.platform) {
+  const p = platform === 'win32' ? path.win32 : path.posix;
+  try {
+    const { stdout } = await runSpec(npmSpawnSpec(npm, ['prefix', '-g'], env, platform), { env, timeoutMs: 10000 });
+    const prefix = stdout.trim().split(/\r?\n/).pop();
+    return prefix && p.isAbsolute(prefix) && fs.statSync(prefix).isDirectory() ? prefix : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Adds the running Node.js's folder, and the folder its npm installs commands
+ * into, to the end of PATH where missing: a manager started by absolute path
+ * at sign-in, at boot or by another app may inherit a PATH without them.
+ */
+export async function addRuntimePaths(env, { execPath: running = process.execPath, platform = process.platform, prefixOf = npmGlobalPrefix, fsx = defaultFsx } = {}) {
+  const p = platform === 'win32' ? path.win32 : path.posix;
+  const execPath = platform === 'win32' ? running : stableExecPath(running);
+  const npm = npmBesideNode(execPath, platform, fsx);
+  const prefix = npm ? await prefixOf(npm, env, platform) : null;
+  const dirs = [p.dirname(execPath), prefix && (platform === 'win32' ? prefix : p.join(prefix, 'bin'))];
+  const key = pathKey(env, platform);
+  env[key] = appendPaths(env[key], dirs, { delimiter: platform === 'win32' ? ';' : ':', caseInsensitive: platform === 'win32' });
   return env;
 }
 

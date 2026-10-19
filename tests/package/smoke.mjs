@@ -1,5 +1,6 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import fs from 'node:fs';
+import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -51,14 +52,68 @@ const env = {
   AGENT_GUILD_SKIP_SHELL_ENV: '1',
 };
 
-function run(name, ...commandArgs) {
-  const file = win ? env.ComSpec || 'cmd.exe' : command(name);
-  const argv = win ? ['/d', '/s', '/c', `"${[command(name), ...commandArgs].map((arg) => `"${arg}"`).join(' ')}"`] : commandArgs;
+function runFile(file, ...commandArgs) {
+  const argv = win ? ['/d', '/s', '/c', `"${[file, ...commandArgs].map((arg) => `"${arg}"`).join(' ')}"`] : commandArgs;
   return new Promise((resolve) => {
-    execFile(file, argv, { env, cwd: home, timeout: 60000, windowsVerbatimArguments: win }, (error, stdout, stderr) => {
+    execFile(win ? env.ComSpec || 'cmd.exe' : file, argv, { env, cwd: home, timeout: 60000, windowsVerbatimArguments: win }, (error, stdout, stderr) => {
       resolve({ code: error ? error.code ?? 1 : 0, stdout, stderr });
     });
   });
+}
+const run = (name, ...commandArgs) => runFile(command(name), ...commandArgs);
+
+// A manager started the way a startup entry or another app starts it: by absolute
+// Node.js path, from a PATH without Node.js's folder, npm or the tools it installed.
+const managerEnv = { ...env, [win ? 'Path' : 'PATH']: env[win ? 'Path' : 'PATH'].split(path.delimiter).filter((dir) => dir !== nodeDir).join(path.delimiter) };
+delete managerEnv.AGENT_GUILD_NO_UPDATE_CHECK;
+const packageDir = path.join(prefix, ...(win ? [] : ['lib']), 'node_modules', '@oddessentials', 'agent-guild');
+function startManager() {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [path.join(packageDir, 'bin', 'agent-guild.mjs'), 'open', '--no-browser'], { env: managerEnv, cwd: home });
+    let out = '';
+    child.stdout.on('data', (chunk) => { out += chunk; });
+    child.stderr.on('data', (chunk) => { out += chunk; });
+    child.on('close', (code) => resolve({ code, stdout: out, stderr: '' }));
+  });
+}
+
+// A newer release than the one installed, from a registry of the test's own.
+const registry = http.createServer((req, res) => {
+  if (req.url === '/@oddessentials%2fagent-guild/latest') return res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ name: '@oddessentials/agent-guild', version: '99.0.0' }));
+  res.writeHead(404).end();
+});
+await new Promise((resolve) => registry.listen(0, '127.0.0.1', resolve));
+managerEnv.AGENT_GUILD_NPM_REGISTRY = `http://127.0.0.1:${registry.address().port}`;
+managerEnv.HOMEBREW_API_DOMAIN = managerEnv.AGENT_GUILD_NPM_REGISTRY;
+
+// A coding tool installed by npm into the prefix, known to the manager from the test's own providers.json.
+const TOOL = 'agent-guild-smoke-tool';
+const toolSource = path.join(home, 'tool-source');
+fs.mkdirSync(toolSource);
+fs.writeFileSync(path.join(toolSource, 'package.json'), JSON.stringify({ name: TOOL, version: '1.2.3', bin: { [TOOL]: 'cli.js' } }));
+fs.writeFileSync(path.join(toolSource, 'cli.js'), '#!/usr/bin/env node\nconsole.log(\'smoke tool 1.2.3\');\n');
+fs.writeFileSync(path.join(home, 'providers.json'), JSON.stringify({ providers: [{ id: 'smoke', vendor: 'Smoke', tool: 'Smoke Tool', command: TOOL, package: TOOL, versionArgs: ['--version'] }] }));
+const npm = path.join(nodeDir, win ? 'npm.cmd' : 'npm');
+const toolDir = win ? prefix : path.join(prefix, 'bin');
+const ownerNpm = path.join(prefix, ...(win ? ['npm.cmd'] : ['bin', 'npm']));
+const upgradeNpm = fs.existsSync(ownerNpm) ? ownerNpm : npm;
+const quoted = (arg) => (/\s/.test(arg) ? `"${arg}"` : arg);
+const upgradeCommand = [upgradeNpm, 'install', '-g', '--prefix', prefix, '@oddessentials/agent-guild@99.0.0', '--registry', managerEnv.AGENT_GUILD_NPM_REGISTRY].map(quoted).join(' ');
+
+async function checkDiscovery(when) {
+  const deadline = Date.now() + 30000;
+  let tool;
+  let upgrade;
+  while (Date.now() < deadline) {
+    await api('POST', '/providers/reload');
+    tool = (await api('GET', '/providers')).body.providers?.find((provider) => provider.id === 'smoke');
+    upgrade = (await api('GET', '/info')).body.upgrade;
+    if (tool?.installedVersion && upgrade?.latestVersion) break;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  const same = (a, b) => (win ? a.toLowerCase() === b.toLowerCase() : a === b);
+  check(tool?.available === true && same(path.dirname(tool.resolvedPath), toolDir) && tool.installedVersion === '1.2.3', `${when}: a tool npm installed is found and runs`, tool ? `${tool.resolvedPath}, version ${tool.installedVersion ?? tool.versionError ?? tool.versionStatus}` : 'not found');
+  check(upgrade?.command === upgradeCommand, `${when}: the upgrade installs into the prefix that holds the running copy`, upgrade?.command ?? upgrade?.guidance ?? 'no upgrade offered');
 }
 
 const token = () => fs.readFileSync(path.join(home, 'auth-token'), 'utf8').trim();
@@ -107,8 +162,16 @@ try {
   const help = await run('agent-guild-report', '--help');
   check(help.code === 0 && /Usage: agent-guild-report/.test(help.stdout), 'agent-guild-report is installed', firstLine(help));
 
-  const opened = await run('agent-guild', 'open', '--no-browser');
-  check(opened.code === 0 && /Session manager started/.test(opened.stdout), 'open starts a manager', firstLine(opened));
+  const packed = await runFile(npm, 'pack', '--silent', '--pack-destination', home, toolSource);
+  const installed = await runFile(npm, 'install', '-g', '--prefix', prefix, '--no-audit', '--no-fund', path.join(home, `${TOOL}-1.2.3.tgz`));
+  check(packed.code === 0 && installed.code === 0, 'npm installs a coding tool into the prefix', firstLine(installed));
+  // A development build never upgrades itself; packed from a checkout, the copy stands in for a release.
+  const installedPackage = path.join(packageDir, 'package.json');
+  const manifest = JSON.parse(fs.readFileSync(installedPackage, 'utf8'));
+  if (/^0\.0\.0(?:-|$)/.test(manifest.version)) fs.writeFileSync(installedPackage, JSON.stringify({ ...manifest, version: '1.0.0' }, null, 2));
+
+  const opened = await startManager();
+  check(opened.code === 0 && /Session manager started/.test(opened.stdout), 'open starts a manager by absolute Node.js path, with Node.js off PATH', firstLine(opened));
 
   const health = await (await fetch(`${base}/api/v1/health`)).json();
   check(health.ok === true && health.name === 'agent-guild', 'the manager answers', `version ${health.version}`);
@@ -180,6 +243,20 @@ try {
   const status = await run('agent-guild', 'status');
   check(status.code === 0 && /1 session\(s\), 1 running/.test(status.stdout), 'status lists the session', firstLine(status));
 
+  await checkDiscovery('at start');
+  const restarted = await api('POST', '/shutdown', { restart: true, force: true });
+  check(restarted.body.ok === true && restarted.body.restart === true, 'the manager restarts', JSON.stringify(restarted.body));
+  const restartedAt = Date.now();
+  let next = null;
+  while (Date.now() - restartedAt < 30000 && !next) {
+    next = await fetch(`${base}/api/v1/health`).then((res) => res.json()).then((h) => (h.pid !== managerPid ? h : null), () => null);
+    if (!next) await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  check(Boolean(next), 'a new manager answers after the restart', next ? `pid ${next.pid}` : 'none');
+  await gone(managerPid, 10000);
+  managerPid = next.pid;
+  await checkDiscovery('after a restart');
+
   const stopped = await run('agent-guild', 'stop');
   check(/Session manager stopped/.test(stopped.stdout), 'stop ends the manager');
   const after = await run('agent-guild', 'status');
@@ -198,6 +275,8 @@ if (failure) {
   process.exitCode = 1;
 }
 if (failure) await gone(managerPid, 10000);
+registry.close();
+await runFile(npm, 'uninstall', '-g', '--prefix', prefix, TOOL);
 try {
   // Windows may hold the folder briefly after the processes exit, as the manager tests also allow for.
   fs.rmSync(home, { recursive: true, force: true, maxRetries: 25, retryDelay: 400 });
