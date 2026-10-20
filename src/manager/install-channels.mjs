@@ -104,7 +104,16 @@ export function npmOwner(packageFile, pkg, platform = process.platform, fsx = de
   for (let i = 0; i < tail.length; i++) prefix = m.dirname(prefix);
   if (!samePath(m.join(prefix, ...tail), m.dirname(packageFile), platform)) return null;
   const owner = npmPrefixAt(prefix, segments, platform, fsx);
-  return owner && fsx.readText(packageFile).match(/"name"\s*:\s*"([^"]*)"/)?.[1] === pkg ? owner : null;
+  const text = owner ? fsx.readText(packageFile) : '';
+  if (!owner || text.match(/"name"\s*:\s*"([^"]*)"/)?.[1] !== pkg) return null;
+  // A project's node_modules has a Windows global prefix's shape; only a global install puts the package's commands in the prefix itself.
+  if (platform === 'win32') {
+    let bin = null;
+    try { bin = JSON.parse(text).bin; } catch {}
+    const names = typeof bin === 'string' ? [segments.at(-1)] : Object.keys(bin || {});
+    if (names.length && !names.some((name) => fsx.exists(m.join(prefix, `${name}.cmd`)))) return null;
+  }
+  return owner;
 }
 
 function npmBeside({ resolvedPath, realPath, pkg, platform, fsx }) {

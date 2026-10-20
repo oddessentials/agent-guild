@@ -61,6 +61,20 @@ export class SelfUpdate extends EventEmitter {
     /** The on-disk version a failed upgrade left behind, not to be trusted until an upgrade completes. */
     this.suspectVersion = null;
     this._refreshing = null;
+    this._owner = null;
+    this._verifiedOwner();
+  }
+
+  /**
+   * The global npm prefix that holds the running copy, as `npmOwner` finds it.
+   * While package.json is missing, as an upgrade stopped midway leaves it,
+   * the prefix last verified still holds the copy, so a retry can go there.
+   */
+  _verifiedOwner() {
+    const owner = this.packageFile ? npmOwner(this.packageFile, this.pkg, this.registry.platform) : null;
+    if (owner) this._owner = owner;
+    else if (this._owner && fs.existsSync(this.packageFile)) this._owner = null;
+    return owner ?? this._owner;
   }
 
   /** Ask the registry for the latest release, hourly unless `force`. Emits "updated" on a change. */
@@ -134,7 +148,7 @@ export class SelfUpdate extends EventEmitter {
    */
   _plan() {
     const { platform } = this.registry;
-    const owner = this.packageFile ? npmOwner(this.packageFile, this.pkg, platform) : null;
+    const owner = this._verifiedOwner();
     if (!owner) {
       const where = this.packageFile ? ` from ${path.dirname(this.packageFile)}` : '';
       return { error: refusal(409, 'not_npm_install', `Agent Guild runs${where}, which is not a global npm install, so it cannot upgrade itself. Update it the way you installed it.`) };

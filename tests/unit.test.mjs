@@ -2473,6 +2473,13 @@ test('a tmux card\'s windows start tmux\'s shell as a Shell card does, so a logi
     'a default-command from the user\'s tmux configuration is left to tmux');
 });
 
+test('a tmux card leaves PowerShell and other shells outside the sh family to tmux', () => {
+  const base = { name: 'guild-abc123', cwd: '/work', cols: 100, rows: 30, env: { PATH: '/shims:/bin' } };
+  const plain = tmuxNewSession(base);
+  for (const shell of ['/usr/bin/pwsh', '/opt/microsoft/powershell/7/pwsh', '/usr/bin/fish', '/usr/bin/nu']) assert.equal(tmuxNewSession({ ...base, shell }), plain, shell);
+  for (const shell of ['/bin/sh', '/bin/dash', '/bin/ksh', '/usr/bin/mksh', '/bin/bash', '/bin/zsh']) assert.match(tmuxNewSession({ ...base, shell }), /\nset-option .* default-command /, shell);
+});
+
 test('a herdr card shows herdr\'s agents, one per pane, from the herdr session its client attaches to', () => {
   assert.deepEqual(herdrAgentReports([
     { agent: 'claude', agent_status: 'working', pane_id: 'w1:p1', cwd: '/work/a' },
@@ -3195,6 +3202,32 @@ test('the npm registry lookup waits for PATH discovery in flight', async () => {
   assert.equal(await registry.refreshPath(), false, 'nothing in flight afterwards');
 });
 
+test('an upgrade stopped after npm moved the running copy aside can be retried in the same prefix', async () => {
+  const dir = tempDir();
+  const win = process.platform === 'win32';
+  const packageFile = path.join(dir, ...(win ? [] : ['lib']), 'node_modules', '@scope', 'app', 'package.json');
+  const npm = path.join(dir, ...(win ? ['npm.cmd'] : ['bin', 'npm']));
+  fs.mkdirSync(path.dirname(packageFile), { recursive: true });
+  fs.mkdirSync(path.dirname(npm), { recursive: true });
+  fs.writeFileSync(npm, '');
+  fs.writeFileSync(packageFile, JSON.stringify({ name: '@scope/app', version: '1.0.0' }));
+  const registry = {
+    checkUpdates: true, registryUrl: null, env: {}, platform: process.platform,
+    fetchImpl: async () => ({ ok: true, json: async () => ({ version: '1.1.0' }) }),
+    npmRegistryUrl: async () => 'https://registry.example',
+    npmArgs: ProviderRegistry.prototype.npmArgs,
+  };
+  const self = new SelfUpdate({ pkg: '@scope/app', version: '1.0.0', packageFile, registry, execPath: path.join(dir, 'no-node', 'node') });
+  await self.refresh();
+  const pkgDir = path.dirname(packageFile);
+  fs.renameSync(pkgDir, path.join(path.dirname(pkgDir), '.app-Ab12Cd34'));
+  const info = self.describe();
+  assert.deepEqual([info.command, info.guidance], [formatCommand(npm, ['install', '-g', '--prefix', dir, '@scope/app@1.1.0']), null]);
+  fs.mkdirSync(pkgDir);
+  fs.writeFileSync(packageFile, JSON.stringify({ name: '@scope/fork', version: '1.0.0' }));
+  assert.match(self.describe().guidance, /not a global npm install/, 'files that are there again are judged afresh');
+});
+
 test('the manager checks its own release and knows when a restart is needed', async () => {
   const dir = tempDir();
   const win = process.platform === 'win32';
@@ -3383,6 +3416,13 @@ test('the npm prefix that owns a package is read from where its files are', () =
   assert.equal(npmOwner('/opt/n/lib/node_modules/@scope/app/package.json', '@scope/other', 'linux', fsx), null);
   assert.equal(npmOwner('/opt/n/lib/node_modules/@scope/app/package.json', '@scope/app', 'linux', { ...fsx, readText: () => '{ "name": "@scope/fork" }' }), null);
   assert.equal(npmOwner('/opt/m/lib/node_modules/@scope/app/package.json', '@scope/app', 'linux', fsx), null, 'no package files there');
+});
+
+test('a project\'s own copy on Windows is not taken for a global npm prefix', () => {
+  const files = new Set(['C:\\project\\node_modules\\@scope\\app\\package.json', 'C:\\n\\node_modules\\@scope\\app\\package.json', 'C:\\n\\app.cmd']);
+  const fsx = { exists: (f) => files.has(f), readText: () => '{ "name": "@scope/app", "version": "1.0.0", "bin": { "app": "bin/app.mjs" } }' };
+  assert.equal(npmOwner('C:\\project\\node_modules\\@scope\\app\\package.json', '@scope/app', 'win32', fsx), null, 'a dependency, its command only in node_modules\\.bin');
+  assert.equal(npmOwner('C:\\n\\node_modules\\@scope\\app\\package.json', '@scope/app', 'win32', fsx)?.prefix, 'C:\\n', 'a global install puts its command in the prefix');
 });
 
 test('the running Node.js and its npm global prefix are added to the end of PATH where missing', async () => {
