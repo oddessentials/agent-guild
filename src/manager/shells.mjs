@@ -129,10 +129,20 @@ function tmuxQuote(value, code = 'bad_request') {
  * detached, `cols` by `rows`, in `cwd`, with `env` as that session's own
  * environment and `args`, if any, as its command. Stdin keeps the card's
  * report token off the command line, where other users could read it.
+ * With `shell`, that session's windows start it as a Shell card does, not as
+ * a login shell: a login profile such as Debian's /etc/profile replaces PATH,
+ * dropping the folder of agent-guild-report that tools' hooks run. Only an sh
+ * family shell gets this: tmux runs the command through that shell's -c, and
+ * another shell, such as PowerShell, would read the quoted path as a string.
  */
-export function tmuxNewSession({ name, cwd, cols, rows, env, args = [] }) {
+export function tmuxNewSession({ name, cwd, cols, rows, env, args = [], shell = null }) {
   const words = ['new-session', '-d', '-s', tmuxQuote(name), '-x', String(cols), '-y', String(rows), '-c', tmuxQuote(cwd, 'bad_cwd')];
   for (const [key, value] of Object.entries(env)) words.push('-e', tmuxQuote(`${key}=${value}`));
-  for (const arg of args) words.push(tmuxQuote(arg, 'bad_args'));
-  return `${words.join(' ')}\n`;
+  const shFamily = shell && /^(?:ba|da|k|mk|z)?sh$/.test(path.posix.basename(shell));
+  const command = shFamily && tmuxQuote(`'${shell.replaceAll("'", "'\\''")}'`, 'bad_shell');
+  if (args.length) for (const arg of args) words.push(tmuxQuote(arg, 'bad_args'));
+  else if (command) words.push(command);
+  const lines = [words.join(' ')];
+  if (command) lines.push(`set-option -t ${tmuxQuote(`=${name}:`)} default-command ${command}`);
+  return `${lines.join('\n')}\n`;
 }

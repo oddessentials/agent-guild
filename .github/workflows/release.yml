@@ -51,9 +51,20 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # Smart App Control blocks node-pty's unsigned Windows modules. Each release signs its own copies,
+  # and ci.yml packs them in place of node-pty's and checks the tarball before anything is published.
+  sign:
+    name: Sign
+    needs: plan
+    if: needs.plan.outputs.version != ''
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/sign.yml
+
   ci:
     name: CI
-    needs: plan
+    needs: [plan, sign]
     if: needs.plan.outputs.version != ''
     # The CI matrices cancel the run on their first failure.
     permissions:

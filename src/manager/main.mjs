@@ -21,7 +21,7 @@ import { loadPty } from './pty.mjs';
 import { createNotesStore } from './notes.mjs';
 import { RemoteAccess, loadRemoteAccess } from './remote-access.mjs';
 import { SelfUpdate } from './self-update.mjs';
-import { resolveBaseEnv, pathReader } from './shell-env.mjs';
+import { addRuntimePaths, resolveBaseEnv, pathReader } from './shell-env.mjs';
 import { writeReportShims } from './report-shims.mjs';
 import { SessionHooks } from './session-hooks.mjs';
 import { launcherPath, nextManager } from './launch.mjs';
@@ -48,17 +48,17 @@ const rootDir = path.resolve(here, '../..');
 const VERSION_REFRESH_MS = 60 * 60 * 1000;
 
 /**
- * `version`, `packageFile`, `github` (GitHub's URLs and client id), `autostart` and `boot` stand in for the real ones in tests.
+ * `version`, `packageFile`, `github` (GitHub's URLs and client id), `autostart`, `boot` and `execPath` (the Node.js whose folders join PATH) stand in for the real ones in tests.
  * `supervised`: started by the Linux boot service, so systemd starts the next manager after a restart.
  */
-export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, sessionDefaults, version = VERSION, packageFile = PACKAGE_FILE, github: githubOptions = {}, remoteAccess: remoteOptions = {}, autostart = null, boot, supervised = false } = {}) {
+export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, sessionDefaults, version = VERSION, packageFile = PACKAGE_FILE, github: githubOptions = {}, remoteAccess: remoteOptions = {}, autostart = null, boot, supervised = false, execPath = process.execPath } = {}) {
   // Validate before creating files, processes or timers, so a typo, or a
   // system node-pty cannot run on, fails startup cleanly.
   loadPty();
   const remoteSettings = loadRemoteAccess(paths.remoteAccess);
   ensureDataDir();
   const token = loadOrCreateToken();
-  const baseEnv = await resolveBaseEnv();
+  const baseEnv = await addRuntimePaths(await resolveBaseEnv(), { execPath });
   const environment = new Environment({ env: baseEnv });
   const remoteAccess = new RemoteAccess({ file: paths.remoteAccess, env: baseEnv, loaded: remoteSettings, ...remoteOptions });
   const webDir = path.join(rootDir, 'web');
@@ -81,7 +81,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
   });
 
   let api;
-  const selfUpdate = new SelfUpdate({ pkg: PACKAGE_NAME, version, packageFile, registry });
+  const selfUpdate = new SelfUpdate({ pkg: PACKAGE_NAME, version, packageFile, registry, execPath });
   const github = new GitHub({ dir: paths.github, registry, ...githubOptions });
   const sessionHooks = new SessionHooks({ registry, dir: paths.reporting, version });
   registry.reportingEnabled = (provider) => sessionHooks.enabled(provider);

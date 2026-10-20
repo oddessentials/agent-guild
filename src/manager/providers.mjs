@@ -10,7 +10,7 @@ import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { resolveCommand, resolveAllCommands, pathKey, buildSpawnSpec, runSpec } from './command-resolver.mjs';
+import { resolveCommand, resolveAllCommands, pathKey, buildSpawnSpec, npmSpawnSpec, runSpec } from './command-resolver.mjs';
 import { compareVersions, probeVersion, fetchManifest, latestVersion, latestReleaseTag, brewVersion, DEFAULT_NPM_REGISTRY } from './versions.mjs';
 import { CHANNEL_LABELS, classifyInstall, expandHome, formatCommand, homeRelative, knownLaunchers, listInstallations, platformDependency, updateHelpAccepted } from './install-channels.mjs';
 import { copyChannel, linkOnPath, pluginVersion, readPlugin } from './docker-plugin.mjs';
@@ -345,7 +345,7 @@ export class ProviderRegistry extends EventEmitter {
       const npm = this.resolveNpm();
       if (!npm) return DEFAULT_NPM_REGISTRY;
       try {
-        const spec = buildSpawnSpec(npm, ['config', 'get', 'registry', '--global'], this.env, this.platform);
+        const spec = npmSpawnSpec(npm, ['config', 'get', 'registry', '--global'], this.env, this.platform);
         const url = (await runSpec(spec, { env: this.env, timeoutMs: 10000 })).stdout.trim();
         return /^https?:\/\/\S+$/.test(url) ? url : DEFAULT_NPM_REGISTRY;
       } catch {
@@ -938,10 +938,9 @@ export class ProviderRegistry extends EventEmitter {
       throw refusal(400, 'not_updatable', update.guidance || `Still checking how ${provider.tool} was installed. Try again in a moment.`);
     }
     if (provider.plugin) return { spec: this._installCommandSpec(provider), channel: channel.channel };
-    const args = channel.update.package
-      ? this.npmArgs(channel.update, await this.resolveRelease(provider, update.file))
-      : update.args;
-    return { spec: buildSpawnSpec(update.file, args, this.env, this.platform), channel: channel.update.package ? 'npm' : channel.channel };
+    if (!channel.update.package) return { spec: buildSpawnSpec(update.file, update.args, this.env, this.platform), channel: channel.channel };
+    const args = this.npmArgs(channel.update, await this.resolveRelease(provider, update.file));
+    return { spec: npmSpawnSpec(update.file, args, this.env, this.platform), channel: 'npm' };
   }
 
   uninstallSpec(provider, copyPath) {
@@ -980,6 +979,6 @@ export class ProviderRegistry extends EventEmitter {
       throw err;
     }
     const version = await this.resolveRelease(provider, npm);
-    return buildSpawnSpec(npm, this.npmArgs({ args: ['install', '-g'], package: provider.package }, version), this.env, this.platform);
+    return npmSpawnSpec(npm, this.npmArgs({ args: ['install', '-g'], package: provider.package }, version), this.env, this.platform);
   }
 }

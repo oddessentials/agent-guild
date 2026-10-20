@@ -28,7 +28,7 @@ import { startupState, startupSummary, unitPort } from './systemd-service.mjs';
 import { buildSpawnSpec, resolveCommand } from './command-resolver.mjs';
 import { parseTmuxVersion, probeVersion } from './versions.mjs';
 import { loadProviders, mergeDiscoveredPath } from './providers.mjs';
-import { pathReader, probeLoginShell, resolveBaseEnv } from './shell-env.mjs';
+import { addRuntimePaths, pathReader, probeLoginShell, resolveBaseEnv } from './shell-env.mjs';
 import { tmuxSupported } from './shells.mjs';
 
 export const MIN_NODE_MAJOR = 22;
@@ -64,6 +64,7 @@ function knownTools(dir, platform) {
 export async function managerEnvironment({ env, platform }) {
   let answer = null;
   const base = await resolveBaseEnv({ platform, env, shellEnv: async (opts) => (answer = await probeLoginShell(opts)).vars });
+  await addRuntimePaths(base, { platform });
   const keep = (text) => ({ env: base, pathSource: { ok: false, text: `${text}; using this terminal's PATH` } });
   if (env.AGENT_GUILD_SKIP_SHELL_ENV === '1') return { env: base, pathSource: { ok: true, text: "this terminal's PATH (AGENT_GUILD_SKIP_SHELL_ENV=1)" } };
   if (platform === 'win32') {
