@@ -21,6 +21,7 @@ const SHELLS_KEY = 'agentGuild.shells';
 const FLAGS_KEY = 'agentGuild.flags';
 const THEME_KEY = 'agentGuild.theme';
 const SKIN_KEY = 'agentGuild.skin';
+const ART_KEY = 'agentGuild.art';
 const NEWS_SEEN_KEY = 'agentGuild.newsSeen';
 const NEWS_FILTER_KEY = 'agentGuild.newsFilter';
 const CHANGELOG_SEEN_KEY = 'agentGuild.changelogSeen';
@@ -340,6 +341,13 @@ function changeSkin(input) {
   save(SKIN_KEY, skin);
   for (const el of document.querySelectorAll('.deal, .enter, .level-up, .summon')) el.classList.remove('deal', 'enter', 'level-up', 'summon');
   revealChange(input.closest('label'), () => { document.documentElement.dataset.skin = skin; });
+}
+
+function changeArt(input) {
+  const art = input.checked ? 'on' : 'off';
+  save(ART_KEY, art);
+  for (const el of document.querySelectorAll('.deal, .enter, .level-up, .summon')) el.classList.remove('deal', 'enter', 'level-up', 'summon');
+  revealChange(input.closest('label'), () => { document.documentElement.dataset.art = art; });
 }
 
 // ---- sound ----------------------------------------------------------------
@@ -8072,6 +8080,7 @@ $('copy-command').addEventListener('click', copyCommand);
 $('upgrade').addEventListener('click', upgradeManager);
 $('settings-menu').addEventListener('change', (e) => {
   if (e.target.name === 'skin') changeSkin(e.target);
+  else if (e.target.name === 'art') changeArt(e.target);
   else if (e.target.name === 'theme') changeTheme(e.target);
   else if (e.target.name === 'sound') changeSound(e.target);
   else if (e.target.name === 'voice') changeVoice(e.target);
@@ -8166,6 +8175,7 @@ $('providers').addEventListener('pointerout', (e) => {
 });
 applyTheme(currentTheme());
 renderSkinChoices();
+$('art').checked = document.documentElement.dataset.art === 'on';
 $('sound').checked = soundOn();
 renderVoice();
 renderRead();

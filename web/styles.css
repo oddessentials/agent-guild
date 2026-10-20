@@ -39,6 +39,7 @@
   --icon-server: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='4' y='4' width='16' height='7' rx='1.5'/%3E%3Crect x='4' y='13' width='16' height='7' rx='1.5'/%3E%3Cpath d='M7.5 7.5h.01M7.5 16.5h.01'/%3E%3C/svg%3E");
   --icon-notes: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 4.5h14v9.5l-5.5 5.5H5z'/%3E%3Cpath d='M13.5 19.5V14H19M8.5 9h7M8.5 12.5h4'/%3E%3C/svg%3E");
   --icon-play: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='black'%3E%3Cpath d='M8 5.5v13a1 1 0 0 0 1.5.86l10.6-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z'/%3E%3C/svg%3E");
+  --icon-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3.5' y='4.5' width='17' height='15' rx='2'/%3E%3Ccircle cx='9' cy='10' r='1.6'/%3E%3Cpath d='M20.5 15.5l-4.5-4.5-9.5 8.5'/%3E%3C/svg%3E");
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   font-size: 15px;
   color-scheme: light;
@@ -438,6 +439,50 @@ main { max-width: calc(1200px + var(--dock-space, 0px)); margin: 0 auto; padding
 .agent.shell, .agent.monitor { font-family: var(--font-mono, monospace); font-size: 0.8rem; }
 .agent-overflow { align-self: center; font-size: 0.75rem; font-weight: 600; color: var(--muted); }
 
+:root[data-art="off"] body::before, :root[data-art="off"] :is(.provider, .session-card, .models, .auth)::after, :root[data-art="off"] #empty::before { content: none; background: none; border-image: none; }
+:root[data-art="off"] .card-art { display: none; }
+:root[data-art="off"] .provider { padding: 16px; }
+:root[data-art="off"] .provider.spent .provider-icon { filter: grayscale(1); }
+:root[data-art="off"] .provider-icon:not(.has-image):is([data-provider="anthropic"], [data-provider="openai"], [data-provider="google"], [data-provider="xai"], [data-provider="docker"], [data-provider="shell"]) { background-position: center; background-size: cover; background-repeat: no-repeat; color: transparent; }
+:root[data-art="off"] .provider-icon:not(.has-image)[data-provider="anthropic"] { background-image: url("skins/professional/icons/anthropic.svg"); }
+:root[data-art="off"] .provider-icon:not(.has-image)[data-provider="openai"] { background-image: url("skins/professional/icons/openai.svg"); }
+:root[data-art="off"] .provider-icon:not(.has-image)[data-provider="google"] { background-image: url("skins/professional/icons/google.svg"); }
+:root[data-art="off"] .provider-icon:not(.has-image)[data-provider="xai"] { background-image: url("skins/professional/icons/xai.svg"); }
+:root[data-art="off"] .provider-icon:not(.has-image)[data-provider="docker"] { background-image: url("skins/professional/icons/docker.svg"); }
+:root[data-art="off"] .provider-icon:not(.has-image)[data-provider="shell"] { background-image: url("skins/professional/icons/shell.svg"); }
+:root[data-art="off"] #sessions .session-card {
+  position: relative; overflow: hidden; min-height: 0; padding: 14px 16px;
+  grid-template-columns: minmax(0, 1fr) auto; align-items: center;
+}
+:root[data-art="off"] #sessions .session-card > * { grid-column: 1 / -1; }
+:root[data-art="off"] #sessions .session-card > .card-actions { grid-column: 1; }
+:root[data-art="off"] #sessions .card-top { flex-wrap: wrap; gap: 8px 12px; }
+:root[data-art="off"] #sessions .card-top > .provider-icon { display: grid; }
+:root[data-art="off"] #sessions .card-title { flex: 1 1 calc(100% - 54px); }
+:root[data-art="off"] #sessions .session-card.exited .provider-icon { filter: grayscale(1); opacity: 0.55; }
+:root[data-art="off"] #sessions .card-aura {
+  grid-column: auto; position: absolute; inset: 0 0 auto; z-index: 1; width: auto; height: 3px; overflow: hidden; pointer-events: none;
+  border-radius: 0; mask: none; background: var(--pc, var(--accent)); opacity: 0; transition: opacity 0.4s var(--ease);
+}
+:root[data-art="off"] .card-aura::before, :root[data-art="off"] .card-aura::after { content: none; background: none; }
+:root[data-art="off"] #sessions .session-card:has(.status-pill.active) .card-aura { opacity: 1; }
+:root[data-art="off"] #sessions .level-badge {
+  grid-column: 2; order: 1; position: static; display: flex; align-items: center; gap: 0.3em; width: auto; height: 24px; padding: 0 9px;
+  border: 1px solid var(--border); border-radius: 999px; background: var(--surface-2); box-shadow: none; filter: none;
+  color: var(--text); font: inherit; font-size: 0.72rem; font-weight: 600; font-variant-numeric: tabular-nums; text-shadow: none;
+}
+:root[data-art="off"] #sessions .level-badge::before { content: "Lv"; color: var(--muted); font-weight: 500; }
+:root[data-art="off"] #sessions .level-badge:empty { display: none; }
+:root[data-art="off"] .agent {
+  place-items: center; padding: 0; border-radius: 50%; border-color: var(--fc, var(--c));
+  background: color-mix(in srgb, var(--fc, var(--c)) 22%, var(--surface)); color: var(--text);
+  font-size: 0.72rem; text-shadow: none; box-shadow: none;
+}
+:root[data-art="off"] .session-card .agent { width: 28px; height: 28px; }
+:root[data-art="off"] .agent:is(.shell, .monitor) { font-size: 0.8rem; }
+:root[data-art="off"] .agent.working::after { border-color: var(--fc, var(--c)); border-radius: 50%; }
+:root[data-art="off"] .meter .meter-label { padding-left: 0; background: none; }
+
 .card-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .btn {
   padding: 6px 12px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface-2);
@@ -466,6 +511,7 @@ main { max-width: calc(1200px + var(--dock-space, 0px)); margin: 0 auto; padding
 .settings-menu .choice > .voice-input::before { mask-image: var(--icon-mic); }
 .settings-menu .choice > .read-aloud::before { mask-image: var(--icon-sound); }
 .settings-menu .choice > .autostart::before { mask-image: var(--icon-power); }
+.settings-menu .choice > .card-art-choice::before { mask-image: var(--icon-image); }
 .choice-row { display: flex; align-items: center; gap: 4px; padding-right: 8px; }
 .choice-row .choice { flex: 1; }
 .note-toggle { cursor: pointer; }

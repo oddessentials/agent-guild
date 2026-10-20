@@ -29,7 +29,18 @@
   try {
     if (localStorage.getItem('agentGuild.view') === 'yard') view = 'yard';
   } catch (e) { /* storage unavailable */ }
+  var art = null;
+  try {
+    art = localStorage.getItem('agentGuild.art');
+    if (art !== 'on' && art !== 'off') {
+      art = 'off';
+      for (var i = 0; i < localStorage.length; i++) if (/^agentGuild\.(?!art$)/.test(localStorage.key(i))) art = 'on';
+      localStorage.setItem('agentGuild.art', art);
+    }
+  } catch (e) { /* storage unavailable */ }
+  if (art !== 'on') art = 'off';
   document.documentElement.dataset.view = view;
   document.documentElement.dataset.theme = theme;
   document.documentElement.dataset.skin = skin;
+  document.documentElement.dataset.art = art;
 })();

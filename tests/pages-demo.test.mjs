@@ -46,7 +46,10 @@ function openBookmark(search, saved = {}) {
     URLSearchParams,
     location: { search },
     document: { documentElement: root },
-    localStorage: { getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, String(value)), removeItem: (key) => storage.delete(key) },
+    localStorage: {
+      getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, String(value)), removeItem: (key) => storage.delete(key),
+      get length() { return storage.size; }, key: (i) => [...storage.keys()][i] ?? null,
+    },
     matchMedia: () => ({ matches: false }),
   };
   context.window = context;
@@ -56,20 +59,22 @@ function openBookmark(search, saved = {}) {
   return { shown: { ...root.dataset }, saved: Object.fromEntries(storage) };
 }
 
-test('a demo bookmark opens its skin, view and theme whatever the visitor saved, keeps them, and closes restored terminals and panels', () => {
-  const saved = { 'agentGuild.skin': 'guild', 'agentGuild.view': 'cards', 'agentGuild.theme': 'light' };
+test('a demo bookmark opens its skin, view, theme and card art whatever the visitor saved, keeps them, and closes restored terminals and panels', () => {
+  const saved = { 'agentGuild.skin': 'guild', 'agentGuild.view': 'cards', 'agentGuild.theme': 'light', 'agentGuild.art': 'on' };
   const skins = fs.readFileSync(path.join(repo, 'web', 'theme.js'), 'utf8').match(/\{ id: '[a-z]+'/g).map((m) => m.slice(7, -1));
   assert.equal(skins.length, 6);
   for (const skin of skins) for (const view of ['cards', 'yard']) for (const theme of ['light', 'dark']) {
     const opened = openBookmark(`?skin=${skin}&view=${view}&theme=${theme}`, saved);
-    assert.deepEqual(opened.shown, { skin, view, theme });
-    assert.deepEqual(opened.saved, { 'agentGuild.skin': skin, 'agentGuild.view': view, 'agentGuild.theme': theme });
+    assert.deepEqual(opened.shown, { skin, view, theme, art: 'on' });
+    assert.deepEqual(opened.saved, { 'agentGuild.skin': skin, 'agentGuild.view': view, 'agentGuild.theme': theme, 'agentGuild.art': 'on' });
   }
-  assert.deepEqual(openBookmark('?view=yard', saved).shown, { skin: 'guild', view: 'yard', theme: 'light' });
-  const refused = openBookmark('?skin=nope&view=map&theme=sepia', saved);
-  assert.deepEqual(refused.shown, { skin: 'guild', view: 'cards', theme: 'light' });
+  assert.deepEqual(openBookmark('?view=yard', saved).shown, { skin: 'guild', view: 'yard', theme: 'light', art: 'on' });
+  assert.deepEqual(openBookmark('?art=off', saved).saved, { ...saved, 'agentGuild.art': 'off' });
+  assert.deepEqual(openBookmark('?skin=guild&art=on', {}).shown, { skin: 'guild', view: 'cards', theme: 'light', art: 'on' });
+  const refused = openBookmark('?skin=nope&view=map&theme=sepia&art=maybe', saved);
+  assert.deepEqual(refused.shown, { skin: 'guild', view: 'cards', theme: 'light', art: 'on' });
   assert.deepEqual(refused.saved, saved);
-  assert.deepEqual(openBookmark('', {}).shown, { skin: 'professional', view: 'cards', theme: 'light' });
+  assert.deepEqual(openBookmark('', {}).shown, { skin: 'professional', view: 'cards', theme: 'light', art: 'off' });
 
   const open = { ...saved, 'agentGuild.panes': '{"panes":["a11ce001"],"focused":"a11ce001"}', 'agentGuild.dock': 'notes' };
   assert.deepEqual(openBookmark('?view=yard', open).saved, { ...saved, 'agentGuild.view': 'yard' });

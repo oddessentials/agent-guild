@@ -63,6 +63,37 @@ test('a page with no saved skin starts in Professional', () => {
   assert.equal(document.documentElement.dataset.skin, 'professional');
 });
 
+test('card art starts off for a new page, on for a page that has used Agent Guild, and keeps the choice', () => {
+  const start = (saved) => {
+    const storage = new Map(Object.entries(saved));
+    const localStorage = {
+      getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, String(value)),
+      get length() { return storage.size; }, key: (i) => [...storage.keys()][i] ?? null,
+    };
+    const document = { documentElement: { dataset: {} } };
+    runInNewContext(readFileSync(new URL('theme.js', web), 'utf8'), { window: { matchMedia: () => ({ matches: false }) }, document, localStorage });
+    return [document.documentElement.dataset.art, storage.get('agentGuild.art')];
+  };
+  assert.deepEqual(start({}), ['off', 'off']);
+  assert.deepEqual(start({ 'other.key': '1' }), ['off', 'off']);
+  assert.deepEqual(start({ 'agentGuild.token': 't' }), ['on', 'on']);
+  assert.deepEqual(start({ 'agentGuild.token': 't', 'agentGuild.art': 'off' }), ['off', 'off']);
+  assert.deepEqual(start({ 'agentGuild.art': 'on' }), ['on', 'on']);
+  assert.deepEqual(start({ 'agentGuild.art': 'sideways' }), ['off', 'off']);
+});
+
+test('with card art off, styles.css draws each tool icon from a shipped file', () => {
+  const css = readFileSync(new URL('styles.css', web), 'utf8');
+  for (const p of providers) {
+    const rule = css.match(new RegExp(`:root\\[data-art="off"\\] \\.provider-icon:not\\(\\.has-image\\)\\[data-provider="${p}"\\] \\{ background-image: url\\("([^"]+)"\\); \\}`));
+    assert.ok(rule, p);
+    assert.ok(existsSync(new URL(rule[1], web)), rule[1]);
+  }
+  const hidden = css.match(/:root\[data-art="off"\] \.provider-icon:not\(\.has-image\)([^{]*) \{[^}]*color: transparent;/);
+  assert.ok(hidden, 'the rule that hides the letters');
+  assert.deepEqual([...hidden[1].matchAll(/\[data-provider="([\w-]+)"\]/g)].map((m) => m[1]).sort(), [...providers].sort(), 'only tools with a drawn icon lose their letters');
+});
+
 for (const { id } of list) {
   const file = new URL(`skins/${id}/skin.css`, web);
 

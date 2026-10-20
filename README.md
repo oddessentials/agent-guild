@@ -8,6 +8,7 @@
   <img src="https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-e8c47c" alt="Windows, macOS and Linux">
   <img src="https://img.shields.io/node/v/@oddessentials/agent-guild?color=4cc38a" alt="Node.js version">
   <a href="https://www.youtube.com/watch?v=ziT62WtXQ1M"><img src="https://img.shields.io/badge/trailer-watch%20on%20YouTube-e5534b?logo=youtube&logoColor=white" alt="Watch the Agent Guild trailer on YouTube"></a>
+  <a href="https://agentguild.oddessentials.ai/"><img src="https://img.shields.io/badge/Agent%20Guild%3A%20World-coming%20soon%20to%20Steam-1b2838?logo=steam&logoColor=white" alt="Agent Guild: World, coming soon to Steam"></a>
   <a href="https://oddessentials.ai/donate/?ref=agent-guild"><img src="https://img.shields.io/badge/support-buy%20the%20lab%20a%20beer-f2a93b" alt="Support Agent Guild: buy the lab a beer"></a>
 </p>
 
@@ -18,6 +19,10 @@ Close the page whenever you like; the sessions keep running.
 
 [Try the demo](https://oddessentials.github.io/agent-guild/) in your browser
 (simulated, nothing installed) or [watch the trailer](https://www.youtube.com/watch?v=ziT62WtXQ1M).
+
+**[Agent Guild: World](https://agentguild.oddessentials.ai/)**, coming soon to
+Steam, shows the same sessions as a crew at work in a living 3D world, on
+Windows, macOS and Linux. It runs on Agent Guild, which stays free.
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/images/overview-light.webp">
