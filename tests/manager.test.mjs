@@ -1061,6 +1061,7 @@ test('a closed tmux card stops offering Reattach once tmux no longer has its ses
   };
   const read = await closedCard('Read by GET');
   const greeted = await closedCard('Read by a page');
+  const ended = await closedCard('Ended with its server');
 
   assert.notEqual(await tmux('kill-session', '-t', `=${read.mux}`), null);
   assert.equal((await sessionNow(read.id)).multiplexer.reattachable, false, 'the answer itself is current');
@@ -1074,6 +1075,9 @@ test('a closed tmux card stops offering Reattach once tmux no longer has its ses
   assert.equal(hello.sessions.find((s) => s.id === greeted.id).multiplexer.reattachable, true, 'hello does not wait for tmux');
   await waitFor(() => events.messages.find((m) => m.type === 'session.updated' && m.session.id === greeted.id && m.session.multiplexer.reattachable === false), { label: 'the correction follows hello' });
   assert.equal(events.messages.filter((m) => m.type === 'session.updated' && m.session.id === read.id).length, 0, 'an unchanged card is not announced');
+
+  assert.notEqual(await tmux('kill-server'), null);
+  assert.equal((await sessionNow(ended.id)).multiplexer.reattachable, false, 'tmux kill-server ends every card\'s session');
 });
 
 test('a restarted manager brings a tmux card back closed, with its own id and token, ready to reattach', async (t) => {
