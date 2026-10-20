@@ -175,13 +175,30 @@ jobs:
         run: npm version "$VERSION" --no-git-tag-version
         env:
           VERSION: ${{ inputs.version }}
+      # A release packs the Windows modules that release.yml signed, keeping node-pty's copies to compare.
+      - if: inputs.version != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: windows-modules
+          path: ${{ runner.temp }}/windows-modules
+      - if: inputs.version != ''
+        run: |
+          node tests/package/check-tarball.mjs --windows-modules | while read -r rel; do
+            mkdir -p "$RUNNER_TEMP/upstream/$(dirname "$rel")"
+            cp "$rel" "$RUNNER_TEMP/upstream/$rel"
+            cp "$RUNNER_TEMP/windows-modules/$rel" "$rel"
+          done
       - id: pack
+        env:
+          SIGNED: ${{ inputs.version != '' }}
         run: |
           mkdir "$RUNNER_TEMP/package"
           version=$(node -p "require('./package.json').version")
           node scripts/yard-pack.mjs --out "$RUNNER_TEMP/package" --url-base "https://github.com/$GITHUB_REPOSITORY/releases/download/v$version/"
           npm pack --pack-destination "$RUNNER_TEMP/package"
-          node tests/package/check-tarball.mjs "$RUNNER_TEMP"/package/*.tgz --version "$version"
+          upstream=()
+          if [ "$SIGNED" = true ]; then upstream=(--upstream "$RUNNER_TEMP/upstream"); fi
+          node tests/package/check-tarball.mjs "$RUNNER_TEMP"/package/*.tgz --version "$version" "${upstream[@]}"
           cd "$RUNNER_TEMP/package"
           sha256sum -- *.tgz yard-art-*.tar.gz > SHA256SUMS
           echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -274,6 +291,11 @@ jobs:
       - env:
           VERSION: ${{ needs.pack.outputs.version }}
         run: node tests/package/smoke.mjs "$(npm prefix --global)" --version "$VERSION"
+      - if: inputs.version != '' && runner.os == 'Windows' && runner.arch == 'X64'
+        shell: pwsh
+        env:
+          PUBLISHER: ${{ vars.WINDOWS_PUBLISHER }}
+        run: ./tests/package/check-signatures.ps1 -Package (Join-Path (npm prefix --global) 'node_modules/@oddessentials/agent-guild') -Publisher $env:PUBLISHER
       - if: failure()
         run: gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY"
         env:

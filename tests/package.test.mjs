@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { readTar, checkPackage } from './package/check-tarball.mjs';
+import { readTar, checkPackage, peLayout, signedFrom, WINDOWS_MODULES } from './package/check-tarball.mjs';
 import { generateNotes } from '../.github/release/capture.mjs';
 import { parseNotes } from '../src/manager/changelog.mjs';
 
@@ -32,6 +32,28 @@ function paxRecord(key, value) {
 
 const tar = (...entries) => Buffer.concat([...entries, Buffer.alloc(1024)]);
 
+const OPTIONAL = 0x80 + 24;
+function pe(seed, size = 1001) {
+  const body = Buffer.alloc(size);
+  body.writeUInt16LE(0x5a4d, 0);
+  body.writeUInt32LE(0x80, 0x3c);
+  body.writeUInt32LE(0x4550, 0x80);
+  body.writeUInt16LE(0x20b, OPTIONAL);
+  body.writeUInt32LE(16, OPTIONAL + 108);
+  for (let i = 0x200; i < size; i++) body[i] = (i * 7 + seed) % 251;
+  return body;
+}
+
+function sign(unsigned, { padding = (8 - (unsigned.length % 8)) % 8, table = Buffer.from('certificate table') } = {}) {
+  const signed = Buffer.concat([unsigned, Buffer.alloc(padding), table]);
+  signed.writeUInt32LE(0x2a2a, OPTIONAL + 64);
+  signed.writeUInt32LE(unsigned.length + padding, OPTIONAL + 144);
+  signed.writeUInt32LE(table.length, OPTIONAL + 148);
+  return signed;
+}
+
+const upstreamModules = new Map(WINDOWS_MODULES.map((rel, i) => [rel, pe(i)]));
+
 const NAME = '@scope/app';
 const lock = {
   packages: {
@@ -56,6 +78,7 @@ function goodPackage({ manifest = {}, without = [], extra = [] } = {}) {
     ['node_modules/dep/lib/package.json', [JSON.stringify({ type: 'commonjs' })]],
     ['node_modules/dep/prebuilds/darwin-arm64/spawn-helper', ['helper', { mode: 0o755 }]],
     ['node_modules/@scope/other/package.json', [JSON.stringify({ version: '2.0.0' })]],
+    ...[...upstreamModules].map(([rel, body]) => [rel, [body]]),
     ...extra,
   ]);
   for (const name of without) files.delete(name);
@@ -119,6 +142,49 @@ test('the package check names every way a tarball can be wrong', () => {
 
   const outside = [...goodPackage(), ...readTar(tar(entry('elsewhere/file', 'x')))];
   assert.deepEqual(checkPackage({ entries: outside, lock, version: '1.2.3' }), ['elsewhere/file is outside package/']);
+});
+
+test('a signed Windows module matches node-pty\'s only when the signature is all that changed', () => {
+  const upstream = pe(1);
+  assert.equal(peLayout(Buffer.from('not a binary')), null);
+  assert.equal(peLayout(upstream).certSize, 0);
+  assert.equal(signedFrom(sign(upstream), upstream), true);
+  assert.equal(signedFrom(sign(pe(1, 1024)), pe(1, 1024)), true);
+
+  const code = sign(upstream);
+  code[0x300] ^= 1;
+  assert.equal(signedFrom(code, upstream), false, 'a changed code byte');
+  const header = sign(upstream);
+  header[OPTIONAL + 60] ^= 1;
+  assert.equal(signedFrom(header, upstream), false, 'a changed header byte beside the checksum');
+  const padding = sign(upstream);
+  padding[upstream.length] = 1;
+  assert.equal(signedFrom(padding, upstream), false, 'non-zero alignment bytes');
+  assert.equal(signedFrom(sign(upstream, { padding: 15 }), upstream), false, 'more than alignment before the table');
+  const trailing = Buffer.concat([sign(upstream), Buffer.from('extra')]);
+  assert.equal(signedFrom(trailing, upstream), false, 'bytes after the certificate table');
+  assert.equal(signedFrom(upstream, upstream), false, 'no signature');
+  assert.equal(signedFrom(sign(sign(upstream)), sign(upstream)), false, 'an upstream file that was already signed');
+});
+
+test('the package check holds a release to signed node-pty modules and no other unsigned Windows binary', () => {
+  const signedModules = [...upstreamModules].map(([rel, body]) => [rel, [sign(body)]]);
+  const check = (options, upstream = null) => checkPackage({ entries: goodPackage(options), lock, version: '1.2.3', upstream });
+
+  assert.deepEqual(check({ extra: signedModules }, upstreamModules), []);
+  assert.deepEqual(check({ extra: [['node_modules/dep/helper.exe', [sign(pe(9))]]] }), []);
+  assert.deepEqual(check({ extra: [['node_modules/dep/helper.exe', [pe(9)]]] }),
+    ['node_modules/dep/helper.exe is an unsigned Windows binary that the release does not sign']);
+  assert.deepEqual(check({ without: [WINDOWS_MODULES[1]] }),
+    [`${WINDOWS_MODULES[1]} is missing; it is one of the Windows modules the release signs`]);
+
+  assert.deepEqual(check({}, upstreamModules), WINDOWS_MODULES.map((rel) => `${rel} is not node-pty's file with only a signature added`));
+  const tampered = sign(upstreamModules.get(WINDOWS_MODULES[0]));
+  tampered[0x250] ^= 1;
+  assert.deepEqual(check({ extra: [...signedModules, [WINDOWS_MODULES[0], [tampered]]] }, upstreamModules),
+    [`${WINDOWS_MODULES[0]} is not node-pty's file with only a signature added`]);
+  const partial = new Map([...upstreamModules].slice(1));
+  assert.deepEqual(check({ extra: signedModules }, partial), [`${WINDOWS_MODULES[0]} has no upstream copy to compare with`]);
 });
 
 test('the release plan records the version and notes that end with the install command', async () => {

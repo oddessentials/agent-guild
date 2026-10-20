@@ -8,6 +8,40 @@ const MAX_PACKED_BYTES = 100 * 1024 * 1024;
 const TOP_LEVEL = new Set(['package.json', 'README.md', 'LICENSE', 'bin', 'src', 'web', 'config', 'examples', 'node_modules']);
 const REQUIRED = ['package.json', 'README.md', 'LICENSE', 'src/manager/main.mjs', 'web/index.html', 'web/yard/art.json', 'config/providers.default.json'];
 const PACKAGE_ROOT = /^((?:node_modules\/(?:@[^/]+\/)?[^/]+\/)+)package\.json$/;
+// node-pty ships these unsigned and Smart App Control blocks unsigned modules, so the release signs them.
+export const WINDOWS_MODULES = ['x64', 'arm64'].flatMap((arch) =>
+  ['conpty.node', 'conpty_console_list.node'].map((name) => `node_modules/node-pty/prebuilds/win32-${arch}/${name}`));
+
+export function peLayout(buffer) {
+  if (!buffer || buffer.length < 0x40 || buffer.readUInt16LE(0) !== 0x5a4d) return null;
+  const pe = buffer.readUInt32LE(0x3c);
+  if (pe + 24 + 2 > buffer.length || buffer.readUInt32LE(pe) !== 0x4550) return null;
+  const optional = pe + 24;
+  const magic = buffer.readUInt16LE(optional);
+  if (magic !== 0x10b && magic !== 0x20b) return null;
+  const directories = optional + (magic === 0x20b ? 112 : 96);
+  const security = directories + 4 * 8;
+  if (security + 8 > buffer.length || buffer.readUInt32LE(directories - 4) < 5) return null;
+  return { checksum: optional + 64, security, certOffset: buffer.readUInt32LE(security), certSize: buffer.readUInt32LE(security + 4) };
+}
+
+// True when signed is upstream with only an Authenticode signature added: the PE checksum, the
+// security directory entry, up to 7 zero bytes of alignment and the certificate table that ends the file.
+export function signedFrom(signed, upstream) {
+  const after = peLayout(signed);
+  const before = peLayout(upstream);
+  if (!after || !before || before.certSize !== 0 || after.certSize === 0) return false;
+  if (after.certOffset + after.certSize !== signed.length) return false;
+  if (after.certOffset < upstream.length || after.certOffset - upstream.length > 7) return false;
+  if (signed.subarray(upstream.length, after.certOffset).some((byte) => byte !== 0)) return false;
+  const masked = (buffer, at) => {
+    const copy = Buffer.from(buffer.subarray(0, upstream.length));
+    copy.fill(0, at.checksum, at.checksum + 4);
+    copy.fill(0, at.security, at.security + 8);
+    return copy;
+  };
+  return masked(signed, after).equals(masked(upstream, before));
+}
 
 function paxPath(body) {
   let found = null;
@@ -71,7 +105,7 @@ export function bundledPackages(files) {
   return bundled;
 }
 
-export function checkPackage({ entries, lock, version = null }) {
+export function checkPackage({ entries, lock, version = null, upstream = null }) {
   const problems = [];
   for (const entry of entries) {
     if (!entry.path.startsWith('package/')) problems.push(`${entry.path} is outside package/`);
@@ -117,25 +151,47 @@ export function checkPackage({ entries, lock, version = null }) {
   for (const [rel, entry] of helpers) {
     if ((entry.mode & 0o111) === 0) problems.push(`${rel} is not executable (mode ${entry.mode.toString(8)}); pack on Linux or macOS`);
   }
+
+  for (const rel of WINDOWS_MODULES) {
+    if (!files.has(rel)) problems.push(`${rel} is missing; it is one of the Windows modules the release signs`);
+  }
+  for (const [rel, entry] of files) {
+    const layout = peLayout(entry.body);
+    if (!layout) continue;
+    if (!WINDOWS_MODULES.includes(rel)) {
+      if (layout.certSize === 0) problems.push(`${rel} is an unsigned Windows binary that the release does not sign`);
+    } else if (upstream) {
+      if (!upstream.has(rel)) problems.push(`${rel} has no upstream copy to compare with`);
+      else if (!signedFrom(entry.body, upstream.get(rel))) problems.push(`${rel} is not node-pty's file with only a signature added`);
+    }
+  }
   return problems;
 }
 
 function main(argv) {
   let tarball = null;
   let version = null;
+  let upstreamDir = null;
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--version') version = argv[++i] ?? null;
-    else tarball = argv[i];
+    else if (argv[i] === '--upstream') upstreamDir = argv[++i] ?? null;
+    else if (argv[i] === '--windows-modules') {
+      console.log(WINDOWS_MODULES.join('\n'));
+      return 0;
+    } else tarball = argv[i];
   }
   if (!tarball) {
-    console.error('Usage: node tests/package/check-tarball.mjs <tarball> [--version X.Y.Z]');
+    console.error('Usage: node tests/package/check-tarball.mjs <tarball> [--version X.Y.Z] [--upstream <dir with node-pty\'s unsigned modules>] | --windows-modules');
     return 2;
   }
   const here = path.dirname(fileURLToPath(import.meta.url));
   const lock = JSON.parse(fs.readFileSync(path.resolve(here, '../../package-lock.json'), 'utf8'));
   const packed = fs.statSync(tarball).size;
   const entries = readTar(zlib.gunzipSync(fs.readFileSync(tarball)));
-  const problems = checkPackage({ entries, lock, version });
+  const upstream = upstreamDir && new Map(WINDOWS_MODULES
+    .filter((rel) => fs.existsSync(path.join(upstreamDir, rel)))
+    .map((rel) => [rel, fs.readFileSync(path.join(upstreamDir, rel))]));
+  const problems = checkPackage({ entries, lock, version, upstream });
   const mb = (bytes) => (bytes / 1024 / 1024).toFixed(1);
   if (packed > MAX_PACKED_BYTES) problems.push(`the package is ${mb(packed)} MB packed; the limit is ${mb(MAX_PACKED_BYTES)} MB`);
   for (const problem of problems) console.error(`not ok  ${problem}`);
