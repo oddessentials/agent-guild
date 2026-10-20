@@ -3228,6 +3228,53 @@ test('an upgrade stopped after npm moved the running copy aside can be retried i
   assert.match(self.describe().guidance, /not a global npm install/, 'files that are there again are judged afresh');
 });
 
+test('an upgrade stopped before npm put the command shims back can be retried in the same prefix', async () => {
+  const dir = tempDir();
+  const win = process.platform === 'win32';
+  const packageFile = path.join(dir, ...(win ? [] : ['lib']), 'node_modules', '@scope', 'app', 'package.json');
+  const npm = path.join(dir, ...(win ? ['npm.cmd'] : ['bin', 'npm']));
+  const shim = path.join(dir, ...(win ? ['app.cmd'] : ['bin', 'app']));
+  fs.mkdirSync(path.dirname(packageFile), { recursive: true });
+  fs.mkdirSync(path.dirname(npm), { recursive: true });
+  fs.writeFileSync(npm, '');
+  fs.writeFileSync(shim, '');
+  const write = (version, name = '@scope/app') => fs.writeFileSync(packageFile, JSON.stringify({ name, version, bin: { app: 'bin/app.mjs' } }));
+  write('1.0.0');
+  const registry = {
+    checkUpdates: true, registryUrl: null, env: {}, platform: process.platform,
+    fetchImpl: async () => ({ ok: true, json: async () => ({ version: '1.1.0' }) }),
+    npmRegistryUrl: async () => 'https://registry.example',
+    npmArgs: ProviderRegistry.prototype.npmArgs,
+  };
+  const retry = formatCommand(npm, ['install', '-g', '--prefix', dir, '@scope/app@1.1.0']);
+  const self = new SelfUpdate({ pkg: '@scope/app', version: '1.0.0', packageFile, registry, execPath: path.join(dir, 'no-node', 'node') });
+  await self.refresh();
+  assert.equal(self.describe().command, retry);
+
+  // npm wrote the new package.json and was stopped before it put the shim it had moved aside back.
+  self.beginInstall();
+  fs.rmSync(shim);
+  write('1.1.0');
+  self.finishInstall({ exitCode: 1 });
+  assert.deepEqual([self.describe().available, self.describe().command, self.describe().guidance], [true, retry, null]);
+
+  // The retry finishes the install.
+  self.beginInstall();
+  fs.writeFileSync(shim, '');
+  self.finishInstall({ exitCode: 0 });
+  assert.deepEqual([self.describe().available, self.describe().pendingVersion, self.describe().guidance], [false, '1.1.0', null]);
+
+  write('1.0.0', '@scope/fork');
+  self.suspectVersion = '1.0.0';
+  assert.match(self.describe().guidance, /not a global npm install/, 'another package there is not this install');
+  const project = path.join(dir, 'project', 'node_modules', '@scope', 'app', 'package.json');
+  fs.mkdirSync(path.dirname(project), { recursive: true });
+  fs.writeFileSync(project, JSON.stringify({ name: '@scope/app', version: '1.0.0', bin: { app: 'bin/app.mjs' } }));
+  const local = new SelfUpdate({ pkg: '@scope/app', version: '1.0.0', packageFile: project, registry, execPath: path.join(dir, 'no-node', 'node') });
+  await local.refresh();
+  assert.match(local.describe().guidance, /not a global npm install/, 'a copy never verified as a global install');
+});
+
 test('the manager checks its own release and knows when a restart is needed', async () => {
   const dir = tempDir();
   const win = process.platform === 'win32';

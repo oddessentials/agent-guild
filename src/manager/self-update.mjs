@@ -67,14 +67,24 @@ export class SelfUpdate extends EventEmitter {
 
   /**
    * The global npm prefix that holds the running copy, as `npmOwner` finds it.
-   * While package.json is missing, as an upgrade stopped midway leaves it,
-   * the prefix last verified still holds the copy, so a retry can go there.
+   * An upgrade stopped midway can leave package.json or the command shims
+   * missing, or package.json half written; until package.json there names
+   * another package, the prefix verified for the running copy still holds it,
+   * so a retry can go there.
    */
   _verifiedOwner() {
     const owner = this.packageFile ? npmOwner(this.packageFile, this.pkg, this.registry.platform) : null;
     if (owner) this._owner = owner;
-    else if (this._owner && fs.existsSync(this.packageFile)) this._owner = null;
+    else if (this._owner && !this._stillThisPackage()) this._owner = null;
     return owner ?? this._owner;
+  }
+
+  _stillThisPackage() {
+    try {
+      return JSON.parse(fs.readFileSync(this.packageFile, 'utf8')).name === this.pkg;
+    } catch {
+      return true;
+    }
   }
 
   /** Ask the registry for the latest release, hourly unless `force`. Emits "updated" on a change. */
