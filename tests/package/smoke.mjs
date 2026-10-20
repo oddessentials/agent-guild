@@ -35,6 +35,8 @@ const nodeDir = path.dirname(process.execPath);
 const inherit = (...names) => Object.fromEntries(names.filter((name) => process.env[name] !== undefined).map((name) => [name, process.env[name]]));
 const systemRoot = process.env.SystemRoot || 'C:\\Windows';
 const env = {
+  // npm's settings from the environment, as a real launch inherits them: GitHub's Windows image names npm's global prefix only there.
+  ...Object.fromEntries(Object.entries(process.env).filter(([name]) => /^npm_config_/i.test(name))),
   ...(win
     ? {
       ...inherit('SystemRoot', 'windir', 'SystemDrive', 'ComSpec', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'APPDATA', 'LOCALAPPDATA', 'ProgramData',
