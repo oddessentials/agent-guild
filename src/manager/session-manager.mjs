@@ -181,8 +181,13 @@ export class SessionManager extends EventEmitter {
       const env = Object.fromEntries(Object.entries(own).filter(([key]) => mux.dropEnv(key) || key.toUpperCase() === 'PATH'));
       const cols = clampDimension(options.cols, 120, 2, 1000);
       const rows = clampDimension(options.rows, 32, 1, 500);
+      const request = { name: muxName, cwd: options.cwd, cols, rows, env, args };
       // Outside the try: a folder or argument tmux cannot take is the request's fault, refused before tmux runs.
-      const input = tmuxNewSession({ name: muxName, cwd: options.cwd, cols, rows, env, args });
+      tmuxNewSession(request);
+      // tmux's own shell, unless the user's tmux configuration names a default-command of its own.
+      const [command, tmuxShell] = await mux.run(['-u', 'start-server', ';', 'show-options', '-gv', 'default-command', ';', 'show-options', '-gv', 'default-shell'], { cwd: options.cwd, input: '' })
+        .then(({ stdout }) => stdout.split('\n'), () => []);
+      const input = tmuxNewSession({ ...request, shell: !command && tmuxShell?.startsWith('/') ? tmuxShell : null });
       try {
         await mux.run(['-u', 'start-server', ';', 'source-file', '-'], { cwd: options.cwd, input });
       } catch (err) {

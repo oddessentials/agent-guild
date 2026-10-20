@@ -2459,6 +2459,20 @@ test('a tmux card\'s own session is made from commands on stdin, every value quo
   assert.throws(() => tmuxNewSession({ name: 'guild-abc123', cwd: '/work', cols: 1, rows: 1, env: {}, args: ['a\rb'] }), { code: 'bad_args', status: 400 });
 });
 
+test('a tmux card\'s windows start tmux\'s shell as a Shell card does, so a login profile cannot replace their PATH', () => {
+  const base = { name: 'guild-abc123', cwd: '/work', cols: 100, rows: 30, env: { PATH: '/shims:/bin' } };
+  const shell = "'\\''/opt/my shell'\\''\\'\\'''\\''s/zsh'\\''";
+  assert.equal(tmuxNewSession({ ...base, shell: "/opt/my shell's/zsh" }), [
+    `new-session -d -s 'guild-abc123' -x 100 -y 30 -c '/work' -e 'PATH=/shims:/bin' '${shell}'`,
+    `set-option -t '=guild-abc123:' default-command '${shell}'`,
+    '',
+  ].join('\n'));
+  assert.match(tmuxNewSession({ ...base, shell: '/bin/bash', args: ['htop'] }), /'htop'\nset-option -t '=guild-abc123:' default-command ''\\''\/bin\/bash'\\'''\n$/,
+    'a command of the card\'s own runs first; later windows still start the shell');
+  assert.equal(tmuxNewSession(base), "new-session -d -s 'guild-abc123' -x 100 -y 30 -c '/work' -e 'PATH=/shims:/bin'\n",
+    'a default-command from the user\'s tmux configuration is left to tmux');
+});
+
 test('a herdr card shows herdr\'s agents, one per pane, from the herdr session its client attaches to', () => {
   assert.deepEqual(herdrAgentReports([
     { agent: 'claude', agent_status: 'working', pane_id: 'w1:p1', cwd: '/work/a' },
