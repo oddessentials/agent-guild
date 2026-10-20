@@ -1,0 +1,32 @@
+# Signs, packs and checks a candidate as a release does, then stops: no job here can write to the
+# repository, draft a release or publish to npm. It runs from the signing-check branch only.
+name: Signing check
+
+on:
+  push:
+    branches: [signing-check]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  sign:
+    name: Sign
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/sign.yml
+
+  ci:
+    name: CI
+    needs: sign
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/ci.yml
+    with:
+      version: 0.0.0-signing-check
