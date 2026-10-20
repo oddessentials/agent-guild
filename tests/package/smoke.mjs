@@ -168,7 +168,9 @@ try {
   // A development build never upgrades itself; packed from a checkout, the copy stands in for a release.
   const installedPackage = path.join(packageDir, 'package.json');
   const manifest = JSON.parse(fs.readFileSync(installedPackage, 'utf8'));
-  if (/^0\.0\.0(?:-|$)/.test(manifest.version)) fs.writeFileSync(installedPackage, JSON.stringify({ ...manifest, version: '1.0.0' }, null, 2));
+  if (expectedVersion !== null) check(manifest.version === expectedVersion, 'the installed package is the expected version', `${manifest.version}, expected ${expectedVersion}`);
+  const runningVersion = /^0\.0\.0(?:-|$)/.test(manifest.version) ? '1.0.0' : manifest.version;
+  if (runningVersion !== manifest.version) fs.writeFileSync(installedPackage, JSON.stringify({ ...manifest, version: runningVersion }, null, 2));
 
   const opened = await startManager();
   check(opened.code === 0 && /Session manager started/.test(opened.stdout), 'open starts a manager by absolute Node.js path, with Node.js off PATH', firstLine(opened));
@@ -176,7 +178,7 @@ try {
   const health = await (await fetch(`${base}/api/v1/health`)).json();
   check(health.ok === true && health.name === 'agent-guild', 'the manager answers', `version ${health.version}`);
   managerPid = health.pid;
-  if (expectedVersion !== null) check(health.version === expectedVersion, 'the manager is the expected version', expectedVersion);
+  check(health.version === runningVersion, 'the manager runs the installed package', `version ${health.version}`);
 
   const assets = ['/', '/app.js', '/theme.js', '/styles.css', '/skins/guild/skin.css', '/skins/guild/page.avif', '/skins/professional/skin.css', '/skins/orbital/skin.css', '/skins/gnomeland/skin.css', '/skins/goblinville/skin.css', '/vendor/xterm/xterm.js', '/vendor/xterm/xterm.css',
     '/vendor/xterm/addon-fit.js', '/vendor/xterm/addon-web-links.js'];
