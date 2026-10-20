@@ -68,6 +68,36 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   assert.deepEqual(await evaluate('(()=>{const s=getComputedStyle(document.body);return [s.containerType,s.contain]})()'), ['normal', 'none'], 'body is not contained');
   pass('the skin art behind the page is not painted over by the body');
 
+  assert.deepEqual(await evaluate('[document.documentElement.dataset.art, document.querySelector("#art").checked]'), ['off', false]);
+  const artFiles = (before) => evaluate(`performance.getEntriesByType('resource').filter(e=>e.startTime<${before}&&e.name.includes('/skins/')&&!/\\/skin\\.css$|\\/fonts\\/|\\/professional\\/icons\\/[a-z]+\\.svg$/.test(e.name)).map(e=>e.name.split('/skins/')[1])`);
+  const slimLayout = () => evaluate(`(()=>{const hit=(a,b)=>a.left<b.right-0.5&&b.left<a.right-0.5&&a.top<b.bottom-0.5&&b.top<a.bottom-0.5;const bad=[];
+    for(const card of document.querySelectorAll('#sessions .session-card')){const c=card.getBoundingClientRect();const badge=card.querySelector('.level-badge').getBoundingClientRect();
+      if(!card.querySelector('.card-top > .provider-icon').checkVisibility())bad.push(card.dataset.id+' icon hidden');
+      for(const el of card.querySelectorAll('button, .status-pill, .agent, .provider-icon, .name')){if(!el.checkVisibility())continue;const r=el.getBoundingClientRect();
+        if(hit(badge,r))bad.push(card.dataset.id+' badge over '+el.className);if(r.left<c.left-0.5||r.right>c.right+0.5)bad.push(card.dataset.id+' '+el.className+' outside');}}
+    for(const p of document.querySelectorAll('#providers .provider'))if(parseFloat(getComputedStyle(p).paddingTop)>24)bad.push(p.dataset.id+' keeps room for art');
+    return bad})()`);
+  const startSkin = await evaluate('[document.documentElement.dataset.skin, document.documentElement.dataset.theme]');
+  for (const skin of await evaluate('agentGuildSkins.map(s=>s.id)')) for (const theme of ['dark', 'light']) {
+    await evaluate(`document.documentElement.dataset.skin=${JSON.stringify(skin)};document.documentElement.dataset.theme=${JSON.stringify(theme)};scrollTo(0,0)`);
+    await layoutReady();
+    await evaluate('scrollTo(0,document.documentElement.scrollHeight)');
+    await layoutReady();
+    assert.deepEqual(await slimLayout(), [], `${skin} ${theme}`);
+    await noSideScroll(`${skin} ${theme} without art`);
+  }
+  const artOn = await evaluate('performance.now()');
+  await evaluate('document.documentElement.dataset.skin="guild";document.documentElement.dataset.theme="dark";document.querySelector("#art").click()');
+  await until('card art on', () => evaluate('document.documentElement.dataset.art==="on"&&localStorage.getItem("agentGuild.art")==="on"'));
+  await until('guild art loads', () => evaluate('performance.getEntriesByType("resource").some(e=>e.name.includes("/skins/guild/characters/"))'));
+  assert.deepEqual(await artFiles(artOn), [], 'no skin art loaded while card art was off');
+  assert.ok(await evaluate('parseFloat(getComputedStyle(document.querySelector("#providers .provider")).paddingTop)>100'), 'the art has its room again');
+  await evaluate('document.querySelector("#art").click()');
+  await until('card art off', () => evaluate('document.documentElement.dataset.art==="off"'));
+  await evaluate(`document.documentElement.dataset.skin=${JSON.stringify(startSkin[0])};document.documentElement.dataset.theme=${JSON.stringify(startSkin[1])};scrollTo(0,0)`);
+  await layoutReady();
+  pass('a new page starts without card art: every skin, light and dark, loads none and lays its cards out without overlap, and the switch brings the art back');
+
   await click('#settings');
   await layoutReady();
   await until('settings open', () => evaluate('document.querySelector("#settings-menu").matches(":popover-open")'));
