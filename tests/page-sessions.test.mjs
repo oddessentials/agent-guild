@@ -6,7 +6,7 @@ import { isSessionWorking } from '../web/activity-favicon.js';
 import { revealRow } from '../web/layout.js';
 
 const app = readFileSync(new URL('../web/app.js', import.meta.url), 'utf8');
-const source = ['upsertSession', 'statusText', 'stopNote', 'stopSession', 'removeSession', 'reattachable', 'reattachSession', 'resumeCard', 'osc52Text', 'exitLine'].map((name) => {
+const source = ['upsertSession', 'statusText', 'stopNote', 'stopSession', 'removeSession', 'reattachable', 'recheckReattach', 'reattachSession', 'resumeCard', 'osc52Text', 'exitLine'].map((name) => {
   const found = app.match(new RegExp(`(?:async )?function ${name}\\([^]*?\\n\\}`))?.[0];
   assert.ok(found, `${name} is present in app.js`);
   return found;
@@ -89,6 +89,21 @@ test('Reattach brings a closed tmux card back as itself, only while tmux still h
   assert.deepEqual(requests, ['POST /sessions/m1/reattach']);
   assert.deepEqual([sessions.get(tmux.id).status, opened], ['running', ['m1']], 'the same card runs again and opens');
   assert.equal(context.reattachable(revived), false, 'a running card has nothing to reattach');
+});
+
+test('coming back to the page asks the manager to check closed tmux and herdr cards again, only when there are some', async () => {
+  const { context, requests } = page({ onApi: () => ({ sessions: [] }) });
+  context.state.connected = true;
+  context.upsertSession({ ...tmux });
+  context.upsertSession(exited(plain));
+  await context.recheckReattach();
+  assert.deepEqual(requests, [], 'a running tmux card and a closed plain shell have nothing to check');
+  context.upsertSession(exited(tmux, { multiplexer: { ...tmux.multiplexer, reattachable: true } }));
+  await context.recheckReattach();
+  assert.deepEqual(requests, ['GET /sessions']);
+  context.state.connected = false;
+  await context.recheckReattach();
+  assert.equal(requests.length, 1, 'not while the manager is unreachable');
 });
 
 test('OSC 52 copies text and never answers a clipboard query', () => {

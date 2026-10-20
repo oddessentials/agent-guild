@@ -63,7 +63,7 @@ test('notes over the character cap are refused and a file that cannot be read is
 });
 
 async function listen(notes) {
-  const manager = Object.assign(new EventEmitter(), { list: () => [] });
+  const manager = Object.assign(new EventEmitter(), { list: () => [], refreshMultiplexers: async () => {} });
   const registry = Object.assign(new EventEmitter(), { warnings: [] });
   const api = createManagerServer({
     manager, registry, notes, token: 'test-manager-token',

@@ -98,7 +98,7 @@ function page({ android = false, available, supported = true, enabled = true, pr
     paneNodes: [0, 1].map(() => ({ contains: () => false })),
     activityFavicon: { setPaused: noop },
     reader: null, replies: new Map(), renderRead: noop,
-    setConnection: noop, showStopped: noop, restartTimer: null, newsLoadedAt: 0, loadNews: noop, connectEvents: noop, dockShows: () => false, githubShownView: () => 'repos', loadView: noop, scheduleRuns: noop, flushNotes: noop, branchesVisible: () => false, recheckPtyBuild: noop,
+    setConnection: noop, showStopped: noop, restartTimer: null, newsLoadedAt: 0, loadNews: noop, connectEvents: noop, dockShows: () => false, githubShownView: () => 'repos', loadView: noop, scheduleRuns: noop, flushNotes: noop, branchesVisible: () => false, recheckPtyBuild: noop, recheckReattach: noop,
   };
   runInNewContext(`${voiceSource}\n${panelSource}\n${listenerSource}\nglobalThis.terminalMessage = ({${terminalMessageSource}}).onMessage;`, context);
   context.renderVoice();

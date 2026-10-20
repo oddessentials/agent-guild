@@ -388,6 +388,43 @@ test('tmux guards count the selected copy and detached cards, ignore plain shell
   f.exit();
 });
 
+test('a read while a detached card is still being checked leaves that check alone, and the tmux guard counts the card throughout', async (t) => {
+  const f = lifecycle(t, 'tmux');
+  f.manager._checkMultiplexer.mock.restore();
+  t.mock.method(f.manager, '_rebindMultiplexer', () => true);
+  t.mock.method(f.manager, '_restorePending', async () => {});
+  let found;
+  const answers = [() => new Promise((resolve) => { found = resolve; }), async () => null];
+  const session = { status: 'exited', multiplexer: { reattachable: false }, _changed() {} };
+  const tracked = { card: { provider: 'shell', shell: 'tmux', installationKey: f.copy.key }, shellPath: '/bin/tmux', alive: t.mock.fn(() => answers.shift()()) };
+  f.manager.sessions.set('detached', session);
+  f.manager.multiplexers.set('detached', tracked);
+  const exitCheck = f.manager._checkMultiplexer(session, tracked);
+  await f.manager.refreshMultiplexers();
+  assert.equal(tracked.alive.mock.callCount(), 1, 'the read does not start a second check');
+  await assert.rejects(f.manager.manageMultiplexer('shell', 'tmux', 'update', { path: '/bin/tmux' }), { code: 'multiplexer_in_use', running: 1 });
+  found(true);
+  await exitCheck;
+  assert.equal(session.multiplexer.reattachable, true, 'the check that was running decides');
+  await assert.rejects(f.manager.manageMultiplexer('shell', 'tmux', 'uninstall', { path: '/bin/tmux' }), { code: 'multiplexer_in_use', running: 1 });
+});
+
+test('a finished tmux update checks closed cards again with the executable it finds now', async (t) => {
+  const f = lifecycle(t, 'tmux');
+  f.manager._checkMultiplexer.mock.restore();
+  t.mock.method(f.manager, '_restorePending', async () => {});
+  const session = { status: 'exited', multiplexer: { reattachable: false }, _changed() {} };
+  const tracked = { card: { provider: 'shell', shell: 'tmux', installationKey: f.copy.key }, shellPath: '/bin/tmux', alive: async () => null };
+  f.manager.sessions.set('detached', session);
+  f.manager.multiplexers.set('detached', tracked);
+  t.mock.method(f.manager, '_rebindMultiplexer', (mux) => { mux.alive = async () => true; return true; });
+  await f.manager.manageMultiplexer('shell', 'tmux', 'update', { path: '/bin/tmux' });
+  f.exit();
+  while (f.manager.multiplexerOperations.size) await new Promise(setImmediate);
+  assert.equal(f.manager._rebindMultiplexer.mock.callCount(), 1);
+  assert.equal(session.multiplexer.reattachable, true);
+});
+
 test('herdr uninstall refuses running or unknown server status, even with force', async (t) => {
   const f = fixture();
   const copy = { resolvedPath: '/bin/herdr' };
@@ -645,6 +682,112 @@ test('detached cards probe and reattach with a replaced executable; an older sta
   release(false); await stale;
   assert.equal(session.multiplexer.reattachable, true);
   assert.equal(tracked.checking, false);
+});
+
+test('reading sessions checks closed cards again: Reattach follows the multiplexer, one round at a time, only changes announced', async (t) => {
+  const f = fixture();
+  f.registry.shellsFor = () => assert.fail('finding tmux and herdr again runs commands synchronously, which a read must not wait for');
+  const manager = new SessionManager({ registry: f.registry, baseEnv: {}, getApiUrl: () => '' });
+  const alive = new Map([['guild-aaaaaa', true], ['guild-bbbbbb', true], ['guild-cccccc', true]]);
+  const checked = [];
+  let hold = null;
+  const changes = [];
+  const card = (id, shell, status) => {
+    const session = { id, status, multiplexer: { reattachable: status === 'exited' }, _changed() { changes.push(id); } };
+    const muxName = `guild-${id}`;
+    manager.sessions.set(id, session);
+    manager.multiplexers.set(id, { card: { id, provider: 'shell', shell, muxName }, checking: false, alive: async () => {
+      checked.push(muxName);
+      if (hold) await hold;
+      return alive.get(muxName);
+    } });
+    return session;
+  };
+  const tmux = card('aaaaaa', 'tmux', 'exited');
+  const herdr = card('bbbbbb', 'herdr', 'exited');
+  card('cccccc', 'tmux', 'running');
+
+  await manager.refreshMultiplexers();
+  assert.deepEqual(checked.sort(), ['guild-aaaaaa', 'guild-bbbbbb'], 'only closed cards are checked');
+  assert.deepEqual(changes, [], 'nothing changed, nothing announced');
+
+  alive.set('guild-aaaaaa', false);
+  alive.set('guild-bbbbbb', false);
+  await manager.refreshMultiplexers();
+  assert.deepEqual([tmux.multiplexer.reattachable, herdr.multiplexer.reattachable], [false, false]);
+  alive.set('guild-bbbbbb', true);
+  await manager.refreshMultiplexers();
+  assert.equal(herdr.multiplexer.reattachable, true, 'a herdr server started again makes its cards reattachable again');
+  assert.deepEqual(changes.sort(), ['aaaaaa', 'bbbbbb', 'bbbbbb']);
+  alive.set('guild-aaaaaa', null);
+  alive.set('guild-bbbbbb', null);
+  await manager.refreshMultiplexers();
+  assert.deepEqual([tmux.multiplexer.reattachable, herdr.multiplexer.reattachable, changes.length], [false, true, 3], 'a multiplexer that cannot answer changes nothing');
+  alive.set('guild-aaaaaa', false);
+  alive.set('guild-bbbbbb', true);
+
+  checked.length = 0;
+  let release;
+  hold = new Promise((resolve) => { release = resolve; });
+  const first = manager.refreshMultiplexers();
+  const second = manager.refreshMultiplexers();
+  const third = manager.refreshMultiplexers();
+  await new Promise(setImmediate);
+  assert.deepEqual(checked.sort(), ['guild-aaaaaa', 'guild-bbbbbb'], 'requests during a round wait for it');
+  hold = null;
+  release();
+  await Promise.all([first, second, third]);
+  assert.equal(checked.length, 4, 'they share one more round, which starts after them');
+
+  hold = new Promise((resolve) => { release = resolve; });
+  alive.set('guild-aaaaaa', true);
+  const started = Date.now();
+  await manager.refreshMultiplexers({ waitMs: 20 });
+  assert.ok(Date.now() - started < 1000, 'a slow multiplexer does not hold up the answer');
+  assert.equal(tmux.multiplexer.reattachable, false);
+  tmux.status = 'running';
+  hold = null;
+  release();
+  await manager._refreshRound();
+  assert.equal(tmux.multiplexer.reattachable, false, 'a check that ends after the card attached again changes nothing');
+  tmux.status = 'exited';
+
+  checked.length = 0;
+  manager.multiplexerOperations.add('tmux');
+  await manager.refreshMultiplexers();
+  assert.deepEqual(checked, ['guild-bbbbbb'], 'cards whose multiplexer is being changed are checked when that finishes');
+});
+
+test('a tmux probe takes only tmux\'s answers for a missing session as gone, and anything it cannot tell as unknown', async (t) => {
+  if (process.platform === 'win32') return t.skip('tmux does not run on Windows');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'guild-fake-tmux-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'tmux');
+  fs.writeFileSync(file, [
+    '#!/bin/sh',
+    '[ "$LC_ALL" = C ] || { echo "messages in the user\'s language" >&2; exit 1; }',
+    'case "$FAKE_TMUX" in',
+    '  there) exit 0 ;;',
+    '  signal) kill -TERM $$ ;;',
+    '  *) printf \'%s\\n\' "$FAKE_TMUX" >&2; exit 1 ;;',
+    'esac',
+  ].join('\n'), { mode: 0o755 });
+  const f = fixture();
+  const manager = new SessionManager({ registry: f.registry, baseEnv: { PATH: process.env.PATH, LC_ALL: 'de_DE.UTF-8' }, getApiUrl: () => '' });
+  const probe = (answer, shellPath = file) => manager._multiplexer({
+    provider: f.provider, account: null, id: 'abcdef', reportToken: 'a'.repeat(32), muxName: 'guild-abcdef',
+    shell: { id: 'tmux', path: shellPath, args: [], env: { FAKE_TMUX: answer } },
+  }).alive();
+  for (const [answer, expected] of [
+    ['there', true],
+    ["can't find session: guild-abcdef", false],
+    ['no server running on /tmp/tmux-501/default', false],
+    ['error connecting to /tmp/tmux-501/default (No such file or directory)', false],
+    ['error connecting to /tmp/tmux-501/default (Permission denied)', null],
+    ['server exited unexpectedly', null],
+    ['signal', null],
+  ]) assert.equal(await probe(answer), expected, answer);
+  assert.equal(await probe('there', path.join(dir, 'missing')), null, 'a tmux that cannot start');
 });
 
 test('successful update commands still report failed post-operation verification', async () => {

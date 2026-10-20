@@ -18,6 +18,7 @@ import { GITHUB_PROVIDER, dropsFromCloneEnv, parseRepo } from './github.mjs';
 import { pathIdentity } from './multiplexer-paths.mjs';
 
 export const MAX_SESSIONS = 32;
+const TMUX_SESSION_GONE = [/^can't find session/m, /^no server running on /m, /^error connecting to .*\(No such file or directory\)$/m];
 
 // The hooks.json earlier versions copied into Codex CLI accounts; an untouched copy would run every hook twice.
 const SEEDED_CODEX_HOOKS = '59d1cfb54cda5fd81add1edee7cf0cac56e4b2afec4c26ff207b675eeaaf70ce';
@@ -90,6 +91,7 @@ export class SessionManager extends EventEmitter {
     this.multiplexerOperations = new Set();
     this.multiplexerStarts = new Map();
     this.pendingRestore = null;
+    this.multiplexerRefresh = null;
     if (this.registry) this.registry.multiplexerState = (provider, id) => ({
       busy: this.multiplexerOperations.has(id),
       pendingCards: [...this.pendingCards.values()].filter((c) => c.provider === provider && c.shell === id).length,
@@ -222,9 +224,11 @@ export class SessionManager extends EventEmitter {
     const clientEnv = this._sessionEnv({ id, reportToken, provider, account, extraEnv: shell.env, dropEnv });
     const run = (args, extra = {}) => runSpec(buildSpawnSpec(shell.path, args, clientEnv, this.registry.platform), { env: clientEnv, ...extra });
     // tmux keeps the card's own session by name; a herdr card's session is herdr's, there while its server runs.
+    // Null when the multiplexer could not say.
     const alive = shell.id === 'tmux'
-      ? () => run(['has-session', '-t', `=${muxName}`]).then(() => true, () => false)
-      : () => run(['session', 'list', '--json']).then(({ stdout }) => herdrSocket(JSON.parse(stdout), clientEnv, this.registry.platform) !== null, () => false);
+      ? () => run(['has-session', '-t', `=${muxName}`], { env: { ...clientEnv, LC_ALL: 'C' } }).then(() => true,
+        (err) => (typeof err.code === 'number' && TMUX_SESSION_GONE.some((gone) => gone.test(err.stderr ?? '')) ? false : null))
+      : () => run(['session', 'list', '--json']).then(({ stdout }) => herdrSocket(JSON.parse(stdout), clientEnv, this.registry.platform) !== null).catch(() => null);
     return { named, dropEnv, clientEnv, run, alive };
   }
 
@@ -336,18 +340,54 @@ export class SessionManager extends EventEmitter {
     return true;
   }
 
-  async _checkMultiplexer(session, tracked) {
+  async _checkMultiplexer(session, tracked, { rebind = true } = {}) {
     const sequence = tracked.checkSequence = (tracked.checkSequence || 0) + 1;
     tracked.checking = true;
-    let alive = false;
+    let alive = null;
     try {
-      this._rebindMultiplexer(tracked);
+      if (rebind) this._rebindMultiplexer(tracked);
       alive = await tracked.alive();
     } catch {}
     if (tracked.checkSequence !== sequence) return;
-    session.multiplexer.reattachable = alive;
     tracked.checking = false;
+    if (alive === null || session.status !== 'exited' || session.multiplexer.reattachable === alive) return;
+    session.multiplexer.reattachable = alive;
     session._changed();
+  }
+
+  _recheckClosed(includes, options) {
+    return Promise.all([...this.multiplexers].map(([id, tracked]) => {
+      const session = this.sessions.get(id);
+      return session?.status === 'exited' && includes(tracked) ? this._checkMultiplexer(session, tracked, options) : null;
+    }));
+  }
+
+  /**
+   * Find again, as clients read session state, whether tmux and herdr still
+   * have the sessions of closed cards. A request made during a round gets
+   * the round after it. Resolves within `waitMs`; a slower round still
+   * finishes, and its changes follow as session.updated.
+   */
+  refreshMultiplexers({ waitMs = 1000 } = {}) {
+    let timer;
+    return Promise.race([
+      this._refreshRound(),
+      new Promise((resolve) => { timer = setTimeout(resolve, waitMs); }),
+    ]).finally(() => clearTimeout(timer));
+  }
+
+  _refreshRound() {
+    if (this.multiplexerRefresh) {
+      this.multiplexerRefreshAgain = true;
+      return this.multiplexerRefresh;
+    }
+    this.multiplexerRefresh = (async () => {
+      do {
+        this.multiplexerRefreshAgain = false;
+        await this._recheckClosed((tracked) => !tracked.checking && !this.multiplexerOperations.has(tracked.card.shell), { rebind: false });
+      } while (this.multiplexerRefreshAgain && !this.closing);
+    })().finally(() => { this.multiplexerRefresh = null; });
+    return this.multiplexerRefresh;
   }
 
   async _reattach(id) {
@@ -356,7 +396,6 @@ export class SessionManager extends EventEmitter {
     if (!mux) throw httpError(400, `${session.name} is not in tmux or herdr`, 'not_reattachable');
     if (this.closing) throw httpError(503, 'the session manager is stopping', 'manager_stopping');
     if (session.status === 'running') throw httpError(409, `${session.name} is still attached`, 'session_running');
-    // As the page offers it: only once the manager has found, after the client closed or at a restart, that the multiplexer still has the session.
     if (!session.multiplexer.reattachable) throw httpError(409, `${session.multiplexer.label} no longer has the session ${session.name} ran in`, 'multiplexer_session_gone');
     // Refresh closures as well as the spawn spec: the previous executable
     // may have disappeared in a native or Homebrew update.
@@ -530,11 +569,7 @@ export class SessionManager extends EventEmitter {
           if (kind === 'update') {
             // A detach during replacement may have probed a vanished release.
             // Recheck closed cards once discovery has the new executable.
-            await Promise.all([...this.multiplexers].map(([cardId, tracked]) => {
-              const card = this.sessions.get(cardId);
-              return tracked.card.shell === id && card?.status === 'exited'
-                ? this._checkMultiplexer(card, tracked) : null;
-            }));
+            await this._recheckClosed((tracked) => tracked.card.shell === id);
           }
         }
         catch (err) { console.warn('[multiplexers] could not refresh:', err.message); }

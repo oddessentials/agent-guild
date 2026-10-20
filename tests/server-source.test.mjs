@@ -64,7 +64,7 @@ async function server(t, options = {}) {
     },
     input(data) { session.emit('data', { type: 'data', data }); },
   });
-  const manager = Object.assign(new EventEmitter(), { list: () => [], get: () => session });
+  const manager = Object.assign(new EventEmitter(), { list: () => [], refreshMultiplexers: async () => {}, get: () => session });
   const registry = Object.assign(new EventEmitter(), { warnings: [] });
   const api = createManagerServer({ manager, registry, token, webDir: fileURLToPath(new URL('../web', import.meta.url)), ...options });
   await api.listen();
@@ -243,7 +243,7 @@ test('revocation detaches terminal output immediately and cannot accept more inp
     },
     input() { inputs++; }, resize() {},
   };
-  const manager = Object.assign(new EventEmitter(), { list: () => [], get: () => session });
+  const manager = Object.assign(new EventEmitter(), { list: () => [], refreshMultiplexers: async () => {}, get: () => session });
   const api = await server(t, { manager, extraHosts: [proxyHost], extraOrigins: [proxyOrigin] });
   const remote = new WebSocket(`${api.url.replace('http:', 'ws:')}/api/v1/sessions/abc123/terminal?token=${token}`, { headers: { Host: proxyHost, Origin: proxyOrigin } });
   t.after(() => remote.terminate());

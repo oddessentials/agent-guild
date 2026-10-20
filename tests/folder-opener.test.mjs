@@ -162,7 +162,7 @@ test('the folder API requires the manager token and trusted source, and advertis
   const { dir } = folders(t);
   const fake = launcher();
   const folderOpener = createFolderOpener({ resolveCwd, ...windows, ...fake, cooldownMs: 0 });
-  const manager = Object.assign(new EventEmitter(), { list: () => [], resolveCwd });
+  const manager = Object.assign(new EventEmitter(), { list: () => [], refreshMultiplexers: async () => {}, resolveCwd });
   const registry = Object.assign(new EventEmitter(), { warnings: [] });
   const api = createManagerServer({ manager, registry, folderOpener, token: 'test-manager-token', webDir: fileURLToPath(new URL('../web', import.meta.url)) });
   await api.listen();
@@ -206,7 +206,7 @@ test('opening folders is local-only: remote clients see it unavailable and are r
   const { dir } = folders(t);
   const fake = launcher();
   const folderOpener = createFolderOpener({ resolveCwd, ...windows, ...fake, cooldownMs: 0 });
-  const manager = Object.assign(new EventEmitter(), { list: () => [], resolveCwd });
+  const manager = Object.assign(new EventEmitter(), { list: () => [], refreshMultiplexers: async () => {}, resolveCwd });
   const registry = Object.assign(new EventEmitter(), { warnings: [] });
   const host = 'guild.example.ts.net';
   const api = createManagerServer({ manager, registry, folderOpener, extraHosts: [host], token: 'test-manager-token', webDir: fileURLToPath(new URL('../web', import.meta.url)) });

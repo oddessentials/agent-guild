@@ -1042,6 +1042,44 @@ test('a tmux card reports what runs in its tmux session, and Stop, Reattach and 
   assert.notEqual(await tmux('has-session', '-t', `=${name}`), null, 'tmux still runs the session');
 });
 
+test('a closed tmux card stops offering Reattach once tmux no longer has its session, when a client reads sessions', async (t) => {
+  if (!(await findProvider('shell')).shells?.some((s) => s.id === 'tmux')) return t.skip('tmux 3.2 or later is not installed');
+  const env = { ...process.env };
+  delete env.TMUX; // the outer tmux this file pretends to run in
+  const tmux = (...args) => new Promise((resolve) => execFile('tmux', args, { env }, (err, stdout) => resolve(err ? null : stdout)));
+  t.after(() => tmux('kill-server'));
+  const closedCard = async (name) => {
+    const { status, body } = await call('POST', '/sessions', { providerId: 'shell', shell: 'tmux', cwd: home, name });
+    assert.equal(status, 201, JSON.stringify(body));
+    t.after(() => call('DELETE', `/sessions/${body.session.id}`));
+    assert.equal((await call('POST', `/sessions/${body.session.id}/stop`)).status, 200);
+    await waitFor(async () => {
+      const s = await sessionNow(body.session.id);
+      return s.status === 'exited' && s.multiplexer.reattachable;
+    }, { label: `${name} closes while tmux keeps its session` });
+    return { id: body.session.id, mux: body.session.multiplexer.attach.split(' ').pop() };
+  };
+  const read = await closedCard('Read by GET');
+  const greeted = await closedCard('Read by a page');
+  const ended = await closedCard('Ended with its server');
+
+  assert.notEqual(await tmux('kill-session', '-t', `=${read.mux}`), null);
+  assert.equal((await sessionNow(read.id)).multiplexer.reattachable, false, 'the answer itself is current');
+  assert.equal((await call('GET', '/sessions')).body.sessions.find((s) => s.id === read.id).multiplexer.reattachable, false);
+
+  assert.notEqual(await tmux('kill-session', '-t', `=${greeted.mux}`), null);
+  const events = new Client(`${base.replace('http', 'ws')}/api/v1/events?token=${token}`);
+  t.after(() => events.close());
+  await events.opened;
+  const hello = await waitFor(() => events.messages.find((m) => m.type === 'hello'), { label: 'hello' });
+  assert.equal(hello.sessions.find((s) => s.id === greeted.id).multiplexer.reattachable, true, 'hello does not wait for tmux');
+  await waitFor(() => events.messages.find((m) => m.type === 'session.updated' && m.session.id === greeted.id && m.session.multiplexer.reattachable === false), { label: 'the correction follows hello' });
+  assert.equal(events.messages.filter((m) => m.type === 'session.updated' && m.session.id === read.id).length, 0, 'an unchanged card is not announced');
+
+  assert.notEqual(await tmux('kill-server'), null);
+  assert.equal((await sessionNow(ended.id)).multiplexer.reattachable, false, 'tmux kill-server ends every card\'s session');
+});
+
 test('a restarted manager brings a tmux card back closed, with its own id and token, ready to reattach', async (t) => {
   if (!(await findProvider('shell')).shells?.some((s) => s.id === 'tmux')) return t.skip('tmux 3.2 or later is not installed');
   const env = { ...process.env };

@@ -82,7 +82,7 @@ test('Windows lists the drives that answer in time and splits paths into segment
 
 test('the folders API requires the manager token and serves local and remote clients alike', { timeout: 10000 }, async (t) => {
   const root = tree(t);
-  const manager = Object.assign(new EventEmitter(), { list: () => [] });
+  const manager = Object.assign(new EventEmitter(), { list: () => [], refreshMultiplexers: async () => {} });
   const registry = Object.assign(new EventEmitter(), { warnings: [] });
   const api = createManagerServer({ manager, registry, folderBrowser: createFolderBrowser({ home: root }), extraHosts: ['guild.example.ts.net'],
     token: 'test-manager-token', webDir: fileURLToPath(new URL('../web', import.meta.url)) });
@@ -151,7 +151,7 @@ test('creating fails clearly when the folder cannot be read or written', async (
 
 test('the create-folder API requires the manager token and answers with the new listing', { timeout: 10000 }, async (t) => {
   const root = tree(t);
-  const manager = Object.assign(new EventEmitter(), { list: () => [] });
+  const manager = Object.assign(new EventEmitter(), { list: () => [], refreshMultiplexers: async () => {} });
   const registry = Object.assign(new EventEmitter(), { warnings: [] });
   const api = createManagerServer({ manager, registry, folderBrowser: createFolderBrowser({ home: root }), extraHosts: ['guild.example.ts.net'],
     token: 'test-manager-token', webDir: fileURLToPath(new URL('../web', import.meta.url)) });
