@@ -358,7 +358,7 @@ export class SessionManager extends EventEmitter {
   _recheckClosed(includes, options) {
     return Promise.all([...this.multiplexers].map(([id, tracked]) => {
       const session = this.sessions.get(id);
-      return session?.status === 'exited' && includes(tracked.card.shell) ? this._checkMultiplexer(session, tracked, options) : null;
+      return session?.status === 'exited' && includes(tracked) ? this._checkMultiplexer(session, tracked, options) : null;
     }));
   }
 
@@ -384,7 +384,7 @@ export class SessionManager extends EventEmitter {
     this.multiplexerRefresh = (async () => {
       do {
         this.multiplexerRefreshAgain = false;
-        await this._recheckClosed((shell) => !this.multiplexerOperations.has(shell), { rebind: false });
+        await this._recheckClosed((tracked) => !tracked.checking && !this.multiplexerOperations.has(tracked.card.shell), { rebind: false });
       } while (this.multiplexerRefreshAgain && !this.closing);
     })().finally(() => { this.multiplexerRefresh = null; });
     return this.multiplexerRefresh;
@@ -552,7 +552,6 @@ export class SessionManager extends EventEmitter {
       // Herdr supports updates with servers and panes running, including brew.
       // Uninstall's server check is never bypassed by force.
       if (id === 'tmux') {
-        await this._recheckClosed((shell) => shell === id, { rebind: false });
         const { running, pending } = this.dependentsOf(providerId, id, prepared.copy);
         if (running && !force) throw Object.assign(httpError(409, `${running} tmux card(s) depend on this installation. Changing it may prevent reattachment.`, 'multiplexer_in_use'), { running, pending });
       }
@@ -570,7 +569,7 @@ export class SessionManager extends EventEmitter {
           if (kind === 'update') {
             // A detach during replacement may have probed a vanished release.
             // Recheck closed cards once discovery has the new executable.
-            await this._recheckClosed((shell) => shell === id);
+            await this._recheckClosed((tracked) => tracked.card.shell === id);
           }
         }
         catch (err) { console.warn('[multiplexers] could not refresh:', err.message); }

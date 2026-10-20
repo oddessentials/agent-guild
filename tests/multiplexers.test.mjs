@@ -371,12 +371,11 @@ test('native and Homebrew herdr updates allow existing servers; locks cover star
   }
 });
 
-test('tmux guards count the selected copy and detached cards, also ones tmux cannot answer for, ignore plain shells and other copies, and require force', async (t) => {
+test('tmux guards count the selected copy and detached cards, ignore plain shells and other copies, and require force', async (t) => {
   const f = lifecycle(t, 'tmux');
-  f.manager._checkMultiplexer.mock.restore();
   for (const [id, key, status, reattachable] of [['attached', f.copy.key, 'running', false], ['detached', f.copy.key, 'exited', true], ['other', 'brew:other', 'running', true], ['gone', f.copy.key, 'exited', false]]) {
-    f.manager.sessions.set(id, { status, multiplexer: { reattachable }, _changed() {} });
-    f.manager.multiplexers.set(id, { card: { provider: 'shell', shell: 'tmux', installationKey: key }, shellPath: '/bin/tmux', alive: async () => null });
+    f.manager.sessions.set(id, { status, multiplexer: { reattachable } });
+    f.manager.multiplexers.set(id, { card: { provider: 'shell', shell: 'tmux', installationKey: key }, shellPath: '/bin/tmux' });
   }
   f.manager.sessions.set('bash', { status: 'running', provider: { id: 'shell' }, task: null });
   f.manager.multiplexers.get('detached').card.provider = 'another-shell-provider';
@@ -387,6 +386,43 @@ test('tmux guards count the selected copy and detached cards, also ones tmux can
   await assert.rejects(f.manager.manageMultiplexer('shell', 'tmux', 'update', { path: '/bin/tmux' }), { code: 'multiplexer_in_use', running: 2, pending: 1 });
   await f.manager.manageMultiplexer('shell', 'tmux', 'update', { path: '/bin/tmux', force: true });
   f.exit();
+});
+
+test('a read while a detached card is still being checked leaves that check alone, and the tmux guard counts the card throughout', async (t) => {
+  const f = lifecycle(t, 'tmux');
+  f.manager._checkMultiplexer.mock.restore();
+  t.mock.method(f.manager, '_rebindMultiplexer', () => true);
+  t.mock.method(f.manager, '_restorePending', async () => {});
+  let found;
+  const answers = [() => new Promise((resolve) => { found = resolve; }), async () => null];
+  const session = { status: 'exited', multiplexer: { reattachable: false }, _changed() {} };
+  const tracked = { card: { provider: 'shell', shell: 'tmux', installationKey: f.copy.key }, shellPath: '/bin/tmux', alive: t.mock.fn(() => answers.shift()()) };
+  f.manager.sessions.set('detached', session);
+  f.manager.multiplexers.set('detached', tracked);
+  const exitCheck = f.manager._checkMultiplexer(session, tracked);
+  await f.manager.refreshMultiplexers();
+  assert.equal(tracked.alive.mock.callCount(), 1, 'the read does not start a second check');
+  await assert.rejects(f.manager.manageMultiplexer('shell', 'tmux', 'update', { path: '/bin/tmux' }), { code: 'multiplexer_in_use', running: 1 });
+  found(true);
+  await exitCheck;
+  assert.equal(session.multiplexer.reattachable, true, 'the check that was running decides');
+  await assert.rejects(f.manager.manageMultiplexer('shell', 'tmux', 'uninstall', { path: '/bin/tmux' }), { code: 'multiplexer_in_use', running: 1 });
+});
+
+test('a finished tmux update checks closed cards again with the executable it finds now', async (t) => {
+  const f = lifecycle(t, 'tmux');
+  f.manager._checkMultiplexer.mock.restore();
+  t.mock.method(f.manager, '_restorePending', async () => {});
+  const session = { status: 'exited', multiplexer: { reattachable: false }, _changed() {} };
+  const tracked = { card: { provider: 'shell', shell: 'tmux', installationKey: f.copy.key }, shellPath: '/bin/tmux', alive: async () => null };
+  f.manager.sessions.set('detached', session);
+  f.manager.multiplexers.set('detached', tracked);
+  t.mock.method(f.manager, '_rebindMultiplexer', (mux) => { mux.alive = async () => true; return true; });
+  await f.manager.manageMultiplexer('shell', 'tmux', 'update', { path: '/bin/tmux' });
+  f.exit();
+  while (f.manager.multiplexerOperations.size) await new Promise(setImmediate);
+  assert.equal(f.manager._rebindMultiplexer.mock.callCount(), 1);
+  assert.equal(session.multiplexer.reattachable, true);
 });
 
 test('herdr uninstall refuses running or unknown server status, even with force', async (t) => {
