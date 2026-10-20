@@ -90,6 +90,7 @@ export class SessionManager extends EventEmitter {
     this.multiplexerOperations = new Set();
     this.multiplexerStarts = new Map();
     this.pendingRestore = null;
+    this.multiplexerRefresh = null;
     if (this.registry) this.registry.multiplexerState = (provider, id) => ({
       busy: this.multiplexerOperations.has(id),
       pendingCards: [...this.pendingCards.values()].filter((c) => c.provider === provider && c.shell === id).length,
@@ -323,6 +324,7 @@ export class SessionManager extends EventEmitter {
     const provider = this.registry.get(mux.card.provider);
     const shell = provider && this.registry.shellsFor(provider)?.shells.find((s) => s.id === mux.card.shell && s.multiplexer);
     if (!shell) return false;
+    const saved = [mux.card.shellPath, mux.card.installationKey];
     const fresh = this._multiplexer({ provider, account: this.registry.account(provider, mux.card.account), shell, id: mux.card.id, reportToken: mux.card.reportToken, muxName: mux.card.muxName });
     mux.spawnSpec = this.registry.spawnSpec(provider, shell.id === 'herdr' ? mux.card.args ?? [] : [], null, [], fresh.named);
     mux.alive = fresh.alive;
@@ -332,7 +334,7 @@ export class SessionManager extends EventEmitter {
     if (key) mux.card.installationKey = key;
     else delete mux.card.installationKey;
     if (mux.herdr) mux.herdr = { path: shell.path, env: fresh.clientEnv };
-    this._saveCards();
+    if (saved[0] !== mux.card.shellPath || saved[1] !== mux.card.installationKey) this._saveCards();
     return true;
   }
 
@@ -345,9 +347,45 @@ export class SessionManager extends EventEmitter {
       alive = await tracked.alive();
     } catch {}
     if (tracked.checkSequence !== sequence) return;
-    session.multiplexer.reattachable = alive;
     tracked.checking = false;
+    if (session.status !== 'exited' || session.multiplexer.reattachable === alive) return;
+    session.multiplexer.reattachable = alive;
     session._changed();
+  }
+
+  _recheckClosed(includes) {
+    return Promise.all([...this.multiplexers].map(([id, tracked]) => {
+      const session = this.sessions.get(id);
+      return session?.status === 'exited' && includes(tracked.card.shell) ? this._checkMultiplexer(session, tracked) : null;
+    }));
+  }
+
+  /**
+   * Find again, as clients read session state, whether tmux and herdr still
+   * have the sessions of closed cards. A request made during a round gets
+   * the round after it. Resolves within `waitMs`; a slower round still
+   * finishes, and its changes follow as session.updated.
+   */
+  refreshMultiplexers({ waitMs = 1000 } = {}) {
+    let timer;
+    return Promise.race([
+      this._refreshRound(),
+      new Promise((resolve) => { timer = setTimeout(resolve, waitMs); }),
+    ]).finally(() => clearTimeout(timer));
+  }
+
+  _refreshRound() {
+    if (this.multiplexerRefresh) {
+      this.multiplexerRefreshAgain = true;
+      return this.multiplexerRefresh;
+    }
+    this.multiplexerRefresh = (async () => {
+      do {
+        this.multiplexerRefreshAgain = false;
+        await this._recheckClosed((shell) => !this.multiplexerOperations.has(shell));
+      } while (this.multiplexerRefreshAgain && !this.closing);
+    })().finally(() => { this.multiplexerRefresh = null; });
+    return this.multiplexerRefresh;
   }
 
   async _reattach(id) {
@@ -356,7 +394,6 @@ export class SessionManager extends EventEmitter {
     if (!mux) throw httpError(400, `${session.name} is not in tmux or herdr`, 'not_reattachable');
     if (this.closing) throw httpError(503, 'the session manager is stopping', 'manager_stopping');
     if (session.status === 'running') throw httpError(409, `${session.name} is still attached`, 'session_running');
-    // As the page offers it: only once the manager has found, after the client closed or at a restart, that the multiplexer still has the session.
     if (!session.multiplexer.reattachable) throw httpError(409, `${session.multiplexer.label} no longer has the session ${session.name} ran in`, 'multiplexer_session_gone');
     // Refresh closures as well as the spawn spec: the previous executable
     // may have disappeared in a native or Homebrew update.
@@ -513,6 +550,7 @@ export class SessionManager extends EventEmitter {
       // Herdr supports updates with servers and panes running, including brew.
       // Uninstall's server check is never bypassed by force.
       if (id === 'tmux') {
+        await this._recheckClosed((shell) => shell === id);
         const { running, pending } = this.dependentsOf(providerId, id, prepared.copy);
         if (running && !force) throw Object.assign(httpError(409, `${running} tmux card(s) depend on this installation. Changing it may prevent reattachment.`, 'multiplexer_in_use'), { running, pending });
       }
@@ -530,11 +568,7 @@ export class SessionManager extends EventEmitter {
           if (kind === 'update') {
             // A detach during replacement may have probed a vanished release.
             // Recheck closed cards once discovery has the new executable.
-            await Promise.all([...this.multiplexers].map(([cardId, tracked]) => {
-              const card = this.sessions.get(cardId);
-              return tracked.card.shell === id && card?.status === 'exited'
-                ? this._checkMultiplexer(card, tracked) : null;
-            }));
+            await this._recheckClosed((shell) => shell === id);
           }
         }
         catch (err) { console.warn('[multiplexers] could not refresh:', err.message); }

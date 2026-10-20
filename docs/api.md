@@ -397,7 +397,10 @@ files. When the tool cannot be asked, `count` is null, `scopes` is empty and
 * `multiplexer` is `{ label, attach, reattachable }` for a Shell session in
   tmux or herdr: the multiplexer's name, the command that reattaches its
   session from a terminal, and whether the exited session can be reattached.
-  Null otherwise.
+  Null otherwise. The manager checks `reattachable` again whenever sessions
+  are read: `GET /sessions` and `GET /sessions/:id` answer with the result,
+  and a new events connection gets its `hello` at once, followed by
+  `session.updated` for any session that changed.
 * `startedAt` is when the session's current process started: `createdAt`,
   or later once a tmux or herdr session is reattached.
 * `account` is the provider account the tool runs under, or null for an

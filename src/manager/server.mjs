@@ -494,6 +494,7 @@ export function createManagerServer({
       return sendJson(res, 201, { session: session.toJSON() });
     }
     if (route === '/sessions' && method === 'GET') {
+      await manager.refreshMultiplexers();
       return sendJson(res, 200, { sessions: manager.list() });
     }
     if (route === '/sessions' && method === 'POST') {
@@ -533,7 +534,11 @@ export function createManagerServer({
     const sessionMatch = route.match(/^\/sessions\/([a-f0-9]+)(\/stop|\/reattach|\/reply)?$/);
     if (sessionMatch) {
       const [, id, action] = sessionMatch;
-      if (!action && method === 'GET') return sendJson(res, 200, { session: manager.get(id).toJSON() });
+      if (!action && method === 'GET') {
+        manager.get(id);
+        await manager.refreshMultiplexers();
+        return sendJson(res, 200, { session: manager.get(id).toJSON() });
+      }
       if (action === '/reply' && method === 'GET') return sendJson(res, 200, { reply: manager.get(id).reply });
       if (!action && method === 'PATCH') {
         const body = await readJsonBody(req);
@@ -698,6 +703,7 @@ export function createManagerServer({
     if (notesHello.known) hello.notesRevision = notesHello.revision;
     else hello.notesUnreadable = true;
     safeSend(ws, hello);
+    manager.refreshMultiplexers();
     ws.on('close', () => eventClients.delete(ws));
     // A browser cannot see protocol pings, so a page checks that a quiet link is alive with its own.
     ws.on('message', (raw, isBinary) => {

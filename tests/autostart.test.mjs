@@ -353,7 +353,7 @@ for (const platform of ['win32', 'darwin', 'linux']) {
     });
     assert.equal((await autostart.describe()).enabled, false, 'reading does not need a listening server');
     api = createManagerServer({
-      manager: Object.assign(new EventEmitter(), { list: () => [] }),
+      manager: Object.assign(new EventEmitter(), { list: () => [], refreshMultiplexers: async () => {} }),
       registry: Object.assign(new EventEmitter(), { warnings: [] }),
       autostart, port: 0, token: 'test', webDir: fileURLToPath(new URL('../web', import.meta.url)),
     });
@@ -381,7 +381,7 @@ test('the autostart API needs the manager token and a boolean', { timeout: 10000
     describe: async () => ({ available: true, enabled, reason: null }),
     set: async (value) => { enabled = value; return { available: true, enabled, reason: null }; },
   };
-  const manager = Object.assign(new EventEmitter(), { list: () => [] });
+  const manager = Object.assign(new EventEmitter(), { list: () => [], refreshMultiplexers: async () => {} });
   const registry = Object.assign(new EventEmitter(), { warnings: [] });
   const api = createManagerServer({ manager, registry, autostart, token: 'test-manager-token', webDir: fileURLToPath(new URL('../web', import.meta.url)) });
   await api.listen();
@@ -403,7 +403,7 @@ test('the autostart API needs the manager token and a boolean', { timeout: 10000
 });
 
 test('a manager without autostart answers 404, which hides the setting', { timeout: 10000 }, async (t) => {
-  const manager = Object.assign(new EventEmitter(), { list: () => [] });
+  const manager = Object.assign(new EventEmitter(), { list: () => [], refreshMultiplexers: async () => {} });
   const registry = Object.assign(new EventEmitter(), { warnings: [] });
   const api = createManagerServer({ manager, registry, token: 't', webDir: fileURLToPath(new URL('../web', import.meta.url)) });
   await api.listen();
@@ -904,7 +904,7 @@ test('the autostart API takes a mode and refuses anything else', { timeout: 1000
     set: async () => { throw new Error('the mode goes to setMode'); },
     setMode: async (mode) => { modes.push(mode); return { available: true, enabled: false, reason: null, mode }; },
   };
-  const manager = Object.assign(new EventEmitter(), { list: () => [] });
+  const manager = Object.assign(new EventEmitter(), { list: () => [], refreshMultiplexers: async () => {} });
   const registry = Object.assign(new EventEmitter(), { warnings: [] });
   const api = createManagerServer({ manager, registry, autostart, token: 'tok', webDir: fileURLToPath(new URL('../web', import.meta.url)) });
   await api.listen();

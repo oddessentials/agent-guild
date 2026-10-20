@@ -647,6 +647,77 @@ test('detached cards probe and reattach with a replaced executable; an older sta
   assert.equal(tracked.checking, false);
 });
 
+test('reading sessions checks closed cards again: Reattach follows the multiplexer, one round at a time, only changes announced', async (t) => {
+  const f = fixture();
+  const shells = ['tmux', 'herdr'].map((id) => ({ id, path: `/usr/bin/${id}`, label: id, args: [], multiplexer: { attach: id } }));
+  f.registry.shellsFor = () => ({ shells });
+  f.registry.account = () => ({ id: 'default' });
+  f.registry.spawnSpec = () => ({ file: 'mux', args: [] });
+  const manager = new SessionManager({ registry: f.registry, baseEnv: {}, getApiUrl: () => '' });
+  const alive = new Map([['guild-aaaaaa', true], ['guild-bbbbbb', true], ['guild-cccccc', true]]);
+  const checked = [];
+  let hold = null;
+  t.mock.method(manager, '_multiplexer', ({ muxName }) => ({ named: {}, clientEnv: {}, alive: async () => {
+    checked.push(muxName);
+    if (hold) await hold;
+    return alive.get(muxName);
+  } }));
+  const changes = [];
+  const card = (id, shell, status) => {
+    const session = { id, status, multiplexer: { reattachable: status === 'exited' }, _changed() { changes.push(id); } };
+    manager.sessions.set(id, session);
+    manager.multiplexers.set(id, { card: { id, provider: 'shell', shell, muxName: `guild-${id}` }, alive: null, checking: false });
+    return session;
+  };
+  const tmux = card('aaaaaa', 'tmux', 'exited');
+  const herdr = card('bbbbbb', 'herdr', 'exited');
+  card('cccccc', 'tmux', 'running');
+
+  await manager.refreshMultiplexers();
+  assert.deepEqual(checked.sort(), ['guild-aaaaaa', 'guild-bbbbbb'], 'only closed cards are checked');
+  assert.deepEqual(changes, [], 'nothing changed, nothing announced');
+
+  alive.set('guild-aaaaaa', false);
+  alive.set('guild-bbbbbb', false);
+  await manager.refreshMultiplexers();
+  assert.deepEqual([tmux.multiplexer.reattachable, herdr.multiplexer.reattachable], [false, false]);
+  alive.set('guild-bbbbbb', true);
+  await manager.refreshMultiplexers();
+  assert.equal(herdr.multiplexer.reattachable, true, 'a herdr server started again makes its cards reattachable again');
+  assert.deepEqual(changes.sort(), ['aaaaaa', 'bbbbbb', 'bbbbbb']);
+
+  checked.length = 0;
+  let release;
+  hold = new Promise((resolve) => { release = resolve; });
+  const first = manager.refreshMultiplexers();
+  const second = manager.refreshMultiplexers();
+  const third = manager.refreshMultiplexers();
+  await new Promise(setImmediate);
+  assert.deepEqual(checked.sort(), ['guild-aaaaaa', 'guild-bbbbbb'], 'requests during a round wait for it');
+  hold = null;
+  release();
+  await Promise.all([first, second, third]);
+  assert.equal(checked.length, 4, 'they share one more round, which starts after them');
+
+  hold = new Promise((resolve) => { release = resolve; });
+  alive.set('guild-aaaaaa', true);
+  const started = Date.now();
+  await manager.refreshMultiplexers({ waitMs: 20 });
+  assert.ok(Date.now() - started < 1000, 'a slow multiplexer does not hold up the answer');
+  assert.equal(tmux.multiplexer.reattachable, false);
+  tmux.status = 'running';
+  hold = null;
+  release();
+  await manager._refreshRound();
+  assert.equal(tmux.multiplexer.reattachable, false, 'a check that ends after the card attached again changes nothing');
+  tmux.status = 'exited';
+
+  checked.length = 0;
+  manager.multiplexerOperations.add('tmux');
+  await manager.refreshMultiplexers();
+  assert.deepEqual(checked, ['guild-bbbbbb'], 'cards whose multiplexer is being changed are checked when that finishes');
+});
+
 test('successful update commands still report failed post-operation verification', async () => {
   const f = fixture();
   f.add('herdr', '/home/test/.local/bin/herdr', { '--version': new Error('broken executable'), 'update --help': 'Usage: herdr update', 'channel show': 'stable' });

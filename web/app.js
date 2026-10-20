@@ -6028,6 +6028,13 @@ function reattachable(s) {
   return Boolean(s.status === 'exited' && s.multiplexer?.reattachable);
 }
 
+async function recheckReattach() {
+  if (!state.connected || ![...state.sessions.values()].some((s) => s.status === 'exited' && s.multiplexer)) return;
+  try {
+    await api('GET', '/sessions');
+  } catch { /* the next hello brings it */ }
+}
+
 async function reattachSession(id) {
   try {
     upsertSession((await api('POST', `/sessions/${id}/reattach`)).session);
@@ -7989,11 +7996,13 @@ document.addEventListener('visibilitychange', () => {
   }
   if (document.visibilityState === 'visible' && state.connected && Date.now() - newsLoadedAt > 60000) loadNews();
   if (document.visibilityState === 'visible') recheckPtyBuild();
+  if (document.visibilityState === 'visible') recheckReattach();
   if (document.visibilityState === 'visible' && dockShows('github') && githubShownView() === 'actions') loadView('actions');
   else scheduleRuns();
   if (branchesVisible() && !viewData('branches')?.error) loadBranches({ resume: true });
 });
 addEventListener('focus', recheckPtyBuild);
+addEventListener('focus', recheckReattach);
 // Files may have changed in an editor while the page was in the background.
 addEventListener('focus', () => refreshInstructionCounts());
 addEventListener('pagehide', () => {
