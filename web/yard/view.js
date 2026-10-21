@@ -243,7 +243,8 @@ export function initYard(controller) {
     if (disposed || view !== 'yard') return;
     snapshot = controller.snapshot();
     if (snapshot.connected) wasConnected = true;
-    $('yard-offline').hidden = !controller.expand || !wasConnected || snapshot.connected;
+    $('yard-offline').hidden = !controller.expand || snapshot.connected || !(wasConnected || snapshot.retrying);
+    $('yard-offline-text').textContent = wasConnected ? 'Agent Guild disconnected. Reconnecting…' : 'Can’t reach Agent Guild. Retrying…';
     if (selected && !(selected.kind === 'provider' ? snapshot.providers : snapshot.sessions).some(x => x.id === selected.id)) {
       const row = rows.get(selected.kind + ':' + selected.id);
       const restoreFocus = row?.contains(document.activeElement) || $('yard-inspector').contains(document.activeElement);

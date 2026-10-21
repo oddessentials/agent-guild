@@ -36,7 +36,7 @@ async function framesSettled(b){
   });
   return settled.frames;
 }
-async function setup(t,{yard=false,auth=true,source='',width=1440,height=1000,hash=''}={}) {
+async function setup(t,{yard=false,auth=true,source='',width=1440,height=1000,hash='',until=null}={}) {
   const fixture=await startFixture();t.after(()=>fixture.close());
   const b=await browser();
   await b.send('Page.navigate',{url:'about:blank'});
@@ -56,7 +56,7 @@ async function setup(t,{yard=false,auth=true,source='',width=1440,height=1000,ha
     ${source}`});
   installedScripts.push(added.identifier);
   await b.send('Page.navigate',{url:fixture.api.url+'/' +(auth?'#token='+fixture.token+hash:'')});
-  await b.wait(auth?"document.querySelector('#connection')?.classList.contains('ok')":"document.querySelector('#auth')?.hidden===false");
+  await b.wait(until||(auth?"document.querySelector('#connection')?.classList.contains('ok')":"document.querySelector('#auth')?.hidden===false"));
   return {f:fixture,b};
 }
 const fill=(b,selector,value)=>b.evaluate(`document.querySelector(${q(selector)}).value=${q(value)};document.querySelector(${q(selector)}).dispatchEvent(new Event('input',{bubbles:true}))`);
@@ -918,8 +918,11 @@ test('a compact host view fills itself with the scene, shows every hall, and sen
     window.__posted=[];
     window.parent={postMessage:message=>window.__posted.push(message)};
     const Socket=window.WebSocket;window.__sockets=[];
-    window.WebSocket=class extends Socket{constructor(...args){super(...args);__sockets.push(this);}};`});
+    window.WebSocket=class extends Socket{constructor(...args){super(...args);__sockets.push(this);}};
+    window.__offlineShown=0;
+    addEventListener('DOMContentLoaded',()=>{const el=document.getElementById('yard-offline');new MutationObserver(()=>{if(!el.hidden)__offlineShown++;}).observe(el,{attributes:true,attributeFilter:['hidden']});});`});
   await ready(b);await nextFrames(b);
+  assert.equal(await b.evaluate('__offlineShown'),0,'no notice while the first connection opens');
   const page=await b.evaluate(`(()=>{
     const shown=selector=>document.querySelector(selector).checkVisibility();
     const stage=document.querySelector('#yard-stage').getBoundingClientRect();
@@ -962,6 +965,29 @@ test('a compact host view fills itself with the scene, shows every hall, and sen
   await b.send('Page.navigate',{url:f.api.url+'/#token='+f.token+'&view=yard'});
   await b.wait("document.querySelector('#connection')?.classList.contains('ok')");
   assert.deepEqual(await b.evaluate("[location.hash,document.documentElement.dataset.layout??null]"),['',null],'a full framed page keeps nothing in its address');
+});
+
+test('a compact view that cannot reach its manager says so instead of preparing, and recovers when it can; a full page is unchanged',options,async t=>{
+  const blocked=`
+    window.__posted=[];
+    window.parent={postMessage:message=>window.__posted.push(message)};
+    window.__block=true;
+    const Socket=window.WebSocket;
+    window.WebSocket=class extends Socket{constructor(url,...args){super(window.__block&&String(url).includes('/events')?'ws://127.0.0.1:9/events':url,...args);}};`;
+  const {f,b}=await setup(t,{width:300,height:400,hash:'&layout=compact',source:blocked,until:"document.querySelector('#yard-offline')?.hidden===false"});
+  const offline=await b.evaluate(`[document.querySelector('#yard-offline').textContent,...['#yard-download','#yard-loading'].map(s=>document.querySelector(s).checkVisibility())]`);
+  assert.deepEqual(offline,['Can’t reach Agent Guild. Retrying…Open Agent Guild',false,false]);
+  await b.click('#yard-offline-open');
+  assert.deepEqual(await b.evaluate("__posted.filter(m=>m.type==='expand')"),[{source:'agent-guild',type:'expand'}]);
+  await b.evaluate('window.__block=false');
+  await b.wait("document.querySelector('#connection').classList.contains('ok') && document.querySelector('#yard-offline').hidden");
+  await ready(b);
+
+  await b.send('Page.navigate',{url:'about:blank'});await b.wait('document.readyState==="complete"');
+  await b.send('Page.navigate',{url:f.api.url+'/#token='+f.token+'&view=yard'});
+  await b.wait("document.querySelector('#yard-summary')?.textContent==='Reconnecting…' && !document.querySelector('#yard-download').hidden");
+  assert.deepEqual(await b.evaluate("[document.querySelector('#yard-offline').hidden,document.querySelector('#yard-download-title').textContent,document.querySelector('.topbar').checkVisibility()]"),
+    [true,'Preparing your yard…',true],'a full page keeps its own badge and screens');
 });
 
 test('auth, graphics failure, retry, manager restart and stopped screen remain usable',options,async t=>{

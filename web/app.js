@@ -8302,6 +8302,7 @@ yardUi = initYard({
     providers: state.providers,
     sessions: [...state.sessions.values()],
     connected: state.connected,
+    retrying: state.eventsRetry > 0,
     news: state.news,
     activeId: state.activeId,
   }),
