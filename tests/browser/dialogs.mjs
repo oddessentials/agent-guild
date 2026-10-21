@@ -331,6 +331,7 @@ const checks = await withPage({ name: 'dialogs', instrumentation }, async ({ ori
     const stop = `document.querySelector('#sessions .session-card[data-id="${id}"] .stop')`;
     await evaluate(`${stop}.click()`);
     await until(`${engine} stop question`, () => evaluate('document.querySelector("#ask").open'));
+    await settled();
     const question = await evaluate(`(() => {
       const r=document.querySelector('#ask').getBoundingClientRect();
       return {message:document.querySelector('#ask-message').textContent,ok:document.querySelector('#ask-ok').textContent,
