@@ -58,7 +58,7 @@ export async function startFixture({port=0,yardArt}={}) {
     remove(id){calls.push(['remove',id]);data.delete(id);manager.emit('event',{type:'session.removed',sessionId:id});},
     upgrade(){calls.push(['upgrade']);return add({providerId:'agent-guild',task:'upgrade',name:'Upgrade Agent Guild'});},
     clone(body){calls.push(['clone',body]);return add({providerId:'github',task:'clone',name:'Clone '+body.repo,clone:{repo:body.repo,path:body.parent+'\\demo',accountId:body.account}});},
-    resolveCwd:cwd=>cwd,
+    resolveCwd:cwd=>cwd,refreshMultiplexers:async()=>{},
     sessionHooks:{async setEnabled(p,enabled){calls.push(['reporting',p.id,enabled]);p.reportingEnabled=enabled;}},
   });
   const registry=Object.assign(new EventEmitter(),{

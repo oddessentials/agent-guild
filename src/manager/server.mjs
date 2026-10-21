@@ -57,13 +57,12 @@ function vendorFiles() {
 
 const SECURITY_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
-  'X-Frame-Options': 'DENY',
   'Referrer-Policy': 'no-referrer',
   'Cross-Origin-Resource-Policy': 'same-origin',
   'Content-Security-Policy':
     "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://i.ytimg.com; " +
     "connect-src 'self' ws://127.0.0.1:* ws://localhost:*; frame-src https://www.youtube-nocookie.com; " +
-    "frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+    "frame-ancestors vscode-webview: vscode-file:; base-uri 'none'; form-action 'none'",
 };
 
 class HttpError extends Error {

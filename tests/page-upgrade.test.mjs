@@ -38,7 +38,7 @@ function page({ api = async () => ({}) } = {}) {
     api,
     AuthError: class extends Error {},
     showAuth() {},
-    confirm: () => false,
+    ask: async () => false,
   };
   runInNewContext(source, context);
   return { ...context, node: context.$, toasts, copied };

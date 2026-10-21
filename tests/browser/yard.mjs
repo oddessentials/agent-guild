@@ -50,7 +50,6 @@ async function setup(t,{yard=false,auth=true,source='',width=1440,height=1000}={
     localStorage.setItem('agentGuild.theme','dark');
     localStorage.setItem('agentGuild.skin','guild');
     localStorage.setItem('agentGuild.view',${q(yard?'yard':'cards')});
-    window.confirm=()=>true; window.prompt=()=>'Renamed from Yard';
     window.__frames=0;
     const raf=window.requestAnimationFrame;
     window.requestAnimationFrame=callback=>raf.call(window,time=>{window.__frames++;callback(time);});
@@ -62,6 +61,8 @@ async function setup(t,{yard=false,auth=true,source='',width=1440,height=1000}={
 }
 const fill=(b,selector,value)=>b.evaluate(`document.querySelector(${q(selector)}).value=${q(value)};document.querySelector(${q(selector)}).dispatchEvent(new Event('input',{bubbles:true}))`);
 const closeTerminal=b=>b.click('#panel-close');
+// Answers the page's in-page question, typing `value` first when it asks for text.
+const answer=async(b,value)=>{await b.wait("document.querySelector('#ask').open");if(value!==undefined)await b.evaluate(`document.querySelector('#ask-input').value=${q(value)}`);await b.click('#ask-ok');};
 const terminalReady=b=>b.wait("!document.querySelector('#terminal-panel').hidden && document.querySelector('.terminal-host .xterm')");
 const ready=b=>b.wait("document.querySelector('#yard-stage').dataset.ready==='true'");
 // Pending controls use aria-disabled so they keep focus; either form blocks.
@@ -116,7 +117,7 @@ test('New pending state follows the account and folder across views, independent
 
   await b.click(card+' .update');await until(()=>installs.length===1);
   installs[0].finish(Object.assign(new Error('Provider is in use'),{code:'provider_in_use',status:409,running:2}));
-  await until(()=>installs.length===2);
+  await answer(b);await until(()=>installs.length===2);
   assert.deepEqual(installs.map(p=>p.args[1]),[{force:false},{force:true}]);
   assert.equal(await disabled(card+' .update'),true);
   await fill(b,'#cwd','project-c');
@@ -484,10 +485,10 @@ test('Cards and Yard use the same actions, accounts, dialogs and terminal',optio
   assert.equal(f.calls.filter(c=>c[0]==='install').at(-1)[1],'xai');
 
   const id=[...f.data.keys()][0];
-  await b.click(session(id));await b.click(inspector+' .rename');
+  await b.click(session(id));await b.click(inspector+' .rename');await answer(b,'Renamed from Yard');
   await b.wait(`document.querySelector('${inspector} .name').textContent==='Renamed from Yard'`);
   assert.equal(f.data.get(id).name,'Renamed from Yard');
-  await b.click(inspector+' .stop');await b.wait(`document.querySelector('${inspector} .resume').hidden===false`);
+  await b.click(inspector+' .stop');await answer(b);await b.wait(`document.querySelector('${inspector} .resume').hidden===false`);
   await b.click(inspector+' .resume');await terminalReady(b);await closeTerminal(b);
   assert.equal(f.calls.filter(c=>c[0]==='create').at(-1)[1].resume,f.data.get(id).toolSessionId);
   await b.click(inspector+' .remove');await b.wait(`!document.querySelector(${q(session(id))})`);
@@ -929,13 +930,13 @@ test('auth, graphics failure, retry, manager restart and stopped screen remain u
   await b.wait("document.querySelector('#yard-failure').hidden===false");
   await b.click('#yard-retry');await ready(b);
   await b.click('#manager');await b.wait("document.querySelector('#manager-menu').matches(':popover-open')");
-  await b.click('#restart-manager');await until(()=>f.calls.some(c=>c[0]==='shutdown' && c[1]));
+  await b.click('#restart-manager');await answer(b);await until(()=>f.calls.some(c=>c[0]==='shutdown' && c[1]));
   await b.wait("!document.querySelector('#app').hidden && document.querySelector('#stopped').hidden && document.querySelector('#version').textContent==='v1.1.0'");
   assert.equal(await b.evaluate("document.documentElement.dataset.view"),'yard');
   assert.equal(await b.evaluate("document.querySelectorAll('.yard-row[data-key^=\"session:\"]').length"),0);
   f.add({providerId:'openai'});await b.wait("document.querySelector('.yard-row[data-key^=\"session:\"]')");
   await b.click('#manager');await b.wait("document.querySelector('#manager-menu').matches(':popover-open')");
-  await b.click('#stop-manager');await b.wait("!document.querySelector('#stopped').hidden && !document.querySelector('#stopped-help').hidden");
+  await b.click('#stop-manager');await answer(b);await b.wait("!document.querySelector('#stopped').hidden && !document.querySelector('#stopped-help').hidden");
   assert.equal(await b.evaluate("document.querySelector('#app').hidden"),true);
   const shutdown=b.requests.filter(r=>r.url.endsWith('/shutdown'));
   assert.deepEqual(shutdown.map(r=>r.postData?JSON.parse(r.postData):{}),[{restart:true},{force:true,restart:true},{}, {force:true}]);
