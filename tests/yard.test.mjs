@@ -141,19 +141,21 @@ test('view restores before paint, tolerates blocked storage, and defaults to Car
  runInNewContext(source,{document,window:{matchMedia:()=>({matches:false})},localStorage:{getItem:()=>{throw new Error('blocked');}}});
  assert.equal(document.documentElement.dataset.view,'cards');
 });
-test('a VS Code tab opens the view named next to its token and keeps it; a browser ignores it',()=>{
+test('a VS Code tab or the Apple app opens the view named next to its token and keeps it; a browser ignores it',()=>{
  const source=readFileSync(new URL('../web/theme.js',import.meta.url),'utf8');
- const open=(framed,hash)=>{
+ const open=(framed,hash,app=false)=>{
   const storage=new Map([['agentGuild.view','cards']]);
   const document={documentElement:{dataset:{}}};
   const window={matchMedia:()=>({matches:false})};
   window.parent=framed?{}:window;
+  if(app)window.webkit={messageHandlers:{agentGuild:{}}};
   runInNewContext(source,{document,window,URLSearchParams,location:{hash},localStorage:{getItem:key=>storage.get(key)??null,setItem:(key,value)=>storage.set(key,value),length:0}});
   return [document.documentElement.dataset.view,storage.get('agentGuild.view')];
  };
  assert.deepEqual(open(true,'#token=t&view=yard'),['yard','yard']);
  assert.deepEqual(open(true,'#token=t&view=map'),['cards','cards']);
  assert.deepEqual(open(false,'#token=t&view=yard'),['cards','cards']);
+ assert.deepEqual(open(false,'#token=t&view=yard',true),['yard','yard']);
 });
 test('every skin has a yard world',()=>{
  const source=readFileSync(new URL('../web/theme.js',import.meta.url),'utf8');

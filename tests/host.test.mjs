@@ -3,11 +3,12 @@ import assert from 'node:assert/strict';
 
 let loads = 0;
 
-/** web/host.js loaded into a fake page; `framed` decides whether its parent is another window. */
-async function host({ framed, writeText, execCommand = () => true }) {
-  const posted = [], opened = [], listeners = {}, copied = [];
+/** web/host.js loaded into a fake page; `framed` decides whether its parent is another window, `app` whether the Apple app's handler exists. */
+async function host({ framed, app = false, writeText, execCommand = () => true }) {
+  const posted = [], opened = [], listeners = {}, copied = [], appPosted = [];
   const win = { open: (...args) => opened.push(args), addEventListener: (type, listener) => { listeners[`window.${type}`] = listener; } };
   win.parent = framed ? { postMessage: (message, origin) => posted.push({ message, origin }) } : win;
+  if (app) win.webkit = { messageHandlers: { agentGuild: { postMessage: (message) => appPosted.push(message) } } };
   const document = {
     activeElement: null,
     body: { append: (area) => { area.parent = 'body'; } },
@@ -17,13 +18,13 @@ async function host({ framed, writeText, execCommand = () => true }) {
     execCommand: (command) => { copied.push([command, document.selected.value]); return execCommand(); },
   };
   const globals = {
-    window: win, document, location: { href: 'http://127.0.0.1:47821/' },
+    window: win, document, location: { href: 'http://127.0.0.1:47821/', origin: 'http://127.0.0.1:47821' },
     navigator: { clipboard: { writeText } },
   };
   // The module reads these when called too, so each page's stay until the next page or the end of the file.
   for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { value, configurable: true, writable: true });
   const module = await import(`../web/host.js?load=${++loads}`);
-  return { module, posted, opened, listeners, copied };
+  return { module, posted, opened, listeners, copied, appPosted };
 }
 
 const saved = Object.fromEntries(['window', 'document', 'location', 'navigator'].map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
@@ -75,6 +76,36 @@ test('a framed page shows the view its extension names, and only its extension',
 
   const page = await host({ framed: false });
   assert.equal(page.listeners['window.message'], undefined, 'an unframed page takes no requests');
+});
+
+test('the Apple app gets links and readiness, and only its own page can ask for a view', async () => {
+  const page = await host({ framed: false, app: true });
+  assert.equal(page.module.framed, false);
+  const link = click('https://github.com/login/device');
+  page.listeners.click(link);
+  assert.equal(link.prevented, true);
+  page.module.openLink('file:///etc/passwd');
+  page.module.announceReady('1.4.0');
+  assert.deepEqual(page.appPosted, [
+    { source: 'agent-guild', type: 'open', url: 'https://github.com/login/device' },
+    { source: 'agent-guild', type: 'ready', version: '1.4.0' },
+  ]);
+  assert.deepEqual([page.opened, page.posted], [[], []]);
+
+  const shown = [];
+  page.module.onViewRequest((view) => shown.push(view));
+  const send = (source, origin, data) => page.listeners['window.message']({ source, origin, data });
+  const own = 'http://127.0.0.1:47821';
+  send(window, own, { source: 'agent-guild-app', type: 'view', view: 'yard' });
+  send({}, own, { source: 'agent-guild-app', type: 'view', view: 'cards' });
+  send(window, 'https://www.youtube-nocookie.com', { source: 'agent-guild-app', type: 'view', view: 'cards' });
+  send(window, own, { source: 'agent-guild-vscode', type: 'view', view: 'cards' });
+  send(window, own, { source: 'agent-guild-app', type: 'view', view: 'cards' });
+  assert.deepEqual(shown, ['yard', 'cards'], 'one transition per request from the page itself');
+
+  const framed = await host({ framed: true, app: true });
+  framed.module.announceReady('1.4.0');
+  assert.deepEqual(framed.appPosted, [], 'a framed page answers only its frame host');
 });
 
 test('copying falls back to execCommand when the clipboard API is refused', async () => {

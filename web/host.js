@@ -1,12 +1,15 @@
-// The page inside an editor tab: the Agent Guild VS Code extension frames it.
-// The frame cannot open windows, so links go to the extension as messages.
-// Unframed, the page behaves exactly as before.
+// The page inside a host that cannot open windows: the VS Code extension frames it, and the
+// Agent Guild app for Apple devices shows it in a WKWebView with an `agentGuild` message handler.
+// Links go to the host as messages. Without a host, the page behaves exactly as before.
 
 export const framed = typeof window !== 'undefined' && window.parent !== window;
+const app = typeof window !== 'undefined' && !framed ? window.webkit?.messageHandlers?.agentGuild ?? null : null;
+const hosted = framed || Boolean(app);
 
 function post(message) {
   // The manager's frame-ancestors lets only VS Code webviews frame the page.
-  window.parent.postMessage({ source: 'agent-guild', ...message }, '*');
+  if (framed) window.parent.postMessage({ source: 'agent-guild', ...message }, '*');
+  else app.postMessage({ source: 'agent-guild', ...message });
 }
 
 /** The absolute http(s) URL `href` names, or null. */
@@ -17,9 +20,9 @@ export function webUrl(href) {
   } catch { return null; }
 }
 
-/** Open a link outside the page: a new tab, or through the extension when framed. */
+/** Open a link outside the page: a new tab, or through the host. */
 export function openLink(href) {
-  if (!framed) {
+  if (!hosted) {
     window.open(href, '_blank', 'noopener,noreferrer');
     return;
   }
@@ -27,9 +30,9 @@ export function openLink(href) {
   if (url) post({ type: 'open', url });
 }
 
-/** Tell the extension the page reached the manager. */
+/** Tell the host the page reached the manager. */
 export function announceReady(version) {
-  if (framed) post({ type: 'ready', version });
+  if (hosted) post({ type: 'ready', version });
 }
 
 let showView = null;
@@ -38,11 +41,13 @@ export function onViewRequest(callback) {
   showView = callback;
 }
 
-if (framed) {
+if (hosted) {
+  // The app posts its request into the page itself, so a subframe such as the video player cannot pass for it.
+  const [sender, expected] = framed ? [window.parent, 'agent-guild-vscode'] : [window, 'agent-guild-app'];
   window.addEventListener('message', (event) => {
-    if (event.source !== window.parent) return;
+    if (event.source !== sender || (app && event.origin !== location.origin)) return;
     const { source, type, view } = event.data ?? {};
-    if (source === 'agent-guild-vscode' && type === 'view' && (view === 'cards' || view === 'yard')) showView?.(view);
+    if (source === expected && type === 'view' && (view === 'cards' || view === 'yard')) showView?.(view);
   });
   const follow = (event) => {
     if (event.button > 1) return;

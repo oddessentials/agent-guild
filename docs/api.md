@@ -724,3 +724,32 @@ Send it once the frame has fired `load`; the page listens from then on.
 | Message | Meaning |
 | --- | --- |
 | `{ source: "agent-guild-vscode", type: "view", view }` | Show `view`, `"cards"` or `"yard"`, and keep it as the user's choice. |
+
+## The page in the Agent Guild app
+
+The app for iPhone, iPad and Apple Vision Pro loads the page URL with
+`#token=<token>` in a `WKWebView` and registers a script message handler
+named `agentGuild`. When the page is not framed and that handler exists, the
+page treats the app as its host: `&view=yard` or `&view=cards` works as for
+VS Code, and the page posts the same `ready` and `open` messages to
+`window.webkit.messageHandlers.agentGuild` instead of `window.parent`.
+Without the handler, the page behaves as in a browser.
+
+The page's checks do not protect the app. A script message handler is
+reachable from every frame, and the page embeds a YouTube frame, so the app
+must:
+
+- accept a message only when `WKScriptMessage.frameInfo.isMainFrame` is true
+  and the frame's `securityOrigin` is the manager's (CVE-2026-44698 is this
+  bug in Home Assistant's iOS app);
+- accept only the messages in the table above, with a string `type` and the
+  fields it names;
+- open only `http:` and `https:` URLs, outside the `WKWebView`, and keep the
+  `WKWebView` from navigating away from the manager's origin, redirects
+  included.
+
+To show a view while the page is open, the app runs
+`window.postMessage({ source: "agent-guild-app", type: "view", view }, location.origin)`
+in the page with `evaluateJavaScript` once navigation has finished. The page
+accepts it only from its own window at its own origin, with the behavior of
+the VS Code message.

@@ -40,7 +40,8 @@
   } catch (e) { /* storage unavailable */ }
   if (art !== 'on') art = 'off';
   // After card art, which reads a saved view as a page that has used Agent Guild.
-  if (window.parent && window.parent !== window) {
+  var app = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.agentGuild;
+  if ((window.parent && window.parent !== window) || app) {
     var asked = new URLSearchParams(location.hash.slice(1)).get('view');
     if (asked === 'cards' || asked === 'yard') {
       view = asked;

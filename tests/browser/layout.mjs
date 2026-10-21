@@ -547,6 +547,42 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   await send('Emulation.setTouchEmulationEnabled', { enabled: false });
   pass('on a touch screen both dividers take a touch beside their thin line and drag with a finger');
 
+  const { identifier } = await send('Page.addScriptToEvaluateOnNewDocument', {
+    source: 'window.testApp=[];window.webkit={messageHandlers:{agentGuild:{postMessage:m=>testApp.push(m)}}};',
+  });
+  await size(393, 852);
+  await send('Page.navigate', { url: `${origin}/?app#token=t&view=yard` });
+  await until('the app opens the Yard', () => evaluate('document.documentElement.dataset.view==="yard"&&testApp.some(m=>m.type==="ready")'));
+  const folderRow = async (width) => {
+    await size(width, 852);
+    const [label, input, tools] = await Promise.all([box('.cwd > label'), box('#cwd'), box('.cwd-tools')]);
+    assert.ok(tools.left > label.right && tools.left - input.left >= 100 && input.right <= width,
+      `Yard at ${width}: the folder tools cover neither the label nor the path (${JSON.stringify({ label, input, tools })})`);
+  };
+  for (const width of [393, 640]) await folderRow(width);
+  pass('on a phone the Yard\'s working folder field shows the path beside its tools');
+
+  await evaluate('window.testViews=[];new MutationObserver(()=>testViews.push(document.documentElement.dataset.view)).observe(document.documentElement,{attributeFilter:["data-view"]})');
+  const ask = (view) => evaluate(`window.postMessage({source:'agent-guild-app',type:'view',view:'${view}'},location.origin)`);
+  await ask('cards');
+  await until('Cards', () => evaluate('document.documentElement.dataset.view==="cards"'));
+  await click('#sessions .session-card .open');
+  await until('terminal', () => visible('#terminal-panel'));
+  await ask('yard');
+  await until('the Yard again', () => evaluate('document.documentElement.dataset.view==="yard"'));
+  await layoutReady();
+  assert.equal(await visible('#terminal-panel'), false, 'the terminal closes first');
+  assert.deepEqual(await evaluate('[testViews, localStorage.getItem("agentGuild.view"), testApp.filter(m=>m.type==="ready").length]'), [['cards', 'yard'], 'yard', 1]);
+  pass('the app opens the page in the Yard and switches views once per request, closing a terminal first');
+
+  assert.equal(await visible('.yard-help-pointer'), true);
+  await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
+  await until('coarse pointer', () => evaluate('matchMedia("(pointer: coarse)").matches'));
+  assert.deepEqual([await visible('.yard-help-pointer'), await visible('.yard-help-touch')], [false, true]);
+  await send('Emulation.setTouchEmulationEnabled', { enabled: false });
+  await send('Page.removeScriptToEvaluateOnNewDocument', { identifier });
+  pass('on a touch screen the Yard\'s hint names touch gestures');
+
   assert.deepEqual(errors, []);
   pass('the page has no uncaught browser exceptions');
 });

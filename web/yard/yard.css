@@ -115,6 +115,9 @@
   .yard-camera { right:12px; bottom:56px; }
   #yard-help { font-size:9px; }
 }
+@media(max-width:640px) { :root[data-view="yard"] .cwd { flex-basis:100%; } }
+.yard-help-touch { display:none; }
+@media(pointer:coarse) { .yard-help-pointer { display:none; } .yard-help-touch { display:inline; } }
 @media(prefers-reduced-motion:reduce) {
   #yard *,#yard *::before,#yard *::after { animation:none!important; transition:none!important; scroll-behavior:auto!important; }
   .yard-loading-bar { display:none; }
