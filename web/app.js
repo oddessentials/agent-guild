@@ -7560,6 +7560,7 @@ function connectEvents() {
       managerGone();
     } else if (msg.type === 'session.created' || msg.type === 'session.updated') {
       upsertSession(msg.session);
+      openAskedSession();
     } else if (msg.type === 'session.removed') {
       dropSession(msg.sessionId);
     } else if (msg.type === 'providers.updated') {
@@ -8360,12 +8361,14 @@ onViewRequest((view) => {
 });
 let askedSession = null;
 function openAskedSession() {
-  if (askedSession) openPanel(askedSession);
+  if (!askedSession || !state.sessions.has(askedSession)) return;
+  const id = askedSession;
   askedSession = null;
+  openPanel(id);
 }
 onSessionRequest((id) => {
   askedSession = id;
-  if (sessionsShown && state.connected) openAskedSession();
+  if (state.connected && state.eventsSocket?.greeted) openAskedSession();
 });
 
 state.token = readTokenFromHash() || load(TOKEN_KEY);

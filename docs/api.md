@@ -729,7 +729,7 @@ from then on.
 | Message | Meaning |
 | --- | --- |
 | `{ source: "agent-guild-vscode", type: "view", view }` | Show `view`, `"cards"` or `"yard"`, and keep it as the user's choice. An open terminal closes first; its sessions keep running. |
-| `{ source: "agent-guild-vscode", type: "session", id }` | Open the terminal of session `id`, once the page has the manager's sessions. |
+| `{ source: "agent-guild-vscode", type: "session", id }` | Open the terminal of session `id` once, as soon as the page knows that session. |
 
 ## The page in the Agent Guild app
 

@@ -916,7 +916,9 @@ test('background plate loads and a preloaded theme switch show no progress',opti
 test('a compact host view fills itself with the scene, shows every hall, and sends a double-clicked session to its host',options,async t=>{
   const {b}=await setup(t,{width:360,height:440,hash:'&layout=compact&skin=grove&theme=light',source:`
     window.__posted=[];
-    window.parent={postMessage:message=>window.__posted.push(message)};`});
+    window.parent={postMessage:message=>window.__posted.push(message)};
+    const Socket=window.WebSocket;window.__sockets=[];
+    window.WebSocket=class extends Socket{constructor(...args){super(...args);__sockets.push(this);}};`});
   await ready(b);await nextFrames(b);
   const page=await b.evaluate(`(()=>{
     const shown=selector=>document.querySelector(selector).checkVisibility();
@@ -935,6 +937,13 @@ test('a compact host view fills itself with the scene, shows every hall, and sen
   assert.equal(page.halls.length,page.tools);
   for(const [x,y] of page.halls)assert.ok(x>=0&&x<=360&&y>=0&&y<=440,'hall in sight at '+x+','+y);
   assert.equal(page.looks,0);
+  assert.equal(await b.evaluate("document.querySelector('#yard-offline').hidden"),true,'no notice while connected');
+  await b.evaluate("__sockets.filter(s=>s.url.includes('/events')).at(-1).close()");
+  await b.wait("!document.querySelector('#yard-offline').hidden");
+  await b.evaluate("document.querySelector('#yard-offline-open').click()");
+  assert.deepEqual(await b.evaluate("__posted.filter(m=>m.type==='expand')"),[{source:'agent-guild',type:'expand'}]);
+  await b.wait("document.querySelector('#yard-offline').hidden");
+  await b.evaluate("__posted.length=0");
   await b.send('Emulation.setDeviceMetricsOverride',{width:1000,height:220,deviceScaleFactor:1,mobile:false});
   await nextFrames(b);await nextFrames(b);
   const wide=await b.evaluate(`[...document.querySelectorAll('.yard-label[data-kind="provider"]')].map(el=>el.getBoundingClientRect()).map(r=>[r.left+r.width/2,r.top+r.height/2])`);

@@ -27,7 +27,7 @@ export function initYard(controller) {
   const root = document.documentElement;
   let view = root.dataset.view === 'yard' ? 'yard' : 'cards';
   let snapshot = controller.snapshot();
-  let lastSkin = '', lastTheme = '';
+  let lastSkin = '', lastTheme = '', wasConnected = false;
   const sceneVisible = () => view === 'yard' && !$('app').hidden && document.visibilityState !== 'hidden' && $('terminal-panel').hidden;
   const skinEntry = (skin = root.dataset.skin) => (window.agentGuildSkins || []).find((item) => item.id === skin) || null;
   // A skin has a yard only when model.mjs has its world.
@@ -242,6 +242,8 @@ export function initYard(controller) {
   function update() {
     if (disposed || view !== 'yard') return;
     snapshot = controller.snapshot();
+    if (snapshot.connected) wasConnected = true;
+    $('yard-offline').hidden = !controller.expand || !wasConnected || snapshot.connected;
     if (selected && !(selected.kind === 'provider' ? snapshot.providers : snapshot.sessions).some(x => x.id === selected.id)) {
       const row = rows.get(selected.kind + ':' + selected.id);
       const restoreFocus = row?.contains(document.activeElement) || $('yard-inspector').contains(document.activeElement);
@@ -281,6 +283,7 @@ export function initYard(controller) {
   };
   if (controller.expand) for (const id of ['yard-cards','yard-download-cards']) $(id).textContent = 'Open Agent Guild';
   $('yard-cards').addEventListener('click',showCards);
+  $('yard-offline-open').addEventListener('click',() => controller.expand?.());
   $('yard-retry').addEventListener('click',() => { failed=false; ensureScene(); });
   $('yard-download-cancel').addEventListener('click',() => artAction('cancel'));
   $('yard-download-retry').addEventListener('click',() => artAction('download'));
