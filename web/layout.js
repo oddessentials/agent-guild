@@ -1,4 +1,4 @@
-export const TOPBAR_INLINE_MIN = 900;
+export const TOPBAR_FITS = ['inline', 'menu', 'label', 'brand', 'version'];
 export const DOCK_PUSH_MIN = 1280;
 export const DOCK_FULL_MAX = 639;
 export const DOCK_DEFAULT = 420;
@@ -10,8 +10,32 @@ export const SPLIT_ROWS_MIN_HEIGHT = 620;
 export const SPLIT_ROWS_MIN_WIDTH = 560;
 export const SPLIT_RATIO_MIN = 0.25;
 
-export function topbarInline(width) {
-  return width >= TOPBAR_INLINE_MIN;
+export function holdsOneRow(topbar) {
+  const boxes = [...topbar.querySelectorAll(':scope > .brand, .topbar-end > *')]
+    .filter((el) => el.getClientRects().length > 0 && !el.matches(':popover-open'))
+    .map((el) => el.getBoundingClientRect());
+  if (topbar.scrollWidth > topbar.clientWidth) return false;
+  if ([...topbar.querySelectorAll('.brief')].some((el) => el.getClientRects().length > 0 && el.scrollWidth > el.clientWidth)) return false;
+  return Math.max(...boxes.map((box) => box.top)) < Math.min(...boxes.map((box) => box.bottom));
+}
+
+export function fitTopbar(topbar, oneRow = holdsOneRow, fits = TOPBAR_FITS) {
+  for (const fit of fits) {
+    topbar.dataset.fit = fit;
+    if (oneRow(topbar)) return fit;
+  }
+  return topbar.dataset.fit;
+}
+
+export function bindTopbarFit(topbar) {
+  let frame;
+  const update = () => fitTopbar(topbar, holdsOneRow, topbar.querySelector('.topbar-menu:popover-open') ? TOPBAR_FITS.slice(1) : TOPBAR_FITS);
+  const schedule = () => { cancelAnimationFrame(frame); frame = requestAnimationFrame(update); };
+  const resized = new ResizeObserver(schedule);
+  for (const el of [topbar, ...topbar.querySelectorAll(':scope > .brand, .topbar-end > *, .topbar-menu > .btn')]) resized.observe(el);
+  new MutationObserver(schedule).observe(topbar, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['hidden', 'class'] });
+  document.fonts?.addEventListener('loadingdone', schedule);
+  update();
 }
 
 export function dockMode(width) {

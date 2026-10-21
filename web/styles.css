@@ -413,7 +413,7 @@ main { max-width: calc(1200px + var(--dock-space, 0px)); margin: 0 auto; padding
 .session-grid > .session-card.settling { transition: scale 0.24s var(--ease), box-shadow 0.24s var(--ease); }
 .session-grid > .session-card.dragging .drag-handle { opacity: 1; color: var(--text); cursor: grabbing; }
 :root.reordering, :root.reordering * { cursor: grabbing; user-select: none; -webkit-user-select: none; }
-.visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.visually-hidden, .topbar:is([data-fit="label"], [data-fit="brand"], [data-fit="version"]) .connection .label { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
 .agents-row { display: flex; align-items: center; gap: 10px; min-height: 30px; }
 .agents-label { font-size: 0.75rem; color: var(--muted); }
@@ -559,13 +559,19 @@ main { max-width: calc(1200px + var(--dock-space, 0px)); margin: 0 auto; padding
 .topbar-menu { min-width: 220px; }
 .topbar-menu:popover-open { top: calc(var(--topbar-h, 56px) - 4px); right: 8px; max-height: calc(100dvh - var(--topbar-h, 56px) - 8px); }
 .topbar-menu:popover-open > .btn { width: 100%; text-align: left; }
+.topbar[data-fit="inline"] .menu-toggle { display: none; }
+.topbar[data-fit="inline"] .topbar-menu {
+  position: static; display: flex; align-items: center; gap: 14px; min-width: 0; padding: 0;
+  border: 0; background: none; box-shadow: none; overflow: visible; color: inherit; font-size: inherit;
+}
 @media (min-width: 900px) {
-  .menu-toggle { display: none; }
-  .topbar-menu {
+  .topbar:not([data-fit]) .menu-toggle { display: none; }
+  .topbar:not([data-fit]) .topbar-menu {
     position: static; display: flex; align-items: center; gap: 14px; min-width: 0; padding: 0;
     border: 0; background: none; box-shadow: none; overflow: visible; color: inherit; font-size: inherit;
   }
 }
+.topbar:is([data-fit="brand"], [data-fit="version"]) h1, .topbar[data-fit="version"] .version { display: none; }
 .upgrade-note { font-size: 0.85rem; color: var(--warn); }
 
 .empty { color: var(--muted); margin: 8px 0 0; }

@@ -24,6 +24,10 @@ Close the page whenever you like; the sessions keep running.
 Steam, shows the same sessions as a crew at work in a living 3D world, on
 Windows, macOS and Linux. It runs on Agent Guild, which stays free.
 
+**[Agent Guild for VS Code](https://marketplace.visualstudio.com/items?itemName=OddEssentials.agent-guild)**
+opens the same page in an editor tab. Editors that install from Open VSX get it
+[there](https://open-vsx.org/extension/OddEssentials/agent-guild).
+
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/images/overview-light.webp">
   <img src="docs/images/overview-dark.webp" alt="Agent Guild with one card per coding tool and six sessions at work">
