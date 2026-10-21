@@ -27,7 +27,7 @@ export function initYard(controller) {
   const root = document.documentElement;
   let view = root.dataset.view === 'yard' ? 'yard' : 'cards';
   let snapshot = controller.snapshot();
-  let lastSkin = '', lastTheme = '';
+  let lastSkin = '', lastTheme = '', wasConnected = false;
   const sceneVisible = () => view === 'yard' && !$('app').hidden && document.visibilityState !== 'hidden' && $('terminal-panel').hidden;
   const skinEntry = (skin = root.dataset.skin) => (window.agentGuildSkins || []).find((item) => item.id === skin) || null;
   // A skin has a yard only when model.mjs has its world.
@@ -50,7 +50,7 @@ export function initYard(controller) {
     const allowed = skinAllowsYard();
     view = next === 'yard' && allowed ? 'yard' : 'cards';
     root.dataset.view = view;
-    if (remember) { try { localStorage.setItem('agentGuild.view', next === 'yard' && allowed ? 'yard' : 'cards'); } catch {} }
+    if (remember && !controller.expand) { try { localStorage.setItem('agentGuild.view', next === 'yard' && allowed ? 'yard' : 'cards'); } catch {} }
     $('view-cards').checked = view === 'cards';
     const yardChoice = $('view-yard');
     yardChoice.checked = view === 'yard';
@@ -242,6 +242,9 @@ export function initYard(controller) {
   function update() {
     if (disposed || view !== 'yard') return;
     snapshot = controller.snapshot();
+    if (snapshot.connected) wasConnected = true;
+    $('yard-offline').hidden = !controller.expand || snapshot.connected || !(wasConnected || snapshot.retrying);
+    $('yard-offline-text').textContent = wasConnected ? 'Agent Guild disconnected. Reconnecting…' : 'Can’t reach Agent Guild. Retrying…';
     if (selected && !(selected.kind === 'provider' ? snapshot.providers : snapshot.sessions).some(x => x.id === selected.id)) {
       const row = rows.get(selected.kind + ':' + selected.id);
       const restoreFocus = row?.contains(document.activeElement) || $('yard-inspector').contains(document.activeElement);
@@ -275,11 +278,17 @@ export function initYard(controller) {
   }
   $('view-cards').addEventListener('change',() => setView('cards'));
   $('view-yard').addEventListener('change',() => { if (skinAllowsYard()) setView('yard'); });
-  $('yard-cards').addEventListener('click',() => { setView('cards'); ($('settings').checkVisibility() ? $('settings') : $('menu-toggle')).focus(); });
+  const showCards = () => {
+    if (controller.expand) return controller.expand();
+    setView('cards'); ($('settings').checkVisibility() ? $('settings') : $('menu-toggle')).focus();
+  };
+  if (controller.expand) for (const id of ['yard-cards','yard-download-cards']) $(id).textContent = 'Open Agent Guild';
+  $('yard-cards').addEventListener('click',showCards);
+  $('yard-offline-open').addEventListener('click',() => controller.expand?.());
   $('yard-retry').addEventListener('click',() => { failed=false; ensureScene(); });
   $('yard-download-cancel').addEventListener('click',() => artAction('cancel'));
   $('yard-download-retry').addEventListener('click',() => artAction('download'));
-  $('yard-download-cards').addEventListener('click',() => { setView('cards'); ($('settings').checkVisibility() ? $('settings') : $('menu-toggle')).focus(); });
+  $('yard-download-cards').addEventListener('click',showCards);
   $('yard-swap-retry').addEventListener('click',() => {
     if ($('yard-swap-failure').contains(document.activeElement)) $('yard-stage').focus();
     $('yard-swap-failure').hidden = true;
@@ -305,8 +314,8 @@ export function initYard(controller) {
   const visibility = () => { update(); renderer?.setActive(sceneVisible()); };
   // A skin change keeps the saved preference and only changes what is on screen.
   const onAppearance = () => {
-    let preferYard = false;
-    try { preferYard = localStorage.getItem('agentGuild.view') === 'yard'; } catch {}
+    let preferYard = Boolean(controller.expand);
+    if (!preferYard) try { preferYard = localStorage.getItem('agentGuild.view') === 'yard'; } catch {}
     setView(preferYard && skinAllowsYard() ? 'yard' : 'cards', { remember: false });
     renderer?.setActive(sceneVisible());
   };

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, statSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
-import { sessionPose, familiarPose, layoutSessions, providerPositions, characterIndex, lookLimits, WORLDS, CAMERA, SUN, minZoom, clampPan, viewBasis, plateExtent,
+import { sessionPose, familiarPose, layoutSessions, providerPositions, characterIndex, lookLimits, WORLDS, CAMERA, SUN, minZoom, overviewFor, clampPan, viewBasis, plateExtent,
  stage, stagingMode, nextStagingChange, restSpots, route, clipFor, doorFor, stationProp, STAGING, CLIPS, SKELETON, PROVIDER_ORDER } from '../web/yard/model.mjs';
 import { goldenVectors } from '../scripts/yard-golden.mjs';
 import { Matrix4, Vector3 } from 'three';
@@ -156,6 +156,37 @@ test('a VS Code tab or the Apple app opens the view named next to its token and 
  assert.deepEqual(open(true,'#token=t&view=map'),['cards','cards']);
  assert.deepEqual(open(false,'#token=t&view=yard'),['cards','cards']);
  assert.deepEqual(open(false,'#token=t&view=yard',true),['yard','yard']);
+});
+test('a compact host view opens the Yard with the look it names, and keeps none of it',()=>{
+ const source=readFileSync(new URL('../web/theme.js',import.meta.url),'utf8');
+ const open=(framed,hash)=>{
+  const storage=new Map([['agentGuild.view','cards'],['agentGuild.skin','guild'],['agentGuild.theme','light']]);
+  const document={documentElement:{dataset:{}}};
+  const window={matchMedia:()=>({matches:false})};
+  window.parent=framed?{}:window;
+  runInNewContext(source,{document,window,URLSearchParams,location:{hash},localStorage:{getItem:key=>storage.get(key)??null,setItem:(key,value)=>storage.set(key,value),length:0}});
+  const {layout,view,skin,theme}=document.documentElement.dataset;
+  return [layout,view,skin,theme,storage.get('agentGuild.view'),storage.get('agentGuild.skin'),storage.get('agentGuild.theme')];
+ };
+ assert.deepEqual(open(true,'#token=t&layout=compact&skin=grove&theme=dark'),['compact','yard','grove','dark','cards','guild','light']);
+ assert.deepEqual(open(true,'#token=t&layout=compact&skin=moon&theme=dim'),['compact','yard','guild','light','cards','guild','light']);
+ assert.deepEqual(open(false,'#token=t&layout=compact&skin=grove'),[undefined,'cards','guild','light','cards','guild','light']);
+});
+test('the overview keeps every hall in sight on narrow stages, and is unchanged on wide ones',()=>{
+ const {right,up}=viewBasis(),dot=(p,v)=>p[0]*v[0]+p[1]*v[1]+p[2]*v[2];
+ for(const aspect of [.75,1,4/3,16/9,3,5]){
+  const {target,zoom}=overviewFor(aspect),halfH=CAMERA.height/2/zoom,halfW=halfH*aspect;
+  assert.ok(zoom>=minZoom(aspect)&&zoom<=CAMERA.zoom.overview,`zoom at ${aspect}`);
+  assert.deepEqual(clampPan({x:target[0],z:target[2]}),{x:target[0],z:target[2]});
+  for(const [id,{x,z}] of providerPositions(providers)){
+   const h=id==='docker'?STAGING.hall.docker:STAGING.hall.half;
+   for(const corner of [[x-h,0,z-h],[x+h,0,z-h],[x-h,0,z+h],[x+h,0,z+h]]){
+    const p=corner.map((v,i)=>v-target[i]);
+    assert.ok(Math.abs(dot(p,right))<=halfW&&Math.abs(dot(p,up))<=halfH,`${id} at ${aspect}`);
+   }
+  }
+ }
+ assert.deepEqual(overviewFor(16/9),{target:CAMERA.target,zoom:CAMERA.zoom.overview});
 });
 test('every skin has a yard world',()=>{
  const source=readFileSync(new URL('../web/theme.js',import.meta.url),'utf8');

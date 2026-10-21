@@ -4,12 +4,13 @@ import assert from 'node:assert/strict';
 let loads = 0;
 
 /** web/host.js loaded into a fake page; `framed` decides whether its parent is another window, `app` whether the Apple app's handler exists. */
-async function host({ framed, app = false, writeText, execCommand = () => true }) {
-  const posted = [], opened = [], listeners = {}, copied = [], appPosted = [];
+async function host({ framed, app = false, layout, writeText, execCommand = () => true }) {
+  const posted = [], opened = [], listeners = {}, copied = [], appPosted = [], observers = [];
   const win = { open: (...args) => opened.push(args), addEventListener: (type, listener) => { listeners[`window.${type}`] = listener; } };
   win.parent = framed ? { postMessage: (message, origin) => posted.push({ message, origin }) } : win;
   if (app) win.webkit = { messageHandlers: { agentGuild: { postMessage: (message) => appPosted.push(message) } } };
   const document = {
+    documentElement: { dataset: { skin: 'guild', theme: 'dark', ...(layout ? { layout } : {}) } },
     activeElement: null,
     body: { append: (area) => { area.parent = 'body'; } },
     addEventListener: (type, listener) => { listeners[type] = listener; },
@@ -20,14 +21,15 @@ async function host({ framed, app = false, writeText, execCommand = () => true }
   const globals = {
     window: win, document, location: { href: 'http://127.0.0.1:47821/', origin: 'http://127.0.0.1:47821' },
     navigator: { clipboard: { writeText } },
+    MutationObserver: class { constructor(callback) { observers.push(callback); } observe() {} },
   };
   // The module reads these when called too, so each page's stay until the next page or the end of the file.
   for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { value, configurable: true, writable: true });
   const module = await import(`../web/host.js?load=${++loads}`);
-  return { module, posted, opened, listeners, copied, appPosted };
+  return { module, posted, opened, listeners, copied, appPosted, observers };
 }
 
-const saved = Object.fromEntries(['window', 'document', 'location', 'navigator'].map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+const saved = Object.fromEntries(['window', 'document', 'location', 'navigator', 'MutationObserver'].map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
 test.after(() => {
   for (const [key, descriptor] of Object.entries(saved)) {
     if (descriptor) Object.defineProperty(globalThis, key, descriptor);
@@ -49,6 +51,7 @@ test('a framed page sends http(s) links to the extension and an unframed one ope
   framed.module.openLink('javascript:alert(1)');
   framed.module.announceReady('1.2.0');
   assert.deepEqual(framed.posted, [
+    { message: { source: 'agent-guild', type: 'look', skin: 'guild', theme: 'dark' }, origin: '*' },
     { message: { source: 'agent-guild', type: 'open', url: 'https://github.com/login/device' }, origin: '*' },
     { message: { source: 'agent-guild', type: 'ready', version: '1.2.0' }, origin: '*' },
   ]);
@@ -76,6 +79,38 @@ test('a framed page shows the view its extension names, and only its extension',
 
   const page = await host({ framed: false });
   assert.equal(page.listeners['window.message'], undefined, 'an unframed page takes no requests');
+});
+
+test('a framed page tells its extension its look as it changes, and opens the session its extension names', async () => {
+  const framed = await host({ framed: true });
+  document.documentElement.dataset.skin = 'grove';
+  for (const observer of framed.observers) observer();
+  assert.deepEqual(framed.posted.map(({ message }) => [message.type, message.skin]), [['look', 'guild'], ['look', 'grove']]);
+
+  const opened = [];
+  framed.module.onSessionRequest((id) => opened.push(id));
+  const send = (source, data) => framed.listeners['window.message']({ source, data });
+  send(window.parent, { source: 'agent-guild-vscode', type: 'session', id: 's1' });
+  send({}, { source: 'agent-guild-vscode', type: 'session', id: 's2' });
+  send(window.parent, { source: 'agent-guild-vscode', type: 'session', id: 3 });
+  send(window.parent, { source: 'agent-guild', type: 'session', id: 's4' });
+  assert.deepEqual(opened, ['s1']);
+});
+
+test('a compact page asks its host for the full page, and keeps its look to itself', async () => {
+  const compact = await host({ framed: true, layout: 'compact' });
+  assert.equal(compact.module.compact, true);
+  compact.module.expand('s1');
+  compact.module.expand();
+  assert.deepEqual(compact.posted.map(({ message }) => message), [
+    { source: 'agent-guild', type: 'expand', session: 's1' },
+    { source: 'agent-guild', type: 'expand' },
+  ]);
+
+  const page = await host({ framed: false, layout: 'compact' });
+  assert.equal(page.module.compact, false, 'only a host can make the page compact');
+  page.module.expand('s1');
+  assert.deepEqual([page.posted, page.opened], [[], []]);
 });
 
 test('the Apple app gets links and readiness, and only its own page can ask for a view', async () => {

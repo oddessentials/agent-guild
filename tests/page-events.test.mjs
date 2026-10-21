@@ -51,6 +51,8 @@ function connect({ changelogOpen = false, githubOpen = false, docked = null } = 
     DOCK_KEY: 'agentGuild.dock',
     openGitHub: () => calls.push('restore github'),
     restorePanes: () => calls.push('panes'),
+    openAskedSession: noop,
+    compact: false,
     wsUrl: (path) => path,
     loadChangelog: () => calls.push('changelog'),
     loadNews: () => calls.push('news'),

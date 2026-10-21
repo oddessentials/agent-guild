@@ -14,7 +14,7 @@ import { createReader } from './read-aloud.js';
 import { matchFolders, readRecentFolders, rememberFolder } from './folders.js';
 import { initYard } from './yard/view.js';
 import { ask } from './ask.js';
-import { framed, openLink, announceReady, copyToClipboard, onViewRequest } from './host.js';
+import { framed, compact, openLink, announceReady, expand, copyToClipboard, onViewRequest, onSessionRequest } from './host.js';
 
 const TOKEN_KEY = 'agentGuild.token';
 const CWD_KEY = 'agentGuild.cwd';
@@ -7069,7 +7069,7 @@ function savePanes() {
 }
 
 function restorePanes() {
-  if (panesRestored) return;
+  if (panesRestored || compact) return;
   panesRestored = true;
   let saved;
   try { saved = JSON.parse(load(PANES_KEY)); } catch { return; }
@@ -7519,8 +7519,9 @@ function connectEvents() {
       managerConnected(msg);
       state.environmentUI?.connected(msg.pid);
       renderSessions();
-      if (!sessionsShown && load(DOCK_KEY) === 'github' && !dockView.panel) openGitHub({ focus: false });
+      if (!sessionsShown && !compact && load(DOCK_KEY) === 'github' && !dockView.panel) openGitHub({ focus: false });
       restorePanes();
+      openAskedSession();
       sessionsShown = true;
       renderEmpty();
       setUpgrade(msg.upgrade, true);
@@ -7559,6 +7560,7 @@ function connectEvents() {
       managerGone();
     } else if (msg.type === 'session.created' || msg.type === 'session.updated') {
       upsertSession(msg.session);
+      openAskedSession();
     } else if (msg.type === 'session.removed') {
       dropSession(msg.sessionId);
     } else if (msg.type === 'providers.updated') {
@@ -7663,8 +7665,9 @@ function readTokenFromHash() {
   const params = new URLSearchParams(location.hash.slice(1));
   const token = params.get('token');
   if (token) {
-    // Keep the token out of the address bar and browser history.
-    history.replaceState(null, '', location.pathname + location.search);
+    // Keep the token out of the address bar and browser history. A compact page keeps the rest, which it does not save.
+    params.delete('token');
+    history.replaceState(null, '', location.pathname + location.search + (compact ? `#${params}` : ''));
   }
   return token;
 }
@@ -7707,7 +7710,7 @@ async function boot() {
   }
   save(TOKEN_KEY, state.token);
   $('app').hidden = false;
-  if (load(DOCK_KEY) === 'notes' && !dockView.panel) openNotes({ focus: false });
+  if (!compact && load(DOCK_KEY) === 'notes' && !dockView.panel) openNotes({ focus: false });
   connectEvents();
   loadUsage();
   clearInterval(usageTimer);
@@ -8198,7 +8201,7 @@ renderVoice();
 renderRead();
 // Follow the system setting until the user picks a theme.
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
-  if (!load(THEME_KEY)) applyTheme(e.matches ? 'dark' : 'light');
+  if (!compact && !load(THEME_KEY)) applyTheme(e.matches ? 'dark' : 'light');
 });
 $('panel-stop').addEventListener('click', () => {
   const s = state.sessions.get(state.activeId);
@@ -8299,10 +8302,12 @@ yardUi = initYard({
     providers: state.providers,
     sessions: [...state.sessions.values()],
     connected: state.connected,
+    retrying: state.eventsRetry > 0,
     news: state.news,
     activeId: state.activeId,
   }),
-  openSession: openPanel,
+  openSession: compact ? expand : openPanel,
+  expand: compact ? () => expand() : null,
   openNews,
   selected: dockMakesWayForYard,
   yardArt: () => state.yardArt,
@@ -8355,6 +8360,17 @@ yardUi = initYard({
 onViewRequest((view) => {
   if (!$('terminal-panel').hidden) closePanel();
   yardUi.setView(view);
+});
+let askedSession = null;
+function openAskedSession() {
+  if (!askedSession || !state.sessions.has(askedSession)) return;
+  const id = askedSession;
+  askedSession = null;
+  openPanel(id);
+}
+onSessionRequest((id) => {
+  askedSession = id;
+  if (state.connected && state.eventsSocket?.greeted) openAskedSession();
 });
 
 state.token = readTokenFromHash() || load(TOKEN_KEY);

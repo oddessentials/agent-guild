@@ -86,6 +86,25 @@ export function plateExtent() {
   };
   return { right: span(right, halfWidth), up: span(up, halfHeight) };
 }
+// Zooms out no further than minZoom, so a narrow stage may still crop the outer halls.
+export function overviewFor(aspect) {
+  const { right, up } = viewBasis(), { half, docker, height, dockerHeight } = STAGING.hall, t = CAMERA.target;
+  const across = [], high = [];
+  for (const [id, { x, z }] of providerPositions(PROVIDER_ORDER.map(id => ({ id })))) {
+    const [h, tall, front] = id === 'docker' ? [docker, dockerHeight, 6.5] : [half, height, 5];
+    for (const [dx, y, dz] of [[-h, tall, -h], [h, tall, -h], [-h, 0, front], [h, 0, front]]) {
+      const p = [x + dx - t[0], y - t[1], z + dz - t[2]];
+      across.push(dot(p, right)); high.push(dot(p, up));
+    }
+  }
+  const [left, far] = [Math.min(...across), Math.max(...across)], reach = Math.max(-Math.min(...high), ...high);
+  const view = CAMERA.height / 2;
+  const zoom = Math.max(minZoom(aspect), Math.min(CAMERA.zoom.overview, 2 * view * aspect / (far - left), view / reach));
+  const width = view * aspect / zoom;
+  const shift = 2 * width >= far - left ? clamp(0, far - width, left + width) : (left + far) / 2;
+  const { x, z } = clampPan({ x: t[0] + right[0] * shift, z: t[2] + right[2] * shift });
+  return { target: [x, t[1], z], zoom };
+}
 export function sessionPose(s) {
   if (s.status === 'exited') return 'exited';
   return s.activity === 'active' ? 'working' : 'resting';
@@ -156,8 +175,8 @@ export const STAGING = {
   door: 2.9,
   // Every world has a centrepiece (a pool, well, hatch or gear) that walkers go round.
   plaza: { x: 0, z: 0, half: 2.2, rings: [[3.2, 10], [4.4, 14], [5.6, 18]] },
-  // Hall footprints, as half widths about each anchor, and the clearance walkers keep.
-  hall: { half: 2.65, docker: 3.4, margin: .55 },
+  // Hall footprints, as half widths about each anchor, the clearance walkers keep, and hall heights.
+  hall: { half: 2.65, docker: 3.4, margin: .55, height: 5.7, dockerHeight: 7.7 },
   // Each station's prop stands gap metres from its character, straight ahead
   // or turned to one side; walkers keep clear of a square of half width half
   // round it. Stations in a row stand spacing metres apart, room for a prop
