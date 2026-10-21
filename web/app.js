@@ -4,7 +4,7 @@
 import { SOUNDS, MAX_ALERT_AGE_MS, playOnce, rearmSound, managerLossWatcher, stopWatcher, updateWatcher } from './alerts.js';
 import { TerminalCopy } from './terminal-copy.js';
 import { TerminalControls, bindTerminalViewport } from './terminal-controls.js';
-import { topbarInline, dockMode, clampDockWidth, stageBesideDock, splitMode, clampRatio, bindSplitter, bindVisibleViewport, revealRow, touchTyping, DOCK_MIN, SPLIT_RATIO_MIN } from './layout.js';
+import { bindTopbarFit, dockMode, clampDockWidth, stageBesideDock, splitMode, clampRatio, bindSplitter, bindVisibleViewport, revealRow, touchTyping, DOCK_MIN, SPLIT_RATIO_MIN } from './layout.js';
 import { highlightParts, rankRepos, recentFirst, remember, repoForOrigin, repoKey } from './repo-search.js';
 import { createActivityFavicon, isSessionWorking } from './activity-favicon.js';
 import { createRemoteAccessUI } from './remote-access.js';
@@ -8159,7 +8159,7 @@ $('panel-swap').addEventListener('click', () => {
   state.views.get(state.activeId)?.claim();
 });
 window.addEventListener('resize', () => {
-  if (topbarInline(innerWidth)) closeMenu($('topbar-menu'));
+  closeMenu($('topbar-menu'));
   applyDockLayout();
   placeMenu($('settings-menu'), $('settings'));
   placeMenu($('manager-menu'), $('manager'));
@@ -8262,6 +8262,7 @@ const scheduleTopbarHeight = () => {
   topbarFrame = requestAnimationFrame(publishTopbarHeight);
 };
 new ResizeObserver(scheduleTopbarHeight).observe(topbar);
+bindTopbarFit(topbar);
 addEventListener('scroll', scheduleTopbarHeight, { passive: true });
 publishTopbarHeight();
 // The window's width less any scrollbar, which the card row spreads into.

@@ -55,6 +55,46 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   await noSideScroll('wide');
   pass('a wide window shows the top bar controls inline on one row');
 
+  const fit = () => evaluate('document.querySelector(".topbar").dataset.fit');
+  const oneRow = async (label) => {
+    await until(`${label}: the top bar holds one row`, async () => {
+      const [bar, end] = await Promise.all([box('.topbar'), box('.topbar-end')]);
+      return bar.height < 80 && end.height < 60;
+    });
+    await noSideScroll(label);
+  };
+  await evaluate('Object.assign(document.querySelector("#upgrade"), { hidden: false, textContent: "Upgrade to 10.10.10" })');
+  await size(1024, 768);
+  await until('the menu gathers the controls', async () => await fit() === 'menu');
+  await oneRow('1024 with Upgrade');
+  assert.equal(await visible('#menu-toggle'), true);
+  await click('#menu-toggle');
+  await until('menu', () => evaluate('document.querySelector("#topbar-menu").matches(":popover-open")'));
+  await layoutReady();
+  assert.equal(await evaluate('document.querySelector("#topbar-menu").matches(":popover-open")'), true, 'an open menu stays open');
+  assert.equal(await fit(), 'menu');
+  await size(1440, 900);
+  await until('inline again', async () => await fit() === 'inline');
+  assert.equal(await evaluate('document.querySelector("#topbar-menu").matches(":popover-open")'), false, 'the menu closes when the window resizes');
+  for (const skin of ['guild', 'professional', 'orbital', 'grove', 'gnomeland', 'goblinville']) {
+    for (const theme of ['light', 'dark']) {
+      await evaluate(`Object.assign(document.documentElement.dataset, { skin: ${JSON.stringify(skin)}, theme: ${JSON.stringify(theme)} })`);
+      for (const width of [1440, 1024, 768, 390, 320]) {
+        await size(width, 800);
+        await oneRow(`${skin} ${theme} at ${width} with Upgrade`);
+      }
+    }
+  }
+  await size(1100, 800);
+  const label = await evaluate('document.querySelector("#connection .label").textContent');
+  await evaluate('document.querySelector("#connection .label").textContent = "Remote access changed. Your terminals are still running. Reopen an enabled address to reconnect."');
+  await until('a long status leaves the inline arrangement', async () => await fit() !== 'inline');
+  await oneRow('1100 with a long status');
+  await evaluate(`document.querySelector("#connection .label").textContent = ${JSON.stringify(label)}; document.querySelector("#upgrade").hidden = true`);
+  await size(1440, 900);
+  await until('inline once the status and Upgrade fit', async () => await fit() === 'inline');
+  pass('the top bar steps down to the menu, then a shorter header, so it holds one row in every skin and with a long status or Upgrade');
+
   const wideGrid = await providerGrid();
   assert.deepEqual([wideGrid.count, wideGrid.rows], [6, 1], 'six cards share one row');
   assert.ok(wideGrid.narrowest >= 220, `each card keeps its full width (${wideGrid.narrowest}px)`);

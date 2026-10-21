@@ -1,13 +1,24 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { topbarInline, dockMode, clampDockWidth, stageBesideDock, splitMode, clampRatio, bindSplitter, bindVisibleViewport, revealRow, DOCK_DEFAULT, DOCK_MIN, DOCK_MAX, WORKSPACE_MIN } from '../web/layout.js';
+import { fitTopbar, TOPBAR_FITS, dockMode, clampDockWidth, stageBesideDock, splitMode, clampRatio, bindSplitter, bindVisibleViewport, revealRow, DOCK_DEFAULT, DOCK_MIN, DOCK_MAX, WORKSPACE_MIN } from '../web/layout.js';
 import { bindTerminalViewport } from '../web/terminal-controls.js';
 
-test('the top bar keeps its controls inline only where they fit on one row', () => {
-  assert.equal(topbarInline(1440), true);
-  assert.equal(topbarInline(900), true);
-  assert.equal(topbarInline(899), false);
-  assert.equal(topbarInline(390), false);
+test('the top bar takes the widest arrangement that holds one row', () => {
+  const fits = (widest) => {
+    const tried = [];
+    const topbar = { dataset: {} };
+    const fit = fitTopbar(topbar, (bar) => { tried.push(bar.dataset.fit); return TOPBAR_FITS.indexOf(bar.dataset.fit) >= TOPBAR_FITS.indexOf(widest); });
+    return { fit, kept: topbar.dataset.fit, tried };
+  };
+  assert.deepEqual(fits('inline'), { fit: 'inline', kept: 'inline', tried: ['inline'] });
+  assert.deepEqual(fits('brand'), { fit: 'brand', kept: 'brand', tried: ['inline', 'menu', 'label', 'brand'] });
+  assert.deepEqual(TOPBAR_FITS, ['inline', 'menu', 'label', 'brand', 'version']);
+});
+
+test('a top bar that holds one row in no arrangement keeps the narrowest', () => {
+  const topbar = { dataset: {} };
+  assert.equal(fitTopbar(topbar, () => false), 'version');
+  assert.equal(topbar.dataset.fit, 'version');
 });
 
 test('the dock takes room only on wide windows, lies over the workspace on mid-size ones and covers phones', () => {
