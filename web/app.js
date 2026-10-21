@@ -7665,8 +7665,9 @@ function readTokenFromHash() {
   const params = new URLSearchParams(location.hash.slice(1));
   const token = params.get('token');
   if (token) {
-    // Keep the token out of the address bar and browser history.
-    history.replaceState(null, '', location.pathname + location.search);
+    // Keep the token out of the address bar and browser history. A compact page keeps the rest, which it does not save.
+    params.delete('token');
+    history.replaceState(null, '', location.pathname + location.search + (compact ? `#${params}` : ''));
   }
   return token;
 }

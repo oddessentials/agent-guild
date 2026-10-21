@@ -914,7 +914,7 @@ test('background plate loads and a preloaded theme switch show no progress',opti
 });
 
 test('a compact host view fills itself with the scene, shows every hall, and sends a double-clicked session to its host',options,async t=>{
-  const {b}=await setup(t,{width:360,height:440,hash:'&layout=compact&skin=grove&theme=light',source:`
+  const {f,b}=await setup(t,{width:360,height:440,hash:'&layout=compact&skin=grove&theme=light',source:`
     window.__posted=[];
     window.parent={postMessage:message=>window.__posted.push(message)};
     const Socket=window.WebSocket;window.__sockets=[];
@@ -937,6 +937,11 @@ test('a compact host view fills itself with the scene, shows every hall, and sen
   assert.equal(page.halls.length,page.tools);
   for(const [x,y] of page.halls)assert.ok(x>=0&&x<=360&&y>=0&&y<=440,'hall in sight at '+x+','+y);
   assert.equal(page.looks,0);
+  assert.equal(await b.evaluate('location.hash'),'#layout=compact&skin=grove&theme=light','the token leaves the address, the compact settings stay');
+  await b.send('Page.reload');
+  await b.wait("document.querySelector('#yard-stage')?.dataset.ready==='true'");
+  assert.deepEqual(await b.evaluate("(({layout,view,skin,theme})=>[layout,view,skin,theme])(document.documentElement.dataset)"),['compact','yard','grove','light'],'a reload stays compact, in the same look');
+  assert.equal(await b.evaluate("document.querySelector('#terminal-panel').hidden"),true);
   assert.equal(await b.evaluate("document.querySelector('#yard-offline').hidden"),true,'no notice while connected');
   await b.evaluate("__sockets.filter(s=>s.url.includes('/events')).at(-1).close()");
   await b.wait("!document.querySelector('#yard-offline').hidden");
@@ -953,6 +958,10 @@ test('a compact host view fills itself with the scene, shows every hall, and sen
   assert.equal(expanded.length,1);
   assert.equal(typeof expanded[0].session,'string');
   assert.equal(await b.evaluate("document.querySelector('#terminal-panel').hidden"),true);
+  await b.send('Page.navigate',{url:'about:blank'});await b.wait('document.readyState==="complete"');
+  await b.send('Page.navigate',{url:f.api.url+'/#token='+f.token+'&view=yard'});
+  await b.wait("document.querySelector('#connection')?.classList.contains('ok')");
+  assert.deepEqual(await b.evaluate("[location.hash,document.documentElement.dataset.layout??null]"),['',null],'a full framed page keeps nothing in its address');
 });
 
 test('auth, graphics failure, retry, manager restart and stopped screen remain usable',options,async t=>{
