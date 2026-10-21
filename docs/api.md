@@ -705,6 +705,8 @@ network drop, reconnect and the snapshot brings the client up to date.
 The manager's page may be framed only by VS Code webviews: its
 `Content-Security-Policy` has `frame-ancestors vscode-webview: vscode-file:`.
 The frame's `src` is the page URL with `#token=<token>`, as for a browser.
+Adding `&view=yard` or `&view=cards` opens that view and keeps it as the
+user's choice, as Settings does. A browser ignores it.
 
 A framed page cannot open windows, so it posts messages to `window.parent`.
 A host must accept a message only from its own frame and the manager's
@@ -714,3 +716,11 @@ origin, and open only `http:` and `https:` URLs.
 | --- | --- |
 | `{ source: "agent-guild", type: "ready", version }` | The page reached the manager. `version` is the manager's. |
 | `{ source: "agent-guild", type: "open", url }` | The user followed a link; open `url` in the browser. |
+
+A host may post one message to the page. The page accepts it only from
+`window.parent`. An open terminal closes first; its sessions keep running.
+Send it once the frame has fired `load`; the page listens from then on.
+
+| Message | Meaning |
+| --- | --- |
+| `{ source: "agent-guild-vscode", type: "view", view }` | Show `view`, `"cards"` or `"yard"`, and keep it as the user's choice. |

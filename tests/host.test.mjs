@@ -6,7 +6,7 @@ let loads = 0;
 /** web/host.js loaded into a fake page; `framed` decides whether its parent is another window. */
 async function host({ framed, writeText, execCommand = () => true }) {
   const posted = [], opened = [], listeners = {}, copied = [];
-  const win = { open: (...args) => opened.push(args) };
+  const win = { open: (...args) => opened.push(args), addEventListener: (type, listener) => { listeners[`window.${type}`] = listener; } };
   win.parent = framed ? { postMessage: (message, origin) => posted.push({ message, origin }) } : win;
   const document = {
     activeElement: null,
@@ -60,6 +60,21 @@ test('a framed page sends http(s) links to the extension and an unframed one ope
   page.module.announceReady('1.2.0');
   assert.deepEqual(page.opened, [['https://example.com/', '_blank', 'noopener,noreferrer']]);
   assert.deepEqual(page.posted, []);
+});
+
+test('a framed page shows the view its extension names, and only its extension', async () => {
+  const framed = await host({ framed: true });
+  const shown = [];
+  framed.module.onViewRequest((view) => shown.push(view));
+  const send = (source, data) => framed.listeners['window.message']({ source, data });
+  send(window.parent, { source: 'agent-guild-vscode', type: 'view', view: 'yard' });
+  send({}, { source: 'agent-guild-vscode', type: 'view', view: 'cards' });
+  send(window.parent, { source: 'agent-guild-vscode', type: 'view', view: 'map' });
+  send(window.parent, null);
+  assert.deepEqual(shown, ['yard']);
+
+  const page = await host({ framed: false });
+  assert.equal(page.listeners['window.message'], undefined, 'an unframed page takes no requests');
 });
 
 test('copying falls back to execCommand when the clipboard API is refused', async () => {

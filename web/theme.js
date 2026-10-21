@@ -39,6 +39,14 @@
     }
   } catch (e) { /* storage unavailable */ }
   if (art !== 'on') art = 'off';
+  // After card art, which reads a saved view as a page that has used Agent Guild.
+  if (window.parent && window.parent !== window) {
+    var asked = new URLSearchParams(location.hash.slice(1)).get('view');
+    if (asked === 'cards' || asked === 'yard') {
+      view = asked;
+      try { localStorage.setItem('agentGuild.view', view); } catch (e) { /* storage unavailable */ }
+    }
+  }
   document.documentElement.dataset.view = view;
   document.documentElement.dataset.theme = theme;
   document.documentElement.dataset.skin = skin;

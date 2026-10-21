@@ -14,7 +14,7 @@ import { createReader } from './read-aloud.js';
 import { matchFolders, readRecentFolders, rememberFolder } from './folders.js';
 import { initYard } from './yard/view.js';
 import { ask } from './ask.js';
-import { framed, openLink, announceReady, copyToClipboard } from './host.js';
+import { framed, openLink, announceReady, copyToClipboard, onViewRequest } from './host.js';
 
 const TOKEN_KEY = 'agentGuild.token';
 const CWD_KEY = 'agentGuild.cwd';
@@ -8351,6 +8351,10 @@ yardUi = initYard({
       node.querySelector('.drag-handle').hidden = true;
     }
   },
+});
+onViewRequest((view) => {
+  if (!$('terminal-panel').hidden) closePanel();
+  yardUi.setView(view);
 });
 
 state.token = readTokenFromHash() || load(TOKEN_KEY);

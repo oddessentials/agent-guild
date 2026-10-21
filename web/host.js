@@ -32,7 +32,18 @@ export function announceReady(version) {
   if (framed) post({ type: 'ready', version });
 }
 
+let showView = null;
+
+export function onViewRequest(callback) {
+  showView = callback;
+}
+
 if (framed) {
+  window.addEventListener('message', (event) => {
+    if (event.source !== window.parent) return;
+    const { source, type, view } = event.data ?? {};
+    if (source === 'agent-guild-vscode' && type === 'view' && (view === 'cards' || view === 'yard')) showView?.(view);
+  });
   const follow = (event) => {
     if (event.button > 1) return;
     const link = event.target.closest?.('a[target="_blank"][href]');
