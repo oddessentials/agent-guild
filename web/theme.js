@@ -42,8 +42,14 @@
   // After card art, which reads a saved view as a page that has used Agent Guild.
   var app = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.agentGuild;
   if ((window.parent && window.parent !== window) || app) {
-    var asked = new URLSearchParams(location.hash.slice(1)).get('view');
-    if (asked === 'cards' || asked === 'yard') {
+    var params = new URLSearchParams(location.hash.slice(1));
+    var asked = params.get('view');
+    if (params.get('layout') === 'compact') {
+      document.documentElement.dataset.layout = 'compact';
+      view = 'yard';
+      if (skins.some(function (s) { return s.id === params.get('skin'); })) skin = params.get('skin');
+      if (params.get('theme') === 'light' || params.get('theme') === 'dark') theme = params.get('theme');
+    } else if (asked === 'cards' || asked === 'yard') {
       view = asked;
       try { localStorage.setItem('agentGuild.view', view); } catch (e) { /* storage unavailable */ }
     }

@@ -29,7 +29,7 @@ function page() {
     updateCard: (el, s) => { el.label = context.statusText(s); },
     guardLeaving: noop, noticeClone: noop, renderAccountsDialog: noop, renderVersion: noop, setConnection: noop, notifyViews: noop, renderEmpty: noop,
     managerConnected: noop, setUpgrade: noop, loadNews: noop,
-    load: noop, DOCK_KEY: 'dock', dockView: {}, restorePanes: noop, dockShows: () => false,
+    load: noop, DOCK_KEY: 'dock', dockView: {}, restorePanes: noop, openAskedSession: noop, compact: false, dockShows: () => false,
     managerLoss: { cancel: noop, disconnected: noop },
     closeDialogs: noop,
     showStopped: noop, showManagerStopped: noop, managerGone: noop,

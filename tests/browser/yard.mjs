@@ -36,7 +36,7 @@ async function framesSettled(b){
   });
   return settled.frames;
 }
-async function setup(t,{yard=false,auth=true,source='',width=1440,height=1000}={}) {
+async function setup(t,{yard=false,auth=true,source='',width=1440,height=1000,hash=''}={}) {
   const fixture=await startFixture();t.after(()=>fixture.close());
   const b=await browser();
   await b.send('Page.navigate',{url:'about:blank'});
@@ -55,7 +55,7 @@ async function setup(t,{yard=false,auth=true,source='',width=1440,height=1000}={
     window.requestAnimationFrame=callback=>raf.call(window,time=>{window.__frames++;callback(time);});
     ${source}`});
   installedScripts.push(added.identifier);
-  await b.send('Page.navigate',{url:fixture.api.url+'/' +(auth?'#token='+fixture.token:'')});
+  await b.send('Page.navigate',{url:fixture.api.url+'/' +(auth?'#token='+fixture.token+hash:'')});
   await b.wait(auth?"document.querySelector('#connection')?.classList.contains('ok')":"document.querySelector('#auth')?.hidden===false");
   return {f:fixture,b};
 }
@@ -911,6 +911,39 @@ test('background plate loads and a preloaded theme switch show no progress',opti
   assert.equal(await b.evaluate('window.__loadingShown'),0);
   assert.equal(await b.evaluate("document.querySelector('#yard-loading').hidden"),true);
   assert.deepEqual(b.errors,[]);
+});
+
+test('a compact host view fills itself with the scene, shows every hall, and sends a double-clicked session to its host',options,async t=>{
+  const {b}=await setup(t,{width:360,height:440,hash:'&layout=compact&skin=grove&theme=light',source:`
+    window.__posted=[];
+    window.parent={postMessage:message=>window.__posted.push(message)};`});
+  await ready(b);await nextFrames(b);
+  const page=await b.evaluate(`(()=>{
+    const shown=selector=>document.querySelector(selector).checkVisibility();
+    const stage=document.querySelector('#yard-stage').getBoundingClientRect();
+    const halls=[...document.querySelectorAll('.yard-label[data-kind="provider"]')].map(el=>el.getBoundingClientRect()).map(r=>[r.left+r.width/2,r.top+r.height/2]);
+    const {skin,theme,layout}=document.documentElement.dataset;
+    return {skin,theme,layout,view:localStorage.getItem('agentGuild.view'),saved:localStorage.getItem('agentGuild.skin'),
+      chrome:['.topbar','#app > .launcher','.yard-heading','.yard-sidebar','.yard-news'].filter(shown),
+      stage:[stage.left,stage.top,stage.width,stage.height],halls,tools:document.querySelectorAll('.yard-row[data-key^="provider:"]').length,
+      looks:__posted.filter(m=>m.type==='look').length};
+  })()`);
+  assert.deepEqual([page.layout,page.skin,page.theme,page.view,page.saved],['compact','grove','light','cards','guild'],'the look it was given, and nothing kept');
+  assert.deepEqual(page.chrome,[]);
+  assert.deepEqual(page.stage,[0,0,360,440]);
+  assert.ok(page.tools>0);
+  assert.equal(page.halls.length,page.tools);
+  for(const [x,y] of page.halls)assert.ok(x>=0&&x<=360&&y>=0&&y<=440,'hall in sight at '+x+','+y);
+  assert.equal(page.looks,0);
+  await b.send('Emulation.setDeviceMetricsOverride',{width:1000,height:220,deviceScaleFactor:1,mobile:false});
+  await nextFrames(b);await nextFrames(b);
+  const wide=await b.evaluate(`[...document.querySelectorAll('.yard-label[data-kind="provider"]')].map(el=>el.getBoundingClientRect()).map(r=>[r.left+r.width/2,r.top+r.height/2])`);
+  for(const [x,y] of wide)assert.ok(x>=0&&x<=1000&&y>=0&&y<=220,'hall in sight in a short panel at '+x+','+y);
+  await b.evaluate(`document.querySelector('.yard-label[data-kind="session"]').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}))`);
+  const expanded=await b.evaluate("__posted.filter(m=>m.type==='expand')");
+  assert.equal(expanded.length,1);
+  assert.equal(typeof expanded[0].session,'string');
+  assert.equal(await b.evaluate("document.querySelector('#terminal-panel').hidden"),true);
 });
 
 test('auth, graphics failure, retry, manager restart and stopped screen remain usable',options,async t=>{

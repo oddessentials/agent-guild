@@ -1,5 +1,5 @@
 import * as T from './vendor/engine.js';
-import { WORLDS, PROVIDER_ORDER, characterIndex, CAMERA, SUN, minZoom, clampPan, viewBasis, providerPositions, sessionPose, familiarPose, hash,
+import { WORLDS, PROVIDER_ORDER, characterIndex, CAMERA, SUN, minZoom, overviewFor, clampPan, viewBasis, providerPositions, sessionPose, familiarPose, hash,
   stage, nextStagingChange, doorFor, arrives, route, clipFor, helperOffset, stationProp, hallActivity, lookTarget, lookLimits, STAGING } from './model.mjs';
 
 const ASSETS = new URL('./assets/', import.meta.url);
@@ -110,6 +110,7 @@ export class YardRenderer {
     this.controls.mouseButtons={LEFT:T.MOUSE.PAN,MIDDLE:T.MOUSE.DOLLY,RIGHT:T.MOUSE.PAN};
     this.controls.touches={ONE:T.TOUCH.PAN,TWO:T.TOUCH.DOLLY_PAN};
     this.controls.addEventListener('change',()=>{this.bound();this.dirty=true;this.drawOnce();});
+    this.controls.addEventListener('start',()=>{this.atOverview=false;});
     this.hemi=new T.HemisphereLight(0xc5dfed,0x495741,3.0);this.scene.add(this.hemi);
     this.sun=new T.DirectionalLight(0xffe4bc,4);this.sun.position.set(-12,25,15);this.sun.castShadow=true;
     this.sun.shadow.mapSize.set(2048,2048);
@@ -129,7 +130,7 @@ export class YardRenderer {
     this.canvas.addEventListener('click',this.onClick);
     this.canvas.addEventListener('dblclick',this.onDouble);
     this.resizeObserver=new ResizeObserver(()=>this.resize());this.resizeObserver.observe(host);
-    this.overview();this.resize();
+    this.resize();this.overview();
   }
   async asset(name) {
     if(!this.cache.has(name)) {
@@ -338,12 +339,15 @@ export class YardRenderer {
     this.controls.minZoom=minZoom(w/h);
     this.camera.zoom=T.MathUtils.clamp(this.camera.zoom,this.controls.minZoom,this.controls.maxZoom);
     this.camera.updateProjectionMatrix();
-    this.dirty=true;this.drawOnce();
+    this.dirty=true;
+    if(this.atOverview)this.overview();else this.drawOnce();
   }
   overview() {
-    this.controls.target.set(...CAMERA.target);
+    const {target,zoom}=overviewFor((this.camera.right-this.camera.left)/(this.camera.top-this.camera.bottom));
+    this.atOverview=true;
+    this.controls.target.set(...target);
     this.camera.position.set(...CAMERA.offset).add(this.controls.target);
-    this.camera.zoom=Math.max(CAMERA.zoom.overview,this.controls.minZoom);
+    this.camera.zoom=Math.max(zoom,this.controls.minZoom);
     this.camera.lookAt(this.controls.target);this.camera.updateProjectionMatrix();this.controls.update();this.dirty=true;this.drawOnce();
   }
   // Keep the view over the environment plates by translating camera and target together.
@@ -354,18 +358,21 @@ export class YardRenderer {
     target.add(move);this.camera.position.add(move);
   }
   zoom(factor) {
+    this.atOverview=false;
     this.camera.zoom=T.MathUtils.clamp(this.camera.zoom*factor,this.controls.minZoom,this.controls.maxZoom);
     this.camera.updateProjectionMatrix();this.dirty=true;this.drawOnce();
   }
   pan(key) {
     const delta={ArrowLeft:[-1,0,0],ArrowRight:[1,0,0],ArrowUp:[0,0,-1],ArrowDown:[0,0,1]}[key];
     if(!delta)return;
+    this.atOverview=false;
     const move=new T.Vector3(...delta).multiplyScalar(1.3/this.camera.zoom);
     this.camera.position.add(move);this.controls.target.add(move);this.bound();this.controls.update();this.dirty=true;this.drawOnce();
   }
   focus(selection) {
     const item=selection?.kind==='provider'?this.halls.get(selection.id):this.units.get(selection?.id);
     if(!item)return;
+    this.atOverview=false;
     const target=item.root.position.clone();target.y=1;
     const move=target.clone().sub(this.controls.target);
     this.camera.position.add(move);this.controls.target.copy(target);this.bound();this.camera.zoom=Math.max(CAMERA.zoom.focus,this.controls.minZoom);

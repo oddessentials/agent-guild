@@ -706,7 +706,10 @@ The manager's page may be framed only by VS Code webviews: its
 `Content-Security-Policy` has `frame-ancestors vscode-webview: vscode-file:`.
 The frame's `src` is the page URL with `#token=<token>`, as for a browser.
 Adding `&view=yard` or `&view=cards` opens that view and keeps it as the
-user's choice, as Settings does. A browser ignores it.
+user's choice, as Settings does. Adding `&layout=compact` instead shows the
+Yard's scene alone, to fill a small view, and keeps nothing: `&skin=<id>` and
+`&theme=light` or `&theme=dark` show that look, and opening a session asks
+the host for the full page. A browser ignores all of these.
 
 A framed page cannot open windows, so it posts messages to `window.parent`.
 A host must accept a message only from its own frame and the manager's
@@ -716,14 +719,17 @@ origin, and open only `http:` and `https:` URLs.
 | --- | --- |
 | `{ source: "agent-guild", type: "ready", version }` | The page reached the manager. `version` is the manager's. |
 | `{ source: "agent-guild", type: "open", url }` | The user followed a link; open `url` in the browser. |
+| `{ source: "agent-guild", type: "look", skin, theme }` | The page's skin and theme, on load and whenever they change. A compact page does not send it. |
+| `{ source: "agent-guild", type: "expand", session }` | A compact page asks for the full page, showing the terminal of `session` when it is present. |
 
-A host may post one message to the page. The page accepts it only from
-`window.parent`. An open terminal closes first; its sessions keep running.
-Send it once the frame has fired `load`; the page listens from then on.
+A host may post these messages to the page. The page accepts them only from
+`window.parent`. Send them once the frame has fired `load`; the page listens
+from then on.
 
 | Message | Meaning |
 | --- | --- |
-| `{ source: "agent-guild-vscode", type: "view", view }` | Show `view`, `"cards"` or `"yard"`, and keep it as the user's choice. |
+| `{ source: "agent-guild-vscode", type: "view", view }` | Show `view`, `"cards"` or `"yard"`, and keep it as the user's choice. An open terminal closes first; its sessions keep running. |
+| `{ source: "agent-guild-vscode", type: "session", id }` | Open the terminal of session `id`, once the page has the manager's sessions. |
 
 ## The page in the Agent Guild app
 

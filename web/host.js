@@ -5,6 +5,7 @@
 export const framed = typeof window !== 'undefined' && window.parent !== window;
 const app = typeof window !== 'undefined' && !framed ? window.webkit?.messageHandlers?.agentGuild ?? null : null;
 const hosted = framed || Boolean(app);
+export const compact = hosted && document.documentElement?.dataset.layout === 'compact';
 
 function post(message) {
   // The manager's frame-ancestors lets only VS Code webviews frame the page.
@@ -35,10 +36,19 @@ export function announceReady(version) {
   if (hosted) post({ type: 'ready', version });
 }
 
+export function expand(session) {
+  if (hosted) post(session ? { type: 'expand', session } : { type: 'expand' });
+}
+
 let showView = null;
+let showSession = null;
 
 export function onViewRequest(callback) {
   showView = callback;
+}
+
+export function onSessionRequest(callback) {
+  showSession = callback;
 }
 
 if (hosted) {
@@ -46,9 +56,17 @@ if (hosted) {
   const [sender, expected] = framed ? [window.parent, 'agent-guild-vscode'] : [window, 'agent-guild-app'];
   window.addEventListener('message', (event) => {
     if (event.source !== sender || (app && event.origin !== location.origin)) return;
-    const { source, type, view } = event.data ?? {};
-    if (source === expected && type === 'view' && (view === 'cards' || view === 'yard')) showView?.(view);
+    const { source, type, view, id } = event.data ?? {};
+    if (source !== expected) return;
+    if (type === 'view' && (view === 'cards' || view === 'yard')) showView?.(view);
+    if (type === 'session' && typeof id === 'string') showSession?.(id);
   });
+  if (framed && !compact) {
+    const root = document.documentElement;
+    const look = () => post({ type: 'look', skin: root.dataset.skin, theme: root.dataset.theme });
+    new MutationObserver(look).observe(root, { attributes: true, attributeFilter: ['data-skin', 'data-theme'] });
+    look();
+  }
   const follow = (event) => {
     if (event.button > 1) return;
     const link = event.target.closest?.('a[target="_blank"][href]');

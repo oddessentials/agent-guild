@@ -50,7 +50,7 @@ export function initYard(controller) {
     const allowed = skinAllowsYard();
     view = next === 'yard' && allowed ? 'yard' : 'cards';
     root.dataset.view = view;
-    if (remember) { try { localStorage.setItem('agentGuild.view', next === 'yard' && allowed ? 'yard' : 'cards'); } catch {} }
+    if (remember && !controller.expand) { try { localStorage.setItem('agentGuild.view', next === 'yard' && allowed ? 'yard' : 'cards'); } catch {} }
     $('view-cards').checked = view === 'cards';
     const yardChoice = $('view-yard');
     yardChoice.checked = view === 'yard';
@@ -275,11 +275,16 @@ export function initYard(controller) {
   }
   $('view-cards').addEventListener('change',() => setView('cards'));
   $('view-yard').addEventListener('change',() => { if (skinAllowsYard()) setView('yard'); });
-  $('yard-cards').addEventListener('click',() => { setView('cards'); ($('settings').checkVisibility() ? $('settings') : $('menu-toggle')).focus(); });
+  const showCards = () => {
+    if (controller.expand) return controller.expand();
+    setView('cards'); ($('settings').checkVisibility() ? $('settings') : $('menu-toggle')).focus();
+  };
+  if (controller.expand) for (const id of ['yard-cards','yard-download-cards']) $(id).textContent = 'Open Agent Guild';
+  $('yard-cards').addEventListener('click',showCards);
   $('yard-retry').addEventListener('click',() => { failed=false; ensureScene(); });
   $('yard-download-cancel').addEventListener('click',() => artAction('cancel'));
   $('yard-download-retry').addEventListener('click',() => artAction('download'));
-  $('yard-download-cards').addEventListener('click',() => { setView('cards'); ($('settings').checkVisibility() ? $('settings') : $('menu-toggle')).focus(); });
+  $('yard-download-cards').addEventListener('click',showCards);
   $('yard-swap-retry').addEventListener('click',() => {
     if ($('yard-swap-failure').contains(document.activeElement)) $('yard-stage').focus();
     $('yard-swap-failure').hidden = true;
@@ -305,8 +310,8 @@ export function initYard(controller) {
   const visibility = () => { update(); renderer?.setActive(sceneVisible()); };
   // A skin change keeps the saved preference and only changes what is on screen.
   const onAppearance = () => {
-    let preferYard = false;
-    try { preferYard = localStorage.getItem('agentGuild.view') === 'yard'; } catch {}
+    let preferYard = Boolean(controller.expand);
+    if (!preferYard) try { preferYard = localStorage.getItem('agentGuild.view') === 'yard'; } catch {}
     setView(preferYard && skinAllowsYard() ? 'yard' : 'cards', { remember: false });
     renderer?.setActive(sceneVisible());
   };

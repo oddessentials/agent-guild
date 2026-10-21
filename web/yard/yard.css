@@ -116,6 +116,13 @@
   #yard-help { font-size:9px; }
 }
 @media(max-width:640px) { :root[data-view="yard"] .cwd { flex-basis:100%; } }
+:root[data-layout="compact"] .topbar, :root[data-layout="compact"] #app > .launcher, :root[data-layout="compact"] .yard-heading, :root[data-layout="compact"] .yard-news, :root[data-layout="compact"] .yard-sidebar, :root[data-layout="compact"] #yard-help, :root[data-layout="compact"] #yard-failure > p { display:none; }
+:root[data-layout="compact"] body { min-height:0; }
+:root[data-layout="compact"] #yard { display:flex; height:100dvh; min-height:0; }
+:root[data-layout="compact"] .yard-main { flex:1; height:auto; min-height:0; }
+:root[data-layout="compact"] .yard-stage { min-height:0; }
+:root[data-layout="compact"] .yard-camera { right:8px; bottom:8px; }
+:root[data-layout="compact"] .yard-failure { top:50%; max-height:calc(100% - 16px); overflow:auto; padding:14px; }
 .yard-help-touch { display:none; }
 @media(pointer:coarse) { .yard-help-pointer { display:none; } .yard-help-touch { display:inline; } }
 @media(prefers-reduced-motion:reduce) {
