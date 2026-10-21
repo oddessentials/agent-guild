@@ -15,6 +15,7 @@ export function holdsOneRow(topbar) {
     .filter((el) => el.getClientRects().length > 0 && !el.matches(':popover-open'))
     .map((el) => el.getBoundingClientRect());
   if (topbar.scrollWidth > topbar.clientWidth) return false;
+  if ([...topbar.querySelectorAll('.brief')].some((el) => el.getClientRects().length > 0 && el.scrollWidth > el.clientWidth)) return false;
   return Math.max(...boxes.map((box) => box.top)) < Math.min(...boxes.map((box) => box.bottom));
 }
 
