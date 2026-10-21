@@ -13,6 +13,8 @@ import { createHistoryPreview } from './history-preview.js';
 import { createReader } from './read-aloud.js';
 import { matchFolders, readRecentFolders, rememberFolder } from './folders.js';
 import { initYard } from './yard/view.js';
+import { ask } from './ask.js';
+import { framed, openLink, announceReady, copyToClipboard } from './host.js';
 
 const TOKEN_KEY = 'agentGuild.token';
 const CWD_KEY = 'agentGuild.cwd';
@@ -2481,7 +2483,7 @@ function renderMultiplexers(card, provider) {
     renderCopies(copies, { ...tool, id: key, warnings: [] }, card, {
       key, busy: tool.busy,
       update: (copy) => manageMultiplexer(provider, tool, 'update', copy),
-      uninstall: (copy) => {
+      uninstall: async (copy) => {
         const plan = copy.uninstall;
         const lines = [
           `Uninstall ${tool.tool} from ${copy.displayPath}?`,
@@ -2490,7 +2492,7 @@ function renderMultiplexers(card, provider) {
           plan.pathEntries && 'Removes only this installation’s entries from your user PATH.',
           'Your settings and session data are kept.',
         ].filter(Boolean);
-        if (confirm(lines.join('\n'))) return manageMultiplexer(provider, tool, 'uninstall', copy);
+        if (await ask(lines.join('\n'), { ok: 'Uninstall' })) return manageMultiplexer(provider, tool, 'uninstall', copy);
       },
     });
     return row;
@@ -2515,7 +2517,7 @@ async function manageMultiplexer(provider, tool, kind, copy = null, force = fals
     if (err instanceof AuthError) return showAuth(err.message);
     if (err.code === 'multiplexer_in_use' && !force) {
       const waiting = err.pending ? ` ${err.pending} detached cards are also waiting for the tool.` : '';
-      if (confirm(`${err.message}${waiting} Continue anyway?`)) return manageMultiplexer(provider, tool, kind, copy, true);
+      if (await ask(`${err.message}${waiting} Continue anyway?`, { ok: 'Continue' })) return manageMultiplexer(provider, tool, kind, copy, true);
     } else toast(err.message, 10000);
   } finally {
     // A successful operation stays busy until the manager sends fresh state.
@@ -3819,11 +3821,11 @@ function providerState(provider) {
   return parts.join(' · ');
 }
 
-function uninstallCopy(provider, card, install) {
+async function uninstallCopy(provider, card, install) {
   const what = install.uninstall.command
     ? [`Runs: ${install.uninstall.command}`, ...install.uninstall.remove.map((p) => `Then deletes: ${p}`)]
     : install.uninstall.remove.map((p) => `Deletes: ${p}`);
-  if (!confirm([`Uninstall ${provider.tool} from ${install.displayPath}?`, '', ...what, '', 'Your sign-in, settings and history are kept.'].join('\n'))) return;
+  if (!await ask([`Uninstall ${provider.tool} from ${install.displayPath}?`, '', ...what, '', 'Your sign-in, settings and history are kept.'].join('\n'), { ok: 'Uninstall' })) return;
   return installProvider(provider, card, { path: install.path });
 }
 
@@ -3892,7 +3894,7 @@ async function installProvider(provider, card, { force = false, path = null } = 
       const n = err.running;
       const what = `${n} ${provider.tool} session${n === 1 ? ' is' : 's are'} running`;
       const [doing, verb] = path ? ['Removing', 'Uninstall'] : ['Updating', 'Update'];
-      if (confirm(`${what}. ${doing} ${provider.tool} while it runs can break ${n === 1 ? 'that session' : 'those sessions'}. ${verb} anyway?`)) {
+      if (await ask(`${what}. ${doing} ${provider.tool} while it runs can break ${n === 1 ? 'that session' : 'those sessions'}. ${verb} anyway?`, { ok: verb })) {
         // Drop the key so the retried request can take it. Awaiting that
         // request keeps this one from clearing the key while it is in flight.
         pendingInstalls.delete(provider.id);
@@ -3928,7 +3930,7 @@ async function startSession(provider, card, { resume, cwd, account = selectedAcc
     } catch (err) {
       if (err.code !== 'bad_cwd' || !cwd) throw err;
       if (resume && provider.historyDetails) {
-        const chosen = prompt(`${cwd} no longer exists. Choose a working folder to resume this conversation:`, working)?.trim();
+        const chosen = (await ask(`${cwd} no longer exists. Choose a working folder to resume this conversation:`, { ok: 'Resume', value: working }))?.trim();
         if (!chosen) return;
         ({ session } = await api('POST', '/sessions', { ...body, cwd: chosen }));
       } else {
@@ -3998,7 +4000,7 @@ function shortId(id) {
 }
 
 function copyText(text, what) {
-  navigator.clipboard?.writeText(text).then(() => toast(`Copied ${what}`, 2500), () => toast(text, 10000));
+  copyToClipboard(text).then(() => toast(`Copied ${what}`, 2500), () => toast(text, 10000));
 }
 
 function copyId(id) {
@@ -4089,7 +4091,7 @@ function historyEntry(id) {
   return historyView.snapshot?.sessions.find((entry) => entry.id === id) ?? null;
 }
 
-function resumeFromHistory(provider, id, cwd) {
+async function resumeFromHistory(provider, id, cwd) {
   const running = runningOn(provider.id, historyView.accountId, id);
   if (running) {
     closeHistory({ focusOpener: false });
@@ -4098,7 +4100,7 @@ function resumeFromHistory(provider, id, cwd) {
     if (provider.historyDetails && !cwd) {
       const workspaces = historyEntry(id)?.workspaces ?? [];
       const reason = workspaces.length > 1 ? `This conversation has several workspaces:\n${workspaces.join('\n')}\n\n` : 'The saved working folder is unknown.\n\n';
-      cwd = prompt(`${reason}Choose a working folder to resume in:`, $('cwd').value.trim())?.trim();
+      cwd = (await ask(`${reason}Choose a working folder to resume in:`, { ok: 'Resume', value: $('cwd').value.trim() }))?.trim();
       if (!cwd) return;
     }
     startSession(provider, null, { resume: id, cwd: cwd || undefined, account: historyView.accountId });
@@ -4680,7 +4682,7 @@ async function setupGitHubSsh(account) {
 
 async function signOutGitHub(account) {
   const text = `Sign out of @${account.login}? Agent Guild forgets this sign-in. Its SSH key stays in the Agent Guild data folder and on your GitHub account, so existing clones keep working.\n\nTo remove Agent Guild's access entirely, revoke it on GitHub; GitHub then also removes the SSH keys Agent Guild added.`;
-  if (!confirm(text)) return;
+  if (!await ask(text, { ok: 'Sign out' })) return;
   try {
     const { github } = await api('DELETE', `/github/accounts/${account.id}`);
     if (githubView.accountId === account.id) selectGitHubAccount(null);
@@ -4786,7 +4788,7 @@ function signInCard(github) {
 function codeCard(signIn) {
   const code = signIn.userCode;
   const open = externalLink('Open GitHub', signIn.verificationUri, 'btn primary');
-  open.addEventListener('click', () => navigator.clipboard?.writeText(code).catch(() => {}));
+  open.addEventListener('click', () => copyToClipboard(code).catch(() => {}));
   open.title = `Copies the code and opens ${signIn.verificationUri}`;
   const codeText = el('span', 'github-code-text', code);
   codeText.setAttribute('aria-label', `Code ${[...code].join(' ')}`);
@@ -5353,8 +5355,7 @@ async function copyBranch(name, control) {
   control.disabled = true;
   let message;
   try {
-    if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
-    await navigator.clipboard.writeText(name);
+    await copyToClipboard(name);
     message = `Copied branch name: ${name}`;
   } catch {
     message = 'Could not copy. Select the branch name and copy it using your browser.';
@@ -6201,7 +6202,10 @@ function stopNote(s) {
 async function stopSession(id) {
   const s = state.sessions.get(id);
   if (!s || s.status !== 'running') return;
-  if (!confirm(`${s.multiplexer ? 'Detach' : 'Stop'} "${s.name}"? ${stopNote(s)}`)) return;
+  const verb = s.multiplexer ? 'Detach' : 'Stop';
+  if (!await ask(`${verb} "${s.name}"? ${stopNote(s)}`, { ok: verb })) return;
+  // It may have ended while the question was open.
+  if (state.sessions.get(id)?.status !== 'running') return;
   try { upsertSession((await api('POST', `/sessions/${id}/stop`)).session); } catch (err) { toast(err.message); }
 }
 
@@ -6210,14 +6214,14 @@ async function removeSession(id) {
   if (!s) return;
   // The card goes, so only the terminal can reattach it.
   const question = s.multiplexer ? `Detach it and remove it? ${s.multiplexer.label} keeps running it. Reattach it in a terminal with: ${s.multiplexer.attach}` : 'End it and remove it?';
-  if (s.status === 'running' && !confirm(`"${s.name}" is still running. ${question}`)) return;
+  if (s.status === 'running' && !await ask(`"${s.name}" is still running. ${question}`, { ok: s.multiplexer ? 'Detach and remove' : 'Remove' })) return;
   try { await api('DELETE', `/sessions/${id}`); dropSession(id); } catch (err) { toast(err.message); }
 }
 
 async function renameSession(id) {
   const s = state.sessions.get(id);
   if (!s) return;
-  const name = prompt('Session name', s.name);
+  const name = await ask('Session name', { ok: 'Rename', value: s.name });
   if (name === null || !name.trim()) return;
   try { upsertSession((await api('PATCH', `/sessions/${id}`, { name })).session); } catch (err) { toast(err.message); }
 }
@@ -6515,7 +6519,7 @@ class TerminalView {
     });
     this.fit = new window.FitAddon.FitAddon();
     this.term.loadAddon(this.fit);
-    this.term.loadAddon(new window.WebLinksAddon.WebLinksAddon((_e, uri) => window.open(uri, '_blank', 'noopener,noreferrer')));
+    this.term.loadAddon(new window.WebLinksAddon.WebLinksAddon((_e, uri) => openLink(uri)));
     this.term.attachCustomKeyEventHandler((e) => this.handleKey(e));
     this.term.onRender(() => this.revealCursor());
     suppressQueryReplies(this.term);
@@ -6523,7 +6527,7 @@ class TerminalView {
     // system clipboard itself. Only the open terminal may write it; nothing reads it.
     this.term.parser.registerOscHandler(52, (data) => {
       const text = osc52Text(data);
-      if (text !== null && state.activeId === this.id) navigator.clipboard?.writeText(text).catch(() => {});
+      if (text !== null && state.activeId === this.id) copyToClipboard(text).catch(() => {});
       return true;
     });
     this.term.onData((data) => {
@@ -6570,7 +6574,7 @@ class TerminalView {
     // Copy: Ctrl+Shift+C, or Ctrl+C when text is selected (Windows Terminal style).
     if (!isMac && e.ctrlKey && key === 'c' && (e.shiftKey || this.term.hasSelection())) {
       const text = this.term.getSelection();
-      if (text) navigator.clipboard?.writeText(text).catch(() => {});
+      if (text) copyToClipboard(text).catch(() => {});
       this.term.clearSelection();
       e.preventDefault();
       return false;
@@ -7154,7 +7158,8 @@ function toggleReading() {
 
 // ---- voice input ----------------------------------------------------------
 
-const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+// Dictate is not offered inside the VS Code extension's frame.
+const Recognition = framed ? null : window.SpeechRecognition || window.webkitSpeechRecognition;
 const VOICE_RETRY_DELAYS = [250, 500, 1000];
 let dictation = null;
 
@@ -7331,7 +7336,7 @@ async function stopManager({ force = false, restart = false } = {}) {
       const what = `${n} session${n === 1 ? ' is' : 's are'} still running`;
       const them = n === 1 ? 'it' : 'all of them';
       const verb = restart ? 'Restarting' : 'Stopping';
-      if (confirm(`${what}. ${verb} the session manager ends ${them}. ${restart ? 'Restart' : 'Stop'} anyway?`)) {
+      if (await ask(`${what}. ${verb} the session manager ends ${them}. ${restart ? 'Restart' : 'Stop'} anyway?`, { ok: restart ? 'Restart' : 'Stop manager' })) {
         return stopManager({ force: true, restart });
       }
       return;
@@ -7358,6 +7363,8 @@ function closeDialogs() {
   closeFlags();
   closeMemory();
   if ($('folder-browser').open) $('folder-browser').close();
+  // An open question is answered as cancelled.
+  if ($('ask').open) $('ask').close();
   state.environmentUI?.close();
   state.remoteAccessUI?.close();
 }
@@ -7437,7 +7444,7 @@ function renderStoppedHelp() {
 async function copyCommand() {
   const button = $('copy-command');
   try {
-    await navigator.clipboard.writeText('agent-guild open');
+    await copyToClipboard('agent-guild open');
     button.textContent = 'Copied';
     setTimeout(() => { button.textContent = 'Copy'; }, 1500);
   } catch {
@@ -7504,6 +7511,7 @@ function connectEvents() {
       state.yardArt = msg.yardArt || null;
       renderVersion();
       setConnection('ok', 'Connected to session manager');
+      announceReady(state.version);
       state.sessions = new Map(msg.sessions.map((s) => [s.id, s]));
       // Answers are numbered per manager run, so a restarted manager's are new ones.
       replies.clear();

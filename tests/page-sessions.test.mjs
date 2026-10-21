@@ -29,7 +29,7 @@ function page({ onApi = () => ({}) } = {}) {
     renderSessions() {}, noticeClone() {}, dropSession() {}, renderAccountsDialog() {},
     openPanel: (id) => opened.push(id),
     toast(message) { assert.fail(message); },
-    confirm: (message) => { confirms.push(message); return true; },
+    ask: async (message) => { confirms.push(message); return true; },
     api: async (method, route) => { requests.push(`${method} ${route}`); return onApi(method, route, context); },
     AuthError: class extends Error {},
     TextDecoder, atob,

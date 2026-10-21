@@ -1,3 +1,5 @@
+import { copyToClipboard } from './host.js';
+
 export function remotePresentation(data) {
   if (!data) return { title: 'Checking connection…', text: 'Looking for Tailscale on this computer.', label: 'Enable remote access' };
   const problem = data.problem;
@@ -142,8 +144,7 @@ export function createRemoteAccessUI({ api, getToken, isConnected, onAuthError }
 
   async function copy(input, button) {
     try {
-      if (!navigator.clipboard) throw new Error('Clipboard unavailable');
-      await navigator.clipboard.writeText(input.value);
+      await copyToClipboard(input.value);
       const label = button.textContent;
       button.textContent = 'Copied';
       setTimeout(() => { button.textContent = label; }, 1600);

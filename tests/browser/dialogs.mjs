@@ -322,6 +322,29 @@ const checks = await withPage({ name: 'dialogs', instrumentation }, async ({ ori
       await closeDialog(selector);
     }
     pass(`${engine}: model, remote-access and folder dialogs retain a visible, scrollable body and footer`);
+
+    // Questions are asked in the page: a framed page's confirm() returns false without showing anything.
+    await resize(390, 844);
+    // The last running session: later checks use the first card's terminal.
+    const id = await evaluate('[...document.querySelectorAll("#sessions .session-card")].findLast((c) => !c.querySelector(".stop").hidden)?.dataset.id');
+    assert.ok(id, `${engine}: a running demo session`);
+    const stop = `document.querySelector('#sessions .session-card[data-id="${id}"] .stop')`;
+    await evaluate(`${stop}.click()`);
+    await until(`${engine} stop question`, () => evaluate('document.querySelector("#ask").open'));
+    const question = await evaluate(`(() => {
+      const r=document.querySelector('#ask').getBoundingClientRect();
+      return {message:document.querySelector('#ask-message').textContent,ok:document.querySelector('#ask-ok').textContent,
+        inside:r.left>=0&&r.top>=0&&r.right<=innerWidth&&r.bottom<=innerHeight,focused:document.activeElement.id};
+    })()`);
+    assert.match(question.message, /^Stop ".+"\? /);
+    assert.deepEqual([question.ok, question.inside, question.focused], ['Stop', true, 'ask-ok']);
+    await closeDialog('#ask', '#ask-cancel');
+    assert.equal(await evaluate(`${stop}.hidden`), false, `${engine}: Cancel leaves the session running`);
+    await evaluate(`${stop}.click()`);
+    await until(`${engine} stop question again`, () => evaluate('document.querySelector("#ask").open'));
+    await closeDialog('#ask', '#ask-ok');
+    await until(`${engine} session stopped`, () => evaluate(`${stop}.hidden`));
+    pass(`${engine}: Stop asks inside the page; Cancel keeps the session and Stop ends it`);
   };
 
   await send('Page.navigate', { url: origin });

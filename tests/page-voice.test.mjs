@@ -80,6 +80,7 @@ function page({ android = false, available, supported = true, enabled = true, pr
   if (available !== undefined) Recognition.available = typeof available === 'function'
     ? (options) => { availabilityCalls.push(options); return available(options); } : available;
   const context = {
+    framed: false,
     window: supported ? { [prefixed ? 'webkitSpeechRecognition' : 'SpeechRecognition']: Recognition } : {},
     navigator: { language, userAgent: android ? 'Mozilla/5.0 (Linux; Android 14) Chrome/130.0' : 'Desktop' },
     document: { visibilityState: 'visible', addEventListener: (type, callback) => listeners.set(type, callback) },

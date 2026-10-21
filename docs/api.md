@@ -699,3 +699,18 @@ A client built on xterm.js can copy `suppressQueryReplies` from `web/app.js`.
 Close codes: `4404` means the session does not exist, `4410` means it was
 removed, and `4008` means the client fell too far behind. After a `4008` or a
 network drop, reconnect and the snapshot brings the client up to date.
+
+## The page in a VS Code tab
+
+The manager's page may be framed only by VS Code webviews: its
+`Content-Security-Policy` has `frame-ancestors vscode-webview: vscode-file:`.
+The frame's `src` is the page URL with `#token=<token>`, as for a browser.
+
+A framed page cannot open windows, so it posts messages to `window.parent`.
+A host must accept a message only from its own frame and the manager's
+origin, and open only `http:` and `https:` URLs.
+
+| Message | Meaning |
+| --- | --- |
+| `{ source: "agent-guild", type: "ready", version }` | The page reached the manager. `version` is the manager's. |
+| `{ source: "agent-guild", type: "open", url }` | The user followed a link; open `url` in the browser. |

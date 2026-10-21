@@ -33,7 +33,7 @@ function page(tools, respond = null) {
   const context = {
     document: { createElement: (tag) => new Element(tag) },
     CHANNEL_LABELS: { native: 'native', brew: 'Homebrew' }, state: { providers: [provider], providersRevision: 'r1' },
-    confirm: (message) => { confirmations.push(message); return true; },
+    ask: async (message) => { confirmations.push(message); return true; },
     api: async (method, route, body) => {
       if (method === 'GET') return { providers: [provider] };
       requests.push({ method, route, body: JSON.parse(JSON.stringify(body)) });

@@ -129,7 +129,9 @@ test('default Host, Origin, authentication and CSP behavior stays loopback-only'
   const api = await server(t);
   const page = await request(api);
   assert.equal(page.status, 200);
-  assert.equal(page.headers['content-security-policy'], "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://i.ytimg.com; connect-src 'self' ws://127.0.0.1:* ws://localhost:*; frame-src https://www.youtube-nocookie.com; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
+  assert.equal(page.headers['content-security-policy'], "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://i.ytimg.com; connect-src 'self' ws://127.0.0.1:* ws://localhost:*; frame-src https://www.youtube-nocookie.com; frame-ancestors vscode-webview: vscode-file:; base-uri 'none'; form-action 'none'");
+  // Only VS Code webviews may frame the page, so X-Frame-Options, which cannot name them, is not sent.
+  assert.equal(page.headers['x-frame-options'], undefined);
   for (const host of [`localhost:${api.port}`, `[::1]:${api.port}`, `127.0.0.1:${api.port}`]) {
     assert.equal((await request(api, '/', { Host: host })).status, 200);
   }

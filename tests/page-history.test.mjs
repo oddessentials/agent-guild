@@ -148,32 +148,32 @@ test('Google empty history distinguishes active filters from an empty unfiltered
   }
 });
 
-test('Google resume requires an explicit folder when unknown or ambiguous, and opens a running session directly', () => {
+test('Google resume requires an explicit folder when unknown or ambiguous, and opens a running session directly', async () => {
   let choice = null, running = null;
   const starts = [], opened = [], prompts = [];
   const context = {
     historyView: { accountId: 'work' },
     historyEntry: () => ({ workspaces: ['/one', '/two'] }),
     runningOn: () => running,
-    prompt: (message, defaultValue) => { prompts.push({ message, defaultValue }); return choice; },
+    ask: async (message, { value: defaultValue }) => { prompts.push({ message, defaultValue }); return choice; },
     $: () => ({ value: '/current' }),
     startSession: (provider, card, options) => starts.push(options),
     closeHistory: () => {}, openPanel: (id) => opened.push(id),
   };
-  runInNewContext(app.match(/^function resumeFromHistory\([^]*?\n\}/m)[0], context);
+  runInNewContext(app.match(/^async function resumeFromHistory\([^]*?\n\}/m)[0], context);
   const provider = { id: 'google', historyDetails: true };
-  context.resumeFromHistory(provider, 'saved', null);
+  await context.resumeFromHistory(provider, 'saved', null);
   assert.equal(starts.length, 0, 'Cancel does not start anything');
   assert.match(prompts[0].message, /\/one\n\/two/);
   choice = '/chosen';
-  context.resumeFromHistory(provider, 'saved', null);
+  await context.resumeFromHistory(provider, 'saved', null);
   assert.equal(starts[0].cwd, '/chosen');
   assert.equal(starts[0].account, 'work');
-  context.resumeFromHistory(provider, 'saved', '/saved');
+  await context.resumeFromHistory(provider, 'saved', '/saved');
   assert.equal(starts[1].cwd, '/saved');
   assert.equal(prompts.length, 2, 'a single saved folder needs no choice');
   running = { id: 'running' };
-  context.resumeFromHistory(provider, 'saved', null);
+  await context.resumeFromHistory(provider, 'saved', null);
   assert.deepEqual(opened, ['running']);
   assert.equal(starts.length, 2);
   assert.equal(prompts.length, 2);
@@ -191,7 +191,7 @@ test('a missing Google resume folder retries only with the chosen folder and rel
         if (calls.length === 1) throw Object.assign(new Error('Missing folder'), { code: 'bad_cwd' });
         return { session: { id: 'resumed', cwd: body.cwd } };
       },
-      prompt: (message, defaultValue) => { prompts.push({ message, defaultValue }); return choice; },
+      ask: async (message, { value: defaultValue }) => { prompts.push({ message, defaultValue }); return choice; },
       upsertSession: () => {}, rememberRecent: () => {}, closeHistory: () => {},
       openPanel: (id) => opened.push(id), AuthError: class extends Error {}, launchArgs: async () => [],
       showAuth: () => assert.fail('unexpected auth error'), toast: () => assert.fail('unexpected automatic fallback'),
