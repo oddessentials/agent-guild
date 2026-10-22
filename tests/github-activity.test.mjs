@@ -1,11 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { GitHub } from '../src/manager/github.mjs';
 import { createViews } from '../src/manager/github-views.mjs';
 
-function fixture(answer) {
+function fixture(answer, { login = 'reader' } = {}) {
   const requests = [];
-  return { requests, views: createViews({
-    account(id) { if (id !== 7) throw Object.assign(new Error('Sign in'), { code: 'unknown_account' }); return { id, login: 'reader' }; },
+  const account = { id: 7, login };
+  const saved = [];
+  return { requests, account, saved, views: createViews({
+    account(id) { if (id !== 7) throw Object.assign(new Error('Sign in'), { code: 'unknown_account' }); return account; },
+    _refreshUser: GitHub.prototype._refreshUser,
+    _save() { saved.push({ ...account }); },
     async _apiJson(account, route) {
       requests.push(route);
       const result = await answer(route);
@@ -22,6 +27,7 @@ const next = '<https://api.github.com/next>; rel="next"';
 function repo({ metadata = {}, pulls = {}, issues = [], details = {}, runs = [] } = {}) {
   return (route) => {
     const [path] = route.split('?');
+    if (path === '/user') return { body: { id: 7, login: 'reader' } };
     if (path === '/repos/team/repo') return { body: metadata };
     if (path.endsWith('/pulls')) {
       const list = pulls[path.split('/').slice(2, 4).join('/')];
@@ -72,6 +78,62 @@ test('activity is only the account\'s own merges, completed closes and passed ru
   assert.deepEqual(requests.filter((r) => /\/issues\/\d+$/.test(r)), ['/repos/team/repo/issues/10', '/repos/team/repo/issues/11', '/repos/team/repo/issues/14']);
   assert.ok(requests.includes('/repos/team/repo/issues?state=closed&sort=updated&direction=desc&since=2026-10-10T00:00:00Z&per_page=100&page=1'));
   assert.ok(requests.includes('/repos/team/repo/actions/runs?actor=reader&status=success&created=%3E%3D2026-10-10T00%3A00%3A00Z&per_page=100&page=1'));
+});
+
+test('passed runs use creation time, including the boundary, even after a later start or rerun', async () => {
+  const { views } = fixture(repo({
+    pulls: { 'team/repo': [] },
+    runs: [
+      { id: 21, conclusion: 'success', actor: { id: 7 }, created_at: after, run_started_at: after, updated_at: after },
+      { id: 22, conclusion: 'success', actor: { id: 7 }, created_at: from, run_started_at: after, updated_at: after },
+      { id: 23, conclusion: 'success', actor: { id: 7 }, created_at: before, run_started_at: before, updated_at: after },
+      { id: 24, conclusion: 'success', actor: { id: 7 }, created_at: before, run_started_at: after, updated_at: after },
+      { id: 25, conclusion: 'success', actor: { id: 7 }, created_at: before, run_started_at: after, updated_at: after, run_attempt: 2 },
+    ],
+  }));
+  const activity = await views.activity(7, 'team', 'repo', { from });
+  assert.deepEqual(activity.passed.map((r) => [r.id, r.createdAt]), [
+    [21, '2026-10-11T00:00:00.000Z'],
+    [22, '2026-10-10T00:00:00.000Z'],
+  ]);
+  assert.equal(activity.truncated, false);
+});
+
+test('activity refreshes a renamed account before querying runs and still checks its numeric id', async () => {
+  const runs = [
+    { id: 21, conclusion: 'success', actor: { id: 7, login: 'renamed' }, created_at: after },
+    { id: 22, conclusion: 'success', actor: { id: 8, login: 'renamed' }, created_at: after },
+  ];
+  const { views, requests, account, saved } = fixture((route) => {
+    if (route === '/user') return { body: { id: 7, login: 'renamed' } };
+    if (route.startsWith('/repos/team/repo/actions/runs?')) {
+      const actor = new URL(route, 'https://api.github.com').searchParams.get('actor');
+      return { body: { workflow_runs: runs.filter((r) => r.actor.login === actor) } };
+    }
+    return repo({ pulls: { 'team/repo': [] } })(route);
+  }, { login: 'old-name' });
+  const activity = await views.activity(7, 'team', 'repo', { from });
+  assert.deepEqual(activity.passed.map((r) => r.id), [21]);
+  assert.equal(requests[0], '/user');
+  assert.ok(requests.includes('/repos/team/repo/actions/runs?actor=renamed&status=success&created=%3E%3D2026-10-10T00%3A00%3A00Z&per_page=100&page=1'));
+  assert.equal(account.login, 'renamed');
+  assert.deepEqual(saved, [{ id: 7, login: 'renamed' }]);
+});
+
+test('activity reports refresh failures with the same errors as repository requests', async () => {
+  for (const [failure, expected] of [
+    [{ status: 502, code: 'github_error', github: 403, limited: true }, { status: 429, code: 'rate_limited' }],
+    [{ status: 409, code: 'github_sign_in' }, { status: 409, code: 'github_sign_in' }],
+    [{ status: 502, code: 'github_error', github: 403 }, { status: 403, code: 'forbidden' }],
+    [{ status: 502, code: 'github_unreachable' }, { status: 502, code: 'github_unreachable' }],
+  ]) {
+    const { views, requests } = fixture((route) => {
+      if (route === '/user') throw Object.assign(new Error('Refresh failed'), failure);
+      return repo({ pulls: { 'team/repo': [] } })(route);
+    });
+    await assert.rejects(views.activity(7, 'team', 'repo', { from }), expected);
+    assert.deepEqual(requests, ['/user'], 'a failed refresh stops before repository requests');
+  }
 });
 
 test('a fork counts what it merged into its parent, and paging stops at the time or the page cap', async () => {

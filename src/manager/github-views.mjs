@@ -18,6 +18,16 @@ function refusal(status, code, message) {
   return Object.assign(new Error(message), { status, code });
 }
 
+/** GitHub's own refusals become answers the page can show as they are. */
+function requestError(err, account, repo) {
+  if (err.limited) return refusal(429, 'rate_limited', err.message);
+  if (err.github === 404) return refusal(404, 'not_found', `GitHub could not find ${repo.fullName} for @${account.login}`);
+  if (err.github === 410) return refusal(404, 'issues_disabled', `Issues are turned off for ${repo.fullName}`);
+  if (err.github === 403) return refusal(403, 'forbidden', `GitHub did not let @${account.login} do that in ${repo.fullName}`);
+  if (err.github === 422) return refusal(400, 'github_rejected', err.message);
+  return err;
+}
+
 /** A github.com page, or the fallback built from checked parts. */
 export function githubUrl(value, fallback) {
   try {
@@ -163,7 +173,7 @@ export function createViews(github, { now = Date.now } = {}) {
     return read;
   }
 
-  /** One request for the repository's account. GitHub's own refusals become answers the page can show as they are. */
+  /** One request for the repository's account. */
   async function call(accountId, owner, name, route, init) {
     const account = github.account(accountId);
     const repo = parseRepo(`${owner ?? ''}/${name ?? ''}`);
@@ -171,12 +181,7 @@ export function createViews(github, { now = Date.now } = {}) {
       const { body, res } = await github._apiJson(account, `/repos/${repo.owner}/${repo.name}${route}`, init);
       return { body, res, repo };
     } catch (err) {
-      if (err.limited) throw refusal(429, 'rate_limited', err.message);
-      if (err.github === 404) throw refusal(404, 'not_found', `GitHub could not find ${repo.fullName} for @${account.login}`);
-      if (err.github === 410) throw refusal(404, 'issues_disabled', `Issues are turned off for ${repo.fullName}`);
-      if (err.github === 403) throw refusal(403, 'forbidden', `GitHub did not let @${account.login} do that in ${repo.fullName}`);
-      if (err.github === 422) throw refusal(400, 'github_rejected', err.message);
-      throw err;
+      throw requestError(err, account, repo);
     }
   }
 
@@ -291,6 +296,8 @@ export function createViews(github, { now = Date.now } = {}) {
       if (!Number.isFinite(from)) throw refusal(400, 'bad_since', 'since must be a time such as 2026-10-01T00:00:00Z');
       const account = github.account(accountId);
       const repo = parseRepo(`${owner ?? ''}/${name ?? ''}`);
+      // The actor filter needs the current login; ownership is still checked by numeric id.
+      await github._refreshUser(account).catch((err) => { throw requestError(err, account, repo); });
       const stamp = new Date(from).toISOString().replace(/\.\d{3}Z$/, 'Z');
       let truncated = false;
       const merged = new Map();

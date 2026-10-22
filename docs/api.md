@@ -513,8 +513,8 @@ branch `{ name, sha, protected, url }`. Follow `nextPage` until it is null,
 even after a short or empty page. Only page one has `defaultBranch`;
 `metadataError` says why it could not be read.
 
-Activity is what the account itself finished in the repository at or after
-`since` (an ISO 8601 time):
+Activity is the account's own work in the repository from `since` (an ISO
+8601 time) on:
 
 ```json
 { "since": "2026-10-01T00:00:00.000Z",
@@ -524,12 +524,18 @@ Activity is what the account itself finished in the repository at or after
   "truncated": false }
 ```
 
-`merged` are pull requests the account opened that were merged, in the
-repository or, for a fork, from it into its parent (`repo` says which).
-`closed` are issues the account closed as completed. `passed` are workflow
-runs the account started that succeeded. Accounts are matched by GitHub's
-numeric user id. `truncated` is true when GitHub had more than was read; the
-newest are read first.
+`merged` are pull requests the account opened that were merged at or after
+`since`, in the repository or, for a fork, from it into its parent (`repo`
+says which). `closed` are issues the account closed as completed at or after
+`since`. `passed` are workflow runs created at or after `since` by the
+account that succeeded. A run created earlier does not count even if it
+ran, or was re-run successfully, later. Accounts are matched by GitHub's
+numeric user id; the login used to query runs is refreshed first.
+
+Each listing reads at most three pages of 100, and at most 20 candidate
+issue closures are checked. `truncated` is true when a cap leaves more to
+examine, so matching work may be missing. Listings are read newest first
+by update time for pull requests and issues, and creation time for runs.
 
 ### Agent
 
