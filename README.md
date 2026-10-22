@@ -12,26 +12,23 @@
   <a href="https://oddessentials.ai/donate/?ref=agent-guild"><img src="https://img.shields.io/badge/support-buy%20the%20lab%20a%20beer-f2a93b" alt="Support Agent Guild: buy the lab a beer"></a>
 </p>
 
+<p align="center">
+  <picture>
+    <source media="(prefers-reduced-motion: reduce)" srcset="docs/images/yard-still.webp">
+    <img src="docs/images/yard-clip.webp" alt="Seven coding-agent sessions as characters in the Guild Yard: they leave the plaza for their tools' halls and get to work, then a double-click on one opens Claude Code's real terminal, with its three helper agents" width="100%">
+  </picture>
+</p>
+
+**Every coding agent you run becomes a character in a 3D world, and stays a
+real terminal one double-click away.**
+
 **Agent Guild** runs Claude Code, Codex CLI, Antigravity CLI, Grok Build,
 Docker Agent and your own shell side by side, in real terminals, from one
-local web page.
+local web page, or from your phone over Tailscale.
 Close the page whenever you like; the sessions keep running.
 
 [Try the demo](https://oddessentials.github.io/agent-guild/) in your browser
 (simulated, nothing installed) or [watch the trailer](https://www.youtube.com/watch?v=ziT62WtXQ1M).
-
-**[Agent Guild: World](https://agentguild.oddessentials.ai/)**, coming soon to
-Steam, shows the same sessions as a crew at work in a living 3D world, on
-Windows, macOS and Linux. It runs on Agent Guild, which stays free.
-
-**[Agent Guild for VS Code](https://marketplace.visualstudio.com/items?itemName=OddEssentials.agent-guild)**
-opens the same page in an editor tab. Editors that install from Open VSX get it
-[there](https://open-vsx.org/extension/OddEssentials/agent-guild).
-
-<picture>
-  <source media="(prefers-color-scheme: light)" srcset="docs/images/overview-light.webp">
-  <img src="docs/images/overview-dark.webp" alt="Agent Guild with one card per coding tool and six sessions at work">
-</picture>
 
 ## Quick start
 
@@ -46,6 +43,10 @@ The page opens in your browser. Press **New** on a tool's card to start a
 session. Sign in to each tool inside its first session, as you would in any
 terminal.
 
+**[Agent Guild for VS Code](https://marketplace.visualstudio.com/items?itemName=OddEssentials.agent-guild)**
+opens the same page in an editor tab. Editors that install from Open VSX get it
+[there](https://open-vsx.org/extension/OddEssentials/agent-guild).
+
 | Requirement | |
 | --- | --- |
 | Node.js | 22 or newer |
@@ -56,23 +57,18 @@ terminal.
 No compiler is needed, except on Linux without glibc, such as Alpine:
 `agent-guild` prints the commands that build its terminal library there. A
 missing tool shows **Install** on its card; Antigravity CLI, which is not on
-npm, shows its install command instead. Docker Agent is the `docker agent`
-plugin; Docker Desktop 4.63 and later ship it, and its card's **Install**
-downloads the latest release into `~/.docker/cli-plugins` when no copy runs.
-The card's installation box lists every copy the Docker CLI finds and which
-one runs; the card updates and removes only the downloaded one, and leaves
-Docker Desktop's to Desktop.
+npm, shows its install command instead. For Docker Agent, see
+[Docker Agent](#docker-agent).
 
-On Linux, Docker Engine does not include the plugin; the card's **Install**
-adds it. The card needs Docker's own `docker` command: Podman's
-`docker` and the Ubuntu snap of Docker do not load the plugin. If you
-installed Docker Agent on its own as `docker-agent` (Homebrew or a release
-download), add this to [`providers.json`](docs/configuration.md#providersjson),
-then run `agent-guild restart`:
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/overview-light.webp">
+  <img src="docs/images/overview-dark.webp" alt="Agent Guild with one card per coding tool and six sessions at work">
+</picture>
 
-```json
-{ "providers": [{ "id": "docker", "command": "docker-agent", "args": ["run"], "versionArgs": ["version"] }] }
-```
+**[Agent Guild: World](https://agentguild.oddessentials.ai/)**, coming soon to
+Steam, is the premium 3D window onto the same sessions: six worlds to roam
+with a free camera, Steam Workshop crews and companions, and controller
+support, on Windows, macOS and Linux. Agent Guild and its Yard stay free.
 
 ## Setup
 
@@ -85,6 +81,25 @@ the page with it. If a browser asks for it, open the link that
 To replace it, stop the manager (this ends running sessions), delete
 `auth-token` from the [data folder](docs/configuration.md#data-folder), and
 start again.
+
+### Docker Agent
+
+Docker Agent is the `docker agent` plugin; Docker Desktop 4.63 and later ship
+it, and its card's **Install** downloads the latest release into
+`~/.docker/cli-plugins` when no copy runs. The card's installation box lists
+every copy the Docker CLI finds and which one runs; the card updates and
+removes only the downloaded one, and leaves Docker Desktop's to Desktop.
+
+On Linux, Docker Engine does not include the plugin; the card's **Install**
+adds it. The card needs Docker's own `docker` command: Podman's
+`docker` and the Ubuntu snap of Docker do not load the plugin. If you
+installed Docker Agent on its own as `docker-agent` (Homebrew or a release
+download), add this to [`providers.json`](docs/configuration.md#providersjson),
+then run `agent-guild restart`:
+
+```json
+{ "providers": [{ "id": "docker", "command": "docker-agent", "args": ["run"], "versionArgs": ["version"] }] }
+```
 
 ### Headless Linux server
 
