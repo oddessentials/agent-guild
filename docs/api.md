@@ -536,6 +536,9 @@ Each listing reads at most three pages of 100, and at most 20 candidate
 issue closures are checked. `truncated` is true when a cap leaves more to
 examine, so matching work may be missing. Listings are read newest first
 by update time for pull requests and issues, and creation time for runs.
+An empty list is what GitHub returned; during a GitHub service incident it
+has returned empty lists that were not complete, so it is not proof of no
+activity.
 
 ### Agent
 
