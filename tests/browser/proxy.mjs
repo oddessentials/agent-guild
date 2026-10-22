@@ -320,11 +320,30 @@ try {
     await until('remote access offered', () => evaluate(`!document.querySelector('#remote-access-open').hidden`));
     await evaluate(`document.querySelector('#remote-access-open').click()`);
     await until('fresh enable action', () => evaluate(`document.querySelector('#remote-primary').textContent==='Enable remote access' && !document.querySelector('#remote-primary').disabled`));
+    assert.deepEqual(await evaluate(`[document.querySelector('#remote-address-row').hidden, document.querySelector('#remote-next').checkVisibility()]`), [true, true]);
+    assert.equal(await evaluate(`document.querySelector('#remote-next').textContent`),
+      `Address when enabled: ${origin}. Expected from Tailscale’s current settings; confirmed once enabled. Your devices used this address before.`);
     await evaluate(`document.querySelector('#remote-primary').click()`);
-    await until('new route enabled', () => evaluate(`document.querySelector('#remote-status-title').textContent==='Remote access enabled' && !document.querySelector('#remote-check').disabled`));
-    assert.equal(ctx.remoteAccess.snapshot().url, 'https://guild.example.ts.net');
+    await until('remembered route enabled', () => evaluate(`document.querySelector('#remote-status-title').textContent==='Remote access enabled' && !document.querySelector('#remote-check').disabled`));
+    assert.equal(ctx.remoteAccess.snapshot().url, origin);
+    assert.equal(await evaluate(`document.querySelector('#remote-address').value`), origin);
+    assert.deepEqual(await evaluate(`['remote-next-row', 'remote-port-note'].map((id) => document.getElementById(id).hidden)`), [true, false]);
     assert.equal(session.toJSON().pid, pid);
-    pass('a new connection chooses its address and enables from the local UI with no reload');
+    pass('turning remote access on again keeps its address, shown as expected first and confirmed once enabled');
+
+    await evaluate(`document.querySelector('#remote-disable').click(); document.querySelector('#remote-disable-yes').click()`);
+    await until('switch offered', () => evaluate(`!document.querySelector('#remote-standard').hidden && !document.querySelector('#remote-standard').disabled`));
+    await evaluate(`document.querySelector('#remote-standard').click()`);
+    assert.equal(await evaluate(`document.querySelector('#remote-standard-confirm').hidden`), false);
+    assert.equal(await evaluate(`document.activeElement.id`), 'remote-standard-yes');
+    assert.equal(await evaluate(`document.querySelector('#remote-standard-text').textContent`),
+      `Switch to https://guild.example.ts.net instead of ${origin}? Devices that saved the old address will need to reconnect with the new address or sign-in link. Your access token doesn’t change. If the port is taken by then, the next free port is used, and the address that was set up is shown here.`);
+    await evaluate(`document.querySelector('#remote-standard-yes').click()`);
+    await until('standard route enabled', () => evaluate(`document.querySelector('#remote-status-title').textContent==='Remote access enabled' && !document.querySelector('#remote-check').disabled`));
+    assert.equal(ctx.remoteAccess.snapshot().url, 'https://guild.example.ts.net');
+    assert.deepEqual(await evaluate(`['remote-standard-confirm', 'remote-port-note'].map((id) => document.getElementById(id).hidden)`), [true, true]);
+    assert.equal(session.toJSON().pid, pid);
+    pass('Switch to standard address warns that saved devices must reconnect, then enables port 443 from the local UI');
 
     await evaluate(`document.querySelector('#remote-disable').click(); document.querySelector('#remote-disable-yes').click()`);
     await until('local disable finishes', () => evaluate(`!document.querySelector('#remote-check').disabled && document.querySelector('#remote-address-row').hidden`));

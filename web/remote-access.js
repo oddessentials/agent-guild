@@ -66,6 +66,15 @@ export function createRemoteAccessUI({ api, getToken, isConnected, onAuthError }
     $('remote-help').hidden = !presentation.help;
     if (presentation.help) { $('remote-help').href = presentation.help; $('remote-help').textContent = presentation.helpLabel; }
     $('remote-address-row').hidden = !data?.url;
+    $('remote-port-note').hidden = !data?.url || !new URL(data.url).port;
+    const next = data && !data.url && !data.pending && !data.problem && !data.busy ? data.candidate : null;
+    $('remote-next-row').hidden = !next;
+    $('remote-next').textContent = next ? `Address when enabled: ${next.url}. Expected from Tailscale’s current settings; confirmed once enabled.${next.remembered ? ' Your devices used this address before.' : ''}` : '';
+    $('remote-standard').hidden = !next?.standardUrl;
+    $('remote-standard').disabled = busy;
+    $('remote-standard-yes').disabled = busy;
+    if (!next?.standardUrl) $('remote-standard-confirm').hidden = true;
+    else $('remote-standard-text').textContent = `Switch to ${next.standardUrl} instead of ${next.url}? Devices that saved the old address will need to reconnect with the new address or sign-in link. Your access token doesn’t change. If the port is taken by then, the next free port is used, and the address that was set up is shown here.`;
     $('remote-address').value = data?.url || '';
     $('remote-open-address').href = data?.url || '#';
     $('remote-connect').disabled = busy;
@@ -124,6 +133,7 @@ export function createRemoteAccessUI({ api, getToken, isConnected, onAuthError }
     const generation = ++request;
     $('remote-error').hidden = true;
     $('remote-disable-confirm').hidden = true;
+    $('remote-standard-confirm').hidden = true;
     if (action !== 'enable') clearShare();
     render();
     try {
@@ -190,6 +200,7 @@ export function createRemoteAccessUI({ api, getToken, isConnected, onAuthError }
     request++; loading = false; posting = false;
     clearTimeout(timer); clearShare();
     $('remote-disable-confirm').hidden = true;
+    $('remote-standard-confirm').hidden = true;
     if (dialog.open) dialog.close();
   }
 
@@ -213,6 +224,9 @@ export function createRemoteAccessUI({ api, getToken, isConnected, onAuthError }
   $('remote-disable').addEventListener('click', () => { $('remote-disable-confirm').hidden = false; $('remote-disable-yes').focus(); });
   $('remote-disable-yes').addEventListener('click', () => change('disable'));
   $('remote-disable-no').addEventListener('click', () => { $('remote-disable-confirm').hidden = true; $('remote-disable').focus(); });
+  $('remote-standard').addEventListener('click', () => { $('remote-standard-confirm').hidden = false; $('remote-standard-yes').focus(); });
+  $('remote-standard-yes').addEventListener('click', () => change('enable', { standard: true }));
+  $('remote-standard-no').addEventListener('click', () => { $('remote-standard-confirm').hidden = true; $('remote-standard').focus(); });
   $('remote-forget').addEventListener('click', () => change('forget'));
   $('remote-connect').addEventListener('click', toggleShare);
   $('remote-copy-address').addEventListener('click', () => copy($('remote-address'), $('remote-copy-address')));

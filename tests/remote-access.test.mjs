@@ -108,6 +108,102 @@ test('enable applies only after the route succeeds and settings persist; disable
   assert.equal(controller.snapshot().candidate.existing, false);
 });
 
+test('turning remote access off and on again keeps its HTTPS port, and the remembered port survives a restart', async (t) => {
+  const { file, controller, fake, change } = setup(t);
+  fake.info.config = configFor({ ...route, target: 'http://127.0.0.1:9000' });
+  assert.equal((await change('enable')).url, `https://${host}:8443`);
+  await change('disable');
+  fake.info.config = {};
+  assert.equal(loadRemoteAccess(file, {}).config.lastRoute.port, 8443);
+  const restarted = new RemoteAccess({ file, env: {}, tailscale: fake, probe: controller.probe });
+  restarted.attach({ apply: () => {}, getTarget: () => target });
+  t.after(() => restarted.close());
+  restarted.info = await fake.inspect();
+  assert.equal(restarted.snapshot().candidate.url, `https://${host}:8443`);
+  restarted.change({ action: 'enable', revision: restarted.snapshot().revision });
+  await restarted.task;
+  assert.equal(restarted.snapshot().url, `https://${host}:8443`);
+});
+
+test('a remembered port that is taken falls back to the usual order, and the fallback port is remembered next', async (t) => {
+  const { file, fake, change } = setup(t);
+  await change('enable');
+  await change('disable');
+  assert.equal(loadRemoteAccess(file, {}).config.lastRoute.port, 443);
+  fake.info.config = configFor({ ...route, target: 'http://127.0.0.1:9000' });
+  assert.equal((await change('enable')).url, `https://${host}:8443`);
+  await change('disable');
+  assert.equal(loadRemoteAccess(file, {}).config.lastRoute.port, 8443);
+});
+
+test('a remembered route from another Tailscale identity or address is ignored', () => {
+  const info = { host, nodeId: route.nodeId, config: {} };
+  assert.equal(chooseRoute(info, target, null, { ...route, port: 8450 }).port, 8450);
+  assert.equal(chooseRoute(info, target, null, { ...route, port: 8450, nodeId: 'other' }).port, 443);
+  assert.equal(chooseRoute(info, target, null, { ...route, port: 8450, host: 'other.example.ts.net' }).port, 443);
+});
+
+test('switching to the standard address while off uses 443, as the preview said', async (t) => {
+  const { controller, fake, change } = setup(t);
+  fake.info.config = configFor({ ...route, target: 'http://127.0.0.1:9000' });
+  assert.equal((await change('enable')).url, `https://${host}:8443`);
+  await change('disable');
+  fake.info.config = {};
+  controller.info = await fake.inspect();
+  const preview = controller.snapshot().candidate;
+  assert.deepEqual(preview, { url: `https://${host}:8443`, existing: false, remembered: true, standardUrl: `https://${host}` });
+  assert.equal((await change('enable', { standard: true })).url, preview.standardUrl);
+});
+
+test('the standard address keeps the usual fallback when 443 is taken, and is offered only when it differs', async (t) => {
+  const { controller, fake, calls, change } = setup(t);
+  const other = configFor({ ...route, target: 'http://127.0.0.1:9000' });
+  fake.info.config = clone(other);
+  await change('enable');
+  await change('disable');
+  fake.info.config = clone(other);
+  controller.info = await fake.inspect();
+  assert.deepEqual(controller.snapshot().candidate, { url: `https://${host}:8443`, existing: false, remembered: true });
+  const before = calls.length;
+  assert.equal((await change('enable', { standard: true })).url, `https://${host}:8443`);
+  assert.deepEqual(calls.slice(before), [['enable', { ...route, port: 8443 }]], 'the other route on 443 is left alone');
+});
+
+test('the standard address is only chosen by an enable while remote access is off', async (t) => {
+  const { controller, change } = setup(t);
+  for (const body of [{ action: 'disable', standard: true }, { action: 'enable', standard: 'yes' }]) {
+    assert.throws(() => controller.change({ ...body, revision: controller.snapshot().revision }), { code: 'bad_action', status: 400 }, JSON.stringify(body));
+  }
+  await change('enable');
+  assert.throws(() => controller.change({ action: 'enable', standard: true, revision: controller.snapshot().revision }), { code: 'bad_action', status: 400 });
+});
+
+test('a failed switch to the standard address keeps the remembered address and other routes', async (t) => {
+  const { file, controller, fake, calls, change } = setup(t);
+  fake.info.config = configFor({ ...route, target: 'http://127.0.0.1:9000' });
+  await change('enable');
+  await change('disable');
+  const other = configFor({ ...route, port: 8444, target: 'http://127.0.0.1:9001' });
+  fake.info.config = clone(other);
+  fake.enable = async () => { throw remoteError('setup_incomplete', 'Tailscale did not finish'); };
+  const failed = await change('enable', { standard: true });
+  assert.equal(failed.problem.code, 'setup_incomplete');
+  assert.equal(failed.url, null);
+  assert.equal(loadRemoteAccess(file, {}).config.lastRoute.port, 8443);
+  assert.deepEqual(fake.info.config, other);
+  assert.equal(calls.filter(([kind]) => kind === 'remove').length, 1, 'only the earlier disable removed a route');
+  assert.equal(controller.config.mode, 'off');
+});
+
+test('settings saved before the remembered route was added still load', (t) => {
+  const { file } = setup(t);
+  fs.writeFileSync(file, JSON.stringify({ version: 1, revision: 'r', mode: 'tailscale', access: { hosts: [], origins: [] }, route, pending: null }));
+  const loaded = loadRemoteAccess(file, {});
+  assert.equal(loaded.error, null);
+  assert.equal(loaded.config.lastRoute, null);
+  assert.equal(loaded.config.route.port, 443);
+});
+
 test('failed persistence prevents changes to Tailscale', async (t) => {
   const { change, calls, applied } = setup(t, { save: () => { throw new Error('disk full'); } });
   const result = await change('enable');

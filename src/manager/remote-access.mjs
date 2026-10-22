@@ -26,6 +26,7 @@ function validateSaved(value) {
   if (!value || value.version !== 1 || typeof value.revision !== 'string' || value.revision.length > 100
     || !['off', 'custom', 'tailscale'].includes(value.mode)) throw new Error('Unsupported remote-access settings.');
   const route = value.route ? validateRoute(value.route) : null;
+  const lastRoute = value.lastRoute ? validateRoute(value.lastRoute) : null;
   if (value.mode === 'tailscale' && !route) throw new Error('Missing saved Tailscale route.');
   if (value.mode !== 'tailscale' && route) throw new Error('Unexpected saved Tailscale route.');
   const access = value.mode === 'off' ? emptyAccess() : value.mode === 'tailscale' ? routeAccess(route) : normalizeAccess(value.access);
@@ -34,7 +35,7 @@ function validateSaved(value) {
     if (!['enable', 'disable'].includes(value.pending.type)) throw new Error('Invalid pending remote-access operation.');
     pending = { type: value.pending.type, route: validateRoute(value.pending.route), ...(value.pending.previous ? { previous: validateRoute(value.pending.previous) } : {}) };
   }
-  return { version: 1, revision: value.revision, mode: value.mode, access, route, pending };
+  return { version: 1, revision: value.revision, mode: value.mode, access, route, lastRoute, pending };
 }
 
 export function loadRemoteAccess(file, env = process.env) {
@@ -56,7 +57,7 @@ export function loadRemoteAccess(file, env = process.env) {
 }
 
 function disabledConfig() {
-  return { version: 1, revision: randomUUID(), mode: 'off', access: emptyAccess(), route: null, pending: null };
+  return { version: 1, revision: randomUUID(), mode: 'off', access: emptyAccess(), route: null, lastRoute: null, pending: null };
 }
 
 export function saveRemoteAccess(file, config) {
@@ -122,13 +123,25 @@ export class RemoteAccess extends EventEmitter {
     this.getTarget = getTarget;
   }
 
+  /** The route enabling would use: the remembered one unless `standard` asks for the usual order. */
+  select(info, previous, standard = false) {
+    return chooseRoute(info, this.getTarget(), previous, standard ? null : this.config.lastRoute);
+  }
+
   snapshot() {
     const config = this.config;
     let candidate = null;
     if (this.info && !this.busy && this.getTarget()) {
       try {
-        const route = chooseRoute(this.info, this.getTarget(), config.pending?.type === 'enable' ? config.pending.route : config.route);
-        candidate = { url: routeUrl(route), existing: !config.route && !config.pending && routeMatches(this.info.config, route) };
+        const previous = config.pending?.type === 'enable' ? config.pending.route : config.route;
+        const route = this.select(this.info, previous);
+        const fresh = !config.route && !config.pending;
+        const existing = fresh && routeMatches(this.info.config, route);
+        candidate = { url: routeUrl(route), existing, remembered: fresh && !existing && Boolean(config.lastRoute) && routeUrl(config.lastRoute) === routeUrl(route) };
+        if (fresh) {
+          const standard = routeUrl(this.select(this.info, null, true));
+          if (standard !== candidate.url) candidate.standardUrl = standard;
+        }
       } catch {}
     }
     return {
@@ -201,6 +214,9 @@ export class RemoteAccess extends EventEmitter {
     if (this.busy) throw remoteError('remote_busy', 'A remote-access operation is already in progress.');
     if (body.revision !== this.config.revision) throw remoteError('stale_settings', 'Remote access changed in another tab. Review the current settings and try again.');
     if (!['enable', 'disable', 'custom', 'forget'].includes(body.action)) throw remoteError('bad_action', 'Choose a valid remote-access action.', 400);
+    if (body.standard !== undefined && (body.standard !== true || body.action !== 'enable' || this.config.route || this.config.pending)) {
+      throw remoteError('bad_action', 'Switch to the standard address while remote access is off.', 400);
+    }
     let access;
     if (body.action === 'custom') {
       if (this.config.route || this.config.pending) throw remoteError('disable_first', 'Disable the Tailscale connection before changing custom proxy settings.');
@@ -214,7 +230,7 @@ export class RemoteAccess extends EventEmitter {
     this.connection = null;
     this.publish();
     this.task = Promise.resolve().then(async () => {
-      if (body.action === 'enable') await this.enable(body.adopt === true);
+      if (body.action === 'enable') await this.enable(body.adopt === true, body.standard === true);
       else if (body.action === 'disable') await this.disable();
       else if (body.action === 'custom') this.persist({ ...this.config, mode: access.hosts.length || access.origins.length ? 'custom' : 'off', access, route: null, pending: null });
       else this.persist({ ...this.config, pending: null });
@@ -227,13 +243,13 @@ export class RemoteAccess extends EventEmitter {
     return this.snapshot();
   }
 
-  async enable(adopt) {
+  async enable(adopt, standard = false) {
     if (this.config.pending?.type === 'disable') throw remoteError('cleanup_required', 'Finish cleanup of the previous route before enabling remote access.');
     const info = await this.tailscale.inspect({ signal: this.abort.signal });
     this.info = info;
     let previous = this.config.pending?.type === 'enable' ? this.config.pending.route : this.config.route;
     let route;
-    try { route = chooseRoute(info, this.getTarget(), previous); } catch (error) {
+    try { route = this.select(info, previous, standard); } catch (error) {
       const fallback = this.config.pending?.previous || this.config.route;
       if (!fallback || !routeMatches(info.config, fallback)) throw error;
       previous = fallback;
@@ -264,7 +280,7 @@ export class RemoteAccess extends EventEmitter {
   async disable() {
     const route = this.config.pending?.route || this.config.route;
     const previous = this.config.pending?.previous || this.config.route;
-    this.persist({ ...this.config, mode: 'off', access: emptyAccess(), route: null, pending: route ? { type: 'disable', route, ...(previous ? { previous } : {}) } : null });
+    this.persist({ ...this.config, mode: 'off', access: emptyAccess(), route: null, lastRoute: this.config.route || this.config.lastRoute, pending: route ? { type: 'disable', route, ...(previous ? { previous } : {}) } : null });
     if (route) {
       try {
         const info = await this.tailscale.inspect({ signal: this.abort.signal });

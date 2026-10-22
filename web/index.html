@@ -391,6 +391,17 @@
         <p id="remote-status-text"></p>
       </div>
       <p id="remote-error" class="remote-error" role="alert" hidden></p>
+      <div id="remote-next-row" hidden>
+        <p id="remote-next" class="sub"></p>
+        <button id="remote-standard" class="btn" type="button" hidden>Switch to standard address</button>
+      </div>
+      <div id="remote-standard-confirm" class="remote-confirm" hidden>
+        <p id="remote-standard-text"></p>
+        <div class="remote-actions">
+          <button id="remote-standard-yes" class="btn primary" type="button">Switch to standard address</button>
+          <button id="remote-standard-no" class="btn" type="button">Keep previous address</button>
+        </div>
+      </div>
       <div id="remote-address-row" hidden>
         <label for="remote-address">Your remote address</label>
         <input id="remote-address" class="remote-address" readonly spellcheck="false">
@@ -399,6 +410,7 @@
           <button id="remote-copy-address" class="btn" type="button">Copy address</button>
           <a id="remote-open-address" class="btn" target="_blank" rel="noopener noreferrer">Open</a>
         </div>
+        <p id="remote-port-note" class="sub" hidden>To use the standard address, disable remote access, then choose Switch to standard address.</p>
       </div>
       <div id="remote-share" class="remote-share" hidden>
         <p>Connect the other device to Tailscale, then scan this code or open the sign-in link.</p>

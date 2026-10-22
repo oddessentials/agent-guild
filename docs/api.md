@@ -513,6 +513,33 @@ branch `{ name, sha, protected, url }`. Follow `nextPage` until it is null,
 even after a short or empty page. Only page one has `defaultBranch`;
 `metadataError` says why it could not be read.
 
+Activity is the account's own work in the repository from `since` (an ISO
+8601 time) on:
+
+```json
+{ "since": "2026-10-01T00:00:00.000Z",
+  "merged": [{ "repo": "octo-cat/agent-guild", "number": 8, "title": "Add viewer", "mergedAt": "2026-10-02T00:00:00.000Z", "url": "https://github.com/octo-cat/agent-guild/pull/8" }],
+  "closed": [{ "number": 4, "title": "Dock is too narrow", "closedAt": "2026-10-02T00:00:00.000Z", "url": "https://github.com/octo-cat/agent-guild/issues/4" }],
+  "passed": [{ "id": 11, "name": "CI", "branch": "main", "event": "push", "createdAt": "2026-10-02T00:00:00.000Z", "url": "https://github.com/octo-cat/agent-guild/actions/runs/11" }],
+  "truncated": false }
+```
+
+`merged` are pull requests the account opened that were merged at or after
+`since`, in the repository or, for a fork, from it into its parent (`repo`
+says which). `closed` are issues the account closed as completed at or after
+`since`. `passed` are workflow runs created at or after `since` by the
+account that succeeded. A run created earlier does not count even if it
+ran, or was re-run successfully, later. Accounts are matched by GitHub's
+numeric user id; the login used to query runs is refreshed first.
+
+Each listing reads at most three pages of 100, and at most 20 candidate
+issue closures are checked. `truncated` is true when a cap leaves more to
+examine, so matching work may be missing. Listings are read newest first
+by update time for pull requests and issues, and creation time for runs.
+An empty list is what GitHub returned; during a GitHub service incident it
+has returned empty lists that were not complete, so it is not proof of no
+activity.
+
 ### Agent
 
 An agent is a worker that the coding tool reports inside a session, such as a
@@ -545,9 +572,9 @@ All paths are under `/api/v1`.
 | --- | --- | --- | --- |
 | GET | `/health` | | `{ ok, name, version, pid }`. No token needed. |
 | GET | `/info` | | `name`, `version`, `pid`, platform, start time, provider config warnings, `upgrade` (an Upgrade object), `launcher` (the double-click launcher in a checkout, else null), `folderOpener` (`{ available, label, reason }` for this client) and `remoteAccess` (`{ available: true }` when this manager can configure it, else null). |
-| GET | `/remote-access` | | `{ remoteAccess }`: `revision`, `mode`, `busy`, `pending`, `problem` and connection details. |
+| GET | `/remote-access` | | `{ remoteAccess }`: `revision`, `mode`, `busy`, `pending`, `problem` and connection details. `url` is the active address. `candidate` is the address enabling would use with Tailscale's current settings, `{ url, existing, remembered, standardUrl? }`: `remembered` when it is the address used before, and `standardUrl` when `standard: true` would choose another. |
 | POST | `/remote-access/check` | | `{ remoteAccess }` after refreshing Tailscale's status. |
-| PUT | `/remote-access` | `{ revision, action, adopt?, hosts?, origins? }` | `202`. `action` is `enable` (`adopt: true` manages a matching existing route), `disable`, `custom` (with `hosts` and `origins`) or `forget` (leave an inactive route awaiting cleanup in Tailscale). Poll until `busy` is null and read `problem`. 409 `stale_settings` for an old `revision`. Needs the API token. Revoked WebSockets close with code 4403; their terminals keep running. |
+| PUT | `/remote-access` | `{ revision, action, adopt?, hosts?, origins? }` | `202`. `action` is `enable` (`adopt: true` manages a matching existing route; `standard: true`, only while remote access is off, skips the remembered address and takes port 443, else the next free port), `disable`, `custom` (with `hosts` and `origins`) or `forget` (leave an inactive route awaiting cleanup in Tailscale). Poll until `busy` is null and read `problem`. 409 `stale_settings` for an old `revision`. Needs the API token. Revoked WebSockets close with code 4403; their terminals keep running. |
 | GET | `/folders?path=` | | `{ path, parent, home, segments, roots, entries, truncated, note }`: the subfolders of `path` (blank or `~` for the home folder). `entries` are `{ name, path, hidden }`. A missing `path` lists the nearest folder above it and names the requested path in `note`. |
 | POST | `/folders` | `{ path, name }` | 201 with the `GET /folders` listing of the new folder `name`, made inside `path`. |
 | GET | `/autostart` | | `{ autostart: { available, enabled, reason, note?, lastRun?, log? } }`: whether the manager starts when the user signs in. `reason` says why it is unavailable. `lastRun` is null or `{ at, outcome }`. On Linux outside WSL it also has `mode` (`off`, `sign-in`, `boot` or `both`) and `boot`, the systemd service's `{ available, enabled, reason, note, user, linger, state, commands }`. |
@@ -595,6 +622,7 @@ All paths are under `/api/v1`.
 | GET | `/github/accounts/:id/repos/:owner/:name/actions` | | Workflow runs (see [Repository views](#repository-views)). |
 | GET | `/github/accounts/:id/repos/:owner/:name/branches?page=` | | Branches (see [Repository views](#repository-views)). |
 | GET | `/github/accounts/:id/repos/:owner/:name/pulls` | | Open pull requests (see [Repository views](#repository-views)). |
+| GET | `/github/accounts/:id/repos/:owner/:name/activity?since=` | | The account's own recent work (see [Repository views](#repository-views)). 400 `bad_since` unless `since` is a time. |
 | POST | `/github/clone` | `{ account, repo, parent }` | `201 { session }`: a session with `task` `clone` running `git clone` for `repo` (owner/name) into `<parent>/<name>`. |
 | GET | `/sessions` | | `{ sessions: Session[] }` |
 | POST | `/sessions` | `{ providerId, account?, shell?, cwd?, cols?, rows?, name?, args?, resume? }` | `201 { session }`. 429 `too_many_sessions` at the session limit. |

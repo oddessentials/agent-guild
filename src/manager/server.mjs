@@ -587,7 +587,7 @@ export function createManagerServer({
       const folder = manager.resolveCwd(url.searchParams.get('cwd'));
       return sendJson(res, 200, { folder, repo: folderOrigin(folder) });
     }
-    const view = route.match(/^\/github\/accounts\/([^/]+)\/repos\/([^/]+)\/([^/]+)\/(issues|actions|pulls|branches)(?:\/([^/]+))?$/);
+    const view = route.match(/^\/github\/accounts\/([^/]+)\/repos\/([^/]+)\/([^/]+)\/(issues|actions|pulls|branches|activity)(?:\/([^/]+))?$/);
     if (view) {
       let parts;
       try { parts = view.map((part) => (part === undefined ? part : decodeURIComponent(part))); } catch { throw new HttpError(400, 'repo must be a GitHub repository written as owner/name', 'bad_repo'); }
@@ -604,6 +604,7 @@ export function createManagerServer({
       if (kind === 'branches' && number === undefined && method === 'GET') return sendJson(res, 200, await views.branches(id, owner, name, { page: url.searchParams.get('page') ?? '1' }));
       if (kind === 'actions' && number === undefined && method === 'GET') return sendJson(res, 200, await views.actions(id, owner, name));
       if (kind === 'pulls' && number === undefined && method === 'GET') return sendJson(res, 200, await views.pulls(id, owner, name));
+      if (kind === 'activity' && number === undefined && method === 'GET') return sendJson(res, 200, await views.activity(id, owner, name, { from: url.searchParams.get('since') }));
     }
     const match = route.match(/^\/github\/accounts\/([^/]+)(\/repos|\/ssh)?$/);
     if (match) {
