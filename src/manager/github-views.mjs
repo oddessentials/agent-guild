@@ -305,7 +305,7 @@ export function createViews(github, { now = Date.now } = {}) {
       const mergeFrom = (list, fullName, head) => {
         for (const pull of list) {
           if (idOf(pull?.user) !== account.id || !since(pull.merged_at, from)) continue;
-          if (head && String(pull.head?.repo?.full_name ?? '').toLowerCase() !== head) continue;
+          if (head !== null && (!Number.isSafeInteger(head) || pull.head?.repo?.id !== head)) continue;
           const clean = cleanMerged(pull, fullName);
           if (clean) merged.set(`${fullName.toLowerCase()}#${clean.number}`, clean);
         }
@@ -321,7 +321,7 @@ export function createViews(github, { now = Date.now } = {}) {
         try {
           const upstream = await recent(accountId, parent.owner, parent.name, closedPulls, (p) => p?.updated_at, from);
           truncated ||= upstream.truncated;
-          mergeFrom(upstream.found, parent.fullName, repo.fullName.toLowerCase());
+          mergeFrom(upstream.found, parent.fullName, metadata.id ?? NaN);
         } catch (err) {
           if (err.code !== 'not_found') throw err;
         }

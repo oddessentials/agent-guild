@@ -150,15 +150,15 @@ test('activity reports refresh failures with the same errors as repository reque
   }
 });
 
-test('a fork counts what it merged into its parent, and paging stops at the time or the page cap', async () => {
+test('a fork counts what it merged into its parent, even asked by an old name, and paging stops at the time or the page cap', async () => {
   const fresh = Array.from({ length: 100 }, (_, i) => ({ number: 100 + i, user: { id: 8 }, merged_at: after, updated_at: after }));
   const { views, requests } = fixture(repo({
-    metadata: { fork: true, parent: { full_name: 'up/stream' } },
+    metadata: { id: 99, full_name: 'team/renamed', fork: true, parent: { full_name: 'up/stream' } },
     pulls: {
       'team/repo': () => ({ body: fresh, link: next }),
       'up/stream': () => ({ link: next, body: [
-        { number: 30, title: 'From the fork', user: { id: 7 }, merged_at: after, updated_at: after, head: { repo: { full_name: 'Team/Repo' } } },
-        { number: 31, title: 'From elsewhere', user: { id: 7 }, merged_at: after, updated_at: after, head: { repo: { full_name: 'reader/other' } } },
+        { number: 30, title: 'From the fork', user: { id: 7 }, merged_at: after, updated_at: after, head: { repo: { id: 99, full_name: 'team/renamed' } } },
+        { number: 31, title: 'From elsewhere', user: { id: 7 }, merged_at: after, updated_at: after, head: { repo: { id: 98, full_name: 'team/repo' } } },
         { number: 32, title: 'Old', user: { id: 7 }, merged_at: before, updated_at: before },
       ] }),
     },
