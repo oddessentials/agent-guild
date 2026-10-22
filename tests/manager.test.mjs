@@ -2833,6 +2833,7 @@ test('a GitHub account signs in, sets up SSH and clones over it in a visible ses
   assert.equal((await call('GET', '/github/accounts/4242/repos/octo-cat/agent-guild.git/issues')).body.error.code, 'bad_repo');
   assert.equal((await call('GET', '/github/accounts/4242/repos/octo-cat/%E0/issues')).body.error.code, 'bad_repo');
   assert.equal((await call('GET', '/github/accounts/4242/repos/octo-cat/missing/pulls')).status, 404);
+  assert.deepEqual(await call('GET', `${repoPath}/activity?since=soon`).then((r) => [r.status, r.body.error.code]), [400, 'bad_since']);
   assert.equal((await call('GET', '/github/accounts/1/repos/octo-cat/agent-guild/issues')).body.error.code, 'unknown_account');
   assert.equal((await call('DELETE', `${repoPath}/pulls`)).status, 404);
 

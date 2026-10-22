@@ -1,9 +1,11 @@
-// Branches, Issues, Actions runs and open pull requests of one repository, read with a
-// signed-in account. Reading and editing stay shallow: GitHub's page is the full view.
+// Branches, Issues, Actions runs, open pull requests and the account's own recent work in one
+// repository, read with a signed-in account. Reading and editing stay shallow: GitHub's page is the full view.
 
 import { nextLink, parseRepo } from './github.mjs';
 
 const PAGE = 30;
+const ACTIVITY_PAGES = 3;
+const CLOSERS = 20;
 const RUNNING = new Set(['queued', 'in_progress', 'waiting', 'requested', 'pending']);
 const WEB = 'https://github.com';
 const ISSUE_RE = /^[1-9]\d{0,9}$/;
@@ -86,6 +88,40 @@ function cleanPull(raw, fullName) {
   };
 }
 
+function idOf(user) {
+  return Number.isSafeInteger(user?.id) ? user.id : null;
+}
+
+function since(value, from) {
+  const at = Date.parse(value);
+  return Number.isFinite(at) && at >= from;
+}
+
+function cleanMerged(raw, fullName) {
+  const number = raw?.number;
+  if (!Number.isSafeInteger(number) || number < 1) return null;
+  return {
+    repo: fullName,
+    number,
+    title: text(raw.title, 256).trim(),
+    mergedAt: time(raw.merged_at),
+    url: githubUrl(raw.html_url, `${WEB}/${fullName}/pull/${number}`),
+  };
+}
+
+function cleanPassed(raw, fullName) {
+  const id = raw?.id;
+  if (!Number.isSafeInteger(id) || id < 1) return null;
+  return {
+    id,
+    name: text(raw.name, 200) || 'Workflow',
+    branch: text(raw.head_branch, 200),
+    event: text(raw.event, 40),
+    createdAt: time(raw.created_at),
+    url: githubUrl(raw.html_url, `${WEB}/${fullName}/actions/runs/${id}`),
+  };
+}
+
 /** The Actions part of a githubstatus.com summary: null while it is operational or unreadable. */
 export function actionsService(summary) {
   const component = (Array.isArray(summary?.components) ? summary.components : []).find((c) => c?.name === 'Actions' && !c.group_id);
@@ -142,6 +178,19 @@ export function createViews(github, { now = Date.now } = {}) {
       if (err.github === 422) throw refusal(400, 'github_rejected', err.message);
       throw err;
     }
+  }
+
+  /** A listing's pages, newest first, until one reaches back before `from`, GitHub has no more, or ACTIVITY_PAGES are read. */
+  async function recent(accountId, owner, name, route, stamp, from, items = (body) => body) {
+    const found = [];
+    for (let page = 1; page <= ACTIVITY_PAGES; page++) {
+      const { body, res } = await call(accountId, owner, name, `${route}&per_page=100&page=${page}`);
+      const list = items(body);
+      if (!Array.isArray(list)) throw refusal(502, 'github_error', 'GitHub did not return a list');
+      found.push(...list);
+      if (!nextLink(res.headers.get('link')) || list.some((item) => !since(stamp(item), from))) return { found, truncated: false };
+    }
+    return { found, truncated: true };
   }
 
   return {
@@ -234,6 +283,74 @@ export function createViews(github, { now = Date.now } = {}) {
         truncated: Boolean(nextLink(res.headers.get('link'))),
         url: `${WEB}/${repo.fullName}/pulls`,
       };
+    },
+
+    /** The account's own merged pull requests, issues closed as completed and successful runs, from `from` on. */
+    async activity(accountId, owner, name, { from: value } = {}) {
+      const from = typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(value) ? Date.parse(value) : NaN;
+      if (!Number.isFinite(from)) throw refusal(400, 'bad_since', 'since must be a time such as 2026-10-01T00:00:00Z');
+      const account = github.account(accountId);
+      const repo = parseRepo(`${owner ?? ''}/${name ?? ''}`);
+      const stamp = new Date(from).toISOString().replace(/\.\d{3}Z$/, 'Z');
+      let truncated = false;
+      const merged = new Map();
+      const closedPulls = '/pulls?state=closed&sort=updated&direction=desc';
+      const mergeFrom = (list, fullName, head) => {
+        for (const pull of list) {
+          if (idOf(pull?.user) !== account.id || !since(pull.merged_at, from)) continue;
+          if (head && String(pull.head?.repo?.full_name ?? '').toLowerCase() !== head) continue;
+          const clean = cleanMerged(pull, fullName);
+          if (clean) merged.set(`${fullName.toLowerCase()}#${clean.number}`, clean);
+        }
+      };
+
+      const { body: metadata } = await call(accountId, repo.owner, repo.name, '');
+      const own = await recent(accountId, repo.owner, repo.name, closedPulls, (p) => p?.updated_at, from);
+      truncated ||= own.truncated;
+      mergeFrom(own.found, repo.fullName, null);
+      let parent = null;
+      try { parent = metadata?.fork === true ? parseRepo(metadata.parent?.full_name) : null; } catch { /* not a fork we can read */ }
+      if (parent) {
+        try {
+          const upstream = await recent(accountId, parent.owner, parent.name, closedPulls, (p) => p?.updated_at, from);
+          truncated ||= upstream.truncated;
+          mergeFrom(upstream.found, parent.fullName, repo.fullName.toLowerCase());
+        } catch (err) {
+          if (err.code !== 'not_found') throw err;
+        }
+      }
+
+      const closed = new Map();
+      try {
+        const listed = await recent(accountId, repo.owner, repo.name, `/issues?state=closed&sort=updated&direction=desc&since=${stamp}`, (i) => i?.updated_at, from);
+        const candidates = listed.found.filter((i) => i && !i.pull_request && i.state_reason === 'completed' && since(i.closed_at, from) && ISSUE_RE.test(String(i.number)));
+        truncated ||= listed.truncated || candidates.length > CLOSERS;
+        for (const candidate of candidates.slice(0, CLOSERS)) {
+          // GitHub's docs promise closed_by only on the issue itself, so a listing without it is read again.
+          const issue = candidate.closed_by !== undefined ? candidate : await call(accountId, repo.owner, repo.name, `/issues/${candidate.number}`).then(({ body }) => body, (err) => {
+            if (err.code === 'not_found') return null;
+            throw err;
+          });
+          if (issue?.state !== 'closed' || issue.state_reason !== 'completed' || idOf(issue.closed_by) !== account.id || !since(issue.closed_at, from)) continue;
+          const clean = cleanIssue(issue, repo.fullName);
+          if (clean) closed.set(clean.number, { number: clean.number, title: clean.title, closedAt: time(issue.closed_at), url: clean.url });
+        }
+      } catch (err) {
+        if (err.code !== 'issues_disabled') throw err;
+      }
+
+      const runs = await recent(accountId, repo.owner, repo.name,
+        `/actions/runs?actor=${encodeURIComponent(account.login)}&status=success&created=${encodeURIComponent(`>=${stamp}`)}`,
+        (r) => r?.created_at, from, (body) => body?.workflow_runs);
+      truncated ||= runs.truncated;
+      const passed = new Map();
+      for (const run of runs.found) {
+        if (idOf(run?.actor) !== account.id || run.conclusion !== 'success' || !since(run.created_at, from)) continue;
+        const clean = cleanPassed(run, repo.fullName);
+        if (clean) passed.set(clean.id, clean);
+      }
+
+      return { since: new Date(from).toISOString(), merged: [...merged.values()], closed: [...closed.values()], passed: [...passed.values()], truncated };
     },
   };
 }

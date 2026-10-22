@@ -513,6 +513,24 @@ branch `{ name, sha, protected, url }`. Follow `nextPage` until it is null,
 even after a short or empty page. Only page one has `defaultBranch`;
 `metadataError` says why it could not be read.
 
+Activity is what the account itself finished in the repository at or after
+`since` (an ISO 8601 time):
+
+```json
+{ "since": "2026-10-01T00:00:00.000Z",
+  "merged": [{ "repo": "octo-cat/agent-guild", "number": 8, "title": "Add viewer", "mergedAt": "2026-10-02T00:00:00.000Z", "url": "https://github.com/octo-cat/agent-guild/pull/8" }],
+  "closed": [{ "number": 4, "title": "Dock is too narrow", "closedAt": "2026-10-02T00:00:00.000Z", "url": "https://github.com/octo-cat/agent-guild/issues/4" }],
+  "passed": [{ "id": 11, "name": "CI", "branch": "main", "event": "push", "createdAt": "2026-10-02T00:00:00.000Z", "url": "https://github.com/octo-cat/agent-guild/actions/runs/11" }],
+  "truncated": false }
+```
+
+`merged` are pull requests the account opened that were merged, in the
+repository or, for a fork, from it into its parent (`repo` says which).
+`closed` are issues the account closed as completed. `passed` are workflow
+runs the account started that succeeded. Accounts are matched by GitHub's
+numeric user id. `truncated` is true when GitHub had more than was read; the
+newest are read first.
+
 ### Agent
 
 An agent is a worker that the coding tool reports inside a session, such as a
@@ -595,6 +613,7 @@ All paths are under `/api/v1`.
 | GET | `/github/accounts/:id/repos/:owner/:name/actions` | | Workflow runs (see [Repository views](#repository-views)). |
 | GET | `/github/accounts/:id/repos/:owner/:name/branches?page=` | | Branches (see [Repository views](#repository-views)). |
 | GET | `/github/accounts/:id/repos/:owner/:name/pulls` | | Open pull requests (see [Repository views](#repository-views)). |
+| GET | `/github/accounts/:id/repos/:owner/:name/activity?since=` | | The account's own recent work (see [Repository views](#repository-views)). 400 `bad_since` unless `since` is a time. |
 | POST | `/github/clone` | `{ account, repo, parent }` | `201 { session }`: a session with `task` `clone` running `git clone` for `repo` (owner/name) into `<parent>/<name>`. |
 | GET | `/sessions` | | `{ sessions: Session[] }` |
 | POST | `/sessions` | `{ providerId, account?, shell?, cwd?, cols?, rows?, name?, args?, resume? }` | `201 { session }`. 429 `too_many_sessions` at the session limit. |
