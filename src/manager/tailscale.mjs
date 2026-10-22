@@ -121,7 +121,7 @@ export function routeMatches(config, route) {
   } catch { return false; }
 }
 
-export function chooseRoute(info, target, previous = null) {
+export function chooseRoute(info, target, previous = null, remembered = null) {
   if (previous) {
     if (previous.nodeId !== info.nodeId || previous.host !== info.host) {
       throw remoteError('network_changed', 'This computer’s Tailscale identity or address changed. Disable the saved connection before setting up the new address.');
@@ -135,6 +135,9 @@ export function chooseRoute(info, target, previous = null) {
     const port = Number(key);
     const route = { nodeId: info.nodeId, host: info.host, port, target };
     if (Number.isInteger(port) && port > 0 && port <= 65535 && routeMatches(info.config, route)) return route;
+  }
+  if (remembered?.nodeId === info.nodeId && remembered.host === info.host && !portOccupied(info.config, remembered.port)) {
+    return { nodeId: info.nodeId, host: info.host, port: remembered.port, target };
   }
   const port = [443, ...Array.from({ length: 32 }, (_, i) => 8443 + i)].find((candidate) => !portOccupied(info.config, candidate));
   if (!port) throw remoteError('no_port', 'No available HTTPS port was found. Free a Serve port in Tailscale and try again.');

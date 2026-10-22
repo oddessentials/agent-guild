@@ -108,6 +108,50 @@ test('enable applies only after the route succeeds and settings persist; disable
   assert.equal(controller.snapshot().candidate.existing, false);
 });
 
+test('turning remote access off and on again keeps its HTTPS port, and the remembered port survives a restart', async (t) => {
+  const { file, controller, fake, change } = setup(t);
+  fake.info.config = configFor({ ...route, target: 'http://127.0.0.1:9000' });
+  assert.equal((await change('enable')).url, `https://${host}:8443`);
+  await change('disable');
+  fake.info.config = {};
+  assert.equal(loadRemoteAccess(file, {}).config.lastRoute.port, 8443);
+  const restarted = new RemoteAccess({ file, env: {}, tailscale: fake, probe: controller.probe });
+  restarted.attach({ apply: () => {}, getTarget: () => target });
+  t.after(() => restarted.close());
+  restarted.info = await fake.inspect();
+  assert.equal(restarted.snapshot().candidate.url, `https://${host}:8443`);
+  restarted.change({ action: 'enable', revision: restarted.snapshot().revision });
+  await restarted.task;
+  assert.equal(restarted.snapshot().url, `https://${host}:8443`);
+});
+
+test('a remembered port that is taken falls back to the usual order, and the fallback port is remembered next', async (t) => {
+  const { file, fake, change } = setup(t);
+  await change('enable');
+  await change('disable');
+  assert.equal(loadRemoteAccess(file, {}).config.lastRoute.port, 443);
+  fake.info.config = configFor({ ...route, target: 'http://127.0.0.1:9000' });
+  assert.equal((await change('enable')).url, `https://${host}:8443`);
+  await change('disable');
+  assert.equal(loadRemoteAccess(file, {}).config.lastRoute.port, 8443);
+});
+
+test('a remembered route from another Tailscale identity or address is ignored', () => {
+  const info = { host, nodeId: route.nodeId, config: {} };
+  assert.equal(chooseRoute(info, target, null, { ...route, port: 8450 }).port, 8450);
+  assert.equal(chooseRoute(info, target, null, { ...route, port: 8450, nodeId: 'other' }).port, 443);
+  assert.equal(chooseRoute(info, target, null, { ...route, port: 8450, host: 'other.example.ts.net' }).port, 443);
+});
+
+test('settings saved before the remembered route was added still load', (t) => {
+  const { file } = setup(t);
+  fs.writeFileSync(file, JSON.stringify({ version: 1, revision: 'r', mode: 'tailscale', access: { hosts: [], origins: [] }, route, pending: null }));
+  const loaded = loadRemoteAccess(file, {});
+  assert.equal(loaded.error, null);
+  assert.equal(loaded.config.lastRoute, null);
+  assert.equal(loaded.config.route.port, 443);
+});
+
 test('failed persistence prevents changes to Tailscale', async (t) => {
   const { change, calls, applied } = setup(t, { save: () => { throw new Error('disk full'); } });
   const result = await change('enable');
