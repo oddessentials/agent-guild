@@ -1,22 +1,27 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { GitHub } from '../src/manager/github.mjs';
 import { createViews } from '../src/manager/github-views.mjs';
 
-function fixture(answer, { login = 'reader' } = {}) {
+function fixture(answer, { login = 'reader', save = () => {} } = {}) {
   const requests = [];
   const account = { id: 7, login };
   const saved = [];
-  return { requests, account, saved, views: createViews({
+  const updates = [];
+  const hub = Object.assign(new EventEmitter(), {
     account(id) { if (id !== 7) throw Object.assign(new Error('Sign in'), { code: 'unknown_account' }); return account; },
     _refreshUser: GitHub.prototype._refreshUser,
-    _save() { saved.push({ ...account }); },
+    _changed: GitHub.prototype._changed,
+    _save() { save(); saved.push({ ...account }); },
     async _apiJson(account, route) {
       requests.push(route);
       const result = await answer(route);
       return { body: result.body, res: new Response('', { headers: result.link ? { Link: result.link } : {} }) };
     },
-  }) };
+  });
+  hub.on('updated', () => updates.push(account.login));
+  return { requests, account, saved, updates, views: createViews(hub) };
 }
 
 const from = '2026-10-10T00:00:00Z';
@@ -104,20 +109,28 @@ test('activity refreshes a renamed account before querying runs and still checks
     { id: 21, conclusion: 'success', actor: { id: 7, login: 'renamed' }, created_at: after },
     { id: 22, conclusion: 'success', actor: { id: 8, login: 'renamed' }, created_at: after },
   ];
-  const { views, requests, account, saved } = fixture((route) => {
+  const answer = (route) => {
     if (route === '/user') return { body: { id: 7, login: 'renamed' } };
     if (route.startsWith('/repos/team/repo/actions/runs?')) {
       const actor = new URL(route, 'https://api.github.com').searchParams.get('actor');
       return { body: { workflow_runs: runs.filter((r) => r.actor.login === actor) } };
     }
     return repo({ pulls: { 'team/repo': [] } })(route);
-  }, { login: 'old-name' });
+  };
+  const { views, requests, account, saved, updates } = fixture(answer, { login: 'old-name' });
   const activity = await views.activity(7, 'team', 'repo', { from });
   assert.deepEqual(activity.passed.map((r) => r.id), [21]);
   assert.equal(requests[0], '/user');
   assert.ok(requests.includes('/repos/team/repo/actions/runs?actor=renamed&status=success&created=%3E%3D2026-10-10T00%3A00%3A00Z&per_page=100&page=1'));
   assert.equal(account.login, 'renamed');
   assert.deepEqual(saved, [{ id: 7, login: 'renamed' }]);
+  assert.deepEqual(updates, ['renamed'], 'connected pages hear of the new name once it is saved');
+  await views.activity(7, 'team', 'repo', { from });
+  assert.deepEqual(updates, ['renamed'], 'an unchanged name is not announced');
+
+  const unsaved = fixture(answer, { login: 'old-name', save() { throw new Error('disk full'); } });
+  await assert.rejects(unsaved.views.activity(7, 'team', 'repo', { from }), /disk full/);
+  assert.deepEqual(unsaved.updates, [], 'a name that was not saved is not announced');
 });
 
 test('activity reports refresh failures with the same errors as repository requests', async () => {
@@ -127,12 +140,13 @@ test('activity reports refresh failures with the same errors as repository reque
     [{ status: 502, code: 'github_error', github: 403 }, { status: 403, code: 'forbidden' }],
     [{ status: 502, code: 'github_unreachable' }, { status: 502, code: 'github_unreachable' }],
   ]) {
-    const { views, requests } = fixture((route) => {
+    const { views, requests, updates } = fixture((route) => {
       if (route === '/user') throw Object.assign(new Error('Refresh failed'), failure);
       return repo({ pulls: { 'team/repo': [] } })(route);
     });
     await assert.rejects(views.activity(7, 'team', 'repo', { from }), expected);
     assert.deepEqual(requests, ['/user'], 'a failed refresh stops before repository requests');
+    assert.deepEqual(updates, []);
   }
 });
 

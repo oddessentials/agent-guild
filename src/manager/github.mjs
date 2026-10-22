@@ -780,6 +780,7 @@ export class GitHub extends EventEmitter {
     if (body?.id === account.id && typeof body.login === 'string' && body.login !== account.login) {
       account.login = body.login;
       this._save();
+      this._changed();
     }
   }
 
