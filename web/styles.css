@@ -812,8 +812,8 @@ body:has(#app[hidden]):has(#auth[hidden]):has(#stopped[hidden])::after {
 .remote-body .btn { min-height: 42px; }
 .remote-body a.btn { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
 .remote-body label { display: block; margin: 12px 0 6px; font-size: 0.8rem; }
-.remote-body input { width: 100%; min-width: 0; box-sizing: border-box; padding: 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); color: var(--text); font: inherit; font-size: 0.8rem; }
-.remote-body input:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.remote-body input, .remote-body select { width: 100%; min-width: 0; box-sizing: border-box; padding: 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); color: var(--text); font: inherit; font-size: 0.8rem; }
+.remote-body input:focus-visible, .remote-body select:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .remote-body details { border-top: 1px solid var(--border); margin-top: 18px; padding-top: 14px; }
 .remote-body summary { cursor: pointer; color: var(--muted); }
 .remote-body .sub { font-size: 0.8rem; color: var(--muted); line-height: 1.5; white-space: pre-line; overflow-wrap: anywhere; }
@@ -821,6 +821,7 @@ body:has(#app[hidden]):has(#auth[hidden]):has(#stopped[hidden])::after {
 .remote-body .remote-error { color: var(--danger); overflow-wrap: anywhere; }
 .remote-share, .remote-confirm { padding: 14px; border: 1px solid var(--border); border-radius: var(--radius); margin: 14px 0; }
 .remote-share p { margin-top: 0; line-height: 1.5; }
+.remote-share select { margin-bottom: 12px; }
 .remote-share canvas { display: block; width: min(100%, 260px); height: auto; margin: 16px auto; image-rendering: pixelated; }
 .remote-share canvas[hidden] { display: none; }
 .remote-share .btn { margin-top: 12px; }

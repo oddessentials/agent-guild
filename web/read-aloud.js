@@ -37,9 +37,12 @@ export function createReader({ synth, Utterance, changed = () => {} }) {
   const reader = {
     session: null,
     read(session, markdown) {
+      reader.speak(session, spokenText(markdown));
+    },
+    speak(session, words) {
       reader.stop();
       const ticket = run;
-      const chunks = speechChunks(spokenText(markdown));
+      const chunks = speechChunks(words);
       const finish = () => {
         if (ticket !== run) return;
         run++;
