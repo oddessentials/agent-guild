@@ -28,6 +28,21 @@ export function remotePresentation(data) {
   return { title: 'Tailscale connected', text: 'Enable a private address for your running terminals. Your settings will be saved for future launches.', label: 'Enable remote access' };
 }
 
+export function paintQr(canvas, qrcode, text) {
+  const code = qrcode(0, 'M');
+  code.addData(text, 'Byte');
+  code.make();
+  const count = code.getModuleCount(), scale = 5, border = 4;
+  canvas.width = canvas.height = (count + border * 2) * scale;
+  const context = canvas.getContext('2d');
+  context.fillStyle = '#ffffff'; context.fillRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = '#000000';
+  for (let row = 0; row < count; row++) for (let col = 0; col < count; col++) {
+    if (code.isDark(row, col)) context.fillRect((col + border) * scale, (row + border) * scale, scale, scale);
+  }
+  canvas.hidden = false;
+}
+
 export function createRemoteAccessUI({ api, getToken, isConnected, onAuthError }) {
   const $ = (id) => document.getElementById(id);
   const dialog = $('remote-access');
@@ -179,19 +194,7 @@ export function createRemoteAccessUI({ api, getToken, isConnected, onAuthError }
     try {
       const { default: qrcode } = await import('./vendor/qrcode.mjs');
       if (!sharing || generation !== shareGeneration || !dialog.open) return;
-      const code = qrcode(0, 'M');
-      code.addData(url.href, 'Byte');
-      code.make();
-      const count = code.getModuleCount(), scale = 5, border = 4;
-      const canvas = $('remote-qr');
-      canvas.width = canvas.height = (count + border * 2) * scale;
-      const context = canvas.getContext('2d');
-      context.fillStyle = '#ffffff'; context.fillRect(0, 0, canvas.width, canvas.height);
-      context.fillStyle = '#000000';
-      for (let row = 0; row < count; row++) for (let col = 0; col < count; col++) {
-        if (code.isDark(row, col)) context.fillRect((col + border) * scale, (row + border) * scale, scale, scale);
-      }
-      canvas.hidden = false;
+      paintQr($('remote-qr'), qrcode, url.href);
       $('remote-qr-note').textContent = '';
     } catch { if (generation === shareGeneration) $('remote-qr-note').textContent = 'The QR code could not load. Use the sign-in link below.'; }
   }

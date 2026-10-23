@@ -9,7 +9,7 @@ const dir = path.resolve(process.argv[2] || 'docs/.pages');
 const required = [
   '.nojekyll', 'index.html', 'app.js', 'activity-favicon.js', 'terminal-copy.js', 'layout.js', 'repo-search.js', 'folders.js', 'theme.js', 'styles.css', 'demo-config.js', 'demo-runtime.js', 'demo-bookmark.js', 'social.png',
   'vendor/xterm/xterm.js', 'vendor/xterm/xterm.css', 'vendor/xterm/addon-fit.js', 'vendor/xterm/addon-web-links.js',
-  'remote-access.js', 'vendor/qrcode.mjs', 'read-aloud.js', 'vendor/markdown-it.mjs',
+  'remote-access.js', 'glasses-link.js', 'vendor/qrcode.mjs', 'read-aloud.js', 'vendor/markdown-it.mjs',
   'vendor/xterm/LICENSE.xterm', 'vendor/xterm/LICENSE.addon-fit', 'vendor/xterm/LICENSE.addon-web-links', 'vendor/LICENSE.markdown-it',
   'yard/view.js', 'yard/renderer.js', 'yard/vendor/engine.js', 'yard/assets/guild.glb', 'yard/assets/guild/plates.json',
 ];

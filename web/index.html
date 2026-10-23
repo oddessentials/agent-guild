@@ -37,6 +37,7 @@
         <button id="settings" class="btn settings menu-button" type="button" popovertarget="settings-menu" aria-haspopup="dialog">Settings</button>
         <div id="settings-menu" class="settings-menu menu" popover role="dialog" aria-label="Settings">
           <button id="remote-access-open" class="btn" type="button" aria-haspopup="dialog" hidden>Remote access</button>
+          <button id="glasses-open" class="btn" type="button" aria-haspopup="dialog" hidden>Meta glasses</button>
           <fieldset id="skin-choices"><legend>Skin</legend></fieldset>
           <fieldset>
             <legend>Art</legend>
@@ -449,6 +450,30 @@
           <button id="remote-custom-save" class="btn" type="submit">Save proxy settings</button>
         </form>
       </details>
+    </div>
+  </dialog>
+
+  <dialog id="glasses" class="models remote-access" aria-labelledby="glasses-title">
+    <div class="models-bar">
+      <div class="models-heading">
+        <h2 id="glasses-title">Meta glasses</h2>
+        <p class="sub">Agent Guild on Meta Ray-Ban Display</p>
+      </div>
+      <button id="glasses-close" class="btn" type="button">Close</button>
+    </div>
+    <div class="models-body remote-body">
+      <p>See your sessions and hear their last answers on the glasses. The Meta AI app on your phone needs developer mode on.</p>
+      <button id="glasses-show" class="btn primary" type="button" aria-expanded="false" aria-controls="glasses-code">Show install code</button>
+      <div id="glasses-code" class="remote-share" hidden>
+        <div id="glasses-address-row" hidden>
+          <label for="glasses-address">Address</label>
+          <select id="glasses-address"></select>
+        </div>
+        <p>Scan with your phone’s camera, then confirm on your glasses.</p>
+        <canvas id="glasses-qr" role="img" aria-label="QR code to add Agent Guild to Meta Ray-Ban Display" hidden></canvas>
+        <p id="glasses-note" class="sub"></p>
+        <p>Anyone with this code can use your terminals.</p>
+      </div>
     </div>
   </dialog>
 

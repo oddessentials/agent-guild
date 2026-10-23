@@ -8,6 +8,7 @@ import { bindTopbarFit, dockMode, clampDockWidth, stageBesideDock, splitMode, cl
 import { highlightParts, rankRepos, recentFirst, remember, repoForOrigin, repoKey } from './repo-search.js';
 import { createActivityFavicon, isSessionWorking, sessionLabel } from './activity-favicon.js';
 import { createRemoteAccessUI } from './remote-access.js';
+import { createGlassesLinkUI } from './glasses-link.js';
 import { createEnvironmentUI } from './environment.js';
 import { createHistoryPreview } from './history-preview.js';
 import { createReader } from './read-aloud.js';
@@ -224,6 +225,7 @@ function setConnection(kind, label, brief = label) {
   paintManagerActions();
   renderEmpty();
   state.remoteAccessUI?.connectionChanged();
+  state.glassesLinkUI?.connectionChanged();
   $('manager').hidden = !state.connected;
   if (!state.connected) closeMenu($('manager-menu'));
   renderFolderTools();
@@ -7365,6 +7367,7 @@ function closeDialogs() {
   if ($('ask').open) $('ask').close();
   state.environmentUI?.close();
   state.remoteAccessUI?.close();
+  state.glassesLinkUI?.close();
 }
 
 /** How long to wait for a restarted manager before telling the user how to start one by hand. */
@@ -7506,6 +7509,7 @@ function connectEvents() {
       state.folderOpener = msg.folderOpener || null;
       state.platform = msg.platform || null;
       state.remoteAccessUI?.setAvailable(msg.remoteAccess);
+      state.glassesLinkUI?.setAvailable(msg.remoteAccess);
       state.yardArt = msg.yardArt || null;
       renderVersion();
       setConnection('ok', 'Connected to session manager');
@@ -7585,6 +7589,7 @@ function connectEvents() {
       state.remoteRevoked = true;
       managerLoss.cancel();
       state.remoteAccessUI?.close();
+      state.glassesLinkUI?.close();
       setConnection('down', 'Remote access changed. Your terminals are still running. Reopen an enabled address to reconnect.', 'Remote access changed');
       return;
     }
@@ -7679,6 +7684,7 @@ function showAuth(message = '') {
   state.eventsSocket = null; // Invalidate callbacks and queued retries before closing.
   ws?.close();
   state.remoteAccessUI?.setAvailable(null);
+  state.glassesLinkUI?.setAvailable(null);
   managerLoss.cancel();
   closeDialogs();
   $('app').hidden = true;
@@ -8280,6 +8286,7 @@ publishPageWidth();
 applyDockLayout();
 
 state.remoteAccessUI = createRemoteAccessUI({ api, getToken: () => state.token, isConnected: () => state.connected, onAuthError: showAuth });
+state.glassesLinkUI = createGlassesLinkUI({ api, getToken: () => state.token, isConnected: () => state.connected, onAuthError: showAuth });
 state.environmentUI = createEnvironmentUI({
   api, onAuthError: showAuth, isAuthError: (err) => err instanceof AuthError,
   workingFolder: () => $('cwd').value.trim(),

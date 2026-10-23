@@ -26,6 +26,7 @@ function page() {
       eventsSocket: null, views: new Map(), sessions: new Map(),
       environmentUI: { close: () => $('environment').close() },
       remoteAccessUI: { close: () => $('remote-access').close(), setAvailable: (capability) => { if (!capability) $('remote-access').close(); } },
+      glassesLinkUI: { close: () => $('glasses').close(), setAvailable: (capability) => { if (!capability) $('glasses').close(); } },
     },
     closePanel: () => $('terminal-copy').close(),
     closeHistory: () => $('history').close(),

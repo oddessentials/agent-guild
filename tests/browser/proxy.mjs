@@ -396,6 +396,34 @@ try {
     assert.deepEqual(ctx.remoteAccess.snapshot().hosts, ['saved.example.com']);
     assert.deepEqual(errors, []);
     pass('a stale custom-proxy draft cannot overwrite settings saved by another tab');
+
+    ctx.remoteAccess.change({ action: 'custom', revision: ctx.remoteAccess.snapshot().revision, hosts: [authority, 'saved.example.com'], origins: [origin, 'https://saved.example.com'] });
+    await ctx.remoteAccess.task;
+    await send('Page.navigate', { url: `${origin}/#token=${ctx.token}` });
+    await until('proxy page connected', () => evaluate(`document.querySelector('#connection')?.classList.contains('ok')`));
+    await until('Meta glasses offered', () => evaluate(`!document.querySelector('#glasses-open').hidden`));
+    await evaluate(`document.querySelector('#glasses-open').click(); document.querySelector('#glasses-show').click()`);
+    await until('glasses QR', () => evaluate(`!document.querySelector('#glasses-qr').hidden`));
+    assert.deepEqual(await evaluate(`[...document.querySelector('#glasses-address').options].map((o) => o.value)`), [origin, 'https://saved.example.com']);
+    assert.equal(await evaluate(`document.querySelector('#glasses-address-row').hidden`), false);
+    const drawnFor = (address) => evaluate(`(async () => {
+      const { default: qrcode } = await import('/vendor/qrcode.mjs');
+      const { paintQr } = await import('/remote-access.js');
+      const { glassesInstallLink } = await import('/glasses-link.js');
+      const expected = document.createElement('canvas');
+      paintQr(expected, qrcode, glassesInstallLink(${JSON.stringify(address)}, ${JSON.stringify(ctx.token)}));
+      return expected.toDataURL() === document.querySelector('#glasses-qr').toDataURL();
+    })()`);
+    assert.equal(await drawnFor(origin), true);
+    await evaluate(`const s = document.querySelector('#glasses-address'); s.value = 'https://saved.example.com'; s.dispatchEvent(new Event('change'));`);
+    assert.equal(await drawnFor('https://saved.example.com'), true);
+    await withDialogClose(evaluate, '#glasses', () => evaluate(`document.querySelector('#glasses-close').click()`));
+    assert.deepEqual(await evaluate('cspViolations'), []);
+    await send('Page.navigate', { url: `${origin}/glasses.html#token=${ctx.token}` });
+    await until('glasses page through the proxy', () => evaluate(`[...document.querySelectorAll('#list .row')].some((e) => e.textContent === ${JSON.stringify(session.toJSON().name + session.toJSON().label)})`));
+    assert.deepEqual(await evaluate('cspViolations'), []);
+    assert.deepEqual(errors, []);
+    pass('with only a reverse proxy, Meta glasses offers its HTTPS origins and the glasses page works through it');
   });
   console.log(`${checks} HTTPS proxy checks passed`);
 } finally {

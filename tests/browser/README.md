@@ -44,6 +44,7 @@ node tests/browser/github.mjs
 node tests/browser/github-branches.mjs
 node tests/browser/environment-scopes.mjs
 node tests/browser/proxy.mjs
+node tests/browser/glasses.mjs
 node tests/browser/dialogs.mjs
 ```
 

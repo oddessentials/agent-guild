@@ -792,3 +792,14 @@ To show a view while the page is open, the app runs
 in the page with `evaluateJavaScript` once navigation has finished. The page
 accepts it only from its own window at its own origin, with the behavior of
 the VS Code message.
+
+## The page on Meta Ray-Ban Display
+
+`/glasses.html` is a 600 × 600 page for Meta's display glasses. It reads
+`#token=<token>` as the page does, then makes only `GET /api/v1/sessions`
+(every 5 seconds) and `GET /api/v1/sessions/:id/reply`, and speaks `spoken`.
+It has no terminal and sends nothing, but the token it holds is the full API
+token. **Settings → Meta glasses** shows a QR code of Meta's install link
+for it, `fb-viewapp://web_app_deep_link?appName=Agent%20Guild&appUrl=<URL>`,
+built from one of the manager's allowed HTTPS origins: the one the page is
+open on, then the Tailscale address, then the other reverse proxy origins.
