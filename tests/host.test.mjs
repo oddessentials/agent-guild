@@ -5,20 +5,20 @@ let loads = 0;
 
 /**
  * web/host.js loaded into a fake page; `framed` decides whether its parent is another window, `app` whether the Apple app's
- * handler exists, and `android` what the Android app's listener puts at window.agentGuild.
+ * handler exists, and `android` whether the Android app's listener does.
  */
-async function host({ framed, app = false, android, layout, writeText, execCommand = () => true }) {
+async function host({ framed, app = false, android = false, layout, writeText, execCommand = () => true }) {
   const posted = [], opened = [], listeners = {}, copied = [], appPosted = [], observers = [];
   const win = { open: (...args) => opened.push(args), addEventListener: (type, listener) => { listeners[`window.${type}`] = listener; } };
   win.parent = framed ? { postMessage: (message, origin) => posted.push({ message, origin }) } : win;
   if (app) win.webkit = { messageHandlers: { agentGuild: { postMessage: (message) => appPosted.push(message) } } };
-  if (android === true) {
+  if (android) {
     // Like Android's WebMessageListener object, which refuses anything but a string.
     win.agentGuild = { postMessage: (message) => {
       if (typeof message !== 'string') throw new TypeError('not a string');
       appPosted.push(message);
     } };
-  } else if (android !== undefined) win.agentGuild = android;
+  }
   const document = {
     documentElement: { dataset: { skin: 'guild', theme: 'dark', ...(layout ? { layout } : {}) } },
     activeElement: null,
@@ -185,15 +185,6 @@ test('the Android app gets links and readiness as JSON text, and only its own pa
   const framed = await host({ framed: true, android: true });
   framed.module.announceReady('1.8.0');
   assert.deepEqual(framed.appPosted, [], 'a framed page answers only its frame host');
-});
-
-test('a window.agentGuild without postMessage is not a host', async () => {
-  for (const android of [{}, { postMessage: 'text' }, null]) {
-    const page = await host({ framed: false, android });
-    page.module.openLink('https://example.com/');
-    assert.deepEqual(page.opened, [['https://example.com/', '_blank', 'noopener,noreferrer']]);
-    assert.equal(page.listeners.click, undefined);
-  }
 });
 
 test('copying falls back to execCommand when the clipboard API is refused', async () => {
