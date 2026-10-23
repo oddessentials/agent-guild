@@ -979,56 +979,6 @@ test('every state reads the card\'s label: Working only while running and produc
   }
 });
 
-test('send enters text as Dictate does and presses Enter once, with and without bracketed paste', async () => {
-  const session = await createFake();
-  const managed = ctx.manager.get(session.id);
-  const client = terminal(session.id);
-  await client.opened;
-  await waitForText(client, session.id, 'FAKE-TOOL READY', 'banner');
-  const send = (text, headers) => call('POST', `/sessions/${session.id}/send`, { text }, headers);
-  const submits = () => [...stripAnsi(client.output).matchAll(/SUBMIT:(\d+):("[^\r\n]*")/g)].map(([, n, data]) => [Number(n), JSON.parse(data)]);
-
-  client.input('paste on');
-  await waitForText(client, session.id, 'PASTE-READY:on', 'paste on');
-  assert.equal(managed.term.modes.bracketedPasteMode, true);
-  assert.deepEqual(await send('  list the files\nand run tests\r'), { status: 200, body: { ok: true } });
-  // A marker typed afterwards shows nothing else was submitted in between.
-  client.send({ type: 'input', data: 'end\r' });
-  await waitFor(() => submits().length === 2, { label: 'two submits' });
-  assert.deepEqual(submits(), [[1, '\x1b[200~list the files and run tests\x1b[201~\r'], [2, 'end\r']]);
-
-  assert.deepEqual((await send('   \n\x03 ')).body.error.code, 'bad_text');
-  assert.deepEqual((await send(7)).body.error.code, 'bad_text');
-  assert.equal((await send('x', { Authorization: '' })).status, 401);
-  assert.equal((await send('x', { Authorization: '', 'X-Agent-Guild-Report-Token': managed.reportToken })).status, 401, 'a session\'s report token cannot type into it');
-  assert.equal((await call('POST', '/sessions/0123456789ab/send', { text: 'x' })).status, 404);
-
-  client.send({ type: 'input', data: '\r' });
-  await waitFor(() => submits().length === 3, { label: 'refusals sent nothing' });
-  assert.deepEqual(submits()[2], [3, '\r']);
-
-  // The fake's paste mode reads raw keys, so it needs the manager to end it.
-  managed.kill();
-  await waitFor(() => managed.status === 'exited', { label: 'exit' });
-  const exited = await send('x');
-  assert.deepEqual([exited.status, exited.body.error.code], [409, 'session_exited']);
-  await client.close();
-});
-
-test('send without bracketed paste types the bare line, then Enter', async () => {
-  const session = await createFake();
-  const client = terminal(session.id);
-  await client.opened;
-  await waitForText(client, session.id, 'FAKE-TOOL READY', 'banner');
-  client.input('paste off');
-  await waitForText(client, session.id, 'PASTE-READY:off', 'paste off');
-  assert.equal(ctx.manager.get(session.id).term.modes.bracketedPasteMode, false);
-  assert.equal((await call('POST', `/sessions/${session.id}/send`, { text: 'two\nlines' })).status, 200);
-  await waitForText(client, session.id, 'SUBMIT:1:"two lines\\r"', 'one line, then Enter');
-  ctx.manager.get(session.id).kill();
-  await client.close();
-});
-
 test('the tool\'s own session id is reported over HTTP, in-band, and through hooks', async () => {
   const session = await createFake();
   assert.equal(session.toolSessionId, null);

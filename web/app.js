@@ -11,7 +11,6 @@ import { createRemoteAccessUI } from './remote-access.js';
 import { createEnvironmentUI } from './environment.js';
 import { createHistoryPreview } from './history-preview.js';
 import { createReader } from './read-aloud.js';
-import { dictatedText } from './dictation.js';
 import { matchFolders, readRecentFolders, rememberFolder } from './folders.js';
 import { initYard } from './yard/view.js';
 import { ask } from './ask.js';
@@ -7177,6 +7176,12 @@ function renderVoice() {
 function changeVoice(input) {
   save(VOICE_KEY, input.checked ? null : 'off');
   renderVoice();
+}
+
+/** Dictated words as terminal input: one line of text, no control characters, so nothing is ever submitted. */
+function dictatedText(text, first) {
+  const clean = text.replace(/[\x00-\x1f\x7f-\x9f]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return clean && (first ? clean : ` ${clean}`);
 }
 
 function canDictate(current) {

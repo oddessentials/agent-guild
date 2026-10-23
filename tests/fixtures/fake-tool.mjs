@@ -15,8 +15,6 @@
 //                      within 1.5 s
 //   stream <ms> <text> prints <text> then a line every 250 ms for <ms>
 //   modes              hides the cursor and enables SGR mouse reporting
-//   paste on|off       turns bracketed paste on or off, then prints SUBMIT:<n>:<input as JSON> for every Enter
-//                      outside a paste, with everything received since the last one
 //   stubborn           ignores hang-up signals
 //   exit <code>        exits with that code
 // Started with --version it prints "fake-tool 1.2.3" and exits.
@@ -77,7 +75,6 @@ out(`FAKE-TOOL READY cwd=${process.cwd()}`);
 let buffer = '';
 let collecting = null;
 let keyCapture = null;
-let pasteCapture = null;
 
 function handle(line) {
   const [cmd, ...rest] = line.trim().split(/\s+/);
@@ -136,11 +133,6 @@ function handle(line) {
     const timer = setInterval(() => {
       if (Date.now() >= until) { clearInterval(timer); out('STREAM-DONE'); } else out('tick');
     }, 250);
-  } else if (cmd === 'paste') {
-    process.stdin.setRawMode?.(true);
-    process.stdout.write(rest[0] === 'on' ? '\x1b[?2004h' : '\x1b[?2004l');
-    pasteCapture = { data: '', submits: 0 };
-    out(`PASTE-READY:${rest[0]}`);
   } else if (cmd === 'modes') {
     process.stdout.write('\x1b[?25l\x1b[?1000h\x1b[?1006h');
     out('MODES-SET');
@@ -161,16 +153,6 @@ process.stdin.on('data', (chunk) => {
       process.stdin.setRawMode?.(false);
       process.stdout.write('\x1b[?1l');
       out(`KEYS:${JSON.stringify([...data].map((c) => c.charCodeAt(0)))}`);
-    }
-    return;
-  }
-  if (pasteCapture) {
-    for (const ch of chunk) {
-      pasteCapture.data += ch;
-      const pasting = pasteCapture.data.lastIndexOf('\x1b[200~') > pasteCapture.data.lastIndexOf('\x1b[201~');
-      if (ch !== '\r' || pasting) continue;
-      out(`SUBMIT:${++pasteCapture.submits}:${JSON.stringify(pasteCapture.data)}`);
-      pasteCapture.data = '';
     }
     return;
   }

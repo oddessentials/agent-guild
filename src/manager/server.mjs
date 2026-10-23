@@ -531,7 +531,7 @@ export function createManagerServer({
       return undefined;
     }
 
-    const sessionMatch = route.match(/^\/sessions\/([a-f0-9]+)(\/stop|\/reattach|\/reply|\/send)?$/);
+    const sessionMatch = route.match(/^\/sessions\/([a-f0-9]+)(\/stop|\/reattach|\/reply)?$/);
     if (sessionMatch) {
       const [, id, action] = sessionMatch;
       if (!action && method === 'GET') {
@@ -542,11 +542,6 @@ export function createManagerServer({
       if (action === '/reply' && method === 'GET') {
         const { reply } = manager.get(id);
         return sendJson(res, 200, { reply: reply && { ...reply, spoken: spokenText(reply.text) } });
-      }
-      if (action === '/send' && method === 'POST') {
-        const body = await readJsonBody(req);
-        await manager.get(id).send(body.text);
-        return sendJson(res, 200, { ok: true });
       }
       if (!action && method === 'PATCH') {
         const body = await readJsonBody(req);
