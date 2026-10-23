@@ -1,6 +1,20 @@
 // The favicon mirrors the card label, including providers that stay active.
 export const isSessionWorking = (session) => session.status !== 'exited' && session.activity === 'active';
 
+/**
+ * The label a session's card shows; the manager sends it with every session. Self-contained: the Pages demo runs
+ * its source on its own.
+ */
+export function sessionLabel({ status, multiplexer, signal, exitCode, activity }) {
+  if (status === 'exited') {
+    // A multiplexer's client exits 1 when detached by Stop: its exit code tells the user nothing.
+    if (multiplexer) return 'Closed';
+    if (signal) return `Exited (${signal})`;
+    return exitCode === 0 || exitCode === null ? 'Exited' : `Exited (${exitCode})`;
+  }
+  return activity === 'active' ? 'Working' : 'Running';
+}
+
 const FRAME_MS = 100;
 const FRAME_COUNT = 24;
 

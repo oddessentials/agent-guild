@@ -11,7 +11,7 @@ import WebSocket from 'ws';
 import { execFile } from 'node:child_process';
 import crypto from 'node:crypto';
 import { startFakeGitHub } from './fixtures/fake-github.mjs';
-import { sessionLabel } from '../src/manager/session.mjs';
+import { sessionLabel } from '../web/activity-favicon.js';
 import { spokenText } from '../src/manager/spoken-text.mjs';
 import { isSessionWorking } from '../web/activity-favicon.js';
 

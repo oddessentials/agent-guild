@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { isSessionWorking } from '../web/activity-favicon.js';
-import { sessionLabel } from '../src/manager/session.mjs';
+import { sessionLabel } from '../web/activity-favicon.js';
 
 const app = readFileSync(new URL('../web/app.js', import.meta.url), 'utf8');
 const source = ['statusText', 'renderSessions', 'upsertSession', 'dropSession', 'connectEvents', 'enterStopping'].map((name) => {
@@ -22,7 +22,7 @@ function page() {
   const favicon = { working: false, setWorking(value) { this.working = value; } };
   const context = {
     reader: null, replies: new Map(), renderRead: () => {}, announceReady() {},
-    isSessionWorking, activityFavicon: favicon,
+    isSessionWorking, sessionLabel, activityFavicon: favicon,
     state: { sessions: new Map(), views: new Map(), panes: [], pageAway: false },
     cards: new Map(), drag: null, sessionsShown: false, sessionOrder: [],
     $: (id) => id === 'sessions' ? grid : node(id),

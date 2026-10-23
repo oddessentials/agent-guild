@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { isSessionWorking } from '../web/activity-favicon.js';
 import { revealRow } from '../web/layout.js';
-import { sessionLabel } from '../src/manager/session.mjs';
+import { sessionLabel } from '../web/activity-favicon.js';
 
 const app = readFileSync(new URL('../web/app.js', import.meta.url), 'utf8');
 const source = ['upsertSession', 'statusText', 'stopNote', 'stopSession', 'removeSession', 'reattachable', 'recheckReattach', 'reattachSession', 'resumeCard', 'osc52Text', 'exitLine'].map((name) => {
@@ -27,7 +27,7 @@ function page({ onApi = () => ({}) } = {}) {
   const opened = [];
   const context = {
     reader: null, replies: new Map(), renderRead: () => {},
-    isSessionWorking,
+    isSessionWorking, sessionLabel,
     state: { sessions: new Map() },
     renderSessions() {}, noticeClone() {}, dropSession() {}, renderAccountsDialog() {},
     openPanel: (id) => opened.push(id),
@@ -81,11 +81,28 @@ test('a multiplexer session detaches instead of ending, says how to reattach, an
   assert.equal(context.statusText(labelled(exited(plain, { exitCode: 0 }))), 'Exited');
 });
 
-test('the page shows the manager\'s label as given, never one of its own', () => {
+test('the page shows the manager\'s label as given, over one of its own', () => {
   const { context } = page();
   // Fields that would read Working, under the label the manager sent.
   assert.equal(context.statusText({ ...plain, activity: 'active', label: 'Running' }), 'Running');
   assert.equal(context.statusText(exited(plain, { label: 'Exited (SIGTERM)' })), 'Exited (SIGTERM)');
+});
+
+test('a session from a manager that sends no label, as one not yet restarted after an upgrade, reads as its card would', () => {
+  const { context } = page();
+  const cases = [
+    [{ ...plain, activity: 'quiet' }, 'Running'],
+    [{ ...plain, activity: 'active' }, 'Working'],
+    [exited(plain, { exitCode: 0 }), 'Exited'],
+    [exited(plain, { exitCode: null }), 'Exited'],
+    [exited(plain), 'Exited (1)'],
+    [exited(plain, { signal: 'SIGTERM' }), 'Exited (SIGTERM)'],
+    [exited(tmux), 'Closed'],
+  ];
+  for (const [session, label] of cases) {
+    assert.equal(session.label, undefined);
+    assert.equal(context.statusText(session), label, JSON.stringify(session));
+  }
 });
 
 test('Reattach brings a closed tmux card back as itself, only while tmux still has its session', async () => {

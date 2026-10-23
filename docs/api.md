@@ -633,7 +633,7 @@ All paths are under `/api/v1`.
 | POST | `/sessions` | `{ providerId, account?, shell?, cwd?, cols?, rows?, name?, args?, resume? }` | `201 { session }`. 429 `too_many_sessions` at the session limit. |
 | GET | `/sessions/:id` | | `{ session }` |
 | GET | `/sessions/:id/reply` | | `{ reply: { id, text, spoken } }`, or `{ reply: null }`: the whole text of the answer `session.reply` names, and `spoken`, the words the page's Read aloud speaks for it: a line per paragraph line, heading, list item and table row, each fenced code block as `Code omitted.` |
-| POST | `/sessions/:id/send` | `{ text }` | `{ ok: true }` once `text` was typed into the session as the page's Dictate types it (on one line, without control characters, as a bracketed paste when the program asked for one) and Enter was pressed 250 ms later. 400 `bad_text` when `text` is not a string or has nothing left to send. 409 `session_exited` when the session is not running, or stopped or was reattached before Enter. 409 `input_interrupted` when other input reached the session before Enter, and 409 `send_in_progress` while another send to it waits to press Enter. Needs the API token; the report token is refused. |
+| POST | `/sessions/:id/send` | `{ text }` | `{ ok: true }` once `text` was typed into the session as the page's Dictate types it (on one line, without control characters, as a bracketed paste when the program asked for one) and Enter was pressed 250 ms later. 400 `bad_text` when `text` is not a string or has nothing left to send. 409 `session_exited` when the session is not running or Stop was asked for it, or when it exited, was asked to stop or was reattached before Enter. 409 `input_interrupted` when other input reached the session before Enter, and 409 `send_in_progress` while another send to it waits to press Enter. Needs the API token; the report token is refused. |
 | PATCH | `/sessions/:id` | `{ name }` | `{ session }`. |
 | POST | `/sessions/:id/stop` | | `{ session }`: ends the process. The session stays listed as exited. |
 | POST | `/sessions/:id/reattach` | | `{ session }`: runs an exited tmux or herdr session's multiplexer client again, keeping the session's id and screen. 409 `multiplexer_session_gone` while `multiplexer.reattachable` is false. |
@@ -659,8 +659,8 @@ header. The manager gives that token only to the processes inside that
 session.
 
 `POST /sessions/:id/send` is not idempotent, and a refusal undoes nothing.
-With `input_interrupted`, and with `session_exited` when the session stopped
-or was reattached during the wait, the text has already reached the terminal
+With `input_interrupted`, and with `session_exited` when the session exited,
+was asked to stop or was reattached during the wait, the text has already reached the terminal
 without Enter. A request whose response was lost may have submitted its
 text. A client must not send it again on its own.
 

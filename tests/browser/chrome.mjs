@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { sessionLabel } from '../../src/manager/session.mjs';
+import { sessionLabel } from '../../web/activity-favicon.js';
 
 const repo = fileURLToPath(new URL('../../', import.meta.url));
 const web = path.join(repo, 'web');

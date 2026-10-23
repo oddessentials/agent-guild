@@ -10,7 +10,7 @@ import { describeCatalog, indexCatalog, parseCatalog } from '../src/manager/mode
 import { GitHub } from '../src/manager/github.mjs';
 import { createViews } from '../src/manager/github-views.mjs';
 import { arrives, doorFor, familiarPose, hallActivity, lookTarget, stage } from '../web/yard/model.mjs';
-import { sessionLabel } from '../src/manager/session.mjs';
+import { sessionLabel } from '../web/activity-favicon.js';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const demo = path.join(repo, 'docs', 'demo');
@@ -575,6 +575,22 @@ test('the demo Yard plays every staging mode, glance, hall level and helper pose
   const before = JSON.stringify([...sessions.values()]);
   t.mock.timers.tick(60000);
   assert.equal(JSON.stringify([...sessions.values()]), before, 'the demo stops simulating output once no page listens');
+});
+
+test('the Pages builder imports only Node.js and files of its own, as the release job has no dependencies installed', () => {
+  const seen = new Set();
+  const packages = [];
+  const visit = (file) => {
+    if (seen.has(file)) return;
+    seen.add(file);
+    for (const [, specifier] of fs.readFileSync(file, 'utf8').matchAll(/^\s*import\s[^'"]*?from\s+['"]([^'"]+)['"]/gm)) {
+      if (specifier.startsWith('.')) visit(path.resolve(path.dirname(file), specifier));
+      else if (!specifier.startsWith('node:')) packages.push(`${path.relative(repo, file)}: ${specifier}`);
+    }
+  };
+  visit(path.join(demo, 'build.mjs'));
+  assert.ok(seen.size > 1, 'the builder imports its own modules');
+  assert.deepEqual(packages, []);
 });
 
 test('the built demo labels its sessions with the manager\'s own code, as they change', async (t) => {

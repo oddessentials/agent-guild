@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describeCatalog, indexCatalog, parseCatalog } from '../../src/manager/model-stats.mjs';
 import { normalizeLaunchFlags, offeredFlags } from '../../src/manager/launch-flags.mjs';
-import { sessionLabel } from '../../src/manager/session.mjs';
+import { sessionLabel } from '../../web/activity-favicon.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, '../..');

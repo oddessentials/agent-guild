@@ -9,6 +9,7 @@ import serializeAddon from '@xterm/addon-serialize';
 import { killWindowsTree } from './command-resolver.mjs';
 import { loadPty } from './pty.mjs';
 import { dictatedText } from '../../web/dictation.js';
+import { sessionLabel } from '../../web/activity-favicon.js';
 
 const { Terminal } = headless;
 const { SerializeAddon } = serializeAddon;
@@ -57,17 +58,6 @@ export function clampDimension(value, fallback, min, max) {
   return Math.min(max, Math.max(min, n));
 }
 
-/** The label a session's card shows; every client shows this one. */
-export function sessionLabel({ status, multiplexer, signal, exitCode, activity }) {
-  if (status === 'exited') {
-    // A multiplexer's client exits 1 when detached by Stop: its exit code tells the user nothing.
-    if (multiplexer) return 'Closed';
-    if (signal) return `Exited (${signal})`;
-    return exitCode === 0 || exitCode === null ? 'Exited' : `Exited (${exitCode})`;
-  }
-  return activity === 'active' ? 'Working' : 'Running';
-}
-
 export class Session extends EventEmitter {
   /**
    * @param {object} opts
@@ -113,6 +103,7 @@ export class Session extends EventEmitter {
     this.reportingTimeoutMs = opts.reportingTimeoutMs ?? 30000;
     this.submitDelayMs = opts.submitDelayMs ?? 250;
     this._runs = 0;
+    this._stopped = null;
     this._inputs = 0;
     this._sending = false;
     this.reporting = REPORTING_STATES.has(opts.reporting?.state) ? { state: opts.reporting.state, reason: opts.reporting.reason ?? null } : null;
@@ -370,6 +361,7 @@ export class Session extends EventEmitter {
     const line = dictatedText(text, true);
     if (!line) throw refusal(400, 'bad_text', 'text has nothing to send');
     if (this.disposed || this.status !== 'running') throw refusal(409, 'session_exited', 'session has exited');
+    if (this._stopped === this._runs) throw refusal(409, 'session_exited', 'session is stopping');
     // A second text typed in the wait would be submitted with the first.
     if (this._sending) throw refusal(409, 'send_in_progress', 'another send to this session has not pressed Enter yet');
     this._sending = true;
@@ -468,6 +460,10 @@ export class Session extends EventEmitter {
    */
   kill({ graceMs = this.killGraceMs } = {}) {
     if (this.status !== 'running') return;
+    // A send waiting to press Enter belongs to the run that Stop ends, even while the process outlives it; and
+    // none starts in what remains of it.
+    this._runs++;
+    this._stopped = this._runs;
     if (process.platform === 'win32') {
       this._killWindowsTree();
       return;

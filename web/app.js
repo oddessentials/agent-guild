@@ -6,7 +6,7 @@ import { TerminalCopy } from './terminal-copy.js';
 import { TerminalControls, bindTerminalViewport } from './terminal-controls.js';
 import { bindTopbarFit, dockMode, clampDockWidth, stageBesideDock, splitMode, clampRatio, bindSplitter, bindVisibleViewport, revealRow, touchTyping, DOCK_MIN, SPLIT_RATIO_MIN } from './layout.js';
 import { highlightParts, rankRepos, recentFirst, remember, repoForOrigin, repoKey } from './repo-search.js';
-import { createActivityFavicon, isSessionWorking } from './activity-favicon.js';
+import { createActivityFavicon, isSessionWorking, sessionLabel } from './activity-favicon.js';
 import { createRemoteAccessUI } from './remote-access.js';
 import { createEnvironmentUI } from './environment.js';
 import { createHistoryPreview } from './history-preview.js';
@@ -5978,9 +5978,12 @@ function accountLabel(s) {
   return (provider?.accounts?.length ?? 0) > 1 || s.account.id !== 'default' ? label : '';
 }
 
-/** The manager's label for the session, the one every client shows. */
+/**
+ * The manager's label for the session, the one every client shows. A manager older than these files, still running
+ * after an upgrade until it restarts, sends none.
+ */
 function statusText(s) {
-  return s.label;
+  return s.label ?? sessionLabel(s);
 }
 
 function buildCard(session) {

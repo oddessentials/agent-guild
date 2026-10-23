@@ -81,3 +81,30 @@ test('Enter never reaches a process that exited, or the one that replaced it, du
   assert.deepEqual(replaced.state, [409, 'session_exited']);
   assert.deepEqual(processes.map((p) => p.writes), [['one'], ['three'], []], 'no Enter in any run');
 });
+
+test('Stop during the wait cancels Enter, though the process has not exited yet', async (t) => {
+  const { session, processes: [child], tick, track } = createSession(t);
+  const send = track(session.send('one'));
+  // The stub ignores the hang-up, as a program may for the kill grace period.
+  session.kill();
+  await tick(250);
+  assert.equal(session.status, 'running');
+  assert.deepEqual([child.writes, send.state], [['one'], [409, 'session_exited']]);
+});
+
+test('after Stop no send starts, however often Stop is asked, until a reattached run takes sends again', async (t) => {
+  const { session, processes, settle, tick, track } = createSession(t);
+  session.kill();
+  session.kill();
+  const refusals = [track(session.send('after stop')), track(session.send('again'))];
+  await settle();
+  assert.equal(session.status, 'running', 'the process outlives the hang-up');
+  assert.deepEqual(refusals.map((send) => send.state), [[409, 'session_exited'], [409, 'session_exited']]);
+  assert.deepEqual(processes[0].writes, [], 'nothing was typed');
+
+  processes[0].exit({ exitCode: 0 });
+  session.reattach({ file: 'mocked-pty', args: [] });
+  const send = track(session.send('new run'));
+  await tick(250);
+  assert.deepEqual([processes[1].writes, send.state], [['new run', '\r'], 'sent']);
+});
