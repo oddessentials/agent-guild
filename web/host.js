@@ -1,16 +1,27 @@
-// The page inside a host that cannot open windows: the VS Code extension frames it, and the
-// Agent Guild app for Apple devices shows it in a WKWebView with an `agentGuild` message handler.
+// The page inside a host that cannot open windows: the VS Code extension frames it, the
+// Agent Guild app for Apple devices shows it in a WKWebView with an `agentGuild` message handler,
+// and the Android app shows it in a WebView with an `agentGuild` web message listener.
 // Links go to the host as messages. Without a host, the page behaves exactly as before.
 
 export const framed = typeof window !== 'undefined' && window.parent !== window;
-const app = typeof window !== 'undefined' && !framed ? window.webkit?.messageHandlers?.agentGuild ?? null : null;
+const app = typeof window !== 'undefined' && !framed ? appHost() : null;
 const hosted = framed || Boolean(app);
 export const compact = hosted && document.documentElement?.dataset.layout === 'compact';
+
+/** The app's message channel, or null. */
+function appHost() {
+  const apple = window.webkit?.messageHandlers?.agentGuild;
+  if (apple) return (message) => apple.postMessage(message);
+  // Android's listener object carries strings only.
+  const android = window.agentGuild;
+  if (typeof android?.postMessage === 'function') return (message) => android.postMessage(JSON.stringify(message));
+  return null;
+}
 
 function post(message) {
   // The manager's frame-ancestors lets only VS Code webviews frame the page.
   if (framed) window.parent.postMessage({ source: 'agent-guild', ...message }, '*');
-  else app.postMessage({ source: 'agent-guild', ...message });
+  else app({ source: 'agent-guild', ...message });
 }
 
 /** The absolute http(s) URL `href` names, or null. */

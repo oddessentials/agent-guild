@@ -793,6 +793,29 @@ in the page with `evaluateJavaScript` once navigation has finished. The page
 accepts it only from its own window at its own origin, with the behavior of
 the VS Code message.
 
+### Android
+
+The Android app loads the same URL in a `WebView` and registers a web message
+listener named `agentGuild` with AndroidX WebKit's
+`WebViewCompat.addWebMessageListener`, whose allowed origin rules name only the
+manager's origin. When the page is not framed, has no Apple handler, and
+`window.agentGuild.postMessage` is a function, the page treats the app as its
+host, as above. That object carries only strings, so the page posts each
+message as JSON text: `JSON.stringify({ source: "agent-guild", type, ... })`.
+
+The page's checks do not protect the app, so the app must:
+
+- accept a message only when `isMainFrame` is true and `sourceOrigin` is
+  exactly the manager's origin;
+- parse it as JSON and accept only the messages in the table above, with a
+  string `type` and the fields it names;
+- open only `http:` and `https:` URLs, outside the `WebView`, and keep the
+  `WebView`'s main frame on the manager's origin: its first load, redirects,
+  new windows and loads after a renderer restart included.
+
+The app shows a view the same way, with `evaluateJavascript` once
+`onPageFinished` has run.
+
 ## The page on Meta Ray-Ban Display
 
 `/glasses.html` is a 600 × 600 page for Meta's display glasses. It reads
