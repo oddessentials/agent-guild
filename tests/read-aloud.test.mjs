@@ -9,6 +9,7 @@ registerHooks({
   resolve: (specifier, context, next) => next(specifier === './vendor/markdown-it.mjs' ? 'markdown-it/browser' : specifier, context),
 });
 const { spokenText, speechChunks, createReader, CODE_OMITTED, MAX_CHUNK } = await import('../web/read-aloud.js');
+const { spokenText: managerSpokenText } = await import('../src/manager/spoken-text.mjs');
 
 test('fenced code inside lists and quotes is skipped, and the prose after it is read', () => {
   assert.deepEqual(spokenText('- > ```\n  > code\n  > ```\n  > After the quote.\n- - ```\n    code\n    ```\n    Nested prose.').split('\n'),
@@ -28,6 +29,17 @@ test('links, inline code and emphasis are read as their words', () => {
 test('headings, prose after code, indented code, list numbers and table rows each read as a line', () => {
   assert.deepEqual(spokenText('## Result\nRun this:\n```sh\nnpm test\n```\nThen check the output.\n\n    indented code is read\n\n1. First step\n2. Second step\n\n| Name | Size |\n| --- | ---: |\n| a.txt | 2 KB |\n\n---\n> quoted').split('\n'),
     ['Result', 'Run this:', CODE_OMITTED, 'Then check the output.', 'indented code is read', '1. First step', '2. Second step', 'Name, Size', 'a.txt, 2 KB', 'quoted']);
+});
+
+test('the manager speaks the same words as the page, with markdown-it\'s Node build', () => {
+  const samples = [
+    '- > ```\n  > code\n  > ```\n  > After the quote.\n- - ```\n    code\n    ```\n    Nested prose.',
+    '```md\n> ```\n> inner\n> ```\n```\nAfter the example.\n~~~\n```\n~~~\nAfter tildes.\n```\nunclosed runs to the end',
+    'Use `snake_case_name` and **bold** _words_ in [the docs](https://example.com) and <https://example.com/a>. ![Diagram](d.png)',
+    '## Result\nRun this:\n```sh\nnpm test\n```\nThen check the output.\n\n    indented code is read\n\n1. First step\n2. Second step\n\n| Name | Size |\n| --- | ---: |\n| a.txt | 2 KB |\n\n---\n> quoted',
+    '<details><summary>Raw *HTML*</summary>\n\nInside &amp; after.\n</details>\n\n3) Third\n   - nested ~~struck~~ item\n\nLine one  \nline two — ünïcode, 日本語.',
+  ];
+  for (const sample of samples) assert.equal(managerSpokenText(sample), spokenText(sample), sample);
 });
 
 test('chunks follow lines and sentences and never pass the limit', () => {

@@ -48,6 +48,15 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   await reloaded('session cards', () => evaluate('document.querySelectorAll("#sessions .session-card").length >= 3'));
   await layoutReady();
 
+  // Each card shows, and announces, the label the (demo) manager sent with its session.
+  const labels = await evaluate('[...document.querySelectorAll("#sessions .session-card")].map(c=>({pill:c.querySelector(".status-pill").textContent,aria:c.getAttribute("aria-label")}))');
+  for (const { pill, aria } of labels) {
+    assert.match(pill, /^(?:Running|Working|Closed|Exited(?: \(.+\))?)$/, `status pill "${pill}"`);
+    assert.ok(aria.includes(`, ${pill}, `), `the card's accessible name says ${pill}: ${aria}`);
+    assert.doesNotMatch(aria, /undefined|null/, aria);
+  }
+  pass('every card shows and announces its session label');
+
   assert.equal(await visible('#menu-toggle'), false);
   for (const id of ['#github-toggle', '#notes-open', '#settings']) assert.equal(await visible(id), true, id);
   assert.ok((await box('.topbar')).height < 80, 'one row');

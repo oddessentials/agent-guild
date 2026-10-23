@@ -11,6 +11,9 @@ import WebSocket from 'ws';
 import { execFile } from 'node:child_process';
 import crypto from 'node:crypto';
 import { startFakeGitHub } from './fixtures/fake-github.mjs';
+import { sessionLabel } from '../web/activity-favicon.js';
+import { spokenText } from '../src/manager/spoken-text.mjs';
+import { isSessionWorking } from '../web/activity-favicon.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 // By real path: macOS's temp folder is under /var, a link to /private/var, which the strict uninstall runner refuses to
@@ -920,14 +923,60 @@ test('a turn\'s answer is reported whole with the report token, read by the page
   const long = 'Every word stays. '.repeat(5000);
   assert.ok(long.length > 64 * 1024, 'longer than any other report may be');
   assert.deepEqual((await report(long)).body.reply, { id: 1 });
-  assert.deepEqual((await call('GET', route)).body.reply, { id: 1, text: long.trim() });
+  assert.deepEqual((await call('GET', route)).body.reply, { id: 1, text: long.trim(), spoken: long.trim() });
   assert.deepEqual((await call('GET', `/sessions/${session.id}`)).body.session.reply, { id: 1 }, 'session updates carry no text');
   assert.equal((await call('GET', route, undefined, { Authorization: '' })).status, 401);
   await report('Second.');
-  assert.deepEqual((await call('GET', route)).body.reply, { id: 2, text: 'Second.' });
+  assert.deepEqual((await call('GET', route)).body.reply, { id: 2, text: 'Second.', spoken: 'Second.' });
   await report(null);
   assert.equal((await call('GET', route)).body.reply, null, 'a turn that ended without an answer leaves nothing to read');
   assert.equal((await report(7)).status, 400);
+});
+
+test('the answer comes with the words Read aloud speaks, from the page\'s code', async () => {
+  const session = await createFake();
+  const route = `/sessions/${session.id}/reply`;
+  const answer = '## Done\nRun this:\n```sh\nnpm test\n```\n1. **Check** the [output](https://example.com).';
+  await call('POST', route, { reply: answer }, { Authorization: '', 'X-Agent-Guild-Report-Token': ctx.manager.get(session.id).reportToken });
+  assert.deepEqual((await call('GET', route)).body.reply, { id: 1, text: answer, spoken: 'Done\nRun this:\nCode omitted.\n1. Check the output.' });
+  assert.equal(spokenText(answer), 'Done\nRun this:\nCode omitted.\n1. Check the output.', 'the same words as the page\'s spokenText');
+});
+
+test('each session carries the label its card shows, as its state changes', async () => {
+  const events = new Client(`${base.replace('http', 'ws')}/api/v1/events?token=${token}`);
+  await events.opened;
+  const session = await createFake();
+  const client = terminal(session.id);
+  await client.opened;
+  await waitForText(client, session.id, 'FAKE-TOOL READY', 'banner');
+  client.input('exit 3');
+  const mine = () => events.messages.filter((m) => m.session?.id === session.id);
+  await waitFor(() => mine().some((m) => m.session.status === 'exited'), { label: 'exit announced' });
+  const labels = mine().map((m) => m.session.label);
+  assert.deepEqual([...new Set(labels)], ['Running', 'Working', 'Exited (3)'], 'in session.created and session.updated, in order');
+  assert.equal((await call('GET', '/sessions')).body.sessions.find((s) => s.id === session.id).label, 'Exited (3)');
+  assert.equal((await call('GET', `/sessions/${session.id}`)).body.session.label, 'Exited (3)');
+  await Promise.all([client.close(), events.close()]);
+});
+
+test('every state reads the card\'s label: Working only while running and producing output', () => {
+  const base = { status: 'running', exitCode: null, signal: null, multiplexer: null, activity: 'quiet' };
+  const tmux = { label: 'tmux', attach: 'tmux attach -t guild-abc123', reattachable: false };
+  const cases = [
+    [{}, 'Running'],
+    [{ activity: 'active' }, 'Working'],
+    [{ activity: 'active', multiplexer: tmux }, 'Working'],
+    [{ status: 'exited' }, 'Exited'],
+    [{ status: 'exited', exitCode: 0, activity: 'active' }, 'Exited'],
+    [{ status: 'exited', exitCode: 1 }, 'Exited (1)'],
+    [{ status: 'exited', exitCode: 1, signal: 'SIGTERM' }, 'Exited (SIGTERM)'],
+    [{ status: 'exited', exitCode: 1, signal: 'SIGTERM', multiplexer: tmux }, 'Closed'],
+  ];
+  for (const [fields, label] of cases) {
+    const s = { ...base, ...fields };
+    assert.equal(sessionLabel(s), label, JSON.stringify(fields));
+    assert.equal(label === 'Working', isSessionWorking(s), 'Working means what the favicon and pill call working');
+  }
 });
 
 test('the tool\'s own session id is reported over HTTP, in-band, and through hooks', async () => {

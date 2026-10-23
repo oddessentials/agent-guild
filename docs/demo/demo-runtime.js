@@ -256,6 +256,12 @@
   }
 
   function clone(value) { return JSON.parse(JSON.stringify(value)); }
+  // Sessions as the manager sends them, each with the label its card shows, from the manager's own code.
+  function labelled(value) {
+    var copy = clone(value);
+    (Array.isArray(copy) ? copy : [copy]).forEach(function (session) { session.label = window.AGENT_GUILD_DEMO_SESSION_LABEL(session); });
+    return copy;
+  }
 
   function fresh(made) {
     made.createdAt = made.startedAt = made.lastOutputAt = new Date().toISOString();
@@ -271,7 +277,7 @@
       var quiet = s.activity === 'active';
       s.activity = quiet ? 'quiet' : 'active';
       s.lastOutputAt = new Date(Date.now() - (quiet ? 2500 : 0)).toISOString();
-      announce({ type: 'session.updated', session: clone(s) });
+      announce({ type: 'session.updated', session: labelled(s) });
     }
     outputTimer = setTimeout(nextOutput, 7000);
   }
@@ -400,8 +406,8 @@
       var id = Math.random().toString(16).slice(2, 10).padEnd(8, '0');
       var p = providers.find(function (item) { return item.id === body.providerId; }) || shellCard;
       var made = fresh(session(id, p.id, body.name || p.tool + ' demo', String(body.cwd || 'demo').replace(/^.*[\\/]/, ''), p.id === 'shell' ? null : 'Demo model', []));
-      sessions.push(made); announce({ type: 'session.created', session: clone(made) });
-      return json({ session: clone(made) }, 201);
+      sessions.push(made); announce({ type: 'session.created', session: labelled(made) });
+      return json({ session: labelled(made) }, 201);
     }
     var muxAction = route.match(/^\/providers\/shell\/multiplexers\/(tmux|herdr)\/(install|update|uninstall)$/);
     if (muxAction && method === 'POST') return manageMultiplexer(muxAction[1], muxAction[2], body);
@@ -413,8 +419,8 @@
     if (match) {
       var at = sessions.findIndex(function (item) { return item.id === match[1]; });
       if (at < 0) return error('demo session not found', 'not_found', 404);
-      if (method === 'PATCH') { sessions[at].name = String(body.name || sessions[at].name); announce({ type: 'session.updated', session: clone(sessions[at]) }); return json({ session: clone(sessions[at]) }); }
-      if (method === 'POST' && match[2] === 'stop') { sessions[at].status = 'exited'; sessions[at].activity = 'quiet'; sessions[at].exitedAt = new Date().toISOString(); announce({ type: 'session.updated', session: clone(sessions[at]) }); return json({ session: clone(sessions[at]) }); }
+      if (method === 'PATCH') { sessions[at].name = String(body.name || sessions[at].name); announce({ type: 'session.updated', session: labelled(sessions[at]) }); return json({ session: labelled(sessions[at]) }); }
+      if (method === 'POST' && match[2] === 'stop') { sessions[at].status = 'exited'; sessions[at].activity = 'quiet'; sessions[at].exitedAt = new Date().toISOString(); announce({ type: 'session.updated', session: labelled(sessions[at]) }); return json({ session: labelled(sessions[at]) }); }
       if (method === 'POST' && match[2] === 'reattach') return reattach(sessions[at]);
       if (method === 'GET' && match[2] === 'reply') return json({ reply: replies[match[1]] ? { id: 1, text: replies[match[1]] } : null });
       if (method === 'DELETE') { sessions.splice(at, 1); announce({ type: 'session.removed', sessionId: match[1] }); return json({}); }
@@ -910,9 +916,9 @@
       current.exitCode = null;
       current.exitedAt = null;
       current.startedAt = current.lastOutputAt = new Date().toISOString();
-      announce({ type: 'session.updated', session: clone(current) });
+      announce({ type: 'session.updated', session: labelled(current) });
     }
-    return json({ session: clone(current) });
+    return json({ session: labelled(current) });
   }
 
   function installBusy(p) {
@@ -942,7 +948,7 @@
       '\r\n' + (updating ? 'updated ' : 'installed ') + (p.installCommand ? p.tool : p.command) + ' to ' + nextVersion +
       '\r\n\r\n\u001b[2m[demo only \u2014 nothing was installed on your computer]\u001b[0m\r\n';
     sessions.push(made);
-    announce({ type: 'session.created', session: clone(made) });
+    announce({ type: 'session.created', session: labelled(made) });
     setTimeout(function () {
       if (!updating) {
         var restored = JSON.parse(JSON.stringify(copyBlueprints[p.id] || []));
@@ -960,10 +966,10 @@
       made.exitCode = 0;
       made.activity = 'quiet';
       made.exitedAt = new Date().toISOString();
-      announce({ type: 'session.updated', session: clone(made) });
+      announce({ type: 'session.updated', session: labelled(made) });
       announce({ type: 'providers.updated', providers: clone(providers) });
     }, 1200);
-    return json({ session: clone(made) }, 201);
+    return json({ session: labelled(made) }, 201);
   }
 
   function manageMultiplexer(toolId, kind, body) {
@@ -977,7 +983,7 @@
     tool.busy = true;
     transcripts[id] = 'Simulated ' + kind + ' of ' + toolId + '\r\nNo commands are run on your computer.\r\n';
     sessions.push(made);
-    announce({ type: 'session.created', session: clone(made) });
+    announce({ type: 'session.created', session: labelled(made) });
     announce({ type: 'providers.updated', providers: clone(providers) });
     setTimeout(function () {
       tool.busy = false;
@@ -989,10 +995,10 @@
       })] : [];
       tool.lastInstall = { kind: kind, outcome: kind === 'uninstall' ? 'removed' : kind === 'install' ? 'installed' : 'updated', exitCode: 0 };
       made.status = 'exited'; made.exitCode = 0; made.activity = 'quiet';
-      announce({ type: 'session.updated', session: clone(made) });
+      announce({ type: 'session.updated', session: labelled(made) });
       announce({ type: 'providers.updated', providers: clone(providers) });
     }, 1000);
-    return json({ session: clone(made) }, 201);
+    return json({ session: labelled(made) }, 201);
   }
 
   function uninstall(providerId, body) {
@@ -1014,16 +1020,16 @@
     var made = fresh(session(id, p.id, 'Uninstall ' + p.tool + ' (' + labels[c.channel] + ')', 'demo', null, []));
     made.cwd = home; made.task = 'install'; made.reporting = null; made.toolSessionId = null;
     transcripts[id] = uninstallTranscript(c);
-    sessions.push(made); announce({ type: 'session.created', session: clone(made) });
+    sessions.push(made); announce({ type: 'session.created', session: labelled(made) });
     setTimeout(function () {
       made.status = 'exited'; made.exitCode = 0; made.activity = 'quiet'; made.exitedAt = new Date().toISOString();
       list.splice(list.indexOf(c), 1);
       syncInstalls(p);
       p.lastInstall = { kind: 'uninstall', outcome: 'removed', exitCode: 0, at: Date.now() };
-      announce({ type: 'session.updated', session: clone(made) });
+      announce({ type: 'session.updated', session: labelled(made) });
       announce({ type: 'providers.updated', providers: clone(providers) });
     }, 1500);
-    return json({ session: clone(made) }, 201);
+    return json({ session: labelled(made) }, 201);
   }
 
   function demoScreen(current) {
@@ -1059,7 +1065,7 @@
         self.emit({ data: JSON.stringify({
           type: 'hello', version: version, pid: null, platform: 'darwin', startedAt: startedAt,
           launcher: null, folderOpener: null, remoteAccess: { available: true }, upgrade: null, yardArt: { state: 'ready', source: 'pack' },
-          notesRevision: notesDoc.revision, sessions: clone(sessions), heartbeat: true,
+          notesRevision: notesDoc.revision, sessions: labelled(sessions), heartbeat: true,
         }) });
       } else {
         var match = self.url.match(/\/sessions\/([a-f0-9]+)\/terminal/);
@@ -1067,7 +1073,7 @@
         if (!current) return self.close(4404, 'session not found');
         var text = transcripts[current.id] || demoScreen(current);
         self.session = current;
-        self.emit({ data: JSON.stringify({ type: 'snapshot', data: text, cols: current.cols, rows: current.rows, generation: current.sizeGeneration || 0, owner: false, session: clone(current) }) });
+        self.emit({ data: JSON.stringify({ type: 'snapshot', data: text, cols: current.cols, rows: current.rows, generation: current.sizeGeneration || 0, owner: false, session: labelled(current) }) });
       }
     }, 20);
   }

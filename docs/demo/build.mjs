@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describeCatalog, indexCatalog, parseCatalog } from '../../src/manager/model-stats.mjs';
 import { normalizeLaunchFlags, offeredFlags } from '../../src/manager/launch-flags.mjs';
+import { sessionLabel } from '../../web/activity-favicon.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, '../..');
@@ -58,7 +59,7 @@ const flags = Object.fromEntries(providers.filter((p) => p.launchFlags).map((p) 
   equals: p.launchFlagsEquals === true,
   flags: offeredFlags(fs.readFileSync(path.join(repo, 'tests', 'fixtures', 'help', `${p.command}.txt`), 'utf8'), normalizeLaunchFlags(p.launchFlags, p.id, [], p.launchFlagExamples ?? null)),
 }]));
-fs.writeFileSync(path.join(out, 'demo-config.js'), `window.AGENT_GUILD_DEMO_VERSION=${JSON.stringify(version)};\nwindow.AGENT_GUILD_DEMO_MODEL_STATS=${JSON.stringify(stats)};\nwindow.AGENT_GUILD_DEMO_FLAGS=${JSON.stringify(flags)};\nwindow.AGENT_GUILD_DEMO_ACTIVITY=true;\n`);
+fs.writeFileSync(path.join(out, 'demo-config.js'), `window.AGENT_GUILD_DEMO_VERSION=${JSON.stringify(version)};\nwindow.AGENT_GUILD_DEMO_MODEL_STATS=${JSON.stringify(stats)};\nwindow.AGENT_GUILD_DEMO_FLAGS=${JSON.stringify(flags)};\nwindow.AGENT_GUILD_DEMO_ACTIVITY=true;\nwindow.AGENT_GUILD_DEMO_SESSION_LABEL=${sessionLabel};\n`);
 fs.writeFileSync(path.join(out, '.nojekyll'), '');
 
 const indexFile = path.join(out, 'index.html');

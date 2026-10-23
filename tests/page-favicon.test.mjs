@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { isSessionWorking } from '../web/activity-favicon.js';
+import { sessionLabel } from '../web/activity-favicon.js';
 
 const app = readFileSync(new URL('../web/app.js', import.meta.url), 'utf8');
 const source = ['statusText', 'renderSessions', 'upsertSession', 'dropSession', 'connectEvents', 'enterStopping'].map((name) => {
@@ -21,7 +22,7 @@ function page() {
   const favicon = { working: false, setWorking(value) { this.working = value; } };
   const context = {
     reader: null, replies: new Map(), renderRead: () => {}, announceReady() {},
-    isSessionWorking, activityFavicon: favicon,
+    isSessionWorking, sessionLabel, activityFavicon: favicon,
     state: { sessions: new Map(), views: new Map(), panes: [], pageAway: false },
     cards: new Map(), drag: null, sessionsShown: false, sessionOrder: [],
     $: (id) => id === 'sessions' ? grid : node(id),
@@ -45,7 +46,11 @@ function page() {
   };
 }
 
-const session = (id, activity = 'active') => ({ id, activity, status: 'running', startedAt: '2026-10-04T10:00:00Z' });
+// A session as the manager sends it, with its label.
+const session = (id, activity = 'active', extra = {}) => {
+  const s = { id, activity, status: 'running', exitCode: null, signal: null, multiplexer: null, startedAt: '2026-10-04T10:00:00Z', ...extra };
+  return { ...s, label: sessionLabel(s) };
+};
 
 test('favicon follows all cards through snapshots, updates, exits and removals', () => {
   const p = page();
@@ -59,7 +64,7 @@ test('favicon follows all cards through snapshots, updates, exits and removals',
   assert.equal(p.favicon.working, false);
   p.send({ type: 'session.created', session: session('c') });
   assert.equal(p.favicon.working, true);
-  p.send({ type: 'session.updated', session: { ...session('c'), status: 'exited', exitCode: 0, exitedAt: '2026-10-04T10:01:00Z' } });
+  p.send({ type: 'session.updated', session: session('c', 'active', { status: 'exited', exitCode: 0, exitedAt: '2026-10-04T10:01:00Z' }) });
   assert.equal(p.label('c'), 'Exited');
   assert.equal(p.favicon.working, false, 'exited cards never count, even with stale active activity');
   p.send({ type: 'session.updated', session: session('c') });

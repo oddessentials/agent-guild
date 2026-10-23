@@ -1,51 +1,13 @@
 // An agent's answer read aloud: every word of its Markdown except fenced code, spoken a chunk at a time.
 import markdownit from './vendor/markdown-it.mjs';
+import { CODE_OMITTED, spokenTextWith } from './spoken-text.js';
 
-export const CODE_OMITTED = 'Code omitted.';
+export { CODE_OMITTED };
 // Chrome's network voices stop speaking an utterance after about 15 seconds.
 export const MAX_CHUNK = 200;
 
-// CommonMark, with GitHub's tables; raw HTML is read as text.
-const markdown = markdownit();
-
-/** The words of inline content: text, code spans and image descriptions, a line break where the source had one. */
-function inlineText(token) {
-  return token.children.map((child) => {
-    if (child.type === 'text' || child.type === 'code_inline') return child.content;
-    if (child.type === 'image') return child.content;
-    if (child.type === 'softbreak' || child.type === 'hardbreak') return '\n';
-    return '';
-  }).join('');
-}
-
-/**
- * The words to speak, a line per paragraph line, heading, list item and table row. Each fenced code block is spoken
- * as CODE_OMITTED; indented code is read as text. An ordered list item keeps its number.
- */
-export function spokenText(source) {
-  const lines = [];
-  const push = (text) => lines.push(...text.split('\n').map((line) => line.trim()).filter(Boolean));
-  let number = '';
-  let row = null;
-  for (const token of markdown.parse(String(source), {})) {
-    if (token.type === 'fence') {
-      number = '';
-      lines.push(CODE_OMITTED);
-    } else if (token.type === 'code_block') push(token.content);
-    else if (token.type === 'list_item_open') number = token.info ? `${token.info}${token.markup} ` : '';
-    else if (token.type === 'tr_open') row = [];
-    else if (token.type === 'tr_close') {
-      push(row.filter(Boolean).join(', '));
-      row = null;
-    } else if (token.type === 'inline') {
-      const text = inlineText(token).trim();
-      if (row) row.push(text);
-      else push(number + text);
-      number = '';
-    }
-  }
-  return lines.join('\n');
-}
+/** The words to speak; see spoken-text.js. */
+export const spokenText = spokenTextWith(markdownit);
 
 /** Pieces of at most `max` characters: one per line and sentence, a long sentence cut at its last pause or space. */
 export function speechChunks(text, max = MAX_CHUNK) {

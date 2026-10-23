@@ -8,6 +8,7 @@ import headless from '@xterm/headless';
 import serializeAddon from '@xterm/addon-serialize';
 import { killWindowsTree } from './command-resolver.mjs';
 import { loadPty } from './pty.mjs';
+import { sessionLabel } from '../../web/activity-favicon.js';
 
 const { Terminal } = headless;
 const { SerializeAddon } = serializeAddon;
@@ -852,6 +853,7 @@ export class Session extends EventEmitter {
       exitCode: this.exitCode,
       signal: this.signal,
       activity: this.activity,
+      label: sessionLabel(this),
       lastOutputAt: this.lastOutputAt ? new Date(this.lastOutputAt).toISOString() : null,
       createdAt: this.createdAt,
       startedAt: this.startedAt,

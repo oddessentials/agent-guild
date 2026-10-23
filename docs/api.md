@@ -365,6 +365,7 @@ files. When the tool cannot be asked, `count` is null, `scopes` is empty and
   "exitCode": null,
   "signal": null,
   "activity": "active",
+  "label": "Working",
   "lastOutputAt": "2026-09-30T03:12:01.120Z",
   "createdAt": "2026-09-30T03:10:44.001Z",
   "startedAt": "2026-09-30T03:10:44.001Z",
@@ -388,6 +389,10 @@ files. When the tool cannot be asked, `count` is null, `scopes` is empty and
 * `pid` is null while the process is still starting and after it exits.
 * `activity` is `active` while the terminal is producing output and `quiet`
   after a short pause.
+* `label` is what the session's card shows, for any client to show the same:
+  `Working` while running and `active`, else `Running`. Once exited, it is
+  `Closed` for a tmux or herdr session, `Exited (<signal>)` when a signal ended
+  it, `Exited (<exit code>)` for an exit code other than 0, and otherwise `Exited`.
 * `resume` is the id of the tool's own session that was resumed, or null.
 * `task` is `install` for a session that installs, updates or uninstalls a
   tool, `upgrade` for the session that upgrades the manager (its
@@ -627,7 +632,7 @@ All paths are under `/api/v1`.
 | GET | `/sessions` | | `{ sessions: Session[] }` |
 | POST | `/sessions` | `{ providerId, account?, shell?, cwd?, cols?, rows?, name?, args?, resume? }` | `201 { session }`. 429 `too_many_sessions` at the session limit. |
 | GET | `/sessions/:id` | | `{ session }` |
-| GET | `/sessions/:id/reply` | | `{ reply: { id, text } }`, or `{ reply: null }`: the whole text of the answer `session.reply` names. |
+| GET | `/sessions/:id/reply` | | `{ reply: { id, text, spoken } }`, or `{ reply: null }`: the whole text of the answer `session.reply` names, and `spoken`, the words the page's Read aloud speaks for it: a line per paragraph line, heading, list item and table row, each fenced code block as `Code omitted.` |
 | PATCH | `/sessions/:id` | `{ name }` | `{ session }`. |
 | POST | `/sessions/:id/stop` | | `{ session }`: ends the process. The session stays listed as exited. |
 | POST | `/sessions/:id/reattach` | | `{ session }`: runs an exited tmux or herdr session's multiplexer client again, keeping the session's id and screen. 409 `multiplexer_session_gone` while `multiplexer.reattachable` is false. |
