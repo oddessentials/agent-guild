@@ -17,6 +17,7 @@ import { createAccountEditor } from './accounts.mjs';
 import { MODES as AUTOSTART_MODES } from './autostart.mjs';
 import { ptyRestartProblem } from './pty.mjs';
 import { YardArt } from './yard-art.mjs';
+import { spokenText } from './spoken-text.mjs';
 
 const require = createRequire(import.meta.url);
 const API = '/api/v1';
@@ -530,7 +531,7 @@ export function createManagerServer({
       return undefined;
     }
 
-    const sessionMatch = route.match(/^\/sessions\/([a-f0-9]+)(\/stop|\/reattach|\/reply)?$/);
+    const sessionMatch = route.match(/^\/sessions\/([a-f0-9]+)(\/stop|\/reattach|\/reply|\/send)?$/);
     if (sessionMatch) {
       const [, id, action] = sessionMatch;
       if (!action && method === 'GET') {
@@ -538,7 +539,15 @@ export function createManagerServer({
         await manager.refreshMultiplexers();
         return sendJson(res, 200, { session: manager.get(id).toJSON() });
       }
-      if (action === '/reply' && method === 'GET') return sendJson(res, 200, { reply: manager.get(id).reply });
+      if (action === '/reply' && method === 'GET') {
+        const { reply } = manager.get(id);
+        return sendJson(res, 200, { reply: reply && { ...reply, spoken: spokenText(reply.text) } });
+      }
+      if (action === '/send' && method === 'POST') {
+        const body = await readJsonBody(req);
+        await manager.get(id).send(body.text);
+        return sendJson(res, 200, { ok: true });
+      }
       if (!action && method === 'PATCH') {
         const body = await readJsonBody(req);
         const session = manager.get(id);

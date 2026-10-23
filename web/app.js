@@ -11,6 +11,7 @@ import { createRemoteAccessUI } from './remote-access.js';
 import { createEnvironmentUI } from './environment.js';
 import { createHistoryPreview } from './history-preview.js';
 import { createReader } from './read-aloud.js';
+import { dictatedText } from './dictation.js';
 import { matchFolders, readRecentFolders, rememberFolder } from './folders.js';
 import { initYard } from './yard/view.js';
 import { ask } from './ask.js';
@@ -5977,14 +5978,9 @@ function accountLabel(s) {
   return (provider?.accounts?.length ?? 0) > 1 || s.account.id !== 'default' ? label : '';
 }
 
+/** The manager's label for the session, the one every client shows. */
 function statusText(s) {
-  if (s.status === 'exited') {
-    // A multiplexer's client exits 1 when detached by Stop: its exit code tells the user nothing.
-    if (s.multiplexer) return 'Closed';
-    if (s.signal) return `Exited (${s.signal})`;
-    return s.exitCode === 0 || s.exitCode === null ? 'Exited' : `Exited (${s.exitCode})`;
-  }
-  return isSessionWorking(s) ? 'Working' : 'Running';
+  return s.label;
 }
 
 function buildCard(session) {
@@ -7178,12 +7174,6 @@ function renderVoice() {
 function changeVoice(input) {
   save(VOICE_KEY, input.checked ? null : 'off');
   renderVoice();
-}
-
-/** Dictated words as terminal input: one line of text, no control characters, so nothing is ever submitted. */
-function dictatedText(text, first) {
-  const clean = text.replace(/[\x00-\x1f\x7f-\x9f]+/g, ' ').replace(/\s+/g, ' ').trim();
-  return clean && (first ? clean : ` ${clean}`);
 }
 
 function canDictate(current) {

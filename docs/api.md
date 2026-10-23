@@ -365,6 +365,7 @@ files. When the tool cannot be asked, `count` is null, `scopes` is empty and
   "exitCode": null,
   "signal": null,
   "activity": "active",
+  "label": "Working",
   "lastOutputAt": "2026-09-30T03:12:01.120Z",
   "createdAt": "2026-09-30T03:10:44.001Z",
   "startedAt": "2026-09-30T03:10:44.001Z",
@@ -388,6 +389,10 @@ files. When the tool cannot be asked, `count` is null, `scopes` is empty and
 * `pid` is null while the process is still starting and after it exits.
 * `activity` is `active` while the terminal is producing output and `quiet`
   after a short pause.
+* `label` is what the session's card shows, for any client to show the same:
+  `Working` while running and `active`, else `Running`. Once exited, it is
+  `Closed` for a tmux or herdr session, `Exited (<signal>)` when a signal ended
+  it, `Exited (<exit code>)` for an exit code other than 0, and otherwise `Exited`.
 * `resume` is the id of the tool's own session that was resumed, or null.
 * `task` is `install` for a session that installs, updates or uninstalls a
   tool, `upgrade` for the session that upgrades the manager (its
@@ -627,7 +632,8 @@ All paths are under `/api/v1`.
 | GET | `/sessions` | | `{ sessions: Session[] }` |
 | POST | `/sessions` | `{ providerId, account?, shell?, cwd?, cols?, rows?, name?, args?, resume? }` | `201 { session }`. 429 `too_many_sessions` at the session limit. |
 | GET | `/sessions/:id` | | `{ session }` |
-| GET | `/sessions/:id/reply` | | `{ reply: { id, text } }`, or `{ reply: null }`: the whole text of the answer `session.reply` names. |
+| GET | `/sessions/:id/reply` | | `{ reply: { id, text, spoken } }`, or `{ reply: null }`: the whole text of the answer `session.reply` names, and `spoken`, the words the page's Read aloud speaks for it: a line per paragraph line, heading, list item and table row, each fenced code block as `Code omitted.` |
+| POST | `/sessions/:id/send` | `{ text }` | `{ ok: true }` once `text` was typed into the session as the page's Dictate types it (on one line, without control characters, as a bracketed paste when the program asked for one) and Enter was pressed 250 ms later. 400 `bad_text` when `text` is not a string or has nothing left to send. 409 `session_exited` when the session is not running, or stopped or was reattached before Enter. 409 `input_interrupted` when other input reached the session before Enter, and 409 `send_in_progress` while another send to it waits to press Enter. Needs the API token; the report token is refused. |
 | PATCH | `/sessions/:id` | `{ name }` | `{ session }`. |
 | POST | `/sessions/:id/stop` | | `{ session }`: ends the process. The session stays listed as exited. |
 | POST | `/sessions/:id/reattach` | | `{ session }`: runs an exited tmux or herdr session's multiplexer client again, keeping the session's id and screen. 409 `multiplexer_session_gone` while `multiplexer.reattachable` is false. |
@@ -651,6 +657,12 @@ The `POST /sessions/:id/…` report routes (`agents`, `model`, `tool-session`,
 report token instead of the API token, in an `X-Agent-Guild-Report-Token`
 header. The manager gives that token only to the processes inside that
 session.
+
+`POST /sessions/:id/send` is not idempotent, and a refusal undoes nothing.
+With `input_interrupted`, and with `session_exited` when the session stopped
+or was reattached during the wait, the text has already reached the terminal
+without Enter. A request whose response was lost may have submitted its
+text. A client must not send it again on its own.
 
 Request bodies are limited to 64 KiB, except `PUT /notes`,
 `POST /sessions/:id/reply` and `POST /sessions/:id/docker`, which accept

@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { isSessionWorking } from '../web/activity-favicon.js';
 import { revealRow } from '../web/layout.js';
+import { sessionLabel } from '../src/manager/session.mjs';
 
 const app = readFileSync(new URL('../web/app.js', import.meta.url), 'utf8');
 const source = ['upsertSession', 'statusText', 'stopNote', 'stopSession', 'removeSession', 'reattachable', 'recheckReattach', 'reattachSession', 'resumeCard', 'osc52Text', 'exitLine'].map((name) => {
@@ -16,6 +17,8 @@ const started = '2026-10-03T10:00:00.000Z';
 const plain = { id: 'p1', name: 'Shell · bash', provider: { tool: 'Shell' }, status: 'running', exitCode: null, signal: null, startedAt: started, exitedAt: null, multiplexer: null };
 const tmux = { ...plain, id: 'm1', name: 'Shell · tmux', multiplexer: { label: 'tmux', attach: 'tmux attach -t guild-abc123', reattachable: false } };
 const exited = (s, extra = {}) => ({ ...s, status: 'exited', exitCode: 1, exitedAt: '2026-10-03T10:05:00.000Z', ...extra });
+// A session as the manager sends it, with its label.
+const labelled = (s) => ({ ...s, label: sessionLabel(s) });
 
 // The browser's own session logic, with only the DOM and the network stubbed.
 function page({ onApi = () => ({}) } = {}) {
@@ -73,9 +76,16 @@ test('a multiplexer session detaches instead of ending, says how to reattach, an
     '"Shell · tmux" is still running. Detach it and remove it? tmux keeps running it. Reattach it in a terminal with: tmux attach -t guild-abc123',
     '"Shell · bash" is still running. End it and remove it?',
   ]);
-  assert.equal(context.statusText(exited(tmux)), 'Closed', 'a detached client\'s exit code means nothing to the user');
-  assert.equal(context.statusText(exited(plain)), 'Exited (1)');
-  assert.equal(context.statusText(exited(plain, { exitCode: 0 })), 'Exited');
+  assert.equal(context.statusText(labelled(exited(tmux))), 'Closed', 'a detached client\'s exit code means nothing to the user');
+  assert.equal(context.statusText(labelled(exited(plain))), 'Exited (1)');
+  assert.equal(context.statusText(labelled(exited(plain, { exitCode: 0 }))), 'Exited');
+});
+
+test('the page shows the manager\'s label as given, never one of its own', () => {
+  const { context } = page();
+  // Fields that would read Working, under the label the manager sent.
+  assert.equal(context.statusText({ ...plain, activity: 'active', label: 'Running' }), 'Running');
+  assert.equal(context.statusText(exited(plain, { label: 'Exited (SIGTERM)' })), 'Exited (SIGTERM)');
 });
 
 test('Reattach brings a closed tmux card back as itself, only while tmux still has its session', async () => {

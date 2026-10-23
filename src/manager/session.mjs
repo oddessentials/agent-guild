@@ -8,6 +8,7 @@ import headless from '@xterm/headless';
 import serializeAddon from '@xterm/addon-serialize';
 import { killWindowsTree } from './command-resolver.mjs';
 import { loadPty } from './pty.mjs';
+import { dictatedText } from '../../web/dictation.js';
 
 const { Terminal } = headless;
 const { SerializeAddon } = serializeAddon;
@@ -56,6 +57,17 @@ export function clampDimension(value, fallback, min, max) {
   return Math.min(max, Math.max(min, n));
 }
 
+/** The label a session's card shows; every client shows this one. */
+export function sessionLabel({ status, multiplexer, signal, exitCode, activity }) {
+  if (status === 'exited') {
+    // A multiplexer's client exits 1 when detached by Stop: its exit code tells the user nothing.
+    if (multiplexer) return 'Closed';
+    if (signal) return `Exited (${signal})`;
+    return exitCode === 0 || exitCode === null ? 'Exited' : `Exited (${exitCode})`;
+  }
+  return activity === 'active' ? 'Working' : 'Running';
+}
+
 export class Session extends EventEmitter {
   /**
    * @param {object} opts
@@ -78,6 +90,7 @@ export class Session extends EventEmitter {
    * @param {number} [opts.activityIdleMs]
    * @param {number} [opts.doneAgentLingerMs]
    * @param {number} [opts.killGraceMs]  time between hang-up and force kill
+   * @param {number} [opts.submitDelayMs]  time between the text and Enter of a send
    */
   constructor(opts) {
     super();
@@ -98,6 +111,10 @@ export class Session extends EventEmitter {
     this.doneAgentLingerMs = opts.doneAgentLingerMs ?? 15000;
     this.killGraceMs = opts.killGraceMs ?? 4000;
     this.reportingTimeoutMs = opts.reportingTimeoutMs ?? 30000;
+    this.submitDelayMs = opts.submitDelayMs ?? 250;
+    this._runs = 0;
+    this._inputs = 0;
+    this._sending = false;
     this.reporting = REPORTING_STATES.has(opts.reporting?.state) ? { state: opts.reporting.state, reason: opts.reporting.reason ?? null } : null;
     this._reportingTimer = null;
     this._typedSinceEnter = false;
@@ -197,6 +214,7 @@ export class Session extends EventEmitter {
       useConpty: true,
     });
     this.pty = proc;
+    this._runs++;
     proc.onData((data) => { if (this.pty === proc) this._onData(data); });
     proc.onExit(({ exitCode, signal }) => { if (this.pty === proc) this._onExit(exitCode, signal); });
   }
@@ -327,6 +345,7 @@ export class Session extends EventEmitter {
   }
 
   input(data) {
+    this._inputs++;
     this.write(data);
     if (this.reporting?.state === 'pending' && !this._reportingTimer && typeof data === 'string' && this._sendsTypedLine(data)) {
       this._reportingTimer = setTimeout(() => {
@@ -338,6 +357,36 @@ export class Session extends EventEmitter {
         this._changed();
       }, this.reportingTimeoutMs);
       this._reportingTimer.unref?.();
+    }
+  }
+
+  /**
+   * Enter `text` as the page's Dictate does, pasted as one line, then press Enter `submitDelayMs` later, as a person
+   * would: a program may read an Enter that follows a paste too closely as a new line, as Codex CLI does. Enter is
+   * pressed only into the same run of the session, and only if no other input arrived in between.
+   */
+  async send(text) {
+    if (typeof text !== 'string') throw refusal(400, 'bad_text', 'text must be a string');
+    const line = dictatedText(text, true);
+    if (!line) throw refusal(400, 'bad_text', 'text has nothing to send');
+    if (this.disposed || this.status !== 'running') throw refusal(409, 'session_exited', 'session has exited');
+    // A second text typed in the wait would be submitted with the first.
+    if (this._sending) throw refusal(409, 'send_in_progress', 'another send to this session has not pressed Enter yet');
+    this._sending = true;
+    try {
+      // What xterm.js's paste sends for one line of text.
+      this.input(this.term.modes.bracketedPasteMode ? `\x1b[200~${line}\x1b[201~` : line);
+      const { _runs: run, _inputs: inputs } = this;
+      await new Promise((resolve) => setTimeout(resolve, this.submitDelayMs));
+      if (this.disposed || this.status !== 'running' || this._runs !== run) {
+        throw refusal(409, 'session_exited', 'session exited before Enter; the text was not submitted');
+      }
+      if (this._inputs !== inputs) {
+        throw refusal(409, 'input_interrupted', 'other input reached the session before Enter; the text was typed but not submitted');
+      }
+      this.input('\r');
+    } finally {
+      this._sending = false;
     }
   }
 
@@ -852,6 +901,7 @@ export class Session extends EventEmitter {
       exitCode: this.exitCode,
       signal: this.signal,
       activity: this.activity,
+      label: sessionLabel(this),
       lastOutputAt: this.lastOutputAt ? new Date(this.lastOutputAt).toISOString() : null,
       createdAt: this.createdAt,
       startedAt: this.startedAt,
@@ -872,6 +922,10 @@ export class Session extends EventEmitter {
 
 function count(value) {
   return Number.isSafeInteger(value) && value > 0 ? value : 0;
+}
+
+function refusal(status, code, message) {
+  return Object.assign(new Error(message), { status, code });
 }
 
 function badRequest(message) {

@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { sessionLabel } from '../../src/manager/session.mjs';
 
 const repo = fileURLToPath(new URL('../../', import.meta.url));
 const web = path.join(repo, 'web');
@@ -120,7 +121,7 @@ export async function withPage({ name, instrumentation = '', headers = () => ({}
     for (const [header, value] of Object.entries(headers())) res.setHeader(header, value);
     if (route === '/') {
       const html = fs.readFileSync(file, 'utf8').replace('<script type="module" src="/app.js"></script>',
-        '<script src="/demo-runtime.js"></script>' + instrumentation + '<script type="module" src="/app.js"></script>');
+        `<script>window.AGENT_GUILD_DEMO_SESSION_LABEL=${sessionLabel};</script>` + '<script src="/demo-runtime.js"></script>' + instrumentation + '<script type="module" src="/app.js"></script>');
       res.end(html);
     } else fs.createReadStream(file).pipe(res);
   });

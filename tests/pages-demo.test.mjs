@@ -10,6 +10,7 @@ import { describeCatalog, indexCatalog, parseCatalog } from '../src/manager/mode
 import { GitHub } from '../src/manager/github.mjs';
 import { createViews } from '../src/manager/github-views.mjs';
 import { arrives, doorFor, familiarPose, hallActivity, lookTarget, stage } from '../web/yard/model.mjs';
+import { sessionLabel } from '../src/manager/session.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const demo = path.join(repo, 'docs', 'demo');
@@ -101,6 +102,7 @@ test('the demo runtime handles initial API calls and opens event and terminal so
       createElement: (tag) => ({ tag, setAttribute() {} }), querySelector: () => null,
     },
     AGENT_GUILD_DEMO_VERSION: '2.3.4',
+    AGENT_GUILD_DEMO_SESSION_LABEL: sessionLabel,
   };
   context.window = context;
   vm.runInNewContext(runtime, context, { filename: 'demo-runtime.js' });
@@ -141,6 +143,8 @@ function loadDemo(globals = {}) {
     localStorage: { setItem() {} },
     document: { body: { prepend() {} }, head: { append() {} }, createElement: (tag) => ({ tag, setAttribute() {} }), querySelector: () => null },
     AGENT_GUILD_DEMO_VERSION: '2.3.4',
+    // As the Pages config sets it: the manager's own label.
+    AGENT_GUILD_DEMO_SESSION_LABEL: sessionLabel,
     ...globals,
   };
   context.window = context;
@@ -571,6 +575,27 @@ test('the demo Yard plays every staging mode, glance, hall level and helper pose
   const before = JSON.stringify([...sessions.values()]);
   t.mock.timers.tick(60000);
   assert.equal(JSON.stringify([...sessions.values()]), before, 'the demo stops simulating output once no page listens');
+});
+
+test('the built demo labels its sessions with the manager\'s own code, as they change', async (t) => {
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-pages-'));
+  t.after(() => fs.rmSync(out, { recursive: true, force: true }));
+  execFileSync(process.execPath, [path.join(demo, 'build.mjs'), '--out', out, '--version', '1.2.3']);
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { context, call } = loadDemo({ AGENT_GUILD_DEMO_SESSION_LABEL: undefined });
+  vm.runInNewContext(fs.readFileSync(path.join(out, 'demo-config.js'), 'utf8'), context, { filename: 'demo-config.js' });
+  const events = [];
+  const socket = new context.WebSocket('wss://example.test/api/v1/events');
+  socket.onmessage = ({ data }) => events.push(JSON.parse(data));
+  t.mock.timers.tick(40);
+  const { sessions } = events[0];
+  assert.ok(sessions.length >= 4);
+  for (const s of sessions) assert.equal(s.label, sessionLabel(s), s.name);
+  const running = sessions.find((s) => s.status === 'running' && s.task === null);
+  const stopped = await call('POST', `/sessions/${running.id}/stop`);
+  t.mock.timers.tick(1);
+  assert.equal(stopped.body.session.label, 'Exited');
+  assert.equal(events.at(-1).session.label, 'Exited');
 });
 
 test('without the Pages config, demo sessions keep their state', async (t) => {
