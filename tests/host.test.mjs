@@ -3,12 +3,22 @@ import assert from 'node:assert/strict';
 
 let loads = 0;
 
-/** web/host.js loaded into a fake page; `framed` decides whether its parent is another window, `app` whether the Apple app's handler exists. */
-async function host({ framed, app = false, layout, writeText, execCommand = () => true }) {
+/**
+ * web/host.js loaded into a fake page; `framed` decides whether its parent is another window, `app` whether the Apple app's
+ * handler exists, and `android` what the Android app's listener puts at window.agentGuild.
+ */
+async function host({ framed, app = false, android, layout, writeText, execCommand = () => true }) {
   const posted = [], opened = [], listeners = {}, copied = [], appPosted = [], observers = [];
   const win = { open: (...args) => opened.push(args), addEventListener: (type, listener) => { listeners[`window.${type}`] = listener; } };
   win.parent = framed ? { postMessage: (message, origin) => posted.push({ message, origin }) } : win;
   if (app) win.webkit = { messageHandlers: { agentGuild: { postMessage: (message) => appPosted.push(message) } } };
+  if (android === true) {
+    // Like Android's WebMessageListener object, which refuses anything but a string.
+    win.agentGuild = { postMessage: (message) => {
+      if (typeof message !== 'string') throw new TypeError('not a string');
+      appPosted.push(message);
+    } };
+  } else if (android !== undefined) win.agentGuild = android;
   const document = {
     documentElement: { dataset: { skin: 'guild', theme: 'dark', ...(layout ? { layout } : {}) } },
     activeElement: null,
@@ -141,6 +151,49 @@ test('the Apple app gets links and readiness, and only its own page can ask for 
   const framed = await host({ framed: true, app: true });
   framed.module.announceReady('1.4.0');
   assert.deepEqual(framed.appPosted, [], 'a framed page answers only its frame host');
+});
+
+test('the Android app gets links and readiness as JSON text, and only its own page can ask for a view', async () => {
+  const page = await host({ framed: false, android: true });
+  assert.equal(page.module.framed, false);
+  const link = click('https://github.com/login/device');
+  page.listeners.click(link);
+  assert.equal(link.prevented, true);
+  page.module.openLink('file:///etc/passwd');
+  page.module.announceReady('1.8.0');
+  assert.deepEqual(page.appPosted.map((text) => JSON.parse(text)), [
+    { source: 'agent-guild', type: 'open', url: 'https://github.com/login/device' },
+    { source: 'agent-guild', type: 'ready', version: '1.8.0' },
+  ]);
+  assert.deepEqual([page.opened, page.posted], [[], []]);
+
+  const shown = [];
+  page.module.onViewRequest((view) => shown.push(view));
+  const send = (source, origin, data) => page.listeners['window.message']({ source, origin, data });
+  const own = 'http://127.0.0.1:47821';
+  send(window, own, { source: 'agent-guild-app', type: 'view', view: 'yard' });
+  send({}, own, { source: 'agent-guild-app', type: 'view', view: 'cards' });
+  send(window, 'https://www.youtube-nocookie.com', { source: 'agent-guild-app', type: 'view', view: 'cards' });
+  send(window, own, { source: 'agent-guild-vscode', type: 'view', view: 'cards' });
+  assert.deepEqual(shown, ['yard']);
+
+  const compact = await host({ framed: false, android: true, layout: 'compact' });
+  assert.equal(compact.module.compact, true);
+  compact.module.expand('s1');
+  assert.deepEqual(compact.appPosted.map((text) => JSON.parse(text)), [{ source: 'agent-guild', type: 'expand', session: 's1' }]);
+
+  const framed = await host({ framed: true, android: true });
+  framed.module.announceReady('1.8.0');
+  assert.deepEqual(framed.appPosted, [], 'a framed page answers only its frame host');
+});
+
+test('a window.agentGuild without postMessage is not a host', async () => {
+  for (const android of [{}, { postMessage: 'text' }, null]) {
+    const page = await host({ framed: false, android });
+    page.module.openLink('https://example.com/');
+    assert.deepEqual(page.opened, [['https://example.com/', '_blank', 'noopener,noreferrer']]);
+    assert.equal(page.listeners.click, undefined);
+  }
 });
 
 test('copying falls back to execCommand when the clipboard API is refused', async () => {

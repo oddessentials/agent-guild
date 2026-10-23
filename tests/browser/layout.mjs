@@ -592,6 +592,18 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   await send('Page.removeScriptToEvaluateOnNewDocument', { identifier });
   pass('on a touch screen the Yard\'s hint names touch gestures');
 
+  // Like Android's WebMessageListener object, which refuses anything but a string.
+  const android = await send('Page.addScriptToEvaluateOnNewDocument', {
+    source: 'window.testApp=[];window.agentGuild={postMessage:m=>{if(typeof m!=="string")throw new TypeError("not a string");testApp.push(JSON.parse(m))}};',
+  });
+  await send('Page.navigate', { url: `${origin}/?android#token=t&view=yard` });
+  await until('the Android app opens the Yard', () => evaluate('document.documentElement.dataset.view==="yard"&&testApp.some(m=>m.source==="agent-guild"&&m.type==="ready")'));
+  await layoutReady();
+  await ask('cards');
+  await until('Cards for the Android app', () => evaluate('document.documentElement.dataset.view==="cards"'));
+  await send('Page.removeScriptToEvaluateOnNewDocument', { identifier: android.identifier });
+  pass('the Android app opens the page in the Yard, gets its readiness as JSON text and switches views');
+
   assert.deepEqual(errors, []);
   pass('the page has no uncaught browser exceptions');
 });
