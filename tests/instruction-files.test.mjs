@@ -212,6 +212,59 @@ test('Codex: one global file, one file per folder from the marker root down, wit
   assert.match(untrusted.scopes[1].note, /marks the folder untrusted/);
 });
 
+test('Codex: a trusted project\'s .codex/config.toml files apply from the root down, each overriding only the keys it sets', async (t) => {
+  const { root, write, dir, at } = fixture(t);
+  dir('repo/.git');
+  write('repo/AGENTS.md');
+  write('repo/leaf/AGENTS.md');
+  write('repo/leaf/.codex/config.toml', 'project_doc_max_bytes = 0\n');
+  const trusting = (rel, level = 'trusted') => write('codex/config.toml', `[projects.'${at(rel)}']\ntrust_level = "${level}"\n`);
+  const reader = new InstructionFiles({ env: { CODEX_HOME: at('codex') }, resolveCwd: (cwd) => cwd });
+  const list = () => reader.list(provider('codex'), account, at('repo/leaf'));
+  const project = (listed) => listed.scopes.find((s) => s.id === 'project');
+  const none = 'Codex is set to read no project files (project_doc_max_bytes is 0).';
+
+  trusting('repo');
+  assert.deepEqual(rows(await list(), root), [['repo/AGENTS.md', 'project', none], ['repo/leaf/AGENTS.md', 'project', none]],
+    'a trusted project\'s budget of 0 reads no project files');
+
+  write('codex/config.toml', '');
+  assert.deepEqual(rows(await list(), root), [['repo/AGENTS.md', 'project', null], ['repo/leaf/AGENTS.md', 'project', null]],
+    'without a trust entry the project config is ignored, and its files still load');
+
+  trusting('repo', 'untrusted');
+  const untrusted = await list();
+  assert.deepEqual(rows(untrusted, root), []);
+  assert.match(project(untrusted).note, /marks the folder untrusted/);
+
+  trusting('repo');
+  write('repo/leaf/.codex/config.toml', '');
+  assert.deepEqual(rows(await list(), root), [['repo/AGENTS.md', 'project', null], ['repo/leaf/AGENTS.md', 'project', null]],
+    'an empty .codex/config.toml changes nothing');
+
+  write('repo/.codex/config.toml', 'project_root_markers = [".hg"]\nproject_doc_fallback_filenames = ["TEAM.md"]\nproject_doc_max_bytes = 5\n');
+  write('repo/leaf/.codex/config.toml', 'project_doc_fallback_filenames = ["CREW.md"]\n');
+  dir('repo/leaf/.hg');
+  fs.rmSync(at('repo/AGENTS.md'));
+  fs.rmSync(at('repo/leaf/AGENTS.md'));
+  write('repo/TEAM.md');
+  write('repo/leaf/TEAM.md');
+  write('repo/leaf/CREW.md', 'CREW-MARK\n');
+  const nested = await list();
+  assert.deepEqual(rows(nested, root), [['repo/leaf/CREW.md', 'project', null]], 'the closer fallback list wins');
+  assert.equal(project(nested).files[0].note, 'Codex reads only the first 5 bytes, its limit for project files.',
+    'the leaf keeps the root\'s budget, so the root stayed at .git despite the project\'s own markers');
+
+  write('repo/leaf/.codex/config.toml', 'project_doc_fallback_filenames = []\n');
+  assert.deepEqual(rows(await list(), root), [], 'an empty list clears the root\'s fallback names');
+
+  trusting('repo/leaf');
+  write('repo/leaf/.codex/config.toml', 'project_doc_fallback_filenames = ["CREW.md"]\n');
+  const leaf = await list();
+  assert.deepEqual(rows(leaf, root), [['repo/leaf/CREW.md', 'project', null]]);
+  assert.equal(project(leaf).files[0].note, null, 'a folder trusted on its own applies its config, but not the untrusted root\'s budget');
+});
+
 test('Grok Build: grok inspect decides, with the account\'s GROK_HOME, real file names and a trust note', async (t) => {
   const { root, write, at } = fixture(t);
   write('grok/AGENTS.md');
