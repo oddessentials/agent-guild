@@ -43,7 +43,7 @@ window.WebSocket=class extends DemoSocket {
 };
 </script>`;
 
-const checks = await withPage({ name: 'terminal-controls', instrumentation }, async ({ origin, send, evaluate, layoutReady, pass, errors }) => {
+const checks = await withPage({ name: 'terminal-controls', instrumentation }, async ({ origin, send, evaluate, layoutReady, pass, errors, navigate }) => {
   const strip = '#terminal-controls';
   const key = (name) => `${strip} [data-key="${name}"]`;
   const currentTerm = 'testTerms.find(t=>t.element?.isConnected && t.element.closest(".focused"))';
@@ -90,7 +90,7 @@ const checks = await withPage({ name: 'terminal-controls', instrumentation }, as
     fs.writeFileSync(path.join(process.env.CONTROLS_SCREENSHOTS, `${name}.png`), Buffer.from(data, 'base64'));
   };
   await size(1200, 850);
-  await send('Page.navigate', { url: origin });
+  await navigate(origin);
   await until('cards', () => evaluate('document.querySelectorAll("#sessions .session-card").length>=3'));
   assert.equal(await evaluate('document.querySelector("#read-choice").hidden'), false, 'Read aloud can be turned on before any terminal opens');
   assert.deepEqual(await evaluate('[document.querySelector("#read-note").hidden,(document.querySelector("#read-choice .note-toggle").click(),document.querySelector("#read-note").hidden),document.querySelector("#read-choice .note-toggle").getAttribute("aria-expanded")]'), [true, false, 'true'], 'a setting\'s note shows only from its info button');
@@ -440,7 +440,7 @@ const checks = await withPage({ name: 'terminal-controls', instrumentation }, as
 
   await send('Emulation.setTouchEmulationEnabled', { enabled: false });
   await send('Page.addScriptToEvaluateOnNewDocument', { source: 'Object.defineProperty(navigator,"maxTouchPoints",{get:()=>5})' });
-  await send('Page.navigate', { url: origin });
+  await navigate(origin);
   await until('restored page', () => evaluate('Boolean(document.querySelector("#sessions .session-card .open"))'));
   await evaluate('document.querySelector("#sessions .session-card .open").click()');
   await ready();
@@ -458,7 +458,7 @@ const checks = await withPage({ name: 'terminal-controls', instrumentation }, as
   await click('#panel-text-larger');
   assert.equal(await font(), before + 1);
   assert.equal(await evaluate('document.querySelector("#panel-text-size-value").textContent'), `${before + 1} px`);
-  await send('Page.navigate', { url: origin });
+  await navigate(origin);
   await until('reloaded page', () => evaluate('Boolean(document.querySelector("#sessions .session-card .open"))'));
   await evaluate('document.querySelector("#sessions .session-card .open").click()');
   await ready();
@@ -467,7 +467,7 @@ const checks = await withPage({ name: 'terminal-controls', instrumentation }, as
 
   await send('Page.addScriptToEvaluateOnNewDocument', { source: `{const real=matchMedia.bind(window);const faked={'(pointer: coarse)':false,'(any-pointer: coarse)':true};
     window.matchMedia=(query)=>query in faked?{matches:faked[query],media:query,addEventListener(){},removeEventListener(){}}:real(query)}` });
-  await send('Page.navigate', { url: origin });
+  await navigate(origin);
   await until('laptop page', () => evaluate('Boolean(document.querySelector("#sessions .session-card .open"))'));
   await evaluate('document.querySelector("#sessions .session-card .open").click()');
   await until('terminal', () => evaluate('testTerms.some(t=>t.element?.isConnected)'));

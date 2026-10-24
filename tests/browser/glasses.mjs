@@ -27,7 +27,7 @@ const sessions = [
 ];
 const replies = { s1: { id: 1, text: 'First line.\n\n```sh\nnpm test\n```\n\nRun it.', spoken: 'First line.\nCode omitted.\nRun it.' } };
 
-const checks = await withPage({ name: 'glasses', chromeArgs: ['--enable-spatial-navigation'] }, async ({ origin, send, evaluate, layoutReady, pass, errors }) => {
+const checks = await withPage({ name: 'glasses', chromeArgs: ['--enable-spatial-navigation'] }, async ({ origin, send, evaluate, layoutReady, pass, errors, navigate }) => {
   await send('Emulation.setDeviceMetricsOverride', { width: 600, height: 600, deviceScaleFactor: 1, mobile: false });
   await send('Page.addScriptToEvaluateOnNewDocument', { source: fake });
   const codes = { ArrowUp: 38, ArrowDown: 40, Enter: 13, Escape: 27 };
@@ -41,9 +41,8 @@ const checks = await withPage({ name: 'glasses', chromeArgs: ['--enable-spatial-
   const focused = () => evaluate('document.activeElement.id || document.activeElement.querySelector(".name")?.textContent || document.activeElement.tagName');
   const setApi = (api) => evaluate(`sessionStorage.setItem('testApi', ${JSON.stringify(JSON.stringify(api))})`);
   const open = async (hash = '') => {
-    await send('Page.navigate', { url: 'about:blank' });
-    await until('blank', () => evaluate(`location.href === 'about:blank'`));
-    await send('Page.navigate', { url: `${origin}/glasses.html${hash}` });
+    await navigate('about:blank');
+    await navigate(`${origin}/glasses.html${hash}`);
     await until('glasses page', () => evaluate(`document.readyState === 'complete' && Boolean(document.querySelector('#list-note'))`));
   };
 

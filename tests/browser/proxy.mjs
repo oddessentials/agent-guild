@@ -90,13 +90,13 @@ try {
 
   const checks = await withPage({ name: 'proxy', chromeArgs: [
     '--host-resolver-rules=MAP guild.example.ts.net 127.0.0.1', '--no-proxy-server',
-  ] }, async ({ send, evaluate, layoutReady, pass, errors }) => {
+  ] }, async ({ send, evaluate, layoutReady, pass, errors, navigate }) => {
     await send('Security.setIgnoreCertificateErrors', { ignore: true });
     await send('Page.addScriptToEvaluateOnNewDocument', { source: `
       window.cspViolations=[];
       document.addEventListener('securitypolicyviolation', e => cspViolations.push(e.effectiveDirective));
     ` });
-    await send('Page.navigate', { url: origin });
+    await navigate(origin);
     await until('remote sign-in', () => evaluate(`document.querySelector('#auth')?.checkVisibility()`));
     assert.equal(await evaluate('location.origin'), origin);
     pass('HTTPS proxy serves the real UI while the manager remains on loopback');
@@ -313,7 +313,7 @@ try {
     pass('disabling revokes the connected remote page while its terminal keeps running');
 
     await send('Emulation.clearDeviceMetricsOverride');
-    await send('Page.navigate', { url: `${ctx.api.url}/#token=${ctx.token}` });
+    await navigate(`${ctx.api.url}/#token=${ctx.token}`);
     await until('local manager connected', () => evaluate(`document.querySelector('#connection')?.classList.contains('ok')`));
     // The socket shows as connected when it opens; remote access is offered only once the manager's hello arrives.
     // A click in between opens the dialog without loading its state, so wait until the button is offered.
@@ -399,7 +399,7 @@ try {
 
     ctx.remoteAccess.change({ action: 'custom', revision: ctx.remoteAccess.snapshot().revision, hosts: [authority, 'saved.example.com'], origins: [origin, 'https://saved.example.com'] });
     await ctx.remoteAccess.task;
-    await send('Page.navigate', { url: `${origin}/#token=${ctx.token}` });
+    await navigate(`${origin}/#token=${ctx.token}`);
     await until('proxy page connected', () => evaluate(`document.querySelector('#connection')?.classList.contains('ok')`));
     await until('Meta glasses offered', () => evaluate(`!document.querySelector('#glasses-open').hidden`));
     await evaluate(`document.querySelector('#glasses-open').click(); document.querySelector('#glasses-show').click()`);
@@ -419,7 +419,7 @@ try {
     assert.equal(await drawnFor('https://saved.example.com'), true);
     await withDialogClose(evaluate, '#glasses', () => evaluate(`document.querySelector('#glasses-close').click()`));
     assert.deepEqual(await evaluate('cspViolations'), []);
-    await send('Page.navigate', { url: `${origin}/glasses.html#token=${ctx.token}` });
+    await navigate(`${origin}/glasses.html#token=${ctx.token}`);
     await until('glasses page through the proxy', () => evaluate(`[...document.querySelectorAll('#list .row')].some((e) => e.textContent === ${JSON.stringify(session.toJSON().name + session.toJSON().label)})`));
     assert.deepEqual(await evaluate('cspViolations'), []);
     assert.deepEqual(errors, []);

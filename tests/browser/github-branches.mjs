@@ -32,7 +32,7 @@ window.fetch = async function(input, init) {
 };
 </script>`;
 
-const checks = await withPage({ name: 'github-branches', instrumentation }, async ({ origin, send, evaluate, layoutReady, pass, errors }) => {
+const checks = await withPage({ name: 'github-branches', instrumentation }, async ({ origin, send, evaluate, layoutReady, pass, errors, navigate }) => {
   const click = (selector) => evaluate(`{ const e=document.querySelector(${JSON.stringify(selector)}); e.focus(); e.click(); }`);
   const input = (selector, text) => evaluate(`{ const e=document.querySelector(${JSON.stringify(selector)}); e.focus(); e.value=${JSON.stringify(text)}; e.dispatchEvent(new Event('input',{bubbles:true})); }`);
   const rows = () => evaluate(`[...document.querySelectorAll('#github-branches-list > *')].map(e=>e.dataset.branch)`);
@@ -69,7 +69,7 @@ const checks = await withPage({ name: 'github-branches', instrumentation }, asyn
     await evaluate(`document.querySelector('#github-repo').blur()`);
   };
   await send('Emulation.setDeviceMetricsOverride', { width:1440, height:900, deviceScaleFactor:1, mobile:false });
-  await send('Page.navigate', { url:origin });
+  await navigate(origin);
   await until('app ready', () => evaluate(`document.querySelectorAll('#sessions .session-card').length >= 3`));
   await click('#github-toggle');
   await until('repository picker', () => evaluate(`!document.querySelector('#github-picker').hidden`));

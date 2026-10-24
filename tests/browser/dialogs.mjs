@@ -56,7 +56,7 @@ window.WebSocket=class extends DemoSocket {
 };
 </script>`;
 
-const checks = await withPage({ name: 'dialogs', instrumentation }, async ({ origin, send, evaluate, layoutReady, pass, errors }) => {
+const checks = await withPage({ name: 'dialogs', instrumentation }, async ({ origin, send, evaluate, layoutReady, pass, errors, navigate }) => {
   const checkDialogs = async (evaluate, resize, settle, engine) => {
     const closeDialog = (selector, button) => withDialogClose(evaluate, selector, () => evaluate(
       button ? `document.querySelector(${JSON.stringify(button)}).click()` : `document.querySelector(${JSON.stringify(selector)}).close()`));
@@ -348,7 +348,7 @@ const checks = await withPage({ name: 'dialogs', instrumentation }, async ({ ori
     pass(`${engine}: Stop asks inside the page; Cancel keeps the session and Stop ends it`);
   };
 
-  await send('Page.navigate', { url: origin });
+  await navigate(origin);
   await checkDialogs(evaluate, (width, height) => send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false }), layoutReady, 'Chrome');
   assert.deepEqual(errors, []);
 

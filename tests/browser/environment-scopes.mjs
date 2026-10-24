@@ -24,7 +24,7 @@ window.fetch = (input, init) => {
 
 const CARD = '24.0.0|3.14.0|1.25.0|1.90.0';
 
-const checks = await withPage({ name: 'environment-scopes', instrumentation }, async ({ origin, send, evaluate, layoutReady, pass, errors }) => {
+const checks = await withPage({ name: 'environment-scopes', instrumentation }, async ({ origin, send, evaluate, layoutReady, pass, errors, navigate }) => {
   const tab = async () => {
     const down = { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9 };
     await send('Input.dispatchKeyEvent', down);
@@ -34,7 +34,7 @@ const checks = await withPage({ name: 'environment-scopes', instrumentation }, a
   const read = (selector) => evaluate(`document.querySelector(${JSON.stringify(selector)}).textContent`);
   const resize = (width, height) => send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
 
-  await send('Page.navigate', { url: origin });
+  await navigate(origin);
   await until('shell card versions', async () => (await card()) === CARD);
   assert.equal(await read('.provider[data-id=shell] .environment-note'), 'Manager environment');
 

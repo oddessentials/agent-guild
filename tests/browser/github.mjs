@@ -51,7 +51,7 @@ window.fetch = async function(input, init) {
 };
 </script>`;
 
-const checks = await withPage({ name: 'github', instrumentation }, async ({ origin, send, evaluate, layoutReady, pass, errors }) => {
+const checks = await withPage({ name: 'github', instrumentation }, async ({ origin, send, evaluate, layoutReady, pass, errors, navigate }) => {
   const click = (selector) => evaluate(`{const e=document.querySelector(${JSON.stringify(selector)});e.focus();e.click();}`);
   const visible = (selector) => evaluate(`Boolean(document.querySelector(${JSON.stringify(selector)})?.checkVisibility())`);
   const value = (selector) => evaluate(`document.querySelector(${JSON.stringify(selector)})?.value`);
@@ -73,7 +73,7 @@ const checks = await withPage({ name: 'github', instrumentation }, async ({ orig
   const cancel = () => evaluate(`[...document.querySelectorAll('#github-issues form button')].find(b=>b.textContent==='Cancel').click()`);
 
   await send('Emulation.setDeviceMetricsOverride', { width:1440, height:900, deviceScaleFactor:1, mobile:false });
-  await send('Page.navigate', { url:origin });
+  await navigate(origin);
   await until('app loaded', () => evaluate(`document.querySelectorAll('#sessions .session-card').length >= 3`));
   await click('#github-toggle');
   await until('accounts loaded', () => evaluate(`document.querySelectorAll('#github-chips .account-chip').length === 2`));
