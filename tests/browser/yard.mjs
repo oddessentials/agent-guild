@@ -989,6 +989,34 @@ test('a compact view that cannot reach its manager says so instead of preparing,
     [true,'Preparing your yard…',true],'a full page keeps its own badge and screens');
 });
 
+test('a compact view whose host has no full page shows no control that asks for one, and never sends expand',options,async t=>{
+  const {b}=await setup(t,{width:360,height:440,hash:'&layout=compact&expand=none',source:`
+    window.__posted=[];
+    window.parent={postMessage:message=>window.__posted.push(message)};
+    window.__block=sessionStorage.getItem('unblocked')!=='1';
+    const Socket=window.WebSocket;
+    window.WebSocket=class extends Socket{constructor(url,...args){super(window.__block&&String(url).includes('/events')?'ws://127.0.0.1:9/events':url,...args);}};`,
+  until:"document.querySelector('#yard-offline')?.hidden===false"});
+  const shown=`['#yard-offline-open','#yard-cards','#yard-download-cards','#yard-retry'].map(s=>getComputedStyle(document.querySelector(s)).display!=='none')`;
+  assert.deepEqual(await b.evaluate(`[document.querySelector('#yard-offline-text').textContent,...${shown}]`),['Can’t reach Agent Guild. Retrying…',false,false,false,true]);
+  await b.evaluate("window.__block=false;sessionStorage.setItem('unblocked','1')");
+  await b.wait("document.querySelector('#connection').classList.contains('ok') && document.querySelector('#yard-offline').hidden");
+  await ready(b);
+  const tryOpen=`(()=>{
+    const crowd=Object.assign(document.createElement('button'),{className:'yard-crowd-open'});document.querySelector('#yard-labels').append(crowd);
+    const crowdShown=getComputedStyle(crowd).display!=='none';crowd.remove();
+    const label=document.querySelector('.yard-label[data-kind="session"]');
+    label.click();label.dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));
+    const stage=document.querySelector('#yard-stage');stage.focus();
+    stage.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));
+    return [location.hash,document.documentElement.dataset.expand,crowdShown,__posted.filter(m=>m.type==='expand').length,document.querySelector('#terminal-panel').hidden];
+  })()`;
+  assert.deepEqual(await b.evaluate(tryOpen),['#layout=compact&expand=none','none',false,0,true],'the token leaves the address and the setting stays');
+  await b.reload();
+  await b.wait("document.querySelector('#connection')?.classList.contains('ok') && document.querySelector('#yard-stage')?.dataset.ready==='true'");
+  assert.deepEqual(await b.evaluate(tryOpen),['#layout=compact&expand=none','none',false,0,true],'a reload keeps it');
+});
+
 test('auth, graphics failure, retry, manager restart and stopped screen remain usable',options,async t=>{
   const {f,b}=await setup(t,{yard:true,auth:false,source:`
     const getContext=HTMLCanvasElement.prototype.getContext;

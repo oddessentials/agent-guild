@@ -7,6 +7,7 @@ export const framed = typeof window !== 'undefined' && window.parent !== window;
 const app = typeof window !== 'undefined' && !framed ? appHost() : null;
 const hosted = framed || Boolean(app);
 export const compact = hosted && document.documentElement?.dataset.layout === 'compact';
+const expandable = hosted && document.documentElement?.dataset.expand !== 'none';
 
 /** The app's message channel, or null. */
 function appHost() {
@@ -48,7 +49,7 @@ export function announceReady(version) {
 }
 
 export function expand(session) {
-  if (hosted) post(session ? { type: 'expand', session } : { type: 'expand' });
+  if (expandable) post(session ? { type: 'expand', session } : { type: 'expand' });
 }
 
 let showView = null;
