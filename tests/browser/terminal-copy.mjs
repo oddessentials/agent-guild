@@ -23,7 +23,7 @@ const checks = await withPage({
   name: 'copy',
   instrumentation,
   headers: () => (denyClipboard ? { 'Permissions-Policy': 'clipboard-write=()' } : {}),
-}, async ({ origin, send, evaluate, layoutReady, pass, errors }) => {
+}, async ({ origin, send, evaluate, layoutReady, pass, errors, navigate }) => {
   const tap = async (selector) => {
     const point = await evaluate(`(()=>{const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`);
     await send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point] });
@@ -50,7 +50,7 @@ const checks = await withPage({
     });
   };
   const load = async () => {
-    await send('Page.navigate', { url: origin });
+    await navigate(origin);
     await until('session cards', () => evaluate('document.querySelectorAll("#sessions .session-card").length >= 2'));
     await evaluate('document.querySelector("#sessions .session-card .open").click()');
     await until('terminal snapshot parsed', () => evaluate(`Boolean(${current}?.testParsed && ${current}.testPendingWrites===0)`));

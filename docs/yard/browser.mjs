@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { pageLoads } from '../../tests/browser/chrome.mjs';
 const root=fileURLToPath(new URL('../../',import.meta.url));
 const candidates=[process.env.CHROME_PATH,'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe','C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe','/usr/bin/google-chrome','/usr/bin/chromium','/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'];
 export const browserBinary=candidates.find(p=>p&&existsSync(p));
@@ -31,7 +32,7 @@ export async function openBrowser({width=1440,height=1000,software=process.env.Y
   }
   const target=(await (await fetch('http://127.0.0.1:'+port+'/json/list')).json()).find(t=>t.type==='page');
   const ws=new WebSocket(target.webSocketDebuggerUrl);await new Promise((r,j)=>{ws.onopen=r;ws.onerror=j;});
-  const pending=new Map(),errors=[],requests=[],events=[];let next=0;
+  const pending=new Map(),errors=[],requests=[],events=[],listeners=new Set();let next=0;
   ws.onmessage=({data})=>{
     const msg=JSON.parse(data),p=pending.get(msg.id);
     if(p){pending.delete(msg.id);clearTimeout(p.timer);if(msg.error)p.reject(new Error(msg.error.message));else p.resolve(msg.result);}
@@ -40,13 +41,17 @@ export async function openBrowser({width=1440,height=1000,software=process.env.Y
       if(msg.method==='Page.javascriptDialogOpening'&&msg.params.type==='beforeunload')send('Page.handleJavaScriptDialog',{accept:true}).catch(()=>{});
       if(msg.method==='Runtime.exceptionThrown')errors.push(msg.params.exceptionDetails.exception?.description||msg.params.exceptionDetails.text);
       if(msg.method==='Network.requestWillBeSent')requests.push(msg.params.request);
+      for(const listener of listeners)listener(msg);
     }
   };
   const send=(method,params={})=>new Promise((resolve,reject)=>{const id=++next;const timer=setTimeout(()=>{pending.delete(id);reject(new Error(method+' timed out'));},20000);pending.set(id,{resolve,reject,timer});ws.send(JSON.stringify({id,method,params}));});
   const evaluate=async expression=>{const r=await send('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(r.exceptionDetails)throw new Error(r.exceptionDetails.exception?.description||r.exceptionDetails.text);return r.result.value;};
   await send('Runtime.enable');await send('Page.enable');await send('Network.enable');
   await send('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});
-  return {send,evaluate,errors,requests,events,
+  await send('Page.setLifecycleEventsEnabled',{enabled:true});
+  const {frameTree}=await send('Page.getFrameTree');
+  const {navigate,reload}=pageLoads(send,listener=>{listeners.add(listener);return()=>listeners.delete(listener);},frameTree.frame.id);
+  return {send,evaluate,errors,requests,events,navigate,reload,
     click:selector=>evaluate('document.querySelector('+JSON.stringify(selector)+').click()'),
     wait:async expression=>{try{return await until(()=>evaluate(expression));}catch(err){throw new Error(err.message+': '+expression+'\n'+errors.join('\n'),{cause:err});}},
     async shot(file){const {data}=await send('Page.captureScreenshot',{format:'png'});await fs.writeFile(file,Buffer.from(data,'base64'));},

@@ -25,6 +25,50 @@ export async function until(label, check, timeoutMs = 15000) {
   throw new Error(`Timed out: ${label}`);
 }
 
+/**
+ * Page.navigate and Page.reload that return once the new document has parsed. Page.navigate answers when the new
+ * document commits, before its HTML is read, so a check made then can meet a page with no root element. Each waits
+ * for the main frame's DOMContentLoaded under its own loader: the one Page.navigate names, or for a reload the first
+ * new loader to start. That event may come before the command's reply; events for other loaders or frames are
+ * ignored. A hash-only navigation keeps the document and returns at once. `listen(handler)` passes every CDP event
+ * to `handler` and returns a function that stops it.
+ */
+export function pageLoads(send, listen, mainFrame, timeoutMs = 15000) {
+  let current = null;
+  const load = (method, params) => new Promise((resolve, reject) => {
+    const parsed = new Set();
+    let target = null, done = false;
+    let stop = () => {};
+    const timer = setTimeout(() => finish(new Error(`Timed out: ${method} ${params.url ?? ''}`.trimEnd())), timeoutMs);
+    const finish = (error) => {
+      if (done) return;
+      done = true;
+      stop();
+      clearTimeout(timer);
+      if (error) reject(error);
+      else resolve();
+    };
+    const settle = () => {
+      if (target && parsed.has(target)) { current = target; finish(); }
+    };
+    stop = listen(({ method: event, params: p }) => {
+      if (event !== 'Page.lifecycleEvent' || p.frameId !== mainFrame) return;
+      if (p.name === 'init' && method === 'Page.reload' && !target && p.loaderId !== current) target = p.loaderId;
+      if (p.name === 'DOMContentLoaded') parsed.add(p.loaderId);
+      settle();
+    });
+    send(method, params).then((result) => {
+      if (result.errorText) return finish(new Error(`${method}: ${result.errorText}`));
+      if (method === 'Page.navigate') {
+        if (!result.loaderId) return finish();
+        target = result.loaderId;
+      }
+      settle();
+    }, finish);
+  });
+  return { navigate: (url) => load('Page.navigate', { url }), reload: () => load('Page.reload', {}) };
+}
+
 export const LAUNCH_ATTEMPTS = 3;
 
 /** Ends a Chrome process and its profile folder; never throws. */
@@ -138,7 +182,7 @@ export async function withPage({ name, instrumentation = '', headers = () => ({}
     socket = new WebSocket(tabs.find((tab) => tab.type === 'page').webSocketDebuggerUrl);
     await new Promise((resolve, reject) => { socket.onopen = resolve; socket.onerror = reject; });
     let nextId = 0;
-    const pending = new Map(), errors = [];
+    const pending = new Map(), errors = [], listeners = new Set();
     const send = (method, params = {}) => new Promise((resolve, reject) => {
       const id = ++nextId;
       const timer = setTimeout(() => { pending.delete(id); reject(new Error(`CDP timeout: ${method}`)); }, 15000);
@@ -153,6 +197,7 @@ export async function withPage({ name, instrumentation = '', headers = () => ({}
         send('Page.handleJavaScriptDialog', { accept: true }).catch((error) => errors.push(error.message));
       }
       if (message.method === 'Runtime.exceptionThrown') errors.push(message.params.exceptionDetails.exception?.description || message.params.exceptionDetails.text);
+      if (message.method) for (const listener of listeners) listener(message);
       const request = pending.get(message.id);
       if (!request) return;
       pending.delete(message.id);
@@ -168,7 +213,13 @@ export async function withPage({ name, instrumentation = '', headers = () => ({}
     const layoutReady = () => evaluate('document.fonts.ready.then(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))');
     await send('Page.enable');
     await send('Runtime.enable');
-    await run({ origin, send, evaluate, layoutReady, pass, errors });
+    await send('Page.setLifecycleEventsEnabled', { enabled: true });
+    const { frameTree } = await send('Page.getFrameTree');
+    const listen = (listener) => { listeners.add(listener); return () => listeners.delete(listener); };
+    const { navigate, reload } = pageLoads(send, listen, frameTree.frame.id);
+    const pageSend = (method, params) => (method === 'Page.navigate' || method === 'Page.reload'
+      ? Promise.reject(new Error(`${method}: use navigate() or reload(), which wait for the new document`)) : send(method, params));
+    await run({ origin, send: pageSend, evaluate, layoutReady, pass, errors, navigate, reload });
     return checks;
   } finally {
     socket?.close();

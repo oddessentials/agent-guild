@@ -19,7 +19,7 @@ window.WebSocket=class extends DemoSocket {
 };
 </script>`;
 
-const checks = await withPage({ name: 'layout', instrumentation }, async ({ origin, send, evaluate, layoutReady, pass, errors }) => {
+const checks = await withPage({ name: 'layout', instrumentation }, async ({ origin, send, evaluate, layoutReady, pass, errors, navigate, reload }) => {
   const size = (width, height) => send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: width < 700 }).then(layoutReady);
   const box = (selector) => evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});if(!e)return null;const r=e.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width,height:r.height}})()`);
   const visible = (selector) => evaluate(`Boolean(document.querySelector(${JSON.stringify(selector)})?.checkVisibility())`);
@@ -33,7 +33,6 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
     assert.ok(scroll <= width, `${label}: the page scrolls sideways (${scroll} > ${width})`);
   };
   const panes = () => evaluate(`[...document.querySelectorAll('.terminal-pane')].filter(p=>p.checkVisibility()).map(p=>{const r=p.getBoundingClientRect();const t=testTerms.find(t=>t.element?.isConnected&&p.contains(t.element));return {pane:p.dataset.pane,focused:p.classList.contains('focused'),left:r.left,top:r.top,width:r.width,height:r.height,cols:t?.cols,rows:t?.rows}})`);
-  const reloaded = (label, check) => until(label, () => evaluate('!window.testOldPage').then((fresh) => fresh && check(), () => false));
   const cards = () => evaluate('[...document.querySelectorAll("#sessions .session-card")].map(c=>c.dataset.id)');
   const fitted = (terms = 'testTerms.filter(t=>t.element?.isConnected)') => until('terminals fit their panes', () => evaluate(`${terms}.every(t=>{t.testFit??=(()=>{const f=new FitAddon.FitAddon();t.loadAddon(f);return f;})();const p=t.testFit.proposeDimensions();return t.testParsed&&p.cols===t.cols&&p.rows===t.rows})`));
   const sizesFor = (id) => evaluate(`testSizes.filter(s=>s.url.includes('/sessions/${id}/')).map(s=>s.type+' '+s.cols+'x'+s.rows)`);
@@ -41,11 +40,11 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   const providerGrid = () => evaluate('(()=>{const c=[...document.querySelectorAll("#providers .provider")];return {count:c.length,rows:new Set(c.map(p=>p.offsetTop)).size,narrowest:Math.min(...c.map(p=>p.offsetWidth))}})()');
 
   await size(1440, 900);
-  await send('Page.navigate', { url: origin });
+  await navigate(origin);
   await until('session cards', () => evaluate('document.querySelectorAll("#sessions .session-card").length >= 3'));
-  await evaluate('localStorage.clear(); window.testOldPage = true');
-  await send('Page.reload');
-  await reloaded('session cards', () => evaluate('document.querySelectorAll("#sessions .session-card").length >= 3'));
+  await evaluate('localStorage.clear()');
+  await reload();
+  await until('session cards', () => evaluate('document.querySelectorAll("#sessions .session-card").length >= 3'));
   await layoutReady();
 
   // Each card shows, and announces, the label the (demo) manager sent with its session.
@@ -234,9 +233,8 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   assert.equal(await evaluate('getComputedStyle(document.documentElement).getPropertyValue("--dock-space").trim()'), '0px');
   pass('the dock switches to Notes and Escape closes it, returning the focus');
 
-  await evaluate('window.testOldPage = true');
-  await send('Page.reload');
-  await reloaded('restored panes', async () => (await panes()).length === 2);
+  await reload();
+  await until('restored panes', async () => (await panes()).length === 2);
   assert.deepEqual((await panes()).map((p) => p.focused), [false, true]);
   await until('restored output', () => evaluate('testTerms.filter(t=>t.element?.isConnected).every(t=>t.testParsed)'));
   await layoutReady();
@@ -509,9 +507,8 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   await click('#notes-open');
   await until('notes', () => visible('#notes-text'));
   assert.equal(await visible('#terminal-panel'), true);
-  await evaluate('window.testOldPage = true');
-  await send('Page.reload');
-  await reloaded('restored panes', async () => (await panes()).length >= 1);
+  await reload();
+  await until('restored panes', async () => (await panes()).length >= 1);
   await layoutReady();
   assert.equal(await visible('#notes-text'), true, 'the restored Notes stay over the restored terminals');
   assert.notEqual(await evaluate('document.activeElement?.closest?.(".terminal-pane") ? "terminal" : ""'), 'terminal', 'a covered terminal does not take the typing');
@@ -560,7 +557,7 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
     source: 'window.testApp=[];window.webkit={messageHandlers:{agentGuild:{postMessage:m=>testApp.push(m)}}};',
   });
   await size(393, 852);
-  await send('Page.navigate', { url: `${origin}/?app#token=t&view=yard` });
+  await navigate(`${origin}/?app#token=t&view=yard`);
   await until('the app opens the Yard', () => evaluate('document.documentElement.dataset.view==="yard"&&testApp.some(m=>m.type==="ready")'));
   const folderRow = async (width) => {
     await size(width, 852);
@@ -596,7 +593,7 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   const android = await send('Page.addScriptToEvaluateOnNewDocument', {
     source: 'window.testApp=[];window.agentGuild={postMessage:m=>{if(typeof m!=="string")throw new TypeError("not a string");testApp.push(JSON.parse(m))}};',
   });
-  await send('Page.navigate', { url: `${origin}/?android#token=t&view=yard` });
+  await navigate(`${origin}/?android#token=t&view=yard`);
   await until('the Android app opens the Yard', () => evaluate('document.documentElement.dataset.view==="yard"&&testApp.some(m=>m.source==="agent-guild"&&m.type==="ready")'));
   await layoutReady();
   await ask('cards');

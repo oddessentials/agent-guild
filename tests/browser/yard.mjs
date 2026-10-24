@@ -39,8 +39,7 @@ async function framesSettled(b){
 async function setup(t,{yard=false,auth=true,source='',width=1440,height=1000,hash='',until=null}={}) {
   const fixture=await startFixture();t.after(()=>fixture.close());
   const b=await browser();
-  await b.send('Page.navigate',{url:'about:blank'});
-  await b.wait('document.readyState==="complete"');
+  await b.navigate('about:blank');
   b.errors.length=0;b.requests.length=0;b.events.length=0;
   for(const identifier of installedScripts)await b.send('Page.removeScriptToEvaluateOnNewDocument',{identifier});
   installedScripts.length=0;
@@ -55,7 +54,7 @@ async function setup(t,{yard=false,auth=true,source='',width=1440,height=1000,ha
     window.requestAnimationFrame=callback=>raf.call(window,time=>{window.__frames++;callback(time);});
     ${source}`});
   installedScripts.push(added.identifier);
-  await b.send('Page.navigate',{url:fixture.api.url+'/' +(auth?'#token='+fixture.token+hash:'')});
+  await b.navigate(fixture.api.url+'/' +(auth?'#token='+fixture.token+hash:''));
   await b.wait(until||(auth?"document.querySelector('#connection')?.classList.contains('ok')":"document.querySelector('#auth')?.hidden===false"));
   return {f:fixture,b};
 }
@@ -941,7 +940,7 @@ test('a compact host view fills itself with the scene, shows every hall, and sen
   for(const [x,y] of page.halls)assert.ok(x>=0&&x<=360&&y>=0&&y<=440,'hall in sight at '+x+','+y);
   assert.equal(page.looks,0);
   assert.equal(await b.evaluate('location.hash'),'#layout=compact&skin=grove&theme=light','the token leaves the address, the compact settings stay');
-  await b.send('Page.reload');
+  await b.reload();
   await b.wait("document.querySelector('#yard-stage')?.dataset.ready==='true'");
   assert.deepEqual(await b.evaluate("(({layout,view,skin,theme})=>[layout,view,skin,theme])(document.documentElement.dataset)"),['compact','yard','grove','light'],'a reload stays compact, in the same look');
   assert.equal(await b.evaluate("document.querySelector('#terminal-panel').hidden"),true);
@@ -961,8 +960,8 @@ test('a compact host view fills itself with the scene, shows every hall, and sen
   assert.equal(expanded.length,1);
   assert.equal(typeof expanded[0].session,'string');
   assert.equal(await b.evaluate("document.querySelector('#terminal-panel').hidden"),true);
-  await b.send('Page.navigate',{url:'about:blank'});await b.wait('document.readyState==="complete"');
-  await b.send('Page.navigate',{url:f.api.url+'/#token='+f.token+'&view=yard'});
+  await b.navigate('about:blank');
+  await b.navigate(f.api.url+'/#token='+f.token+'&view=yard');
   await b.wait("document.querySelector('#connection')?.classList.contains('ok')");
   assert.deepEqual(await b.evaluate("[location.hash,document.documentElement.dataset.layout??null]"),['',null],'a full framed page keeps nothing in its address');
 });
@@ -983,8 +982,8 @@ test('a compact view that cannot reach its manager says so instead of preparing,
   await b.wait("document.querySelector('#connection').classList.contains('ok') && document.querySelector('#yard-offline').hidden");
   await ready(b);
 
-  await b.send('Page.navigate',{url:'about:blank'});await b.wait('document.readyState==="complete"');
-  await b.send('Page.navigate',{url:f.api.url+'/#token='+f.token+'&view=yard'});
+  await b.navigate('about:blank');
+  await b.navigate(f.api.url+'/#token='+f.token+'&view=yard');
   await b.wait("document.querySelector('#yard-summary')?.textContent==='Reconnecting…' && !document.querySelector('#yard-download').hidden");
   assert.deepEqual(await b.evaluate("[document.querySelector('#yard-offline').hidden,document.querySelector('#yard-download-title').textContent,document.querySelector('.topbar').checkVisibility()]"),
     [true,'Preparing your yard…',true],'a full page keeps its own badge and screens');
