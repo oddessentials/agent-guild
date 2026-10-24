@@ -70,6 +70,7 @@ export function pageLoads(send, listen, mainFrame, timeoutMs = 15000) {
 }
 
 export const LAUNCH_ATTEMPTS = 3;
+export const DESKTOP_POINTER = '--blink-settings=primaryPointerType=4,availablePointerTypes=4,primaryHoverType=2,availableHoverTypes=2,maxTouchPoints=0';
 
 /** Ends a Chrome process and its profile folder; never throws. */
 async function discard(chrome, profile) {
@@ -100,7 +101,7 @@ export async function launchChrome({ chromePath, name, chromeArgs = [], attempts
   for (let attempt = 1; attempt <= attempts; attempt++) {
     const profile = fs.mkdtempSync(path.join(os.tmpdir(), `guild-${name}-browser-`));
     const chrome = spawnImpl(chromePath, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`,
-      '--no-first-run', '--no-default-browser-check', ...(process.env.CHROME_NO_SANDBOX === '1' ? ['--no-sandbox'] : []), ...chromeArgs, 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
+      '--no-first-run', '--no-default-browser-check', DESKTOP_POINTER, ...(process.env.CHROME_NO_SANDBOX === '1' ? ['--no-sandbox'] : []), ...chromeArgs, 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
     let diagnostics = '';
     chrome.stderr.on('data', (data) => { diagnostics = (diagnostics + data).slice(-3000); });
     let startupError;
