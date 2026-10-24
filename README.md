@@ -1,34 +1,23 @@
-<p align="center">
-  <img src="docs/images/banner.webp" alt="Agent Guild: Work hard, play hard. An agentic UI that enhances instead of hinders." width="100%">
-</p>
+<h1 align="center">Agent Guild</h1>
 
 <p align="center">
   <a href="https://www.npmjs.com/package/@oddessentials/agent-guild"><img src="https://img.shields.io/npm/v/@oddessentials/agent-guild?color=7c5cff&label=npm" alt="npm version"></a>
   <a href="https://github.com/oddessentials/agent-guild/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/oddessentials/agent-guild/release.yml?branch=main&label=release" alt="Release status"></a>
   <img src="https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-e8c47c" alt="Windows, macOS and Linux">
   <img src="https://img.shields.io/node/v/@oddessentials/agent-guild?color=4cc38a" alt="Node.js version">
-  <a href="https://www.youtube.com/watch?v=ziT62WtXQ1M"><img src="https://img.shields.io/badge/trailer-watch%20on%20YouTube-e5534b?logo=youtube&logoColor=white" alt="Watch the Agent Guild trailer on YouTube"></a>
-  <a href="https://agentguild.oddessentials.ai/"><img src="https://img.shields.io/badge/Agent%20Guild%3A%20World-coming%20soon%20to%20Steam-1b2838?logo=steam&logoColor=white" alt="Agent Guild: World, coming soon to Steam"></a>
-  <a href="https://oddessentials.ai/donate/?ref=agent-guild"><img src="https://img.shields.io/badge/support-buy%20the%20lab%20a%20beer-f2a93b" alt="Support Agent Guild: buy the lab a beer"></a>
 </p>
 
-<p align="center">
-  <picture>
-    <source media="(prefers-reduced-motion: reduce)" srcset="docs/images/yard-still.webp">
-    <img src="docs/images/yard-clip.webp" alt="Seven coding-agent sessions as characters in the Guild Yard: they leave the plaza for their tools' halls and get to work, then a double-click on one opens Claude Code's real terminal, with its three helper agents" width="100%">
-  </picture>
-</p>
+**Run Claude Code, Codex CLI, Antigravity CLI, Grok Build, Docker Agent and
+your own shells side by side in real terminals. Pick the same live sessions up
+from your phone, VS Code or any browser. Free, on Windows, macOS and Linux.**
 
-**Every coding agent you run becomes a character in a 3D world, and stays a
-real terminal one double-click away.**
+Agent Guild is a small manager that runs on your computer and serves one
+local web page. Close the page whenever you like; the sessions keep running.
 
-**Agent Guild** runs Claude Code, Codex CLI, Antigravity CLI, Grok Build,
-Docker Agent and your own shell side by side, in real terminals, from one
-local web page, or from your phone over Tailscale.
-Close the page whenever you like; the sessions keep running.
-
-[Try the demo](https://oddessentials.github.io/agent-guild/) in your browser
-(simulated, nothing installed) or [watch the trailer](https://www.youtube.com/watch?v=ziT62WtXQ1M).
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/overview-light.webp">
+  <img src="docs/images/overview-dark.webp" alt="Agent Guild with one card per coding tool and six sessions at work">
+</picture>
 
 ## Quick start
 
@@ -41,13 +30,48 @@ agent-guild
 
 The page opens in your browser. Press **New** on a tool's card to start a
 session. Sign in to each tool inside its first session, as you would in any
-terminal.
+terminal. To look around first, [try the demo](https://oddessentials.github.io/agent-guild/)
+(simulated, nothing installed) or [watch the trailer](https://www.youtube.com/watch?v=_vQuW0v-uMY).
 
-**[Agent Guild for VS Code](https://marketplace.visualstudio.com/items?itemName=OddEssentials.agent-guild)**
-opens the same page in an editor tab. Editors that install from Open VSX get it
-[there](https://open-vsx.org/extension/OddEssentials/agent-guild).
+## Why Agent Guild
 
-| Requirement | |
+* **The real CLIs, unchanged.** Each session is the tool itself in a real
+  terminal, not a chat copy of it. Whatever sign-in the tool uses works: a
+  subscription, an API key, Amazon Bedrock or your own gateway.
+* **Every agent in one place.** Claude Code, Codex CLI, Antigravity CLI, Grok
+  Build, Docker Agent, any shell, and tmux or herdr sessions, each card
+  showing its helper agents and model, with usage meters for Claude Code and
+  Codex CLI.
+* **The same session on every screen.** Any browser, a phone over
+  [Tailscale](#remote-access-with-tailscale) with touch keys, VS Code, and
+  apps for iPhone, iPad and Vision Pro (beta) and
+  [Android](https://github.com/oddessentials/agent-guild-android/releases/latest).
+  Apple Watch and Meta Ray-Ban Display list your sessions and read a
+  session's last answer aloud.
+* **Native on Windows.** No WSL. Also macOS, Linux, and headless Linux
+  servers over SSH.
+* **Nothing in between.** No account and no relay server: the manager
+  listens on `127.0.0.1`, and other devices reach it through your own
+  Tailscale network or reverse proxy. See [Privacy](#privacy).
+
+### How it compares
+
+| | Agent Guild | tmux over SSH | Claude Code Remote Control |
+| --- | --- | --- | --- |
+| Agents | Any CLI, side by side | Any CLI | Claude Code |
+| On a phone | The real terminal in a web page or app, with touch keys | An SSH app | A chat view in the Claude app |
+| Sign-in | Whatever the tool uses | Whatever the tool uses | Pro, Max, Team or Enterprise; [not API keys, Bedrock or a gateway](https://code.claude.com/docs/en/remote-control) |
+| Windows without WSL | Yes | No | Yes |
+
+**Not yet:** push notifications. Phones and the Apple apps reconnect when you
+open them again; the sessions keep running on the computer in the meantime.
+
+**License:** open source under the [GNU AGPL 3.0](LICENSE). Free for
+personal and commercial use.
+
+## Requirements
+
+| | |
 | --- | --- |
 | Node.js | 22 or newer |
 | Windows | 10 version 1809 or later, x64 or arm64. No WSL needed. |
@@ -60,15 +84,9 @@ missing tool shows **Install** on its card; Antigravity CLI, which is not on
 npm, shows its install command instead. For Docker Agent, see
 [Docker Agent](#docker-agent).
 
-<picture>
-  <source media="(prefers-color-scheme: light)" srcset="docs/images/overview-light.webp">
-  <img src="docs/images/overview-dark.webp" alt="Agent Guild with one card per coding tool and six sessions at work">
-</picture>
-
-**[Agent Guild: World](https://agentguild.oddessentials.ai/)**, coming soon to
-Steam, is the premium 3D window onto the same sessions: six worlds to roam
-with a free camera, Steam Workshop crews and companions, and controller
-support, on Windows, macOS and Linux. Agent Guild and its Yard stay free.
+**[Agent Guild for VS Code](https://marketplace.visualstudio.com/items?itemName=OddEssentials.agent-guild)**
+opens the same page in an editor tab. Editors that install from Open VSX get it
+[there](https://open-vsx.org/extension/OddEssentials/agent-guild).
 
 ## Setup
 
@@ -193,7 +211,15 @@ The first Claude Code usage meter may ask for access to the
 
 <img src="docs/images/workspace.webp" alt="Two terminals side by side with the GitHub panel showing the workflow runs of the focused terminal's repository">
 
-<img src="docs/images/yard.webp" alt="The Yard in the Professional skin: a 3D campus with a building for each coding tool, its sessions' characters outside, and the roster and inspector beside it">
+### The Yard
+
+For fun, the Yard shows your tools and sessions as a 3D world, one for each
+skin. A double-click on a character opens its real terminal.
+
+<picture>
+  <source media="(prefers-reduced-motion: reduce)" srcset="docs/images/yard-still.webp">
+  <img src="docs/images/yard-clip.webp" alt="Seven coding-agent sessions as characters in the Guild Yard: they leave the plaza for their tools' halls and get to work, then a double-click on one opens Claude Code's real terminal, with its three helper agents" width="100%">
+</picture>
 
 <table>
   <tr>
@@ -257,6 +283,13 @@ Failed news, model list and release checks retry after 10 minutes.
 * [Skins](docs/SKINS.md): make your own look
 * [Contributing](CONTRIBUTING.md)
 
+## Agent Guild: World
+
+[Agent Guild: World](https://agentguild.oddessentials.ai/), coming soon to
+Steam, is a separate, premium 3D window onto the same sessions: six worlds to
+roam with a free camera, Steam Workshop crews and companions, and controller
+support, on Windows, macOS and Linux. Agent Guild and its Yard stay free.
+
 ## Support
 
 Agent Guild is free to use. If it saves you time,
@@ -265,4 +298,5 @@ tax-deductible donation, and it changes nothing about the software.
 
 ## License
 
-See [LICENSE](LICENSE).
+Copyright (c) 2026 Odd Essentials. Licensed under the
+[GNU Affero General Public License 3.0](LICENSE).
