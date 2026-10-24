@@ -2,7 +2,7 @@
   "name": "@oddessentials/agent-guild",
   "version": "0.0.0-development",
   "description": "Launch and watch AI coding-assistant terminal sessions from one local web page. A bundled session manager owns the terminals so the page can close and reconnect.",
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "AGPL-3.0-only",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/oddessentials/agent-guild.git"

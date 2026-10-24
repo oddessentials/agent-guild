@@ -66,9 +66,8 @@ terminal. To look around first, [try the demo](https://oddessentials.github.io/a
 **Not yet:** push notifications. Phones and the Apple apps reconnect when you
 open them again; the sessions keep running on the computer in the meantime.
 
-**License:** free for personal and commercial use. The source is available
-under [PolyForm Shield 1.0.0](LICENSE), which lets you use, change and share
-Agent Guild for anything except building a product that competes with it.
+**License:** open source under the [GNU AGPL 3.0](LICENSE). Free for
+personal and commercial use.
 
 ## Requirements
 
@@ -299,4 +298,5 @@ tax-deductible donation, and it changes nothing about the software.
 
 ## License
 
-See [LICENSE](LICENSE).
+Copyright (c) 2026 Odd Essentials. Licensed under the
+[GNU Affero General Public License 3.0](LICENSE).
