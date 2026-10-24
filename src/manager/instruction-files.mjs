@@ -1,7 +1,8 @@
 // The instruction files each coding tool loads when a session starts in a working folder:
 // CLAUDE.md, AGENTS.md, GEMINI.md and rules files people wrote for it. Each tool's own rules are
-// reproduced for Claude Code 2.1.296, Codex 0.162.1 and Antigravity CLI 1.3.2; Grok Build 1.0.50
-// is asked with `grok inspect --json`. Nothing here creates or edits a file.
+// reproduced for Claude Code 2.1.296, Codex 0.164.0 and Antigravity CLI 1.3.2; Grok Build 1.0.50
+// is asked with `grok inspect --json`. Nothing here creates or edits a file. Codex settings come from
+// its config.toml files on disk; launch flags such as -c or --profile and managed settings are not seen.
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -270,24 +271,23 @@ export function codexConfig(text) {
   }
   const strings = (v) => (Array.isArray(v) ? v.filter((s) => typeof s === 'string') : undefined);
   return {
-    rootMarkers: strings(top.project_root_markers) ?? ['.git'],
-    fallbackNames: strings(top.project_doc_fallback_filenames) ?? [],
-    maxBytes: Number.isInteger(top.project_doc_max_bytes) && top.project_doc_max_bytes >= 0 ? top.project_doc_max_bytes : CODEX_MAX_BYTES,
+    rootMarkers: strings(top.project_root_markers),
+    fallbackNames: strings(top.project_doc_fallback_filenames),
+    maxBytes: Number.isInteger(top.project_doc_max_bytes) && top.project_doc_max_bytes >= 0 ? top.project_doc_max_bytes : undefined,
     trust,
   };
 }
 
-/** Codex's own project lookup: the working folder, then the repository root, each real path before its spelling. */
-function codexUntrusted(trust, cwd, platform) {
+/** Codex's own project lookup: the trust level of the first of `dirs` it names, each real path before its spelling. */
+function codexTrust(trust, dirs, platform) {
   const fold = (key) => (platform === 'win32' ? key.toLowerCase() : key);
-  const root = claudeProjectRoot(cwd);
-  const keys = [cwd, root].flatMap((p) => [realPath(p), p]).map(fold);
+  const keys = dirs.flatMap((p) => [realPath(p), p]).map(fold);
   const entries = [...trust].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
   for (const key of keys) {
     const hit = trust.has(key) ? [key, trust.get(key)] : entries.find(([candidate]) => fold(candidate) === key);
-    if (hit) return hit[1] === 'untrusted';
+    if (hit) return hit[1];
   }
-  return false;
+  return undefined;
 }
 
 function exists(file) {
@@ -308,29 +308,42 @@ function codexRows(env, cwd, platform) {
     if (statFile(override)) rows.push(row(override, 'global', 'Empty, so Codex reads AGENTS.md instead.'));
     if (statFile(global)) rows.push(row(global, 'global', blank(global) ? 'Empty, so Codex skips it.' : null));
   }
-  if (codexUntrusted(config.trust, cwd, platform)) {
+  const repo = claudeProjectRoot(cwd);
+  if (codexTrust(config.trust, [cwd, repo], platform) === 'untrusted') {
     return { rows, projectNote: 'Codex won’t read this project’s files: its config.toml marks the folder untrusted.' };
   }
+  const markers = config.rootMarkers ?? ['.git'];
   let root = null;
-  if (config.rootMarkers.length) {
+  if (markers.length) {
     for (let dir = cwd; ; dir = path.dirname(dir)) {
-      if (config.rootMarkers.some((marker) => exists(path.join(dir, marker)))) { root = dir; break; }
+      if (markers.some((marker) => exists(path.join(dir, marker)))) { root = dir; break; }
       if (path.dirname(dir) === dir) break;
     }
   }
   const folders = root ? foldersDown(cwd).slice(foldersDown(root).length - 1) : [cwd];
+  // A .codex/config.toml counts only in a folder trusted by name; each overrides just the keys it sets.
+  let { fallbackNames = [], maxBytes = CODEX_MAX_BYTES } = config;
+  const trust = new Map([...config.trust].filter(([, level]) => level !== undefined));
+  for (const dir of folders) {
+    const dotCodex = path.join(dir, '.codex');
+    if (!isFolder(dotCodex) || realPath(dotCodex) === realPath(home)) continue;
+    if (codexTrust(trust, [dir, root ?? cwd, repo], platform) !== 'trusted') continue;
+    const layer = codexConfig(readText(path.join(dotCodex, 'config.toml')));
+    fallbackNames = layer.fallbackNames ?? fallbackNames;
+    maxBytes = layer.maxBytes ?? maxBytes;
+  }
   const names = ['AGENTS.override.md', 'AGENTS.md'];
-  for (const name of config.fallbackNames) {
+  for (const name of fallbackNames) {
     const bad = name === '.' || name === '..' || /[/\0]/.test(name) || (platform === 'win32' && /[\\:]/.test(name));
     if (name && !bad && !names.includes(name)) names.push(name);
   }
-  let remaining = config.maxBytes;
+  let remaining = maxBytes;
   for (const dir of folders) {
     const found = names.map((name) => path.join(dir, name)).filter(statFile);
     if (!found.length) continue;
     const [chosen, ...others] = found;
     if (remaining === 0) {
-      rows.push(row(chosen, 'project', config.maxBytes === 0 ? 'Codex is set to read no project files (project_doc_max_bytes is 0).' : `Past Codex’s limit for project files (${sizeWords(config.maxBytes)}).`));
+      rows.push(row(chosen, 'project', maxBytes === 0 ? 'Codex is set to read no project files (project_doc_max_bytes is 0).' : `Past Codex’s limit for project files (${sizeWords(maxBytes)}).`));
     } else {
       const data = readBytes(chosen);
       const kept = data?.subarray(0, remaining);
