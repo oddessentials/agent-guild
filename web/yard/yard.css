@@ -125,6 +125,7 @@
 :root[data-layout="compact"] #yard-offline { top:8px; bottom:auto; left:8px; right:8px; transform:none; flex-wrap:wrap; justify-content:center; text-align:center; border-radius:var(--radius); background:var(--surface); }
 :root[data-layout="compact"] #yard-stage:has(#yard-offline:not([hidden])) :is(canvas, .yard-labels) { opacity:.5; filter:grayscale(1); }
 :root[data-layout="compact"] #yard-stage:has(#yard-offline:not([hidden])) :is(#yard-download, #yard-loading) { display:none; }
+:root[data-expand="none"] :is(#yard-offline-open, #yard-cards, #yard-download-cards, .yard-crowd-open) { display:none; }
 :root[data-layout="compact"] .yard-failure { top:50%; max-height:calc(100% - 16px); overflow:auto; padding:14px; }
 .yard-help-touch { display:none; }
 @media(pointer:coarse) { .yard-help-pointer { display:none; } .yard-help-touch { display:inline; } }

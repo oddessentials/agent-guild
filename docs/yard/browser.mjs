@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { pageLoads } from '../../tests/browser/chrome.mjs';
+import { DESKTOP_POINTER, pageLoads } from '../../tests/browser/chrome.mjs';
 const root=fileURLToPath(new URL('../../',import.meta.url));
 const candidates=[process.env.CHROME_PATH,'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe','C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe','/usr/bin/google-chrome','/usr/bin/chromium','/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'];
 export const browserBinary=candidates.find(p=>p&&existsSync(p));
@@ -21,7 +21,7 @@ export async function openBrowser({width=1440,height=1000,software=process.env.Y
   // profile serving our trusted local fixtures; normal app browsers are untouched.
   const graphics=software?['--use-gl=angle','--use-angle=swiftshader-webgl','--enable-unsafe-swiftshader']:process.env.CI?['--enable-unsafe-swiftshader']:[];
   const sandbox=process.env.CHROME_NO_SANDBOX==='1'?['--no-sandbox']:[];
-  const chrome=spawn(binary,['--headless=new',...graphics,...sandbox,'--remote-debugging-port=0','--user-data-dir='+profile,'--no-first-run','--no-default-browser-check','--force-color-profile=srgb','--window-size='+width+','+height,'about:blank'],{stdio:'ignore',windowsHide:true});
+  const chrome=spawn(binary,['--headless=new',...graphics,...sandbox,'--remote-debugging-port=0','--user-data-dir='+profile,'--no-first-run','--no-default-browser-check',DESKTOP_POINTER,'--force-color-profile=srgb','--window-size='+width+','+height,'about:blank'],{stdio:'ignore',windowsHide:true});
   let launchError;chrome.on('error',e=>{launchError=e;});
   let port;
   try {

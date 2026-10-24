@@ -47,6 +47,7 @@
     var asked = params.get('view');
     if (params.get('layout') === 'compact') {
       document.documentElement.dataset.layout = 'compact';
+      if (params.get('expand') === 'none') document.documentElement.dataset.expand = 'none';
       view = 'yard';
       if (skins.some(function (s) { return s.id === params.get('skin'); })) skin = params.get('skin');
       if (params.get('theme') === 'light' || params.get('theme') === 'dark') theme = params.get('theme');

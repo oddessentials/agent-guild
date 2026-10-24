@@ -439,7 +439,7 @@ const checks = await withPage({ name: 'terminal-controls', instrumentation }, as
   pass('all skins retain geometry; hiding terminals cancels input; no browser exceptions');
 
   await send('Emulation.setTouchEmulationEnabled', { enabled: false });
-  await send('Page.addScriptToEvaluateOnNewDocument', { source: 'Object.defineProperty(navigator,"maxTouchPoints",{get:()=>5})' });
+  const tablet = await send('Page.addScriptToEvaluateOnNewDocument', { source: 'Object.defineProperty(navigator,"maxTouchPoints",{get:()=>5})' });
   await navigate(origin);
   await until('restored page', () => evaluate('Boolean(document.querySelector("#sessions .session-card .open"))'));
   await evaluate('document.querySelector("#sessions .session-card .open").click()');
@@ -465,6 +465,9 @@ const checks = await withPage({ name: 'terminal-controls', instrumentation }, as
   assert.equal(await font(), before + 1);
   pass('the terminal text size changes on request and this device remembers it');
 
+  await send('Page.removeScriptToEvaluateOnNewDocument', { identifier: tablet.identifier });
+  await size(390, 844);
+  await send('Page.addScriptToEvaluateOnNewDocument', { source: 'Object.defineProperty(navigator,"maxTouchPoints",{get:()=>5})' });
   await send('Page.addScriptToEvaluateOnNewDocument', { source: `{const real=matchMedia.bind(window);const faked={'(pointer: coarse)':false,'(any-pointer: coarse)':true};
     window.matchMedia=(query)=>query in faked?{matches:faked[query],media:query,addEventListener(){},removeEventListener(){}}:real(query)}` });
   await navigate(origin);

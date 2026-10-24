@@ -742,7 +742,9 @@ Adding `&view=yard` or `&view=cards` opens that view and keeps it as the
 user's choice, as Settings does. Adding `&layout=compact` instead shows the
 Yard's scene alone, to fill a small view, and keeps nothing: `&skin=<id>` and
 `&theme=light` or `&theme=dark` show that look, and opening a session asks
-the host for the full page. A browser ignores all of these.
+the host for the full page. A host with no full page adds `&expand=none`, and
+the page then neither shows its controls that ask for one nor sends `expand`.
+A browser ignores all of these.
 
 A framed page cannot open windows, so it posts messages to `window.parent`.
 A host must accept a message only from its own frame and the manager's
