@@ -230,10 +230,12 @@ const checks = await withPage({ name: 'dialogs', instrumentation }, async ({ ori
         const last=items.at(-1).getBoundingClientRect(),nav=document.querySelector('.videos-nav');
         return {inside:r.top>=-1&&r.bottom<=innerHeight+1&&r.left>=-1&&r.right<=innerWidth+1,ratio:Math.round(s.width/s.height*100),screen:Math.round(s.width),
           overflow:d.scrollWidth>d.clientWidth||document.documentElement.scrollWidth>innerWidth,listReachable:last.bottom<=r.bottom+1||nav.scrollHeight>nav.clientHeight,
-          first:items[0].getAttribute('aria-current'),frames:youtubeFrames.length,kinds:items.map((i)=>i.querySelector('.news-meta').textContent.split(' · ')[0])};
+          first:items[0].getAttribute('aria-current'),frames:youtubeFrames.length,kinds:items.map((i)=>i.querySelector('.news-meta').textContent.split(' · ')[0]),
+          groups:[...document.querySelectorAll('#videos-list .videos-group-title')].map((h)=>h.textContent),lengths:items.every((i)=>/^\\d+:\\d\\d$/.test(i.querySelector('.videos-length')?.textContent))};
       })()`);
       assert.ok(g.inside && g.ratio === 178 && g.screen >= Math.min(width - 32, 340) && !g.overflow && g.listReachable && g.first === 'true' && g.frames === 0
-        && g.kinds[0] === 'Tutorial' && g.kinds.lastIndexOf('Tutorial') < g.kinds.indexOf('Trailer'),
+        && g.kinds[0] === 'Tutorial' && g.kinds.lastIndexOf('Tutorial') < g.kinds.indexOf('Trailer') && g.kinds.lastIndexOf('Trailer') < g.kinds.indexOf('World')
+        && g.groups.join() === 'Tutorials,Trailers,World' && g.lengths,
         `${engine} videos ${width}: ${JSON.stringify(g)}`);
       // A video plays only when chosen, and closing the dialog removes the player so the sound stops.
       const id = await evaluate('(()=>{const item=[...document.querySelectorAll("#videos-list .videos-item")].at(-1);item.click();return item.dataset.id})()');
@@ -243,6 +245,16 @@ const checks = await withPage({ name: 'dialogs', instrumentation }, async ({ ori
       await closeDialog('#videos', '#videos-close');
       assert.deepEqual(await evaluate('[document.querySelectorAll("#videos iframe").length,document.activeElement===document.querySelector("#videos-open")]'), [0, true], `${engine} player removed and focus restored`);
     }
+    // A landscape phone keeps the list beside the player, so whole items stay in view.
+    await resize(844, 390);
+    await evaluate('document.querySelector("#videos-open").click()');
+    await until(`${engine} video poster landscape`, () => evaluate('document.querySelector("#videos-screen").dataset.state==="ready"'));
+    await settled();
+    const land = await evaluate(`(()=>{const d=document.querySelector('#videos').getBoundingClientRect(),n=document.querySelector('.videos-nav').getBoundingClientRect(),s=document.querySelector('#videos-screen').getBoundingClientRect();
+      return {items:[...document.querySelectorAll('#videos-list .videos-item')].filter((i)=>{const r=i.getBoundingClientRect();return r.top>=n.top-1&&r.bottom<=n.bottom+1}).length,
+        screen:s.top>=d.top&&s.bottom<=d.bottom&&s.width>=200}})()`);
+    assert.ok(land.items >= 2 && land.screen, `${engine} videos landscape: ${JSON.stringify(land)}`);
+    await closeDialog('#videos', '#videos-close');
     // Without YouTube the dialog says so and plays nothing; coming back online loads the poster.
     await evaluate('youtubeOffline=true;youtubeFrames.length=0;document.querySelector("#videos-open").click()');
     await until(`${engine} videos offline`, () => evaluate('document.querySelector("#videos-screen").dataset.state==="offline"'));
@@ -255,7 +267,7 @@ const checks = await withPage({ name: 'dialogs', instrumentation }, async ({ ori
     assert.deepEqual(await evaluate('[document.querySelector("#videos-offline").checkVisibility(),document.activeElement.dataset.id===document.querySelectorAll("#videos-list .videos-item")[1].dataset.id]'), [false, true],
       'the poster replaces the message and focus moves to the chosen video');
     await closeDialog('#videos', '#videos-close');
-    pass(`${engine}: Videos plays a chosen video, stops it on close, and says when YouTube is unreachable, on desktop, tablet and phone`);
+    pass(`${engine}: Videos groups and plays the videos, stops one on close, and says when YouTube is unreachable, on desktop, tablet, phone and landscape phone`);
 
     await until(`${engine} environment summary`, () => evaluate('document.querySelectorAll(".provider[data-id=shell] .environment-values dd").length===4'));
     for (const [width, height] of [[1440, 900], [768, 1024], [390, 844]]) {

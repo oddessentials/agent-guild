@@ -3414,10 +3414,10 @@ function closeNews() {
   if ($('news').open) $('news').close();
 }
 
-// Trailers and tutorials ship in web/videos.json, oldest first, and the page lists tutorials first. Nothing
+// Videos ship in web/videos.json, oldest first, and the page groups them like the channel's playlists. Nothing
 // reaches YouTube until the dialog opens, and a video plays only once YouTube's image server has answered for
 // its poster.
-const VIDEO_CATEGORIES = { tutorials: ['Tutorials', 'Tutorial'], trailers: ['Trailers', 'Trailer'] };
+const VIDEO_CATEGORIES = { tutorials: ['Tutorials', 'Tutorial'], trailers: ['Trailers', 'Trailer'], world: ['World', 'World'] };
 const VIDEO_ID = /^[\w-]{11}$/;
 const videosView = { list: [], filter: 'all', selected: null, play: false, poster: 0, opener: null };
 
@@ -3441,8 +3441,22 @@ function videoDate(video) {
   return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
-function videoMeta(video) {
-  return [VIDEO_CATEGORIES[video.category][1], videoDate(video)].filter(Boolean).join(' · ');
+function videoLength(video) {
+  const seconds = video.duration;
+  if (!Number.isInteger(seconds) || seconds <= 0) return '';
+  const [h, m, s] = [Math.floor(seconds / 3600), Math.floor(seconds / 60) % 60, seconds % 60];
+  return [...(h ? [h, String(m).padStart(2, '0')] : [m]), String(s).padStart(2, '0')].join(':');
+}
+
+function videoLengthWords(video) {
+  const seconds = video.duration;
+  if (!videoLength(video) || !Intl.DurationFormat) return videoLength(video);
+  return new Intl.DurationFormat(undefined, { style: 'long' })
+    .format({ hours: Math.floor(seconds / 3600), minutes: Math.floor(seconds / 60) % 60, seconds: seconds % 60 });
+}
+
+function videoMeta(video, length = false) {
+  return [VIDEO_CATEGORIES[video.category][1], length && videoLength(video), videoDate(video)].filter(Boolean).join(' · ');
 }
 
 function shownVideos() {
@@ -3464,21 +3478,30 @@ function renderVideoFilters() {
   }));
 }
 
+function videoItem(video) {
+  const thumb = el('img', 'videos-thumb');
+  thumb.alt = '';
+  thumb.loading = 'lazy';
+  thumb.src = `https://i.ytimg.com/vi/${video.id}/mqdefault.jpg`;
+  thumb.addEventListener('error', () => { thumb.hidden = true; }, { once: true });
+  const length = videoLength(video) ? el('span', 'videos-length', videoLength(video)) : null;
+  length?.setAttribute('aria-hidden', 'true');
+  const item = el('button', 'videos-item', el('span', 'videos-frame', thumb, length),
+    el('span', 'videos-item-text', el('span', 'videos-item-title', video.title),
+      length && el('span', 'visually-hidden', `, ${videoLengthWords(video)}, `), el('span', 'news-meta', videoMeta(video))));
+  item.type = 'button';
+  item.dataset.id = video.id;
+  item.addEventListener('click', () => selectVideo(video, true));
+  if (video === videosView.selected) item.setAttribute('aria-current', 'true');
+  return el('li', null, item);
+}
+
 function renderVideoList() {
-  $('videos-list').replaceChildren(...shownVideos().map((video) => {
-    const thumb = el('img', 'videos-thumb');
-    thumb.alt = '';
-    thumb.loading = 'lazy';
-    thumb.src = `https://i.ytimg.com/vi/${video.id}/mqdefault.jpg`;
-    thumb.addEventListener('error', () => { thumb.hidden = true; }, { once: true });
-    const item = el('button', 'videos-item', el('span', 'videos-frame', thumb),
-      el('span', 'videos-item-text', el('span', 'videos-item-title', video.title), el('span', 'news-meta', videoMeta(video))));
-    item.type = 'button';
-    item.dataset.id = video.id;
-    item.addEventListener('click', () => selectVideo(video, true));
-    if (video === videosView.selected) item.setAttribute('aria-current', 'true');
-    return el('li', null, item);
-  }));
+  const shown = shownVideos();
+  const groups = Object.keys(VIDEO_CATEGORIES).map((id) => [id, shown.filter((video) => video.category === id)]).filter(([, videos]) => videos.length);
+  $('videos-list').replaceChildren(...groups.map(([id, videos]) => el('li', 'videos-group',
+    groups.length > 1 && el('h3', 'videos-group-title', VIDEO_CATEGORIES[id][0]),
+    el('ol', 'videos-group-list', ...videos.map(videoItem)))));
 }
 
 function stopVideo() {
@@ -3494,7 +3517,7 @@ function selectVideo(video, play) {
     else item.removeAttribute('aria-current');
   }
   $('videos-now').textContent = video.title;
-  $('videos-meta').textContent = videoMeta(video);
+  $('videos-meta').textContent = videoMeta(video, true);
   $('videos-youtube').href = `https://www.youtube.com/watch?v=${video.id}`;
   $('videos-play').setAttribute('aria-label', `Play ${video.title}`);
   const request = ++videosView.poster;
