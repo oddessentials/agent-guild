@@ -4721,6 +4721,7 @@ test('every video in web/videos.json plays in the page, oldest first', () => {
     assert.ok(video.title.length > 0 && video.title.length <= 120, `${video.id}: a title of 1 to 120 characters`);
     assert.ok(categories.includes(video.category), `${video.id}: category ${video.category} is one the page shows`);
     assert.match(video.published, /^\d{4}-\d{2}-\d{2}$/, `${video.id}: a publish date`);
+    assert.ok(Number.isInteger(video.duration) && video.duration > 0, `${video.id}: a length in seconds`);
   }
   assert.equal(new Set(videos.map((video) => video.id)).size, videos.length, 'no video is listed twice');
   const dates = videos.map((video) => video.published);
