@@ -15,7 +15,7 @@ import { cleanResumeId } from '../manager/resume-id.mjs';
 const { Terminal } = headless;
 
 /** Newest first; an older client gets its own version back when it is listed. */
-export const PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
+export const PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2024-11-05'];
 const REQUEST_TIMEOUT_MS = 10000;
 const START_TIMEOUT_MS = 50000;
 const SCREEN_TIMEOUT_MS = 5000;

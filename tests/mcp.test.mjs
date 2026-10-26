@@ -246,6 +246,52 @@ async function exchange(client, requests) {
   return printed.trim().split('\n').map((line) => JSON.parse(line));
 }
 
+test('supported protocol revisions negotiate unchanged', async () => {
+  for (const protocolVersion of ['2025-11-25', '2025-06-18', '2024-11-05']) {
+    const [response] = await exchange(createGuildClient({ token }), [{
+      id: 1, method: 'initialize',
+      params: { protocolVersion, capabilities: {}, clientInfo: { name: 'test', version: '1' } },
+    }]);
+    assert.equal(response.error, undefined);
+    assert.equal(response.result.protocolVersion, protocolVersion);
+  }
+});
+
+test('March 2025 negotiates a modern revision, rejects batches and still serves standalone requests', { timeout: 5000 }, async (t) => {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  const replies = readline.createInterface({ input: output })[Symbol.asyncIterator]();
+  const receive = async () => JSON.parse((await replies.next()).value);
+  const send = (message) => input.write(`${JSON.stringify(message)}\n`);
+  const done = serveMcp({ input, output, client: createGuildClient({ token }) });
+  t.after(async () => { input.end(); await done; output.end(); });
+
+  send({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {
+    protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'test', version: '1' },
+  } });
+  const init = await receive();
+  assert.equal(init.id, 1);
+  assert.equal(init.error, undefined);
+  assert.equal(init.result.protocolVersion, '2025-11-25');
+  send({ jsonrpc: '2.0', method: 'notifications/initialized' });
+  send([
+    { jsonrpc: '2.0', id: 2, method: 'ping' },
+    { jsonrpc: '2.0', id: 3, method: 'tools/list' },
+  ]);
+  assert.deepEqual(await receive(), { jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Invalid Request' } });
+
+  send({ jsonrpc: '2.0', id: 4, method: 'ping' });
+  assert.deepEqual(await receive(), { jsonrpc: '2.0', id: 4, result: {} });
+  send({ jsonrpc: '2.0', id: 5, method: 'tools/list' });
+  const listed = await receive();
+  assert.equal(listed.id, 5);
+  assert.ok(listed.result.tools.some((tool) => tool.name === 'guild_status'));
+  input.end();
+  await done;
+  output.end();
+  assert.equal((await replies.next()).done, true);
+});
+
 test('known token fragments need 16 hex digits, preserving short hashes, session ids and colors', () => {
   // 64 bits of the known token, above ordinary 6/8-digit colors and 7-12-digit ids.
   // Repeated windows must not leave a short tail behind when their matches overlap.
