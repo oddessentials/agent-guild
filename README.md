@@ -33,6 +33,12 @@ session. Sign in to each tool inside its first session, as you would in any
 terminal. To look around first, [try the demo](https://oddessentials.github.io/agent-guild/)
 (simulated, nothing installed) or [watch the trailer](https://www.youtube.com/watch?v=_vQuW0v-uMY).
 
+**Or ask your agent.** Point it at
+[the setup skill](https://github.com/oddessentials/agent-guild/blob/main/plugins/agent-guild/skills/setup-agent-guild/SKILL.md),
+or run `claude plugin marketplace add oddessentials/agent-guild --sparse .claude-plugin plugins`
+and `claude plugin install agent-guild@agent-guild`. It installs and checks Agent Guild,
+then connects over [MCP](docs/mcp.md) to see and steer your sessions.
+
 ## Why Agent Guild
 
 * **The real CLIs, unchanged.** Each session is the tool itself in a real
@@ -245,6 +251,7 @@ skin. A double-click on a character opens its real terminal.
 | `agent-guild url` | Print the page link with the access token. |
 | `agent-guild start` | Run the manager in the foreground. |
 | `agent-guild doctor` | Diagnose the health of the installation and related tooling. |
+| `agent-guild mcp` | Serve MCP on stdio, so a coding agent can see and steer the sessions. See [Agent Guild for agents](docs/mcp.md). |
 | `agent-guild --version` | Print the installed Agent Guild version (`-v` or `version`). |
 
 Sessions end when the manager stops or the computer restarts. tmux and herdr
@@ -278,6 +285,7 @@ Failed news, model list and release checks retry after 10 minutes.
 
 ## More
 
+* [Agent Guild for agents](docs/mcp.md): the MCP server, and a plugin and skill that set Agent Guild up
 * [Configuration](docs/configuration.md): add tools, accounts, environment variables, reverse proxies
 * [Agent reporting](docs/agent-reporting.md): show agents from any tool
 * [Skins](docs/SKINS.md): make your own look

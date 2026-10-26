@@ -8,7 +8,8 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { resolveCommand, resolveAllCommands, buildSpawnSpec, npmSpawnSpec, quoteForCmd, runSpec } from '../src/manager/command-resolver.mjs';
 import { mergePathLists, parsePathFromEnvOutput, parseEnvOutput, macLocale, resolveBaseEnv, weavePaths, parseRegValue, expandWindowsVars, readWindowsPath, trimPathExt, probeLoginShell, appendPaths, addRuntimePaths, npmGlobalPrefix } from '../src/manager/shell-env.mjs';
-import { mergeEnv, cleanResumeId, modelFromArgs, SessionManager } from '../src/manager/session-manager.mjs';
+import { mergeEnv, modelFromArgs, SessionManager } from '../src/manager/session-manager.mjs';
+import { cleanResumeId } from '../src/manager/resume-id.mjs';
 import { loadProviders, ProviderRegistry } from '../src/manager/providers.mjs';
 import { detectShells, tmuxNewSession, tmuxSupported } from '../src/manager/shells.mjs';
 import { herdrAgentReports, herdrSocket } from '../src/manager/herdr.mjs';
@@ -199,6 +200,7 @@ test('resume and install specs come from the provider configuration', async () =
   assert.equal(cleanResumeId('  550e8400-e29b  '), '550e8400-e29b');
   assert.throws(() => cleanResumeId(''), (err) => err.status === 400);
   assert.throws(() => cleanResumeId('a\x1bb'), (err) => err.status === 400);
+  assert.throws(() => cleanResumeId(' --dangerously-skip-permissions'), (err) => err.status === 400);
   assert.throws(() => cleanResumeId('x'.repeat(201)), (err) => err.status === 400);
 });
 
@@ -4331,7 +4333,8 @@ test('every reporting bundle runs the reporter, Antigravity\'s through a script 
   assert.deepEqual(Object.keys(claude).filter((event) => claude[event][0].hooks[0].async !== true), ['SubagentStart', 'PreToolUse'], 'only a start holds Claude Code up, so it reaches the manager before its end');
   assert.equal(claude.SessionStart[0].matcher, undefined);
   assert.ok(commands(unix.claude).every((c) => c === REPORT_COMMAND));
-  assert.equal(JSON.parse(unix.claude['.claude-plugin/plugin.json']).name, 'agent-guild');
+  const distributed = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'plugins', 'agent-guild', '.claude-plugin', 'plugin.json'), 'utf8')).name;
+  assert.notEqual(JSON.parse(unix.claude['.claude-plugin/plugin.json']).name, distributed, 'a --plugin-dir plugin replaces an installed one of the same name');
   for (const platform of ['win32', 'linux']) {
     const files = grokFiles(platform);
     const script = platform === 'win32' ? 'agent-guild-hook.cmd' : 'agent-guild-hook.sh';

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "ai.oddessentials/agent-guild",
+  "title": "Agent Guild",
+  "description": "See and steer Claude Code, Codex, Antigravity, Grok, Docker Agent and shell sessions in Agent Guild.",
+  "version": "0.0.0-development",
+  "websiteUrl": "https://github.com/oddessentials/agent-guild/blob/main/docs/mcp.md",
+  "repository": {
+    "url": "https://github.com/oddessentials/agent-guild",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@oddessentials/agent-guild",
+      "version": "0.0.0-development",
+      "transport": { "type": "stdio" },
+      "packageArguments": [{ "type": "positional", "value": "mcp" }]
+    }
+  ]
+}

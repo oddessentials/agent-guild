@@ -175,6 +175,18 @@ test('open starts a background manager, status reports it, stop ends it', async 
   assert.ok(!fs.existsSync(path.join(home, 'manager.json')), 'runtime file is removed on shutdown');
 });
 
+test('open still starts the manager when no browser can be launched, and points to url instead of printing the token', async (t) => {
+  const { port, base, home, run, token } = await launcher(t);
+  const noOpener = Object.fromEntries(Object.entries(env).filter(([key]) => key.toUpperCase() !== 'PATH'));
+  const opened = await runWith({ ...noOpener, PATH: '', AGENT_GUILD_HOME: home, AGENT_GUILD_PORT: String(port) }, 'open');
+  assert.equal(opened.code, 0, opened.stderr);
+  assert.match(opened.stdout, /Session manager started/);
+  assert.match(opened.stdout, /Could not open a browser automatically\. Run `agent-guild url`/);
+  assert.doesNotMatch(opened.stdout, /#token=/);
+  assert.equal((await fetch(`${base}/api/v1/health`)).status, 200);
+  assert.equal((await run('url')).stdout.trim(), `${base}/#token=${token()}`);
+});
+
 test('a sign-in launch records a new or existing manager without printing the access token', async (t) => {
   const { base, home, run, token } = await launcher(t);
   const attempt = path.join(home, SIGN_IN_ATTEMPT);

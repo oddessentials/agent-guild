@@ -649,7 +649,8 @@ All paths are under `/api/v1`.
 
 `cwd` defaults to the user's home folder, and a leading `~` is expanded.
 `args` are appended to the provider's configured arguments. `resume` is an
-id or name of one of the tool's own sessions. `account` defaults to `default`.
+id or name of one of the tool's own sessions; one that starts with `-` is
+refused with 400 `bad_resume`. `account` defaults to `default`.
 
 The `POST /sessions/:id/…` report routes (`agents`, `model`, `tool-session`,
 `context`, `reply`, `reporting`, `docker` and `shells`) also accept the per-session
