@@ -45,7 +45,13 @@
   if ((window.parent && window.parent !== window) || app) {
     var params = new URLSearchParams(location.hash.slice(1));
     var asked = params.get('view');
-    if (params.get('layout') === 'compact') {
+    if (params.get('yard') === 'none') {
+      document.documentElement.dataset.yard = 'none';
+      view = 'cards';
+      if (asked === 'cards') {
+        try { localStorage.setItem('agentGuild.view', view); } catch (e) { /* storage unavailable */ }
+      }
+    } else if (params.get('layout') === 'compact') {
       document.documentElement.dataset.layout = 'compact';
       if (params.get('expand') === 'none') document.documentElement.dataset.expand = 'none';
       view = 'yard';

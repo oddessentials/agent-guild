@@ -40,12 +40,12 @@ test('the Pages builder makes a portable, complete site without changing web/', 
   assert.throws(() => execFileSync(process.execPath, [path.join(demo, 'check.mjs'), out], { stdio: 'pipe' }), /origin-root url\(\)/);
 });
 
-function openBookmark(search, saved = {}) {
+function openBookmark(search, saved = {}, hash = '') {
   const storage = new Map(Object.entries(saved));
   const root = { dataset: {} };
   const context = {
     URLSearchParams,
-    location: { search },
+    location: { search, hash },
     document: { documentElement: root },
     localStorage: {
       getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, String(value)), removeItem: (key) => storage.delete(key),
@@ -54,6 +54,7 @@ function openBookmark(search, saved = {}) {
     matchMedia: () => ({ matches: false }),
   };
   context.window = context;
+  if (hash) context.agentGuild = { postMessage() {} };
   for (const file of [path.join(repo, 'web', 'theme.js'), path.join(demo, 'demo-bookmark.js')]) {
     vm.runInNewContext(fs.readFileSync(file, 'utf8'), context, { filename: path.basename(file) });
   }
@@ -81,6 +82,10 @@ test('a demo bookmark opens its skin, view, theme and card art whatever the visi
   assert.deepEqual(openBookmark('?view=yard', open).saved, { ...saved, 'agentGuild.view': 'yard' });
   assert.deepEqual(openBookmark('?view=map', open).saved, open);
   assert.deepEqual(openBookmark('', open).saved, open);
+
+  const off = openBookmark('?view=yard', saved, '#layout=compact&yard=none');
+  assert.deepEqual(off.shown, { skin: 'guild', view: 'cards', theme: 'light', art: 'on', yard: 'none' });
+  assert.deepEqual(off.saved, saved);
 });
 
 test('the demo runtime handles initial API calls and opens event and terminal sockets', async (t) => {

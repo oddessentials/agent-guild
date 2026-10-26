@@ -8,6 +8,7 @@ const app = typeof window !== 'undefined' && !framed ? appHost() : null;
 const hosted = framed || Boolean(app);
 export const compact = hosted && document.documentElement?.dataset.layout === 'compact';
 const expandable = hosted && document.documentElement?.dataset.expand !== 'none';
+export const yardOff = hosted && document.documentElement?.dataset.yard === 'none';
 
 /** The app's message channel, or null. */
 function appHost() {
@@ -70,7 +71,7 @@ if (hosted) {
     if (event.source !== sender || (app && event.origin !== location.origin)) return;
     const { source, type, view, id } = event.data ?? {};
     if (source !== expected) return;
-    if (type === 'view' && (view === 'cards' || view === 'yard')) showView?.(view);
+    if (type === 'view' && (view === 'cards' || (view === 'yard' && !yardOff))) showView?.(view);
     if (type === 'session' && typeof id === 'string') showSession?.(id);
   });
   if (framed && !compact) {

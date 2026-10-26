@@ -601,6 +601,24 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   await send('Page.removeScriptToEvaluateOnNewDocument', { identifier: android.identifier });
   pass('the Android app opens the page in the Yard, gets its readiness as JSON text and switches views');
 
+  const tv = await send('Page.addScriptToEvaluateOnNewDocument', {
+    source: 'window.testApp=[];window.agentGuild={postMessage:m=>testApp.push(JSON.parse(m))};localStorage.setItem("agentGuild.view","yard");',
+  });
+  await navigate(`${origin}/?tv#token=t&layout=compact&expand=none&view=yard&yard=none`);
+  await until('the TV app opens the Cards', () => evaluate('document.documentElement.dataset.view==="cards"&&testApp.some(m=>m.type==="ready")'));
+  await layoutReady();
+  assert.deepEqual(await evaluate('["layout" in document.documentElement.dataset, document.querySelector("#yard").hidden, document.querySelector("#view-yard").closest("fieldset").checkVisibility({visibilityProperty:true})]'), [false, true, false]);
+  await ask('yard');
+  await click('#skin-choices input[value="grove"]');
+  await until('the grove skin', () => evaluate('document.documentElement.dataset.skin==="grove"'));
+  await ask('cards');
+  await layoutReady();
+  assert.equal(await evaluate('document.documentElement.dataset.view'), 'cards');
+  assert.deepEqual(await evaluate('performance.getEntriesByType("resource").map(e=>e.name).filter(n=>/\\/yard\\/(?:renderer|assets\\/)|yard-art/.test(n))'), []);
+  assert.equal(await evaluate('localStorage.getItem("agentGuild.view")'), 'cards', 'the Cards the TV asked for are kept');
+  await send('Page.removeScriptToEvaluateOnNewDocument', { identifier: tv.identifier });
+  pass('with &yard=none the page shows the Cards, offers no Yard, ignores requests for it and never loads its scene or art');
+
   assert.deepEqual(errors, []);
   pass('the page has no uncaught browser exceptions');
 });

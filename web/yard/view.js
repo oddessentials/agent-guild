@@ -30,8 +30,9 @@ export function initYard(controller) {
   let lastSkin = '', lastTheme = '', wasConnected = false;
   const sceneVisible = () => view === 'yard' && !$('app').hidden && document.visibilityState !== 'hidden' && $('terminal-panel').hidden;
   const skinEntry = (skin = root.dataset.skin) => (window.agentGuildSkins || []).find((item) => item.id === skin) || null;
+  const yardOff = root.dataset.yard === 'none';
   // A skin has a yard only when model.mjs has its world.
-  const skinAllowsYard = (skin = root.dataset.skin) => Boolean(WORLDS[skin]);
+  const skinAllowsYard = (skin = root.dataset.skin) => !yardOff && Boolean(WORLDS[skin]);
   function select(next, { focus = false } = {}) {
     selected = next;
     updateInspector();
@@ -282,6 +283,7 @@ export function initYard(controller) {
     if (controller.expand) return controller.expand();
     setView('cards'); ($('settings').checkVisibility() ? $('settings') : $('menu-toggle')).focus();
   };
+  $('view-yard').closest('fieldset').hidden = yardOff;
   if (controller.expand) for (const id of ['yard-cards','yard-download-cards']) $(id).textContent = 'Open Agent Guild';
   $('yard-cards').addEventListener('click',showCards);
   $('yard-offline-open').addEventListener('click',() => controller.expand?.());
