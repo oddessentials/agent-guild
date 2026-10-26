@@ -616,8 +616,14 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   assert.equal(await evaluate('document.documentElement.dataset.view'), 'cards');
   assert.deepEqual(await evaluate('performance.getEntriesByType("resource").map(e=>e.name).filter(n=>/\\/yard\\/(?:renderer|assets\\/)|yard-art/.test(n))'), []);
   assert.equal(await evaluate('localStorage.getItem("agentGuild.view")'), 'cards', 'the Cards the TV asked for are kept');
+  assert.equal(await evaluate('location.hash'), '#yard=none');
+  await reload();
+  await until('the reloaded TV page opens the Cards', () => evaluate('document.documentElement.dataset.view==="cards"&&testApp.some(m=>m.type==="ready")'));
+  await layoutReady();
+  assert.deepEqual(await evaluate('[location.hash, localStorage.getItem("agentGuild.view"), document.querySelector("#view-yard").closest("fieldset").checkVisibility({visibilityProperty:true})]'), ['#yard=none', 'yard', false]);
+  assert.deepEqual(await evaluate('performance.getEntriesByType("resource").map(e=>e.name).filter(n=>/\\/yard\\/(?:renderer|assets\\/)|yard-art/.test(n))'), []);
   await send('Page.removeScriptToEvaluateOnNewDocument', { identifier: tv.identifier });
-  pass('with &yard=none the page shows the Cards, offers no Yard, ignores requests for it and never loads its scene or art');
+  pass('with &yard=none the page shows the Cards, offers no Yard, ignores requests for it and never loads its scene or art, after a reload too');
 
   assert.deepEqual(errors, []);
   pass('the page has no uncaught browser exceptions');
