@@ -135,7 +135,7 @@ export function grokHooksState(dir, files) {
 
 export function bundleFiles(version, { platform = process.platform } = {}) {
   const json = (value) => `${JSON.stringify(value, null, 2)}\n`;
-  const manifest = { name: PLUGIN_NAME, version, description: MANIFEST_DESCRIPTION };
+  const manifest = { name: `${PLUGIN_NAME}-reporting`, version, description: MANIFEST_DESCRIPTION };
   return {
     claude: {
       '.claude-plugin/plugin.json': json(manifest),

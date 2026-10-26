@@ -1,0 +1,30 @@
+{
+  "name": "agent-guild",
+  "description": "Set up Agent Guild, then see and steer its Claude Code, Codex, Antigravity, Grok, Docker Agent and shell sessions from this agent.",
+  "author": {
+    "name": "Odd Essentials",
+    "url": "https://oddessentials.ai"
+  },
+  "homepage": "https://github.com/oddessentials/agent-guild/blob/main/docs/mcp.md",
+  "repository": "https://github.com/oddessentials/agent-guild",
+  "license": "AGPL-3.0-only",
+  "keywords": [
+    "agent-guild",
+    "sessions",
+    "terminal",
+    "claude-code",
+    "codex",
+    "mcp"
+  ],
+  "mcpServers": {
+    "agent-guild": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@oddessentials/agent-guild@latest",
+        "mcp"
+      ]
+    }
+  },
+  "icon": "./.claude-plugin/icon.png"
+}

@@ -16,6 +16,7 @@ import { DockerSessions } from './docker-sessions.mjs';
 import { SELF_PROVIDER } from './self-update.mjs';
 import { GITHUB_PROVIDER, dropsFromCloneEnv, parseRepo } from './github.mjs';
 import { pathIdentity } from './multiplexer-paths.mjs';
+import { cleanResumeId } from './resume-id.mjs';
 
 export const MAX_SESSIONS = 32;
 const TMUX_SESSION_GONE = [/^can't find session/m, /^no server running on /m, /^error connecting to .*\(No such file or directory\)$/m];
@@ -876,18 +877,6 @@ export function modelFromArgs(args) {
     if (args[i].startsWith('--model=') && args[i].length > 8) return args[i].slice(8);
   }
   return null;
-}
-
-const MAX_RESUME_ID = 200;
-
-/** A session id or name to resume: one printable line, or null when absent. */
-export function cleanResumeId(resume) {
-  if (resume === undefined || resume === null) return null;
-  const id = String(resume).trim();
-  if (!id || id.length > MAX_RESUME_ID || /\p{Cc}/u.test(id)) {
-    throw httpError(400, `resume must be a printable id of at most ${MAX_RESUME_ID} characters`, 'bad_resume');
-  }
-  return id;
 }
 
 export function timingSafeEqualString(a, b) {

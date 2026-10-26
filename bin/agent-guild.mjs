@@ -7,6 +7,7 @@
 //   agent-guild restart    stop the manager and start it again (ends all sessions)
 //   agent-guild status     show whether the manager is running
 //   agent-guild url        print the page URL (includes the access token)
+//   agent-guild mcp        serve the Model Context Protocol on stdio, for coding agents
 
 import fs from 'node:fs';
 import { spawn } from 'node:child_process';
@@ -35,6 +36,8 @@ Commands:
   status    Show whether the session manager is running
   url       Print the web page URL, including the access token
   doctor    Diagnose the health of the installation and related tooling
+  mcp       Serve the Model Context Protocol on stdio, so a coding agent can
+            see and steer the sessions (--allow-input lets it type into them)
 
 Options:
   -v, --version  Print the installed Agent Guild version
@@ -90,7 +93,7 @@ function openBrowser(url) {
     // rundll32 avoids cmd.exe's special handling of characters like "&" in URLs.
     child = spawn('rundll32', ['url.dll,FileProtocolHandler', url], { ...opts, windowsHide: true });
   } else child = spawn('xdg-open', [url], opts);
-  child.on('error', () => console.log(`Could not open a browser automatically. Open this URL:\n  ${url}`));
+  child.on('error', () => console.log('Could not open a browser automatically. Run `agent-guild url` to print the page link.'));
   child.unref();
 }
 
@@ -334,6 +337,12 @@ async function main() {
     }
     case 'url': {
       console.log(pageUrl(baseUrl(), loadOrCreateToken()));
+      return undefined;
+    }
+    case 'mcp': {
+      // stdout carries only protocol messages from here on.
+      const { serveMcp } = await import('../src/mcp/server.mjs');
+      await serveMcp({ allowInput: flags.has('--allow-input') });
       return undefined;
     }
     default:

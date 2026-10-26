@@ -829,6 +829,9 @@ test('an existing tool session can be resumed by id', async () => {
 
   assert.equal((await call('POST', '/sessions', { providerId: 'fake', resume: '' })).status, 400);
   assert.equal((await call('POST', '/sessions', { providerId: 'fake', resume: 'a\nb' })).status, 400);
+  const flag = await call('POST', '/sessions', { providerId: 'fake', resume: '--dangerously-skip-permissions' });
+  assert.equal(flag.status, 400);
+  assert.equal(flag.body.error.code, 'bad_resume');
   const unsupported = await call('POST', '/sessions', { providerId: 'plain', resume: 'abc' });
   assert.equal(unsupported.status, 400);
   assert.equal(unsupported.body.error.code, 'resume_unsupported');

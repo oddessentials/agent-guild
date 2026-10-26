@@ -1,0 +1,16 @@
+{
+  "name": "agent-guild",
+  "owner": {
+    "name": "Odd Essentials",
+    "url": "https://oddessentials.ai"
+  },
+  "description": "Agent Guild: every coding agent, on every screen.",
+  "plugins": [
+    {
+      "name": "agent-guild",
+      "source": "./plugins/agent-guild",
+      "description": "Set up Agent Guild, then see and steer its sessions from this agent: the setup-agent-guild skill and the Agent Guild MCP server.",
+      "category": "development"
+    }
+  ]
+}

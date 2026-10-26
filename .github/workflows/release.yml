@@ -237,6 +237,50 @@ jobs:
           done
           node tests/package/smoke.mjs "$(npm prefix --global)" --version "$VERSION" --yard-art
 
+  registry:
+    name: Publish to the MCP Registry
+    needs: [plan, confirm]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      MCP_PUBLISHER_VERSION: v1.8.1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: server.json
+          sparse-checkout-cone-mode: false
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - env:
+          VERSION: ${{ needs.plan.outputs.version }}
+          MCP_PRIVATE_KEY: ${{ secrets.MCP_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$MCP_PRIVATE_KEY" ]; then
+            echo "::warning::$VERSION is not in the MCP Registry: the MCP_PRIVATE_KEY secret is not set."
+            exit 0
+          fi
+          name=$(jq -r .name server.json)
+          if curl --fail --silent --output /dev/null "https://registry.modelcontextprotocol.io/v0.1/servers/$(jq -rn --arg n "$name" '$n | @uri')/versions/$VERSION"; then
+            echo "$name $VERSION is already in the MCP Registry."
+            exit 0
+          fi
+          archive=mcp-publisher_linux_amd64.tar.gz
+          base="https://github.com/modelcontextprotocol/registry/releases/download/$MCP_PUBLISHER_VERSION"
+          curl --fail --location --silent --show-error --output "$archive" "$base/$archive"
+          curl --fail --location --silent --show-error --output "$archive.sigstore.json" "$base/$archive.sigstore.json"
+          cosign verify-blob \
+            --bundle "$archive.sigstore.json" \
+            --certificate-identity "https://github.com/modelcontextprotocol/registry/.github/workflows/release.yml@refs/tags/$MCP_PUBLISHER_VERSION" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "$archive"
+          tar -xzf "$archive" mcp-publisher
+          jq --arg v "$VERSION" '.version = $v | .packages[0].version = $v' server.json > server.tmp
+          mv server.tmp server.json
+          ./mcp-publisher login dns --domain oddessentials.ai --private-key "$MCP_PRIVATE_KEY"
+          ./mcp-publisher publish
+
   pages-build:
     name: Build Pages demo
     needs: [plan, release]
