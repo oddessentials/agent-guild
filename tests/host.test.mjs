@@ -7,7 +7,7 @@ let loads = 0;
  * web/host.js loaded into a fake page; `framed` decides whether its parent is another window, `app` whether the Apple app's
  * handler exists, and `android` whether the Android app's listener does.
  */
-async function host({ framed, app = false, android = false, layout, writeText, execCommand = () => true }) {
+async function host({ framed, app = false, android = false, layout, yard, writeText, execCommand = () => true }) {
   const posted = [], opened = [], listeners = {}, copied = [], appPosted = [], observers = [];
   const win = { open: (...args) => opened.push(args), addEventListener: (type, listener) => { listeners[`window.${type}`] = listener; } };
   win.parent = framed ? { postMessage: (message, origin) => posted.push({ message, origin }) } : win;
@@ -20,7 +20,7 @@ async function host({ framed, app = false, android = false, layout, writeText, e
     } };
   }
   const document = {
-    documentElement: { dataset: { skin: 'guild', theme: 'dark', ...(layout ? { layout } : {}) } },
+    documentElement: { dataset: { skin: 'guild', theme: 'dark', ...(layout ? { layout } : {}), ...(yard ? { yard } : {}) } },
     activeElement: null,
     body: { append: (area) => { area.parent = 'body'; } },
     addEventListener: (type, listener) => { listeners[type] = listener; },
@@ -185,6 +185,25 @@ test('the Android app gets links and readiness as JSON text, and only its own pa
   const framed = await host({ framed: true, android: true });
   framed.module.announceReady('1.8.0');
   assert.deepEqual(framed.appPosted, [], 'a framed page answers only its frame host');
+});
+
+test('a host that turns the Yard off can still ask for the Cards, but not the Yard', async () => {
+  const own = 'http://127.0.0.1:47821';
+  for (const [options, source, sender] of [
+    [{ framed: true }, 'agent-guild-vscode', () => window.parent],
+    [{ framed: false, app: true }, 'agent-guild-app', () => window],
+    [{ framed: false, android: true }, 'agent-guild-app', () => window],
+  ]) {
+    const page = await host({ ...options, yard: 'none' });
+    assert.equal(page.module.yardOff, true);
+    const shown = [];
+    page.module.onViewRequest((view) => shown.push(view));
+    page.listeners['window.message']({ source: sender(), origin: own, data: { source, type: 'view', view: 'yard' } });
+    page.listeners['window.message']({ source: sender(), origin: own, data: { source, type: 'view', view: 'cards' } });
+    assert.deepEqual(shown, ['cards']);
+  }
+  const browser = await host({ framed: false, yard: 'none' });
+  assert.equal(browser.module.yardOff, false, 'only a host can turn the Yard off');
 });
 
 test('copying falls back to execCommand when the clipboard API is refused', async () => {

@@ -4,7 +4,7 @@
   var chosen = {
     skin: (window.agentGuildSkins || []).some(function (s) { return s.id === params.get('skin'); }) ? params.get('skin') : null,
     theme: params.get('theme') === 'light' || params.get('theme') === 'dark' ? params.get('theme') : null,
-    view: params.get('view') === 'cards' || params.get('view') === 'yard' ? params.get('view') : null,
+    view: params.get('view') === 'cards' || (params.get('view') === 'yard' && root.dataset.yard !== 'none') ? params.get('view') : null,
     art: params.get('art') === 'on' || params.get('art') === 'off' ? params.get('art') : null,
   };
   var keys = Object.keys(chosen).filter(function (key) { return chosen[key]; });

@@ -745,6 +745,10 @@ Yard's scene alone, to fill a small view, and keeps nothing: `&skin=<id>` and
 `&theme=light` or `&theme=dark` show that look, and opening a session asks
 the host for the full page. A host with no full page adds `&expand=none`, and
 the page then neither shows its controls that ask for one nor sends `expand`.
+A host whose device can't run the Yard adds `&yard=none`: the page shows the
+Cards, doesn't offer the Yard, ignores `&view=yard`, `&layout=compact` and
+the `view` message's `"yard"`, and never loads the scene or downloads the
+Yard's art.
 A browser ignores all of these.
 
 A framed page cannot open windows, so it posts messages to `window.parent`.
@@ -764,7 +768,7 @@ from then on.
 
 | Message | Meaning |
 | --- | --- |
-| `{ source: "agent-guild-vscode", type: "view", view }` | Show `view`, `"cards"` or `"yard"`, and keep it as the user's choice. An open terminal closes first; its sessions keep running. |
+| `{ source: "agent-guild-vscode", type: "view", view }` | Show `view`, `"cards"` or `"yard"`, and keep it as the user's choice. An open terminal closes first; its sessions keep running. A page opened with `&yard=none` ignores `"yard"`. |
 | `{ source: "agent-guild-vscode", type: "session", id }` | Open the terminal of session `id` once, as soon as the page knows that session. |
 
 ## The page in the Agent Guild app
@@ -772,8 +776,8 @@ from then on.
 The app for iPhone, iPad and Apple Vision Pro loads the page URL with
 `#token=<token>` in a `WKWebView` and registers a script message handler
 named `agentGuild`. When the page is not framed and that handler exists, the
-page treats the app as its host: `&view=yard` or `&view=cards` works as for
-VS Code, and the page posts the same `ready` and `open` messages to
+page treats the app as its host: `&view=yard`, `&view=cards`,
+`&layout=compact` and `&yard=none` work as for VS Code, and the page posts the same `ready` and `open` messages to
 `window.webkit.messageHandlers.agentGuild` instead of `window.parent`.
 Without the handler, the page behaves as in a browser.
 

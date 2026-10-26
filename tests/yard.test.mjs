@@ -172,6 +172,27 @@ test('a compact host view opens the Yard with the look it names, and keeps none 
  assert.deepEqual(open(true,'#token=t&layout=compact&skin=moon&theme=dim'),['compact','yard','guild','light','cards','guild','light']);
  assert.deepEqual(open(false,'#token=t&layout=compact&skin=grove'),[undefined,'cards','guild','light','cards','guild','light']);
 });
+test('a host that turns the Yard off gets the Cards whatever it or the user asked, and the saved view stays',()=>{
+ const source=readFileSync(new URL('../web/theme.js',import.meta.url),'utf8');
+ const open=(host,hash)=>{
+  const storage=new Map([['agentGuild.view','yard']]);
+  const document={documentElement:{dataset:{}}};
+  const window={matchMedia:()=>({matches:false})};
+  window.parent=host==='framed'?{}:window;
+  if(host==='android')window.agentGuild={postMessage(){}};
+  runInNewContext(source,{document,window,URLSearchParams,location:{hash},localStorage:{getItem:key=>storage.get(key)??null,setItem:(key,value)=>storage.set(key,value),length:0}});
+  const {yard,layout,view}=document.documentElement.dataset;
+  return [yard,layout,view,storage.get('agentGuild.view')];
+ };
+ for(const host of ['framed','android']){
+  assert.deepEqual(open(host,'#token=t&yard=none'),['none',undefined,'cards','yard']);
+  assert.deepEqual(open(host,'#token=t&yard=none&view=yard'),['none',undefined,'cards','yard']);
+  assert.deepEqual(open(host,'#token=t&layout=compact&expand=none&view=yard&yard=none'),['none',undefined,'cards','yard']);
+  assert.deepEqual(open(host,'#token=t&view=cards&yard=none'),['none',undefined,'cards','cards']);
+  assert.deepEqual(open(host,'#token=t&yard=off'),[undefined,undefined,'yard','yard']);
+ }
+ assert.deepEqual(open('browser','#token=t&yard=none'),[undefined,undefined,'yard','yard']);
+});
 test('the overview keeps every hall in sight on narrow stages, and is unchanged on wide ones',()=>{
  const {right,up}=viewBasis(),dot=(p,v)=>p[0]*v[0]+p[1]*v[1]+p[2]*v[2];
  for(const aspect of [.75,1,4/3,16/9,3,5]){

@@ -15,7 +15,7 @@ import { createReader } from './read-aloud.js';
 import { matchFolders, readRecentFolders, rememberFolder } from './folders.js';
 import { initYard } from './yard/view.js';
 import { ask } from './ask.js';
-import { framed, compact, openLink, announceReady, expand, copyToClipboard, onViewRequest, onSessionRequest } from './host.js';
+import { framed, compact, yardOff, openLink, announceReady, expand, copyToClipboard, onViewRequest, onSessionRequest } from './host.js';
 
 const TOKEN_KEY = 'agentGuild.token';
 const CWD_KEY = 'agentGuild.cwd';
@@ -7691,9 +7691,11 @@ function readTokenFromHash() {
   const params = new URLSearchParams(location.hash.slice(1));
   const token = params.get('token');
   if (token) {
-    // Keep the token out of the address bar and browser history. A compact page keeps the rest, which it does not save.
+    // Keep the token out of the address bar and browser history. A compact page keeps the rest, which it does not save,
+    // and a page without the Yard keeps yard=none, so a reload doesn't bring the Yard back.
     params.delete('token');
-    history.replaceState(null, '', location.pathname + location.search + (compact ? `#${params}` : ''));
+    const kept = compact ? params : yardOff ? new URLSearchParams({ yard: 'none' }) : null;
+    history.replaceState(null, '', location.pathname + location.search + (kept ? `#${kept}` : ''));
   }
   return token;
 }
