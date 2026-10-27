@@ -69,6 +69,8 @@ function readStdin() {
 function send(report, kind = report.compaction !== undefined ? 'context'
   : report.reply !== undefined ? 'reply'
   : report.shell !== undefined ? 'shells'
+  : report.permission !== undefined ? 'permission'
+  : report.turn !== undefined ? 'turn'
   : report.agentId !== undefined || report.finishForeground === true ? 'agents'
   : report.hello === true ? 'reporting'
   : report.toolSessionId !== undefined ? 'tool-session' : 'model') {
@@ -201,6 +203,9 @@ async function main() {
     // Antigravity CLI runs the hook in its sub-agents too, each a conversation of its own.
     if (typeof input.conversationId === 'string' && !antigravityUserConversation(firstRecord(input.transcriptPath))) return;
     for (const report of hookToReports(input)) {
+      // Each hook runs in a process of its own, and Claude Code's arrive in any order: the time this one started
+      // orders its event among the others.
+      if (report.permission !== undefined || report.turn !== undefined || report.reply !== undefined || report.status === 'done') report.at = performance.timeOrigin;
       if (report.transcript === undefined) await sendQuietly(report);
       else {
         const key = await claudeCompaction(report.transcript, performance.timeOrigin - 2000);

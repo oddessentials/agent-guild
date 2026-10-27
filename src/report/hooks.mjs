@@ -39,6 +39,10 @@ const TOOL_START_EVENTS = new Set(['PreToolUse']);
 const TOOL_END_EVENTS = new Set(['PostToolUse', 'PostToolUseFailure']);
 const TURN_BOUNDARY_EVENTS = new Set(['UserPromptSubmit', 'Stop', 'StopFailure', 'Interrupt']);
 const PERMISSION_EVENTS = new Set(['PermissionRequest', 'PermissionDenied']);
+// A call Claude Code asked permission for ends with one of these; an interactive denial fires none of them.
+const PERMISSION_ENDS = new Set(['PostToolUse', 'PostToolUseFailure', 'PermissionDenied']);
+// What the main agent's own events say about its turn.
+const TURN_EVENTS = new Map([['UserPromptSubmit', 'working'], ['Stop', 'ended'], ['StopFailure', 'ended'], ['Interrupt', 'ended']]);
 const MAX_DETAIL = 200;
 
 const FINISHED_TASKS = new Set(['completed', 'failed', 'killed']);
@@ -51,6 +55,14 @@ const text = (...values) => values.find((v) => typeof v === 'string' && v.trim()
 
 export function commandHash(command) {
   return crypto.createHash('sha256').update(command.replace(/\s+/g, ' ').trim()).digest('hex').slice(0, 32);
+}
+
+const sortedJson = (value) => JSON.stringify(value, (_key, v) => (v && typeof v === 'object' && !Array.isArray(v)
+  ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, v[k]])) : v));
+
+/** A tool call by its name and input: Claude Code's PermissionRequest carries no call id. */
+export function callHash(toolName, toolInput) {
+  return crypto.createHash('sha256').update(`${toolName}\n${sortedJson(toolInput ?? null)}`).digest('hex').slice(0, 32);
 }
 
 function shellReport(event, input, toolName, subagentId) {
@@ -181,6 +193,7 @@ export function hookToReports(input) {
       reports.push({ shell: 'end', task: taskId.slice(0, 128), ...(toolUseId ? { key: toolUseId.slice(0, 128) } : {}) });
       if (FINISHED_TASKS.has(status)) reports.push({ agentId: `hook-${taskId}`, status: 'done' });
     }
+    if (!subagentId && !text(input.subagent_type, input.subagentType) && !taskNotifications(input.prompt)) reports.push({ turn: 'working' });
     return reports;
   }
 
@@ -229,6 +242,16 @@ export function hookToReports(input) {
     }
   }
 
+  // Claude Code only (turn_id is Codex's): Codex CLI runs PermissionRequest before its Guardian reviewer as well, so
+  // there it does not mean the user is being asked.
+  if (toolName && !text(input.turn_id) && (event === 'PermissionRequest' || PERMISSION_ENDS.has(event))) {
+    reports.push({
+      permission: event === 'PermissionRequest' ? 'request' : 'done',
+      match: callHash(toolName, input.tool_input ?? input.toolInput),
+      ...(subagentId ? { agentId: `hook-${subagentId}` } : {}),
+    });
+  }
+
   // Codex CLI: SubagentStop ended the previous turn of this agent; a new
   // prompt inside it, or a tool call of a turn inside it (turn_id is Codex's
   // own field, so Claude Code's internal helpers stay out), means the agent
@@ -249,6 +272,7 @@ export function hookToReports(input) {
   const reply = event !== 'Stop' || insideSubagent ? undefined
     : 'last_assistant_message' in input ? input.last_assistant_message : input.lastAssistantMessage;
   if (reply !== undefined) reports.push({ reply: typeof reply === 'string' ? reply : null });
+  if (!insideSubagent && TURN_EVENTS.has(event)) reports.push({ turn: TURN_EVENTS.get(event) });
 
   const model = insideSubagent || toolEvent || PERMISSION_EVENTS.has(event) ? null : event === 'PostModelSwitch'
     ? text(input.to_model)

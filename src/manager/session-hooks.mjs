@@ -16,11 +16,12 @@ const handler = (extra = {}) => ({ type: 'command', command: REPORT_COMMAND, ...
 
 const shellEvents = (events, matcher) => Object.fromEntries(events.map((event) => [event, { group: { matcher } }]));
 
-// Shell commands and monitors are the only tool calls reported. StopFailure (an API error) ends a turn like Stop, and
-// PermissionDenied (auto mode) ends a command that PreToolUse started, since no PostToolUse follows a denial.
+// Shell commands and monitors are the only tool calls whose start is reported. StopFailure (an API error) ends a turn
+// like Stop, and PermissionDenied (auto mode) ends a command that PreToolUse started, since no PostToolUse follows a
+// denial. A permission request for any tool is reported, and so is the end of any call, which answers it.
 const CLAUDE_SHELL_TOOLS = 'Bash|PowerShell|Monitor';
 const CLAUDE_EVENTS = ['SessionStart', 'UserPromptSubmit', 'SubagentStart', 'SubagentStop', 'PostModelSwitch', 'PreToolUse', 'PermissionRequest', 'PermissionDenied', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'StopFailure', 'PostCompact'];
-const CLAUDE_MATCHERS = { PreToolUse: CLAUDE_SHELL_TOOLS, PermissionRequest: CLAUDE_SHELL_TOOLS, PermissionDenied: CLAUDE_SHELL_TOOLS, PostToolUse: `${CLAUDE_SHELL_TOOLS}|TaskStop`, PostToolUseFailure: CLAUDE_SHELL_TOOLS };
+const CLAUDE_MATCHERS = { PreToolUse: CLAUDE_SHELL_TOOLS };
 const CLAUDE_BLOCKING = new Set(['SubagentStart', 'PreToolUse']);
 export const CODEX_EVENTS = ['SessionStart', 'UserPromptSubmit', 'SubagentStart', 'SubagentStop', 'PreToolUse', 'PermissionRequest', 'PostToolUse', 'Stop', 'Interrupt', 'SessionEnd', 'PostCompact'];
 const CODEX_MATCHERS = { PermissionRequest: 'Bash', PostToolUse: 'Bash' };

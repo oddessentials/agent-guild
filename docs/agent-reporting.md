@@ -18,6 +18,11 @@ Code's and Codex CLI's `last_assistant_message`, Grok Build's
 `lastAssistantMessage` and Docker Agent's `stop_response` on their stop
 events, and for Antigravity CLI the last model response in its transcript.
 
+Claude Code's hooks also report each permission request, for any tool, and the
+end of each tool call, which answers it. Claude Code's and Codex CLI's report
+when the main agent's turn starts with a prompt and when it ends. Clients read
+these as the session's `permission` and `turn` ([api.md](api.md)).
+
 To add hooks yourself, merge the example into the tool's own hook settings.
 Where those live is in each tool's hooks docs.
 

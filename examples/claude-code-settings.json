@@ -67,7 +67,6 @@
     ],
     "PermissionRequest": [
       {
-        "matcher": "Bash|PowerShell|Monitor",
         "hooks": [
           {
             "type": "command",
@@ -79,7 +78,6 @@
     ],
     "PermissionDenied": [
       {
-        "matcher": "Bash|PowerShell|Monitor",
         "hooks": [
           {
             "type": "command",
@@ -91,7 +89,6 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Bash|PowerShell|Monitor|TaskStop",
         "hooks": [
           {
             "type": "command",
@@ -103,7 +100,6 @@
     ],
     "PostToolUseFailure": [
       {
-        "matcher": "Bash|PowerShell|Monitor",
         "hooks": [
           {
             "type": "command",
