@@ -30,7 +30,8 @@ const session = {
   id: 'b45b6822d158', name: 'Claude Code', provider: { id: 'anthropic', vendor: 'Anthropic', tool: 'Claude Code' },
   cwd: '/work/app', status: 'running', activity: 'active', label: 'Working', account: { id: 'default' }, task: null,
   model: { name: 'claude-opus-5-5', displayName: 'Opus 5.5' }, agents: [{ name: 'explorer', status: 'working', detail: 'Map the auth flow' }],
-  reply: { id: 3 }, startedAt: '2026-10-25T10:00:00.000Z', exitCode: null,
+  permission: { state: 'waiting', since: '2026-10-25T10:04:00.000Z' }, turn: { state: 'working', at: '2026-10-25T10:03:00.000Z' },
+  reply: { id: 3, at: '2026-10-25T10:02:00.000Z' }, startedAt: '2026-10-25T10:00:00.000Z', exitCode: null,
 };
 const page = 'http://127.0.0.1:47821/#token=';
 const clipped = [token, otherToken].flatMap((secret, i) => [
@@ -59,7 +60,8 @@ before(async () => {
       if (req.url === `/api/v1/sessions/${session.id}/reply`) return json(200, { reply: { id: 3, text: '## Done\n\nAll tests pass.', spoken: 'Done.' } });
       if (req.url === '/api/v1/sessions' && req.method === 'POST' && JSON.parse(body).name === 'hang') return undefined;
       if (req.url === '/api/v1/sessions' && req.method === 'POST') return json(201, { session: { ...session, id: 'c0ffee000001', name: 'New' } });
-      if (req.url === `/api/v1/sessions/${session.id}/stop`) return json(200, { session: { ...session, status: 'exited', label: 'Exited' } });
+      // As a manager from before permission, turn and reply times answers.
+      if (req.url === `/api/v1/sessions/${session.id}/stop`) return json(200, { session: { ...session, permission: undefined, turn: undefined, reply: { id: 3 }, status: 'exited', label: 'Exited' } });
       return json(404, { error: { code: 'not_found', message: 'Session not found' } });
     });
     return undefined;
@@ -160,6 +162,9 @@ test('the read tools report status, sessions, the last reply and the screen', as
   assert.equal(listed.model, 'Opus 5.5');
   assert.equal(listed.working, true);
   assert.equal(listed.hasReply, true);
+  assert.deepEqual(listed.permission, { state: 'waiting', since: '2026-10-25T10:04:00.000Z' });
+  assert.deepEqual(listed.turn, { state: 'working', at: '2026-10-25T10:03:00.000Z' });
+  assert.equal(listed.replyAt, '2026-10-25T10:02:00.000Z', 'the reply\'s own time, not the turn\'s');
   assert.deepEqual(listed.agents, [{ name: 'explorer', status: 'working', detail: 'Map the auth flow' }]);
 
   assert.equal((await callTool('read_reply', { session_id: session.id })).body, '## Done\n\nAll tests pass.');
@@ -202,6 +207,7 @@ test('starting a session resolves the tool by name, sends no launch flags, and r
 
   const stopped = JSON.parse((await callTool('stop_session', { session_id: session.id })).body);
   assert.equal(stopped.session.status, 'exited');
+  assert.deepEqual([stopped.session.permission, stopped.session.turn, stopped.session.replyAt], [null, null, null], 'an older manager\'s session');
 });
 
 test('--allow-input adds send_input, which types into the terminal and presses Enter', async (t) => {
