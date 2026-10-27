@@ -364,6 +364,7 @@
     }
     if (route === '/notes' && method === 'GET') return json({ notes: { revision: notesDoc.revision, text: notesDoc.text } });
     if (route === '/notes' && method === 'PUT') return saveNotes(body);
+    if (route === '/sign-in' && method === 'GET') return json({ signIn: { requests: [] } });
     if (route.indexOf('/remote-access') === 0) return remoteRoute(route, method, body);
     if (route === '/providers' && method === 'GET') return json({ providers: clone(providers) });
     if (route === '/environment' && method === 'GET') return demoEnvironment(url, false, {});

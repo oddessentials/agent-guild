@@ -413,8 +413,12 @@
         </div>
         <p id="remote-port-note" class="sub" hidden>To use the standard address, disable remote access, then choose Switch to standard address.</p>
       </div>
+      <div id="remote-devices" class="remote-devices" role="status" aria-live="polite" hidden>
+        <p>Devices asking to sign in. Approve a code only when it matches the one on that device's screen.</p>
+        <ul id="remote-device-list"></ul>
+      </div>
       <div id="remote-share" class="remote-share" hidden>
-        <p>Connect the other device to Tailscale, then scan this code or open the sign-in link.</p>
+        <p>Connect the other device to Tailscale, then scan this code or open the sign-in link. On a TV or another device without a camera, enter your remote address in the Agent Guild app and approve the code it shows here.</p>
         <canvas id="remote-qr" role="img" aria-label="QR code to sign into Agent Guild" hidden></canvas>
         <p id="remote-qr-note" class="sub"></p>
         <label for="remote-signin">Anyone with this code or link can use your terminals.</label>

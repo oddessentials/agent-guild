@@ -13,6 +13,7 @@ import { createFolderOpener } from './folder-opener.mjs';
 import { createFolderBrowser } from './folder-browser.mjs';
 import { normalizeAccess } from './access-policy.mjs';
 import { NOTES_BODY_LIMIT, createNotesStore } from './notes.mjs';
+import { DeviceSignIn } from './device-sign-in.mjs';
 import { createAccountEditor } from './accounts.mjs';
 import { MODES as AUTOSTART_MODES } from './autostart.mjs';
 import { ptyRestartProblem } from './pty.mjs';
@@ -166,6 +167,7 @@ export function createManagerServer({
   autostart = null,
   /** In-memory when omitted, so a test server never reads the user's notes file. */
   notes = createNotesStore(),
+  deviceSignIn = new DeviceSignIn({ token }),
   folderOpener = createFolderOpener({ resolveCwd: (cwd) => manager.resolveCwd(cwd) }),
   folderBrowser = createFolderBrowser(),
   /** The double-click launcher file for this platform, or null when the package carries none. */
@@ -324,7 +326,23 @@ export function createManagerServer({
       return sendJson(res, 200, { toolSessionId: manager.reportToolSession(id, body, auth) });
     }
 
+    if (route === '/sign-in' && method === 'POST') return sendJson(res, 201, { signIn: deviceSignIn.request() });
+    if (route === '/sign-in/poll' && method === 'POST') {
+      const { device } = await readJsonBody(req);
+      if (typeof device !== 'string') throw new HttpError(400, 'device must be the secret from POST /sign-in', 'bad_request');
+      return sendJson(res, 200, { signIn: deviceSignIn.poll(device) });
+    }
+
     requireAuth(req, url);
+
+    if (route === '/sign-in' && method === 'GET') return sendJson(res, 200, { signIn: deviceSignIn.list() });
+    const decideSignIn = async (decision) => {
+      const { code } = await readJsonBody(req);
+      if (typeof code !== 'string') throw new HttpError(400, 'code must be the code the device shows', 'bad_request');
+      return sendJson(res, 200, { signIn: decision(code) });
+    };
+    if (route === '/sign-in/approve' && method === 'POST') return decideSignIn((code) => deviceSignIn.approve(code));
+    if (route === '/sign-in/deny' && method === 'POST') return decideSignIn((code) => deviceSignIn.deny(code));
 
     if (route === '/notes' && method === 'GET') {
       return sendJson(res, 200, { notes: notes.snapshot() });
@@ -698,6 +716,7 @@ export function createManagerServer({
   changelog?.on('updated', () => broadcast({ type: 'changelog.updated' }));
   github?.on('updated', () => broadcast({ type: 'github.updated' }));
   remoteAccess?.on('updated', () => broadcast({ type: 'remote-access.updated' }));
+  deviceSignIn.on('updated', () => broadcast({ type: 'sign-in.updated' }));
   yardArt.on('updated', (status) => broadcast({ type: 'yard-art.updated', yardArt: status }));
 
   function handleEvents(ws, req) {
@@ -810,6 +829,7 @@ export function createManagerServer({
     /** @param {{ notice?: object }} [opts] a final event for the events clients */
     async close({ notice } = {}) {
       environment?.off('updated', environmentUpdated);
+      deviceSignIn.close();
       if (notice) await farewell(notice);
       clearInterval(heartbeat);
       for (const ws of wss.clients) ws.terminate();

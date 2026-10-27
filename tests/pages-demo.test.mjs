@@ -225,6 +225,7 @@ test('the demo simulates remote access through Tailscale and a custom proxy', as
   t.mock.timers.tick(40);
   assert.deepEqual(events[0].remoteAccess, { available: true });
 
+  assert.deepEqual((await call('GET', '/sign-in')).body, { signIn: { requests: [] } });
   const off = (await call('GET', '/remote-access')).body.remoteAccess;
   assert.equal(off.mode, 'off');
   assert.equal(off.url, null);

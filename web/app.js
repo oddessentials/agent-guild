@@ -7532,6 +7532,7 @@ function connectEvents() {
       state.folderOpener = msg.folderOpener || null;
       state.platform = msg.platform || null;
       state.remoteAccessUI?.setAvailable(msg.remoteAccess);
+      state.remoteAccessUI?.signInsUpdated();
       state.glassesLinkUI?.setAvailable(msg.remoteAccess);
       state.yardArt = msg.yardArt || null;
       renderVersion();
@@ -7565,6 +7566,8 @@ function connectEvents() {
       state.environmentUI?.updated(msg.environment);
     } else if (msg.type === 'remote-access.updated') {
       state.remoteAccessUI?.updated();
+    } else if (msg.type === 'sign-in.updated') {
+      state.remoteAccessUI?.signInsUpdated();
     } else if (msg.type === 'yard-art.updated') {
       state.yardArt = msg.yardArt;
       notifyViews();
@@ -8310,7 +8313,7 @@ new ResizeObserver(() => requestAnimationFrame(publishPageWidth)).observe(docume
 publishPageWidth();
 applyDockLayout();
 
-state.remoteAccessUI = createRemoteAccessUI({ api, getToken: () => state.token, isConnected: () => state.connected, onAuthError: showAuth });
+state.remoteAccessUI = createRemoteAccessUI({ api, getToken: () => state.token, isConnected: () => state.connected, onAuthError: showAuth, toast });
 state.glassesLinkUI = createGlassesLinkUI({ api, getToken: () => state.token, isConnected: () => state.connected, onAuthError: showAuth });
 state.environmentUI = createEnvironmentUI({
   api, onAuthError: showAuth, isAuthError: (err) => err instanceof AuthError,

@@ -39,7 +39,7 @@ All under `src/manager` unless noted.
 | Model benchmarks | `model-stats.mjs` |
 | News, What's new and self-upgrade | `news.mjs`, `changelog.mjs`, `self-update.mjs` |
 | GitHub | `github.mjs`, `github-views.mjs` |
-| Remote access | `remote-access.mjs`, `tailscale.mjs`, `access-policy.mjs` |
+| Remote access | `remote-access.mjs`, `tailscale.mjs`, `access-policy.mjs`, `device-sign-in.mjs` |
 | Folders and notes | `folder-browser.mjs`, `folder-opener.mjs`, `notes.mjs` |
 | Starting, stopping and autostart | `bin/agent-guild.mjs`, `launch.mjs`, `autostart.mjs`, `systemd-service.mjs` |
 | `agent-guild doctor` | `doctor.mjs` |
