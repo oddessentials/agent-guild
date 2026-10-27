@@ -811,6 +811,14 @@ export class SessionManager extends EventEmitter {
     return this._reportingSession(id, auth).reportShell(report);
   }
 
+  reportPermission(id, report, auth) {
+    return this._reportingSession(id, auth).reportPermission(report);
+  }
+
+  reportTurn(id, report, auth) {
+    return this._reportingSession(id, auth).reportTurn(report);
+  }
+
   /**
    * A Docker Agent hook event. A session that was not started as Docker Agent (a Shell card the user ran it in, with
    * its own hooks) becomes one at its first event; the first Docker session heard from is then its main one.

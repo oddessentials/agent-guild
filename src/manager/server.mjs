@@ -302,7 +302,7 @@ export function createManagerServer({
     // Agent, model and tool-session reports may authenticate with the
     // per-session report token that the manager injects into each tool's
     // environment.
-    const reportMatch = route.match(/^\/sessions\/([a-f0-9]+)\/(agents|model|tool-session|context|reporting|shells|docker|reply)$/);
+    const reportMatch = route.match(/^\/sessions\/([a-f0-9]+)\/(agents|model|tool-session|context|reporting|shells|docker|reply|permission|turn)$/);
     if (reportMatch && method === 'POST') {
       const [, id, kind] = reportMatch;
       const body = await readJsonBody(req, kind === 'reply' || kind === 'docker' ? REPLY_BODY_LIMIT : MAX_BODY);
@@ -323,6 +323,8 @@ export function createManagerServer({
         manager.reportShell(id, body, auth);
         return sendJson(res, 200, { ok: true });
       }
+      if (kind === 'permission') return sendJson(res, 200, { permission: manager.reportPermission(id, body, auth) });
+      if (kind === 'turn') return sendJson(res, 200, { turn: manager.reportTurn(id, body, auth) });
       return sendJson(res, 200, { toolSessionId: manager.reportToolSession(id, body, auth) });
     }
 
