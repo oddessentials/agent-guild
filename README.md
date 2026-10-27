@@ -58,7 +58,8 @@ then connects over [MCP](docs/mcp.md) to see and steer your sessions.
   Codex CLI.
 * **The same session on every screen.** Any browser, a phone over
   [Tailscale](#remote-access-with-tailscale) with touch keys, VS Code, and
-  apps for iPhone, iPad and Vision Pro (beta) and
+  apps for [Apple Vision Pro](https://apps.apple.com/us/app/agent-guild-remote/id6825451331),
+  iPhone and iPad (beta) and
   [Android](https://github.com/oddessentials/agent-guild-android/releases/latest).
   Apple Watch and Meta Ray-Ban Display list your sessions and read a
   session's last answer aloud.
@@ -300,10 +301,19 @@ Failed news, model list and release checks retry after 10 minutes.
 
 ## Agent Guild: World
 
-[Agent Guild: World](https://agentguild.oddessentials.ai/), coming soon to
-Steam, is a separate, premium 3D window onto the same sessions: six worlds to
-roam with a free camera, Steam Workshop crews and companions, and controller
-support, on Windows, macOS and Linux. Agent Guild and its Yard stay free.
+[Agent Guild: World](https://store.steampowered.com/app/5462970/Agent_Guild_World/)
+is a free, living 3D world for your AI coding agents, coming to Steam in
+November 2026: six worlds to roam with a free camera, your own characters and
+companions from the Steam Workshop, a Guild Board for your notes and to-dos,
+and controller support, on Windows, macOS and Linux.
+[Wishlist it on Steam](https://store.steampowered.com/app/5462970/Agent_Guild_World/).
+
+## Follow
+
+[YouTube](https://www.youtube.com/@Agent-Guild) ·
+[X](https://x.com/agentguild_3d) ·
+[Steam](https://store.steampowered.com/app/5462970/Agent_Guild_World/) ·
+[Website](https://agentguild.oddessentials.ai/)
 
 ## Support
 
