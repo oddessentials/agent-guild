@@ -36,6 +36,13 @@ Authorization: Bearer <token>
 WebSocket clients that cannot set headers, such as browsers, pass
 `?token=<token>` in the URL instead.
 
+A device that cannot scan the page's sign-in QR code, such as a TV, obtains
+the token by device sign-in: `POST /sign-in` answers a code to show on screen
+and a `device` secret, the person approves the code in the page's
+**Remote access** dialog, and `POST /sign-in/poll` with that secret then
+answers the token once. Requests expire after five minutes; at most five are
+live, and a new one is accepted every two seconds.
+
 The manager rejects requests whose `Host` or browser `Origin` is outside
 its loopback and saved remote-access allowlists. Native clients that send no
 `Origin` still need an accepted Host and the API token. See
@@ -576,6 +583,11 @@ All paths are under `/api/v1`.
 | Method | Path | Body | Result |
 | --- | --- | --- | --- |
 | GET | `/health` | | `{ ok, name, version, pid }`. No token needed. |
+| POST | `/sign-in` | | `201 { signIn: { code, device, expiresAt, interval } }`: a device sign-in to show as `code` and poll with `device` every `interval` seconds. No token needed. 429 `sign_in_busy` while five are live or one was made under two seconds ago. |
+| POST | `/sign-in/poll` | `{ device }` | `{ signIn: { status } }`: `pending`, `approved` with `token`, or `denied`. An approved or denied answer is given once; after it, and after `expiresAt`, 404 `sign_in_unknown`. No token needed. |
+| GET | `/sign-in` | | `{ signIn: { requests } }`: the pending device sign-ins, each `{ code, requestedAt, expiresAt }`. |
+| POST | `/sign-in/approve` | `{ code }` | `{ signIn }` as above, after approving that code. 404 `sign_in_unknown` when no pending sign-in has it. |
+| POST | `/sign-in/deny` | `{ code }` | `{ signIn }` as above, after denying it. |
 | GET | `/info` | | `name`, `version`, `pid`, platform, start time, provider config warnings, `upgrade` (an Upgrade object), `launcher` (the double-click launcher in a checkout, else null), `folderOpener` (`{ available, label, reason }` for this client) and `remoteAccess` (`{ available: true }` when this manager can configure it, else null). |
 | GET | `/remote-access` | | `{ remoteAccess }`: `revision`, `mode`, `busy`, `pending`, `problem` and connection details. `url` is the active address. `candidate` is the address enabling would use with Tailscale's current settings, `{ url, existing, remembered, standardUrl? }`: `remembered` when it is the address used before, and `standardUrl` when `standard: true` would choose another. |
 | POST | `/remote-access/check` | | `{ remoteAccess }` after refreshing Tailscale's status. |
@@ -684,6 +696,7 @@ but `{ type: "ping" }`, which the manager answers with `{ type: "pong" }`.
 | `{ type: "changelog.updated" }` | Fetch `/changelog` again. |
 | `{ type: "github.updated" }` | Fetch `/github` again. |
 | `{ type: "remote-access.updated" }` | Fetch `/remote-access` again. |
+| `{ type: "sign-in.updated" }` | Fetch `/sign-in` again. |
 | `{ type: "notes.updated", notes }` | The notepad was saved. `notes` is `{ revision, text }`. |
 | `{ type: "manager.upgrade", upgrade }` | The manager's own version check changed. |
 | `{ type: "manager.stopping", running, restart }` | A client asked the manager to stop; `running` sessions are being ended. `restart` is true when a new manager will take over. |

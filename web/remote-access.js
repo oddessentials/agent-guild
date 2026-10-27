@@ -43,11 +43,63 @@ export function paintQr(canvas, qrcode, text) {
   canvas.hidden = false;
 }
 
-export function createRemoteAccessUI({ api, getToken, isConnected, onAuthError }) {
+export function signInPrompt(request) {
+  return `A device is asking to sign in with code ${request.code}.`;
+}
+
+export function createRemoteAccessUI({ api, getToken, isConnected, onAuthError, toast = () => {} }) {
   const $ = (id) => document.getElementById(id);
   const dialog = $('remote-access');
   let data = null, request = 0, loading = false, posting = false, timer = null, sharing = false, shareGeneration = 0, editRevision = null, dirty = false;
   let available = false, waitingForApproval = false;
+  let signIns = [], signInGeneration = 0;
+  const prompted = new Set();
+
+  function renderSignIns() {
+    const list = $('remote-device-list');
+    list.replaceChildren(...signIns.map((entry) => {
+      const item = document.createElement('li');
+      const code = document.createElement('code');
+      code.textContent = entry.code;
+      const approve = document.createElement('button');
+      approve.type = 'button'; approve.className = 'btn primary'; approve.textContent = 'Approve';
+      approve.addEventListener('click', () => decideSignIn('approve', entry.code));
+      const deny = document.createElement('button');
+      deny.type = 'button'; deny.className = 'btn'; deny.textContent = 'Not me';
+      deny.addEventListener('click', () => decideSignIn('deny', entry.code));
+      item.append(code, approve, deny);
+      return item;
+    }));
+    $('remote-devices').hidden = signIns.length === 0;
+  }
+
+  async function loadSignIns() {
+    if (!available || !getToken() || !isConnected()) return;
+    const generation = ++signInGeneration;
+    let result;
+    try { result = await api('GET', '/sign-in'); } catch (error) { if (generation === signInGeneration) showError(error); return; }
+    if (generation !== signInGeneration) return;
+    signIns = result.signIn.requests;
+    renderSignIns();
+    for (const entry of signIns) {
+      if (prompted.has(entry.code)) continue;
+      prompted.add(entry.code);
+      toast(signInPrompt(entry), Math.max(1000, Date.parse(entry.expiresAt) - Date.now()), { label: 'Approve', run: () => decideSignIn('approve', entry.code) });
+    }
+  }
+
+  async function decideSignIn(action, code) {
+    if (!isConnected()) return;
+    try {
+      await api('POST', `/sign-in/${action}`, { code });
+      prompted.clear();
+      await loadSignIns();
+      if (signIns.length === 0) toast(action === 'approve' ? `Approved ${code}. The device is signing in.` : `Declined ${code}.`, 4000);
+    } catch (error) {
+      if (error.code === 'sign_in_unknown') { loadSignIns(); return; }
+      showError(error);
+    }
+  }
 
   function clearShare() {
     sharing = false;
@@ -125,6 +177,7 @@ export function createRemoteAccessUI({ api, getToken, isConnected, onAuthError }
 
   async function refresh(check = false) {
     if (!dialog.open || !available || !isConnected() || loading || posting) return;
+    loadSignIns();
     const generation = ++request;
     loading = true;
     if (check) $('remote-error').hidden = true;
@@ -246,8 +299,13 @@ export function createRemoteAccessUI({ api, getToken, isConnected, onAuthError }
     else if (dialog.open && !data?.busy) refresh(true);
   });
   return {
-    setAvailable(capability) { available = Boolean(capability?.available); $('remote-access-open').hidden = !available; if (!available) close(); },
+    setAvailable(capability) {
+      available = Boolean(capability?.available);
+      $('remote-access-open').hidden = !available;
+      if (!available) { close(); signInGeneration++; signIns = []; prompted.clear(); renderSignIns(); }
+    },
     updated() { if (dialog.open) refresh(false); },
+    signInsUpdated() { loadSignIns(); },
     connectionChanged() { render(); if (!isConnected()) { clearTimeout(timer); clearShare(); } else schedule(); },
     close,
   };

@@ -170,7 +170,9 @@ tailnet, with MagicDNS on.
    **Connection details** in a terminal allowed to manage Tailscale, then
    choose **Continue setup**.
 4. Choose **Connect another device** and scan the QR code, or open the
-   sign-in link, on the other device.
+   sign-in link, on the other device. On a TV or another device without a
+   camera, enter your remote address in the Agent Guild app and approve the
+   code it shows.
 
 The sign-in link contains your access token. **Disable remote access** turns
 it off; sessions keep running. On a headless server, do this through the SSH

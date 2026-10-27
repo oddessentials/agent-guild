@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { normalizeAccess, parseAllowedOrigins } from '../src/manager/access-policy.mjs';
 import { Tailscale, runTailscale, chooseRoute, routeMatches, routeUrl, approvalLink, remoteError, findTailscale } from '../src/manager/tailscale.mjs';
 import { RemoteAccess, loadRemoteAccess, saveRemoteAccess, checkRemoteUrl } from '../src/manager/remote-access.mjs';
-import { remotePresentation } from '../web/remote-access.js';
+import { remotePresentation, signInPrompt } from '../web/remote-access.js';
 
 const host = 'guild.example.ts.net';
 const target = 'http://127.0.0.1:47821';
@@ -431,6 +431,11 @@ test('recovery UI keeps cleanup separate from setup and makes route adoption exp
   }
   assert.equal(remotePresentation({ mode: 'custom', source: 'environment', candidate: { existing: true } }).label, 'Use existing route');
   assert.equal(remotePresentation({ mode: 'off', problem: { approvalUrl: 'https://login.tailscale.com/f/serve-test' } }).helpLabel, 'Open Tailscale approval');
+});
+
+test('the sign-in prompt names the code to match against the device and nothing else', () => {
+  const request = { code: 'ABCD-EFGH', requestedAt: '2026-10-26T12:00:00.000Z', expiresAt: '2026-10-26T12:05:00.000Z' };
+  assert.equal(signInPrompt(request), 'A device is asking to sign in with code ABCD-EFGH.');
 });
 
 test('the secure connection check identifies this manager without sending credentials or following redirects', async (t) => {
