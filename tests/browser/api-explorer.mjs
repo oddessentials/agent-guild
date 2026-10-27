@@ -40,6 +40,15 @@ const checks = await withPage({ name: 'api-explorer' }, async ({ origin, send, e
   assert.deepEqual(await evaluate('[testRequests.length, testSockets.length, document.querySelectorAll(".try").length]'), [0, 0, 0]);
   pass('without a sign-in the doc still reads, with nothing sent and nothing to try');
 
+  const hrefs = await evaluate(`[...document.querySelectorAll('#doc a')].map((a) => a.getAttribute('href'))`);
+  const docs = 'https://github.com/oddessentials/agent-guild/blob/main/docs/';
+  for (const target of ['architecture.md', 'configuration.md#reverse-proxies', 'agent-reporting.md']) assert.ok(hrefs.includes(docs + target), target);
+  assert.deepEqual(hrefs.filter((href) => !/^(#|https?:|mailto:)/.test(href)), [], 'no link is left relative to the manager');
+  const anchors = hrefs.filter((href) => href.startsWith('#'));
+  assert.ok(anchors.length > 0);
+  assert.deepEqual(await evaluate(`${JSON.stringify(anchors)}.filter((href) => !document.getElementById(decodeURIComponent(href.slice(1))))`), [], 'every anchor has its heading');
+  pass('links to other docs go to the repository, and links within the doc reach their sections');
+
   await open('#token=t0k3n');
   assert.equal(await evaluate('location.href'), `${origin}/api.html`);
   assert.equal(await evaluate(`localStorage.getItem('agentGuild.token')`), 't0k3n');

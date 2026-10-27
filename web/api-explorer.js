@@ -26,11 +26,19 @@ function el(tag, props = {}, ...children) {
 
 // GitHub's heading ids, so the doc's links between its sections work here too.
 const slug = (text) => text.toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu, '').trim().replace(/\s/g, '-');
+// The manager serves only this doc: a link to another one goes to it in the repository.
+const DOCS = 'https://github.com/oddessentials/agent-guild/blob/main/docs/';
 
 function render(markdown) {
   const md = markdownit({ html: false });
   md.core.ruler.push('heading_ids', (state) => {
     state.tokens.forEach((t, i) => { if (t.type === 'heading_open') t.attrSet('id', slug(state.tokens[i + 1].content)); });
+  });
+  md.core.ruler.push('doc_links', (state) => {
+    for (const link of state.tokens.flatMap((t) => t.children ?? []).filter((t) => t.type === 'link_open')) {
+      const href = link.attrGet('href');
+      if (!href.startsWith('#') && !/^[a-z][a-z\d+.-]*:/i.test(href)) link.attrSet('href', new URL(href, DOCS).href);
+    }
   });
   $('doc').innerHTML = md.render(markdown);
 }
