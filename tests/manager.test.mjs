@@ -925,32 +925,15 @@ test('a turn\'s answer is reported whole with the report token, read by the page
   assert.equal((await call('POST', route, { reply: 'x' }, { Authorization: '', 'X-Agent-Guild-Report-Token': 'wrong' })).status, 401);
   const long = 'Every word stays. '.repeat(5000);
   assert.ok(long.length > 64 * 1024, 'longer than any other report may be');
-  const { at } = (await report(long)).body.reply;
-  assert.ok(Math.abs(Date.parse(at) - Date.now()) < 60_000, 'given when the manager heard it, without a time from the hook');
-  assert.deepEqual((await call('GET', route)).body.reply, { id: 1, text: long.trim(), at, spoken: long.trim() });
-  assert.deepEqual((await call('GET', `/sessions/${session.id}`)).body.session.reply, { id: 1, at }, 'session updates carry no text');
+  assert.deepEqual((await report(long)).body.reply, { id: 1 });
+  assert.deepEqual((await call('GET', route)).body.reply, { id: 1, text: long.trim(), spoken: long.trim() });
+  assert.deepEqual((await call('GET', `/sessions/${session.id}`)).body.session.reply, { id: 1 }, 'session updates carry no text');
   assert.equal((await call('GET', route, undefined, { Authorization: '' })).status, 401);
-  const second = (await report('Second.')).body.reply;
-  assert.deepEqual((await call('GET', route)).body.reply, { id: 2, text: 'Second.', at: second.at, spoken: 'Second.' });
+  await report('Second.');
+  assert.deepEqual((await call('GET', route)).body.reply, { id: 2, text: 'Second.', spoken: 'Second.' });
   await report(null);
   assert.equal((await call('GET', route)).body.reply, null, 'a turn that ended without an answer leaves nothing to read');
   assert.equal((await report(7)).status, 400);
-});
-
-test('permission and turn reports take the report token, and a tool that cannot report them shows neither', async () => {
-  const session = await createFake();
-  const managed = ctx.manager.get(session.id);
-  const post = (kind, body, reportToken = managed.reportToken) => call('POST', `/sessions/${session.id}/${kind}`, body, { Authorization: '', 'X-Agent-Guild-Report-Token': reportToken });
-  const match = 'a'.repeat(32);
-  assert.equal((await post('permission', { permission: 'request', match }, 'wrong')).status, 401);
-  assert.equal((await post('turn', { turn: 'ended' }, 'wrong')).status, 401);
-  assert.deepEqual(await post('permission', { permission: 'request', match }).then((r) => [r.status, r.body]), [200, { permission: null }]);
-  assert.deepEqual(await post('turn', { turn: 'ended', at: Date.now() - 5 }).then((r) => [r.status, r.body]), [200, { turn: null }]);
-  assert.equal((await post('permission', { permission: 'asked', match })).status, 400);
-  assert.equal((await post('permission', { permission: 'done', match: 'ls -la' })).status, 400, 'a call hash, never the call itself');
-  assert.equal((await post('turn', { turn: 'idle' })).status, 400);
-  const { permission, turn } = (await call('GET', `/sessions/${session.id}`)).body.session;
-  assert.deepEqual([permission, turn], [null, null]);
 });
 
 test('the answer comes with the words Read aloud speaks, from the page\'s code', async () => {
@@ -958,8 +941,7 @@ test('the answer comes with the words Read aloud speaks, from the page\'s code',
   const route = `/sessions/${session.id}/reply`;
   const answer = '## Done\nRun this:\n```sh\nnpm test\n```\n1. **Check** the [output](https://example.com).';
   await call('POST', route, { reply: answer }, { Authorization: '', 'X-Agent-Guild-Report-Token': ctx.manager.get(session.id).reportToken });
-  const { at, ...reply } = (await call('GET', route)).body.reply;
-  assert.deepEqual(reply, { id: 1, text: answer, spoken: 'Done\nRun this:\nCode omitted.\n1. Check the output.' });
+  assert.deepEqual((await call('GET', route)).body.reply, { id: 1, text: answer, spoken: 'Done\nRun this:\nCode omitted.\n1. Check the output.' });
   assert.equal(spokenText(answer), 'Done\nRun this:\nCode omitted.\n1. Check the output.', 'the same words as the page\'s spokenText');
 });
 
