@@ -41,7 +41,7 @@ const TOOLS = [
   {
     name: 'list_sessions',
     title: 'List sessions',
-    description: 'Every session in Agent Guild: its id, tool, folder, status, whether it is working, whether it is waiting for permission, when its turn changed, its model, its sub-agents, and whether and when it has a reply to read.',
+    description: 'Every session in Agent Guild: its id, tool, folder, status, whether it is working, its model, its sub-agents, and whether it has a reply to read.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
@@ -221,10 +221,7 @@ function summarize(s) {
     account: s.account?.id ?? null,
     task: s.task,
     agents: (s.agents ?? []).map((a) => ({ name: a.name, status: a.status, detail: a.detail ?? null })),
-    permission: s.permission ?? null,
-    turn: s.turn ?? null,
     hasReply: s.reply != null,
-    replyAt: s.reply?.at ?? null,
     startedAt: s.startedAt,
     exitCode: s.exitCode,
   };

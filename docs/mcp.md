@@ -51,7 +51,7 @@ skill, which installs, starts and checks Agent Guild for the person:
 | Tool | What it does |
 | --- | --- |
 | `guild_status` | Whether Agent Guild is running, its version, its session counts and which tools are installed. |
-| `list_sessions` | Every session: id, tool, folder, status, whether it is working, whether it waits for permission, its turn, model, sub-agents, and whether and when it has a reply. |
+| `list_sessions` | Every session: id, tool, folder, status, whether it is working, model, sub-agents, and whether it has a reply. |
 | `read_reply` | The whole answer that ended a session's last turn, as Markdown. |
 | `read_screen` | What a session's terminal shows now, as plain text. |
 | `start_session` | Starts a session of a tool (`claude`, `codex`, `antigravity`, `grok`, `docker`, `shell` or a provider id) in a folder. |
