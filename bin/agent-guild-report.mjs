@@ -205,7 +205,7 @@ async function main() {
     for (const report of hookToReports(input)) {
       // Each hook runs in a process of its own, and Claude Code's arrive in any order: the time this one started
       // orders its event among the others.
-      if (report.permission !== undefined || report.turn !== undefined || report.reply !== undefined) report.at = performance.timeOrigin;
+      if (report.permission !== undefined || report.turn !== undefined || report.reply !== undefined || report.status === 'done') report.at = performance.timeOrigin;
       if (report.transcript === undefined) await sendQuietly(report);
       else {
         const key = await claudeCompaction(report.transcript, performance.timeOrigin - 2000);

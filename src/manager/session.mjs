@@ -510,7 +510,7 @@ export class Session extends EventEmitter {
     const existing = this.agents.get(id);
     if (status === 'done') {
       this._endForegroundShells(id);
-      this._clearAgentPermissions(id, Date.now());
+      this._clearAgentPermissions(id, reportTime(report.at));
     }
     // A first report that already says done would only flash an icon:
     // Claude Code's internal helpers (prompt suggestions, side questions)

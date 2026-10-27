@@ -118,6 +118,27 @@ test('the main agent\'s turn boundaries end its own requests, not a sub-agent\'s
   assert.equal(permission(session).state, 'none');
 });
 
+test('a sub-agent\'s end answers its requests from before it, not those of its resumed run, in either order of arrival', (t) => {
+  const { session } = createSession(t);
+  session.reportHello();
+  session.reportAgent({ agentId: 'hook-a1', status: 'working' });
+  request(session, NOW - 90, A, 'hook-a1');
+  // The resumed run asks before the end's own hook reaches the manager.
+  request(session, NOW - 50, B, 'hook-a1');
+  session.reportAgent({ agentId: 'hook-a1', status: 'done', at: NOW - 70 });
+  assert.deepEqual(permission(session), { state: 'waiting', since: iso(NOW - 50) }, 'end, after the newer request');
+  request(session, NOW - 80, A, 'hook-a1');
+  assert.equal(permission(session).since, iso(NOW - 50), 'a request from before the end stays answered');
+  done(session, NOW - 40, B, 'hook-a1');
+
+  session.reportAgent({ agentId: 'hook-a2', status: 'working' });
+  session.reportAgent({ agentId: 'hook-a2', status: 'done', at: NOW - 30 });
+  request(session, NOW - 35, A, 'hook-a2');
+  assert.equal(permission(session).state, 'none', 'a request from before the end, delayed past it');
+  request(session, NOW - 20, A, 'hook-a2');
+  assert.deepEqual(permission(session), { state: 'waiting', since: iso(NOW - 20) }, 'end, before the newer request');
+});
+
 test('an agent end that was never shown changes nothing else', (t) => {
   const { session } = createSession(t);
   session.reportHello();

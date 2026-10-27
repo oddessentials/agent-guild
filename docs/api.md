@@ -599,6 +599,10 @@ as `done` stays visible for a few seconds and is then removed. `source` is
 `herdr` for an agent in a herdr session's panes. All agents are cleared when
 their session exits.
 
+A `done` report may carry `at`, when the hook started, in milliseconds since
+1970, or now when missing or later: the agent's permission requests from up
+to then are answered, and its later ones still wait.
+
 ## HTTP endpoints
 
 All paths are under `/api/v1`.
