@@ -4319,6 +4319,23 @@ test('the launcher path names the double-click file for the platform only when t
   fs.rmSync(bare, { recursive: true, force: true });
 });
 
+test('Claude Code\'s tool hooks run only for shell tools, so ordinary tool calls start no reporter process', () => {
+  // Each hook run is a process of its own: a tool hook without a matcher runs on every call of every agent.
+  const claude = JSON.parse(bundleFiles('1.2.3', { platform: 'linux' }).claude['hooks/hooks.json']).hooks;
+  const toolEvents = Object.keys(claude).filter((event) => /Tool|Permission/.test(event));
+  assert.deepEqual(toolEvents, ['PreToolUse', 'PermissionRequest', 'PermissionDenied', 'PostToolUse', 'PostToolUseFailure']);
+  const shell = new Set(['Bash', 'PowerShell', 'Monitor', 'TaskStop']);
+  for (const event of toolEvents) {
+    for (const { matcher } of claude[event]) {
+      assert.equal(typeof matcher, 'string', `${event} has a matcher`);
+      assert.deepEqual(matcher.split('|').filter((tool) => !shell.has(tool)), [], `${event} names only shell tools`);
+      for (const tool of ['Read', 'Grep', 'Glob', 'Edit', 'Write', 'NotebookEdit', 'Agent', 'Task', 'WebFetch', 'WebSearch', 'TodoWrite', 'mcp__agent-guild__list_sessions']) {
+        assert.equal(new RegExp(`^(?:${matcher})$`).test(tool), false, `${event} does not run for ${tool}`);
+      }
+    }
+  }
+});
+
 test('every reporting bundle runs the reporter, Antigravity\'s through a script in its plugin folder', async () => {
   const unix = bundleFiles('1.2.3', { platform: 'linux' });
   const commands = (files) => [...JSON.stringify(JSON.parse(files['hooks/hooks.json'])).matchAll(/"command":"((?:[^"\\]|\\.)*)"/g)].map((m) => JSON.parse(`"${m[1]}"`));
