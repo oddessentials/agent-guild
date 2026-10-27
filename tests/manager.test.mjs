@@ -450,6 +450,19 @@ test('the web page and xterm assets are served', async () => {
   assert.equal((await fetch(`${base}/skins/goblinville/fonts/germania-one.woff2`)).headers.get('content-type'), 'font/woff2');
 });
 
+test('the API explorer and the doc it reads are served without the token, with the page\'s headers', async () => {
+  const doc = await fetch(`${base}/api.md`);
+  assert.equal(doc.status, 200);
+  assert.equal(doc.headers.get('content-type'), 'text/markdown; charset=utf-8');
+  assert.match(doc.headers.get('content-security-policy'), /script-src 'self';/);
+  assert.equal(await doc.text(), fs.readFileSync(new URL('../docs/api.md', import.meta.url), 'utf8'));
+  const page = await fetch(`${base}/api.html`);
+  assert.equal(page.status, 200);
+  assert.match(await page.text(), /<script type="module" src="\.\/api-explorer\.js"><\/script>/);
+  assert.equal((await fetch(`${base}/api-doc.js`)).status, 200);
+  assert.equal((await fetch(`${base}/api/v1/sessions`)).status, 401, 'what the explorer asks for still needs the token');
+});
+
 test('static files revalidate with their ETag instead of downloading again', async () => {
   const first = await fetch(`${base}/styles.css`);
   const etag = first.headers.get('etag');

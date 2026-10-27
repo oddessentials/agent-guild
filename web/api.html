@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="The Agent Guild API, read from its doc, with its read-only routes and sockets live.">
+  <title>Agent Guild API</title>
+  <link rel="icon" href="/brand/favicon.png" type="image/png">
+  <style>
+    :root { color-scheme: light dark; --fg: #1c1c1e; --muted: #6b6b70; --bg: #fff; --panel: #f4f4f6; --line: #d9d9de; --accent: #0a5fd6; }
+    @media (prefers-color-scheme: dark) { :root { --fg: #e8e8ea; --muted: #9a9aa0; --bg: #141416; --panel: #1f1f23; --line: #34343a; --accent: #6aa6ff; } }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, sans-serif; }
+    main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+    #note { margin: 0 0 12px; padding: 10px 12px; border-left: 3px solid var(--accent); background: var(--panel); }
+    #note:empty { display: none; }
+    a { color: var(--accent); }
+    code, pre, input { font: 13px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; }
+    table { display: block; overflow-x: auto; border-collapse: collapse; margin: 12px 0; }
+    th, td { border: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top; }
+    .not-sent { display: block; margin-top: 4px; color: var(--muted); font-size: 13px; }
+    .try { margin: 6px 0 12px; padding: 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+    .try form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .try label { display: flex; gap: 6px; align-items: center; }
+    .try input { min-width: 14ch; padding: 4px 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--fg); }
+    .try button { padding: 4px 12px; border: 1px solid var(--accent); border-radius: 4px; background: transparent; color: var(--accent); font: inherit; cursor: pointer; }
+    .try .sent, .try .status { margin: 6px 0 0; color: var(--muted); font-size: 13px; }
+    .try pre { max-height: 420px; margin: 6px 0 0; padding: 8px; overflow: auto; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .try pre:empty { display: none; }
+  </style>
+</head>
+<body>
+  <main>
+    <p id="note" role="status"></p>
+    <div id="doc"></div>
+    <datalist id="session-ids"></datalist>
+  </main>
+  <script type="module" src="./api-explorer.js"></script>
+</body>
+</html>

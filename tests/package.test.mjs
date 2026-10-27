@@ -74,6 +74,7 @@ function goodPackage({ manifest = {}, without = [], extra = [] } = {}) {
     ['web/index.html', ['page']],
     ['web/yard/art.json', [JSON.stringify({ archive: { url: 'https://github.com/o/r/releases/download/v1.2.3/yard-art-0123456789abcdef.tar.gz' } })]],
     ['config/providers.default.json', ['{}']],
+    ['docs/api.md', ['doc']],
     ['node_modules/dep/package.json', [JSON.stringify({ version: '1.0.0' })]],
     ['node_modules/dep/lib/package.json', [JSON.stringify({ type: 'commonjs' })]],
     ['node_modules/dep/prebuilds/darwin-arm64/spawn-helper', ['helper', { mode: 0o755 }]],

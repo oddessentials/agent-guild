@@ -30,7 +30,8 @@
     "web/",
     "!web/yard/assets/",
     "config/",
-    "examples/"
+    "examples/",
+    "docs/api.md"
   ],
   "scripts": {
     "start": "node bin/agent-guild.mjs open",
