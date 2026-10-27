@@ -26,6 +26,8 @@ const MAX_BODY = 64 * 1024;
 // A reply, and a Docker Agent stop that carries one, is a whole answer, which Claude Code does not clip.
 const REPLY_BODY_LIMIT = 1024 * 1024;
 const MAX_WS_PAYLOAD = 1024 * 1024;
+// The API explorer (web/api.html) reads the doc itself.
+const API_DOC = path.join(path.dirname(require.resolve('../../package.json')), 'docs', 'api.md');
 const SLOW_CLIENT_BYTES = 8 * 1024 * 1024;
 
 const MIME = {
@@ -33,6 +35,7 @@ const MIME = {
   '.js': 'text/javascript; charset=utf-8',
   '.mjs': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
+  '.md': 'text/markdown; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
   '.avif': 'image/avif',
@@ -271,6 +274,7 @@ export function createManagerServer({
       throw new HttpError(405, 'method not allowed', 'method_not_allowed');
     }
     if (vendor[pathname]) return serveFile(req, res, vendor[pathname], { cache: true });
+    if (pathname === '/api.md') return serveFile(req, res, API_DOC);
     let rel;
     try {
       rel = pathname === '/' ? 'index.html' : decodeURIComponent(pathname).replace(/^\/+/, '');
@@ -302,7 +306,7 @@ export function createManagerServer({
     // Agent, model and tool-session reports may authenticate with the
     // per-session report token that the manager injects into each tool's
     // environment.
-    const reportMatch = route.match(/^\/sessions\/([a-f0-9]+)\/(agents|model|tool-session|context|reporting|shells|docker|reply|permission|turn)$/);
+    const reportMatch = route.match(/^\/sessions\/([a-f0-9]+)\/(agents|model|tool-session|context|reporting|shells|docker|reply)$/);
     if (reportMatch && method === 'POST') {
       const [, id, kind] = reportMatch;
       const body = await readJsonBody(req, kind === 'reply' || kind === 'docker' ? REPLY_BODY_LIMIT : MAX_BODY);
@@ -323,8 +327,6 @@ export function createManagerServer({
         manager.reportShell(id, body, auth);
         return sendJson(res, 200, { ok: true });
       }
-      if (kind === 'permission') return sendJson(res, 200, { permission: manager.reportPermission(id, body, auth) });
-      if (kind === 'turn') return sendJson(res, 200, { turn: manager.reportTurn(id, body, auth) });
       return sendJson(res, 200, { toolSessionId: manager.reportToolSession(id, body, auth) });
     }
 

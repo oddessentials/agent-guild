@@ -6,7 +6,9 @@ Unreal Engine interface, can use the same API to list, start, watch and drive
 the same sessions at the same time.
 
 This is the contract a client relies on. How the manager works out each value
-is in the code (see [architecture.md](architecture.md)).
+is in the code (see [architecture.md](architecture.md)). A running manager
+serves this doc at `/api.html`, where its read-only routes and sockets can be
+tried.
 
 ## Discovery and authentication
 
@@ -383,9 +385,7 @@ files. When the tool cannot be asked, `count` is null, `scopes` is empty and
   "model": { "name": "claude-opus-4-5", "displayName": "Opus 4.5", "source": "report" },
   "toolSessionId": "581893e5-a93d-5e49-968b-1c1c277d3255",
   "context": { "compactions": 2, "resets": 0 },
-  "reply": { "id": 3, "at": "2026-09-30T03:11:58.402Z" },
-  "permission": { "state": "waiting", "since": "2026-09-30T03:12:00.950Z" },
-  "turn": { "state": "working", "at": "2026-09-30T03:12:00.031Z" },
+  "reply": { "id": 3 },
   "reporting": { "state": "active", "reason": null },
   "agents": [ /* Agent */ ],
   "shells": [{ "id": "shell-3", "kind": "shell" }]
@@ -422,29 +422,8 @@ files. When the tool cannot be asked, `count` is null, `scopes` is empty and
   the session in `GET /providers/:id/history`.
 * `context` counts the times the tool compacted its context and started over
   in a new session (`/clear`, `/new`) since the card started.
-* `reply` names the answer that ended the agent's last turn by `id`, with
-  `at`, when it was given, or is null. Its text is read with
-  `GET /sessions/:id/reply`.
-* `permission` says whether Claude Code is waiting for the user to answer a
-  permission prompt: `{ state: "waiting", since }`, with `since` when the
-  oldest open request was made, or `{ state: "none", since }`, with `since`
-  when the last wait ended or the hooks first reported. It is null when the
-  session cannot say: a tool other than Claude Code (Codex CLI runs its
-  permission hook before its own automatic reviewer, so its hook does not mean
-  the user is asked), hooks Agent Guild did not add itself, `reporting` that is
-  not `active`, or an exited session. No hook reports the answer itself: a
-  request ends when its tool call ends, or, for the main agent, when its turn
-  ends or the user sends the next prompt; a sub-agent's request also ends with
-  the sub-agent. So after an approval it stays `waiting` while the approved call
-  runs, and after a denial or Esc, which no hook reports, until the next prompt.
-  Times are when each change was seen, not a promise that it still holds.
-* `turn` is the main agent's turn in Claude Code and Codex CLI:
-  `{ state, at }`, with `state` `working` from a prompt the user submitted,
-  or one Claude Code starts on its own, and `ended` when the turn ended, with or
-  without a `reply`. `at` is when that happened. It is null for other tools,
-  when `reporting` is not `active`, before the first prompt, and once the
-  session exits. A Claude Code turn that a denial or Esc interrupts stays
-  `working` until the next prompt or turn end.
+* `reply` names the answer that ended the agent's last turn by `id`, or is
+  null. Its text is read with `GET /sessions/:id/reply`.
 * `reporting` says whether the tool's reporting hooks work, or is null for a
   tool Agent Guild supplies no hooks to. `state` is `pending`, `active`,
   `unavailable`, `setup_required` or `unsupported`; `reason` explains every
@@ -599,10 +578,6 @@ as `done` stays visible for a few seconds and is then removed. `source` is
 `herdr` for an agent in a herdr session's panes. All agents are cleared when
 their session exits.
 
-A `done` report may carry `at`, when the hook started, in milliseconds since
-1970, or now when missing or later: the agent's permission requests from up
-to then are answered, and its later ones still wait.
-
 ## HTTP endpoints
 
 All paths are under `/api/v1`.
@@ -671,7 +646,7 @@ All paths are under `/api/v1`.
 | GET | `/sessions` | | `{ sessions: Session[] }` |
 | POST | `/sessions` | `{ providerId, account?, shell?, cwd?, cols?, rows?, name?, args?, resume? }` | `201 { session }`. 429 `too_many_sessions` at the session limit. |
 | GET | `/sessions/:id` | | `{ session }` |
-| GET | `/sessions/:id/reply` | | `{ reply: { id, text, at, spoken } }`, or `{ reply: null }`: the whole text of the answer `session.reply` names, and `spoken`, the words the page's Read aloud speaks for it: a line per paragraph line, heading, list item and table row, each fenced code block as `Code omitted.` |
+| GET | `/sessions/:id/reply` | | `{ reply: { id, text, spoken } }`, or `{ reply: null }`: the whole text of the answer `session.reply` names, and `spoken`, the words the page's Read aloud speaks for it: a line per paragraph line, heading, list item and table row, each fenced code block as `Code omitted.` |
 | PATCH | `/sessions/:id` | `{ name }` | `{ session }`. |
 | POST | `/sessions/:id/stop` | | `{ session }`: ends the process. The session stays listed as exited. |
 | POST | `/sessions/:id/reattach` | | `{ session }`: runs an exited tmux or herdr session's multiplexer client again, keeping the session's id and screen. 409 `multiplexer_session_gone` while `multiplexer.reattachable` is false. |
@@ -680,11 +655,9 @@ All paths are under `/api/v1`.
 | POST | `/sessions/:id/model` | `{ model, displayName? }` | `{ model }`. Sets the session's model with source `report`. |
 | POST | `/sessions/:id/tool-session` | `{ toolSessionId, source? }` | `{ toolSessionId }`. Records the id the tool gave its own session. A new id with `source` `clear`, `startup` or `new` counts a reset. |
 | POST | `/sessions/:id/context` | `{ compaction, key? }` | `{ context }`. Counts a compaction, `manual` or `auto`. A repeated `key`, or with none a report within 2 s of the last, is the same one. |
-| POST | `/sessions/:id/reply` | `{ reply, at? }` | `{ reply: { id, at } }`, or `{ reply: null }`. `reply` is the text of the answer that ended the turn, as Markdown, or null; `at` as for `permission`. |
+| POST | `/sessions/:id/reply` | `{ reply }` | `{ reply: { id } }`, or `{ reply: null }`. `reply` is the text of the answer that ended the turn, as Markdown, or null. |
 | POST | `/sessions/:id/reporting` | | `{ reporting }`: the tool's hooks announce themselves. |
 | POST | `/sessions/:id/docker` | `{ event, sessionId, agentName?, toolName?, toolUseId?, command?, model?, reply? }` | `{ ok }`. One Docker Agent hook event. |
-| POST | `/sessions/:id/permission` | `{ permission, match, agentId?, at? }` | `{ permission }`. `permission` is `request` (Claude Code asked to use a tool) or `done` (a tool call ended). `match` is the call's 32-hex-digit hash, never the call itself; `agentId` names a sub-agent; `at` is when the hook started, in milliseconds since 1970, or now when missing or later. A request at or before the last `done` for the same call, or the end of its agent or turn, changes nothing. |
-| POST | `/sessions/:id/turn` | `{ turn, at? }` | `{ turn }`. `turn` is `working` or `ended`, for the main agent; `at` as for `permission`. A report older than the current `turn` changes only the requests it ends. |
 | POST | `/sessions/:id/shells` | `{ shell, key \| task, match?, agentId?, persist?, endsWithAgent?, kind?, tasks? }` | `{ ok }`. A shell command the tool started, ended or put in the background. |
 | POST | `/shutdown` | `{ force?, restart? }` | `202 { ok, running, restart }`: stops the manager and every session, detaching tmux and herdr sessions. 409 `sessions_running` (with `running`) while other sessions run; retry with `force: true` after the user confirms. With `restart`, a new manager takes over on the same port and token, running the version on disk. |
 
@@ -694,9 +667,9 @@ id or name of one of the tool's own sessions; one that starts with `-` is
 refused with 400 `bad_resume`. `account` defaults to `default`.
 
 The `POST /sessions/:id/…` report routes (`agents`, `model`, `tool-session`,
-`context`, `reply`, `reporting`, `docker`, `shells`, `permission` and `turn`)
-also accept the per-session report token instead of the API token, in an
-`X-Agent-Guild-Report-Token` header. The manager gives that token only to the processes inside that
+`context`, `reply`, `reporting`, `docker` and `shells`) also accept the per-session
+report token instead of the API token, in an `X-Agent-Guild-Report-Token`
+header. The manager gives that token only to the processes inside that
 session.
 
 Request bodies are limited to 64 KiB, except `PUT /notes`,

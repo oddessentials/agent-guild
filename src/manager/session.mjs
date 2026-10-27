@@ -29,12 +29,6 @@ const SHELL_EVENTS = new Set(['start', 'waiting', 'asked', 'background', 'end', 
 const SHELL_KINDS = new Set(['shell', 'monitor']);
 const MAX_SHELLS = 256;
 const MAX_ENDED_TASKS = 256;
-const PERMISSION_EVENTS = new Set(['request', 'done']);
-const TURN_STATES = new Set(['working', 'ended']);
-// Claude Code's PermissionRequest means the user is asked; Codex CLI's may be answered by its Guardian reviewer.
-const PERMISSION_REPORTING = new Set(['claude']);
-const TURN_REPORTING = new Set(['claude', 'codex']);
-const MAX_PERMISSION_CLEARS = 256;
 // Keys and reports a terminal sends as escape sequences: X10 mouse reports (three raw bytes after ESC [ M), other CSI
 // and SS3 sequences, OSC and DCS strings (to their end, or the next ESC, so a large paste is scanned once), and ESC
 // with one character (Alt+key). Bracketed paste markers are CSI, so pasted text is kept.
@@ -126,16 +120,6 @@ export class Session extends EventEmitter {
     this.toolSessionId = null;
     this.reply = null;
     this._replies = 0;
-    this._reportingActiveAt = null;
-    // Agent Guild's own hooks, not ones the user added, which may not cover every tool.
-    this._hooksSupplied = this.reporting?.state === 'pending';
-    // Open permission requests, by agent ('' for the main one) and call, each at its latest request; and when each
-    // call and each agent's requests were last answered, so a request that arrives after its own end stays closed.
-    this._permissions = new Map();
-    this._permissionClears = new Map();
-    this._agentPermissionClears = new Map();
-    this._permissionChangedAt = null;
-    this.turn = null;
     this.context = { compactions: count(opts.context?.compactions), resets: count(opts.context?.resets) };
     this.compactionRepeatMs = opts.compactionRepeatMs ?? 2000;
     this._compactionKeys = [];
@@ -508,10 +492,7 @@ export class Session extends EventEmitter {
     }
     const now = new Date().toISOString();
     const existing = this.agents.get(id);
-    if (status === 'done') {
-      this._endForegroundShells(id);
-      this._clearAgentPermissions(id, reportTime(report.at));
-    }
+    if (status === 'done') this._endForegroundShells(id);
     // A first report that already says done would only flash an icon:
     // Claude Code's internal helpers (prompt suggestions, side questions)
     // stop without ever having started here.
@@ -801,75 +782,9 @@ export class Session extends EventEmitter {
     if (report.reply !== null && typeof report.reply !== 'string') throw badRequest('reply must be a string or null');
     this._reportingHeard();
     const text = report.reply?.trim() || null;
-    this.reply = text ? { id: ++this._replies, text, at: new Date(reportTime(report.at)).toISOString() } : null;
+    this.reply = text ? { id: ++this._replies, text } : null;
     this._changed();
-    return this.reply && { id: this.reply.id, at: this.reply.at };
-  }
-
-  /**
-   * Claude Code asked to use a tool (request), or a call it asked about ended (done). A done ends only the request
-   * it follows; an interactive denial reports nothing, and the main agent's next turn report ends the wait.
-   */
-  reportPermission(report) {
-    if (!report || typeof report !== 'object') throw badRequest('permission report must be an object');
-    if (this.status !== 'running') throw Object.assign(new Error('session has exited'), { status: 409 });
-    if (!PERMISSION_EVENTS.has(report.permission)) throw badRequest(`permission must be one of ${[...PERMISSION_EVENTS].join(', ')}`);
-    if (typeof report.match !== 'string' || !/^[a-f0-9]{32}$/.test(report.match)) throw badRequest('match must be a call hash');
-    this._reportingHeard();
-    const agent = typeof report.agentId === 'string' ? report.agentId.slice(0, 128) : '';
-    const key = `${agent}\n${report.match}`;
-    const at = reportTime(report.at);
-    if (report.permission === 'done') {
-      remember(this._permissionClears, key, at);
-      if (this._permissions.get(key) <= at) this._dropPermissions([key], at);
-    } else {
-      const answered = Math.max(this._permissionClears.get(key) ?? -Infinity, this._agentPermissionClears.get(agent) ?? -Infinity);
-      if (at > answered && !(this._permissions.get(key) >= at)) {
-        this._permissions.set(key, at);
-        this._changed();
-      }
-    }
-    return this._permissionJSON();
-  }
-
-  /** The main agent's turn: a prompt was submitted (working), or the turn ended, with or without a reply (ended). */
-  reportTurn(report) {
-    if (!report || typeof report !== 'object') throw badRequest('turn report must be an object');
-    if (this.status !== 'running') throw Object.assign(new Error('session has exited'), { status: 409 });
-    if (!TURN_STATES.has(report.turn)) throw badRequest(`turn must be one of ${[...TURN_STATES].join(', ')}`);
-    this._reportingHeard();
-    const at = reportTime(report.at);
-    this._clearAgentPermissions('', at);
-    if (!this.turn || this.turn.at <= at) {
-      this.turn = { state: report.turn, at };
-      this._changed();
-    }
-    return this._turnJSON();
-  }
-
-  /** An agent's turn or the agent itself ended: every request it made before then was answered. */
-  _clearAgentPermissions(agent, at) {
-    remember(this._agentPermissionClears, agent, at);
-    const prefix = `${agent}\n`;
-    this._dropPermissions([...this._permissions].filter(([key, since]) => key.startsWith(prefix) && since <= at).map(([key]) => key), at);
-  }
-
-  _dropPermissions(keys, at) {
-    if (!keys.length) return;
-    for (const key of keys) this._permissions.delete(key);
-    if (this._permissions.size === 0) this._permissionChangedAt = at;
-    this._changed();
-  }
-
-  _permissionJSON() {
-    if (!PERMISSION_REPORTING.has(this.provider.reporting) || !this._hooksSupplied || this.status !== 'running' || this.reporting?.state !== 'active') return null;
-    if (this._permissions.size) return { state: 'waiting', since: new Date(Math.min(...this._permissions.values())).toISOString() };
-    return { state: 'none', since: new Date(this._permissionChangedAt ?? this._reportingActiveAt ?? Date.parse(this.startedAt)).toISOString() };
-  }
-
-  _turnJSON() {
-    if (!TURN_REPORTING.has(this.provider.reporting) || this.status !== 'running' || this.reporting?.state !== 'active' || !this.turn) return null;
-    return { state: this.turn.state, at: new Date(this.turn.at).toISOString() };
+    return this.reply && { id: this.reply.id };
   }
 
   reportHello() {
@@ -882,7 +797,6 @@ export class Session extends EventEmitter {
     clearTimeout(this._reportingTimer);
     if (!this.reporting || this.reporting.state === 'active') return;
     this.reporting = { state: 'active', reason: null };
-    this._reportingActiveAt = Date.now();
     this._changed();
   }
 
@@ -950,28 +864,12 @@ export class Session extends EventEmitter {
       model: this.model,
       toolSessionId: this.toolSessionId,
       context: { ...this.context },
-      reply: this.reply && { id: this.reply.id, at: this.reply.at },
-      permission: this._permissionJSON(),
-      turn: this._turnJSON(),
+      reply: this.reply && { id: this.reply.id },
       reporting: this.reporting,
       agents: [...this.agents.values()],
       shells: [...this.shells.values()].filter((s) => s.visible).map((s) => ({ id: s.id, kind: s.kind })),
     };
   }
-}
-
-/** A report's time: when its hook started, in milliseconds, or now for one that has none or names a later time. */
-function reportTime(at) {
-  const now = Date.now();
-  return Number.isFinite(at) && at > 0 && at < now ? at : now;
-}
-
-/** Record a time under a key, keeping the latest and only the most recent keys. */
-function remember(map, key, at) {
-  const last = map.get(key) ?? -Infinity;
-  map.delete(key);
-  map.set(key, Math.max(last, at));
-  if (map.size > MAX_PERMISSION_CLEARS) map.delete(map.keys().next().value);
 }
 
 function count(value) {
