@@ -159,6 +159,7 @@ export async function withPage({ name, instrumentation = '', headers = () => ({}
     const route = new URL(req.url, 'http://localhost').pathname;
     const file = vendor[route] ? path.join(repo, 'node_modules', vendor[route])
       : route === '/demo-runtime.js' ? path.join(repo, 'docs/demo/demo-runtime.js')
+        : route === '/api.md' ? path.join(repo, 'docs/api.md')
         : path.resolve(web, `.${route === '/' ? '/index.html' : route}`);
     if (!file.startsWith(repo) || !fs.existsSync(file) || !fs.statSync(file).isFile()) { res.writeHead(404); res.end(); return; }
     const types = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.html': 'text/html', '.svg': 'image/svg+xml', '.json': 'application/json' };

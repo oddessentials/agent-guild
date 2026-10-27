@@ -6,7 +6,9 @@ Unreal Engine interface, can use the same API to list, start, watch and drive
 the same sessions at the same time.
 
 This is the contract a client relies on. How the manager works out each value
-is in the code (see [architecture.md](architecture.md)).
+is in the code (see [architecture.md](architecture.md)). A running manager
+serves this doc at `/api.html`, where its read-only routes and sockets can be
+tried.
 
 ## Discovery and authentication
 
