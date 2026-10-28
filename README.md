@@ -19,8 +19,8 @@ local web page. Close the page whenever you like; the sessions keep running.
   <img src="docs/images/yard-clip.webp" alt="Seven coding-agent sessions as characters in the Guild Yard: they leave the plaza for their tools' halls and get to work, then a double-click on one opens Claude Code's real terminal, with its three helper agents" width="100%">
 </picture></a>
 
-**[Try the demo](https://oddessentials.github.io/agent-guild/?view=yard&skin=guild&theme=dark)**
-in your browser: simulated, free, no account and nothing installed.
+**[Try the demo](https://oddessentials.github.io/agent-guild/?view=yard&skin=guild&theme=dark)**:
+walk the Yard in your browser. Simulated, free, no account and nothing installed.
 
 ## Quick start
 
@@ -33,13 +33,8 @@ agent-guild
 
 The page opens in your browser. Press **New** on a tool's card to start a
 session. Sign in to each tool inside its first session, as you would in any
-terminal. To look around first, [try the demo](https://oddessentials.github.io/agent-guild/)
+terminal. To look around first, [try the demo](https://oddessentials.github.io/agent-guild/?view=yard&skin=guild&theme=dark)
 (simulated, nothing installed) or [watch the trailer](https://www.youtube.com/watch?v=_vQuW0v-uMY).
-
-<picture>
-  <source media="(prefers-color-scheme: light)" srcset="docs/images/overview-light.webp">
-  <img src="docs/images/overview-dark.webp" alt="Agent Guild with one card per coding tool and six sessions at work">
-</picture>
 
 **Or ask your agent.** Point it at
 [the setup skill](https://github.com/oddessentials/agent-guild/blob/main/plugins/agent-guild/skills/setup-agent-guild/SKILL.md),
@@ -48,6 +43,11 @@ and `claude plugin install agent-guild@agent-guild`. It installs and checks Agen
 then connects over [MCP](docs/mcp.md) to see and steer your sessions.
 
 ## Why Agent Guild
+
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/overview-light.webp">
+  <img src="docs/images/overview-dark.webp" alt="Agent Guild with one card per coding tool and six sessions at work">
+</picture>
 
 * **The real CLIs, unchanged.** Each session is the tool itself in a real
   terminal, not a chat copy of it. Whatever sign-in the tool uses works: a
