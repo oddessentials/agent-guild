@@ -65,12 +65,15 @@ const STATS = [
     about: 'Cross-platform React Native mobile apps built by the model as an agent; users compare them. When building: mobile apps.',
   },
 ];
-const INDEXES = STATS.filter((stat) => stat.index).map((stat) => stat.id);
+const RATING = {
+  id: 'rating', label: 'Rating', short: 'Rating', group: 'Agent Guild',
+  about: 'Agent Guild\'s blend of every benchmark this model has: its levels are averaged within Artificial Analysis, Design Arena · Models and Design Arena · Agents, then across the sources it has results from. A ranking relative to the models the configured tools run, not an absolute measure of capability. Missing results are left out, so check its coverage.',
+};
 
 class CatalogError extends Error {}
 
 const compare = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
-const newestFirst = (a, b) => (b.created ?? 0) - (a.created ?? 0) || compare(a.id, b.id);
+const newestFirst = (a, b) => compare(b.released ?? '', a.released ?? '') || compare(a.id, b.id);
 const record = (value) => (value && typeof value === 'object' && !Array.isArray(value) ? value : {});
 const finite = (value) => (typeof value === 'number' && Number.isFinite(value) ? value : null);
 const isMeasured = (model) => Object.keys(model.values).length > 0;
@@ -92,6 +95,14 @@ function displayName(name, id) {
   const full = text(name, 120) ?? id;
   const colon = full.indexOf(': ');
   return colon > 0 && colon <= 40 && full.length > colon + 2 ? full.slice(colon + 2) : full;
+}
+
+function releaseDay(canonical, created) {
+  const version = /-(\d{4})(\d{2})(\d{2})$/.exec(canonical) ?? /-(\d{4})-(\d{2})-(\d{2})$/.exec(canonical);
+  const day = version && `${version[1]}-${version[2]}-${version[3]}`;
+  const time = day ? Date.parse(`${day}T00:00:00Z`) : NaN;
+  if (!Number.isNaN(time) && new Date(time).toISOString().slice(0, 10) === day) return day;
+  return created === null ? null : new Date(created * 1000).toISOString().slice(0, 10);
 }
 
 function readValues(benchmarks) {
@@ -119,12 +130,15 @@ export function parseCatalog(payload) {
     if (!ID_RE.test(id)) continue;
     const architecture = record(entry.architecture);
     const pricing = record(entry.pricing);
+    const canonical = text(entry.canonical_slug, 200) ?? '';
+    const created = finite(entry.created);
     listings.push({
       id,
       slug: id.slice(id.indexOf('/') + 1),
-      canonical: text(entry.canonical_slug, 200) ?? '',
+      canonical,
       name: displayName(entry.name, id),
-      created: finite(entry.created),
+      created,
+      released: releaseDay(canonical, created),
       context: finite(entry.context_length),
       maxOutput: finite(record(entry.top_provider).max_completion_tokens),
       input: strings(architecture.input_modalities),
@@ -233,15 +247,33 @@ export function resolveModel(index, related, model) {
   return null;
 }
 
-function cardFor(model, pool, retrievedAt) {
+const UNPLACED = { level: null, tier: null, place: null, tied: false, of: null };
+
+function levelsFor(model, pool) {
   const stats = {};
   for (const stat of STATS) {
     const own = model.values[stat.id];
     if (!own) continue;
     const others = pool[stat.id].filter((entry) => entry.id !== model.id).map((entry) => entry.value);
-    const place = standing(own.value, others) ?? { level: null, tier: null, place: null, tied: false, of: null };
-    stats[stat.id] = { ...place, value: own.value, rank: own.rank };
+    stats[stat.id] = { ...(standing(own.value, others) ?? UNPLACED), value: own.value, rank: own.rank };
   }
+  return stats;
+}
+
+function blend(stats) {
+  const groups = new Map();
+  for (const stat of STATS) {
+    const level = stats[stat.id]?.level;
+    if (typeof level === 'number') groups.set(stat.group, [...(groups.get(stat.group) ?? []), level]);
+  }
+  if (groups.size === 0) return null;
+  const means = [...groups.values()].map((levels) => levels.reduce((sum, level) => sum + level, 0) / levels.length);
+  const value = Math.round((100 * means.reduce((sum, mean) => sum + mean, 0)) / means.length) / 100;
+  const counted = [...groups.values()].reduce((sum, levels) => sum + levels.length, 0);
+  return { value, coverage: { stats: counted, of: STATS.length, groups: [...groups.keys()] } };
+}
+
+function cardFor(model, stats, rating, retrievedAt) {
   const created = model.created === null ? null : model.created * 1000;
   return {
     id: model.id,
@@ -255,12 +287,13 @@ function cardFor(model, pool, retrievedAt) {
     reasoning: model.reasoning,
     price: model.price,
     stats,
+    rating,
   };
 }
 
 export function describeCatalog({ index, retrievedAt, stale, error }, providers, sessions = []) {
   const stats = STATS.map((stat) => ({ id: stat.id, label: stat.label, short: stat.short ?? stat.label, group: stat.group, about: stat.about }));
-  const result = { retrievedAt, stale, error, stats, pool: null, providers: {}, models: {}, sessions: {} };
+  const result = { retrievedAt, stale, error, stats, rating: { ...RATING }, pool: null, providers: {}, models: {}, sessions: {} };
   if (!index) return result;
   const related = new Map(providers.map((provider) => [provider.id, providerModels(index, provider)]));
   const listed = new Map([...related].map(([id, models]) => [id, models.filter(isMeasured)]));
@@ -271,12 +304,23 @@ export function describeCatalog({ index, retrievedAt, stale, error }, providers,
     pool[stat.id] = [...members.values()].filter((m) => m.values[stat.id]).map((m) => ({ id: m.id, value: m.values[stat.id].value }));
   }
   result.pool = { tools: providers.filter((p) => listed.get(p.id).length).map((p) => p.tool) };
-  const card = (id) => (result.models[id] ??= cardFor(index.models.get(id), pool, retrievedAt));
+  const levels = new Map([...members.values()].map((m) => [m.id, levelsFor(m, pool)]));
+  const blends = [...levels].map(([id, stats]) => [id, blend(stats)]).filter(([, rated]) => rated);
+  const ratings = new Map(blends.map(([id, rated]) => {
+    const others = blends.filter(([other]) => other !== id).map(([, other]) => other.value);
+    return [id, { value: rated.value, ...(standing(rated.value, others) ?? UNPLACED), coverage: rated.coverage }];
+  }));
+  const card = (id) => {
+    if (result.models[id]) return result.models[id];
+    const model = index.models.get(id);
+    return (result.models[id] = cardFor(model, levels.get(id) ?? levelsFor(model, pool), ratings.get(id) ?? null, retrievedAt));
+  };
   for (const provider of providers) {
+    const [featured] = related.get(provider.id);
+    if (!featured) continue;
     const models = listed.get(provider.id);
-    if (models.length === 0) continue;
-    const featured = models.find((m) => INDEXES.every((stat) => m.values[stat])) ?? models[0];
-    result.providers[provider.id] = { featured: featured.id, models: models.map((m) => card(m.id).id) };
+    const shown = models[0] === featured ? models : [featured, ...models];
+    result.providers[provider.id] = { featured: featured.id, models: shown.map((m) => card(m.id).id) };
   }
   for (const session of sessions) {
     if (!session.model) continue;

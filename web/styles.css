@@ -836,7 +836,7 @@ body:has(#app[hidden]):has(#auth[hidden]):has(#stopped[hidden])::after {
 .remote-devices ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
 .remote-devices li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .remote-devices code { font-size: 1.25rem; letter-spacing: 0.1em; margin-right: auto; }
-.model-columns, .model-toggle { display: grid; grid-template-columns: minmax(0, 1fr) repeat(3, 6.5rem) 4.5rem; align-items: center; gap: 8px; }
+.model-columns, .model-toggle { display: grid; grid-template-columns: minmax(0, 1fr) repeat(4, 6.5rem) 4.5rem; align-items: center; gap: 8px; }
 .model-columns {
   position: sticky; top: 0; z-index: 1; padding: 10px 8px 6px; background: var(--surface);
   border-bottom: 1px solid var(--border); color: var(--muted); font-size: 0.72rem; font-weight: 600;
@@ -1328,7 +1328,7 @@ body:has(#terminal-panel:not([hidden]) .terminal-controls:not([hidden])) .toast 
   .launch-tools .github-open { flex: 1 1 auto; }
   .github-fields { grid-template-columns: minmax(0, 1fr); }
   .models { width: 100vw; max-width: 100vw; height: 100dvh; max-height: 100dvh; margin: 0; border-radius: 0; }
-  .model-columns, .model-toggle { grid-template-columns: minmax(0, 1fr) repeat(3, 4.6rem); }
+  .model-columns, .model-toggle { grid-template-columns: minmax(0, 1fr) repeat(4, 3.6rem); }
   .model-columns span:last-child, .model-context { display: none; }
   .model-detail { padding-left: 8px; grid-template-columns: max-content minmax(32px, 1fr) auto; }
   .model-detail .stat { padding-bottom: 6px; }
