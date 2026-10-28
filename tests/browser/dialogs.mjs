@@ -1,7 +1,9 @@
 // Shared dialog layout in Chrome and, when PLAYWRIGHT_MODULE is set, WebKit.
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { describeCatalog, indexCatalog, parseCatalog } from '../../src/manager/model-stats.mjs';
 import { until, withDialogClose, withPage } from './chrome.mjs';
 
 const instrumentation = `<script>
@@ -27,6 +29,8 @@ window.fetch=(input,init)=>{
     return Promise.resolve(new Response(JSON.stringify({history:{total:334,sessions:Array.from({length:200},(_,i)=>({
       id:'saved-'+i,title:'Saved session '+i,cwd:'/work/storefront',updatedAt:'2026-10-04T10:00:00Z'
     }))}}),{headers:{'Content-Type':'application/json'}}));
+  if(url.pathname.endsWith('/model-stats')&&sessionStorage.getItem('testModelStats'))
+    return Promise.resolve(new Response(sessionStorage.getItem('testModelStats'),{headers:{'Content-Type':'application/json'}}));
   return demoFetch(input,init);
 };
 // Videos never reach YouTube: a poster becomes a local 320x180 image, or fails while youtubeOffline is
@@ -56,7 +60,7 @@ window.WebSocket=class extends DemoSocket {
 };
 </script>`;
 
-const checks = await withPage({ name: 'dialogs', instrumentation }, async ({ origin, send, evaluate, layoutReady, pass, errors, navigate }) => {
+const checks = await withPage({ name: 'dialogs', instrumentation }, async ({ origin, send, evaluate, layoutReady, pass, errors, navigate, reload }) => {
   const checkDialogs = async (evaluate, resize, settle, engine) => {
     const closeDialog = (selector, button) => withDialogClose(evaluate, selector, () => evaluate(
       button ? `document.querySelector(${JSON.stringify(button)}).click()` : `document.querySelector(${JSON.stringify(selector)}).close()`));
@@ -363,6 +367,37 @@ const checks = await withPage({ name: 'dialogs', instrumentation }, async ({ ori
   await navigate(origin);
   await checkDialogs(evaluate, (width, height) => send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false }), layoutReady, 'Chrome');
   assert.deepEqual(errors, []);
+
+  const { providers } = JSON.parse(fs.readFileSync(new URL('../../config/providers.default.json', import.meta.url), 'utf8'));
+  const listing = (id, version, analysis = {}, arena = []) => ({ id, canonical_slug: `${id}-${version}`, name: id, created: 1790000000,
+    architecture: { output_modalities: ['text'] }, supported_parameters: ['tools'], benchmarks: { artificial_analysis: analysis, design_arena: arena } });
+  const unrated = describeCatalog({ index: indexCatalog(parseCatalog({ data: [
+    listing('anthropic/claude-opus-9', '20261020'),
+    listing('anthropic/claude-fable-5.1', '20261001', { coding_index: 80 }, [{ arena: 'models', category: 'website', elo: 1300, rank: 2 }]),
+    listing('openai/gpt-9', '20261001', { coding_index: 50 }),
+  ] })), retrievedAt: '2026-10-28T00:00:00.000Z', stale: false, error: null }, providers);
+  unrated.sessions = { a11ce001: 'anthropic/claude-fable-5.1' };
+  const legacy = structuredClone(unrated);
+  delete legacy.rating;
+  for (const model of Object.values(legacy.models)) delete model.rating;
+  for (const [label, response] of [['an older manager without Rating', legacy], ['a featured model with no Rating', unrated]]) {
+    await evaluate(`sessionStorage.setItem('testModelStats',${JSON.stringify(JSON.stringify(response))})`);
+    await reload();
+    const card = '.provider[data-id="anthropic"] .model-stats';
+    await until(`${label}: card`, () => evaluate(`document.querySelector('${card} .stat .stat-value')?.textContent==='—'`));
+    await until(`${label}: session tooltip`, () => evaluate(`[...document.querySelectorAll('.model-pill')].some((pill)=>pill.title.includes('\\nRating '))`));
+    await evaluate(`document.querySelector('${card} .model-stats-head').click()`);
+    const fable = '#models-list .model[data-id="anthropic/claude-fable-5.1"]';
+    await until(`${label}: dialog`, () => evaluate(`document.querySelector('#models').open&&!!document.querySelector('${fable}')`));
+    await evaluate(`document.querySelector('${fable} .model-toggle').click()`);
+    assert.equal(await evaluate(`document.querySelectorAll('#models-columns span').length`), 6);
+    assert.equal(await evaluate(`document.querySelector('${fable} .model-index:nth-of-type(3) .level')?.textContent`), '100');
+    assert.match(await evaluate(`document.querySelector('${fable} .model-detail').textContent`), /Coding Index.*Website/s);
+    await withDialogClose(evaluate, '#models', () => evaluate(`document.querySelector('#models').close()`));
+    assert.deepEqual(errors, [], label);
+  }
+  await evaluate(`sessionStorage.removeItem('testModelStats')`);
+  pass('Chrome: cards, the Models dialog and session tooltips show benchmarks when Rating is missing or null');
 
   if (process.env.PLAYWRIGHT_MODULE) {
     const { webkit } = await import(pathToFileURL(path.resolve(process.env.PLAYWRIGHT_MODULE)).href);

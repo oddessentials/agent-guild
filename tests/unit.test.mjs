@@ -3695,7 +3695,8 @@ test('levels compare the benchmarked models the configured tools run, and missin
     { id: 's2', provider: { id: 'one' }, model: null },
   ]);
   assert.deepEqual(stats.pool, { tools: ['Tool One', 'Tool Two'] });
-  assert.deepEqual(stats.providers.one, { featured: 'a/one-full', models: ['a/one-new', 'a/one-full', 'a/one-old'] });
+  assert.deepEqual(stats.providers.one, { featured: 'a/one-unmeasured', models: ['a/one-unmeasured', 'a/one-new', 'a/one-full', 'a/one-old'] });
+  assert.equal(stats.models['a/one-unmeasured'].rating, null);
   assert.equal(stats.providers.shell, undefined);
   assert.ok(stats.stats.every((stat) => stat.about.includes('When building:')), 'every benchmark says what it means for building');
   const coding = (id) => stats.models[id].stats.coding;
@@ -3711,6 +3712,61 @@ test('levels compare the benchmarked models the configured tools run, and missin
   assert.deepEqual(stats.models['b/two-1'].stats.webapps, { level: null, tier: null, place: null, tied: false, of: null, value: 1300, rank: 1 });
   const shuffled = statsOf(catalogOf(...[...entries].reverse()), providers);
   for (const id of Object.keys(shuffled.models)) assert.deepEqual(shuffled.models[id], stats.models[id]);
+});
+
+test('the newest matching model is featured, and Rating weighs each benchmark source equally', () => {
+  const providers = [{ id: 'one', tool: 'Tool One', modelPattern: 'one-[a-z]' }];
+  const entries = [
+    catalogEntry('a/one-x', { canonical: 'a/one-x-20261001', created: 1795000000, coding: 80, arena: [arenaRow('website', 1300, 1)] }),
+    catalogEntry('a/one-y', { canonical: 'a/one-y-20261005', created: 1780000000 }),
+    catalogEntry('a/one-z', { canonical: 'a/one-z-20261005', coding: 60, arena: [arenaRow('website', 1200, 3), arenaRow('webapps', 1250, 1, 'agents')] }),
+    catalogEntry('a/one-v', { created: 1790000000, coding: 60 }),
+    catalogEntry('a/one-u', { created: 1785000000, arena: [arenaRow('website', 1250, 2)] }),
+    catalogEntry('a/one-w', { created: null, coding: 40 }),
+  ];
+  const stats = statsOf(catalogOf(...entries), providers);
+  assert.deepEqual(stats.providers.one, { featured: 'a/one-y', models: ['a/one-y', 'a/one-z', 'a/one-x', 'a/one-v', 'a/one-u', 'a/one-w'] });
+  const rating = (id) => stats.models[id].rating;
+  assert.equal(rating('a/one-y'), null);
+  assert.deepEqual(rating('a/one-z'), {
+    value: 25, level: 25, tier: 'C', place: 4, tied: false, of: 5,
+    coverage: { stats: 2, of: 13, groups: ['Artificial Analysis', 'Design Arena · Models'] },
+  });
+  assert.deepEqual([rating('a/one-v').value, rating('a/one-u').value], [50, 50], 'a missing source is left out, not a zero');
+  assert.deepEqual([rating('a/one-v').level, rating('a/one-v').tied, rating('a/one-v').place], [63, true, 2]);
+  assert.deepEqual([rating('a/one-x').level, rating('a/one-w').level], [100, 0]);
+  assert.deepEqual(statsOf(catalogOf(...[...entries].reverse()), providers), stats);
+});
+
+test('version dates in either slug format outrank listing dates, and an invalid one falls back to the listing date', () => {
+  const providers = [{ id: 'one', tool: 'Tool One', modelPattern: 'one-[a-z]' }];
+  const listed = (day) => Date.parse(`${day}T12:00:00Z`) / 1000;
+  const entries = [
+    catalogEntry('a/one-p', { canonical: 'a/one-p-2026-09-01', created: listed('2026-10-03'), coding: 50 }),
+    catalogEntry('a/one-q', { canonical: 'a/one-q-20260902', created: listed('2026-10-02'), coding: 60 }),
+    catalogEntry('a/one-r', { canonical: 'a/one-r-2026-02-30', created: listed('2026-09-03'), coding: 70 }),
+    catalogEntry('a/one-s', { canonical: 'a/one-s-2026-08-31', created: listed('2026-10-04'), coding: 80 }),
+  ];
+  const stats = statsOf(catalogOf(...entries), providers);
+  assert.deepEqual(stats.providers.one, { featured: 'a/one-r', models: ['a/one-r', 'a/one-q', 'a/one-p', 'a/one-s'] });
+  assert.deepEqual(statsOf(catalogOf(...[...entries].reverse()), providers), stats);
+});
+
+test('a session model outside the pool keeps its benchmarks but gets no Rating, and moves no other rating', () => {
+  const providers = [{ id: 'one', tool: 'Tool One', modelPattern: 'one-[a-z]+' }];
+  const index = catalogOf(
+    catalogEntry('a/one-hi', { coding: 20 }),
+    catalogEntry('a/one-lo', { coding: 10 }),
+    catalogEntry('c/outside', { coding: 20 }),
+  );
+  const alone = statsOf(index, providers);
+  const stats = statsOf(index, providers, [{ id: 's1', provider: { id: 'shell' }, model: { name: 'outside', displayName: null } }]);
+  assert.equal(stats.sessions.s1, 'c/outside');
+  assert.equal(stats.models['c/outside'].rating, null);
+  assert.equal(stats.models['c/outside'].stats.coding.value, 20);
+  assert.deepEqual([stats.models['a/one-hi'].rating.tier, stats.models['a/one-hi'].rating.level, stats.models['a/one-hi'].rating.place], ['S', 100, 1]);
+  assert.deepEqual(stats.providers, alone.providers);
+  for (const id of Object.keys(alone.models)) assert.deepEqual(stats.models[id], alone.models[id]);
 });
 
 test('a session model matches its catalog listing exactly, never a provider, prefix or sibling', () => {

@@ -240,7 +240,7 @@
   var eventSockets = [];
   var outputTurn = 0, outputTimer = null;
   var transcripts = {};
-  var catalog = window.AGENT_GUILD_DEMO_MODEL_STATS || { retrievedAt: null, stale: false, error: null, stats: [], pool: null, providers: {}, models: {}, sessions: {} };
+  var catalog = window.AGENT_GUILD_DEMO_MODEL_STATS || { retrievedAt: null, stale: false, error: null, stats: [], rating: null, pool: null, providers: {}, models: {}, sessions: {} };
 
   function modelStats() {
     var result = clone(catalog);

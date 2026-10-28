@@ -2784,7 +2784,16 @@ function formatDate(iso, options = { year: 'numeric', month: 'short', day: 'nume
 }
 
 function statValue(stat, entry) {
-  return stat.group === ARTIFICIAL_ANALYSIS ? String(entry.value) : `Elo ${entry.value}`;
+  return stat.group.startsWith('Design Arena') ? `Elo ${entry.value}` : String(entry.value);
+}
+
+function ratingStat() {
+  return state.stats?.rating ?? { id: 'rating', label: 'Rating', short: 'Rating', group: 'Agent Guild', about: 'This manager does not report a Rating. Restart it to update.' };
+}
+
+function coverageText(rating) {
+  const sources = new Set(state.stats.stats.map((stat) => stat.group)).size;
+  return `${rating.coverage.stats} of ${rating.coverage.of} benchmarks · ${rating.coverage.groups.length} of ${sources} sources`;
 }
 
 function statPlace(entry) {
@@ -2795,7 +2804,7 @@ function statSummary(stat, entry) {
   if (!entry) return `${stat.label}: no published result`;
   const value = `${stat.label} ${statValue(stat, entry)}`;
   if (entry.level === null) return `${value}: no other model has this result to compare with`;
-  const rank = entry.rank === null ? '' : `, Design Arena rank ${entry.rank}`;
+  const rank = entry.rank == null ? '' : `, Design Arena rank ${entry.rank}`;
   return `${value}: level ${entry.level}, tier ${entry.tier}, ${statPlace(entry)}${rank}`;
 }
 
@@ -2815,9 +2824,8 @@ function tierClass(entry) {
   return entry?.tier ? `tier-${entry.tier.toLowerCase()}` : '';
 }
 
-function statRow(stat, card, { detail = false } = {}) {
+function statRow(stat, entry, { detail = false, note = null } = {}) {
   const node = $('stat-template').content.firstElementChild.cloneNode(true);
-  const entry = card.stats[stat.id];
   node.querySelector('.stat-name').textContent = detail ? stat.label : stat.short;
   const info = node.querySelector('.info');
   info.dataset.stat = stat.id;
@@ -2832,7 +2840,7 @@ function statRow(stat, card, { detail = false } = {}) {
   if (detail) {
     const rank = entry?.rank == null ? '' : ` · Rank ${entry.rank}`;
     reading.querySelector('.stat-note').textContent = !entry ? 'No published result'
-      : entry.level === null ? statValue(stat, entry) : `${statPlace(entry)} · ${statValue(stat, entry)}${rank}`;
+      : note ?? (entry.level === null ? statValue(stat, entry) : `${statPlace(entry)} · ${statValue(stat, entry)}${rank}`);
   }
   reading.title = statSummary(stat, entry);
   reading.setAttribute('aria-label', reading.title);
@@ -2844,7 +2852,7 @@ let quietFocus = false;
 
 function showTip(button) {
   const flag = button.dataset.flag && flagLists.get(flagsView.providerId)?.flags?.find((f) => f.flag === button.dataset.flag);
-  const stat = !flag && state.stats?.stats.find((s) => s.id === button.dataset.stat);
+  const stat = !flag && [ratingStat(), ...(state.stats?.stats ?? [])].find((s) => s?.id === button.dataset.stat);
   if (!flag && !stat) return;
   const tip = $('tip');
   $('tip-title').textContent = flag ? flag.flag : stat.label;
@@ -2880,25 +2888,22 @@ function renderModelStats(card, provider) {
   }
   const featured = stats.models[entry.featured];
   const count = entry.models.length;
-  const complete = indexStats().every((stat) => featured.stats[stat.id]);
   const head = document.createElement('button');
   head.type = 'button';
   head.className = 'model-stats-head';
   head.textContent = `${featured.name} · ${count} model${count === 1 ? '' : 's'}`;
   head.setAttribute('aria-label', head.textContent);
-  head.title = `${featured.name} is the newest ${provider.tool} model with ${complete ? 'all three Artificial Analysis indexes' : 'published benchmarks'}. Open to compare ${count === 1 ? 'it' : `all ${count}`}.`;
+  head.title = `${featured.name} is the newest matching ${provider.tool} model. Open to compare ${count === 1 ? 'it' : `all ${count}`}.`;
   head.addEventListener('click', () => showModels({ providerId: provider.id, focus: featured.id }));
-  host.replaceChildren(head, ...indexStats().map((stat) => statRow(stat, featured)));
+  host.replaceChildren(head, statRow(ratingStat(), featured.rating));
 }
 
 function modelStatsLine(s) {
   const id = sessionModelId(s);
   const card = id ? state.stats.models[id] : null;
   if (!card) return '';
-  return indexStats().map((stat) => {
-    const entry = card.stats[stat.id];
-    return `${stat.short} ${entry?.tier ? `${entry.tier} ${entry.level}` : '—'}`;
-  }).join(' · ');
+  const entry = card.rating;
+  return `${ratingStat().short} ${entry?.tier ? `${entry.tier} ${entry.level}` : '—'}`;
 }
 
 function modelsFocus() {
@@ -2954,6 +2959,7 @@ function sourceText(stats, { levels = true } = {}) {
     parts.push('Artificial Analysis results are index scores. Design Arena results are Elo ratings from real users\' head-to-head votes, and Rank is the model\'s place on Design Arena\'s own leaderboard.');
     parts.push(`Level 0–100 is a model's standing on each benchmark among the models ${listJoin(stats.pool.tools)} run; 100 is the best result.`);
     parts.push('Tier: S 90+, A 75+, B 50+, C 25+, D below 25.');
+    parts.push('Rating averages a model\'s levels within each source it has results from, then across those sources: a composite ranking among these models, not an absolute measure of capability.');
   }
   return parts.join(' ');
 }
@@ -3007,6 +3013,17 @@ function modelFacts(card) {
   return facts;
 }
 
+function ratingSection(card) {
+  const section = document.createElement('div');
+  section.className = 'model-group';
+  const heading = document.createElement('h4');
+  heading.textContent = ratingStat().label;
+  const entry = card.rating;
+  const note = entry && (entry.level === null ? coverageText(entry) : `${statPlace(entry)} · ${coverageText(entry)}`);
+  section.append(heading, statRow(ratingStat(), entry, { detail: true, note }));
+  return section;
+}
+
 function modelDetail(card) {
   const groups = [];
   for (const stat of state.stats.stats) {
@@ -3020,7 +3037,7 @@ function modelDetail(card) {
     heading.textContent = name;
     section.append(heading);
     if (stats.some((stat) => card.stats[stat.id])) {
-      section.append(...stats.map((stat) => statRow(stat, card, { detail: true })));
+      section.append(...stats.map((stat) => statRow(stat, card.stats[stat.id], { detail: true })));
     } else {
       const none = document.createElement('p');
       none.className = 'model-none';
@@ -3029,7 +3046,7 @@ function modelDetail(card) {
     }
     return section;
   });
-  return [...sections, modelFacts(card)];
+  return [ratingSection(card), ...sections, modelFacts(card)];
 }
 
 function modelRow(card) {
@@ -3047,8 +3064,7 @@ function modelRow(card) {
     badges.push(badge('expires', `Expires ${day}`, `OpenRouter lists this model as expiring on ${formatDate(card.expires, { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' })}`));
   }
   node.querySelector('.model-title').append(...badges);
-  for (const stat of indexStats()) {
-    const entry = card.stats[stat.id];
+  for (const [stat, entry] of [[ratingStat(), card.rating], ...indexStats().map((stat) => [stat, card.stats[stat.id]])]) {
     const cell = document.createElement('span');
     cell.className = ['model-index', tierClass(entry), entry ? '' : 'unmeasured'].filter(Boolean).join(' ');
     cell.replaceChildren(...levelValue(entry));
@@ -3060,7 +3076,7 @@ function modelRow(card) {
   context.textContent = formatTokens(card.context);
   context.title = card.context ? `Context: ${card.context.toLocaleString()} tokens` : 'Context: not listed';
   toggle.append(context);
-  const summary = indexStats().map((stat) => statSummary(stat, card.stats[stat.id])).join('. ');
+  const summary = [statSummary(ratingStat(), card.rating), ...indexStats().map((stat) => statSummary(stat, card.stats[stat.id]))].join('. ');
   toggle.setAttribute('aria-description', summary);
   const expand = (open) => {
     toggle.setAttribute('aria-expanded', String(open));
@@ -3104,17 +3120,17 @@ function renderModels() {
   } else if (!stats) {
     note = 'Loading benchmarks from OpenRouter…';
   } else if (list.length === 0) {
-    note = stats.error ? `Benchmarks are unavailable: ${stats.error}.` : `OpenRouter lists no benchmarked ${provider.tool} models.`;
+    note = stats.error ? `Benchmarks are unavailable: ${stats.error}.` : `OpenRouter lists no matching ${provider.tool} models.`;
   }
   $('models-title').textContent = title;
   $('models-sub').textContent = ids.length > 1
-    ? `${ids.length} models with published benchmarks, newest first`
+    ? `${ids.length} matching models, newest first`
     : session ? `Reported by ${session.name} as “${session.model.name}”` : '';
   const all = modelsView.all || ids.length <= MODELS_SHOWN || ids.indexOf(modelsView.focus) >= MODELS_SHOWN;
   const shown = all ? ids : ids.slice(0, MODELS_SHOWN);
   const columns = $('models-columns');
   columns.hidden = shown.length === 0;
-  columns.replaceChildren(...['Model', ...indexStats().map((stat) => stat.short), 'Context'].map((label) => {
+  columns.replaceChildren(...['Model', ratingStat().short, ...indexStats().map((stat) => stat.short), 'Context'].map((label) => {
     const span = document.createElement('span');
     span.textContent = label;
     return span;

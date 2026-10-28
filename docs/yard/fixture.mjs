@@ -72,8 +72,8 @@ export async function startFixture({port=0,yardArt}={}) {
     {id:'history-1',title:'Explore the architecture',cwd:'E:\\projects\\example',updatedAt:now()},
     {id:'history-missing',title:'A moved project',cwd:'missing',updatedAt:now()}]};}};
   const modelStats={snapshot:async(sessions)=>({
-    retrievedAt:now(),stale:false,error:null,stats:[],pool:{tools:providers.filter(p=>p.id!=='shell').map(p=>p.tool)},providers:Object.fromEntries(providers.filter(p=>p.id!=='shell').map(p=>[p.id,{featured:p.id+'/fixture',models:[p.id+'/fixture']}])),
-    models:Object.fromEntries(providers.filter(p=>p.id!=='shell').map(p=>[p.id+'/fixture',{id:p.id+'/fixture',name:'Preview model',context:200000,input:['text'],reasoning:[],created:'2026-09-01',price:{input:1,output:3},stats:{}}])),
+    retrievedAt:now(),stale:false,error:null,stats:[],rating:{id:'rating',label:'Rating',short:'Rating',group:'Agent Guild',about:'Preview rating.'},pool:{tools:providers.filter(p=>p.id!=='shell').map(p=>p.tool)},providers:Object.fromEntries(providers.filter(p=>p.id!=='shell').map(p=>[p.id,{featured:p.id+'/fixture',models:[p.id+'/fixture']}])),
+    models:Object.fromEntries(providers.filter(p=>p.id!=='shell').map(p=>[p.id+'/fixture',{id:p.id+'/fixture',name:'Preview model',context:200000,input:['text'],reasoning:[],created:'2026-09-01',price:{input:1,output:3},stats:{},rating:null}])),
     sessions:Object.fromEntries(sessions.map(s=>[s.id,s.provider.id+'/fixture'])),
   })};
   const news=Object.assign(new EventEmitter(),{snapshot:()=>({refreshedAt:now(),refreshing:false,sources:[],items:[{id:'preview-news',title:'Welcome to your Guild Yard — every session has a place.',url:'https://example.com',source:'Preview',sourceId:'preview',category:'news',publishedAt:now()}]})});
