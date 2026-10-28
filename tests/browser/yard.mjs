@@ -964,13 +964,13 @@ test('the camera controls stay whole and reachable beside the swap status and he
         const inside=r=>r.left>=stage.left&&r.right<=stage.right&&r.top>=stage.top&&r.bottom<=stage.bottom;
         const meets=r=>r.left<bar.right&&bar.left<r.right&&r.top<bar.bottom&&bar.top<r.bottom;
         const buttons=[...document.querySelectorAll('.yard-camera .btn:not([hidden])')].map(e=>{const r=R(e);
-          return {label:e.textContent,inside:inside(r),reached:document.elementFromPoint(r.left+r.width/2,r.top+r.height/2)===e,height:r.height};});
+          return {label:e.getAttribute('aria-label')||e.textContent,inside:inside(r),reached:e.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2)),height:r.height};});
         const overlaps=['#yard-help',...(status==='none'?[]:['#'+status])].filter(s=>meets(R($(s))));
         $('#yard-swap-failure').hidden=true;$('#yard-loading').hidden=true;
         return {buttons,overlaps};
       })()`);
       const at=`${name}, ${status} shown`;
-      assert.deepEqual(layout.buttons.map(c=>c.label),['+','−','Overview','Focus selected','Photo'],at);
+      assert.deepEqual(layout.buttons.map(c=>c.label),['Zoom in','Zoom out','Overview','Focus selected','Save a picture of the Yard'],at);
       assert.deepEqual(layout.buttons.filter(c=>!c.inside||!c.reached).map(c=>c.label),[],at);
       assert.equal(new Set(layout.buttons.map(c=>c.height)).size,1,`every label stays on one line: ${at}`);
       assert.deepEqual(layout.overlaps,[],at);
@@ -984,7 +984,7 @@ test('Photo says so when its code cannot load',options,async t=>{
   await b.send('Network.enable');
   await b.send('Network.setBlockedURLs',{urls:['*/yard/photo.js']});
   await b.click('#yard-photo');
-  await b.wait("document.querySelector('#toast').textContent==='Couldn’t open Photo. Reload the page and try again.'");
+  await b.wait("document.querySelector('#toast').textContent==='Couldn’t open the picture. Reload the page and try again.'");
   assert.equal(await b.evaluate("document.querySelector('#yard-photo-dialog').open"),false);
   assert.deepEqual(b.errors,[]);
 });
