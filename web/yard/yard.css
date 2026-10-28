@@ -45,6 +45,7 @@
 .yard-overlay > * { pointer-events:auto; max-width:100%; }
 .yard-camera { align-self:flex-end; display:flex; gap:5px; flex-wrap:wrap; justify-content:flex-end; }
 .yard-camera .btn { min-height:30px; padding:5px 10px; font-size:11px; background:var(--surface); white-space:nowrap; }
+.yard-camera .btn svg { display:block; width:16px; height:16px; }
 #yard-help { width:max-content; margin:6px 0 0; padding:4px 12px; border-radius:30px; font-size:10px; color:var(--muted); text-align:center; pointer-events:none; background:color-mix(in srgb,var(--surface) 80%,transparent); }
 .yard-loading { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); display:grid; grid-template-columns:1fr auto; align-items:center; gap:10px 16px; min-width:240px; padding:18px 26px; color:var(--text); border:1px solid var(--yard-line); background:var(--surface); z-index:4; border-radius:var(--radius); }
 .yard-loading-size { font-size:11px; color:var(--muted); font-variant-numeric:tabular-nums; }

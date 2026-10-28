@@ -313,7 +313,7 @@ export function initYard(controller) {
   $('yard-photo').addEventListener('click',async () => {
     let YardPhoto;
     try { ({ YardPhoto } = await import('./photo.js')); }
-    catch { controller.toast('Couldn’t open Photo. Reload the page and try again.'); return; }
+    catch { controller.toast('Couldn’t open the picture. Reload the page and try again.'); return; }
     photo ||= new YardPhoto($('yard-photo-dialog'));
     if (renderer && !disposed && sceneVisible()) photo.open(renderer, $('yard-photo'));
   });
