@@ -85,7 +85,7 @@ function page({ android = false, available, supported = true, enabled = true, pr
     navigator: { language, userAgent: android ? 'Mozilla/5.0 (Linux; Android 14) Chrome/130.0' : 'Desktop' },
     document: { visibilityState: 'visible', addEventListener: (type, callback) => listeners.set(type, callback) },
     addEventListener: (type, callback) => listeners.set(type, callback),
-    $: node, VOICE_KEY: 'voice', SOUND_KEY: 'sound', CHANGELOG_SEEN_KEY: 'changelog',
+    $: node, yardUi: null, VOICE_KEY: 'voice', SOUND_KEY: 'sound', CHANGELOG_SEEN_KEY: 'changelog',
     load: (key) => storage.get(key),
     save: (key, value) => value === null ? storage.delete(key) : storage.set(key, value),
     state: { panes: ['a'], focusedPane: 0, activeId: 'a', sessions: new Map(['a', 'b'].map((id) => [id, session(id)])), views: new Map(['a', 'b'].map((id) => [id, view(id)])), connected: false },

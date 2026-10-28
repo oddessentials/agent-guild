@@ -21,7 +21,8 @@ const megabytes = bytes => (bytes / 1048576).toFixed(1) + ' MB';
 /** A layout with injected canonical controls. No API, sockets, or business rules. */
 export function initYard(controller) {
   let selected = null, renderer = null, loading = null, failed = false, disposed = false;
-  let sceneAttempt = 0, worldAttempt = 0, pendingRenderer = null, swapReveal = 0;
+  let sceneAttempt = 0, worldAttempt = 0, pendingRenderer = null, swapReveal = 0, photo = null;
+  const closePhoto = () => photo?.close();
   const rows = new Map();
   const motion = matchMedia('(prefers-reduced-motion: reduce)');
   const root = document.documentElement;
@@ -59,6 +60,7 @@ export function initYard(controller) {
     if (allowed) yardChoice.parentElement.removeAttribute('title');
     else yardChoice.parentElement.title = `${skinEntry()?.name || 'This skin'} has no yard yet.`;
     $('yard').hidden = view !== 'yard';
+    if (view !== 'yard') closePhoto();
     $('providers').hidden = view === 'yard';
     $('providers').inert = view === 'yard';
     for (const section of document.querySelectorAll('#app > section.sessions, #app > section.news')) {
@@ -158,6 +160,7 @@ export function initYard(controller) {
         renderer.setActive(sceneVisible());
         hideLoading();
         $('yard-stage').dataset.ready = 'true';
+        $('yard-photo').disabled = false;
       } catch (err) {
         candidate?.dispose();
         if (attempt === sceneAttempt && !disposed) {
@@ -169,6 +172,7 @@ export function initYard(controller) {
     await loading;
   }
   function failScene() {
+    closePhoto();
     const restoreFocus = $('yard-stage').contains(document.activeElement);
     sceneAttempt++; worldAttempt++; loading = null;
     pendingRenderer?.dispose(); pendingRenderer = null;
@@ -178,6 +182,7 @@ export function initYard(controller) {
     $('yard-swap-failure').hidden = true;
     $('yard-failure').hidden = false;
     $('yard-stage').dataset.ready = 'false';
+    $('yard-photo').disabled = true;
     if (restoreFocus) $('yard-retry').focus();
   }
   function roster() {
@@ -304,6 +309,14 @@ export function initYard(controller) {
   $('yard-focus').addEventListener('click',() => renderer?.focus(selected));
   $('yard-zoom-in').addEventListener('click',() => renderer?.zoom(1.2));
   $('yard-zoom-out').addEventListener('click',() => renderer?.zoom(1/1.2));
+  $('yard-photo').hidden = !controller.photo;
+  $('yard-photo').addEventListener('click',async () => {
+    let YardPhoto;
+    try { ({ YardPhoto } = await import('./photo.js')); }
+    catch { controller.toast('Couldn’t open Photo. Reload the page and try again.'); return; }
+    photo ||= new YardPhoto($('yard-photo-dialog'));
+    if (renderer && !disposed && sceneVisible()) photo.open(renderer, $('yard-photo'));
+  });
   $('yard-stage').addEventListener('keydown',event => {
     if (event.target !== $('yard-stage') || event.ctrlKey || event.metaKey || event.altKey) return;
     if (event.key === 'Escape') { select(null); event.preventDefault(); }
@@ -335,7 +348,8 @@ export function initYard(controller) {
   window.addEventListener('pagehide',pageHide);
   window.addEventListener('pageshow',visibility);
   setView(view,{remember:false});
-  return { update, select, setView, dispose() {
+  return { update, select, setView, closePhoto, dispose() {
+    closePhoto();
     disposed=true; sceneAttempt++; worldAttempt++; clearTimeout(swapReveal); observer.disconnect(); pendingRenderer?.dispose(); renderer?.dispose();
     document.removeEventListener('visibilitychange',visibility);
     motion.removeEventListener('change',motionChange);

@@ -1,6 +1,6 @@
 import * as T from './vendor/engine.js';
 import { WORLDS, PROVIDER_ORDER, characterIndex, CAMERA, SUN, minZoom, overviewFor, clampPan, viewBasis, providerPositions, sessionPose, familiarPose, hash,
-  stage, nextStagingChange, doorFor, arrives, route, clipFor, helperOffset, stationProp, hallActivity, lookTarget, lookLimits, STAGING } from './model.mjs';
+  stage, nextStagingChange, doorFor, arrives, route, clipFor, helperOffset, stationProp, hallActivity, lookTarget, lookLimits, STAGING, photoSize } from './model.mjs';
 
 const ASSETS = new URL('./assets/', import.meta.url);
 const vector = new T.Vector3();
@@ -939,6 +939,51 @@ export class YardRenderer {
       item.ring.scale.setScalar(on?1.15:1);
     }
     this.dirty=true;this.drawOnce();
+  }
+  // The frame on screen at twice its size, without the selection ring, and
+  // the tags shown over it. The live view is left exactly as it was.
+  capture() {
+    if(this.disposed||!this.world||this.renderer.getContext().isContextLost())return null;
+    const w=this.host.clientWidth,h=this.host.clientHeight,buffer=this.renderer.getDrawingBufferSize(new T.Vector2());
+    const size=photoSize(w,h,buffer.x,buffer.y);
+    const viewport=this.renderer.getViewport({copy:v=>v.clone()}),ratio=this.renderer.getPixelRatio();
+    const particleScale=this.effects?.points.material.uniforms.scale,scale=particleScale?.value;
+    const radius=(this.effects?Math.max(...this.effects.preset.size):0)*size.height*this.camera.projectionMatrix.elements[5]/4;
+    const pad=Math.ceil(radius)+1,tw=buffer.x+2*pad,th=buffer.y+2*pad;
+    const canvas=Object.assign(document.createElement('canvas'),{width:size.width,height:size.height});
+    let tags;
+    try {
+      this.positionLabels();
+      tags=this.tags();
+      for(const unit of this.units.values()){unit.ring.material.color.set(unit.session?.provider.color||0xbaaa80);unit.ring.scale.setScalar(1);}
+      const context=canvas.getContext('2d');
+      // Keep particle centers within a padded frustum. Extending the viewport
+      // beyond the canvas crops the margins without enlarging the live buffer.
+      this.renderer.setViewport(-pad/ratio,-pad/ratio,tw/ratio,th/ratio);
+      if(particleScale)particleScale.value=th/2;
+      for(const {x,y}of size.tiles) {
+        this.camera.setViewOffset(size.width,size.height,x-pad,y-pad,tw,th);
+        this.renderer.render(this.scene,this.camera);
+        context.drawImage(this.canvas,x,y);
+      }
+    } finally {
+      this.renderer.setViewport(viewport);
+      if(particleScale)particleScale.value=scale;
+      this.camera.clearViewOffset();
+      this.select(this.selected);
+      this.renderer.render(this.scene,this.camera);
+    }
+    return {canvas,scale:size.scale,skin:this.skin,theme:this.theme,tags};
+  }
+  tags() {
+    const origin=this.host.getBoundingClientRect();
+    const box=el=>{const r=el.getBoundingClientRect();return {x:r.left-origin.left,y:r.top-origin.top,w:r.width,h:r.height};};
+    const text=el=>{const style=getComputedStyle(el);return {text:el.textContent,font:style.fontWeight+' '+style.fontSize+' '+style.fontFamily,box:box(el)};};
+    return [...this.labels.children].filter(el=>el.style.visibility!=='hidden'&&(el.classList.contains('yard-label')||el.classList.contains('yard-crowd'))).map(el=>{
+      if(el.classList.contains('yard-crowd'))return {kind:'chip',box:box(el),lines:[text(el)]};
+      const kind=el.dataset.kind,lines=kind==='session'?[text(el.children[0])]:[...el.children].map(text);
+      return {kind,status:el.dataset.status,color:el.style.getPropertyValue('--unit-color'),box:box(el),lines};
+    });
   }
   pick(event) {
     const rect=this.canvas.getBoundingClientRect();
