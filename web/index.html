@@ -131,13 +131,15 @@
         <div class="yard-heading"><div><p class="yard-eyebrow">AGENT GUILD · YOUR WORK, ALIVE</p><h2 id="yard-title">The Guild Yard</h2><p id="yard-subtitle"></p></div><span id="yard-summary" class="yard-summary" role="status"></span></div>
         <div id="yard-stage" class="yard-stage" role="region" tabindex="0" aria-label="Interactive yard. Select a provider or session using the roster, or select it in the scene. Drag to pan; scroll to zoom." aria-describedby="yard-help">
           <div id="yard-labels" class="yard-labels"></div>
-          <div id="yard-loading" class="yard-loading" role="status" data-mode="scene"><span id="yard-loading-text">Preparing your yard…</span><span id="yard-loading-size" class="yard-loading-size" aria-hidden="true"></span><span class="yard-loading-bar" aria-hidden="true"></span></div>
-          <div id="yard-swap-failure" class="yard-swap-failure" hidden role="status"><span id="yard-swap-failure-text"></span><button id="yard-swap-retry" class="btn" type="button">Retry</button></div>
           <div id="yard-offline" class="yard-swap-failure" hidden role="status"><span id="yard-offline-text"></span><button id="yard-offline-open" class="btn" type="button">Open Agent Guild</button></div>
           <div id="yard-failure" class="yard-failure" hidden role="status"><strong>The 3D view is unavailable</strong><p>You can still use every action in the roster and inspector.</p><button id="yard-retry" class="btn" type="button">Retry 3D</button><button id="yard-cards" class="btn" type="button">Show Cards</button></div>
           <div id="yard-download" class="yard-failure yard-download" hidden role="region" aria-labelledby="yard-download-title"><strong id="yard-download-title" role="status"></strong><p id="yard-download-text"></p><progress id="yard-download-progress" aria-labelledby="yard-download-title"></progress><span id="yard-download-size" class="yard-loading-size"></span><div class="yard-download-actions"><button id="yard-download-cancel" class="btn" type="button">Cancel</button><button id="yard-download-retry" class="btn" type="button" hidden>Retry</button><button id="yard-download-cards" class="btn" type="button">Show Cards</button></div></div>
-          <div class="yard-camera" role="group" aria-label="Camera"><button id="yard-zoom-in" type="button" class="btn" aria-label="Zoom in">+</button><button id="yard-zoom-out" type="button" class="btn" aria-label="Zoom out">−</button><button id="yard-fit" type="button" class="btn">Overview</button><button id="yard-focus" type="button" class="btn" disabled>Focus selected</button></div>
-          <p id="yard-help"><span class="yard-help-pointer">Drag to explore · Scroll to zoom · Select to inspect · Double-click a session to open</span><span class="yard-help-touch">Drag to explore · Pinch to zoom · Tap to inspect · Open from the Inspector</span></p>
+          <div class="yard-overlay">
+            <div id="yard-loading" class="yard-loading" role="status" data-mode="scene"><span id="yard-loading-text">Preparing your yard…</span><span id="yard-loading-size" class="yard-loading-size" aria-hidden="true"></span><span class="yard-loading-bar" aria-hidden="true"></span></div>
+            <div id="yard-swap-failure" class="yard-swap-failure" hidden role="status"><span id="yard-swap-failure-text"></span><button id="yard-swap-retry" class="btn" type="button">Retry</button></div>
+            <div class="yard-camera" role="group" aria-label="Camera"><button id="yard-zoom-in" type="button" class="btn" aria-label="Zoom in">+</button><button id="yard-zoom-out" type="button" class="btn" aria-label="Zoom out">−</button><button id="yard-fit" type="button" class="btn">Overview</button><button id="yard-focus" type="button" class="btn" disabled>Focus selected</button><button id="yard-photo" type="button" class="btn" aria-haspopup="dialog" title="Save a picture of the Yard" disabled hidden>Photo</button></div>
+            <p id="yard-help"><span class="yard-help-pointer">Drag to explore · Scroll to zoom · Select to inspect · Double-click a session to open</span><span class="yard-help-touch">Drag to explore · Pinch to zoom · Tap to inspect · Open from the Inspector</span></p>
+          </div>
         </div>
         <div class="yard-news"><button id="yard-news" type="button" class="btn">All news</button><a id="yard-headline" target="_blank" rel="noopener noreferrer" hidden></a><span id="yard-news-empty">Your guild is ready.</span><button id="yard-videos" type="button" class="btn videos-open" aria-haspopup="dialog" hidden>Videos</button></div>
       </div>
@@ -518,6 +520,23 @@
       <h3 id="environment-docker-heading">Docker</h3>
       <div id="environment-docker"></div>
       <p id="environment-manager-node" class="environment-detail"></p>
+    </div>
+  </dialog>
+
+  <dialog id="yard-photo-dialog" class="models yard-photo" aria-labelledby="yard-photo-title">
+    <div class="models-bar">
+      <div class="models-heading"><h2 id="yard-photo-title">Picture of your Yard</h2></div>
+      <button class="btn" type="button" data-done>Done</button>
+    </div>
+    <div class="models-body">
+      <canvas class="yard-photo-preview" role="img" aria-label="The picture"></canvas>
+      <label class="yard-photo-labels"><input type="checkbox" data-labels> Show labels <span>Labels include session names.</span></label>
+    </div>
+    <div class="models-source yard-photo-footer">
+      <p role="status"></p>
+      <button class="btn" type="button" data-share hidden>Share…</button>
+      <button class="btn" type="button" data-save>Save PNG</button>
+      <button class="btn primary" type="button" data-copy hidden>Copy image</button>
     </div>
   </dialog>
 

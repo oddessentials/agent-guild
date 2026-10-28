@@ -9,6 +9,7 @@ const hosted = framed || Boolean(app);
 export const compact = hosted && document.documentElement?.dataset.layout === 'compact';
 const expandable = hosted && document.documentElement?.dataset.expand !== 'none';
 export const yardOff = hosted && document.documentElement?.dataset.yard === 'none';
+export const canSavePicture = !hosted;
 
 /** The app's message channel, or null. */
 function appHost() {

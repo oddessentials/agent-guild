@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, statSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { sessionPose, familiarPose, layoutSessions, providerPositions, characterIndex, lookLimits, WORLDS, CAMERA, SUN, minZoom, overviewFor, clampPan, viewBasis, plateExtent,
- stage, stagingMode, nextStagingChange, restSpots, route, clipFor, doorFor, stationProp, STAGING, CLIPS, SKELETON, PROVIDER_ORDER } from '../web/yard/model.mjs';
+ stage, stagingMode, nextStagingChange, restSpots, route, clipFor, doorFor, stationProp, STAGING, CLIPS, SKELETON, PROVIDER_ORDER, photoSize, photoName } from '../web/yard/model.mjs';
 import { goldenVectors } from '../scripts/yard-golden.mjs';
 import { Matrix4, Vector3 } from 'three';
 const providers=['anthropic','openai','google','xai','shell','docker'].map(id=>({id}));
@@ -208,6 +208,20 @@ test('the overview keeps every hall in sight on narrow stages, and is unchanged 
   }
  }
  assert.deepEqual(overviewFor(16/9),{target:CAMERA.target,zoom:CAMERA.zoom.overview});
+});
+test('a picture is twice the stage within every cap, at its aspect, and its tiles cover it once',()=>{
+ for(const [w,h,bw,bh] of [[1100,800,1650,1200],[360,500,1080,1500],[3840,1900,3840,1900],[2560,1440,3840,2160],[1000,700,1000,700],[700,4000,700,4000]]){
+  const {width,height,scale,tiles}=photoSize(w,h,bw,bh);
+  assert.ok(width<=4096&&height<=4096&&width*height<=16777216&&scale<=2,`${w}x${h}`);
+  assert.ok(Math.abs(width/height-w/h)<.002,`${w}x${h} aspect`);
+  const xs=[],ys=[];for(let x=0;x<width;x+=bw)xs.push(x);for(let y=0;y<height;y+=bh)ys.push(y);
+  assert.deepEqual(tiles,ys.flatMap(y=>xs.map(x=>({x,y}))),`${w}x${h} tiles`);
+ }
+ assert.deepEqual(photoSize(1100,800,1650,1200),{width:2200,height:1600,scale:2,tiles:[{x:0,y:0},{x:1650,y:0},{x:0,y:1200},{x:1650,y:1200}]});
+ assert.deepEqual(photoSize(3840,1900,3840,1900),{width:4096,height:2026,scale:4096/3840,tiles:[{x:0,y:0},{x:3840,y:0},{x:0,y:1900},{x:3840,y:1900}]});
+});
+test('a picture is named after its world and the local day',()=>{
+ assert.deepEqual(Object.values(WORLDS).map(w=>photoName(w.title,new Date(2026,9,7))),['guild-yard','orbital-station','living-grove','operations-campus','goblinville-works','gnomeland-village'].map(n=>`agent-guild-${n}-2026-10-07.png`));
 });
 test('every skin has a yard world',()=>{
  const source=readFileSync(new URL('../web/theme.js',import.meta.url),'utf8');

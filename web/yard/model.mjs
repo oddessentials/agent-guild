@@ -388,3 +388,16 @@ export function helperOffset(i, count) {
   const angle = (i / Math.min(count, 6)) * Math.PI * 2;
   return { x: round(Math.cos(angle) * .82), z: round(Math.sin(angle) * .72) };
 }
+// A picture of the stage: twice its size, within what every browser can
+// encode, drawn in tiles no larger than the live drawing buffer.
+export const PHOTO = { scale: 2, edge: 4096, area: 16777216 };
+export function photoSize(w, h, bufferW, bufferH) {
+  const scale = Math.min(PHOTO.scale, PHOTO.edge / Math.max(w, h), Math.sqrt(PHOTO.area / (w * h)));
+  const width = Math.floor(w * scale), height = Math.floor(h * scale), tiles = [];
+  for (let y = 0; y < height; y += bufferH) for (let x = 0; x < width; x += bufferW) tiles.push({ x, y });
+  return { width, height, scale: width / w, tiles };
+}
+export function photoName(title, date) {
+  const day = [date.getFullYear(), date.getMonth() + 1, date.getDate()].map(n => String(n).padStart(2, '0')).join('-');
+  return 'agent-guild-' + title.toLowerCase().replace(/^the /, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') + '-' + day + '.png';
+}

@@ -15,7 +15,7 @@ import { createReader } from './read-aloud.js';
 import { matchFolders, readRecentFolders, rememberFolder } from './folders.js';
 import { initYard } from './yard/view.js';
 import { ask } from './ask.js';
-import { framed, compact, yardOff, openLink, announceReady, expand, copyToClipboard, onViewRequest, onSessionRequest } from './host.js';
+import { framed, compact, yardOff, canSavePicture, openLink, announceReady, expand, copyToClipboard, onViewRequest, onSessionRequest } from './host.js';
 
 const TOKEN_KEY = 'agentGuild.token';
 const CWD_KEY = 'agentGuild.cwd';
@@ -7386,6 +7386,7 @@ function closeDialogs() {
   closeFlags();
   closeMemory();
   if ($('folder-browser').open) $('folder-browser').close();
+  yardUi?.closePhoto();
   // An open question is answered as cancelled.
   if ($('ask').open) $('ask').close();
   state.environmentUI?.close();
@@ -8341,6 +8342,8 @@ yardUi = initYard({
   }),
   openSession: compact ? expand : openPanel,
   expand: compact ? () => expand() : null,
+  photo: canSavePicture,
+  toast,
   openNews,
   selected: dockMakesWayForYard,
   yardArt: () => state.yardArt,

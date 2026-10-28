@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { startFixture } from '../../docs/yard/fixture.mjs';
 import { browserBinary, openBrowser, until } from '../../docs/yard/browser.mjs';
 
@@ -773,7 +776,7 @@ test('a crowd hides the tags it cannot fit, counts them on its hall, and lists t
   let s=await state();
   assert.deepEqual(s,{open:true,expanded:'true',controls:true,rows:names,focus:'row0:yard-crowd-pick',inside:true,bounded:true},'Enter on the chip opens the list and moves focus into it');
   assert.equal(await b.evaluate(`(()=>{
-    const camera=Object.assign(document.createElement('div'),{className:'yard-camera'});camera.style.inset='0';__host.append(camera);
+    const camera=Object.assign(document.createElement('div'),{className:'yard-overlay'});camera.style.cssText='position:absolute;inset:0;pointer-events:auto';__host.append(camera);
     const row=__renderer.list.children[0].getBoundingClientRect(),hit=document.elementFromPoint(row.left+row.width/2,row.top+row.height/2);
     camera.remove();return __renderer.list.contains(hit);
   })()`),true,'the list shows above the camera controls');
@@ -810,6 +813,179 @@ test('a crowd hides the tags it cannot fit, counts them on its hall, and lists t
   await b.send('Input.dispatchMouseEvent',{type:'mouseReleased',x:20,y:680,button:'left',clickCount:1});
   assert.equal((await state()).open,false,'a click on the stage closes the list');
   await b.evaluate('__renderer.dispose()');
+  assert.deepEqual(b.errors,[]);
+});
+
+test('a capture draws twice the stage in tiles without the selection ring, and leaves the live view as it was even when it fails',options,async t=>{
+  const {f,b}=await setup(t);
+  const sessions=[...f.data.values()];
+  const result=await b.evaluate(`(async()=>{
+    const {YardRenderer}=await import('/yard/renderer.js');
+    const host=document.createElement('div'),labels=document.createElement('div');
+    host.style.cssText='position:fixed;width:900px;height:700px;top:0;left:0';labels.className='yard-labels';host.append(labels);document.body.append(host);
+    const r=new YardRenderer(host,labels,{select(){},open(){}});
+    await r.setWorld('guild','dark');r.update(${q(f.providers)},${q(sessions)});
+    const id=${q(sessions[0].id)},ring=r.units.get(id).ring;
+    r.select({kind:'session',id});
+    const gl=r.renderer.getContext();
+    const live=()=>[ring.scale.x,ring.material.color.getHex(),r.camera.view?.enabled??false,r.camera.projectionMatrix.elements.join(),
+      [...gl.getParameter(gl.VIEWPORT)],r.effects.points.material.uniforms.scale.value,r.canvas.width,r.canvas.height];
+    const before=live(),renders=[],render=r.renderer.render.bind(r.renderer);
+    let fail=0;
+    r.renderer.render=(scene,camera)=>{renders.push([ring.scale.x,ring.material.color.getHex(),camera.view?.enabled??false]);if(fail&&renders.length===fail)throw new Error('lost');render(scene,camera);};
+    const shot=r.capture(),ok={size:[shot.canvas.width,shot.canvas.height],scale:shot.scale,skin:shot.skin,renders:[...renders],after:live(),tags:shot.tags.length};
+    renders.length=0;fail=2;
+    let threw=false;try{r.capture();}catch{threw=true;}
+    const result={before,ok,threw,failed:{renders:[...renders],after:live()},provider:new (await import('/yard/vendor/engine.js')).Color(${q(sessions[0].provider.color||'#baaa80')}).getHex()};
+    r.dispose();host.remove();
+    return result;
+  })()`);
+  const plain=[1,result.provider,true],restored=[1.15,0xffdf92,false];
+  assert.deepEqual(result.ok.size,[1800,1400]);
+  assert.equal(result.ok.scale,2);
+  assert.equal(result.ok.skin,'guild');
+  assert.ok(result.ok.tags>0);
+  assert.deepEqual(result.ok.renders,[plain,plain,plain,plain,restored]);
+  assert.deepEqual(result.ok.after,result.before);
+  assert.equal(result.threw,true);
+  assert.deepEqual(result.failed.renders,[plain,plain,restored]);
+  assert.deepEqual(result.failed.after,result.before);
+});
+
+test('capture preserves particles across tile edges at different pixel ratios',options,async t=>{
+  const {b}=await setup(t);
+  const results=await b.evaluate(`(async()=>{
+    const {YardRenderer}=await import('/yard/renderer.js');
+    const T=await import('/yard/vendor/engine.js'),{WORLDS}=await import('/yard/model.mjs');
+    const host=document.createElement('div'),labels=document.createElement('div');
+    host.style.cssText='position:fixed;width:180px;height:140px;top:0;left:0';host.append(labels);document.body.append(host);
+    const r=new YardRenderer(host,labels,{select(){},open(){}}),results=[];
+    r.world=new T.Group();r.atOverview=false;
+    try {
+      for(const skin of ['guild','orbital','grove'])for(const ratio of [1,1.5])for(const clipCenters of [false,true]){
+        r.releaseEffects();r.makeEffects(WORLDS[skin].effect);
+        // Some backends expand points before clipping. Also exercise the
+        // center-clipping behavior that loses sprites outside a tile's frustum.
+        if(clipCenters)r.effects.points.material.vertexShader=r.effects.points.material.vertexShader.replace('gl_PointSize=',
+          'if(any(greaterThan(abs(gl_Position.xy),vec2(gl_Position.w))))gl_Position.z=2.*gl_Position.w;gl_PointSize=');
+        r.renderer.setPixelRatio(2);r.resize();r.camera.zoom=r.controls.maxZoom;r.camera.updateProjectionMatrix();
+        r.camera.updateMatrixWorld();
+        const {geometry}=r.effects.points;let index=0;
+        // Place centers on both sides of horizontal and vertical tile seams.
+        for(const x of [179.5,180.5,269.5,270.5])for(const y of [139.5,140.5,209.5,210.5]){
+          const p=new T.Vector3(x/360*2-1,1-y/280*2,0).unproject(r.camera);
+          geometry.attributes.position.setXYZ(index,p.x,p.y,p.z);
+          geometry.attributes.size.setX(index,Math.max(...r.effects.preset.size));
+          geometry.attributes.alpha.setX(index,.7);index++;
+        }
+        geometry.setDrawRange(0,index);
+        r.renderer.render(r.scene,r.camera);
+        const reference=Object.assign(document.createElement('canvas'),{width:360,height:280}),context=reference.getContext('2d');
+        context.drawImage(r.canvas,0,0);
+        const expected=context.getImageData(0,0,360,280).data;
+        r.renderer.setPixelRatio(ratio);r.resize();
+        const shot=r.capture(),actual=shot.canvas.getContext('2d').getImageData(0,0,360,280).data;
+        let maxDelta=0,alpha=0;
+        for(let i=0;i<actual.length;i+=4){maxDelta=Math.max(maxDelta,Math.abs(actual[i+3]-expected[i+3]));alpha+=expected[i+3];}
+        results.push({skin,ratio,clipCenters,maxDelta,alpha});
+      }
+    } finally {r.dispose();host.remove();}
+    return results;
+  })()`);
+  for(const result of results){
+    assert.ok(result.alpha>0,'the reference contains visible particles');
+    assert.ok(result.maxDelta<=2,JSON.stringify(result));
+  }
+  assert.deepEqual(b.errors,[]);
+});
+
+test('Photo opens the picture without labels, adds them on request from the same moment, and copies, saves and shares it',options,async t=>{
+  const {b}=await setup(t,{yard:true,source:`
+    navigator.canShare=()=>true;
+    navigator.share=async data=>{window.__shared=data.files.map(file=>[file.name,file.type,file.size]);};
+    navigator.clipboard.write=async items=>{const blob=await items[0].getType('image/png');window.__copied=[blob.type,blob.size];};`});
+  await ready(b);
+  const downloads=await fs.mkdtemp(path.join(os.tmpdir(),'yard-photo-'));t.after(()=>fs.rm(downloads,{recursive:true,force:true}));
+  await b.send('Page.setDownloadBehavior',{behavior:'allow',downloadPath:downloads});
+  assert.equal(await b.evaluate("(e=>!e.hidden&&!e.disabled)(document.querySelector('#yard-photo'))"),true);
+  await b.click('.yard-row[data-key^="session:"]');
+  await b.wait("[...document.querySelectorAll('#yard-labels .yard-label[data-kind=session]')].some(e=>e.style.visibility!=='hidden')");
+  await b.click('#yard-photo');
+  await b.wait("document.querySelector('#yard-photo-dialog').open");
+  const region=`(()=>{
+    const dialog=document.querySelector('#yard-photo-dialog'),preview=dialog.querySelector('canvas'),stage=document.querySelector('#yard-stage');
+    const scale=preview.width/stage.clientWidth,origin=stage.getBoundingClientRect();
+    const label=[...document.querySelectorAll('#yard-labels .yard-label[data-kind=session]')].find(e=>e.style.visibility!=='hidden').getBoundingClientRect();
+    const sum=(x,y,w,h)=>preview.getContext('2d').getImageData(Math.round(x*scale),Math.round(y*scale),Math.round(w*scale),Math.round(h*scale)).data.reduce((a,v)=>a+v,0);
+    return {size:[preview.width,preview.height],stage:[stage.clientWidth,stage.clientHeight],label:sum(label.left-origin.left,label.top-origin.top,label.width,label.height),corner:sum(0,0,120,120),
+      focused:document.activeElement.textContent,share:!dialog.querySelector('[data-share]').hidden,labels:dialog.querySelector('[data-labels]').checked};
+  })()`;
+  const off=await b.evaluate(region);
+  assert.deepEqual(off.size,off.stage.map(n=>n*2));
+  assert.equal(off.focused,'Copy image');
+  assert.equal(off.share,true);
+  assert.equal(off.labels,false);
+  await b.click('#yard-photo-dialog [data-labels]');
+  const on=await b.evaluate(region);
+  await b.click('#yard-photo-dialog [data-labels]');
+  const again=await b.evaluate(region);
+  assert.notEqual(on.label,off.label,'labels draw over their tags');
+  assert.equal(on.corner,off.corner,'the captured moment stays the same');
+  assert.deepEqual(again,off);
+  await b.click('#yard-photo-dialog [data-copy]');
+  await b.wait("document.querySelector('#yard-photo-dialog [role=status]').textContent==='Copied'");
+  await b.click('#yard-photo-dialog [data-save]');
+  const name=await b.wait("(t=>t.startsWith('Saved ')&&t.slice(6))(document.querySelector('#yard-photo-dialog [role=status]').textContent)");
+  assert.match(name,/^agent-guild-guild-yard-\d{4}-\d{2}-\d{2}\.png$/);
+  const file=path.join(downloads,name);
+  const png=await until(async()=>{try{const data=await fs.readFile(file);return data.length>24&&data;}catch{return false;}});
+  assert.deepEqual([png.readUInt32BE(16),png.readUInt32BE(20)],off.size);
+  await b.click('#yard-photo-dialog [data-share]');
+  await b.wait("document.querySelector('#yard-photo-dialog [role=status]').textContent==='Shared'");
+  assert.deepEqual(await b.evaluate('[window.__copied,window.__shared]'),[['image/png',png.length],[[name,'image/png',png.length]]]);
+  await b.click('#yard-photo-dialog [data-done]');
+  await b.wait("!document.querySelector('#yard-photo-dialog').open&&document.activeElement.id==='yard-photo'");
+  assert.deepEqual(b.errors,[]);
+});
+
+test('the camera controls stay whole and reachable beside the swap status and help, at every stage width',options,async t=>{
+  for(const [width,height,dock] of [[1440,1000],[390,844],[1280,900,700],[1280,900,720]]){
+    const name=dock?`${width} with a ${dock}px dock`:String(width);
+    const {b}=await setup(t,{yard:true,width,height,source:dock?`localStorage.setItem('agentGuild.dock','notes');localStorage.setItem('agentGuild.dockWidth','${dock}');`:''});
+    await ready(b);
+    if(dock)await b.wait("document.querySelector('#dock')?.hidden===false");
+    for(const status of ['none','yard-swap-failure','yard-loading']){
+      const layout=await b.evaluate(`(async()=>{
+        const $=s=>document.querySelector(s),R=e=>e.getBoundingClientRect(),status=${q(status)};
+        if(status==='yard-swap-failure'){$('#yard-swap-failure-text').textContent='Orbital Station could not load.';$('#yard-swap-failure').hidden=false;}
+        if(status==='yard-loading'){$('#yard-loading').dataset.mode='swap';$('#yard-loading-text').textContent='Loading Orbital Station…';$('#yard-loading').hidden=false;}
+        await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+        const stage=R($('#yard-stage')),bar=R($('.yard-camera'));
+        const inside=r=>r.left>=stage.left&&r.right<=stage.right&&r.top>=stage.top&&r.bottom<=stage.bottom;
+        const meets=r=>r.left<bar.right&&bar.left<r.right&&r.top<bar.bottom&&bar.top<r.bottom;
+        const buttons=[...document.querySelectorAll('.yard-camera .btn:not([hidden])')].map(e=>{const r=R(e);
+          return {label:e.textContent,inside:inside(r),reached:document.elementFromPoint(r.left+r.width/2,r.top+r.height/2)===e,height:r.height};});
+        const overlaps=['#yard-help',...(status==='none'?[]:['#'+status])].filter(s=>meets(R($(s))));
+        $('#yard-swap-failure').hidden=true;$('#yard-loading').hidden=true;
+        return {buttons,overlaps};
+      })()`);
+      const at=`${name}, ${status} shown`;
+      assert.deepEqual(layout.buttons.map(c=>c.label),['+','−','Overview','Focus selected','Photo'],at);
+      assert.deepEqual(layout.buttons.filter(c=>!c.inside||!c.reached).map(c=>c.label),[],at);
+      assert.equal(new Set(layout.buttons.map(c=>c.height)).size,1,`every label stays on one line: ${at}`);
+      assert.deepEqual(layout.overlaps,[],at);
+    }
+  }
+});
+
+test('Photo says so when its code cannot load',options,async t=>{
+  const {b}=await setup(t,{yard:true});
+  await ready(b);
+  await b.send('Network.enable');
+  await b.send('Network.setBlockedURLs',{urls:['*/yard/photo.js']});
+  await b.click('#yard-photo');
+  await b.wait("document.querySelector('#toast').textContent==='Couldn’t open Photo. Reload the page and try again.'");
+  assert.equal(await b.evaluate("document.querySelector('#yard-photo-dialog').open"),false);
   assert.deepEqual(b.errors,[]);
 });
 

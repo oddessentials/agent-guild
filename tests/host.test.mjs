@@ -206,6 +206,13 @@ test('a host that turns the Yard off can still ask for the Cards, but not the Ya
   assert.equal(browser.module.yardOff, false, 'only a host can turn the Yard off');
 });
 
+test('only a browser tab saves pictures of the Yard; no host or compact view gets the button', async () => {
+  assert.equal((await host({ framed: false })).module.canSavePicture, true);
+  for (const options of [{ framed: true }, { framed: true, layout: 'compact' }, { framed: false, app: true }, { framed: false, android: true }, { framed: false, android: true, layout: 'compact' }]) {
+    assert.equal((await host(options)).module.canSavePicture, false, JSON.stringify(options));
+  }
+});
+
 test('copying falls back to execCommand when the clipboard API is refused', async () => {
   const refused = Object.assign(new Error('Write permission denied.'), { name: 'NotAllowedError' });
   const framed = await host({ framed: true, writeText: () => Promise.reject(refused) });
