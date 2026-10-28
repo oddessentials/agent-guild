@@ -14,10 +14,13 @@ from your phone, VS Code or any browser. Free, on Windows, macOS and Linux.**
 Agent Guild is a small manager that runs on your computer and serves one
 local web page. Close the page whenever you like; the sessions keep running.
 
-<picture>
-  <source media="(prefers-color-scheme: light)" srcset="docs/images/overview-light.webp">
-  <img src="docs/images/overview-dark.webp" alt="Agent Guild with one card per coding tool and six sessions at work">
-</picture>
+<a href="https://oddessentials.github.io/agent-guild/?view=yard&skin=guild&theme=dark"><picture>
+  <source media="(prefers-reduced-motion: reduce)" srcset="docs/images/yard-still.webp">
+  <img src="docs/images/yard-clip.webp" alt="Seven coding-agent sessions as characters in the Guild Yard: they leave the plaza for their tools' halls and get to work, then a double-click on one opens Claude Code's real terminal, with its three helper agents" width="100%">
+</picture></a>
+
+**[Try the demo](https://oddessentials.github.io/agent-guild/?view=yard&skin=guild&theme=dark)**:
+walk the Yard in your browser. Simulated, free, no account and nothing installed.
 
 ## Quick start
 
@@ -30,7 +33,7 @@ agent-guild
 
 The page opens in your browser. Press **New** on a tool's card to start a
 session. Sign in to each tool inside its first session, as you would in any
-terminal. To look around first, [try the demo](https://oddessentials.github.io/agent-guild/)
+terminal. To look around first, [try the demo](https://oddessentials.github.io/agent-guild/?view=yard&skin=guild&theme=dark)
 (simulated, nothing installed) or [watch the trailer](https://www.youtube.com/watch?v=_vQuW0v-uMY).
 
 **Or ask your agent.** Point it at
@@ -41,6 +44,11 @@ then connects over [MCP](docs/mcp.md) to see and steer your sessions.
 
 ## Why Agent Guild
 
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/overview-light.webp">
+  <img src="docs/images/overview-dark.webp" alt="Agent Guild with one card per coding tool and six sessions at work">
+</picture>
+
 * **The real CLIs, unchanged.** Each session is the tool itself in a real
   terminal, not a chat copy of it. Whatever sign-in the tool uses works: a
   subscription, an API key, Amazon Bedrock or your own gateway.
@@ -50,7 +58,8 @@ then connects over [MCP](docs/mcp.md) to see and steer your sessions.
   Codex CLI.
 * **The same session on every screen.** Any browser, a phone over
   [Tailscale](#remote-access-with-tailscale) with touch keys, VS Code, and
-  apps for iPhone, iPad and Vision Pro (beta) and
+  apps for [Apple Vision Pro](https://apps.apple.com/us/app/agent-guild-remote/id6825451331),
+  iPhone and iPad (beta) and
   [Android](https://github.com/oddessentials/agent-guild-android/releases/latest).
   Apple Watch and Meta Ray-Ban Display list your sessions and read a
   session's last answer aloud.
@@ -222,12 +231,9 @@ The first Claude Code usage meter may ask for access to the
 ### The Yard
 
 For fun, the Yard shows your tools and sessions as a 3D world, one for each
-skin. A double-click on a character opens its real terminal.
-
-<picture>
-  <source media="(prefers-reduced-motion: reduce)" srcset="docs/images/yard-still.webp">
-  <img src="docs/images/yard-clip.webp" alt="Seven coding-agent sessions as characters in the Guild Yard: they leave the plaza for their tools' halls and get to work, then a double-click on one opens Claude Code's real terminal, with its three helper agents" width="100%">
-</picture>
+skin. A double-click on a character opens its real terminal. The clip at the
+top of this page shows it, and [the demo](https://oddessentials.github.io/agent-guild/?view=yard)
+lets you try every skin.
 
 <table>
   <tr>
@@ -295,10 +301,19 @@ Failed news, model list and release checks retry after 10 minutes.
 
 ## Agent Guild: World
 
-[Agent Guild: World](https://agentguild.oddessentials.ai/), coming soon to
-Steam, is a separate, premium 3D window onto the same sessions: six worlds to
-roam with a free camera, Steam Workshop crews and companions, and controller
-support, on Windows, macOS and Linux. Agent Guild and its Yard stay free.
+[Agent Guild: World](https://store.steampowered.com/app/5462970/Agent_Guild_World/)
+is a free, living 3D world for your AI coding agents, coming to Steam in
+November 2026: six worlds to roam with a free camera, your own characters and
+companions from the Steam Workshop, a Guild Board for your notes and to-dos,
+and controller support, on Windows, macOS and Linux.
+[Wishlist it on Steam](https://store.steampowered.com/app/5462970/Agent_Guild_World/).
+
+## Follow
+
+[YouTube](https://www.youtube.com/@Agent-Guild) ·
+[X](https://x.com/agentguild_3d) ·
+[Steam](https://store.steampowered.com/app/5462970/Agent_Guild_World/) ·
+[Website](https://agentguild.oddessentials.ai/)
 
 ## Support
 
