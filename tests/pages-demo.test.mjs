@@ -491,7 +491,7 @@ test('the demo changelog, news and history match the shapes the page reads', asy
   assert.equal(history.total, history.sessions.length);
   assert.ok(history.sessions.length >= 2);
   for (const row of history.sessions) {
-    assert.deepEqual(Object.keys(row).sort(), ['cwd', 'id', 'startedAt', 'title', 'updatedAt']);
+    assert.deepEqual(Object.keys(row).sort(), ['cwd', 'id', 'name', 'startedAt', 'title', 'updatedAt']);
   }
   assert.equal((await call('GET', '/providers/shell/history')).body.error.code, 'history_unsupported');
 });
