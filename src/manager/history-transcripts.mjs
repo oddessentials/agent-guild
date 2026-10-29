@@ -507,8 +507,11 @@ function grokUpdate(record) {
 }
 
 function grokUserChunk(update) {
-  return update.sessionUpdate === 'user_message_chunk' && update.content?.type === 'text';
+  return update.sessionUpdate === 'user_message_chunk';
 }
+
+/** What a turn does after its prompt; read backwards, any of it ends the turn before. */
+const GROK_TURN_ACTIVITY = new Set(['agent_message_chunk', 'agent_thought_chunk', 'tool_call', 'tool_call_update', 'turn_completed', 'rewind_marker']);
 
 /** Grok Build 1.0.70 numbers a prompt's chunks with promptIndex; earlier versions gave them a promptId. */
 function grokPromptKey(record, update) {
@@ -516,14 +519,14 @@ function grokPromptKey(record, update) {
 }
 
 /**
- * A turn is the user's prompt, whose chunks share `promptIndex`, and the
- * replies after it; a tool call ends a reply. A rewind leaves the old turns in
- * `updates.jsonl` and appends a `rewind_marker`: read backwards, every turn at
- * or above the lowest target passed so far was discarded.
+ * A turn is the user's prompt, whose chunks share `promptIndex` whether they hold text or an image, and the
+ * replies after it; a tool call ends a reply, and only text shows. Records such as `image_dropped` can sit
+ * between a prompt's chunks. A rewind leaves the old turns in `updates.jsonl` and appends a `rewind_marker`:
+ * read backwards, every turn at or above the lowest target passed so far was discarded.
  */
 export const grokReader = {
   start: (saved) => ({ cut: safeInteger(saved?.c) ? saved.c : null, skip: saved?.k === true, skipPrompt: safeInteger(saved?.p) ? saved.p : null, turn: null, stopped: false }),
-  continues: (s, record, update) => grokUserChunk(update) && grokPromptKey(record, update) === s.turn.key,
+  continues: (s, record, update) => (grokUserChunk(update) ? grokPromptKey(record, update) === s.turn.key : !GROK_TURN_ACTIVITY.has(update.sessionUpdate)),
   starts(s, record) {
     const update = grokUpdate(record);
     if (!update) return false;
@@ -549,7 +552,8 @@ export const grokReader = {
       turn.reply = null;
       turn.key = grokPromptKey(record, update);
       turn.index = update._meta?.promptIndex;
-      if (update.content._meta?.bash_command || update._meta?.host_turn === true || update._meta?.hideFromScrollback === true) turn.hidden = true;
+      if (update.content?._meta?.bash_command || update._meta?.host_turn === true || update._meta?.hideFromScrollback === true) turn.hidden = true;
+      else if (update.content?.type !== 'text') return;
       else if (record.withheld) turn.promptWithheld = true;
       else turn.prompt.unshift(update.content.text);
     } else if (update.sessionUpdate === 'tool_call' || update.sessionUpdate === 'tool_call_update') {

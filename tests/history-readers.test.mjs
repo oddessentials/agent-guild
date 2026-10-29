@@ -408,6 +408,36 @@ const grok = {
   rewind: (target) => ({ method: '_x.ai/session/update', params: { sessionId: 'g', update: { sessionUpdate: 'rewind_marker', target_prompt_index: target, created_at: '2026-10-29T13:11:42Z' } } }),
 };
 
+test('a Grok Build turn starts at its prompt whatever the prompt holds, so replies, rewinds and pages follow it', async (t) => {
+  // As Grok Build 1.0.70 wrote them: an image prompt is a user chunk with promptIndex and no text, and image_dropped
+  // can sit before a prompt or between the chunks of one.
+  const image = (promptIndex, data = 'iVBORw0KGgo=') => ({ method: 'session/update', params: { sessionId: 'g', update: { sessionUpdate: 'user_message_chunk', content: { type: 'image', data, mimeType: 'image/png' }, _meta: { modelId: 'grok-4.6', promptIndex } }, _meta: {} } });
+  const dropped = { method: '_x.ai/session/update', params: { sessionId: 'g', update: { sessionUpdate: 'image_dropped', notes: ['Image 1 was dropped before send'] } } };
+  const records = [
+    grok.user('Reply with alpha', 0), grok.agent('alpha'), grok.done(),
+    dropped, image(1), grok.agent('An image reply'), grok.done(),
+    grok.user('Compare ', 2), image(2), dropped, grok.user('these', 2), grok.agent('Looking'), grok.tool(), grok.agent('Mixed reply'), grok.done(),
+  ];
+  const dir = tempDir(t);
+  const kept = write(path.join(dir, 'kept.jsonl'), lines(...records));
+  const whole = ['You: Reply with alpha', 'AI: alpha', 'AI: An image reply', 'You: Compare these', 'AI: Looking', 'AI: Mixed reply'];
+  assert.deepEqual(said((await read('grok', kept)).messages), whole);
+  assert.deepEqual(said((await readAll('grok', kept, { ...PAGE_LIMITS, messages: 1, chunkBytes: 64 })).messages), whole, 'pages keep each turn whole');
+
+  const rewound = write(path.join(dir, 'rewound.jsonl'), lines(...records, grok.rewind(1), grok.user('Reply with delta', 1), grok.agent('delta'), grok.done()));
+  const live = ['You: Reply with alpha', 'AI: alpha', 'You: Reply with delta', 'AI: delta'];
+  assert.deepEqual(said((await read('grok', rewound)).messages), live, 'a rewind to the image prompt drops it with its reply');
+  assert.deepEqual(said((await readAll('grok', rewound, { ...PAGE_LIMITS, messages: 1, chunkBytes: 64 })).messages), live);
+
+  const limits = { ...PAGE_LIMITS, maxLineBytes: 2000, chunkBytes: 512 };
+  const bigImage = write(path.join(dir, 'big-image.jsonl'), lines(grok.user('first', 0), grok.agent('First reply'), grok.done(), grok.user('Look at ', 1), image(1, 'A'.repeat(5000)), grok.user('this', 1), grok.agent('Seen')));
+  const seen = await read('grok', bigImage, null, limits);
+  assert.deepEqual([said(seen.messages), seen.omitted], [['You: first', 'AI: First reply', 'You: Look at this', 'AI: Seen'], false], 'an image too large to read hides no text');
+  const bigText = write(path.join(dir, 'big-text.jsonl'), lines(grok.user('first', 0), grok.agent('First reply'), grok.done(), grok.user('x'.repeat(5000), 1), grok.agent('Answered')));
+  const left = await read('grok', bigText, null, limits);
+  assert.deepEqual([said(left.messages), left.omitted], [['You: first', 'AI: First reply', 'AI: Answered'], true], 'a prompt too large to read is left out and said to be');
+});
+
 test('Grok Build previews join chunks, split replies at tool calls and leave out turns a rewind discarded', async (t) => {
   // As Grok Build 1.0.70 wrote it: three prompts, a rewind to the second, then a new second prompt.
   const file = write(path.join(tempDir(t), 'updates.jsonl'), lines(
