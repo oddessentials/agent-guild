@@ -369,6 +369,97 @@ test('the saved name follows each card\'s chosen name for the tool session it ho
   assert.equal(createCardNames(file).get('tool', 'default', 'later'), 'Later', 'the next change writes it');
 });
 
+test('two cards on one tool session: the newest choice is kept, however often the older card changes, and a failed write is retried only while it is the newest', async (t) => {
+  const file = path.join(tempDir(t), 'card-names.json');
+  const cardNames = createCardNames(file, { warn: () => {} });
+  const provider = { id: 'tool', tool: 'Tool', args: [], accounts: [{ id: 'default' }] };
+  const registry = {
+    get: () => provider, account: () => ({ id: 'default', label: 'Default' }), describe: () => provider,
+    shellFor: () => null, shellsFor: () => ({ shells: [] }), spawnSpec: () => ({ file: 'tool', args: [] }),
+  };
+  const manager = new SessionManager({ registry, baseEnv: {}, getApiUrl: () => '', cardNames });
+  t.mock.method(pty, 'spawn', () => fakePty());
+  const start = async (options) => {
+    const session = await manager.create({ providerId: 'tool', cwd: os.tmpdir(), ...options });
+    t.after(() => session.dispose());
+    return session;
+  };
+  const saved = () => cardNames.get('tool', 'default', 'shared');
+  const unwritable = () => { fs.renameSync(file, `${file}.aside`); fs.mkdirSync(file); };
+  const writable = () => { fs.rmdirSync(file); fs.renameSync(`${file}.aside`, file); };
+
+  const older = await start({ resume: 'shared', name: 'Old' });
+  const newer = await start({ resume: 'shared' });
+  assert.deepEqual([newer.name, saved()], ['Old', 'Old'], 'the newer card resumes with the saved name');
+  newer.rename('New');
+  older.attach(() => {});
+  older._changed();
+  assert.equal(saved(), 'New', 'showing the older card again keeps the newer name');
+
+  unwritable();
+  newer.rename('Newer');
+  older._changed();
+  writable();
+  assert.equal(createCardNames(file).get('tool', 'default', 'shared'), 'New', 'the failed write stored nothing, and the older card wrote nothing');
+  newer._changed();
+  assert.equal(saved(), 'Newer', 'the failed choice is written on the next change');
+
+  unwritable();
+  older.rename('Stale');
+  writable();
+  newer.rename('Newest');
+  older._changed();
+  assert.equal(createCardNames(file).get('tool', 'default', 'shared'), 'Newest', 'an older choice that failed is not written over a newer one');
+  older.rename('Latest');
+  assert.equal(saved(), 'Latest', 'a new choice on the older card is written');
+});
+
+test('a cursor naming any span anchors() does not make is refused before the transcript is opened', async (t) => {
+  const file = path.join(tempDir(t), 'rollout.jsonl');
+  const message = (n) => ({ type: 'event_msg', payload: { type: n % 2 ? 'agent_message' : 'user_message', message: `message ${n}` } });
+  fs.writeFileSync(file, lines(message(0)));
+  fs.truncateSync(file, 512 * 1024 * 1024);
+  fs.appendFileSync(file, '\n' + lines(message(1), message(2), message(3)));
+  const size = fs.statSync(file).size;
+  let opens = 0, largest = 0;
+  const open = async (target) => {
+    opens++;
+    const handle = await fs.promises.open(target, 'r');
+    return {
+      size: (await handle.stat()).size,
+      async read(position, length) {
+        largest = Math.max(largest, length);
+        if (length > PAGE_LIMITS.chunkBytes) throw new Error(`asked to read ${length} bytes`);
+        const { bytesRead, buffer } = await handle.read(Buffer.alloc(length), 0, length, position);
+        return buffer.subarray(0, bytesRead);
+      },
+      close: () => handle.close(),
+    };
+  };
+  const page = (cursor) => readJsonlPage({ source: 'codex', id: 'conversation', file, cursor, ...JSONL_READERS.codex, limits: { ...PAGE_LIMITS, messages: 1 }, open });
+  const first = await page(null);
+  assert.deepEqual(first.messages.map((m) => m.text), ['message 3']);
+  const valid = JSON.parse(Buffer.from(first.nextCursor, 'base64url').toString('utf8'));
+  const span = valid.o - valid.as;
+  const crafted = {
+    'the whole file as the head': { hl: size },
+    'a negative head': { hl: -1 },
+    'the whole file around the offset': { as: 0, ae: size },
+    'a start after the offset': { as: valid.o + 1 },
+    'a start further back than anchors() reaches': { as: valid.o - span - 1 },
+    'an end before the offset': { ae: valid.o - 1 },
+    'an end further on than anchors() reaches': { ae: valid.o + span + 1 },
+    'an offset that is not a number': { o: '0' },
+  };
+  opens = 0;
+  for (const [label, change] of Object.entries(crafted)) {
+    const cursor = Buffer.from(JSON.stringify({ ...valid, ...change })).toString('base64url');
+    await assert.rejects(page(cursor), { code: 'bad_history_cursor', status: 400 }, label);
+  }
+  assert.deepEqual([opens, largest <= PAGE_LIMITS.chunkBytes], [0, true], 'no crafted cursor opened the transcript');
+  assert.deepEqual((await page(first.nextCursor)).messages.map((m) => m.text), ['message 2'], 'the cursor anchors() made still reads');
+});
+
 test('appends keep a cursor; a rewrite, truncation or replacement under it refuses it', async (t) => {
   const records = Array.from({ length: 6 }, (_, n) => ({ type: 'event_msg', payload: { type: n % 2 ? 'agent_message' : 'user_message', message: `message ${n}` } }));
   const file = write(path.join(tempDir(t), 'rollout.jsonl'), lines(...records));

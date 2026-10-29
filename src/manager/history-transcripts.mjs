@@ -131,9 +131,15 @@ async function anchors(source, offset, end) {
   return { hl, hh: digest(await source.read(0, hl)), as, ae, ah: digest(await source.read(as, ae - as)) };
 }
 
-async function verify(source, cursor) {
+/** Only the spans anchors() makes: at most ANCHOR_BYTES of the head, and of each side of the offset. */
+function checkAnchors(cursor) {
   if (!safeInteger(cursor.o) || !safeInteger(cursor.as) || !safeInteger(cursor.ae) || !safeInteger(cursor.hl)
-    || typeof cursor.hh !== 'string' || typeof cursor.ah !== 'string' || cursor.as > cursor.o || cursor.ae < cursor.o) throw badCursor();
+    || typeof cursor.hh !== 'string' || typeof cursor.ah !== 'string'
+    || cursor.hl > ANCHOR_BYTES || cursor.as !== Math.max(0, cursor.o - ANCHOR_BYTES)
+    || cursor.ae < cursor.o || cursor.ae > cursor.o + ANCHOR_BYTES) throw badCursor();
+}
+
+async function verify(source, cursor) {
   if (source.size < cursor.ae || source.size < cursor.hl) throw changed();
   if (digest(await source.read(0, cursor.hl)) !== cursor.hh) throw changed();
   if (digest(await source.read(cursor.as, cursor.ae - cursor.as)) !== cursor.ah) throw changed();
@@ -208,6 +214,7 @@ async function readFirstRecord(source, limits) {
  */
 export async function readJsonlPage({ source: kind, id, file, cursor, reader, firstRecord = null, limits = PAGE_LIMITS, open = openSource }) {
   const saved = cursor ? decodeCursor(cursor, kind, id) : null;
+  if (saved) checkAnchors(saved);
   const source = await open(file, limits);
   try {
     if (firstRecord && !firstRecord(await readFirstRecord(source, limits))) throw unavailable();

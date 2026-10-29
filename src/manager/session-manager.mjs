@@ -69,6 +69,11 @@ export class SessionManager extends EventEmitter {
   constructor({ registry, baseEnv, getApiUrl, sessionDefaults = {}, shimDir = null, selfUpdate = null, github = null, sessionHooks = null, store = null, cardNames = null }) {
     super();
     this.cardNames = cardNames;
+    /** Each card's latest choice of name for the tool session it holds, in the order the choices were made. */
+    this.nameChoices = new WeakMap();
+    this.nameOrder = 0;
+    /** Tool session → the order of the newest choice written to the store for it. */
+    this.namesWritten = new Map();
     this.registry = registry;
     this.baseEnv = baseEnv;
     this.getApiUrl = getApiUrl;
@@ -259,18 +264,33 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
-   * The store holds what a card chose for the tool session it holds now: its name, or none for its default.
-   * It is compared on every change, so a write that failed is made again; a card nobody named writes nothing.
+   * The store holds what a card last chose for the tool session it holds: its name, or none for its default. A
+   * card's choice is written once, when it is made: a rename, a new tool session, or the card's start. One whose
+   * write failed is written again on a later change, unless a newer choice for that tool session was written since,
+   * so a card shown again never puts back a name another card replaced. A card nobody named writes nothing.
    */
   _keepCardName(session) {
     // The page's identity for the tool session a card holds; a resumed card knows it before the tool reports.
     const toolSessionId = session.toolSessionId ?? session.resume;
     if (!this.cardNames || session.task !== null || !toolSessionId || !session.nameChosen) return;
     const account = session.account?.id ?? 'default';
+    const key = `${session.provider.id}\0${account}\0${toolSessionId}`;
     const name = session.named ? session.name : null;
-    if (this.cardNames.get(session.provider.id, account, toolSessionId) === name) return;
-    if (name) this.cardNames.set(session.provider.id, account, toolSessionId, name);
-    else this.cardNames.delete(session.provider.id, account, toolSessionId);
+    let choice = this.nameChoices.get(session);
+    if (choice?.key !== key || choice.name !== name) {
+      choice = { key, name, order: ++this.nameOrder, written: false };
+      this.nameChoices.set(session, choice);
+    }
+    if (choice.written) return;
+    if ((this.namesWritten.get(key) ?? 0) > choice.order) {
+      choice.written = true;
+      return;
+    }
+    const saved = this.cardNames.get(session.provider.id, account, toolSessionId) === name
+      || (name ? this.cardNames.set(session.provider.id, account, toolSessionId, name) : this.cardNames.delete(session.provider.id, account, toolSessionId));
+    if (!saved) return;
+    choice.written = true;
+    this.namesWritten.set(key, choice.order);
   }
 
   _saveCards() {
