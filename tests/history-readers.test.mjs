@@ -5,7 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { PAGE_LIMITS, JSONL_READERS, readJsonlPage, readDockerConversation, checkedFile } from '../src/manager/history-transcripts.mjs';
-import { SessionHistory, FileMemo, listClaudeSessions } from '../src/manager/session-history.mjs';
+import { SessionHistory, FileMemo, listClaudeSessions, listCodexSessions, listGrokSessions } from '../src/manager/session-history.mjs';
+import { SessionManager } from '../src/manager/session-manager.mjs';
 import { createCardNames } from '../src/manager/card-names.mjs';
 
 // Synthetic records shaped like Claude Code 2.1.312, Codex CLI 0.165.0, Grok Build 1.0.70 and Docker Agent 1.154.0 write them.
@@ -168,6 +169,62 @@ test('a Claude title set after the last listing replaces the cached one, in a sh
     fs.appendFileSync(file, lines({ type: 'user', isMeta: true, message: { role: 'user', content: 'g'.repeat(filler ? 400 * 1024 : 10) } }));
     assert.equal((await listClaudeSessions(dir, memo))[0].title, 'Second name', 'a title pushed out of the end window is kept');
   }
+});
+
+test('prompts are told apart by each tool\'s own markers, never by leading markup, in previews and titles', async (t) => {
+  const dir = tempDir(t);
+  const pasted = '<pasted_content id="p1">Fix the spacing</pasted_content>';
+  const claudeHome = path.join(dir, 'claude');
+  const claude = write(path.join(claudeHome, 'projects', '-w', 'aaaa-1.jsonl'), lines(
+    { type: 'user', uuid: 'u1', parentUuid: null, cwd: '/w', origin: { kind: 'human' }, message: { role: 'user', content: pasted } },
+    { type: 'assistant', uuid: 'u2', parentUuid: 'u1', message: { id: 'm1', role: 'assistant', content: [{ type: 'text', text: 'Spaced' }] } },
+    { type: 'user', uuid: 'u3', parentUuid: 'u2', origin: { kind: 'task-notification' }, message: { role: 'user', content: 'Background task finished' } },
+    { type: 'user', uuid: 'u4', parentUuid: 'u3', message: { role: 'user', content: '<command-name>/model</command-name>' } },
+    { type: 'user', uuid: 'u5', parentUuid: 'u4', message: { role: 'user', content: 'Legacy prompt' } },
+  ));
+  assert.deepEqual(said((await read('claude', claude)).messages), [`You: ${pasted}`, 'AI: Spaced', 'You: Legacy prompt']);
+  assert.equal((await listClaudeSessions(claudeHome))[0].title, pasted);
+
+  const codex = write(path.join(dir, 'rollout.jsonl'), lines(
+    { type: 'session_meta', payload: { id: 'c1', cwd: '/w', timestamp: '2026-10-29T00:00:00Z' } },
+    { type: 'event_msg', payload: { type: 'user_message', message: '<task>Review the change</task>' } },
+    { type: 'event_msg', payload: { type: 'agent_message', message: 'Reviewed' } },
+  ));
+  assert.deepEqual(said((await read('codex', codex)).messages), ['You: <task>Review the change</task>', 'AI: Reviewed']);
+  const codexHome = path.join(dir, 'codex');
+  write(path.join(codexHome, 'sessions', '2026', '10', '29', 'rollout-2026-10-29T00-00-00-c1.jsonl'), fs.readFileSync(codex, 'utf8'));
+  assert.equal((await listCodexSessions(codexHome))[0].title, '<task>Review the change</task>');
+
+  const reminder = grok.user('<system-reminder>Background task completed</system-reminder>', 1);
+  reminder.params.update._meta.hideFromScrollback = true;
+  const grokHome = path.join(dir, 'grok');
+  const session = path.join(grokHome, 'sessions', encodeURIComponent('/w'), 'g1');
+  const updates = write(path.join(session, 'updates.jsonl'), lines(grok.user('<div>Fix the spacing</div>', 0), grok.agent('Spaced'), grok.done(), reminder, grok.agent('Noted')));
+  write(path.join(session, 'summary.json'), JSON.stringify({ info: { id: 'g1', cwd: '/w' }, created_at: '2026-10-29T00:00:00Z', num_messages: 4 }));
+  assert.deepEqual(said((await read('grok', updates)).messages), ['You: <div>Fix the spacing</div>', 'AI: Spaced', 'AI: Noted']);
+  assert.equal((await listGrokSessions(grokHome))[0].title, '<div>Fix the spacing</div>');
+});
+
+test('a Claude page that ends before the newest message is found still finds it on the next page', async (t) => {
+  const records = claudeTranscript();
+  for (let n = 0; n < 6; n++) records.push({ type: 'file-history-snapshot', messageId: `x${n}`, snapshot: 'f'.repeat(200) });
+  const file = write(path.join(tempDir(t), 'c.jsonl'), lines(...records));
+  const { pages, messages } = await readAll('claude', file, { ...PAGE_LIMITS, scanBytes: 300 });
+  assert.equal(pages.at(-1).messages.length, 0, 'the first page only reaches the trailing records');
+  assert.deepEqual(said(messages), claudeConversation);
+});
+
+test('a card name that could not be saved is saved on the next change once the names file can be read', async (t) => {
+  const file = path.join(tempDir(t), 'card-names.json');
+  fs.writeFileSync(file, 'not json');
+  const cardNames = createCardNames(file, { warn: () => {} });
+  const manager = new SessionManager({ registry: null, baseEnv: {}, getApiUrl: () => '', cardNames });
+  const session = { task: null, toolSessionId: 'tool-1', resume: null, account: null, provider: { id: 'anthropic' }, named: true, name: 'Login fix' };
+  manager._keepCardName(session);
+  assert.equal(fs.readFileSync(file, 'utf8'), 'not json');
+  fs.unlinkSync(file);
+  manager._keepCardName(session);
+  assert.equal(createCardNames(file).get('anthropic', 'default', 'tool-1'), 'Login fix');
 });
 
 test('appends keep a cursor; a rewrite, truncation or replacement under it refuses it', async (t) => {

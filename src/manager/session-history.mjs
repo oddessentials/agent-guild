@@ -34,12 +34,17 @@ function shortPath(file) {
   return file.startsWith(home) ? `~${file.slice(home.length)}` : file;
 }
 
-/** One line of prompt text, or null for an empty or tool-inserted (`<tag>…`) message. */
-function promptTitle(text) {
+/** One line of prompt text, or null for an empty one. */
+function lineTitle(text) {
   if (typeof text !== 'string') return null;
   const clean = text.replace(/\s+/g, ' ').trim();
-  if (!clean || TAG_RE.test(clean)) return null;
-  return clean.slice(0, MAX_TITLE);
+  return clean ? clean.slice(0, MAX_TITLE) : null;
+}
+
+/** For text with no marker saying who wrote it: null also for a tool-inserted (`<tag>…`) message. */
+function promptTitle(text) {
+  const title = lineTitle(text);
+  return title && !TAG_RE.test(title) ? title : null;
 }
 
 function contentText(content) {
@@ -213,7 +218,10 @@ function claudeEntry(id, text, tail, stat, before) {
     if (startedAt === null && record.timestamp) startedAt = record.timestamp;
     if (record.type !== 'user' || record.isSidechain === true) continue;
     seenUser = true;
-    if (prompt === null) prompt = promptTitle(contentText(record.message?.content));
+    if (prompt !== null || record.isMeta === true || record.isCompactSummary === true) continue;
+    const origin = record.origin && typeof record.origin === 'object' ? record.origin.kind : undefined;
+    if (origin === undefined) prompt = promptTitle(contentText(record.message?.content));
+    else if (origin === 'human') prompt = lineTitle(contentText(record.message?.content));
   }
   if (cwd === null && !seenUser) return null;
   const head = claudeTitles(text, 0), end = { ...claudeTitles(tail.text, tail.start), start: tail.start };
@@ -255,8 +263,8 @@ function codexPrompt(record) {
   const payload = record?.payload;
   if (!payload || typeof payload !== 'object') return null;
   if (record.type === 'event_msg') {
-    if (payload.type === 'user_message') return promptTitle(payload.message);
-    if (payload.type === 'item_completed' && payload.item?.type === 'UserMessage') return promptTitle(contentText(payload.item.content));
+    if (payload.type === 'user_message') return lineTitle(payload.message);
+    if (payload.type === 'item_completed' && payload.item?.type === 'UserMessage') return lineTitle(contentText(payload.item.content));
     return null;
   }
   if (record.type === 'response_item' && payload.type === 'message' && payload.role === 'user') return promptTitle(contentText(payload.content));
@@ -510,14 +518,14 @@ function grokPrompt(text) {
   for (const record of parseLines(text)) {
     const update = record?.params?.update;
     if (update?.sessionUpdate !== 'user_message_chunk' || update.content?.type !== 'text') continue;
-    if (update.content._meta?.bash_command || update._meta?.host_turn === true) continue;
+    if (update.content._meta?.bash_command || update._meta?.host_turn === true || update._meta?.hideFromScrollback === true) continue;
     // Grok Build 1.0.70 numbers a prompt's chunks with promptIndex; earlier versions gave them a promptId.
     const id = update._meta?.promptIndex ?? record.params._meta?.promptId ?? null;
     if (parts.length && id !== promptId) break;
     promptId = id;
     parts.push(update.content.text);
   }
-  return promptTitle(parts.join(''));
+  return lineTitle(parts.join(''));
 }
 
 async function grokEntry(folder, summary, stat, bucketCwd) {

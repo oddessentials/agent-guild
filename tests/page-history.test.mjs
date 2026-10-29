@@ -58,6 +58,18 @@ test('an earlier page goes in front once, duplicate clicks are ignored and an ol
   assert.deepEqual(preview.state.messages.map((m) => m.text), ['refreshed']);
 });
 
+test('the newest page\'s incomplete warning stays while earlier pages are read, until a refresh replaces it', async () => {
+  const { preview, requests } = page();
+  const first = preview.select(target('one'));
+  requests[0].resolve({ ...detail('newest', 'cursor'), incomplete: true }); await first;
+  const earlier = preview.more();
+  requests[1].resolve(detail('earlier')); await earlier;
+  assert.equal(preview.state.incomplete, true);
+  const refresh = preview.refresh();
+  requests[2].resolve(detail('finished')); await refresh;
+  assert.equal(preview.state.incomplete, false);
+});
+
 test('a changed transcript drops what was read and requires refresh; other page failures can retry the same cursor', async () => {
   const { preview, requests } = page();
   const first = preview.select(target('one'));

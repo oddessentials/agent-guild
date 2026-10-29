@@ -268,9 +268,11 @@ export class SessionManager extends EventEmitter {
     const name = session.named ? session.name : null;
     const kept = session.keptName;
     if (kept?.at === at && kept.name === name) return;
-    if (name) this.cardNames.set(session.provider.id, account, toolSessionId, name);
-    else if (kept?.at === at && kept.name) this.cardNames.delete(session.provider.id, account, toolSessionId);
-    session.keptName = { at, name };
+    // Remembered only once stored, so a name the store could not take is tried again on the next change.
+    let stored = true;
+    if (name) stored = this.cardNames.set(session.provider.id, account, toolSessionId, name);
+    else if (kept?.at === at && kept.name) stored = this.cardNames.delete(session.provider.id, account, toolSessionId);
+    if (stored) session.keptName = { at, name };
   }
 
   _saveCards() {

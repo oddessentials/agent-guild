@@ -3111,7 +3111,8 @@ test('tmux cards are kept across restarts, and come back closed with their own i
   const kept = await first.create({ providerId: 'shell', shell: 'tmux', cwd: project, name: 'Kept' });
   await first.create({ providerId: 'shell', shell: 'tmux', cwd: project, name: 'Gone' });
   assert.deepEqual(saved.map((card) => card.name), ['Kept', 'Gone']);
-  assert.deepEqual(Object.keys(saved[0]).sort(), ['account', 'createdAt', 'cwd', 'id', 'muxName', 'name', 'provider', 'reportToken', 'shell', 'shellPath']);
+  assert.deepEqual(Object.keys(saved[0]).sort(), ['account', 'createdAt', 'cwd', 'defaultName', 'id', 'muxName', 'name', 'named', 'provider', 'reportToken', 'shell', 'shellPath']);
+  assert.deepEqual([saved[0].named, saved[0].defaultName], [true, kept.defaultName]);
   kept.name = 'Kept, renamed';
   kept.emit('changed');
   assert.equal(saved[0].name, 'Kept, renamed', 'a rename is kept');
@@ -3134,6 +3135,7 @@ test('tmux cards are kept across restarts, and come back closed with their own i
     [kept.id, 'Kept, renamed', 'exited', '2026-10-03T09:00:00.000Z', project, { label: 'tmux', attach: `tmux attach -t ${saved[0].muxName}`, reattachable: true }],
   ]);
   assert.equal(next.get(kept.id).reportToken, kept.reportToken, 'with its own report token, which tools inside still hold');
+  assert.deepEqual([next.get(kept.id).named, next.get(kept.id).defaultName], [true, kept.defaultName], 'its name stays explicit, so later tool sessions keep it');
   assert.deepEqual(next.get(kept.id).context, { compactions: 2, resets: 1 });
   assert.deepEqual(saved.map((card) => card.id), [kept.id], 'a card whose session is gone is forgotten');
   // Reattach waits until the manager has found tmux still has the session, as the page does.

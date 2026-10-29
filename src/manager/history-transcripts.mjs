@@ -155,9 +155,10 @@ async function* linesBackward(source, end, limits) {
   if (tailSize > 0) yield { offset: 0, size: tailSize, bytes: tailSize > limits.maxLineBytes ? null : Buffer.concat(tail) };
 }
 
-const OUTLINE_PATHS = new Set(['type', 'uuid', 'parentUuid', 'logicalParentUuid', 'isSidechain', 'isMeta', 'isCompactSummary',
+const OUTLINE_PATHS = new Set(['type', 'uuid', 'parentUuid', 'logicalParentUuid', 'isSidechain', 'isMeta', 'isCompactSummary', 'origin.kind',
   'message.id', 'message.content.[].type', 'source', 'payload.type', 'payload.item.type', 'params.update.sessionUpdate',
-  'params.update.content.type', 'params.update.content._meta.bash_command', 'params.update._meta.promptIndex', 'params.update._meta.host_turn']);
+  'params.update.content.type', 'params.update.content._meta.bash_command', 'params.update._meta.promptIndex', 'params.update._meta.host_turn',
+  'params.update._meta.hideFromScrollback']);
 const MAX_OUTLINE_VALUE = 512;
 
 /**
@@ -355,6 +356,8 @@ const WITHHELD = Symbol('withheld');
 
 function claudePrompt(record) {
   if (record.type !== 'user' || record.isMeta === true || record.isCompactSummary === true) return null;
+  const origin = record.origin && typeof record.origin === 'object' ? record.origin.kind : undefined;
+  if (origin !== undefined && origin !== 'human') return null;
   const content = record.message?.content;
   if (record.withheld) return Array.isArray(content) && content[0]?.type === 'tool_result' ? null : WITHHELD;
   let text;
@@ -362,7 +365,7 @@ function claudePrompt(record) {
   else if (Array.isArray(content) && !content.some((part) => part?.type === 'tool_result')) {
     text = content.filter((part) => part?.type === 'text' && typeof part.text === 'string').map((part) => part.text).join('\n');
   } else return null;
-  const value = visiblePrompt(text);
+  const value = origin === 'human' ? clean(text) : visiblePrompt(text);
   return value && !value.startsWith('[Request interrupted by user') ? value : null;
 }
 
@@ -385,7 +388,7 @@ function claudeMessageId(record) {
  */
 export const claudeReader = {
   start: (saved) => ({
-    leaf: Boolean(saved), expected: typeof saved?.u === 'string' ? saved.u : null,
+    leaf: saved?.f === true, expected: typeof saved?.u === 'string' ? saved.u : null,
     skipId: typeof saved?.k === 'string' ? saved.k : null, root: false, reply: null,
   }),
   onChain(s, record) {
@@ -447,7 +450,7 @@ export const claudeReader = {
     s.reply = null;
   },
   done: (s) => s.root,
-  cursor: (s) => ({ u: s.expected, ...(s.skipId ? { k: s.skipId } : {}) }),
+  cursor: (s) => ({ f: s.leaf, u: s.expected, ...(s.skipId ? { k: s.skipId } : {}) }),
 };
 
 // ---- Codex CLI --------------------------------------------------------------------
@@ -455,12 +458,12 @@ export const claudeReader = {
 function codexMessage(record) {
   const payload = record.type === 'event_msg' ? record.payload : null;
   if (!payload || typeof payload !== 'object') return null;
-  if (payload.type === 'user_message') return { role: 'user', text: visiblePrompt(payload.message) };
+  if (payload.type === 'user_message') return { role: 'user', text: clean(payload.message) };
   if (payload.type === 'agent_message') return { role: 'assistant', text: clean(payload.message) };
   if (payload.type !== 'item_completed') return null;
   const item = payload.item;
   const text = Array.isArray(item?.content) ? item.content.filter((part) => typeof part?.text === 'string').map((part) => part.text).join('\n') : '';
-  if (item?.type === 'UserMessage') return { role: 'user', text: visiblePrompt(text) };
+  if (item?.type === 'UserMessage') return { role: 'user', text: clean(text) };
   if (item?.type === 'AgentMessage') return { role: 'assistant', text: clean(text) };
   return null;
 }
@@ -549,7 +552,7 @@ export const grokReader = {
       turn.reply = null;
       turn.key = grokPromptKey(record, update);
       turn.index = update._meta?.promptIndex;
-      if (update.content._meta?.bash_command || update._meta?.host_turn === true) turn.hidden = true;
+      if (update.content._meta?.bash_command || update._meta?.host_turn === true || update._meta?.hideFromScrollback === true) turn.hidden = true;
       else if (record.withheld) turn.promptWithheld = true;
       else turn.prompt.unshift(update.content.text);
     } else if (update.sessionUpdate === 'tool_call' || update.sessionUpdate === 'tool_call_update') {
@@ -571,7 +574,7 @@ export const grokReader = {
     s.skip = false;
     if (turn.promptWithheld || turn.replies.some((parts) => parts.withheld)) s.omitted = true;
     const replies = turn.replies.filter((parts) => !parts.withheld).map((parts) => clean(parts.join(''))).filter(Boolean);
-    const prompt = turn.hidden || turn.promptWithheld ? '' : visiblePrompt(turn.prompt.join(''));
+    const prompt = turn.hidden || turn.promptWithheld ? '' : clean(turn.prompt.join(''));
     if (!replies.length && !prompt) return;
     if (s.cut !== null) {
       if (!safeInteger(turn.index)) { s.failed = true; return; }

@@ -65,11 +65,13 @@ export function createCardNames(file, { limit = CARD_NAMES_LIMIT, warn = (messag
   }
 
   function save(current) {
-    if (!file) return;
+    if (!file) return true;
     try {
       writeNames(file, [...current.values()]);
+      return true;
     } catch (err) {
       warn(`[names] could not save card names: ${err.message}`);
+      return false;
     }
   }
 
@@ -77,20 +79,23 @@ export function createCardNames(file, { limit = CARD_NAMES_LIMIT, warn = (messag
     get(providerId, accountId, toolSessionId) {
       return load()?.get(key(providerId, accountId, toolSessionId))?.name ?? null;
     },
+    /** True once the name is stored. */
     set(providerId, accountId, toolSessionId, name) {
       const current = load();
-      if (!current) return;
+      if (!current) return false;
       const k = key(providerId, accountId, toolSessionId);
-      if (current.get(k)?.name === name) return;
+      if (current.get(k)?.name === name) return true;
       // Newest last, so the oldest are dropped first.
       current.delete(k);
       current.set(k, { provider: providerId, account: accountId, id: toolSessionId, name, at: now() });
       while (current.size > limit) current.delete(current.keys().next().value);
-      save(current);
+      return save(current);
     },
+    /** True once no name is stored. */
     delete(providerId, accountId, toolSessionId) {
       const current = load();
-      if (current?.delete(key(providerId, accountId, toolSessionId))) save(current);
+      if (!current) return false;
+      return current.delete(key(providerId, accountId, toolSessionId)) ? save(current) : true;
     },
   };
 }

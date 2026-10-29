@@ -20,7 +20,7 @@ export function createHistoryPreview({ read, changed, authError = () => {} }) {
       const detail = await read(target, cursor);
       if (request !== ticket) return;
       Object.assign(state, { messages: more ? [...detail.messages, ...state.messages] : detail.messages,
-        nextCursor: detail.nextCursor, incomplete: detail.incomplete, omitted: state.omitted || detail.omitted });
+        nextCursor: detail.nextCursor, incomplete: more ? state.incomplete : detail.incomplete, omitted: state.omitted || detail.omitted });
     } catch (err) {
       if (request !== ticket) return;
       authError(err);
