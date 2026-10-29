@@ -114,7 +114,7 @@ export function familiarPose(agent) {
 }
 export const SHOWN_HELPERS = 6;
 export function marksFor(s, mode) {
-  if (s.status === 'exited') return { crew: !s.multiplexer && (s.signal || (s.exitCode ?? 0) !== 0) ? 'failed' : null, helpers: [] };
+  if (s.status === 'exited') return { crew: s.multiplexer ? null : s.signal || (s.exitCode ?? 0) !== 0 ? 'failed' : 'exited', helpers: [] };
   const agents = s.agents || [], waiting = agents.filter(a => familiarPose(a) === 'waiting');
   const shown = waiting.filter(a => agents.indexOf(a) < SHOWN_HELPERS);
   const crew = waiting.length > shown.length ? 'waiting' : mode === 'rest' && !agents.length && !s.shells?.length ? 'asleep' : null;
