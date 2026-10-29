@@ -6,7 +6,6 @@
   var version = window.AGENT_GUILD_DEMO_VERSION || '0.0.0-demo';
   var launchFlags = window.AGENT_GUILD_DEMO_FLAGS || {};
   var now = Date.now();
-  // The history source each card reads, as in config/providers.default.json.
   var historySources = { anthropic: 'claude', openai: 'codex', google: 'antigravity', xai: 'grok', docker: 'docker' };
   // Public card fields from config/providers.default.json. Versions below are sample data.
   var about = {
@@ -755,7 +754,6 @@
     return { refreshedAt: new Date(now).toISOString(), refreshing: false, sources: sources, items: items };
   }
 
-  // Each row: id, the tool's title, folder, minutes ago, the card's name or null, and the reply its preview shows.
   function historyRows(providerId) {
     var rows = {
       anthropic: [

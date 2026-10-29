@@ -2045,7 +2045,6 @@ test('usage is read per account, from that account\'s home folder only', async (
 });
 
 const jsonl = (...records) => records.map((r) => (typeof r === 'string' ? r : JSON.stringify(r))).join('\n') + '\n';
-// What the API lists: the file a preview reads and the titles kept between reads stay in the manager.
 const listed = (entries) => entries.map(({ file, titles, ...entry }) => entry);
 function writeAt(file, contents, when) {
   fs.mkdirSync(path.dirname(file), { recursive: true });

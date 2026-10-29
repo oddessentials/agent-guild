@@ -149,7 +149,6 @@ export class SessionManager extends EventEmitter {
     const defaultName = (current.accounts.length > 1 ? `${provider.tool} · ${signIn.label}` : null)
       || (runShell && this.registry.shellsFor(provider).shells.length > 1 ? `${provider.tool} · ${runShell.label}` : null)
       || provider.tool;
-    // A resumed conversation gets back the name its card had, unless this request names it.
     const given = cleanName(name) || (resumeId ? this.cardNames?.get(provider.id, signIn.id, resumeId) : null) || null;
     const extraEnv = hooks.env ? { ...runShell?.env, ...hooks.env } : runShell?.env;
     const options = { provider, cwd: workDir, cols, rows, name: given ?? defaultName, defaultName, named: given !== null, resume: resumeId, account: signIn, reporting: hooks.reporting, extraEnv };
@@ -259,10 +258,7 @@ export class SessionManager extends EventEmitter {
     });
   }
 
-  /**
-   * An explicitly named card keeps its name for every tool session it holds, a new one after /clear included;
-   * renaming it back to its default name forgets the name for the session it holds now.
-   */
+  /** Renaming a card back to its default name forgets the name for the tool session it holds now; earlier ones keep it. */
   _keepCardName(session) {
     if (!this.cardNames || session.task !== null || !session.toolSessionId) return;
     const account = session.account?.id ?? 'default';

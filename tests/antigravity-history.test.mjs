@@ -169,7 +169,6 @@ test('appends keep a cursor valid; a rewritten or deleted transcript does not', 
   const second = await readAntigravityTranscript(f.dir, id(1), first.nextCursor, limits);
   assert.deepEqual(second.messages.map((m) => m.text.slice(0, 1)), ['4', '5'], 'the page before is the same after an append');
   assert.equal((await readAntigravityTranscript(f.dir, id(1), null, limits)).messages.at(-1).text, 'New turn');
-  // The cursor checks the bytes around it and the file's first bytes.
   fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('4 a', '4 b'));
   await assert.rejects(readAntigravityTranscript(f.dir, id(1), second.nextCursor, limits), { code: 'history_changed', status: 409 });
   fs.unlinkSync(file);

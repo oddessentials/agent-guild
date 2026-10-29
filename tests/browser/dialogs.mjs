@@ -26,7 +26,6 @@ window.fetch=(input,init)=>{
       return res;
     });
   if(url.pathname.endsWith('/history')&&!url.pathname.includes('/google/')){
-    // Filtered as the manager filters, before the limit.
     const q=(url.searchParams.get('q')||'').toLowerCase();
     const all=Array.from({length:334},(_,i)=>({id:'saved-'+i,title:'Saved session '+i,cwd:'/work/storefront',updatedAt:'2026-10-04T10:00:00Z'}))
       .filter(s=>s.title.toLowerCase().includes(q));

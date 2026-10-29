@@ -4025,7 +4025,6 @@ function renderHistoryPreview(view) {
   const first = messages.childElementCount === 0;
   messages.replaceChildren(...view.messages.map((message) => el('article', 'history-message',
     el('h4', null, message.role === 'user' ? 'You' : 'Assistant'), el('p', null, message.text))));
-  // A conversation opens on its latest messages; an earlier page goes above without moving what is in view.
   messages.scrollTop = first ? messages.scrollHeight : messages.scrollHeight - fromBottom;
   for (const node of $('history-list').querySelectorAll('.history-preview-open')) node.setAttribute('aria-current', String(node.dataset.id === view.target?.id));
 }

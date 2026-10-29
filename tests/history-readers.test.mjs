@@ -25,7 +25,6 @@ function write(file, text) {
 
 const read = (source, file, cursor = null, limits = PAGE_LIMITS) => readJsonlPage({ source, id: 'conversation', file, cursor, limits, ...JSONL_READERS[source] });
 
-/** Every page from newest to oldest, joined in reading order, with each page's messages kept apart. */
 async function readAll(source, file, limits) {
   const pages = [];
   let cursor = null;
@@ -248,7 +247,6 @@ test('Docker Agent previews show what Docker Agent shows the user, paged by posi
   assert.deepEqual(said(first.messages), ['You: Thanks', 'AI: You are welcome']);
   const second = await page(first.nextCursor, limits);
   assert.deepEqual([said(second.messages), second.nextCursor], [['You: List the files', 'AI: Here they are'], null]);
-  // The cursor stops at the oldest row its page read; history rewritten under it refuses the cursor.
   db.exec("DELETE FROM session_items WHERE session_id = 's1' AND position <= 4");
   add(3, { role: 'user', content: 'Rewritten' });
   add(4, { role: 'assistant', content: 'Rewritten reply' });

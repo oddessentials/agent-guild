@@ -24,7 +24,6 @@ const MAX_WALK_DEPTH = 4;
 
 export class HistoryError extends Error {}
 
-/** The tools whose saved conversations the preview can read, and the folder below each tool's home that holds them. */
 export const DETAIL_SOURCES = new Set(['claude', 'codex', 'antigravity', 'grok', 'docker']);
 const TRANSCRIPT_ROOTS = { claude: 'projects', codex: 'sessions', grok: 'sessions' };
 
@@ -92,7 +91,6 @@ async function readTail(file, size, bytes = TAIL_BYTES) {
   try {
     const { bytesRead, buffer } = await handle.read(Buffer.alloc(length), 0, length, size - length);
     const text = buffer.subarray(0, bytesRead).toString('utf8');
-    // The window starts inside a record.
     return text.slice(text.indexOf('\n') + 1);
   } finally {
     await handle.close();
@@ -143,7 +141,6 @@ export class FileMemo {
     this.entries = new Map();
   }
 
-  /** `parse` gets the entry parsed before when the file has only grown since. */
   async entry(file, stat, parse) {
     const known = this.entries.get(file);
     if (known && known.size === stat.size && known.mtimeMs === stat.mtimeMs) return known.entry;
@@ -176,7 +173,6 @@ export function claudeConfigDir(env = process.env) {
   return (env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')).normalize('NFC');
 }
 
-/** The newest names Claude Code wrote in these records: one set with /rename or --name, and one it generated. */
 function claudeTitles(records) {
   const titles = { custom: null, ai: null };
   for (const record of records) {
@@ -186,11 +182,7 @@ function claudeTitles(records) {
   return titles;
 }
 
-/**
- * Claude Code repeats its title records through a transcript, so the newest is
- * read from the end; while a long turn pushes them out of that window, the
- * title read before is kept.
- */
+/** Title records repeat through a transcript: the newest is read from the end, else the one read before is kept. */
 function claudeEntry(id, text, tail, stat, before) {
   let cwd = null;
   let startedAt = null;
@@ -279,7 +271,6 @@ async function walk(dir, depth, onFile) {
   }
 }
 
-/** `<dir>/session_index.jsonl`: thread names, set by the user or generated; the newest line for an id wins. */
 async function codexThreadNames(dir, memo) {
   const file = path.join(dir, 'session_index.jsonl');
   const stat = await statFile(file);
@@ -605,7 +596,6 @@ export class SessionHistory {
     return null;
   }
 
-  /** Filters the cached listing only; a search never opens a transcript. */
   async list(provider, account = this.registry.account(provider), { limit, cwd, query } = {}) {
     const n = Math.min(MAX_LIMIT, Math.max(1, Math.floor(Number(limit)) || DEFAULT_LIMIT));
     const snapshot = await this.snapshot(provider, account);
@@ -623,7 +613,7 @@ export class SessionHistory {
     if (typeof id !== 'string' || cleanEntry({ id })?.id !== id || (source === 'antigravity' && !ANTIGRAVITY_ID.test(id))) {
       throw historyError(400, 'bad_history_id', 'Invalid conversation id.');
     }
-    // Revalidate membership, even if the client still has an older list open, and read the file the listing found.
+    // Revalidate membership, even if the client still has an older list open.
     const snapshot = await this._read(provider, account);
     const entry = snapshot.sessions.find((s) => s.id === id);
     if (!entry) throw historyError(404, 'history_unavailable', 'This conversation transcript is unavailable.');

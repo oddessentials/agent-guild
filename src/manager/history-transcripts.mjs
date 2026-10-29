@@ -1,10 +1,5 @@
-// Saved conversations for the History preview, newest page first. A page holds
-// whole visible messages only: prompts and replies, never thinking, tool calls
-// or results, injected context, or turns the tool discarded. Each tool keeps
-// its own records, so each has a reader; the JSONL ones share the backward
-// paging here. A cursor checks the bytes around its offset and the file's first
-// bytes, so appends keep it valid while a rewrite, a truncation or a replaced
-// file refuses it.
+// Saved conversations for the History preview, newest page first, in whole visible messages.
+// A cursor checks the file's first bytes and those around its offset, so appends keep it valid.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -15,14 +10,10 @@ import { historyError, transcriptFile, transcriptMessage } from './antigravity-t
 
 export const PAGE_LIMITS = {
   messages: 40,
-  /** Bytes read before a page stops at the next message. */
   scanBytes: 8 * 1024 * 1024,
-  /** A message still unfinished after this many bytes is left out. */
   maxScanBytes: 32 * 1024 * 1024,
-  /** Longer records are left out unparsed. */
   maxLineBytes: 4 * 1024 * 1024,
   chunkBytes: 256 * 1024,
-  /** Docker Agent rows read for one page. */
   rows: 2000,
 };
 const ANCHOR_BYTES = 4096;
@@ -91,12 +82,7 @@ async function plainSource(file) {
   }
 }
 
-/**
- * A zstd rollout, decoded as a stream. Offsets address the decoded JSONL, so a
- * cursor survives Codex swapping a file between `.jsonl` and `.jsonl.zst`.
- * Only the first bytes and a window before `stop` are kept; `floor` is where
- * that window starts.
- */
+/** Offsets address the decoded JSONL, so a cursor survives Codex swapping `.jsonl` and `.jsonl.zst`. */
 async function zstdSource(file, stop, window) {
   if (typeof zlib.createZstdDecompress !== 'function') throw unavailable();
   const head = [];
@@ -150,7 +136,6 @@ async function openSource(file, stop, limits) {
   }
 }
 
-/** The bytes a cursor depends on: the file's first bytes and those around its offset, never past `end`. */
 async function anchors(source, offset, end) {
   const hl = Math.min(ANCHOR_BYTES, source.size);
   const as = Math.max(source.floor, offset - ANCHOR_BYTES);
@@ -166,7 +151,6 @@ async function verify(source, cursor) {
   if (digest(await source.read(cursor.as, cursor.ae - cursor.as)) !== cursor.ah) throw changed();
 }
 
-/** Where the newest complete line ends. A partial line after it is still being written. */
 async function lastLineEnd(source, limits) {
   let position = source.size;
   while (position > source.floor && source.size - position < limits.maxScanBytes) {
@@ -179,7 +163,6 @@ async function lastLineEnd(source, limits) {
   return source.floor;
 }
 
-/** Lines ending at `end`, newest first, each with the offset it starts at; `floor` marks the end of a zstd window. */
 async function* linesBackward(source, end, limits) {
   let position = end;
   let tail = [];
@@ -277,7 +260,6 @@ function clean(text) {
   return typeof text === 'string' ? text.trim() : '';
 }
 
-/** A prompt the user typed; text that opens with a tag was inserted by the tool. */
 function visiblePrompt(text) {
   const value = clean(text);
   return value && !TAG_RE.test(value) ? value : '';
@@ -316,7 +298,6 @@ function claudeMessageId(record) {
  */
 export const claudeReader = {
   start: (saved) => ({
-    // Before the first record of the chain is found, the newest `last-prompt` or message names it.
     leaf: Boolean(saved), expected: typeof saved?.u === 'string' ? saved.u : null,
     skipId: typeof saved?.k === 'string' ? saved.k : null, root: false, reply: null,
   }),
@@ -502,8 +483,6 @@ export const grokReader = {
     if (prompt) s.messages.push({ role: 'user', text: prompt });
   },
   abandon(s) {
-    // A turn too long to finish is left out: before its prompt, the next page skips the rest of its replies
-    // and still shows the prompt; within its prompt, the next page skips the rest of the prompt.
     if (s.turn?.user && safeInteger(s.turn.index)) s.skipPrompt = s.turn.index;
     else s.skip = true;
     s.turn = null;
@@ -535,14 +514,13 @@ export const JSONL_READERS = {
   antigravity: { reader: antigravityReader, firstRecord: antigravityUserConversation },
 };
 
-/** A page of an Antigravity CLI conversation; a sub-agent's, which starts with its parent's message, is unavailable. */
 export async function readAntigravityTranscript(dir, id, cursor = null, limits = PAGE_LIMITS) {
   return readJsonlPage({ source: 'antigravity', id, file: await transcriptFile(dir, id), cursor, ...JSONL_READERS.antigravity, limits });
 }
 
 // ---- Docker Agent -------------------------------------------------------------------
 
-/** Docker Agent's own rule for what the user saw: real messages and final replies. */
+/** Docker Agent's own VisibleExchanges rule. */
 function dockerMessage(row) {
   if (row.implicit || row.subsession_id) return null;
   let message;
@@ -553,7 +531,6 @@ function dockerMessage(row) {
   return text ? { role: message.role, text } : null;
 }
 
-/** A page of a Docker Agent session, by row position; the row a cursor stopped at must still be there. */
 export async function readDockerConversation({ dir, id, cursor, loadSqlite, limits = PAGE_LIMITS }) {
   const saved = cursor ? decodeCursor(cursor, 'docker', id) : null;
   if (saved && (!safeInteger(saved.p) || !safeInteger(saved.r, 1))) throw badCursor();

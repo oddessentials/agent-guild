@@ -1,6 +1,4 @@
-// The names people give cards, kept by provider, account and the tool's own
-// session id, so History shows them and a resumed card gets its name back.
-// Only explicit names are kept; a card named after its tool has none.
+// Names given to cards, by provider, account and the tool's own session id.
 
 import fs from 'node:fs';
 import path from 'node:path';
