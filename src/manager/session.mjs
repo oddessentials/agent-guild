@@ -6,8 +6,7 @@ import { EventEmitter } from 'node:events';
 import crypto from 'node:crypto';
 import headless from '@xterm/headless';
 import serializeAddon from '@xterm/addon-serialize';
-import { killWindowsTree } from './command-resolver.mjs';
-import { loadPty } from './pty.mjs';
+import { loadPty, closeConsole, releasePty } from './pty.mjs';
 import { sessionLabel } from '../../web/activity-favicon.js';
 
 const { Terminal } = headless;
@@ -81,7 +80,6 @@ export class Session extends EventEmitter {
    * @param {number} [opts.activityIdleMs]
    * @param {number} [opts.doneAgentLingerMs]
    * @param {number} [opts.killGraceMs]  time between hang-up and force kill
-   * @param {typeof killWindowsTree} [opts.killTree]  how a Windows process tree is ended, replaceable in tests
    */
   constructor(opts) {
     super();
@@ -105,8 +103,7 @@ export class Session extends EventEmitter {
     this.activityIdleMs = opts.activityIdleMs ?? 2500;
     this.doneAgentLingerMs = opts.doneAgentLingerMs ?? 15000;
     this.killGraceMs = opts.killGraceMs ?? 4000;
-    this.killTree = opts.killTree ?? killWindowsTree;
-    this._treeKill = false;
+    this._killed = false;
     this.reportingTimeoutMs = opts.reportingTimeoutMs ?? 30000;
     this.reporting = REPORTING_STATES.has(opts.reporting?.state) ? { state: opts.reporting.state, reason: opts.reporting.reason ?? null } : null;
     this._reportingTimer = null;
@@ -207,7 +204,7 @@ export class Session extends EventEmitter {
       useConpty: true,
     });
     this.pty = proc;
-    this._treeKill = false;
+    this._killed = false;
     proc.onData((data) => { if (this.pty === proc) this._onData(data); });
     proc.onExit(({ exitCode, signal }) => { if (this.pty === proc) this._onExit(exitCode, signal); });
   }
@@ -254,6 +251,7 @@ export class Session extends EventEmitter {
 
   _onExit(exitCode, signal) {
     clearTimeout(this._killTimer);
+    if (process.platform === 'win32') releasePty(this.pty);
     this._resolveExited();
     if (this.disposed) return;
     this.exitedAt ??= new Date().toISOString();
@@ -422,19 +420,18 @@ export class Session extends EventEmitter {
 
   /**
    * End the process. On macOS and Linux: hang-up first, force after a grace
-   * period. On Windows: end the whole process tree at once, except for a
-   * multiplexer's client, whose server is its child there and must outlive
-   * it. node-pty's own Windows kill first asks a helper process for the
-   * console's process list, and when that helper fails it waits a fixed
-   * five seconds.
+   * period. On Windows: close the session's console, which ends every process
+   * attached to it; a multiplexer's server and anything started detached
+   * outlive it.
    */
   kill({ graceMs = this.killGraceMs } = {}) {
     if (this.status !== 'running') return;
     if (process.platform === 'win32') {
-      // Once asked, the tree is not ended again while the exit is on its way: by then its pid may name another process.
-      if (this._treeKill) return;
-      this._treeKill = true;
-      this._killWindowsTree();
+      // At most once per pty: node-pty 1.2.0-beta.15 closes the pseudoconsole again on a second close before the
+      // exit watcher runs, which corrupts this process's heap (microsoft/node-pty#983).
+      if (this._killed) return;
+      this._killed = true;
+      closeConsole(this.pty);
       return;
     }
     const force = () => { try { this.pty.kill('SIGKILL'); } catch { /* gone */ } };
@@ -442,22 +439,6 @@ export class Session extends EventEmitter {
     clearTimeout(this._killTimer);
     this._killTimer = setTimeout(force, graceMs);
     this._killTimer.unref?.();
-  }
-
-  _killWindowsTree() {
-    // At most once per pty, so the guard in kill() is not cleared here: node-pty 1.2.0-beta.15 closes the
-    // pseudoconsole again on a second kill() before the exit watcher runs, which corrupts this process's heap
-    // (microsoft/node-pty#983). While the pty is still starting its pid is 0 and node-pty defers every kill().
-    const fallback = () => {
-      if (this.status === 'running') { try { this.pty.kill(); } catch { /* gone */ } }
-    };
-    const pid = this.pty.pid;
-    if (!pid) return fallback();
-    this.killTree(pid, (err) => {
-      // taskkill's exit status 128: no process has this pid, so it has already ended. node-pty's own kill would end
-      // every process on whatever console that pid now belongs to, which can be this one.
-      if (err && err.code !== 128) fallback();
-    }, { tree: !this.multiplexer });
   }
 
   /**

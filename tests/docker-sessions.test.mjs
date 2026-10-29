@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import pty from 'node-pty';
+import { fakePty } from './fixtures/fake-pty.mjs';
 import { Session } from '../src/manager/session.mjs';
 import { DockerSessions } from '../src/manager/docker-sessions.mjs';
 import { dockerHookEvent, commandHash } from '../src/report/hooks.mjs';
@@ -8,7 +9,7 @@ import { dockerHookEvent, commandHash } from '../src/report/hooks.mjs';
 // The real session state machine, with no terminal and with time under control.
 function createSession(t) {
   try { t.mock.timers.enable({ apis: ['setTimeout'] }); } catch { /* a second session in the same test */ }
-  t.mock.method(pty, 'spawn', () => ({ pid: 0, onData() {}, onExit() {}, write() {}, resize() {}, kill() {} }));
+  t.mock.method(pty, 'spawn', () => fakePty());
   const session = new Session({
     id: 'docker-test', provider: { id: 'docker', tool: 'Docker Agent' },
     spawnSpec: { file: 'mocked-pty', args: [] },

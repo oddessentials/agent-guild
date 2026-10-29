@@ -1,14 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import pty from 'node-pty';
+import { fakePty } from './fixtures/fake-pty.mjs';
 import { Session } from '../src/manager/session.mjs';
 
 // Exercise the real session state machine without PTY startup or wall-clock races.
 function createSession(t) {
   t.mock.timers.enable({ apis: ['setTimeout'] });
-  t.mock.method(pty, 'spawn', () => ({
-    pid: 0, onData() {}, onExit() {}, write() {}, resize() {}, kill() {},
-  }));
+  t.mock.method(pty, 'spawn', () => fakePty());
   const session = new Session({
     id: 'shell-test', provider: { id: 'fake', tool: 'Fake Tool' },
     spawnSpec: { file: 'mocked-pty', args: [] },

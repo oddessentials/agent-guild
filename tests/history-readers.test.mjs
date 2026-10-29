@@ -9,6 +9,7 @@ import { SessionHistory, FileMemo, listClaudeSessions, listCodexSessions, listGr
 import { SessionManager } from '../src/manager/session-manager.mjs';
 import { createCardNames } from '../src/manager/card-names.mjs';
 import pty from 'node-pty';
+import { fakePty } from './fixtures/fake-pty.mjs';
 
 // Synthetic records shaped like Claude Code 2.1.312, Codex CLI 0.165.0, Grok Build 1.0.70 and Docker Agent 1.154.0 write them.
 const lines = (...records) => records.map((r) => JSON.stringify(r)).join('\n') + '\n';
@@ -323,7 +324,7 @@ test('the saved name follows each card\'s chosen name for the tool session it ho
     shellFor: () => null, shellsFor: () => ({ shells: [] }), spawnSpec: () => ({ file: 'tool', args: [] }),
   };
   const manager = new SessionManager({ registry, baseEnv: {}, getApiUrl: () => '', cardNames });
-  t.mock.method(pty, 'spawn', () => ({ pid: 0, onData() {}, onExit() {}, write() {}, resize() {}, kill() {} }));
+  t.mock.method(pty, 'spawn', () => fakePty());
   const start = async (options) => {
     const session = await manager.create({ providerId: 'tool', cwd: os.tmpdir(), ...options });
     t.after(() => session.dispose());

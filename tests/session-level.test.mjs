@@ -4,6 +4,7 @@ import { once } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import pty from 'node-pty';
+import { fakePty } from './fixtures/fake-pty.mjs';
 import { Session } from '../src/manager/session.mjs';
 
 // app.js is a browser script. Exercise its actual calculation without booting
@@ -27,7 +28,7 @@ function createSession(t) {
     resize() {},
     kill() { this.stopRequested = true; },
   };
-  t.mock.method(pty, 'spawn', () => child);
+  t.mock.method(pty, 'spawn', () => fakePty(child));
   const session = new Session({
     id: 'test-session',
     provider: { id: 'fake', vendor: 'Test', tool: 'Fake Tool' },
@@ -174,7 +175,7 @@ test('a reset is a new tool session the tool started over in, not its first, a r
 });
 
 test('a restored card keeps its counts, and only counts', (t) => {
-  t.mock.method(pty, 'spawn', () => ({ pid: 0, onData() {}, onExit() {}, write() {}, resize() {}, kill() {} }));
+  t.mock.method(pty, 'spawn', () => fakePty());
   const make = (context) => {
     const session = new Session({
       id: 'restored', provider: { id: 'fake', vendor: 'Test', tool: 'Fake Tool' }, spawnSpec: { file: 'mocked-pty', args: [] },
