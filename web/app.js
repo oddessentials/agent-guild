@@ -5292,6 +5292,7 @@ async function loadView(view) {
   const request = { key, stamp, value: before?.stamp === stamp ? before.value : null, error: null, loading: true };
   githubPick.data[view] = request;
   renderGitHubViews();
+  const watching = view === 'actions' ? new Set(runWatch.runs.values()) : null;
   let value = null;
   let error = null;
   try {
@@ -5306,7 +5307,7 @@ async function loadView(view) {
   renderGitHubViews();
   if (view === 'actions') scheduleRuns();
   if (view === 'actions' && value) {
-    runWatchSeen(repo, value.runs);
+    runWatchSeen(repo, value.runs, watching);
     deliverRunWatch();
   }
 }
@@ -5543,11 +5544,12 @@ function endWatch(key, outcome) {
   runWatch.outcomes.push({ repo: watch.repo.fullName, name: watch.name, title: watch.title, url: watch.url, ...outcome });
 }
 
-function runWatchSeen(repo, runs) {
+/** Only the watches there were when the request for `runs` began: a later one may be for a run newer than those listed. */
+function runWatchSeen(repo, runs, watching = new Set(runWatch.runs.values())) {
   const key = repoKey(repo);
   let changed = false;
   for (const [id, watch] of runWatch.runs) {
-    if (repoKey(watch.repo) !== key) continue;
+    if (repoKey(watch.repo) !== key || !watching.has(watch)) continue;
     const run = runs.find((r) => r.id === watch.id);
     if (run && run.status !== 'completed') continue;
     changed = true;
@@ -5622,12 +5624,13 @@ function pollRunWatch() {
   runWatch.polling = (async () => {
     if (!state.connected || !runWatch.runs.size) return;
     if (!state.github) await api('GET', '/github').then(({ github }) => setGitHub(github), () => {});
+    const watching = new Set(runWatch.runs.values());
     const repos = new Map();
-    for (const watch of runWatch.runs.values()) repos.set(repoKey(watch.repo), watch.repo);
+    for (const watch of watching) repos.set(repoKey(watch.repo), watch.repo);
     const accounts = usableGitHubAccounts();
     await Promise.all([...repos.values()].filter((repo) => accounts.some((a) => a.id === repo.accountId)).map(async (repo) => {
       try {
-        runWatchSeen(repo, (await api('GET', `${repoPath(repo)}/actions`)).runs);
+        runWatchSeen(repo, (await api('GET', `${repoPath(repo)}/actions`)).runs, watching);
       } catch (err) {
         if (err instanceof AuthError) showAuth(err.message);
       }

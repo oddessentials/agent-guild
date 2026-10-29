@@ -34,12 +34,13 @@ function page({ store = new Map(), visible = true, shown = true } = {}) {
     sessionStorage: { getItem: (key) => store.get(key) ?? null, setItem: (key, value) => store.set(key, value), removeItem: (key) => store.delete(key) },
     setTimeout: (handler, ms) => timers.push({ handler, ms, cleared: false }),
     clearTimeout: (id) => { if (id) timers[id - 1].cleared = true; },
+    githubPick: { repo: null, data: {}, issueState: 'open' }, loadBranches: () => {}, scheduleRuns: () => {},
   };
   context.$ = (id) => ({ app: { hidden: !shown }, toast: toastEl })[id];
   runInNewContext([
     "'use strict';", line('const RUNS_POLL_MS ='), line('const RUNS_IDLE_POLL_MS ='), line('const RUN_WATCH_KEY ='), line('const RUN_FAILURES ='),
     ...['usableGitHubAccounts', 'repoPath', 'runLabel', 'runWatchKey', 'saveRunWatch', 'loadRunWatch', 'watchedRun', 'toggleRunWatch', 'endWatch',
-      'runWatchSeen', 'dropWatchAccounts', 'deliverRunWatch', 'dismissRunFailures', 'scheduleRunWatch', 'pollRunWatch'].map(fn),
+      'runWatchSeen', 'dropWatchAccounts', 'deliverRunWatch', 'dismissRunFailures', 'scheduleRunWatch', 'pollRunWatch', 'loadView'].map(fn),
   ].join('\n'), context);
   const live = () => timers.filter((t) => !t.cleared);
   const saved = () => JSON.parse(store.get(KEY) ?? 'null');
@@ -254,4 +255,28 @@ test('the poll loads accounts when it has none, asks once per repository, skips 
   p.toggleRunWatch(bob, run(4));
   assert.equal(p.runWatch.runs.size, 0);
   assert.deepEqual(p.live(), []);
+});
+
+test('a response settles only the watches there were when its request began, from a poll or the Actions panel', async () => {
+  const p = page();
+  p.toggleRunWatch(repo, run(1));
+  p.toggleRunWatch(repo, run(3));
+  const poll = p.pollRunWatch();
+  p.toggleRunWatch(repo, run(2));
+  p.toggleRunWatch(repo, run(3));
+  p.toggleRunWatch(repo, run(3));
+  p.requests[0].resolve({ runs: [run(1, 'completed', 'success')] });
+  await poll;
+  assert.deepEqual(p.toasts.map((t) => t.message), ['CI passed: Run 1']);
+  assert.deepEqual([p.watchedRun(repo, 2), p.watchedRun(repo, 3)], [true, true], 'a watch added, or added again, during the poll is not ended by it');
+
+  const q = page();
+  q.githubPick.repo = repo;
+  q.toggleRunWatch(repo, run(1));
+  const panel = q.loadView('actions');
+  q.toggleRunWatch(repo, run(2));
+  q.requests[0].resolve({ runs: [] });
+  await panel;
+  assert.deepEqual([q.watchedRun(repo, 1), q.watchedRun(repo, 2)], [false, true]);
+  assert.deepEqual(q.toasts.map((t) => t.message), ['Run 1 is no longer among the latest runs of team/project.']);
 });
