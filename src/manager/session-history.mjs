@@ -11,7 +11,7 @@ import { resolveCommand, buildSpawnSpec, runSpec } from './command-resolver.mjs'
 import { toIso } from './usage.mjs';
 import { antigravityUserConversation } from '../report/hooks.mjs';
 import { ANTIGRAVITY_ID, transcriptFile, historyError } from './antigravity-transcript.mjs';
-import { JSONL_READERS, readJsonlPage, readAntigravityTranscript, readDockerConversation, checkedFile } from './history-transcripts.mjs';
+import { JSONL_READERS, readJsonlPage, readAntigravityTranscript, readDockerConversation, checkedFile, CLAUDE_INSERTED } from './history-transcripts.mjs';
 
 export const HISTORY_TTL_MS = 5 * 1000;
 export const DEFAULT_LIMIT = 100;
@@ -220,8 +220,9 @@ function claudeEntry(id, text, tail, stat, before) {
     seenUser = true;
     if (prompt !== null || record.isMeta === true || record.isCompactSummary === true) continue;
     const origin = record.origin && typeof record.origin === 'object' ? record.origin.kind : undefined;
-    if (origin === undefined) prompt = promptTitle(contentText(record.message?.content));
-    else if (origin === 'human') prompt = lineTitle(contentText(record.message?.content));
+    if (origin !== undefined && origin !== 'human') continue;
+    const title = lineTitle(contentText(record.message?.content));
+    if (title && !(origin === undefined && CLAUDE_INSERTED.test(title))) prompt = title;
   }
   if (cwd === null && !seenUser) return null;
   const head = claudeTitles(text, 0), end = { ...claudeTitles(tail.text, tail.start), start: tail.start };

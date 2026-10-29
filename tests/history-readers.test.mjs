@@ -205,6 +205,43 @@ test('prompts are told apart by each tool\'s own markers, never by leading marku
   assert.equal((await listGrokSessions(grokHome))[0].title, '<div>Fix the spacing</div>');
 });
 
+test('an older Claude prompt keeps its markup, and only the wrappers Claude Code inserts are left out', async (t) => {
+  const home = tempDir(t);
+  const prompt = (uuid, parentUuid, content) => ({ type: 'user', uuid, parentUuid, cwd: '/w', message: { role: 'user', content } });
+  const file = write(path.join(home, 'projects', '-w', 'aaaa-1.jsonl'), lines(
+    prompt('u1', null, '<command-name>/clear</command-name>\n<command-message>clear</command-message>'),
+    prompt('u2', 'u1', '<local-command-stdout>Set model to Opus</local-command-stdout>'),
+    prompt('u3', 'u2', '<bash-input>ls</bash-input>'),
+    prompt('u4', 'u3', '<bash-stdout>README.md</bash-stdout>'),
+    prompt('u5', 'u4', '<div>Fix the spacing here</div>'),
+    { type: 'assistant', uuid: 'u6', parentUuid: 'u5', message: { id: 'm1', role: 'assistant', content: [{ type: 'text', text: 'Fixed' }] } },
+  ));
+  const page = await read('claude', file);
+  assert.deepEqual([said(page.messages), page.omitted], [['You: <div>Fix the spacing here</div>', 'AI: Fixed'], false]);
+  assert.equal((await listClaudeSessions(home))[0].title, '<div>Fix the spacing here</div>');
+});
+
+test('a card name whose save failed is saved by the next set or delete, and the cache never runs ahead of the file', async (t) => {
+  const file = path.join(tempDir(t), 'card-names.json');
+  const names = createCardNames(file, { warn: () => {} });
+  assert.equal(names.get('p', 'default', 'a'), null);
+  fs.mkdirSync(file);
+  assert.equal(names.set('p', 'default', 'a', 'A'), false);
+  assert.equal(names.get('p', 'default', 'a'), null, 'a failed set changes nothing');
+  fs.rmdirSync(file);
+  assert.equal(names.set('p', 'default', 'a', 'A'), true);
+  assert.equal(createCardNames(file).get('p', 'default', 'a'), 'A', 'the retry is written');
+  const saved = fs.readFileSync(file, 'utf8');
+  fs.unlinkSync(file);
+  fs.mkdirSync(file);
+  assert.equal(names.delete('p', 'default', 'a'), false);
+  assert.equal(names.get('p', 'default', 'a'), 'A', 'a failed delete changes nothing');
+  fs.rmdirSync(file);
+  fs.writeFileSync(file, saved);
+  assert.equal(names.delete('p', 'default', 'a'), true);
+  assert.equal(createCardNames(file).get('p', 'default', 'a'), null, 'the retry is written');
+});
+
 test('a Claude page that ends before the newest message is found still finds it on the next page', async (t) => {
   const records = claudeTranscript();
   for (let n = 0; n < 6; n++) records.push({ type: 'file-history-snapshot', messageId: `x${n}`, snapshot: 'f'.repeat(200) });

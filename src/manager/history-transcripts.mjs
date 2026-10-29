@@ -20,7 +20,8 @@ export const PAGE_LIMITS = {
 };
 const ANCHOR_BYTES = 4096;
 const MAX_CURSOR = 2048;
-const TAG_RE = /^<[a-z][a-z0-9_-]*[\s>]/i;
+/** The wrappers Claude Code puts around text it inserted as a user record, in records from before `origin`. */
+export const CLAUDE_INSERTED = /^<(command-name|local-command-stdout|bash-input|bash-stdout)>/;
 
 const changed = () => historyError(409, 'history_changed', 'The conversation changed. Refresh to read it again.');
 const badCursor = () => historyError(400, 'bad_history_cursor', 'Invalid conversation page.');
@@ -345,11 +346,6 @@ function clean(text) {
   return typeof text === 'string' ? text.trim() : '';
 }
 
-function visiblePrompt(text) {
-  const value = clean(text);
-  return value && !TAG_RE.test(value) ? value : '';
-}
-
 // ---- Claude Code ----------------------------------------------------------------
 
 const WITHHELD = Symbol('withheld');
@@ -365,7 +361,8 @@ function claudePrompt(record) {
   else if (Array.isArray(content) && !content.some((part) => part?.type === 'tool_result')) {
     text = content.filter((part) => part?.type === 'text' && typeof part.text === 'string').map((part) => part.text).join('\n');
   } else return null;
-  const value = origin === 'human' ? clean(text) : visiblePrompt(text);
+  const value = clean(text);
+  if (origin === undefined && CLAUDE_INSERTED.test(value)) return null;
   return value && !value.startsWith('[Request interrupted by user') ? value : null;
 }
 

@@ -79,23 +79,32 @@ export function createCardNames(file, { limit = CARD_NAMES_LIMIT, warn = (messag
     get(providerId, accountId, toolSessionId) {
       return load()?.get(key(providerId, accountId, toolSessionId))?.name ?? null;
     },
-    /** True once the name is stored. */
+    /** True once the name is stored. The cache changes only with the file, so a failed save is retried by the next call. */
     set(providerId, accountId, toolSessionId, name) {
       const current = load();
       if (!current) return false;
       const k = key(providerId, accountId, toolSessionId);
       if (current.get(k)?.name === name) return true;
+      const next = new Map(current);
       // Newest last, so the oldest are dropped first.
-      current.delete(k);
-      current.set(k, { provider: providerId, account: accountId, id: toolSessionId, name, at: now() });
-      while (current.size > limit) current.delete(current.keys().next().value);
-      return save(current);
+      next.delete(k);
+      next.set(k, { provider: providerId, account: accountId, id: toolSessionId, name, at: now() });
+      while (next.size > limit) next.delete(next.keys().next().value);
+      if (!save(next)) return false;
+      names = next;
+      return true;
     },
     /** True once no name is stored. */
     delete(providerId, accountId, toolSessionId) {
       const current = load();
       if (!current) return false;
-      return current.delete(key(providerId, accountId, toolSessionId)) ? save(current) : true;
+      const k = key(providerId, accountId, toolSessionId);
+      if (!current.has(k)) return true;
+      const next = new Map(current);
+      next.delete(k);
+      if (!save(next)) return false;
+      names = next;
+      return true;
     },
   };
 }
