@@ -81,6 +81,7 @@ function connect({ changelogOpen = false, githubOpen = false, docked = null } = 
     managerGone: () => alerts.push('gone'),
     managerLoss: { disconnected: () => recovery.push('check'), cancel: () => recovery.push('cancel') },
     catchUpNotes: noop, applyServerNotes: noop, runWatch: { runs: new Map() }, deliverRunWatch: noop,
+    yardUi: { celebrate: () => calls.push('fireworks') },
   };
   runInNewContext(`${connectSource}\n${lifecycleSource}`, context);
   const loadProviders = context.loadProviders;
@@ -135,6 +136,13 @@ test('a reconnect leaves the changelog alone while its panel is closed', () => {
   const page = connect({ changelogOpen: false });
   page.send(page.hello);
   assert.deepEqual(page.calls, ['panes', 'news']);
+});
+
+test('a yard.fireworks event lights the Yard once', () => {
+  const page = connect();
+  page.send(page.hello);
+  page.send({ type: 'yard.fireworks' });
+  assert.deepEqual(page.calls.filter((call) => call === 'fireworks'), ['fireworks']);
 });
 
 test('a reconnect and a github.updated reload the open GitHub panel', () => {

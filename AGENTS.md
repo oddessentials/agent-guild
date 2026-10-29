@@ -8,7 +8,7 @@ Notes for coding agents working in this repository. People start with
 
 ## Layout
 
-* `bin/agent-guild.mjs`: the launcher CLI (`open`, `start`, `stop`, `status`, `url`, `doctor`, `mcp`).
+* `bin/agent-guild.mjs`: the launcher CLI (`open`, `start`, `stop`, `status`, `url`, `fireworks`, `doctor`, `mcp`).
 * `src/manager/`: the session manager, which owns every terminal and serves the
   local API in [docs/api.md](docs/api.md). Its design is in
   [docs/architecture.md](docs/architecture.md).

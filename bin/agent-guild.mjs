@@ -7,6 +7,7 @@
 //   agent-guild restart    stop the manager and start it again (ends all sessions)
 //   agent-guild status     show whether the manager is running
 //   agent-guild url        print the page URL (includes the access token)
+//   agent-guild fireworks  launch fireworks over every open Yard
 //   agent-guild mcp        serve the Model Context Protocol on stdio, for coding agents
 
 import fs from 'node:fs';
@@ -35,6 +36,7 @@ Commands:
   restart   Stop the session manager and start it again; ends every session
   status    Show whether the session manager is running
   url       Print the web page URL, including the access token
+  fireworks Launch fireworks over every open Yard
   doctor    Diagnose the health of the installation and related tooling
   mcp       Serve the Model Context Protocol on stdio, so a coding agent can
             see and steer the sessions (--allow-input lets it type into them)
@@ -287,6 +289,19 @@ async function cmdStatus() {
   }
 }
 
+async function cmdFireworks() {
+  const url = baseUrl();
+  if (!(await health(url))) {
+    console.log('Session manager is not running.');
+    process.exitCode = 3;
+    return;
+  }
+  const res = await fetch(`${url}/api/v1/yard/fireworks`, { method: 'POST', headers: { Authorization: `Bearer ${loadOrCreateToken()}` } });
+  if (!res.ok) throw new Error(`the session manager answered ${res.status}.`);
+  const { pages } = await res.json();
+  console.log(pages ? `Fireworks sent to ${pages} open page(s); every Yard on show lights up.` : 'No page is open to see the fireworks.');
+}
+
 const MIN_NODE_MAJOR = 22;
 
 async function main() {
@@ -335,6 +350,7 @@ async function main() {
       process.exitCode = ok ? 0 : 1;
       return undefined;
     }
+    case 'fireworks': return cmdFireworks();
     case 'url': {
       console.log(pageUrl(baseUrl(), loadOrCreateToken()));
       return undefined;

@@ -433,6 +433,21 @@ test('both sockets answer a ping, so a page can notice a link that went silent',
   await call('POST', `/sessions/${session.id}/stop`);
 });
 
+test('fireworks need the token, reach every open page once, and tell the caller how many pages heard', async () => {
+  assert.equal((await fetch(`${base}/api/v1/yard/fireworks`, { method: 'POST' })).status, 401);
+  const before = await call('POST', '/yard/fireworks');
+  assert.equal(before.status, 200);
+  assert.equal(before.body.ok, true);
+  const pages = [1, 2].map(() => new Client(`${base.replace('http', 'ws')}/api/v1/events?token=${token}`));
+  await Promise.all(pages.map((page) => page.opened));
+  await waitFor(() => pages.every((page) => page.messages.some((m) => m.type === 'hello')), { label: 'hellos' });
+  const lit = await call('POST', '/yard/fireworks');
+  assert.equal(lit.body.pages, before.body.pages + 2);
+  await waitFor(() => pages.every((page) => page.messages.some((m) => m.type === 'yard.fireworks')), { label: 'fireworks' });
+  for (const page of pages) assert.deepEqual(page.messages.filter((m) => m.type === 'yard.fireworks'), [{ type: 'yard.fireworks' }]);
+  await Promise.all(pages.map((page) => page.close()));
+});
+
 test('the web page and xterm assets are served', async () => {
   const page = await fetch(`${base}/`);
   assert.equal(page.status, 200);

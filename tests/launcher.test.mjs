@@ -132,6 +132,10 @@ test('open starts a background manager, status reports it, stop ends it', async 
   const url = await run('url');
   assert.match(url.stdout, /#token=/);
 
+  const unseen = await run('fireworks');
+  assert.equal(unseen.code, 0, unseen.stderr);
+  assert.match(unseen.stdout, /No page is open/);
+
   // With a session running, a bare shutdown request is refused: the web
   // page uses that refusal to ask before ending sessions.
   const created = await call('POST', '/sessions', { providerId: 'fake', cwd: home });
@@ -151,6 +155,10 @@ test('open starts a background manager, status reports it, stop ends it', async 
   await new Promise((resolve, reject) => { events.once('open', resolve); events.once('error', reject); });
   const closed = new Promise((resolve) => events.once('close', resolve));
 
+  const lit = await run('fireworks');
+  assert.equal(lit.code, 0, lit.stderr);
+  assert.match(lit.stdout, /Fireworks sent to 1 open page/);
+
   // The CLI's stop is documented as ending every session, so it forces.
   const stopped = await run('stop');
   assert.match(stopped.stdout, /Ending 1 running session/);
@@ -169,9 +177,11 @@ test('open starts a background manager, status reports it, stop ends it', async 
   assert.ok(done, `no manager.stopped event in ${JSON.stringify(types)}`);
   assert.equal(done.remaining, 0);
   assert.equal(types.at(-1), 'manager.stopped');
+  assert.equal(types.filter((type) => type === 'yard.fireworks').length, 1);
 
   const after = await run('status');
   assert.equal(after.code, 3);
+  assert.equal((await run('fireworks')).code, 3);
   assert.ok(!fs.existsSync(path.join(home, 'manager.json')), 'runtime file is removed on shutdown');
 });
 
