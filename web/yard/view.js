@@ -348,7 +348,8 @@ export function initYard(controller) {
   window.addEventListener('pagehide',pageHide);
   window.addEventListener('pageshow',visibility);
   setView(view,{remember:false});
-  return { update, select, setView, closePhoto, dispose() {
+  const celebrate = () => { if (sceneVisible()) renderer?.fireworks(); };
+  return { update, select, setView, closePhoto, celebrate, dispose() {
     closePhoto();
     disposed=true; sceneAttempt++; worldAttempt++; clearTimeout(swapReveal); observer.disconnect(); pendingRenderer?.dispose(); renderer?.dispose();
     document.removeEventListener('visibilitychange',visibility);

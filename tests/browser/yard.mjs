@@ -360,10 +360,23 @@ test('characters walk to where their sessions\' states put them, arrive from the
   await b.wait(`__renderer.units.get('arrival').loaded`);
   assert.ok(await b.evaluate(`__walk('arrival')`)<4000,'and reaches its place');
   assert.deepEqual(await b.evaluate(`__at('arrival')`),await b.evaluate(`__place('arrival')`));
-  // Reduced motion: a change of place is immediate, with no walk.
+  const show=await b.evaluate(`(()=>{
+    __renderer.fireworks();
+    const shows=__renderer.shows.length,halls=[...__renderer.halls.values()].filter(h=>h.root.visible).length;
+    for(let i=0;i<25;i++)__renderer.step(.05);
+    const lit=__renderer.sparks.length;
+    let n=0;while((__renderer.shows.length||__renderer.sparks.length)&&n<400){__renderer.step(.05);n++;}
+    return {shows,halls,lit,n,left:__renderer.sparks.length};
+  })()`);
+  assert.equal(show.shows,show.halls+1,'one show over the plaza and one per hall on show');
+  assert.ok(show.lit>0,'bursts are up within the first second and a quarter');
+  assert.ok(show.n<400,`the show burned out after ${show.n} steps`);
+  assert.equal(show.left,0);
+  // Reduced motion: a change of place is immediate, with no walk, and no fireworks.
   await b.evaluate(`__renderer.setReducedMotion(true);__sessions[0].activity='active';__sessions[0].lastOutputAt=${q(iso(0))};__renderer.update(__providers,__sessions)`);
   assert.equal(await b.evaluate(`${unit}.moving`),false);
   assert.deepEqual(await b.evaluate(`__at(${q(id)})`),await b.evaluate(`__place(${q(id)})`),'reduced motion places it at once');
+  assert.equal(await b.evaluate(`(__renderer.fireworks(),__renderer.shows.length)`),0,'reduced motion shows no fireworks');
   await b.evaluate('__renderer.dispose()');
   assert.deepEqual(b.errors,[]);
 });

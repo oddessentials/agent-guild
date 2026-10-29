@@ -25,7 +25,7 @@ function page() {
     api: (method, path) => new Promise((resolve, reject) => requests.push({ method, path, resolve, reject })),
     renderGitHubViews: () => calls.push('render'),
     restorePick: () => calls.push('restore'), followTerminal: () => calls.push('follow'),
-    scheduleRuns: () => calls.push('schedule'), showAuth: () => calls.push('auth'),
+    scheduleRuns: () => calls.push('schedule'), showAuth: () => calls.push('auth'), runWatchSeen: () => calls.push('watch'), deliverRunWatch: () => calls.push('deliver'), dropWatchAccounts: () => calls.push('drop'),
   };
   context.dockShows = () => context.visibility.shown;
   const constants = ['BODY_LIMIT', 'GITHUB_REQUEST_LIMIT'].map((name) => app.match(new RegExp(`^const ${name} = .*$`, 'm'))[0]);

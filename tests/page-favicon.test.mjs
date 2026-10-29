@@ -34,7 +34,7 @@ function page() {
     managerLoss: { cancel: noop, disconnected: noop },
     closeDialogs: noop,
     showStopped: noop, showManagerStopped: noop, managerGone: noop,
-    wsUrl: (path) => path, WebSocket: class {}, setTimeout: noop, catchUpNotes: noop, applyServerNotes: noop, loadProviders: async () => {}, AuthError: class extends Error {},
+    wsUrl: (path) => path, WebSocket: class {}, setTimeout: noop, catchUpNotes: noop, applyServerNotes: noop, runWatch: { runs: new Map() }, deliverRunWatch: noop, loadProviders: async () => {}, AuthError: class extends Error {},
   };
   runInNewContext(source, context);
   context.connectEvents();

@@ -20,6 +20,7 @@ const GLOW = { off: 0, low: .55, high: 1 }, GLOW_GAIN = { light: .9, dark: 2.2 }
 // fronts, and a generated hall's baked glow map.
 const glows = m => m.name === 'window' || m.name === 'magic' || m.name === 'officeGlass' || m.emissiveMap;
 const PARTICLES = 640;
+const FIREWORK_COLORS = [0xffd36b, 0xff6b8a, 0x7bd7ff, 0xa8ff7b, 0xffffff];
 // How many tags' heights a character's tag may rise above its character
 // before it hides: any higher, it reads as another's.
 const RISE = 2, CHIP_GAP = 4;
@@ -91,7 +92,7 @@ export class YardRenderer {
     this.scene=new T.Scene();this.units=new Map();this.halls=new Map();this.slots=new Map();this.cache=new Map();
     this.loadingManager=new T.LoadingManager();
     this.providers=[];this.sessions=[];this.selected=null;this.world=null;this.skin=null;this.request=0;this.worldRequest=0;this.pending=null;
-    this.staged=null;this.seen=new Set();this.stageTimer=0;this.sparks=[];this.marks=new T.Group();this.scene.add(this.marks);this.glyphs=null;this.markPlane=new T.PlaneGeometry(1,1);
+    this.staged=null;this.seen=new Set();this.stageTimer=0;this.sparks=[];this.shows=[];this.marks=new T.Group();this.scene.add(this.marks);this.glyphs=null;this.markPlane=new T.PlaneGeometry(1,1);
     this.props=new Map();this.propSpots=[];this.station=null;this.effects=null;
     this.active=false;this.reduced=false;this.disposed=false;this.frame=0;this.lastTime=0;this.dirty=true;
     this.crowd=null;this.rows=new Map();
@@ -872,30 +873,61 @@ export class YardRenderer {
       const crossed=last<=time?event.time>last&&event.time<=time:event.time>last||event.time<=time;
       if(!crossed)continue;
       const c=Math.cos(unit.heading),s=Math.sin(unit.heading),[x,y,z]=event.at;
-      this.spark(unit.root.position.x+x*c+z*s,unit.root.position.y+y,unit.root.position.z-x*s+z*c,unit.session.provider.color);
+      this.spark(unit.root.position.x+x*c+z*s,unit.root.position.y+y,unit.root.position.z-x*s+z*c);
     }
   }
-  spark(x,y,z,color) {
-    if(this.sparks.length>=24)return;
+  spark(x,y,z) {
     const count=14,positions=new Float32Array(count*3),velocity=[];
     for(let i=0;i<count;i++){
       positions.set([x,y+.05,z],i*3);
       const a=i/count*Math.PI*2+Math.random()*.4,r=1.2+Math.random()*1.4;
       velocity.push([Math.cos(a)*r,1.6+Math.random()*2.2,Math.sin(a)*r]);
     }
+    this.scatter(positions,velocity,{color:0xffc46b,size:.09,life:.55,gravity:9});
+  }
+  fireworks() {
+    if(this.reduced||this.disposed||!this.world)return;
+    const spots=[{x:0,y:4,z:0}];
+    for(const item of this.halls.values()){
+      if(!item.root.visible)continue;
+      (item.smoke||item.root).getWorldPosition(vector);spots.push({x:vector.x,y:vector.y+3.5,z:vector.z});
+    }
+    for(const spot of spots)this.shows.push({...spot,due:Math.random()*1.2,left:4});
+    this.drawOnce();
+  }
+  burst({x,y,z}) {
+    const count=90,positions=new Float32Array(count*3),velocity=[];
+    const ox=x+(Math.random()-.5)*2,oy=y+Math.random()*2,oz=z+(Math.random()-.5)*2;
+    for(let i=0;i<count;i++){
+      positions.set([ox,oy,oz],i*3);
+      const u=Math.random()*2-1,a=Math.random()*Math.PI*2,r=Math.sqrt(1-u*u),s=2.8+Math.random()*1.6;
+      velocity.push([r*Math.cos(a)*s,u*s+.8,r*Math.sin(a)*s]);
+    }
+    this.scatter(positions,velocity,{color:FIREWORK_COLORS[Math.floor(Math.random()*FIREWORK_COLORS.length)],size:.3,life:1.5,gravity:2});
+  }
+  scatter(positions,velocity,{color,size,life,gravity}) {
+    if(this.sparks.length>=48)return;
     const geometry=new T.BufferGeometry();geometry.setAttribute('position',new T.BufferAttribute(positions,3));
-    const material=new T.PointsMaterial({color:0xffc46b,size:.09,transparent:true,opacity:1,blending:T.AdditiveBlending,depthWrite:false});
+    const material=new T.PointsMaterial({color,size,transparent:true,opacity:1,blending:T.AdditiveBlending,depthWrite:false});
     const points=new T.Points(geometry,material);points.frustumCulled=false;
-    this.scene.add(points);this.sparks.push({points,velocity,age:0});
+    this.scene.add(points);this.sparks.push({points,velocity,age:0,life,gravity});
+  }
+  updateShows(dt) {
+    for(const show of this.shows){
+      show.due-=dt;
+      if(show.due>0)continue;
+      this.burst(show);show.left--;show.due=.3+Math.random()*.4;
+    }
+    this.shows=this.shows.filter(show=>show.left>0);
   }
   updateSparks(dt) {
     for(const spark of [...this.sparks]){
       spark.age+=dt;
       const array=spark.points.geometry.attributes.position.array;
-      spark.velocity.forEach((v,i)=>{v[1]-=9*dt;array[i*3]+=v[0]*dt;array[i*3+1]=Math.max(.02,array[i*3+1]+v[1]*dt);array[i*3+2]+=v[2]*dt;});
+      spark.velocity.forEach((v,i)=>{v[1]-=spark.gravity*dt;array[i*3]+=v[0]*dt;array[i*3+1]=Math.max(.02,array[i*3+1]+v[1]*dt);array[i*3+2]+=v[2]*dt;});
       spark.points.geometry.attributes.position.needsUpdate=true;
-      spark.points.material.opacity=Math.max(0,1-spark.age/.55);
-      if(spark.age>.55){this.scene.remove(spark.points);spark.points.geometry.dispose();spark.points.material.dispose();this.sparks.splice(this.sparks.indexOf(spark),1);}
+      spark.points.material.opacity=Math.max(0,1-spark.age/spark.life);
+      if(spark.age>spark.life){this.scene.remove(spark.points);spark.points.geometry.dispose();spark.points.material.dispose();this.sparks.splice(this.sparks.indexOf(spark),1);}
     }
     if(this.sparks.length)this.dirty=true;
   }
@@ -1087,7 +1119,7 @@ export class YardRenderer {
     if(value)for(const unit of this.units.values()){this.unlook(unit);unit.lookYaw=0;unit.lookPitch=0;}
     if(value)for(const unit of this.units.values())if(unit.moving&&unit.target){this.arrive(unit);this.play(unit);}
     // Reduced motion shows each hall's glow as it stands, and no effects.
-    if(value){for(const item of this.halls.values())item.level=item.target;this.glow();this.stillEffects();}
+    if(value){for(const item of this.halls.values())item.level=item.target;this.glow();this.stillEffects();this.shows=[];}
     this.dirty=true;this.drawOnce();
   }
   setActive(value) {
@@ -1125,6 +1157,7 @@ export class YardRenderer {
       for(const helper of unit.helpers)helper.mixer.update(step);
       this.look(unit,step);
     }
+    this.updateShows(dt);
     this.updateSparks(dt);
     this.updateHalls(dt);
     this.stepMarks(dt);
@@ -1187,7 +1220,7 @@ export class YardRenderer {
   dispose() {
     if(this.disposed)return;
     this.disposed=true;this.request++;this.worldRequest++;cancelAnimationFrame(this.frame);clearTimeout(this.stageTimer);
-    for(const spark of this.sparks){spark.points.geometry.dispose();spark.points.material.dispose();}this.sparks=[];
+    for(const spark of this.sparks){spark.points.geometry.dispose();spark.points.material.dispose();}this.sparks=[];this.shows=[];
     this.releaseEffects();this.clearProps();
     this.loadingManager.abort();this.pending?.close();this.pending=null;
     this.resizeObserver.disconnect();this.controls.dispose();this.clearUnits();
