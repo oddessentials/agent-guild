@@ -81,6 +81,7 @@ export class Session extends EventEmitter {
    * @param {number} [opts.activityIdleMs]
    * @param {number} [opts.doneAgentLingerMs]
    * @param {number} [opts.killGraceMs]  time between hang-up and force kill
+   * @param {typeof killWindowsTree} [opts.killTree]  how a Windows process tree is ended, replaceable in tests
    */
   constructor(opts) {
     super();
@@ -102,6 +103,8 @@ export class Session extends EventEmitter {
     this.activityIdleMs = opts.activityIdleMs ?? 2500;
     this.doneAgentLingerMs = opts.doneAgentLingerMs ?? 15000;
     this.killGraceMs = opts.killGraceMs ?? 4000;
+    this.killTree = opts.killTree ?? killWindowsTree;
+    this._treeKill = false;
     this.reportingTimeoutMs = opts.reportingTimeoutMs ?? 30000;
     this.reporting = REPORTING_STATES.has(opts.reporting?.state) ? { state: opts.reporting.state, reason: opts.reporting.reason ?? null } : null;
     this._reportingTimer = null;
@@ -202,6 +205,7 @@ export class Session extends EventEmitter {
       useConpty: true,
     });
     this.pty = proc;
+    this._treeKill = false;
     proc.onData((data) => { if (this.pty === proc) this._onData(data); });
     proc.onExit(({ exitCode, signal }) => { if (this.pty === proc) this._onExit(exitCode, signal); });
   }
@@ -425,6 +429,9 @@ export class Session extends EventEmitter {
   kill({ graceMs = this.killGraceMs } = {}) {
     if (this.status !== 'running') return;
     if (process.platform === 'win32') {
+      // Once asked, the tree is not ended again while the exit is on its way: by then its pid may name another process.
+      if (this._treeKill) return;
+      this._treeKill = true;
       this._killWindowsTree();
       return;
     }
@@ -437,11 +444,16 @@ export class Session extends EventEmitter {
 
   _killWindowsTree() {
     const fallback = () => {
+      this._treeKill = false;
       if (this.status === 'running') { try { this.pty.kill(); } catch { /* gone */ } }
     };
     const pid = this.pty.pid;
     if (!pid) return fallback();
-    killWindowsTree(pid, (err) => { if (err) fallback(); }, { tree: !this.multiplexer });
+    this.killTree(pid, (err) => {
+      // taskkill's exit status 128: no process has this pid, so it has already ended. node-pty's own kill would end
+      // every process on whatever console that pid now belongs to, which can be this one.
+      if (err && err.code !== 128) fallback();
+    }, { tree: !this.multiplexer });
   }
 
   /**
