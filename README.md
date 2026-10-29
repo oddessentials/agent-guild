@@ -284,7 +284,7 @@ requests carry your code or prompts:
 | News feeds, Hacker News, arXiv, GitHub | News feed | Every 30 minutes while the page is open |
 | GitHub releases | What's new | Hourly, more often just after a release |
 | herdr.dev, Homebrew | Multiplexer version checks | Hourly |
-| GitHub, GitHub Status | GitHub panel | When you use it |
+| GitHub, GitHub Status | GitHub panel | When you use it, and every few seconds while a workflow run you chose to watch is going |
 | Package sources | Installs and updates | When you ask |
 | YouTube | Video thumbnails and playback | When you open Videos |
 

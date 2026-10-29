@@ -80,7 +80,7 @@ function connect({ changelogOpen = false, githubOpen = false, docked = null } = 
     managerConnected: () => alerts.push('connected'),
     managerGone: () => alerts.push('gone'),
     managerLoss: { disconnected: () => recovery.push('check'), cancel: () => recovery.push('cancel') },
-    catchUpNotes: noop, applyServerNotes: noop,
+    catchUpNotes: noop, applyServerNotes: noop, runWatch: { runs: new Map() }, deliverRunWatch: noop,
   };
   runInNewContext(`${connectSource}\n${lifecycleSource}`, context);
   const loadProviders = context.loadProviders;

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { until, withPage } from './chrome.mjs';
 
 const instrumentation = `<script>
-window.testGithub = { requests: [], writes: [], completed: 0, held: [], bulk: 201, unavailable: false, removed: false,
+window.testGithub = { requests: [], writes: [], completed: 0, held: [], bulk: 201, unavailable: false, removed: false, runs: {}, extraRuns: [],
   bodies: { 42: 'x'.repeat(50000), 39: 'first\\r\\nlast' } };
 const DemoSocket = window.WebSocket;
 window.WebSocket = class extends DemoSocket {
@@ -40,6 +40,13 @@ window.fetch = async function(input, init) {
     data.repos.push({...sample, accountId:2002, login:'work-dev'});
     for (let i=0; i<testGithub.bulk; i++) data.repos.push({...sample, name:'bulk-'+String(i).padStart(3,'0'), fullName:'acme/bulk-'+String(i).padStart(3,'0')});
     if(testGithub.unavailable) data.errors.push({accountId:1001,login:'demo-dev',message:'Sign in again.'});
+    return answer(data);
+  }
+  if (method === 'GET' && /\\/actions$/.test(path)) {
+    const data = await response.json();
+    data.runs.push(...testGithub.extraRuns);
+    for (const run of data.runs) Object.assign(run, testGithub.runs[run.id] || {});
+    data.running = data.runs.some(r => r.status !== 'completed');
     return answer(data);
   }
   if (method === 'GET' && /\\/acme\\/storefront\\/issues$/.test(path)) {
@@ -307,6 +314,37 @@ const checks = await withPage({ name: 'github', instrumentation }, async ({ orig
   await evaluate(`{const o=document.querySelectorAll('#github-repo-list [role=option]')[1];for(const type of ['pointerdown','pointerup'])o.dispatchEvent(new PointerEvent(type,{bubbles:true,cancelable:true,pointerType:'touch'}));document.querySelector('#github-repo').blur();}`);
   assert.equal(await value('#github-repo'), tapped);
   pass('a tap picks a repository even when focus leaves before its click');
+
+  await choose('storefront demo-dev');
+  await click('#github-view-actions');
+  await until('runs listed', () => visible('#github-runs [data-key="watch:9003"]'));
+  await click('#github-runs [data-key="watch:9003"]');
+  assert.equal(await evaluate(`document.querySelector('#github-runs [data-key="watch:9003"]').getAttribute('aria-pressed')`), 'true');
+  assert.match(await evaluate(`sessionStorage.getItem('agentGuild.githubWatch')`), /9003/);
+  await click('#github-view-issues');
+  await evaluate(`testGithub.runs[9003]={status:'completed',conclusion:'success'}`);
+  await until('passed toast', () => evaluate(`!document.querySelector('#toast').hidden && document.querySelector('#toast').textContent.includes('CI passed')`), 20000);
+  assert.equal(await evaluate(`sessionStorage.getItem('agentGuild.githubWatch')`), null);
+  assert.equal(await visible('#run-failed'), false);
+  pass('a watched run that passes says so from another view and ends the watch');
+
+  await evaluate(`testGithub.extraRuns.push({id:9004,name:'Release',title:'Ship it',branch:'main',event:'push',status:'in_progress',conclusion:null,runNumber:215,updatedAt:new Date().toISOString(),url:'https://github.com/acme/storefront/actions/runs/9004'})`);
+  await click('#github-view-actions');
+  await until('new run listed', () => visible('#github-runs [data-key="watch:9004"]'));
+  await click('#github-runs [data-key="watch:9004"]');
+  await click('#dock-close');
+  await evaluate(`testGithub.runs[9004]={status:'completed',conclusion:'failure'}`);
+  await until('failure overlay', () => visible('#run-failed .run-failed-banner'), 20000);
+  assert.match(await evaluate(`document.querySelector('#run-failed-title').textContent`), /Release failure/);
+  assert.equal(await evaluate(`document.querySelector('#run-failed-list a').href`), 'https://github.com/acme/storefront/actions/runs/9004');
+  assert.match(await evaluate(`document.querySelector('#run-failed-list').textContent`), /Ship it · acme\/storefront · main/);
+  assert.match(await evaluate(`sessionStorage.getItem('agentGuild.githubWatch')`), /failures.*9004/);
+  await click('#run-failed-dismiss');
+  assert.equal(await visible('#run-failed'), false);
+  assert.equal(await evaluate(`sessionStorage.getItem('agentGuild.githubWatch')`), null);
+  await click('#github-toggle');
+  await click('#github-view-issues');
+  pass('a watched run that fails paints the page with the dock closed, until dismissed');
 
   await choose('storefront work-dev');
   await issueList();

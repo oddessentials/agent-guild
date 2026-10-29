@@ -4619,6 +4619,7 @@ function loadGitHub() {
 function setGitHub(github) {
   const before = state.github?.signIn;
   state.github = github;
+  dropWatchAccounts(github.accounts);
   const branches = githubPick.data.branches;
   if (branches && !github.accounts.some((a) => a.id === branches.repo.accountId && !a.needsSignIn)) {
     // Replace the generation even while the dock is closed; signing in again must
@@ -5317,6 +5318,10 @@ async function loadView(view) {
   githubPick.data[view] = { key, stamp, value: value ?? slot.value, error, loading: false };
   renderGitHubViews();
   if (view === 'actions') scheduleRuns();
+  if (view === 'actions' && value) {
+    runWatchSeen(repo, value.runs);
+    deliverRunWatch();
+  }
 }
 
 // Each object is a listing generation, scoped to the selected account/repository.
@@ -5498,6 +5503,154 @@ function scheduleRuns() {
   clearTimeout(runsTimer);
   if (!dockShows('github') || githubShownView() !== 'actions' || !githubPick.repo || document.visibilityState !== 'visible') return;
   runsTimer = setTimeout(() => loadView('actions'), viewData('actions')?.value?.running ? RUNS_POLL_MS : RUNS_IDLE_POLL_MS);
+}
+
+const RUN_WATCH_KEY = 'agentGuild.githubWatch';
+const RUN_FAILURES = new Set(['failure', 'timed_out', 'startup_failure', 'action_required']);
+const runWatch = { runs: new Map(), outcomes: [], failures: [], timer: 0, polling: null, told: null };
+
+function runWatchKey(repo, id) {
+  return `${repoKey(repo)}#${id}`;
+}
+
+function saveRunWatch() {
+  const { runs, outcomes, failures } = runWatch;
+  const value = runs.size || outcomes.length || failures.length ? JSON.stringify({ watches: [...runs.values()], outcomes, failures }) : null;
+  try { value === null ? sessionStorage.removeItem(RUN_WATCH_KEY) : sessionStorage.setItem(RUN_WATCH_KEY, value); } catch {}
+}
+
+function loadRunWatch() {
+  let saved = null;
+  try { saved = JSON.parse(sessionStorage.getItem(RUN_WATCH_KEY) ?? 'null'); } catch { saved = null; }
+  const list = (value) => (Array.isArray(value) ? value.filter((item) => item && typeof item === 'object') : []);
+  runWatch.runs = new Map();
+  for (const item of list(saved?.watches)) {
+    if (Number.isSafeInteger(item.id) && Number.isSafeInteger(item.repo?.accountId) && typeof item.repo.fullName === 'string') runWatch.runs.set(runWatchKey(item.repo, item.id), item);
+  }
+  runWatch.outcomes = list(saved?.outcomes);
+  runWatch.failures = list(saved?.failures);
+  renderRunFailures();
+  scheduleRunWatch();
+  deliverRunWatch();
+}
+
+function watchedRun(repo, id) {
+  return runWatch.runs.has(runWatchKey(repo, id));
+}
+
+function toggleRunWatch(repo, run) {
+  const key = runWatchKey(repo, run.id);
+  if (runWatch.runs.has(key)) runWatch.runs.delete(key);
+  else {
+    const { accountId, login, owner, name, fullName } = repo;
+    runWatch.runs.set(key, { repo: { accountId, login, owner, name, fullName }, id: run.id, name: run.name, title: run.title, url: run.url });
+  }
+  saveRunWatch();
+  renderGitHubViews();
+  scheduleRunWatch();
+}
+
+function endWatch(key, outcome) {
+  const watch = runWatch.runs.get(key);
+  runWatch.runs.delete(key);
+  runWatch.outcomes.push({ repo: watch.repo.fullName, name: watch.name, title: watch.title, url: watch.url, ...outcome });
+}
+
+function runWatchSeen(repo, runs) {
+  const key = repoKey(repo);
+  let changed = false;
+  for (const [id, watch] of runWatch.runs) {
+    if (repoKey(watch.repo) !== key) continue;
+    const run = runs.find((r) => r.id === watch.id);
+    if (run && run.status !== 'completed') continue;
+    changed = true;
+    if (!run) endWatch(id, { kind: 'ended', text: `${watch.title} is no longer among the latest runs of ${watch.repo.fullName}.` });
+    else if (run.conclusion === 'success') endWatch(id, { kind: 'passed', text: `${watch.name} passed: ${watch.title}` });
+    else if (RUN_FAILURES.has(run.conclusion)) endWatch(id, { kind: 'failed', label: runLabel(run), branch: run.branch });
+    else endWatch(id, { kind: 'ended', text: `${watch.name} was ${runLabel(run)}: ${watch.title}` });
+  }
+  if (!changed) return;
+  saveRunWatch();
+  renderGitHubViews();
+  scheduleRunWatch();
+}
+
+function dropWatchAccounts(accounts) {
+  let changed = false;
+  for (const [key, watch] of runWatch.runs) {
+    if (accounts.some((a) => a.id === watch.repo.accountId)) continue;
+    changed = true;
+    endWatch(key, { kind: 'ended', text: `Stopped watching ${watch.title}: @${watch.repo.login} was signed out.` });
+  }
+  if (!changed) return;
+  saveRunWatch();
+  scheduleRunWatch();
+  deliverRunWatch();
+}
+
+function deliverRunWatch() {
+  if (!runWatch.outcomes.length || runWatch.polling || document.visibilityState !== 'visible' || $('app').hidden) return;
+  const outcomes = runWatch.outcomes;
+  runWatch.outcomes = [];
+  runWatch.failures.push(...outcomes.filter((o) => o.kind === 'failed'));
+  saveRunWatch();
+  renderRunFailures();
+  const showing = runWatch.told && !$('toast').hidden && $('toast').contains(runWatch.told.node) ? runWatch.told.outcomes : [];
+  const told = [...showing, ...outcomes.filter((o) => o.kind !== 'failed')];
+  if (told.length) {
+    const node = document.createTextNode(told.map((o) => o.text).join('\n'));
+    runWatch.told = { node, outcomes: told };
+    const single = told.length === 1 && told[0].url ? { label: 'GitHub', run: () => window.open(told[0].url, '_blank', 'noopener,noreferrer') } : null;
+    toast(node, 8000, single);
+  }
+  if (outcomes.some((o) => o.kind === 'passed')) yardUi?.celebrate();
+}
+
+function renderRunFailures() {
+  const failures = runWatch.failures;
+  $('run-failed').hidden = !failures.length;
+  if (!failures.length) return;
+  $('run-failed-title').textContent = failures.length === 1 ? `${failures[0].name} ${failures[0].label}` : `${failures.length} watched runs failed`;
+  $('run-failed-list').replaceChildren(...failures.map((o) => el('li', null, externalLink(o.title, o.url, 'run-failed-link'),
+    ` · ${[o.repo, o.branch, failures.length > 1 && `${o.name} ${o.label}`].filter(Boolean).join(' · ')}`)));
+}
+
+function dismissRunFailures() {
+  runWatch.failures = [];
+  saveRunWatch();
+  renderRunFailures();
+}
+
+function scheduleRunWatch() {
+  clearTimeout(runWatch.timer);
+  runWatch.timer = 0;
+  if (!runWatch.runs.size || runWatch.polling) return;
+  runWatch.timer = setTimeout(pollRunWatch, document.visibilityState === 'visible' ? RUNS_POLL_MS : RUNS_IDLE_POLL_MS);
+}
+
+function pollRunWatch() {
+  if (runWatch.polling) return runWatch.polling;
+  clearTimeout(runWatch.timer);
+  runWatch.timer = 0;
+  runWatch.polling = (async () => {
+    if (!state.connected || !runWatch.runs.size) return;
+    if (!state.github) await api('GET', '/github').then(({ github }) => setGitHub(github), () => {});
+    const repos = new Map();
+    for (const watch of runWatch.runs.values()) repos.set(repoKey(watch.repo), watch.repo);
+    const accounts = usableGitHubAccounts();
+    await Promise.all([...repos.values()].filter((repo) => accounts.some((a) => a.id === repo.accountId)).map(async (repo) => {
+      try {
+        runWatchSeen(repo, (await api('GET', `${repoPath(repo)}/actions`)).runs);
+      } catch (err) {
+        if (err instanceof AuthError) showAuth(err.message);
+      }
+    }));
+  })().finally(() => {
+    runWatch.polling = null;
+    deliverRunWatch();
+    scheduleRunWatch();
+  });
+  return runWatch.polling;
 }
 
 function switchGitHubView(view, { focus = false } = {}) {
@@ -5963,7 +6116,15 @@ function renderRuns() {
   const banner = slot?.value ? el('p', `github-running-note${slot.value.running ? ' on' : ''}`, slot.value.running ? 'A workflow is running. This list refreshes every few seconds.' : 'No workflow is running.') : null;
   const rows = runs.map((run) => {
     const meta = [run.name !== run.title && run.name, run.branch && `on ${run.branch}`, run.event, run.runNumber && `#${run.runNumber}`, run.updatedAt && relativeTime(run.updatedAt)].filter(Boolean).join(' · ');
-    return recordRow(`run:${run.id}`, run.title, meta, badge(runTone(run), runLabel(run), `Status: ${runLabel(run)}`), run.url);
+    const side = el('span', 'github-run-side', badge(runTone(run), runLabel(run), `Status: ${runLabel(run)}`));
+    if (run.status !== 'completed') {
+      const watching = watchedRun(githubPick.repo, run.id);
+      const watch = keyed(button(watching ? 'Watching' : 'Watch', () => toggleRunWatch(githubPick.repo, run)), `watch:${run.id}`);
+      watch.setAttribute('aria-pressed', String(watching));
+      watch.title = watching ? 'Stop watching this run' : 'Fireworks when this run passes, a red screen when it fails';
+      side.prepend(watch);
+    }
+    return recordRow(`run:${run.id}`, run.title, meta, side, run.url);
   });
   redraw(panel, [
     viewTools('actions'),
@@ -7571,7 +7732,8 @@ function connectEvents() {
       loadNews();
       // A changelog.updated sent while the socket was down is lost; catch up the open panel.
       if ($('changelog').open) loadChangelog();
-      if (dockShows('github')) loadGitHub();
+      if (dockShows('github') || runWatch.runs.size) loadGitHub();
+      deliverRunWatch();
       catchUpNotes(msg.notesRevision, msg.notesUnreadable === true);
       loadProviders(ws).catch((err) => {
         if (state.pageAway || state.remoteRevoked || state.eventsSocket !== ws) return;
@@ -7591,7 +7753,7 @@ function connectEvents() {
     } else if (msg.type === 'news.updated') {
       loadNews();
     } else if (msg.type === 'github.updated') {
-      if (dockShows('github')) loadGitHub();
+      if (dockShows('github') || runWatch.runs.size) loadGitHub();
     } else if (msg.type === 'changelog.updated') {
       if ($('changelog').open) loadChangelog();
     } else if (msg.type === 'manager.upgrade') {
@@ -8425,5 +8587,12 @@ onSessionRequest((id) => {
   if (state.connected && state.eventsSocket?.greeted) openAskedSession();
 });
 
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && runWatch.runs.size) pollRunWatch();
+  else scheduleRunWatch();
+  deliverRunWatch();
+});
+$('run-failed-dismiss').addEventListener('click', dismissRunFailures);
+loadRunWatch();
 state.token = readTokenFromHash() || load(TOKEN_KEY);
 boot();

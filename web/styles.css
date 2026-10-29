@@ -1222,6 +1222,19 @@ a.btn.github-out::after {
 .github-service-note .console-link { color: inherit; text-decoration: underline; }
 .github-running-note.on { color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, var(--surface)); }
 .badge.run { --badge: var(--warn); }
+.github-run-side { display: inline-flex; align-items: center; gap: 6px; }
+.run-failed { position: fixed; inset: 0; z-index: 13; pointer-events: none; background: color-mix(in srgb, var(--danger) 30%, transparent); }
+.run-failed:not([hidden]) { animation: fade-in 0.5s ease-out; }
+.run-failed-banner {
+  pointer-events: auto; position: absolute; left: 50%; top: calc(var(--topbar-h, 56px) + 24px); transform: translateX(-50%);
+  width: max-content; max-width: min(560px, calc(100vw - 32px)); max-height: calc(100dvh - var(--topbar-h, 56px) - 48px); padding: 14px 18px;
+  display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 8px;
+  background: var(--surface); color: var(--text); border: 2px solid var(--danger); border-radius: var(--radius); box-shadow: var(--shadow);
+}
+.run-failed-banner strong { color: var(--danger); font-size: 1.05rem; }
+.run-failed-list { margin: 0; padding: 0; list-style: none; display: grid; align-content: start; gap: 4px; color: var(--muted); overflow-wrap: anywhere; overflow-y: auto; }
+.run-failed-link { color: var(--text); }
+.run-failed-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .badge.ok { --badge: var(--ok); }
 .badge.bad { --badge: var(--danger); }
 .badge.run, .badge.ok, .badge.bad { color: color-mix(in srgb, var(--badge) 72%, #000); border-color: color-mix(in srgb, var(--badge) 45%, transparent); }
@@ -1302,7 +1315,7 @@ body:has(#terminal-panel:not([hidden]) .terminal-controls:not([hidden])) .toast 
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .status-pill.active::before, .agent.working::after, .model-detail .stat-fill, .toast:not([hidden]), .tip:not([hidden]), .menu:popover-open { animation: none; }
+  .status-pill.active::before, .agent.working::after, .model-detail .stat-fill, .toast:not([hidden]), .tip:not([hidden]), .run-failed:not([hidden]), .menu:popover-open { animation: none; }
   .model-name::before, .provider .copies summary::before, .menu-button::after, .btn, .videos-play img, .videos-play-icon, .models, .news-panel, .models::backdrop, .news-panel::backdrop { transition: none; }
   .github-waiting::before, .github-running, body:has(#app[hidden]):has(#auth[hidden]):has(#stopped[hidden])::after { animation: none; }
   .btn:active:not(:disabled):not([aria-disabled="true"]) { transform: none; }
