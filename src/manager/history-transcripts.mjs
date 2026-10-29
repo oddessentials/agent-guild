@@ -162,11 +162,15 @@ async function lastLineEnd(source, limits) {
   return source.size > limits.maxLineBytes ? null : 0;
 }
 
-/** Lines before `end`, newest first. A line longer than the limit ends them, with `bytes` null, before more of it is read. */
+/**
+ * Lines before `end`, which follows a newline or is 0, newest first; the nothing between that newline and `end` is not a
+ * line. A line longer than the limit ends them, with `bytes` null, before more of it is read.
+ */
 async function* linesBackward(source, end, limits) {
   let position = end;
   let tail = [];
   let tailSize = 0;
+  let first = true;
   while (position > 0) {
     const length = Math.min(limits.chunkBytes, position);
     position -= length;
@@ -178,7 +182,8 @@ async function* linesBackward(source, end, limits) {
         yield { offset: null, size, bytes: null };
         return;
       }
-      yield { offset: position + i + 1, size, bytes: Buffer.concat([chunk.subarray(i + 1, lineEnd), ...tail]) };
+      if (!first || size) yield { offset: position + i + 1, size, bytes: Buffer.concat([chunk.subarray(i + 1, lineEnd), ...tail]) };
+      first = false;
       tail = [];
       tailSize = 0;
       lineEnd = i;
@@ -236,10 +241,11 @@ export async function readJsonlPage({ source: kind, id, file, cursor, reader, fi
         truncated = true;
         break;
       }
-      if (!line.size) { last = line.offset; continue; }
       let record = null, parsed = true;
-      try { record = JSON.parse(line.bytes.toString('utf8')); } catch { parsed = false; }
-      if (typeof record !== 'object') record = null;
+      if (line.size) {
+        try { record = JSON.parse(line.bytes.toString('utf8')); } catch { parsed = false; }
+        if (typeof record !== 'object') record = null;
+      }
       if ((!unfinished && scanned >= limits.scanBytes)
         || (record && reader.starts(state, record) && (state.messages.length >= limits.messages || scanned >= limits.scanBytes))) {
         more = true;
@@ -572,7 +578,7 @@ export async function readDockerConversation({ dir, id, cursor, loadSqlite, limi
         break;
       }
       last = row;
-      scanned += row.size ?? 0;
+      scanned += (row.size ?? 0) + 1;
       if (row.visible && clean(row.content)) messages.push({ role: row.role, text: clean(row.content) });
     }
     return {

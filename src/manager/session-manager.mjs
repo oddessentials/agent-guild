@@ -286,8 +286,8 @@ export class SessionManager extends EventEmitter {
       choice.written = true;
       return;
     }
-    const saved = this.cardNames.get(session.provider.id, account, toolSessionId) === name
-      || (name ? this.cardNames.set(session.provider.id, account, toolSessionId, name) : this.cardNames.delete(session.provider.id, account, toolSessionId));
+    // set() and delete() say whether the store now holds the choice; get() cannot tell an unreadable store from one without it.
+    const saved = name ? this.cardNames.set(session.provider.id, account, toolSessionId, name) : this.cardNames.delete(session.provider.id, account, toolSessionId);
     if (!saved) return;
     choice.written = true;
     this.namesWritten.set(key, choice.order);

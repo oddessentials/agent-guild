@@ -460,6 +460,54 @@ test('a cursor naming any span anchors() does not make is refused before the tra
   assert.deepEqual((await page(first.nextCursor)).messages.map((m) => m.text), ['message 2'], 'the cursor anchors() made still reads');
 });
 
+test('a reset to the default while the names file cannot be read is made once the file is readable again', async (t) => {
+  const file = path.join(tempDir(t), 'card-names.json');
+  createCardNames(file).set('tool', 'default', 'gone', 'Mine');
+  const good = fs.readFileSync(file, 'utf8');
+  fs.writeFileSync(file, 'not json');
+  const cardNames = createCardNames(file, { warn: () => {} });
+  const provider = { id: 'tool', tool: 'Tool', args: [], accounts: [{ id: 'default' }] };
+  const registry = {
+    get: () => provider, account: () => ({ id: 'default', label: 'Default' }), describe: () => provider,
+    shellFor: () => null, shellsFor: () => ({ shells: [] }), spawnSpec: () => ({ file: 'tool', args: [] }),
+  };
+  const manager = new SessionManager({ registry, baseEnv: {}, getApiUrl: () => '', cardNames });
+  t.mock.method(pty, 'spawn', () => fakePty());
+  const card = await manager.create({ providerId: 'tool', cwd: os.tmpdir(), resume: 'gone' });
+  t.after(() => card.dispose());
+  card.rename('Tool');
+  assert.equal(fs.readFileSync(file, 'utf8'), 'not json', 'an unreadable file is never overwritten');
+  fs.writeFileSync(file, good);
+  card._changed();
+  assert.equal(createCardNames(file).get('tool', 'default', 'gone'), null, 'the reset is made on the next change');
+  fs.writeFileSync(file, good);
+  card._changed();
+  assert.equal(createCardNames(file).get('tool', 'default', 'gone'), 'Mine', 'once made, an unrelated change writes nothing');
+});
+
+test('blank lines and empty rows spend the scan budget, so a page always stops within it and the next one goes on', async (t) => {
+  const message = (n) => ({ type: 'event_msg', payload: { type: n % 2 ? 'agent_message' : 'user_message', message: `message ${n}` } });
+  const file = write(path.join(tempDir(t), 'rollout.jsonl'), lines(message(0), message(1)) + '\n'.repeat(64 * 1024) + lines(message(2), message(3)));
+  const limits = { ...PAGE_LIMITS, scanBytes: 1024 };
+  const first = await read('codex', file, null, limits);
+  assert.ok(first.nextCursor, 'the first page stops within its budget');
+  const at = JSON.parse(Buffer.from(first.nextCursor, 'base64url').toString('utf8')).o;
+  assert.ok(fs.statSync(file).size - at <= limits.scanBytes + 64, `the first page read ${fs.statSync(file).size - at} bytes`);
+  const { pages, messages } = await readAll('codex', file, limits);
+  assert.ok(pages.length > 50);
+  assert.deepEqual(messages.map((m) => m.text), ['message 0', 'message 1', 'message 2', 'message 3']);
+
+  const store = await dockerStore(t);
+  if (!store) return;
+  store.add(0, { role: 'user', content: 'Before the empty rows' });
+  store.db.exec('BEGIN');
+  for (let position = 1; position <= 3000; position++) store.add(position, null);
+  store.db.exec('COMMIT');
+  store.add(3001, { role: 'assistant', content: 'After them' });
+  const docker = await readDockerConversation({ dir: store.dir, id: 's1', cursor: null, loadSqlite: () => import('node:sqlite'), limits: { ...PAGE_LIMITS, scanBytes: 200 } });
+  assert.deepEqual([said(docker.messages), docker.nextCursor !== null], [['AI: After them'], true], 'empty rows end the page within its budget');
+});
+
 test('appends keep a cursor; a rewrite, truncation or replacement under it refuses it', async (t) => {
   const records = Array.from({ length: 6 }, (_, n) => ({ type: 'event_msg', payload: { type: n % 2 ? 'agent_message' : 'user_message', message: `message ${n}` } }));
   const file = write(path.join(tempDir(t), 'rollout.jsonl'), lines(...records));
