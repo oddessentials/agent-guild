@@ -275,6 +275,23 @@ test('a card name that could not be saved is saved on the next change once the n
   assert.equal(createCardNames(file).get('anthropic', 'default', 'tool-1'), 'Login fix');
 });
 
+test('a name restored on resume and renamed to the default before anything else happens is forgotten', async (t) => {
+  const cardNames = createCardNames();
+  cardNames.set('tool', 'default', 'saved-1', 'Login fix');
+  const provider = { id: 'tool', tool: 'Tool', args: [], accounts: [{ id: 'default' }] };
+  const registry = {
+    get: () => provider, account: () => ({ id: 'default', label: 'Default' }),
+    shellFor: () => null, shellsFor: () => ({ shells: [] }), spawnSpec: () => ({ file: 'tool', args: [] }),
+  };
+  const manager = new SessionManager({ registry, baseEnv: {}, getApiUrl: () => '', cardNames });
+  t.mock.method(manager, '_spawn', (options) => ({ ...options, task: null, toolSessionId: null, account: { id: 'default' }, provider, setModel() {} }));
+  const session = await manager.create({ providerId: 'tool', cwd: os.tmpdir(), resume: 'saved-1' });
+  assert.deepEqual([session.name, session.named], ['Login fix', true]);
+  Object.assign(session, { name: 'Tool', named: false });
+  manager._keepCardName(session);
+  assert.equal(cardNames.get('tool', 'default', 'saved-1'), null);
+});
+
 test('appends keep a cursor; a rewrite, truncation or replacement under it refuses it', async (t) => {
   const records = Array.from({ length: 6 }, (_, n) => ({ type: 'event_msg', payload: { type: n % 2 ? 'agent_message' : 'user_message', message: `message ${n}` } }));
   const file = write(path.join(tempDir(t), 'rollout.jsonl'), lines(...records));

@@ -149,9 +149,13 @@ export class SessionManager extends EventEmitter {
     const defaultName = (current.accounts.length > 1 ? `${provider.tool} · ${signIn.label}` : null)
       || (runShell && this.registry.shellsFor(provider).shells.length > 1 ? `${provider.tool} · ${runShell.label}` : null)
       || provider.tool;
-    const given = cleanName(name) || (resumeId ? this.cardNames?.get(provider.id, signIn.id, resumeId) : null) || null;
+    const saved = !cleanName(name) && resumeId ? this.cardNames?.get(provider.id, signIn.id, resumeId) ?? null : null;
+    const given = cleanName(name) || saved || null;
     const extraEnv = hooks.env ? { ...runShell?.env, ...hooks.env } : runShell?.env;
-    const options = { provider, cwd: workDir, cols, rows, name: given ?? defaultName, defaultName, named: given !== null, resume: resumeId, account: signIn, reporting: hooks.reporting, extraEnv };
+    const options = {
+      provider, cwd: workDir, cols, rows, name: given ?? defaultName, defaultName, named: given !== null, resume: resumeId, account: signIn, reporting: hooks.reporting, extraEnv,
+      keptName: saved && { at: `${signIn.id}\0${resumeId}`, name: saved },
+    };
     if (runShell?.multiplexer) return this._withMultiplexerStart(provider.id, runShell.id, () => this._startMultiplexer(options, runShell, args || []));
     const spawnSpec = this.registry.spawnSpec(provider, args || [], resumeId, hooks.args, runShell);
     const session = this._spawn({ ...options, spawnSpec });
@@ -735,7 +739,7 @@ export class SessionManager extends EventEmitter {
   _spawn({
     provider, description = this.registry.describe(provider), spawnSpec, cwd, cols, rows, name, defaultName, named = false, resume = null, task = null, installKind = null, installPath = null, account = null,
     extraEnv = null, dropEnv = null, clone = null, reporting = null, multiplexer = null,
-    id = newId(), reportToken = crypto.randomBytes(16).toString('hex'), createdAt, context = null, multiplexerInstall = null,
+    id = newId(), reportToken = crypto.randomBytes(16).toString('hex'), createdAt, context = null, multiplexerInstall = null, keptName = null,
   }) {
     this._assertCanSpawn();
     let env = this._sessionEnv({ id, reportToken, provider, account, extraEnv, dropEnv });
@@ -769,6 +773,7 @@ export class SessionManager extends EventEmitter {
       throw httpError(500, `could not start ${provider.tool}: ${err.message}`, 'spawn_failed');
     }
 
+    if (keptName) session.keptName = keptName;
     session.on('changed', () => {
       this._keepCardName(session);
       if (this.sessions.has(id)) this.emit('event', { type: 'session.updated', session: session.toJSON() });
