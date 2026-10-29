@@ -494,6 +494,38 @@ test('marks show reported state over the crew and leave every character\'s motio
   assert.deepEqual(b.errors,[]);
 });
 
+test('a mark drawn before its glyph loads is drawn again once it loads, with reduced motion and nothing else changing',options,async t=>{
+  const {f,b}=await setup(t);
+  const T0=Date.parse('2026-10-13T12:00:00.000Z'),iso=ms=>new Date(T0-ms).toISOString();
+  const sessions=[{...[...f.data.values()][0],activity:'quiet',lastOutputAt:iso(60000),createdAt:iso(3600000),agents:[],shells:[]}];
+  await b.evaluate(`(async()=>{
+    const T=await import('/yard/vendor/engine.js'),{YardRenderer}=await import('/yard/renderer.js');
+    const host=document.createElement('div'),labels=document.createElement('div');
+    host.style.cssText='position:fixed;width:900px;height:700px;top:0;left:0';host.append(labels);document.body.append(host);
+    window.__renderer=new YardRenderer(host,labels,{select(){},open(){},clock:()=>${T0}});
+    await __renderer.setWorld('guild','dark');
+    __renderer.setReducedMotion(true);__renderer.setActive(true);
+    const load=T.TextureLoader.prototype.load;window.__held=[];
+    T.TextureLoader.prototype.load=function(url,onLoad,...rest){return load.call(this,url,url.startsWith('data:')?texture=>__held.push(()=>onLoad?.(texture)):onLoad,...rest);};
+    const render=__renderer.renderer.render.bind(__renderer.renderer);window.__draws=0;
+    __renderer.renderer.render=(...args)=>{__draws++;return render(...args);};
+    __renderer.update(${q(f.providers)},${q(sessions)});
+  })()`);
+  await b.wait('__held.length===2 && [...__renderer.units.values()].every(u=>u.loaded)');
+  await b.wait('__renderer.frame===0 && !__renderer.dirty');
+  const idle=await b.evaluate('__draws');
+  await nextFrames(b);
+  assert.equal(await b.evaluate('__draws'),idle,'the scene is idle while the glyph is still loading');
+  await b.evaluate('__held.splice(0).forEach(release=>release())');
+  await b.wait(`__draws>${idle}`);
+  assert.ok(await b.evaluate(`[...__renderer.units.get(${q(sessions[0].id)}).marks.values()].every(m=>m.sprites.every(s=>s.visible&&s.material.map.image))`));
+  const drawn=await b.evaluate('__draws');
+  await nextFrames(b);
+  assert.equal(await b.evaluate('__draws'),drawn,'and idle again after one redraw');
+  await b.evaluate('__renderer.dispose()');
+  assert.deepEqual(b.errors,[]);
+});
+
 test('Cards and Yard use the same actions, accounts, dialogs and terminal',options,async t=>{
   const {f,b}=await setup(t);
   await b.wait("document.querySelector('#providers .usage .meter')");

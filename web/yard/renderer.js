@@ -29,11 +29,11 @@ const GLYPHS = {
   z: c => { c.beginPath(); c.moveTo(36, 36); c.lineTo(92, 36); c.lineTo(36, 92); c.lineTo(92, 92); c.stroke(); },
   bang: (c, w) => { c.beginPath(); c.moveTo(64, 22); c.lineTo(64, 70); c.stroke(); c.beginPath(); c.arc(64, 100, w * .55, 0, Math.PI * 2); c.fill(); },
 };
-function glyph(draw) {
+function glyph(draw, loaded) {
   const canvas = Object.assign(document.createElement('canvas'), { width: 128, height: 128 }), c = canvas.getContext('2d');
   c.lineCap = c.lineJoin = 'round'; c.shadowColor = 'rgba(0,0,0,.45)';
   for (const [width, color, blur] of [[30, 'rgba(16,12,10,.85)', 12], [15, '#fff', 0]]) { c.lineWidth = width; c.strokeStyle = c.fillStyle = color; c.shadowBlur = blur; draw(c, width); }
-  const texture = new T.TextureLoader().load(canvas.toDataURL()); texture.colorSpace = T.SRGBColorSpace; return texture;
+  const texture = new T.TextureLoader().load(canvas.toDataURL(), loaded); texture.colorSpace = T.SRGBColorSpace; return texture;
 }
 let crowdLists = 0;
 const angleTo = (from, to) => { let d = (to - from) % (2 * Math.PI); if (d > Math.PI) d -= 2 * Math.PI; if (d < -Math.PI) d += 2 * Math.PI; return d; };
@@ -1138,7 +1138,8 @@ export class YardRenderer {
     for(const [anchor,kind]of want)if(!unit.marks.has(anchor+':'+kind))unit.marks.set(anchor+':'+kind,this.newMark(unit,anchor,kind));
   }
   newMark(unit,anchor,kind) {
-    this.glyphs??={z:glyph(GLYPHS.z),bang:glyph(GLYPHS.bang)};
+    const loaded=()=>{if(!this.disposed){this.dirty=true;this.drawOnce();}};
+    this.glyphs??={z:glyph(GLYPHS.z,loaded),bang:glyph(GLYPHS.bang,loaded)};
     const spec=MARKS[kind],color=new T.Color(spec.color||unit.session.provider.color||'#d0ba82');
     if(!spec.color){const {h,s,l}=color.getHSL({});color.setHSL(h,Math.min(s,.8),Math.max(l,.7));}
     const sprites=Array.from({length:spec.count},()=>{
