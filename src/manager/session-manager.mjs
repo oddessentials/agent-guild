@@ -149,13 +149,9 @@ export class SessionManager extends EventEmitter {
     const defaultName = (current.accounts.length > 1 ? `${provider.tool} · ${signIn.label}` : null)
       || (runShell && this.registry.shellsFor(provider).shells.length > 1 ? `${provider.tool} · ${runShell.label}` : null)
       || provider.tool;
-    const saved = !cleanName(name) && resumeId ? this.cardNames?.get(provider.id, signIn.id, resumeId) ?? null : null;
-    const given = cleanName(name) || saved || null;
+    const given = cleanName(name) || (resumeId ? this.cardNames?.get(provider.id, signIn.id, resumeId) : null) || null;
     const extraEnv = hooks.env ? { ...runShell?.env, ...hooks.env } : runShell?.env;
-    const options = {
-      provider, cwd: workDir, cols, rows, name: given ?? defaultName, defaultName, named: given !== null, resume: resumeId, account: signIn, reporting: hooks.reporting, extraEnv,
-      keptName: saved && { at: `${signIn.id}\0${resumeId}`, name: saved },
-    };
+    const options = { provider, cwd: workDir, cols, rows, name: given ?? defaultName, defaultName, named: given !== null, resume: resumeId, account: signIn, reporting: hooks.reporting, extraEnv };
     if (runShell?.multiplexer) return this._withMultiplexerStart(provider.id, runShell.id, () => this._startMultiplexer(options, runShell, args || []));
     const spawnSpec = this.registry.spawnSpec(provider, args || [], resumeId, hooks.args, runShell);
     const session = this._spawn({ ...options, spawnSpec });
@@ -262,21 +258,19 @@ export class SessionManager extends EventEmitter {
     });
   }
 
-  /** Renaming a card back to its default name forgets the name for the tool session it holds now; earlier ones keep it. */
+  /**
+   * The store holds what a card chose for the tool session it holds now: its name, or none for its default.
+   * It is compared on every change, so a write that failed is made again; a card nobody named writes nothing.
+   */
   _keepCardName(session) {
     // The page's identity for the tool session a card holds; a resumed card knows it before the tool reports.
     const toolSessionId = session.toolSessionId ?? session.resume;
-    if (!this.cardNames || session.task !== null || !toolSessionId) return;
+    if (!this.cardNames || session.task !== null || !toolSessionId || !session.nameChosen) return;
     const account = session.account?.id ?? 'default';
-    const at = `${account}\0${toolSessionId}`;
     const name = session.named ? session.name : null;
-    const kept = session.keptName;
-    if (kept?.at === at && kept.name === name) return;
-    // Remembered only once stored, so a name the store could not take is tried again on the next change.
-    let stored = true;
-    if (name) stored = this.cardNames.set(session.provider.id, account, toolSessionId, name);
-    else if (kept?.at === at && kept.name) stored = this.cardNames.delete(session.provider.id, account, toolSessionId);
-    if (stored) session.keptName = { at, name };
+    if (this.cardNames.get(session.provider.id, account, toolSessionId) === name) return;
+    if (name) this.cardNames.set(session.provider.id, account, toolSessionId, name);
+    else this.cardNames.delete(session.provider.id, account, toolSessionId);
   }
 
   _saveCards() {
@@ -739,7 +733,7 @@ export class SessionManager extends EventEmitter {
   _spawn({
     provider, description = this.registry.describe(provider), spawnSpec, cwd, cols, rows, name, defaultName, named = false, resume = null, task = null, installKind = null, installPath = null, account = null,
     extraEnv = null, dropEnv = null, clone = null, reporting = null, multiplexer = null,
-    id = newId(), reportToken = crypto.randomBytes(16).toString('hex'), createdAt, context = null, multiplexerInstall = null, keptName = null,
+    id = newId(), reportToken = crypto.randomBytes(16).toString('hex'), createdAt, context = null, multiplexerInstall = null,
   }) {
     this._assertCanSpawn();
     let env = this._sessionEnv({ id, reportToken, provider, account, extraEnv, dropEnv });
@@ -773,7 +767,7 @@ export class SessionManager extends EventEmitter {
       throw httpError(500, `could not start ${provider.tool}: ${err.message}`, 'spawn_failed');
     }
 
-    if (keptName) session.keptName = keptName;
+    this._keepCardName(session);
     session.on('changed', () => {
       this._keepCardName(session);
       if (this.sessions.has(id)) this.emit('event', { type: 'session.updated', session: session.toJSON() });

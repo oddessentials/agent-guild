@@ -8,6 +8,7 @@ import { PAGE_LIMITS, JSONL_READERS, readJsonlPage, readDockerConversation, chec
 import { SessionHistory, FileMemo, listClaudeSessions, listCodexSessions, listGrokSessions } from '../src/manager/session-history.mjs';
 import { SessionManager } from '../src/manager/session-manager.mjs';
 import { createCardNames } from '../src/manager/card-names.mjs';
+import pty from 'node-pty';
 
 // Synthetic records shaped like Claude Code 2.1.312, Codex CLI 0.165.0, Grok Build 1.0.70 and Docker Agent 1.154.0 write them.
 const lines = (...records) => records.map((r) => JSON.stringify(r)).join('\n') + '\n';
@@ -262,34 +263,58 @@ test('a Claude page that ends before the newest message is found still finds it 
   assert.deepEqual(said(messages), claudeConversation);
 });
 
-test('a card name that could not be saved is saved on the next change once the names file can be read', async (t) => {
+test('the saved name follows each card\'s chosen name for the tool session it holds, through resume, requests, /clear and a failed write', async (t) => {
   const file = path.join(tempDir(t), 'card-names.json');
-  fs.writeFileSync(file, 'not json');
   const cardNames = createCardNames(file, { warn: () => {} });
-  const manager = new SessionManager({ registry: null, baseEnv: {}, getApiUrl: () => '', cardNames });
-  const session = { task: null, toolSessionId: 'tool-1', resume: null, account: null, provider: { id: 'anthropic' }, named: true, name: 'Login fix' };
-  manager._keepCardName(session);
-  assert.equal(fs.readFileSync(file, 'utf8'), 'not json');
-  fs.unlinkSync(file);
-  manager._keepCardName(session);
-  assert.equal(createCardNames(file).get('anthropic', 'default', 'tool-1'), 'Login fix');
-});
-
-test('a name restored on resume and renamed to the default before anything else happens is forgotten', async (t) => {
-  const cardNames = createCardNames();
-  cardNames.set('tool', 'default', 'saved-1', 'Login fix');
   const provider = { id: 'tool', tool: 'Tool', args: [], accounts: [{ id: 'default' }] };
   const registry = {
-    get: () => provider, account: () => ({ id: 'default', label: 'Default' }),
+    get: () => provider, account: () => ({ id: 'default', label: 'Default' }), describe: () => provider,
     shellFor: () => null, shellsFor: () => ({ shells: [] }), spawnSpec: () => ({ file: 'tool', args: [] }),
   };
   const manager = new SessionManager({ registry, baseEnv: {}, getApiUrl: () => '', cardNames });
-  t.mock.method(manager, '_spawn', (options) => ({ ...options, task: null, toolSessionId: null, account: { id: 'default' }, provider, setModel() {} }));
-  const session = await manager.create({ providerId: 'tool', cwd: os.tmpdir(), resume: 'saved-1' });
-  assert.deepEqual([session.name, session.named], ['Login fix', true]);
-  Object.assign(session, { name: 'Tool', named: false });
-  manager._keepCardName(session);
-  assert.equal(cardNames.get('tool', 'default', 'saved-1'), null);
+  t.mock.method(pty, 'spawn', () => ({ pid: 0, onData() {}, onExit() {}, write() {}, resize() {}, kill() {} }));
+  const start = async (options) => {
+    const session = await manager.create({ providerId: 'tool', cwd: os.tmpdir(), ...options });
+    t.after(() => session.dispose());
+    return session;
+  };
+  const saved = (id) => cardNames.get('tool', 'default', id);
+
+  cardNames.set('tool', 'default', 'kept', 'Old');
+  const restored = await start({ resume: 'kept' });
+  assert.deepEqual([restored.name, saved('kept')], ['Old', 'Old'], 'a resume without a name gets the saved one back');
+  restored.rename('Tool');
+  assert.equal(saved('kept'), null, 'renaming it to the default forgets it');
+
+  cardNames.set('tool', 'default', 'asked', 'Old');
+  await start({ resume: 'asked', name: 'New' });
+  assert.equal(saved('asked'), 'New', 'a name the resume asks for replaces the saved one at once');
+  cardNames.set('tool', 'default', 'reset', 'Old');
+  await start({ resume: 'reset', name: 'Tool' });
+  assert.equal(saved('reset'), null, 'asking for the default forgets the saved one');
+
+  const fresh = await start({});
+  fresh.rename('Mine');
+  fresh.reportToolSession({ toolSessionId: 'first' });
+  fresh.reportToolSession({ toolSessionId: 'second', source: 'clear' });
+  assert.deepEqual([saved('first'), saved('second')], ['Mine', 'Mine'], 'a named card keeps its name for every tool session it holds');
+  fresh.rename('Tool');
+  assert.deepEqual([saved('first'), saved('second')], ['Mine', null], 'the default forgets only the session it holds now');
+
+  cardNames.set('tool', 'default', 'theirs', 'Theirs');
+  const unnamed = await start({});
+  unnamed.reportToolSession({ toolSessionId: 'theirs' });
+  assert.equal(saved('theirs'), 'Theirs', 'a card nobody named never forgets another card\'s name');
+
+  const later = await start({});
+  later.reportToolSession({ toolSessionId: 'later' });
+  fs.rmSync(file);
+  fs.mkdirSync(file);
+  later.rename('Later');
+  assert.equal(saved('later'), null, 'a write that fails stores nothing');
+  fs.rmdirSync(file);
+  later.rename('Later');
+  assert.equal(createCardNames(file).get('tool', 'default', 'later'), 'Later', 'the next change writes it');
 });
 
 test('appends keep a cursor; a rewrite, truncation or replacement under it refuses it', async (t) => {

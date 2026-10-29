@@ -90,6 +90,8 @@ export class Session extends EventEmitter {
     this.defaultName = cleanName(opts.defaultName) || opts.provider.tool;
     this.name = cleanName(opts.name) || this.defaultName;
     this.named = opts.named === true && this.name !== this.defaultName;
+    /** Someone gave or changed this card's name, its default included. */
+    this.nameChosen = opts.named === true;
     this.resume = opts.resume ?? null;
     this.task = opts.task ?? null;
     this.account = opts.account ?? null;
@@ -480,6 +482,7 @@ export class Session extends EventEmitter {
     if (!clean) return;
     this.name = clean;
     this.named = clean !== this.defaultName;
+    this.nameChosen = true;
     this._changed();
   }
 
