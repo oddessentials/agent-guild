@@ -16,7 +16,6 @@ export const PAGE_LIMITS = {
   maxScanBytes: 32 * 1024 * 1024,
   maxLineBytes: 4 * 1024 * 1024,
   chunkBytes: 256 * 1024,
-  rows: 2000,
 };
 const ANCHOR_BYTES = 4096;
 const MAX_CURSOR = 2048;
@@ -631,17 +630,26 @@ export async function readAntigravityTranscript(dir, id, cursor = null, limits =
 
 // ---- Docker Agent -------------------------------------------------------------------
 
-/** Docker Agent's own VisibleExchanges rule. */
-function dockerMessage(row) {
-  if (row.implicit || row.subsession_id) return null;
-  let message;
-  try { message = JSON.parse(row.message_json); } catch { return null; }
-  if (!message || (message.role !== 'user' && message.role !== 'assistant')) return null;
-  if (Array.isArray(message.tool_calls) && message.tool_calls.length) return null;
-  const text = clean(typeof message.content === 'string' ? message.content : '');
-  return text ? { role: message.role, text } : null;
-}
+/**
+ * Docker Agent's own VisibleExchanges rule, worked out by SQLite so that no payload reaches this process: a message
+ * row that is not implicit, from the user or the assistant, with no tool calls and text content. Its content is read
+ * only when within the line limit; `size` is what the row costs the page's scan budget.
+ */
+// Every JSON function sits behind CASE, since SQLite does not promise to stop an AND early on a malformed row.
+const DOCKER_VISIBLE = `case when json_valid(message_json) then case
+    when implicit or subsession_id is not null then 0
+    when json_extract(message_json, '$.role') not in ('user', 'assistant') then 0
+    when coalesce(json_array_length(message_json, '$.tool_calls'), 0) <> 0 then 0
+    else json_type(message_json, '$.content') = 'text' end else 0 end`;
+const DOCKER_CONTENT_BYTES = `length(cast(json_extract(message_json, '$.content') as blob))`;
+const DOCKER_PAGE_SQL = (after) => `
+  select id, position, length(cast(message_json as blob)) as size, ${DOCKER_VISIBLE} as visible,
+    case when ${DOCKER_VISIBLE} then case when ${DOCKER_CONTENT_BYTES} <= ? then json_extract(message_json, '$.content') end end as content,
+    case when ${DOCKER_VISIBLE} then json_extract(message_json, '$.role') end as role
+  from session_items where session_id = ? and item_type = 'message'${after ? ' and position < ?' : ''}
+  order by position desc`;
 
+/** A page of a Docker Agent session, newest first, within the page's message and scan limits. */
 export async function readDockerConversation({ dir, id, cursor, loadSqlite, limits = PAGE_LIMITS }) {
   const saved = cursor ? decodeCursor(cursor, 'docker', id) : null;
   if (saved && (!safeInteger(saved.p) || !safeInteger(saved.r, 1))) throw badCursor();
@@ -650,24 +658,25 @@ export async function readDockerConversation({ dir, id, cursor, loadSqlite, limi
   try {
     try { db = new DatabaseSync(path.join(dir, 'session.db'), { readOnly: true }); } catch { throw unavailable(); }
     if (saved && db.prepare('select id from session_items where session_id = ? and position = ?').get(id, saved.p)?.id !== saved.r) throw changed();
-    const rows = db.prepare(`select id, position, implicit, subsession_id, message_json from session_items
-      where session_id = ? and item_type = 'message'${saved ? ' and position < ?' : ''} order by position desc limit ?`)
-      .all(...(saved ? [id, saved.p] : [id]), limits.rows + 1);
     const messages = [];
-    let used = 0;
-    for (const row of rows.slice(0, limits.rows)) {
-      const message = dockerMessage(row);
-      if (message && messages.length >= limits.messages) break;
-      used++;
-      if (message) messages.push(message);
+    let last = null, scanned = 0, more = false, omitted = false;
+    for (const row of db.prepare(DOCKER_PAGE_SQL(saved)).iterate(limits.maxLineBytes, id, ...(saved ? [saved.p] : []))) {
+      if (last && (scanned >= limits.scanBytes || (row.visible && messages.length >= limits.messages))) {
+        more = true;
+        break;
+      }
+      last = row;
+      scanned += row.size ?? 0;
+      if (!row.visible) continue;
+      if (row.content === null) omitted = true;
+      else if (clean(row.content)) messages.push({ role: row.role, text: clean(row.content) });
     }
-    const last = rows[used - 1];
     return {
       id,
       messages: messages.reverse(),
-      nextCursor: used < rows.length ? encodeCursor({ v: 1, s: 'docker', i: id, p: last.position, r: last.id, st: {} }) : null,
+      nextCursor: more ? encodeCursor({ v: 1, s: 'docker', i: id, p: last.position, r: last.id, st: {} }) : null,
       incomplete: false,
-      omitted: false,
+      omitted,
     };
   } catch (err) {
     if (err.status) throw err;

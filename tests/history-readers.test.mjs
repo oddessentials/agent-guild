@@ -503,6 +503,57 @@ test('Docker Agent previews show what Docker Agent shows the user, paged by posi
   await assert.rejects(page(first.nextCursor, limits), { code: 'history_changed', status: 409 });
 });
 
+test('Docker Agent pages read within the byte limits: large discarded payloads never reach the manager, and each page moves on', async (t) => {
+  const store = await dockerStore(t);
+  if (!store) return;
+  const { dir, add } = store;
+  const big = 'b'.repeat(200 * 1024);
+  add(0, { role: 'user', content: 'Read the log' });
+  add(1, { role: 'assistant', content: '', tool_calls: [{ id: 't', function: { name: 'read_file', arguments: big } }] });
+  add(2, { role: 'tool', content: big, tool_call_id: 't' });
+  add(3, { role: 'assistant', content: 'The log is long' });
+  add(4, { role: 'user', content: 'Show all of it' });
+  add(5, { role: 'assistant', content: 'c'.repeat(5000) });
+  add(6, { role: 'user', content: 'Thanks' });
+  add(7, { role: 'assistant', content: 'Done' });
+  store.db.prepare('INSERT INTO session_items (session_id, position, item_type, message_json) VALUES (?, ?, ?, ?)').run('s1', 8, 'message', '{"role":"assistant","content":"torn');
+  const sqlite = await import('node:sqlite');
+  let largest = 0;
+  const measure = (row) => {
+    for (const value of Object.values(row ?? {})) if (typeof value === 'string') largest = Math.max(largest, Buffer.byteLength(value));
+    return row;
+  };
+  class Measured extends sqlite.DatabaseSync {
+    prepare(sql) {
+      const statement = super.prepare(sql);
+      return {
+        get: (...args) => measure(statement.get(...args)),
+        all: (...args) => statement.all(...args).map(measure),
+        *iterate(...args) { for (const row of statement.iterate(...args)) yield measure(row); },
+      };
+    }
+  }
+  const loadSqlite = async () => ({ DatabaseSync: Measured });
+  const limits = { ...PAGE_LIMITS, messages: 2, maxLineBytes: 1000, scanBytes: 100 * 1024 };
+  const pages = [];
+  let cursor = null, position = Infinity;
+  do {
+    const page = await readDockerConversation({ dir, id: 's1', cursor, loadSqlite, limits });
+    pages.unshift(page);
+    cursor = page.nextCursor;
+    if (cursor) {
+      const at = JSON.parse(Buffer.from(cursor, 'base64url').toString()).p;
+      assert.ok(at < position, 'every page moves back');
+      position = at;
+    }
+    assert.ok(pages.length < 20);
+  } while (cursor);
+  assert.deepEqual(said(pages.flatMap((p) => p.messages)), ['You: Read the log', 'AI: The log is long', 'You: Show all of it', 'You: Thanks', 'AI: Done']);
+  assert.equal(pages.some((p) => p.omitted), true, 'the reply too long to read is left out and said to be');
+  assert.ok(largest <= limits.maxLineBytes, `no value larger than the line limit was read: ${largest}`);
+  assert.ok(pages.length > 2, 'the large rows spend a page\'s scan budget');
+});
+
 // ---- detail, names and search ---------------------------------------------------------------
 
 test('a preview reads only the file its listing found, inside the tool\'s folder and not through a link', async (t) => {
