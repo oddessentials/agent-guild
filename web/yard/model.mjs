@@ -112,6 +112,14 @@ export function sessionPose(s) {
 export function familiarPose(agent) {
   return ['working', 'waiting', 'idle', 'done'].includes(agent.status) ? agent.status : 'idle';
 }
+export const SHOWN_HELPERS = 6;
+export function marksFor(s, mode) {
+  if (s.status === 'exited') return { crew: !s.multiplexer && (s.signal || (s.exitCode ?? 0) !== 0) ? 'failed' : null, helpers: [] };
+  const agents = s.agents || [], waiting = agents.filter(a => familiarPose(a) === 'waiting');
+  const shown = waiting.filter(a => agents.indexOf(a) < SHOWN_HELPERS);
+  const crew = waiting.length > shown.length ? 'waiting' : mode === 'rest' && !agents.length && !s.shells?.length ? 'asleep' : null;
+  return { crew, helpers: shown.map(a => a.id) };
+}
 export function hash(value) {
   let n = 0;
   for (const char of String(value)) n = ((n << 5) - n + char.charCodeAt(0)) | 0;
