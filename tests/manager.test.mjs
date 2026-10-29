@@ -1027,6 +1027,18 @@ test('a card\'s given name is kept for each tool session it holds, shown in Hist
   }
 });
 
+test('renaming a resumed card keeps the name before the tool reports its session', async () => {
+  const names = ctx.manager.cardNames;
+  const resumed = await createFake({ resume: 'quiet-1' });
+  assert.equal(resumed.toolSessionId, null);
+  await call('PATCH', `/sessions/${resumed.id}`, { name: 'Quiet rename' });
+  assert.equal(names.get('fake', 'default', 'quiet-1'), 'Quiet rename');
+  await call('POST', `/sessions/${resumed.id}/tool-session`, { toolSessionId: 'quiet-2' });
+  assert.deepEqual([names.get('fake', 'default', 'quiet-1'), names.get('fake', 'default', 'quiet-2')], ['Quiet rename', 'Quiet rename']);
+  await call('POST', `/sessions/${resumed.id}/stop`);
+  await call('DELETE', `/sessions/${resumed.id}`);
+});
+
 test('the tool\'s own session id is reported over HTTP, in-band, and through hooks', async () => {
   const session = await createFake();
   assert.equal(session.toolSessionId, null);

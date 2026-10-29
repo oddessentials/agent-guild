@@ -260,14 +260,16 @@ export class SessionManager extends EventEmitter {
 
   /** Renaming a card back to its default name forgets the name for the tool session it holds now; earlier ones keep it. */
   _keepCardName(session) {
-    if (!this.cardNames || session.task !== null || !session.toolSessionId) return;
+    // The page's identity for the tool session a card holds; a resumed card knows it before the tool reports.
+    const toolSessionId = session.toolSessionId ?? session.resume;
+    if (!this.cardNames || session.task !== null || !toolSessionId) return;
     const account = session.account?.id ?? 'default';
-    const at = `${account}\0${session.toolSessionId}`;
+    const at = `${account}\0${toolSessionId}`;
     const name = session.named ? session.name : null;
     const kept = session.keptName;
     if (kept?.at === at && kept.name === name) return;
-    if (name) this.cardNames.set(session.provider.id, account, session.toolSessionId, name);
-    else if (kept?.at === at && kept.name) this.cardNames.delete(session.provider.id, account, session.toolSessionId);
+    if (name) this.cardNames.set(session.provider.id, account, toolSessionId, name);
+    else if (kept?.at === at && kept.name) this.cardNames.delete(session.provider.id, account, toolSessionId);
     session.keptName = { at, name };
   }
 

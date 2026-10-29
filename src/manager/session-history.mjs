@@ -84,14 +84,16 @@ async function readHead(file, bytes = HEAD_BYTES) {
   }
 }
 
+/** The whole records in the last bytes of a file, and the offset the first of them starts at. */
 async function readTail(file, size, bytes = TAIL_BYTES) {
-  if (size <= HEAD_BYTES) return '';
+  if (size <= HEAD_BYTES) return { text: '', start: size };
   const length = Math.min(bytes, size - HEAD_BYTES);
   const handle = await fs.promises.open(file, 'r');
   try {
     const { bytesRead, buffer } = await handle.read(Buffer.alloc(length), 0, length, size - length);
-    const text = buffer.subarray(0, bytesRead).toString('utf8');
-    return text.slice(text.indexOf('\n') + 1);
+    const data = buffer.subarray(0, bytesRead);
+    const first = data.indexOf(10) + 1;
+    return { text: data.subarray(first).toString('utf8'), start: size - length + first };
   } finally {
     await handle.close();
   }
@@ -173,16 +175,32 @@ export function claudeConfigDir(env = process.env) {
   return (env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')).normalize('NFC');
 }
 
-function claudeTitles(records) {
-  const titles = { custom: null, ai: null };
-  for (const record of records) {
-    if (record?.type === 'custom-title' && typeof record.customTitle === 'string' && record.customTitle.trim()) titles.custom = record.customTitle;
-    if (record?.type === 'ai-title' && typeof record.aiTitle === 'string' && record.aiTitle.trim()) titles.ai = record.aiTitle;
+/** Claude Code's title records in whole lines of `text`, which starts at offset `base`, and where those lines end. */
+function claudeTitles(text, base) {
+  const titles = { custom: null, ai: null, end: base };
+  let at = base;
+  for (const line of text.split('\n').slice(0, -1)) {
+    let record = null;
+    try { record = JSON.parse(line); } catch { /* a foreign line */ }
+    if (record?.type === 'custom-title' && typeof record.customTitle === 'string' && record.customTitle.trim()) titles.custom = { text: record.customTitle, at };
+    if (record?.type === 'ai-title' && typeof record.aiTitle === 'string' && record.aiTitle.trim()) titles.ai = { text: record.aiTitle, at };
+    at += Buffer.byteLength(line) + 1;
   }
+  titles.end = at;
   return titles;
 }
 
-/** Title records repeat through a transcript: the newest is read from the end, else the one read before is kept. */
+/**
+ * The newest title record by position in the file. Only the start and end are
+ * read; a title found earlier still counts while it lies in the unread middle
+ * of a file that has only grown.
+ */
+function newestTitle(head, tail, before, key) {
+  const kept = before?.titles?.[key];
+  const unread = kept && kept.at >= head.end && kept.at < tail.start ? kept : null;
+  return [head[key], unread, tail[key]].filter(Boolean).reduce((newest, title) => (title.at > newest.at ? title : newest), { at: -1, text: null });
+}
+
 function claudeEntry(id, text, tail, stat, before) {
   let cwd = null;
   let startedAt = null;
@@ -198,12 +216,10 @@ function claudeEntry(id, text, tail, stat, before) {
     if (prompt === null) prompt = promptTitle(contentText(record.message?.content));
   }
   if (cwd === null && !seenUser) return null;
-  const head = claudeTitles(records), end = claudeTitles(parseLines(tail));
-  const titles = {
-    custom: end.custom ?? before?.titles?.custom ?? head.custom,
-    ai: end.ai ?? before?.titles?.ai ?? head.ai,
-  };
-  return { ...cleanEntry({ id, title: titles.custom ?? titles.ai ?? prompt, cwd, startedAt, updatedAt: stat.mtime }), titles };
+  const head = claudeTitles(text, 0), end = { ...claudeTitles(tail.text, tail.start), start: tail.start };
+  const custom = newestTitle(head, end, before, 'custom'), ai = newestTitle(head, end, before, 'ai');
+  const titles = { custom: custom.text === null ? null : custom, ai: ai.text === null ? null : ai };
+  return { ...cleanEntry({ id, title: titles.custom?.text ?? titles.ai?.text ?? prompt, cwd, startedAt, updatedAt: stat.mtime }), titles };
 }
 
 /** Sessions under `<dir>/projects/<folder>/<id>.jsonl`; sub-agent transcripts sit in sub-folders and are not listed. */

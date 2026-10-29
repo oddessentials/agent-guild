@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { PAGE_LIMITS, JSONL_READERS, readJsonlPage, readDockerConversation, checkedFile } from '../src/manager/history-transcripts.mjs';
-import { SessionHistory } from '../src/manager/session-history.mjs';
+import { SessionHistory, FileMemo, listClaudeSessions } from '../src/manager/session-history.mjs';
 import { createCardNames } from '../src/manager/card-names.mjs';
 
 // Synthetic records shaped like Claude Code 2.1.312, Codex CLI 0.165.0, Grok Build 1.0.70 and Docker Agent 1.154.0 write them.
@@ -102,6 +102,72 @@ test('a message longer than a page can read is left out whole, never cut', async
   const { messages, omitted } = await readAll('claude', file, { ...PAGE_LIMITS, maxScanBytes: 2000, chunkBytes: 512 });
   assert.equal(omitted, true);
   assert.deepEqual(said(messages), claudeConversation.slice(0, 4), 'the reply that spans the bulk is gone, not split');
+});
+
+test('an oversized Claude record keeps the chain and leaves out only the message it belongs to', async (t) => {
+  const records = claudeTranscript();
+  const big = 'x'.repeat(3000);
+  records.find((r) => r.uuid === 'c4').message.content[0].content = big;
+  records.find((r) => r.uuid === 'd3').message.content[0].text = big;
+  const file = write(path.join(tempDir(t), 'c.jsonl'), lines(...records));
+  const limits = { ...PAGE_LIMITS, maxLineBytes: 2000, chunkBytes: 512 };
+  const page = await read('claude', file, null, limits);
+  assert.deepEqual(said(page.messages), ['You: First prompt', 'AI: Reply one', 'AI: Reply two', 'You: Second prompt'], 'the reply with an unreadable part is left out whole');
+  assert.deepEqual([page.omitted, page.nextCursor], [true, null]);
+});
+
+test('a corrupt Claude chain record ends the conversation there, without the reply that depended on it', async (t) => {
+  const records = claudeTranscript();
+  const at = records.findIndex((r) => r.uuid === 'd2');
+  const text = lines(...records).split('\n').map((line, i) => (i === at ? `${line.slice(0, 40)}` : line)).join('\n');
+  const file = write(path.join(tempDir(t), 'c.jsonl'), text);
+  const page = await read('claude', file);
+  assert.deepEqual([said(page.messages), page.omitted, page.nextCursor], [[], true, null], 'nothing older is joined to the newest reply');
+});
+
+test('an oversized Grok Build chunk leaves out its whole reply, and a corrupt record ends the readable history', async (t) => {
+  const dir = tempDir(t);
+  const limits = { ...PAGE_LIMITS, maxLineBytes: 2000, chunkBytes: 512 };
+  const oversized = write(path.join(dir, 'oversized.jsonl'), lines(grok.user('first', 0), grok.agent('First reply'), grok.user('second', 1), grok.agent('Sec'), grok.agent('y'.repeat(3000)), grok.agent('ond')));
+  const page = await read('grok', oversized, null, limits);
+  assert.deepEqual([said(page.messages), page.omitted], [['You: first', 'AI: First reply', 'You: second'], true]);
+  const torn = '{"method":"_x.ai/session/upd\n';
+  const adjacent = write(path.join(dir, 'adjacent.jsonl'), lines(grok.user('first', 0), grok.agent('First reply')) + torn + lines(grok.user('second', 1), grok.agent('Second reply')));
+  const unsure = await read('grok', adjacent);
+  assert.deepEqual([said(unsure.messages), unsure.omitted, unsure.nextCursor], [[], true, null], 'the record may have been part of the prompt after it');
+  const separate = write(path.join(dir, 'separate.jsonl'), lines(grok.user('first', 0), grok.agent('First reply')) + torn + lines(grok.done(), grok.user('second', 1), grok.agent('Second reply')));
+  const after = await read('grok', separate);
+  assert.deepEqual([said(after.messages), after.omitted, after.nextCursor], [['You: second', 'AI: Second reply'], true, null], 'a record that may have been a rewind is never guessed past');
+});
+
+test('Read earlier moves past a compressed record larger than a page can read, and never returns the same page', { skip: typeof zlib.zstdCompressSync !== 'function' }, async (t) => {
+  const dir = tempDir(t);
+  const message = (n, text = `message ${n}`) => ({ type: 'event_msg', payload: { type: n % 2 ? 'agent_message' : 'user_message', message: text } });
+  const text = lines(message(0), message(1), message(2, 'z'.repeat(2 * 1024 * 1024)), message(3), message(4));
+  const file = path.join(dir, 'rollout.jsonl.zst');
+  fs.writeFileSync(file, zlib.zstdCompressSync(Buffer.from(text)));
+  const decodedCopies = () => fs.readdirSync(os.tmpdir()).filter((name) => name.startsWith('agent-guild-rollout-')).length;
+  const copies = decodedCopies();
+  const { messages, omitted } = await readAll('codex', file, { ...PAGE_LIMITS, messages: 1, maxLineBytes: 10000, maxScanBytes: 12000, chunkBytes: 1000 });
+  assert.deepEqual([messages.map((m) => m.text), omitted], [['message 0', 'message 1', 'message 3', 'message 4'], true]);
+  const broken = write(path.join(dir, 'broken.jsonl.zst'), 'not zstd');
+  await assert.rejects(read('codex', broken), { code: 'history_unavailable', status: 404 });
+  assert.equal(decodedCopies(), copies, 'no decoded copy is left behind after a read or a failure');
+});
+
+test('a Claude title set after the last listing replaces the cached one, in a short or a long transcript', async (t) => {
+  for (const filler of [0, 300 * 1024]) {
+    const dir = tempDir(t);
+    const file = path.join(dir, 'projects', '-w', 'aaaa-1.jsonl');
+    write(file, lines({ type: 'user', cwd: '/w', message: { role: 'user', content: 'Prompt' } }, { type: 'custom-title', customTitle: 'First name' },
+      ...(filler ? [{ type: 'user', isMeta: true, message: { role: 'user', content: 'f'.repeat(filler) } }] : [])));
+    const memo = new FileMemo();
+    assert.equal((await listClaudeSessions(dir, memo))[0].title, 'First name');
+    fs.appendFileSync(file, lines({ type: 'custom-title', customTitle: 'Second name' }));
+    assert.equal((await listClaudeSessions(dir, memo))[0].title, 'Second name', `filler ${filler}`);
+    fs.appendFileSync(file, lines({ type: 'user', isMeta: true, message: { role: 'user', content: 'g'.repeat(filler ? 400 * 1024 : 10) } }));
+    assert.equal((await listClaudeSessions(dir, memo))[0].title, 'Second name', 'a title pushed out of the end window is kept');
+  }
 });
 
 test('appends keep a cursor; a rewrite, truncation or replacement under it refuses it', async (t) => {
