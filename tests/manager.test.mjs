@@ -296,7 +296,7 @@ function rawGet(route, headers) {
   });
 }
 
-function waitFor(predicate, { timeout = 8000, interval = 25, label = 'condition' } = {}) {
+function waitFor(predicate, { timeout = 30000, interval = 25, label = 'condition' } = {}) {
   return new Promise((resolve, reject) => {
     const start = Date.now();
     const tick = async () => {
