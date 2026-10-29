@@ -10,8 +10,11 @@ import { fileURLToPath } from 'node:url';
 import { resolveCommand, buildSpawnSpec, runSpec } from './command-resolver.mjs';
 import { toIso } from './usage.mjs';
 import { antigravityUserConversation } from '../report/hooks.mjs';
-import { ANTIGRAVITY_ID, transcriptFile, historyError } from './antigravity-transcript.mjs';
-import { JSONL_READERS, readJsonlPage, readAntigravityTranscript, readDockerConversation, checkedFile, CLAUDE_INSERTED } from './history-transcripts.mjs';
+import { ANTIGRAVITY_ID, transcriptFile, transcriptMessage, historyError } from './antigravity-transcript.mjs';
+import {
+  JSONL_READERS, DOCKER_VISIBLE, GROK_TURN_ACTIVITY, readJsonlPage, readAntigravityTranscript, readDockerConversation, checkedFile,
+  claudePrompt, codexMessage, grokPromptChunk, zstdDecoder,
+} from './history-transcripts.mjs';
 
 export const HISTORY_TTL_MS = 5 * 1000;
 export const DEFAULT_LIMIT = 100;
@@ -47,12 +50,6 @@ function promptTitle(text) {
   return title && !TAG_RE.test(title) ? title : null;
 }
 
-function contentText(content) {
-  if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) return '';
-  return content.map((part) => (typeof part === 'string' ? part : part && typeof part.text === 'string' ? part.text : '')).filter(Boolean).join('\n');
-}
-
 function parseLines(text) {
   const records = [];
   for (const line of text.split('\n')) {
@@ -66,7 +63,7 @@ async function readHead(file, bytes = HEAD_BYTES) {
   if (file.endsWith('.zst')) {
     if (typeof zlib.createZstdDecompress !== 'function') return null;
     const source = fs.createReadStream(file);
-    const inflate = source.pipe(zlib.createZstdDecompress());
+    const inflate = source.pipe(zstdDecoder());
     const chunks = [];
     let size = 0;
     try {
@@ -218,11 +215,7 @@ function claudeEntry(id, text, tail, stat, before) {
     if (startedAt === null && record.timestamp) startedAt = record.timestamp;
     if (record.type !== 'user' || record.isSidechain === true) continue;
     seenUser = true;
-    if (prompt !== null || record.isMeta === true || record.isCompactSummary === true) continue;
-    const origin = record.origin && typeof record.origin === 'object' ? record.origin.kind : undefined;
-    if (origin !== undefined && origin !== 'human') continue;
-    const title = lineTitle(contentText(record.message?.content));
-    if (title && !(origin === undefined && CLAUDE_INSERTED.test(title))) prompt = title;
+    prompt ??= lineTitle(claudePrompt(record));
   }
   if (cwd === null && !seenUser) return null;
   const head = claudeTitles(text, 0), end = { ...claudeTitles(tail.text, tail.start), start: tail.start };
@@ -260,18 +253,6 @@ export function codexHome(env = process.env) {
   return env.CODEX_HOME || path.join(os.homedir(), '.codex');
 }
 
-function codexPrompt(record) {
-  const payload = record?.payload;
-  if (!payload || typeof payload !== 'object') return null;
-  if (record.type === 'event_msg') {
-    if (payload.type === 'user_message') return lineTitle(payload.message);
-    if (payload.type === 'item_completed' && payload.item?.type === 'UserMessage') return lineTitle(contentText(payload.item.content));
-    return null;
-  }
-  if (record.type === 'response_item' && payload.type === 'message' && payload.role === 'user') return promptTitle(contentText(payload.content));
-  return null;
-}
-
 function codexEntry(text, stat) {
   const records = parseLines(text);
   const meta = records.find((r) => r?.type === 'session_meta')?.payload;
@@ -281,7 +262,8 @@ function codexEntry(text, stat) {
   if (meta.parent_thread_id || (meta.thread_source && meta.thread_source !== 'user')) return null;
   let title = null;
   for (const record of records) {
-    title = codexPrompt(record);
+    const message = codexMessage(record);
+    title = message?.role === 'user' ? lineTitle(message.text) : null;
     if (title) break;
   }
   return cleanEntry({ id, title, cwd: meta.cwd, startedAt: meta.timestamp ?? records[0]?.timestamp, updatedAt: stat.mtime });
@@ -371,8 +353,7 @@ function antigravityEntry(id, text, stat) {
   let first;
   try { first = JSON.parse((text ?? '').split('\n', 1)[0]); } catch { return null; }
   if (!antigravityUserConversation(first) || typeof first.content !== 'string') return null;
-  const request = first.content.match(/<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/)?.[1];
-  return cleanEntry({ id, title: promptTitle(request), startedAt: first.created_at, updatedAt: stat.mtime });
+  return cleanEntry({ id, title: lineTitle(transcriptMessage(first)?.text), startedAt: first.created_at, updatedAt: stat.mtime });
 }
 
 /** Legacy fallback. Multiple cache paths for one id cannot identify a launch folder. */
@@ -465,21 +446,19 @@ async function loadSqlite() {
   return sqlite;
 }
 
-// A session's title, else its first user message; the newest message dates it. A sub-agent's session has a parent.
+// A session's title, else the first message its preview shows if that is the user's; the newest message dates it.
+// A sub-agent's session has a parent. No JSON function reads a row larger than $max.
 const DOCKER_SESSIONS_SQL = `
   select s.id, s.title, s.created_at, s.working_dir,
-    (select i.message_json from session_items i where i.session_id = s.id and i.item_type = 'message' order by i.position limit 1) as first_message,
-    (select max(json_extract(i.message_json, '$.created_at')) from session_items i where i.session_id = s.id) as updated_at
+    (select case when visible and json_extract(message_json, '$.role') = 'user' then json_extract(message_json, '$.content') end
+      from (select position, message_json, ${DOCKER_VISIBLE} as visible from session_items i where i.session_id = s.id and i.item_type = 'message')
+      where visible is not 0 order by position limit 1) as first_prompt,
+    (select max(case when octet_length(i.message_json) <= $max then json_extract(i.message_json, '$.created_at') end)
+      from session_items i where i.session_id = s.id) as updated_at
   from sessions s where s.parent_id is null order by s.created_at desc limit ${MAX_LIMIT}`;
 
 function dockerEntry(row) {
-  let title = typeof row.title === 'string' && row.title.trim() ? row.title : null;
-  if (!title && typeof row.first_message === 'string') {
-    try {
-      const message = JSON.parse(row.first_message);
-      if (message?.role === 'user') title = promptTitle(contentText(message.content));
-    } catch { /* not a message */ }
-  }
+  const title = typeof row.title === 'string' && row.title.trim() ? row.title : lineTitle(row.first_prompt);
   return cleanEntry({ id: row.id, title, cwd: row.working_dir, startedAt: row.created_at, updatedAt: row.updated_at ?? row.created_at });
 }
 
@@ -491,7 +470,7 @@ export async function listDockerSessions(dir) {
   let db = null;
   try {
     db = new DatabaseSync(file, { readOnly: true });
-    return dedupe(db.prepare(DOCKER_SESSIONS_SQL).all().map(dockerEntry).filter(Boolean));
+    return dedupe(db.prepare(DOCKER_SESSIONS_SQL).all({ max: HEAD_BYTES }).map(dockerEntry).filter(Boolean));
   } catch (err) {
     throw new HistoryError(`${shortPath(file)} could not be read: ${err.message}`);
   } finally {
@@ -513,20 +492,22 @@ async function grokBucketCwd(bucket) {
   return (await readText(path.join(bucket, '.cwd')))?.trim() || null;
 }
 
+/** The first prompt Grok Build shows, its chunks joined as the preview joins them. */
 function grokPrompt(text) {
-  const parts = [];
-  let promptId;
+  let turn = null;
+  const title = () => (turn && !turn.hidden ? lineTitle(turn.parts.join('')) : null);
   for (const record of parseLines(text)) {
-    const update = record?.params?.update;
-    if (update?.sessionUpdate !== 'user_message_chunk' || update.content?.type !== 'text') continue;
-    if (update.content._meta?.bash_command || update._meta?.host_turn === true || update._meta?.hideFromScrollback === true) continue;
-    // Grok Build 1.0.70 numbers a prompt's chunks with promptIndex; earlier versions gave them a promptId.
-    const id = update._meta?.promptIndex ?? record.params._meta?.promptId ?? null;
-    if (parts.length && id !== promptId) break;
-    promptId = id;
-    parts.push(update.content.text);
+    const chunk = grokPromptChunk(record);
+    if (turn && (chunk ? chunk.key !== turn.key : GROK_TURN_ACTIVITY.has(record?.params?.update?.sessionUpdate))) {
+      if (title()) return title();
+      turn = null;
+    }
+    if (!chunk) continue;
+    turn ??= { key: chunk.key, hidden: false, parts: [] };
+    if (chunk.hidden) turn.hidden = true;
+    else if (chunk.text !== null) turn.parts.push(chunk.text);
   }
-  return lineTitle(parts.join(''));
+  return title();
 }
 
 async function grokEntry(folder, summary, stat, bucketCwd) {

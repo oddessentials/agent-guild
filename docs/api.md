@@ -295,7 +295,8 @@ entries. Filtering uses the listing only and never reads a conversation.
     "messages": [{ "role": "user", "text": "Fix the login bug" }],
     "nextCursor": null,
     "incomplete": false,
-    "omitted": false
+    "omitted": false,
+    "truncated": false
   }
 }
 ```
@@ -306,11 +307,14 @@ rewound or rolled back. The first page holds the newest messages; each
 `nextCursor` reads the page before it, and messages within a page are oldest
 first. Every message is whole. Follow `nextCursor` until it is null, even when
 a page has no visible messages. `omitted` says records were left out, such as
-one too long to read; `incomplete` says the newest record was still being
+an unreadable one the tool itself skips; `truncated` says the history ends
+early, at a record too large to read or one that cannot be read safely, and
+nothing before it is shown; `incomplete` says the newest record was still being
 written, and a later read may complete it. Messages added after the first page
 appear when it is read again without a cursor. 409 `history_changed` means
 the part a cursor depends on was rewritten, truncated or replaced: start again
-without a cursor.
+without a cursor. 413 `history_too_large` means a compressed Codex rollout
+decodes to more than 64 MiB.
 
 ### Memory
 

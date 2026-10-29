@@ -4017,7 +4017,8 @@ function renderHistoryPreview(view) {
   else if (view.loading) notes.push('Reading saved messages…');
   else if (view.target && !view.messages.length) notes.push(view.nextCursor ? 'No visible messages in this part. Read earlier messages above.' : 'No visible messages in this conversation.');
   else if (!view.target) notes.push('Read a saved exchange, then resume when you want to continue it.');
-  if (view.omitted) notes.push('Some unreadable or oversized records were omitted.');
+  if (view.omitted) notes.push('Some unreadable records were omitted.');
+  if (view.truncated) notes.push('Earlier messages cannot be shown: a record before these is too large or unreadable.');
   if (view.incomplete) notes.push('The last record is incomplete. Refresh after the conversation finishes writing.');
   $('history-preview-note').textContent = notes.join(' ');
   const messages = $('history-messages');

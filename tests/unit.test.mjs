@@ -4748,7 +4748,7 @@ test('reading Docker Agent history prints no SQLite experimental warning', async
   const dir = tempDir();
   const db = new sqlite.DatabaseSync(path.join(dir, 'session.db'));
   db.exec(`create table sessions (id text primary key, created_at text, title text default '', working_dir text default '', parent_id text);
-    create table session_items (id integer primary key autoincrement, session_id text not null, position integer not null, item_type text not null, agent_name text, message_json text);`);
+    create table session_items (id integer primary key autoincrement, session_id text not null, position integer not null, item_type text not null, agent_name text, message_json text, implicit boolean default 0, subsession_id text);`);
   db.prepare('insert into sessions (id, created_at, title, working_dir) values (?, ?, ?, ?)').run('s1', '2026-10-07T20:00:00Z', 'Quiet', '/w');
   db.close();
   // A fresh process, so the only node:sqlite import is the reader's own; other warnings still print.
@@ -4770,7 +4770,7 @@ test('Docker Agent sessions come from its SQLite store, titled by name or first 
   assert.deepEqual(await listDockerSessions(dir), [], 'no store yet');
   const db = new sqlite.DatabaseSync(path.join(dir, 'session.db'));
   db.exec(`create table sessions (id text primary key, created_at text, title text default '', working_dir text default '', parent_id text references sessions(id));
-    create table session_items (id integer primary key autoincrement, session_id text not null, position integer not null, item_type text not null, agent_name text, message_json text);`);
+    create table session_items (id integer primary key autoincrement, session_id text not null, position integer not null, item_type text not null, agent_name text, message_json text, implicit boolean default 0, subsession_id text);`);
   const add = db.prepare('insert into sessions (id, created_at, title, working_dir, parent_id) values (?, ?, ?, ?, ?)');
   const item = db.prepare('insert into session_items (session_id, position, item_type, message_json) values (?, ?, ?, ?)');
   add.run('named', '2026-10-07T19:38:31-04:00', 'Upgrade notes', 'C:\work\engine', null);

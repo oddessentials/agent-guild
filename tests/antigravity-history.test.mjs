@@ -128,7 +128,7 @@ test('preview returns only visible user and assistant messages, treating markup 
   f.transcript(1, lines(user('<script>plain text</script>'), reply(), { source: 'MODEL', type: 'GENERIC', content: 'tool output' },
     { source: 'MODEL', type: 'PLANNER_RESPONSE', thinking: 'no visible reply' }, { source: 'SYSTEM', type: 'USER_INPUT', content: 'injected' }));
   const result = await readAntigravityTranscript(f.dir, id(1));
-  assert.deepEqual(result, { id: id(1), messages: [{ role: 'user', text: '<script>plain text</script>' }, { role: 'assistant', text: 'Visible reply' }], nextCursor: null, incomplete: false, omitted: false });
+  assert.deepEqual(result, { id: id(1), messages: [{ role: 'user', text: '<script>plain text</script>' }, { role: 'assistant', text: 'Visible reply' }], nextCursor: null, incomplete: false, omitted: false, truncated: false });
 });
 
 test('pages run newest first and keep UTF-8 records whole across byte boundaries', async (t) => {
@@ -155,8 +155,8 @@ test('oversized, malformed and partial records have bounded, explicit outcomes',
   const limits = { ...PAGE_LIMITS, maxLineBytes: 100000 };
   f.transcript(1, lines(user(), reply('x'.repeat(200000)), reply('After long record')) + 'not json\n{"unfinished":');
   const page = await readAntigravityTranscript(f.dir, id(1), null, limits);
-  assert.deepEqual([page.omitted, page.incomplete, page.nextCursor], [true, true, null]);
-  assert.deepEqual(page.messages.map((m) => m.text), ['First prompt', 'After long record']);
+  assert.deepEqual([page.omitted, page.incomplete, page.truncated, page.nextCursor], [true, true, true, null]);
+  assert.deepEqual(page.messages.map((m) => m.text), ['After long record'], 'nothing before the record too long to read is shown');
 });
 
 test('appends keep a cursor valid; a rewritten or deleted transcript does not', async (t) => {

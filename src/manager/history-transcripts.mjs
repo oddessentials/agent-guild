@@ -14,17 +14,24 @@ export const PAGE_LIMITS = {
   messages: 40,
   scanBytes: 8 * 1024 * 1024,
   maxScanBytes: 32 * 1024 * 1024,
-  maxLineBytes: 4 * 1024 * 1024,
+  maxLineBytes: 16 * 1024 * 1024,
+  maxDecodedBytes: 64 * 1024 * 1024,
   chunkBytes: 256 * 1024,
 };
 const ANCHOR_BYTES = 4096;
 const MAX_CURSOR = 2048;
 /** The wrappers Claude Code puts around text it inserted as a user record, in records from before `origin`. */
-export const CLAUDE_INSERTED = /^<(command-name|local-command-stdout|bash-input|bash-stdout|bash-stderr)>/;
+const CLAUDE_INSERTED = /^<(command-name|local-command-stdout|bash-input|bash-stdout|bash-stderr)>/;
 
 const changed = () => historyError(409, 'history_changed', 'The conversation changed. Refresh to read it again.');
 const badCursor = () => historyError(400, 'bad_history_cursor', 'Invalid conversation page.');
 const unavailable = () => historyError(404, 'history_unavailable', 'This conversation transcript is unavailable.');
+const tooLarge = () => historyError(413, 'history_too_large', 'This compressed conversation is too large to preview.');
+
+/** Codex compresses rollouts at level 3, whose window is 2 MiB; a frame asking for more than 8 MiB is refused. */
+export function zstdDecoder() {
+  return zlib.createZstdDecompress({ params: { [zlib.constants.ZSTD_d_windowLogMax]: 23 } });
+}
 
 function digest(buffer) {
   return createHash('sha256').update(buffer).digest('hex').slice(0, 24);
@@ -83,8 +90,11 @@ async function plainSource(file) {
   }
 }
 
-/** A compressed rollout is decoded to a private temporary file, removed when the page is read; offsets address the decoded JSONL. */
-async function openSource(file) {
+/**
+ * A compressed rollout is decoded to a private temporary file, removed when the page is read; offsets address the
+ * decoded JSONL. Decoding stops once it passes the limit.
+ */
+async function openSource(file, limits) {
   let target = file;
   try { await fs.promises.access(target); } catch {
     // Codex compresses a cold rollout, and decompresses one to resume it, under the other name.
@@ -97,12 +107,20 @@ async function openSource(file) {
   const remove = () => fs.promises.rm(dir, { recursive: true, force: true });
   try {
     const decoded = path.join(dir, 'rollout.jsonl');
-    await pipeline(fs.createReadStream(target), zlib.createZstdDecompress(), fs.createWriteStream(decoded, { flags: 'wx', mode: 0o600 }));
+    const bounded = async function* (chunks) {
+      let size = 0;
+      for await (const chunk of chunks) {
+        size += chunk.length;
+        if (size > limits.maxDecodedBytes) throw tooLarge();
+        yield chunk;
+      }
+    };
+    await pipeline(fs.createReadStream(target), zstdDecoder(), bounded, fs.createWriteStream(decoded, { flags: 'wx', mode: 0o600 }));
     const source = await plainSource(decoded);
     return { ...source, close: async () => { try { await source.close(); } finally { await remove(); } } };
-  } catch {
+  } catch (err) {
     await remove();
-    throw unavailable();
+    throw err.code === 'history_too_large' ? err : unavailable();
   }
 }
 
@@ -121,18 +139,24 @@ async function verify(source, cursor) {
   if (digest(await source.read(cursor.as, cursor.ae - cursor.as)) !== cursor.ah) throw changed();
 }
 
+/** Where the last whole line ends, or null when the partial line after it is already too long to read. */
 async function lastLineEnd(source, limits) {
   let position = source.size;
-  while (position > 0 && source.size - position < limits.maxScanBytes) {
+  while (position > 0) {
+    if (source.size - position > limits.maxLineBytes) return null;
     const length = Math.min(limits.chunkBytes, position);
     const chunk = await source.read(position - length, length);
     const newline = chunk.lastIndexOf(10);
-    if (newline >= 0) return position - length + newline + 1;
+    if (newline >= 0) {
+      const end = position - length + newline + 1;
+      return source.size - end > limits.maxLineBytes ? null : end;
+    }
     position -= length;
   }
-  return 0;
+  return source.size > limits.maxLineBytes ? null : 0;
 }
 
+/** Lines before `end`, newest first. A line longer than the limit ends them, with `bytes` null, before more of it is read. */
 async function* linesBackward(source, end, limits) {
   let position = end;
   let tail = [];
@@ -144,123 +168,23 @@ async function* linesBackward(source, end, limits) {
     let lineEnd = chunk.length;
     for (let i = chunk.lastIndexOf(10, lineEnd - 1); i >= 0; i = lineEnd > 0 ? chunk.lastIndexOf(10, lineEnd - 1) : -1) {
       const size = lineEnd - i - 1 + tailSize;
-      yield { offset: position + i + 1, size, bytes: size > limits.maxLineBytes ? null : Buffer.concat([chunk.subarray(i + 1, lineEnd), ...tail]) };
+      if (size > limits.maxLineBytes) {
+        yield { offset: null, size, bytes: null };
+        return;
+      }
+      yield { offset: position + i + 1, size, bytes: Buffer.concat([chunk.subarray(i + 1, lineEnd), ...tail]) };
       tail = [];
       tailSize = 0;
       lineEnd = i;
     }
     tailSize += lineEnd;
-    if (tailSize <= limits.maxLineBytes) tail.unshift(chunk.subarray(0, lineEnd));
-  }
-  if (tailSize > 0) yield { offset: 0, size: tailSize, bytes: tailSize > limits.maxLineBytes ? null : Buffer.concat(tail) };
-}
-
-const OUTLINE_PATHS = new Set(['type', 'uuid', 'parentUuid', 'logicalParentUuid', 'isSidechain', 'isMeta', 'isCompactSummary', 'origin.kind',
-  'message.id', 'message.content.[].type', 'source', 'payload.type', 'payload.item.type', 'params.update.sessionUpdate',
-  'params.update.content.type', 'params.update.content._meta.bash_command', 'params.update._meta.promptIndex', 'params.update._meta.host_turn',
-  'params.update._meta.hideFromScrollback']);
-const MAX_OUTLINE_VALUE = 512;
-
-/**
- * The fields readers need from a record too large to keep, in one pass over its
- * bytes: only the paths above, never its text. Null unless the record is one
- * whole JSON object.
- */
-async function outline(source, offset, size, limits) {
-  const frames = [];
-  const found = new Map();
-  let inString = false, escape = false, buffer = null, bufferLimit = 0, kind = null, path = null, literal = null, closed = false;
-  const current = () => frames.map((frame) => (frame.array ? '[]' : frame.key)).join('.');
-  const wanted = (at) => OUTLINE_PATHS.has(at) && !found.has(at);
-  const valueStarts = () => {
-    if (closed || (frames.length && !frames.at(-1).array && frames.at(-1).key === null)) return false;
-    return true;
-  };
-  const endLiteral = () => {
-    if (literal && literal.bytes) {
-      try { found.set(literal.path, JSON.parse(Buffer.from(literal.bytes).toString('utf8'))); } catch { /* not a scalar */ }
+    if (tailSize > limits.maxLineBytes) {
+      yield { offset: null, size: tailSize, bytes: null };
+      return;
     }
-    literal = null;
-  };
-  for (let at = offset; at < offset + size; at += limits.chunkBytes) {
-    const chunk = await source.read(at, Math.min(limits.chunkBytes, offset + size - at));
-    for (const b of chunk) {
-      if (inString) {
-        if (escape) escape = false;
-        else if (b === 92) escape = true;
-        else if (b === 34) {
-          inString = false;
-          const text = buffer && buffer.length <= bufferLimit ? Buffer.from(buffer) : null;
-          if (kind === 'key') {
-            frames.at(-1).key = text ? text.toString('utf8') : '';
-          } else if (text && path) {
-            try { found.set(path, JSON.parse(`"${text.toString('utf8')}"`)); } catch { /* malformed escape */ }
-          }
-          buffer = null;
-          continue;
-        }
-        if (buffer && buffer.length <= bufferLimit) buffer.push(b);
-        continue;
-      }
-      if (literal && (b === 44 || b === 125 || b === 93 || b === 32 || b === 9 || b === 13 || b === 10)) endLiteral();
-      else if (literal) {
-        if (literal.bytes && literal.bytes.length < 32) literal.bytes.push(b);
-        continue;
-      }
-      if (b === 32 || b === 9 || b === 13 || b === 10 || b === 58) continue;
-      if (b === 44) {
-        if (frames.length && !frames.at(-1).array) frames.at(-1).key = null;
-        continue;
-      }
-      if (b === 123 || b === 91) {
-        if (!valueStarts() || (!frames.length && b !== 123)) return null;
-        frames.push({ array: b === 91, key: null });
-        continue;
-      }
-      if (b === 125 || b === 93) {
-        const frame = frames.pop();
-        if (!frame || frame.array !== (b === 93)) return null;
-        if (!frames.length) closed = true;
-        continue;
-      }
-      if (!frames.length || closed) return null;
-      const top = frames.at(-1);
-      if (b === 34) {
-        inString = true;
-        if (!top.array && top.key === null) {
-          kind = 'key';
-          buffer = [];
-          bufferLimit = 64;
-        } else {
-          kind = 'value';
-          const at = current();
-          path = wanted(at) ? at : null;
-          buffer = path ? [] : null;
-          bufferLimit = MAX_OUTLINE_VALUE;
-        }
-        continue;
-      }
-      if (!top.array && top.key === null) return null;
-      const at = current();
-      literal = { path: at, bytes: wanted(at) ? [b] : null };
-    }
+    tail.unshift(chunk.subarray(0, lineEnd));
   }
-  if (literal) endLiteral();
-  if (!closed || inString) return null;
-  const record = {};
-  for (const [at, value] of found) {
-    let node = record;
-    const parts = at.split('.');
-    parts.forEach((part, i) => {
-      if (part === '[]') return;
-      if (i === parts.length - 1) node[part] = value;
-      else if (parts[i + 1] === '[]') {
-        node[part] = [{}];
-        node = node[part][0];
-      } else node = node[part] ??= {};
-    });
-  }
-  return record;
+  if (tailSize > 0) yield { offset: 0, size: tailSize, bytes: Buffer.concat(tail) };
 }
 
 async function readFirstRecord(source, limits) {
@@ -275,16 +199,16 @@ async function readFirstRecord(source, limits) {
  * - `starts(state, record)`: the record begins a message, so the page may stop before it;
  * - `take(state, record)`: consume it;
  * - `open(state)`: a message is unfinished, so the page may not stop;
- * - `flush(state)`: finish the open message;
- * - `abandon(state)`: give up a message too long to finish, leaving the rest of it for the next page to skip;
- * - `corrupt(state)`: a record could not be read at all;
+ * - `flush(state, atStart)`: finish the open message;
  * - `done(state)`: nothing older belongs to the conversation; `failed` says it cannot be shown truthfully;
- * - `cursor(state)`: what the next page needs.
- * A record too large to keep reaches `take` as its outline, marked `withheld`: the message it belongs to is left out whole.
+ * - `cursor(state)`: what the next page needs;
+ * - `skipsCorrupt`: a record that is not JSON is passed over, as the tool passes over it, instead of ending the history.
+ * A line too long to read, or a message that does not end within the most a page reads, ends the readable history
+ * there: the unfinished message is dropped and the page says it is `truncated`.
  */
-export async function readJsonlPage({ source: kind, id, file, cursor, reader, firstRecord = null, limits = PAGE_LIMITS }) {
+export async function readJsonlPage({ source: kind, id, file, cursor, reader, firstRecord = null, limits = PAGE_LIMITS, open = openSource }) {
   const saved = cursor ? decodeCursor(cursor, kind, id) : null;
-  const source = await openSource(file);
+  const source = await open(file, limits);
   try {
     if (firstRecord && !firstRecord(await readFirstRecord(source, limits))) throw unavailable();
     let end, incomplete = false;
@@ -293,49 +217,46 @@ export async function readJsonlPage({ source: kind, id, file, cursor, reader, fi
       end = saved.o;
     } else {
       end = await lastLineEnd(source, limits);
+      if (end === null) return { id, messages: [], nextCursor: null, incomplete: true, omitted: false, truncated: true };
       incomplete = end < source.size;
     }
     const before = await anchors(source, end, end);
     const state = { messages: [], omitted: false, failed: false, ...reader.start(saved?.st ?? null) };
-    let last = end, scanned = 0, more = false;
+    let last = end, scanned = 0, more = false, truncated = false;
     for await (const line of linesBackward(source, end, limits)) {
-      if (!line.size) { last = line.offset; continue; }
-      let record = null, corrupt = false;
-      if (line.bytes === null) {
-        record = await outline(source, line.offset, line.size, limits);
-        if (record) record.withheld = true;
-        else corrupt = true;
-      } else {
-        try { record = JSON.parse(line.bytes.toString('utf8')); } catch { corrupt = true; }
+      const unfinished = reader.open(state);
+      if (line.bytes === null || (unfinished && scanned >= limits.maxScanBytes)) {
+        truncated = true;
+        break;
       }
-      const open = reader.open(state);
-      if ((!open && scanned >= limits.scanBytes)
+      if (!line.size) { last = line.offset; continue; }
+      let record = null, parsed = true;
+      try { record = JSON.parse(line.bytes.toString('utf8')); } catch { parsed = false; }
+      if (typeof record !== 'object') record = null;
+      if ((!unfinished && scanned >= limits.scanBytes)
         || (record && reader.starts(state, record) && (state.messages.length >= limits.messages || scanned >= limits.scanBytes))) {
         more = true;
         break;
       }
-      if (open && scanned >= limits.maxScanBytes) {
-        reader.abandon(state);
+      if (!parsed) {
         state.omitted = true;
-        more = true;
-        break;
-      }
-      if (corrupt) {
-        state.omitted = true;
-        reader.corrupt(state);
-      } else if (record && typeof record === 'object') reader.take(state, record);
+        if (!reader.skipsCorrupt) {
+          truncated = true;
+          break;
+        }
+      } else if (record) reader.take(state, record);
       scanned += line.size + 1;
       last = line.offset;
-      if (reader.done(state)) { more = false; break; }
+      if (reader.done(state)) break;
     }
-    reader.flush(state, !more);
+    if (!truncated) reader.flush(state, !more);
     if (state.failed) throw unavailable();
     if (more && last >= end) throw unavailable();
     const after = await anchors(source, end, end);
     if (after.hh !== before.hh || after.ah !== before.ah) throw changed();
     const nextCursor = more ? encodeCursor({ v: 1, s: kind, i: id, o: last, ...(await anchors(source, last, end)), st: reader.cursor(state) }) : null;
     if (nextCursor && nextCursor.length > MAX_CURSOR) throw unavailable();
-    return { id, messages: state.messages.reverse(), nextCursor, incomplete, omitted: state.omitted };
+    return { id, messages: state.messages.reverse(), nextCursor, incomplete, omitted: state.omitted, truncated };
   } finally {
     await source.close();
   }
@@ -347,14 +268,12 @@ function clean(text) {
 
 // ---- Claude Code ----------------------------------------------------------------
 
-const WITHHELD = Symbol('withheld');
-
-function claudePrompt(record) {
-  if (record.type !== 'user' || record.isMeta === true || record.isCompactSummary === true) return null;
+/** The text of a prompt the user wrote, or null for any other record. */
+export function claudePrompt(record) {
+  if (record?.type !== 'user' || record.isMeta === true || record.isCompactSummary === true) return null;
   const origin = record.origin && typeof record.origin === 'object' ? record.origin.kind : undefined;
   if (origin !== undefined && origin !== 'human') return null;
   const content = record.message?.content;
-  if (record.withheld) return Array.isArray(content) && content[0]?.type === 'tool_result' ? null : WITHHELD;
   let text;
   if (typeof content === 'string') text = content;
   else if (Array.isArray(content) && !content.some((part) => part?.type === 'tool_result')) {
@@ -383,10 +302,8 @@ function claudeMessageId(record) {
  * reply is several records sharing `message.id`.
  */
 export const claudeReader = {
-  start: (saved) => ({
-    leaf: saved?.f === true, expected: typeof saved?.u === 'string' ? saved.u : null,
-    skipId: typeof saved?.k === 'string' ? saved.k : null, root: false, reply: null,
-  }),
+  skipsCorrupt: true,
+  start: (saved) => ({ leaf: saved?.f === true, expected: typeof saved?.u === 'string' ? saved.u : null, root: false, reply: null }),
   onChain(s, record) {
     if (record.isSidechain === true || typeof record.uuid !== 'string') return false;
     return s.leaf ? record.uuid === s.expected : record.type === 'user' || record.type === 'assistant';
@@ -415,44 +332,37 @@ export const claudeReader = {
     const prompt = claudePrompt(record);
     if (prompt !== null) {
       this.flush(s);
-      s.skipId = null;
-      if (prompt === WITHHELD) s.omitted = true;
-      else s.messages.push({ role: 'user', text: prompt });
+      s.messages.push({ role: 'user', text: prompt });
       return;
     }
     const messageId = claudeMessageId(record);
     if (messageId === null) return;
-    if (messageId === s.skipId) return;
-    s.skipId = null;
     if (s.reply?.id !== messageId) {
       this.flush(s);
-      s.reply = { id: messageId, parts: [], withheld: false };
+      s.reply = { id: messageId, parts: [] };
     }
-    if (record.withheld) s.reply.withheld = true;
     const text = claudeReplyText(record);
     if (text) s.reply.parts.unshift(text);
   },
   open: (s) => s.reply !== null,
   flush(s, atStart = false) {
     // A chain that never reaches its root lost a record: the reply waiting on it may be missing a part.
-    const unresolved = atStart && s.leaf && !s.root && s.expected !== null;
-    if (unresolved || s.reply?.withheld) s.omitted = true;
+    if (atStart && s.leaf && !s.root && s.expected !== null) s.omitted = true;
     else if (s.reply?.parts.length) s.messages.push({ role: 'assistant', text: s.reply.parts.join('\n\n') });
     s.reply = null;
   },
-  corrupt: () => {},
-  abandon(s) {
-    s.skipId = s.reply?.id ?? null;
-    s.reply = null;
-  },
   done: (s) => s.root,
-  cursor: (s) => ({ f: s.leaf, u: s.expected, ...(s.skipId ? { k: s.skipId } : {}) }),
+  cursor: (s) => ({ f: s.leaf, u: s.expected }),
 };
 
 // ---- Codex CLI --------------------------------------------------------------------
 
-function codexMessage(record) {
-  const payload = record.type === 'event_msg' ? record.payload : null;
+/**
+ * A message as Codex shows it: older rollouts carry `user_message` and `agent_message` events, newer ones
+ * `item_completed` items. The `response_item` copies also hold the context Codex inserts, so they are never read.
+ */
+export function codexMessage(record) {
+  const payload = record?.type === 'event_msg' ? record.payload : null;
   if (!payload || typeof payload !== 'object') return null;
   if (payload.type === 'user_message') return { role: 'user', text: clean(payload.message) };
   if (payload.type === 'agent_message') return { role: 'assistant', text: clean(payload.message) };
@@ -468,12 +378,9 @@ function codexRollback(record) {
   return record.type === 'event_msg' && record.payload?.type === 'thread_rolled_back';
 }
 
-/**
- * Older rollouts carry `user_message` and `agent_message` events, newer ones
- * `item_completed` items; one rollout has one kind. A legacy
- * `thread_rolled_back` dropped the user turns before it.
- */
+/** One rollout has one kind of message. A legacy `thread_rolled_back` dropped the user turns before it. */
 export const codexReader = {
+  skipsCorrupt: true,
   start: (saved) => ({ drop: safeInteger(saved?.d) ? saved.d : 0 }),
   starts: (s, record) => codexRollback(record) || codexMessage(record) !== null,
   take(s, record) {
@@ -487,13 +394,10 @@ export const codexReader = {
       if (message.role === 'user') s.drop--;
       return;
     }
-    if (record.withheld) s.omitted = true;
-    else if (message.text) s.messages.push(message);
+    if (message.text) s.messages.push(message);
   },
   open: () => false,
   flush: () => {},
-  abandon: () => {},
-  corrupt: () => {},
   done: () => false,
   cursor: (s) => (s.drop ? { d: s.drop } : {}),
 };
@@ -501,31 +405,42 @@ export const codexReader = {
 // ---- Grok Build -------------------------------------------------------------------
 
 function grokUpdate(record) {
-  const update = record.params?.update;
+  const update = record?.params?.update;
   return update && typeof update === 'object' ? update : null;
 }
 
-function grokUserChunk(update) {
-  return update.sessionUpdate === 'user_message_chunk';
-}
-
 /** What a turn does after its prompt; read backwards, any of it ends the turn before. */
-const GROK_TURN_ACTIVITY = new Set(['agent_message_chunk', 'agent_thought_chunk', 'tool_call', 'tool_call_update', 'turn_completed', 'rewind_marker']);
+export const GROK_TURN_ACTIVITY = new Set(['agent_message_chunk', 'agent_thought_chunk', 'tool_call', 'tool_call_update', 'turn_completed', 'rewind_marker']);
 
-/** Grok Build 1.0.70 numbers a prompt's chunks with promptIndex; earlier versions gave them a promptId. */
-function grokPromptKey(record, update) {
-  return update._meta?.promptIndex ?? record.params._meta?.promptId ?? null;
+/**
+ * A chunk of a prompt: the key its chunks share, whether text or image, its index, whether the prompt is one Grok
+ * Build hides or ran itself, and its text if it has any. Grok Build 1.0.70 numbers chunks with promptIndex; earlier
+ * versions gave them a promptId.
+ */
+export function grokPromptChunk(record) {
+  const update = grokUpdate(record);
+  if (update?.sessionUpdate !== 'user_message_chunk') return null;
+  return {
+    key: update._meta?.promptIndex ?? record.params._meta?.promptId ?? null,
+    index: update._meta?.promptIndex,
+    hidden: Boolean(update.content?._meta?.bash_command) || update._meta?.host_turn === true || update._meta?.hideFromScrollback === true,
+    text: update.content?.type === 'text' && typeof update.content.text === 'string' ? update.content.text : null,
+  };
 }
 
 /**
- * A turn is the user's prompt, whose chunks share `promptIndex` whether they hold text or an image, and the
- * replies after it; a tool call ends a reply, and only text shows. Records such as `image_dropped` can sit
- * between a prompt's chunks. A rewind leaves the old turns in `updates.jsonl` and appends a `rewind_marker`:
- * read backwards, every turn at or above the lowest target passed so far was discarded.
+ * A turn is the user's prompt and the replies after it; a tool call ends a reply, and only text shows. Records such
+ * as `image_dropped` can sit between a prompt's chunks. A rewind leaves the old turns in `updates.jsonl` and appends
+ * a `rewind_marker`: read backwards, every turn at or above the lowest target passed so far was discarded. A record
+ * that is not JSON may have been a rewind or part of a prompt, so it ends the history.
  */
 export const grokReader = {
-  start: (saved) => ({ cut: safeInteger(saved?.c) ? saved.c : null, skip: saved?.k === true, skipPrompt: safeInteger(saved?.p) ? saved.p : null, turn: null, stopped: false }),
-  continues: (s, record, update) => (grokUserChunk(update) ? grokPromptKey(record, update) === s.turn.key : !GROK_TURN_ACTIVITY.has(update.sessionUpdate)),
+  skipsCorrupt: false,
+  start: (saved) => ({ cut: safeInteger(saved?.c) ? saved.c : null, turn: null }),
+  continues: (s, record, update) => {
+    const chunk = grokPromptChunk(record);
+    return chunk ? chunk.key === s.turn.key : !GROK_TURN_ACTIVITY.has(update.sessionUpdate);
+  },
   starts(s, record) {
     const update = grokUpdate(record);
     if (!update) return false;
@@ -540,30 +455,24 @@ export const grokReader = {
       if (safeInteger(update.target_prompt_index)) s.cut = s.cut === null ? update.target_prompt_index : Math.min(s.cut, update.target_prompt_index);
       return;
     }
-    if (s.skipPrompt !== null) {
-      if (grokUserChunk(update) && update._meta?.promptIndex === s.skipPrompt) return;
-      s.skipPrompt = null;
-    }
-    s.turn ??= { user: false, key: null, index: undefined, hidden: false, prompt: [], promptWithheld: false, replies: [], reply: null };
+    s.turn ??= { user: false, key: null, index: undefined, hidden: false, prompt: [], replies: [], reply: null };
     const turn = s.turn;
-    if (grokUserChunk(update)) {
+    const chunk = grokPromptChunk(record);
+    if (chunk) {
       turn.user = true;
       turn.reply = null;
-      turn.key = grokPromptKey(record, update);
-      turn.index = update._meta?.promptIndex;
-      if (update.content?._meta?.bash_command || update._meta?.host_turn === true || update._meta?.hideFromScrollback === true) turn.hidden = true;
-      else if (update.content?.type !== 'text') return;
-      else if (record.withheld) turn.promptWithheld = true;
-      else turn.prompt.unshift(update.content.text);
+      turn.key = chunk.key;
+      turn.index = chunk.index;
+      if (chunk.hidden) turn.hidden = true;
+      else if (chunk.text !== null) turn.prompt.unshift(chunk.text);
     } else if (update.sessionUpdate === 'tool_call' || update.sessionUpdate === 'tool_call_update') {
       turn.reply = null;
-    } else if (update.sessionUpdate === 'agent_message_chunk' && update.content?.type === 'text' && !s.skip) {
+    } else if (update.sessionUpdate === 'agent_message_chunk' && update.content?.type === 'text') {
       if (!turn.reply) {
         turn.reply = [];
         turn.replies.unshift(turn.reply);
       }
-      if (record.withheld) turn.reply.withheld = true;
-      else turn.reply.unshift(update.content.text);
+      turn.reply.unshift(update.content.text);
     }
   },
   open: (s) => s.turn !== null,
@@ -571,10 +480,8 @@ export const grokReader = {
     const turn = s.turn;
     s.turn = null;
     if (!turn) return;
-    s.skip = false;
-    if (turn.promptWithheld || turn.replies.some((parts) => parts.withheld)) s.omitted = true;
-    const replies = turn.replies.filter((parts) => !parts.withheld).map((parts) => clean(parts.join(''))).filter(Boolean);
-    const prompt = turn.hidden || turn.promptWithheld ? '' : clean(turn.prompt.join(''));
+    const replies = turn.replies.map((parts) => clean(parts.join(''))).filter(Boolean);
+    const prompt = turn.hidden ? '' : clean(turn.prompt.join(''));
     if (!replies.length && !prompt) return;
     if (s.cut !== null) {
       if (!safeInteger(turn.index)) { s.failed = true; return; }
@@ -583,36 +490,22 @@ export const grokReader = {
     for (const text of replies.reverse()) s.messages.push({ role: 'assistant', text });
     if (prompt) s.messages.push({ role: 'user', text: prompt });
   },
-  abandon(s) {
-    if (s.turn?.user && safeInteger(s.turn.index)) s.skipPrompt = s.turn.index;
-    else s.skip = true;
-    s.turn = null;
-  },
-  corrupt(s) {
-    s.turn = null;
-    s.stopped = true;
-  },
-  done: (s) => s.failed || s.stopped,
-  cursor: (s) => ({ ...(s.cut !== null ? { c: s.cut } : {}), ...(s.skip ? { k: true } : {}), ...(s.skipPrompt !== null ? { p: s.skipPrompt } : {}) }),
+  done: (s) => s.failed,
+  cursor: (s) => (s.cut !== null ? { c: s.cut } : {}),
 };
 
 // ---- Antigravity CLI ----------------------------------------------------------------
 
 export const antigravityReader = {
+  skipsCorrupt: true,
   start: () => ({}),
   starts: (s, record) => transcriptMessage(record) !== null,
   take(s, record) {
-    if (record.withheld) {
-      if (antigravityUserConversation(record) || (record.source === 'MODEL' && record.type === 'PLANNER_RESPONSE')) s.omitted = true;
-      return;
-    }
     const message = transcriptMessage(record);
     if (message) s.messages.push(message);
   },
   open: () => false,
   flush: () => {},
-  abandon: () => {},
-  corrupt: () => {},
   done: () => false,
   cursor: () => ({}),
 };
@@ -631,22 +524,23 @@ export async function readAntigravityTranscript(dir, id, cursor = null, limits =
 // ---- Docker Agent -------------------------------------------------------------------
 
 /**
- * Docker Agent's own VisibleExchanges rule, worked out by SQLite so that no payload reaches this process: a message
- * row that is not implicit, from the user or the assistant, with no tool calls and text content. Its content is read
- * only when within the line limit; `size` is what the row costs the page's scan budget.
+ * Docker Agent's own VisibleExchanges rule, worked out by SQLite: 1 for a message row that is not implicit, from the
+ * user or the assistant, with no tool calls and text content; 0 for any other row; null for a row that might be shown
+ * but is larger than `$max`. CASE stops at the first match, so no JSON function sees a row larger than `$max`.
  */
-// Every JSON function sits behind CASE, since SQLite does not promise to stop an AND early on a malformed row.
-const DOCKER_VISIBLE = `case when json_valid(message_json) then case
-    when implicit or subsession_id is not null then 0
-    when json_extract(message_json, '$.role') not in ('user', 'assistant') then 0
+export const DOCKER_VISIBLE = `case
+    when implicit or subsession_id is not null or message_json is null then 0
+    when octet_length(message_json) > $max then null
+    when not json_valid(message_json) then 0
+    when coalesce(json_extract(message_json, '$.role') not in ('user', 'assistant'), 1) then 0
     when coalesce(json_array_length(message_json, '$.tool_calls'), 0) <> 0 then 0
-    else json_type(message_json, '$.content') = 'text' end else 0 end`;
-const DOCKER_CONTENT_BYTES = `length(cast(json_extract(message_json, '$.content') as blob))`;
+    else coalesce(json_type(message_json, '$.content') = 'text', 0) end`;
 const DOCKER_PAGE_SQL = (after) => `
-  select id, position, length(cast(message_json as blob)) as size, ${DOCKER_VISIBLE} as visible,
-    case when ${DOCKER_VISIBLE} then case when ${DOCKER_CONTENT_BYTES} <= ? then json_extract(message_json, '$.content') end end as content,
-    case when ${DOCKER_VISIBLE} then json_extract(message_json, '$.role') end as role
-  from session_items where session_id = ? and item_type = 'message'${after ? ' and position < ?' : ''}
+  select id, position, octet_length(message_json) as size, visible,
+    case when visible then json_extract(message_json, '$.role') end as role,
+    case when visible then json_extract(message_json, '$.content') end as content
+  from (select id, position, message_json, ${DOCKER_VISIBLE} as visible from session_items
+    where session_id = $session and item_type = 'message'${after ? ' and position < $after' : ''})
   order by position desc`;
 
 /** A page of a Docker Agent session, newest first, within the page's message and scan limits. */
@@ -659,24 +553,28 @@ export async function readDockerConversation({ dir, id, cursor, loadSqlite, limi
     try { db = new DatabaseSync(path.join(dir, 'session.db'), { readOnly: true }); } catch { throw unavailable(); }
     if (saved && db.prepare('select id from session_items where session_id = ? and position = ?').get(id, saved.p)?.id !== saved.r) throw changed();
     const messages = [];
-    let last = null, scanned = 0, more = false, omitted = false;
-    for (const row of db.prepare(DOCKER_PAGE_SQL(saved)).iterate(limits.maxLineBytes, id, ...(saved ? [saved.p] : []))) {
+    let last = null, scanned = 0, more = false, truncated = false;
+    const params = { max: limits.maxLineBytes, session: id, ...(saved ? { after: saved.p } : {}) };
+    for (const row of db.prepare(DOCKER_PAGE_SQL(saved)).iterate(params)) {
       if (last && (scanned >= limits.scanBytes || (row.visible && messages.length >= limits.messages))) {
         more = true;
         break;
       }
+      if (row.visible === null) {
+        truncated = true;
+        break;
+      }
       last = row;
       scanned += row.size ?? 0;
-      if (!row.visible) continue;
-      if (row.content === null) omitted = true;
-      else if (clean(row.content)) messages.push({ role: row.role, text: clean(row.content) });
+      if (row.visible && clean(row.content)) messages.push({ role: row.role, text: clean(row.content) });
     }
     return {
       id,
       messages: messages.reverse(),
       nextCursor: more ? encodeCursor({ v: 1, s: 'docker', i: id, p: last.position, r: last.id, st: {} }) : null,
       incomplete: false,
-      omitted,
+      omitted: false,
+      truncated,
     };
   } catch (err) {
     if (err.status) throw err;

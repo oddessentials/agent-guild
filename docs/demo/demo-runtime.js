@@ -391,7 +391,7 @@
       return json({ detail: { id: saved.id, messages: [
         { role: 'user', text: saved.prompt },
         { role: 'assistant', text: saved.reply },
-      ], nextCursor: null, incomplete: false, omitted: false } });
+      ], nextCursor: null, incomplete: false, omitted: false, truncated: false } });
     }
     var flagsMatch = route.match(/^\/providers\/([^/]+)\/flags$/);
     if (flagsMatch && method === 'GET') return json({ flags: clone(launchFlags[flagsMatch[1]] ? launchFlags[flagsMatch[1]].flags : []), error: null });
