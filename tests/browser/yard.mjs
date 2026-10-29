@@ -432,6 +432,68 @@ test('station props come and go with their sessions, halls glow and smoke with t
   assert.deepEqual(b.errors,[]);
 });
 
+test('marks show reported state over the crew and leave every character\'s motion as it was',options,async t=>{
+  const {f,b}=await setup(t);
+  const T0=Date.parse('2026-10-13T12:00:00.000Z'),iso=ms=>new Date(T0-ms).toISOString();
+  const sessions=[...f.data.values()].slice(0,2).map(s=>({...s,activity:'active',lastOutputAt:iso(0),createdAt:iso(3600000),agents:[],shells:[]}));
+  await b.evaluate(`(async()=>{
+    const {YardRenderer}=await import('/yard/renderer.js');
+    const make=async()=>{const host=document.createElement('div'),labels=document.createElement('div');
+      host.style.cssText='position:fixed;width:900px;height:700px;top:0;left:0';host.append(labels);document.body.append(host);
+      const r=new YardRenderer(host,labels,{select(){},open(){},clock:()=>${T0}});await r.setWorld('guild','dark');r.update(${q(f.providers)},${q(sessions)});return r;};
+    window.__renderer=await make();window.__plain=await make();__plain.mark=()=>{};__plain.stepMarks=()=>{};
+    window.__sessions=${q(sessions)};window.__providers=${q(f.providers)};
+    window.__set=(i,patch)=>{Object.assign(__sessions[i],patch);for(const r of [__renderer,__plain])r.update(__providers,structuredClone(__sessions));};
+    window.__pose=r=>[...r.units.values()].map(u=>[u.root.position.x,u.root.position.z,u.heading,u.clip,u.action?.time]);
+    window.__marks=id=>[...(__renderer.units.get(id).marks||new Map()).values()].map(m=>m.anchor+':'+m.kind+':'+m.alpha);
+    window.__sprites=id=>[...__renderer.units.get(id).marks.values()].flatMap(m=>m.sprites).map(s=>[s.visible,+s.position.y.toFixed(3),+s.material.opacity.toFixed(3)]);
+  })()`);
+  const [a,c]=sessions.map(s=>s.id);
+  await b.wait('[__renderer,__plain].every(r=>[...r.units.values()].every(u=>u.loaded))');
+  const motion=[];
+  const steps=n=>b.evaluate(`(()=>{const out=[];for(let i=0;i<${n};i++){__renderer.step(.05);__plain.step(.05);out.push([__pose(__renderer),__pose(__plain)]);}return out;})()`).then(out=>motion.push(...out));
+  assert.deepEqual(await b.evaluate(`__marks(${q(a)})`),[],'a working character has no mark');
+  // Quiet for a minute: it walks to the plaza with no mark, then falls asleep there.
+  await b.evaluate(`__set(0,{activity:'quiet',lastOutputAt:${q(iso(60000))}})`);
+  assert.equal(await b.evaluate(`__renderer.units.get(${q(a)}).moving`),true);
+  await steps(5);
+  assert.deepEqual(await b.evaluate(`__marks(${q(a)})`),[':asleep:0'],'no zzz while it walks');
+  await b.evaluate(`(()=>{let n=0;while(__renderer.units.get(${q(a)}).moving&&n<4000){__renderer.step(.05);__plain.step(.05);n++;}})()`);
+  await steps(10);
+  assert.deepEqual(await b.evaluate(`__marks(${q(a)})`),[':asleep:1'],'it fades in once the character rests');
+  const before=await b.evaluate(`__sprites(${q(a)})`);
+  assert.equal(before.length,3);assert.ok(before.every(([visible])=>visible));
+  await steps(10);
+  assert.notDeepEqual(await b.evaluate(`__sprites(${q(a)})`),before,'the zzz drifts');
+  // A helper ends the nap; a waiting one is marked over itself once it is shown.
+  await b.evaluate(`__set(0,{agents:[{id:'w',name:'W',status:'waiting'}]})`);
+  await b.wait(`__renderer.units.get(${q(a)}).helpers.length===1`);
+  await steps(10);
+  assert.deepEqual(await b.evaluate(`__marks(${q(a)})`),['w:waiting:1'],'the zzz fades out and the helper carries the mark');
+  assert.ok(await b.evaluate(`(([m],h)=>m.sprites[0].position.y>h.model.position.y+h.top)([...__renderer.units.get(${q(a)}).marks.values()],__renderer.units.get(${q(a)}).helpers[0])`));
+  // A waiting helper past the six shown is marked over its character instead.
+  await b.evaluate(`__set(0,{agents:Array.from({length:7},(_,i)=>({id:'h'+i,name:'H'+i,status:i===6?'waiting':'working'}))})`);
+  await steps(10);
+  assert.deepEqual(await b.evaluate(`__marks(${q(a)})`),[':waiting:1']);
+  // A failed exit is marked; a clean one is not.
+  await b.evaluate(`__set(1,{status:'exited',exitCode:1,activity:'quiet',agents:[],shells:[]})`);
+  await steps(10);
+  assert.deepEqual(await b.evaluate(`__marks(${q(c)})`),[':failed:1']);
+  await b.evaluate(`__set(1,{exitCode:0})`);
+  await steps(10);
+  assert.deepEqual(await b.evaluate(`__marks(${q(c)})`),[]);
+  assert.equal(await b.evaluate(`__renderer.marks.children.length`),await b.evaluate(`[...__renderer.units.values()].reduce((n,u)=>n+[...u.marks.values()].reduce((k,m)=>k+m.sprites.length,0),0)`),'spent marks are released');
+  for(const [i,[marked,plain]]of motion.entries())assert.deepEqual(marked,plain,`step ${i}: marks change no character's motion`);
+  // Reduced motion holds the zzz still.
+  await b.evaluate(`__set(0,{agents:[]});for(const r of [__renderer,__plain])r.setReducedMotion(true);__renderer.stepMarks(0)`);
+  const still=await b.evaluate(`__sprites(${q(a)})`);
+  await b.evaluate('__renderer.stepMarks(0)');
+  assert.deepEqual(await b.evaluate(`__sprites(${q(a)})`),still);
+  assert.ok(still.every(([visible])=>visible));
+  await b.evaluate('__renderer.dispose();__plain.dispose()');
+  assert.deepEqual(b.errors,[]);
+});
+
 test('Cards and Yard use the same actions, accounts, dialogs and terminal',options,async t=>{
   const {f,b}=await setup(t);
   await b.wait("document.querySelector('#providers .usage .meter')");

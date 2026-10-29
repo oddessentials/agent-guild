@@ -1,6 +1,6 @@
 import * as T from './vendor/engine.js';
 import { WORLDS, PROVIDER_ORDER, characterIndex, CAMERA, SUN, minZoom, overviewFor, clampPan, viewBasis, providerPositions, sessionPose, familiarPose, hash,
-  stage, nextStagingChange, doorFor, arrives, route, clipFor, helperOffset, stationProp, hallActivity, lookTarget, lookLimits, STAGING, photoSize } from './model.mjs';
+  stage, nextStagingChange, doorFor, arrives, route, clipFor, helperOffset, stationProp, hallActivity, lookTarget, lookLimits, STAGING, photoSize, marksFor, SHOWN_HELPERS } from './model.mjs';
 
 const ASSETS = new URL('./assets/', import.meta.url);
 const vector = new T.Vector3();
@@ -23,6 +23,18 @@ const PARTICLES = 640;
 // How many tags' heights a character's tag may rise above its character
 // before it hides: any higher, it reads as another's.
 const RISE = 2, CHIP_GAP = 4;
+const MARKS = { asleep: { glyph: 'z', count: 3, size: .62 }, waiting: { glyph: 'bang', color: '#ffc23d', count: 1, size: .78 }, failed: { glyph: 'bang', color: '#ff4d4f', count: 1, size: .78 } };
+const MARK_FADE = .3, MARK_RIGHT = new T.Vector3(...viewBasis().right), markTurn = new T.Quaternion(), axisZ = new T.Vector3(0, 0, 1);
+const GLYPHS = {
+  z: c => { c.beginPath(); c.moveTo(36, 36); c.lineTo(92, 36); c.lineTo(36, 92); c.lineTo(92, 92); c.stroke(); },
+  bang: (c, w) => { c.beginPath(); c.moveTo(64, 22); c.lineTo(64, 70); c.stroke(); c.beginPath(); c.arc(64, 100, w * .55, 0, Math.PI * 2); c.fill(); },
+};
+function glyph(draw) {
+  const canvas = Object.assign(document.createElement('canvas'), { width: 128, height: 128 }), c = canvas.getContext('2d');
+  c.lineCap = c.lineJoin = 'round'; c.shadowColor = 'rgba(0,0,0,.45)';
+  for (const [width, color, blur] of [[30, 'rgba(16,12,10,.85)', 12], [15, '#fff', 0]]) { c.lineWidth = width; c.strokeStyle = c.fillStyle = color; c.shadowBlur = blur; draw(c, width); }
+  const texture = new T.TextureLoader().load(canvas.toDataURL()); texture.colorSpace = T.SRGBColorSpace; return texture;
+}
 let crowdLists = 0;
 const angleTo = (from, to) => { let d = (to - from) % (2 * Math.PI); if (d > Math.PI) d -= 2 * Math.PI; if (d < -Math.PI) d += 2 * Math.PI; return d; };
 function helpersFor(session) {
@@ -79,7 +91,7 @@ export class YardRenderer {
     this.scene=new T.Scene();this.units=new Map();this.halls=new Map();this.slots=new Map();this.cache=new Map();
     this.loadingManager=new T.LoadingManager();
     this.providers=[];this.sessions=[];this.selected=null;this.world=null;this.skin=null;this.request=0;this.worldRequest=0;this.pending=null;
-    this.staged=null;this.seen=new Set();this.stageTimer=0;this.sparks=[];
+    this.staged=null;this.seen=new Set();this.stageTimer=0;this.sparks=[];this.marks=new T.Group();this.scene.add(this.marks);this.glyphs=null;this.markPlane=new T.PlaneGeometry(1,1);
     this.props=new Map();this.propSpots=[];this.station=null;this.effects=null;
     this.active=false;this.reduced=false;this.disposed=false;this.frame=0;this.lastTime=0;this.dirty=true;
     this.crowd=null;this.rows=new Map();
@@ -512,6 +524,7 @@ export class YardRenderer {
       }
       unit.session=session;
       this.goTo(unit,place);
+      this.mark(unit,place);
       // Only visible state transitions grant another load opportunity. Routine
       // snapshots, telemetry and animation frames must not retry failed assets.
       const loadState=JSON.stringify([sessionPose(session),helpersFor(session)]);
@@ -906,7 +919,7 @@ export class YardRenderer {
     const kinds=WORLDS[this.skin].helpers;
     // The full helper count and all helper details remain in the canonical inspector.
     // Small squads preserve readable character silhouettes at the overview scale.
-    await Promise.all(agents.slice(0,6).map(async(agent,i)=>{
+    await Promise.all(agents.slice(0,SHOWN_HELPERS).map(async(agent,i)=>{
       try {
         const asset=await this.asset((agent.shell?kinds.shell:kinds.agent)+(hash(agent.name||agent.id)%4));
         if(this.disposed||generation!==this.request||rev!==unit.revision||!unit.root.parent)return;
@@ -915,7 +928,8 @@ export class YardRenderer {
         model.scale.setScalar(.45);model.position.set(unit.root.position.x+offset.x,.27,unit.root.position.z+offset.z);
         unit.crew.add(model);
         const mixer=new T.AnimationMixer(model);
-        const helper={model,mixer,offset,pose:agent.pose,clips:asset.animations,moving:false,action:null};
+        let yard=null;asset.scene.traverse(n=>{if(n.userData?.yard)yard=n.userData.yard;});
+        const helper={id:agent.id,top:(yard?.height||1)*model.scale.y,model,mixer,offset,pose:agent.pose,clips:asset.animations,moving:false,action:null};
         this.helperClip(helper,agent.pose);
         mixer.update(.3+(hash(agent.id)%40)/10);
         unit.helpers.push(helper);
@@ -1091,6 +1105,7 @@ export class YardRenderer {
     this.frame=0;if(!this.active||this.disposed)return;
     const dt=this.lastTime?Math.min((time-this.lastTime)/1000,.05):0;this.lastTime=time;
     if(!this.reduced)this.step(dt);
+    else if(this.dirty)this.stepMarks(0);
     if(this.dirty)this.positionLabels();
     if(!this.reduced||this.dirty){this.renderer.render(this.scene,this.camera);this.dirty=false;}
     if(!this.reduced)this.schedule();
@@ -1112,12 +1127,58 @@ export class YardRenderer {
     }
     this.updateSparks(dt);
     this.updateHalls(dt);
+    this.stepMarks(dt);
   }
   drawOnce() { if(this.active)this.schedule(); }
+  mark(unit,place) {
+    const {crew,helpers}=marksFor(unit.session,place.mode),want=new Map(helpers.map(id=>[id,'waiting']));
+    if(crew)want.set('',crew);
+    unit.marks??=new Map();
+    for(const mark of unit.marks.values())mark.target=want.get(mark.anchor)===mark.kind?1:0;
+    for(const [anchor,kind]of want)if(!unit.marks.has(anchor+':'+kind))unit.marks.set(anchor+':'+kind,this.newMark(unit,anchor,kind));
+  }
+  newMark(unit,anchor,kind) {
+    this.glyphs??={z:glyph(GLYPHS.z),bang:glyph(GLYPHS.bang)};
+    const spec=MARKS[kind],color=new T.Color(spec.color||unit.session.provider.color||'#d0ba82');
+    if(!spec.color){const {h,s,l}=color.getHSL({});color.setHSL(h,Math.min(s,.8),Math.max(l,.7));}
+    const sprites=Array.from({length:spec.count},()=>{
+      const sprite=new T.Mesh(this.markPlane,new T.MeshBasicMaterial({map:this.glyphs[spec.glyph],color,transparent:true,depthWrite:false,toneMapped:false,opacity:0}));
+      sprite.renderOrder=21;sprite.visible=false;this.marks.add(sprite);return sprite;
+    });
+    return {anchor,kind,spec,sprites,target:1,alpha:0,age:0,seed:hash(unit.session.id+anchor)%1000/1000};
+  }
+  dropMark(mark) { for(const sprite of mark.sprites){this.marks.remove(sprite);sprite.material.dispose();} }
+  stepMarks(dt) {
+    const boost=Math.sqrt(Math.max(1,1.5/this.camera.zoom));
+    for(const unit of this.units.values())for(const [key,mark]of unit.marks||[]) {
+      const on=mark.target&&!(mark.kind==='asleep'&&unit.moving)?1:0;
+      mark.age+=dt;mark.alpha=this.reduced?on:Math.max(0,Math.min(1,mark.alpha+(on?dt:-dt)/MARK_FADE));
+      if(!mark.target&&!mark.alpha){this.dropMark(mark);unit.marks.delete(key);continue;}
+      const helper=mark.anchor&&unit.helpers.find(h=>h.id===mark.anchor);
+      const at=mark.anchor?helper?.model.position:unit.root.position,top=mark.anchor?helper?.top:unit.height||2;
+      mark.sprites.forEach((sprite,i,{length})=>{
+        sprite.visible=Boolean(at)&&mark.alpha>0;
+        if(!sprite.visible)return;
+        let size=mark.spec.size*boost*(mark.anchor?.85:1),opacity=mark.alpha,y=at.y+top,side=mark.anchor?0:.5;
+        if(mark.kind==='asleep'){
+          const u=this.reduced?(i+.5)/length:(mark.age/2.7+mark.seed+i/length)%1;
+          side=.38+.6*u+.05*Math.sin(u*2*Math.PI);y+=-.3+.55*u;size*=.5+.6*u;opacity*=Math.min(1,u/.15,(1-u)/.35);
+          sprite.quaternion.copy(this.camera.quaternion).multiply(markTurn.setFromAxisAngle(axisZ,.25*Math.sin(u*2*Math.PI+i)));
+        } else {
+          const t=this.reduced?0:mark.age+mark.seed*9;sprite.quaternion.copy(this.camera.quaternion);
+          y+=(mark.anchor?size*.6:-.15)+(mark.kind==='waiting'?.06*Math.sin(t*3.9):0);
+          if(mark.kind==='failed')size*=1+(this.reduced?0:.35*Math.exp(-mark.age*5)*Math.sin(mark.age*12)+.04*Math.sin(t*2.6));
+        }
+        sprite.position.copy(at).addScaledVector(MARK_RIGHT,side);sprite.position.y=y;
+        sprite.scale.setScalar(size);sprite.material.opacity=opacity;
+      });
+    }
+  }
   removeUnit(unit) {
     unit.revision++;
     for(const mixer of unit.mixers){mixer.stopAllAction();mixer.uncacheRoot(mixer.getRoot());}
     for(const helper of unit.helpers){helper.mixer.stopAllAction();helper.mixer.uncacheRoot(helper.model);}
+    for(const mark of unit.marks?.values()||[])this.dropMark(mark);
     disposeSkeletons(unit.root);disposeSkeletons(unit.crew);
     this.scene.remove(unit.root);this.scene.remove(unit.crew);unit.label.remove();unit.ring.geometry.dispose();unit.ring.material.dispose();
   }
@@ -1132,6 +1193,7 @@ export class YardRenderer {
     for(const item of this.halls.values()){item.label.remove();item.chip.remove();}this.halls.clear();this.list.remove();
     disposeWorld(this.world);
     for(const entry of this.cache.values())entry.then(a=>disposeTree(a.scene)).catch(noop);this.cache.clear();
+    for(const texture of Object.values(this.glyphs||{}))texture.dispose();this.markPlane.dispose();
     this.sun.shadow.map?.dispose();
     this.canvas.removeEventListener('webglcontextlost',this.contextLost);
     this.canvas.removeEventListener('pointerdown',this.onPointerDown);

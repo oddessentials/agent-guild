@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, statSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
-import { sessionPose, familiarPose, layoutSessions, providerPositions, characterIndex, lookLimits, WORLDS, CAMERA, SUN, minZoom, overviewFor, clampPan, viewBasis, plateExtent,
+import { sessionPose, familiarPose, marksFor, layoutSessions, providerPositions, characterIndex, lookLimits, WORLDS, CAMERA, SUN, minZoom, overviewFor, clampPan, viewBasis, plateExtent,
  stage, stagingMode, nextStagingChange, restSpots, route, clipFor, doorFor, stationProp, STAGING, CLIPS, SKELETON, PROVIDER_ORDER, photoSize, photoName } from '../web/yard/model.mjs';
 import { goldenVectors } from '../scripts/yard-golden.mjs';
 import { Matrix4, Vector3 } from 'three';
@@ -21,6 +21,20 @@ test('visual poses preserve running/quiet vs exited and reported helper states',
  assert.equal(sessionPose({status:'exited',activity:'active'}),'exited');
  for(const status of ['working','waiting','idle','done'])assert.equal(familiarPose({status}),status);
  assert.equal(familiarPose({status:'unknown'}),'idle');
+});
+test('marks follow reported state only: asleep resting alone, waiting helpers, failed exits',()=>{
+ const run={status:'running',agents:[],shells:[]},agent=(id,status)=>({id,status});
+ assert.deepEqual(marksFor(run,'rest'),{crew:'asleep',helpers:[]});
+ for(const mode of ['pause','work'])assert.deepEqual(marksFor(run,mode),{crew:null,helpers:[]});
+ assert.equal(marksFor({...run,agents:[agent('a','idle')]},'rest').crew,null);
+ assert.equal(marksFor({...run,shells:[{id:'s'}]},'rest').crew,null);
+ assert.deepEqual(marksFor({...run,agents:[agent('a','working'),agent('b','waiting')]},'rest'),{crew:null,helpers:['b']});
+ const many=Array.from({length:7},(_,i)=>agent('a'+i,i===0||i===6?'waiting':'working'));
+ assert.deepEqual(marksFor({...run,agents:many},'work'),{crew:'waiting',helpers:['a0']});
+ const exit=e=>marksFor({status:'exited',exitCode:null,signal:null,multiplexer:null,...e},'done').crew;
+ assert.equal(exit({exitCode:0}),null);assert.equal(exit({}),null);
+ assert.equal(exit({exitCode:1}),'failed');assert.equal(exit({signal:'SIGTERM'}),'failed');
+ assert.equal(exit({exitCode:1,multiplexer:{label:'tmux'}}),null);
 });
 test('all sessions remain addressable beyond the prototype limit and retain their slots',()=>{
  const sessions=Array.from({length:40},(_,i)=>session('s'+i));
