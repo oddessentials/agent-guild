@@ -257,6 +257,7 @@ lets you try every skin.
 | `agent-guild stop` | Stop the manager and end every session. |
 | `agent-guild restart` | Restart the manager on the installed version and end every session. |
 | `agent-guild url` | Print the page link with the access token. |
+| `agent-guild fireworks` | Launch fireworks over every open Yard. A coding agent in any terminal can run it too. |
 | `agent-guild start` | Run the manager in the foreground. |
 | `agent-guild doctor` | Diagnose the health of the installation and related tooling. |
 | `agent-guild mcp` | Serve MCP on stdio, so a coding agent can see and steer the sessions. See [Agent Guild for agents](docs/mcp.md). |

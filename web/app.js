@@ -7737,6 +7737,8 @@ function connectEvents() {
     } else if (msg.type === 'yard-art.updated') {
       state.yardArt = msg.yardArt;
       notifyViews();
+    } else if (msg.type === 'yard.fireworks') {
+      yardUi?.celebrate();
     } else if (msg.type === 'news.updated') {
       loadNews();
     } else if (msg.type === 'github.updated') {

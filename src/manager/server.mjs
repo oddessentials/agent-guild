@@ -384,6 +384,10 @@ export function createManagerServer({
     if (route === '/yard-art' && method === 'GET') return sendJson(res, 200, { yardArt: yardArt.snapshot() });
     if (route === '/yard-art/download' && method === 'POST') return sendJson(res, 202, { yardArt: yardArt.start() });
     if (route === '/yard-art/cancel' && method === 'POST') return sendJson(res, 200, { yardArt: yardArt.cancel() });
+    if (route === '/yard/fireworks' && method === 'POST') {
+      broadcast({ type: 'yard.fireworks' });
+      return sendJson(res, 200, { ok: true, pages: [...eventClients].filter((ws) => !ws.revoked && ws.readyState === ws.OPEN).length });
+    }
 
     if (route === '/info' && method === 'GET') {
       selfUpdate?.refresh().catch(() => {});
