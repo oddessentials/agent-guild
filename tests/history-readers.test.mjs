@@ -226,6 +226,13 @@ test('Codex previews read either message format once, leave out inserted context
   assert.deepEqual(said(paged.messages), ['You: One', 'AI: Reply one', 'You: Three'], 'a rollback carries across pages');
 });
 
+test('a corrupt Codex record is skipped as Codex skips it on resume, and older messages stay readable', async (t) => {
+  const message = (n) => ({ type: 'event_msg', payload: { type: n % 2 ? 'agent_message' : 'user_message', message: `message ${n}` } });
+  const file = write(path.join(tempDir(t), 'rollout.jsonl'), lines(message(0), message(1)) + '{"type":"event_msg","payl\n' + lines(message(2), message(3)));
+  const { messages, omitted } = await readAll('codex', file, { ...PAGE_LIMITS, messages: 1 });
+  assert.deepEqual([messages.map((m) => m.text), omitted], [['message 0', 'message 1', 'message 2', 'message 3'], true]);
+});
+
 test('a compressed Codex rollout reads the same, and a cursor survives the switch to and from compression', { skip: typeof zlib.zstdCompressSync !== 'function' }, async (t) => {
   const dir = tempDir(t);
   const text = lines(...Array.from({ length: 40 }, (_, n) => ({ type: 'event_msg', payload: { type: n % 2 ? 'agent_message' : 'user_message', message: `message ${n} ${'z'.repeat(300)}` } })));

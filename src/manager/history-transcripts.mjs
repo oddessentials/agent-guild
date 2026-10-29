@@ -475,7 +475,7 @@ function codexRollback(record) {
  * `thread_rolled_back` dropped the user turns before it.
  */
 export const codexReader = {
-  start: (saved) => ({ drop: safeInteger(saved?.d) ? saved.d : 0, stopped: false }),
+  start: (saved) => ({ drop: safeInteger(saved?.d) ? saved.d : 0 }),
   starts: (s, record) => codexRollback(record) || codexMessage(record) !== null,
   take(s, record) {
     if (codexRollback(record)) {
@@ -494,8 +494,8 @@ export const codexReader = {
   open: () => false,
   flush: () => {},
   abandon: () => {},
-  corrupt: (s) => { s.stopped = true; },
-  done: (s) => s.stopped,
+  corrupt: () => {},
+  done: () => false,
   cursor: (s) => (s.drop ? { d: s.drop } : {}),
 };
 
