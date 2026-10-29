@@ -10,17 +10,23 @@ import { fileURLToPath } from 'node:url';
 import { resolveCommand, buildSpawnSpec, runSpec } from './command-resolver.mjs';
 import { toIso } from './usage.mjs';
 import { antigravityUserConversation } from '../report/hooks.mjs';
-import { ANTIGRAVITY_ID, transcriptFile, readAntigravityTranscript, historyError } from './antigravity-transcript.mjs';
+import { ANTIGRAVITY_ID, transcriptFile, historyError } from './antigravity-transcript.mjs';
+import { JSONL_READERS, readJsonlPage, readAntigravityTranscript, readDockerConversation, checkedFile } from './history-transcripts.mjs';
 
 export const HISTORY_TTL_MS = 5 * 1000;
 export const DEFAULT_LIMIT = 100;
 export const MAX_LIMIT = 500;
 const HEAD_BYTES = 256 * 1024;
+const TAIL_BYTES = 256 * 1024;
 const MAX_TITLE = 120;
 const MAX_ID = 200;
 const MAX_WALK_DEPTH = 4;
 
 export class HistoryError extends Error {}
+
+/** The tools whose saved conversations the preview can read, and the folder below each tool's home that holds them. */
+export const DETAIL_SOURCES = new Set(['claude', 'codex', 'antigravity', 'grok', 'docker']);
+const TRANSCRIPT_ROOTS = { claude: 'projects', codex: 'sessions', grok: 'sessions' };
 
 const TAG_RE = /^<[a-z][a-z0-9_-]*[\s>]/i;
 
@@ -79,6 +85,20 @@ async function readHead(file, bytes = HEAD_BYTES) {
   }
 }
 
+async function readTail(file, size, bytes = TAIL_BYTES) {
+  if (size <= HEAD_BYTES) return '';
+  const length = Math.min(bytes, size - HEAD_BYTES);
+  const handle = await fs.promises.open(file, 'r');
+  try {
+    const { bytesRead, buffer } = await handle.read(Buffer.alloc(length), 0, length, size - length);
+    const text = buffer.subarray(0, bytesRead).toString('utf8');
+    // The window starts inside a record.
+    return text.slice(text.indexOf('\n') + 1);
+  } finally {
+    await handle.close();
+  }
+}
+
 async function readDir(dir) {
   try {
     return await fs.promises.readdir(dir, { withFileTypes: true });
@@ -123,11 +143,12 @@ export class FileMemo {
     this.entries = new Map();
   }
 
+  /** `parse` gets the entry parsed before when the file has only grown since. */
   async entry(file, stat, parse) {
     const known = this.entries.get(file);
     if (known && known.size === stat.size && known.mtimeMs === stat.mtimeMs) return known.entry;
     let entry = null;
-    try { entry = await parse(); } catch { /* unreadable or not a transcript */ }
+    try { entry = await parse(known && known.size <= stat.size ? known.entry : null); } catch { /* unreadable or not a transcript */ }
     this.entries.set(file, { size: stat.size, mtimeMs: stat.mtimeMs, entry });
     return entry;
   }
@@ -155,22 +176,42 @@ export function claudeConfigDir(env = process.env) {
   return (env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')).normalize('NFC');
 }
 
-function claudeEntry(id, text, stat) {
+/** The newest names Claude Code wrote in these records: one set with /rename or --name, and one it generated. */
+function claudeTitles(records) {
+  const titles = { custom: null, ai: null };
+  for (const record of records) {
+    if (record?.type === 'custom-title' && typeof record.customTitle === 'string' && record.customTitle.trim()) titles.custom = record.customTitle;
+    if (record?.type === 'ai-title' && typeof record.aiTitle === 'string' && record.aiTitle.trim()) titles.ai = record.aiTitle;
+  }
+  return titles;
+}
+
+/**
+ * Claude Code repeats its title records through a transcript, so the newest is
+ * read from the end; while a long turn pushes them out of that window, the
+ * title read before is kept.
+ */
+function claudeEntry(id, text, tail, stat, before) {
   let cwd = null;
   let startedAt = null;
-  let title = null;
+  let prompt = null;
   let seenUser = false;
-  for (const record of parseLines(text)) {
+  const records = parseLines(text);
+  for (const record of records) {
     if (!record || typeof record !== 'object') continue;
     if (cwd === null && typeof record.cwd === 'string') cwd = record.cwd;
     if (startedAt === null && record.timestamp) startedAt = record.timestamp;
-    if (record.type === 'custom-title' && typeof record.customTitle === 'string' && record.customTitle.trim()) title = record.customTitle;
     if (record.type !== 'user' || record.isSidechain === true) continue;
     seenUser = true;
-    if (title === null) title = promptTitle(contentText(record.message?.content));
+    if (prompt === null) prompt = promptTitle(contentText(record.message?.content));
   }
   if (cwd === null && !seenUser) return null;
-  return cleanEntry({ id, title, cwd, startedAt, updatedAt: stat.mtime });
+  const head = claudeTitles(records), end = claudeTitles(parseLines(tail));
+  const titles = {
+    custom: end.custom ?? before?.titles?.custom ?? head.custom,
+    ai: end.ai ?? before?.titles?.ai ?? head.ai,
+  };
+  return { ...cleanEntry({ id, title: titles.custom ?? titles.ai ?? prompt, cwd, startedAt, updatedAt: stat.mtime }), titles };
 }
 
 /** Sessions under `<dir>/projects/<folder>/<id>.jsonl`; sub-agent transcripts sit in sub-folders and are not listed. */
@@ -188,8 +229,8 @@ export async function listClaudeSessions(dir, memo = new FileMemo()) {
       if (!stat) continue;
       seen.add(file);
       const id = item.name.slice(0, -'.jsonl'.length);
-      const entry = await memo.entry(file, stat, async () => claudeEntry(id, await readHead(file), stat));
-      if (entry) entries.push(entry);
+      const entry = await memo.entry(file, stat, async (before) => claudeEntry(id, await readHead(file), await readTail(file, stat.size), stat, before));
+      if (entry) entries.push({ ...entry, file });
     }
   }
   memo.prune(root, seen);
@@ -238,11 +279,26 @@ async function walk(dir, depth, onFile) {
   }
 }
 
+/** `<dir>/session_index.jsonl`: thread names, set by the user or generated; the newest line for an id wins. */
+async function codexThreadNames(dir, memo) {
+  const file = path.join(dir, 'session_index.jsonl');
+  const stat = await statFile(file);
+  if (!stat) return new Map();
+  return (await memo.entry(file, stat, async () => {
+    const names = new Map();
+    for (const record of parseLines(await fs.promises.readFile(file, 'utf8'))) {
+      if (typeof record?.id === 'string' && typeof record.thread_name === 'string' && record.thread_name.trim()) names.set(record.id, record.thread_name);
+    }
+    return names;
+  })) ?? new Map();
+}
+
 /** Rollouts under `<dir>/sessions/YYYY/MM/DD/rollout-*.jsonl`, uncompressed or zstd-compressed. Sub-agent threads are skipped. */
 export async function listCodexSessions(dir, memo = new FileMemo()) {
   const root = path.join(dir, 'sessions');
   const entries = [];
   const seen = new Set();
+  const names = await codexThreadNames(dir, memo);
   await walk(root, MAX_WALK_DEPTH, async (file, name) => {
     if (!/^rollout-.*\.jsonl(\.zst)?$/.test(name)) return;
     const stat = await statFile(file);
@@ -252,7 +308,7 @@ export async function listCodexSessions(dir, memo = new FileMemo()) {
       const head = await readHead(file);
       return head === null ? null : codexEntry(head, stat);
     });
-    if (entry) entries.push(entry);
+    if (entry) entries.push({ ...entry, title: cleanEntry({ id: entry.id, title: names.get(entry.id) }).title ?? entry.title, file });
   });
   memo.prune(root, seen);
   return dedupe(entries);
@@ -358,7 +414,7 @@ export async function listAntigravitySessions(dir, memo = new FileMemo(), { plat
       const workspaces = summary ? antigravityWorkspaces(summary.workspace_uris, platform) : [];
       const cwd = workspaces.length === 1 ? workspaces[0] : workspaces.length ? null : folders.get(entry.id) ?? null;
       const title = promptTitle(summary?.title) || promptTitle(summary?.preview) || entry.title;
-      entries.push({ ...entry, title, cwd, ...(withStatus ? { workspaces: workspaces.length ? workspaces : cwd ? [cwd] : [] } : {}) });
+      entries.push({ ...entry, title, cwd, file, ...(withStatus ? { workspaces: workspaces.length ? workspaces : cwd ? [cwd] : [] } : {}) });
     }
   }
   memo.prune(root, seen);
@@ -448,7 +504,8 @@ function grokPrompt(text) {
     const update = record?.params?.update;
     if (update?.sessionUpdate !== 'user_message_chunk' || update.content?.type !== 'text') continue;
     if (update.content._meta?.bash_command || update._meta?.host_turn === true) continue;
-    const id = record.params._meta?.promptId ?? null;
+    // Grok Build 1.0.70 numbers a prompt's chunks with promptIndex; earlier versions gave them a promptId.
+    const id = update._meta?.promptIndex ?? record.params._meta?.promptId ?? null;
     if (parts.length && id !== promptId) break;
     promptId = id;
     parts.push(update.content.text);
@@ -492,7 +549,7 @@ export async function listGrokSessions(dir, memo = new FileMemo()) {
       if (!stat) continue;
       seen.add(file);
       const entry = await memo.entry(file, stat, async () => grokEntry(folder, JSON.parse(await readText(file)), stat, cwd));
-      if (entry) entries.push(entry);
+      if (entry) entries.push({ ...entry, file: path.join(folder, 'updates.jsonl') });
     }
   }
   memo.prune(root, seen);
@@ -526,9 +583,11 @@ export class SessionHistory {
    * @param {object} [opts.env]
    * @param {number} [opts.ttlMs]
    * @param {object} [opts.readers]  session listers by source, replaceable in tests
+   * @param {ReturnType<import('./card-names.mjs').createCardNames>|null} [opts.names]  the names given to cards, by tool session id
    */
-  constructor({ registry, env = process.env, platform = process.platform, ttlMs = HISTORY_TTL_MS, readers = {} } = {}) {
+  constructor({ registry, env = process.env, platform = process.platform, ttlMs = HISTORY_TTL_MS, readers = {}, names = null } = {}) {
     this.registry = registry;
+    this.names = names;
     this.env = env;
     this.platform = platform;
     this.ttlMs = ttlMs;
@@ -546,24 +605,38 @@ export class SessionHistory {
     return null;
   }
 
+  /** Filters the cached listing only; a search never opens a transcript. */
   async list(provider, account = this.registry.account(provider), { limit, cwd, query } = {}) {
     const n = Math.min(MAX_LIMIT, Math.max(1, Math.floor(Number(limit)) || DEFAULT_LIMIT));
     const snapshot = await this.snapshot(provider, account);
     const search = typeof query === 'string' ? query.trim().toLowerCase().slice(0, 500) : '';
-    const sessions = snapshot.sessions.filter((entry) =>
-      (!cwd || (entry.workspaces ?? [entry.cwd]).some((folder) => sameHistoryFolder(folder, cwd, this.platform)))
-      && (!search || [entry.id, entry.title, ...(entry.workspaces ?? [entry.cwd])].join('\n').toLowerCase().includes(search)));
+    const sessions = snapshot.sessions.map(({ file, titles, ...entry }) => ({ ...entry, name: this.names?.get(provider.id, account.id, entry.id) ?? null }))
+      .filter((entry) =>
+        (!cwd || (entry.workspaces ?? [entry.cwd]).some((folder) => sameHistoryFolder(folder, cwd, this.platform)))
+        && (!search || [entry.id, entry.name, entry.title, ...(entry.workspaces ?? [entry.cwd])].join('\n').toLowerCase().includes(search)));
     return { ...snapshot, total: sessions.length, sessions: sessions.slice(0, n) };
   }
 
   async detail(provider, account, id, cursor) {
-    if (provider.history !== 'antigravity') throw historyError(400, 'history_detail_unsupported', 'This tool has no conversation preview.');
-    if (!ANTIGRAVITY_ID.test(id)) throw historyError(400, 'bad_history_id', 'Invalid conversation id.');
-    // Revalidate membership, even if the client still has an older list open.
+    const source = provider.history;
+    if (!DETAIL_SOURCES.has(source)) throw historyError(400, 'history_detail_unsupported', 'This tool has no conversation preview.');
+    if (typeof id !== 'string' || cleanEntry({ id })?.id !== id || (source === 'antigravity' && !ANTIGRAVITY_ID.test(id))) {
+      throw historyError(400, 'bad_history_id', 'Invalid conversation id.');
+    }
+    // Revalidate membership, even if the client still has an older list open, and read the file the listing found.
     const snapshot = await this._read(provider, account);
-    if (!snapshot.sessions.some((s) => s.id === id)) throw historyError(404, 'history_unavailable', 'This conversation transcript is unavailable.');
+    const entry = snapshot.sessions.find((s) => s.id === id);
+    if (!entry) throw historyError(404, 'history_unavailable', 'This conversation transcript is unavailable.');
     const env = { ...this.env, ...provider.env, ...account.env };
-    return readAntigravityTranscript(antigravityDir(env, this.platform), id, cursor);
+    const dir = SessionHistory.sourceDir(source, env, this.platform);
+    if (source === 'docker') return readDockerConversation({ dir, id, cursor, loadSqlite });
+    if (source === 'antigravity') return readAntigravityTranscript(dir, id, cursor);
+    if (typeof entry.file !== 'string') throw historyError(404, 'history_unavailable', 'This conversation transcript is unavailable.');
+    const root = path.join(dir, TRANSCRIPT_ROOTS[source]);
+    // Codex may have compressed or decompressed the rollout since it was listed.
+    const other = entry.file.endsWith('.zst') ? entry.file.slice(0, -4) : `${entry.file}.zst`;
+    const file = await checkedFile(root, entry.file).catch((err) => (source === 'codex' ? checkedFile(root, other) : Promise.reject(err)));
+    return readJsonlPage({ source, id, file, cursor, ...JSONL_READERS[source] });
   }
 
   snapshot(provider, account) {

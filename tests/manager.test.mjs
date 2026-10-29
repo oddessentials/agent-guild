@@ -995,6 +995,38 @@ test('every state reads the card\'s label: Working only while running and produc
   }
 });
 
+test('a card\'s given name is kept for each tool session it holds, shown in History and given back on resume', async () => {
+  const names = ctx.manager.cardNames;
+  const session = await createFake();
+  const report = (id, toolSessionId, source) => call('POST', `/sessions/${id}/tool-session`, { toolSessionId, ...(source ? { source } : {}) });
+  await report(session.id, 'kept-1');
+  assert.equal(names.get('fake', 'default', 'kept-1'), null, 'a card named after its tool keeps no name');
+  await call('PATCH', `/sessions/${session.id}`, { name: 'Login fix' });
+  assert.equal(names.get('fake', 'default', 'kept-1'), 'Login fix');
+  await report(session.id, 'kept-2', 'clear');
+  assert.deepEqual([names.get('fake', 'default', 'kept-1'), names.get('fake', 'default', 'kept-2')], ['Login fix', 'Login fix'], 'the card keeps its name after /clear');
+  await call('PATCH', `/sessions/${session.id}`, { name: 'Fake Tool' });
+  assert.deepEqual([names.get('fake', 'default', 'kept-1'), names.get('fake', 'default', 'kept-2')], ['Login fix', null], 'the default name forgets the current session only');
+  await call('POST', `/sessions/${session.id}/stop`);
+  await call('DELETE', `/sessions/${session.id}`);
+
+  const resumed = await createFake({ resume: 'kept-1' });
+  assert.equal(resumed.name, 'Login fix');
+  await report(resumed.id, 'kept-1');
+  assert.equal(names.get('fake', 'default', 'kept-1'), 'Login fix', 'the tool reporting its session never renames the card');
+  const renamed = await createFake({ resume: 'kept-1', name: 'Asked for' });
+  assert.equal(renamed.name, 'Asked for');
+
+  const plain = (await call('POST', '/sessions', { providerId: 'plain', cwd: home, cols: 90, rows: 20, name: 'Parser work' })).body.session;
+  await report(plain.id, 'older-1');
+  const listed = (await call('GET', '/providers/plain/history?q=parser')).body.history.sessions;
+  assert.deepEqual(listed.map((s) => [s.id, s.name, s.title]), [['older-1', 'Parser work', 'Fix the login bug']]);
+  for (const id of [resumed.id, renamed.id, plain.id]) {
+    await call('POST', `/sessions/${id}/stop`);
+    await call('DELETE', `/sessions/${id}`);
+  }
+});
+
 test('the tool\'s own session id is reported over HTTP, in-band, and through hooks', async () => {
   const session = await createFake();
   assert.equal(session.toolSessionId, null);

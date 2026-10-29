@@ -19,14 +19,15 @@ export function createHistoryPreview({ read, changed, authError = () => {} }) {
     try {
       const detail = await read(target, cursor);
       if (request !== ticket) return;
-      Object.assign(state, { messages: more ? [...state.messages, ...detail.messages] : detail.messages,
+      // Pages run newest first, so an earlier page goes in front.
+      Object.assign(state, { messages: more ? [...detail.messages, ...state.messages] : detail.messages,
         nextCursor: detail.nextCursor, incomplete: detail.incomplete, omitted: state.omitted || detail.omitted });
     } catch (err) {
       if (request !== ticket) return;
       authError(err);
       state.error = err.message || 'The conversation could not be read.';
-      // A stale cursor cannot be retried; other errors can retry the same page.
-      if (err.code === 'history_changed') state.nextCursor = null;
+      // A changed conversation drops what was read from it, never mixing two versions; other errors can retry the same page.
+      if (err.code === 'history_changed') Object.assign(state, { messages: [], nextCursor: null, incomplete: false, omitted: false });
     } finally {
       if (request === ticket) { state.loading = false; changed(state); }
     }

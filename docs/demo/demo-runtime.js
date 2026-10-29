@@ -6,6 +6,8 @@
   var version = window.AGENT_GUILD_DEMO_VERSION || '0.0.0-demo';
   var launchFlags = window.AGENT_GUILD_DEMO_FLAGS || {};
   var now = Date.now();
+  // The history source each card reads, as in config/providers.default.json.
+  var historySources = { anthropic: 'claude', openai: 'codex', google: 'antigravity', xai: 'grok', docker: 'docker' };
   // Public card fields from config/providers.default.json. Versions below are sample data.
   var about = {
     anthropic: {
@@ -141,10 +143,10 @@
       installedVersion: id === 'shell' ? null : '1.0.0', versionStatus: 'ok', versionError: null,
       latestVersion: id === 'shell' ? null : '1.0.0', updateAvailable: false, installChannel: null,
       updateCommand: null, updateGuidance: null, lastInstall: null, installs: [], warnings: [], npmNote: info.npmNote || null,
-      usageSource: metered ? 'command' : null, historySource: id === 'shell' ? null : 'command',
+      usageSource: metered ? 'command' : null, historySource: historySources[id] || null,
       memorySource: info.memory || null,
       instructionsSource: info.instructions || null,
-      historyDetails: id === 'google',
+      historyDetails: Boolean(historySources[id]),
       reporting: info.reporting || null, reportingEnabled: typeof info.reportingEnabled === 'boolean' ? info.reportingEnabled : null, reportingNote: null,
       accounts: id === 'anthropic' ? [{ id: 'default', label: 'Personal' }, { id: 'work', label: 'Work' }] : [{ id: 'default', label: 'Default' }],
       accountsEditable: id === 'anthropic' || id === 'openai' || id === 'xai',
@@ -383,12 +385,13 @@
     if (route.indexOf('/github') === 0) return githubRoute(route, method, body, url.searchParams);
     var historyMatch = route.match(/^\/providers\/([^/]+)\/history$/);
     if (historyMatch && method === 'GET') return providerHistory(historyMatch[1], url.searchParams);
-    if (route === '/providers/google/history/detail' && method === 'GET') {
-      var saved = historyRows('google').find(function (row) { return row.id === url.searchParams.get('id'); });
+    var detailMatch = route.match(/^\/providers\/([^/]+)\/history\/detail$/);
+    if (detailMatch && method === 'GET') {
+      var saved = historyRows(detailMatch[1]).find(function (row) { return row.id === url.searchParams.get('id'); });
       if (!saved) return error('This conversation is unavailable.', 'history_unavailable', 404);
       return json({ detail: { id: saved.id, messages: [
-        { role: 'user', text: saved.title },
-        { role: 'assistant', text: 'The migration plan is ready. Keep the existing page URLs, move the shared navigation first, and check the generated links before publishing.' },
+        { role: 'user', text: saved.prompt },
+        { role: 'assistant', text: saved.reply },
       ], nextCursor: null, incomplete: false, omitted: false } });
     }
     var flagsMatch = route.match(/^\/providers\/([^/]+)\/flags$/);
@@ -752,29 +755,41 @@
     return { refreshedAt: new Date(now).toISOString(), refreshing: false, sources: sources, items: items };
   }
 
+  // Each row: id, the tool's title, folder, minutes ago, the card's name or null, and the reply its preview shows.
   function historyRows(providerId) {
     var rows = {
       anthropic: [
-        ['ses_store_wallet', 'Add Apple Pay and Google Pay to the checkout flow', '/work/storefront', 120],
-        ['ses_store_safari', 'Why does the cart badge flicker on Safari?', '/work/storefront', 26 * 60],
+        ['ses_store_wallet', 'Add Apple Pay and Google Pay to the checkout flow', '/work/storefront', 120, 'Wallet checkout',
+          'Both wallets now go through the same payment sheet. Safari needs the merchant id in the domain association file before Apple Pay appears.'],
+        ['ses_store_safari', 'Why does the cart badge flicker on Safari?', '/work/storefront', 26 * 60, null,
+          'The badge re-renders before the count arrives. Holding the old count until the new one loads stops the flicker.'],
       ],
       openai: [
-        ['ses_gw_limit', 'Add per-key rate limiting to the API gateway', '/work/api-gateway', 5 * 60],
+        ['ses_gw_limit', 'Add per-key rate limiting to the API gateway', '/work/api-gateway', 5 * 60, null,
+          'Each key now has its own token bucket. Requests over the limit get 429 with a Retry-After header.'],
       ],
       google: [
-        ['ses_docs_move', 'Move the docs site to the new static generator', '/work/docs-site', 30 * 60],
-        ['ses_store_docs', 'Document the storefront checkout flow', '/work/storefront', 45 * 60],
+        ['ses_docs_move', 'Move the docs site to the new static generator', '/work/docs-site', 30 * 60, null,
+          'The migration plan is ready. Keep the existing page URLs, move the shared navigation first, and check the generated links before publishing.'],
+        ['ses_store_docs', 'Document the storefront checkout flow', '/work/storefront', 45 * 60, null,
+          'The checkout guide covers the cart, the payment sheet and the receipt email, with a diagram of each step.'],
       ],
       xai: [
-        ['ses_grok_notes', 'Draft the release notes for wallet payments', '/work/storefront', 8 * 60],
+        ['ses_grok_notes', 'Draft the release notes for wallet payments', '/work/storefront', 8 * 60, null,
+          'The notes lead with Apple Pay and Google Pay, then list the Safari setup step for store owners.'],
       ],
       docker: [
-        ['3f9c1e2a-7d41-4b0e-9a6c-2e5f8b1d4c70', 'Write the upgrade notes for the particle engine', '/work/game-engine', 12 * 60],
+        ['3f9c1e2a-7d41-4b0e-9a6c-2e5f8b1d4c70', 'Write the upgrade notes for the particle engine', '/work/game-engine', 12 * 60, null,
+          'The upgrade notes list the renamed emitter options and the one breaking change to the collision callback.'],
       ],
     };
     return (rows[providerId] || []).map(function (row) {
-      return { id: row[0], title: row[1], cwd: row[2], startedAt: ago(row[3] + 90), updatedAt: ago(row[3]) };
+      return { id: row[0], title: row[1], cwd: row[2], startedAt: ago(row[3] + 90), updatedAt: ago(row[3]), name: row[4], prompt: row[1], reply: row[5] };
     });
+  }
+
+  function historyEntry(row) {
+    return { id: row.id, title: row.title, cwd: row.cwd, startedAt: row.startedAt, updatedAt: row.updatedAt, name: row.name };
   }
 
   function providerHistory(providerId, params) {
@@ -783,9 +798,9 @@
     if (!p.historySource) return error(p.tool + ' has no history source configured', 'history_unsupported', 400);
     var list = historyRows(p.id);
     if (params.get('cwd')) list = list.filter(function (row) { return row.cwd === params.get('cwd'); });
-    if (params.get('q')) list = list.filter(function (row) { return [row.title, row.cwd, row.id].join('\n').toLowerCase().includes(params.get('q').toLowerCase()); });
+    if (params.get('q')) list = list.filter(function (row) { return [row.name, row.title, row.cwd, row.id].join('\n').toLowerCase().includes(params.get('q').toLowerCase()); });
     return json({ history: {
-      providerId: p.id, accountId: params.get('account') || 'default', sessions: list, total: list.length,
+      providerId: p.id, accountId: params.get('account') || 'default', sessions: list.map(historyEntry), total: list.length,
       fetchedAt: new Date(now).toISOString(), error: null,
     } });
   }

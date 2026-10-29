@@ -64,9 +64,11 @@ export class SessionManager extends EventEmitter {
    * @param {string|null} [opts.shimDir]  folder with the agent-guild-report launchers, put first on PATH
    * @param {import('./self-update.mjs').SelfUpdate|null} [opts.selfUpdate]  the manager's own upgrade
    * @param {import('./github.mjs').GitHub|null} [opts.github]
+   * @param {ReturnType<import('./card-names.mjs').createCardNames>|null} [opts.cardNames]  names given to cards, by tool session id
    */
-  constructor({ registry, baseEnv, getApiUrl, sessionDefaults = {}, shimDir = null, selfUpdate = null, github = null, sessionHooks = null, store = null }) {
+  constructor({ registry, baseEnv, getApiUrl, sessionDefaults = {}, shimDir = null, selfUpdate = null, github = null, sessionHooks = null, store = null, cardNames = null }) {
     super();
+    this.cardNames = cardNames;
     this.registry = registry;
     this.baseEnv = baseEnv;
     this.getApiUrl = getApiUrl;
@@ -144,11 +146,13 @@ export class SessionManager extends EventEmitter {
     if (!current) throw httpError(404, `unknown provider "${provider.id}"`, 'unknown_provider');
     const signIn = this.registry.account(current, account);
     this.prepareAccount(provider, signIn, { hooksSupplied: hooks.args.length > 0 });
-    const sessionName = cleanName(name)
-      || (current.accounts.length > 1 ? `${provider.tool} · ${signIn.label}` : null)
-      || (runShell && this.registry.shellsFor(provider).shells.length > 1 ? `${provider.tool} · ${runShell.label}` : null);
+    const defaultName = (current.accounts.length > 1 ? `${provider.tool} · ${signIn.label}` : null)
+      || (runShell && this.registry.shellsFor(provider).shells.length > 1 ? `${provider.tool} · ${runShell.label}` : null)
+      || provider.tool;
+    // A resumed conversation gets back the name its card had, unless this request names it.
+    const given = cleanName(name) || (resumeId ? this.cardNames?.get(provider.id, signIn.id, resumeId) : null) || null;
     const extraEnv = hooks.env ? { ...runShell?.env, ...hooks.env } : runShell?.env;
-    const options = { provider, cwd: workDir, cols, rows, name: sessionName, resume: resumeId, account: signIn, reporting: hooks.reporting, extraEnv };
+    const options = { provider, cwd: workDir, cols, rows, name: given ?? defaultName, defaultName, named: given !== null, resume: resumeId, account: signIn, reporting: hooks.reporting, extraEnv };
     if (runShell?.multiplexer) return this._withMultiplexerStart(provider.id, runShell.id, () => this._startMultiplexer(options, runShell, args || []));
     const spawnSpec = this.registry.spawnSpec(provider, args || [], resumeId, hooks.args, runShell);
     const session = this._spawn({ ...options, spawnSpec });
@@ -209,7 +213,7 @@ export class SessionManager extends EventEmitter {
     }
     this._track(session, { spawnSpec, mux, shell, card: {
       id, reportToken, provider: provider.id, account: account.id, shell: shell.id,
-      muxName, name: session.name, cwd: session.cwd, createdAt: session.createdAt,
+      muxName, name: session.name, defaultName: session.defaultName, named: session.named, cwd: session.cwd, createdAt: session.createdAt,
       // Herdr's request arguments belong to its client and must survive rebinding.
       // Tmux's request arguments belong to the already-running inner session.
       ...(shell.id === 'herdr' ? { args: [...args] } : {}),
@@ -247,11 +251,28 @@ export class SessionManager extends EventEmitter {
     this._saveCards();
     session.on('exit', () => this._checkMultiplexer(session, tracked));
     session.on('changed', () => {
-      if (card.name === session.name && (card.context?.compactions ?? 0) === session.context.compactions && (card.context?.resets ?? 0) === session.context.resets) return;
+      if (card.name === session.name && card.named === session.named && (card.context?.compactions ?? 0) === session.context.compactions && (card.context?.resets ?? 0) === session.context.resets) return;
       card.name = session.name;
+      card.named = session.named;
       card.context = { ...session.context };
       this._saveCards();
     });
+  }
+
+  /**
+   * An explicitly named card keeps its name for every tool session it holds, a new one after /clear included;
+   * renaming it back to its default name forgets the name for the session it holds now.
+   */
+  _keepCardName(session) {
+    if (!this.cardNames || session.task !== null || !session.toolSessionId) return;
+    const account = session.account?.id ?? 'default';
+    const at = `${account}\0${session.toolSessionId}`;
+    const name = session.named ? session.name : null;
+    const kept = session.keptName;
+    if (kept?.at === at && kept.name === name) return;
+    if (name) this.cardNames.set(session.provider.id, account, session.toolSessionId, name);
+    else if (kept?.at === at && kept.name) this.cardNames.delete(session.provider.id, account, session.toolSessionId);
+    session.keptName = { at, name };
   }
 
   _saveCards() {
@@ -309,12 +330,13 @@ export class SessionManager extends EventEmitter {
     const spawnSpec = this.registry.spawnSpec(provider, shell.id === 'herdr' ? card.args ?? [] : [], null, [], mux.named);
     const session = this._spawn({
       provider, spawnSpec: null, cwd: typeof card.cwd === 'string' ? card.cwd : os.homedir(), name: card.name, account,
+      defaultName: typeof card.defaultName === 'string' ? card.defaultName : undefined, named: card.named === true,
       id: card.id, reportToken: card.reportToken, dropEnv: mux.dropEnv, extraEnv: shell.env,
       createdAt: typeof card.createdAt === 'string' && !Number.isNaN(Date.parse(card.createdAt)) ? card.createdAt : undefined,
       context: card.context,
       multiplexer: { label: shell.label, attach: shell.multiplexer.attach.replaceAll('{name}', card.muxName), reattachable: true },
     });
-    this._track(session, { spawnSpec, mux, shell, card: { ...card, name: session.name, cwd: session.cwd, createdAt: session.createdAt } });
+    this._track(session, { spawnSpec, mux, shell, card: { ...card, name: session.name, defaultName: session.defaultName, named: session.named, cwd: session.cwd, createdAt: session.createdAt } });
   }
 
   /** Attach a stopped tmux or herdr session's card to its multiplexer session again, keeping its id and report token. */
@@ -711,7 +733,7 @@ export class SessionManager extends EventEmitter {
   }
 
   _spawn({
-    provider, description = this.registry.describe(provider), spawnSpec, cwd, cols, rows, name, resume = null, task = null, installKind = null, installPath = null, account = null,
+    provider, description = this.registry.describe(provider), spawnSpec, cwd, cols, rows, name, defaultName, named = false, resume = null, task = null, installKind = null, installPath = null, account = null,
     extraEnv = null, dropEnv = null, clone = null, reporting = null, multiplexer = null,
     id = newId(), reportToken = crypto.randomBytes(16).toString('hex'), createdAt, context = null, multiplexerInstall = null,
   }) {
@@ -731,6 +753,8 @@ export class SessionManager extends EventEmitter {
         cols: clampDimension(cols, 120, 2, 1000),
         rows: clampDimension(rows, 32, 1, 500),
         name,
+        defaultName,
+        named,
         reportToken,
         resume,
         task,
@@ -746,6 +770,7 @@ export class SessionManager extends EventEmitter {
     }
 
     session.on('changed', () => {
+      this._keepCardName(session);
       if (this.sessions.has(id)) this.emit('event', { type: 'session.updated', session: session.toJSON() });
     });
     session.on('warning', (msg) => console.warn(`[session ${id}] ${msg}`));

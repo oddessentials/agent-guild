@@ -68,6 +68,8 @@ export class Session extends EventEmitter {
    * @param {number} opts.cols
    * @param {number} opts.rows
    * @param {string} [opts.name]
+   * @param {string} [opts.defaultName]  the name a card has when nobody named it
+   * @param {boolean} [opts.named]  the name was given, so it is kept for the tool session
    * @param {string|null} [opts.resume]  id of the tool's own session being resumed
    * @param {string|null} [opts.task]    "install" for a package install, "upgrade" for the manager's own, "clone" for a GitHub clone, else null
    * @param {{id: string, label: string}|null} [opts.account]  the tool sign-in the session runs under
@@ -84,7 +86,9 @@ export class Session extends EventEmitter {
     super();
     this.id = opts.id;
     this.provider = opts.provider;
-    this.name = cleanName(opts.name) || opts.provider.tool;
+    this.defaultName = cleanName(opts.defaultName) || opts.provider.tool;
+    this.name = cleanName(opts.name) || this.defaultName;
+    this.named = opts.named === true && this.name !== this.defaultName;
     this.resume = opts.resume ?? null;
     this.task = opts.task ?? null;
     this.account = opts.account ?? null;
@@ -461,6 +465,7 @@ export class Session extends EventEmitter {
     const clean = cleanName(name);
     if (!clean) return;
     this.name = clean;
+    this.named = clean !== this.defaultName;
     this._changed();
   }
 
