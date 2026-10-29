@@ -21,7 +21,7 @@ export const PAGE_LIMITS = {
 const ANCHOR_BYTES = 4096;
 const MAX_CURSOR = 2048;
 /** The wrappers Claude Code puts around text it inserted as a user record, in records from before `origin`. */
-export const CLAUDE_INSERTED = /^<(command-name|local-command-stdout|bash-input|bash-stdout)>/;
+export const CLAUDE_INSERTED = /^<(command-name|local-command-stdout|bash-input|bash-stdout|bash-stderr)>/;
 
 const changed = () => historyError(409, 'history_changed', 'The conversation changed. Refresh to read it again.');
 const badCursor = () => historyError(400, 'bad_history_cursor', 'Invalid conversation page.');

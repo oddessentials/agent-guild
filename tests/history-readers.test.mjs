@@ -221,6 +221,17 @@ test('an older Claude prompt keeps its markup, and only the wrappers Claude Code
   assert.equal((await listClaudeSessions(home))[0].title, '<div>Fix the spacing here</div>');
 });
 
+test('an older Claude record holding only a shell command\'s stderr is neither a message nor a title', async (t) => {
+  const home = tempDir(t);
+  const file = write(path.join(home, 'projects', '-w', 'aaaa-1.jsonl'), lines(
+    { type: 'user', uuid: 'u1', parentUuid: null, cwd: '/w', message: { role: 'user', content: '<bash-stderr>Command failed: spawn EPERM</bash-stderr>' } },
+    { type: 'user', uuid: 'u2', parentUuid: 'u1', message: { role: 'user', content: '<div>Fix the spacing here</div>' } },
+    { type: 'assistant', uuid: 'u3', parentUuid: 'u2', message: { id: 'm1', role: 'assistant', content: [{ type: 'text', text: 'Fixed' }] } },
+  ));
+  assert.deepEqual(said((await read('claude', file)).messages), ['You: <div>Fix the spacing here</div>', 'AI: Fixed']);
+  assert.equal((await listClaudeSessions(home))[0].title, '<div>Fix the spacing here</div>');
+});
+
 test('a card name whose save failed is saved by the next set or delete, and the cache never runs ahead of the file', async (t) => {
   const file = path.join(tempDir(t), 'card-names.json');
   const names = createCardNames(file, { warn: () => {} });
