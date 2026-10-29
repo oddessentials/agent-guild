@@ -443,8 +443,10 @@ export class Session extends EventEmitter {
   }
 
   _killWindowsTree() {
+    // At most once per pty, so the guard in kill() is not cleared here: node-pty 1.2.0-beta.15 closes the
+    // pseudoconsole again on a second kill() before the exit watcher runs, which corrupts this process's heap
+    // (microsoft/node-pty#983). While the pty is still starting its pid is 0 and node-pty defers every kill().
     const fallback = () => {
-      this._treeKill = false;
       if (this.status === 'running') { try { this.pty.kill(); } catch { /* gone */ } }
     };
     const pid = this.pty.pid;
