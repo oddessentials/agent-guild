@@ -7,6 +7,8 @@
   <img src="https://img.shields.io/node/v/@oddessentials/agent-guild?color=4cc38a" alt="Node.js version">
 </p>
 
+<p align="center"><strong>English</strong> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a></p>
+
 **Run Claude Code, Codex CLI, Antigravity CLI, Grok Build, Docker Agent and
 your own shells side by side in real terminals. Pick the same live sessions up
 from your phone, VS Code or any browser. Free, on Windows, macOS and Linux.**
