@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { launcherTarget } from './launchers.mjs';
 
 export const CHANNEL_LABELS = {
   npm: 'npm',
@@ -190,7 +191,8 @@ export function formatCommand(file, args) {
 export function classifyInstall({
   resolvedPath, provider, env = process.env, platform = process.platform, fsx = defaultFsx, npmOnPath = null, wingetOnPath = null,
 }) {
-  const realPath = fsx.realpath(resolvedPath);
+  const target = launcherTarget(resolvedPath, platform, fsx);
+  const realPath = fsx.realpath(target);
   const channels = provider.channels || {};
   const result = (channel, extra = {}) => ({ channel, resolvedPath, realPath, update: null, probe: false, guidance: null, ...extra });
 
@@ -199,7 +201,7 @@ export function classifyInstall({
     if (!npm) return result('npm', { prefix: owner.prefix, guidance: `Installed by npm under ${owner.prefix}, but npm was not found.` });
     return result('npm', { prefix: owner.prefix, update: { file: npm, args: ['install', '-g', '--prefix', owner.prefix], package: provider.package } });
   };
-  const npmArgs = { resolvedPath, realPath, pkg: provider.package, platform, fsx };
+  const npmArgs = { resolvedPath: target, realPath, pkg: provider.package, platform, fsx };
 
   const beside = provider.package ? npmBeside(npmArgs) : null;
   if (beside) return ownedByNpm(beside);

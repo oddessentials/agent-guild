@@ -745,6 +745,30 @@ test('installations are counted once however many entry points they have', () =>
     ['native', false, ['/Users/a/.local/bin/claude', '/Users/a/.local/share/claude']],
     ['legacy', false, ['/Users/a/.claude/local']],
   ]);
+
+  const guild = '/home/a/.local/share/agent-guild';
+  const guildPkg = `${guild}/lib/node_modules/@anthropic-ai/claude-code`;
+  const linux = { ...mac, platform: 'linux', env: { HOME: '/home/a' } };
+  const wrapped = (text) => fsx({
+    files: [`${guildPkg}/package.json`, `${guild}/bin/npm`, `${guild}/launcher/claude`],
+    links: { [`${guild}/bin/claude`]: `${guildPkg}/bin/claude.exe` },
+    texts: { [`${guild}/launcher/claude`]: text },
+  });
+  const launcher = `#!/bin/sh\nexec '${guild}/bin/claude' "$@"\n`;
+  const viaLauncher = listInstallations({ ...linux, onPath: [`${guild}/launcher/claude`, `${guild}/bin/claude`], fsx: wrapped(launcher) });
+  assert.deepEqual(channelsOf(viaLauncher), ['npm'], 'an installer\'s launcher and the npm command behind it are one installation');
+  assert.equal(viaLauncher[0].resolvedPath, `${guild}/launcher/claude`, 'the command on PATH stays the one in use');
+  assert.deepEqual(viaLauncher[0].update, { file: `${guild}/bin/npm`, args: ['install', '-g', '--prefix', guild], package: '@anthropic-ai/claude-code' });
+  assert.deepEqual(channelsOf(listInstallations({ ...linux, onPath: [`${guild}/launcher/claude`, `${guild}/bin/claude`], fsx: wrapped(`${launcher}# mine\n`) })), ['unknown', 'npm'], 'an edited launcher is not taken for the npm command');
+
+  const app = 'C:\\Users\\a\\AppData\\Local\\Programs\\Agent Guild';
+  const viaCmdLauncher = listInstallations({ ...windows, onPath: [`${app}\\launcher\\claude.cmd`, `${app}\\claude.cmd`], fsx: fsx({
+    files: [`${app}\\node_modules\\@anthropic-ai\\claude-code\\package.json`, `${app}\\npm.cmd`, `${app}\\claude.cmd`, `${app}\\launcher\\claude.cmd`],
+    texts: { [`${app}\\claude.cmd`]: shimText, [`${app}\\launcher\\claude.cmd`]: '@"%~dp0..\\claude.cmd" %*\r\n' },
+  }) });
+  assert.deepEqual(channelsOf(viaCmdLauncher), ['npm']);
+  assert.equal(viaCmdLauncher[0].resolvedPath, `${app}\\launcher\\claude.cmd`);
+  assert.deepEqual(viaCmdLauncher[0].update, { file: `${app}\\npm.cmd`, args: ['install', '-g', '--prefix', app], package: '@anthropic-ai/claude-code' });
 });
 
 test('shared npm and native copies have the same uninstall plan in either PATH order', () => {

@@ -20,6 +20,7 @@ import { RUNNER, encodePlan } from './uninstall.mjs';
 import { paths } from './config.mjs';
 import { MultiplexerRegistry } from './multiplexers.mjs';
 import { reconcileHerdrPath } from './multiplexer-paths.mjs';
+import { refreshLaunchers } from './launchers.mjs';
 import { LaunchFlags, normalizeLaunchFlags } from './launch-flags.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -531,6 +532,7 @@ export class ProviderRegistry extends EventEmitter {
     const provider = this.get(id);
     if (!provider) return;
     const before = this.versions.get(id)?.installed ?? null;
+    try { refreshLaunchers(); } catch {}
     this.emit('updated');
     await this.refreshVersions({ force: true, ids: [id] });
     const entry = this.versions.get(id);

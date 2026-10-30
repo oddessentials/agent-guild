@@ -240,7 +240,7 @@ jobs:
           cache: npm
       - run: npm ci
       - if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y tmux
+        run: sudo apt-get update && sudo apt-get install -y tmux zsh
       - run: npm test
         # Real PTYs and hook processes vary with runner load. Windows already
         # takes nearly five minutes without any failed assertions.
