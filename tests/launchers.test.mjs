@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { defaultFsx } from '../src/manager/install-channels.mjs';
 import { launcherTarget, refreshLaunchers } from '../src/manager/launchers.mjs';
+import { SessionHooks } from '../src/manager/session-hooks.mjs';
 
 function prefix(t) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "agent-guild-it's-")));
@@ -89,6 +90,32 @@ test('launcherTarget names the command behind exactly the launchers written here
   fs.appendFileSync(path.join(root, 'launcher', 'codex'), '# mine\n');
   assert.equal(launcherTarget(path.join(root, 'launcher', 'codex'), 'linux', defaultFsx), path.join(root, 'launcher', 'codex'));
   assert.equal(launcherTarget(path.join(bin, 'codex'), 'linux', defaultFsx), path.join(bin, 'codex'));
+});
+
+test('a reporting probe through a launcher is reused while the tool behind it is unchanged, and asked again once it changes', { skip: process.platform === 'win32' }, async (t) => {
+  const root = prefix(t);
+  const bin = path.join(root, 'bin');
+  const tool = path.join(bin, 'claude');
+  write(path.join(bin, 'node'), '');
+  write(tool, '#!/bin/sh\necho "Usage: claude [options]"\n');
+  fs.mkdirSync(path.join(root, 'launcher'));
+  refreshLaunchers({ execPath: path.join(bin, 'node'), platform: 'linux' });
+  const wrapper = path.join(root, 'launcher', 'claude');
+  const registry = { providers: [], env: { PATH: '/usr/bin:/bin' }, platform: 'linux', resolve: () => wrapper };
+  const hooks = new SessionHooks({ registry, dir: path.join(root, 'hooks'), version: '1' });
+  const provider = { id: 'claude', tool: 'Claude Code', reporting: 'claude', env: {} };
+  const old = await hooks.launch(provider, null);
+  assert.equal(old.reporting.state, 'unsupported');
+  assert.equal(hooks._probe(provider), hooks._probe(provider), 'an unchanged tool is not asked again');
+
+  const before = fs.readFileSync(wrapper, 'utf8');
+  write(tool, '#!/bin/sh\necho "Usage: claude [options]"\necho "  --plugin-dir <path>"\n');
+  fs.utimesSync(tool, new Date(), new Date(Date.now() + 60000));
+  refreshLaunchers({ execPath: path.join(bin, 'node'), platform: 'linux' });
+  assert.equal(fs.readFileSync(wrapper, 'utf8'), before, 'the upgrade leaves the launcher as it was');
+  const upgraded = await hooks.launch(provider, null);
+  assert.equal(upgraded.reporting.state, 'pending');
+  assert.deepEqual(upgraded.args, ['--plugin-dir', hooks.bundles.claude]);
 });
 
 const gitBash = process.platform === 'win32' ? path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Git', 'bin', 'bash.exe') : null;

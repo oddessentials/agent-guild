@@ -8,6 +8,7 @@ import { pinsFrom } from '../scripts/node-pins.mjs';
 
 const INSTALL_SH = path.resolve('installers/linux/install.sh');
 const ZSH = process.platform === 'win32' ? '' : execFileSync('/bin/sh', ['-c', 'command -v zsh || true'], { encoding: 'utf8' }).trim();
+const DASH = process.platform === 'win32' ? '' : execFileSync('/bin/sh', ['-c', 'command -v dash || true'], { encoding: 'utf8' }).trim();
 const TOOLS = ['awk', 'basename', 'cp', 'dirname', 'grep', 'mkdir', 'mv', 'readlink', 'rm', 'sed', 'uname'];
 
 test('the Node.js pins take each target archive\'s SHA-256, and a missing target is refused', () => {
@@ -152,6 +153,23 @@ test('install.sh installs nothing when zsh cannot say where its .zshrc is', { sk
   assert.throws(() => execFileSync('/bin/sh', [download(root, '1.0.0')], { env: { ...env, SHELL: ZSH }, encoding: 'utf8', stdio: 'pipe' }), /did not say which folder its \.zshrc is in\. Nothing was installed\./);
   assert.equal(fs.existsSync(path.join(home, '.local')), false);
   assert.equal(fs.existsSync(path.join(home, '.zshrc')), false);
+});
+
+test('install.sh under dash without SHELL in its environment falls back to .profile, and --uninstall removes the block', { skip: !DASH }, (t) => {
+  const { root, home, env } = fixture(t);
+  const dash = (file, args) => execFileSync(DASH, [file, ...args], { env: { HOME: env.HOME, PATH: env.PATH }, encoding: 'utf8', stdio: 'pipe' });
+  fs.writeFileSync(path.join(home, '.profile'), 'echo mine\n');
+  dash(download(root, '1.0.0'), []);
+  assert.equal(fs.readFileSync(path.join(home, '.profile'), 'utf8'), `echo mine\n\n${block(app(home))}`);
+  dash(path.join(app(home), 'install.sh'), ['--uninstall']);
+  assert.equal(fs.readFileSync(path.join(home, '.profile'), 'utf8'), 'echo mine\n');
+});
+
+test('the Windows uninstaller stops the manager only once uninstalling is confirmed, before files are removed', () => {
+  const iss = fs.readFileSync(path.resolve('installers/windows/agent-guild.iss'), 'utf8');
+  assert.doesNotMatch(iss, /InitializeUninstall/, 'Inno Setup runs it before the confirmation dialog');
+  assert.match(iss, /procedure CurUninstallStepChanged[\s\S]*if CurUninstallStep = usUninstall then\s*begin\s*StopManager;/);
+  assert.match(iss, /function PrepareToInstall[\s\S]*?StopManager;/);
 });
 
 const GNU_SHA256SUM = process.platform !== 'win32' && /GNU/.test(execFileSync('/bin/sh', ['-c', 'sha256sum --version 2>/dev/null || true'], { encoding: 'utf8' }));

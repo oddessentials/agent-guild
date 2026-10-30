@@ -158,14 +158,11 @@ begin
     AddToPath(ExpandConstant('{app}\launcher'));
 end;
 
-function InitializeUninstall: Boolean;
-begin
-  StopManager;
-  Result := True;
-end;
-
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usUninstall then
+  begin
+    StopManager;
     RemoveFromPath(ExpandConstant('{app}\launcher'));
+  end;
 end;

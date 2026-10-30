@@ -5,6 +5,8 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { buildSpawnSpec, runSpec, killWindowsTree } from './command-resolver.mjs';
 import { compareVersions, probeVersion } from './versions.mjs';
+import { defaultFsx } from './install-channels.mjs';
+import { launcherTarget } from './launchers.mjs';
 
 export const REPORT_COMMAND = 'agent-guild-report --hook';
 export const PLUGIN_NAME = 'agent-guild';
@@ -337,7 +339,7 @@ export class SessionHooks {
     const resolved = this.registry.resolve(provider);
     if (!resolved) return Promise.resolve(null);
     let mtime = null;
-    try { mtime = fs.statSync(resolved).mtimeMs; } catch { /* probe anyway */ }
+    try { mtime = fs.statSync(launcherTarget(resolved, this.registry.platform, defaultFsx)).mtimeMs; } catch { /* probe anyway */ }
     const cached = this.probes.get(provider.id);
     // A probe still running is shared. A finished one is reused while the binary is the same, for good when it found the
     // hooks and for the retry interval when it did not, unless it asked to be rechecked by the next session (Docker Agent).

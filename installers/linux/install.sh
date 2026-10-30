@@ -1,6 +1,7 @@
 #!/bin/sh
 # Usage: ./install.sh [--uninstall]
 set -eu
+SHELL=${SHELL:-}
 
 BEGIN='# >>> Agent Guild >>>'
 END='# <<< Agent Guild <<<'
