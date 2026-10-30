@@ -153,3 +153,65 @@ test('install.sh installs nothing when zsh cannot say where its .zshrc is', { sk
   assert.equal(fs.existsSync(path.join(home, '.local')), false);
   assert.equal(fs.existsSync(path.join(home, '.zshrc')), false);
 });
+
+const GNU_SHA256SUM = process.platform !== 'win32' && /GNU/.test(execFileSync('/bin/sh', ['-c', 'sha256sum --version 2>/dev/null || true'], { encoding: 'utf8' }));
+const RELEASE_YML = fs.readFileSync(path.resolve('.github/workflows/release.yml'), 'utf8');
+const job = (name) => RELEASE_YML.match(new RegExp(`\\n  ${name}:\\n([\\s\\S]*?)(?=\\n  [a-z-]+:\\n|$)`))[1];
+
+test('a release builds and tests the installers for its planned version before npm or a public release can have it', () => {
+  assert.match(job('installers'), /needs: \[plan, ci\]\n[\s\S]*uses: \.\/\.github\/workflows\/installers\.yml\n    with:\n      version: \$\{\{ needs\.plan\.outputs\.version \}\}/);
+  assert.match(job('draft'), /needs: \[plan, ci, installers\]/);
+  assert.match(job('publish'), /needs: \[plan, ci, draft\]/);
+  assert.match(job('release'), /needs: \[plan, publish\]/);
+  for (const name of ['installers', 'draft', 'publish', 'release']) assert.doesNotMatch(job(name), /^    if:/m, `${name} runs only when what it needs succeeded`);
+});
+
+function draftRun(t, { missing = null, altered = null } = {}) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-draft-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const work = path.join(root, 'work');
+  const release = path.join(root, 'release');
+  const bin = path.join(root, 'bin');
+  for (const dir of [work, release, bin]) fs.mkdirSync(dir);
+  const version = '1.20.0';
+  const art = 'yard-art-0123.tar.gz';
+  fs.writeFileSync(path.join(work, art), 'art');
+  const sha = execFileSync('sha256sum', [art], { cwd: work, encoding: 'utf8' }).split(' ')[0];
+  fs.mkdirSync(path.join(root, 'package', 'web', 'yard'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'package', 'web', 'yard', 'art.json'), JSON.stringify({ archive: { name: art, url: `https://github.com/o/r/releases/download/v${version}/${art}`, sha256: sha } }));
+  execFileSync('tar', ['-czf', path.join(work, `oddessentials-agent-guild-${version}.tgz`), '-C', root, 'package']);
+  execFileSync('/bin/sh', ['-c', 'sha256sum -- *.tgz yard-art-*.tar.gz > SHA256SUMS'], { cwd: work });
+  fs.writeFileSync(path.join(work, 'notes.md'), 'notes');
+  const installers = [`agent-guild-${version}-windows-setup.exe`, `agent-guild-${version}-linux-x64.tar.gz`, `agent-guild-${version}-linux-arm64.tar.gz`];
+  for (const name of installers) if (name !== missing) fs.writeFileSync(path.join(work, name), name);
+  fs.writeFileSync(path.join(bin, 'gh'), `#!/bin/sh
+echo "$*" >> "$GH_LOG"
+case "$1 $2" in
+  "release view") exit 1 ;;
+  "release create"|"release upload") shift 2; for file; do if [ -f "$file" ]; then cp "$file" "$RELEASE/"; fi; done
+    if [ -n "$ALTERED" ]; then echo altered > "$RELEASE/$ALTERED"; fi ;;
+  "release download") mkdir -p "$7"; cp "$RELEASE/$5" "$7/" ;;
+esac
+`, { mode: 0o755 });
+  const script = job('draft').match(/\n        run: \|\n([\s\S]*)$/)[1].replace(/^ {10}/gm, '');
+  const log = path.join(root, 'gh.log');
+  const env = { PATH: `${bin}:${process.env.PATH}`, GH_LOG: log, RELEASE: release, ALTERED: altered ?? '', VERSION: version, GH_REPO: 'o/r', GH_TOKEN: 'x', GITHUB_SHA: 'abc' };
+  let failed = false;
+  try { execFileSync('bash', ['-e', '-c', script], { cwd: work, env, stdio: 'pipe' }); } catch { failed = true; }
+  return { failed, release, installers, calls: fs.existsSync(log) ? fs.readFileSync(log, 'utf8') : '' };
+}
+
+test('the draft release holds the installers, SHA256SUMS covers them, and a missing or altered installer stops the release', { skip: !GNU_SHA256SUM }, (t) => {
+  const ok = draftRun(t);
+  assert.equal(ok.failed, false);
+  assert.deepEqual(fs.readdirSync(ok.release).filter((name) => name !== 'notes.md').sort(), [...ok.installers, 'SHA256SUMS', 'oddessentials-agent-guild-1.20.0.tgz', 'yard-art-0123.tar.gz'].sort());
+  assert.deepEqual(fs.readFileSync(path.join(ok.release, 'SHA256SUMS'), 'utf8').trim().split('\n').map((line) => line.split(/\s+/)[1]).sort(), [...ok.installers, 'oddessentials-agent-guild-1.20.0.tgz', 'yard-art-0123.tar.gz'].sort());
+  execFileSync('sha256sum', ['--check', 'SHA256SUMS'], { cwd: ok.release, stdio: 'pipe' });
+
+  const missing = draftRun(t, { missing: 'agent-guild-1.20.0-linux-arm64.tar.gz' });
+  assert.equal(missing.failed, true);
+  assert.equal(missing.calls, '', 'nothing reaches the release');
+
+  const altered = draftRun(t, { altered: 'agent-guild-1.20.0-windows-setup.exe' });
+  assert.equal(altered.failed, true, 'the release is checked for what it holds');
+});

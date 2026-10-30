@@ -74,11 +74,21 @@ jobs:
     with:
       version: ${{ needs.plan.outputs.version }}
 
+  installers:
+    name: Installers
+    needs: [plan, ci]
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/installers.yml
+    with:
+      version: ${{ needs.plan.outputs.version }}
+
   # npm only gets a version whose art pack is on its release: the release is a
   # draft holding the pack, checked against the package's manifest, until npm has it.
   draft:
-    name: Draft release with the Yard art
-    needs: [plan, ci]
+    name: Draft release with the Yard art and installers
+    needs: [plan, ci, installers]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -89,6 +99,12 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-plan
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: installer-windows
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: installer-linux
       - env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -96,6 +112,8 @@ jobs:
         run: |
           sha256sum --check SHA256SUMS
           tag="v$VERSION"
+          installers=("agent-guild-$VERSION-windows-setup.exe" "agent-guild-$VERSION-linux-x64.tar.gz" "agent-guild-$VERSION-linux-arm64.tar.gz")
+          sha256sum -- "${installers[@]}" >> SHA256SUMS
           art() { tar -xzOf ./*.tgz package/web/yard/art.json | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).archive.$1"; }
           name=$(art name)
           url=$(art url)
@@ -109,15 +127,19 @@ jobs:
           if [ "$state" = false ]; then
             echo "Release $tag is already public."
           elif [ "$state" = true ]; then
-            gh release upload "$tag" --clobber ./*.tgz "$name" SHA256SUMS
+            gh release upload "$tag" --clobber ./*.tgz "$name" "${installers[@]}" SHA256SUMS
             gh release edit "$tag" --target "$GITHUB_SHA" --title "$tag" --notes-file notes.md
           else
-            gh release create "$tag" --draft --target "$GITHUB_SHA" --title "$tag" --notes-file notes.md ./*.tgz "$name" SHA256SUMS
+            gh release create "$tag" --draft --target "$GITHUB_SHA" --title "$tag" --notes-file notes.md ./*.tgz "$name" "${installers[@]}" SHA256SUMS
           fi
           # Check what the release holds, not what was sent.
           mkdir held
           gh release download "$tag" --pattern "$name" --dir held
           echo "$sha  held/$name" | sha256sum --check
+          for file in "${installers[@]}"; do
+            gh release download "$tag" --pattern "$file" --dir held
+            cmp "$file" "held/$file"
+          done
 
   publish:
     name: Publish to npm
