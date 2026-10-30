@@ -31,7 +31,6 @@ export const defaultFsx = {
   },
 };
 
-/** When the command at `file` last changed: for an installer's launcher, when the executable behind it did. */
 export function commandMtime(file, platform = process.platform) {
   try { return fs.statSync(launcherTarget(file, platform, defaultFsx)).mtimeMs; } catch { return null; }
 }
