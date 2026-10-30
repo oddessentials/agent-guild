@@ -178,8 +178,6 @@ jobs:
           if (-not (& $onPath $launcher)) { throw "$launcher is not on the user's PATH." }
           if (& $onPath $app) { throw "$app, which holds the bundled Node.js, is on the user's PATH." }
           if ((& $terminal 'agent-guild --version') -ne $env:VERSION) { throw 'agent-guild does not run from a new terminal.' }
-          & (Join-Path $app 'node.exe') tests/package/smoke.mjs $app --version $env:VERSION
-          if ($LASTEXITCODE -ne 0) { throw 'The smoke test failed.' }
           if ($env:RUNNER_ARCH -eq 'X64') {
             ./tests/package/check-signatures.ps1 -Package (Join-Path $app 'node_modules\@oddessentials\agent-guild') -Publisher $env:PUBLISHER
             if ($LASTEXITCODE -ne 0) { exit 1 }
@@ -198,6 +196,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'npm could not install the test command.' }
           & (Join-Path $app 'node.exe') (Join-Path $app 'node_modules\@oddessentials\agent-guild\src\manager\launchers.mjs')
           & $everyTerminal 'after installing'
+          & (Join-Path $app 'node.exe') tests/package/smoke.mjs $app --version $env:VERSION
+          if ($LASTEXITCODE -ne 0) { throw 'The smoke test failed.' }
 
           & $terminal 'agent-guild open --no-browser' | Out-Null
           if (-not (Test-Path (Join-Path $data 'auth-token'))) { throw "The manager keeps no data in $data." }
