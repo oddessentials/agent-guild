@@ -60,11 +60,15 @@ then connects over [MCP](docs/mcp.md) to see and steer your sessions.
   Codex CLI.
 * **The same session on every screen.** Any browser, a phone over
   [Tailscale](#remote-access-with-tailscale) with touch keys, VS Code, and
-  apps for [Apple Vision Pro](https://apps.apple.com/us/app/agent-guild-remote/id6825451331),
-  iPhone and iPad (beta) and
-  [Android](https://github.com/oddessentials/agent-guild-android/releases/latest).
+  the Agent Guild app: iPhone, iPad and Apple Vision Pro on the
+  [App Store](https://apps.apple.com/us/app/agent-guild-remote/id6825451331);
+  Android, Android TV, Google TV and Android XR on
+  [Google Play](https://play.google.com/store/apps/details?id=com.oddessentials.agentguild)
+  or [GitHub](https://github.com/oddessentials/agent-guild-android/releases/latest);
+  Fire tablets and Fire TV on the [Amazon Appstore](https://www.amazon.com/dp/B0HPLBDYPR);
+  and Meta Quest on the [Meta Horizon Store](https://www.meta.com/experiences/1325496170657270/).
   Apple Watch and Meta Ray-Ban Display list your sessions and read a
-  session's last answer aloud.
+  session's last answer aloud. See [what each screen needs](https://agentguild.oddessentials.ai/requirements/).
 * **Native on Windows.** No WSL. Also macOS, Linux, and headless Linux
   servers over SSH.
 * **Nothing in between.** No account and no relay server: the manager
