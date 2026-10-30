@@ -12,7 +12,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { resolveCommand, resolveAllCommands, pathKey, buildSpawnSpec, npmSpawnSpec, runSpec } from './command-resolver.mjs';
 import { compareVersions, probeVersion, fetchManifest, latestVersion, latestReleaseTag, brewVersion, DEFAULT_NPM_REGISTRY } from './versions.mjs';
-import { CHANNEL_LABELS, classifyInstall, expandHome, formatCommand, homeRelative, knownLaunchers, listInstallations, platformDependency, updateHelpAccepted } from './install-channels.mjs';
+import { CHANNEL_LABELS, classifyInstall, commandMtime, expandHome, formatCommand, homeRelative, knownLaunchers, listInstallations, platformDependency, updateHelpAccepted } from './install-channels.mjs';
 import { copyChannel, linkOnPath, pluginVersion, readPlugin } from './docker-plugin.mjs';
 import { weavePaths } from './shell-env.mjs';
 import { detectShells, fallbackShell } from './shells.mjs';
@@ -32,10 +32,6 @@ const VERSION_TTL_MS = 60 * 60 * 1000;
 const FAILED_PROBE_TTL_MS = 5 * 60 * 1000;
 const PATH_REFRESH_MS = 60 * 1000;
 const INSTALLS_TTL_MS = 30 * 1000;
-
-function fileMtime(file) {
-  try { return fs.statSync(file).mtimeMs; } catch { return null; }
-}
 
 function realPathOf(file) {
   try { return fs.realpathSync.native(file); } catch { return file; }
@@ -419,7 +415,7 @@ export class ProviderRegistry extends EventEmitter {
         // A listed copy whose file has gone since docker listed it was removed by hand: ask docker again, once. A copy
         // docker lists that was already missing when it answered is not asked about again until the next interval,
         // or every refresh would run docker info (the providers request refreshes on every call).
-        const missing = (copies) => copies.filter((c) => fileMtime(c.path) === null).map((c) => c.path);
+        const missing = (copies) => copies.filter((c) => commandMtime(c.path, this.platform) === null).map((c) => c.path);
         const gone = Boolean(read && missing(read.copies).some((file) => !read.missing.includes(file)));
         if (!found) {
           if (read) { entry.plugin = null; changed = true; }
@@ -432,7 +428,7 @@ export class ProviderRegistry extends EventEmitter {
       }
       const channel = found ? this.channelFor(provider, found) : null;
       if (channel?.probe) {
-        const mtime = fileMtime(found);
+        const mtime = commandMtime(found, this.platform);
         const ttl = entry.probeOk === true ? VERSION_TTL_MS : FAILED_PROBE_TTL_MS;
         if (force || entry.probePath !== found || entry.probeMtime !== mtime || now - entry.probeAt > ttl) {
           const spec = buildSpawnSpec(channel.update.file, [...channel.update.args, '--help'], this.env, this.platform);
@@ -449,7 +445,7 @@ export class ProviderRegistry extends EventEmitter {
       const pluginCopies = entry.plugin?.copies ?? [];
       const resolved = provider.versionArgs ? (provider.plugin ? pluginCopies.find((c) => c.active)?.path ?? null : found) : null;
       if (resolved) {
-        const mtime = fileMtime(resolved);
+        const mtime = commandMtime(resolved, this.platform);
         const ttl = entry.installed === null ? FAILED_PROBE_TTL_MS : VERSION_TTL_MS;
         const stale = entry.installedPath !== resolved || entry.installedMtime !== mtime || now - entry.installedAt > ttl;
         if (force || stale) {
@@ -474,7 +470,7 @@ export class ProviderRegistry extends EventEmitter {
       const installs = provider.plugin ? this._pluginInstalls(provider, pluginCopies) : this.installsFor(provider, found);
       for (const other of provider.versionArgs ? installs.filter((i) => i.resolvedPath !== resolved) : []) {
         const file = other.resolvedPath;
-        const mtime = fileMtime(file);
+        const mtime = commandMtime(file, this.platform);
         const cached = entry.copies[file];
         const ttl = cached?.version ? VERSION_TTL_MS : FAILED_PROBE_TTL_MS;
         if (!force && cached && cached.mtime === mtime && now - cached.at <= ttl) {

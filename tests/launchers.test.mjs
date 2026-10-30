@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { defaultFsx } from '../src/manager/install-channels.mjs';
 import { launcherTarget, refreshLaunchers } from '../src/manager/launchers.mjs';
+import { ProviderRegistry } from '../src/manager/providers.mjs';
 import { SessionHooks } from '../src/manager/session-hooks.mjs';
 
 function prefix(t) {
@@ -116,6 +117,43 @@ test('a reporting probe through a launcher is reused while the tool behind it is
   const upgraded = await hooks.launch(provider, null);
   assert.equal(upgraded.reporting.state, 'pending');
   assert.deepEqual(upgraded.args, ['--plugin-dir', hooks.bundles.claude]);
+});
+
+test('a version and launch options read through a launcher are kept while the tool behind it is unchanged, and read again once it changes', { skip: process.platform === 'win32' }, async (t) => {
+  const root = prefix(t);
+  const bin = path.join(root, 'bin');
+  const tool = path.join(bin, 'fake-tool');
+  const runs = path.join(root, 'runs');
+  const release = (version, flags) => {
+    write(tool, `#!/bin/sh\necho "$*" >> "${runs}"\nif [ "$1" = --version ]; then echo "fake-tool ${version}"; exit 0; fi\necho "Usage: fake-tool [options]"\n${flags.map((flag) => `echo "  ${flag}  ${flag.slice(2)}"`).join('\n')}\n`);
+    refreshLaunchers({ execPath: path.join(bin, 'node'), platform: 'linux' });
+  };
+  write(path.join(bin, 'node'), '');
+  fs.mkdirSync(path.join(root, 'launcher'));
+  release('1.0.0', ['--effort', '--gone']);
+  const wrapper = path.join(root, 'launcher', 'fake-tool');
+  const before = fs.readFileSync(wrapper, 'utf8');
+  const userFile = path.join(root, 'providers.json');
+  fs.writeFileSync(userFile, JSON.stringify({ providers: [{ id: 'fake', tool: 'Fake', command: 'fake-tool', versionArgs: ['--version'], launchFlags: ['--effort', '--gone'] }] }));
+  const registry = new ProviderRegistry({ userFile, env: { PATH: `${path.join(root, 'launcher')}:/usr/bin:/bin` }, platform: 'linux', checkUpdates: false });
+  const provider = registry.get('fake');
+  const flags = async () => (await registry.launchFlags(provider)).flags.map((f) => f.flag);
+  const count = () => fs.readFileSync(runs, 'utf8').trim().split('\n').length;
+
+  await registry.refreshVersions({ ids: ['fake'] });
+  assert.equal(registry.versions.get('fake').installed, '1.0.0');
+  assert.deepEqual(await flags(), ['--effort', '--gone']);
+  const read = count();
+  await registry.refreshVersions({ ids: ['fake'] });
+  assert.deepEqual(await flags(), ['--effort', '--gone']);
+  assert.equal(count(), read, 'an unchanged tool is not asked again');
+
+  release('2.0.0', ['--effort']);
+  fs.utimesSync(tool, new Date(), new Date(Date.now() + 60000));
+  assert.equal(fs.readFileSync(wrapper, 'utf8'), before, 'the upgrade leaves the launcher as it was');
+  assert.deepEqual(await flags(), ['--effort'], 'a removed flag is no longer offered');
+  await registry.refreshVersions({ ids: ['fake'] });
+  assert.equal(registry.versions.get('fake').installed, '2.0.0');
 });
 
 const gitBash = process.platform === 'win32' ? path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Git', 'bin', 'bash.exe') : null;
