@@ -22,7 +22,7 @@ test('visual poses preserve running/quiet vs exited and reported helper states',
  for(const status of ['working','waiting','idle','done'])assert.equal(familiarPose({status}),status);
  assert.equal(familiarPose({status:'unknown'}),'idle');
 });
-test('marks follow reported state only: asleep resting alone, waiting helpers, failed exits',()=>{
+test('marks follow reported state only: asleep resting alone, waiting helpers, clean and failed exits',()=>{
  const run={status:'running',agents:[],shells:[]},agent=(id,status)=>({id,status});
  assert.deepEqual(marksFor(run,'rest'),{crew:'asleep',helpers:[]});
  for(const mode of ['pause','work'])assert.deepEqual(marksFor(run,mode),{crew:null,helpers:[]});
@@ -32,7 +32,7 @@ test('marks follow reported state only: asleep resting alone, waiting helpers, f
  const many=Array.from({length:7},(_,i)=>agent('a'+i,i===0||i===6?'waiting':'working'));
  assert.deepEqual(marksFor({...run,agents:many},'work'),{crew:'waiting',helpers:['a0']});
  const exit=e=>marksFor({status:'exited',exitCode:null,signal:null,multiplexer:null,...e},'done').crew;
- assert.equal(exit({exitCode:0}),null);assert.equal(exit({}),null);
+ assert.equal(exit({exitCode:0}),'exited');assert.equal(exit({}),'exited');
  assert.equal(exit({exitCode:1}),'failed');assert.equal(exit({signal:'SIGTERM'}),'failed');
  assert.equal(exit({exitCode:1,multiplexer:{label:'tmux'}}),null);
 });

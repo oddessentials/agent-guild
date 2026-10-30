@@ -216,6 +216,10 @@ export async function withPage({ name, instrumentation = '', headers = () => ({}
     await send('Page.enable');
     await send('Runtime.enable');
     await send('Page.setLifecycleEventsEnabled', { enabled: true });
+    // A headless page starts without window focus, and then focus() fires no focus event until the page gains focus,
+    // whenever that is. Emulated focus makes every focus() and blur() fire at once, as in a focused window.
+    await send('Emulation.setFocusEmulationEnabled', { enabled: true });
+    if (!(await evaluate('document.hasFocus()'))) throw new Error('the page does not have focus');
     const { frameTree } = await send('Page.getFrameTree');
     const listen = (listener) => { listeners.add(listener); return () => listeners.delete(listener); };
     const { navigate, reload } = pageLoads(send, listen, frameTree.frame.id);

@@ -84,6 +84,13 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { session_id: sessionId }, required: ['session_id'], additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   },
+  {
+    name: 'fireworks',
+    title: 'Fireworks over the Yard',
+    description: 'Launch fireworks over the Yard on every screen connected to Agent Guild. Use it to celebrate something the person cares about, such as tests, a build or a release that passed. Says how many pages saw them.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
 ];
 
 const INPUT_TOOL = {
@@ -308,6 +315,10 @@ export function createToolHandlers(client, { allowInput = false } = {}) {
     async stop_session({ session_id: id }) {
       const { session } = await client.api(`/sessions/${checkId(id)}/stop`, { method: 'POST', session: id });
       return text({ stopped: true, session: summarize(session) });
+    },
+    async fireworks() {
+      const { pages } = await client.api('/yard/fireworks', { method: 'POST' });
+      return text({ launched: true, pages, ...(pages ? {} : { message: 'No page is open to see them. The person can open Agent Guild and choose the Yard.' }) });
     },
   };
   if (allowInput) {

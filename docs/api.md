@@ -132,7 +132,8 @@ listed them once.
 null when `GET /usage`, `GET /providers/:id/history`,
 `GET /providers/:id/memory` or `GET /providers/:id/instructions` cannot report
 the tool. `historyDetails` is true when `GET /providers/:id/history/detail`
-can read saved messages. `accounts` lists the sign-ins the tool can run
+can read saved messages: for every built-in history source, not for a
+`command`. `accounts` lists the sign-ins the tool can run
 under: `default` is the tool's own, and each further one has its own home
 folder, so it keeps its own sign-in and usage. `POST /sessions` takes an
 account id. `accountsEditable` is true when accounts can be added, renamed
@@ -260,7 +261,7 @@ account, true when one was read, and null when that is unknown.
   "providerId": "anthropic",
   "accountId": "default",
   "sessions": [
-    { "id": "581893e5-a93d-5e49-968b-1c1c277d3255", "title": "Fix the login bug", "cwd": "/Users/me/src/app", "startedAt": "2026-10-01T13:26:53.713Z", "updatedAt": "2026-10-01T13:49:28.000Z" }
+    { "id": "581893e5-a93d-5e49-968b-1c1c277d3255", "name": "Login bug", "title": "Fix the login bug", "cwd": "/Users/me/src/app", "startedAt": "2026-10-01T13:26:53.713Z", "updatedAt": "2026-10-01T13:49:28.000Z" }
   ],
   "total": 42,
   "fetchedAt": "2026-10-01T14:00:00.000Z",
@@ -269,16 +270,19 @@ account, true when one was read, and null when that is unknown.
 ```
 
 The tool's own earlier sessions, newest first. `id` is what the tool resumes
-by (`POST /sessions` with `resume`); `title` is the session's name or first
-prompt, or null; `cwd` is the folder the session ran in, or null. Claude Code
+by (`POST /sessions` with `resume`); `name` is the name a card holding
+that session was given, or null; `title` is the name the tool gave the
+session, else its first prompt, or null; `cwd` is the folder the session ran
+in, or null. Claude Code
 finds a session only from its own folder, so resume with that `cwd`.
 `sessions` holds at most `limit` entries of the `total` found. `error` says
 why nothing could be listed; a tool that has never run lists no sessions and
 no error. Antigravity CLI entries add `workspaces`, and its history may add a
 `note`.
 
-The optional `cwd` and `q` parameters filter by folder and by text (title, id
-or folder) **before** applying `limit`; `total` counts matching entries.
+The optional `cwd` and `q` parameters filter by folder and by text (name,
+title, id or folder) **before** applying `limit`; `total` counts matching
+entries. Filtering uses the listing only and never reads a conversation.
 
 #### Saved messages
 
@@ -291,16 +295,26 @@ or folder) **before** applying `limit`; `total` counts matching entries.
     "messages": [{ "role": "user", "text": "Fix the login bug" }],
     "nextCursor": null,
     "incomplete": false,
-    "omitted": false
+    "omitted": false,
+    "truncated": false
   }
 }
 ```
 
-Only the user's requests and the visible answers are included, as plain text.
-Follow `nextCursor` until it is null, even when a page has no visible
-messages. `omitted` says records were left out; `incomplete` says the last one
-was partial, and a later read may complete it. 409 `history_changed` means the
-transcript changed: start again without a cursor.
+Only the user's requests and the visible answers are included, as plain text:
+no thinking, tool calls or results, text the tool inserted, or turns it
+rewound or rolled back. The first page holds the newest messages; each
+`nextCursor` reads the page before it, and messages within a page are oldest
+first. Every message is whole. Follow `nextCursor` until it is null, even when
+a page has no visible messages. `omitted` says records were left out, such as
+an unreadable one the tool itself skips; `truncated` says the history ends
+early, at a record too large to read or one that cannot be read safely, and
+nothing before it is shown; `incomplete` says the newest record was still being
+written, and a later read may complete it. Messages added after the first page
+appear when it is read again without a cursor. 409 `history_changed` means
+the part a cursor depends on was rewritten, truncated or replaced: start again
+without a cursor. 413 `history_too_large` means a compressed Codex rollout
+decodes to more than 64 MiB.
 
 ### Memory
 
@@ -618,6 +632,7 @@ All paths are under `/api/v1`.
 | GET | `/yard-art` | | `{ yardArt }`: the Yard's art. `state` is `ready`, `missing`, `downloading` (with `received` bytes), `installing`, `failed` or `unavailable` (each with `error`), or `cancelled`; `size` is the pack's size in bytes. A checkout serves `web/yard/assets` and is always `ready`. `/yard/assets/` answers 404 until the art is `ready`. |
 | POST | `/yard-art/download` | | `202 { yardArt }`: starts the one download of the art pack named by the package, unless it is running or installed. Progress and the outcome arrive as `yard-art.updated`. |
 | POST | `/yard-art/cancel` | | `{ yardArt }`: stops the download for every client; the state becomes `cancelled`. |
+| POST | `/yard/fireworks` | | `{ ok, pages }`: fireworks over the Yard of every open page, sent as `yard.fireworks`. `pages` is how many pages were listening. |
 | GET | `/changelog` | | `{ refreshing, okAt, error, releases }`: Agent Guild's own releases, newest first, each `{ version, url, publishedAt, sections: [{ title, changes }] }`, where `title` may be null and a change is a list of text runs. A `changelog.updated` event follows a refresh. |
 | GET | `/providers/:id/history?account=&limit=&cwd=&q=` | | `{ history }`: a History object for one account (default `default`). |
 | GET | `/providers/:id/history/detail?account=&id=&cursor=` | | `{ detail }`; see [Saved messages](#saved-messages). |
@@ -664,7 +679,11 @@ All paths are under `/api/v1`.
 `cwd` defaults to the user's home folder, and a leading `~` is expanded.
 `args` are appended to the provider's configured arguments. `resume` is an
 id or name of one of the tool's own sessions; one that starts with `-` is
-refused with 400 `bad_resume`. `account` defaults to `default`.
+refused with 400 `bad_resume`. `account` defaults to `default`. A session
+resumed without a `name` gets back the name a card holding it was given.
+A name given to a session, by `name` or a rename, is kept for every tool
+session the card holds; renaming the card to its default name drops it for
+the tool session it holds then.
 
 The `POST /sessions/:id/…` report routes (`agents`, `model`, `tool-session`,
 `context`, `reply`, `reporting`, `docker` and `shells`) also accept the per-session
@@ -695,6 +714,7 @@ but `{ type: "ping" }`, which the manager answers with `{ type: "pong" }`.
 | `{ type: "environment.updated", environment }` | An environment check started or finished. |
 | `{ type: "news.updated" }` | Fetch `/news` again. |
 | `{ type: "yard-art.updated", yardArt }` | The Yard's art changed state or made download progress, as in `/yard-art`. |
+| `{ type: "yard.fireworks" }` | Fireworks over the Yard, when it is on show. |
 | `{ type: "changelog.updated" }` | Fetch `/changelog` again. |
 | `{ type: "github.updated" }` | Fetch `/github` again. |
 | `{ type: "remote-access.updated" }` | Fetch `/remote-access` again. |

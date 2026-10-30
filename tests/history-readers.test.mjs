@@ -1,0 +1,826 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import zlib from 'node:zlib';
+import { PAGE_LIMITS, JSONL_READERS, readJsonlPage, readDockerConversation, readAntigravityTranscript, checkedFile } from '../src/manager/history-transcripts.mjs';
+import { SessionHistory, FileMemo, listClaudeSessions, listCodexSessions, listGrokSessions, listAntigravitySessions, listDockerSessions } from '../src/manager/session-history.mjs';
+import { SessionManager } from '../src/manager/session-manager.mjs';
+import { createCardNames } from '../src/manager/card-names.mjs';
+import pty from 'node-pty';
+import { fakePty } from './fixtures/fake-pty.mjs';
+
+// Synthetic records shaped like Claude Code 2.1.312, Codex CLI 0.165.0, Grok Build 1.0.70 and Docker Agent 1.154.0 write them.
+const lines = (...records) => records.map((r) => JSON.stringify(r)).join('\n') + '\n';
+
+function tempDir(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'guild-readers-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
+
+function write(file, text) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, text);
+  return file;
+}
+
+const read = (source, file, cursor = null, limits = PAGE_LIMITS) => readJsonlPage({ source, id: 'conversation', file, cursor, limits, ...JSONL_READERS[source] });
+
+async function readAll(source, file, limits) {
+  const pages = [];
+  let cursor = null;
+  do {
+    const page = await read(source, file, cursor, limits);
+    pages.unshift(page);
+    cursor = page.nextCursor;
+    assert.ok(pages.length < 200, 'the pages end');
+  } while (cursor);
+  return { pages, messages: pages.flatMap((p) => p.messages), omitted: pages.some((p) => p.omitted), truncated: pages[0].truncated };
+}
+
+const said = (messages) => messages.map((m) => `${m.role === 'user' ? 'You' : 'AI'}: ${m.text}`);
+
+// ---- Claude Code ------------------------------------------------------------------
+
+function claudeTranscript() {
+  let last = null;
+  const at = (record) => {
+    const r = { parentUuid: last, sessionId: 's', ...record };
+    last = r.uuid;
+    return r;
+  };
+  const prompt = (uuid, content, extra = {}) => at({ type: 'user', uuid, message: { role: 'user', content }, ...extra });
+  const reply = (uuid, id, content) => at({ type: 'assistant', uuid, message: { id, role: 'assistant', content } });
+  return [
+    { type: 'file-history-snapshot', messageId: 'x' },
+    prompt('c1', 'First prompt'),
+    reply('c2', 'm1', [{ type: 'thinking', thinking: 'private' }, { type: 'text', text: 'Reply one' }]),
+    reply('c3', 'm1', [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'ls' } }]),
+    prompt('c4', [{ type: 'tool_result', tool_use_id: 't1', content: 'secret output' }]),
+    reply('c5', 'm2', [{ type: 'text', text: 'Reply two' }]),
+    prompt('c6', 'Caveat inserted by the tool', { isMeta: true }),
+    prompt('c7', '<command-name>/model</command-name>'),
+    prompt('c8', [{ type: 'text', text: '[Request interrupted by user]' }]),
+    // Rewound away: a branch from c5 that the live conversation does not continue.
+    { type: 'user', uuid: 'b1', parentUuid: 'c5', message: { role: 'user', content: 'Discarded prompt' } },
+    { type: 'assistant', uuid: 'b2', parentUuid: 'b1', message: { id: 'm3', role: 'assistant', content: [{ type: 'text', text: 'Discarded reply' }] } },
+    { type: 'system', subtype: 'compact_boundary', uuid: 'k1', parentUuid: null, logicalParentUuid: 'c8' },
+    { type: 'user', uuid: 'k2', parentUuid: 'k1', isCompactSummary: true, message: { role: 'user', content: 'Summary of the earlier conversation' } },
+    { type: 'user', uuid: 'd1', parentUuid: 'k2', message: { role: 'user', content: 'Second prompt' } },
+    { type: 'assistant', uuid: 'd2', parentUuid: 'd1', message: { id: 'm4', role: 'assistant', content: [{ type: 'text', text: 'Second reply' }] } },
+    { type: 'user', uuid: 's1', parentUuid: 'd2', isSidechain: true, message: { role: 'user', content: 'Sub-agent prompt' } },
+    { type: 'assistant', uuid: 'd3', parentUuid: 'd2', message: { id: 'm4', role: 'assistant', content: [{ type: 'text', text: 'continued' }] } },
+    { type: 'ai-title', aiTitle: 'Generated title', sessionId: 's' },
+    { type: 'last-prompt', lastPrompt: 'Second prompt', leafUuid: 'd3', sessionId: 's' },
+  ];
+}
+
+const claudeConversation = ['You: First prompt', 'AI: Reply one', 'AI: Reply two', 'You: Second prompt', 'AI: Second reply\n\ncontinued'];
+
+test('Claude Code previews follow the resumed chain: no thinking, tools, inserted text, sub-agents or rewound branches', async (t) => {
+  const file = write(path.join(tempDir(t), 'c.jsonl'), lines(...claudeTranscript()));
+  const page = await read('claude', file);
+  assert.deepEqual(said(page.messages), claudeConversation);
+  assert.deepEqual([page.nextCursor, page.incomplete, page.omitted], [null, false, false]);
+});
+
+test('every page holds whole messages, however small the pages and reads', async (t) => {
+  const file = write(path.join(tempDir(t), 'c.jsonl'), lines(...claudeTranscript()));
+  for (const limits of [{ ...PAGE_LIMITS, messages: 1, chunkBytes: 17 }, { ...PAGE_LIMITS, scanBytes: 1, chunkBytes: 64 }]) {
+    const { pages, messages, omitted } = await readAll('claude', file, limits);
+    assert.ok(pages.length > 2);
+    assert.equal(omitted, false);
+    assert.deepEqual(said(messages), claudeConversation, JSON.stringify(limits));
+  }
+});
+
+test('a message that does not end within the most a page reads ends the history there, never shown cut', async (t) => {
+  const records = claudeTranscript();
+  const bulk = { type: 'user', uuid: 'r1', parentUuid: 'd2', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't2', content: 'x'.repeat(5000) }] } };
+  const at = records.findIndex((r) => r.uuid === 'd3');
+  records.splice(at, 1, bulk, { ...records[at], parentUuid: 'r1' });
+  const file = write(path.join(tempDir(t), 'c.jsonl'), lines(...records));
+  const { messages, truncated } = await readAll('claude', file, { ...PAGE_LIMITS, maxScanBytes: 2000, chunkBytes: 512 });
+  assert.deepEqual([said(messages), truncated], [[], true], 'the reply that spans the bulk is dropped, and nothing before it is joined on');
+});
+
+test('a line too long to read ends the history at it, after reading no more of it than the limit', async (t) => {
+  const dir = tempDir(t);
+  const message = (n) => ({ type: 'event_msg', payload: { type: n % 2 ? 'agent_message' : 'user_message', message: `message ${n}` } });
+  const huge = 64 * 1024 * 1024;
+  const file = path.join(dir, 'rollout.jsonl');
+  fs.writeFileSync(file, lines(message(0), message(1)));
+  fs.appendFileSync(file, Buffer.alloc(huge, 'x'));
+  fs.appendFileSync(file, '\n' + lines(message(2), message(3)));
+  let bytesRead = 0;
+  const open = async (target) => {
+    const handle = await fs.promises.open(target, 'r');
+    const { size } = await handle.stat();
+    return {
+      size,
+      async read(position, length) {
+        const { bytesRead: n, buffer } = await handle.read(Buffer.alloc(length), 0, length, position);
+        bytesRead += n;
+        return buffer.subarray(0, n);
+      },
+      close: () => handle.close(),
+    };
+  };
+  const page = await readJsonlPage({ source: 'codex', id: 'conversation', file, cursor: null, ...JSONL_READERS.codex, open });
+  assert.deepEqual([page.messages.map((m) => m.text), page.nextCursor, page.truncated, page.omitted], [['message 2', 'message 3'], null, true, false]);
+  assert.ok(bytesRead < PAGE_LIMITS.maxLineBytes + 4 * PAGE_LIMITS.chunkBytes, `read ${bytesRead} bytes of a ${huge}-byte line`);
+
+  fs.appendFileSync(file, Buffer.alloc(PAGE_LIMITS.maxLineBytes + 1, 'y'));
+  bytesRead = 0;
+  const writing = await readJsonlPage({ source: 'codex', id: 'conversation', file, cursor: null, ...JSONL_READERS.codex, open });
+  assert.deepEqual([writing.messages, writing.incomplete, writing.truncated], [[], true, true], 'a last line already past the limit is never searched to its start');
+  assert.ok(bytesRead < PAGE_LIMITS.maxLineBytes + 4 * PAGE_LIMITS.chunkBytes + 2 * 4096, `read ${bytesRead} bytes`);
+});
+
+test('a line too long to read drops the unfinished message it falls in, in each reader', async (t) => {
+  const dir = tempDir(t);
+  const limits = { ...PAGE_LIMITS, maxLineBytes: 2000, chunkBytes: 512 };
+  const records = claudeTranscript();
+  records.find((r) => r.uuid === 'c4').message.content[0].content = 'x'.repeat(3000);
+  const claude = await read('claude', write(path.join(dir, 'c.jsonl'), lines(...records)), null, limits);
+  assert.deepEqual([said(claude.messages), claude.truncated, claude.nextCursor], [['You: Second prompt', 'AI: Second reply\n\ncontinued'], true, null], 'Reply two waits on the record before it, so it is not shown');
+  const grokFile = write(path.join(dir, 'g.jsonl'), lines(grok.user('first', 0), grok.agent('First reply'), grok.done(),
+    grok.user('second', 1), grok.agent('y'.repeat(3000)), grok.done(), grok.user('third', 2), grok.agent('Third reply'), grok.done()));
+  const grokPage = await read('grok', grokFile, null, limits);
+  assert.deepEqual([said(grokPage.messages), grokPage.truncated], [['You: third', 'AI: Third reply'], true]);
+});
+
+test('a corrupt Grok Build record ends the readable history, since it may have been a rewind or part of a prompt', async (t) => {
+  const dir = tempDir(t);
+  const torn = '{"method":"_x.ai/session/upd\n';
+  const adjacent = write(path.join(dir, 'adjacent.jsonl'), lines(grok.user('first', 0), grok.agent('First reply')) + torn + lines(grok.user('second', 1), grok.agent('Second reply')));
+  const unsure = await read('grok', adjacent);
+  assert.deepEqual([said(unsure.messages), unsure.truncated, unsure.nextCursor], [[], true, null], 'the record may have been part of the prompt after it');
+  const separate = write(path.join(dir, 'separate.jsonl'), lines(grok.user('first', 0), grok.agent('First reply')) + torn + lines(grok.done(), grok.user('second', 1), grok.agent('Second reply')));
+  const after = await read('grok', separate);
+  assert.deepEqual([said(after.messages), after.truncated, after.nextCursor], [['You: second', 'AI: Second reply'], true, null], 'a record that may have been a rewind is never guessed past');
+});
+
+test('a compressed rollout is decoded only up to the limit, with a bounded window, and leaves no copy behind', { skip: typeof zlib.zstdCompressSync !== 'function' }, async (t) => {
+  const dir = tempDir(t);
+  const text = Buffer.from(lines(...Array.from({ length: 4096 }, (_, n) => ({ type: 'event_msg', payload: { type: n % 2 ? 'agent_message' : 'user_message', message: `message ${n} ${'z'.repeat(4200)}` } }))));
+  assert.ok(text.length > 16 * 1024 * 1024);
+  const decodedCopies = () => fs.readdirSync(os.tmpdir()).filter((name) => name.startsWith('agent-guild-rollout-')).length;
+  const copies = decodedCopies();
+  const level3 = write(path.join(dir, 'level3.jsonl.zst'), zlib.zstdCompressSync(text, { params: { [zlib.constants.ZSTD_c_compressionLevel]: 3 } }));
+  const page = await read('codex', level3, null, { ...PAGE_LIMITS, maxDecodedBytes: text.length });
+  assert.equal(page.messages.at(-1).text.split(' ')[1], '4095', 'Codex\'s own compression level reads');
+  await assert.rejects(read('codex', level3, null, { ...PAGE_LIMITS, maxDecodedBytes: 1024 * 1024 }), { code: 'history_too_large', status: 413 });
+  const wide = write(path.join(dir, 'wide.jsonl.zst'), zlib.zstdCompressSync(text, { params: { [zlib.constants.ZSTD_c_windowLog]: 27 } }));
+  await assert.rejects(read('codex', wide, null, { ...PAGE_LIMITS, maxDecodedBytes: text.length }), { code: 'history_unavailable', status: 404 }, 'a frame asking for a large window is refused');
+  const broken = write(path.join(dir, 'broken.jsonl.zst'), 'not zstd');
+  await assert.rejects(read('codex', broken), { code: 'history_unavailable', status: 404 });
+  assert.equal(decodedCopies(), copies, 'no decoded copy is left behind after a read or a failure');
+});
+
+test('a corrupt Claude chain record ends the conversation there, without the reply that depended on it', async (t) => {
+  const records = claudeTranscript();
+  const at = records.findIndex((r) => r.uuid === 'd2');
+  const text = lines(...records).split('\n').map((line, i) => (i === at ? `${line.slice(0, 40)}` : line)).join('\n');
+  const file = write(path.join(tempDir(t), 'c.jsonl'), text);
+  const page = await read('claude', file);
+  assert.deepEqual([said(page.messages), page.omitted, page.nextCursor], [[], true, null], 'nothing older is joined to the newest reply');
+});
+
+test('a Claude title set after the last listing replaces the cached one, in a short or a long transcript', async (t) => {
+  for (const filler of [0, 300 * 1024]) {
+    const dir = tempDir(t);
+    const file = path.join(dir, 'projects', '-w', 'aaaa-1.jsonl');
+    write(file, lines({ type: 'user', cwd: '/w', message: { role: 'user', content: 'Prompt' } }, { type: 'custom-title', customTitle: 'First name' },
+      ...(filler ? [{ type: 'user', isMeta: true, message: { role: 'user', content: 'f'.repeat(filler) } }] : [])));
+    const memo = new FileMemo();
+    assert.equal((await listClaudeSessions(dir, memo))[0].title, 'First name');
+    fs.appendFileSync(file, lines({ type: 'custom-title', customTitle: 'Second name' }));
+    assert.equal((await listClaudeSessions(dir, memo))[0].title, 'Second name', `filler ${filler}`);
+    fs.appendFileSync(file, lines({ type: 'user', isMeta: true, message: { role: 'user', content: 'g'.repeat(filler ? 400 * 1024 : 10) } }));
+    assert.equal((await listClaudeSessions(dir, memo))[0].title, 'Second name', 'a title pushed out of the end window is kept');
+  }
+});
+
+test('prompts are told apart by each tool\'s own markers, never by leading markup, in previews and titles', async (t) => {
+  const dir = tempDir(t);
+  const pasted = '<pasted_content id="p1">Fix the spacing</pasted_content>';
+  const claudeHome = path.join(dir, 'claude');
+  const claude = write(path.join(claudeHome, 'projects', '-w', 'aaaa-1.jsonl'), lines(
+    { type: 'user', uuid: 'u1', parentUuid: null, cwd: '/w', origin: { kind: 'human' }, message: { role: 'user', content: pasted } },
+    { type: 'assistant', uuid: 'u2', parentUuid: 'u1', message: { id: 'm1', role: 'assistant', content: [{ type: 'text', text: 'Spaced' }] } },
+    { type: 'user', uuid: 'u3', parentUuid: 'u2', origin: { kind: 'task-notification' }, message: { role: 'user', content: 'Background task finished' } },
+    { type: 'user', uuid: 'u4', parentUuid: 'u3', message: { role: 'user', content: '<command-name>/model</command-name>' } },
+    { type: 'user', uuid: 'u5', parentUuid: 'u4', message: { role: 'user', content: 'Legacy prompt' } },
+  ));
+  assert.deepEqual(said((await read('claude', claude)).messages), [`You: ${pasted}`, 'AI: Spaced', 'You: Legacy prompt']);
+  assert.equal((await listClaudeSessions(claudeHome))[0].title, pasted);
+
+  const codex = write(path.join(dir, 'rollout.jsonl'), lines(
+    { type: 'session_meta', payload: { id: 'c1', cwd: '/w', timestamp: '2026-10-29T00:00:00Z' } },
+    { type: 'event_msg', payload: { type: 'user_message', message: '<task>Review the change</task>' } },
+    { type: 'event_msg', payload: { type: 'agent_message', message: 'Reviewed' } },
+  ));
+  assert.deepEqual(said((await read('codex', codex)).messages), ['You: <task>Review the change</task>', 'AI: Reviewed']);
+  const codexHome = path.join(dir, 'codex');
+  write(path.join(codexHome, 'sessions', '2026', '10', '29', 'rollout-2026-10-29T00-00-00-c1.jsonl'), fs.readFileSync(codex, 'utf8'));
+  assert.equal((await listCodexSessions(codexHome))[0].title, '<task>Review the change</task>');
+
+  const reminder = grok.user('<system-reminder>Background task completed</system-reminder>', 1);
+  reminder.params.update._meta.hideFromScrollback = true;
+  const grokHome = path.join(dir, 'grok');
+  const session = path.join(grokHome, 'sessions', encodeURIComponent('/w'), 'g1');
+  const updates = write(path.join(session, 'updates.jsonl'), lines(grok.user('<div>Fix the spacing</div>', 0), grok.agent('Spaced'), grok.done(), reminder, grok.agent('Noted')));
+  write(path.join(session, 'summary.json'), JSON.stringify({ info: { id: 'g1', cwd: '/w' }, created_at: '2026-10-29T00:00:00Z', num_messages: 4 }));
+  assert.deepEqual(said((await read('grok', updates)).messages), ['You: <div>Fix the spacing</div>', 'AI: Spaced', 'AI: Noted']);
+  assert.equal((await listGrokSessions(grokHome))[0].title, '<div>Fix the spacing</div>');
+
+  const antigravityHome = path.join(dir, 'antigravity');
+  const conversation = '1b2c3d4e-0000-4000-8000-000000000001';
+  write(path.join(antigravityHome, 'brain', conversation, '.system_generated', 'logs', 'transcript.jsonl'), lines(
+    { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', created_at: '2026-10-29T00:00:00Z', content: '<USER_REQUEST>\n<div>Fix the spacing</div>\n</USER_REQUEST>\n<ADDITIONAL_METADATA>time</ADDITIONAL_METADATA>' },
+    { step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', content: 'Spaced' },
+  ));
+  assert.deepEqual(said((await readAntigravityTranscript(antigravityHome, conversation)).messages), ['You: <div>Fix the spacing</div>', 'AI: Spaced']);
+  assert.equal((await listAntigravitySessions(antigravityHome))[0].title, '<div>Fix the spacing</div>');
+
+  const store = await dockerStore(t);
+  if (!store) return;
+  store.db.exec("CREATE TABLE sessions (id TEXT PRIMARY KEY, created_at TEXT, title TEXT DEFAULT '', working_dir TEXT DEFAULT '', parent_id TEXT)");
+  store.db.prepare("INSERT INTO sessions (id, created_at) VALUES ('s1', '2026-10-29T00:00:00Z')").run();
+  store.add(0, { role: 'user', content: 'Injected context' }, { implicit: 1 });
+  store.add(1, { role: 'user', content: '<div>Fix the spacing</div>' });
+  store.add(2, { role: 'assistant', content: 'Spaced' });
+  const docker = await readDockerConversation({ dir: store.dir, id: 's1', cursor: null, loadSqlite: () => import('node:sqlite') });
+  assert.deepEqual(said(docker.messages), ['You: <div>Fix the spacing</div>', 'AI: Spaced']);
+  assert.equal((await listDockerSessions(store.dir))[0].title, '<div>Fix the spacing</div>', 'the title is the first message the preview shows');
+});
+
+test('an older Claude prompt keeps its markup, and only the wrappers Claude Code inserts are left out', async (t) => {
+  const home = tempDir(t);
+  const prompt = (uuid, parentUuid, content) => ({ type: 'user', uuid, parentUuid, cwd: '/w', message: { role: 'user', content } });
+  const file = write(path.join(home, 'projects', '-w', 'aaaa-1.jsonl'), lines(
+    prompt('u1', null, '<command-name>/clear</command-name>\n<command-message>clear</command-message>'),
+    prompt('u2', 'u1', '<local-command-stdout>Set model to Opus</local-command-stdout>'),
+    prompt('u3', 'u2', '<bash-input>ls</bash-input>'),
+    prompt('u4', 'u3', '<bash-stdout>README.md</bash-stdout>'),
+    prompt('u5', 'u4', '<div>Fix the spacing here</div>'),
+    { type: 'assistant', uuid: 'u6', parentUuid: 'u5', message: { id: 'm1', role: 'assistant', content: [{ type: 'text', text: 'Fixed' }] } },
+  ));
+  const page = await read('claude', file);
+  assert.deepEqual([said(page.messages), page.omitted], [['You: <div>Fix the spacing here</div>', 'AI: Fixed'], false]);
+  assert.equal((await listClaudeSessions(home))[0].title, '<div>Fix the spacing here</div>');
+});
+
+test('an older Claude record holding only a shell command\'s stderr is neither a message nor a title', async (t) => {
+  const home = tempDir(t);
+  const file = write(path.join(home, 'projects', '-w', 'aaaa-1.jsonl'), lines(
+    { type: 'user', uuid: 'u1', parentUuid: null, cwd: '/w', message: { role: 'user', content: '<bash-stderr>Command failed: spawn EPERM</bash-stderr>' } },
+    { type: 'user', uuid: 'u2', parentUuid: 'u1', message: { role: 'user', content: '<div>Fix the spacing here</div>' } },
+    { type: 'assistant', uuid: 'u3', parentUuid: 'u2', message: { id: 'm1', role: 'assistant', content: [{ type: 'text', text: 'Fixed' }] } },
+  ));
+  assert.deepEqual(said((await read('claude', file)).messages), ['You: <div>Fix the spacing here</div>', 'AI: Fixed']);
+  assert.equal((await listClaudeSessions(home))[0].title, '<div>Fix the spacing here</div>');
+});
+
+test('a card name whose save failed is saved by the next set or delete, and the cache never runs ahead of the file', async (t) => {
+  const file = path.join(tempDir(t), 'card-names.json');
+  const names = createCardNames(file, { warn: () => {} });
+  assert.equal(names.get('p', 'default', 'a'), null);
+  fs.mkdirSync(file);
+  assert.equal(names.set('p', 'default', 'a', 'A'), false);
+  assert.equal(names.get('p', 'default', 'a'), null, 'a failed set changes nothing');
+  fs.rmdirSync(file);
+  assert.equal(names.set('p', 'default', 'a', 'A'), true);
+  assert.equal(createCardNames(file).get('p', 'default', 'a'), 'A', 'the retry is written');
+  const saved = fs.readFileSync(file, 'utf8');
+  fs.unlinkSync(file);
+  fs.mkdirSync(file);
+  assert.equal(names.delete('p', 'default', 'a'), false);
+  assert.equal(names.get('p', 'default', 'a'), 'A', 'a failed delete changes nothing');
+  fs.rmdirSync(file);
+  fs.writeFileSync(file, saved);
+  assert.equal(names.delete('p', 'default', 'a'), true);
+  assert.equal(createCardNames(file).get('p', 'default', 'a'), null, 'the retry is written');
+});
+
+test('a Claude page that ends before the newest message is found still finds it on the next page', async (t) => {
+  const records = claudeTranscript();
+  for (let n = 0; n < 6; n++) records.push({ type: 'file-history-snapshot', messageId: `x${n}`, snapshot: 'f'.repeat(200) });
+  const file = write(path.join(tempDir(t), 'c.jsonl'), lines(...records));
+  const { pages, messages } = await readAll('claude', file, { ...PAGE_LIMITS, scanBytes: 300 });
+  assert.equal(pages.at(-1).messages.length, 0, 'the first page only reaches the trailing records');
+  assert.deepEqual(said(messages), claudeConversation);
+});
+
+test('the saved name follows each card\'s chosen name for the tool session it holds, through resume, requests, /clear and a failed write', async (t) => {
+  const file = path.join(tempDir(t), 'card-names.json');
+  const cardNames = createCardNames(file, { warn: () => {} });
+  const provider = { id: 'tool', tool: 'Tool', args: [], accounts: [{ id: 'default' }] };
+  const registry = {
+    get: () => provider, account: () => ({ id: 'default', label: 'Default' }), describe: () => provider,
+    shellFor: () => null, shellsFor: () => ({ shells: [] }), spawnSpec: () => ({ file: 'tool', args: [] }),
+  };
+  const manager = new SessionManager({ registry, baseEnv: {}, getApiUrl: () => '', cardNames });
+  t.mock.method(pty, 'spawn', () => fakePty());
+  const start = async (options) => {
+    const session = await manager.create({ providerId: 'tool', cwd: os.tmpdir(), ...options });
+    t.after(() => session.dispose());
+    return session;
+  };
+  const saved = (id) => cardNames.get('tool', 'default', id);
+
+  cardNames.set('tool', 'default', 'kept', 'Old');
+  const restored = await start({ resume: 'kept' });
+  assert.deepEqual([restored.name, saved('kept')], ['Old', 'Old'], 'a resume without a name gets the saved one back');
+  restored.rename('Tool');
+  assert.equal(saved('kept'), null, 'renaming it to the default forgets it');
+
+  cardNames.set('tool', 'default', 'asked', 'Old');
+  await start({ resume: 'asked', name: 'New' });
+  assert.equal(saved('asked'), 'New', 'a name the resume asks for replaces the saved one at once');
+  cardNames.set('tool', 'default', 'reset', 'Old');
+  await start({ resume: 'reset', name: 'Tool' });
+  assert.equal(saved('reset'), null, 'asking for the default forgets the saved one');
+
+  const fresh = await start({});
+  fresh.rename('Mine');
+  fresh.reportToolSession({ toolSessionId: 'first' });
+  fresh.reportToolSession({ toolSessionId: 'second', source: 'clear' });
+  assert.deepEqual([saved('first'), saved('second')], ['Mine', 'Mine'], 'a named card keeps its name for every tool session it holds');
+  fresh.rename('Tool');
+  assert.deepEqual([saved('first'), saved('second')], ['Mine', null], 'the default forgets only the session it holds now');
+
+  cardNames.set('tool', 'default', 'theirs', 'Theirs');
+  const unnamed = await start({});
+  unnamed.reportToolSession({ toolSessionId: 'theirs' });
+  assert.equal(saved('theirs'), 'Theirs', 'a card nobody named never forgets another card\'s name');
+
+  const later = await start({});
+  later.reportToolSession({ toolSessionId: 'later' });
+  fs.rmSync(file);
+  fs.mkdirSync(file);
+  later.rename('Later');
+  assert.equal(saved('later'), null, 'a write that fails stores nothing');
+  fs.rmdirSync(file);
+  later.rename('Later');
+  assert.equal(createCardNames(file).get('tool', 'default', 'later'), 'Later', 'the next change writes it');
+});
+
+test('two cards on one tool session: the newest choice is kept, however often the older card changes, and a failed write is retried only while it is the newest', async (t) => {
+  const file = path.join(tempDir(t), 'card-names.json');
+  const cardNames = createCardNames(file, { warn: () => {} });
+  const provider = { id: 'tool', tool: 'Tool', args: [], accounts: [{ id: 'default' }] };
+  const registry = {
+    get: () => provider, account: () => ({ id: 'default', label: 'Default' }), describe: () => provider,
+    shellFor: () => null, shellsFor: () => ({ shells: [] }), spawnSpec: () => ({ file: 'tool', args: [] }),
+  };
+  const manager = new SessionManager({ registry, baseEnv: {}, getApiUrl: () => '', cardNames });
+  t.mock.method(pty, 'spawn', () => fakePty());
+  const start = async (options) => {
+    const session = await manager.create({ providerId: 'tool', cwd: os.tmpdir(), ...options });
+    t.after(() => session.dispose());
+    return session;
+  };
+  const saved = () => cardNames.get('tool', 'default', 'shared');
+  const unwritable = () => { fs.renameSync(file, `${file}.aside`); fs.mkdirSync(file); };
+  const writable = () => { fs.rmdirSync(file); fs.renameSync(`${file}.aside`, file); };
+
+  const older = await start({ resume: 'shared', name: 'Old' });
+  const newer = await start({ resume: 'shared' });
+  assert.deepEqual([newer.name, saved()], ['Old', 'Old'], 'the newer card resumes with the saved name');
+  newer.rename('New');
+  older.attach(() => {});
+  older._changed();
+  assert.equal(saved(), 'New', 'showing the older card again keeps the newer name');
+
+  unwritable();
+  newer.rename('Newer');
+  older._changed();
+  writable();
+  assert.equal(createCardNames(file).get('tool', 'default', 'shared'), 'New', 'the failed write stored nothing, and the older card wrote nothing');
+  newer._changed();
+  assert.equal(saved(), 'Newer', 'the failed choice is written on the next change');
+
+  unwritable();
+  older.rename('Stale');
+  writable();
+  newer.rename('Newest');
+  older._changed();
+  assert.equal(createCardNames(file).get('tool', 'default', 'shared'), 'Newest', 'an older choice that failed is not written over a newer one');
+  older.rename('Latest');
+  assert.equal(saved(), 'Latest', 'a new choice on the older card is written');
+});
+
+test('a cursor naming any span anchors() does not make is refused before the transcript is opened', async (t) => {
+  const file = path.join(tempDir(t), 'rollout.jsonl');
+  const message = (n) => ({ type: 'event_msg', payload: { type: n % 2 ? 'agent_message' : 'user_message', message: `message ${n}` } });
+  fs.writeFileSync(file, lines(message(0)));
+  fs.truncateSync(file, 512 * 1024 * 1024);
+  fs.appendFileSync(file, '\n' + lines(message(1), message(2), message(3)));
+  const size = fs.statSync(file).size;
+  let opens = 0, largest = 0;
+  const open = async (target) => {
+    opens++;
+    const handle = await fs.promises.open(target, 'r');
+    return {
+      size: (await handle.stat()).size,
+      async read(position, length) {
+        largest = Math.max(largest, length);
+        if (length > PAGE_LIMITS.chunkBytes) throw new Error(`asked to read ${length} bytes`);
+        const { bytesRead, buffer } = await handle.read(Buffer.alloc(length), 0, length, position);
+        return buffer.subarray(0, bytesRead);
+      },
+      close: () => handle.close(),
+    };
+  };
+  const page = (cursor) => readJsonlPage({ source: 'codex', id: 'conversation', file, cursor, ...JSONL_READERS.codex, limits: { ...PAGE_LIMITS, messages: 1 }, open });
+  const first = await page(null);
+  assert.deepEqual(first.messages.map((m) => m.text), ['message 3']);
+  const valid = JSON.parse(Buffer.from(first.nextCursor, 'base64url').toString('utf8'));
+  const span = valid.o - valid.as;
+  const crafted = {
+    'the whole file as the head': { hl: size },
+    'a negative head': { hl: -1 },
+    'the whole file around the offset': { as: 0, ae: size },
+    'a start after the offset': { as: valid.o + 1 },
+    'a start further back than anchors() reaches': { as: valid.o - span - 1 },
+    'an end before the offset': { ae: valid.o - 1 },
+    'an end further on than anchors() reaches': { ae: valid.o + span + 1 },
+    'an offset that is not a number': { o: '0' },
+  };
+  opens = 0;
+  for (const [label, change] of Object.entries(crafted)) {
+    const cursor = Buffer.from(JSON.stringify({ ...valid, ...change })).toString('base64url');
+    await assert.rejects(page(cursor), { code: 'bad_history_cursor', status: 400 }, label);
+  }
+  assert.deepEqual([opens, largest <= PAGE_LIMITS.chunkBytes], [0, true], 'no crafted cursor opened the transcript');
+  assert.deepEqual((await page(first.nextCursor)).messages.map((m) => m.text), ['message 2'], 'the cursor anchors() made still reads');
+});
+
+test('a reset to the default while the names file cannot be read is made once the file is readable again', async (t) => {
+  const file = path.join(tempDir(t), 'card-names.json');
+  createCardNames(file).set('tool', 'default', 'gone', 'Mine');
+  const good = fs.readFileSync(file, 'utf8');
+  fs.writeFileSync(file, 'not json');
+  const cardNames = createCardNames(file, { warn: () => {} });
+  const provider = { id: 'tool', tool: 'Tool', args: [], accounts: [{ id: 'default' }] };
+  const registry = {
+    get: () => provider, account: () => ({ id: 'default', label: 'Default' }), describe: () => provider,
+    shellFor: () => null, shellsFor: () => ({ shells: [] }), spawnSpec: () => ({ file: 'tool', args: [] }),
+  };
+  const manager = new SessionManager({ registry, baseEnv: {}, getApiUrl: () => '', cardNames });
+  t.mock.method(pty, 'spawn', () => fakePty());
+  const card = await manager.create({ providerId: 'tool', cwd: os.tmpdir(), resume: 'gone' });
+  t.after(() => card.dispose());
+  card.rename('Tool');
+  assert.equal(fs.readFileSync(file, 'utf8'), 'not json', 'an unreadable file is never overwritten');
+  fs.writeFileSync(file, good);
+  card._changed();
+  assert.equal(createCardNames(file).get('tool', 'default', 'gone'), null, 'the reset is made on the next change');
+  fs.writeFileSync(file, good);
+  card._changed();
+  assert.equal(createCardNames(file).get('tool', 'default', 'gone'), 'Mine', 'once made, an unrelated change writes nothing');
+});
+
+test('blank lines and empty rows spend the scan budget, so a page always stops within it and the next one goes on', async (t) => {
+  const message = (n) => ({ type: 'event_msg', payload: { type: n % 2 ? 'agent_message' : 'user_message', message: `message ${n}` } });
+  const file = write(path.join(tempDir(t), 'rollout.jsonl'), lines(message(0), message(1)) + '\n'.repeat(64 * 1024) + lines(message(2), message(3)));
+  const limits = { ...PAGE_LIMITS, scanBytes: 1024 };
+  const first = await read('codex', file, null, limits);
+  assert.ok(first.nextCursor, 'the first page stops within its budget');
+  const at = JSON.parse(Buffer.from(first.nextCursor, 'base64url').toString('utf8')).o;
+  assert.ok(fs.statSync(file).size - at <= limits.scanBytes + 64, `the first page read ${fs.statSync(file).size - at} bytes`);
+  const { pages, messages } = await readAll('codex', file, limits);
+  assert.ok(pages.length > 50);
+  assert.deepEqual(messages.map((m) => m.text), ['message 0', 'message 1', 'message 2', 'message 3']);
+
+  const store = await dockerStore(t);
+  if (!store) return;
+  store.add(0, { role: 'user', content: 'Before the empty rows' });
+  store.db.exec('BEGIN');
+  for (let position = 1; position <= 3000; position++) store.add(position, null);
+  store.db.exec('COMMIT');
+  store.add(3001, { role: 'assistant', content: 'After them' });
+  const docker = await readDockerConversation({ dir: store.dir, id: 's1', cursor: null, loadSqlite: () => import('node:sqlite'), limits: { ...PAGE_LIMITS, scanBytes: 200 } });
+  assert.deepEqual([said(docker.messages), docker.nextCursor !== null], [['AI: After them'], true], 'empty rows end the page within its budget');
+});
+
+test('appends keep a cursor; a rewrite, truncation or replacement under it refuses it', async (t) => {
+  const records = Array.from({ length: 6 }, (_, n) => ({ type: 'event_msg', payload: { type: n % 2 ? 'agent_message' : 'user_message', message: `message ${n}` } }));
+  const file = write(path.join(tempDir(t), 'rollout.jsonl'), lines(...records));
+  const limits = { ...PAGE_LIMITS, messages: 2 };
+  const first = await read('codex', file, null, limits);
+  assert.deepEqual(first.messages.map((m) => m.text), ['message 4', 'message 5']);
+  fs.appendFileSync(file, lines({ type: 'event_msg', payload: { type: 'user_message', message: 'message 6' } }) + '{"type":"event_msg","pay');
+  const second = await read('codex', file, first.nextCursor, limits);
+  assert.deepEqual(second.messages.map((m) => m.text), ['message 2', 'message 3']);
+  const fresh = await read('codex', file, null, limits);
+  assert.deepEqual([fresh.messages.map((m) => m.text), fresh.incomplete], [['message 5', 'message 6'], true], 'a partial record waits');
+  const text = fs.readFileSync(file, 'utf8');
+  for (const [label, next] of [
+    ['rewritten', text.replace('message 2', 'message X')],
+    ['truncated', text.slice(0, text.indexOf('message 3'))],
+    ['replaced', lines({ type: 'session_meta', payload: { id: 'other' } }) + text],
+  ]) {
+    fs.writeFileSync(file, next);
+    await assert.rejects(read('codex', file, second.nextCursor, limits), { code: 'history_changed', status: 409 }, label);
+  }
+  await assert.rejects(read('codex', file, 'not-a-cursor'), { code: 'bad_history_cursor' });
+  await assert.rejects(read('grok', file, second.nextCursor), { code: 'bad_history_cursor' }, 'a cursor belongs to its own tool');
+});
+
+// ---- Codex CLI ----------------------------------------------------------------------
+
+test('Codex previews read either message format once, leave out inserted context and rolled-back turns', async (t) => {
+  const dir = tempDir(t);
+  const item = (type, text) => ({ type: 'event_msg', payload: { type: 'item_completed', item: { type, content: [{ type: 'text', text }] } } });
+  const current = write(path.join(dir, 'new.jsonl'), lines(
+    { type: 'session_meta', payload: { id: 'a' } },
+    { type: 'response_item', payload: { type: 'message', role: 'developer', content: [{ type: 'input_text', text: 'instructions' }] } },
+    { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '<environment_context>cwd</environment_context>' }] } },
+    { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Fix it' }] } },
+    item('UserMessage', 'Fix it'),
+    { type: 'response_item', payload: { type: 'reasoning', summary: [{ text: 'private' }] } },
+    { type: 'response_item', payload: { type: 'custom_tool_call', name: 'shell', input: 'ls' } },
+    { type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Fixed' }] } },
+    item('AgentMessage', 'Fixed'),
+    item('Reasoning', 'private'),
+  ));
+  assert.deepEqual(said((await read('codex', current)).messages), ['You: Fix it', 'AI: Fixed']);
+  const legacy = write(path.join(dir, 'old.jsonl'), lines(
+    { type: 'session_meta', payload: { id: 'b' } },
+    { type: 'event_msg', payload: { type: 'user_message', message: 'One' } },
+    { type: 'event_msg', payload: { type: 'agent_message', message: 'Reply one' } },
+    { type: 'event_msg', payload: { type: 'user_message', message: 'Two' } },
+    { type: 'event_msg', payload: { type: 'agent_message', message: 'Reply two' } },
+    { type: 'event_msg', payload: { type: 'thread_rolled_back', num_turns: 1 } },
+    { type: 'event_msg', payload: { type: 'user_message', message: 'Three' } },
+  ));
+  assert.deepEqual(said((await read('codex', legacy)).messages), ['You: One', 'AI: Reply one', 'You: Three']);
+  const paged = await readAll('codex', legacy, { ...PAGE_LIMITS, messages: 1 });
+  assert.deepEqual(said(paged.messages), ['You: One', 'AI: Reply one', 'You: Three'], 'a rollback carries across pages');
+});
+
+test('a corrupt Codex record is skipped as Codex skips it on resume, and older messages stay readable', async (t) => {
+  const message = (n) => ({ type: 'event_msg', payload: { type: n % 2 ? 'agent_message' : 'user_message', message: `message ${n}` } });
+  const file = write(path.join(tempDir(t), 'rollout.jsonl'), lines(message(0), message(1)) + '{"type":"event_msg","payl\n' + lines(message(2), message(3)));
+  const { messages, omitted } = await readAll('codex', file, { ...PAGE_LIMITS, messages: 1 });
+  assert.deepEqual([messages.map((m) => m.text), omitted], [['message 0', 'message 1', 'message 2', 'message 3'], true]);
+});
+
+test('a compressed Codex rollout reads the same, and a cursor survives the switch to and from compression', { skip: typeof zlib.zstdCompressSync !== 'function' }, async (t) => {
+  const dir = tempDir(t);
+  const text = lines(...Array.from({ length: 40 }, (_, n) => ({ type: 'event_msg', payload: { type: n % 2 ? 'agent_message' : 'user_message', message: `message ${n} ${'z'.repeat(300)}` } })));
+  const plain = write(path.join(dir, 'rollout.jsonl'), text);
+  const limits = { ...PAGE_LIMITS, messages: 5, chunkBytes: 1000 };
+  const first = await read('codex', plain, null, limits);
+  fs.writeFileSync(`${plain}.zst`, zlib.zstdCompressSync(Buffer.from(text)));
+  fs.unlinkSync(plain);
+  const second = await read('codex', plain, first.nextCursor, limits);
+  assert.equal(second.messages[0].text.split(' ')[1], '30');
+  const all = await readAll('codex', `${plain}.zst`, limits);
+  assert.equal(all.messages.length, 40);
+  fs.writeFileSync(plain, text);
+  fs.unlinkSync(`${plain}.zst`);
+  assert.deepEqual(await read('codex', `${plain}.zst`, second.nextCursor, limits), await read('codex', plain, second.nextCursor, limits));
+});
+
+// ---- Grok Build -----------------------------------------------------------------------
+
+const grok = {
+  user: (text, promptIndex, extra = {}) => ({ method: 'session/update', params: { sessionId: 'g', update: { sessionUpdate: 'user_message_chunk', content: { type: 'text', text, ...extra }, _meta: { modelId: 'grok-4.7', ...(promptIndex === undefined ? {} : { promptIndex }) } }, _meta: {} } }),
+  agent: (text, promptId = 'p') => ({ method: 'session/update', params: { sessionId: 'g', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } }, _meta: { promptId } } }),
+  thought: (text) => ({ method: 'session/update', params: { sessionId: 'g', update: { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text } } } }),
+  tool: () => ({ method: 'session/update', params: { sessionId: 'g', update: { sessionUpdate: 'tool_call', toolCallId: 't', title: 'ls', rawInput: { secret: true } } } }),
+  done: () => ({ method: '_x.ai/session/update', params: { sessionId: 'g', update: { sessionUpdate: 'turn_completed', prompt_id: 'p', stop_reason: 'end_turn' } } }),
+  rewind: (target) => ({ method: '_x.ai/session/update', params: { sessionId: 'g', update: { sessionUpdate: 'rewind_marker', target_prompt_index: target, created_at: '2026-10-29T13:11:42Z' } } }),
+};
+
+test('a Grok Build turn starts at its prompt whatever the prompt holds, so replies, rewinds and pages follow it', async (t) => {
+  // As Grok Build 1.0.70 wrote them: an image prompt is a user chunk with promptIndex and no text, and image_dropped
+  // can sit before a prompt or between the chunks of one.
+  const image = (promptIndex, data = 'iVBORw0KGgo=') => ({ method: 'session/update', params: { sessionId: 'g', update: { sessionUpdate: 'user_message_chunk', content: { type: 'image', data, mimeType: 'image/png' }, _meta: { modelId: 'grok-4.6', promptIndex } }, _meta: {} } });
+  const dropped = { method: '_x.ai/session/update', params: { sessionId: 'g', update: { sessionUpdate: 'image_dropped', notes: ['Image 1 was dropped before send'] } } };
+  const records = [
+    grok.user('Reply with alpha', 0), grok.agent('alpha'), grok.done(),
+    dropped, image(1), grok.agent('An image reply'), grok.done(),
+    grok.user('Compare ', 2), image(2), dropped, grok.user('these', 2), grok.agent('Looking'), grok.tool(), grok.agent('Mixed reply'), grok.done(),
+  ];
+  const dir = tempDir(t);
+  const kept = write(path.join(dir, 'kept.jsonl'), lines(...records));
+  const whole = ['You: Reply with alpha', 'AI: alpha', 'AI: An image reply', 'You: Compare these', 'AI: Looking', 'AI: Mixed reply'];
+  assert.deepEqual(said((await read('grok', kept)).messages), whole);
+  assert.deepEqual(said((await readAll('grok', kept, { ...PAGE_LIMITS, messages: 1, chunkBytes: 64 })).messages), whole, 'pages keep each turn whole');
+
+  const rewound = write(path.join(dir, 'rewound.jsonl'), lines(...records, grok.rewind(1), grok.user('Reply with delta', 1), grok.agent('delta'), grok.done()));
+  const live = ['You: Reply with alpha', 'AI: alpha', 'You: Reply with delta', 'AI: delta'];
+  assert.deepEqual(said((await read('grok', rewound)).messages), live, 'a rewind to the image prompt drops it with its reply');
+  assert.deepEqual(said((await readAll('grok', rewound, { ...PAGE_LIMITS, messages: 1, chunkBytes: 64 })).messages), live);
+
+});
+
+test('Grok Build previews join chunks, split replies at tool calls and leave out turns a rewind discarded', async (t) => {
+  // As Grok Build 1.0.70 wrote it: three prompts, a rewind to the second, then a new second prompt.
+  const file = write(path.join(tempDir(t), 'updates.jsonl'), lines(
+    grok.user('Reply with ', 0), grok.user('alpha', 0), grok.thought('thinking'), grok.agent('Al'), grok.agent('pha'), grok.tool(), grok.agent('After the tool'), grok.done(),
+    grok.user('!ls', 1, { _meta: { bash_command: true } }), grok.done(),
+    grok.user('bravo', 1), grok.agent('Bravo'), grok.done(),
+    grok.user('charlie', 2), grok.agent('Charlie'), grok.done(),
+    grok.rewind(1),
+    grok.user('delta', 1), grok.agent('Delta'), grok.done(),
+  ));
+  const expected = ['You: Reply with alpha', 'AI: Alpha', 'AI: After the tool', 'You: delta', 'AI: Delta'];
+  assert.deepEqual(said((await read('grok', file)).messages), expected);
+  assert.deepEqual(said((await readAll('grok', file, { ...PAGE_LIMITS, messages: 1, chunkBytes: 50 })).messages), expected, 'the rewind carries across pages');
+});
+
+test('a Grok Build turn that a rewind may cover but has no prompt index cannot be shown', async (t) => {
+  const file = write(path.join(tempDir(t), 'updates.jsonl'), lines(grok.user('old', undefined), grok.agent('Old reply'), grok.rewind(0), grok.user('new', 0), grok.agent('New reply')));
+  await assert.rejects(read('grok', file), { code: 'history_unavailable', status: 404 });
+});
+
+// ---- Docker Agent ------------------------------------------------------------------------
+
+async function dockerStore(t) {
+  let DatabaseSync;
+  try { ({ DatabaseSync } = await import('node:sqlite')); } catch { t.skip('SQLite is unavailable on this Node version'); return null; }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'guild-readers-'));
+  const db = new DatabaseSync(path.join(dir, 'session.db'));
+  // Windows keeps an open database's folder.
+  t.after(() => { db.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+  // Only the columns Docker Agent 1.154.0's session_items has that the preview reads.
+  db.exec(`CREATE TABLE session_items (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, position INTEGER NOT NULL,
+    item_type TEXT NOT NULL, message_json TEXT, implicit BOOLEAN DEFAULT 0, subsession_id TEXT)`);
+  const insert = db.prepare('INSERT INTO session_items (session_id, position, item_type, message_json, implicit, subsession_id) VALUES (?, ?, ?, ?, ?, ?)');
+  const add = (position, message, { type = 'message', implicit = 0, sub = null, session = 's1' } = {}) => insert.run(session, position, type, message && JSON.stringify(message), implicit, sub);
+  return { dir, db, add };
+}
+
+test('Docker Agent previews show what Docker Agent shows the user, paged by position', async (t) => {
+  const store = await dockerStore(t);
+  if (!store) return;
+  const { dir, db, add } = store;
+  add(0, { role: 'user', content: 'List the files' });
+  add(1, { role: 'assistant', content: '', tool_calls: [{ id: 't', function: { name: 'list_directory' } }] });
+  add(2, { role: 'tool', content: 'secret listing', tool_call_id: 't' });
+  add(3, { role: 'assistant', content: 'Here they are' });
+  add(4, { role: 'user', content: 'Injected reminder' }, { implicit: 1 });
+  add(5, { message: 'model failed', code: 'model_error' }, { type: 'error' });
+  add(6, { role: 'assistant', content: 'Sub-agent reply' }, { sub: 's2' });
+  add(7, { role: 'user', content: 'Thanks' });
+  add(8, { role: 'assistant', content: 'You are welcome' });
+  add(0, { role: 'user', content: 'Another session' }, { session: 's2' });
+  const loadSqlite = () => import('node:sqlite');
+  const page = (cursor, limits = PAGE_LIMITS) => readDockerConversation({ dir, id: 's1', cursor, loadSqlite, limits });
+  assert.deepEqual(said((await page()).messages), ['You: List the files', 'AI: Here they are', 'You: Thanks', 'AI: You are welcome']);
+  const limits = { ...PAGE_LIMITS, messages: 2 };
+  const first = await page(null, limits);
+  assert.deepEqual(said(first.messages), ['You: Thanks', 'AI: You are welcome']);
+  const second = await page(first.nextCursor, limits);
+  assert.deepEqual([said(second.messages), second.nextCursor], [['You: List the files', 'AI: Here they are'], null]);
+  db.exec("DELETE FROM session_items WHERE session_id = 's1' AND position <= 4");
+  add(3, { role: 'user', content: 'Rewritten' });
+  add(4, { role: 'assistant', content: 'Rewritten reply' });
+  await assert.rejects(page(first.nextCursor, limits), { code: 'history_changed', status: 409 });
+});
+
+test('Docker Agent pages spend the scan budget on large rows, pass over large rows never shown, and end at a row too large to read', async (t) => {
+  const store = await dockerStore(t);
+  if (!store) return;
+  const { dir, add } = store;
+  const big = 'b'.repeat(200 * 1024);
+  add(0, { role: 'user', content: 'Hello' });
+  add(1, { role: 'assistant', content: 'c'.repeat(400 * 1024) });
+  add(2, { role: 'user', content: 'Read the log' });
+  add(3, { role: 'assistant', content: '', tool_calls: [{ id: 't', function: { name: 'read_file', arguments: big } }] });
+  add(4, { role: 'tool', content: big, tool_call_id: 't' });
+  add(5, { role: 'assistant', content: 'The log is long' });
+  add(6, { role: 'user', content: 'i'.repeat(400 * 1024) }, { implicit: 1 });
+  add(7, { role: 'user', content: 'Thanks' });
+  add(8, { role: 'assistant', content: 'Done' });
+  store.db.prepare('INSERT INTO session_items (session_id, position, item_type, message_json) VALUES (?, ?, ?, ?)').run('s1', 9, 'message', '{"role":"assistant","content":"torn');
+  const sqlite = await import('node:sqlite');
+  let largest = 0;
+  const measure = (row) => {
+    for (const value of Object.values(row ?? {})) if (typeof value === 'string') largest = Math.max(largest, Buffer.byteLength(value));
+    return row;
+  };
+  class Measured extends sqlite.DatabaseSync {
+    prepare(sql) {
+      const statement = super.prepare(sql);
+      return {
+        get: (...args) => measure(statement.get(...args)),
+        all: (...args) => statement.all(...args).map(measure),
+        *iterate(...args) { for (const row of statement.iterate(...args)) yield measure(row); },
+      };
+    }
+  }
+  const loadSqlite = async () => ({ DatabaseSync: Measured });
+  const limits = { ...PAGE_LIMITS, messages: 2, maxLineBytes: 300 * 1024, scanBytes: 100 * 1024 };
+  const pages = [];
+  let cursor = null, position = Infinity;
+  do {
+    const page = await readDockerConversation({ dir, id: 's1', cursor, loadSqlite, limits });
+    pages.unshift(page);
+    cursor = page.nextCursor;
+    if (cursor) {
+      const at = JSON.parse(Buffer.from(cursor, 'base64url').toString()).p;
+      assert.ok(at < position, 'every page moves back');
+      position = at;
+    }
+    assert.ok(pages.length < 20);
+  } while (cursor);
+  assert.deepEqual(said(pages.flatMap((p) => p.messages)), ['You: Read the log', 'AI: The log is long', 'You: Thanks', 'AI: Done']);
+  assert.deepEqual(pages.map((p) => p.truncated), [true, ...pages.slice(1).map(() => false)], 'the oldest page says the history ends early');
+  assert.ok(largest <= limits.maxLineBytes, `no value larger than the line limit was read: ${largest}`);
+  assert.ok(pages.length > 2, 'the large rows spend a page\'s scan budget');
+});
+
+test('a Docker Agent row far larger than the limit costs SQLite no more memory to page past or list', async (t) => {
+  const store = await dockerStore(t);
+  if (!store) return;
+  const { dir, db, add } = store;
+  db.exec("CREATE TABLE sessions (id TEXT PRIMARY KEY, created_at TEXT, title TEXT DEFAULT '', working_dir TEXT DEFAULT '', parent_id TEXT)");
+  db.prepare("INSERT INTO sessions (id, created_at) VALUES ('s1', '2026-10-29T00:00:00Z')").run();
+  add(0, { role: 'user', content: 'Read the log', created_at: '2026-10-29T00:00:01Z' });
+  add(1, { role: 'tool', content: 'x'.repeat(64 * 1024 * 1024), tool_call_id: 't', created_at: '2026-10-29T00:00:02Z' });
+  add(2, { role: 'assistant', content: 'The log is long', created_at: '2026-10-29T00:00:03Z' });
+  const script = `
+    import { readDockerConversation } from ${JSON.stringify(new URL('../src/manager/history-transcripts.mjs', import.meta.url).href)};
+    import { listDockerSessions } from ${JSON.stringify(new URL('../src/manager/session-history.mjs', import.meta.url).href)};
+    const loadSqlite = () => import('node:sqlite');
+    await loadSqlite();
+    const peak = () => process.resourceUsage().maxRSS * 1024;
+    const before = peak();
+    const page = await readDockerConversation({ dir: process.argv[1], id: 's1', cursor: null, loadSqlite });
+    const read = peak() - before;
+    const sessions = await listDockerSessions(process.argv[1]);
+    console.log(JSON.stringify({ page, read, listed: peak() - before, sessions }));`;
+  const { execFileSync } = await import('node:child_process');
+  const out = JSON.parse(execFileSync(process.execPath, ['--input-type=module', '--no-warnings', '-e', script, dir], { encoding: 'utf8' }));
+  const limit = 16 * 1024 * 1024;
+  assert.ok(out.read < limit, `paging grew the peak by ${out.read} bytes`);
+  assert.ok(out.listed < limit, `listing grew the peak by ${out.listed} bytes`);
+  assert.deepEqual([said(out.page.messages), out.page.truncated], [['AI: The log is long'], true]);
+  assert.deepEqual(out.sessions.map((s) => [s.title, s.updatedAt]), [['Read the log', '2026-10-29T00:00:03.000Z']]);
+});
+
+// ---- detail, names and search ---------------------------------------------------------------
+
+test('a preview reads only the file its listing found, inside the tool\'s folder and not through a link', async (t) => {
+  const home = tempDir(t);
+  const project = path.join(home, 'projects', '-work');
+  write(path.join(project, 'aaaa-1.jsonl'), lines({ type: 'user', uuid: 'u1', parentUuid: null, cwd: '/work', message: { role: 'user', content: 'Listed prompt' } }));
+  const outside = write(path.join(home, 'outside.jsonl'), lines({ type: 'user', uuid: 'u1', parentUuid: null, message: { role: 'user', content: 'Outside' } }));
+  const provider = { id: 'anthropic', history: 'claude', env: {} };
+  const account = { id: 'default', env: { CLAUDE_CONFIG_DIR: home } };
+  const history = new SessionHistory({ registry: {}, env: {} });
+  assert.deepEqual(said((await history.detail(provider, account, 'aaaa-1')).messages), ['You: Listed prompt']);
+  await assert.rejects(history.detail(provider, account, '../outside'), { code: 'history_unavailable', status: 404 }, 'an id never becomes a path');
+  await assert.rejects(history.detail(provider, account, 'a\nb'), { code: 'bad_history_id', status: 400 });
+  await assert.rejects(checkedFile(path.join(home, 'projects'), outside), { code: 'history_unavailable' });
+  const linked = path.join(home, 'projects', 'linked');
+  fs.symlinkSync(project, linked, process.platform === 'win32' ? 'junction' : 'dir');
+  await assert.rejects(checkedFile(path.join(home, 'projects'), path.join(linked, 'aaaa-1.jsonl')), { code: 'history_unavailable' });
+});
+
+test('History lists the name given to a card ahead of the tool\'s title, and search matches it without reading transcripts', async (t) => {
+  const names = createCardNames();
+  names.set('custom', 'default', 'two', 'Login fix');
+  let reads = 0;
+  const history = new SessionHistory({ registry: {}, env: {}, ttlMs: Infinity, names, readers: {
+    claude: async () => { reads++; return [{ id: 'one', title: 'Tool title one', cwd: '/w', file: '/never/read' }, { id: 'two', title: 'Tool title two', cwd: '/w', titles: {} }]; },
+  } });
+  const provider = { id: 'custom', history: 'claude', env: {} };
+  const account = { id: 'default', env: {} };
+  const all = await history.list(provider, account);
+  assert.deepEqual(all.sessions, [{ id: 'one', title: 'Tool title one', cwd: '/w', name: null }, { id: 'two', title: 'Tool title two', cwd: '/w', name: 'Login fix' }]);
+  assert.deepEqual((await history.list(provider, account, { query: 'login' })).sessions.map((s) => s.id), ['two']);
+  names.set('custom', 'default', 'one', 'Parser work');
+  assert.deepEqual((await history.list(provider, account, { query: 'parser' })).sessions.map((s) => s.id), ['one'], 'a new name is found at once');
+  assert.equal(reads, 1, 'searching uses the cached listing');
+});
+
+test('card names keep the newest entries, and an unreadable file is never overwritten', async (t) => {
+  const dir = tempDir(t);
+  const file = path.join(dir, 'card-names.json');
+  const names = createCardNames(file, { limit: 2, warn: () => {} });
+  names.set('p', 'default', 'a', 'A');
+  names.set('p', 'default', 'b', 'B');
+  names.set('p', 'default', 'a', 'A2');
+  names.set('p', 'work', 'c', 'C');
+  const again = createCardNames(file);
+  assert.deepEqual([again.get('p', 'default', 'a'), again.get('p', 'default', 'b'), again.get('p', 'work', 'c')], ['A2', null, 'C']);
+  again.delete('p', 'default', 'a');
+  assert.equal(createCardNames(file).get('p', 'default', 'a'), null);
+  fs.writeFileSync(file, 'not json');
+  const warnings = [];
+  const broken = createCardNames(file, { warn: (message) => warnings.push(message) });
+  broken.set('p', 'default', 'd', 'D');
+  assert.equal(broken.get('p', 'default', 'd'), null);
+  assert.equal(fs.readFileSync(file, 'utf8'), 'not json');
+  assert.equal(warnings.length, 1);
+});

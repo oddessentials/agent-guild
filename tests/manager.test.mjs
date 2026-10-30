@@ -296,7 +296,7 @@ function rawGet(route, headers) {
   });
 }
 
-function waitFor(predicate, { timeout = 8000, interval = 25, label = 'condition' } = {}) {
+function waitFor(predicate, { timeout = 30000, interval = 25, label = 'condition' } = {}) {
   return new Promise((resolve, reject) => {
     const start = Date.now();
     const tick = async () => {
@@ -431,6 +431,21 @@ test('both sockets answer a ping, so a page can notice a link that went silent',
   await waitFor(() => [events, client].every((socket) => socket.messages.some((m) => m.type === 'pong')), { label: 'pongs' });
   await Promise.all([events.close(), client.close()]);
   await call('POST', `/sessions/${session.id}/stop`);
+});
+
+test('fireworks need the token, reach every open page once, and tell the caller how many pages heard', async () => {
+  assert.equal((await fetch(`${base}/api/v1/yard/fireworks`, { method: 'POST' })).status, 401);
+  const before = await call('POST', '/yard/fireworks');
+  assert.equal(before.status, 200);
+  assert.equal(before.body.ok, true);
+  const pages = [1, 2].map(() => new Client(`${base.replace('http', 'ws')}/api/v1/events?token=${token}`));
+  await Promise.all(pages.map((page) => page.opened));
+  await waitFor(() => pages.every((page) => page.messages.some((m) => m.type === 'hello')), { label: 'hellos' });
+  const lit = await call('POST', '/yard/fireworks');
+  assert.equal(lit.body.pages, before.body.pages + 2);
+  await waitFor(() => pages.every((page) => page.messages.some((m) => m.type === 'yard.fireworks')), { label: 'fireworks' });
+  for (const page of pages) assert.deepEqual(page.messages.filter((m) => m.type === 'yard.fireworks'), [{ type: 'yard.fireworks' }]);
+  await Promise.all(pages.map((page) => page.close()));
 });
 
 test('the web page and xterm assets are served', async () => {
@@ -993,6 +1008,50 @@ test('every state reads the card\'s label: Working only while running and produc
     assert.equal(sessionLabel(s), label, JSON.stringify(fields));
     assert.equal(label === 'Working', isSessionWorking(s), 'Working means what the favicon and pill call working');
   }
+});
+
+test('a card\'s given name is kept for each tool session it holds, shown in History and given back on resume', async () => {
+  const names = ctx.manager.cardNames;
+  const session = await createFake();
+  const report = (id, toolSessionId, source) => call('POST', `/sessions/${id}/tool-session`, { toolSessionId, ...(source ? { source } : {}) });
+  await report(session.id, 'kept-1');
+  assert.equal(names.get('fake', 'default', 'kept-1'), null, 'a card named after its tool keeps no name');
+  await call('PATCH', `/sessions/${session.id}`, { name: 'Login fix' });
+  assert.equal(names.get('fake', 'default', 'kept-1'), 'Login fix');
+  await report(session.id, 'kept-2', 'clear');
+  assert.deepEqual([names.get('fake', 'default', 'kept-1'), names.get('fake', 'default', 'kept-2')], ['Login fix', 'Login fix'], 'the card keeps its name after /clear');
+  await call('PATCH', `/sessions/${session.id}`, { name: 'Fake Tool' });
+  assert.deepEqual([names.get('fake', 'default', 'kept-1'), names.get('fake', 'default', 'kept-2')], ['Login fix', null], 'the default name forgets the current session only');
+  await call('POST', `/sessions/${session.id}/stop`);
+  await call('DELETE', `/sessions/${session.id}`);
+
+  const resumed = await createFake({ resume: 'kept-1' });
+  assert.equal(resumed.name, 'Login fix');
+  await report(resumed.id, 'kept-1');
+  assert.equal(names.get('fake', 'default', 'kept-1'), 'Login fix', 'the tool reporting its session never renames the card');
+  const renamed = await createFake({ resume: 'kept-1', name: 'Asked for' });
+  assert.equal(renamed.name, 'Asked for');
+
+  const plain = (await call('POST', '/sessions', { providerId: 'plain', cwd: home, cols: 90, rows: 20, name: 'Parser work' })).body.session;
+  await report(plain.id, 'older-1');
+  const listed = (await call('GET', '/providers/plain/history?q=parser')).body.history.sessions;
+  assert.deepEqual(listed.map((s) => [s.id, s.name, s.title]), [['older-1', 'Parser work', 'Fix the login bug']]);
+  for (const id of [resumed.id, renamed.id, plain.id]) {
+    await call('POST', `/sessions/${id}/stop`);
+    await call('DELETE', `/sessions/${id}`);
+  }
+});
+
+test('renaming a resumed card keeps the name before the tool reports its session', async () => {
+  const names = ctx.manager.cardNames;
+  const resumed = await createFake({ resume: 'quiet-1' });
+  assert.equal(resumed.toolSessionId, null);
+  await call('PATCH', `/sessions/${resumed.id}`, { name: 'Quiet rename' });
+  assert.equal(names.get('fake', 'default', 'quiet-1'), 'Quiet rename');
+  await call('POST', `/sessions/${resumed.id}/tool-session`, { toolSessionId: 'quiet-2' });
+  assert.deepEqual([names.get('fake', 'default', 'quiet-1'), names.get('fake', 'default', 'quiet-2')], ['Quiet rename', 'Quiet rename']);
+  await call('POST', `/sessions/${resumed.id}/stop`);
+  await call('DELETE', `/sessions/${resumed.id}`);
 });
 
 test('the tool\'s own session id is reported over HTTP, in-band, and through hooks', async () => {

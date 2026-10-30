@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import headless from '@xterm/headless';
 import pty from 'node-pty';
+import { fakePty } from './fixtures/fake-pty.mjs';
 import { Session } from '../src/manager/session.mjs';
 
 function createSession(t) {
@@ -15,7 +16,7 @@ function createSession(t) {
     resize(cols, rows) { resizes.push(`${cols}x${rows}`); },
     kill() {},
   };
-  t.mock.method(pty, 'spawn', () => child);
+  t.mock.method(pty, 'spawn', () => fakePty(child));
   const session = new Session({
     id: 'size-session',
     provider: { id: 'fake', vendor: 'Test', tool: 'Fake Tool' },

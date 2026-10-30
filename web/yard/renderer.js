@@ -24,7 +24,7 @@ const FIREWORK_COLORS = [0xffd36b, 0xff6b8a, 0x7bd7ff, 0xa8ff7b, 0xffffff];
 // How many tags' heights a character's tag may rise above its character
 // before it hides: any higher, it reads as another's.
 const RISE = 2, CHIP_GAP = 4;
-const MARKS = { asleep: { glyph: 'z', count: 3, size: .62 }, waiting: { glyph: 'bang', color: '#ffc23d', count: 1, size: .78 }, failed: { glyph: 'bang', color: '#ff4d4f', count: 1, size: .78 } };
+const MARKS = { asleep: { glyph: 'z', count: 3, size: .62 }, waiting: { glyph: 'bang', color: '#ffc23d', count: 1, size: .78 }, failed: { glyph: 'bang', color: '#ff4d4f', count: 1, size: .78 }, exited: { glyph: 'bang', color: '#ffffff', count: 1, size: .78 } };
 const MARK_FADE = .3, MARK_RIGHT = new T.Vector3(...viewBasis().right), markTurn = new T.Quaternion(), axisZ = new T.Vector3(0, 0, 1);
 const GLYPHS = {
   z: c => { c.beginPath(); c.moveTo(36, 36); c.lineTo(92, 36); c.lineTo(36, 92); c.lineTo(92, 92); c.stroke(); },

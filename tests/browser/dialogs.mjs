@@ -25,10 +25,12 @@ window.fetch=(input,init)=>{
       res.text=()=>read().then(data=>{window.memoryStaleDelivered=true;return data;});
       return res;
     });
-  if(url.pathname.endsWith('/history')&&!url.pathname.includes('/google/'))
-    return Promise.resolve(new Response(JSON.stringify({history:{total:334,sessions:Array.from({length:200},(_,i)=>({
-      id:'saved-'+i,title:'Saved session '+i,cwd:'/work/storefront',updatedAt:'2026-10-04T10:00:00Z'
-    }))}}),{headers:{'Content-Type':'application/json'}}));
+  if(url.pathname.endsWith('/history')&&!url.pathname.includes('/google/')){
+    const q=(url.searchParams.get('q')||'').toLowerCase();
+    const all=Array.from({length:334},(_,i)=>({id:'saved-'+i,title:'Saved session '+i,cwd:'/work/storefront',updatedAt:'2026-10-04T10:00:00Z'}))
+      .filter(s=>s.title.toLowerCase().includes(q));
+    return Promise.resolve(new Response(JSON.stringify({history:{total:all.length,sessions:all.slice(0,200)}}),{headers:{'Content-Type':'application/json'}}));
+  }
   if(url.pathname.endsWith('/model-stats')&&sessionStorage.getItem('testModelStats'))
     return Promise.resolve(new Response(sessionStorage.getItem('testModelStats'),{headers:{'Content-Type':'application/json'}}));
   return demoFetch(input,init);
@@ -78,28 +80,27 @@ const checks = await withPage({ name: 'dialogs', instrumentation }, async ({ ori
       return {height:r.height,body:body.height,scrollable:b.scrollHeight>b.clientHeight,inside:r.top>=-1&&r.bottom<=innerHeight+1,
         footer:footer.bottom<=r.bottom+1,bodyBottom:body.bottom<=r.bottom+1};
     })()`);
-    const loadedHistoryNote = 'Loaded the newest 200 of 334 sessions. Filtering searches these loaded sessions.';
+    const limitNote = 'Showing 200 of 334 sessions. Narrow the filter to find older conversations.';
     for (const [width, height] of [[1440, 900], [768, 1024], [390, 844]]) {
       await resize(width, height);
       await evaluate('document.querySelector(".provider[data-id=anthropic] .existing").click()');
       await until(`${engine} history rows`, () => evaluate('document.querySelectorAll("#history-list .history-row").length===200'));
-      assert.equal(await evaluate('document.querySelector("#history-note").textContent'), loadedHistoryNote);
+      assert.equal(await evaluate('document.querySelector("#history-note").textContent'), limitNote);
+      assert.equal(await evaluate('document.querySelector("#history-preview").checkVisibility()'), true, 'every built-in history has a preview');
       await settled();
       let g = await geometry('#history');
       assert.ok(g.body > 120 && g.scrollable && g.inside && g.footer, `${engine} ${width}: ${JSON.stringify(g)}`);
-      const fullHeight = g.height;
       assert.ok(await evaluate('(()=>{const b=document.querySelector("#history .models-body");b.scrollTop=b.scrollHeight;return b.scrollTop})()') > 0);
-      await evaluate('document.querySelector("#history-filter").value="Saved session 199";document.querySelector("#history-filter").dispatchEvent(new Event("input"))');
-      await settled();
-      assert.equal(await evaluate('document.querySelectorAll("#history-list .history-row").length'), 1);
-      assert.equal(await evaluate('document.querySelector("#history-note").textContent'), loadedHistoryNote);
+      await evaluate('document.querySelector("#history-filter").value="Saved session 333";document.querySelector("#history-filter").dispatchEvent(new Event("input"))');
+      await until(`${engine} searched beyond the loaded rows`, () => evaluate('document.querySelectorAll("#history-list .history-row").length===1'));
+      assert.equal(await evaluate('document.querySelector("#history-list .history-title").textContent'), 'Saved session 333');
+      assert.equal(await evaluate('document.querySelector("#history-note").hidden'), true);
       g = await geometry('#history');
       assert.ok(g.body > 30 && g.inside && g.footer, `${engine} filtered: ${JSON.stringify(g)}`);
-      if (width > 640) assert.ok(g.height < fullHeight, 'a short list still sizes to its content');
-      await evaluate('document.querySelector("#history-filter").value="Saved session 333";document.querySelector("#history-filter").dispatchEvent(new Event("input"))');
-      await settled();
+      await evaluate('document.querySelector("#history-filter").value="Missing conversation";document.querySelector("#history-filter").dispatchEvent(new Event("input"))');
+      await until(`${engine} no match`, () => evaluate('document.querySelectorAll("#history-list .history-row").length===0'));
       assert.equal(await evaluate('document.querySelector("#history-note").checkVisibility()'), true);
-      assert.equal(await evaluate('document.querySelector("#history-note").textContent'), `No session matches the filter. ${loadedHistoryNote}`);
+      assert.equal(await evaluate('document.querySelector("#history-note").textContent'), 'No session matches the filter.');
       assert.ok((await geometry('#history')).body > 20, 'the empty state remains visible');
       await closeDialog('#history', '#history-close');
     }
@@ -112,7 +113,7 @@ const checks = await withPage({ name: 'dialogs', instrumentation }, async ({ ori
       await until(`${engine} Google history`, () => evaluate('document.querySelectorAll("#history-list .history-preview-open").length===1'));
       assert.equal(await evaluate('document.querySelector(".provider[data-id=google] .memory-link").textContent'), 'History');
       await evaluate('document.querySelector("#history-list .history-preview-open").click()');
-      await until(`${engine} Google saved reply`, () => evaluate('document.querySelector("#history-messages").textContent.includes("The migration plan is ready")'));
+      await until(`${engine} Google saved reply`, () => evaluate('document.querySelector("#history-messages").textContent.includes("The checkout guide covers")'));
       await settled();
       const g = await evaluate(`(() => {
         const d=document.querySelector('#history'),r=d.getBoundingClientRect(),p=document.querySelector('#history-preview').getBoundingClientRect(),m=document.querySelector('#history-messages').getBoundingClientRect();

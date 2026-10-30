@@ -488,13 +488,13 @@ test('marks show reported state over the crew and leave every character\'s motio
   await b.evaluate(`__set(0,{agents:Array.from({length:7},(_,i)=>({id:'h'+i,name:'H'+i,status:i===6?'waiting':'working'}))})`);
   await steps(10);
   assert.deepEqual(await b.evaluate(`__marks(${q(a)})`),[':waiting:1']);
-  // A failed exit is marked; a clean one is not.
+  // A failed exit is marked red; a clean one swaps to the white mark.
   await b.evaluate(`__set(1,{status:'exited',exitCode:1,activity:'quiet',agents:[],shells:[]})`);
   await steps(10);
   assert.deepEqual(await b.evaluate(`__marks(${q(c)})`),[':failed:1']);
   await b.evaluate(`__set(1,{exitCode:0})`);
   await steps(10);
-  assert.deepEqual(await b.evaluate(`__marks(${q(c)})`),[]);
+  assert.deepEqual(await b.evaluate(`__marks(${q(c)})`),[':exited:1']);
   assert.equal(await b.evaluate(`__renderer.marks.children.length`),await b.evaluate(`[...__renderer.units.values()].reduce((n,u)=>n+[...u.marks.values()].reduce((k,m)=>k+m.sprites.length,0),0)`),'spent marks are released');
   for(const [i,[marked,plain]]of motion.entries())assert.deepEqual(marked,plain,`step ${i}: marks change no character's motion`);
   // Reduced motion holds the zzz still.

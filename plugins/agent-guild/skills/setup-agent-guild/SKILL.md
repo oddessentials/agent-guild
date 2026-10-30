@@ -67,7 +67,8 @@ setup and says what to fix. The manager also answers, with no token,
 ## 5. Connect this agent over MCP (optional)
 
 `agent-guild mcp` lets an agent list the sessions, read their last replies
-and terminals, and start or stop sessions with the person's approval. Add it
+and terminals, start or stop sessions with the person's approval, and launch
+fireworks over the Yard. Add it
 to the agent the person is using:
 
 | Agent | Command |

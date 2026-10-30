@@ -110,3 +110,29 @@ export function loadPty() {
   pty = require('node-pty');
   return pty;
 }
+
+/**
+ * End a Windows session's pty as node-pty 1.2.0-beta.15's kill() does on the inbox ConPTY, without kill()'s
+ * console-list helper: that helper attaches to the console by the shell's pid after kill() has ended the shell, when
+ * Windows may have given the pid to another process (microsoft/node-pty#967). node-pty closes the pseudoconsole through
+ * its own handle, which ends every process attached to it and does nothing once the process has exited. Like kill(),
+ * it waits until the terminal is ready.
+ */
+export function closeConsole(term) {
+  term._deferNoArgs(() => {
+    const agent = term._agent;
+    term._close();
+    agent._clearConnectionTimeout();
+    agent._pendingPtyInfo = undefined;
+    agent._inSocket.readable = false;
+    agent._outSocket.readable = false;
+    agent._ptyNative.kill(agent._pty, false);
+    releasePty(term);
+  });
+}
+
+/** What node-pty leaves open on Windows once a process has exited, by itself or by kill(): the output worker and the input pipe. */
+export function releasePty(term) {
+  term._agent._conoutSocketWorker.dispose();
+  term._agent._inSocket.destroy();
+}

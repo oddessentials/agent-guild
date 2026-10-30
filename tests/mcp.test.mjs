@@ -39,6 +39,7 @@ const clipped = [token, otherToken].flatMap((secret, i) => [
 ]);
 const exited = { ...session, id: 'e0e0e0e00001', status: 'exited', activity: null, label: 'Exited', exitCode: 0 };
 const posted = [];
+let pagesOpen = 2;
 const opening = [];
 /** What the next terminal socket to open receives, once it closes. */
 const nextClose = () => new Promise((resolve) => opening.push(resolve));
@@ -55,6 +56,7 @@ before(async () => {
     req.on('end', () => {
       if (req.method === 'POST') posted.push({ url: req.url, body: body ? JSON.parse(body) : null });
       if (req.url === '/api/v1/sessions' && req.method === 'GET') return json(200, { sessions: [session] });
+      if (req.url === '/api/v1/yard/fireworks' && req.method === 'POST') return json(200, { ok: true, pages: pagesOpen });
       if (req.url === '/api/v1/providers') return json(200, { providers, revision: null });
       if (req.url === `/api/v1/sessions/${session.id}/reply`) return json(200, { reply: { id: 3, text: '## Done\n\nAll tests pass.', spoken: 'Done.' } });
       if (req.url === '/api/v1/sessions' && req.method === 'POST' && JSON.parse(body).name === 'hang') return undefined;
@@ -139,7 +141,7 @@ test('it introduces itself, lists read and write tools, and keeps typing off by 
   assert.deepEqual((await request('ping')).result, {});
 
   const { tools } = (await request('tools/list')).result;
-  assert.deepEqual(tools.map((tool) => tool.name), ['guild_status', 'list_sessions', 'read_reply', 'read_screen', 'start_session', 'stop_session']);
+  assert.deepEqual(tools.map((tool) => tool.name), ['guild_status', 'list_sessions', 'read_reply', 'read_screen', 'start_session', 'stop_session', 'fireworks']);
   for (const tool of tools.slice(0, 4)) assert.equal(tool.annotations.readOnlyHint, true, tool.name);
   assert.equal(tools.find((tool) => tool.name === 'stop_session').annotations.destructiveHint, true);
   assert.equal(tools.find((tool) => tool.name === 'start_session').inputSchema.properties.args, undefined, 'launch flags stay the person\'s choice');
@@ -174,6 +176,17 @@ test('the read tools report status, sessions, the last reply and the screen', as
   const bad = await callTool('read_reply', { session_id: '../../shutdown' });
   assert.equal(bad.isError, true);
   assert.equal(posted.some((p) => p.url.includes('shutdown')), false);
+});
+
+test('fireworks post once to the manager and say how many pages saw them, or that none was open', async (t) => {
+  const { callTool } = startMcp(t);
+  assert.deepEqual(JSON.parse((await callTool('fireworks')).body), { launched: true, pages: 2 });
+  assert.equal(posted.filter((p) => p.url === '/api/v1/yard/fireworks').length, 1);
+  pagesOpen = 0;
+  const unseen = JSON.parse((await callTool('fireworks')).body);
+  assert.equal(unseen.pages, 0);
+  assert.match(unseen.message, /No page is open/);
+  pagesOpen = 2;
 });
 
 test('starting a session resolves the tool by name, sends no launch flags, and refuses a missing tool', async (t) => {

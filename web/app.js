@@ -2293,8 +2293,8 @@ function buildProvider(provider) {
     existing.addEventListener('click', (event) => showHistory(provider, false, event.currentTarget));
     node.querySelector('.launch-flags').addEventListener('click', (event) => showFlags(provider, event.currentTarget));
     const memory = node.querySelector('.memory-link');
-    memory.hidden = !provider.available || (!provider.memorySource && !provider.historyDetails);
-    const historyLink = !provider.memorySource && provider.historyDetails;
+    const historyLink = !provider.memorySource && provider.historySource === 'antigravity';
+    memory.hidden = !provider.available || (!provider.memorySource && !historyLink);
     memory.textContent = historyLink ? 'History' : 'Memory';
     memory.title = historyLink ? `Read ${provider.tool}'s saved conversations` : `See what ${provider.tool} remembers about the working folder`;
     memory.addEventListener('click', (event) => historyLink ? showHistory(provider, true, event.currentTarget) : showMemory(provider, event.currentTarget));
@@ -3970,7 +3970,7 @@ async function startSession(provider, card, { resume, cwd, account = selectedAcc
       ({ session } = await api('POST', '/sessions', body));
     } catch (err) {
       if (err.code !== 'bad_cwd' || !cwd) throw err;
-      if (resume && provider.historyDetails) {
+      if (resume && provider.historySource === 'antigravity') {
         const chosen = (await ask(`${cwd} no longer exists. Choose a working folder to resume this conversation:`, { ok: 'Resume', value: working }))?.trim();
         if (!chosen) return;
         ({ session } = await api('POST', '/sessions', { ...body, cwd: chosen }));
@@ -4011,20 +4011,22 @@ function renderHistoryPreview(view) {
   $('history-preview-title').textContent = view.target?.title || 'Select a conversation';
   $('history-preview-refresh').disabled = !view.target || view.loading;
   $('history-preview-more').hidden = !view.nextCursor;
-  paintPending($('history-preview-more'), view.loading, 'Read more', 'Reading…');
+  paintPending($('history-preview-more'), view.loading, 'Read earlier', 'Reading…');
   const notes = [];
   if (view.error) notes.push(view.error);
   else if (view.loading) notes.push('Reading saved messages…');
-  else if (view.target && !view.messages.length) notes.push(view.nextCursor ? 'No visible messages in this part. Continue reading below.' : 'No complete visible messages in this part.');
+  else if (view.target && !view.messages.length) notes.push(view.nextCursor ? 'No visible messages in this part. Read earlier messages above.' : 'No visible messages in this conversation.');
   else if (!view.target) notes.push('Read a saved exchange, then resume when you want to continue it.');
-  if (view.omitted) notes.push('Some unreadable or oversized records were omitted.');
+  if (view.omitted) notes.push('Some unreadable records were omitted.');
+  if (view.truncated) notes.push('Earlier messages cannot be shown: a record before these is too large or unreadable.');
   if (view.incomplete) notes.push('The last record is incomplete. Refresh after the conversation finishes writing.');
   $('history-preview-note').textContent = notes.join(' ');
   const messages = $('history-messages');
-  const scroll = messages.scrollTop;
+  const fromBottom = messages.scrollHeight - messages.scrollTop;
+  const first = messages.childElementCount === 0;
   messages.replaceChildren(...view.messages.map((message) => el('article', 'history-message',
     el('h4', null, message.role === 'user' ? 'You' : 'Assistant'), el('p', null, message.text))));
-  messages.scrollTop = view.messages.length ? scroll : 0;
+  messages.scrollTop = first ? messages.scrollHeight : messages.scrollHeight - fromBottom;
   for (const node of $('history-list').querySelectorAll('.history-preview-open')) node.setAttribute('aria-current', String(node.dataset.id === view.target?.id));
 }
 
@@ -4090,10 +4092,8 @@ async function loadHistory() {
   renderHistory();
   try {
     const query = new URLSearchParams({ account: accountId, limit: HISTORY_LIMIT });
-    if (provider.historyDetails) {
-      if ($('history-here').checked && $('cwd').value.trim()) query.set('cwd', $('cwd').value.trim());
-      if ($('history-filter').value.trim()) query.set('q', $('history-filter').value.trim());
-    }
+    if ($('history-here').checked && $('cwd').value.trim()) query.set('cwd', $('cwd').value.trim());
+    if ($('history-filter').value.trim()) query.set('q', $('history-filter').value.trim());
     const { history } = await api('GET', `/providers/${providerId}/history?${query}`);
     if (request !== historyView.request) return;
     historyView.snapshot = history;
@@ -4107,25 +4107,16 @@ async function loadHistory() {
 }
 
 function historyFiltersChanged() {
-  if (historyProvider()?.historyDetails) {
+  if (historyProvider()?.historySource) {
     historyView.snapshot = null;
     historyPreview.clear();
     loadHistory();
   } else renderHistory();
 }
 
-function historyText(entry) {
-  return `${entry.title ?? ''}\n${entry.cwd ?? ''}\n${entry.id}`.toLowerCase();
-}
-
 function folderName(dir) {
   const parts = dir.replace(/[\\/]+$/, '').split(/[\\/]/);
   return parts.at(-1) || dir;
-}
-
-function sameFolder(a, b) {
-  const clean = (dir) => (dir || '').replace(/[\\/]+$/, '').replace(/\\/g, '/').toLowerCase();
-  return clean(a) === clean(b);
 }
 
 function historyEntry(id) {
@@ -4138,7 +4129,7 @@ async function resumeFromHistory(provider, id, cwd) {
     closeHistory({ focusOpener: false });
     openPanel(running.id);
   } else {
-    if (provider.historyDetails && !cwd) {
+    if (provider.historySource === 'antigravity' && !cwd) {
       const workspaces = historyEntry(id)?.workspaces ?? [];
       const reason = workspaces.length > 1 ? `This conversation has several workspaces:\n${workspaces.join('\n')}\n\n` : 'The saved working folder is unknown.\n\n';
       cwd = (await ask(`${reason}Choose a working folder to resume in:`, { ok: 'Resume', value: $('cwd').value.trim() }))?.trim();
@@ -4164,27 +4155,28 @@ function buildHistoryRow(id) {
 
 function updateHistoryRow(node, provider, entry) {
   const running = runningOn(provider.id, historyView.accountId, entry.id);
-  node.classList.toggle('untitled', !entry.title);
+  const label = entry.name ?? entry.title;
+  node.classList.toggle('untitled', !label);
   node.classList.toggle('running', Boolean(running));
   const title = node.querySelector('.history-title');
-  title.title = entry.title ?? '';
+  title.title = label ?? '';
   if (provider.historyDetails) {
     let preview = title.querySelector('button');
     if (!preview) {
       preview = button('', () => {
         const current = historyEntry(entry.id);
-        if (current) historyPreview.select({ providerId: provider.id, accountId: historyView.accountId, id: entry.id, title: current.title ?? 'Untitled session' });
+        if (current) historyPreview.select({ providerId: provider.id, accountId: historyView.accountId, id: entry.id, title: current.name ?? current.title ?? 'Untitled session' });
       }, 'history-preview-open');
       preview.dataset.id = entry.id;
       title.replaceChildren(preview);
     }
-    preview.textContent = entry.title ?? 'Untitled session';
+    preview.textContent = label ?? 'Untitled session';
     preview.setAttribute('aria-current', String(historyPreview.state.target?.id === entry.id));
-  } else title.textContent = entry.title ?? 'Untitled session';
+  } else title.textContent = label ?? 'Untitled session';
   const meta = node.querySelector('.history-meta');
   const when = entry.updatedAt ? `updated ${relativeTime(entry.updatedAt)}` : '';
-  const folder = entry.cwd ? folderName(entry.cwd) : provider.historyDetails ? (entry.workspaces?.length > 1 ? `${entry.workspaces.length} workspaces` : 'Folder unknown') : null;
-  meta.textContent = [folder, when, running && `open in Agent Guild as ${running.name}`].filter(Boolean).join(' · ');
+  const folder = entry.cwd ? folderName(entry.cwd) : provider.historySource === 'antigravity' ? (entry.workspaces?.length > 1 ? `${entry.workspaces.length} workspaces` : 'Folder unknown') : null;
+  meta.textContent = [entry.name && entry.title !== entry.name ? entry.title : null, folder, when, running && `open in Agent Guild as ${running.name}`].filter(Boolean).join(' · ');
   meta.title = [...(entry.workspaces ?? [entry.cwd]), entry.startedAt && `started ${new Date(entry.startedAt).toLocaleString()}`].filter(Boolean).join('\n');
   const action = node.querySelector('.history-resume');
   const key = sessionActionKey(provider.id, historyView.accountId, entry.id);
@@ -4193,7 +4185,7 @@ function updateHistoryRow(node, provider, entry) {
   action.title = running
     ? `This session is running in Agent Guild as "${running.name}". Open it instead of resuming it twice.`
     : `Resume this ${provider.tool} session${entry.cwd ? ` in ${entry.cwd}` : ''}`;
-  action.setAttribute('aria-label', `${action.textContent} ${entry.title ?? entry.id}`);
+  action.setAttribute('aria-label', `${action.textContent} ${label ?? entry.id}`);
 }
 
 /** Rows are kept and updated in place, so a refresh never drops keyboard focus from a row's buttons. */
@@ -4222,9 +4214,8 @@ function renderHistory() {
   const here = $('history-here');
   here.disabled = !working;
   here.parentElement.title = working ? `Only sessions started in ${working}` : 'Set a working folder above to filter by it';
-  const serverFiltered = provider.historyDetails && Boolean(filter || (here.checked && !here.disabled));
-  const all = snapshot?.sessions ?? [];
-  const shown = provider.historyDetails ? all : all.filter((entry) => (!filter || historyText(entry).includes(filter)) && (!here.checked || here.disabled || sameFolder(entry.cwd, working)));
+  const serverFiltered = Boolean(filter || (here.checked && !here.disabled));
+  const shown = snapshot?.sessions ?? [];
   const parts = [];
   if ((provider.accounts?.length ?? 0) > 1 && account) parts.push(`${account.label} account`);
   if (snapshot && !snapshot.error) {
@@ -4239,14 +4230,11 @@ function renderHistory() {
   if (!provider.historySource) note = `Agent Guild cannot list ${provider.tool}'s sessions. Enter the id of one to resume it.`;
   else if (historyView.loading && !snapshot) note = `Reading ${provider.tool}'s sessions…`;
   else if (snapshot?.error) note = `Sessions could not be read: ${snapshot.error}`;
-  else if (snapshot && all.length === 0 && !serverFiltered) note = `No ${provider.tool} sessions were found${account && account.id !== 'default' ? ` for the ${account.label} account` : ''}.`;
+  else if (snapshot && shown.length === 0 && !serverFiltered) note = `No ${provider.tool} sessions were found${account && account.id !== 'default' ? ` for the ${account.label} account` : ''}.`;
   else if (snapshot && shown.length === 0) note = 'No session matches the filter.';
   if (snapshot?.note) note = [note, snapshot.note].filter(Boolean).join(' ');
-  if (snapshot?.total > all.length) {
-    const limitNote = provider.historyDetails
-      ? `Showing ${all.length} of ${snapshot.total} sessions. Narrow the filter to find older conversations.`
-      : `Loaded the newest ${all.length} of ${snapshot.total} sessions. Filtering searches these loaded sessions.`;
-    note = [note, limitNote].filter(Boolean).join(' ');
+  if (snapshot?.total > shown.length) {
+    note = [note, `Showing ${shown.length} of ${snapshot.total} sessions. Narrow the filter to find older conversations.`].filter(Boolean).join(' ');
   }
   $('history-note').textContent = note;
   $('history-note').hidden = !note;
@@ -5305,6 +5293,7 @@ async function loadView(view) {
   const request = { key, stamp, value: before?.stamp === stamp ? before.value : null, error: null, loading: true };
   githubPick.data[view] = request;
   renderGitHubViews();
+  const watching = view === 'actions' ? new Set(runWatch.runs.values()) : null;
   let value = null;
   let error = null;
   try {
@@ -5319,7 +5308,7 @@ async function loadView(view) {
   renderGitHubViews();
   if (view === 'actions') scheduleRuns();
   if (view === 'actions' && value) {
-    runWatchSeen(repo, value.runs);
+    runWatchSeen(repo, value.runs, watching);
     deliverRunWatch();
   }
 }
@@ -5556,11 +5545,12 @@ function endWatch(key, outcome) {
   runWatch.outcomes.push({ repo: watch.repo.fullName, name: watch.name, title: watch.title, url: watch.url, ...outcome });
 }
 
-function runWatchSeen(repo, runs) {
+/** Only the watches there were when the request for `runs` began: a later one may be for a run newer than those listed. */
+function runWatchSeen(repo, runs, watching = new Set(runWatch.runs.values())) {
   const key = repoKey(repo);
   let changed = false;
   for (const [id, watch] of runWatch.runs) {
-    if (repoKey(watch.repo) !== key) continue;
+    if (repoKey(watch.repo) !== key || !watching.has(watch)) continue;
     const run = runs.find((r) => r.id === watch.id);
     if (run && run.status !== 'completed') continue;
     changed = true;
@@ -5635,12 +5625,13 @@ function pollRunWatch() {
   runWatch.polling = (async () => {
     if (!state.connected || !runWatch.runs.size) return;
     if (!state.github) await api('GET', '/github').then(({ github }) => setGitHub(github), () => {});
+    const watching = new Set(runWatch.runs.values());
     const repos = new Map();
-    for (const watch of runWatch.runs.values()) repos.set(repoKey(watch.repo), watch.repo);
+    for (const watch of watching) repos.set(repoKey(watch.repo), watch.repo);
     const accounts = usableGitHubAccounts();
     await Promise.all([...repos.values()].filter((repo) => accounts.some((a) => a.id === repo.accountId)).map(async (repo) => {
       try {
-        runWatchSeen(repo, (await api('GET', `${repoPath(repo)}/actions`)).runs);
+        runWatchSeen(repo, (await api('GET', `${repoPath(repo)}/actions`)).runs, watching);
       } catch (err) {
         if (err instanceof AuthError) showAuth(err.message);
       }
@@ -7750,6 +7741,8 @@ function connectEvents() {
     } else if (msg.type === 'yard-art.updated') {
       state.yardArt = msg.yardArt;
       notifyViews();
+    } else if (msg.type === 'yard.fireworks') {
+      yardUi?.celebrate();
     } else if (msg.type === 'news.updated') {
       loadNews();
     } else if (msg.type === 'github.updated') {

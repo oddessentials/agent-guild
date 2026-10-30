@@ -19,6 +19,7 @@ import { createManagerServer } from './server.mjs';
 import { YardArt } from './yard-art.mjs';
 import { loadPty } from './pty.mjs';
 import { createNotesStore } from './notes.mjs';
+import { createCardNames } from './card-names.mjs';
 import { RemoteAccess, loadRemoteAccess } from './remote-access.mjs';
 import { SelfUpdate } from './self-update.mjs';
 import { addRuntimePaths, resolveBaseEnv, pathReader } from './shell-env.mjs';
@@ -87,8 +88,9 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
   registry.reportingEnabled = (provider) => sessionHooks.enabled(provider);
   registry.reportingNote = (provider) => sessionHooks.note(provider);
   sessionHooks.warm();
+  const cardNames = createCardNames(paths.cardNames);
   const manager = new SessionManager({
-    registry, baseEnv, getApiUrl: () => api.url, sessionDefaults, shimDir, selfUpdate, github, sessionHooks, store: multiplexerStore,
+    registry, baseEnv, getApiUrl: () => api.url, sessionDefaults, shimDir, selfUpdate, github, sessionHooks, store: multiplexerStore, cardNames,
   });
   environment.setSessionLookup((id) => {
     let session;
@@ -99,7 +101,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
     if (event.type === 'session.removed') environment.forgetSession(event.sessionId);
   });
   const usage = new UsageMonitor({ registry, env: baseEnv });
-  const history = new SessionHistory({ registry, env: baseEnv });
+  const history = new SessionHistory({ registry, env: baseEnv, names: cardNames });
   const memory = new AgentMemory({ env: baseEnv, resolveCwd: (cwd) => manager.resolveCwd(cwd) });
   const instructions = new InstructionFiles({ env: baseEnv, resolveCwd: (cwd) => manager.resolveCwd(cwd) });
   const modelStats = new ModelStats({ registry });

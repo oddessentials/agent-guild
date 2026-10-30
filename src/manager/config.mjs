@@ -47,6 +47,7 @@ export const paths = {
   get remoteAccess() { return path.join(dataDir(), 'remote-access.json'); },
   /** The shared notepad. A missing file means it was never stored. */
   get notes() { return path.join(dataDir(), 'notes.json'); },
+  get cardNames() { return path.join(dataDir(), 'card-names.json'); },
   get log() { return path.join(dataDir(), 'manager.log'); },
   /** Launchers for agent-guild-report, put first on every session's PATH. */
   get shims() { return path.join(dataDir(), 'bin'); },

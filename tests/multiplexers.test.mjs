@@ -6,6 +6,7 @@ import path from 'node:path';
 import { EventEmitter, once } from 'node:events';
 import { execFileSync } from 'node:child_process';
 import pty from 'node-pty';
+import { fakePty } from './fixtures/fake-pty.mjs';
 import { MultiplexerRegistry, distroCandidate, nativeHerdrEnv } from '../src/manager/multiplexers.mjs';
 import { loadProviders, ProviderRegistry } from '../src/manager/providers.mjs';
 import { SessionManager, MAX_SESSIONS } from '../src/manager/session-manager.mjs';
@@ -554,7 +555,7 @@ test('herdr request arguments survive exit checks, repeated reattach, executable
       t.mock.method(pty, 'spawn', (file, args) => {
         launches.push({ file, args: [...args] });
         let onExit;
-        return { pid: 0, onData() {}, onExit(fn) { onExit = fn; }, write() {}, resize() {}, kill() { onExit({ exitCode: 0 }); } };
+        return fakePty({ onExit(fn) { onExit = fn; }, kill() { onExit({ exitCode: 0 }); } });
       });
       const f = savedCardsFixture(t, { platform });
       const args = ['--session', 'work space', 'quoted"value', "single'quote", ''];

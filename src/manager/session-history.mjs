@@ -10,17 +10,25 @@ import { fileURLToPath } from 'node:url';
 import { resolveCommand, buildSpawnSpec, runSpec } from './command-resolver.mjs';
 import { toIso } from './usage.mjs';
 import { antigravityUserConversation } from '../report/hooks.mjs';
-import { ANTIGRAVITY_ID, transcriptFile, readAntigravityTranscript, historyError } from './antigravity-transcript.mjs';
+import { ANTIGRAVITY_ID, transcriptFile, transcriptMessage, historyError } from './antigravity-transcript.mjs';
+import {
+  JSONL_READERS, DOCKER_VISIBLE, GROK_TURN_ACTIVITY, readJsonlPage, readAntigravityTranscript, readDockerConversation, checkedFile,
+  claudePrompt, codexMessage, grokPromptChunk, zstdDecoder,
+} from './history-transcripts.mjs';
 
 export const HISTORY_TTL_MS = 5 * 1000;
 export const DEFAULT_LIMIT = 100;
 export const MAX_LIMIT = 500;
 const HEAD_BYTES = 256 * 1024;
+const TAIL_BYTES = 256 * 1024;
 const MAX_TITLE = 120;
 const MAX_ID = 200;
 const MAX_WALK_DEPTH = 4;
 
 export class HistoryError extends Error {}
+
+export const DETAIL_SOURCES = new Set(['claude', 'codex', 'antigravity', 'grok', 'docker']);
+const TRANSCRIPT_ROOTS = { claude: 'projects', codex: 'sessions', grok: 'sessions' };
 
 const TAG_RE = /^<[a-z][a-z0-9_-]*[\s>]/i;
 
@@ -29,18 +37,17 @@ function shortPath(file) {
   return file.startsWith(home) ? `~${file.slice(home.length)}` : file;
 }
 
-/** One line of prompt text, or null for an empty or tool-inserted (`<tag>…`) message. */
-function promptTitle(text) {
+/** One line of prompt text, or null for an empty one. */
+function lineTitle(text) {
   if (typeof text !== 'string') return null;
   const clean = text.replace(/\s+/g, ' ').trim();
-  if (!clean || TAG_RE.test(clean)) return null;
-  return clean.slice(0, MAX_TITLE);
+  return clean ? clean.slice(0, MAX_TITLE) : null;
 }
 
-function contentText(content) {
-  if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) return '';
-  return content.map((part) => (typeof part === 'string' ? part : part && typeof part.text === 'string' ? part.text : '')).filter(Boolean).join('\n');
+/** For text with no marker saying who wrote it: null also for a tool-inserted (`<tag>…`) message. */
+function promptTitle(text) {
+  const title = lineTitle(text);
+  return title && !TAG_RE.test(title) ? title : null;
 }
 
 function parseLines(text) {
@@ -56,7 +63,7 @@ async function readHead(file, bytes = HEAD_BYTES) {
   if (file.endsWith('.zst')) {
     if (typeof zlib.createZstdDecompress !== 'function') return null;
     const source = fs.createReadStream(file);
-    const inflate = source.pipe(zlib.createZstdDecompress());
+    const inflate = source.pipe(zstdDecoder());
     const chunks = [];
     let size = 0;
     try {
@@ -74,6 +81,21 @@ async function readHead(file, bytes = HEAD_BYTES) {
   try {
     const { bytesRead, buffer } = await handle.read(Buffer.alloc(bytes), 0, bytes, 0);
     return buffer.subarray(0, bytesRead).toString('utf8');
+  } finally {
+    await handle.close();
+  }
+}
+
+/** The whole records in the last bytes of a file, and the offset the first of them starts at. */
+async function readTail(file, size, bytes = TAIL_BYTES) {
+  if (size <= HEAD_BYTES) return { text: '', start: size };
+  const length = Math.min(bytes, size - HEAD_BYTES);
+  const handle = await fs.promises.open(file, 'r');
+  try {
+    const { bytesRead, buffer } = await handle.read(Buffer.alloc(length), 0, length, size - length);
+    const data = buffer.subarray(0, bytesRead);
+    const first = data.indexOf(10) + 1;
+    return { text: data.subarray(first).toString('utf8'), start: size - length + first };
   } finally {
     await handle.close();
   }
@@ -127,7 +149,7 @@ export class FileMemo {
     const known = this.entries.get(file);
     if (known && known.size === stat.size && known.mtimeMs === stat.mtimeMs) return known.entry;
     let entry = null;
-    try { entry = await parse(); } catch { /* unreadable or not a transcript */ }
+    try { entry = await parse(known && known.size <= stat.size ? known.entry : null); } catch { /* unreadable or not a transcript */ }
     this.entries.set(file, { size: stat.size, mtimeMs: stat.mtimeMs, entry });
     return entry;
   }
@@ -155,22 +177,51 @@ export function claudeConfigDir(env = process.env) {
   return (env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')).normalize('NFC');
 }
 
-function claudeEntry(id, text, stat) {
+/** Claude Code's title records in whole lines of `text`, which starts at offset `base`, and where those lines end. */
+function claudeTitles(text, base) {
+  const titles = { custom: null, ai: null, end: base };
+  let at = base;
+  for (const line of text.split('\n').slice(0, -1)) {
+    let record = null;
+    try { record = JSON.parse(line); } catch { /* a foreign line */ }
+    if (record?.type === 'custom-title' && typeof record.customTitle === 'string' && record.customTitle.trim()) titles.custom = { text: record.customTitle, at };
+    if (record?.type === 'ai-title' && typeof record.aiTitle === 'string' && record.aiTitle.trim()) titles.ai = { text: record.aiTitle, at };
+    at += Buffer.byteLength(line) + 1;
+  }
+  titles.end = at;
+  return titles;
+}
+
+/**
+ * The newest title record by position in the file. Only the start and end are
+ * read; a title found earlier still counts while it lies in the unread middle
+ * of a file that has only grown.
+ */
+function newestTitle(head, tail, before, key) {
+  const kept = before?.titles?.[key];
+  const unread = kept && kept.at >= head.end && kept.at < tail.start ? kept : null;
+  return [head[key], unread, tail[key]].filter(Boolean).reduce((newest, title) => (title.at > newest.at ? title : newest), { at: -1, text: null });
+}
+
+function claudeEntry(id, text, tail, stat, before) {
   let cwd = null;
   let startedAt = null;
-  let title = null;
+  let prompt = null;
   let seenUser = false;
-  for (const record of parseLines(text)) {
+  const records = parseLines(text);
+  for (const record of records) {
     if (!record || typeof record !== 'object') continue;
     if (cwd === null && typeof record.cwd === 'string') cwd = record.cwd;
     if (startedAt === null && record.timestamp) startedAt = record.timestamp;
-    if (record.type === 'custom-title' && typeof record.customTitle === 'string' && record.customTitle.trim()) title = record.customTitle;
     if (record.type !== 'user' || record.isSidechain === true) continue;
     seenUser = true;
-    if (title === null) title = promptTitle(contentText(record.message?.content));
+    prompt ??= lineTitle(claudePrompt(record));
   }
   if (cwd === null && !seenUser) return null;
-  return cleanEntry({ id, title, cwd, startedAt, updatedAt: stat.mtime });
+  const head = claudeTitles(text, 0), end = { ...claudeTitles(tail.text, tail.start), start: tail.start };
+  const custom = newestTitle(head, end, before, 'custom'), ai = newestTitle(head, end, before, 'ai');
+  const titles = { custom: custom.text === null ? null : custom, ai: ai.text === null ? null : ai };
+  return { ...cleanEntry({ id, title: titles.custom?.text ?? titles.ai?.text ?? prompt, cwd, startedAt, updatedAt: stat.mtime }), titles };
 }
 
 /** Sessions under `<dir>/projects/<folder>/<id>.jsonl`; sub-agent transcripts sit in sub-folders and are not listed. */
@@ -188,8 +239,8 @@ export async function listClaudeSessions(dir, memo = new FileMemo()) {
       if (!stat) continue;
       seen.add(file);
       const id = item.name.slice(0, -'.jsonl'.length);
-      const entry = await memo.entry(file, stat, async () => claudeEntry(id, await readHead(file), stat));
-      if (entry) entries.push(entry);
+      const entry = await memo.entry(file, stat, async (before) => claudeEntry(id, await readHead(file), await readTail(file, stat.size), stat, before));
+      if (entry) entries.push({ ...entry, file });
     }
   }
   memo.prune(root, seen);
@@ -202,18 +253,6 @@ export function codexHome(env = process.env) {
   return env.CODEX_HOME || path.join(os.homedir(), '.codex');
 }
 
-function codexPrompt(record) {
-  const payload = record?.payload;
-  if (!payload || typeof payload !== 'object') return null;
-  if (record.type === 'event_msg') {
-    if (payload.type === 'user_message') return promptTitle(payload.message);
-    if (payload.type === 'item_completed' && payload.item?.type === 'UserMessage') return promptTitle(contentText(payload.item.content));
-    return null;
-  }
-  if (record.type === 'response_item' && payload.type === 'message' && payload.role === 'user') return promptTitle(contentText(payload.content));
-  return null;
-}
-
 function codexEntry(text, stat) {
   const records = parseLines(text);
   const meta = records.find((r) => r?.type === 'session_meta')?.payload;
@@ -223,7 +262,8 @@ function codexEntry(text, stat) {
   if (meta.parent_thread_id || (meta.thread_source && meta.thread_source !== 'user')) return null;
   let title = null;
   for (const record of records) {
-    title = codexPrompt(record);
+    const message = codexMessage(record);
+    title = message?.role === 'user' ? lineTitle(message.text) : null;
     if (title) break;
   }
   return cleanEntry({ id, title, cwd: meta.cwd, startedAt: meta.timestamp ?? records[0]?.timestamp, updatedAt: stat.mtime });
@@ -238,11 +278,25 @@ async function walk(dir, depth, onFile) {
   }
 }
 
+async function codexThreadNames(dir, memo) {
+  const file = path.join(dir, 'session_index.jsonl');
+  const stat = await statFile(file);
+  if (!stat) return new Map();
+  return (await memo.entry(file, stat, async () => {
+    const names = new Map();
+    for (const record of parseLines(await fs.promises.readFile(file, 'utf8'))) {
+      if (typeof record?.id === 'string' && typeof record.thread_name === 'string' && record.thread_name.trim()) names.set(record.id, record.thread_name);
+    }
+    return names;
+  })) ?? new Map();
+}
+
 /** Rollouts under `<dir>/sessions/YYYY/MM/DD/rollout-*.jsonl`, uncompressed or zstd-compressed. Sub-agent threads are skipped. */
 export async function listCodexSessions(dir, memo = new FileMemo()) {
   const root = path.join(dir, 'sessions');
   const entries = [];
   const seen = new Set();
+  const names = await codexThreadNames(dir, memo);
   await walk(root, MAX_WALK_DEPTH, async (file, name) => {
     if (!/^rollout-.*\.jsonl(\.zst)?$/.test(name)) return;
     const stat = await statFile(file);
@@ -252,7 +306,7 @@ export async function listCodexSessions(dir, memo = new FileMemo()) {
       const head = await readHead(file);
       return head === null ? null : codexEntry(head, stat);
     });
-    if (entry) entries.push(entry);
+    if (entry) entries.push({ ...entry, title: cleanEntry({ id: entry.id, title: names.get(entry.id) }).title ?? entry.title, file });
   });
   memo.prune(root, seen);
   return dedupe(entries);
@@ -299,8 +353,7 @@ function antigravityEntry(id, text, stat) {
   let first;
   try { first = JSON.parse((text ?? '').split('\n', 1)[0]); } catch { return null; }
   if (!antigravityUserConversation(first) || typeof first.content !== 'string') return null;
-  const request = first.content.match(/<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/)?.[1];
-  return cleanEntry({ id, title: promptTitle(request), startedAt: first.created_at, updatedAt: stat.mtime });
+  return cleanEntry({ id, title: lineTitle(transcriptMessage(first)?.text), startedAt: first.created_at, updatedAt: stat.mtime });
 }
 
 /** Legacy fallback. Multiple cache paths for one id cannot identify a launch folder. */
@@ -358,7 +411,7 @@ export async function listAntigravitySessions(dir, memo = new FileMemo(), { plat
       const workspaces = summary ? antigravityWorkspaces(summary.workspace_uris, platform) : [];
       const cwd = workspaces.length === 1 ? workspaces[0] : workspaces.length ? null : folders.get(entry.id) ?? null;
       const title = promptTitle(summary?.title) || promptTitle(summary?.preview) || entry.title;
-      entries.push({ ...entry, title, cwd, ...(withStatus ? { workspaces: workspaces.length ? workspaces : cwd ? [cwd] : [] } : {}) });
+      entries.push({ ...entry, title, cwd, file, ...(withStatus ? { workspaces: workspaces.length ? workspaces : cwd ? [cwd] : [] } : {}) });
     }
   }
   memo.prune(root, seen);
@@ -393,21 +446,19 @@ async function loadSqlite() {
   return sqlite;
 }
 
-// A session's title, else its first user message; the newest message dates it. A sub-agent's session has a parent.
+// A session's title, else the first message its preview shows if that is the user's; the newest message dates it.
+// A sub-agent's session has a parent. No JSON function reads a row larger than $max.
 const DOCKER_SESSIONS_SQL = `
   select s.id, s.title, s.created_at, s.working_dir,
-    (select i.message_json from session_items i where i.session_id = s.id and i.item_type = 'message' order by i.position limit 1) as first_message,
-    (select max(json_extract(i.message_json, '$.created_at')) from session_items i where i.session_id = s.id) as updated_at
+    (select case when visible and json_extract(message_json, '$.role') = 'user' then json_extract(message_json, '$.content') end
+      from (select position, message_json, ${DOCKER_VISIBLE} as visible from session_items i where i.session_id = s.id and i.item_type = 'message')
+      where visible is not 0 order by position limit 1) as first_prompt,
+    (select max(case when octet_length(i.message_json) <= $max then json_extract(i.message_json, '$.created_at') end)
+      from session_items i where i.session_id = s.id) as updated_at
   from sessions s where s.parent_id is null order by s.created_at desc limit ${MAX_LIMIT}`;
 
 function dockerEntry(row) {
-  let title = typeof row.title === 'string' && row.title.trim() ? row.title : null;
-  if (!title && typeof row.first_message === 'string') {
-    try {
-      const message = JSON.parse(row.first_message);
-      if (message?.role === 'user') title = promptTitle(contentText(message.content));
-    } catch { /* not a message */ }
-  }
+  const title = typeof row.title === 'string' && row.title.trim() ? row.title : lineTitle(row.first_prompt);
   return cleanEntry({ id: row.id, title, cwd: row.working_dir, startedAt: row.created_at, updatedAt: row.updated_at ?? row.created_at });
 }
 
@@ -419,7 +470,7 @@ export async function listDockerSessions(dir) {
   let db = null;
   try {
     db = new DatabaseSync(file, { readOnly: true });
-    return dedupe(db.prepare(DOCKER_SESSIONS_SQL).all().map(dockerEntry).filter(Boolean));
+    return dedupe(db.prepare(DOCKER_SESSIONS_SQL).all({ max: HEAD_BYTES }).map(dockerEntry).filter(Boolean));
   } catch (err) {
     throw new HistoryError(`${shortPath(file)} could not be read: ${err.message}`);
   } finally {
@@ -441,19 +492,22 @@ async function grokBucketCwd(bucket) {
   return (await readText(path.join(bucket, '.cwd')))?.trim() || null;
 }
 
+/** The first prompt Grok Build shows, its chunks joined as the preview joins them. */
 function grokPrompt(text) {
-  const parts = [];
-  let promptId;
+  let turn = null;
+  const title = () => (turn && !turn.hidden ? lineTitle(turn.parts.join('')) : null);
   for (const record of parseLines(text)) {
-    const update = record?.params?.update;
-    if (update?.sessionUpdate !== 'user_message_chunk' || update.content?.type !== 'text') continue;
-    if (update.content._meta?.bash_command || update._meta?.host_turn === true) continue;
-    const id = record.params._meta?.promptId ?? null;
-    if (parts.length && id !== promptId) break;
-    promptId = id;
-    parts.push(update.content.text);
+    const chunk = grokPromptChunk(record);
+    if (turn && (chunk ? chunk.key !== turn.key : GROK_TURN_ACTIVITY.has(record?.params?.update?.sessionUpdate))) {
+      if (title()) return title();
+      turn = null;
+    }
+    if (!chunk) continue;
+    turn ??= { key: chunk.key, hidden: false, parts: [] };
+    if (chunk.hidden) turn.hidden = true;
+    else if (chunk.text !== null) turn.parts.push(chunk.text);
   }
-  return promptTitle(parts.join(''));
+  return title();
 }
 
 async function grokEntry(folder, summary, stat, bucketCwd) {
@@ -492,7 +546,7 @@ export async function listGrokSessions(dir, memo = new FileMemo()) {
       if (!stat) continue;
       seen.add(file);
       const entry = await memo.entry(file, stat, async () => grokEntry(folder, JSON.parse(await readText(file)), stat, cwd));
-      if (entry) entries.push(entry);
+      if (entry) entries.push({ ...entry, file: path.join(folder, 'updates.jsonl') });
     }
   }
   memo.prune(root, seen);
@@ -526,9 +580,11 @@ export class SessionHistory {
    * @param {object} [opts.env]
    * @param {number} [opts.ttlMs]
    * @param {object} [opts.readers]  session listers by source, replaceable in tests
+   * @param {ReturnType<import('./card-names.mjs').createCardNames>|null} [opts.names]  the names given to cards, by tool session id
    */
-  constructor({ registry, env = process.env, platform = process.platform, ttlMs = HISTORY_TTL_MS, readers = {} } = {}) {
+  constructor({ registry, env = process.env, platform = process.platform, ttlMs = HISTORY_TTL_MS, readers = {}, names = null } = {}) {
     this.registry = registry;
+    this.names = names;
     this.env = env;
     this.platform = platform;
     this.ttlMs = ttlMs;
@@ -550,20 +606,33 @@ export class SessionHistory {
     const n = Math.min(MAX_LIMIT, Math.max(1, Math.floor(Number(limit)) || DEFAULT_LIMIT));
     const snapshot = await this.snapshot(provider, account);
     const search = typeof query === 'string' ? query.trim().toLowerCase().slice(0, 500) : '';
-    const sessions = snapshot.sessions.filter((entry) =>
-      (!cwd || (entry.workspaces ?? [entry.cwd]).some((folder) => sameHistoryFolder(folder, cwd, this.platform)))
-      && (!search || [entry.id, entry.title, ...(entry.workspaces ?? [entry.cwd])].join('\n').toLowerCase().includes(search)));
+    const sessions = snapshot.sessions.map(({ file, titles, ...entry }) => ({ ...entry, name: this.names?.get(provider.id, account.id, entry.id) ?? null }))
+      .filter((entry) =>
+        (!cwd || (entry.workspaces ?? [entry.cwd]).some((folder) => sameHistoryFolder(folder, cwd, this.platform)))
+        && (!search || [entry.id, entry.name, entry.title, ...(entry.workspaces ?? [entry.cwd])].join('\n').toLowerCase().includes(search)));
     return { ...snapshot, total: sessions.length, sessions: sessions.slice(0, n) };
   }
 
   async detail(provider, account, id, cursor) {
-    if (provider.history !== 'antigravity') throw historyError(400, 'history_detail_unsupported', 'This tool has no conversation preview.');
-    if (!ANTIGRAVITY_ID.test(id)) throw historyError(400, 'bad_history_id', 'Invalid conversation id.');
+    const source = provider.history;
+    if (!DETAIL_SOURCES.has(source)) throw historyError(400, 'history_detail_unsupported', 'This tool has no conversation preview.');
+    if (typeof id !== 'string' || cleanEntry({ id })?.id !== id || (source === 'antigravity' && !ANTIGRAVITY_ID.test(id))) {
+      throw historyError(400, 'bad_history_id', 'Invalid conversation id.');
+    }
     // Revalidate membership, even if the client still has an older list open.
     const snapshot = await this._read(provider, account);
-    if (!snapshot.sessions.some((s) => s.id === id)) throw historyError(404, 'history_unavailable', 'This conversation transcript is unavailable.');
+    const entry = snapshot.sessions.find((s) => s.id === id);
+    if (!entry) throw historyError(404, 'history_unavailable', 'This conversation transcript is unavailable.');
     const env = { ...this.env, ...provider.env, ...account.env };
-    return readAntigravityTranscript(antigravityDir(env, this.platform), id, cursor);
+    const dir = SessionHistory.sourceDir(source, env, this.platform);
+    if (source === 'docker') return readDockerConversation({ dir, id, cursor, loadSqlite });
+    if (source === 'antigravity') return readAntigravityTranscript(dir, id, cursor);
+    if (typeof entry.file !== 'string') throw historyError(404, 'history_unavailable', 'This conversation transcript is unavailable.');
+    const root = path.join(dir, TRANSCRIPT_ROOTS[source]);
+    // Codex may have compressed or decompressed the rollout since it was listed.
+    const other = entry.file.endsWith('.zst') ? entry.file.slice(0, -4) : `${entry.file}.zst`;
+    const file = await checkedFile(root, entry.file).catch((err) => (source === 'codex' ? checkedFile(root, other) : Promise.reject(err)));
+    return readJsonlPage({ source, id, file, cursor, ...JSONL_READERS[source] });
   }
 
   snapshot(provider, account) {

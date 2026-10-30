@@ -4,7 +4,8 @@
 on stdin and stdout. A coding agent that speaks MCP, such as Claude Code,
 Codex CLI, Antigravity CLI, Gemini CLI, Cursor or VS Code, can then list the
 sessions in this computer's Agent Guild, read their last replies and
-terminals, and start or stop sessions with the person's approval.
+terminals, start or stop sessions with the person's approval, and launch
+fireworks over the Yard.
 
 It talks to the manager through its [local API](api.md), as the launcher
 does, and finds it the same way. Start Agent Guild first; the tools say so
@@ -56,6 +57,7 @@ skill, which installs, starts and checks Agent Guild for the person:
 | `read_screen` | What a session's terminal shows now, as plain text. |
 | `start_session` | Starts a session of a tool (`claude`, `codex`, `antigravity`, `grok`, `docker`, `shell` or a provider id) in a folder. |
 | `stop_session` | Ends a session's process; it stays listed with its final screen. |
+| `fireworks` | Launches fireworks over the Yard on every open page, and says how many pages saw them. |
 | `send_input` | Types into a session's terminal. Only with `agent-guild mcp --allow-input`. |
 
 The read tools are marked read-only, and `stop_session` and `send_input`

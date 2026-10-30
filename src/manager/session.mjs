@@ -6,8 +6,7 @@ import { EventEmitter } from 'node:events';
 import crypto from 'node:crypto';
 import headless from '@xterm/headless';
 import serializeAddon from '@xterm/addon-serialize';
-import { killWindowsTree } from './command-resolver.mjs';
-import { loadPty } from './pty.mjs';
+import { loadPty, closeConsole, releasePty } from './pty.mjs';
 import { sessionLabel } from '../../web/activity-favicon.js';
 
 const { Terminal } = headless;
@@ -68,6 +67,8 @@ export class Session extends EventEmitter {
    * @param {number} opts.cols
    * @param {number} opts.rows
    * @param {string} [opts.name]
+   * @param {string} [opts.defaultName]  the name a card has when nobody named it
+   * @param {boolean} [opts.named]  the name was given, so it is kept for the tool session
    * @param {string|null} [opts.resume]  id of the tool's own session being resumed
    * @param {string|null} [opts.task]    "install" for a package install, "upgrade" for the manager's own, "clone" for a GitHub clone, else null
    * @param {{id: string, label: string}|null} [opts.account]  the tool sign-in the session runs under
@@ -84,7 +85,11 @@ export class Session extends EventEmitter {
     super();
     this.id = opts.id;
     this.provider = opts.provider;
-    this.name = cleanName(opts.name) || opts.provider.tool;
+    this.defaultName = cleanName(opts.defaultName) || opts.provider.tool;
+    this.name = cleanName(opts.name) || this.defaultName;
+    this.named = opts.named === true && this.name !== this.defaultName;
+    /** Someone gave or changed this card's name, its default included. */
+    this.nameChosen = opts.named === true;
     this.resume = opts.resume ?? null;
     this.task = opts.task ?? null;
     this.account = opts.account ?? null;
@@ -98,6 +103,7 @@ export class Session extends EventEmitter {
     this.activityIdleMs = opts.activityIdleMs ?? 2500;
     this.doneAgentLingerMs = opts.doneAgentLingerMs ?? 15000;
     this.killGraceMs = opts.killGraceMs ?? 4000;
+    this._killed = false;
     this.reportingTimeoutMs = opts.reportingTimeoutMs ?? 30000;
     this.reporting = REPORTING_STATES.has(opts.reporting?.state) ? { state: opts.reporting.state, reason: opts.reporting.reason ?? null } : null;
     this._reportingTimer = null;
@@ -198,6 +204,7 @@ export class Session extends EventEmitter {
       useConpty: true,
     });
     this.pty = proc;
+    this._killed = false;
     proc.onData((data) => { if (this.pty === proc) this._onData(data); });
     proc.onExit(({ exitCode, signal }) => { if (this.pty === proc) this._onExit(exitCode, signal); });
   }
@@ -244,6 +251,7 @@ export class Session extends EventEmitter {
 
   _onExit(exitCode, signal) {
     clearTimeout(this._killTimer);
+    if (process.platform === 'win32') releasePty(this.pty);
     this._resolveExited();
     if (this.disposed) return;
     this.exitedAt ??= new Date().toISOString();
@@ -412,16 +420,18 @@ export class Session extends EventEmitter {
 
   /**
    * End the process. On macOS and Linux: hang-up first, force after a grace
-   * period. On Windows: end the whole process tree at once, except for a
-   * multiplexer's client, whose server is its child there and must outlive
-   * it. node-pty's own Windows kill first asks a helper process for the
-   * console's process list, and when that helper fails it waits a fixed
-   * five seconds.
+   * period. On Windows: close the session's console, which ends every process
+   * attached to it; a multiplexer's server and anything started detached
+   * outlive it.
    */
   kill({ graceMs = this.killGraceMs } = {}) {
     if (this.status !== 'running') return;
     if (process.platform === 'win32') {
-      this._killWindowsTree();
+      // At most once per pty: node-pty 1.2.0-beta.15 closes the pseudoconsole again on a second close before the
+      // exit watcher runs, which corrupts this process's heap (microsoft/node-pty#983).
+      if (this._killed) return;
+      this._killed = true;
+      closeConsole(this.pty);
       return;
     }
     const force = () => { try { this.pty.kill('SIGKILL'); } catch { /* gone */ } };
@@ -429,15 +439,6 @@ export class Session extends EventEmitter {
     clearTimeout(this._killTimer);
     this._killTimer = setTimeout(force, graceMs);
     this._killTimer.unref?.();
-  }
-
-  _killWindowsTree() {
-    const fallback = () => {
-      if (this.status === 'running') { try { this.pty.kill(); } catch { /* gone */ } }
-    };
-    const pid = this.pty.pid;
-    if (!pid) return fallback();
-    killWindowsTree(pid, (err) => { if (err) fallback(); }, { tree: !this.multiplexer });
   }
 
   /**
@@ -461,6 +462,8 @@ export class Session extends EventEmitter {
     const clean = cleanName(name);
     if (!clean) return;
     this.name = clean;
+    this.named = clean !== this.defaultName;
+    this.nameChosen = true;
     this._changed();
   }
 

@@ -2,10 +2,10 @@
 // can be exercised with explicitly released promises, without timers or a browser.
 export function createHistoryPreview({ read, changed, authError = () => {} }) {
   let request = 0;
-  const state = { target: null, messages: [], nextCursor: null, loading: false, error: null, incomplete: false, omitted: false };
+  const state = { target: null, messages: [], nextCursor: null, loading: false, error: null, incomplete: false, omitted: false, truncated: false };
   function clear(target = null) {
     request++;
-    Object.assign(state, { target, messages: [], nextCursor: null, loading: false, error: null, incomplete: false, omitted: false });
+    Object.assign(state, { target, messages: [], nextCursor: null, loading: false, error: null, incomplete: false, omitted: false, truncated: false });
     changed(state);
   }
   async function load(more = false) {
@@ -14,19 +14,19 @@ export function createHistoryPreview({ read, changed, authError = () => {} }) {
     const target = state.target;
     const cursor = more ? state.nextCursor : null;
     Object.assign(state, { loading: true, error: null });
-    if (!more) Object.assign(state, { messages: [], nextCursor: null, incomplete: false, omitted: false });
+    if (!more) Object.assign(state, { messages: [], nextCursor: null, incomplete: false, omitted: false, truncated: false });
     changed(state);
     try {
       const detail = await read(target, cursor);
       if (request !== ticket) return;
-      Object.assign(state, { messages: more ? [...state.messages, ...detail.messages] : detail.messages,
-        nextCursor: detail.nextCursor, incomplete: detail.incomplete, omitted: state.omitted || detail.omitted });
+      Object.assign(state, { messages: more ? [...detail.messages, ...state.messages] : detail.messages,
+        nextCursor: detail.nextCursor, incomplete: more ? state.incomplete : detail.incomplete, omitted: state.omitted || detail.omitted, truncated: detail.truncated === true });
     } catch (err) {
       if (request !== ticket) return;
       authError(err);
       state.error = err.message || 'The conversation could not be read.';
-      // A stale cursor cannot be retried; other errors can retry the same page.
-      if (err.code === 'history_changed') state.nextCursor = null;
+      // A changed conversation drops what was read; other errors can retry the same page.
+      if (err.code === 'history_changed') Object.assign(state, { messages: [], nextCursor: null, incomplete: false, omitted: false, truncated: false });
     } finally {
       if (request === ticket) { state.loading = false; changed(state); }
     }

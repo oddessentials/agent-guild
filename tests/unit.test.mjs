@@ -2045,6 +2045,7 @@ test('usage is read per account, from that account\'s home folder only', async (
 });
 
 const jsonl = (...records) => records.map((r) => (typeof r === 'string' ? r : JSON.stringify(r))).join('\n') + '\n';
+const listed = (entries) => entries.map(({ file, titles, ...entry }) => entry);
 function writeAt(file, contents, when) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, contents);
@@ -2077,7 +2078,7 @@ test('Claude Code sessions are read from the head of each project transcript', a
 
   const memo = new FileMemo();
   const sessions = await listClaudeSessions(dir, memo);
-  assert.deepEqual(sessions, [
+  assert.deepEqual(listed(sessions), [
     { id: 'bbbbbbbb-2222', title: 'Add dark mode', cwd: '/home/me/app', startedAt: '2026-09-30T10:00:00.000Z', updatedAt: '2026-10-01T08:00:00.000Z' },
     { id: 'aaaaaaaa-1111', title: 'Fix the login bug, please', cwd: '/home/me/app', startedAt: '2026-09-30T09:59:59.000Z', updatedAt: '2026-09-30T10:05:00.000Z' },
     { id: 'cccccccc-3333', title: 'Renamed by /rename', cwd: '/home/me/app', startedAt: '2026-09-30T10:00:00.000Z', updatedAt: '2026-09-29T12:00:00.000Z' },
@@ -2135,7 +2136,7 @@ test('Codex CLI sessions come from rollout files, in either history mode, withou
   }
 
   const sessions = await listCodexSessions(dir);
-  assert.deepEqual(sessions, [
+  assert.deepEqual(listed(sessions), [
     { id: '01a0f7a7-387f-7e11-b368-5335205ef1a6', title: 'say hello', cwd: '/work/proj', startedAt: '2026-10-01T13:28:46.480Z', updatedAt: '2026-10-01T16:00:00.000Z' },
     { id: '11111111-2222-3333-4444-555555555555', title: 'Refactor the parser', cwd: 'C:\\work\\legacy', startedAt: '2026-09-30T08:00:00.000Z', updatedAt: '2026-09-30T08:10:00.000Z' },
     ...(zstd ? [{ id: 'cccccccc-0000-0000-0000-000000000003', title: 'Old compressed session', cwd: '/work/old', startedAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:30:00.000Z' }] : []),
@@ -2158,7 +2159,7 @@ test('Antigravity CLI sessions come from each conversation\'s transcript, with a
   transcript('not-a-conversation', request('Not one of the CLI\'s'));
   writeAt(path.join(dir, 'cache', 'last_conversations.json'), JSON.stringify({ '/home/me/app': ids[0], '/home/me/gone': 'f0000000-0000-4000-8000-000000000000' }), '2026-10-02T22:00:00.000Z');
 
-  assert.deepEqual(await listAntigravitySessions(dir), [
+  assert.deepEqual(listed(await listAntigravitySessions(dir)), [
     { id: ids[0], title: 'Fix the login bug', cwd: '/home/me/app', startedAt: '2026-10-02T21:35:59.000Z', updatedAt: '2026-10-02T22:00:00.000Z' },
     { id: ids[1], title: 'Explain the parser', cwd: null, startedAt: '2026-10-01T08:00:00.000Z', updatedAt: '2026-10-02T22:00:00.000Z' },
   ], 'only conversations the user started, with a folder where the CLI keeps one');
@@ -2189,7 +2190,7 @@ test('Grok Build sessions come from each folder bucket\'s summaries, hidden and 
   writeAt(path.join(hashed, uuid(7), 'summary.json'), summary(uuid(7), { info: { id: uuid(7) }, generated_title: 'Elsewhere', updated_at: '2026-09-01T00:00:00Z' }), '2026-09-01T00:00:00Z');
   writeAt(path.join(dir, 'sessions', 'session_search.sqlite'), '', '2026-10-01T12:00:00Z');
 
-  assert.deepEqual(await listGrokSessions(dir), [
+  assert.deepEqual(listed(await listGrokSessions(dir)), [
     { id: uuid(1), title: 'Fix Login Bug', cwd: '/home/me/app', startedAt: '2026-10-01T10:00:00.000Z', updatedAt: '2026-10-01T11:00:00.000Z' },
     { id: uuid(2), title: 'Explored the data layer', cwd: '/home/me/app', startedAt: '2026-10-01T10:00:00.000Z', updatedAt: '2026-10-01T10:30:00.000Z' },
     { id: uuid(6), title: 'Write the release notes', cwd: '/home/me/app', startedAt: '2026-10-01T10:00:00.000Z', updatedAt: '2026-09-30T09:00:00.000Z' },
@@ -3031,7 +3032,8 @@ test('a Shell session is named after its shell and gets its environment', async 
   assert.deepEqual(defaultSession.spawnSpec, { file: 'cmd.exe', args: ['--own'] });
   assert.equal((await manager.create({ providerId: 'shell', cwd: os.tmpdir(), name: 'Mine' })).name, 'Mine');
   shells = [cmd];
-  assert.equal((await manager.create({ providerId: 'shell', cwd: os.tmpdir() })).name, null, 'no name when there is no choice');
+  const plain = await manager.create({ providerId: 'shell', cwd: os.tmpdir() });
+  assert.deepEqual([plain.name, plain.named], ['Shell', false], 'named after the tool when there is no choice');
   await assert.rejects(manager.create({ providerId: 'shell', shell: 7, cwd: os.tmpdir() }), { code: 'bad_shell', status: 400 });
 });
 
@@ -3109,7 +3111,8 @@ test('tmux cards are kept across restarts, and come back closed with their own i
   const kept = await first.create({ providerId: 'shell', shell: 'tmux', cwd: project, name: 'Kept' });
   await first.create({ providerId: 'shell', shell: 'tmux', cwd: project, name: 'Gone' });
   assert.deepEqual(saved.map((card) => card.name), ['Kept', 'Gone']);
-  assert.deepEqual(Object.keys(saved[0]).sort(), ['account', 'createdAt', 'cwd', 'id', 'muxName', 'name', 'provider', 'reportToken', 'shell', 'shellPath']);
+  assert.deepEqual(Object.keys(saved[0]).sort(), ['account', 'createdAt', 'cwd', 'defaultName', 'id', 'muxName', 'name', 'named', 'provider', 'reportToken', 'shell', 'shellPath']);
+  assert.deepEqual([saved[0].named, saved[0].defaultName], [true, kept.defaultName]);
   kept.name = 'Kept, renamed';
   kept.emit('changed');
   assert.equal(saved[0].name, 'Kept, renamed', 'a rename is kept');
@@ -3132,6 +3135,7 @@ test('tmux cards are kept across restarts, and come back closed with their own i
     [kept.id, 'Kept, renamed', 'exited', '2026-10-03T09:00:00.000Z', project, { label: 'tmux', attach: `tmux attach -t ${saved[0].muxName}`, reattachable: true }],
   ]);
   assert.equal(next.get(kept.id).reportToken, kept.reportToken, 'with its own report token, which tools inside still hold');
+  assert.deepEqual([next.get(kept.id).named, next.get(kept.id).defaultName], [true, kept.defaultName], 'its name stays explicit, so later tool sessions keep it');
   assert.deepEqual(next.get(kept.id).context, { compactions: 2, resets: 1 });
   assert.deepEqual(saved.map((card) => card.id), [kept.id], 'a card whose session is gone is forgotten');
   // Reattach waits until the manager has found tmux still has the session, as the page does.
@@ -4744,7 +4748,7 @@ test('reading Docker Agent history prints no SQLite experimental warning', async
   const dir = tempDir();
   const db = new sqlite.DatabaseSync(path.join(dir, 'session.db'));
   db.exec(`create table sessions (id text primary key, created_at text, title text default '', working_dir text default '', parent_id text);
-    create table session_items (id integer primary key autoincrement, session_id text not null, position integer not null, item_type text not null, agent_name text, message_json text);`);
+    create table session_items (id integer primary key autoincrement, session_id text not null, position integer not null, item_type text not null, agent_name text, message_json text, implicit boolean default 0, subsession_id text);`);
   db.prepare('insert into sessions (id, created_at, title, working_dir) values (?, ?, ?, ?)').run('s1', '2026-10-07T20:00:00Z', 'Quiet', '/w');
   db.close();
   // A fresh process, so the only node:sqlite import is the reader's own; other warnings still print.
@@ -4766,7 +4770,7 @@ test('Docker Agent sessions come from its SQLite store, titled by name or first 
   assert.deepEqual(await listDockerSessions(dir), [], 'no store yet');
   const db = new sqlite.DatabaseSync(path.join(dir, 'session.db'));
   db.exec(`create table sessions (id text primary key, created_at text, title text default '', working_dir text default '', parent_id text references sessions(id));
-    create table session_items (id integer primary key autoincrement, session_id text not null, position integer not null, item_type text not null, agent_name text, message_json text);`);
+    create table session_items (id integer primary key autoincrement, session_id text not null, position integer not null, item_type text not null, agent_name text, message_json text, implicit boolean default 0, subsession_id text);`);
   const add = db.prepare('insert into sessions (id, created_at, title, working_dir, parent_id) values (?, ?, ?, ?, ?)');
   const item = db.prepare('insert into session_items (session_id, position, item_type, message_json) values (?, ?, ?, ?)');
   add.run('named', '2026-10-07T19:38:31-04:00', 'Upgrade notes', 'C:\work\engine', null);

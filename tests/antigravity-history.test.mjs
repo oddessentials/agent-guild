@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { SessionHistory, FileMemo, listAntigravitySessions, antigravityWorkspaces, sameHistoryFolder } from '../src/manager/session-history.mjs';
-import { readAntigravityTranscript, TRANSCRIPT_PAGE_BYTES } from '../src/manager/antigravity-transcript.mjs';
+import { readAntigravityTranscript, PAGE_LIMITS } from '../src/manager/history-transcripts.mjs';
 
 const id = (n) => `10000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const user = (text = 'First prompt') => ({ source: 'USER_EXPLICIT', type: 'USER_INPUT', created_at: '2026-10-01T12:00:00Z', content: `<USER_REQUEST>\n${text}\n</USER_REQUEST>\n<ADDITIONAL_METADATA>injected</ADDITIONAL_METADATA>` });
@@ -128,22 +128,23 @@ test('preview returns only visible user and assistant messages, treating markup 
   f.transcript(1, lines(user('<script>plain text</script>'), reply(), { source: 'MODEL', type: 'GENERIC', content: 'tool output' },
     { source: 'MODEL', type: 'PLANNER_RESPONSE', thinking: 'no visible reply' }, { source: 'SYSTEM', type: 'USER_INPUT', content: 'injected' }));
   const result = await readAntigravityTranscript(f.dir, id(1));
-  assert.deepEqual(result, { id: id(1), messages: [{ role: 'user', text: '<script>plain text</script>' }, { role: 'assistant', text: 'Visible reply' }], nextCursor: null, incomplete: false, omitted: false });
+  assert.deepEqual(result, { id: id(1), messages: [{ role: 'user', text: '<script>plain text</script>' }, { role: 'assistant', text: 'Visible reply' }], nextCursor: null, incomplete: false, omitted: false, truncated: false });
 });
 
-test('transcript pages preserve UTF-8 records across byte boundaries and do not duplicate messages', async (t) => {
+test('pages run newest first and keep UTF-8 records whole across byte boundaries', async (t) => {
   const f = fixture(t);
   const records = [user(), ...Array.from({ length: 10 }, (_, n) => reply(`${n}: ${'漢🙂'.repeat(6000)}`))];
   f.transcript(1, lines(...records));
-  const messages = [];
+  const limits = { ...PAGE_LIMITS, scanBytes: 100000, chunkBytes: 4093 };
+  let messages = [];
   let cursor = null, pages = 0;
   do {
-    const page = await readAntigravityTranscript(f.dir, id(1), cursor);
-    messages.push(...page.messages);
+    const page = await readAntigravityTranscript(f.dir, id(1), cursor, limits);
+    messages = [...page.messages, ...messages];
     assert.equal(page.omitted, false);
     assert.equal(page.incomplete, false);
     cursor = page.nextCursor;
-    assert.ok(++pages < 10, 'bounded fixture finishes without a cursor loop');
+    assert.ok(++pages < 20, 'bounded fixture finishes without a cursor loop');
   } while (cursor);
   assert.ok(pages > 1);
   assert.deepEqual(messages.map((m) => m.text), ['First prompt', ...records.slice(1).map((r) => r.content)]);
@@ -151,27 +152,25 @@ test('transcript pages preserve UTF-8 records across byte boundaries and do not 
 
 test('oversized, malformed and partial records have bounded, explicit outcomes', async (t) => {
   const f = fixture(t);
-  f.transcript(1, lines(user(), reply('x'.repeat(TRANSCRIPT_PAGE_BYTES * 2)), reply('After long record')) + 'not json\n{"unfinished":');
-  let cursor = null, pages = 0, omitted = false, last;
-  const messages = [];
-  do {
-    last = await readAntigravityTranscript(f.dir, id(1), cursor);
-    messages.push(...last.messages); omitted ||= last.omitted; cursor = last.nextCursor;
-    assert.ok(++pages < 10);
-  } while (cursor);
-  assert.equal(omitted, true);
-  assert.equal(last.incomplete, true);
-  assert.deepEqual(messages.map((m) => m.text), ['First prompt', 'After long record']);
+  const limits = { ...PAGE_LIMITS, maxLineBytes: 100000 };
+  f.transcript(1, lines(user(), reply('x'.repeat(200000)), reply('After long record')) + 'not json\n{"unfinished":');
+  const page = await readAntigravityTranscript(f.dir, id(1), null, limits);
+  assert.deepEqual([page.omitted, page.incomplete, page.truncated, page.nextCursor], [true, true, true, null]);
+  assert.deepEqual(page.messages.map((m) => m.text), ['After long record'], 'nothing before the record too long to read is shown');
 });
 
-test('changed or deleted transcripts invalidate saved cursors without timing assumptions', async (t) => {
+test('appends keep a cursor valid; a rewritten or deleted transcript does not', async (t) => {
   const f = fixture(t);
-  const file = f.transcript(1, lines(user(), ...Array.from({ length: 8 }, () => reply('a'.repeat(50000)))));
-  const first = await readAntigravityTranscript(f.dir, id(1));
-  assert.ok(first.nextCursor);
-  fs.appendFileSync(file, lines(reply('New turn'))); // Size changes even on coarse timestamp filesystems.
-  await assert.rejects(readAntigravityTranscript(f.dir, id(1), first.nextCursor), { code: 'history_changed', status: 409 });
-  assert.ok((await readAntigravityTranscript(f.dir, id(1))).messages.length);
+  const file = f.transcript(1, lines(user(), ...Array.from({ length: 8 }, (_, n) => reply(`${n} ${'a'.repeat(50000)}`))));
+  const limits = { ...PAGE_LIMITS, messages: 2 };
+  const first = await readAntigravityTranscript(f.dir, id(1), null, limits);
+  assert.deepEqual(first.messages.map((m) => m.text.slice(0, 1)), ['6', '7']);
+  fs.appendFileSync(file, lines(reply('New turn')));
+  const second = await readAntigravityTranscript(f.dir, id(1), first.nextCursor, limits);
+  assert.deepEqual(second.messages.map((m) => m.text.slice(0, 1)), ['4', '5'], 'the page before is the same after an append');
+  assert.equal((await readAntigravityTranscript(f.dir, id(1), null, limits)).messages.at(-1).text, 'New turn');
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('4 a', '4 b'));
+  await assert.rejects(readAntigravityTranscript(f.dir, id(1), second.nextCursor, limits), { code: 'history_changed', status: 409 });
   fs.unlinkSync(file);
   await assert.rejects(readAntigravityTranscript(f.dir, id(1)), { code: 'history_unavailable', status: 404 });
 });
@@ -183,7 +182,7 @@ test('preview rejects traversal, bad cursors, linked folders and subagents', asy
   f.transcript(4, 'not json\n' + lines(user(), reply()));
   for (const bad of ['../outside', 'x', null, id(1) + '/logs']) await assert.rejects(readAntigravityTranscript(f.dir, bad), { code: 'bad_history_id' });
   await assert.rejects(readAntigravityTranscript(f.dir, id(1), 'not-a-cursor'), { code: 'bad_history_cursor' });
-  await assert.rejects(readAntigravityTranscript(f.dir, id(1), 'x'.repeat(257)), { code: 'bad_history_cursor' });
+  await assert.rejects(readAntigravityTranscript(f.dir, id(1), 'x'.repeat(2049)), { code: 'bad_history_cursor' });
   await assert.rejects(readAntigravityTranscript(f.dir, id(2)), { code: 'history_unavailable' });
   await assert.rejects(readAntigravityTranscript(f.dir, id(4)), { code: 'history_unavailable' });
   const linked = path.join(f.dir, 'brain', id(3));
@@ -199,7 +198,7 @@ test('detail requests recheck provider membership and account environment', asyn
   const account = { id: 'default', env: { HOME: f.home, USERPROFILE: f.home } };
   const history = new SessionHistory({ registry: {}, env: {} });
   assert.equal((await history.detail(provider, account, id(1))).messages.length, 2);
-  await assert.rejects(history.detail({ ...provider, history: 'codex' }, account, id(1)), { code: 'history_detail_unsupported' });
+  await assert.rejects(history.detail({ ...provider, history: { command: 'x' } }, account, id(1)), { code: 'history_detail_unsupported' });
   await assert.rejects(history.detail(provider, account, '../x'), { code: 'bad_history_id' });
   await assert.rejects(history.detail(provider, { id: 'other', env: { HOME: path.join(f.home, 'other'), USERPROFILE: path.join(f.home, 'other') } }, id(1)), { code: 'history_unavailable' });
 });
