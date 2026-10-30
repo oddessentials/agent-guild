@@ -40,9 +40,9 @@ agent-guild
   Docker Agent、任意 shell，以及 tmux 或 herdr 会话。Claude Code、Codex CLI 和
   Grok Build 可以同时登录多个账号；Claude Code 和 Codex 账号的用量上限实时可见。
 * **同一个会话，每块屏幕。** 任何浏览器；通过 Tailscale 在手机上使用，带触屏按键；
-  VS Code；以及 Agent Guild 应用：iPhone、iPad 和 Apple Vision Pro（App Store），
-  Android、Android TV、Google TV 和 Android XR（Google Play），Fire 平板和 Fire TV
-  （Amazon Appstore），Meta Horizon Store。Apple Watch 和 Meta Ray-Ban Display
+  VS Code；以及 Agent Guild 应用：iPhone、iPad 和 Apple Vision Pro（[App Store](https://apps.apple.com/us/app/agent-guild-remote/id6825451331)），
+  Android、Android TV、Google TV 和 Android XR（[Google Play](https://play.google.com/store/apps/details?id=com.oddessentials.agentguild)），Fire 平板和 Fire TV
+  （[Amazon Appstore](https://www.amazon.com/dp/B0HPLBDYPR)），[Meta Horizon Store](https://www.meta.com/experiences/1325496170657270/)。Apple Watch 和 Meta Ray-Ban Display
   会列出你的会话，并朗读某个会话的最后一条回答。
 * **Yard：看着它们干活。** 每个会话都是 3D 世界里的一个角色。等你回复的会被标出来；
   CI 通过时 Yard 会放烟花。双击任何一个角色，就能打开它的真实终端直接输入。
@@ -58,6 +58,9 @@ agent-guild
 
 * 网站：https://agentguild.oddessentials.ai
 * 各设备的要求：https://agentguild.oddessentials.ai/requirements/
+* App：[App Store](https://apps.apple.com/us/app/agent-guild-remote/id6825451331) · [Google Play](https://play.google.com/store/apps/details?id=com.oddessentials.agentguild) · [Amazon Appstore](https://www.amazon.com/dp/B0HPLBDYPR) · [Meta Horizon Store](https://www.meta.com/experiences/1325496170657270/) · [GitHub 上的 Android 版](https://github.com/oddessentials/agent-guild-android/releases/latest)
+* VS Code：[Marketplace](https://marketplace.visualstudio.com/items?itemName=OddEssentials.agent-guild) · [Open VSX](https://open-vsx.org/extension/OddEssentials/agent-guild)（Cursor、Windsurf 等编辑器）
+* [Agent Guild: World](https://store.steampowered.com/app/5462970/Agent_Guild_World/)：Steam 上的 3D 世界
 * YouTube：https://www.youtube.com/@Agent-Guild
 * X：https://x.com/agentguild_3d
 

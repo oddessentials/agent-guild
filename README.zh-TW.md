@@ -40,9 +40,9 @@ agent-guild
   Docker Agent、任何 shell，以及 tmux 或 herdr 工作階段。Claude Code、Codex CLI 和
   Grok Build 可以同時登入多個帳號；Claude Code 和 Codex 帳號的用量上限即時可見。
 * **同一個工作階段，每個螢幕。** 任何瀏覽器；透過 Tailscale 在手機上使用，附觸控按鍵；
-  VS Code；以及 Agent Guild App：iPhone、iPad 和 Apple Vision Pro（App Store），
-  Android、Android TV、Google TV 和 Android XR（Google Play），Fire 平板和 Fire TV
-  （Amazon Appstore），Meta Horizon Store。Apple Watch 和 Meta Ray-Ban Display
+  VS Code；以及 Agent Guild App：iPhone、iPad 和 Apple Vision Pro（[App Store](https://apps.apple.com/us/app/agent-guild-remote/id6825451331)），
+  Android、Android TV、Google TV 和 Android XR（[Google Play](https://play.google.com/store/apps/details?id=com.oddessentials.agentguild)），Fire 平板和 Fire TV
+  （[Amazon Appstore](https://www.amazon.com/dp/B0HPLBDYPR)），[Meta Horizon Store](https://www.meta.com/experiences/1325496170657270/)。Apple Watch 和 Meta Ray-Ban Display
   會列出你的工作階段，並朗讀某個工作階段的最後一則回答。
 * **Yard：看著它們工作。** 每個工作階段都是 3D 世界裡的一個角色。等你回覆的會被標示出來；
   CI 通過時 Yard 會放煙火。雙擊任何一個角色，就能開啟它的真實終端機直接輸入。
@@ -58,6 +58,9 @@ agent-guild
 
 * 網站：https://agentguild.oddessentials.ai
 * 各裝置的需求：https://agentguild.oddessentials.ai/requirements/
+* App：[App Store](https://apps.apple.com/us/app/agent-guild-remote/id6825451331) · [Google Play](https://play.google.com/store/apps/details?id=com.oddessentials.agentguild) · [Amazon Appstore](https://www.amazon.com/dp/B0HPLBDYPR) · [Meta Horizon Store](https://www.meta.com/experiences/1325496170657270/) · [GitHub 上的 Android 版](https://github.com/oddessentials/agent-guild-android/releases/latest)
+* VS Code：[Marketplace](https://marketplace.visualstudio.com/items?itemName=OddEssentials.agent-guild) · [Open VSX](https://open-vsx.org/extension/OddEssentials/agent-guild)（Cursor、Windsurf 等編輯器）
+* [Agent Guild: World](https://store.steampowered.com/app/5462970/Agent_Guild_World/)：Steam 上的 3D 世界
 * YouTube：https://www.youtube.com/@Agent-Guild
 * X：https://x.com/agentguild_3d
 
