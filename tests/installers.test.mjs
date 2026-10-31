@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -204,6 +204,19 @@ test('the macOS package runs the install.sh it carries, then removes its staging
   }
 });
 
+test('the macOS build stops before touching a keychain when signing credentials are missing, and names only the missing ones', { skip: process.platform === 'win32' }, (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-macos-build-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const log = path.join(root, 'security.log');
+  fs.writeFileSync(path.join(root, 'security'), `#!/bin/sh\necho "$@" >> '${log}'\n`, { mode: 0o755 });
+  const env = { PATH: `${root}:${process.env.PATH}`, APPLE_DEVELOPER_ID_APPLICATION_P12: 'sentinel-p12', APPLE_DEVELOPER_ID_INSTALLER_P12: '', APPLE_P12_PASSWORD: 'sentinel-password', ASC_KEY_ID: 'sentinel-key-id' };
+  const result = spawnSync('/bin/bash', [path.resolve('installers/macos/build.sh'), '1.0.0', root, root], { env, encoding: 'utf8' });
+  assert.equal(result.status, 1);
+  assert.equal(result.stderr, 'These signing credentials are missing: APPLE_DEVELOPER_ID_INSTALLER_P12 APPLE_NOTARY_KEY_P8 ASC_ISSUER_ID\n');
+  assert.doesNotMatch(result.stdout + result.stderr, /sentinel/);
+  assert.equal(fs.existsSync(log), false);
+});
+
 test('only installer jobs in the release-signing environment get Apple or Azure credentials, and none runs on a self-hosted runner', () => {
   const workflow = fs.readFileSync(path.resolve('.github/workflows/installers.yml'), 'utf8');
   const jobs = workflow.slice(workflow.indexOf('\njobs:\n')).split(/\n(?=  [a-z-]+:\n)/).slice(1);
@@ -211,6 +224,7 @@ test('only installer jobs in the release-signing environment get Apple or Azure 
   for (const text of jobs) {
     const name = text.match(/^  ([a-z-]+):/)[1];
     if (/secrets\.|vars\.(AZURE|ASC)_/.test(text)) assert.match(text, /\n    environment: release-signing\n/, `${name} uses credentials outside release-signing`);
+    if (name !== 'macos') assert.doesNotMatch(text, /secrets\./, `${name} gets secrets`);
     assert.doesNotMatch(text, /self-hosted/, `${name} runs on a self-hosted runner`);
   }
   assert.match(jobs[2], /runs-on: macos-latest/);
@@ -222,7 +236,7 @@ const RELEASE_YML = fs.readFileSync(path.resolve('.github/workflows/release.yml'
 const job = (name) => RELEASE_YML.match(new RegExp(`\\n  ${name}:\\n([\\s\\S]*?)(?=\\n  [a-z-]+:\\n|$)`))[1];
 
 test('a release builds and tests the installers for its planned version before npm or a public release can have it', () => {
-  assert.match(job('installers'), /needs: \[plan, ci\]\n[\s\S]*uses: \.\/\.github\/workflows\/installers\.yml\n    with:\n      version: \$\{\{ needs\.plan\.outputs\.version \}\}/);
+  assert.match(job('installers'), /needs: \[plan, ci\]\n[\s\S]*uses: \.\/\.github\/workflows\/installers\.yml\n    secrets: inherit\n    with:\n      version: \$\{\{ needs\.plan\.outputs\.version \}\}/);
   assert.match(job('draft'), /needs: \[plan, ci, installers\]/);
   assert.match(job('publish'), /needs: \[plan, ci, draft\]/);
   assert.match(job('release'), /needs: \[plan, publish\]/);

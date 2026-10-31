@@ -5,10 +5,15 @@
 set -euo pipefail
 version=$1 stage=$2 out=$3
 here=$(cd "$(dirname "$0")" && pwd)
+fail() { echo "$*" >&2; exit 1; }
+missing=''
+for var in APPLE_DEVELOPER_ID_APPLICATION_P12 APPLE_DEVELOPER_ID_INSTALLER_P12 APPLE_P12_PASSWORD APPLE_NOTARY_KEY_P8 ASC_KEY_ID ASC_ISSUER_ID; do
+  [ -n "${!var:-}" ] || missing="$missing $var"
+done
+[ -z "$missing" ] || fail "These signing credentials are missing:$missing"
 work=$(mktemp -d)
 kc="$work/signing.keychain-db"
 trap 'security delete-keychain "$kc" 2>/dev/null || true; rm -rf "$work"' EXIT
-fail() { echo "$*" >&2; exit 1; }
 
 kcpw=$(openssl rand -hex 24)
 security create-keychain -p "$kcpw" "$kc"
