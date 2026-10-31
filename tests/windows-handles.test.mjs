@@ -115,3 +115,48 @@ test('agent-guild open through a .cmd launcher does not leave the caller\'s inhe
   assert.fail(`the extra handle was still open 5 s after cmd.exe exited, while manager ${managerPid} was running; ` +
     (closedAfterStop ? `it closed ${closedAfterStop - stoppedAt} ms after the manager was stopped` : 'it was still open 10 s after the manager was stopped'));
 });
+
+test('prototype: a manager started through Windows PowerShell Start-Process answers, logs and stops without keeping the caller\'s handle', { skip }, async (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-handles-'));
+  const port = await freePort();
+  const base = `http://127.0.0.1:${port}`;
+  const env = { ...process.env, AGENT_GUILD_HOME: home, AGENT_GUILD_PORT: String(port), AGENT_GUILD_SKIP_SHELL_ENV: '1', AGENT_GUILD_NO_UPDATE_CHECK: '1' };
+  const health = () => fetch(`${base}/api/v1/health`, { signal: AbortSignal.timeout(2000) }).then((res) => res.json(), () => null);
+  let pid = null;
+  const stop = () => new Promise((resolve) => execFile(process.execPath, [cli, 'stop'], { env, timeout: 30000 }, (error, stdout) => resolve({ error, stdout })));
+  t.after(async () => {
+    const stopped = await stop();
+    if (pid && /still shutting down/.test(stopped.stdout)) {
+      await new Promise((resolve) => execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { timeout: 10000 }, resolve));
+    }
+    fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  });
+
+  const started = Date.now();
+  const run = throughCmd(writeCmd(home, 'start.cmd', `"${process.execPath}" "${path.join(here, 'fixtures', 'start-process-manager.mjs')}"`), [], env);
+  t.after(() => run.child.kill());
+  const exited = await within(run.exited, 30000);
+  assert.ok(exited, 'the Start-Process launcher did not return');
+  assert.equal(exited.code, 0, run.output());
+  pid = Number(run.output().trim().split(/\r?\n/).pop());
+  assert.ok(pid > 0, `Start-Process reported no pid: ${run.output()}`);
+
+  let up = null;
+  const deadline = Date.now() + 20000;
+  while (!up && Date.now() < deadline) {
+    up = await health();
+    if (!up) await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  assert.equal(up?.pid, pid, 'the manager that answers is not the process Start-Process reported');
+  t.diagnostic(`answering ${Date.now() - started} ms after the launcher started`);
+
+  const closed = await within(run.closed, 5000);
+  assert.equal((await health())?.pid, pid, 'the manager stopped answering during the check, so the result says nothing');
+  assert.ok(closed, 'the extra handle was still open 5 s after cmd.exe exited, while the manager ran');
+  t.diagnostic(`closed ${closed - exited.at} ms after cmd.exe exited, while manager ${pid} ran`);
+
+  assert.match(fs.readFileSync(path.join(home, 'manager.log'), 'utf8'), new RegExp(`listening on ${base.replace(/[.]/g, '\\.')} \\(pid ${pid}\\)`));
+  const stopped = await stop();
+  assert.match(stopped.stdout, /Session manager stopped\./);
+  assert.throws(() => process.kill(pid, 0), 'the manager process still runs after stop');
+});
