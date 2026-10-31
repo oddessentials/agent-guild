@@ -1,5 +1,5 @@
-import fs from 'node:fs';
 import { buildSpawnSpec, runSpec } from './command-resolver.mjs';
+import { commandMtime } from './install-channels.mjs';
 
 export const HELP_TIMEOUT_MS = 10000;
 export const HELP_MAX_BYTES = 256 * 1024;
@@ -81,8 +81,7 @@ export class LaunchFlags {
     if (!provider.launchFlags.length) return { flags: [], error: null };
     const resolved = this.registry.resolve(provider);
     if (!resolved) return { flags: [], error: `${provider.tool} is not installed.` };
-    let mtime = null;
-    try { mtime = fs.statSync(resolved).mtimeMs; } catch { /* read it anyway */ }
+    const mtime = commandMtime(resolved, this.registry.platform);
     const key = JSON.stringify([resolved, mtime, this.registry.versions?.get(provider.id)?.installed ?? null, provider.args, provider.launchFlags]);
     const cached = this.cache.get(provider.id);
     if (cached?.key === key && !cached.failed && !(provider.plugin && cached.done)) return cached.promise;

@@ -1,0 +1,283 @@
+# Builds the Windows installer and the Linux tarballs from the package ci.yml packed, each with the
+# Node.js installers/node.json pins, and installs each on clean runners.
+name: Installers
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows installer
+    runs-on: windows-latest
+    timeout-minutes: 30
+    environment: release-signing
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      INNO_SETUP_URL: https://github.com/jrsoftware/issrc/releases/download/is-7_1_0/innosetup-7.1.0-x64.exe
+      INNO_SETUP_SHA256: 0362a383ed217d4c4239b5933866dd96d3eb2102737da92f80f6057a4b40df2f
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            scripts
+            installers
+            web/brand
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: package
+          path: ${{ runner.temp }}/package
+      - shell: pwsh
+        run: |
+          foreach ($line in Get-Content (Join-Path $env:RUNNER_TEMP 'package\SHA256SUMS')) {
+            $sha, $name = $line -split '\s+\*?', 2
+            if ((Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $env:RUNNER_TEMP "package\$name")).Hash -ne $sha) { throw "$name does not match SHA256SUMS." }
+          }
+          node scripts/installers.mjs windows (Get-Item (Join-Path $env:RUNNER_TEMP 'package\*.tgz')).FullName (Join-Path $env:RUNNER_TEMP 'installers')
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Inno Setup
+        shell: pwsh
+        run: |
+          $setup = Join-Path $env:RUNNER_TEMP 'innosetup.exe'
+          Invoke-WebRequest -UseBasicParsing -Uri $env:INNO_SETUP_URL -OutFile $setup
+          $hash = (Get-FileHash -Algorithm SHA256 -Path $setup).Hash.ToLowerInvariant()
+          if ($hash -ne $env:INNO_SETUP_SHA256) { throw "Inno Setup's SHA-256 is $hash, not the pinned $env:INNO_SETUP_SHA256." }
+          $dir = Join-Path $env:RUNNER_TEMP 'innosetup'
+          Start-Process -Wait -FilePath $setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=$dir"
+          if (-not (Test-Path (Join-Path $dir 'ISCC.exe'))) { throw 'Inno Setup did not install ISCC.exe.' }
+          "ISCC=$(Join-Path $dir 'ISCC.exe')" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Build, with Setup and Uninstall signed
+        shell: pwsh
+        env:
+          VERSION: ${{ inputs.version }}
+          PUBLISHER: ${{ vars.WINDOWS_PUBLISHER }}
+        run: |
+          $sign = "pwsh.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `$q$env:GITHUB_WORKSPACE\installers\windows\sign.ps1`$q -Tools `$q$env:RUNNER_TEMP\signing-tools`$q -Endpoint https://eus.codesigning.azure.net -Account agent-guild-signing -CertificateProfile agent-guild-public -Files `$f"
+          & $env:ISCC /Q "/DVersion=$env:VERSION" "/DStage=$env:RUNNER_TEMP\installers\windows" "/DOutput=$env:RUNNER_TEMP\installer" /DSign "/Sagentguild=$sign" installers\windows\agent-guild.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE." }
+          $setup = Join-Path $env:RUNNER_TEMP "installer\agent-guild-$env:VERSION-windows-setup.exe"
+          $signature = Get-AuthenticodeSignature -LiteralPath $setup
+          if ($signature.Status -ne 'Valid' -or -not $signature.TimeStamperCertificate -or $signature.SignerCertificate.Subject -ne $env:PUBLISHER) {
+            throw "$setup is not signed and timestamped by $env:PUBLISHER ($($signature.Status), $($signature.SignerCertificate.Subject))."
+          }
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: installer-windows
+          path: ${{ runner.temp }}/installer/
+          if-no-files-found: error
+          retention-days: 7
+
+  linux:
+    name: Linux tarballs
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            scripts
+            installers
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: package
+          path: ${{ runner.temp }}/package
+      - run: |
+          (cd "$RUNNER_TEMP/package" && sha256sum --check SHA256SUMS)
+          node scripts/installers.mjs linux "$RUNNER_TEMP"/package/*.tgz "$RUNNER_TEMP/installers"
+          mkdir "$RUNNER_TEMP/installer"
+          mv "$RUNNER_TEMP"/installers/*.tar.gz "$RUNNER_TEMP/installer/"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: installer-linux
+          path: ${{ runner.temp }}/installer/
+          if-no-files-found: error
+          retention-days: 7
+
+  windows-install:
+    name: Install (${{ matrix.os }}, Windows installer)
+    needs: windows
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        os: [windows-latest, windows-11-arm]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: tests/package
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: installer-windows
+          path: ${{ runner.temp }}/installer
+      - name: Install, run, reinstall and uninstall
+        shell: pwsh
+        env:
+          VERSION: ${{ inputs.version }}
+          PUBLISHER: ${{ vars.WINDOWS_PUBLISHER }}
+        run: |
+          $app = Join-Path $env:LOCALAPPDATA 'Programs\Agent Guild'
+          $launcher = Join-Path $app 'launcher'
+          $data = Join-Path $env:APPDATA 'AgentGuild'
+          $userPath = { [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment').GetValue('Path', '', 'DoNotExpandEnvironmentNames') -split ';' | Where-Object { $_ } }
+          $onPath = { param($dir) [bool]((& $userPath) | Where-Object { $_.TrimEnd('\') -ieq $dir }) }
+          $gitBash = Join-Path $env:ProgramFiles 'Git\bin\bash.exe'
+          if (-not (Test-Path $gitBash)) { throw "Git Bash is not at $gitBash." }
+          $terminal = {
+            param($command, $shell = 'cmd')
+            $saved = $env:Path
+            try {
+              $env:Path = (([Environment]::GetEnvironmentVariable('Path', 'Machine') -split ';') + (& $userPath)) -join ';'
+              switch ($shell) {
+                'cmd' { cmd.exe /d /c $command }
+                'powershell' { powershell.exe -NoProfile -NonInteractive -Command $command }
+                'bash' { & $gitBash -lc $command }
+              }
+            }
+            finally { $env:Path = $saved }
+          }
+          $everyTerminal = {
+            param($when)
+            foreach ($shell in 'cmd', 'powershell', 'bash') {
+              if ((& $terminal 'agent-guild --version' $shell) -ne $env:VERSION) { throw "agent-guild does not run from a new $shell terminal $when." }
+              if ((& $terminal 'guild-ci-tool' $shell) -ne (Join-Path $app 'node.exe')) { throw "A command npm installed into the folder does not run on the bundled Node.js from a new $shell terminal $when." }
+            }
+          }
+          $setup = Join-Path $env:RUNNER_TEMP "installer\agent-guild-$env:VERSION-windows-setup.exe"
+          $install = {
+            $log = Join-Path $env:RUNNER_TEMP "setup-$(Get-Random).log"
+            $run = Start-Process -Wait -PassThru -FilePath $setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=$log"
+            if ($run.ExitCode -ne 0) { Get-Content $log; throw "Setup exited with $($run.ExitCode)." }
+          }
+
+          & $install
+          $arch = & (Join-Path $app 'node.exe') -p process.arch
+          $want = if ($env:RUNNER_ARCH -eq 'ARM64') { 'arm64' } else { 'x64' }
+          if ($arch -ne $want) { throw "Setup installed the $arch Node.js on $want Windows." }
+          if (-not (& $onPath $launcher)) { throw "$launcher is not on the user's PATH." }
+          if (& $onPath $app) { throw "$app, which holds the bundled Node.js, is on the user's PATH." }
+          if ((& $terminal 'agent-guild --version') -ne $env:VERSION) { throw 'agent-guild does not run from a new terminal.' }
+          if ($env:RUNNER_ARCH -eq 'X64') {
+            ./tests/package/check-signatures.ps1 -Package (Join-Path $app 'node_modules\@oddessentials\agent-guild') -Publisher $env:PUBLISHER
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+            foreach ($file in 'node.exe', 'unins000.exe') {
+              $signature = Get-AuthenticodeSignature -LiteralPath (Join-Path $app $file)
+              if ($signature.Status -ne 'Valid' -or -not $signature.TimeStamperCertificate) { throw "$file is not signed and timestamped ($($signature.Status))." }
+            }
+            if ((Get-AuthenticodeSignature -LiteralPath (Join-Path $app 'unins000.exe')).SignerCertificate.Subject -ne $env:PUBLISHER) { throw "unins000.exe is not signed by $env:PUBLISHER." }
+          }
+
+          $tool = Join-Path $env:RUNNER_TEMP 'tool'
+          New-Item -ItemType Directory $tool | Out-Null
+          Set-Content -LiteralPath (Join-Path $tool 'package.json') -Value '{"name":"guild-ci-tool","version":"1.0.0","bin":{"guild-ci-tool":"cli.js"}}'
+          Set-Content -LiteralPath (Join-Path $tool 'cli.js') -Value "#!/usr/bin/env node`nconsole.log(process.execPath)"
+          & (Join-Path $app 'node.exe') (Join-Path $app 'node_modules\npm\bin\npm-cli.js') install --global --prefix $app --no-fund --no-audit $tool
+          if ($LASTEXITCODE -ne 0) { throw 'npm could not install the test command.' }
+          & (Join-Path $app 'node.exe') (Join-Path $app 'node_modules\@oddessentials\agent-guild\src\manager\launchers.mjs')
+          & $everyTerminal 'after installing'
+          & (Join-Path $app 'node.exe') tests/package/smoke.mjs $app --version $env:VERSION
+          if ($LASTEXITCODE -ne 0) { throw 'The smoke test failed.' }
+
+          & $terminal 'agent-guild open --no-browser' | Out-Null
+          if (-not (Test-Path (Join-Path $data 'auth-token'))) { throw "The manager keeps no data in $data." }
+          Set-Content -LiteralPath (Join-Path $data 'ci-marker') -Value 'mine'
+          & $install
+          & $terminal 'agent-guild status' | Out-Null
+          if ($LASTEXITCODE -eq 0) { throw 'Reinstalling left the old manager running.' }
+          if ((Get-Content -LiteralPath (Join-Path $data 'ci-marker')) -ne 'mine') { throw 'Reinstalling changed user data.' }
+          & $everyTerminal 'after reinstalling'
+          if (@(& $userPath | Where-Object { $_.TrimEnd('\') -ieq $launcher }).Count -ne 1) { throw 'Reinstalling wrote PATH twice.' }
+          & $terminal 'agent-guild open --no-browser' | Out-Null
+          & $terminal 'agent-guild status' | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'Agent Guild does not start after reinstalling.' }
+
+          Start-Process -FilePath (Join-Path $app 'unins000.exe') -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'
+          $deadline = (Get-Date).AddMinutes(2)
+          while ((Test-Path $app) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 1 }
+          if (Test-Path $app) { Get-ChildItem -Recurse $app | Select-Object -First 20 FullName; throw "Uninstall left $app." }
+          if (& $onPath $launcher) { throw "Uninstall left $launcher on the user's PATH." }
+          if ((Get-Content -LiteralPath (Join-Path $data 'ci-marker')) -ne 'mine') { throw 'Uninstall changed user data.' }
+
+  linux-install:
+    name: Install (${{ matrix.os }}, Linux tarball)
+    needs: linux
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        include:
+          - { os: ubuntu-latest, arch: x64 }
+          - { os: ubuntu-24.04-arm, arch: arm64 }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: tests/package
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: installer-linux
+          path: ${{ runner.temp }}/installer
+      - name: Install, run, reinstall and uninstall
+        env:
+          VERSION: ${{ inputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          export HOME="$RUNNER_TEMP/home" SHELL=/bin/bash
+          mkdir "$HOME" "$RUNNER_TEMP/unpacked"
+          tar -xzf "$RUNNER_TEMP/installer/agent-guild-$VERSION-linux-$ARCH.tar.gz" -C "$RUNNER_TEMP/unpacked"
+          setup="$RUNNER_TEMP/unpacked/agent-guild-$VERSION-linux-$ARCH/install.sh"
+          app="$HOME/.local/share/agent-guild"
+          data=$(bash -lc 'printf %s "${XDG_CONFIG_HOME:-$HOME/.config}/agent-guild"')
+          fail() { echo "::error::$*"; exit 1; }
+          "$setup"
+          [ "$(bash -lc 'printf %s "$PATH"' | tr ':' '\n' | grep -cxF "$app/launcher")" = 1 ] || fail "The launcher folder is not on PATH once."
+          case ":$(bash -lc 'printf %s "$PATH"'):" in *":$app/bin:"*) fail "The bundled Node.js is on PATH." ;; esac
+          [ "$(bash -lc 'agent-guild --version')" = "$VERSION" ] || fail 'agent-guild does not run from a login shell.'
+          "$app/bin/node" tests/package/smoke.mjs "$app" --version "$VERSION"
+
+          tool="$RUNNER_TEMP/tool"
+          mkdir "$tool"
+          echo '{"name":"guild-ci-tool","version":"1.0.0","bin":{"guild-ci-tool":"cli.js"}}' > "$tool/package.json"
+          printf '#!/usr/bin/env node\nconsole.log(process.execPath)\n' > "$tool/cli.js"
+          "$app/bin/node" "$app/bin/npm" install --global --prefix "$app" --no-fund --no-audit "$tool"
+          "$app/bin/node" "$app/lib/node_modules/@oddessentials/agent-guild/src/manager/launchers.mjs"
+          [ "$(bash -lc guild-ci-tool)" = "$app/bin/node" ] || fail 'A command npm installed into the folder does not run on the bundled Node.js from a login shell.'
+
+          bash -lc 'agent-guild open --no-browser' > /dev/null
+          [ -s "$data/auth-token" ] || fail "The manager keeps no data in $data."
+          token=$(cksum < "$data/auth-token")
+          echo mine > "$data/ci-marker"
+          "$setup"
+          if bash -lc 'agent-guild status' > /dev/null; then fail 'Reinstalling left the old manager running.'; fi
+          [ "$(cat "$data/ci-marker")" = mine ] && [ "$(cksum < "$data/auth-token")" = "$token" ] || fail 'Reinstalling changed user data.'
+          [ "$(bash -lc guild-ci-tool)" = "$app/bin/node" ] || fail 'Reinstalling lost a command npm installed into the folder.'
+          [ "$(grep -c 'Agent Guild >>>' "$HOME/.profile")" = 1 ] || fail 'Reinstalling wrote PATH twice.'
+          bash -lc 'agent-guild open --no-browser' > /dev/null
+          bash -lc 'agent-guild status' > /dev/null || fail 'Agent Guild does not start after reinstalling.'
+
+          "$app/install.sh" --uninstall
+          [ ! -e "$app" ] || fail "Uninstall left $app."
+          [ "$(cat "$data/ci-marker")" = mine ] && [ "$(cksum < "$data/auth-token")" = "$token" ] || fail 'Uninstall changed user data.'
+          if grep -q 'Agent Guild' "$HOME/.profile"; then fail 'Uninstall left Agent Guild in .profile.'; fi
+          if bash -lc 'command -v agent-guild'; then fail 'Uninstall left agent-guild on PATH.'; fi

@@ -30,3 +30,13 @@ jobs:
     uses: ./.github/workflows/ci.yml
     with:
       version: 0.0.0-signing-check
+
+  installers:
+    name: Installers
+    needs: ci
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/installers.yml
+    with:
+      version: 0.0.0-signing-check
