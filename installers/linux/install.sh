@@ -88,6 +88,9 @@ if [ "${1:-}" = --uninstall ]; then
   done
   rm -rf -- "$dest"
   remove_block
+  if command -v pkgutil > /dev/null 2>&1 && pkgutil --pkg-info ai.oddessentials.agent-guild --volume "$HOME" > /dev/null 2>&1; then
+    pkgutil --forget ai.oddessentials.agent-guild --volume "$HOME" > /dev/null
+  fi
   echo "Agent Guild was removed from $dest. Your Agent Guild data and settings are kept."
   if [ -n "$tools" ]; then echo "These commands installed into its folder were removed with it:$tools"; fi
   exit 0

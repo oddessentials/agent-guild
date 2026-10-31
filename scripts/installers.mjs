@@ -87,30 +87,43 @@ export async function windows({ tgz, out, cache }) {
   return { version: packageVersion(tgz), dir };
 }
 
-export async function linux({ tgz, out, cache }) {
+async function posix({ tgz, out, cache, os, node }) {
   const version = packageVersion(tgz);
-  const tarballs = [];
+  const dirs = [];
   for (const arch of ARCHES) {
-    const name = `agent-guild-${version}-linux-${arch}`;
-    const top = path.join(out, 'linux', name);
+    const top = path.join(out, os, `agent-guild-${version}-${os}-${arch}`);
     fs.rmSync(top, { recursive: true, force: true });
-    await runtime({ target: `linux-${arch}`, cache, dir: path.join(top, 'agent-guild') });
+    await runtime({ target: `${node}-${arch}`, cache, dir: path.join(top, 'agent-guild') });
     install({ win: false, tgz, dir: path.join(top, 'agent-guild') });
     fs.copyFileSync(path.join(ROOT, 'installers', 'linux', 'install.sh'), path.join(top, 'install.sh'));
     fs.chmodSync(path.join(top, 'install.sh'), 0o755);
-    const tarball = path.join(out, `${name}.tar.gz`);
-    execFileSync(TAR, ['-czf', tarball, '-C', path.dirname(top), name], { stdio: 'inherit' });
+    dirs.push(top);
+  }
+  return { version, dirs };
+}
+
+export async function linux({ tgz, out, cache }) {
+  const { version, dirs } = await posix({ tgz, out, cache, os: 'linux', node: 'linux' });
+  const tarballs = [];
+  for (const [i, top] of dirs.entries()) {
+    const tarball = path.join(out, `agent-guild-linux-${ARCHES[i]}.tar.gz`);
+    execFileSync(TAR, ['-czf', tarball, '-C', path.dirname(top), path.basename(top)], { stdio: 'inherit' });
     tarballs.push(tarball);
   }
   return { version, tarballs };
 }
 
+export function macos({ tgz, out, cache }) {
+  return posix({ tgz, out, cache, os: 'macos', node: 'darwin' });
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const [kind, tgz, out] = process.argv.slice(2);
-  if (!['windows', 'linux'].includes(kind) || !tgz || !out) {
-    console.error('Usage: node scripts/installers.mjs <windows|linux> <package .tgz> <output folder>');
+  const builds = { windows, linux, macos };
+  if (!Object.hasOwn(builds, kind) || !tgz || !out) {
+    console.error('Usage: node scripts/installers.mjs <windows|linux|macos> <package .tgz> <output folder>');
     process.exit(2);
   }
-  const result = await (kind === 'windows' ? windows : linux)({ tgz, out: path.resolve(out), cache: path.resolve(out, 'downloads') });
+  const result = await builds[kind]({ tgz, out: path.resolve(out), cache: path.resolve(out, 'downloads') });
   console.log(JSON.stringify(result));
 }

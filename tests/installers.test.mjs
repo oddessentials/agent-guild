@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -172,17 +172,78 @@ test('the Windows uninstaller stops the manager only once uninstalling is confir
   assert.match(iss, /function PrepareToInstall[\s\S]*?StopManager;/);
 });
 
+test('install.sh --uninstall forgets the macOS package receipt in the user\'s home, and only when there is one', { skip: process.platform === 'win32' }, (t) => {
+  for (const installed of [true, false]) {
+    const { root, home, env } = fixture(t);
+    const log = path.join(root, 'pkgutil.log');
+    fs.writeFileSync(path.join(env.PATH, 'pkgutil'), `#!/bin/sh\necho "$*" >> '${log}'\n[ "$1" = --forget ] || [ ${installed ? 0 : 1} = 0 ]\n`, { mode: 0o755 });
+    run(download(root, '1.0.0'), [], env);
+    run(path.join(app(home), 'install.sh'), ['--uninstall'], env);
+    const calls = fs.readFileSync(log, 'utf8').trim().split('\n');
+    assert.deepEqual(calls, [
+      `--pkg-info ai.oddessentials.agent-guild --volume ${home}`,
+      ...(installed ? [`--forget ai.oddessentials.agent-guild --volume ${home}`] : []),
+    ]);
+  }
+});
+
+test('the macOS package runs the install.sh it carries, then removes its staging folder, and fails and keeps it when installing fails', { skip: process.platform === 'win32' }, (t) => {
+  const postinstall = path.resolve('installers/macos/postinstall');
+  for (const ok of [true, false]) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-postinstall-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const staging = path.join(root, '.local', 'share', 'agent-guild-setup');
+    fs.mkdirSync(path.join(staging, 'agent-guild'), { recursive: true });
+    const log = path.join(root, 'install.log');
+    fs.writeFileSync(path.join(staging, 'install.sh'), `#!/bin/sh\necho "$0 $#" > '${log}'\nexit ${ok ? 0 : 3}\n`, { mode: 0o755 });
+    let failed = false;
+    try { execFileSync('/bin/sh', [postinstall, path.join(root, 'agent-guild.pkg'), staging, '/', '/'], { stdio: 'pipe' }); } catch { failed = true; }
+    assert.equal(fs.readFileSync(log, 'utf8'), `${path.join(staging, 'install.sh')} 0\n`);
+    assert.equal(failed, !ok);
+    assert.equal(fs.existsSync(staging), !ok);
+  }
+});
+
+test('the macOS build stops before touching a keychain when signing credentials are missing, and names only the missing ones', { skip: process.platform === 'win32' }, (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-macos-build-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const log = path.join(root, 'security.log');
+  fs.writeFileSync(path.join(root, 'security'), `#!/bin/sh\necho "$@" >> '${log}'\n`, { mode: 0o755 });
+  const env = { PATH: `${root}:${process.env.PATH}`, APPLE_DEVELOPER_ID_APPLICATION_P12: 'sentinel-p12', APPLE_DEVELOPER_ID_INSTALLER_P12: '', APPLE_P12_PASSWORD: 'sentinel-password', ASC_KEY_ID: 'sentinel-key-id' };
+  const result = spawnSync('/bin/bash', [path.resolve('installers/macos/build.sh'), '1.0.0', root, root], { env, encoding: 'utf8' });
+  assert.equal(result.status, 1);
+  assert.equal(result.stderr, 'These signing credentials are missing: APPLE_DEVELOPER_ID_INSTALLER_P12 APPLE_NOTARY_KEY_P8 ASC_ISSUER_ID\n');
+  assert.doesNotMatch(result.stdout + result.stderr, /sentinel/);
+  assert.equal(fs.existsSync(log), false);
+});
+
+test('only installer jobs in the release-signing environment get Apple or Azure credentials, and none runs on a self-hosted runner', () => {
+  const workflow = fs.readFileSync(path.resolve('.github/workflows/installers.yml'), 'utf8');
+  const jobs = workflow.slice(workflow.indexOf('\njobs:\n')).split(/\n(?=  [a-z-]+:\n)/).slice(1);
+  assert.deepEqual(jobs.map((text) => text.match(/^  ([a-z-]+):/)[1]), ['windows', 'linux', 'macos', 'windows-install', 'linux-install', 'macos-install']);
+  for (const text of jobs) {
+    const name = text.match(/^  ([a-z-]+):/)[1];
+    if (/secrets\.|vars\.(AZURE|ASC)_/.test(text)) assert.match(text, /\n    environment: release-signing\n/, `${name} uses credentials outside release-signing`);
+    if (name !== 'macos') assert.doesNotMatch(text, /secrets\./, `${name} gets secrets`);
+    assert.doesNotMatch(text, /self-hosted/, `${name} runs on a self-hosted runner`);
+  }
+  assert.match(jobs[2], /runs-on: macos-latest/);
+  assert.match(jobs[5], /- \{ os: macos-latest, arch: arm64 \}\n\s+- \{ os: macos-15-intel, arch: x64 \}/);
+});
+
 const GNU_SHA256SUM = process.platform !== 'win32' && /GNU/.test(execFileSync('/bin/sh', ['-c', 'sha256sum --version 2>/dev/null || true'], { encoding: 'utf8' }));
 const RELEASE_YML = fs.readFileSync(path.resolve('.github/workflows/release.yml'), 'utf8');
 const job = (name) => RELEASE_YML.match(new RegExp(`\\n  ${name}:\\n([\\s\\S]*?)(?=\\n  [a-z-]+:\\n|$)`))[1];
 
 test('a release builds and tests the installers for its planned version before npm or a public release can have it', () => {
-  assert.match(job('installers'), /needs: \[plan, ci\]\n[\s\S]*uses: \.\/\.github\/workflows\/installers\.yml\n    with:\n      version: \$\{\{ needs\.plan\.outputs\.version \}\}/);
+  assert.match(job('installers'), /needs: \[plan, ci\]\n[\s\S]*uses: \.\/\.github\/workflows\/installers\.yml\n    secrets: inherit\n    with:\n      version: \$\{\{ needs\.plan\.outputs\.version \}\}/);
   assert.match(job('draft'), /needs: \[plan, ci, installers\]/);
   assert.match(job('publish'), /needs: \[plan, ci, draft\]/);
   assert.match(job('release'), /needs: \[plan, publish\]/);
   for (const name of ['installers', 'draft', 'publish', 'release']) assert.doesNotMatch(job(name), /^    if:/m, `${name} runs only when what it needs succeeded`);
 });
+
+const INSTALLERS = ['agent-guild-windows-setup.exe', 'agent-guild-linux-x64.tar.gz', 'agent-guild-linux-arm64.tar.gz', 'agent-guild-macos-arm64.pkg', 'agent-guild-macos-x64.pkg'];
 
 function draftRun(t, { missing = null, altered = null } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-draft-'));
@@ -200,7 +261,7 @@ function draftRun(t, { missing = null, altered = null } = {}) {
   execFileSync('tar', ['-czf', path.join(work, `oddessentials-agent-guild-${version}.tgz`), '-C', root, 'package']);
   execFileSync('/bin/sh', ['-c', 'sha256sum -- *.tgz yard-art-*.tar.gz > SHA256SUMS'], { cwd: work });
   fs.writeFileSync(path.join(work, 'notes.md'), 'notes');
-  const installers = [`agent-guild-${version}-windows-setup.exe`, `agent-guild-${version}-linux-x64.tar.gz`, `agent-guild-${version}-linux-arm64.tar.gz`];
+  const installers = INSTALLERS;
   for (const name of installers) if (name !== missing) fs.writeFileSync(path.join(work, name), name);
   fs.writeFileSync(path.join(bin, 'gh'), `#!/bin/sh
 echo "$*" >> "$GH_LOG"
@@ -226,10 +287,10 @@ test('the draft release holds the installers, SHA256SUMS covers them, and a miss
   assert.deepEqual(fs.readFileSync(path.join(ok.release, 'SHA256SUMS'), 'utf8').trim().split('\n').map((line) => line.split(/\s+/)[1]).sort(), [...ok.installers, 'oddessentials-agent-guild-1.20.0.tgz', 'yard-art-0123.tar.gz'].sort());
   execFileSync('sha256sum', ['--check', 'SHA256SUMS'], { cwd: ok.release, stdio: 'pipe' });
 
-  const missing = draftRun(t, { missing: 'agent-guild-1.20.0-linux-arm64.tar.gz' });
-  assert.equal(missing.failed, true);
-  assert.equal(missing.calls, '', 'nothing reaches the release');
-
-  const altered = draftRun(t, { altered: 'agent-guild-1.20.0-windows-setup.exe' });
-  assert.equal(altered.failed, true, 'the release is checked for what it holds');
+  for (const name of ok.installers) {
+    const missing = draftRun(t, { missing: name });
+    assert.equal(missing.failed, true, `${name} missing`);
+    assert.equal(missing.calls, '', `nothing reaches the release without ${name}`);
+    assert.equal(draftRun(t, { altered: name }).failed, true, `the release is checked for the ${name} it holds`);
+  }
 });

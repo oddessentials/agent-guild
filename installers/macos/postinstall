@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+"$2/install.sh"
+rm -rf -- "$2"
