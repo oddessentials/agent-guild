@@ -201,7 +201,8 @@ test('a manager keeps running when the console that started it is closed', { ski
   }
   assert.ok(up?.pid, 'the manager does not answer');
   m.track(up.pid);
-  execFileSync('taskkill', ['/PID', String(run.child.pid), '/T', '/F'], { timeout: 10000 });
+  // taskkill /T exits non-zero when a process in the tree has already exited; whether the console closed is asserted below.
+  await new Promise((resolve) => execFile('taskkill', ['/PID', String(run.child.pid), '/T', '/F'], { timeout: 10000 }, resolve));
   assert.ok(await within(run.exited, 10000), 'the console did not close');
   await new Promise((resolve) => setTimeout(resolve, 2000));
   assert.equal((await m.health())?.pid, up.pid, 'the manager stopped with the console that started it');
