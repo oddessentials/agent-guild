@@ -210,8 +210,10 @@ jobs:
           $install = {
             param($expect = 0)
             $log = Join-Path $env:RUNNER_TEMP "setup-$(Get-Random).log"
-            $run = Start-Process -Wait -PassThru -FilePath $setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=$log"
-            if ($run.ExitCode -ne $expect) { Get-Content $log; throw "Setup exited with $($run.ExitCode), not $expect." }
+            $run = Start-Process -PassThru -FilePath $setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=$log"
+            # Setup's own exit, not its descendants': waiting through Start-Process covers every process under it, without limit.
+            $code = ./tests/package/wait-process.ps1 -Process $run -Name 'Setup' -Seconds 150 -Log $log
+            if ($code -ne $expect) { Get-Content $log; throw "Setup exited with $code, not $expect." }
           }
 
           # Each operation names itself and has 3 minutes. A stalled one fails, with the processes started since this
@@ -308,7 +310,10 @@ jobs:
           try {
             & $op 'reinstall while the install''s Node.js runs' { & $install 7 }
             if (-not (Test-Path (Join-Path $package 'ci-untouched'))) { throw 'Setup replaced files while the install''s Node.js ran.' }
-            & $op 'uninstall while the install''s Node.js runs' { Start-Process -Wait -FilePath (Join-Path $app 'unins000.exe') -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' }
+            & $op 'uninstall while the install''s Node.js runs' {
+              $un = Start-Process -PassThru -FilePath (Join-Path $app 'unins000.exe') -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'
+              ./tests/package/wait-process.ps1 -Process $un -Name 'Uninstall' -Seconds 150 | Out-Null
+            }
             if (-not (Test-Path (Join-Path $package 'ci-untouched')) -or -not (& $onPath $launcher)) { throw 'Uninstall removed files while the install''s Node.js ran.' }
           }
           finally {

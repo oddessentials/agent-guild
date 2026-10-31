@@ -253,6 +253,48 @@ test('the Windows install test gives each operation 3 minutes, refuses to instal
   for (const name of ['smoke test', 'open', 'reinstall over the running manager', 'uninstall']) assert.match(job, new RegExp(`& \\$op '${name}' \\{`), `${name} is not bounded`);
   assert.match(job, /& \$op 'reinstall while the install''s Node\.js runs' \{ & \$install 7 \}/);
   assert.match(job, /& \$annotate error 'Processes from this test still run'/);
+  assert.doesNotMatch(job, /Start-Process -Wait/, 'Start-Process -Wait waits for every descendant of Setup, without limit');
+  assert.match(job, /\$run = Start-Process -PassThru -FilePath \$setup[^\n]*\n[^\n]*\n\s+\$code = \.\/tests\/package\/wait-process\.ps1 -Process \$run -Name 'Setup' -Seconds 150 -Log \$log\n\s+if \(\$code -ne \$expect\)/, 'Setup is waited for by its own process, bounded, with its live log kept on timeout');
+  assert.match(job, /\$un = Start-Process -PassThru -FilePath \(Join-Path \$app 'unins000\.exe'\)[^\n]*\n\s+\.\/tests\/package\/wait-process\.ps1 -Process \$un -Name 'Uninstall' -Seconds 150/);
+});
+
+// The CI step runs under pwsh, and the wait must come back the moment the process exits, whatever it leaves behind.
+const pwsh = process.platform === 'win32' && (() => { try { return execFileSync('where.exe', ['pwsh'], { encoding: 'utf8', windowsHide: true }).split(/\r?\n/)[0].trim(); } catch { return null; } })();
+test('wait-process.ps1 returns the exit code once the process exits though a descendant keeps running, and fails a stuck process within its limit', { skip: !pwsh && 'needs pwsh on Windows' }, () => {
+  const script = path.resolve('tests/package/wait-process.ps1');
+  const run = (body) => {
+    const started = Date.now();
+    try {
+      const stdout = execFileSync(pwsh, ['-NoProfile', '-NonInteractive', '-Command', body], { encoding: 'utf8', windowsHide: true, timeout: 60000 });
+      return { code: 0, stdout, seconds: (Date.now() - started) / 1000 };
+    } catch (err) {
+      return { code: err.status, stdout: `${err.stdout}${err.stderr}`, seconds: (Date.now() - started) / 1000 };
+    }
+  };
+  // cmd exits with 7 at once and leaves a ping of its own running for 40 s.
+  const exited = run(`$p = Start-Process -PassThru -WindowStyle Hidden -FilePath cmd.exe -ArgumentList '/d /c "start /b ping -n 40 127.0.0.1 > nul & exit /b 7"'
+    $code = & '${script}' -Process $p -Name 'cmd' -Seconds 30
+    $ping = @(Get-CimInstance Win32_Process -Filter "Name='PING.EXE'" | Where-Object { $_.ParentProcessId -eq $p.Id })
+    $ping | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+    "code=$code descendant=$($ping.Count)"`);
+  assert.equal(exited.code, 0, exited.stdout);
+  assert.match(exited.stdout, /code=7 descendant=1/, 'the exit code is the process\'s own, and its descendant was still running');
+  assert.ok(exited.seconds < 20, `returned after ${exited.seconds} s, not when the descendant ended`);
+  // A process that never exits within the limit: the live log and the processes under it are printed, and it is stopped.
+  const log = path.join(os.tmpdir(), `agent-guild-wait-${process.pid}.log`);
+  fs.writeFileSync(log, 'setup line one\nsetup line two\n');
+  const stuck = run(`$p = Start-Process -PassThru -WindowStyle Hidden -FilePath ping.exe -ArgumentList '-n 90 127.0.0.1'
+    try { & '${script}' -Process $p -Name 'Setup' -Seconds 2 -Log '${log}' } catch { "thrown: $($_.Exception.Message)" }
+    Start-Sleep -Seconds 1
+    "alive=$([bool](Get-Process -Id $p.Id -ErrorAction SilentlyContinue))"`);
+  fs.rmSync(log, { force: true });
+  assert.equal(stuck.code, 0, stuck.stdout);
+  assert.match(stuck.stdout, /Setup \(pid \d+\) did not exit within 2 s\./);
+  assert.match(stuck.stdout, /setup line two/, 'the live log is printed');
+  assert.match(stuck.stdout, /processes under Setup\r?\n\s+PING\.EXE \d+, parent \d+/i, 'the processes under it are printed');
+  assert.match(stuck.stdout, /thrown: Setup did not exit within 2 s\./);
+  assert.match(stuck.stdout, /alive=False/, 'the stuck process was stopped');
+  assert.ok(stuck.seconds < 20, `failed after ${stuck.seconds} s`);
 });
 
 test('a pull request packs and tests CI\'s unsigned launcher, and a release packs only the launcher sign.yml signed', () => {
