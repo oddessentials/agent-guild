@@ -171,7 +171,16 @@ test('the Windows installer stops the manager only once uninstalling is confirme
   assert.match(iss, /function StopManager: Boolean;[\s\S]*?' stop'[\s\S]*?Result := NodeState\(Node\) = NODE_GONE;/, 'stopping is confirmed by no process running the install\'s Node.js');
   assert.doesNotMatch(iss, /powershell/i, 'Windows PowerShell can take half a minute to start');
   assert.match(iss, /CreateToolhelp32Snapshot@kernel32\.dll[\s\S]*QueryFullProcessImageNameW@kernel32\.dll/);
-  assert.match(iss, /if Unknown or \(DLLGetLastError <> ERROR_NO_MORE_FILES\) then\s*Result := NODE_UNKNOWN/, 'a process that cannot be inspected never counts as stopped');
+  assert.match(iss, /if Unknown then\s*begin\s*Log\('Process check: unknown'\);\s*Result := NODE_UNKNOWN;/, 'a process that cannot be inspected never counts as stopped');
+  assert.match(iss, /\nSetupArchitecture=x64\n/, 'the process entry below is laid out for 64-bit Setup');
+  assert.match(iss, /TProcessEntry = record\s*dwSize, cntUsage, th32ProcessID, Padding1: DWORD;\s*th32DefaultHeapID: Int64;\s*th32ModuleID, cntThreads, th32ParentProcessID: DWORD;\s*pcPriClassBase: Longint;\s*dwFlags: DWORD;\s*szExeFile: array \[0\.\.259\] of Char;\s*Padding2: DWORD;\s*end;/, 'PROCESSENTRY32W as 64-bit Windows lays it out');
+  assert.match(iss, /Entry\.dwSize := 568;/);
+  for (const name of ['CreateToolhelp32Snapshot', 'OpenProcess']) assert.match(iss, new RegExp(`function ${name}\\([^)]*\\): NativeInt;`), `${name} returns a pointer-sized handle`);
+  assert.match(iss, /function CloseHandle\(Handle: NativeInt\)/);
+  for (const call of ['CreateToolhelp32Snapshot', 'Process32FirstW', 'Process32NextW', 'OpenProcess for process', 'QueryFullProcessImageNameW for process']) {
+    assert.match(iss, new RegExp(`LogFailure\\('${call}`), `a failed ${call} logs its Windows error`);
+  }
+  assert.doesNotMatch(iss, /LogFailure\([^;]*\);\s*\n[^\n]*DLLGetLastError/, 'the error is read right after the call that failed');
   assert.match(iss, /function PrepareToInstall[\s\S]*?if StopManager then\s*Result := ''\s*else\s*Result := '[^']+';/, 'Setup stops before changing files');
   assert.match(iss, /if CurUninstallStep = usUninstall then\s*begin\s*if not StopManager then\s*begin\s*SuppressibleMsgBox\([^;]*\);\s*Abort;\s*end;\s*RemoveFromPath/, 'Uninstall stops before removing anything');
   assert.doesNotMatch(iss, /[^e]MsgBox\(/, 'a message box that cannot be suppressed would hold a silent uninstall forever');

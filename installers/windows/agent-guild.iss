@@ -145,20 +145,24 @@ const
   NODE_UNKNOWN = 2;
 
 type
-  { PROCESSENTRY32W as a 32-bit process, which Setup is, sees it: 556 bytes. }
+  { PROCESSENTRY32W in 64-bit Setup (SetupArchitecture=x64). Pascal Script packs records, so Windows'
+    alignment padding is written out: 568 bytes. }
   TProcessEntry = record
-    dwSize, cntUsage, th32ProcessID, th32DefaultHeapID, th32ModuleID, cntThreads, th32ParentProcessID: DWORD;
+    dwSize, cntUsage, th32ProcessID, Padding1: DWORD;
+    th32DefaultHeapID: Int64;
+    th32ModuleID, cntThreads, th32ParentProcessID: DWORD;
     pcPriClassBase: Longint;
     dwFlags: DWORD;
     szExeFile: array [0..259] of Char;
+    Padding2: DWORD;
   end;
 
-function CreateToolhelp32Snapshot(Flags, ProcessId: DWORD): Longint; external 'CreateToolhelp32Snapshot@kernel32.dll stdcall';
-function Process32FirstW(Snapshot: Longint; var Entry: TProcessEntry): BOOL; external 'Process32FirstW@kernel32.dll stdcall';
-function Process32NextW(Snapshot: Longint; var Entry: TProcessEntry): BOOL; external 'Process32NextW@kernel32.dll stdcall';
-function OpenProcess(Access: DWORD; Inherit: BOOL; ProcessId: DWORD): Longint; external 'OpenProcess@kernel32.dll stdcall';
-function QueryFullProcessImageNameW(Process: Longint; Flags: DWORD; Name: String; var Size: DWORD): BOOL; external 'QueryFullProcessImageNameW@kernel32.dll stdcall';
-function CloseHandle(Handle: Longint): BOOL; external 'CloseHandle@kernel32.dll stdcall';
+function CreateToolhelp32Snapshot(Flags, ProcessId: DWORD): NativeInt; external 'CreateToolhelp32Snapshot@kernel32.dll stdcall';
+function Process32FirstW(Snapshot: NativeInt; var Entry: TProcessEntry): BOOL; external 'Process32FirstW@kernel32.dll stdcall';
+function Process32NextW(Snapshot: NativeInt; var Entry: TProcessEntry): BOOL; external 'Process32NextW@kernel32.dll stdcall';
+function OpenProcess(Access: DWORD; Inherit: BOOL; ProcessId: DWORD): NativeInt; external 'OpenProcess@kernel32.dll stdcall';
+function QueryFullProcessImageNameW(Process: NativeInt; Flags: DWORD; Name: String; var Size: DWORD): BOOL; external 'QueryFullProcessImageNameW@kernel32.dll stdcall';
+function CloseHandle(Handle: NativeInt): BOOL; external 'CloseHandle@kernel32.dll stdcall';
 
 function ExeName(const Entry: TProcessEntry): String;
 var
@@ -173,25 +177,38 @@ begin
   end;
 end;
 
+procedure LogFailure(const Call: String; Error: Longint);
+begin
+  Log('Process check: ' + Call + ' failed, Windows error ' + IntToStr(Error));
+end;
+
 { Whether a process runs Node, the install's node.exe, by its full path; unknown when that cannot be established. }
 function NodeState(const Node: String): Integer;
 var
-  Snapshot, Process: Longint;
+  Snapshot, Process: NativeInt;
   Entry: TProcessEntry;
   Path: String;
   Size: DWORD;
+  Error: Longint;
   More, Unknown: Boolean;
 begin
   Result := NODE_UNKNOWN;
+  Unknown := False;
   Snapshot := CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
   if Snapshot = -1 then
+  begin
+    LogFailure('CreateToolhelp32Snapshot', DLLGetLastError);
+    Log('Process check: unknown');
     Exit;
+  end;
   try
-    Entry.dwSize := 556;
+    Entry.dwSize := 568;
     More := Process32FirstW(Snapshot, Entry);
     if not More then
-      Exit;
-    Unknown := False;
+    begin
+      LogFailure('Process32FirstW', DLLGetLastError);
+      Unknown := True;
+    end;
     while More do
     begin
       if CompareText(ExeName(Entry), 'node.exe') = 0 then
@@ -199,18 +216,26 @@ begin
         Process := OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, Entry.th32ProcessID);
         if Process = 0 then
         begin
+          Error := DLLGetLastError;
           { A process that exited since the snapshot is gone; any other failure leaves it unknown. }
-          if DLLGetLastError <> ERROR_INVALID_PARAMETER then
+          if Error <> ERROR_INVALID_PARAMETER then
+          begin
+            LogFailure('OpenProcess for process ' + IntToStr(Entry.th32ProcessID), Error);
             Unknown := True;
+          end;
         end
         else
           try
             Size := 1024;
             Path := StringOfChar(#0, Size);
             if not QueryFullProcessImageNameW(Process, 0, Path, Size) then
-              Unknown := True
+            begin
+              LogFailure('QueryFullProcessImageNameW for process ' + IntToStr(Entry.th32ProcessID), DLLGetLastError);
+              Unknown := True;
+            end
             else if SamePath(Copy(Path, 1, Size), Node) then
             begin
+              Log('Process check: running, process ' + IntToStr(Entry.th32ProcessID));
               Result := NODE_RUNNING;
               Exit;
             end;
@@ -219,11 +244,26 @@ begin
           end;
       end;
       More := Process32NextW(Snapshot, Entry);
+      if not More then
+      begin
+        Error := DLLGetLastError;
+        if Error <> ERROR_NO_MORE_FILES then
+        begin
+          LogFailure('Process32NextW', Error);
+          Unknown := True;
+        end;
+      end;
     end;
-    if Unknown or (DLLGetLastError <> ERROR_NO_MORE_FILES) then
-      Result := NODE_UNKNOWN
+    if Unknown then
+    begin
+      Log('Process check: unknown');
+      Result := NODE_UNKNOWN;
+    end
     else
+    begin
+      Log('Process check: gone');
       Result := NODE_GONE;
+    end;
   finally
     CloseHandle(Snapshot);
   end;
