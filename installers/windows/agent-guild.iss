@@ -135,21 +135,46 @@ begin
     SetUserPath(Kept);
 end;
 
-procedure StopManager;
+function NodeRunning(const Node: String): Boolean;
+var
+  Quoted: String;
+  Code: Integer;
+begin
+  Quoted := Node;
+  StringChangeEx(Quoted, '''', '''''', True);
+  Result := not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+    '-NoLogo -NoProfile -NonInteractive -Command "if (Get-Process -Name node -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq ''' + Quoted + ''' }) { exit 1 }"',
+    '', SW_HIDE, ewWaitUntilTerminated, Code) or (Code <> 0);
+end;
+
+{ True once no process runs this install's Node.js: the manager and everything it started have exited. }
+function StopManager: Boolean;
 var
   Node, Entry: String;
-  Code: Integer;
+  Code, I: Integer;
 begin
   Node := ExpandConstant('{app}\node.exe');
   Entry := ExpandConstant('{app}\node_modules\@oddessentials\agent-guild\bin\agent-guild.mjs');
-  if FileExists(Node) and FileExists(Entry) then
+  Result := not FileExists(Node);
+  if Result then
+    Exit;
+  if FileExists(Entry) then
     Exec(Node, AddQuotes(Entry) + ' stop', '', SW_HIDE, ewWaitUntilTerminated, Code);
+  for I := 1 to 10 do
+  begin
+    Result := not NodeRunning(Node);
+    if Result then
+      Exit;
+    Sleep(1000);
+  end;
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
-  StopManager;
-  Result := '';
+  if StopManager then
+    Result := ''
+  else
+    Result := 'Agent Guild is still running and could not be stopped. Close it, then run Setup again.';
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
@@ -162,7 +187,11 @@ procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usUninstall then
   begin
-    StopManager;
+    if not StopManager then
+    begin
+      SuppressibleMsgBox('Agent Guild is still running and could not be stopped. Close it, then uninstall again.', mbError, MB_OK, IDOK);
+      Abort;
+    end;
     RemoveFromPath(ExpandConstant('{app}\launcher'));
   end;
 end;
