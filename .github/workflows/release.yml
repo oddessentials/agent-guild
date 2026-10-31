@@ -105,6 +105,9 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: installer-linux
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: installer-macos
       - env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -112,7 +115,7 @@ jobs:
         run: |
           sha256sum --check SHA256SUMS
           tag="v$VERSION"
-          installers=("agent-guild-$VERSION-windows-setup.exe" "agent-guild-$VERSION-linux-x64.tar.gz" "agent-guild-$VERSION-linux-arm64.tar.gz")
+          installers=("agent-guild-$VERSION-windows-setup.exe" "agent-guild-$VERSION-linux-x64.tar.gz" "agent-guild-$VERSION-linux-arm64.tar.gz" "agent-guild-$VERSION-macos-arm64.pkg" "agent-guild-$VERSION-macos-x64.pkg")
           sha256sum -- "${installers[@]}" >> SHA256SUMS
           art() { tar -xzOf ./*.tgz package/web/yard/art.json | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).archive.$1"; }
           name=$(art name)

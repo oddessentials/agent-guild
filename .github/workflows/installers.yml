@@ -114,6 +114,47 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  macos:
+    name: macOS installers
+    runs-on: macos-latest
+    timeout-minutes: 240
+    environment: release-signing
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            scripts
+            installers
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: package
+          path: ${{ runner.temp }}/package
+      - run: |
+          (cd "$RUNNER_TEMP/package" && shasum -a 256 -c SHA256SUMS)
+          node scripts/installers.mjs macos "$RUNNER_TEMP"/package/*.tgz "$RUNNER_TEMP/installers"
+      - name: Sign, package, notarize and staple
+        env:
+          VERSION: ${{ inputs.version }}
+          APPLE_DEVELOPER_ID_APPLICATION_P12: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_P12 }}
+          APPLE_DEVELOPER_ID_INSTALLER_P12: ${{ secrets.APPLE_DEVELOPER_ID_INSTALLER_P12 }}
+          APPLE_P12_PASSWORD: ${{ secrets.APPLE_P12_PASSWORD }}
+          APPLE_NOTARY_KEY_P8: ${{ secrets.APPLE_NOTARY_KEY_P8 }}
+          ASC_KEY_ID: ${{ vars.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ vars.ASC_ISSUER_ID }}
+        run: installers/macos/build.sh "$VERSION" "$RUNNER_TEMP/installers/macos" "$RUNNER_TEMP/installer"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: installer-macos
+          path: ${{ runner.temp }}/installer/
+          if-no-files-found: error
+          retention-days: 7
+
   windows-install:
     name: Install (${{ matrix.os }}, Windows installer)
     needs: windows
@@ -281,3 +322,86 @@ jobs:
           [ "$(cat "$data/ci-marker")" = mine ] && [ "$(cksum < "$data/auth-token")" = "$token" ] || fail 'Uninstall changed user data.'
           if grep -q 'Agent Guild' "$HOME/.profile"; then fail 'Uninstall left Agent Guild in .profile.'; fi
           if bash -lc 'command -v agent-guild'; then fail 'Uninstall left agent-guild on PATH.'; fi
+
+  macos-install:
+    name: Install (${{ matrix.os }}, macOS package)
+    needs: macos
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        include:
+          - { os: macos-latest, arch: arm64 }
+          - { os: macos-15-intel, arch: x64 }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: tests/package
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: installer-macos
+          path: ${{ runner.temp }}/installer
+      - name: Check, install, run, reinstall and uninstall
+        env:
+          VERSION: ${{ inputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          pkg="$RUNNER_TEMP/installer/agent-guild-$VERSION-macos-$ARCH.pkg"
+          receipt=ai.oddessentials.agent-guild
+          app="$HOME/.local/share/agent-guild"
+          data="$HOME/Library/Application Support/AgentGuild"
+          shell=$(dscl . -read "/Users/$(id -un)" UserShell | awk '{print $2}')
+          login() { "$shell" -lic "$1"; }
+          blocks() { cat "$HOME/.zshrc" "$HOME/.bash_profile" "$HOME/.bash_login" "$HOME/.profile" 2> /dev/null | grep -c 'Agent Guild >>>' || true; }
+          fail() { echo "::error::$*"; exit 1; }
+          setup() { installer -pkg "$pkg" -target CurrentUserHomeDirectory; }
+
+          xattr -w com.apple.quarantine "0081;$(printf %x "$(date +%s)");Safari;" "$pkg"
+          spctl --assess --type install -vv "$pkg" 2>&1 | grep -q 'source=Notarized Developer ID' || fail 'Gatekeeper does not accept the downloaded package as notarized.'
+          xcrun stapler validate "$pkg" || fail 'The package has no notarization ticket stapled to it.'
+          pkgutil --check-signature "$pkg" | grep -q 'Developer ID Installer: .* (H3FY62W58W)' || fail 'The package is not signed with the Developer ID Installer certificate.'
+
+          setup
+          [ ! -e "$HOME/.local/share/agent-guild-setup" ] || fail 'The installer left its staging folder.'
+          pkgutil --pkgs --volume "$HOME" | grep -qx "$receipt" || fail 'The installer recorded no receipt.'
+          [ "$("$app/bin/node" -p process.arch)" = "$ARCH" ] || fail "The package installed a Node.js that is not $ARCH."
+          find "$app" -type f -print0 | while IFS= read -r -d '' file; do
+            file -b "$file" | grep -q '^Mach-O' || continue
+            codesign --verify --strict "$file" || fail "$file is not validly signed."
+            codesign -dvv "$file" 2>&1 | grep -q '^Authority=Developer ID Application: .* (H3FY62W58W)$' || fail "$file is not signed with the Developer ID Application certificate."
+            codesign -dvv "$file" 2>&1 | grep -q '^CodeDirectory .*flags=.*runtime' || fail "$file does not use the hardened runtime."
+          done
+          if codesign -d --entitlements - --xml "$app/bin/node" 2> /dev/null | grep -q get-task-allow; then fail 'The bundled Node.js asks for get-task-allow.'; fi
+          [ "$(login "printf %s \"\$PATH\"" | tr ':' '\n' | grep -cxF "$app/launcher")" = 1 ] || fail "The launcher folder is not on $shell's PATH once."
+          case ":$(login "printf %s \"\$PATH\""):" in *":$app/bin:"*) fail "The bundled Node.js is on PATH." ;; esac
+          [ "$(login 'agent-guild --version')" = "$VERSION" ] || fail "agent-guild does not run from a $shell login shell."
+          "$app/bin/node" tests/package/smoke.mjs "$app" --version "$VERSION"
+
+          tool="$RUNNER_TEMP/tool"
+          mkdir "$tool"
+          echo '{"name":"guild-ci-tool","version":"1.0.0","bin":{"guild-ci-tool":"cli.js"}}' > "$tool/package.json"
+          printf '#!/usr/bin/env node\nconsole.log(process.execPath)\n' > "$tool/cli.js"
+          "$app/bin/node" "$app/bin/npm" install --global --prefix "$app" --no-fund --no-audit "$tool"
+          "$app/bin/node" "$app/lib/node_modules/@oddessentials/agent-guild/src/manager/launchers.mjs"
+          [ "$(login guild-ci-tool)" = "$app/bin/node" ] || fail 'A command npm installed into the folder does not run on the bundled Node.js from a login shell.'
+
+          login 'agent-guild open --no-browser' > /dev/null
+          [ -s "$data/auth-token" ] || fail "The manager keeps no data in $data."
+          token=$(cksum < "$data/auth-token")
+          echo mine > "$data/ci-marker"
+          setup
+          if login 'agent-guild status' > /dev/null; then fail 'Reinstalling left the old manager running.'; fi
+          [ "$(cat "$data/ci-marker")" = mine ] && [ "$(cksum < "$data/auth-token")" = "$token" ] || fail 'Reinstalling changed user data.'
+          [ "$(login guild-ci-tool)" = "$app/bin/node" ] || fail 'Reinstalling lost a command npm installed into the folder.'
+          [ "$(blocks)" = 1 ] || fail 'Reinstalling wrote PATH twice.'
+          [ ! -e "$HOME/.local/share/agent-guild-setup" ] || fail 'Reinstalling left the staging folder.'
+          login 'agent-guild open --no-browser' > /dev/null
+          login 'agent-guild status' > /dev/null || fail 'Agent Guild does not start after reinstalling.'
+
+          "$app/install.sh" --uninstall
+          [ ! -e "$app" ] || fail "Uninstall left $app."
+          [ "$(cat "$data/ci-marker")" = mine ] && [ "$(cksum < "$data/auth-token")" = "$token" ] || fail 'Uninstall changed user data.'
+          if pkgutil --pkgs --volume "$HOME" | grep -qx "$receipt"; then fail 'Uninstall left the package receipt.'; fi
+          [ "$(blocks)" = 0 ] || fail 'Uninstall left Agent Guild in a shell profile.'
+          if login 'command -v agent-guild'; then fail 'Uninstall left agent-guild on PATH.'; fi
