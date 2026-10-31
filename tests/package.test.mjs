@@ -168,7 +168,7 @@ test('a signed Windows module matches node-pty\'s only when the signature is all
   assert.equal(signedFrom(sign(sign(upstream)), sign(upstream)), false, 'an upstream file that was already signed');
 });
 
-test('the package check holds a release to signed node-pty modules and no other unsigned Windows binary', () => {
+test('the package check holds a release to signed node-pty modules and launchers, and no other unsigned Windows binary', () => {
   const signedModules = [...upstreamModules].map(([rel, body]) => [rel, [sign(body)]]);
   const check = (options, upstream = null) => checkPackage({ entries: goodPackage(options), lock, version: '1.2.3', upstream });
 
@@ -179,11 +179,11 @@ test('the package check holds a release to signed node-pty modules and no other 
   assert.deepEqual(check({ without: [WINDOWS_MODULES[1]] }),
     [`${WINDOWS_MODULES[1]} is missing; it is one of the Windows modules the release signs`]);
 
-  assert.deepEqual(check({}, upstreamModules), WINDOWS_MODULES.map((rel) => `${rel} is not node-pty's file with only a signature added`));
+  assert.deepEqual(check({}, upstreamModules), WINDOWS_MODULES.map((rel) => `${rel} is not the unsigned file with only a signature added`));
   const tampered = sign(upstreamModules.get(WINDOWS_MODULES[0]));
   tampered[0x250] ^= 1;
   assert.deepEqual(check({ extra: [...signedModules, [WINDOWS_MODULES[0], [tampered]]] }, upstreamModules),
-    [`${WINDOWS_MODULES[0]} is not node-pty's file with only a signature added`]);
+    [`${WINDOWS_MODULES[0]} is not the unsigned file with only a signature added`]);
   const partial = new Map([...upstreamModules].slice(1));
   assert.deepEqual(check({ extra: signedModules }, partial), [`${WINDOWS_MODULES[0]} has no upstream copy to compare with`]);
 });

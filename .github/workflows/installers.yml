@@ -174,6 +174,7 @@ jobs:
           path: ${{ runner.temp }}/installer
       - name: Install, run, reinstall and uninstall
         shell: pwsh
+        timeout-minutes: 15
         env:
           VERSION: ${{ inputs.version }}
           PUBLISHER: ${{ vars.WINDOWS_PUBLISHER }}
@@ -207,12 +208,63 @@ jobs:
           }
           $setup = Join-Path $env:RUNNER_TEMP "installer\agent-guild-windows-setup.exe"
           $install = {
+            param($expect = 0)
             $log = Join-Path $env:RUNNER_TEMP "setup-$(Get-Random).log"
             $run = Start-Process -Wait -PassThru -FilePath $setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=$log"
-            if ($run.ExitCode -ne 0) { Get-Content $log; throw "Setup exited with $($run.ExitCode)." }
+            if ($run.ExitCode -ne $expect) { Get-Content $log; throw "Setup exited with $($run.ExitCode), not $expect." }
           }
 
-          & $install
+          # Each operation names itself and has 3 minutes. A stalled one fails, with the processes started since this
+          # step began; only this step's own processes and those running from the install are stopped. Annotations
+          # carry the evidence, since a cancelled job's log is not kept.
+          $since = Get-Date
+          $phase = Join-Path $env:RUNNER_TEMP 'phase'
+          $stamp = { (Get-Date).ToUniversalTime().ToString('HH:mm:ss.fff') }
+          $owned = {
+            param($all, $step)
+            $ids = @($step)
+            do {
+              $more = @($all | Where-Object { $ids -contains $_.ParentProcessId -and $ids -notcontains $_.ProcessId })
+              $ids += $more.ProcessId
+            } while ($more)
+            $all | Where-Object { ($ids -contains $_.ProcessId -and $_.ProcessId -ne $step) -or ($_.ExecutablePath -and $_.ExecutablePath.StartsWith("$app\", 'OrdinalIgnoreCase')) }
+          }
+          $evidence = {
+            param($all, $since, $step)
+            $all | Where-Object { $_.CreationDate -ge $since -and $_.ProcessId -ne $step } | ForEach-Object {
+              '{0} {1}, parent {2}, started {3:HH:mm:ss}: {4}' -f $_.Name, $_.ProcessId, $_.ParentProcessId, $_.CreationDate.ToUniversalTime(), ($_.CommandLine -replace '#token=\S+', '#token=...')
+            }
+          }
+          $annotate = { param($kind, $title, $lines) Write-Host ("::$kind title=$title::" + (($lines -join "`n") -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A')) }
+          $op = {
+            param($name, [scriptblock]$block)
+            Set-Content -LiteralPath $phase -Value $name
+            Write-Host "[$(& $stamp)] $name"
+            $global:LASTEXITCODE = 0
+            & $block
+            $code = $LASTEXITCODE
+            Write-Host "[$(& $stamp)] $name finished, exit code $code"
+            if (Test-Path "$phase.timedout") { throw "$name did not finish within 3 minutes." }
+            Set-Content -LiteralPath $phase -Value "after $name"
+            $global:LASTEXITCODE = $code
+          }
+          Set-Content -LiteralPath $phase -Value 'starting'
+          $watchdog = Start-ThreadJob -StreamingHost $Host -ArgumentList $phase, $PID, $since, $app, "$owned", "$evidence", "$annotate" -ScriptBlock {
+            param($phase, $step, $since, $app, $owned, $evidence, $annotate)
+            $owned, $evidence, $annotate = $owned, $evidence, $annotate | ForEach-Object { [scriptblock]::Create($_) }
+            while ($true) {
+              Start-Sleep -Seconds 5
+              if (((Get-Date) - (Get-Item -LiteralPath $phase).LastWriteTime).TotalSeconds -lt 180) { continue }
+              $all = Get-CimInstance Win32_Process
+              $name = Get-Content -LiteralPath $phase
+              & $annotate error "$name did not finish within 3 minutes" (@('Processes started since the step began:') + @(& $evidence $all $since $step))
+              Set-Content -LiteralPath "$phase.timedout" -Value 'yes'
+              foreach ($p in @(& $owned $all $step)) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
+              break
+            }
+          }
+
+          & $op 'install' { & $install }
           $arch = & (Join-Path $app 'node.exe') -p process.arch
           $want = if ($env:RUNNER_ARCH -eq 'ARM64') { 'arm64' } else { 'x64' }
           if ($arch -ne $want) { throw "Setup installed the $arch Node.js on $want Windows." }
@@ -233,32 +285,60 @@ jobs:
           New-Item -ItemType Directory $tool | Out-Null
           Set-Content -LiteralPath (Join-Path $tool 'package.json') -Value '{"name":"guild-ci-tool","version":"1.0.0","bin":{"guild-ci-tool":"cli.js"}}'
           Set-Content -LiteralPath (Join-Path $tool 'cli.js') -Value "#!/usr/bin/env node`nconsole.log(process.execPath)"
-          & (Join-Path $app 'node.exe') (Join-Path $app 'node_modules\npm\bin\npm-cli.js') install --global --prefix $app --no-fund --no-audit $tool
+          & $op 'npm installs a command' { & (Join-Path $app 'node.exe') (Join-Path $app 'node_modules\npm\bin\npm-cli.js') install --global --prefix $app --no-fund --no-audit $tool }
           if ($LASTEXITCODE -ne 0) { throw 'npm could not install the test command.' }
           & (Join-Path $app 'node.exe') (Join-Path $app 'node_modules\@oddessentials\agent-guild\src\manager\launchers.mjs')
-          & $everyTerminal 'after installing'
-          & (Join-Path $app 'node.exe') tests/package/smoke.mjs $app --version $env:VERSION
+          & $op 'terminals after installing' { & $everyTerminal 'after installing' }
+          & $op 'smoke test' { & (Join-Path $app 'node.exe') tests/package/smoke.mjs $app --version $env:VERSION }
           if ($LASTEXITCODE -ne 0) { throw 'The smoke test failed.' }
 
-          & $terminal 'agent-guild open --no-browser' | Out-Null
+          & $op 'open' { & $terminal 'agent-guild open --no-browser' | Out-Null }
           if (-not (Test-Path (Join-Path $data 'auth-token'))) { throw "The manager keeps no data in $data." }
           Set-Content -LiteralPath (Join-Path $data 'ci-marker') -Value 'mine'
-          & $install
-          & $terminal 'agent-guild status' | Out-Null
+          & $op 'reinstall over the running manager' { & $install }
+          & $op 'status after reinstalling' { & $terminal 'agent-guild status' | Out-Null }
           if ($LASTEXITCODE -eq 0) { throw 'Reinstalling left the old manager running.' }
           if ((Get-Content -LiteralPath (Join-Path $data 'ci-marker')) -ne 'mine') { throw 'Reinstalling changed user data.' }
-          & $everyTerminal 'after reinstalling'
+          & $op 'terminals after reinstalling' { & $everyTerminal 'after reinstalling' }
           if (@(& $userPath | Where-Object { $_.TrimEnd('\') -ieq $launcher }).Count -ne 1) { throw 'Reinstalling wrote PATH twice.' }
-          & $terminal 'agent-guild open --no-browser' | Out-Null
-          & $terminal 'agent-guild status' | Out-Null
+
+          $package = Join-Path $app 'node_modules\@oddessentials\agent-guild'
+          Set-Content -LiteralPath (Join-Path $package 'ci-untouched') -Value 'yes'
+          $holder = Start-Process -FilePath (Join-Path $app 'node.exe') -ArgumentList '-e "setTimeout(() => {}, 600000)"' -WindowStyle Hidden -PassThru
+          try {
+            & $op 'reinstall while the install''s Node.js runs' { & $install 7 }
+            if (-not (Test-Path (Join-Path $package 'ci-untouched'))) { throw 'Setup replaced files while the install''s Node.js ran.' }
+            & $op 'uninstall while the install''s Node.js runs' { Start-Process -Wait -FilePath (Join-Path $app 'unins000.exe') -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' }
+            if (-not (Test-Path (Join-Path $package 'ci-untouched')) -or -not (& $onPath $launcher)) { throw 'Uninstall removed files while the install''s Node.js ran.' }
+          }
+          finally {
+            Stop-Process -Id $holder.Id -Force -ErrorAction SilentlyContinue
+            $holder.WaitForExit(10000) | Out-Null
+          }
+          Remove-Item -LiteralPath (Join-Path $package 'ci-untouched')
+
+          & $op 'open after reinstalling' { & $terminal 'agent-guild open --no-browser' | Out-Null }
+          & $op 'status after reopening' { & $terminal 'agent-guild status' | Out-Null }
           if ($LASTEXITCODE -ne 0) { throw 'Agent Guild does not start after reinstalling.' }
 
-          Start-Process -FilePath (Join-Path $app 'unins000.exe') -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'
-          $deadline = (Get-Date).AddMinutes(2)
-          while ((Test-Path $app) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 1 }
+          & $op 'uninstall' {
+            Start-Process -FilePath (Join-Path $app 'unins000.exe') -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'
+            $deadline = (Get-Date).AddMinutes(2)
+            while ((Test-Path $app) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 1 }
+          }
           if (Test-Path $app) { Get-ChildItem -Recurse $app | Select-Object -First 20 FullName; throw "Uninstall left $app." }
           if (& $onPath $launcher) { throw "Uninstall left $launcher on the user's PATH." }
           if ((Get-Content -LiteralPath (Join-Path $data 'ci-marker')) -ne 'mine') { throw 'Uninstall changed user data.' }
+
+          Stop-Job $watchdog
+          $all = Get-CimInstance Win32_Process
+          $left = @(& $owned $all $PID)
+          Write-Host "[$(& $stamp)] processes started since the step began that still run:"
+          & $evidence $all $since $PID | ForEach-Object { Write-Host "  $_" }
+          if ($left) {
+            & $annotate error 'Processes from this test still run' (& $evidence $left ([datetime]::MinValue) $PID)
+            exit 1
+          }
 
   linux-install:
     name: Install (${{ matrix.os }}, Linux tarball)
