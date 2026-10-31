@@ -8,9 +8,11 @@ const MAX_PACKED_BYTES = 100 * 1024 * 1024;
 const TOP_LEVEL = new Set(['package.json', 'README.md', 'README.zh-CN.md', 'README.zh-TW.md', 'LICENSE', 'bin', 'src', 'web', 'config', 'examples', 'docs', 'node_modules']);
 const REQUIRED = ['package.json', 'README.md', 'LICENSE', 'src/manager/main.mjs', 'web/index.html', 'web/yard/art.json', 'config/providers.default.json', 'docs/api.md'];
 const PACKAGE_ROOT = /^((?:node_modules\/(?:@[^/]+\/)?[^/]+\/)+)package\.json$/;
-// node-pty ships these unsigned and Smart App Control blocks unsigned modules, so the release signs them.
-export const WINDOWS_MODULES = ['x64', 'arm64'].flatMap((arch) =>
-  ['conpty.node', 'conpty_console_list.node'].map((name) => `node_modules/node-pty/prebuilds/win32-${arch}/${name}`));
+// node-pty ships these unsigned, the launcher is built unsigned, and Smart App Control blocks unsigned modules, so the release signs them.
+export const WINDOWS_MODULES = ['x64', 'arm64'].flatMap((arch) => [
+  ...['conpty.node', 'conpty_console_list.node'].map((name) => `node_modules/node-pty/prebuilds/win32-${arch}/${name}`),
+  `bin/windows/${arch}/agent-guild-start.exe`,
+]);
 
 export function peLayout(buffer) {
   if (!buffer || buffer.length < 0x40 || buffer.readUInt16LE(0) !== 0x5a4d) return null;
@@ -162,7 +164,7 @@ export function checkPackage({ entries, lock, version = null, upstream = null })
       if (layout.certSize === 0) problems.push(`${rel} is an unsigned Windows binary that the release does not sign`);
     } else if (upstream) {
       if (!upstream.has(rel)) problems.push(`${rel} has no upstream copy to compare with`);
-      else if (!signedFrom(entry.body, upstream.get(rel))) problems.push(`${rel} is not node-pty's file with only a signature added`);
+      else if (!signedFrom(entry.body, upstream.get(rel))) problems.push(`${rel} is not the unsigned file with only a signature added`);
     }
   }
   return problems;

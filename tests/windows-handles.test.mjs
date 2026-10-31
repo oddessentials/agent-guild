@@ -9,7 +9,7 @@ import { execFile, execFileSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
 import { waitForTerminalReady } from './fixtures/terminal-ready.mjs';
-import { startHidden, startProcessScript } from '../src/manager/launch.mjs';
+import { startDetached, windowsLauncher } from '../src/manager/launch.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const cli = path.resolve(here, '../bin/agent-guild.mjs');
@@ -207,16 +207,23 @@ test('a manager keeps running when the console that started it is closed', { ski
   assert.equal((await m.health())?.pid, up.pid, 'the manager stopped with the console that started it');
 });
 
-test('without Windows PowerShell the manager is not started, and the error says why', () => {
+test('without the launcher the manager is not started, and the error says how to build it', () => {
   assert.throws(
-    () => startHidden(process.execPath, ['-e', '0'], { powershell: path.join(os.tmpdir(), 'no-such-powershell.exe') }),
-    /could not start the session manager: Windows PowerShell did not start it/,
+    () => startDetached(process.execPath, ['-e', '0'], { launcher: path.join(os.tmpdir(), 'no-such-dir', 'agent-guild-start.exe') }),
+    /could not start the session manager: .*agent-guild-start\.exe is missing; in a checkout, run npm run build:windows/,
   );
 });
 
-test('the Start-Process script quotes the program and its arguments', () => {
-  assert.equal(
-    startProcessScript("C:\\Program Files\\O'Brien\\node.exe", ['C:\\a b\\main.mjs', '--own-log']),
-    "$p = Start-Process -FilePath 'C:\\Program Files\\O''Brien\\node.exe' -ArgumentList '\"C:\\a b\\main.mjs\" \"--own-log\"' -WindowStyle Hidden -PassThru; $p.Id",
-  );
+test('the launcher hands the program its arguments unchanged and reports its pid', { skip }, async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild handles '));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }));
+  const out = path.join(dir, 'argv.json');
+  const args = ['plain', 'with space', 'quote"inside', 'trailing\\', 'back\\\\"slash', '', 'C:\\Program Files\\x\\'];
+  const script = 'require("fs").writeFileSync(process.argv[1], JSON.stringify({ pid: process.pid, args: process.argv.slice(2) }))';
+  const { pid } = startDetached(process.execPath, ['-e', script, out, ...args], { launcher: windowsLauncher() });
+  const deadline = Date.now() + 10000;
+  while (!fs.existsSync(out) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 50));
+  const seen = JSON.parse(fs.readFileSync(out, 'utf8'));
+  assert.equal(seen.pid, pid);
+  assert.deepEqual(seen.args, args);
 });

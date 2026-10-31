@@ -30,30 +30,28 @@ function rotateLog() {
   } catch { /* no log yet */ }
 }
 
-/** The Windows PowerShell script that starts `file` with `args`, hidden, and prints its pid. */
-export function startProcessScript(file, args) {
-  const quote = (text) => `'${text.replace(/'/g, "''")}'`;
-  return `$p = Start-Process -FilePath ${quote(file)} -ArgumentList ${quote(args.map((arg) => `"${arg}"`).join(' '))} -WindowStyle Hidden -PassThru; $p.Id`;
+/** The launcher that starts the manager on Windows, built for this Node.js's architecture. */
+export function windowsLauncher(arch = process.arch, rootDir = ROOT_DIR) {
+  return path.join(rootDir, 'bin', 'windows', arch, 'agent-guild-start.exe');
 }
 
 /**
- * Start `file` on Windows through Start-Process, which passes on none of this
- * process's inheritable handles, unlike Node.js's spawn: a pipe of whoever ran
- * the launcher would otherwise stay open as long as the manager runs. Returns
- * `{ pid }`, or throws when Windows PowerShell did not start it.
+ * Start `file` on Windows through agent-guild-start.exe, which creates it detached and with none of this process's
+ * handles; Node.js's spawn would pass every inheritable one on, and a pipe of whoever ran the launcher would stay open
+ * as long as the manager runs. Returns `{ pid }`, or throws when it could not be started.
  */
-export function startHidden(file, args, { env = process.env, powershell = path.win32.join(env.SystemRoot || env.SYSTEMROOT || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe') } = {}) {
+export function startDetached(file, args, { env = process.env, launcher = windowsLauncher() } = {}) {
+  if (!fs.existsSync(launcher)) {
+    throw new Error(`could not start the session manager: ${launcher} is missing; in a checkout, run npm run build:windows (it needs Visual Studio Build Tools with C++)`);
+  }
   let out;
   try {
-    out = execFileSync(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(startProcessScript(file, args), 'utf16le').toString('base64')], {
-      env, encoding: 'utf8', windowsHide: true, timeout: 30000, stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    out = execFileSync(launcher, [file, ...args], { env, encoding: 'utf8', windowsHide: true, timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] });
   } catch (err) {
-    const why = `${err.stderr || ''}`.trim().split(/\r?\n/)[0] || err.message;
-    throw new Error(`could not start the session manager: Windows PowerShell did not start it (${why})`);
+    throw new Error(`could not start the session manager: ${`${err.stderr || ''}`.trim() || err.message}`);
   }
-  const pid = Number(out.trim().split(/\r?\n/).pop());
-  if (!(pid > 0)) throw new Error(`could not start the session manager: Windows PowerShell reported no process (${out.trim()})`);
+  const pid = Number(out.trim());
+  if (!(pid > 0)) throw new Error(`could not start the session manager: ${launcher} reported no process (${out.trim()})`);
   return { pid };
 }
 
@@ -71,7 +69,7 @@ export function spawnManager({ env = process.env, note = 'starting manager' } = 
   fs.writeSync(log, `\n--- ${note} ${new Date().toISOString()} ---\n`);
   if (process.platform === 'win32') {
     fs.closeSync(log);
-    return startHidden(process.execPath, [MANAGER_ENTRY, '--own-log'], { env });
+    return startDetached(process.execPath, [MANAGER_ENTRY, '--own-log'], { env });
   }
   const child = spawn(process.execPath, [MANAGER_ENTRY], {
     detached: true,

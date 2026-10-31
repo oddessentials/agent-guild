@@ -25,7 +25,8 @@ npm install
 npm test
 ```
 
-* Node.js 22 or newer, plain ES modules, no build step for the manager or the page.
+* Node.js 22 or newer, plain ES modules, no build step for the manager or the page, except on Windows:
+  `npm run build:windows` builds the launcher that starts the manager (it needs Visual Studio Build Tools with C++).
 * The API is a contract: a change to it updates `docs/api.md` in the same change.
 * Never print, log or return the API token or the page link (`#token=`).
 * Pull request titles follow Conventional Commits; a `feat` or `fix` merged

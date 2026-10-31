@@ -1,4 +1,5 @@
 node_modules/
+bin/windows/
 *.log
 .DS_Store
 Thumbs.db

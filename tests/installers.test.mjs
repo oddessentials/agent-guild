@@ -168,7 +168,10 @@ test('install.sh under dash without SHELL in its environment falls back to .prof
 test('the Windows installer stops the manager only once uninstalling is confirmed, and changes no file while the install\'s Node.js still runs', () => {
   const iss = fs.readFileSync(path.resolve('installers/windows/agent-guild.iss'), 'utf8');
   assert.doesNotMatch(iss, /InitializeUninstall/, 'Inno Setup runs it before the confirmation dialog');
-  assert.match(iss, /function StopManager: Boolean;[\s\S]*?' stop'[\s\S]*?Result := not NodeRunning\(Node\);/, 'stopping is confirmed by no process running the install\'s Node.js');
+  assert.match(iss, /function StopManager: Boolean;[\s\S]*?' stop'[\s\S]*?Result := NodeState\(Node\) = NODE_GONE;/, 'stopping is confirmed by no process running the install\'s Node.js');
+  assert.doesNotMatch(iss, /powershell/i, 'Windows PowerShell can take half a minute to start');
+  assert.match(iss, /CreateToolhelp32Snapshot@kernel32\.dll[\s\S]*QueryFullProcessImageNameW@kernel32\.dll/);
+  assert.match(iss, /if Unknown or \(DLLGetLastError <> ERROR_NO_MORE_FILES\) then\s*Result := NODE_UNKNOWN/, 'a process that cannot be inspected never counts as stopped');
   assert.match(iss, /function PrepareToInstall[\s\S]*?if StopManager then\s*Result := ''\s*else\s*Result := '[^']+';/, 'Setup stops before changing files');
   assert.match(iss, /if CurUninstallStep = usUninstall then\s*begin\s*if not StopManager then\s*begin\s*SuppressibleMsgBox\([^;]*\);\s*Abort;\s*end;\s*RemoveFromPath/, 'Uninstall stops before removing anything');
   assert.doesNotMatch(iss, /[^e]MsgBox\(/, 'a message box that cannot be suppressed would hold a silent uninstall forever');
@@ -241,6 +244,18 @@ test('the Windows install test gives each operation 3 minutes, refuses to instal
   for (const name of ['smoke test', 'open', 'reinstall over the running manager', 'uninstall']) assert.match(job, new RegExp(`& \\$op '${name}' \\{`), `${name} is not bounded`);
   assert.match(job, /& \$op 'reinstall while the install''s Node\.js runs' \{ & \$install 7 \}/);
   assert.match(job, /& \$annotate error 'Processes from this test still run'/);
+});
+
+test('a pull request packs and tests CI\'s unsigned launcher, and a release packs only the launcher sign.yml signed', () => {
+  const ci = fs.readFileSync(path.resolve('.github/workflows/ci.yml'), 'utf8');
+  const sign = fs.readFileSync(path.resolve('.github/workflows/sign.yml'), 'utf8');
+  const ciJob = (name) => ci.match(new RegExp(`\\n  ${name}:\\n([\\s\\S]*?)(?=\\n  [a-z-]+:\\n|$)`))[1];
+  assert.match(ciJob('launcher'), /node scripts\/build-windows-launcher\.mjs x64 arm64[\s\S]*name: windows-launcher\n\s+path: bin\/windows\/\n\s+if-no-files-found: error/);
+  assert.match(ciJob('pack'), /needs: launcher\n/);
+  assert.match(ciJob('pack'), /name: windows-launcher\n\s+path: bin\/windows\n[\s\S]*bin\/windows\/\*\) cp "\$RUNNER_TEMP\/windows-modules\/upstream\/\$rel"[\s\S]*cp "\$RUNNER_TEMP\/windows-modules\/\$rel" "\$rel"[\s\S]*--upstream/, 'a release replaces CI\'s launcher with the signed one and compares it with sign.yml\'s own unsigned build');
+  assert.match(ciJob('test'), /needs: \[[^\]]*launcher\]/);
+  assert.match(ciJob('test'), /if: runner\.os == 'Windows'\n\s+uses: actions\/download-artifact@\S+ # \S+\n\s+with:\n\s+name: windows-launcher\n\s+path: bin\/windows\n/);
+  assert.match(sign, /run: node scripts\/build-windows-launcher\.mjs x64 arm64\n[\s\S]*check-tarball\.mjs --windows-modules[\s\S]*-like 'bin\/windows\/\*'[\s\S]*"upstream\/\$rel"/);
 });
 
 const GNU_SHA256SUM = process.platform !== 'win32' && /GNU/.test(execFileSync('/bin/sh', ['-c', 'sha256sum --version 2>/dev/null || true'], { encoding: 'utf8' }));

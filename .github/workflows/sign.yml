@@ -20,21 +20,32 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          sparse-checkout: tests/package
+          sparse-checkout: |
+            tests/package
+            native
+            scripts
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: npm
       - run: npm ci --omit=dev --ignore-scripts
+      - run: node scripts/build-windows-launcher.mjs x64 arm64
+      # The launcher's unsigned build goes along under upstream/, unsigned, for Pack to compare the signed one with.
       - id: stage
         shell: pwsh
         run: |
           $dir = Join-Path $env:RUNNER_TEMP 'windows-modules'
-          $files = node tests/package/check-tarball.mjs --windows-modules | ForEach-Object {
+          $modules = @(node tests/package/check-tarball.mjs --windows-modules)
+          $files = $modules | ForEach-Object {
             $to = [IO.Path]::GetFullPath((Join-Path $dir $_))
             New-Item -ItemType Directory -Force (Split-Path $to) | Out-Null
             Copy-Item -LiteralPath $_ $to
             $to
+          }
+          foreach ($rel in $modules -like 'bin/windows/*') {
+            $to = [IO.Path]::GetFullPath((Join-Path $dir "upstream/$rel"))
+            New-Item -ItemType Directory -Force (Split-Path $to) | Out-Null
+            Copy-Item -LiteralPath $rel $to
           }
           "files<<EOF`n$($files -join "`n")`nEOF" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
       - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
