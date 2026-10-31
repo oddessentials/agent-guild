@@ -26,7 +26,16 @@ walk the Yard in your browser. Simulated, free, no account and nothing installed
 
 ## Quick start
 
-With Node.js 22 or newer:
+<p align="center">
+  <a href="https://github.com/oddessentials/agent-guild/releases/latest/download/agent-guild-windows-setup.exe"><picture><source media="(prefers-color-scheme: light)" srcset="docs/images/download-windows-light.webp"><img src="docs/images/download-windows-dark.webp" alt="Download Agent Guild for Windows" width="180"></picture></a>
+  <a href="https://github.com/oddessentials/agent-guild/releases/latest/download/agent-guild-macos.pkg"><picture><source media="(prefers-color-scheme: light)" srcset="docs/images/download-macos-light.webp"><img src="docs/images/download-macos-dark.webp" alt="Download Agent Guild for macOS" width="180"></picture></a>
+  <a href="https://github.com/oddessentials/agent-guild/releases/latest/download/agent-guild-linux-x64.tar.gz"><picture><source media="(prefers-color-scheme: light)" srcset="docs/images/download-linux-x64-light.webp"><img src="docs/images/download-linux-x64-dark.webp" alt="Download Agent Guild for Linux x64" width="180"></picture></a>
+  <a href="https://github.com/oddessentials/agent-guild/releases/latest/download/agent-guild-linux-arm64.tar.gz"><picture><source media="(prefers-color-scheme: light)" srcset="docs/images/download-linux-arm64-light.webp"><img src="docs/images/download-linux-arm64-dark.webp" alt="Download Agent Guild for Linux arm64" width="180"></picture></a>
+</p>
+
+<p align="center"><sub>On Linux, extract the download and run <code>./install.sh</code>. · <a href="https://github.com/oddessentials/agent-guild/releases/latest">All downloads and checksums</a></sub></p>
+
+Or install with npm, on Node.js 22 or newer:
 
 ```sh
 npm install -g @oddessentials/agent-guild

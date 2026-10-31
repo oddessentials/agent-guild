@@ -18,7 +18,16 @@ Agent Guild 是一个运行在你电脑上的小管理器，提供一个本地�
 
 ## 快速开始
 
-需要 Node.js 22 或更新版本：
+<p align="center">
+  <a href="https://github.com/oddessentials/agent-guild/releases/latest/download/agent-guild-windows-setup.exe"><picture><source media="(prefers-color-scheme: light)" srcset="docs/images/download-windows-light.webp"><img src="docs/images/download-windows-dark.webp" alt="下载 Agent Guild Windows 版" width="180"></picture></a>
+  <a href="https://github.com/oddessentials/agent-guild/releases/latest/download/agent-guild-macos.pkg"><picture><source media="(prefers-color-scheme: light)" srcset="docs/images/download-macos-light.webp"><img src="docs/images/download-macos-dark.webp" alt="下载 Agent Guild macOS 版" width="180"></picture></a>
+  <a href="https://github.com/oddessentials/agent-guild/releases/latest/download/agent-guild-linux-x64.tar.gz"><picture><source media="(prefers-color-scheme: light)" srcset="docs/images/download-linux-x64-light.webp"><img src="docs/images/download-linux-x64-dark.webp" alt="下载 Agent Guild Linux x64 版" width="180"></picture></a>
+  <a href="https://github.com/oddessentials/agent-guild/releases/latest/download/agent-guild-linux-arm64.tar.gz"><picture><source media="(prefers-color-scheme: light)" srcset="docs/images/download-linux-arm64-light.webp"><img src="docs/images/download-linux-arm64-dark.webp" alt="下载 Agent Guild Linux arm64 版" width="180"></picture></a>
+</p>
+
+<p align="center"><sub>Linux 上解压后运行 <code>./install.sh</code>。 · <a href="https://github.com/oddessentials/agent-guild/releases/latest">全部下载与校验和</a></sub></p>
+
+或者用 npm 安装，需要 Node.js 22 或更新版本：
 
 ```sh
 npm install -g @oddessentials/agent-guild
