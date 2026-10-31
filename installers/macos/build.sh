@@ -54,7 +54,7 @@ for arch in arm64 x64; do
   pkgbuild --quiet --root "$top" --identifier ai.oddessentials.agent-guild --version "$version" \
     --install-location /.local/share/agent-guild-setup --scripts "$work/scripts" "$work/agent-guild.pkg"
   sed -e "s/@ARCH@/$host/" -e "s/@VERSION@/$version/" "$here/distribution.xml" > "$work/distribution.xml"
-  pkg="$out/agent-guild-$version-macos-$arch.pkg"
+  pkg="$out/agent-guild-macos-$arch.pkg"
   productbuild --quiet --distribution "$work/distribution.xml" --package-path "$work" --sign "$inst" --keychain "$kc" --timestamp "$pkg"
   rm -f "$work/agent-guild.pkg"
 

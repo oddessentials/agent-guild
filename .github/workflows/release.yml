@@ -115,7 +115,7 @@ jobs:
         run: |
           sha256sum --check SHA256SUMS
           tag="v$VERSION"
-          installers=("agent-guild-$VERSION-windows-setup.exe" "agent-guild-$VERSION-linux-x64.tar.gz" "agent-guild-$VERSION-linux-arm64.tar.gz" "agent-guild-$VERSION-macos-arm64.pkg" "agent-guild-$VERSION-macos-x64.pkg")
+          installers=(agent-guild-windows-setup.exe agent-guild-linux-x64.tar.gz agent-guild-linux-arm64.tar.gz agent-guild-macos-arm64.pkg agent-guild-macos-x64.pkg)
           sha256sum -- "${installers[@]}" >> SHA256SUMS
           art() { tar -xzOf ./*.tgz package/web/yard/art.json | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).archive.$1"; }
           name=$(art name)

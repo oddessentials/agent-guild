@@ -229,7 +229,7 @@ test('a release builds and tests the installers for its planned version before n
   for (const name of ['installers', 'draft', 'publish', 'release']) assert.doesNotMatch(job(name), /^    if:/m, `${name} runs only when what it needs succeeded`);
 });
 
-const INSTALLERS = ['agent-guild-VERSION-windows-setup.exe', 'agent-guild-VERSION-linux-x64.tar.gz', 'agent-guild-VERSION-linux-arm64.tar.gz', 'agent-guild-VERSION-macos-arm64.pkg', 'agent-guild-VERSION-macos-x64.pkg'];
+const INSTALLERS = ['agent-guild-windows-setup.exe', 'agent-guild-linux-x64.tar.gz', 'agent-guild-linux-arm64.tar.gz', 'agent-guild-macos-arm64.pkg', 'agent-guild-macos-x64.pkg'];
 
 function draftRun(t, { missing = null, altered = null } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-draft-'));
@@ -247,7 +247,7 @@ function draftRun(t, { missing = null, altered = null } = {}) {
   execFileSync('tar', ['-czf', path.join(work, `oddessentials-agent-guild-${version}.tgz`), '-C', root, 'package']);
   execFileSync('/bin/sh', ['-c', 'sha256sum -- *.tgz yard-art-*.tar.gz > SHA256SUMS'], { cwd: work });
   fs.writeFileSync(path.join(work, 'notes.md'), 'notes');
-  const installers = INSTALLERS.map((name) => name.replace('VERSION', version));
+  const installers = INSTALLERS;
   for (const name of installers) if (name !== missing) fs.writeFileSync(path.join(work, name), name);
   fs.writeFileSync(path.join(bin, 'gh'), `#!/bin/sh
 echo "$*" >> "$GH_LOG"

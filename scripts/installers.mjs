@@ -105,8 +105,8 @@ async function posix({ tgz, out, cache, os, node }) {
 export async function linux({ tgz, out, cache }) {
   const { version, dirs } = await posix({ tgz, out, cache, os: 'linux', node: 'linux' });
   const tarballs = [];
-  for (const top of dirs) {
-    const tarball = path.join(out, `${path.basename(top)}.tar.gz`);
+  for (const [i, top] of dirs.entries()) {
+    const tarball = path.join(out, `agent-guild-linux-${ARCHES[i]}.tar.gz`);
     execFileSync(TAR, ['-czf', tarball, '-C', path.dirname(top), path.basename(top)], { stdio: 'inherit' });
     tarballs.push(tarball);
   }

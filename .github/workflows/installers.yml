@@ -72,7 +72,7 @@ jobs:
           $sign = "pwsh.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `$q$env:GITHUB_WORKSPACE\installers\windows\sign.ps1`$q -Tools `$q$env:RUNNER_TEMP\signing-tools`$q -Endpoint https://eus.codesigning.azure.net -Account agent-guild-signing -CertificateProfile agent-guild-public -Files `$f"
           & $env:ISCC /Q "/DVersion=$env:VERSION" "/DStage=$env:RUNNER_TEMP\installers\windows" "/DOutput=$env:RUNNER_TEMP\installer" /DSign "/Sagentguild=$sign" installers\windows\agent-guild.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE." }
-          $setup = Join-Path $env:RUNNER_TEMP "installer\agent-guild-$env:VERSION-windows-setup.exe"
+          $setup = Join-Path $env:RUNNER_TEMP "installer\agent-guild-windows-setup.exe"
           $signature = Get-AuthenticodeSignature -LiteralPath $setup
           if ($signature.Status -ne 'Valid' -or -not $signature.TimeStamperCertificate -or $signature.SignerCertificate.Subject -ne $env:PUBLISHER) {
             throw "$setup is not signed and timestamped by $env:PUBLISHER ($($signature.Status), $($signature.SignerCertificate.Subject))."
@@ -205,7 +205,7 @@ jobs:
               if ((& $terminal 'guild-ci-tool' $shell) -ne (Join-Path $app 'node.exe')) { throw "A command npm installed into the folder does not run on the bundled Node.js from a new $shell terminal $when." }
             }
           }
-          $setup = Join-Path $env:RUNNER_TEMP "installer\agent-guild-$env:VERSION-windows-setup.exe"
+          $setup = Join-Path $env:RUNNER_TEMP "installer\agent-guild-windows-setup.exe"
           $install = {
             $log = Join-Path $env:RUNNER_TEMP "setup-$(Get-Random).log"
             $run = Start-Process -Wait -PassThru -FilePath $setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=$log"
@@ -286,7 +286,7 @@ jobs:
         run: |
           export HOME="$RUNNER_TEMP/home" SHELL=/bin/bash
           mkdir "$HOME" "$RUNNER_TEMP/unpacked"
-          tar -xzf "$RUNNER_TEMP/installer/agent-guild-$VERSION-linux-$ARCH.tar.gz" -C "$RUNNER_TEMP/unpacked"
+          tar -xzf "$RUNNER_TEMP/installer/agent-guild-linux-$ARCH.tar.gz" -C "$RUNNER_TEMP/unpacked"
           setup="$RUNNER_TEMP/unpacked/agent-guild-$VERSION-linux-$ARCH/install.sh"
           app="$HOME/.local/share/agent-guild"
           data=$(bash -lc 'printf %s "${XDG_CONFIG_HOME:-$HOME/.config}/agent-guild"')
@@ -347,7 +347,7 @@ jobs:
           VERSION: ${{ inputs.version }}
           ARCH: ${{ matrix.arch }}
         run: |
-          pkg="$RUNNER_TEMP/installer/agent-guild-$VERSION-macos-$ARCH.pkg"
+          pkg="$RUNNER_TEMP/installer/agent-guild-macos-$ARCH.pkg"
           receipt=ai.oddessentials.agent-guild
           app="$HOME/.local/share/agent-guild"
           data="$HOME/Library/Application Support/AgentGuild"
