@@ -321,7 +321,8 @@ jobs:
             $holder.WaitForExit(10000) | Out-Null
           }
           # node-pty's console host, as a terminal session leaves it: hosting a shell, with no window.
-          $console = Join-Path $app "node_modules\node-pty\prebuilds\win32-$want\conpty\OpenConsole.exe"
+          $console = Join-Path $package "node_modules\node-pty\prebuilds\win32-$want\conpty\OpenConsole.exe"
+          if (-not (Test-Path -LiteralPath $console)) { throw "node-pty's console host is not at $console." }
           $holder = Start-Process -FilePath $console -ArgumentList '--headless', '--', 'cmd.exe', '/d', '/c', 'ping -n 601 127.0.0.1' -PassThru
           try {
             & $op 'reinstall while a session''s console host runs' { & $install 7 }

@@ -256,7 +256,7 @@ test('the Windows install test gives each operation 3 minutes, refuses to instal
   assert.match(job, /Start-ThreadJob[\s\S]*TotalSeconds -lt 180/);
   for (const name of ['smoke test', 'open', 'reinstall over the running manager', 'uninstall']) assert.match(job, new RegExp(`& \\$op '${name}' \\{`), `${name} is not bounded`);
   assert.match(job, /& \$op 'reinstall while the install''s Node\.js runs' \{ & \$install 7 \}/);
-  assert.match(job, /\$console = Join-Path \$app "node_modules\\node-pty\\prebuilds\\win32-\$want\\conpty\\OpenConsole\.exe"\n\s+\$holder = Start-Process -FilePath \$console -ArgumentList '--headless', '--', 'cmd\.exe', /, 'the installed console host runs, hosting a shell, as a session leaves it');
+  assert.match(job, /\$console = Join-Path \$package "node_modules\\node-pty\\prebuilds\\win32-\$want\\conpty\\OpenConsole\.exe"\n\s+if \(-not \(Test-Path -LiteralPath \$console\)\) \{ throw "[^"]+" \}\n\s+\$holder = Start-Process -FilePath \$console -ArgumentList '--headless', '--', 'cmd\.exe', /, 'the console host node-pty bundles inside the package runs, hosting a shell, as a session leaves it');
   assert.match(job, /& \$op 'reinstall while a session''s console host runs' \{ & \$install 7 \}/);
   assert.match(job, /& \$op 'uninstall while a session''s console host runs' \{[\s\S]*?wait-process\.ps1 -Process \$un -Name 'Uninstall'[\s\S]*?\}\n\s+if \(-not \(Test-Path \(Join-Path \$package 'ci-untouched'\)\) -or -not \(& \$onPath \$launcher\)\)/, 'Uninstall refuses while it runs');
   assert.match(job, /& \$annotate error 'Processes from this test still run'/);
