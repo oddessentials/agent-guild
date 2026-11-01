@@ -334,8 +334,15 @@ jobs:
             if (-not (Test-Path (Join-Path $package 'ci-untouched')) -or -not (& $onPath $launcher)) { throw 'Uninstall removed files while a session''s console host ran.' }
           }
           finally {
-            Stop-Process -Id $holder.Id -Force -ErrorAction SilentlyContinue
-            $holder.WaitForExit(10000) | Out-Null
+            # The shell and ping it hosts outlive the host: stop the whole tree and wait for each.
+            $all = Get-CimInstance Win32_Process
+            $ids = @([uint32]$holder.Id)
+            do {
+              $more = @($all | Where-Object { $ids -contains $_.ParentProcessId -and $ids -notcontains $_.ProcessId })
+              if ($more) { $ids += $more.ProcessId }
+            } while ($more)
+            foreach ($id in $ids) { Stop-Process -Id $id -Force -ErrorAction SilentlyContinue }
+            foreach ($id in $ids) { $p = Get-Process -Id $id -ErrorAction SilentlyContinue; if ($p) { $p.WaitForExit(10000) | Out-Null } }
           }
           Remove-Item -LiteralPath (Join-Path $package 'ci-untouched')
 
