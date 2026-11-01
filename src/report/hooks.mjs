@@ -260,6 +260,7 @@ export function hookToReports(input) {
   const toolSessionId = insideSubagent ? null : text(input.session_id, input.sessionId, input.conversationId);
   const source = event === 'SessionStart' ? text(input.source) : null;
   if (toolSessionId && (event === 'SessionStart' || event === 'PreInvocation')) reports.push(source ? { toolSessionId, source } : { toolSessionId });
+  else if (toolSessionId && !toolEvent && !PERMISSION_EVENTS.has(event)) reports.push({ toolSessionId, fallback: true });
   return reports;
 }
 

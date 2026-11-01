@@ -172,6 +172,15 @@ test('a reset is a new tool session the tool started over in, not its first, a r
   assert.equal(resets(), 3, 'Codex CLI /new, Grok Build /clear and /new');
   for (const source of ['resume', 'load', 'fork', undefined]) session.reportToolSession({ toolSessionId: `other-${source}`, source });
   assert.equal(resets(), 3);
+  assert.equal(session.reportToolSession({ toolSessionId: 's5', fallback: true }), 'other-undefined', 'a turn event never replaces a known id');
+  session.reportToolSession({ toolSessionId: 's5', source: 'clear' });
+  assert.equal(resets(), 4, 'so the SessionStart that follows still counts the reset');
+});
+
+test('a turn event names a session whose SessionStart never ran', (t) => {
+  const { session } = createSession(t);
+  assert.equal(session.reportToolSession({ toolSessionId: 'r1', fallback: true }), 'r1');
+  assert.equal(session.toJSON().context.resets, 0);
 });
 
 test('a restored card keeps its counts, and only counts', (t) => {
