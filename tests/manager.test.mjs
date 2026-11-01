@@ -14,6 +14,7 @@ import { startFakeGitHub } from './fixtures/fake-github.mjs';
 import { sessionLabel } from '../web/activity-favicon.js';
 import { spokenText } from '../src/manager/spoken-text.mjs';
 import { isSessionWorking } from '../web/activity-favicon.js';
+import { nativeReporter } from '../src/manager/report-shims.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 // By real path: macOS's temp folder is under /var, a link to /private/var, which the strict uninstall runner refuses to
@@ -1519,10 +1520,13 @@ test('agents can be reported over HTTP with the session report token', async () 
   await call('DELETE', `/sessions/${session.id}`);
 });
 
-test('Claude Code sub-agent hooks reach the session through agent-guild-report', async () => {
+const nativeBuild = nativeReporter(path.resolve(here, '..'));
+for (const [via, [file, args]] of [
+  ['agent-guild-report', [process.execPath, [path.resolve(here, '../bin/agent-guild-report.mjs'), '--hook']]],
+  ['the native agent-guild-report', [nativeBuild, ['--hook']]],
+]) test(`Claude Code sub-agent hooks reach the session through ${via}`, { skip: !file && 'no native reporter is built for this computer' }, async () => {
   const session = await createFake();
   const managed = ctx.manager.get(session.id);
-  const reporter = path.resolve(here, '../bin/agent-guild-report.mjs');
   const env = {
     ...process.env,
     AGENT_GUILD_URL: base,
@@ -1530,7 +1534,7 @@ test('Claude Code sub-agent hooks reach the session through agent-guild-report',
     AGENT_GUILD_REPORT_TOKEN: managed.reportToken,
   };
   const runHook = (payload) => new Promise((resolve, reject) => {
-    const child = execFile(process.execPath, [reporter, '--hook'], { env, timeout: 10000 }, (err, stdout, stderr) => {
+    const child = execFile(file, args, { env, timeout: 10000 }, (err, stdout, stderr) => {
       if (err) reject(new Error(`${err.message}\n${stderr}`)); else resolve(stderr);
     });
     child.stdin.end(JSON.stringify(payload));
@@ -2981,4 +2985,52 @@ test('the runtime file lets other clients discover the manager', () => {
   assert.equal(runtime.url, base);
   assert.equal(runtime.pid, process.pid);
   assert.equal(fs.readFileSync(path.join(home, 'auth-token'), 'utf8').trim(), token);
+});
+
+test('a hook event sent whole to the manager reports as agent-guild-report would report it', { timeout: 30000 }, async (t) => {
+  const session = await createFake();
+  t.after(() => call('DELETE', `/sessions/${session.id}`));
+  const managed = ctx.manager.get(session.id);
+  const hook = async (payload, query = '', reportHeader = managed.reportToken) => {
+    const res = await fetch(`${base}/api/v1/sessions/${session.id}/hook${query}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Agent-Guild-Report-Token': reportHeader },
+      body: JSON.stringify(payload),
+    });
+    return { status: res.status, body: await res.json() };
+  };
+  const now = () => managed.toJSON();
+
+  const refused = await hook({}, '', 'wrong');
+  assert.deepEqual([refused.status, refused.body.error.code], [401, 'unauthorized']);
+  assert.equal((await hook({}, `?event=${'E'.repeat(200)}`)).status, 400);
+  assert.equal((await hook({}, '?event=Pre%0AToolUse')).status, 400, 'a control character in a parameter');
+
+  const common = { session_id: 'claude-session', cwd: home, transcript_path: '/tmp/t.jsonl' };
+  assert.deepEqual(await hook({ ...common, hook_event_name: 'SubagentStart', agent_id: 'agent-7', agent_type: 'Explore' }), { status: 200, body: { ok: true } });
+  assert.deepEqual(now().agents.map((a) => [a.id, a.name, a.status]), [['hook-agent-7', 'Explore', 'working']]);
+  await hook({ ...common, hook_event_name: 'SubagentStop', agent_id: 'agent-7', agent_type: 'Explore' });
+  assert.equal(now().agents[0].status, 'done');
+
+  await hook({ ...common, tool_name: 'Bash', tool_use_id: 'toolu_whole', tool_input: { command: 'npm test' } }, '?event=PreToolUse');
+  assert.equal(managed.shells.size, 1, 'the event the query names starts the command');
+  await hook({ ...common, hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_use_id: 'toolu_whole', tool_response: { stdout: 'ok'.repeat(100000) } });
+  assert.equal(managed.shells.size, 0, 'an event larger than the other report routes take ends it');
+
+  await hook({ session_id: 'docker-main', hook_event_name: 'session_start', agent_name: 'root', source: 'startup' }, '?reporting=docker');
+  assert.equal(now().toolSessionId, 'docker-main');
+
+  const transcript = path.join(home, 'whole-hook-transcript.jsonl');
+  fs.writeFileSync(transcript, `${JSON.stringify({ type: 'system', subtype: 'compact_boundary', uuid: 'boundary-1', timestamp: new Date().toISOString() })}\n`);
+  assert.deepEqual(await hook({ ...common, hook_event_name: 'PostCompact', trigger: 'manual', compact_summary: 'Summary', transcript_path: transcript }), { status: 200, body: { ok: true } });
+  await waitFor(() => now().context.compactions === 1, { label: 'the compaction', timeout: 5000 });
+
+  const agyTranscript = path.join(home, 'whole-hook-agy.jsonl');
+  fs.writeFileSync(agyTranscript, `${JSON.stringify({ source: 'USER_EXPLICIT', type: 'USER_INPUT', content: 'hi' })}\n`);
+  await hook({ conversationId: 'agy-whole', modelName: 'gemini-3', transcriptPath: agyTranscript }, '?event=PreInvocation&reporting=antigravity');
+  assert.equal(now().toolSessionId, 'agy-whole');
+
+  assert.deepEqual(await hook({ hook_event_name: 'SessionStart', session_id: 'x'.repeat(201), source: 'startup' }),
+    { status: 200, body: { ok: true, errors: [{ status: 400, message: 'toolSessionId must be a printable id of at most 200 characters' }] } });
+  assert.equal(now().toolSessionId, 'agy-whole', 'a refused report changes nothing');
 });

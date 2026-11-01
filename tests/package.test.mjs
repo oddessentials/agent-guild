@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { readTar, checkPackage, peLayout, signedFrom, WINDOWS_MODULES } from './package/check-tarball.mjs';
+import { readTar, checkPackage, peLayout, signedFrom, WINDOWS_MODULES, NATIVE_REPORTERS } from './package/check-tarball.mjs';
 import { generateNotes } from '../.github/release/capture.mjs';
 import { parseNotes } from '../src/manager/changelog.mjs';
 
@@ -80,6 +80,7 @@ function goodPackage({ manifest = {}, without = [], extra = [] } = {}) {
     ['node_modules/dep/prebuilds/darwin-arm64/spawn-helper', ['helper', { mode: 0o755 }]],
     ['node_modules/@scope/other/package.json', [JSON.stringify({ version: '2.0.0' })]],
     ...[...upstreamModules].map(([rel, body]) => [rel, [body]]),
+    ...NATIVE_REPORTERS.map((rel) => [rel, ['reporter', { mode: 0o755 }]]),
     ...extra,
   ]);
   for (const name of without) files.delete(name);
@@ -140,6 +141,12 @@ test('the package check names every way a tarball can be wrong', () => {
     ['node_modules/dep/prebuilds/darwin-arm64/spawn-helper is not executable (mode 644); pack on Linux or macOS']);
   assert.deepEqual(problems({ without: ['node_modules/dep/prebuilds/darwin-arm64/spawn-helper'] }),
     ['no spawn-helper was found; node-pty needs it to start terminals on macOS']);
+  assert.deepEqual(problems({ without: ['bin/native/linux-arm64/agent-guild-report'] }),
+    ['bin/native/linux-arm64/agent-guild-report is missing; it is the native hook reporter for linux-arm64']);
+  assert.deepEqual(problems({ extra: [['bin/native/darwin-x64/agent-guild-report', ['reporter', { mode: 0o644 }]]] }),
+    ['bin/native/darwin-x64/agent-guild-report is not executable (mode 644)'], 'artifacts lose file modes, so Pack sets them again');
+  assert.deepEqual(problems({ without: ['bin/native/win32-arm64/agent-guild-report.exe'] }),
+    ['bin/native/win32-arm64/agent-guild-report.exe is missing; it is one of the Windows modules the release signs']);
 
   const outside = [...goodPackage(), ...readTar(tar(entry('elsewhere/file', 'x')))];
   assert.deepEqual(checkPackage({ entries: outside, lock, version: '1.2.3' }), ['elsewhere/file is outside package/']);

@@ -242,6 +242,30 @@ try {
   socket.send(JSON.stringify({ type: 'input', data: 'agent-guild-report --help\r' }));
   await seen(() => /Usage: agent-guild-report/.test(plain(screen)), 'agent-guild-report inside the session');
   pass('agent-guild-report runs inside the session');
+
+  const sessionId = created.body.session.id;
+  const hookLine = (command, id) => {
+    const event = JSON.stringify({ hook_event_name: 'SessionStart', session_id: id, source: 'startup' });
+    return win ? `'${event}' | ${command} --hook\r` : `printf '%s' '${event}' | ${command} --hook\r`;
+  };
+  const reported = (id, what) => seen(() => heard === id, what, 60000);
+  let heard = null;
+  const listen = setInterval(() => {
+    api('GET', `/sessions/${sessionId}`).then(({ body }) => { heard = body.session?.toolSessionId ?? heard; }, () => {});
+  }, 250);
+  try {
+    const native = fs.existsSync(path.join(packageDir, 'bin', 'native', `${process.platform}-${process.arch}`));
+    if (native) {
+      socket.send(JSON.stringify({ type: 'input', data: hookLine('agent-guild-report-native', 'smoke-native') }));
+      await reported('smoke-native', 'a hook event through the native agent-guild-report');
+      pass('the native agent-guild-report runs inside the session', `${process.platform}-${process.arch}`);
+    }
+    socket.send(JSON.stringify({ type: 'input', data: hookLine('agent-guild-report', 'smoke-hook') }));
+    await reported('smoke-hook', 'a hook event through agent-guild-report');
+    pass('a hook event reaches the session through agent-guild-report', native ? 'which runs the native reporter' : 'with Node.js, as no native reporter is built for this computer');
+  } finally {
+    clearInterval(listen);
+  }
   socket.close();
 
   const status = await run('agent-guild', 'status');

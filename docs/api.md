@@ -674,6 +674,7 @@ All paths are under `/api/v1`.
 | POST | `/sessions/:id/reporting` | | `{ reporting }`: the tool's hooks announce themselves. |
 | POST | `/sessions/:id/docker` | `{ event, sessionId, agentName?, toolName?, toolUseId?, command?, model?, reply? }` | `{ ok }`. One Docker Agent hook event. |
 | POST | `/sessions/:id/shells` | `{ shell, key \| task, match?, agentId?, persist?, endsWithAgent?, kind?, tasks? }` | `{ ok }`. A shell command the tool started, ended or put in the background. |
+| POST | `/sessions/:id/hook?event=&reporting=` | A coding tool's hook event, as the tool gives it to its hooks | `{ ok }`, or `{ ok, errors }` when reports the event makes are refused, each `{ status, code?, message }` as its own route would answer. The manager turns the event into the session's reports as `agent-guild-report --hook` does. `event` names an event that does not name itself; `reporting` is the session's `AGENT_GUILD_REPORTING` where the hook ran, and defaults to the session's own. A transcript the event names is read only if it is a regular file. |
 | POST | `/shutdown` | `{ force?, restart? }` | `202 { ok, running, restart }`: stops the manager and every session, detaching tmux and herdr sessions. 409 `sessions_running` (with `running`) while other sessions run; retry with `force: true` after the user confirms. With `restart`, a new manager takes over on the same port and token, running the version on disk. |
 
 `cwd` defaults to the user's home folder, and a leading `~` is expanded.
@@ -686,14 +687,15 @@ session the card holds; renaming the card to its default name drops it for
 the tool session it holds then.
 
 The `POST /sessions/:id/…` report routes (`agents`, `model`, `tool-session`,
-`context`, `reply`, `reporting`, `docker` and `shells`) also accept the per-session
+`context`, `reply`, `reporting`, `docker`, `shells` and `hook`) also accept the per-session
 report token instead of the API token, in an `X-Agent-Guild-Report-Token`
 header. The manager gives that token only to the processes inside that
 session.
 
 Request bodies are limited to 64 KiB, except `PUT /notes`,
 `POST /sessions/:id/reply` and `POST /sessions/:id/docker`, which accept
-1 MiB. Messages a client sends on a WebSocket are limited to 1 MiB.
+1 MiB, and `POST /sessions/:id/hook`, which accepts 32 MiB and checks the token
+before reading the body. Messages a client sends on a WebSocket are limited to 1 MiB.
 
 ## WebSockets
 

@@ -30,7 +30,8 @@ jobs:
           cache: npm
       - run: npm ci --omit=dev --ignore-scripts
       - run: node scripts/build-windows-launcher.mjs x64 arm64
-      # The launcher's unsigned build goes along under upstream/, unsigned, for Pack to compare the signed one with.
+      - run: rustup target add x86_64-pc-windows-msvc aarch64-pc-windows-msvc
+      - run: node scripts/build-reporter.mjs win32-x64 win32-arm64
       - id: stage
         shell: pwsh
         run: |
@@ -42,7 +43,7 @@ jobs:
             Copy-Item -LiteralPath $_ $to
             $to
           }
-          foreach ($rel in $modules -like 'bin/windows/*') {
+          foreach ($rel in $modules | Where-Object { $_ -like 'bin/windows/*' -or $_ -like 'bin/native/*' }) {
             $to = [IO.Path]::GetFullPath((Join-Path $dir "upstream/$rel"))
             New-Item -ItemType Directory -Force (Split-Path $to) | Out-Null
             Copy-Item -LiteralPath $rel $to

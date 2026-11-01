@@ -5,6 +5,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { pinsFrom } from '../scripts/node-pins.mjs';
+import { REPORTER_TARGETS } from '../scripts/build-reporter.mjs';
+import { WINDOWS_MODULES } from './package/check-tarball.mjs';
 
 const INSTALL_SH = path.resolve('installers/linux/install.sh');
 const ZSH = process.platform === 'win32' ? '' : execFileSync('/bin/sh', ['-c', 'command -v zsh || true'], { encoding: 'utf8' }).trim();
@@ -310,11 +312,28 @@ test('a pull request packs and tests CI\'s unsigned launcher, and a release pack
   const sign = fs.readFileSync(path.resolve('.github/workflows/sign.yml'), 'utf8');
   const ciJob = (name) => ci.match(new RegExp(`\\n  ${name}:\\n([\\s\\S]*?)(?=\\n  [a-z-]+:\\n|$)`))[1];
   assert.match(ciJob('launcher'), /node scripts\/build-windows-launcher\.mjs x64 arm64[\s\S]*name: windows-launcher\n\s+path: bin\/windows\/\n\s+if-no-files-found: error/);
-  assert.match(ciJob('pack'), /needs: launcher\n/);
+  assert.match(ciJob('pack'), /needs: \[launcher, reporter\]\n/);
   assert.match(ciJob('pack'), /name: windows-launcher\n\s+path: bin\/windows\n[\s\S]*bin\/windows\/\*\) cp "\$RUNNER_TEMP\/windows-modules\/upstream\/\$rel"[\s\S]*cp "\$RUNNER_TEMP\/windows-modules\/\$rel" "\$rel"[\s\S]*--upstream/, 'a release replaces CI\'s launcher with the signed one and compares it with sign.yml\'s own unsigned build');
-  assert.match(ciJob('test'), /needs: \[[^\]]*launcher\]/);
+  assert.match(ciJob('test'), /needs: \[[^\]]*launcher, reporter\]/);
   assert.match(ciJob('test'), /if: runner\.os == 'Windows'\n\s+uses: actions\/download-artifact@\S+ # \S+\n\s+with:\n\s+name: windows-launcher\n\s+path: bin\/windows\n/);
   assert.match(sign, /run: node scripts\/build-windows-launcher\.mjs x64 arm64\n[\s\S]*check-tarball\.mjs --windows-modules[\s\S]*-like 'bin\/windows\/\*'[\s\S]*"upstream\/\$rel"/);
+});
+
+test('CI builds and tests every platform\'s hook reporter, packs each executable, and a release signs the Windows ones', () => {
+  const ci = fs.readFileSync(path.resolve('.github/workflows/ci.yml'), 'utf8');
+  const sign = fs.readFileSync(path.resolve('.github/workflows/sign.yml'), 'utf8');
+  const ciJob = (name) => ci.match(new RegExp(`\\n  ${name}:\\n([\\s\\S]*?)(?=\\n  [a-z-]+:\\n|$)`))[1];
+  const reporter = ciJob('reporter');
+  assert.match(reporter, /rustup target add \$\{\{ matrix\.targets \}\}\n\s+- run: cargo test --locked --manifest-path native\/report\/Cargo\.toml\n\s+- run: node scripts\/build-reporter\.mjs \$\{\{ matrix\.builds \}\}\n[\s\S]*name: reporter-\$\{\{ matrix\.artifact \}\}\n\s+path: bin\/native\/\n\s+if-no-files-found: error/);
+  const rows = [...reporter.matchAll(/builds: ([a-z0-9 -]+), targets: ([a-z0-9_ -]+) \}/g)];
+  assert.deepEqual(rows.flatMap(([, builds]) => builds.split(' ')).sort(), Object.keys(REPORTER_TARGETS).sort(), 'every build the manager looks for');
+  for (const [, builds, targets] of rows) assert.deepEqual(targets.split(' '), builds.split(' ').map((build) => REPORTER_TARGETS[build]), 'with the Rust target each build needs');
+  assert.match(ciJob('pack'), /pattern: reporter-\*\n\s+path: bin\/native\n\s+merge-multiple: true\n\s+- run: chmod \+x bin\/native\/\*\/agent-guild-report\n/, 'artifacts lose file modes');
+  assert.match(ciJob('pack'), /bin\/native\/\*\|bin\/windows\/\*\) cp "\$RUNNER_TEMP\/windows-modules\/upstream\/\$rel"/, 'a release compares the signed reporter with sign.yml\'s own unsigned build');
+  assert.match(ciJob('test'), /name: reporter-\$\{\{ runner\.os == 'Windows' && 'windows' \|\| runner\.os == 'macOS' && 'macos' \|\| 'linux' \}\}\n\s+path: bin\/native\n/);
+  assert.doesNotMatch(ciJob('linux'), /reporter|bin\/native/, 'the Linux gate runs its hooks through the Node.js reporter');
+  assert.match(sign, /run: node scripts\/build-reporter\.mjs win32-x64 win32-arm64\n[\s\S]*check-tarball\.mjs --windows-modules[\s\S]*-like 'bin\/native\/\*'[\s\S]*"upstream\/\$rel"/);
+  for (const build of ['win32-x64', 'win32-arm64']) assert.ok(WINDOWS_MODULES.includes(`bin/native/${build}/agent-guild-report.exe`), `the release signs the ${build} reporter`);
 });
 
 const GNU_SHA256SUM = process.platform !== 'win32' && /GNU/.test(execFileSync('/bin/sh', ['-c', 'sha256sum --version 2>/dev/null || true'], { encoding: 'utf8' }));

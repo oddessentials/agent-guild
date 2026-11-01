@@ -17,8 +17,11 @@ import { SELF_PROVIDER } from './self-update.mjs';
 import { GITHUB_PROVIDER, dropsFromCloneEnv, parseRepo } from './github.mjs';
 import { pathIdentity } from './multiplexer-paths.mjs';
 import { cleanResumeId } from './resume-id.mjs';
+import { handleHookEvent } from '../report/hook-event.mjs';
 
 export const MAX_SESSIONS = 32;
+const TRUSTED = Object.freeze({ trusted: true });
+const unrefSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms).unref());
 const TMUX_SESSION_GONE = [/^can't find session/m, /^no server running on /m, /^error connecting to .*\(No such file or directory\)$/m];
 
 // The hooks.json earlier versions copied into Codex CLI accounts; an untouched copy would run every hook twice.
@@ -863,6 +866,37 @@ export class SessionManager extends EventEmitter {
     const session = this._reportingSession(id, auth);
     session.docker ??= new DockerSessions(session);
     session.docker.report(event);
+  }
+
+  async reportHook(id, input, { event = null, reporting = null } = {}, auth) {
+    const session = this._reportingSession(id, auth);
+    const errors = [];
+    const apply = {
+      agents: (report) => this.reportAgent(id, report, TRUSTED),
+      model: (report) => this.reportModel(id, report, TRUSTED),
+      'tool-session': (report) => this.reportToolSession(id, report, TRUSTED),
+      context: (report) => this.reportContext(id, report, TRUSTED),
+      reply: (report) => this.reportReply(id, report, TRUSTED),
+      reporting: () => this.reportHello(id, TRUSTED),
+      shells: (report) => this.reportShell(id, report, TRUSTED),
+      docker: (report) => this.reportDocker(id, report, TRUSTED),
+    };
+    const send = async (report, kind) => {
+      try {
+        apply[kind](report);
+      } catch (err) {
+        errors.push({ status: err.status ?? 500, ...(err.code ? { code: err.code } : {}), message: err.message });
+      }
+    };
+    const { later } = await handleHookEvent(input, {
+      reporting: reporting ?? session.provider.reporting ?? '', event, since: Date.now() - 2000, send, sleep: unrefSleep,
+    });
+    later.catch((err) => console.warn(`[session ${id}] a hook report failed: ${err.message}`));
+    return errors;
+  }
+
+  checkReportAuth(id, auth) {
+    this._reportingSession(id, auth);
   }
 
   _reportingSession(id, { reportToken, trusted = false } = {}) {
