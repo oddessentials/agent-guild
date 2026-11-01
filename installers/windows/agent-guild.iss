@@ -16,6 +16,9 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
 ChangesEnvironment=yes
+; Setup never closes or restarts processes itself: StopManager below stops Agent Guild, and PrepareToInstall refuses
+; while anything still runs from {app}.
+CloseApplications=no
 OutputDir={#Output}
 OutputBaseFilename=agent-guild-windows-setup
 SetupIconFile={#Stage}\agent-guild.ico
@@ -140,9 +143,9 @@ const
   PROCESS_QUERY_LIMITED_INFORMATION = $1000;
   ERROR_INVALID_PARAMETER = 87;
   ERROR_NO_MORE_FILES = 18;
-  NODE_GONE = 0;
-  NODE_RUNNING = 1;
-  NODE_UNKNOWN = 2;
+  INSTALL_GONE = 0;
+  INSTALL_RUNNING = 1;
+  INSTALL_UNKNOWN = 2;
 
 type
   { PROCESSENTRY32W in 64-bit Setup (SetupArchitecture=x64). Pascal Script packs records, so Windows'
@@ -182,18 +185,28 @@ begin
   Log('Process check: ' + Call + ' failed, Windows error ' + IntToStr(Error));
 end;
 
-{ Whether a process runs Node, the install's node.exe, by its full path; unknown when that cannot be established. }
-function NodeState(const Node: String): Integer;
+{ The programs Setup installs and replaces: Node.js, the launcher that starts the manager, and the console host
+  node-pty runs for each terminal session. }
+function OwnedProgram(const Name: String): Boolean;
+begin
+  Result := (CompareText(Name, 'node.exe') = 0) or (CompareText(Name, 'agent-guild-start.exe') = 0) or (CompareText(Name, 'OpenConsole.exe') = 0);
+end;
+
+{ Whether a process runs one of those programs from the install folder Dir, by its full image path; unknown when that
+  cannot be established. Only processes with those names are opened, so the system's own processes, which refuse
+  to be opened, are never mistaken for ours. }
+function InstallState(const Dir: String): Integer;
 var
   Snapshot, Process: NativeInt;
   Entry: TProcessEntry;
-  Path: String;
+  Prefix, Path: String;
   Size: DWORD;
   Error: Longint;
   More, Unknown: Boolean;
 begin
-  Result := NODE_UNKNOWN;
+  Result := INSTALL_UNKNOWN;
   Unknown := False;
+  Prefix := AddBackslash(Dir);
   Snapshot := CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
   if Snapshot = -1 then
   begin
@@ -211,7 +224,7 @@ begin
     end;
     while More do
     begin
-      if CompareText(ExeName(Entry), 'node.exe') = 0 then
+      if OwnedProgram(ExeName(Entry)) then
       begin
         Process := OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, Entry.th32ProcessID);
         if Process = 0 then
@@ -233,10 +246,10 @@ begin
               LogFailure('QueryFullProcessImageNameW for process ' + IntToStr(Entry.th32ProcessID), DLLGetLastError);
               Unknown := True;
             end
-            else if SamePath(Copy(Path, 1, Size), Node) then
+            else if CompareText(Copy(Path, 1, Length(Prefix)), Prefix) = 0 then
             begin
-              Log('Process check: running, process ' + IntToStr(Entry.th32ProcessID));
-              Result := NODE_RUNNING;
+              Log('Process check: running, process ' + IntToStr(Entry.th32ProcessID) + ' is ' + Copy(Path, 1, Size));
+              Result := INSTALL_RUNNING;
               Exit;
             end;
           finally
@@ -257,34 +270,35 @@ begin
     if Unknown then
     begin
       Log('Process check: unknown');
-      Result := NODE_UNKNOWN;
+      Result := INSTALL_UNKNOWN;
     end
     else
     begin
       Log('Process check: gone');
-      Result := NODE_GONE;
+      Result := INSTALL_GONE;
     end;
   finally
     CloseHandle(Snapshot);
   end;
 end;
 
-{ True only once no process runs this install's Node.js: the manager and everything it started have exited. }
+{ True only once nothing runs from this install: the manager, everything it started, its sessions' console hosts. }
 function StopManager: Boolean;
 var
-  Node, Entry: String;
+  App, Node, Entry: String;
   Code, I: Integer;
 begin
-  Node := ExpandConstant('{app}\node.exe');
-  Entry := ExpandConstant('{app}\node_modules\@oddessentials\agent-guild\bin\agent-guild.mjs');
-  Result := not FileExists(Node);
+  App := ExpandConstant('{app}');
+  Node := App + '\node.exe';
+  Entry := App + '\node_modules\@oddessentials\agent-guild\bin\agent-guild.mjs';
+  Result := not DirExists(App);
   if Result then
     Exit;
-  if FileExists(Entry) then
+  if FileExists(Node) and FileExists(Entry) then
     Exec(Node, AddQuotes(Entry) + ' stop', '', SW_HIDE, ewWaitUntilTerminated, Code);
   for I := 1 to 20 do
   begin
-    Result := NodeState(Node) = NODE_GONE;
+    Result := InstallState(App) = INSTALL_GONE;
     if Result then
       Exit;
     Sleep(500);

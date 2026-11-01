@@ -320,6 +320,22 @@ jobs:
             Stop-Process -Id $holder.Id -Force -ErrorAction SilentlyContinue
             $holder.WaitForExit(10000) | Out-Null
           }
+          # node-pty's console host, as a terminal session leaves it: hosting a shell, with no window.
+          $console = Join-Path $app "node_modules\node-pty\prebuilds\win32-$want\conpty\OpenConsole.exe"
+          $holder = Start-Process -FilePath $console -ArgumentList '--headless', '--', 'cmd.exe', '/d', '/c', 'ping -n 601 127.0.0.1' -PassThru
+          try {
+            & $op 'reinstall while a session''s console host runs' { & $install 7 }
+            if (-not (Test-Path (Join-Path $package 'ci-untouched'))) { throw 'Setup replaced files while a session''s console host ran.' }
+            & $op 'uninstall while a session''s console host runs' {
+              $un = Start-Process -PassThru -FilePath (Join-Path $app 'unins000.exe') -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'
+              ./tests/package/wait-process.ps1 -Process $un -Name 'Uninstall' -Seconds 150 | Out-Null
+            }
+            if (-not (Test-Path (Join-Path $package 'ci-untouched')) -or -not (& $onPath $launcher)) { throw 'Uninstall removed files while a session''s console host ran.' }
+          }
+          finally {
+            Stop-Process -Id $holder.Id -Force -ErrorAction SilentlyContinue
+            $holder.WaitForExit(10000) | Out-Null
+          }
           Remove-Item -LiteralPath (Join-Path $package 'ci-untouched')
 
           & $op 'open after reinstalling' { & $terminal 'agent-guild open --no-browser' | Out-Null }
