@@ -225,6 +225,17 @@ function isEntryPoint() {
   }
 }
 if (isEntryPoint()) {
+  // Started on Windows through Start-Process, which cannot hand over manager.log.
+  if (process.argv.includes('--own-log')) {
+    const log = fs.openSync(paths.log, 'a');
+    for (const stream of [process.stdout, process.stderr]) {
+      stream.write = (chunk, encoding, done) => {
+        fs.writeSync(log, chunk);
+        (typeof encoding === 'function' ? encoding : done)?.();
+        return true;
+      };
+    }
+  }
   // The manager exists to keep sessions alive. An unexpected error in one
   // request or session must not take every other session down with it, so
   // log it and keep serving.

@@ -135,21 +135,168 @@ begin
     SetUserPath(Kept);
 end;
 
-procedure StopManager;
+const
+  TH32CS_SNAPPROCESS = $2;
+  PROCESS_QUERY_LIMITED_INFORMATION = $1000;
+  ERROR_INVALID_PARAMETER = 87;
+  ERROR_NO_MORE_FILES = 18;
+  NODE_GONE = 0;
+  NODE_RUNNING = 1;
+  NODE_UNKNOWN = 2;
+
+type
+  { PROCESSENTRY32W in 64-bit Setup (SetupArchitecture=x64). Pascal Script packs records, so Windows'
+    alignment padding is written out: 568 bytes. }
+  TProcessEntry = record
+    dwSize, cntUsage, th32ProcessID, Padding1: DWORD;
+    th32DefaultHeapID: Int64;
+    th32ModuleID, cntThreads, th32ParentProcessID: DWORD;
+    pcPriClassBase: Longint;
+    dwFlags: DWORD;
+    szExeFile: array [0..259] of Char;
+    Padding2: DWORD;
+  end;
+
+function CreateToolhelp32Snapshot(Flags, ProcessId: DWORD): NativeInt; external 'CreateToolhelp32Snapshot@kernel32.dll stdcall';
+function Process32FirstW(Snapshot: NativeInt; var Entry: TProcessEntry): BOOL; external 'Process32FirstW@kernel32.dll stdcall';
+function Process32NextW(Snapshot: NativeInt; var Entry: TProcessEntry): BOOL; external 'Process32NextW@kernel32.dll stdcall';
+function OpenProcess(Access: DWORD; Inherit: BOOL; ProcessId: DWORD): NativeInt; external 'OpenProcess@kernel32.dll stdcall';
+function QueryFullProcessImageNameW(Process: NativeInt; Flags: DWORD; Name: String; var Size: DWORD): BOOL; external 'QueryFullProcessImageNameW@kernel32.dll stdcall';
+function CloseHandle(Handle: NativeInt): BOOL; external 'CloseHandle@kernel32.dll stdcall';
+
+function ExeName(const Entry: TProcessEntry): String;
+var
+  I: Integer;
+begin
+  Result := '';
+  I := 0;
+  while (I < 260) and (Entry.szExeFile[I] <> #0) do
+  begin
+    Result := Result + Entry.szExeFile[I];
+    I := I + 1;
+  end;
+end;
+
+procedure LogFailure(const Call: String; Error: Longint);
+begin
+  Log('Process check: ' + Call + ' failed, Windows error ' + IntToStr(Error));
+end;
+
+{ Whether a process runs Node, the install's node.exe, by its full path; unknown when that cannot be established. }
+function NodeState(const Node: String): Integer;
+var
+  Snapshot, Process: NativeInt;
+  Entry: TProcessEntry;
+  Path: String;
+  Size: DWORD;
+  Error: Longint;
+  More, Unknown: Boolean;
+begin
+  Result := NODE_UNKNOWN;
+  Unknown := False;
+  Snapshot := CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+  if Snapshot = -1 then
+  begin
+    LogFailure('CreateToolhelp32Snapshot', DLLGetLastError);
+    Log('Process check: unknown');
+    Exit;
+  end;
+  try
+    Entry.dwSize := 568;
+    More := Process32FirstW(Snapshot, Entry);
+    if not More then
+    begin
+      LogFailure('Process32FirstW', DLLGetLastError);
+      Unknown := True;
+    end;
+    while More do
+    begin
+      if CompareText(ExeName(Entry), 'node.exe') = 0 then
+      begin
+        Process := OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, Entry.th32ProcessID);
+        if Process = 0 then
+        begin
+          Error := DLLGetLastError;
+          { A process that exited since the snapshot is gone; any other failure leaves it unknown. }
+          if Error <> ERROR_INVALID_PARAMETER then
+          begin
+            LogFailure('OpenProcess for process ' + IntToStr(Entry.th32ProcessID), Error);
+            Unknown := True;
+          end;
+        end
+        else
+          try
+            Size := 1024;
+            Path := StringOfChar(#0, Size);
+            if not QueryFullProcessImageNameW(Process, 0, Path, Size) then
+            begin
+              LogFailure('QueryFullProcessImageNameW for process ' + IntToStr(Entry.th32ProcessID), DLLGetLastError);
+              Unknown := True;
+            end
+            else if SamePath(Copy(Path, 1, Size), Node) then
+            begin
+              Log('Process check: running, process ' + IntToStr(Entry.th32ProcessID));
+              Result := NODE_RUNNING;
+              Exit;
+            end;
+          finally
+            CloseHandle(Process);
+          end;
+      end;
+      More := Process32NextW(Snapshot, Entry);
+      if not More then
+      begin
+        Error := DLLGetLastError;
+        if Error <> ERROR_NO_MORE_FILES then
+        begin
+          LogFailure('Process32NextW', Error);
+          Unknown := True;
+        end;
+      end;
+    end;
+    if Unknown then
+    begin
+      Log('Process check: unknown');
+      Result := NODE_UNKNOWN;
+    end
+    else
+    begin
+      Log('Process check: gone');
+      Result := NODE_GONE;
+    end;
+  finally
+    CloseHandle(Snapshot);
+  end;
+end;
+
+{ True only once no process runs this install's Node.js: the manager and everything it started have exited. }
+function StopManager: Boolean;
 var
   Node, Entry: String;
-  Code: Integer;
+  Code, I: Integer;
 begin
   Node := ExpandConstant('{app}\node.exe');
   Entry := ExpandConstant('{app}\node_modules\@oddessentials\agent-guild\bin\agent-guild.mjs');
-  if FileExists(Node) and FileExists(Entry) then
+  Result := not FileExists(Node);
+  if Result then
+    Exit;
+  if FileExists(Entry) then
     Exec(Node, AddQuotes(Entry) + ' stop', '', SW_HIDE, ewWaitUntilTerminated, Code);
+  for I := 1 to 20 do
+  begin
+    Result := NodeState(Node) = NODE_GONE;
+    if Result then
+      Exit;
+    Sleep(500);
+  end;
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
-  StopManager;
-  Result := '';
+  if StopManager then
+    Result := ''
+  else
+    Result := 'Agent Guild is still running, or Setup could not confirm that it stopped. Close it, then run Setup again.';
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
@@ -162,7 +309,11 @@ procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usUninstall then
   begin
-    StopManager;
+    if not StopManager then
+    begin
+      SuppressibleMsgBox('Agent Guild is still running, or Uninstall could not confirm that it stopped. Close it, then uninstall again.', mbError, MB_OK, IDOK);
+      Abort;
+    end;
     RemoveFromPath(ExpandConstant('{app}\launcher'));
   end;
 end;

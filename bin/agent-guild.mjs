@@ -114,8 +114,8 @@ async function ensureManager({ port = null } = {}) {
   // A pinned port is the endpoint to serve, so it is also the one to check;
   // a manager found anywhere else is not the one asked for.
   const knownUrl = port === null ? baseUrl() : expectedUrl;
-  const running = await health(knownUrl);
-  if (running) return { url: knownUrl, started: false, version: running.version };
+  const answering = await health(knownUrl);
+  if (answering) return { url: knownUrl, started: false, version: answering.version };
 
   // Say why no manager can run here rather than start one that fails.
   const problem = ptyProblem();
@@ -128,10 +128,8 @@ async function ensureManager({ port = null } = {}) {
 
   const child = spawnManager({ env: { ...process.env, AGENT_GUILD_PORT: String(listenPort) } });
 
-  let exited = false;
-  child.once('exit', () => { exited = true; });
   const deadline = Date.now() + 20000;
-  while (Date.now() < deadline && !exited) {
+  while (Date.now() < deadline && running(child.pid)) {
     await new Promise((r) => setTimeout(r, 250));
     const url = readRuntimeFile()?.pid === child.pid ? readRuntimeFile().url : expectedUrl;
     const up = await health(url, 500);
@@ -217,7 +215,12 @@ async function cmdStop() {
     return;
   }
   await requestShutdown(url);
-  console.log(await waitForExit(h.pid) ? 'Session manager stopped.' : 'Stop requested; the manager is still shutting down.');
+  if (await waitForExit(h.pid)) {
+    console.log('Session manager stopped.');
+    return;
+  }
+  console.log('Stop requested; the manager is still shutting down.');
+  process.exitCode = 1;
 }
 
 async function cmdRestart() {

@@ -4,6 +4,7 @@
 git clone https://github.com/oddessentials/agent-guild.git
 cd agent-guild
 npm install
+npm run build:windows   # Windows only, once: the launcher that starts the manager (needs Visual Studio Build Tools with C++)
 npm start      # open the page, starting a manager from this checkout if none runs
 npm test
 ```

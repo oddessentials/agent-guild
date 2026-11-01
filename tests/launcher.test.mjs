@@ -309,8 +309,19 @@ test('stop says stopped only once the manager has exited, though it missed healt
   t.after(() => fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }));
   const fake = await fakeManager(t, home, '0.0.1', 'slow');
   const stopped = await runWith({ ...env, AGENT_GUILD_HOME: home, AGENT_GUILD_PORT: String(fake.port) }, 'stop');
+  assert.equal(stopped.code, 0);
   assert.match(stopped.stdout, /Session manager stopped/);
   assert.equal(running(fake.pid), false, 'the manager had exited');
+});
+
+test('stop fails when the manager has not exited by the end of its wait', async (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-launcher-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }));
+  const fake = await fakeManager(t, home, '0.0.1', 'stuck');
+  const stopped = await runWith({ ...env, AGENT_GUILD_HOME: home, AGENT_GUILD_PORT: String(fake.port) }, 'stop');
+  assert.equal(stopped.code, 1);
+  assert.match(stopped.stdout, /still shutting down/);
+  assert.equal(running(fake.pid), true, 'the manager still runs');
 });
 
 test('restart keeps an ephemeral port, and starts the manager itself when the old one only stops', async (t) => {

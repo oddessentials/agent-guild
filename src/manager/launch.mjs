@@ -9,7 +9,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dataDir, ensureDataDir, paths } from './config.mjs';
 import { stableExecPath } from './autostart.mjs';
@@ -30,9 +30,34 @@ function rotateLog() {
   } catch { /* no log yet */ }
 }
 
+/** The launcher that starts the manager on Windows, built for this Node.js's architecture. */
+export function windowsLauncher(arch = process.arch, rootDir = ROOT_DIR) {
+  return path.join(rootDir, 'bin', 'windows', arch, 'agent-guild-start.exe');
+}
+
+/**
+ * Start `file` on Windows through agent-guild-start.exe, which creates it detached and with none of this process's
+ * handles; Node.js's spawn would pass every inheritable one on, and a pipe of whoever ran the launcher would stay open
+ * as long as the manager runs. Returns `{ pid }`, or throws when it could not be started.
+ */
+export function startDetached(file, args, { env = process.env, launcher = windowsLauncher() } = {}) {
+  if (!fs.existsSync(launcher)) {
+    throw new Error(`could not start the session manager: ${launcher} is missing; in a checkout, run npm run build:windows (it needs Visual Studio Build Tools with C++)`);
+  }
+  let out;
+  try {
+    out = execFileSync(launcher, [file, ...args], { env, encoding: 'utf8', windowsHide: true, timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (err) {
+    throw new Error(`could not start the session manager: ${`${err.stderr || ''}`.trim() || err.message}`);
+  }
+  const pid = Number(out.trim());
+  if (!(pid > 0)) throw new Error(`could not start the session manager: ${launcher} reported no process (${out.trim()})`);
+  return { pid };
+}
+
 /**
  * Start a manager that outlives this process, with its output appended to
- * `manager.log`. Returns the child; the caller watches `/health` or the
+ * `manager.log`. Returns `{ pid }`; the caller watches `/health` or the
  * runtime file to learn when it is serving.
  *
  * @param {{ env?: NodeJS.ProcessEnv, note?: string }} [opts]
@@ -42,6 +67,10 @@ export function spawnManager({ env = process.env, note = 'starting manager' } = 
   rotateLog();
   const log = fs.openSync(paths.log, 'a');
   fs.writeSync(log, `\n--- ${note} ${new Date().toISOString()} ---\n`);
+  if (process.platform === 'win32') {
+    fs.closeSync(log);
+    return startDetached(process.execPath, [MANAGER_ENTRY, '--own-log'], { env });
+  }
   const child = spawn(process.execPath, [MANAGER_ENTRY], {
     detached: true,
     stdio: ['ignore', log, log],

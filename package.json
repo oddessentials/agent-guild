@@ -37,6 +37,7 @@
     "start": "node bin/agent-guild.mjs open",
     "manager": "node bin/agent-guild.mjs start",
     "stop": "node bin/agent-guild.mjs stop",
+    "build:windows": "node scripts/build-windows-launcher.mjs",
     "status": "node bin/agent-guild.mjs status",
     "doctor": "node bin/agent-guild.mjs doctor",
     "demo:build": "node docs/demo/build.mjs",
