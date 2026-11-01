@@ -748,7 +748,7 @@ export class Session extends EventEmitter {
     if (source === 'api') this._reportingHeard();
     const id = String(report.toolSessionId ?? '').trim();
     if (!id || id.length > MAX_TOOL_SESSION_ID || /\p{Cc}/u.test(id)) throw badRequest(`toolSessionId must be a printable id of at most ${MAX_TOOL_SESSION_ID} characters`);
-    if (this.toolSessionId !== id) {
+    if (this.toolSessionId !== id && !(this.toolSessionId && report.fallback === true)) {
       if (this.toolSessionId && RESET_SOURCES.has(report.source)) this.context.resets++;
       this.toolSessionId = id;
       this._changed();

@@ -668,7 +668,7 @@ All paths are under `/api/v1`.
 | DELETE | `/sessions/:id` | | `{ ok: true }`: ends the process if needed and removes the session. |
 | POST | `/sessions/:id/agents` | Agent report | `{ agent }`, or `{ agent: null }`. |
 | POST | `/sessions/:id/model` | `{ model, displayName? }` | `{ model }`. Sets the session's model with source `report`. |
-| POST | `/sessions/:id/tool-session` | `{ toolSessionId, source? }` | `{ toolSessionId }`. Records the id the tool gave its own session. A new id with `source` `clear`, `startup` or `new` counts a reset. |
+| POST | `/sessions/:id/tool-session` | `{ toolSessionId, source?, fallback? }` | `{ toolSessionId }`. Records the id the tool gave its own session. A new id with `source` `clear`, `startup` or `new` counts a reset. With `fallback` true, the id only fills in a missing one. |
 | POST | `/sessions/:id/context` | `{ compaction, key? }` | `{ context }`. Counts a compaction, `manual` or `auto`. A repeated `key`, or with none a report within 2 s of the last, is the same one. |
 | POST | `/sessions/:id/reply` | `{ reply }` | `{ reply: { id } }`, or `{ reply: null }`. `reply` is the text of the answer that ended the turn, as Markdown, or null. |
 | POST | `/sessions/:id/reporting` | | `{ reporting }`: the tool's hooks announce themselves. |
