@@ -165,13 +165,17 @@ test('install.sh under dash without SHELL in its environment falls back to .prof
   assert.equal(fs.readFileSync(path.join(home, '.profile'), 'utf8'), 'echo mine\n');
 });
 
-test('the Windows installer stops the manager only once uninstalling is confirmed, and changes no file while the install\'s Node.js still runs', () => {
+test('the Windows installer stops the manager only once uninstalling is confirmed, and changes no file while anything still runs from the install folder', () => {
   const iss = fs.readFileSync(path.resolve('installers/windows/agent-guild.iss'), 'utf8');
+  assert.match(iss, /\nCloseApplications=no\n/, 'Setup would otherwise close and restart processes holding its files, outside StopManager');
   assert.doesNotMatch(iss, /InitializeUninstall/, 'Inno Setup runs it before the confirmation dialog');
-  assert.match(iss, /function StopManager: Boolean;[\s\S]*?' stop'[\s\S]*?Result := NodeState\(Node\) = NODE_GONE;/, 'stopping is confirmed by no process running the install\'s Node.js');
+  assert.match(iss, /function StopManager: Boolean;[\s\S]*?' stop'[\s\S]*?Result := InstallState\(App\) = INSTALL_GONE;/, 'stopping is confirmed by no process running an installed program from the install folder');
+  assert.match(iss, /function OwnedProgram\(const Name: String\): Boolean;\s*begin\s*Result := \(CompareText\(Name, 'node\.exe'\) = 0\) or \(CompareText\(Name, 'agent-guild-start\.exe'\) = 0\) or \(CompareText\(Name, 'OpenConsole\.exe'\) = 0\);/, 'the programs Setup installs: Node.js, the launcher and node-pty\'s console host');
+  assert.match(iss, /if OwnedProgram\(ExeName\(Entry\)\) then/, 'only processes with those names are opened');
+  assert.match(iss, /Prefix := AddBackslash\(Dir\);[\s\S]*?else if CompareText\(Copy\(Path, 1, Length\(Prefix\)\), Prefix\) = 0 then/, 'a process counts by its image path lying under the install folder');
   assert.doesNotMatch(iss, /powershell/i, 'Windows PowerShell can take half a minute to start');
   assert.match(iss, /CreateToolhelp32Snapshot@kernel32\.dll[\s\S]*QueryFullProcessImageNameW@kernel32\.dll/);
-  assert.match(iss, /if Unknown then\s*begin\s*Log\('Process check: unknown'\);\s*Result := NODE_UNKNOWN;/, 'a process that cannot be inspected never counts as stopped');
+  assert.match(iss, /if Unknown then\s*begin\s*Log\('Process check: unknown'\);\s*Result := INSTALL_UNKNOWN;/, 'a process that cannot be inspected never counts as stopped');
   assert.match(iss, /\nSetupArchitecture=x64\n/, 'the process entry below is laid out for 64-bit Setup');
   assert.match(iss, /TProcessEntry = record\s*dwSize, cntUsage, th32ProcessID, Padding1: DWORD;\s*th32DefaultHeapID: Int64;\s*th32ModuleID, cntThreads, th32ParentProcessID: DWORD;\s*pcPriClassBase: Longint;\s*dwFlags: DWORD;\s*szExeFile: array \[0\.\.259\] of Char;\s*Padding2: DWORD;\s*end;/, 'PROCESSENTRY32W as 64-bit Windows lays it out');
   assert.match(iss, /Entry\.dwSize := 568;/);
@@ -252,6 +256,10 @@ test('the Windows install test gives each operation 3 minutes, refuses to instal
   assert.match(job, /Start-ThreadJob[\s\S]*TotalSeconds -lt 180/);
   for (const name of ['smoke test', 'open', 'reinstall over the running manager', 'uninstall']) assert.match(job, new RegExp(`& \\$op '${name}' \\{`), `${name} is not bounded`);
   assert.match(job, /& \$op 'reinstall while the install''s Node\.js runs' \{ & \$install 7 \}/);
+  assert.match(job, /\$console = Join-Path \$package "node_modules\\node-pty\\prebuilds\\win32-\$want\\conpty\\OpenConsole\.exe"\n\s+if \(-not \(Test-Path -LiteralPath \$console\)\) \{ throw "[^"]+" \}\n\s+\$holder = Start-Process -FilePath \$console -ArgumentList '--headless', '--', 'cmd\.exe', /, 'the console host node-pty bundles inside the package runs, hosting a shell, as a session leaves it');
+  assert.match(job, /& \$op 'reinstall while a session''s console host runs' \{ & \$install 7 \}/);
+  assert.match(job, /& \$op 'uninstall while a session''s console host runs' \{[\s\S]*?wait-process\.ps1 -Process \$un -Name 'Uninstall'[\s\S]*?\}\n\s+if \(-not \(Test-Path \(Join-Path \$package 'ci-untouched'\)\) -or -not \(& \$onPath \$launcher\)\)/, 'Uninstall refuses while it runs');
+  assert.match(job, /\$ids = @\(\[uint32\]\$holder\.Id\)\n\s+do \{[\s\S]*?\} while \(\$more\)\n\s+foreach \(\$id in \$ids\) \{ Stop-Process -Id \$id -Force -ErrorAction SilentlyContinue \}\n\s+foreach \(\$id in \$ids\) \{ \$p = Get-Process -Id \$id -ErrorAction SilentlyContinue; if \(\$p\) \{ \$p\.WaitForExit\(10000\) \| Out-Null \} \}/, 'the console host\'s shell and ping are stopped and waited for with it');
   assert.match(job, /& \$annotate error 'Processes from this test still run'/);
   assert.doesNotMatch(job, /Start-Process -Wait/, 'Start-Process -Wait waits for every descendant of Setup, without limit');
   assert.match(job, /\$run = Start-Process -PassThru -FilePath \$setup[^\n]*\n[^\n]*\n\s+\$code = \.\/tests\/package\/wait-process\.ps1 -Process \$run -Name 'Setup' -Seconds 150 -Log \$log\n\s+if \(\$code -ne \$expect\)/, 'Setup is waited for by its own process, bounded, with its live log kept on timeout');
