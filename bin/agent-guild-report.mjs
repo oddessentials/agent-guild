@@ -17,9 +17,9 @@
 //                      (reads Claude Code status line JSON on stdin; prints a
 //                       status line, or the JSON itself with --passthrough)
 
-import fs from 'node:fs';
 import { createRequire } from 'node:module';
-import { hookToReports, hookRoute, dockerHookEvent, claudeStatuslineToReport, formatStatusLine, antigravityUserConversation, antigravityReply, claudeCompactBoundary } from '../src/report/hooks.mjs';
+import { claudeStatuslineToReport, formatStatusLine } from '../src/report/hooks.mjs';
+import { handleHookEvent, reportKind } from '../src/report/hook-event.mjs';
 
 // Importing node:http as an ES module costs a hook about 50 ms more than requiring it.
 const http = createRequire(import.meta.url)('node:http');
@@ -66,12 +66,7 @@ function readStdin() {
   });
 }
 
-function send(report, kind = report.compaction !== undefined ? 'context'
-  : report.reply !== undefined ? 'reply'
-  : report.shell !== undefined ? 'shells'
-  : report.agentId !== undefined || report.finishForeground === true ? 'agents'
-  : report.hello === true ? 'reporting'
-  : report.toolSessionId !== undefined ? 'tool-session' : 'model') {
+function send(report, kind = reportKind(report)) {
   const body = JSON.stringify(report);
   return new Promise((resolve, reject) => {
     const req = http.request(`${env.AGENT_GUILD_URL}/api/v1/sessions/${env.AGENT_GUILD_SESSION_ID}/${kind}`, {
@@ -97,85 +92,6 @@ function send(report, kind = report.compaction !== undefined ? 'context'
 /** A hook must never break the coding tool, so report failures quietly. */
 const sendQuietly = (report, kind) => send(report, kind).catch((err) => console.error(`agent-guild-report: ${err.message}`));
 
-const MAX_FIRST_LINE = 1024 * 1024;
-
-/** The first JSON record of a JSONL file, or null. */
-function firstRecord(file) {
-  if (typeof file !== 'string') return null;
-  let fd;
-  try {
-    fd = fs.openSync(file, 'r');
-    const chunks = [];
-    const buffer = Buffer.alloc(64 * 1024);
-    for (let total = 0; total < MAX_FIRST_LINE;) {
-      const n = fs.readSync(fd, buffer, 0, buffer.length, null);
-      if (n === 0) break;
-      const end = buffer.subarray(0, n).indexOf(10);
-      chunks.push(Buffer.from(buffer.subarray(0, end === -1 ? n : end)));
-      if (end !== -1) break;
-      total += n;
-    }
-    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
-  } catch {
-    return null;
-  } finally {
-    if (fd !== undefined) fs.closeSync(fd);
-  }
-}
-
-/** The last response of an Antigravity CLI turn, read back from the end of its transcript. */
-function antigravityTranscriptReply(file) {
-  if (typeof file !== 'string') return null;
-  let fd;
-  try {
-    fd = fs.openSync(file, 'r');
-    const size = fs.fstatSync(fd).size;
-    for (let bytes = 256 * 1024; ; bytes *= 4) {
-      const start = Math.max(0, size - bytes);
-      const buffer = Buffer.alloc(size - start);
-      fs.readSync(fd, buffer, 0, buffer.length, start);
-      const lines = buffer.toString('utf8').split('\n');
-      // A window that starts mid-file starts mid-line.
-      if (start > 0) lines.shift();
-      const reply = antigravityReply(lines.map(parseJson));
-      if (reply !== undefined || start === 0) return reply ?? null;
-    }
-  } catch {
-    return null;
-  } finally {
-    if (fd !== undefined) fs.closeSync(fd);
-  }
-}
-
-// Claude Code writes the compaction record a moment after its PostCompact hook starts.
-async function claudeCompaction(file, since) {
-  if (typeof file !== 'string') return null;
-  for (let waited = 0; waited <= 3000; waited += 250) {
-    if (waited) await new Promise((resolve) => setTimeout(resolve, 250));
-    const key = claudeCompactBoundary(tailRecords(file, 1024 * 1024), since);
-    if (key) return key;
-  }
-  return null;
-}
-
-function tailRecords(file, bytes) {
-  let fd;
-  try {
-    fd = fs.openSync(file, 'r');
-    const size = fs.fstatSync(fd).size;
-    const start = Math.max(0, size - bytes);
-    const buffer = Buffer.alloc(size - start);
-    fs.readSync(fd, buffer, 0, buffer.length, start);
-    const lines = buffer.toString('utf8').split('\n');
-    if (start > 0) lines.shift();
-    return lines.map(parseJson);
-  } catch {
-    return [];
-  } finally {
-    if (fd !== undefined) fs.closeSync(fd);
-  }
-}
-
 function parseJson(raw) {
   try { return JSON.parse(raw); } catch { return null; }
 }
@@ -189,25 +105,8 @@ async function main() {
   if (args.hook) {
     const input = parseJson(await readStdin());
     if (!inSession || !input || typeof input !== 'object') return;
-    if (args.event && input.hook_event_name === undefined) input.hook_event_name = args.event;
-    const route = hookRoute(input, env.AGENT_GUILD_REPORTING);
-    if (!route) return;
-    // Docker Agent's events go whole to the manager, which tells its sessions (tabs, sub-agents) apart.
-    if (route === 'docker') {
-      const event = dockerHookEvent(input);
-      if (event) await sendQuietly(event, 'docker');
-      return;
-    }
-    // Antigravity CLI runs the hook in its sub-agents too, each a conversation of its own.
-    if (typeof input.conversationId === 'string' && !antigravityUserConversation(firstRecord(input.transcriptPath))) return;
-    for (const report of hookToReports(input)) {
-      if (report.transcript === undefined) await sendQuietly(report);
-      else {
-        const key = await claudeCompaction(report.transcript, performance.timeOrigin - 2000);
-        if (key) await sendQuietly({ compaction: report.compaction, key });
-      }
-    }
-    if (typeof input.conversationId === 'string' && input.hook_event_name === 'Stop') await sendQuietly({ reply: antigravityTranscriptReply(input.transcriptPath) });
+    const { later } = await handleHookEvent(input, { reporting: env.AGENT_GUILD_REPORTING, event: args.event, since: performance.timeOrigin - 2000, send: sendQuietly });
+    await later;
     return;
   }
   if (args.claudeStatusline) {

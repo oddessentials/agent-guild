@@ -16,8 +16,10 @@ import { herdrAgentReports, herdrSocket } from '../src/manager/herdr.mjs';
 import { paths } from '../src/manager/config.mjs';
 import { classifyInstall, expandHome, formatCommand, homeRelative, helpDescribes, platformDependency, listInstallations, knownLaunchers, npmOwner, updateHelpAccepted, uninstallPlan } from '../src/manager/install-channels.mjs';
 import { runPlan, encodePlan, removeFile, RUNNER } from '../src/manager/uninstall.mjs';
-import { hookToReports, hookRoute, claudeStatuslineToReport, formatStatusLine, antigravityReply, claudeCompactBoundary } from '../src/report/hooks.mjs';
-import { shimContents, writeReportShims, prependPath, fileUrl, SHIM_NAME, LOADER_NAME } from '../src/manager/report-shims.mjs';
+import { hookToReports, hookRoute, claudeStatuslineToReport, formatStatusLine, antigravityReply, claudeCompactBoundary, commandHash } from '../src/report/hooks.mjs';
+import { handleHookEvent, reportKind } from '../src/report/hook-event.mjs';
+import { firstRecord, tailRecords, antigravityTranscriptReply, claudeCompaction } from '../src/report/transcripts.mjs';
+import { shimContents, writeReportShims, prependPath, fileUrl, nativeReporter, SHIM_NAME, LOADER_NAME, NATIVE_NAME } from '../src/manager/report-shims.mjs';
 import { bundleFiles, grokFiles, grokHooks, grokHooksState, codexHookArgs, codexTrustArgs, codexHooksFrom, antigravityInstalled, antigravityPluginDir, antigravityConfigFile, antigravityPluginEnabled, helpLists, REPORT_COMMAND, dockerHookArgs, DOCKER_HOOK_FLAGS, dockerDropin } from '../src/manager/session-hooks.mjs';
 import { execFile, execFileSync, spawn, spawnSync } from 'node:child_process';
 import { parseVersion, parseTmuxVersion, compareVersions, probeVersion, diagnosticLine, latestVersion, brewVersion } from '../src/manager/versions.mjs';
@@ -2710,6 +2712,69 @@ test('the agent-guild-report launchers run the reporter from any hook shell', ()
   }
 });
 
+test('the launchers run the native reporter for --hook, and the Node.js reporter for the rest or when it cannot run', async (t) => {
+  const posix = shimContents({ execPath: '/usr/bin/node', script: '/pkg/bin/agent-guild-report.mjs', platform: 'linux', native: '/data/bin/agent-guild-report-native' });
+  assert.equal(posix[SHIM_NAME], '#!/bin/sh\n[ "$1" = --hook ] && [ -z "$AGENT_GUILD_SESSION_ID" ] && exec cat >/dev/null\nr="/data/bin/agent-guild-report-native"\n[ "$1" = --hook ] && [ -x "$r" ] && "$r" "$@" && exit 0\nn="/usr/bin/node"\n[ -x "$n" ] || n=node\nexec "$n" "/pkg/bin/agent-guild-report.mjs" "$@"\n');
+  const win = shimContents({ execPath: 'C:\\node.exe', script: 'C:\\Users\\José\\bin\\agent-guild-report.mjs', platform: 'win32', native: 'C:\\Users\\José\\.agent-guild\\bin\\agent-guild-report-native.exe' });
+  assert.equal(win[`${SHIM_NAME}.cmd`], '@ECHO OFF\r\nIF "%~1"=="--hook" IF NOT DEFINED AGENT_GUILD_SESSION_ID EXIT /B 0\r\nIF "%~1"=="--hook" IF EXIST "%~dp0agent-guild-report-native.exe" GOTO native\r\n:node\r\nIF EXIST "%AGENT_GUILD_NODE%" GOTO manager\r\nnode "%~dp0agent-guild-report-loader.mjs" %*\r\nEXIT /B %ERRORLEVEL%\r\n:manager\r\n"%AGENT_GUILD_NODE%" "%~dp0agent-guild-report-loader.mjs" %*\r\nEXIT /B %ERRORLEVEL%\r\n:native\r\n"%~dp0agent-guild-report-native.exe" %*\r\nIF ERRORLEVEL 1 GOTO node\r\n');
+  assert.match(win[`${SHIM_NAME}.cmd`], /^[\x20-\x7e\r\n]+$/, 'still ASCII: the .cmd finds the native reporter beside itself');
+  assert.match(win[SHIM_NAME], /\nr="C:\/Users\/José\/\.agent-guild\/bin\/agent-guild-report-native\.exe"\n/, 'Git Bash runs it by its path');
+
+  const root = tempDir();
+  const built = path.join(root, 'bin', 'native', 'linux-x64', 'agent-guild-report');
+  assert.equal(nativeReporter(root, { platform: 'linux', arch: 'x64' }), null, 'a checkout that did not build it');
+  fs.mkdirSync(path.dirname(built), { recursive: true });
+  fs.writeFileSync(built, '');
+  assert.equal(nativeReporter(root, { platform: 'linux', arch: 'x64' }), built);
+  assert.equal(nativeReporter(root, { platform: 'linux', arch: 'riscv64' }), null, 'an architecture with no build');
+  assert.equal(nativeReporter(root, { platform: 'win32', arch: 'x64' }), null);
+
+  const received = [];
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', () => { received.push(`${req.url} ${body}`); res.end('{"ok":true}'); });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const dir = path.join(tempDir(), 'bin');
+  const reporter = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../bin/agent-guild-report.mjs');
+  const copy = path.join(dir, process.platform === 'win32' ? `${NATIVE_NAME}.exe` : NATIVE_NAME);
+  const session = { AGENT_GUILD_SESSION_ID: 'ab12', AGENT_GUILD_URL: `http://127.0.0.1:${server.address().port}`, AGENT_GUILD_REPORT_TOKEN: 'token', AGENT_GUILD_REPORTING: '', AGENT_GUILD_NODE: process.execPath };
+  const env = { ...prependPath({ ...process.env }, dir), ...session };
+  const system32 = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32');
+  const hook = (args) => new Promise((resolve) => {
+    const [file, argv, options] = process.platform === 'win32'
+      ? [path.join(system32, 'cmd.exe'), ['/d', '/s', '/c', `"${SHIM_NAME} ${args}"`], { windowsVerbatimArguments: true }]
+      : ['/bin/sh', ['-c', `${SHIM_NAME} ${args}`], {}];
+    const child = execFile(file, argv, { env, encoding: 'utf8', timeout: 20000, windowsHide: true, ...options }, (err, stdout, stderr) => resolve({ code: err ? err.code : 0, stdout, stderr, received: received.splice(0) }));
+    child.stdin.end('{"hook_event_name":"Stop"}');
+  });
+  const refusing = process.platform === 'win32' ? path.join(system32, 'where.exe') : path.join(tempDir(), 'refusing');
+  if (process.platform !== 'win32') fs.writeFileSync(refusing, '#!/bin/sh\nexit 2\n', { mode: 0o755 });
+  writeReportShims({ dir, script: reporter, native: refusing });
+  assert.ok(fs.existsSync(copy), 'a copy sits beside the shims');
+  let ran = await hook('--hook --event Stop');
+  assert.deepEqual([ran.code, ran.received], [0, ['/api/v1/sessions/ab12/agents {"finishForeground":true}']], 'the Node.js reporter takes over, with the whole event');
+  assert.match((await hook('--help')).stdout, /^Usage: agent-guild-report/, 'and takes every other form');
+
+  const native = nativeReporter(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'));
+  if (native) {
+    writeReportShims({ dir, script: reporter, native });
+    assert.deepEqual(fs.readFileSync(copy), fs.readFileSync(native), 'a start replaces the copy with the package\'s');
+    ran = await hook('--hook --event Stop');
+    assert.deepEqual([ran.code, ran.stderr, ran.received], [0, '', ['/api/v1/sessions/ab12/hook?reporting=&event=Stop {"hook_event_name":"Stop"}']], 'the native reporter sends the event whole');
+  } else {
+    t.diagnostic('no native reporter is built for this computer (node scripts/build-reporter.mjs); its own run is skipped');
+  }
+
+  writeReportShims({ dir, script: reporter, native: null });
+  assert.ok(!fs.existsSync(copy), 'a start without one removes the copy');
+  assert.doesNotMatch(fs.readFileSync(path.join(dir, SHIM_NAME), 'utf8'), /native/);
+  ran = await hook('--hook --event Stop');
+  assert.deepEqual(ran.received, ['/api/v1/sessions/ab12/agents {"finishForeground":true}']);
+});
+
 test('a compaction is reported for the main session only, as each tool sends it', () => {
   const claude = { session_id: 's', transcript_path: '/t/s.jsonl', cwd: '/w', prompt_id: 'p', hook_event_name: 'PostCompact', trigger: 'manual', compact_summary: 'Summary' };
   assert.deepEqual(hookToReports(claude), [{ compaction: 'manual', transcript: '/t/s.jsonl' }], 'Claude Code: confirmed against its transcript');
@@ -2756,6 +2821,82 @@ test('the reporter sends a Claude Code compaction once its transcript records it
   });
   assert.deepEqual(await hook('claude', { session_id: 's', transcript_path: transcript, hook_event_name: 'PostCompact', trigger: 'manual', compact_summary: 'x' }), ['context {"compaction":"manual","key":"b1"}']);
   assert.deepEqual(await hook('codex', { session_id: 'c', turn_id: 't', hook_event_name: 'PostCompact', trigger: 'auto' }), ['context {"compaction":"auto"}']);
+});
+
+test('a hook event makes the same reports wherever it is handled: in order, with the compaction left for later', async () => {
+  const sent = [];
+  const send = async (report, kind) => { sent.push([kind, report]); };
+  let release;
+  const files = {
+    firstRecord: async (file) => (file === '/sub.jsonl' ? { type: 'USER_INPUT', source: 'SUBAGENT' } : { type: 'USER_INPUT', source: 'USER_EXPLICIT' }),
+    antigravityTranscriptReply: async () => 'Answer.',
+    claudeCompaction: () => new Promise((resolve) => { release = resolve; }),
+  };
+  const handle = (input, options) => handleHookEvent(input, { send, files, ...options });
+  await handle({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'k', tool_input: { command: 'ls' } }, { reporting: 'claude' });
+  assert.deepEqual(sent.splice(0), [['shells', { shell: 'start', key: 'k', match: commandHash('ls') }]]);
+  await handle({ tool_name: 'Bash', tool_use_id: 'k', tool_response: {} }, { reporting: 'claude', event: 'PostToolUse' });
+  assert.deepEqual(sent.splice(0), [['shells', { shell: 'end', key: 'k' }]], '--event names an event that does not name itself');
+  await handle({ hook_event_name: 'SessionStart', session_id: 's', source: 'startup', model: 'm' }, { reporting: 'claude' });
+  assert.deepEqual(sent.splice(0).map(([kind]) => kind), ['model', 'reporting', 'tool-session'], 'in the order the event makes them');
+
+  await handle({ session_id: 'd', hook_event_name: 'stop', agent_name: 'root', stop_response: 'Done' }, { reporting: 'docker' });
+  assert.deepEqual(sent.splice(0), [['docker', { event: 'Stop', sessionId: 'd', agentName: 'root', reply: 'Done' }]]);
+  await handle({ session_id: 'd', hook_event_name: 'stop', agent_name: 'root' }, { reporting: 'claude' });
+  assert.deepEqual(sent.splice(0), [], 'Docker Agent run inside another tool\'s card reports nothing to it');
+
+  const { later } = await handle({ hook_event_name: 'PostCompact', trigger: 'auto', compact_summary: 's', transcript_path: '/t.jsonl' }, { reporting: 'claude' });
+  assert.deepEqual(sent, [], 'the event\'s own reports are sent before the compaction record lands');
+  release('b2');
+  await later;
+  assert.deepEqual(sent.splice(0), [['context', { compaction: 'auto', key: 'b2' }]]);
+
+  await handle({ conversationId: 'c', transcriptPath: '/sub.jsonl' }, { reporting: 'antigravity', event: 'Stop' });
+  assert.deepEqual(sent.splice(0), [], 'an Antigravity sub-agent\'s conversation');
+  await handle({ conversationId: 'c', transcriptPath: '/a.jsonl', modelName: 'gemini-3' }, { reporting: 'antigravity', event: 'Stop' });
+  assert.deepEqual(sent.at(-1), ['reply', { reply: 'Answer.' }], 'an Antigravity turn\'s answer comes from its transcript');
+  assert.deepEqual([reportKind({ hello: true }), reportKind({ finishForeground: true }), reportKind({ toolSessionId: 'x' }), reportKind({ model: 'm' })], ['reporting', 'agents', 'tool-session', 'model']);
+});
+
+test('the transcript readers open regular files only, and read only the part they need', { timeout: 10000 }, async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ag-transcripts-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 't.jsonl');
+  fs.writeFileSync(file, `${JSON.stringify({ a: 1 })}\nnot json\n`);
+  assert.deepEqual(await firstRecord(file), { a: 1 });
+  for (const other of [dir, path.join(dir, 'missing'), 42, '']) assert.equal(await firstRecord(other), null, String(other));
+  fs.writeFileSync(file, `{"long":"${'y'.repeat(1024 * 1024)}"}\n`);
+  assert.equal(await firstRecord(file), null, 'a first line over 1 MiB is not read to its end');
+  fs.writeFileSync(file, ['{"n":1}', '{"n":2}', 'not json', '{"n":3}'].join('\n'));
+  assert.deepEqual(await tailRecords(file, 1000), [{ n: 1 }, { n: 2 }, null, { n: 3 }]);
+  assert.deepEqual(await tailRecords(file, 12), [{ n: 3 }], 'a window that starts mid-line drops that line');
+  assert.deepEqual(await tailRecords(dir, 12), []);
+
+  const user = { type: 'USER_INPUT', source: 'USER_EXPLICIT', content: 'hi' };
+  const model = (content) => ({ type: 'PLANNER_RESPONSE', source: 'MODEL', ...(content === undefined ? {} : { content }) });
+  fs.writeFileSync(file, [user, model('Found it.'), ...Array(8000).fill(model())].map((r) => JSON.stringify(r)).join('\n'));
+  assert.ok(fs.statSync(file).size > 256 * 1024);
+  assert.equal(await antigravityTranscriptReply(file), 'Found it.', 'read further back until the answer');
+  fs.writeFileSync(file, [user, model()].map((r) => JSON.stringify(r)).join('\n'));
+  assert.equal(await antigravityTranscriptReply(file), null, 'a turn with no answer');
+
+  const since = Date.now() - 1000;
+  fs.writeFileSync(file, `${JSON.stringify({ type: 'user' })}\n`);
+  let naps = 0;
+  const sleep = async () => {
+    if (++naps === 2) fs.appendFileSync(file, `${JSON.stringify({ type: 'system', subtype: 'compact_boundary', uuid: 'b3', timestamp: new Date().toISOString() })}\n`);
+  };
+  assert.equal(await claudeCompaction(file, since, { sleep }), 'b3', 'the record that lands while the hook waits');
+  assert.equal(await claudeCompaction(file, Date.now() + 60_000, { sleep: async () => {} }), null, 'no newer record within the wait');
+  assert.equal(await claudeCompaction(null, since), null);
+
+  if (process.platform !== 'win32') {
+    const fifo = path.join(dir, 'fifo');
+    execFileSync('mkfifo', [fifo]);
+    assert.equal(await firstRecord(fifo), null, 'a FIFO is never opened, so no reader waits for a writer');
+    assert.deepEqual(await tailRecords(fifo, 10), []);
+    assert.equal(await antigravityTranscriptReply(fifo), null);
+  }
 });
 
 test('a main turn\'s Stop brings its answer; a sub-agent\'s or a failed turn\'s does not', () => {

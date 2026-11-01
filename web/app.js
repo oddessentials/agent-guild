@@ -6702,7 +6702,7 @@ class TerminalView {
       cursorBlink: true,
       fontFamily: 'ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace',
       fontSize: terminalFontSize,
-      scrollback: 5000,
+      scrollback: 1000,
       macOptionIsMeta: true,
       // Option-drag selects text even while a program reads the mouse, as Shift-drag does elsewhere.
       macOptionClickForcesSelection: true,

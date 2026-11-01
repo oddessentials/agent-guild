@@ -49,6 +49,7 @@ export function cleanName(name) {
   return typeof name === 'string' ? name.trim().slice(0, 80) : '';
 }
 const MAX_AGENTS = 64;
+export const SCROLLBACK_LINES = 1000;
 
 export function clampDimension(value, fallback, min, max) {
   const n = Math.floor(Number(value));
@@ -99,7 +100,7 @@ export class Session extends EventEmitter {
     this.cols = opts.cols;
     this.rows = opts.rows;
     this.reportToken = opts.reportToken;
-    this.scrollback = opts.scrollback ?? 5000;
+    this.scrollback = opts.scrollback ?? SCROLLBACK_LINES;
     this.activityIdleMs = opts.activityIdleMs ?? 2500;
     this.doneAgentLingerMs = opts.doneAgentLingerMs ?? 15000;
     this.killGraceMs = opts.killGraceMs ?? 4000;

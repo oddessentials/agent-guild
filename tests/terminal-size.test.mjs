@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import headless from '@xterm/headless';
 import pty from 'node-pty';
 import { fakePty } from './fixtures/fake-pty.mjs';
-import { Session } from '../src/manager/session.mjs';
+import fs from 'node:fs';
+import { Session, SCROLLBACK_LINES } from '../src/manager/session.mjs';
 
 function createSession(t) {
   let onData;
@@ -91,4 +92,17 @@ test('the mirror applies a resize after the output that came before it', async (
   await parsed(session);
   assert.equal(fresh.messages[0].cols, 40);
   reference.dispose();
+});
+
+test('a page that attaches gets the newest 1,000 lines of history, and keeps as many itself', async (t) => {
+  const { session, viewer, output } = createSession(t);
+  for (let i = 1; i <= 1500; i++) output(`line ${i}\r\n`);
+  const page = viewer('desk');
+  await parsed(session);
+  const { data } = page.messages[0];
+  assert.equal(SCROLLBACK_LINES, 1000);
+  assert.ok(data.includes('line 1500\r\n') && data.includes('line 600\r\n'), 'the newest lines');
+  assert.ok(!data.includes('line 400\r\n'), 'and none from before the last 1,000');
+  const app = fs.readFileSync(new URL('../web/app.js', import.meta.url), 'utf8');
+  assert.match(app, new RegExp(`\\n\\s+scrollback: ${SCROLLBACK_LINES},\\n`), 'the page\'s terminal keeps as many lines');
 });

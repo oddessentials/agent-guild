@@ -25,6 +25,8 @@ const API = '/api/v1';
 const MAX_BODY = 64 * 1024;
 // A reply, and a Docker Agent stop that carries one, is a whole answer, which Claude Code does not clip.
 const REPLY_BODY_LIMIT = 1024 * 1024;
+const HOOK_BODY_LIMIT = 32 * 1024 * 1024;
+const MAX_HOOK_PARAM = 128;
 const MAX_WS_PAYLOAD = 1024 * 1024;
 // The API explorer (web/api.html) reads the doc itself.
 const API_DOC = path.join(path.dirname(require.resolve('../../package.json')), 'docs', 'api.md');
@@ -306,14 +308,28 @@ export function createManagerServer({
     // Agent, model and tool-session reports may authenticate with the
     // per-session report token that the manager injects into each tool's
     // environment.
-    const reportMatch = route.match(/^\/sessions\/([a-f0-9]+)\/(agents|model|tool-session|context|reporting|shells|docker|reply)$/);
+    const reportMatch = route.match(/^\/sessions\/([a-f0-9]+)\/(agents|model|tool-session|context|reporting|shells|docker|reply|hook)$/);
     if (reportMatch && method === 'POST') {
       const [, id, kind] = reportMatch;
-      const body = await readJsonBody(req, kind === 'reply' || kind === 'docker' ? REPLY_BODY_LIMIT : MAX_BODY);
       const auth = {
         trusted: timingSafeEqualString(requestToken(req, url), token),
         reportToken: req.headers['x-agent-guild-report-token'],
       };
+      if (kind === 'hook') {
+        // Before the body, which may be large, is read.
+        manager.checkReportAuth(id, auth);
+        const param = (name) => {
+          const value = url.searchParams.get(name);
+          if (value !== null && (value.length > MAX_HOOK_PARAM || /\p{Cc}/u.test(value))) {
+            throw new HttpError(400, `${name} must be printable and at most ${MAX_HOOK_PARAM} characters`, 'bad_request');
+          }
+          return value;
+        };
+        const options = { event: param('event') || null, reporting: param('reporting') };
+        const errors = await manager.reportHook(id, await readJsonBody(req, HOOK_BODY_LIMIT), options, auth);
+        return sendJson(res, 200, errors.length ? { ok: true, errors } : { ok: true });
+      }
+      const body = await readJsonBody(req, kind === 'reply' || kind === 'docker' ? REPLY_BODY_LIMIT : MAX_BODY);
       if (kind === 'agents') return sendJson(res, 200, { agent: manager.reportAgent(id, body, auth) });
       if (kind === 'docker') {
         manager.reportDocker(id, body, auth);

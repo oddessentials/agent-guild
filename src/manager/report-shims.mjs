@@ -25,6 +25,14 @@ import path from 'node:path';
 
 export const SHIM_NAME = 'agent-guild-report';
 export const LOADER_NAME = 'agent-guild-report-loader.mjs';
+export const NATIVE_NAME = 'agent-guild-report-native';
+
+const exeName = (name, platform) => (platform === 'win32' ? `${name}.exe` : name);
+
+export function nativeReporter(root, { platform = process.platform, arch = process.arch } = {}) {
+  const file = path.join(root, 'bin', 'native', `${platform}-${arch}`, exeName(SHIM_NAME, platform));
+  return fs.existsSync(file) ? file : null;
+}
 
 /** Quote for double quotes in sh: backslash, double quote, dollar and backtick. */
 function shQuote(value) {
@@ -43,12 +51,13 @@ export function fileUrl(file, platform = process.platform) {
  * forward slashes in Windows paths, and a backslash would be an escape in
  * the sh shim, so the sh shim gets forward slashes on Windows.
  */
-export function shimContents({ execPath, script, platform = process.platform }) {
+export function shimContents({ execPath, script, platform = process.platform, native = null }) {
   const forSh = (p) => (platform === 'win32' ? p.replace(/\\/g, '/') : p);
   const files = {
     [SHIM_NAME]: [
       '#!/bin/sh',
       '[ "$1" = --hook ] && [ -z "$AGENT_GUILD_SESSION_ID" ] && exec cat >/dev/null',
+      ...(native ? [`r=${shQuote(forSh(native))}`, '[ "$1" = --hook ] && [ -x "$r" ] && "$r" "$@" && exit 0'] : []),
       `n=${shQuote(forSh(execPath))}`,
       '[ -x "$n" ] || n=node',
       `exec "$n" ${shQuote(forSh(script))} "$@"`,
@@ -56,19 +65,40 @@ export function shimContents({ execPath, script, platform = process.platform }) 
     ].join('\n'),
   };
   if (platform === 'win32') {
+    const exe = `%~dp0${exeName(NATIVE_NAME, platform)}`;
     files[LOADER_NAME] = `import ${JSON.stringify(fileUrl(script, platform))};\n`;
     files[`${SHIM_NAME}.cmd`] = [
       '@ECHO OFF',
       'IF "%~1"=="--hook" IF NOT DEFINED AGENT_GUILD_SESSION_ID EXIT /B 0',
+      ...(native ? [`IF "%~1"=="--hook" IF EXIST "${exe}" GOTO native`, ':node'] : []),
       'IF EXIST "%AGENT_GUILD_NODE%" GOTO manager',
       `node "%~dp0${LOADER_NAME}" %*`,
       'EXIT /B %ERRORLEVEL%',
       ':manager',
       `"%AGENT_GUILD_NODE%" "%~dp0${LOADER_NAME}" %*`,
+      ...(native ? ['EXIT /B %ERRORLEVEL%', ':native', `"${exe}" %*`, 'IF ERRORLEVEL 1 GOTO node'] : []),
       '',
     ].join('\r\n');
   }
   return files;
+}
+
+function installNative(source, file, platform) {
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.copyFileSync(source, tmp);
+  try { fs.chmodSync(tmp, 0o755); } catch {}
+  try {
+    fs.renameSync(tmp, file);
+  } catch (err) {
+    if (platform !== 'win32' || !fs.existsSync(file)) {
+      fs.rmSync(tmp, { force: true });
+      throw err;
+    }
+    const aside = `${file}.${process.pid}.old`;
+    fs.renameSync(file, aside);
+    fs.renameSync(tmp, file);
+    try { fs.unlinkSync(aside); } catch {}
+  }
 }
 
 /**
@@ -77,9 +107,23 @@ export function shimContents({ execPath, script, platform = process.platform }) 
  * Returns `dir`. Throws when the folder is not writable; the caller decides
  * whether that is fatal.
  */
-export function writeReportShims({ dir, execPath = process.execPath, script, platform = process.platform }) {
+export function writeReportShims({ dir, execPath = process.execPath, script, platform = process.platform, native = null, warn = console.warn }) {
   fs.mkdirSync(dir, { recursive: true });
-  const files = shimContents({ execPath, script, platform });
+  const copy = path.join(dir, exeName(NATIVE_NAME, platform));
+  const remove = (file) => { try { fs.rmSync(file, { force: true }); } catch {} };
+  for (const name of fs.readdirSync(dir)) {
+    if (name.startsWith(`${exeName(NATIVE_NAME, platform)}.`) && name.endsWith('.old')) remove(path.join(dir, name));
+  }
+  if (native) {
+    try {
+      installNative(native, copy, platform);
+    } catch (err) {
+      warn(`[manager] could not copy the native agent-guild-report to ${copy}: ${err.message}; ${fs.existsSync(copy) ? 'hooks keep the earlier copy' : 'hooks run the Node.js reporter'}`);
+    }
+  } else {
+    remove(copy);
+  }
+  const files = shimContents({ execPath, script, platform, native: native ? copy : null });
   for (const [name, contents] of Object.entries(files)) {
     const file = path.join(dir, name);
     const tmp = `${file}.${process.pid}.tmp`;

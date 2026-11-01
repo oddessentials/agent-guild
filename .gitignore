@@ -1,5 +1,7 @@
 node_modules/
 bin/windows/
+bin/native/
+native/report/target/
 *.log
 .DS_Store
 Thumbs.db

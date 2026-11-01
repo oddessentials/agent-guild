@@ -23,7 +23,7 @@ import { createCardNames } from './card-names.mjs';
 import { RemoteAccess, loadRemoteAccess } from './remote-access.mjs';
 import { SelfUpdate } from './self-update.mjs';
 import { addRuntimePaths, resolveBaseEnv, pathReader } from './shell-env.mjs';
-import { writeReportShims } from './report-shims.mjs';
+import { nativeReporter, writeReportShims } from './report-shims.mjs';
 import { SessionHooks } from './session-hooks.mjs';
 import { launcherPath, nextManager } from './launch.mjs';
 import { createAutostart } from './autostart.mjs';
@@ -68,7 +68,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
   // because the Node.js path can change between runs.
   let shimDir = null;
   try {
-    shimDir = writeReportShims({ dir: paths.shims, script: path.join(rootDir, 'bin', 'agent-guild-report.mjs') });
+    shimDir = writeReportShims({ dir: paths.shims, script: path.join(rootDir, 'bin', 'agent-guild-report.mjs'), native: nativeReporter(rootDir) });
   } catch (err) {
     console.warn(`[manager] could not write the agent-guild-report launchers to ${paths.shims}: ${err.message}; hooks need the command on PATH`);
   }
