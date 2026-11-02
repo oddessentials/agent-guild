@@ -11,7 +11,7 @@ import WebSocket from 'ws';
 import { createManagerServer } from '../src/manager/server.mjs';
 import { fileURLToPath } from 'node:url';
 import { ProviderRegistry } from '../src/manager/providers.mjs';
-import { McpConnect, SERVER_NAME, classify, ownServer } from '../src/manager/mcp-connect.mjs';
+import { McpConnect, SERVER_NAME, ownServer } from '../src/manager/mcp-connect.mjs';
 import { dataDir } from '../src/manager/config.mjs';
 import { SessionManager } from '../src/manager/session-manager.mjs';
 
@@ -266,8 +266,6 @@ test('a manager with its own data folder registers that folder, so a tool starte
   const { command, args } = ownServer(process.execPath, home);
   assert.equal(args.at(-1), `--home=${home}`);
   assert.equal(ownServer().args.at(-1), `--home=${path.resolve(dataDir())}`, 'the default folder is pinned too');
-  const legacy = ownServer(process.execPath, home);
-  assert.equal(classify({}, legacy, { command: legacy.command, args: legacy.legacyArgs }).state, 'on', 'a registration made before the pin is still ours');
   const elsewhere = path.join(home, 'elsewhere');
   const env = { ...process.env, APPDATA: elsewhere, XDG_CONFIG_HOME: elsewhere };
   delete env.AGENT_GUILD_HOME;
@@ -283,6 +281,21 @@ test('a manager with its own data folder registers that folder, so a tool starte
   await call(1, 'initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '1' } });
   const status = await call(2, 'tools/call', { name: 'guild_status', arguments: {} });
   assert.equal(JSON.parse(status.result.content[0].text).version, '9.9.9-home');
+});
+
+test('a manager never claims or rewrites a registration that targets another data folder, or none', async (t) => {
+  const ctx = setup(t, { accounts: {} });
+  const [a, b] = ['manager-a', 'manager-b'].map((name) => ownServer(process.execPath, path.join(ctx.root, name)));
+  const managerB = new McpConnect({ registry: ctx.registry, own: b, prepareAccount: () => {}, dir: ctx.root });
+  const file = storeFile('anthropic', ctx.homeOf('anthropic'));
+  for (const [registration, label] of [[a, 'manager A\'s'], [{ command: a.command, args: a.args.slice(0, 2) }, 'unpinned']]) {
+    seed('anthropic', ctx.homeOf('anthropic'), registration);
+    const before = fs.readFileSync(file, 'utf8');
+    assert.equal((await managerB.refresh(ctx.provider('anthropic'), { force: true }))[0].state, 'other', `${label} reads as another server`);
+    const [result] = await managerB.setEnabled(ctx.provider('anthropic'), true);
+    assert.deepEqual([result.outcome, result.state], ['skipped', 'other'], `${label} is not reused`);
+    assert.equal(fs.readFileSync(file, 'utf8'), before, `${label} is left as it was`);
+  }
 });
 
 test('an open page hears an MCP server removed outside the card, from the heartbeat', async (t) => {

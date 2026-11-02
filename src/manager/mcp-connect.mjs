@@ -13,7 +13,7 @@ const STATE_TTL_MS = 60 * 1000;
 const RUN_TIMEOUT_MS = 30000;
 
 export function ownServer(execPath = process.execPath, home = dataDir()) {
-  return { command: stableExecPath(execPath), args: [PACKAGE_SCRIPT, 'mcp', `--home=${path.resolve(home)}`], legacyArgs: [PACKAGE_SCRIPT, 'mcp'] };
+  return { command: stableExecPath(execPath), args: [PACKAGE_SCRIPT, 'mcp', `--home=${path.resolve(home)}`] };
 }
 
 const homeOf = (env, platform) => (platform === 'win32' ? env.USERPROFILE : env.HOME) || os.homedir();
@@ -24,8 +24,7 @@ export function classify(entry, own, { enabled = true, command, args, remote = n
   if (typeof command !== 'string' || !Array.isArray(args) || !args.every((a) => typeof a === 'string')) {
     return { state: 'unknown', detail: 'its MCP settings name the agent-guild server in a form Agent Guild does not recognize' };
   }
-  const same = (list) => args.length === list.length && args.every((a, i) => a === list[i]);
-  if (command !== own.command || !(same(own.args) || (own.legacyArgs && same(own.legacyArgs)))) {
+  if (command !== own.command || args.length !== own.args.length || args.some((a, i) => a !== own.args[i])) {
     return { state: 'other', detail: `agent-guild is already set to run ${[command, ...args].join(' ')}` };
   }
   return { state: enabled === false ? 'disabled' : 'on' };
