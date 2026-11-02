@@ -468,7 +468,6 @@ export function createManagerServer({
       const id = addedMatch[1];
       if (method === 'PUT') optionalCards.add(id, await readJsonBody(req));
       else optionalCards.remove(id, { revision: url.searchParams.get('revision') });
-      registry.refreshVersions({ force: true, ids: [id] }).catch(() => {});
       return sendJson(res, 200, { providers: registry.list(), revision: registry.revision });
     }
     if (route === '/usage' && method === 'GET') {

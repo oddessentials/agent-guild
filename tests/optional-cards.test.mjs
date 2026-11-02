@@ -14,9 +14,11 @@ function setup(t, contents) {
   const userFile = path.join(dir, 'providers.json');
   if (contents !== undefined) fs.writeFileSync(userFile, typeof contents === 'string' ? contents : JSON.stringify(contents));
   const registry = new ProviderRegistry({ userFile, env: { PATH: '', HOME: dir }, platform: 'linux', checkUpdates: false, accountsDir: path.join(dir, 'accounts') });
+  const refreshes = [];
+  registry.refreshVersions = (options) => { refreshes.push(options); return Promise.resolve(false); };
   let running = false;
   const cards = createOptionalCards({ registry, inUse: (id) => running && id === shipped.id });
-  return { userFile, registry, cards, run: (value) => { running = value; }, read: () => fs.readFileSync(userFile, 'utf8') };
+  return { userFile, registry, cards, refreshes, run: (value) => { running = value; }, read: () => fs.readFileSync(userFile, 'utf8') };
 }
 
 const refused = (fn, code) => assert.throws(fn, (err) => err.code === code);
@@ -40,6 +42,7 @@ test('an optional card is added to providers.json and removed from it, keeping t
   existing.cards.remove(shipped.id, { revision: existing.registry.revision });
   assert.deepEqual(JSON.parse(existing.read()).providers, [mine]);
   assert.equal(existing.registry.get(shipped.id), null);
+  assert.deepEqual(existing.refreshes, [{ force: true }, { force: true }], 'every change rechecks every tool the reload cleared');
 });
 
 test('a providers.json that is not valid JSON is refused and left exactly as it was', (t) => {

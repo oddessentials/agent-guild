@@ -47,6 +47,7 @@ export function createOptionalCards({ registry, inUse, file = OPTIONAL_FILE }) {
     else parsed.providers = next;
     writeAtomic(target, `${JSON.stringify(parsed, null, 2)}\n`);
     registry.reload();
+    registry.refreshVersions({ force: true }).catch(() => {});
   }
 
   return {
