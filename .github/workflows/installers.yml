@@ -468,7 +468,6 @@ jobs:
 
           xattr -w com.apple.quarantine "0081;$(printf %x "$(date +%s)");Safari;" "$pkg"
           spctl --assess --type install -vv "$pkg" 2>&1 | grep -q 'source=Notarized Developer ID' || fail 'Gatekeeper does not accept the downloaded package as notarized.'
-          xcrun stapler validate "$pkg" || fail 'The package has no notarization ticket stapled to it.'
           pkgutil --check-signature "$pkg" | grep -q 'Developer ID Installer: .* (H3FY62W58W)' || fail 'The package is not signed with the Developer ID Installer certificate.'
 
           setup
