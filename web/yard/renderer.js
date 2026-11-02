@@ -20,7 +20,8 @@ const GLOW = { off: 0, low: .55, high: 1 }, GLOW_GAIN = { light: .9, dark: 2.2 }
 // fronts, and a generated hall's baked glow map.
 const glows = m => m.name === 'window' || m.name === 'magic' || m.name === 'officeGlass' || m.emissiveMap;
 const PARTICLES = 640;
-const FIREWORK_COLORS = [0xffd36b, 0xff6b8a, 0x7bd7ff, 0xa8ff7b, 0xffffff];
+const FIREWORK_COLORS = [0xffc857, 0xff507c, 0x53cfff, 0xb28aff, 0x7dffae];
+const FIREWORKS = { points: 1024, batches: 8, bursts: 24, stars: 32, trail: 4, launch: .5, life: 1.7 };
 // How many tags' heights a character's tag may rise above its character
 // before it hides: any higher, it reads as another's.
 const RISE = 2, CHIP_GAP = 4;
@@ -186,7 +187,7 @@ export class YardRenderer {
     if(this.disposed||request!==this.worldRequest){disposeWorld(loaded.scene);return;}
     this.request++;
     this.clearUnits();
-    this.clearProps();this.releaseStation();this.releaseEffects();
+    this.clearProps();this.releaseStation();this.releaseEffects();this.clearFireworks();
     this.closeCrowd(false);
     for(const item of this.halls.values()){item.label.remove();item.chip.remove();}
     this.halls.clear();
@@ -886,50 +887,119 @@ export class YardRenderer {
     this.scatter(positions,velocity,{color:0xffc46b,size:.09,life:.55,gravity:9});
   }
   fireworks() {
-    if(this.reduced||this.disposed||!this.world)return;
-    const spots=[{x:0,y:4,z:0}];
+    if(this.reduced||this.disposed||!this.world||this.shows.length||this.sparks.some(s=>s.firework))return;
+    this.camera.updateMatrixWorld();
+    const spots=[{x:0,y:6.5,z:0}];
+    vector.set(0,6.5,0).project(this.camera);
+    if(Math.abs(vector.x)>.7||Math.abs(vector.y)>.7)spots[0]={x:this.controls.target.x,y:this.controls.target.y+3,z:this.controls.target.z};
     for(const item of this.halls.values()){
-      if(!item.root.visible)continue;
-      (item.smoke||item.root).getWorldPosition(vector);spots.push({x:vector.x,y:vector.y+3.5,z:vector.z});
+      if(!item.root.visible||spots.length>=FIREWORKS.bursts-3)continue;
+      (item.smoke||item.root).getWorldPosition(vector);vector.y+=5.5;
+      const spot={x:vector.x,y:vector.y,z:vector.z};
+      vector.project(this.camera);
+      if(Math.abs(vector.x)<.9&&Math.abs(vector.y)<.8)spots.push(spot);
     }
-    for(const spot of spots)this.shows.push({...spot,due:Math.random()*1.2,left:4});
-    this.drawOnce();
+    const count=Math.min(FIREWORKS.bursts,Math.max(12,spots.length+5)),regular=count-3;
+    const offset=Math.floor(Math.random()*FIREWORK_COLORS.length);
+    for(let i=0;i<count;i++)this.shows.push({...spots[i%spots.length],index:i,color:FIREWORK_COLORS[(i+offset)%FIREWORK_COLORS.length],
+      finale:i>=regular,due:i<regular?i*2.2/(regular-1):2.8+(i-regular)*.13});
+    this.updateShows(0);this.drawOnce();
   }
-  burst({x,y,z}) {
-    const count=90,positions=new Float32Array(count*3),velocity=[];
-    const ox=x+(Math.random()-.5)*2,oy=y+Math.random()*2,oz=z+(Math.random()-.5)*2;
-    for(let i=0;i<count;i++){
-      positions.set([ox,oy,oz],i*3);
-      const u=Math.random()*2-1,a=Math.random()*Math.PI*2,r=Math.sqrt(1-u*u),s=2.8+Math.random()*1.6;
-      velocity.push([r*Math.cos(a)*s,u*s+.8,r*Math.sin(a)*s]);
+  fireworkMap() {
+    if(this.fireworkTexture)return this.fireworkTexture;
+    const canvas=Object.assign(document.createElement('canvas'),{width:32,height:32}),c=canvas.getContext('2d');
+    const glow=c.createRadialGradient(16,16,0,16,16,16);
+    glow.addColorStop(0,'#fff');glow.addColorStop(.18,'#fff');glow.addColorStop(.45,'rgba(255,255,255,.45)');glow.addColorStop(1,'rgba(255,255,255,0)');
+    c.fillStyle=glow;c.fillRect(0,0,32,32);
+    this.fireworkTexture=new T.TextureLoader().load(canvas.toDataURL(),()=>{this.dirty=true;this.drawOnce();});
+    return this.fireworkTexture;
+  }
+  burst(show) {
+    const count=FIREWORKS.stars*FIREWORKS.trail;
+    let batches=0,live=0;
+    for(const spark of this.sparks)if(spark.firework){batches++;live+=spark.points.geometry.attributes.position.count;}
+    if(this.sparks.length>=48||batches>=FIREWORKS.batches-(show.finale?0:3)||live+count>FIREWORKS.points)return;
+    const width=(this.camera.right-this.camera.left)/this.camera.zoom,height=(this.camera.top-this.camera.bottom)/this.camera.zoom;
+    const scale=Math.min(1.3,width/14,height/14);
+    this.camera.updateMatrixWorld();
+    vector.set(show.x+(Math.random()-.5)*2*scale,show.y+(Math.random()-.5)*scale,show.z).project(this.camera);
+    vector.x=T.MathUtils.clamp(vector.x,-.55,.55);vector.y=T.MathUtils.clamp(vector.y,-.1,.55);vector.unproject(this.camera);
+    const firework={x:vector.x,y:vector.y,z:vector.z,scale,size:show.finale?8:6,kind:show.index%3,bloom:false,colors:new Float32Array(count*3)};
+    const positions=new Float32Array(count*3),velocity=new Float32Array(FIREWORKS.stars*3),color=new T.Color(show.color),gold=new T.Color(0xffcf78);
+    const turn=Math.random()*Math.PI*2,{right,up}=viewBasis();
+    for(let i=0;i<FIREWORKS.stars;i++){
+      const u=1-2*(i+.5)/FIREWORKS.stars,a=i*Math.PI*(3-Math.sqrt(5))+turn,r=Math.sqrt(1-u*u),speed=(3.5+Math.random())*scale*(show.finale?1.2:1);
+      if(firework.kind===1){
+        const angle=i/FIREWORKS.stars*Math.PI*2;
+        for(let k=0;k<3;k++)velocity[i*3+k]=(right[k]*Math.cos(angle)+up[k]*Math.sin(angle))*speed;
+      } else velocity.set([r*Math.cos(a)*speed,(u+.2)*speed,r*Math.sin(a)*speed],i*3);
+      for(let j=0;j<FIREWORKS.trail;j++){
+        const at=(i*FIREWORKS.trail+j)*3,brightness=1-j*.23;
+        positions.set([firework.x,firework.y-3*scale,firework.z],at);
+        firework.colors.set([color.r*brightness,color.g*brightness,color.b*brightness],at);
+        if(j===0)for(let k=0;k<3;k++)firework.colors[at+k]=firework.colors[at+k]*.55+.45;
+      }
     }
-    this.scatter(positions,velocity,{color:FIREWORK_COLORS[Math.floor(Math.random()*FIREWORK_COLORS.length)],size:.3,life:1.5,gravity:2});
+    const colors=new Float32Array(count*3);
+    for(let i=0;i<12;i++)colors.set([gold.r*(1-i/13),gold.g*(1-i/13),gold.b*(1-i/13)],i*3);
+    firework.initialColors=colors;
+    this.scatter(positions,velocity,{color:0xffffff,size:firework.size,life:FIREWORKS.launch+FIREWORKS.life,gravity:0,firework});
   }
-  scatter(positions,velocity,{color,size,life,gravity}) {
+  scatter(positions,velocity,{color,size,life,gravity,firework=null}) {
     if(this.sparks.length>=48)return;
     const geometry=new T.BufferGeometry();geometry.setAttribute('position',new T.BufferAttribute(positions,3));
-    const material=new T.PointsMaterial({color,size,transparent:true,opacity:1,blending:T.AdditiveBlending,depthWrite:false});
+    if(firework){geometry.setAttribute('color',new T.BufferAttribute(firework.initialColors,3));geometry.setDrawRange(0,12);}
+    const material=new T.PointsMaterial({color,size,transparent:true,opacity:1,blending:T.AdditiveBlending,depthWrite:false,
+      ...(firework?{map:this.fireworkMap(),vertexColors:true,toneMapped:false}: {})});
     const points=new T.Points(geometry,material);points.frustumCulled=false;
-    this.scene.add(points);this.sparks.push({points,velocity,age:0,life,gravity});
+    this.scene.add(points);this.sparks.push({points,velocity,age:0,life,gravity,firework});
   }
   updateShows(dt) {
-    for(const show of this.shows){
-      show.due-=dt;
-      if(show.due>0)continue;
-      this.burst(show);show.left--;show.due=.3+Math.random()*.4;
+    for(let i=0;i<this.shows.length;){
+      const show=this.shows[i];show.due-=dt;
+      if(show.due>0){i++;continue;}
+      this.burst(show);this.shows.splice(i,1);
     }
-    this.shows=this.shows.filter(show=>show.left>0);
+  }
+  updateFirework(spark) {
+    const {firework:f,points,velocity,age}=spark,{position,color}=points.geometry.attributes;
+    const t=age-FIREWORKS.launch;
+    if(t<0){
+      for(let i=0;i<12;i++){
+        const u=Math.max(0,age-i*.014)/FIREWORKS.launch;
+        position.setXYZ(i,f.x-.25*f.scale*(1-u),f.y-3*f.scale*(1-u)*(1-u),f.z);
+      }
+      return;
+    }
+    if(!f.bloom){color.array.set(f.colors);color.needsUpdate=true;points.geometry.setDrawRange(0,FIREWORKS.stars*FIREWORKS.trail);f.bloom=true;}
+    const gravity=(f.kind===2?2.4:1.2)*f.scale;
+    for(let j=0;j<FIREWORKS.trail;j++){
+      const time=Math.max(0,t-j*.055),travel=(1-Math.exp(-1.5*time))/1.5,fall=gravity*time*time/2;
+      for(let i=0;i<FIREWORKS.stars;i++)position.setXYZ(i*FIREWORKS.trail+j,f.x+velocity[i*3]*travel,f.y+velocity[i*3+1]*travel-fall,f.z+velocity[i*3+2]*travel);
+    }
+    points.material.size=f.size*(1-t/FIREWORKS.life/3);
+    points.material.opacity=Math.pow(Math.max(0,1-t/FIREWORKS.life),.65);
+  }
+  clearFireworks() {
+    this.shows=[];
+    for(let i=this.sparks.length-1;i>=0;i--)if(this.sparks[i].firework){
+      const {points}=this.sparks[i];this.scene.remove(points);points.geometry.dispose();points.material.dispose();this.sparks.splice(i,1);
+    }
+    this.dirty=true;
   }
   updateSparks(dt) {
-    for(const spark of [...this.sparks]){
-      spark.age+=dt;
-      const array=spark.points.geometry.attributes.position.array;
-      spark.velocity.forEach((v,i)=>{v[1]-=spark.gravity*dt;array[i*3]+=v[0]*dt;array[i*3+1]=Math.max(.02,array[i*3+1]+v[1]*dt);array[i*3+2]+=v[2]*dt;});
-      spark.points.geometry.attributes.position.needsUpdate=true;
-      spark.points.material.opacity=Math.max(0,1-spark.age/spark.life);
-      if(spark.age>spark.life){this.scene.remove(spark.points);spark.points.geometry.dispose();spark.points.material.dispose();this.sparks.splice(this.sparks.indexOf(spark),1);}
-    }
     if(this.sparks.length)this.dirty=true;
+    for(let n=this.sparks.length-1;n>=0;n--){
+      const spark=this.sparks[n];spark.age+=dt;
+      if(spark.age>=spark.life){this.scene.remove(spark.points);spark.points.geometry.dispose();spark.points.material.dispose();this.sparks.splice(n,1);continue;}
+      if(spark.firework)this.updateFirework(spark);
+      else {
+        const array=spark.points.geometry.attributes.position.array;
+        spark.velocity.forEach((v,i)=>{v[1]-=spark.gravity*dt;array[i*3]+=v[0]*dt;array[i*3+1]=Math.max(.02,array[i*3+1]+v[1]*dt);array[i*3+2]+=v[2]*dt;});
+        spark.points.material.opacity=Math.max(0,1-spark.age/spark.life);
+      }
+      spark.points.geometry.attributes.position.needsUpdate=true;
+    }
   }
   helperClip(helper,name) {
     const clip=helper.clips.find(c=>c.name===name)||helper.clips.find(c=>c.name===LEGACY[name])||helper.clips[0];
@@ -994,11 +1064,14 @@ export class YardRenderer {
     const size=photoSize(w,h,buffer.x,buffer.y);
     const viewport=this.renderer.getViewport({copy:v=>v.clone()}),ratio=this.renderer.getPixelRatio();
     const particleScale=this.effects?.points.material.uniforms.scale,scale=particleScale?.value;
-    const radius=(this.effects?Math.max(...this.effects.preset.size):0)*size.height*this.camera.projectionMatrix.elements[5]/4;
+    const fireworks=this.sparks.filter(s=>s.firework).map(s=>({material:s.points.material,size:s.points.material.size}));
+    const radius=Math.max((this.effects?Math.max(...this.effects.preset.size):0)*size.height*this.camera.projectionMatrix.elements[5]/4,
+      ...fireworks.map(s=>s.size*size.scale/2));
     const pad=Math.ceil(radius)+1,tw=buffer.x+2*pad,th=buffer.y+2*pad;
     const canvas=Object.assign(document.createElement('canvas'),{width:size.width,height:size.height});
     let tags;
     try {
+      for(const spark of fireworks)spark.material.size=spark.size*size.scale/ratio;
       this.positionLabels();
       tags=this.tags();
       for(const unit of this.units.values()){unit.ring.material.color.set(unit.session?.provider.color||0xbaaa80);unit.ring.scale.setScalar(1);}
@@ -1013,6 +1086,7 @@ export class YardRenderer {
         context.drawImage(this.canvas,x,y);
       }
     } finally {
+      for(const spark of fireworks)spark.material.size=spark.size;
       this.renderer.setViewport(viewport);
       if(particleScale)particleScale.value=scale;
       this.camera.clearViewOffset();
@@ -1118,8 +1192,7 @@ export class YardRenderer {
     this.reduced=value;
     if(value)for(const unit of this.units.values()){this.unlook(unit);unit.lookYaw=0;unit.lookPitch=0;}
     if(value)for(const unit of this.units.values())if(unit.moving&&unit.target){this.arrive(unit);this.play(unit);}
-    // Reduced motion shows each hall's glow as it stands, and no effects.
-    if(value){for(const item of this.halls.values())item.level=item.target;this.glow();this.stillEffects();this.shows=[];}
+    if(value){for(const item of this.halls.values())item.level=item.target;this.glow();this.stillEffects();this.clearFireworks();}
     this.dirty=true;this.drawOnce();
   }
   setActive(value) {
@@ -1220,7 +1293,8 @@ export class YardRenderer {
   dispose() {
     if(this.disposed)return;
     this.disposed=true;this.request++;this.worldRequest++;cancelAnimationFrame(this.frame);clearTimeout(this.stageTimer);
-    for(const spark of this.sparks){spark.points.geometry.dispose();spark.points.material.dispose();}this.sparks=[];this.shows=[];
+    this.clearFireworks();this.fireworkTexture?.dispose();
+    for(const spark of this.sparks){spark.points.geometry.dispose();spark.points.material.dispose();}this.sparks=[];
     this.releaseEffects();this.clearProps();
     this.loadingManager.abort();this.pending?.close();this.pending=null;
     this.resizeObserver.disconnect();this.controls.dispose();this.clearUnits();

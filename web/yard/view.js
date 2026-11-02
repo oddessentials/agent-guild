@@ -29,6 +29,12 @@ export function initYard(controller) {
   let view = root.dataset.view === 'yard' ? 'yard' : 'cards';
   let snapshot = controller.snapshot();
   let lastSkin = '', lastTheme = '', wasConnected = false;
+  const celebrate = () => { if (!disposed && sceneVisible()) renderer?.fireworks(); };
+  const fireworksButton = () => {
+    const button = $('yard-fireworks');
+    button.disabled = !renderer || disposed || motion.matches;
+    button.title = motion.matches ? 'Fireworks off: reduced motion is enabled' : 'Fireworks in this Yard only';
+  };
   const sceneVisible = () => view === 'yard' && !$('app').hidden && document.visibilityState !== 'hidden' && $('terminal-panel').hidden;
   const skinEntry = (skin = root.dataset.skin) => (window.agentGuildSkins || []).find((item) => item.id === skin) || null;
   const yardOff = root.dataset.yard === 'none';
@@ -161,6 +167,7 @@ export function initYard(controller) {
         hideLoading();
         $('yard-stage').dataset.ready = 'true';
         $('yard-photo').disabled = false;
+        fireworksButton();
       } catch (err) {
         candidate?.dispose();
         if (attempt === sceneAttempt && !disposed) {
@@ -183,6 +190,7 @@ export function initYard(controller) {
     $('yard-failure').hidden = false;
     $('yard-stage').dataset.ready = 'false';
     $('yard-photo').disabled = true;
+    fireworksButton();
     if (restoreFocus) $('yard-retry').focus();
   }
   function roster() {
@@ -309,6 +317,8 @@ export function initYard(controller) {
   $('yard-focus').addEventListener('click',() => renderer?.focus(selected));
   $('yard-zoom-in').addEventListener('click',() => renderer?.zoom(1.2));
   $('yard-zoom-out').addEventListener('click',() => renderer?.zoom(1/1.2));
+  $('yard-fireworks').addEventListener('click',celebrate);
+  fireworksButton();
   $('yard-photo').hidden = !controller.photo;
   $('yard-photo').addEventListener('click',async () => {
     let YardPhoto;
@@ -334,7 +344,7 @@ export function initYard(controller) {
     setView(preferYard && skinAllowsYard() ? 'yard' : 'cards', { remember: false });
     renderer?.setActive(sceneVisible());
   };
-  const motionChange = () => renderer?.setReducedMotion(motion.matches);
+  const motionChange = () => { renderer?.setReducedMotion(motion.matches); fireworksButton(); };
   const pageHide = () => renderer?.setActive(false);
   const observer = new MutationObserver((records) => {
     if (records.some((record) => record.attributeName === 'data-skin' || record.attributeName === 'data-theme')) onAppearance();
@@ -348,10 +358,10 @@ export function initYard(controller) {
   window.addEventListener('pagehide',pageHide);
   window.addEventListener('pageshow',visibility);
   setView(view,{remember:false});
-  const celebrate = () => { if (sceneVisible()) renderer?.fireworks(); };
   return { update, select, setView, closePhoto, celebrate, dispose() {
     closePhoto();
-    disposed=true; sceneAttempt++; worldAttempt++; clearTimeout(swapReveal); observer.disconnect(); pendingRenderer?.dispose(); renderer?.dispose();
+    $('yard-fireworks').removeEventListener('click',celebrate);
+    disposed=true; fireworksButton(); sceneAttempt++; worldAttempt++; clearTimeout(swapReveal); observer.disconnect(); pendingRenderer?.dispose(); renderer?.dispose();
     document.removeEventListener('visibilitychange',visibility);
     motion.removeEventListener('change',motionChange);
     window.removeEventListener('pagehide',pageHide);
