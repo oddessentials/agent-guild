@@ -198,6 +198,12 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   for (const id of allCards) await click(`#cards-shown input[value="${id}"]`);
   await evaluate('document.querySelector("#cards-menu").hidePopover()');
   assert.deepEqual([await cardIds(), await visible('#cards-none')], [[], true]);
+  await click('#view-yard');
+  await until('the Yard', () => evaluate('document.documentElement.dataset.view==="yard"'));
+  assert.equal(await visible('#cards-none'), false, 'the Yard does not show the Cards empty state');
+  await click('#view-cards');
+  await until('Cards', () => evaluate('document.documentElement.dataset.view==="cards"'));
+  assert.equal(await visible('#cards-none'), true, 'back in Cards the empty state returns');
   await click('#cards-show-all');
   assert.deepEqual([await cardIds(), await visible('#cards-none')], [allCards, false]);
   assert.equal(await evaluate('document.activeElement.matches("#providers .card-toggle")'), true, 'focus moves to the restored cards');
