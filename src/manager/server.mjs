@@ -456,8 +456,7 @@ export function createManagerServer({
       return sendJson(res, 200, { providers: registry.list(), revision: registry.revision });
     }
     if (route === '/providers/reload' && method === 'POST') {
-      registry.reload();
-      registry.refreshVersions({ force: true }).catch(() => {});
+      registry.reloadAndRecheck();
       return sendJson(res, 200, { providers: registry.list(), revision: registry.revision, warnings: registry.warnings });
     }
     if (route === '/providers/optional' && method === 'GET') {

@@ -39,10 +39,15 @@ test('an optional card is added to providers.json and removed from it, keeping t
   refused(() => existing.cards.remove(shipped.id, { revision: existing.registry.revision }), 'card_in_use');
   existing.run(false);
   refused(() => existing.cards.remove(shipped.id, { revision: 'stale' }), 'stale_providers');
+  const handEdited = JSON.stringify({ providers: [mine, shipped] });
+  fs.writeFileSync(existing.userFile, handEdited);
+  refused(() => existing.cards.remove(shipped.id, { revision: 'stale' }), 'stale_providers');
+  assert.equal(existing.read(), handEdited, 'the hand edit is kept as written');
+  assert.deepEqual(existing.refreshes, [{ force: true }, { force: true }], 'reloading the hand edit rechecks every tool');
   existing.cards.remove(shipped.id, { revision: existing.registry.revision });
   assert.deepEqual(JSON.parse(existing.read()).providers, [mine]);
   assert.equal(existing.registry.get(shipped.id), null);
-  assert.deepEqual(existing.refreshes, [{ force: true }, { force: true }], 'every change rechecks every tool the reload cleared');
+  assert.deepEqual(existing.refreshes, [{ force: true }, { force: true }, { force: true }], 'every change rechecks every tool the reload cleared');
 });
 
 test('a providers.json that is not valid JSON is refused and left exactly as it was', (t) => {

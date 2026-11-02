@@ -121,7 +121,7 @@ export function createAccountEditor({ registry, inUse }) {
     const bytes = readBytes(file);
     const current = fileRevision(bytes);
     if (revision !== current || registry.revision !== current) {
-      if (registry.revision !== current) registry.reload();
+      if (registry.revision !== current) registry.reloadAndRecheck();
       throw refusal(409, 'stale_accounts', 'The accounts changed elsewhere. Check them and try again.');
     }
     const result = apply(provider, (change) => editAccountsText(bytes === null ? null : bytes.toString('utf8'), providerId, registry.platform, change, file));

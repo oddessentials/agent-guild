@@ -29,7 +29,7 @@ export function createOptionalCards({ registry, inUse, file = OPTIONAL_FILE }) {
     const bytes = readBytes(target);
     const current = fileRevision(bytes);
     if (revision !== current || registry.revision !== current) {
-      if (registry.revision !== current) registry.reload();
+      if (registry.revision !== current) registry.reloadAndRecheck();
       throw refusal(409, 'stale_providers', 'Your tool settings changed elsewhere. Check them and try again.');
     }
     let parsed = { providers: [] };
@@ -46,8 +46,7 @@ export function createOptionalCards({ registry, inUse, file = OPTIONAL_FILE }) {
     if (Array.isArray(parsed)) parsed = next;
     else parsed.providers = next;
     writeAtomic(target, `${JSON.stringify(parsed, null, 2)}\n`);
-    registry.reload();
-    registry.refreshVersions({ force: true }).catch(() => {});
+    registry.reloadAndRecheck();
   }
 
   return {

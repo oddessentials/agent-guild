@@ -141,6 +141,8 @@ test('adding an account writes providers.json, reloads the tools and changes the
 test('a change made from an older view of the file is refused, and the tools reload from the file', (t) => {
   const { registry, editor, userFile, accounts } = setup(t, { providers: [{ id: 'openai', accounts: [{ id: 'work', label: 'Work' }] }] });
   const loaded = registry.revision;
+  const refreshes = [];
+  registry.refreshVersions = (options) => { refreshes.push(options); return Promise.resolve(false); };
   refused(() => editor.add('openai', { label: 'Side', revision: null }), 409, 'stale_accounts');
   refused(() => editor.add('openai', { label: 'Side', revision: 'f'.repeat(32) }), 409, 'stale_accounts');
   assert.equal(registry.revision, loaded, 'nothing changed on disk, so nothing reloads');
@@ -150,6 +152,7 @@ test('a change made from an older view of the file is refused, and the tools rel
   refused(() => editor.rename('openai', 'work', { label: 'Office', revision: loaded }), 409, 'stale_accounts');
   assert.equal(fs.readFileSync(userFile, 'utf8'), handEdited, 'the hand edit is kept as written');
   assert.notEqual(registry.revision, loaded, 'the tools now reflect the hand edit');
+  assert.deepEqual(refreshes, [{ force: true }], 'the reload is followed by a recheck of every tool');
   assert.deepEqual(accounts('openai'), [{ id: 'default', label: 'Default' }, { id: 'work', label: 'Job' }]);
   editor.rename('openai', 'work', { label: 'Office', revision: registry.revision });
   assert.deepEqual(accounts('openai'), [{ id: 'default', label: 'Default' }, { id: 'work', label: 'Office' }]);
