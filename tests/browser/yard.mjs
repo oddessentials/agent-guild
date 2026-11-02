@@ -360,19 +360,6 @@ test('characters walk to where their sessions\' states put them, arrive from the
   await b.wait(`__renderer.units.get('arrival').loaded`);
   assert.ok(await b.evaluate(`__walk('arrival')`)<4000,'and reaches its place');
   assert.deepEqual(await b.evaluate(`__at('arrival')`),await b.evaluate(`__place('arrival')`));
-  const show=await b.evaluate(`(()=>{
-    __renderer.fireworks();
-    const shows=__renderer.shows.length,halls=[...__renderer.halls.values()].filter(h=>h.root.visible).length;
-    for(let i=0;i<25;i++)__renderer.step(.05);
-    const lit=__renderer.sparks.length;
-    let n=0;while((__renderer.shows.length||__renderer.sparks.length)&&n<400){__renderer.step(.05);n++;}
-    return {shows,halls,lit,n,left:__renderer.sparks.length};
-  })()`);
-  assert.equal(show.shows,show.halls+1,'one show over the plaza and one per hall on show');
-  assert.ok(show.lit>0,'bursts are up within the first second and a quarter');
-  assert.ok(show.n<400,`the show burned out after ${show.n} steps`);
-  assert.equal(show.left,0);
-  // Reduced motion: a change of place is immediate, with no walk, and no fireworks.
   await b.evaluate(`__renderer.setReducedMotion(true);__sessions[0].activity='active';__sessions[0].lastOutputAt=${q(iso(0))};__renderer.update(__providers,__sessions)`);
   assert.equal(await b.evaluate(`${unit}.moving`),false);
   assert.deepEqual(await b.evaluate(`__at(${q(id)})`),await b.evaluate(`__place(${q(id)})`),'reduced motion places it at once');
@@ -933,10 +920,10 @@ test('a capture draws twice the stage in tiles without the selection ring, and l
     const r=new YardRenderer(host,labels,{select(){},open(){}});
     await r.setWorld('guild','dark');r.update(${q(f.providers)},${q(sessions)});
     const id=${q(sessions[0].id)},ring=r.units.get(id).ring;
-    r.select({kind:'session',id});
+    r.select({kind:'session',id});r.fireworks();r.updateSparks(.8);
     const gl=r.renderer.getContext();
     const live=()=>[ring.scale.x,ring.material.color.getHex(),r.camera.view?.enabled??false,r.camera.projectionMatrix.elements.join(),
-      [...gl.getParameter(gl.VIEWPORT)],r.effects.points.material.uniforms.scale.value,r.canvas.width,r.canvas.height];
+      [...gl.getParameter(gl.VIEWPORT)],r.effects.points.material.uniforms.scale.value,r.canvas.width,r.canvas.height,r.sparks.find(s=>s.firework)?.points.material.size];
     const before=live(),renders=[],render=r.renderer.render.bind(r.renderer);
     let fail=0;
     r.renderer.render=(scene,camera)=>{renders.push([ring.scale.x,ring.material.color.getHex(),camera.view?.enabled??false]);if(fail&&renders.length===fail)throw new Error('lost');render(scene,camera);};
@@ -1077,7 +1064,7 @@ test('the camera controls stay whole and reachable beside the swap status and he
         return {buttons,overlaps};
       })()`);
       const at=`${name}, ${status} shown`;
-      assert.deepEqual(layout.buttons.map(c=>c.label),['Zoom in','Zoom out','Overview','Focus selected','Save a picture of the Yard'],at);
+      assert.deepEqual(layout.buttons.map(c=>c.label),['Zoom in','Zoom out','Overview','Focus selected','Save a picture of the Yard','Fireworks in this Yard only'],at);
       assert.deepEqual(layout.buttons.filter(c=>!c.inside||!c.reached).map(c=>c.label),[],at);
       assert.equal(new Set(layout.buttons.map(c=>c.height)).size,1,`every label stays on one line: ${at}`);
       assert.deepEqual(layout.overlaps,[],at);
@@ -1327,5 +1314,168 @@ test('auth, graphics failure, retry, manager restart and stopped screen remain u
   assert.equal(await b.evaluate("document.querySelector('#app').hidden"),true);
   const shutdown=b.requests.filter(r=>r.url.endsWith('/shutdown'));
   assert.deepEqual(shutdown.map(r=>r.postData?JSON.parse(r.postData):{}),[{restart:true},{force:true,restart:true},{}, {force:true}]);
+  assert.deepEqual(b.errors,[]);
+});
+
+
+test('fireworks stay bounded under repeated triggers, finish deterministically, and release their resources',options,async t=>{
+  const {b}=await setup(t);
+  const result=await b.evaluate(`(async()=>{
+    const {YardRenderer}=await import('/yard/renderer.js'),T=await import('/yard/vendor/engine.js');
+    const host=document.createElement('div'),labels=document.createElement('div');
+    host.style.cssText='position:fixed;width:900px;height:700px;top:0;left:0';host.append(labels);document.body.append(host);
+    const r=new YardRenderer(host,labels,{select(){},open(){},clock:()=>0}),random=Math.random;
+    let seed=1,created=0,released=0;
+    Math.random=()=>((seed=Math.imul(seed,1664525)+1013904223>>>0)/4294967296);
+    const scatter=r.scatter.bind(r);
+    r.scatter=(...args)=>{scatter(...args);const spark=r.sparks.at(-1);if(spark?.firework){created+=2;spark.points.geometry.addEventListener('dispose',()=>released++);spark.points.material.addEventListener('dispose',()=>released++);}};
+    try {
+      r.fireworks();const unloaded=r.shows.length+r.sparks.length;
+      r.world=new T.Group();r.scene.add(r.world);
+      for(let i=0;i<100;i++){
+        const root=new T.Group();root.position.set(i%5-2,0,Math.floor(i/5)%5-2);r.world.add(root);
+        r.halls.set(String(i),{root,glows:[],level:0,target:0,label:document.createElement('button'),chip:document.createElement('button')});
+      }
+      const run=repeat=>{
+        seed=7;r.fireworks();const scheduled=r.shows.length+1,trace=[],kinds=new Set();let peakPoints=0,peakBatches=0;
+        for(let i=0;i<120;i++){
+          if(repeat&&(r.shows.length||r.sparks.some(s=>s.firework)))for(let n=0;n<20;n++)r.fireworks();
+          r.updateShows(.05);r.updateSparks(.05);
+          const live=r.sparks.filter(s=>s.firework);
+          peakPoints=Math.max(peakPoints,live.reduce((n,s)=>n+s.points.geometry.attributes.position.count,0));peakBatches=Math.max(peakBatches,live.length);
+          for(const s of live)if(s.firework.bloom)kinds.add(s.firework.kind);
+          if(i%10===0)trace.push([r.shows.length,live.length,...live.flatMap(s=>Array.from(s.points.geometry.attributes.position.array.slice(0,3)))]);
+        }
+        return {scheduled,peakPoints,peakBatches,kinds:[...kinds].sort(),trace,left:r.shows.length+r.sparks.length,frame:r.frame};
+      };
+      r.fireworkMap();
+      const first=run(false),map=r.fireworkTexture,second=run(true),reused=map===r.fireworkTexture;
+      for(let i=0;i<12;i++)r.burst({x:0,y:5,z:0,index:i,color:0xffc857,finale:true});
+      const saturated={batches:r.sparks.length,points:r.sparks.reduce((n,s)=>n+s.points.geometry.attributes.position.count,0)};
+      r.clearFireworks();r.fireworks();r.updateShows(.6);r.updateSparks(.6);r.spark(0,1,0);
+      const workshop=r.sparks.find(s=>!s.firework);r.setReducedMotion(true);r.fireworks();
+      const reduced={queued:r.shows.length,live:r.sparks.filter(s=>s.firework).length,workshop:r.sparks.includes(workshop)};
+      r.setReducedMotion(false);r.clearFireworks();r.updateSparks(1);
+      host.style.width='220px';r.resize();r.zoom(20);r.controls.target.set(15,1,20);r.camera.position.set(19,24,31).add(r.controls.target);r.camera.updateMatrixWorld();
+      const camera=r.camera.matrixWorld.toArray();r.fireworks();r.updateShows(.6);r.updateSparks(.6);
+      const centers=r.sparks.filter(s=>s.firework).map(s=>new T.Vector3(s.firework.x,s.firework.y,s.firework.z).project(r.camera).toArray());
+      const stillCamera=JSON.stringify(camera)===JSON.stringify(r.camera.matrixWorld.toArray());
+      let textureReleased=0;map.addEventListener('dispose',()=>textureReleased++);r.dispose();r.fireworks();
+      return {unloaded,first,second,reused,saturated,reduced,centers,stillCamera,created,released,textureReleased,disposed:r.shows.length+r.sparks.length};
+    } finally {Math.random=random;r.dispose();host.remove();}
+  })()`);
+  assert.equal(result.unloaded,0);
+  assert.deepEqual(result.second,result.first,'rapid repeated triggers cannot extend or alter the show');
+  assert.ok(result.first.scheduled<=24);
+  assert.ok(result.first.peakPoints>0&&result.first.peakPoints<=1024);
+  assert.ok(result.first.peakBatches>0&&result.first.peakBatches<=8);
+  assert.deepEqual(result.first.kinds,[0,1,2]);
+  assert.equal(result.first.left,0);
+  assert.equal(result.first.frame,0,'an inactive renderer never schedules animation');
+  assert.equal(result.reused,true);
+  assert.deepEqual(result.saturated,{batches:8,points:1024});
+  assert.deepEqual(result.reduced,{queued:0,live:0,workshop:true});
+  assert.ok(result.centers.length>0);
+  for(const [x,y]of result.centers)assert.ok(Math.abs(x)<=.551&&y>=-.101&&y<=.551,'burst centers stay inside a narrow, zoomed, panned view');
+  assert.equal(result.stillCamera,true);
+  assert.equal(result.created,result.released);
+  assert.equal(result.textureReleased,1);
+  assert.equal(result.disposed,0);
+  assert.deepEqual(b.errors,[]);
+});
+
+test('the fireworks button is local, accessible, and follows loading, motion and graphics recovery',options,async t=>{
+  const {b}=await setup(t,{yard:true,source:`
+    const originalFetch=window.fetch;
+    window.fetch=(...args)=>String(args[0]?.url||args[0]).endsWith('/guild.glb')&&!window.__releaseWorld
+      ?new Promise((resolve,reject)=>{window.__releaseWorld=()=>originalFetch(...args).then(resolve,reject);}) : originalFetch(...args);`});
+  const button="document.querySelector('#yard-fireworks')";
+  await b.wait('window.__releaseWorld');
+  assert.equal(await b.evaluate(button+'.disabled'),true);
+  await b.evaluate('window.__releaseWorld()');await ready(b);
+  assert.equal(await b.evaluate(button+'.disabled'),true);
+  assert.match(await b.evaluate(button+'.title'),/reduced motion/);
+  await b.evaluate(`(async()=>{
+    const {YardRenderer}=await import('/yard/renderer.js'),original=YardRenderer.prototype.fireworks;
+    window.__fireworkCalls=0;
+    YardRenderer.prototype.fireworks=function(){this.setActive(false);window.__yardRenderer=this;window.__fireworkCalls++;return original.call(this);};
+  })()`);
+  await b.send('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'no-preference'}]});
+  await b.wait(button+'.disabled===false');
+  assert.deepEqual(await b.evaluate('['+button+'.title,'+button+'.getAttribute("aria-label")]'),['Fireworks in this Yard only','Fireworks in this Yard only']);
+  assert.equal(await b.evaluate(button+'.previousElementSibling.id'),'yard-photo');
+  const center=await b.evaluate('(()=>{const r='+button+'.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()');
+  await b.send('Input.dispatchMouseEvent',{type:'mousePressed',...center,button:'left',clickCount:1});
+  await b.send('Input.dispatchMouseEvent',{type:'mouseReleased',...center,button:'left',clickCount:1});
+  assert.equal(await b.evaluate('__fireworkCalls'),1);
+  for(const [key,code,windowsVirtualKeyCode]of [['Enter','Enter',13],[' ','Space',32]]){
+    await b.evaluate(button+'.focus()');
+    await b.send('Input.dispatchKeyEvent',{type:'keyDown',key,code,windowsVirtualKeyCode,...(key==='Enter'?{text:'\r'}:{})});
+    await b.send('Input.dispatchKeyEvent',{type:'keyUp',key,code,windowsVirtualKeyCode});
+  }
+  assert.equal(await b.evaluate('__fireworkCalls'),3);
+  await b.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{...center,radiusX:1,radiusY:1}]});
+  await b.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+  await b.wait('__fireworkCalls===4');
+  assert.equal(b.requests.some(r=>r.url.endsWith('/yard/fireworks')),false,'the button makes no broadcast request');
+  await b.send('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});
+  await b.wait(button+'.disabled');
+  assert.equal(await b.evaluate('__yardRenderer.shows.length+__yardRenderer.sparks.filter(s=>s.firework).length'),0);
+  await b.click('#yard-fireworks');assert.equal(await b.evaluate('__fireworkCalls'),4);
+  await b.send('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'no-preference'}]});
+  await b.wait(button+'.disabled===false');await b.click('#yard-fireworks');
+  await b.evaluate("document.documentElement.dataset.skin='orbital'");
+  await b.wait("document.querySelector('#yard-stage').dataset.world==='orbital'");
+  assert.equal(await b.evaluate('__yardRenderer.shows.length+__yardRenderer.sparks.filter(s=>s.firework).length'),0,'world replacement clears the previous show');
+  await b.click('#view-cards');
+  const before=await b.evaluate('__fireworkCalls');await b.click('#yard-fireworks');
+  assert.equal(await b.evaluate('__fireworkCalls'),before,'a hidden Yard does not celebrate');
+  await b.click('#view-yard');await ready(b);
+  await b.evaluate("document.querySelector('#yard-stage canvas').dispatchEvent(new Event('webglcontextlost',{cancelable:true}))");
+  await b.wait("document.querySelector('#yard-failure').hidden===false");
+  assert.equal(await b.evaluate(button+'.disabled'),true);
+  await b.click('#yard-retry');await ready(b);
+  assert.equal(await b.evaluate(button+'.disabled'),false);
+  assert.deepEqual(b.errors,[]);
+});
+
+
+test('fireworks keep their size and glow across photo tiles at different pixel ratios',options,async t=>{
+  const {b}=await setup(t);
+  const result=await b.evaluate(`(async()=>{
+    const {YardRenderer}=await import('/yard/renderer.js'),T=await import('/yard/vendor/engine.js');
+    const host=document.createElement('div'),labels=document.createElement('div');
+    host.style.cssText='position:fixed;width:180px;height:140px;top:0;left:0';host.append(labels);document.body.append(host);
+    const r=new YardRenderer(host,labels,{select(){},open(){}}),random=Math.random,results=[];
+    r.world=new T.Group();r.atOverview=false;Math.random=()=>.5;
+    try {
+      await new Promise((resolve,reject)=>{
+        const load=T.TextureLoader.prototype.load;
+        T.TextureLoader.prototype.load=function(url,onLoad){return load.call(this,url,texture=>{onLoad?.(texture);resolve();},undefined,reject);};
+        try{r.fireworkMap();}finally{T.TextureLoader.prototype.load=load;}
+      });
+      r.fireworks();r.updateSparks(.8);
+      const spark=r.sparks[0],size=spark.points.material.size;
+      r.renderer.setPixelRatio(2);r.resize();r.camera.updateMatrixWorld();
+      let index=0;
+      for(const x of [179,181,269,271])for(const y of [139,141,209,211]){
+        const p=new T.Vector3(x/360*2-1,1-y/280*2,0).unproject(r.camera);
+        spark.points.geometry.attributes.position.setXYZ(index++,p.x,p.y,p.z);
+      }
+      spark.points.geometry.attributes.position.needsUpdate=true;spark.points.geometry.setDrawRange(0,index);
+      r.renderer.render(r.scene,r.camera);
+      const canvas=Object.assign(document.createElement('canvas'),{width:360,height:280}),c=canvas.getContext('2d');
+      c.drawImage(r.canvas,0,0);const expected=c.getImageData(0,0,360,280).data;
+      for(const ratio of [1,1.5]){
+        r.renderer.setPixelRatio(ratio);r.resize();
+        const shot=r.capture(),actual=shot.canvas.getContext('2d').getImageData(0,0,360,280).data;
+        let maxDelta=0,alpha=0;
+        for(let i=3;i<actual.length;i+=4){maxDelta=Math.max(maxDelta,Math.abs(actual[i]-expected[i]));alpha+=expected[i];}
+        results.push({ratio,maxDelta,alpha,size:spark.points.material.size});
+      }
+      return {size,results};
+    } finally {Math.random=random;r.dispose();host.remove();}
+  })()`);
+  for(const shot of result.results){assert.ok(shot.alpha>0);assert.ok(shot.maxDelta<=2,JSON.stringify(shot));assert.equal(shot.size,result.size);}
   assert.deepEqual(b.errors,[]);
 });
