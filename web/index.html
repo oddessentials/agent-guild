@@ -817,12 +817,6 @@
         <span class="reporting-text"></span>
         <button class="btn reporting-toggle" type="button"></button>
       </div>
-      <div class="reporting-row mcp-row" hidden>
-        <span class="mcp-text"></span>
-        <a class="console-link mcp-docs" href="https://github.com/oddessentials/agent-guild/blob/main/docs/mcp.md" target="_blank" rel="noopener noreferrer" title="What Agent Guild's MCP server lets a coding agent do">About</a>
-        <button class="btn mcp-on" type="button">Turn on</button>
-        <button class="btn mcp-off" type="button">Turn off</button>
-      </div>
       <div class="provider-links">
         <a class="console-link usage-link" target="_blank" rel="noopener noreferrer">Usage</a>
         <a class="console-link billing-link" target="_blank" rel="noopener noreferrer">Billing</a>
@@ -837,6 +831,16 @@
         <summary>Terminal multiplexers</summary>
         <button class="btn multiplexer-refresh" type="button">Refresh</button>
         <div class="multiplexer-list"></div>
+      </details>
+      <details class="mcp" hidden>
+        <summary><span class="mcp-title">Agent Guild MCP</span><span class="mcp-state"></span></summary>
+        <p class="mcp-about"></p>
+        <p class="mcp-status"></p>
+        <code class="mcp-command" hidden></code>
+        <div class="mcp-actions">
+          <a class="console-link" href="https://github.com/oddessentials/agent-guild/blob/main/docs/mcp.md" target="_blank" rel="noopener noreferrer">How it works</a>
+          <button class="btn mcp-action" type="button" hidden></button>
+        </div>
       </details>
       <p class="hint" hidden></p>
       <div class="provider-actions">

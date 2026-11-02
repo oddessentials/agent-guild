@@ -20,16 +20,16 @@ export const PACKAGE_NAME = packageJson.name;
 
 /** Per-user data directory. Override with AGENT_GUILD_HOME (used by tests). */
 export function dataDir() {
-  if (process.env.AGENT_GUILD_HOME) return path.resolve(process.env.AGENT_GUILD_HOME);
-  if (process.platform === 'win32') {
-    const base = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
-    return path.join(base, 'AgentGuild');
-  }
-  if (process.platform === 'darwin') {
-    return path.join(os.homedir(), 'Library', 'Application Support', 'AgentGuild');
-  }
-  const base = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
-  return path.join(base, 'agent-guild');
+  return dataDirFor(process.env, process.platform);
+}
+
+export function dataDirFor(env, platform) {
+  const p = platform === 'win32' ? path.win32 : path.posix;
+  if (env.AGENT_GUILD_HOME) return p.resolve(env.AGENT_GUILD_HOME);
+  const home = (platform === 'win32' ? env.USERPROFILE : env.HOME) || os.homedir();
+  if (platform === 'win32') return p.join(env.APPDATA || p.join(home, 'AppData', 'Roaming'), 'AgentGuild');
+  if (platform === 'darwin') return p.join(home, 'Library', 'Application Support', 'AgentGuild');
+  return p.join(env.XDG_CONFIG_HOME || p.join(home, '.config'), 'agent-guild');
 }
 
 export function ensureDataDir() {

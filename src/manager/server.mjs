@@ -19,6 +19,7 @@ import { MODES as AUTOSTART_MODES } from './autostart.mjs';
 import { ptyRestartProblem } from './pty.mjs';
 import { YardArt } from './yard-art.mjs';
 import { spokenText } from './spoken-text.mjs';
+import { MCP_ACTIONS } from './mcp-connect.mjs';
 
 const require = createRequire(import.meta.url);
 const API = '/api/v1';
@@ -524,9 +525,11 @@ export function createManagerServer({
       const provider = registry.get(mcpMatch[1]);
       if (!provider) throw new HttpError(404, `unknown provider "${mcpMatch[1]}"`, 'unknown_provider');
       const body = await readJsonBody(req);
-      if (typeof body.enabled !== 'boolean') throw new HttpError(400, 'enabled must be true or false', 'bad_request');
-      const results = await mcpConnect.setEnabled(provider, body.enabled);
-      return sendJson(res, 200, { provider: registry.describe(provider), results });
+      if (typeof body.account !== 'string') throw new HttpError(400, 'account must be an account id', 'bad_request');
+      if (!MCP_ACTIONS.includes(body.action)) throw new HttpError(400, `action must be one of ${MCP_ACTIONS.join(', ')}`, 'bad_request');
+      if (typeof body.expect !== 'string') throw new HttpError(400, 'expect must be the fingerprint the card showed', 'bad_request');
+      const result = await mcpConnect.change(provider, body.account, body.action, body.expect);
+      return sendJson(res, 200, { provider: registry.describe(provider), result });
     }
     const multiplexerMatch = route.match(/^\/providers\/([a-z0-9][a-z0-9_-]{0,31})\/multiplexers\/([a-z0-9_-]+)\/(install|update|uninstall)$/);
     if (multiplexerMatch && method === 'POST') {

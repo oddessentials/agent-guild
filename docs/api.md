@@ -158,17 +158,28 @@ cannot be used, or is null.
 `mcp` is null unless the tool is installed and Agent Guild can add its own MCP
 server (`agent-guild mcp`, see [mcp.md](mcp.md)) to the tool's settings:
 Claude Code, Codex CLI, Antigravity CLI and Grok Build. Otherwise it is
-`{ state, on, total, accounts }`, read from each account's settings and kept
-for up to a minute. `accounts` lists `{ id, label, state, detail }` per
-account, where `state` is `on`, `off`, `disabled` (Agent Guild's server, turned
-off in the tool), `other` (a server of that name that runs something else,
-which Agent Guild never changes) or `unknown` (the settings could not be
-read), and `detail` says why for `other` and `unknown`. An account whose home folder does not exist yet
-reads `off`, and turning the server on makes the folder. `on` counts the
-accounts that are on, of `total`. The provider's `state` is `on` or `off` when
-every account is, `partial` when some but not all are on, else `unknown`,
-`other` or `disabled` for the first of those any account has; `checking`
-before the first read, with `accounts` empty.
+`{ mode, accounts }`: `mode` is `claude`, `codex`, `antigravity` or `grok`, and
+`accounts` has one `{ id, label, state, managed, from, command, allowInput,
+detail, fingerprint }` per account, read from that account's settings. A
+settings file the tool keeps as JSON is read again when it changes; a tool
+asked through its CLI is asked again after a minute.
+
+`state` is `checking` before the first read, `off`, `on`, `disabled` (turned
+off in the tool), `conflict` or `error`. `on` and `disabled` mean the entry
+named agent-guild starts Agent Guild's MCP server (`agent-guild mcp`, `npx
+@oddessentials/agent-guild mcp` or Node running its `bin/agent-guild.mjs mcp`)
+and reaches this manager's data folder, as the tool would start it: from
+`--home=`, else the entry's `AGENT_GUILD_HOME`, else `APPDATA`,
+`XDG_CONFIG_HOME` or the home folder from the tool's environment.
+`conflict` is any other entry of that name, including one whose data folder
+depends on an `AGENT_GUILD_HOME` set where the tool starts; `error` means the
+tool's settings could not be read. `detail` says why for both. `managed` is
+true for the entry Agent Guild adds itself. `from` names the other tool whose
+settings the entry comes from (Grok Build loads Claude Code's and Cursor's), or
+is null. `command` is the entry's command line. `fingerprint` identifies the
+whole entry as read, or is null for `checking` and `error`. An account whose
+home folder does not exist yet reads `off`, and turning the server on makes
+the folder.
 
 `usageUrl`, `billingUrl` and `cloudUrl` are
 `https://` links to the vendor's usage and billing pages and web app, or null.
@@ -641,7 +652,7 @@ All paths are under `/api/v1`.
 | PATCH | `/providers/:id/accounts/:account` | `{ label, revision }` | `{ account, dir, providers, revision }`: renames an account, including `default`. |
 | DELETE | `/providers/:id/accounts/:account?revision=` | | `{ account, dir, providers, revision }`: removes an account from `providers.json`. Its home folder, `dir`, stays on disk. 409 `default_account` for `default`; 409 `account_in_use` while a running session uses it. |
 | POST | `/providers/:id/reporting` | `{ enabled }` | `{ provider }`: turns agent or model reporting on or off for a tool that has `reportingEnabled`. |
-| POST | `/providers/:id/mcp` | `{ enabled }` | `{ provider, results }`: adds Agent Guild's MCP server to, or removes it from, each account of a tool that has `mcp`. Each account is read again first; one whose state is then `other` or `unknown` is left as it is. `results` has one `{ id, label, outcome, state, detail? }` per account, `outcome` `added`, `removed`, `unchanged`, `skipped` or `failed`; a failed account does not undo the others. 400 `not_applicable` for a tool without `mcp`; 409 `provider_unavailable` when it is not installed; 409 `busy` while a change for that tool is running. |
+| POST | `/providers/:id/mcp` | `{ account, action, expect }` | `{ provider, result }`: changes Agent Guild's MCP server in one account's settings. `action` is `on` (add it, or turn it on in the tool), `off` (remove Agent Guild's entry, or turn off one that comes from another tool's settings) or `replace` (put Agent Guild's own entry in place of the one there). `expect` is the account's `fingerprint`: the account is read again first, and nothing changes unless the entry is still that one. `result` is `{ outcome, state, detail? }`, `outcome` `changed`, `unchanged` or `failed`. 400 `not_applicable` for a tool without `mcp`; 404 `unknown_account`; 409 `provider_unavailable` when it is not installed, `busy` while a change for that tool is running, `changed` when the entry is no longer `expect`, `unreadable` when the settings cannot be read, `conflict` for `on` or `off` on another server of that name, `needs_replace` for `on` on a Codex CLI entry Agent Guild did not add. |
 | POST | `/providers/:id/install` | `{ force? }` | `201 { session }`: a session that installs or updates the tool. 409 `provider_in_use` (with `running`, the session count) while the provider's sessions are running; retry with `force: true` after the user confirms. |
 | POST | `/providers/:id/uninstall` | `{ path, force? }` | `201 { session }`: a session that removes the copy at `path`, one of the provider's `installs`. `force` as for `install`. |
 | GET | `/environment?scope=&cwd=&id=` | | An environment snapshot; see [Manager environment](#manager-environment). |
