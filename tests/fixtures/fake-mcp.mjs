@@ -1,12 +1,13 @@
 // `<tool> mcp ...` for claude, codex, agy and grok, stored as each real tool stores it. Calls are logged to $FAKE_MCP_LOG.
 // fake-mcp.json { "fail": true } fails every call, { "garbage": true } prints a list that is not JSON; a home named *broken* refuses writes.
 // As the real tools do, codex fails when $CODEX_HOME does not exist, and grok creates its home on any call. Grok also
-// loads ~/.claude.json's servers, as `mcp doctor` shows and `mcp list` does not, and only says on stderr that its
+// loads ~/.claude.json's servers, as `inspect` and `mcp doctor` show and `mcp list` does not, and only says on stderr that its
 // config does not parse ({ "configError": true }); { "stderrNoise": true } writes an unrelated stderr line.
 
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 
 const home = () => (process.platform === 'win32' ? process.env.USERPROFILE : process.env.HOME) || os.homedir();
 const homes = {
@@ -45,9 +46,29 @@ export function runMcp(tool, argv) {
   const config = load(file);
   if (config.fail) fail('settings are locked');
   const servers = config.mcpServers ?? config.servers ?? {};
-  const disabled = config.disabled ?? [];
-  const save = () => store(file, tool === 'claude' || tool === 'agy' ? { ...config, mcpServers: servers } : { servers, disabled });
-  const claudeServers = () => load(path.join(home(), '.claude.json')).mcpServers ?? {};
+  // Grok Build keeps the names `mcp disable` turned off in config.toml, one line for one name, one per line for more.
+  const offFile = path.join(dir, 'config.toml');
+  const disabled = tool !== 'grok' ? [] : (() => {
+    try {
+      const listed = /^disabled_mcp_servers = \[([^\]]*)\]/m.exec(fs.readFileSync(offFile, 'utf8'));
+      return listed ? [...listed[1].matchAll(/"([^"]*)"/g)].map((m) => m[1]) : [];
+    } catch { return []; }
+  })();
+  const save = () => {
+    store(file, tool === 'claude' || tool === 'agy' ? { ...config, mcpServers: servers } : { servers });
+    if (tool === 'grok') fs.writeFileSync(offFile, disabled.length === 1 ? `disabled_mcp_servers = ["${disabled[0]}"]\n` : `disabled_mcp_servers = [\n${disabled.map((n) => `    "${n}",\n`).join('')}]\n`);
+  };
+  const claudeFile = path.join(home(), '.claude.json');
+  const claudeServers = () => load(claudeFile).mcpServers ?? {};
+  if (tool === 'grok' && argv[0] === 'inspect') {
+    if (argv.slice(1).join(' ') !== '--json') fail(`grok: unexpected arguments: ${argv.join(' ')}`, 2);
+    const own = Object.entries(servers).filter(([name, s]) => s.enabled !== false && !disabled.includes(name))
+      .map(([name, s]) => ({ name, transport: 'stdio', target: s.command, source: { type: 'configToml', path: offFile } }));
+    const theirs = Object.entries(claudeServers()).filter(([name]) => !servers[name])
+      .map(([name, s]) => ({ name, transport: 'stdio', target: s.command, source: { type: 'claudeJson', path: claudeFile }, compatibilityStatus: 'enabled', vendor: 'claude' }));
+    process.stdout.write(`${JSON.stringify({ cwd: process.cwd(), mcpServers: [...own, ...theirs] }, null, 2)}\n`);
+    process.exit(0);
+  }
   if (tool === 'grok' && config.configError) process.stderr.write('2026-11-02T00:00:00Z ERROR config toml has syntax errors: TOML parse error at line 1\n');
   if (tool === 'grok' && config.stderrNoise) process.stderr.write('2026-11-02T00:00:00Z WARN leader socket is stale, starting a new one\n');
   const scoped = tool === 'claude' || tool === 'grok';
@@ -61,7 +82,7 @@ export function runMcp(tool, argv) {
     if (config.garbage) { process.stdout.write('MCP servers:\n  (none)\n'); process.exit(0); }
     const list = Object.entries(servers).map(([name, s]) => (tool === 'codex'
       ? { name, enabled: s.enabled !== false, disabled_reason: null, transport: s.url ? { type: 'streamable_http', url: s.url } : { type: 'stdio', command: s.command, args: s.args, env: s.env ?? null, env_vars: s.env_vars ?? [], cwd: s.cwd ?? null }, startup_timeout_sec: null, tool_timeout_sec: null, auth_status: 'unsupported' }
-      : { ...(s.url ? { url: s.url } : { command: s.command, args: s.args }), ...(s.env && { env: s.env }), enabled: s.enabled !== false, name, scope: 'user' }));
+      : { ...(s.url ? { url: s.url } : { command: s.command, args: s.args }), ...(s.env && { env: s.env }), enabled: s.enabled !== false && !disabled.includes(name), name, scope: 'user' }));
     process.stdout.write(`${JSON.stringify(list, null, 2)}\n`);
     process.exit(0);
   }
@@ -73,6 +94,8 @@ export function runMcp(tool, argv) {
     const entry = own ?? theirs;
     if (!entry) fail(`MCP server '${name}' not found.`);
     const off = disabled.includes(name) || own?.enabled === false;
+    // As Grok Build's doctor does, an enabled server is started to check it.
+    if (!off) spawnSync(entry.command, entry.args ?? [], { stdio: 'ignore', timeout: 10000, windowsHide: true });
     const report = entry ? [{ name, transport: 'stdio', target: [entry.command, ...(entry.args ?? [])].join(' '), source: own ? '~/.grok/config.toml' : '~/.claude.json',
       checks: off ? [{ label: 'disabled in config', passed: false, detail: 'server is disabled in config.toml' }] : [{ label: 'command found', passed: true }], healthy: !off }] : [];
     process.stdout.write(`${JSON.stringify({ sources: [], servers: report, healthy_count: 0, failing_count: 0 }, null, 2)}\n`);

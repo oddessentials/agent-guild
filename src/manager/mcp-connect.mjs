@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { buildSpawnSpec, resolveCommand, runSpec } from './command-resolver.mjs';
 import { antigravityConfigFile } from './session-hooks.mjs';
+import { tomlValue } from './instruction-files.mjs';
 import { stableExecPath } from './autostart.mjs';
 import { PACKAGE_SCRIPT } from './launch.mjs';
 import { dataDir, dataDirFor } from './config.mjs';
@@ -87,6 +88,8 @@ const grokConfigError = (stderr) => String(stderr || '').split('\n').map((l) => 
 
 const TOOLS = {
   claude: {
+    // Claude Code starts MCP servers from Node, which keeps the first of Windows variables that differ only in case.
+    firstKeyWins: true,
     file: (env, platform) => path.join(env.CLAUDE_CONFIG_DIR || homeOf(env, platform), '.claude.json'),
     async read(ctx) {
       const found = entryInFile(this.file(ctx.env, ctx.platform));
@@ -146,25 +149,26 @@ const TOOLS = {
       if (!list) return { error: 'its MCP server list was not in a form Agent Guild recognizes' };
       const item = list.find((e) => e?.name === SERVER_NAME && (e.scope === undefined || e.scope === 'user'));
       if (item) return { entry: { ...fromJson(item, item.enabled !== false), raw: item } };
-      // Grok Build also loads the servers in Claude Code's and Cursor's settings, which its list leaves out.
-      const doctor = await ctx.run(['mcp', 'doctor', SERVER_NAME, '--json']).catch((err) => err);
-      if (grokConfigError(doctor.stderr)) return { error: grokConfigError(doctor.stderr) };
-      if (doctor instanceof Error && String(doctor.stderr).includes(`MCP server '${SERVER_NAME}' not found`)) return { entry: null };
+      // Grok Build also loads the servers in Claude Code's and Cursor's settings, which its list leaves out. `inspect`
+      // names them without starting them; `mcp doctor` would start them.
+      const inspected = await ctx.run(['inspect', '--json']).catch((err) => err);
+      if (grokConfigError(inspected.stderr)) return { error: grokConfigError(inspected.stderr) };
+      if (inspected instanceof Error) return { error: `grok inspect failed: ${lastLine(inspected)}` };
       let report;
-      try { report = JSON.parse(doctor.stdout); } catch { report = null; }
-      const server = report?.servers?.find((s) => s?.name === SERVER_NAME);
-      if (!server) {
-        if (!report || doctor instanceof Error) return { error: `grok mcp doctor failed: ${doctor instanceof Error ? lastLine(doctor) : 'its report was not in a form Agent Guild recognizes'}` };
-        return { entry: null };
-      }
-      const home = homeOf(ctx.env, ctx.platform);
-      const source = { '~/.claude.json': ['Claude Code', path.join(home, '.claude.json')], '~/.cursor/mcp.json': ['Cursor', path.join(home, '.cursor', 'mcp.json')] }[server.source];
-      if (!source) return { error: `Grok Build takes agent-guild from ${server.source}, which Agent Guild cannot read` };
-      const found = entryInFile(source[1]);
+      try { report = JSON.parse(inspected.stdout); } catch { report = null; }
+      if (!Array.isArray(report?.mcpServers)) return { error: 'grok inspect gave an answer Agent Guild does not recognize' };
+      const server = report.mcpServers.find((s) => s?.name === SERVER_NAME);
+      if (!server) return { entry: null };
+      const from = { claude: 'Claude Code', cursor: 'Cursor' }[server.vendor];
+      const file = server.source?.path;
+      if (!from || typeof file !== 'string') return { error: `Grok Build takes agent-guild from ${typeof file === 'string' ? `${file}, which` : 'a source'} Agent Guild cannot read` };
+      const found = entryInFile(path.resolve(file));
       if (found.error) return found;
-      if (found.entry === null) return { error: `Grok Build reports agent-guild in ${source[1]}, but it is not there` };
-      const disabled = (server.checks ?? []).some((c) => c?.passed === false && /disabled/i.test(String(c.label)));
-      return { entry: { ...fromJson(found.entry, !disabled), from: source[0], raw: { source: server.source, entry: found.entry } } };
+      if (found.entry === null) return { error: `Grok Build reports agent-guild in ${file}, but it is not there` };
+      const off = grokOffList(ctx.env, ctx.platform);
+      if (off.error) return off;
+      const enabled = !off.names.includes(SERVER_NAME);
+      return { entry: { ...fromJson(found.entry, enabled), from, raw: { source: file, entry: found.entry, enabled } } };
     },
     add: (own) => [['mcp', 'add', '-s', 'user', SERVER_NAME, '--', own.command, ...own.args]],
     enable: () => [['mcp', 'enable', SERVER_NAME]],
@@ -174,6 +178,30 @@ const TOOLS = {
     replace: (own) => [['mcp', 'add', '-s', 'user', SERVER_NAME, '--', own.command, ...own.args], ['mcp', 'enable', SERVER_NAME]],
   },
 };
+
+/** The names `grok mcp disable` turned off: `disabled_mcp_servers` at the top of Grok Build's config.toml. */
+function grokOffList(env, platform) {
+  const file = path.join(env.GROK_HOME || path.join(homeOf(env, platform), '.grok'), 'config.toml');
+  let text;
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch (err) {
+    return err.code === 'ENOENT' ? { names: [] } : { error: `${file} cannot be read: ${err.message}` };
+  }
+  const lines = text.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (line.startsWith('[')) break;
+    const key = /^disabled_mcp_servers\s*=\s*(.*)$/.exec(line);
+    if (!key) continue;
+    let value = key[1];
+    if (value.startsWith('[')) while (!/\]\s*(?:#.*)?$/.test(value) && i + 1 < lines.length) value += ` ${lines[++i].trim()}`;
+    const names = tomlValue(value);
+    if (!Array.isArray(names) || !names.every((n) => typeof n === 'string')) return { error: `${file} has disabled_mcp_servers in a form Agent Guild does not recognize` };
+    return { names };
+  }
+  return { names: [] };
+}
 
 function parseList(stdout) {
   try {
@@ -210,15 +238,35 @@ function launchOf(command, args, platform) {
   if (rest[0] !== 'mcp') return null;
   const flags = rest.slice(1);
   if (!flags.every((f) => f === '--allow-input' || f.startsWith(HOME_FLAG))) return null;
-  const homes = flags.filter((f) => f.startsWith(HOME_FLAG));
-  return { script, home: homes.length ? homes.at(-1).slice(HOME_FLAG.length) : null, allowInput: flags.includes('--allow-input') };
+  // As bin/agent-guild.mjs reads it: the first --home=, and none when that one is empty.
+  const home = flags.find((f) => f.startsWith(HOME_FLAG))?.slice(HOME_FLAG.length) || null;
+  return { script, home, allowInput: flags.includes('--allow-input') };
+}
+
+/**
+ * The environment a tool gives an MCP server, `{ KEY: { value, fromEntry } }`, with Windows keys in upper case.
+ * On Windows, Codex CLI, Grok Build and Antigravity CLI let the entry's variable win in any case; Claude Code, on
+ * Node, keeps the lexicographically first of keys that differ only in case (`firstKeyWins`).
+ */
+export function serverEnv(toolEnv, entryEnv, { platform, firstKeyWins = false, drops = [], envVars = [] }) {
+  const fold = (k) => (platform === 'win32' ? k.toUpperCase() : k);
+  const merged = new Map();
+  for (const [k, v] of Object.entries(toolEnv)) {
+    if (!drops.includes(fold(k)) || envVars.some((name) => fold(name) === fold(k))) merged.set(k, { value: v, fromEntry: false });
+  }
+  for (const [k, v] of Object.entries(entryEnv)) merged.set(k, { value: String(v), fromEntry: true });
+  const keys = [...merged.keys()];
+  if (firstKeyWins) keys.sort();
+  const out = {};
+  for (const k of keys) if (!firstKeyWins || !Object.hasOwn(out, fold(k))) out[fold(k)] = merged.get(k);
+  return out;
 }
 
 /**
  * What an entry is to this manager. `env` is the environment the tool runs with; `drops` the variables the
  * tool keeps from its MCP servers unless the entry passes them on.
  */
-export function classify(entry, { own, home, env, platform, drops = [], tool }) {
+export function classify(entry, { own, home, env, platform, drops = [], firstKeyWins = false, tool }) {
   if (!entry) return { state: 'off' };
   const command = typeof entry.command === 'string' ? entry.command : null;
   const shown = command && isStringList(entry.args) ? commandLine(command, entry.args) : null;
@@ -230,12 +278,11 @@ export function classify(entry, { own, home, env, platform, drops = [], tool }) 
   if (!launch) return conflict('runs something other than Agent Guild\'s MCP server');
   const entryEnv = stringMap(entry.env);
   const p = platform === 'win32' ? path.win32 : path.posix;
-  const upper = (k) => (platform === 'win32' ? k.toUpperCase() : k);
-  const passed = Object.fromEntries(Object.entries(env).filter(([k]) => !drops.includes(upper(k)) || entry.envVars?.some((v) => upper(v) === upper(k))));
-  const serverEnv = { ...passed, ...entryEnv };
-  const relevant = [command, ...entry.args, ...['AGENT_GUILD_HOME', 'APPDATA', 'XDG_CONFIG_HOME', 'HOME', 'USERPROFILE', 'PATH'].map((k) => entryEnv[k] ?? '')];
+  const vars = serverEnv(env, entryEnv, { platform, firstKeyWins, drops, envVars: entry.envVars ?? [] });
+  const values = Object.fromEntries(Object.entries(vars).map(([k, v]) => [k, v.value]));
+  const relevant = [command, ...entry.args, ...['AGENT_GUILD_HOME', 'APPDATA', 'XDG_CONFIG_HOME', 'HOME', 'USERPROFILE', 'PATH'].map((k) => (vars[k]?.fromEntry ? vars[k].value : ''))];
   if (relevant.some((v) => String(v).includes('${'))) return conflict('uses variables Agent Guild cannot resolve');
-  const program = resolveCommand(command, serverEnv, platform);
+  const program = resolveCommand(command, values, platform);
   if (!program) return conflict(`runs ${command}, which is not installed`);
   if (launch.script && !fs.existsSync(p.isAbsolute(launch.script) ? launch.script : p.resolve(entry.cwd || os.homedir(), launch.script))) {
     return conflict(`runs ${launch.script}, which does not exist`);
@@ -244,13 +291,13 @@ export function classify(entry, { own, home, env, platform, drops = [], tool }) 
   if (launch.home !== null) {
     if (!p.isAbsolute(launch.home)) return conflict('names a relative data folder');
     target = launch.home;
-  } else if (entryEnv.AGENT_GUILD_HOME) {
-    if (!p.isAbsolute(entryEnv.AGENT_GUILD_HOME)) return conflict('names a relative data folder');
-    target = entryEnv.AGENT_GUILD_HOME;
-  } else if (Object.keys(passed).some((k) => upper(k) === 'AGENT_GUILD_HOME')) {
+  } else if (vars.AGENT_GUILD_HOME?.value && vars.AGENT_GUILD_HOME.fromEntry) {
+    if (!p.isAbsolute(vars.AGENT_GUILD_HOME.value)) return conflict('names a relative data folder');
+    target = vars.AGENT_GUILD_HOME.value;
+  } else if (vars.AGENT_GUILD_HOME?.value) {
     return conflict(`names no data folder, so AGENT_GUILD_HOME decides which Agent Guild it reaches wherever ${tool} starts`);
   } else {
-    target = dataDirFor(serverEnv, platform);
+    target = dataDirFor(values, platform);
   }
   if (!samePath(target, home, platform)) return conflict(`reaches the Agent Guild data folder ${target}, not this one, ${home}`);
   const managed = !entry.from && command === own.command && entry.args.length === own.args.length && entry.args.every((a, i) => a === own.args[i])
@@ -314,7 +361,7 @@ export class McpConnect {
       return { state: 'error', detail: `${provider.command} mcp list failed: ${lastLine(err)}`, fingerprint: null };
     }
     if (read.error) return { state: 'error', detail: read.error, fingerprint: null };
-    const result = classify(read.entry, { own: this.own, home: this.home, env: account.env, platform, drops: tool.drops, tool: provider.tool });
+    const result = classify(read.entry, { own: this.own, home: this.home, env: account.env, platform, drops: tool.drops, firstKeyWins: tool.firstKeyWins, tool: provider.tool });
     return { ...result, from: read.entry?.from ?? null, fingerprint: fingerprint(read.entry?.raw ?? null) };
   }
 

@@ -221,7 +221,7 @@ function basic(body) {
 }
 
 /** A TOML string, array of strings or integer, as a value in config.toml; undefined for anything else. */
-function tomlValue(text) {
+export function tomlValue(text) {
   const value = text.trim();
   if (/^-?\d[\d_]*$/.test(value)) return Number(value.replaceAll('_', ''));
   const quoted = /^(?:"((?:[^"\\]|\\.)*)"|'([^']*)')/.exec(value);

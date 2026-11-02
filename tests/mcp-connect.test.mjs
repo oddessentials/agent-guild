@@ -11,7 +11,7 @@ import WebSocket from 'ws';
 import { createManagerServer } from '../src/manager/server.mjs';
 import { fileURLToPath } from 'node:url';
 import { ProviderRegistry } from '../src/manager/providers.mjs';
-import { McpConnect, SERVER_NAME, classify, ownServer } from '../src/manager/mcp-connect.mjs';
+import { McpConnect, SERVER_NAME, classify, ownServer, serverEnv } from '../src/manager/mcp-connect.mjs';
 import { dataDir, dataDirFor } from '../src/manager/config.mjs';
 import { PACKAGE_SCRIPT } from '../src/manager/launch.mjs';
 import { SessionManager } from '../src/manager/session-manager.mjs';
@@ -93,7 +93,7 @@ function writeRaw(id, dir, text) {
   fs.writeFileSync(storeFile(id, dir), text);
 }
 
-const changes = (ctx) => ctx.calls().filter((c) => c.argv[1] !== 'list' && c.argv[1] !== 'doctor');
+const changes = (ctx) => ctx.calls().filter((c) => c.argv[1] !== 'list' && c.argv[0] !== 'inspect');
 
 test('every tool reads Agent Guild\'s server, one the person added, another server, and broken settings alike', async (t) => {
   const ctx = setup(t);
@@ -113,6 +113,11 @@ test('every tool reads Agent Guild\'s server, one the person added, another serv
     ['a program that is gone', { command: path.join(ctx.root, 'gone', 'agent-guild'), args: ['mcp'] }, { state: 'conflict', detail: /not installed/ }],
     ['a script that is gone', { command: process.execPath, args: [path.join(ctx.root, 'gone', 'bin', 'agent-guild.mjs'), 'mcp'] }, { state: 'conflict', detail: /does not exist/ }],
     ['a variable', { command: 'agent-guild', args: ['mcp', '--home=${HOME}/guild'] }, { state: 'conflict', detail: /variables/ }],
+    // As bin/agent-guild.mjs reads them: the first --home= decides, and an empty one leaves the folder to the environment.
+    ['another folder first', { command: 'agent-guild', args: ['mcp', `--home=${elsewhere}`, `--home=${ctx.guildHome}`] }, { state: 'conflict', detail: /reaches the Agent Guild data folder/ }],
+    ['this folder first', { command: 'agent-guild', args: ['mcp', `--home=${ctx.guildHome}`, `--home=${elsewhere}`] }, { state: 'on' }],
+    ['an empty first --home', { command: 'agent-guild', args: ['mcp', '--home=', `--home=${elsewhere}`] }, { state: 'on' }],
+    ...(win ? [['another folder in lower case', { command: 'agent-guild', args: ['mcp'], env: { agent_guild_home: elsewhere } }, { state: 'conflict', detail: /reaches the Agent Guild data folder/ }]] : []),
   ];
   for (const [id, tool] of Object.entries(TOOLS)) {
     const dir = ctx.homeOf(id);
@@ -182,6 +187,22 @@ test('where the tool starts decides which data folder an unpinned registration r
   if (folderKey === 'XDG_CONFIG_HOME') assert.equal(read(moved, dataDirFor(moved, platform), {}, 'codex').state, 'conflict', 'Codex does not pass XDG_CONFIG_HOME on');
 });
 
+test('on Windows the entry\'s variable wins in any case, except under Claude Code, where Node keeps the first key', () => {
+  const tool = { AGENT_GUILD_HOME: 'C:\\tool', APPDATA: 'C:\\tool-appdata', Path: 'C:\\tool-bin' };
+  const entry = { agent_guild_home: 'C:\\entry', appdata: 'C:\\entry-appdata', PATH: 'C:\\entry-bin' };
+  const values = (env) => Object.fromEntries(Object.entries(env).map(([k, v]) => [k, [v.value, v.fromEntry]]));
+  assert.deepEqual(values(serverEnv(tool, entry, { platform: 'win32' })), {
+    AGENT_GUILD_HOME: ['C:\\entry', true], APPDATA: ['C:\\entry-appdata', true], PATH: ['C:\\entry-bin', true],
+  }, 'Codex CLI, Grok Build and Antigravity CLI');
+  assert.deepEqual(values(serverEnv(tool, entry, { platform: 'win32', firstKeyWins: true })), {
+    AGENT_GUILD_HOME: ['C:\\tool', false], APPDATA: ['C:\\tool-appdata', false], PATH: ['C:\\entry-bin', true],
+  }, 'Claude Code: AGENT_GUILD_HOME sorts before agent_guild_home, PATH before Path');
+  assert.deepEqual(values(serverEnv({ agent_guild_home: 'C:\\tool' }, { AGENT_GUILD_HOME: 'C:\\entry' }, { platform: 'win32', firstKeyWins: true })), { AGENT_GUILD_HOME: ['C:\\entry', true] });
+  assert.deepEqual(values(serverEnv({ AGENT_GUILD_HOME: 'C:\\tool' }, {}, { platform: 'win32', drops: ['AGENT_GUILD_HOME'] })), {}, 'Codex drops it in any case');
+  assert.deepEqual(values(serverEnv(tool, entry, { platform: 'linux' })).agent_guild_home, ['C:\\entry', true], 'elsewhere names keep their case');
+  assert.deepEqual(values(serverEnv(tool, entry, { platform: 'linux' })).AGENT_GUILD_HOME, ['C:\\tool', false]);
+});
+
 test('turning on and off runs each tool\'s own commands in the chosen account only', async (t) => {
   const ctx = setup(t, { accounts: { anthropic: ['work'], openai: ['work'], xai: ['work'] } });
   const add = (tool) => (tool === 'claude' || tool === 'grok' ? ['mcp', 'add', '-s', 'user', SERVER_NAME, '--'] : ['mcp', 'add', SERVER_NAME, '--']).concat(ctx.own.command, ctx.own.args);
@@ -245,6 +266,42 @@ test('a registration Agent Guild did not add changes only as asked, and only whi
   await assert.rejects(ctx.change('openai', 'on'), { code: 'needs_replace' }, 'Codex turns another entry on only by replacing it');
   writeRaw('anthropic', ctx.homeOf('anthropic'), '{ not json');
   await assert.rejects(ctx.mcp.change(ctx.provider('anthropic'), 'default', 'on', 'x'), { code: 'unreadable' });
+});
+
+test('reading Grok Build starts no server it takes from Claude Code, and shows what Grok Build turns on', async (t) => {
+  const ctx = setup(t);
+  const marker = path.join(ctx.root, 'started');
+  const server = path.join(ctx.root, 'server.mjs');
+  fs.writeFileSync(server, `import fs from 'node:fs';\nfs.writeFileSync(${JSON.stringify(marker)}, 'started');\n`);
+  const claudeFile = path.join(ctx.home, '.claude.json');
+  const writeClaude = (entry) => fs.writeFileSync(claudeFile, JSON.stringify({ mcpServers: { [SERVER_NAME]: { type: 'stdio', env: {}, ...entry } } }));
+  writeClaude({ command: process.execPath, args: [server] });
+  ctx.clearCalls();
+  for (let i = 0; i < 3; i++) assert.deepEqual([(await ctx.read('xai')).state, (await ctx.read('xai')).from], ['conflict', 'Claude Code']);
+  ctx.mcp.describe(ctx.provider('xai'));
+  await ctx.mcp.refresh(ctx.provider('xai'));
+  assert.equal(fs.existsSync(marker), false, 'the inherited server was never started');
+  assert.deepEqual([...new Set(ctx.calls().map((c) => c.argv.slice(0, 2).join(' ')))].sort(), ['inspect --json', 'mcp list'], 'only reads ran');
+
+  // Grok Build's own off list, which it writes one name per line once it holds two.
+  writeClaude({ command: 'agent-guild', args: ['mcp'] });
+  fs.writeFileSync(path.join(ctx.homeOf('xai'), 'config.toml'), 'disabled_mcp_servers = [\n    "other",\n    "agent-guild",\n]\n');
+  assert.deepEqual([(await ctx.read('xai')).state, (await ctx.read('xai')).from], ['disabled', 'Claude Code']);
+  fs.writeFileSync(path.join(ctx.homeOf('xai'), 'config.toml'), 'disabled_mcp_servers = ["other"]\n');
+  assert.equal((await ctx.read('xai')).state, 'on');
+  fs.writeFileSync(path.join(ctx.homeOf('xai'), 'config.toml'), 'disabled_mcp_servers = "agent-guild"\n');
+  assert.equal((await ctx.read('xai')).state, 'error', 'an off list Agent Guild cannot read is not taken as on');
+  fs.rmSync(path.join(ctx.homeOf('xai'), 'config.toml'));
+
+  // Grok Build's own entry comes before Claude Code's, turned off or not.
+  seed('xai', ctx.homeOf('xai'), { ...ctx.own, enabled: false });
+  const off = await ctx.read('xai');
+  assert.deepEqual([off.state, off.managed, off.from], ['disabled', true, null], 'its own entry, off, leaves Claude Code\'s unused');
+  seed('xai', ctx.homeOf('xai'), ctx.own);
+  const on = await ctx.read('xai');
+  assert.deepEqual([on.state, on.managed, on.from], ['on', true, null]);
+  assert.equal(fs.readFileSync(claudeFile, 'utf8'), JSON.stringify({ mcpServers: { [SERVER_NAME]: { type: 'stdio', env: {}, command: 'agent-guild', args: ['mcp'] } } }), 'Claude Code\'s settings untouched');
+  assert.equal(fs.existsSync(marker), false);
 });
 
 test('Grok Build\'s card follows the server it takes from Claude Code\'s settings, and changes only Grok Build', async (t) => {

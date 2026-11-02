@@ -169,7 +169,7 @@ off in the tool), `conflict` or `error`. `on` and `disabled` mean the entry
 named agent-guild starts Agent Guild's MCP server (`agent-guild mcp`, `npx
 @oddessentials/agent-guild mcp` or Node running its `bin/agent-guild.mjs mcp`)
 and reaches this manager's data folder, as the tool would start it: from
-`--home=`, else the entry's `AGENT_GUILD_HOME`, else `APPDATA`,
+the first `--home=` when it names a folder, else the entry's `AGENT_GUILD_HOME`, else `APPDATA`,
 `XDG_CONFIG_HOME` or the home folder from the tool's environment.
 `conflict` is any other entry of that name, including one whose data folder
 depends on an `AGENT_GUILD_HOME` set where the tool starts; `error` means the
