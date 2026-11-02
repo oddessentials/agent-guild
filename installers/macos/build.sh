@@ -69,8 +69,11 @@ for arch in arm64 x64; do
     xcrun notarytool log "$(plutil -extract id raw -o - - <<< "$result")" "${notary[@]}" >&2 || true
     fail "Apple's notary service answered $status for $pkg."
   fi
-  xcrun stapler staple "$pkg"
-  xcrun stapler validate "$pkg"
+  for attempt in 1 2 3 4 5; do
+    xcrun stapler staple "$pkg" && xcrun stapler validate "$pkg" && break
+    [ "$attempt" -lt 5 ] || fail "Apple's ticket service did not staple $pkg after 5 tries."
+    sleep 60
+  done
   pkgutil --check-signature "$pkg" | grep -qF "$inst" || fail "$pkg is not signed by $inst."
   spctl --assess --type install -vv "$pkg" 2>&1 | grep -q 'source=Notarized Developer ID' || fail "Gatekeeper does not accept $pkg as notarized."
 done
