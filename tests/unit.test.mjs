@@ -445,7 +445,7 @@ test('a tool whose install command reinstalls it gets Install, Update and Remove
   const win = process.platform === 'win32';
   const home = tempDir();
   const userFile = path.join(home, 'providers.json');
-  fs.copyFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'examples', 'terminal-ai-chat.json'), userFile);
+  fs.copyFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'config', 'providers.optional.json'), userFile);
   const nativeDir = win ? path.join(home, 'AppData', 'Local', 'Programs', 'terminal-ai-chat') : path.join(home, '.local', 'bin');
   const otherDir = path.join(home, 'other');
   const copyIn = (dir) => {

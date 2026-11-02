@@ -15,6 +15,7 @@ import { normalizeAccess } from './access-policy.mjs';
 import { NOTES_BODY_LIMIT, createNotesStore } from './notes.mjs';
 import { DeviceSignIn } from './device-sign-in.mjs';
 import { createAccountEditor } from './accounts.mjs';
+import { createOptionalCards } from './optional-cards.mjs';
 import { MODES as AUTOSTART_MODES } from './autostart.mjs';
 import { ptyRestartProblem } from './pty.mjs';
 import { YardArt } from './yard-art.mjs';
@@ -191,6 +192,10 @@ export function createManagerServer({
   const accounts = createAccountEditor({
     registry,
     inUse: (providerId, accountId) => [...manager.sessions.values()].some((s) => s.status === 'running' && s.provider.id === providerId && s.account?.id === accountId),
+  });
+  const optionalCards = createOptionalCards({
+    registry,
+    inUse: (providerId) => [...manager.sessions.values()].some((s) => s.status === 'running' && s.provider.id === providerId),
   });
   let access = normalizeAccess({ hosts: extraHosts, origins: extraOrigins });
   let policyVersion = 0;
@@ -454,6 +459,17 @@ export function createManagerServer({
       registry.reload();
       registry.refreshVersions({ force: true }).catch(() => {});
       return sendJson(res, 200, { providers: registry.list(), revision: registry.revision, warnings: registry.warnings });
+    }
+    if (route === '/providers/optional' && method === 'GET') {
+      return sendJson(res, 200, { cards: optionalCards.list() });
+    }
+    const addedMatch = route.match(/^\/providers\/([a-z0-9][a-z0-9_-]{0,31})\/added$/);
+    if (addedMatch && (method === 'PUT' || method === 'DELETE')) {
+      const id = addedMatch[1];
+      if (method === 'PUT') optionalCards.add(id, await readJsonBody(req));
+      else optionalCards.remove(id, { revision: url.searchParams.get('revision') });
+      registry.refreshVersions({ force: true, ids: [id] }).catch(() => {});
+      return sendJson(res, 200, { providers: registry.list(), revision: registry.revision });
     }
     if (route === '/usage' && method === 'GET') {
       return sendJson(res, 200, { usage: await usage.all() });

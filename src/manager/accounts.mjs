@@ -68,14 +68,14 @@ export function editAccountsText(text, providerId, platform, change, file = 'pro
   return `${JSON.stringify(parsed, null, 2)}\n`;
 }
 
-function readBytes(file) {
+export function readBytes(file) {
   try { return fs.readFileSync(file); } catch (err) {
     if (err.code === 'ENOENT') return null;
     throw refusal(500, 'providers_file_unreadable', `${file} could not be read: ${err.message}`);
   }
 }
 
-function writeAtomic(file, contents) {
+export function writeAtomic(file, contents) {
   let target = file;
   let mode = 0o600;
   try {

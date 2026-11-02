@@ -87,13 +87,6 @@ multiple saved folders require an explicit folder choice before resuming.
 This reads Antigravity CLI's local transcripts and does not configure learned
 memory. Claude Code, Codex CLI and Grok Build keep their **Memory** entry.
 
-## Terminal AI Chat
-
-[Terminal AI Chat](https://github.com/oddessentials/terminal-ai-chat-releases)
-runs your ChatGPT web session in a terminal. To add its card, copy the entry in
-[examples/terminal-ai-chat.json](../examples/terminal-ai-chat.json) into the
-`providers` list of your `providers.json`.
-
 ## Accounts
 
 Run a personal and a work sign-in of the same tool side by side. Claude Code,
