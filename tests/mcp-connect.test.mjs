@@ -11,7 +11,8 @@ import WebSocket from 'ws';
 import { createManagerServer } from '../src/manager/server.mjs';
 import { fileURLToPath } from 'node:url';
 import { ProviderRegistry } from '../src/manager/providers.mjs';
-import { McpConnect, SERVER_NAME, ownServer } from '../src/manager/mcp-connect.mjs';
+import { McpConnect, SERVER_NAME, classify, ownServer } from '../src/manager/mcp-connect.mjs';
+import { dataDir } from '../src/manager/config.mjs';
 import { SessionManager } from '../src/manager/session-manager.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -264,8 +265,11 @@ test('a manager with its own data folder registers that folder, so a tool starte
 
   const { command, args } = ownServer(process.execPath, home);
   assert.equal(args.at(-1), `--home=${home}`);
-  assert.equal(ownServer(process.execPath, '').args.length, 2, 'the default folder adds nothing');
-  const env = { ...process.env };
+  assert.equal(ownServer().args.at(-1), `--home=${path.resolve(dataDir())}`, 'the default folder is pinned too');
+  const legacy = ownServer(process.execPath, home);
+  assert.equal(classify({}, legacy, { command: legacy.command, args: legacy.legacyArgs }).state, 'on', 'a registration made before the pin is still ours');
+  const elsewhere = path.join(home, 'elsewhere');
+  const env = { ...process.env, APPDATA: elsewhere, XDG_CONFIG_HOME: elsewhere };
   delete env.AGENT_GUILD_HOME;
   const child = spawn(command, args, { env, shell: false, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
   t.after(() => child.kill());
