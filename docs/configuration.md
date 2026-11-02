@@ -69,13 +69,14 @@ Invalid values are ignored; a file that cannot be read is reported in `manager.l
 | `homeVar` | Variable that moves the tool's home folder; required for `accounts` |
 | `accounts` | Extra sign-ins; see [Accounts](#accounts) |
 | `color`, `monogram`, `icon` | Card appearance; `icon` is a URL path |
-| `install`, `docs` | Shown when the tool is not installed; for a `plugin`, `install` is the command **Install** and **Update** run |
+| `install`, `docs` | Shown when the tool is not installed; for a `plugin`, or with `channels.native.reinstall`, `install` is the command **Install** and **Update** run |
+| `channels` | Where each kind of copy lives, so the card can update and remove it: `native` `{ paths, remove, reinstall, versionEnv }`, `brew` `{ names }`, `winget` `{ id }`. A copy inside a `native` path is native; **Remove** deletes its `remove` paths, which must be inside your home folder. With `reinstall`, running `install` again updates a native copy, and `versionEnv` names the variable that pins `install` to the version `releases` reports |
 | `plugin` | The Docker CLI plugin the tool is (`"agent"` for `docker agent`): the card lists the plugin's copies as `docker info` finds them, offers to remove a downloaded one, and runs `install` to add or update it. Ignored unless `command` is `docker` |
 | `releases` | `https://` URL of a "latest release" page that redirects to the release's tag (GitHub's `releases/latest`); its version is the update check for a tool without `package` |
 | `usageUrl`, `billingUrl`, `cloudUrl` | `https://` links on the card; `null` hides one |
 | `win32`, `darwin`, `linux` | Fields that apply on one platform only |
 
-Other fields in the built-in file (`channels`, `hooks`, `reporting`,
+Other fields in the built-in file (`hooks`, `reporting`,
 `accountEnv`, `multiplexers`, `npmNote`) are for the built-in tools; copy them
 from there if you need them.
 
@@ -85,6 +86,13 @@ and Resume; **Existing…** opens the same browser across folders. Unknown or
 multiple saved folders require an explicit folder choice before resuming.
 This reads Antigravity CLI's local transcripts and does not configure learned
 memory. Claude Code, Codex CLI and Grok Build keep their **Memory** entry.
+
+## Terminal AI Chat
+
+[Terminal AI Chat](https://github.com/oddessentials/terminal-ai-chat-releases)
+runs your ChatGPT web session in a terminal. To add its card, copy the entry in
+[examples/terminal-ai-chat.json](../examples/terminal-ai-chat.json) into the
+`providers` list of your `providers.json`.
 
 ## Accounts
 

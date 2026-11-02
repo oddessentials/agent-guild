@@ -1745,6 +1745,21 @@ test('Grok Build reports through the hooks its card\'s switch adds to Grok Build
   assert.equal(fs.readFileSync(theirs, 'utf8'), '{"hooks":{}}\n', 'left as it was');
 });
 
+test('a coding tool\'s card adds Agent Guild\'s MCP server to every account\'s settings, and removes it', async (t) => {
+  t.after(() => fs.rmSync(path.join(toolHomes.codex, 'fake-mcp.json'), { force: true }));
+  const codex = async () => (await call('GET', '/providers')).body.providers.find((p) => p.id === 'openai').mcp;
+  const first = await waitFor(async () => { const mcp = await codex(); return mcp.state !== 'checking' && mcp; }, { label: 'the first read of Codex\'s settings' });
+  assert.deepEqual([first.state, first.total], ['off', 2]);
+  const on = await call('POST', '/providers/openai/mcp', { enabled: true });
+  assert.equal(on.status, 200, JSON.stringify(on.body));
+  assert.deepEqual(on.body.results.map((r) => [r.id, r.outcome]), [['default', 'added'], ['work', 'added']]);
+  assert.deepEqual([on.body.provider.mcp.state, on.body.provider.mcp.on], ['on', 2]);
+  const off = await call('POST', '/providers/openai/mcp', { enabled: false });
+  assert.deepEqual(off.body.results.map((r) => r.outcome), ['removed', 'removed']);
+  assert.equal(off.body.provider.mcp.state, 'off');
+  assert.equal((await call('POST', '/providers/docker/mcp', { enabled: true })).status, 400, 'a tool Agent Guild cannot add it to');
+});
+
 test('Docker Agent reports its shell commands and its sub-agents through the hook flags added after `agent run`', async () => {
   const tool = await startTool('docker');
   assert.equal(tool.session.reporting.state, 'pending');

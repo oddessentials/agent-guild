@@ -183,6 +183,8 @@ export function createManagerServer({
   nextManagerProblem = ptyRestartProblem,
   /** The Yard's art; without a data folder, only a checkout's. */
   yardArt = new YardArt({ webDir }),
+  mcpConnect = null,
+  heartbeatMs = 30000,
 }) {
   let listedProviders = null;
   const accounts = createAccountEditor({
@@ -517,6 +519,15 @@ export function createManagerServer({
       registry.emit('updated');
       return sendJson(res, 200, { provider: registry.describe(provider) });
     }
+    const mcpMatch = route.match(/^\/providers\/([a-z0-9][a-z0-9_-]{0,31})\/mcp$/);
+    if (mcpMatch && method === 'POST' && mcpConnect) {
+      const provider = registry.get(mcpMatch[1]);
+      if (!provider) throw new HttpError(404, `unknown provider "${mcpMatch[1]}"`, 'unknown_provider');
+      const body = await readJsonBody(req);
+      if (typeof body.enabled !== 'boolean') throw new HttpError(400, 'enabled must be true or false', 'bad_request');
+      const results = await mcpConnect.setEnabled(provider, body.enabled);
+      return sendJson(res, 200, { provider: registry.describe(provider), results });
+    }
     const multiplexerMatch = route.match(/^\/providers\/([a-z0-9][a-z0-9_-]{0,31})\/multiplexers\/([a-z0-9_-]+)\/(install|update|uninstall)$/);
     if (multiplexerMatch && method === 'POST') {
       const body = await readJsonBody(req);
@@ -818,7 +829,8 @@ export function createManagerServer({
       ws.isAlive = false;
       try { ws.ping(); } catch { /* closing */ }
     }
-  }, 30000);
+    if (mcpConnect && wss.clients.size) for (const provider of registry.providers) mcpConnect.refresh(provider).catch(() => {});
+  }, heartbeatMs);
   heartbeat.unref();
 
   return {

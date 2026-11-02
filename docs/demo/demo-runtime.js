@@ -138,7 +138,7 @@
       command: info.command || id, package: info.package || null, args: info.args || [], resumable: id !== 'shell', installable: Boolean(info.package),
       launchFlags: (launchFlags[id] ? launchFlags[id].flags : []).map(function (f) { return { flag: f.flag, risky: f.risky }; }),
       launchFlagsEquals: Boolean(launchFlags[id] && launchFlags[id].equals),
-      installCommand: info.plugin ? info.install : null, pluginError: null, pluginPending: false,
+      installCommand: info.plugin ? info.install : null, plugin: info.plugin || null, pluginError: null, pluginPending: false,
       installedVersion: id === 'shell' ? null : '1.0.0', versionStatus: 'ok', versionError: null,
       latestVersion: id === 'shell' ? null : '1.0.0', updateAvailable: false, installChannel: null,
       updateCommand: null, updateGuidance: null, lastInstall: null, installs: [], warnings: [], npmNote: info.npmNote || null,

@@ -441,6 +441,45 @@ test('updates are bound to the installation that owns the resolved tool', async 
   assert.equal(helpDescribes('', ['update']), false);
 });
 
+test('a tool whose install command reinstalls it gets Install, Update and Remove for its native copy, pinned to the latest release', async () => {
+  const win = process.platform === 'win32';
+  const home = tempDir();
+  const userFile = path.join(home, 'providers.json');
+  fs.copyFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'examples', 'terminal-ai-chat.json'), userFile);
+  const nativeDir = win ? path.join(home, 'AppData', 'Local', 'Programs', 'terminal-ai-chat') : path.join(home, '.local', 'bin');
+  const otherDir = path.join(home, 'other');
+  const copyIn = (dir) => {
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, win ? 'terminal-ai-chat.cmd' : 'terminal-ai-chat');
+    fs.writeFileSync(file, win ? '@echo off\r\necho terminal-ai-chat 0.1.0\r\n' : '#!/bin/sh\necho "terminal-ai-chat 0.1.0"\n', { mode: 0o755 });
+    return file;
+  };
+  const env = (dir) => ({ PATHEXT: '.EXE;.CMD', ComSpec: process.env.ComSpec, SystemRoot: process.env.SystemRoot, HOME: home, USERPROFILE: home, PATH: dir });
+  const fetchImpl = async () => ({ status: 302, headers: { get: () => 'https://github.com/oddessentials/terminal-ai-chat-releases/releases/tag/v0.2.0' } });
+  const ids = ['terminal-ai-chat'];
+
+  const registry = new ProviderRegistry({ userFile, env: env(nativeDir), fetchImpl });
+  const tool = registry.get('terminal-ai-chat');
+  await registry.refreshVersions({ force: true, ids });
+  const missing = registry.describe(tool);
+  assert.deepEqual([missing.available, missing.installable, missing.installCommand], [false, true, tool.install]);
+  assert.equal((await registry.installSpec(tool)).args.at(-1), tool.install);
+  assert.deepEqual(registry.installEnv(tool), { TAC_VERSION: '0.2.0' });
+
+  copyIn(nativeDir);
+  await registry.refreshVersions({ force: true, ids });
+  const card = registry.describe(tool);
+  assert.deepEqual([card.installChannel, card.installedVersion, card.updateAvailable, card.updateCommand], ['native', '0.1.0', true, tool.install]);
+  assert.equal((await registry.updateSpec(tool)).spec.args.at(-1), tool.install);
+  const removed = win ? path.join('AppData', 'Local', 'Programs', 'terminal-ai-chat') : path.join('.local', 'bin', 'terminal-ai-chat');
+  assert.deepEqual(card.installs.map((i) => i.uninstall?.remove), [[`~${path.sep}${removed}`]], 'only the program is removed');
+
+  copyIn(otherDir);
+  const elsewhere = new ProviderRegistry({ userFile, env: env(otherDir), fetchImpl });
+  const other = elsewhere.describe(elsewhere.get('terminal-ai-chat'));
+  assert.deepEqual([other.installChannel, other.updateCommand, other.installs[0].uninstall], ['unknown', null, null], 'a copy the install command did not put there is left alone');
+});
+
 test('an install or update ends with a fresh version check and a recorded outcome', async () => {
   const dir = tempDir();
   const versionFile = path.join(dir, 'version.txt');
@@ -3110,6 +3149,7 @@ for (const task of [null, 'install']) {
       resolve: () => null,
       installed: () => false,
       installSpec: async () => ({}),
+      installEnv: () => null,
       uninstallSpec: () => ({ spec: {}, channel: 'native' }),
     };
     const manager = new SessionManager({ registry, baseEnv: {}, getApiUrl: () => '' });

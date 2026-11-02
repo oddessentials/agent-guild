@@ -505,11 +505,11 @@ export class SessionManager extends EventEmitter {
         const { spec, channel } = await this.registry.updateSpec(provider);
         guard();
         const name = `Update ${provider.tool} (${CHANNEL_LABELS[channel]})`;
-        return this._spawn({ provider, spawnSpec: spec, cwd: os.homedir(), name, task: 'install', installKind: 'update' });
+        return this._spawn({ provider, spawnSpec: spec, cwd: os.homedir(), name, task: 'install', installKind: 'update', extraEnv: this.registry.installEnv(provider) });
       }
       const spawnSpec = await this.registry.installSpec(provider);
       guard();
-      return this._spawn({ provider, spawnSpec, cwd: os.homedir(), name: `Install ${provider.tool}`, task: 'install', installKind: 'install' });
+      return this._spawn({ provider, spawnSpec, cwd: os.homedir(), name: `Install ${provider.tool}`, task: 'install', installKind: 'install', extraEnv: this.registry.installEnv(provider) });
     } finally {
       this.installing.delete(provider.id);
     }

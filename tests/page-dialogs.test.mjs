@@ -226,6 +226,7 @@ test('pending Photo opens are invalidated by Yard shutdown, sign-out and manager
         clearTimeout: noop, swapReveal: 0, observer: { disconnect: noop }, pendingRenderer: null, renderer: null,
         document: { removeEventListener: noop }, motion: { removeEventListener: noop }, window: { removeEventListener: noop },
         visibility: noop, motionChange: noop, pageHide: noop,
+        $: () => ({ removeEventListener: noop }), celebrate: noop, fireworksButton: noop,
       });
     } else if (leave === 'sign out') p.showAuth('Sign in again.');
     else p.enterStopping(0, leave === 'restart');
