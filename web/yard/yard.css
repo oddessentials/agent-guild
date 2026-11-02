@@ -6,6 +6,7 @@
 :root[data-view="yard"] #launch-heading { font-size:12px; letter-spacing:.08em; white-space:nowrap; }
 :root[data-view="yard"] .launch-tools { flex:1; justify-content:flex-end; }
 :root[data-view="yard"] .cwd { flex:1; max-width:650px; }
+:root[data-view="yard"] #cards-none { display:none; }
 #yard { --yard-line:color-mix(in srgb,var(--gold) 27%, transparent); display:grid; grid-template-columns:minmax(0,1fr) 334px; min-height:650px; height:calc(100dvh - var(--topbar-h,60px) - 75px); margin:0; background:var(--bg); }
 .yard-main { min-width:0; min-height:0; display:flex; flex-direction:column; position:relative; isolation:isolate; }
 .yard-heading { display:flex; align-items:center; justify-content:space-between; gap:20px; padding:24px 28px 34px; position:absolute; inset:0 0 auto; z-index:2; pointer-events:none; background:linear-gradient(180deg,color-mix(in srgb,var(--bg) 78%,transparent),transparent); }
