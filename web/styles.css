@@ -243,7 +243,7 @@ main { max-width: calc(1200px + var(--dock-space, 0px)); margin: 0 auto; padding
   font: inherit; font-size: 0.78rem; text-align: left; cursor: pointer;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.model-stats-head::after, .console-link::after, .menu-button::after, .model-name::before, .provider .copies summary::before {
+.model-stats-head::after, .console-link::after, .menu-button::after, .model-name::before, .provider .copies summary::before, .provider .mcp summary::before {
   content: ""; display: inline-block; flex: none; width: 0.75em; height: 0.75em; margin-left: 0.3em; vertical-align: -0.05em;
   background: currentColor; mask: var(--icon-chevron) center / contain no-repeat;
 }
@@ -308,8 +308,6 @@ main { max-width: calc(1200px + var(--dock-space, 0px)); margin: 0 auto; padding
 }
 .reporting-row { display: flex; align-items: center; gap: 10px; font-size: 0.78rem; color: var(--muted); }
 .reporting-row .btn { padding: 2px 10px; font-size: 0.75rem; white-space: nowrap; }
-.mcp-row { flex-wrap: wrap; row-gap: 4px; }
-.mcp-row .mcp-text { flex-basis: 100%; }
 .console-link { color: var(--accent); text-decoration: none; }
 .console-link:hover { text-decoration: underline; }
 .console-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 3px; }
@@ -338,6 +336,17 @@ main { max-width: calc(1200px + var(--dock-space, 0px)); margin: 0 auto; padding
 .provider .copies li span { display: block; }
 .provider .copies .copy-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 24px; }
 .provider .copies .copy-name { color: var(--text); min-width: 0; }
+.provider .mcp { font-size: 0.78rem; color: var(--muted); overflow-wrap: anywhere; }
+.provider .mcp summary { display: flex; align-items: baseline; cursor: pointer; list-style: none; white-space: nowrap; }
+.provider .mcp summary::-webkit-details-marker { display: none; }
+.provider .mcp summary::before { margin: 0 0.3em 0 0; align-self: center; transition: transform 0.15s var(--ease); }
+.provider .mcp[open] summary::before { transform: rotate(90deg); }
+.provider .mcp .mcp-state { margin-left: auto; padding-left: 8px; font-weight: 600; white-space: nowrap; }
+.provider .mcp.warned .mcp-state { color: var(--warn); }
+.provider .mcp p { margin: 6px 0 0; line-height: 1.45; }
+.provider .mcp .mcp-command { display: block; margin-top: 4px; font-size: 0.72rem; color: var(--text); }
+.provider .mcp .mcp-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; }
+.provider .mcp .mcp-action { padding: 2px 10px; font-size: 0.75rem; white-space: nowrap; }
 .provider .copies .copy-path { font-family: var(--font-mono); font-size: 0.72rem; }
 .provider .copies .copy-uninstall { flex: none; padding: 2px 10px; font-size: 0.75rem; }
 .provider.busy { opacity: 0.6; pointer-events: none; }
@@ -1318,7 +1327,7 @@ body:has(#terminal-panel:not([hidden]) .terminal-controls:not([hidden])) .toast 
 
 @media (prefers-reduced-motion: reduce) {
   .status-pill.active::before, .agent.working::after, .model-detail .stat-fill, .toast:not([hidden]), .tip:not([hidden]), .run-failed:not([hidden]), .menu:popover-open { animation: none; }
-  .model-name::before, .provider .copies summary::before, .menu-button::after, .btn, .videos-play img, .videos-play-icon, .models, .news-panel, .models::backdrop, .news-panel::backdrop { transition: none; }
+  .model-name::before, .provider .copies summary::before, .provider .mcp summary::before, .menu-button::after, .btn, .videos-play img, .videos-play-icon, .models, .news-panel, .models::backdrop, .news-panel::backdrop { transition: none; }
   .github-waiting::before, .github-running, body:has(#app[hidden]):has(#auth[hidden]):has(#stopped[hidden])::after { animation: none; }
   .btn:active:not(:disabled):not([aria-disabled="true"]) { transform: none; }
   .btn.voice[aria-pressed="true"]::before { animation: none; }
