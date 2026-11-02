@@ -59,6 +59,7 @@
     "markdown-it": "^15.0.2",
     "node-pty": "^1.2.0-beta.15",
     "qrcode-generator": "2.0.4",
+    "smol-toml": "1.9.1",
     "ws": "^8.22.0"
   },
   "bundleDependencies": true,

@@ -2277,7 +2277,9 @@ function mcpView(provider, entry) {
   const yours = !entry.managed && !entry.from ? 'You added it yourself. ' : '';
   const typing = entry.allowInput ? ' It can also type into sessions.' : '';
   if (entry.state === 'checking') return { label: 'Checking…', status: `Reading ${tool}'s MCP settings.` };
-  if (entry.state === 'off') return { label: 'Off', status: `Not added to ${tool}.`, action: 'on', button: 'Turn on' };
+  if (entry.state === 'off') {
+    return { label: 'Off', status: entry.detail ? `${entry.detail} Turn on adds Agent Guild's own server to ${tool}'s settings.` : `Not added to ${tool}.`, action: 'on', button: 'Turn on' };
+  }
   if (entry.state === 'on') {
     return {
       label: 'On', status: `${from}${yours}New ${tool} sessions can use it.${typing}`, action: 'off', button: 'Turn off',

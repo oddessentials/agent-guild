@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { buildSpawnSpec, resolveCommand, runSpec } from './command-resolver.mjs';
 import { antigravityConfigFile } from './session-hooks.mjs';
-import { tomlValue } from './instruction-files.mjs';
+import { parse as parseToml } from 'smol-toml';
 import { stableExecPath } from './autostart.mjs';
 import { PACKAGE_SCRIPT } from './launch.mjs';
 import { dataDir, dataDirFor } from './config.mjs';
@@ -162,6 +162,11 @@ const TOOLS = {
       const from = { claude: 'Claude Code', cursor: 'Cursor' }[server.vendor];
       const file = server.source?.path;
       if (!from || typeof file !== 'string') return { error: `Grok Build takes agent-guild from ${typeof file === 'string' ? `${file}, which` : 'a source'} Agent Guild cannot read` };
+      // Listed, but not loaded: Grok Build's compatibility settings keep that tool's servers out.
+      if (server.disabled === true || server.compatibilityStatus === 'disabled') {
+        const why = server.compatibilityStatus === 'disabled' ? `, because its ${from} compatibility is off` : '';
+        return { entry: null, raw: { source: file, loaded: false }, note: `Grok Build does not load the agent-guild server in ${from}'s settings${why}.` };
+      }
       const found = entryInFile(path.resolve(file));
       if (found.error) return found;
       if (found.entry === null) return { error: `Grok Build reports agent-guild in ${file}, but it is not there` };
@@ -188,19 +193,15 @@ function grokOffList(env, platform) {
   } catch (err) {
     return err.code === 'ENOENT' ? { names: [] } : { error: `${file} cannot be read: ${err.message}` };
   }
-  const lines = text.split(/\r?\n/);
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (line.startsWith('[')) break;
-    const key = /^disabled_mcp_servers\s*=\s*(.*)$/.exec(line);
-    if (!key) continue;
-    let value = key[1];
-    if (value.startsWith('[')) while (!/\]\s*(?:#.*)?$/.test(value) && i + 1 < lines.length) value += ` ${lines[++i].trim()}`;
-    const names = tomlValue(value);
-    if (!Array.isArray(names) || !names.every((n) => typeof n === 'string')) return { error: `${file} has disabled_mcp_servers in a form Agent Guild does not recognize` };
-    return { names };
+  let config;
+  try {
+    config = parseToml(text);
+  } catch {
+    return { error: `${file} is not valid TOML` };
   }
-  return { names: [] };
+  const names = config.disabled_mcp_servers ?? [];
+  if (!Array.isArray(names) || !names.every((n) => typeof n === 'string')) return { error: `${file} has disabled_mcp_servers in a form Agent Guild does not recognize` };
+  return { names };
 }
 
 function parseList(stdout) {
@@ -362,7 +363,7 @@ export class McpConnect {
     }
     if (read.error) return { state: 'error', detail: read.error, fingerprint: null };
     const result = classify(read.entry, { own: this.own, home: this.home, env: account.env, platform, drops: tool.drops, firstKeyWins: tool.firstKeyWins, tool: provider.tool });
-    return { ...result, from: read.entry?.from ?? null, fingerprint: fingerprint(read.entry?.raw ?? null) };
+    return { ...result, ...(read.note && { detail: read.note }), from: read.entry?.from ?? null, fingerprint: fingerprint(read.entry?.raw ?? read.raw ?? null) };
   }
 
   async _readAll(provider, resolved) {

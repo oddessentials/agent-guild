@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 
 const home = () => (process.platform === 'win32' ? process.env.USERPROFILE : process.env.HOME) || os.homedir();
 const homes = {
@@ -46,17 +47,15 @@ export function runMcp(tool, argv) {
   const config = load(file);
   if (config.fail) fail('settings are locked');
   const servers = config.mcpServers ?? config.servers ?? {};
-  // Grok Build keeps the names `mcp disable` turned off in config.toml, one line for one name, one per line for more.
+  // Grok Build keeps the names `mcp disable` turned off, and whether it loads Claude Code's servers, in config.toml.
   const offFile = path.join(dir, 'config.toml');
-  const disabled = tool !== 'grok' ? [] : (() => {
-    try {
-      const listed = /^disabled_mcp_servers = \[([^\]]*)\]/m.exec(fs.readFileSync(offFile, 'utf8'));
-      return listed ? [...listed[1].matchAll(/"([^"]*)"/g)].map((m) => m[1]) : [];
-    } catch { return []; }
+  const grokConfig = tool !== 'grok' ? {} : (() => {
+    try { return parseToml(fs.readFileSync(offFile, 'utf8')); } catch { return {}; }
   })();
+  const disabled = grokConfig.disabled_mcp_servers ?? [];
   const save = () => {
     store(file, tool === 'claude' || tool === 'agy' ? { ...config, mcpServers: servers } : { servers });
-    if (tool === 'grok') fs.writeFileSync(offFile, disabled.length === 1 ? `disabled_mcp_servers = ["${disabled[0]}"]\n` : `disabled_mcp_servers = [\n${disabled.map((n) => `    "${n}",\n`).join('')}]\n`);
+    if (tool === 'grok') fs.writeFileSync(offFile, stringifyToml({ ...grokConfig, disabled_mcp_servers: disabled }));
   };
   const claudeFile = path.join(home(), '.claude.json');
   const claudeServers = () => load(claudeFile).mcpServers ?? {};
@@ -65,7 +64,8 @@ export function runMcp(tool, argv) {
     const own = Object.entries(servers).filter(([name, s]) => s.enabled !== false && !disabled.includes(name))
       .map(([name, s]) => ({ name, transport: 'stdio', target: s.command, source: { type: 'configToml', path: offFile } }));
     const theirs = Object.entries(claudeServers()).filter(([name]) => !servers[name])
-      .map(([name, s]) => ({ name, transport: 'stdio', target: s.command, source: { type: 'claudeJson', path: claudeFile }, compatibilityStatus: 'enabled', vendor: 'claude' }));
+      .map(([name, s]) => ({ name, transport: 'stdio', target: s.command, source: { type: 'claudeJson', path: claudeFile },
+        ...(grokConfig.compat?.claude?.mcps === false ? { disabled: true, compatibilityStatus: 'disabled' } : { compatibilityStatus: 'enabled' }), vendor: 'claude' }));
     process.stdout.write(`${JSON.stringify({ cwd: process.cwd(), mcpServers: [...own, ...theirs] }, null, 2)}\n`);
     process.exit(0);
   }

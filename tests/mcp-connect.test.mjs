@@ -304,6 +304,34 @@ test('reading Grok Build starts no server it takes from Claude Code, and shows w
   assert.equal(fs.existsSync(marker), false);
 });
 
+test('Grok Build\'s config.toml is read as TOML, and a server its compatibility settings leave out reads as off', async (t) => {
+  const ctx = setup(t);
+  const claudeFile = path.join(ctx.home, '.claude.json');
+  fs.writeFileSync(claudeFile, JSON.stringify({ mcpServers: { [SERVER_NAME]: { type: 'stdio', command: 'agent-guild', args: ['mcp'], env: {} } } }));
+  const claude = fs.readFileSync(claudeFile, 'utf8');
+  const config = path.join(ctx.homeOf('xai'), 'config.toml');
+  const state = async (text) => { fs.writeFileSync(config, text); const r = await ctx.read('xai'); return [r.state, r.from]; };
+  assert.deepEqual(await state('disabled_mcp_servers = [\n  "other", # "agent-guild"\n]\n'), ['on', 'Claude Code'], 'a name in a comment is not on the list');
+  assert.deepEqual(await state('# disabled_mcp_servers = ["agent-guild"]\n'), ['on', 'Claude Code'], 'nor is a commented-out list');
+  assert.deepEqual(await state('"disabled_mcp_servers" = ["agent-guild"]\n'), ['disabled', 'Claude Code'], 'a quoted key is the same key');
+  assert.equal((await state('disabled_mcp_servers = [\n'))[0], 'error', 'a config.toml that does not parse is not read as on');
+
+  fs.writeFileSync(config, '[compat.claude]\nmcps = false\n');
+  ctx.clearCalls();
+  const ignored = await ctx.read('xai');
+  assert.deepEqual([ignored.state, ignored.from, Boolean(ignored.managed)], ['off', null, false], 'Grok Build lists it but does not load it');
+  assert.match(ignored.detail, /does not load the agent-guild server in Claude Code's settings/);
+  const view = card({ id: 'xai', tool: 'Grok Build', mcp: { mode: 'grok', accounts: [ignored] } });
+  assert.deepEqual([view.label, view.button, view.action, view.ask], ['Off', 'Turn on', 'on', null]);
+  assert.match(view.status, /Turn on adds Agent Guild's own server to Grok Build's settings\.$/);
+  assert.deepEqual(await ctx.mcp.change(ctx.provider('xai'), 'default', 'on', ignored.fingerprint), { outcome: 'changed', state: 'on' });
+  assert.deepEqual(changes(ctx).map((c) => c.argv.slice(0, 2)), [['mcp', 'add']], 'Turn on adds Grok Build\'s own entry and starts nothing');
+  const own = await ctx.read('xai');
+  assert.deepEqual([own.state, own.managed, own.from], ['on', true, null]);
+  assert.equal(fs.readFileSync(claudeFile, 'utf8'), claude, 'Claude Code\'s settings untouched');
+  assert.match(fs.readFileSync(config, 'utf8'), /mcps = false/, 'Grok Build\'s compatibility setting untouched');
+});
+
 test('Grok Build\'s card follows the server it takes from Claude Code\'s settings, and changes only Grok Build', async (t) => {
   const ctx = setup(t);
   const claudeFile = path.join(ctx.home, '.claude.json');
