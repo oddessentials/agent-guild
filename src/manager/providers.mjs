@@ -88,6 +88,8 @@ function normalizeChannels(raw) {
       remove: stringList(raw.native.remove),
       links: stringList(raw.native.links),
       sharedWithNpm: raw.native.sharedWithNpm === true,
+      reinstall: raw.native.reinstall === true,
+      versionEnv: typeof raw.native.versionEnv === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(raw.native.versionEnv) ? raw.native.versionEnv : null,
     };
   }
   if (raw.brew && typeof raw.brew === 'object') out.brew = { names: stringList(raw.brew.names), autoUpdates: raw.brew.autoUpdates === true };
@@ -588,6 +590,18 @@ export class ProviderRegistry extends EventEmitter {
     return args;
   }
 
+  /** Whether Install runs the provider's `install` command, which puts a native copy in place that running it again updates. */
+  reinstalls(provider) {
+    return Boolean(!provider.plugin && !provider.package && provider.install && provider.channels.native?.reinstall);
+  }
+
+  /** The variable that pins the install command to the latest version, when the tool names one and that version is known. */
+  installEnv(provider) {
+    const name = this.reinstalls(provider) ? provider.channels.native.versionEnv : null;
+    const latest = name ? this.versions.get(provider.id)?.latest : null;
+    return latest ? { [name]: latest } : null;
+  }
+
   /** Whether the tool is there to run: its command on PATH, and for a plugin a copy that `docker` runs. */
   installed(provider) {
     return Boolean(provider.plugin ? this._pluginPath(provider) : this.resolve(provider));
@@ -702,7 +716,7 @@ export class ProviderRegistry extends EventEmitter {
         guidance: `Homebrew moved ${provider.tool} from a formula to a cask, so brew upgrade no longer updates this copy. Run "brew uninstall ${channel.token}", then "brew install --cask ${channel.token}".`,
       };
     }
-    if (provider.plugin) return { file: null, args: [], command: channel.update.command, guidance: null };
+    if (provider.plugin || channel.update.reinstall) return { file: null, args: [], command: channel.update.command, guidance: null };
     const args = this.npmArgs(channel.update, this.versions.get(provider.id)?.latest ?? 'latest');
     const command = formatCommand(channel.update.file, args);
     if (channel.probe) {
@@ -831,8 +845,10 @@ export class ProviderRegistry extends EventEmitter {
       resumable: provider.resumeArgs.length > 0,
       launchFlags: provider.launchFlags.map(({ flag, risky }) => ({ flag, risky })),
       launchFlagsEquals: provider.launchFlagsEquals,
-      installable: provider.plugin ? Boolean(commandPath && !resolvedPath && !pluginError && !pluginPending && provider.install) : Boolean(provider.package && this.resolveNpm()),
-      installCommand: provider.plugin && provider.install ? provider.install : null,
+      installable: provider.plugin ? Boolean(commandPath && !resolvedPath && !pluginError && !pluginPending && provider.install)
+        : this.reinstalls(provider) || Boolean(provider.package && this.resolveNpm()),
+      installCommand: (provider.plugin || this.reinstalls(provider)) && provider.install ? provider.install : null,
+      plugin: provider.plugin,
       pluginError,
       pluginPending,
       installedVersion: installed,
@@ -939,7 +955,7 @@ export class ProviderRegistry extends EventEmitter {
     if (!update.command) {
       throw refusal(400, 'not_updatable', update.guidance || `Still checking how ${provider.tool} was installed. Try again in a moment.`);
     }
-    if (provider.plugin) return { spec: this._installCommandSpec(provider), channel: channel.channel };
+    if (provider.plugin || channel.update.reinstall) return { spec: this._installCommandSpec(provider), channel: channel.channel };
     if (!channel.update.package) return { spec: buildSpawnSpec(update.file, update.args, this.env, this.platform), channel: channel.channel };
     const args = this.npmArgs(channel.update, await this.resolveRelease(provider, update.file));
     return { spec: npmSpawnSpec(update.file, args, this.env, this.platform), channel: 'npm' };
@@ -967,6 +983,7 @@ export class ProviderRegistry extends EventEmitter {
       if (plugins.copies.some((c) => c.active)) throw refusal(409, 'already_installed', `${provider.tool} is already installed at ${this._pluginPath(provider)}.`);
       return this._installCommandSpec(provider);
     }
+    if (this.reinstalls(provider)) return this._installCommandSpec(provider);
     if (!provider.package) {
       const err = new Error(`${provider.tool} has no npm package configured; install it by hand: ${provider.install || provider.docs || 'see its documentation'}`);
       err.status = 400;

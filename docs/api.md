@@ -123,8 +123,10 @@ whether its folder is on PATH. `uninstall` is null when Agent Guild cannot
 remove that copy, and `uninstallGuidance` then says how to remove it instead.
 `POST /providers/:id/uninstall` removes one copy.
 
-For a tool that is a Docker CLI plugin (Docker Agent), `installCommand` is the
-command **Install** and **Update** run. `pluginError` says why docker could not
+`installCommand` is the command **Install** and **Update** run for a tool that
+is a Docker CLI plugin (Docker Agent), or that a configured install command
+updates by running again, and null otherwise. `plugin` names the Docker CLI
+plugin the tool is, or is null. `pluginError` says why docker could not
 list the plugin's copies, or is null; `pluginPending` is true until docker has
 listed them once.
 

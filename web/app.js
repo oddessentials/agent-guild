@@ -2358,7 +2358,8 @@ function buildProvider(provider) {
     if (provider.available && provider.instructionsSource && !instructionCounts.has(instructionKey(provider))) refreshInstructionCounts();
     const install = node.querySelector('.install');
     install.hidden = provider.available || !provider.installable;
-    install.title = provider.installCommand ? `Downloads the latest ${provider.tool} release into Docker's plugin folder, in a session.` : `Install ${provider.tool} using npm.${provider.npmNote ? ` ${provider.npmNote}` : ''}`;
+    install.title = provider.plugin ? `Downloads the latest ${provider.tool} release into Docker's plugin folder, in a session.`
+      : provider.installCommand ? `Run "${provider.installCommand}" in a session` : `Install ${provider.tool} using npm.${provider.npmNote ? ` ${provider.npmNote}` : ''}`;
     install.addEventListener('click', () => installProvider(provider, node));
     const update = node.querySelector('.update');
     update.hidden = !(provider.available && provider.updateCommand && (provider.updateAvailable || checkFailed));
@@ -3878,7 +3879,7 @@ function installNote(provider) {
   }
   if (last.kind === 'uninstall') return last.outcome === 'remaining' ? 'Uninstalled copy is still present' : '';
   if (last.verification === 'failed') return `Installation completed, but ${provider.tool} verification failed`;
-  if (last.outcome === 'missing') return provider.installCommand ? 'Installed, but docker does not list it' : 'Installed, but not found on PATH';
+  if (last.outcome === 'missing') return provider.plugin ? 'Installed, but docker does not list it' : 'Installed, but not found on PATH';
   if (last.outcome === 'unchanged') return 'No version change after update';
   return '';
 }
