@@ -308,6 +308,8 @@ main { max-width: calc(1200px + var(--dock-space, 0px)); margin: 0 auto; padding
 }
 .reporting-row { display: flex; align-items: center; gap: 10px; font-size: 0.78rem; color: var(--muted); }
 .reporting-row .btn { padding: 2px 10px; font-size: 0.75rem; white-space: nowrap; }
+.mcp-row { flex-wrap: wrap; row-gap: 4px; }
+.mcp-row .mcp-text { flex-basis: 100%; }
 .console-link { color: var(--accent); text-decoration: none; }
 .console-link:hover { text-decoration: underline; }
 .console-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 3px; }

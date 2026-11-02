@@ -151,7 +151,24 @@ leaves the multiplexer's own session running, and
 
 For a tool whose agent or model reporting has to be turned on,
 `reportingEnabled` says whether it is, and `reportingNote` says why that switch
-cannot be used, or is null. `usageUrl`, `billingUrl` and `cloudUrl` are
+cannot be used, or is null.
+
+`mcp` is null unless the tool is installed and Agent Guild can add its own MCP
+server (`agent-guild mcp`, see [mcp.md](mcp.md)) to the tool's settings:
+Claude Code, Codex CLI, Antigravity CLI and Grok Build. Otherwise it is
+`{ state, on, total, accounts }`, read from each account's settings and kept
+for up to a minute. `accounts` lists `{ id, label, state, detail }` per
+account, where `state` is `on`, `off`, `disabled` (Agent Guild's server, turned
+off in the tool), `other` (a server of that name that runs something else,
+which Agent Guild never changes) or `unknown` (the settings could not be
+read), and `detail` says why for `other` and `unknown`. An account whose home folder does not exist yet
+reads `off`, and turning the server on makes the folder. `on` counts the
+accounts that are on, of `total`. The provider's `state` is `on` or `off` when
+every account is, `partial` when some but not all are on, else `unknown`,
+`other` or `disabled` for the first of those any account has; `checking`
+before the first read, with `accounts` empty.
+
+`usageUrl`, `billingUrl` and `cloudUrl` are
 `https://` links to the vendor's usage and billing pages and web app, or null.
 
 ### Manager environment
@@ -622,6 +639,7 @@ All paths are under `/api/v1`.
 | PATCH | `/providers/:id/accounts/:account` | `{ label, revision }` | `{ account, dir, providers, revision }`: renames an account, including `default`. |
 | DELETE | `/providers/:id/accounts/:account?revision=` | | `{ account, dir, providers, revision }`: removes an account from `providers.json`. Its home folder, `dir`, stays on disk. 409 `default_account` for `default`; 409 `account_in_use` while a running session uses it. |
 | POST | `/providers/:id/reporting` | `{ enabled }` | `{ provider }`: turns agent or model reporting on or off for a tool that has `reportingEnabled`. |
+| POST | `/providers/:id/mcp` | `{ enabled }` | `{ provider, results }`: adds Agent Guild's MCP server to, or removes it from, each account of a tool that has `mcp`. Each account is read again first; one whose state is then `other` or `unknown` is left as it is. `results` has one `{ id, label, outcome, state, detail? }` per account, `outcome` `added`, `removed`, `unchanged`, `skipped` or `failed`; a failed account does not undo the others. 400 `not_applicable` for a tool without `mcp`; 409 `provider_unavailable` when it is not installed; 409 `busy` while a change for that tool is running. |
 | POST | `/providers/:id/install` | `{ force? }` | `201 { session }`: a session that installs or updates the tool. 409 `provider_in_use` (with `running`, the session count) while the provider's sessions are running; retry with `force: true` after the user confirms. |
 | POST | `/providers/:id/uninstall` | `{ path, force? }` | `201 { session }`: a session that removes the copy at `path`, one of the provider's `installs`. `force` as for `install`. |
 | GET | `/environment?scope=&cwd=&id=` | | An environment snapshot; see [Manager environment](#manager-environment). |

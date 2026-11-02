@@ -25,6 +25,7 @@ import { SelfUpdate } from './self-update.mjs';
 import { addRuntimePaths, resolveBaseEnv, pathReader } from './shell-env.mjs';
 import { nativeReporter, writeReportShims } from './report-shims.mjs';
 import { SessionHooks } from './session-hooks.mjs';
+import { McpConnect, ownServer } from './mcp-connect.mjs';
 import { launcherPath, nextManager } from './launch.mjs';
 import { createAutostart } from './autostart.mjs';
 import { bootSupported, createBootService } from './systemd-service.mjs';
@@ -92,6 +93,8 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
   const manager = new SessionManager({
     registry, baseEnv, getApiUrl: () => api.url, sessionDefaults, shimDir, selfUpdate, github, sessionHooks, store: multiplexerStore, cardNames,
   });
+  const mcpConnect = new McpConnect({ registry, own: ownServer(), prepareAccount: (provider, account) => manager.prepareAccount(provider, account), dir: dataDir() });
+  registry.mcpState = (provider) => mcpConnect.describe(provider);
   environment.setSessionLookup((id) => {
     let session;
     try { session = manager.get(id); } catch { return null; }
@@ -184,6 +187,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
     notes: createNotesStore(paths.notes),
     launcher: launcherPath(),
     yardArt: new YardArt({ webDir, dir: paths.yardArt }),
+    mcpConnect,
     onShutdownRequest: ({ restart = false } = {}) => shutdown('requested via API', { restart }).then((code) => process.exit(code)),
   });
   remoteAccess.attach({ apply: (access) => api.setAccessPolicy(access), getTarget: () => api.url });

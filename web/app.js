@@ -2265,6 +2265,53 @@ function renderReportingSetup(card, provider) {
   };
 }
 
+const MCP_STATES = { on: 'on', off: 'off', disabled: 'turned off in the tool', other: 'another server is named agent-guild', unknown: 'settings could not be read' };
+
+function mcpText(provider, mcp) {
+  if (mcp.state === 'checking') return 'Agent Guild MCP: checking';
+  if (mcp.state === 'on') return mcp.total > 1 ? `Agent Guild MCP on for all ${mcp.total} accounts` : 'Agent Guild MCP on';
+  if (mcp.state === 'partial') return `Agent Guild MCP on for ${mcp.on} of ${mcp.total} accounts`;
+  if (mcp.state === 'disabled') return `Agent Guild MCP turned off in ${provider.tool}`;
+  if (mcp.state === 'other') return 'Agent Guild MCP: another server is named agent-guild';
+  if (mcp.state === 'unknown') return 'Agent Guild MCP: settings could not be read';
+  return 'Agent Guild MCP off';
+}
+
+function renderMcpSetup(card, provider) {
+  const row = card.querySelector('.mcp-row');
+  const mcp = provider.mcp;
+  row.hidden = !provider.available || !mcp;
+  if (row.hidden) return;
+  const text = row.querySelector('.mcp-text');
+  text.textContent = mcpText(provider, mcp);
+  text.title = mcp.accounts.map((a) => `${a.label}: ${MCP_STATES[a.state] ?? a.state}${a.detail ? `. ${a.detail}` : ''}`).join('\n');
+  const states = new Set(mcp.accounts.map((a) => a.state));
+  const turnOn = row.querySelector('.mcp-on');
+  const turnOff = row.querySelector('.mcp-off');
+  turnOn.hidden = !states.has('off') && !states.has('disabled');
+  turnOff.hidden = !states.has('on') && !states.has('disabled');
+  turnOn.title = `Lets ${provider.tool} see your other Agent Guild sessions, read their answers and screens, and start or stop sessions when you approve. Typing into sessions stays off. Adds agent-guild to ${provider.tool}'s MCP servers for every account.`;
+  turnOff.title = `Removes Agent Guild's MCP server from ${provider.tool}'s settings. A server named agent-guild that runs something else is left as it is.`;
+  const change = async (enabled) => {
+    turnOn.disabled = turnOff.disabled = true;
+    try {
+      const { results } = await api('POST', `/providers/${provider.id}/mcp`, { enabled });
+      const problems = results.filter((r) => r.outcome === 'failed' || r.outcome === 'skipped');
+      const done = results.length - problems.length;
+      const lead = !problems.length ? `Agent Guild MCP is ${enabled ? `on for ${provider.tool}. New sessions can use it` : `off for ${provider.tool}`}.`
+        : `Agent Guild MCP is ${enabled ? 'on' : 'off'} for ${done} of ${results.length} ${provider.tool} accounts.`;
+      toast([lead, ...problems.map((r) => `${r.label}: ${r.detail ?? MCP_STATES[r.state] ?? r.state}.`)].join(' '), problems.length ? 12000 : undefined);
+    } catch (err) {
+      if (err instanceof AuthError) return showAuth(err.message);
+      toast(err.message, 10000);
+    } finally {
+      turnOn.disabled = turnOff.disabled = false;
+    }
+  };
+  turnOn.onclick = () => change(true);
+  turnOff.onclick = () => change(false);
+}
+
 let dealt = false;
 
 // Both layouts mount these same controls with these same command handlers.
@@ -2336,6 +2383,7 @@ function buildProvider(provider) {
     renderMultiplexers(node, provider);
     renderUsage(node, provider);
     renderReportingSetup(node, provider);
+    renderMcpSetup(node, provider);
     renderModelStats(node, provider);
     renderProviderPending(node, provider);
     paintManagerActions(node);

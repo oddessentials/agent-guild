@@ -22,6 +22,7 @@ import { MultiplexerRegistry } from './multiplexers.mjs';
 import { reconcileHerdrPath } from './multiplexer-paths.mjs';
 import { refreshLaunchers } from './launchers.mjs';
 import { LaunchFlags, normalizeLaunchFlags } from './launch-flags.mjs';
+import { MCP_MODES } from './mcp-connect.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULTS_FILE = path.resolve(here, '../../config/providers.default.json');
@@ -171,6 +172,7 @@ function normalize(raw, platform, warnings) {
     memory: ['claude', 'codex', 'grok'].includes(merged.memory) ? merged.memory : null,
     instructions: ['claude', 'codex', 'grok', 'google'].includes(merged.instructions) ? merged.instructions : null,
     reporting: REPORTING_MODES.has(merged.reporting) ? merged.reporting : null,
+    mcp: MCP_MODES.includes(merged.mcp) ? merged.mcp : null,
     modelPattern: merged.modelPattern ? String(merged.modelPattern) : null,
     args: Array.isArray(merged.args) ? merged.args.map(String) : [],
     resumeArgs: Array.isArray(merged.resumeArgs) ? merged.resumeArgs.map(String) : [],
@@ -308,6 +310,7 @@ export class ProviderRegistry extends EventEmitter {
     this._npmRegistry = null;
     this.reportingEnabled = null;
     this.reportingNote = null;
+    this.mcpState = null;
     this.multiplexers = new MultiplexerRegistry(this, multiplexerOptions);
     this.multiplexerState = null;
     this.reload();
@@ -853,6 +856,7 @@ export class ProviderRegistry extends EventEmitter {
       reporting: provider.reporting,
       reportingEnabled: this.reportingEnabled?.(provider) ?? null,
       reportingNote: this.reportingNote?.(provider) ?? null,
+      mcp: this.mcpState?.(provider) ?? null,
       accounts: provider.accounts.map((account) => ({ id: account.id, label: account.label })),
       accountsEditable: Boolean(provider.homeVar),
       shells: shells?.shells.map((shell) => ({ id: shell.id, label: shell.label, path: shell.path, multiplexer: Boolean(shell.multiplexer) })) ?? null,

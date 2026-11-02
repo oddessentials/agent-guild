@@ -59,6 +59,7 @@ const [tool, ...argv] = process.argv.slice(2);
 const win = process.platform === 'win32';
 const out = (text) => process.stdout.write(`${text}\r\n`);
 const readJson = (file) => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } };
+if (argv[0] === 'mcp' && tool !== 'docker') (await import('./fake-mcp.mjs')).runMcp(tool, argv);
 
 // The docker fixture's agent plugin: absent with FAKE_DOCKER_NO_PLUGIN=1, or when FAKE_DOCKER_PLUGIN_PATH names a
 // file that is not there (so an install command that writes it, `docker-install`, makes the plugin appear).
