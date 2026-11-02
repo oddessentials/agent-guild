@@ -590,12 +590,10 @@ export class ProviderRegistry extends EventEmitter {
     return args;
   }
 
-  /** Whether Install runs the provider's `install` command, which puts a native copy in place that running it again updates. */
   reinstalls(provider) {
     return Boolean(!provider.plugin && !provider.package && provider.install && provider.channels.native?.reinstall);
   }
 
-  /** The variable that pins the install command to the latest version, when the tool names one and that version is known. */
   installEnv(provider) {
     const name = this.reinstalls(provider) ? provider.channels.native.versionEnv : null;
     const latest = name ? this.versions.get(provider.id)?.latest : null;

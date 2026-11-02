@@ -94,11 +94,6 @@ runs your ChatGPT web session in a terminal. To add its card, copy the entry in
 [examples/terminal-ai-chat.json](../examples/terminal-ai-chat.json) into the
 `providers` list of your `providers.json`.
 
-* **Install** and **Update** run its install script, pinned to the latest
-  release. A Homebrew or WinGet copy updates with that tool.
-* **Remove** deletes only the program. Its browser runtime and data stay.
-* Sign-in opens Chrome on the computer Agent Guild runs on.
-
 ## Accounts
 
 Run a personal and a work sign-in of the same tool side by side. Claude Code,
