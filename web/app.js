@@ -2669,8 +2669,24 @@ function renderMultiplexers(card, provider) {
 
 async function reloadProviders() {
   const previous = state.providers;
-  await settleProviders(await api('POST', '/providers/reload', {}), previous);
+  const result = await api('POST', '/providers/reload', {});
+  await settleProviders(result, previous);
   renderProviders();
+  return result.warnings || [];
+}
+
+async function reloadCards(button) {
+  button.disabled = true;
+  try {
+    const warnings = await reloadProviders();
+    if (warnings.length) toast(warnings.join(' '), 10000);
+    else toast('Cards reloaded', 3000);
+  } catch (err) {
+    if (err instanceof AuthError) showAuth(err.message);
+    else toast(err.message, 10000);
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function manageMultiplexer(provider, tool, kind, copy = null, force = false) {
@@ -8549,6 +8565,10 @@ $('cards-menu').addEventListener('change', (e) => {
 });
 $('cards-collapse').addEventListener('click', () => setCollapsed(state.providers.map((p) => p.id), true));
 $('cards-expand').addEventListener('click', () => setCollapsed(state.providers.map((p) => p.id), false));
+$('cards-reload').addEventListener('click', () => {
+  closeMenu($('cards-menu'));
+  reloadCards($('cards-reload'));
+});
 $('cards-show-all').addEventListener('click', () => {
   setHidden(state.providers.map((p) => p.id), false);
   $('providers').querySelector('.card-toggle')?.focus();

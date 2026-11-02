@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 
 const app = fs.readFileSync(new URL('../web/app.js', import.meta.url), 'utf8');
-const functions = ['renderCopies', 'renderMultiplexers', 'manageMultiplexer', 'reloadProviders', 'setProviders', 'settleProviders', 'installNote'].map((name) => {
+const functions = ['renderCopies', 'renderMultiplexers', 'manageMultiplexer', 'reloadProviders', 'reloadCards', 'setProviders', 'settleProviders', 'installNote'].map((name) => {
   const found = app.match(new RegExp('(?:async )?function ' + name + '\\([^]*?\\n\\}'))?.[0];
   assert.ok(found);
   return found;
@@ -114,6 +114,25 @@ test('Refresh requests forced rediscovery through the existing reload route', as
   p.render();
   await p.host.querySelector('.multiplexer-refresh').click();
   assert.deepEqual(p.requests, [{ method: 'POST', route: '/providers/reload', body: {} }]);
+});
+
+test('Reload cards reloads the tools, stays disabled until the reply, and shows the manager’s warnings', async () => {
+  const p = page([]);
+  const replies = held(p);
+  const button = new Element('button');
+  const reloading = p.context.reloadCards(button);
+  assert.equal(button.disabled, true);
+  assert.deepEqual(replies.map((r) => `${r.method} ${r.route}`), ['POST /providers/reload']);
+  replies[0].resolve({ providers: [{ id: 'chat' }], revision: 'r2', warnings: ['provider "chat": ignored docs "x"; it must be an https:// URL'] });
+  await reloading;
+  assert.equal(button.disabled, false);
+  assert.deepEqual(p.context.state.providers, [{ id: 'chat' }]);
+  assert.deepEqual(p.errors, ['provider "chat": ignored docs "x"; it must be an https:// URL']);
+
+  const again = p.context.reloadCards(button);
+  replies[1].resolve({ providers: [{ id: 'chat' }], revision: 'r2', warnings: [] });
+  await again;
+  assert.deepEqual(p.errors.at(-1), 'Cards reloaded');
 });
 
 function held(p) {

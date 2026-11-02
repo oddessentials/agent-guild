@@ -44,8 +44,8 @@ be the bare array. See
 }
 ```
 
-Edits apply after `agent-guild restart` (this ends running sessions), or to
-new sessions at once with `POST /api/v1/providers/reload` ([API](api.md)).
+Edits apply to new sessions after **Cards → Reload cards** on the page, or
+after `agent-guild restart` (this ends running sessions).
 Invalid values are ignored; a file that cannot be read is reported in `manager.log`.
 
 | Field | Meaning |
