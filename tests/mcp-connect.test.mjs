@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -245,6 +246,69 @@ test('the command each tool is given starts Agent Guild\'s MCP server, with no s
   await exited;
   assert.equal(answer.id, 1);
   assert.equal(answer.result.serverInfo.name, 'agent-guild');
+});
+
+test('a manager with its own data folder registers that folder, so a tool started anywhere reaches it', async (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-mcp-home-'));
+  const token = 'b'.repeat(48);
+  const api = http.createServer((req, res) => {
+    const body = req.url === '/api/v1/health' ? { name: 'agent-guild', version: '9.9.9-home' }
+      : req.headers.authorization !== `Bearer ${token}` ? null
+        : req.url === '/api/v1/sessions' ? { sessions: [] } : { providers: [] };
+    res.writeHead(body ? 200 : 401, { 'Content-Type': 'application/json' }).end(JSON.stringify(body ?? {}));
+  });
+  await new Promise((resolve) => api.listen(0, '127.0.0.1', resolve));
+  t.after(() => { api.close(); fs.rmSync(home, { recursive: true, force: true }); });
+  fs.writeFileSync(path.join(home, 'auth-token'), `${token}\n`);
+  fs.writeFileSync(path.join(home, 'manager.json'), JSON.stringify({ url: `http://127.0.0.1:${api.address().port}` }));
+
+  const { command, args } = ownServer(process.execPath, home);
+  assert.equal(args.at(-1), `--home=${home}`);
+  assert.equal(ownServer(process.execPath, '').args.length, 2, 'the default folder adds nothing');
+  const env = { ...process.env };
+  delete env.AGENT_GUILD_HOME;
+  const child = spawn(command, args, { env, shell: false, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+  t.after(() => child.kill());
+  const answers = new Map();
+  let out = '';
+  child.stdout.on('data', (chunk) => {
+    out += chunk;
+    for (let at; (at = out.indexOf('\n')) >= 0; out = out.slice(at + 1)) { const message = JSON.parse(out.slice(0, at)); answers.get(message.id)?.(message); }
+  });
+  const call = (id, method, params) => new Promise((resolve) => { answers.set(id, resolve); child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`); });
+  await call(1, 'initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '1' } });
+  const status = await call(2, 'tools/call', { name: 'guild_status', arguments: {} });
+  assert.equal(JSON.parse(status.result.content[0].text).version, '9.9.9-home');
+});
+
+test('an open page hears an MCP server removed outside the card, from the heartbeat', async (t) => {
+  const ctx = setup(t, { accounts: {} });
+  for (const name of ['codex', 'agy', 'grok']) fs.rmSync(path.join(ctx.root, 'bin', win ? `${name}.cmd` : name));
+  seed('anthropic', ctx.homeOf('anthropic'), ctx.own);
+  await ctx.mcp.refresh(ctx.provider('anthropic'), { force: true });
+  assert.equal(ctx.mcp.describe(ctx.provider('anthropic')).state, 'on');
+  ctx.mcp.ttlMs = 0;
+
+  const token = 'a'.repeat(48);
+  ctx.registry.mcpState = (provider) => ctx.mcp.describe(provider);
+  const manager = Object.assign(new EventEmitter(), { list: () => [], refreshMultiplexers() {}, sessions: new Map() });
+  const api = createManagerServer({ manager, registry: ctx.registry, token, port: 0, webDir: path.join(here, '..', 'web'), mcpConnect: ctx.mcp, heartbeatMs: 20 });
+  await api.listen();
+  const ws = new WebSocket(`${api.url.replace('http', 'ws')}/api/v1/events`, { headers: { Authorization: `Bearer ${token}` } });
+  try {
+    const off = new Promise((resolve) => ws.on('message', (raw) => {
+      const event = JSON.parse(raw);
+      if (event.type === 'providers.updated' && event.providers.find((p) => p.id === 'anthropic').mcp?.state === 'off') resolve();
+    }));
+    await once(ws, 'open');
+    writeRaw('anthropic', ctx.homeOf('anthropic'), JSON.stringify({ theme: 'dark', mcpServers: {} }));
+    let timer;
+    await Promise.race([off, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('the card never heard the change')), 10000); })]);
+    clearTimeout(timer);
+  } finally {
+    ws.terminate();
+    await api.close();
+  }
 });
 
 const app = fs.readFileSync(new URL('../web/app.js', import.meta.url), 'utf8');

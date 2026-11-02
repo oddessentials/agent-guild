@@ -360,6 +360,8 @@ async function main() {
     }
     case 'mcp': {
       // stdout carries only protocol messages from here on.
+      const home = args.find((a) => a.startsWith('--home='))?.slice('--home='.length);
+      if (home) process.env.AGENT_GUILD_HOME = home;
       const { serveMcp } = await import('../src/mcp/server.mjs');
       await serveMcp({ allowInput: flags.has('--allow-input') });
       return undefined;

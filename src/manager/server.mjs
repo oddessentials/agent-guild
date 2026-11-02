@@ -184,6 +184,7 @@ export function createManagerServer({
   /** The Yard's art; without a data folder, only a checkout's. */
   yardArt = new YardArt({ webDir }),
   mcpConnect = null,
+  heartbeatMs = 30000,
 }) {
   let listedProviders = null;
   const accounts = createAccountEditor({
@@ -828,7 +829,8 @@ export function createManagerServer({
       ws.isAlive = false;
       try { ws.ping(); } catch { /* closing */ }
     }
-  }, 30000);
+    if (mcpConnect && wss.clients.size) for (const provider of registry.providers) mcpConnect.refresh(provider).catch(() => {});
+  }, heartbeatMs);
   heartbeat.unref();
 
   return {

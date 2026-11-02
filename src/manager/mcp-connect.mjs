@@ -11,8 +11,8 @@ export const MCP_MODES = ['claude', 'codex', 'antigravity', 'grok'];
 const STATE_TTL_MS = 60 * 1000;
 const RUN_TIMEOUT_MS = 30000;
 
-export function ownServer(execPath = process.execPath) {
-  return { command: stableExecPath(execPath), args: [PACKAGE_SCRIPT, 'mcp'] };
+export function ownServer(execPath = process.execPath, home = process.env.AGENT_GUILD_HOME) {
+  return { command: stableExecPath(execPath), args: [PACKAGE_SCRIPT, 'mcp', ...(home ? [`--home=${path.resolve(home)}`] : [])] };
 }
 
 const homeOf = (env, platform) => (platform === 'win32' ? env.USERPROFILE : env.HOME) || os.homedir();
