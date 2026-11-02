@@ -315,13 +315,23 @@ main { max-width: calc(1200px + var(--dock-space, 0px)); margin: 0 auto; padding
 .memory-link, .hint-details { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; }
 .memory-link:hover, .hint-details:hover { text-decoration: underline; }
 .memory-link:focus-visible, .hint-details:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 3px; }
-/* The bottom margin lets the second icon's padding overlap the gap below, so the header is no taller. */
 .head-tools { display: flex; flex-direction: column; flex: none; align-self: flex-start; margin: -4px -6px -6px 0; }
-.cloud-link, .accounts-link { display: block; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 8px; background: none; color: var(--muted); cursor: pointer; }
-.cloud-link::before, .accounts-link::before { content: ""; display: block; width: 100%; height: 100%; background: currentColor; mask: var(--icon-cloud) center / 20px no-repeat; }
+.card-toggle, .cloud-link, .accounts-link { display: block; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 8px; background: none; color: var(--muted); cursor: pointer; }
+.card-toggle::before, .cloud-link::before, .accounts-link::before { content: ""; display: block; width: 100%; height: 100%; background: currentColor; mask: var(--icon-cloud) center / 20px no-repeat; }
 .accounts-link::before { mask-image: var(--icon-accounts); }
-.cloud-link:hover, .accounts-link:hover { color: var(--accent); }
-.cloud-link:focus-visible, .accounts-link:focus-visible { color: var(--accent); outline: 2px solid var(--focus); outline-offset: 0; }
+.card-toggle::before { mask-image: var(--icon-chevron); mask-size: 16px; rotate: -90deg; transition: rotate 0.15s var(--ease); }
+.card-toggle[aria-expanded="false"]::before { rotate: 90deg; }
+.providers > .provider.collapsed { padding-top: 16px; align-self: start; }
+:root[data-skin="guild"][data-art="on"] .providers > .provider.collapsed { padding-top: 18px; }
+.providers > .provider.collapsed :is(.card-art, .usage, .model-stats, .reporting-row, .provider-links, .copies, .multiplexers, .mcp, .environment-summary, .hint-details) { display: none; }
+.providers > .provider.collapsed::after { background: var(--brackets, none); background-repeat: no-repeat; }
+.providers > .provider.collapsed.spent .provider-icon { filter: grayscale(1); }
+.launch-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.cards-open { padding: 3px 10px; font-size: 0.78rem; }
+#cards-shown .choice > span::before { content: none; }
+.cards-none { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 0; color: var(--muted); font-size: 0.85rem; }
+.card-toggle:hover, .cloud-link:hover, .accounts-link:hover { color: var(--accent); }
+.card-toggle:focus-visible, .cloud-link:focus-visible, .accounts-link:focus-visible { color: var(--accent); outline: 2px solid var(--focus); outline-offset: 0; }
 .provider-actions { margin-top: auto; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 /* A card's note sits with its buttons at the foot of the card, above them. */
 .provider .hint { margin: auto 0 0; font-size: 0.78rem; color: var(--muted); overflow-wrap: anywhere; }

@@ -47,6 +47,7 @@ const DOCK_WIDTH_KEY = 'agentGuild.dockWidth';
 const PANES_KEY = 'agentGuild.panes';
 const SPLIT_RATIO_KEY = 'agentGuild.splitRatio';
 const TERMINAL_FONT_KEY = 'agentGuild.terminalFontSize';
+const TOOL_CARDS_KEY = 'agentGuild.toolCards';
 const RELEASES_URL = 'https://github.com/oddessentials/agent-guild/releases';
 const SUPPORT_URL = 'https://oddessentials.ai/donate/?ref=agent-guild';
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -2431,11 +2432,87 @@ function buildProvider(provider) {
     return node;
 }
 
+function readToolCards() {
+  let saved = null;
+  try { saved = JSON.parse(load(TOOL_CARDS_KEY)); } catch {}
+  const ids = (list) => new Set(Array.isArray(list) ? list.filter((id) => typeof id === 'string') : []);
+  return { collapsed: ids(saved?.collapsed), hidden: ids(saved?.hidden) };
+}
+
+const toolCards = readToolCards();
+
+function saveToolCards() {
+  save(TOOL_CARDS_KEY, JSON.stringify({ collapsed: [...toolCards.collapsed], hidden: [...toolCards.hidden] }));
+}
+
+function paintCollapse(card, provider) {
+  const collapsed = toolCards.collapsed.has(provider.id);
+  card.classList.toggle('collapsed', collapsed);
+  const toggle = card.querySelector('.card-toggle');
+  toggle.hidden = false;
+  toggle.dataset.muxFocus = `${provider.id}:collapse`;
+  toggle.setAttribute('aria-expanded', String(!collapsed));
+  toggle.setAttribute('aria-label', `${collapsed ? 'Expand' : 'Collapse'} the ${provider.tool} card`);
+  toggle.title = collapsed ? 'Show everything on this card' : 'Show only what starts a session';
+  card.querySelector('.head-tools').hidden = false;
+}
+
+function setCollapsed(ids, collapsed) {
+  for (const id of ids) {
+    if (collapsed) toolCards.collapsed.add(id);
+    else toolCards.collapsed.delete(id);
+  }
+  saveToolCards();
+  for (const card of $('providers').children) {
+    const provider = state.providers.find((p) => p.id === card.dataset.id);
+    if (provider && ids.includes(provider.id)) paintCollapse(card, provider);
+  }
+}
+
+function setHidden(ids, hidden) {
+  for (const id of ids) {
+    if (hidden) toolCards.hidden.add(id);
+    else toolCards.hidden.delete(id);
+  }
+  saveToolCards();
+  renderProviders();
+}
+
+function renderCardsMenu() {
+  const hidden = state.providers.filter((p) => toolCards.hidden.has(p.id)).length;
+  const button = $('cards-open');
+  button.textContent = hidden ? `Cards · ${hidden} hidden` : 'Cards';
+  button.setAttribute('aria-label', hidden ? `Tool cards, ${hidden} hidden` : 'Tool cards');
+  $('cards-none').hidden = !state.providers.length || hidden < state.providers.length;
+  const box = $('cards-shown');
+  const rows = JSON.stringify(state.providers.map((p) => [p.id, p.vendor, p.tool]));
+  if (box.dataset.rows !== rows) {
+    const focused = box.contains(document.activeElement) ? document.activeElement.value : null;
+    box.dataset.rows = rows;
+    box.replaceChildren(box.querySelector('legend'), ...state.providers.map((provider) => {
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.name = 'card';
+      input.value = provider.id;
+      const label = el('label', 'choice', input, el('span', '', provider.tool));
+      label.title = `${provider.vendor} ${provider.tool}`;
+      return label;
+    }));
+    if (focused) [...box.querySelectorAll('input')].find((input) => input.value === focused)?.focus();
+  }
+  for (const input of box.querySelectorAll('input')) input.checked = !toolCards.hidden.has(input.value);
+}
+
 function renderProviders() {
   const list = $('providers');
   const focused = document.activeElement;
   const focusKey = focused?.dataset?.muxFocus;
-  list.replaceChildren(...state.providers.map(buildProvider));
+  list.replaceChildren(...state.providers.filter((p) => !toolCards.hidden.has(p.id)).map((provider) => {
+    const card = buildProvider(provider);
+    paintCollapse(card, provider);
+    return card;
+  }));
+  renderCardsMenu();
   notifyViews();
   if (focusKey) {
     const controls = [...list.querySelectorAll('[data-mux-focus]')];
@@ -8461,6 +8538,26 @@ window.addEventListener('resize', () => {
   placeMenu($('manager-menu'), $('manager'));
   placeMenu($('panel-sessions'), sessionInvoker());
   placeMenu($('panel-text-size'), $('panel-text-toggle'));
+  placeMenu($('cards-menu'), $('cards-open'));
+});
+onMenu($('cards-menu'), (menu) => {
+  placeMenu(menu, $('cards-open'));
+  menu.querySelector('input')?.focus();
+}, (menu) => returnFocus(menu, $('cards-open')));
+$('cards-menu').addEventListener('change', (e) => {
+  if (e.target.name === 'card') setHidden([e.target.value], !e.target.checked);
+});
+$('cards-collapse').addEventListener('click', () => setCollapsed(state.providers.map((p) => p.id), true));
+$('cards-expand').addEventListener('click', () => setCollapsed(state.providers.map((p) => p.id), false));
+$('cards-show-all').addEventListener('click', () => {
+  setHidden(state.providers.map((p) => p.id), false);
+  $('providers').querySelector('.card-toggle')?.focus();
+});
+$('providers').addEventListener('click', (e) => {
+  const toggle = e.target.closest('.card-toggle');
+  if (!toggle) return;
+  setCollapsed([toggle.closest('.provider').dataset.id], toggle.getAttribute('aria-expanded') === 'true');
+  toggle.scrollIntoView({ block: 'nearest' });
 });
 $('providers').addEventListener('animationend', (e) => {
   if (e.target === e.currentTarget.lastElementChild) e.currentTarget.classList.remove('deal');

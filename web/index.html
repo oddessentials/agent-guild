@@ -98,7 +98,17 @@
   <main id="app" hidden>
     <section class="launcher" aria-labelledby="launch-heading">
       <div class="section-head">
-        <h2 id="launch-heading">Start a session</h2>
+        <div class="launch-title">
+          <h2 id="launch-heading">Start a session</h2>
+          <button id="cards-open" class="btn menu-button cards-open" type="button" popovertarget="cards-menu" aria-haspopup="dialog">Cards</button>
+          <div id="cards-menu" class="settings-menu menu cards-menu" popover role="dialog" aria-label="Tool cards">
+            <fieldset id="cards-shown"><legend>Show</legend></fieldset>
+            <fieldset>
+              <button id="cards-collapse" class="menu-item" type="button">Collapse all</button>
+              <button id="cards-expand" class="menu-item" type="button">Expand all</button>
+            </fieldset>
+          </div>
+        </div>
         <div class="launch-tools">
           <div class="cwd">
             <label for="cwd">Working folder</label>
@@ -124,6 +134,7 @@
         </div>
       </div>
       <div id="providers" class="providers" role="list"></div>
+      <p id="cards-none" class="cards-none" hidden>All tool cards are hidden. <button id="cards-show-all" class="btn" type="button">Show all</button></p>
     </section>
 
     <section id="yard" hidden aria-label="Yard">
@@ -799,6 +810,7 @@
           <span class="state"></span>
         </span>
         <span class="head-tools">
+          <button class="card-toggle" type="button" aria-expanded="true" hidden></button>
           <a class="cloud-link" target="_blank" rel="noopener noreferrer" hidden></a>
           <button class="accounts-link" type="button" aria-haspopup="dialog" aria-label="Accounts" hidden></button>
         </span>

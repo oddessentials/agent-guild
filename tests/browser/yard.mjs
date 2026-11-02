@@ -530,6 +530,7 @@ test('Cards and Yard use the same actions, accounts, dialogs and terminal',optio
   const {f,b}=await setup(t);
   await b.wait("document.querySelector('#providers .usage .meter')");
   assert.equal(b.requests.some(r=>/\/yard\/(assets|vendor|renderer)/.test(r.url)),false,'Cards does not load the world or graphics engine');
+  await b.click('#providers [data-id="anthropic"] .card-toggle');
   await fill(b,'#cwd','E:\\projects\\parity');
   await b.click('#providers [data-id="anthropic"] [data-account="work"]');
   await b.click('#providers [data-id="anthropic"] .new');await terminalReady(b);
@@ -541,6 +542,7 @@ test('Cards and Yard use the same actions, accounts, dialogs and terminal',optio
   assert.equal(await b.evaluate("window.__terminal===document.querySelector('.terminal-host .xterm')"),true);
   assert.equal(b.events.filter(e=>e.method==='Network.webSocketCreated').length,sockets,'switching does not replace sockets');
   await closeTerminal(b);await b.click(provider('anthropic'));
+  assert.deepEqual(await b.evaluate(`(()=>{const c=document.querySelector('${inspector} .provider');return [c.classList.contains('collapsed'),c.querySelector('.card-toggle').hidden,c.querySelector('.usage').checkVisibility()]})()`),[false,true,true],'the Yard shows the whole card a collapsed Cards card stands for, with no collapse control');
   assert.equal(await b.evaluate(`document.querySelector('${inspector} [data-account="work"]').getAttribute('aria-selected')`),'true');
   await b.click(inspector+' .new');await terminalReady(b);
   assert.deepEqual(f.calls.filter(c=>c[0]==='create').at(-1)[1],fromCards,'identical request body in both views');

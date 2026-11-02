@@ -146,6 +146,66 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   await layoutReady();
   pass('a new page starts without card art: every skin, light and dark, loads none and lays its cards out without overlap, and the switch brings the art back');
 
+  const cardIds = () => evaluate('[...document.querySelectorAll("#providers .provider")].map(c=>c.dataset.id)');
+  const allCards = await cardIds();
+  const claude = '#providers [data-id="anthropic"]';
+  await click(`${claude} .card-toggle`);
+  assert.deepEqual(await evaluate(`(()=>{const c=document.querySelector('${claude}'),t=c.querySelector('.card-toggle'),shown=(s)=>Boolean(c.querySelector(s)?.checkVisibility());
+    return [c.classList.contains('collapsed'),t.getAttribute('aria-expanded'),document.activeElement===t,...['.new','.existing','.accounts','.usage','.provider-links','.copies'].map(shown)]})()`),
+  [true, 'false', true, true, true, true, false, false, false]);
+  await click('#cards-open');
+  await until('the cards menu opens', () => evaluate('document.querySelector("#cards-menu").matches(":popover-open")'));
+  await click('#cards-shown input[value="xai"]');
+  assert.deepEqual(await cardIds(), allCards.filter((id) => id !== 'xai'));
+  assert.equal(await evaluate('document.querySelector("#cards-open").textContent'), 'Cards · 1 hidden');
+  await evaluate('document.querySelector("#cards-menu").hidePopover()');
+  await reload();
+  await until('cards dealt after reload', () => evaluate('document.querySelectorAll("#providers .provider").length > 0 && !document.querySelector("#providers").classList.contains("deal")'));
+  assert.deepEqual(await cardIds(), allCards.filter((id) => id !== 'xai'), 'the hidden card stays hidden');
+  assert.equal(await evaluate(`document.querySelector('${claude}').classList.contains('collapsed')`), true, 'the collapsed card stays collapsed');
+  await click('#cards-open');
+  await until('the cards menu opens', () => evaluate('document.querySelector("#cards-menu").matches(":popover-open")'));
+  await click('#cards-shown input[value="xai"]');
+  assert.deepEqual(await cardIds(), allCards, 'a restored card returns to its place');
+  await click('#cards-collapse');
+  assert.equal(await evaluate('[...document.querySelectorAll("#providers .provider")].every(c=>c.classList.contains("collapsed"))'), true);
+  await evaluate('document.querySelector("#cards-menu").hidePopover()');
+  await click(`${claude} .card-toggle`);
+  pass('a card collapses to what starts a session, the menu hides and restores cards, and both survive a reload');
+
+  const cardLayout = () => evaluate(`(()=>{const hit=(a,b)=>a.left<b.right-0.5&&b.left<a.right-0.5&&a.top<b.bottom-0.5&&b.top<a.bottom-0.5;const bad=[];
+    for(const c of document.querySelectorAll('#providers .provider')){const cb=c.getBoundingClientRect(),t=c.querySelector('.card-toggle');
+      if(!t.checkVisibility())bad.push(c.dataset.id+' toggle hidden');
+      for(const e of c.querySelectorAll('button, a, .provider-text, .provider-icon')){if(!e.checkVisibility()||e===t)continue;const r=e.getBoundingClientRect();
+        if(r.left<cb.left-0.5||r.right>cb.right+0.5||r.top<cb.top-0.5||r.bottom>cb.bottom+0.5)bad.push(c.dataset.id+' '+e.className+' outside');
+        if(hit(t.getBoundingClientRect(),r))bad.push(c.dataset.id+' toggle over '+e.className);}
+      if(c.classList.contains('collapsed')&&parseFloat(getComputedStyle(c).paddingTop)>24)bad.push(c.dataset.id+' keeps room for art');}
+    return bad})()`);
+  for (const skin of await evaluate('agentGuildSkins.map(s=>s.id)')) for (const theme of ['dark', 'light']) {
+    await evaluate(`document.documentElement.dataset.skin=${JSON.stringify(skin)};document.documentElement.dataset.theme=${JSON.stringify(theme)}`);
+    for (const [width, height] of [[375, 812], [768, 1024], [1024, 768], [1440, 900], [1920, 1080]]) {
+      await size(width, height);
+      assert.deepEqual(await cardLayout(), [], `${skin} ${theme} ${width}`);
+      await noSideScroll(`${skin} ${theme} ${width} with collapsed cards`);
+    }
+  }
+  await evaluate(`document.documentElement.dataset.skin=${JSON.stringify(startSkin[0])};document.documentElement.dataset.theme=${JSON.stringify(startSkin[1])}`);
+  await size(1440, 900);
+  pass('collapsed and expanded cards side by side keep their controls inside the card in every skin, light and dark, from phone to wide');
+
+  await click('#cards-open');
+  await until('the cards menu opens', () => evaluate('document.querySelector("#cards-menu").matches(":popover-open")'));
+  for (const id of allCards) await click(`#cards-shown input[value="${id}"]`);
+  await evaluate('document.querySelector("#cards-menu").hidePopover()');
+  assert.deepEqual([await cardIds(), await visible('#cards-none')], [[], true]);
+  await click('#cards-show-all');
+  assert.deepEqual([await cardIds(), await visible('#cards-none')], [allCards, false]);
+  assert.equal(await evaluate('document.activeElement.matches("#providers .card-toggle")'), true, 'focus moves to the restored cards');
+  await click('#cards-expand');
+  assert.equal(await evaluate('document.querySelectorAll("#providers .provider.collapsed").length'), 0);
+  await evaluate('scrollTo(0,0)');
+  pass('with every card hidden, Show all brings them back');
+
   await click('#settings');
   await layoutReady();
   await until('settings open', () => evaluate('document.querySelector("#settings-menu").matches(":popover-open")'));
