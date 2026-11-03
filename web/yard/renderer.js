@@ -1,5 +1,5 @@
 import * as T from './vendor/engine.js';
-import { WORLDS, PROVIDER_ORDER, characterIndex, CAMERA, SUN, minZoom, overviewFor, clampPan, viewBasis, providerPositions, sessionPose, familiarPose, hash,
+import { WORLDS, PROVIDER_ORDER, characterIndex, GILDED, CAMERA, SUN, minZoom, overviewFor, clampPan, viewBasis, providerPositions, sessionPose, familiarPose, hash,
   stage, nextStagingChange, doorFor, arrives, route, clipFor, helperOffset, stationProp, hallActivity, lookTarget, lookLimits, STAGING, photoSize, marksFor, SHOWN_HELPERS } from './model.mjs';
 
 const ASSETS = new URL('./assets/', import.meta.url);
@@ -19,6 +19,36 @@ const GLOW = { off: 0, low: .55, high: 1 }, GLOW_GAIN = { light: .9, dark: 2.2 }
 // Materials that light up with a hall's crew: lit windows and magic, glass
 // fronts, and a generated hall's baked glow map.
 const glows = m => m.name === 'window' || m.name === 'magic' || m.name === 'officeGlass' || m.emissiveMap;
+// Near-black stays as it is, so a face keeps its dark screen.
+const GOLD_SHADER = shader => {
+  shader.fragmentShader = shader.fragmentShader
+    .replace('#include <map_fragment>', `#include <map_fragment>
+      float goldPeak = max(diffuseColor.r, max(diffuseColor.g, diffuseColor.b));
+      float goldMix = smoothstep(.015, .045, goldPeak);
+      vec3 goldTone = vec3(1., .56, .1) * mix(.4, .9, smoothstep(.03, .4, goldPeak));
+      diffuseColor.rgb = mix(diffuseColor.rgb, goldTone, goldMix);`)
+    .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+      roughnessFactor = mix(roughnessFactor, .06 + roughnessFactor * .18, goldMix);`)
+    .replace('#include <metalnessmap_fragment>', `#include <metalnessmap_fragment>
+      metalnessFactor = mix(metalnessFactor, 1., goldMix);`)
+    .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+      totalEmissiveRadiance = vec3(1., .66, .22) * dot(totalEmissiveRadiance, vec3(.2126, .7152, .0722)) * 1.4 + goldTone * goldMix * .06;`);
+};
+function gild(root, own = []) {
+  const copies = new Map();
+  root.traverse(node => {
+    if (!node.isMesh) return;
+    const swap = m => {
+      if (m.name === 'window' || m.name === 'magic' || m.name === 'officeGlass') return m;
+      if (!copies.has(m)) copies.set(m, own.includes(m) ? m : m.clone());
+      const copy = copies.get(m);
+      copy.onBeforeCompile = GOLD_SHADER; copy.needsUpdate = true;
+      return copy;
+    };
+    node.material = Array.isArray(node.material) ? node.material.map(swap) : swap(node.material);
+  });
+  return [...copies.values()].filter(m => !own.includes(m));
+}
 const PARTICLES = 640;
 const FIREWORK_COLORS = [0xffc857, 0xff507c, 0x53cfff, 0xb28aff, 0x7dffae];
 const FIREWORKS = { points: 1024, batches: 8, bursts: 24, stars: 32, trail: 4, launch: .5, life: 1.7 };
@@ -155,6 +185,17 @@ export class YardRenderer {
       this.cache.set(name,pending);
     }
     return this.cache.get(name);
+  }
+  goldAsset(name) {
+    const key='gold:'+name;
+    if(!this.cache.has(key)) {
+      const pending=this.asset(name).then(asset=>{const scene=T.cloneSkeleton(asset.scene);gild(scene);return {...asset,scene};}).catch(err=>{
+        if(this.cache.get(key)===pending)this.cache.delete(key);
+        throw err;
+      });
+      this.cache.set(key,pending);
+    }
+    return this.cache.get(key);
   }
   // Shows skin's world in theme, or only theme's plates when that world is
   // already up. What is on screen stays until the new world or theme is
@@ -478,6 +519,7 @@ export class YardRenderer {
         }
         item={id:p.id,root,label:this.label('provider',p.id),chip:this.chip(p.id),custom,glows:this.ownGlow(root),level:0,target:0,emitted:0,
           smoke:root.getObjectByName('hall_'+(custom?'shell':p.id)+'_smoke')};this.halls.set(p.id,item);
+        item.gilt=custom&&GILDED.includes(p.id)?gild(root,item.glows):[];
         root.userData.entity={kind:'provider',id:p.id};
       }
       item.target=GLOW[hallActivity(sessions,p.id)];
@@ -495,7 +537,7 @@ export class YardRenderer {
       if(this.crowd===id)this.closeCrowd(false);
       item.label.remove();item.chip.remove();this.halls.delete(id);
       // A custom hall's own glow materials share their textures with the shell hall's.
-      if(item.custom){this.world.remove(item.root);for(const m of item.glows)m.dispose();}
+      if(item.custom){this.world.remove(item.root);for(const m of [...item.glows,...item.gilt])m.dispose();}
     }
     this.glow();
     // Where every session goes (model.mjs stage). A quiet session leaves for
@@ -553,7 +595,7 @@ export class YardRenderer {
     const index=characterIndex(session.provider.id);
     unit.loading=true;
     try {
-      const asset=await this.asset(prefix+index);
+      const asset=await (GILDED.includes(session.provider.id)?this.goldAsset(prefix+index):this.asset(prefix+index));
       if(this.disposed||generation!==this.request||!unit.root.parent)return;
       const model=T.cloneSkeleton(asset.scene);
       model.rotation.y=unit.heading;

@@ -7,7 +7,7 @@ PACK = Path(__file__).resolve().parent.parent
 WEB = PACK.parent.parent / "web" / "skins" / "guild"
 BRAND = PACK.parent.parent / "web" / "brand"
 GEN = Path("E:/projects/local-image-studio/scripts/gen.py")
-PROVIDERS = ["anthropic", "docker", "google", "openai", "shell", "xai"]
+PROVIDERS = ["anthropic", "docker", "google", "openai", "shell", "xai", "terminal-ai-chat"]
 STATES = ["idle", "working", "locked"]
 CHARACTER_WIDTH = 640
 PROPS = {
@@ -104,7 +104,8 @@ def main():
             if args.masks:
                 remask(src, mask)
             encode(shrink(cutout(src, mask), CHARACTER_WIDTH), WEB / "characters" / pid / st, avif=60)
-        encode(Image.open(PACK / "icons" / f"{pid}.png").convert("RGB"), WEB / "icons" / pid, avif=70)
+        if (PACK / "icons" / f"{pid}.png").exists():
+            encode(Image.open(PACK / "icons" / f"{pid}.png").convert("RGB"), WEB / "icons" / pid, avif=70)
 
     for rel, height in PROPS.items():
         im = Image.open(PACK / rel).convert("RGBA")

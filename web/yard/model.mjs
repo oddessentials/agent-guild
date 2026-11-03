@@ -2,6 +2,7 @@
 export const PROVIDER_ORDER = ['anthropic', 'openai', 'google', 'xai', 'shell', 'docker'];
 // Character model index for a provider; custom providers wear the shell's, as they get its hall.
 export const characterIndex = id => PROVIDER_ORDER.includes(id) ? PROVIDER_ORDER.indexOf(id) : PROVIDER_ORDER.indexOf('shell');
+export const GILDED = ['terminal-ai-chat'];
 // Hall effects, one pooled particle system for every hall: how many
 // particles a second a hall gives off at low and high activity, how long each
 // lives, how fast it rises and drifts (metres a second), how widely it starts

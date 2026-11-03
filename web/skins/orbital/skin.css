@@ -105,6 +105,12 @@
     --working: image-set(url("characters/docker/working.avif") type("image/avif"), url("characters/docker/working.webp") type("image/webp"));
     --locked: image-set(url("characters/docker/locked.avif") type("image/avif"), url("characters/docker/locked.webp") type("image/webp"));
   }
+  .provider[data-id="terminal-ai-chat"], .session-card[data-provider="terminal-ai-chat"] {
+    --pc: #C8983A;
+    --idle: image-set(url("characters/terminal-ai-chat/idle.avif") type("image/avif"), url("characters/terminal-ai-chat/idle.webp") type("image/webp"));
+    --working: image-set(url("characters/terminal-ai-chat/working.avif") type("image/avif"), url("characters/terminal-ai-chat/working.webp") type("image/webp"));
+    --locked: image-set(url("characters/terminal-ai-chat/locked.avif") type("image/avif"), url("characters/terminal-ai-chat/locked.webp") type("image/webp"));
+  }
 
   .provider-icon[data-provider="anthropic"] { --icon: image-set(url("icons/anthropic.avif") type("image/avif"), url("icons/anthropic.webp") type("image/webp")); }
   .provider-icon[data-provider="openai"] { --icon: image-set(url("icons/openai.avif") type("image/avif"), url("icons/openai.webp") type("image/webp")); }

@@ -912,6 +912,36 @@ test('a crowd hides the tags it cannot fit, counts them on its hall, and lists t
   assert.deepEqual(b.errors,[]);
 });
 
+test('a gilded card gets a gold hall and character of its own, and Shell keeps its look',options,async t=>{
+  const {f,b}=await setup(t);
+  const shell=f.providers.find(p=>p.id==='shell'),gold={...shell,id:'terminal-ai-chat',tool:'Terminal AI Chat'};
+  const base=[...f.data.values()][0];
+  const sessions=[{...base,id:'gold',provider:gold,agents:[],shells:[]},{...base,id:'plain',provider:shell,agents:[],shells:[]}];
+  const looks=await b.evaluate(`(async()=>{
+    const {YardRenderer}=await import('/yard/renderer.js');
+    const host=document.createElement('div'),labels=document.createElement('div');
+    host.style.cssText='position:fixed;width:900px;height:700px;top:0;left:0';host.append(labels);document.body.append(host);
+    window.__renderer=new YardRenderer(host,labels,{select(){},open(){}});
+    await __renderer.setWorld('guild','dark');__renderer.update(${q([...f.providers,gold])},${q(sessions)});
+    while(![...__renderer.units.values()].every(u=>u.loaded))await new Promise(requestAnimationFrame);
+    const materials=root=>{const all=new Set();root.traverse(n=>{if(n.isMesh)for(const m of [n.material].flat())all.add(m);});return [...all];};
+    const plain=m=>m.onBeforeCompile===Object.getPrototypeOf(m).onBeforeCompile;
+    const look=root=>({materials:materials(root),bare:materials(root).filter(m=>!/^(window|magic|officeGlass)$/.test(m.name))});
+    const goldHall=look(__renderer.halls.get('terminal-ai-chat').root),shellHall=look(__renderer.halls.get('shell').root);
+    const goldUnit=look(__renderer.units.get('gold').model),shellUnit=look(__renderer.units.get('plain').model);
+    return {
+      hallShared:goldHall.materials.filter(m=>shellHall.materials.includes(m)).length,
+      hallGilded:goldHall.bare.length>0&&goldHall.bare.every(m=>!plain(m)),
+      unitShared:goldUnit.materials.filter(m=>shellUnit.materials.includes(m)).length,
+      unitGilded:goldUnit.bare.every(m=>!plain(m)),
+      shellPlain:[...shellHall.materials,...shellUnit.materials].every(plain),
+    };
+  })()`);
+  assert.deepEqual(looks,{hallShared:0,hallGilded:true,unitShared:0,unitGilded:true,shellPlain:true});
+  await b.evaluate('__renderer.dispose()');
+  assert.deepEqual(b.errors,[]);
+});
+
 test('a capture draws twice the stage in tiles without the selection ring, and leaves the live view as it was even when it fails',options,async t=>{
   const {f,b}=await setup(t);
   const sessions=[...f.data.values()];
