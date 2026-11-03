@@ -240,6 +240,10 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   await key('End', 'End', 35);
   await until('the dock is at its widest', () => evaluate('getComputedStyle(document.documentElement).getPropertyValue("--dock-space")==="720px"'));
   await playPlaced('dock', 1440);
+  await evaluate('document.documentElement.dataset.skin="guild"');
+  await layoutReady();
+  assert.equal(await visible('#yard-summary'), true, 'a narrow stage hides the summary only in Orbital');
+  await evaluate('document.documentElement.dataset.skin="orbital"');
   assert.deepEqual([...forms].sort(), [0, 1, 3, 4], 'the sizes covered every form of the chip');
   await key('Home', 'Home', 36);
   await click('#dock-close');
