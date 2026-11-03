@@ -6,7 +6,7 @@
       "tool": "Terminal AI Chat",
       "command": "terminal-ai-chat",
       "versionArgs": ["--version"],
-      "color": "#E11D48",
+      "color": "#C8983A",
       "monogram": "T",
       "releases": "https://github.com/oddessentials/terminal-ai-chat-releases/releases/latest",
       "install": "curl -fsSL https://github.com/oddessentials/terminal-ai-chat-releases/releases/latest/download/install.sh | sh",

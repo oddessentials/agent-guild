@@ -55,3 +55,15 @@ test('a providers.json that is not valid JSON is refused and left exactly as it 
   refused(() => broken.cards.add(shipped.id, { revision: broken.registry.revision }), 'providers_file_invalid');
   assert.equal(broken.read(), '{ "providers": [');
 });
+
+test('every optional card ships its own icon', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-optional-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const userFile = path.join(dir, 'providers.json');
+  fs.copyFileSync(OPTIONAL_FILE, userFile);
+  const iconDir = path.join(path.dirname(OPTIONAL_FILE), '..', 'web', 'icons');
+  const registry = new ProviderRegistry({ userFile, iconDir, env: { PATH: '', HOME: dir }, platform: 'linux', checkUpdates: false, accountsDir: path.join(dir, 'accounts') });
+  for (const { id } of JSON.parse(fs.readFileSync(OPTIONAL_FILE, 'utf8')).providers) {
+    assert.equal(registry.iconUrl(registry.get(id)), `/icons/${id}.svg`);
+  }
+});
