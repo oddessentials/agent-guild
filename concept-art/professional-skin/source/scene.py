@@ -13,6 +13,8 @@ TOOLS = {'anthropic': '#d97757', 'openai': '#10a37f', 'google': '#4285f4', 'xai'
 LOCKED = '#8b929e'
 # The empty state, before the first session: a blank slate-grey tile, rendered idle only.
 EXTRA = {'empty': '#a3adbd'}
+# Polished metal instead of glass; locked is tarnished instead of frosted.
+METAL = {'terminal-ai-chat': {'color': '#ffd98a', 'locked': '#8a744a'}}
 # The world is not seen, but the glass reflects it: bright and white for light, deep slate for dark.
 THEMES = {
     'light': {'top': '#ffffff', 'bottom': '#e9edf3', 'tint': 0.08, 'world': 1.0, 'key': 1400, 'fill': 350, 'rim': 500, 'glass': 1.0},
@@ -117,6 +119,9 @@ def hero_shell():
     return [cube((1.25, 1.25, 1.25), (0, 0, 1.1), (45, 35.264, 0), bevel=0.08)]
 
 
+hero_terminal_ai_chat = hero_shell
+
+
 def hero_empty():
     # A blank tile standing at a slant.
     return [cube((2.1, 0.12, 1.4), (0, 0, 0.72), (0, 0, -22), bevel=0.05)]
@@ -128,10 +133,10 @@ def hero_docker():
 
 
 heroes = {}
-for tool in {**TOOLS, **EXTRA}:
+for tool in {**TOOLS, **EXTRA, **METAL}:
     col = bpy.data.collections.new(tool)
     scene.collection.children.link(col)
-    for o in globals()[f'hero_{tool}']():
+    for o in globals()[f'hero_{tool.replace("-", "_")}']():
         for c in o.users_collection:
             c.objects.unlink(o)
         col.objects.link(o)
@@ -194,7 +199,8 @@ aim(cam, (0, 0, 1.0))
 
 def render(tool, theme, state):
     th, st = THEMES[theme], STATES[state]
-    color = rgb(LOCKED if state == 'locked' else {**TOOLS, **EXTRA}[tool])
+    metal = METAL.get(tool)
+    color = rgb(metal[state if state == 'locked' else 'color'] if metal else LOCKED if state == 'locked' else {**TOOLS, **EXTRA}[tool])
     for name, col in heroes.items():
         col.hide_render = col.hide_viewport = name != tool
     ramp.color_ramp.elements[0].color = (*mix(rgb(th['bottom']), color, th['tint']), 1)
@@ -210,8 +216,16 @@ def render(tool, theme, state):
     gnode.inputs['Coat Weight'].default_value = 0 if frosted else 0.6
     gnode.inputs['Emission Color'].default_value = (*color, 1)
     gnode.inputs['Emission Strength'].default_value = st['glow'] * (0.25 if theme == 'light' else 1)
-    key.data.energy = th['key']
+    gnode.inputs['Metallic'].default_value = 1 if metal else 0
+    if metal:
+        gnode.inputs['Transmission Weight'].default_value = 0
+        gnode.inputs['Roughness'].default_value = 0.45 if frosted else 0.18
+        gnode.inputs['Coat Weight'].default_value = 0 if frosted else 0.4
+        gnode.inputs['Emission Strength'].default_value *= 0.5
+    key.data.energy = th['key'] * (1.8 if metal and theme == 'dark' else 1)
     fill.data.energy = th['fill']
+    if metal and theme == 'light':
+        wbg.inputs['Strength'].default_value = th['world'] * 0.3
     rim.data.energy = th['rim'] * (min(st['rim'], 1.4) if theme == 'light' else st['rim'])
     rim.data.color = mix([1, 1, 1], color, 0.6)
     out = out_dir / tool / f'{theme}-{state}.png'

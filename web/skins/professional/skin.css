@@ -76,6 +76,12 @@
     --working: image-set(url("objects/docker/light-working.avif") type("image/avif"), url("objects/docker/light-working.webp") type("image/webp"));
     --locked: image-set(url("objects/docker/light-locked.avif") type("image/avif"), url("objects/docker/light-locked.webp") type("image/webp"));
   }
+  .provider[data-id="terminal-ai-chat"], .session-card[data-provider="terminal-ai-chat"] {
+    --pc: #C8983A;
+    --idle: image-set(url("objects/terminal-ai-chat/light-idle.avif") type("image/avif"), url("objects/terminal-ai-chat/light-idle.webp") type("image/webp"));
+    --working: image-set(url("objects/terminal-ai-chat/light-working.avif") type("image/avif"), url("objects/terminal-ai-chat/light-working.webp") type("image/webp"));
+    --locked: image-set(url("objects/terminal-ai-chat/light-locked.avif") type("image/avif"), url("objects/terminal-ai-chat/light-locked.webp") type("image/webp"));
+  }
 
   .provider-icon[data-provider="anthropic"] { --icon: url("icons/anthropic.svg"); }
   .provider-icon[data-provider="openai"] { --icon: url("icons/openai.svg"); }
@@ -270,6 +276,11 @@
     --idle: image-set(url("objects/docker/dark-idle.avif") type("image/avif"), url("objects/docker/dark-idle.webp") type("image/webp"));
     --working: image-set(url("objects/docker/dark-working.avif") type("image/avif"), url("objects/docker/dark-working.webp") type("image/webp"));
     --locked: image-set(url("objects/docker/dark-locked.avif") type("image/avif"), url("objects/docker/dark-locked.webp") type("image/webp"));
+  }
+  .provider[data-id="terminal-ai-chat"], .session-card[data-provider="terminal-ai-chat"] {
+    --idle: image-set(url("objects/terminal-ai-chat/dark-idle.avif") type("image/avif"), url("objects/terminal-ai-chat/dark-idle.webp") type("image/webp"));
+    --working: image-set(url("objects/terminal-ai-chat/dark-working.avif") type("image/avif"), url("objects/terminal-ai-chat/dark-working.webp") type("image/webp"));
+    --locked: image-set(url("objects/terminal-ai-chat/dark-locked.avif") type("image/avif"), url("objects/terminal-ai-chat/dark-locked.webp") type("image/webp"));
   }
 
   .tier-s { --tier: #34d399; --tier-ink: #bbf7d0; }
