@@ -205,17 +205,45 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   await layoutReady();
   assert.equal(await visible('#yard-play'), true, 'Orbital shows Play now');
   assert.deepEqual(await evaluate('(()=>{const a=document.querySelector("#yard-play");return [a.href,a.target,a.rel]})()'), ['https://survive.oddessentials.ai/', '_blank', 'noopener noreferrer']);
-  const playPlaced = async (label) => {
+  // The chip's form follows the stage's width: full, then without its chevrons and tagline, then "Play", then the orb alone.
+  const forms = new Set();
+  const playPlaced = async (label, width) => {
+    assert.equal(await evaluate('innerWidth'), width, `${label}: the viewport keeps its width`);
     const [play, stage, title] = await Promise.all([box('#yard-play'), box('#yard-stage'), box('.yard-heading > div:first-child')]);
+    const form = stage.width > 640 ? 4 : width > 760 ? (stage.width > 440 ? 3 : 0) : stage.width > 420 ? 3 : stage.width > 380 ? 1 : 0;
+    forms.add(form);
     assert.ok(play.height >= 44, `${label}: Play now is ${play.height}px tall`);
     assert.ok(play.left >= stage.left && play.right <= stage.right && play.top >= stage.top && play.bottom <= stage.bottom, `${label}: Play now is on the stage`);
     assert.ok(play.left >= title.right, `${label}: Play now is clear of the title block`);
     assert.deepEqual(await evaluate('[".yard-eyebrow","#yard-title","#yard-subtitle"].map(s=>{const r=document.createRange();r.selectNodeContents(document.querySelector(s));return r.getClientRects().length})'), [1, 1, 1], `${label}: the title block keeps every line whole`);
+    assert.equal(await evaluate('[".yard-play-chev",".yard-play-sub",".yard-play-now",".yard-play-text"].filter(s=>document.querySelector(s).checkVisibility()).length'), form, `${label}: the chip shows its ${form}-part form`);
     await noSideScroll(`${label} with Play now`);
   };
-  await playPlaced('1440');
-  for (const [width, height] of [[1024, 768], [844, 390], [390, 844], [360, 640]]) { await size(width, height); await playPlaced(String(width)); }
+  await playPlaced('1440', 1440);
+  for (const [width, height] of [[1024, 768], [964, 800], [936, 800], [844, 390], [444, 800], [416, 800], [390, 844], [380, 800], [360, 640]]) {
+    await size(width, height);
+    await playPlaced(String(width), width);
+  }
   await size(1440, 900);
+  await evaluate('document.querySelector("#yard-stage").focus()');
+  await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, modifiers: 8 });
+  await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, modifiers: 8 });
+  assert.equal(await evaluate('document.activeElement.id==="yard-play"&&document.activeElement.matches(":focus-visible")'), true, 'Shift+Tab from the stage reaches Play now with a visible focus');
+  const [ring, heading] = await Promise.all([box('#yard-play'), box('.yard-heading')]);
+  assert.ok(ring.left - 5 >= heading.left && ring.right + 5 <= heading.right && ring.top - 5 >= heading.top && ring.bottom + 5 <= heading.bottom, 'the focus ring is inside the heading, which clips');
+  await click('#notes-open');
+  await until('the dock opens', () => visible('#dock'));
+  await evaluate('document.querySelector("#dock-splitter").focus()');
+  await key('End', 'End', 35);
+  await until('the dock is at its widest', () => evaluate('getComputedStyle(document.documentElement).getPropertyValue("--dock-space")==="720px"'));
+  await layoutReady();
+  assert.equal((await box('#yard-stage')).width, 386, 'the widest dock leaves the stage 386px');
+  await playPlaced('dock', 1440);
+  assert.deepEqual([...forms].sort(), [0, 1, 3, 4], 'the sizes covered every form of the chip');
+  await key('Home', 'Home', 36);
+  await click('#dock-close');
+  await until('the dock closes', async () => !(await visible('#dock')));
+  await layoutReady();
   await evaluate('document.documentElement.dataset.layout="compact"');
   await layoutReady();
   assert.equal(await visible('#yard-play'), false, 'a compact host hides Play now');

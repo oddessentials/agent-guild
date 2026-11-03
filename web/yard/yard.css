@@ -8,8 +8,8 @@
 :root[data-view="yard"] .cwd { flex:1; max-width:650px; }
 :root[data-view="yard"] #cards-none { display:none; }
 #yard { --yard-line:color-mix(in srgb,var(--gold) 27%, transparent); display:grid; grid-template-columns:minmax(0,1fr) 334px; min-height:650px; height:calc(100dvh - var(--topbar-h,60px) - 75px); margin:0; background:var(--bg); }
-.yard-main { min-width:0; min-height:0; display:flex; flex-direction:column; position:relative; isolation:isolate; }
-.yard-heading { display:flex; align-items:center; justify-content:space-between; gap:20px; padding:24px 28px 34px; position:absolute; inset:0 0 auto; z-index:2; pointer-events:none; background:linear-gradient(180deg,color-mix(in srgb,var(--bg) 78%,transparent),transparent); }
+.yard-main { min-width:0; min-height:0; display:flex; flex-direction:column; position:relative; isolation:isolate; container-type:inline-size; }
+.yard-heading { display:flex; align-items:center; justify-content:space-between; gap:20px; padding:24px 28px 34px; position:absolute; inset:0 0 auto; z-index:2; pointer-events:none; overflow:clip; background:linear-gradient(180deg,color-mix(in srgb,var(--bg) 78%,transparent),transparent); }
 /* A soft scrim keeps the title block readable over busy light plates. */
 .yard-heading > div:first-child { position:relative; isolation:isolate; }
 .yard-heading > div:first-child::before { content:""; position:absolute; inset:-12px -22px -14px; z-index:-1; border-radius:28px; background:color-mix(in srgb,var(--bg) 72%,transparent); filter:blur(12px); }
@@ -156,9 +156,9 @@
 :root[data-theme="light"] .yard-play { --play-ray:#b8893d; }
 .yard-play:has(.yard-play-link:focus-visible) { outline:2px solid var(--focus); outline-offset:3px; }
 .yard-play-burst { position:absolute; left:50%; top:50%; width:calc(var(--play-h) * 7); height:calc(var(--play-h) * 2.6); translate:-50% -50%; pointer-events:none; z-index:0; opacity:.55; transition:opacity .3s;
-  background:radial-gradient(closest-side, color-mix(in srgb, var(--play-aura) 55%, transparent), color-mix(in srgb, var(--play-aura) 22%, transparent) 40%, transparent 72%), repeating-conic-gradient(from 0deg at 50% 50%, var(--play-ray) 0deg .9deg, transparent .9deg 12deg);
-  -webkit-mask:radial-gradient(closest-side, #000 0, #000c 30%, #0004 55%, transparent 74%); mask:radial-gradient(closest-side, #000 0, #000c 30%, #0004 55%, transparent 74%);
-  animation:yard-play-spin 140s linear infinite; }
+  background:radial-gradient(closest-side, color-mix(in srgb, var(--play-aura) 55%, transparent), color-mix(in srgb, var(--play-aura) 22%, transparent) 40%, transparent 72%);
+  -webkit-mask:radial-gradient(closest-side, #000 0, #000c 30%, #0004 55%, transparent 74%); mask:radial-gradient(closest-side, #000 0, #000c 30%, #0004 55%, transparent 74%); }
+.yard-play-burst::before { content:""; position:absolute; left:50%; top:50%; width:calc(var(--play-h) * 7); height:calc(var(--play-h) * 7); translate:-50% -50%; background:repeating-conic-gradient(from 0deg at 50% 50%, var(--play-ray) 0deg .9deg, transparent .9deg 12deg); animation:yard-play-spin 140s linear infinite; }
 .yard-play:hover .yard-play-burst { opacity:.9; }
 .yard-play-link { position:relative; z-index:1; pointer-events:auto; display:inline-flex; align-items:center; gap:10px; height:var(--play-h); padding:0 16px 0 9px; box-sizing:border-box; color:#fff3cf; text-decoration:none; font-family:var(--font-display); cursor:pointer; transition:translate .15s;
   background:linear-gradient(90deg,#8a6326,#f6dc9c 18%,#c99a45 50%,#f6dc9c 82%,#8a6326);
@@ -184,5 +184,7 @@
 @keyframes yard-play-sweep { 0% { left:-30%; } 55%,100% { left:130%; } }
 @keyframes yard-play-pulse { 0%,100% { opacity:.45; transform:scale(.94); } 50% { opacity:.9; transform:scale(1.06); } }
 @keyframes yard-play-chev { 0%,100% { opacity:.35; } 40% { opacity:1; } }
-@media(max-width:900px) { .yard-play { --play-h:44px; } .yard-play-chev, .yard-play-sub-more { display:none; } }
-@media(max-width:420px) { .yard-play-text { display:none; } .yard-play-link { padding:0 7px; } }
+@container (max-width:640px) { .yard-heading { padding-inline:18px; } .yard-summary { display:none; } .yard-play { --play-h:44px; } .yard-play-chev, .yard-play-sub-more { display:none; } }
+@container (max-width:420px) { .yard-play-sub, .yard-play-now { display:none; } }
+@container (max-width:380px) { .yard-play-text { display:none; } .yard-play-link { padding:0 7px; } }
+@media (min-width:761px) { @container (max-width:440px) { .yard-play-text { display:none; } .yard-play-link { padding:0 7px; } } }
