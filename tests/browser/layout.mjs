@@ -210,7 +210,7 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   const playPlaced = async (label, width) => {
     assert.equal(await evaluate('innerWidth'), width, `${label}: the viewport keeps its width`);
     const [play, stage, title] = await Promise.all([box('#yard-play'), box('#yard-stage'), box('.yard-heading > div:first-child')]);
-    const form = stage.width > 640 ? 4 : width > 760 ? (stage.width > 440 ? 3 : 0) : stage.width > 420 ? 3 : stage.width > 380 ? 1 : 0;
+    const form = stage.width > 640 ? 4 : stage.width > 460 ? 3 : stage.width > (width > 760 ? 440 : 420) ? 1 : 0;
     forms.add(form);
     assert.ok(play.height >= 44, `${label}: Play now is ${play.height}px tall`);
     assert.ok(play.left >= stage.left && play.right <= stage.right && play.top >= stage.top && play.bottom <= stage.bottom, `${label}: Play now is on the stage`);
@@ -220,7 +220,7 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
     await noSideScroll(`${label} with Play now`);
   };
   await playPlaced('1440', 1440);
-  for (const [width, height] of [[1024, 768], [964, 800], [936, 800], [844, 390], [444, 800], [416, 800], [390, 844], [380, 800], [360, 640]]) {
+  for (const [width, height] of [[1024, 768], [964, 800], [936, 800], [844, 390], [464, 800], [456, 800], [424, 800], [416, 800], [390, 844], [360, 640]]) {
     await size(width, height);
     await playPlaced(String(width), width);
   }

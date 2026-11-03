@@ -185,6 +185,6 @@
 @keyframes yard-play-pulse { 0%,100% { opacity:.45; transform:scale(.94); } 50% { opacity:.9; transform:scale(1.06); } }
 @keyframes yard-play-chev { 0%,100% { opacity:.35; } 40% { opacity:1; } }
 @container (max-width:640px) { .yard-heading { padding-inline:18px; } .yard-summary { display:none; } .yard-play { --play-h:44px; } .yard-play-chev, .yard-play-sub-more { display:none; } }
-@container (max-width:420px) { .yard-play-sub, .yard-play-now { display:none; } }
-@container (max-width:380px) { .yard-play-text { display:none; } .yard-play-link { padding:0 7px; } }
+@container (max-width:460px) { .yard-play-sub, .yard-play-now { display:none; } }
+@container (max-width:420px) { .yard-play-text { display:none; } .yard-play-link { padding:0 7px; } }
 @media (min-width:761px) { @container (max-width:440px) { .yard-play-text { display:none; } .yard-play-link { padding:0 7px; } } }
