@@ -201,6 +201,28 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   await click('#view-yard');
   await until('the Yard', () => evaluate('document.documentElement.dataset.view==="yard"'));
   assert.equal(await visible('#cards-none'), false, 'the Yard does not show the Cards empty state');
+  await evaluate('document.documentElement.dataset.skin="orbital"');
+  await layoutReady();
+  assert.equal(await visible('#yard-play'), true, 'Orbital shows Play now');
+  assert.deepEqual(await evaluate('(()=>{const a=document.querySelector("#yard-play");return [a.href,a.target,a.rel]})()'), ['https://survive.oddessentials.ai/', '_blank', 'noopener noreferrer']);
+  const playPlaced = async (label) => {
+    const [play, stage, title] = await Promise.all([box('#yard-play'), box('#yard-stage'), box('.yard-heading > div:first-child')]);
+    assert.ok(play.height >= 44, `${label}: Play now is ${play.height}px tall`);
+    assert.ok(play.left >= stage.left && play.right <= stage.right && play.top >= stage.top && play.bottom <= stage.bottom, `${label}: Play now is on the stage`);
+    assert.ok(play.left >= title.right, `${label}: Play now is clear of the title block`);
+    assert.deepEqual(await evaluate('[".yard-eyebrow","#yard-title","#yard-subtitle"].map(s=>{const r=document.createRange();r.selectNodeContents(document.querySelector(s));return r.getClientRects().length})'), [1, 1, 1], `${label}: the title block keeps every line whole`);
+    await noSideScroll(`${label} with Play now`);
+  };
+  await playPlaced('1440');
+  for (const [width, height] of [[1024, 768], [844, 390], [390, 844], [360, 640]]) { await size(width, height); await playPlaced(String(width)); }
+  await size(1440, 900);
+  await evaluate('document.documentElement.dataset.layout="compact"');
+  await layoutReady();
+  assert.equal(await visible('#yard-play'), false, 'a compact host hides Play now');
+  await evaluate('delete document.documentElement.dataset.layout;document.documentElement.dataset.skin="guild"');
+  await layoutReady();
+  assert.equal(await visible('#yard-play'), false, 'the Guild has no Play now');
+  await evaluate(`document.documentElement.dataset.skin=${JSON.stringify(startSkin[0])}`);
   await click('#view-cards');
   await until('Cards', () => evaluate('document.documentElement.dataset.view==="cards"'));
   assert.equal(await visible('#cards-none'), true, 'back in Cards the empty state returns');
