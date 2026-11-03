@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 // npm's registry refused a 316 MB package. The Yard's art ships as a release pack instead; the skins stay.
 const MAX_PACKED_BYTES = 100 * 1024 * 1024;
 const TOP_LEVEL = new Set(['package.json', 'README.md', 'README.zh-CN.md', 'README.zh-TW.md', 'LICENSE', 'bin', 'src', 'web', 'config', 'examples', 'docs', 'node_modules']);
-const REQUIRED = ['package.json', 'README.md', 'LICENSE', 'src/manager/main.mjs', 'web/index.html', 'web/yard/art.json', 'config/providers.default.json', 'docs/api.md'];
+const REQUIRED = ['package.json', 'README.md', 'LICENSE', 'src/manager/main.mjs', 'web/index.html', 'web/yard/art.json', 'config/providers.default.json', 'config/providers.optional.json', 'docs/api.md'];
 const PACKAGE_ROOT = /^((?:node_modules\/(?:@[^/]+\/)?[^/]+\/)+)package\.json$/;
 export const WINDOWS_MODULES = ['x64', 'arm64'].flatMap((arch) => [
   ...['conpty.node', 'conpty_console_list.node'].map((name) => `node_modules/node-pty/prebuilds/win32-${arch}/${name}`),

@@ -334,6 +334,11 @@ export class ProviderRegistry extends EventEmitter {
     this.emit('updated');
   }
 
+  reloadAndRecheck() {
+    this.reload();
+    this.refreshVersions({ force: true }).catch(() => {});
+  }
+
   /**
    * The registry that installs use: the configured one, else npm's global
    * configuration, which is what `npm install -g` reads (a project .npmrc

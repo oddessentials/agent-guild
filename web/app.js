@@ -2501,6 +2501,67 @@ function renderCardsMenu() {
     if (focused) [...box.querySelectorAll('input')].find((input) => input.value === focused)?.focus();
   }
   for (const input of box.querySelectorAll('input')) input.checked = !toolCards.hidden.has(input.value);
+  renderMoreCards();
+}
+
+let optionalCards = [];
+const optionalBusy = new Map();
+
+function renderMoreCards() {
+  const box = $('cards-more');
+  box.hidden = optionalCards.length === 0;
+  const rows = JSON.stringify(optionalCards.map((c) => [c.id, c.vendor, c.tool]));
+  if (box.dataset.rows !== rows) {
+    box.dataset.rows = rows;
+    box.replaceChildren(box.querySelector('legend'), ...optionalCards.map((card) => {
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.name = 'optional-card';
+      input.value = card.id;
+      const label = el('label', 'choice', input, el('span', '', card.tool));
+      label.title = `${card.vendor} ${card.tool}`;
+      return label;
+    }));
+  }
+  for (const input of box.querySelectorAll('input')) {
+    input.checked = optionalBusy.get(input.value) ?? state.providers.some((p) => p.id === input.value);
+    input.disabled = optionalBusy.has(input.value);
+  }
+}
+
+async function loadOptionalCards() {
+  try {
+    optionalCards = (await api('GET', '/providers/optional')).cards;
+  } catch {
+    return;
+  }
+  renderMoreCards();
+}
+
+async function setOptionalCard(id, add) {
+  const card = optionalCards.find((c) => c.id === id);
+  if (!card || optionalBusy.has(id)) return;
+  if (!add) {
+    closeMenu($('cards-menu'));
+    renderMoreCards();
+    if (!await ask(`Remove the ${card.tool} card?\nThe program stays installed. To remove it too, use Remove on the card first.`, { ok: 'Remove card' })) return;
+  }
+  optionalBusy.set(id, add);
+  renderMoreCards();
+  try {
+    const previous = state.providers;
+    const path = `/providers/${encodeURIComponent(id)}/added`;
+    const revision = state.providersRevision === null ? '' : `?revision=${encodeURIComponent(state.providersRevision)}`;
+    const result = add ? await api('PUT', path, { revision: state.providersRevision }) : await api('DELETE', path + revision);
+    await settleProviders(result, previous);
+  } catch (err) {
+    closeMenu($('cards-menu'));
+    if (err instanceof AuthError) showAuth(err.message);
+    else toast(err.message, 10000);
+  } finally {
+    optionalBusy.delete(id);
+    renderProviders();
+  }
 }
 
 function renderProviders() {
@@ -2669,8 +2730,24 @@ function renderMultiplexers(card, provider) {
 
 async function reloadProviders() {
   const previous = state.providers;
-  await settleProviders(await api('POST', '/providers/reload', {}), previous);
+  const result = await api('POST', '/providers/reload', {});
+  await settleProviders(result, previous);
   renderProviders();
+  return result.warnings || [];
+}
+
+async function reloadCards(button) {
+  button.disabled = true;
+  try {
+    const warnings = await reloadProviders();
+    if (warnings.length) toast(warnings.join(' '), 10000);
+    else toast('Cards reloaded', 3000);
+  } catch (err) {
+    if (err instanceof AuthError) showAuth(err.message);
+    else toast(err.message, 10000);
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function manageMultiplexer(provider, tool, kind, copy = null, force = false) {
@@ -8543,12 +8620,18 @@ window.addEventListener('resize', () => {
 onMenu($('cards-menu'), (menu) => {
   placeMenu(menu, $('cards-open'));
   menu.querySelector('input')?.focus();
+  loadOptionalCards().then(() => placeMenu(menu, $('cards-open')));
 }, (menu) => returnFocus(menu, $('cards-open')));
 $('cards-menu').addEventListener('change', (e) => {
   if (e.target.name === 'card') setHidden([e.target.value], !e.target.checked);
+  if (e.target.name === 'optional-card') setOptionalCard(e.target.value, e.target.checked);
 });
 $('cards-collapse').addEventListener('click', () => setCollapsed(state.providers.map((p) => p.id), true));
 $('cards-expand').addEventListener('click', () => setCollapsed(state.providers.map((p) => p.id), false));
+$('cards-reload').addEventListener('click', () => {
+  closeMenu($('cards-menu'));
+  reloadCards($('cards-reload'));
+});
 $('cards-show-all').addEventListener('click', () => {
   setHidden(state.providers.map((p) => p.id), false);
   $('providers').querySelector('.card-toggle')?.focus();

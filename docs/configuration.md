@@ -44,8 +44,8 @@ be the bare array. See
 }
 ```
 
-Edits apply after `agent-guild restart` (this ends running sessions), or to
-new sessions at once with `POST /api/v1/providers/reload` ([API](api.md)).
+Edits apply to new sessions after **Cards → Reload cards** on the page, or
+after `agent-guild restart` (this ends running sessions).
 Invalid values are ignored; a file that cannot be read is reported in `manager.log`.
 
 | Field | Meaning |
@@ -86,13 +86,6 @@ and Resume; **Existing…** opens the same browser across folders. Unknown or
 multiple saved folders require an explicit folder choice before resuming.
 This reads Antigravity CLI's local transcripts and does not configure learned
 memory. Claude Code, Codex CLI and Grok Build keep their **Memory** entry.
-
-## Terminal AI Chat
-
-[Terminal AI Chat](https://github.com/oddessentials/terminal-ai-chat-releases)
-runs your ChatGPT web session in a terminal. To add its card, copy the entry in
-[examples/terminal-ai-chat.json](../examples/terminal-ai-chat.json) into the
-`providers` list of your `providers.json`.
 
 ## Accounts
 
