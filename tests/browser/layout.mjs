@@ -226,14 +226,14 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
     await layoutReady();
     assert.equal(await evaluate('innerWidth'), width, `${label}: the viewport keeps its width`);
     const [chip, more, stage, title] = await Promise.all([box('.yard-play-chip'), box('#yard-play-more'), box('#yard-stage'), box('.yard-heading > div:first-child')]);
-    const form = stage.width > 660 ? 4 : stage.width > 460 ? 3 : stage.width > 420 ? 1 : 0;
-    const split = stage.width > 350;
+    const form = stage.width > 660 ? 4 : stage.width > 480 ? 3 : stage.width > 440 ? 1 : 0;
+    const split = stage.width > 380;
     forms.add(split ? form : -1);
     assert.ok(chip.height >= 44 && more.height >= 44, `${label}: Play now is ${chip.height}px tall`);
     assert.ok(more.width >= 36, `${label}: the caret is ${more.width}px wide`);
     assert.ok(chip.left >= stage.left && chip.right <= stage.right && chip.top >= stage.top && chip.bottom <= stage.bottom, `${label}: Play now is on the stage`);
     assert.equal(await visible('#yard-play'), split, `${label}: the split shows while it fits`);
-    if (stage.width < 310) {
+    if (stage.width < 340) {
       assert.ok(title.right <= chip.left, `${label}: the title stays clear of the chip`);
       assert.equal(await visible('#yard-subtitle'), false, `${label}: only the title remains`);
     } else {
@@ -254,7 +254,7 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
     await closePlayMenu();
   };
   await playPlaced('1440', 1440);
-  for (const [width, height] of [[980, 800], [972, 800], [936, 800], [844, 390], [464, 800], [456, 800], [424, 800], [416, 800], [390, 844], [360, 640], [352, 640], [348, 640], [320, 568]]) {
+  for (const [width, height] of [[980, 800], [972, 800], [936, 800], [844, 390], [484, 800], [476, 800], [444, 800], [436, 800], [390, 844], [384, 800], [376, 800], [360, 640], [344, 640], [336, 640], [320, 568]]) {
     await size(width, height);
     await playPlaced(String(width), width);
   }
