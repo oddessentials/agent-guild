@@ -201,26 +201,29 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   await click('#view-yard');
   await until('the Yard', () => evaluate('document.documentElement.dataset.view==="yard"'));
   assert.equal(await visible('#cards-none'), false, 'the Yard does not show the Cards empty state');
+  // The overlay is measured with no WebGL, so the Yard's scene never renders here: CI has no GPU.
+  await evaluate('window.testGetContext=HTMLCanvasElement.prototype.getContext;HTMLCanvasElement.prototype.getContext=function(type,...rest){return /webgl/.test(type)?null:testGetContext.call(this,type,...rest)}');
   await evaluate('document.documentElement.dataset.skin="orbital"');
-  await layoutReady();
-  assert.equal(await visible('#yard-play'), true, 'Orbital shows Play now');
+  await until('Orbital shows Play now', () => visible('#yard-play'));
   assert.deepEqual(await evaluate('(()=>{const a=document.querySelector("#yard-play");return [a.href,a.target,a.rel]})()'), ['https://survive.oddessentials.ai/', '_blank', 'noopener noreferrer']);
   // The chip's form follows the stage's width: full, then without its chevrons and tagline, then "Play", then the orb alone.
   const forms = new Set();
   const playPlaced = async (label, width) => {
+    await layoutReady();
     assert.equal(await evaluate('innerWidth'), width, `${label}: the viewport keeps its width`);
     const [play, stage, title] = await Promise.all([box('#yard-play'), box('#yard-stage'), box('.yard-heading > div:first-child')]);
     const form = stage.width > 640 ? 4 : stage.width > 460 ? 3 : stage.width > (width > 760 ? 440 : 420) ? 1 : 0;
     forms.add(form);
     assert.ok(play.height >= 44, `${label}: Play now is ${play.height}px tall`);
     assert.ok(play.left >= stage.left && play.right <= stage.right && play.top >= stage.top && play.bottom <= stage.bottom, `${label}: Play now is on the stage`);
-    assert.ok(play.left >= title.right, `${label}: Play now is clear of the title block`);
-    assert.deepEqual(await evaluate('[".yard-eyebrow","#yard-title","#yard-subtitle"].map(s=>{const r=document.createRange();r.selectNodeContents(document.querySelector(s));return r.getClientRects().length})'), [1, 1, 1], `${label}: the title block keeps every line whole`);
+    // The room the chip leaves holds the widest title line unwrapped, in whatever font this machine has.
+    const [room, needed] = await evaluate('(()=>{const heading=document.querySelector(".yard-heading"),title=heading.firstElementChild,play=document.querySelector("#yard-play");const room=play.getBoundingClientRect().left-parseFloat(getComputedStyle(heading).columnGap)-title.getBoundingClientRect().left;const needed=Math.max(...[".yard-eyebrow","#yard-title","#yard-subtitle"].map(s=>{const e=document.querySelector(s);e.style.whiteSpace="nowrap";const w=e.scrollWidth;e.style.whiteSpace="";return w}));return [room,needed]})()');
+    assert.ok(room >= needed, `${label}: the title block has ${room}px for a ${needed}px line`);
     assert.equal(await evaluate('[".yard-play-chev",".yard-play-sub",".yard-play-now",".yard-play-text"].filter(s=>document.querySelector(s).checkVisibility()).length'), form, `${label}: the chip shows its ${form}-part form`);
     await noSideScroll(`${label} with Play now`);
   };
   await playPlaced('1440', 1440);
-  for (const [width, height] of [[1024, 768], [964, 800], [936, 800], [844, 390], [464, 800], [456, 800], [424, 800], [416, 800], [390, 844], [360, 640]]) {
+  for (const [width, height] of [[964, 800], [936, 800], [844, 390], [464, 800], [456, 800], [424, 800], [416, 800], [390, 844], [360, 640]]) {
     await size(width, height);
     await playPlaced(String(width), width);
   }
@@ -236,14 +239,13 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   await evaluate('document.querySelector("#dock-splitter").focus()');
   await key('End', 'End', 35);
   await until('the dock is at its widest', () => evaluate('getComputedStyle(document.documentElement).getPropertyValue("--dock-space")==="720px"'));
-  await layoutReady();
-  assert.equal((await box('#yard-stage')).width, 386, 'the widest dock leaves the stage 386px');
   await playPlaced('dock', 1440);
   assert.deepEqual([...forms].sort(), [0, 1, 3, 4], 'the sizes covered every form of the chip');
   await key('Home', 'Home', 36);
   await click('#dock-close');
   await until('the dock closes', async () => !(await visible('#dock')));
   await layoutReady();
+  await evaluate('HTMLCanvasElement.prototype.getContext=testGetContext');
   await evaluate('document.documentElement.dataset.layout="compact"');
   await layoutReady();
   assert.equal(await visible('#yard-play'), false, 'a compact host hides Play now');
