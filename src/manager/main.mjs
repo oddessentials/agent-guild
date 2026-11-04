@@ -88,7 +88,6 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
   const sessionHooks = new SessionHooks({ registry, dir: paths.reporting, version });
   registry.reportingEnabled = (provider) => sessionHooks.enabled(provider);
   registry.reportingNote = (provider) => sessionHooks.note(provider);
-  sessionHooks.warm();
   const cardNames = createCardNames(paths.cardNames);
   const manager = new SessionManager({
     registry, baseEnv, getApiUrl: () => api.url, sessionDefaults, shimDir, selfUpdate, github, sessionHooks, store: multiplexerStore, cardNames,
@@ -199,10 +198,10 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
       err.message = `port ${port} is already in use. Is another Agent Guild manager running? ` +
         'Set AGENT_GUILD_PORT to use a different port.';
     }
-    // The probes started above would otherwise outlive this manager, which never runs its shutdown.
-    await Promise.all([mcpConnect.close(), registry.close(), sessionHooks.close()]);
     throw err;
   }
+  // Only now: a manager that cannot take its port never runs its shutdown, which is what ends these probes.
+  sessionHooks.warm();
   // tmux and herdr cards come back closed, ready to reattach, before the
   // runtime file announces this manager; after listening, since a card's
   // environment names the API's URL.

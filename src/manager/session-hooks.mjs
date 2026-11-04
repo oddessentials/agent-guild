@@ -252,12 +252,14 @@ export function codexHooksList(resolved, args, { env, platform = process.platfor
   });
 }
 
-/** Ends the child and all it started, and resolves once the child has gone. */
+/**
+ * Ends the child and all it started, and resolves once the child has gone. Its stdin stays open until then:
+ * on end of input Codex exits by itself, its wrapper first, and taskkill /T can no longer find the rest of the tree.
+ */
 function endTree(child, platform) {
   if (!child?.pid) return Promise.resolve();
   if (platform !== 'win32') killGroup(child.pid);
   if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
-  try { child.stdin.end(); } catch { /* closed */ }
   const gone = new Promise((resolve) => { child.once('exit', resolve); });
   if (platform !== 'win32') return gone;
   return new Promise((resolve) => { killWindowsTree(child.pid, (err) => { if (err) resolve(); else gone.then(resolve); }); });

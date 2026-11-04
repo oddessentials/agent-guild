@@ -60,17 +60,21 @@ async function launcher(t) {
   const token = () => fs.readFileSync(path.join(home, 'auth-token'), 'utf8').trim();
   // Register before any assertion: a failed test must still stop its own manager.
   t.after(async () => {
-    const stopped = await run('stop');
-    assert.equal(stopped.code, 0, stopped.stderr);
-    assert.doesNotMatch(stopped.stdout, /still shutting down/, 'cleanup must finish before removing the data directory');
-    fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    try {
+      const stopped = await run('stop');
+      assert.equal(stopped.code, 0, stopped.stderr);
+      assert.doesNotMatch(stopped.stdout, /still shutting down/, 'cleanup must finish before removing the data directory');
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    }
   });
   // A real PTY is essential here: shutdown must end the session's process.
   fs.writeFileSync(path.join(home, 'providers.json'), JSON.stringify({
     providers: [
       { id: 'fake', vendor: 'Test', tool: 'Fake Tool', command: process.execPath, args: [path.join(here, 'fixtures', 'fake-tool.mjs')] },
       { id: 'anthropic', usage: null },
-      { id: 'openai', usage: null },
+      // Not the real Codex CLI's hooks probe: these tests stop their manager at once, whatever it is doing.
+      { id: 'openai', usage: null, reporting: null },
       { id: 'google', usage: null },
     ],
   }));
@@ -245,10 +249,11 @@ test('stop ends every read of a tool, so none is left running and nothing holds 
 });
 
 test('a Codex probe that has just answered still removes its folder when the manager stops at once', async (t) => {
-  const { run, probeFolders, seen, runTools } = await withHungTools(t, { HUNG_TOOL_ANSWERS: '1' });
+  const { run, probeFolders, notes, seen, runTools } = await withHungTools(t, { HUNG_TOOL_ANSWERS: '1' });
   assert.equal((await runTools('open', '--no-browser')).code, 0);
   await seen('an answer from Codex', (all) => all.some((note) => note.answered));
   assert.equal((await run('stop')).code, 0);
+  assert.deepEqual(notes().filter(({ pid }) => running(pid)), [], 'ending the probe reached the child of what it started');
   assert.deepEqual(probeFolders(), []);
 });
 
@@ -261,7 +266,7 @@ test('a manager that cannot take its port leaves no probe or probe folder behind
   const manager = spawn(process.execPath, [cli, 'start'], { env: toolsEnv, stdio: 'ignore' });
   assert.equal(await new Promise((resolve) => manager.once('exit', resolve)), 1);
   assert.deepEqual(probeFolders(), []);
-  assert.deepEqual(notes().filter(({ pid }) => running(pid)), []);
+  assert.deepEqual(notes(), [], 'it asked no tool anything');
 });
 
 test('a sign-in launch records a new or existing manager without printing the access token', async (t) => {
@@ -395,6 +400,7 @@ test('restart keeps an ephemeral port, and starts the manager itself when the ol
   // AGENT_GUILD_PORT=0: the successor must listen where the old manager did, not on another free port.
   const zeroHome = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-launcher-'));
   const zeroEnv = { ...env, AGENT_GUILD_HOME: zeroHome, AGENT_GUILD_PORT: '0' };
+  fs.writeFileSync(path.join(zeroHome, 'providers.json'), JSON.stringify({ providers: [{ id: 'openai', usage: null, reporting: null }] }));
   const runtime = () => JSON.parse(fs.readFileSync(path.join(zeroHome, 'manager.json'), 'utf8'));
   try {
     const opened = await runWith(zeroEnv, 'open', '--no-browser');
@@ -417,6 +423,7 @@ test('restart keeps an ephemeral port, and starts the manager itself when the ol
   // answers a shutdown without `restart` and starts nothing.
   const oldHome = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-launcher-'));
   // Found through its runtime file, as with an ephemeral port setting; the successor must keep that port.
+  fs.writeFileSync(path.join(oldHome, 'providers.json'), JSON.stringify({ providers: [{ id: 'openai', usage: null, reporting: null }] }));
   const old = await fakeManager(t, oldHome, '0.0.1');
   const oldPort = old.port;
   // Another manager answers at the port the environment names; it is not the one being restarted.
