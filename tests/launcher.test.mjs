@@ -197,6 +197,32 @@ test('open still starts the manager when no browser can be launched, and points 
   assert.equal((await run('url')).stdout.trim(), `${base}/#token=${token()}`);
 });
 
+test('stop ends an MCP read still running, so nothing it started holds the data folder', async (t) => {
+  const { home, run, call } = await launcher(t);
+  const fixture = path.join(here, 'fixtures', 'hung-mcp-cli.mjs');
+  const script = path.join(home, process.platform === 'win32' ? 'hung-codex.cmd' : 'hung-codex');
+  if (process.platform === 'win32') fs.writeFileSync(script, `@echo off\r\n"${process.execPath}" "${fixture}" %*\r\n`);
+  else fs.writeFileSync(script, `#!/bin/sh\nexec "${process.execPath}" "${fixture}" "$@"\n`, { mode: 0o755 });
+  fs.writeFileSync(path.join(home, 'providers.json'), JSON.stringify({
+    providers: [{ id: 'openai', usage: null, command: script }, { id: 'anthropic', usage: null, enabled: false }, { id: 'google', usage: null, enabled: false }, { id: 'xai', usage: null, enabled: false }],
+  }));
+  assert.equal((await run('open', '--no-browser')).code, 0);
+  const marker = path.join(home, 'hung-mcp.pid');
+  const deadline = Date.now() + 15000;
+  while (!fs.existsSync(marker) || !fs.readFileSync(marker, 'utf8')) {
+    assert.ok(Date.now() < deadline, 'the card read reached the tool');
+    await call('GET', '/providers');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  const pid = Number(fs.readFileSync(marker, 'utf8'));
+  t.after(() => { if (running(pid)) process.kill(pid); });
+  const stopped = await run('stop');
+  assert.equal(stopped.code, 0, stopped.stderr);
+  assert.equal(running(pid), false, 'the tool ended with the manager');
+  fs.rmSync(home, { recursive: true, force: true });
+  assert.equal(fs.existsSync(home), false, 'the data folder can be removed at once');
+});
+
 test('a sign-in launch records a new or existing manager without printing the access token', async (t) => {
   const { base, home, run, token } = await launcher(t);
   const attempt = path.join(home, SIGN_IN_ATTEMPT);
