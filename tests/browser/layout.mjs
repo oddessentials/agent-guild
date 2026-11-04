@@ -206,45 +206,131 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   await evaluate('document.documentElement.dataset.skin="orbital"');
   await until('Orbital shows Play now', () => visible('#yard-play'));
   assert.deepEqual(await evaluate('(()=>{const a=document.querySelector("#yard-play");return [a.href,a.target,a.rel]})()'), ['https://survive.oddessentials.ai/', '_blank', 'noopener noreferrer']);
-  // The chip's form follows the stage's width: full, then without its chevrons and tagline, then "Play", then the orb alone.
+  assert.deepEqual(await evaluate('[...document.querySelectorAll("#yard-play-menu a")].map(a=>[a.href,a.target,a.rel,a.getAttribute("role"),a.querySelector(".yard-play-title").textContent])'), [
+    ['https://survive.oddessentials.ai/', '_blank', 'noopener noreferrer', 'menuitem', 'Survive the swarm'],
+    ['https://towers.oddessentials.ai/', '_blank', 'noopener noreferrer', 'menuitem', 'Defend the towers'],
+  ]);
+  const playMenuOpen = () => visible('#yard-play-menu');
+  const openPlayMenu = async () => {
+    await click('#yard-play-more');
+    await until('the games menu opens', playMenuOpen);
+    await layoutReady();
+  };
+  const closePlayMenu = async () => {
+    await click('#yard-play-more');
+    await until('the games menu closes', async () => !(await playMenuOpen()));
+  };
+  // The chip's form follows the stage's width: full, then without its chevrons and tagline, then "Play", then the orb, each with the caret; narrowest, the caret alone wears the orb.
   const forms = new Set();
   const playPlaced = async (label, width) => {
     await layoutReady();
     assert.equal(await evaluate('innerWidth'), width, `${label}: the viewport keeps its width`);
-    const [play, stage, title] = await Promise.all([box('#yard-play'), box('#yard-stage'), box('.yard-heading > div:first-child')]);
-    const form = stage.width > 640 ? 4 : stage.width > 460 ? 3 : stage.width > (width > 760 ? 440 : 420) ? 1 : 0;
-    forms.add(form);
-    assert.ok(play.height >= 44, `${label}: Play now is ${play.height}px tall`);
-    assert.ok(play.left >= stage.left && play.right <= stage.right && play.top >= stage.top && play.bottom <= stage.bottom, `${label}: Play now is on the stage`);
-    // The room the chip leaves holds the widest title line unwrapped, in whatever font this machine has.
-    const [room, needed] = await evaluate('(()=>{const heading=document.querySelector(".yard-heading"),title=heading.firstElementChild,play=document.querySelector("#yard-play");const room=play.getBoundingClientRect().left-parseFloat(getComputedStyle(heading).columnGap)-title.getBoundingClientRect().left;const needed=Math.max(...[".yard-eyebrow","#yard-title","#yard-subtitle"].map(s=>{const e=document.querySelector(s);e.style.whiteSpace="nowrap";const w=e.scrollWidth;e.style.whiteSpace="";return w}));return [room,needed]})()');
-    assert.ok(room >= needed, `${label}: the title block has ${room}px for a ${needed}px line`);
+    const [chip, more, stage, title] = await Promise.all([box('.yard-play-chip'), box('#yard-play-more'), box('#yard-stage'), box('.yard-heading > div:first-child')]);
+    const form = stage.width > 660 ? 4 : stage.width > 480 ? 3 : stage.width > 440 ? 1 : 0;
+    const split = stage.width > 380;
+    forms.add(split ? form : -1);
+    assert.ok(chip.height >= 44 && more.height >= 44, `${label}: Play now is ${chip.height}px tall`);
+    assert.ok(more.width >= 36, `${label}: the caret is ${more.width}px wide`);
+    assert.ok(chip.left >= stage.left && chip.right <= stage.right && chip.top >= stage.top && chip.bottom <= stage.bottom, `${label}: Play now is on the stage`);
+    assert.equal(await visible('#yard-play'), split, `${label}: the split shows while it fits`);
+    if (stage.width < 340) {
+      assert.ok(title.right <= chip.left, `${label}: the title stays clear of the chip`);
+      assert.equal(await visible('#yard-subtitle'), false, `${label}: only the title remains`);
+    } else {
+      // The room the chip leaves holds the widest title line unwrapped, in whatever font this machine has.
+      const [room, needed] = await evaluate('(()=>{const heading=document.querySelector(".yard-heading"),title=heading.firstElementChild,chip=document.querySelector(".yard-play-chip");const room=chip.getBoundingClientRect().left-parseFloat(getComputedStyle(heading).columnGap)-title.getBoundingClientRect().left;const needed=Math.max(...[".yard-eyebrow","#yard-title","#yard-subtitle"].map(s=>{const e=document.querySelector(s);e.style.whiteSpace="nowrap";const w=e.scrollWidth;e.style.whiteSpace="";return w}));return [room,needed]})()');
+      assert.ok(room >= needed, `${label}: the title block has ${room}px for a ${needed}px line`);
+    }
     assert.equal(await evaluate('[".yard-play-chev",".yard-play-sub",".yard-play-now",".yard-play-text"].filter(s=>document.querySelector(s).checkVisibility()).length'), form, `${label}: the chip shows its ${form}-part form`);
     await noSideScroll(`${label} with Play now`);
+    await openPlayMenu();
+    const [menu, rows, clipped, height] = await evaluate('(()=>{const m=document.querySelector("#yard-play-menu"),b=e=>{const r=e.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,height:r.height}},items=[...m.querySelectorAll("a")];return [b(m),items.map(b),items.filter(a=>a.scrollWidth>a.clientWidth).length,innerHeight]})()');
+    assert.ok(menu.left >= 8 && menu.right <= width - 8, `${label}: the games menu is on screen sideways`);
+    assert.ok(menu.top >= more.bottom && menu.bottom <= height, `${label}: the games menu opens under the caret and on screen`);
+    assert.deepEqual(await evaluate('(()=>{const s=getComputedStyle(document.querySelector("#yard-play-menu"));return [s.backgroundColor,s.backdropFilter]})()'), ['rgba(0, 0, 0, 0)', 'none'], `${label}: only the cut frame paints the games menu`);
+    assert.ok(rows.every((row) => row.height >= 44), `${label}: each game is tall enough to tap`);
+    assert.equal(clipped, 0, `${label}: no game name is cut off`);
+    await noSideScroll(`${label} with the games menu`);
+    await closePlayMenu();
   };
   await playPlaced('1440', 1440);
-  for (const [width, height] of [[964, 800], [936, 800], [844, 390], [464, 800], [456, 800], [424, 800], [416, 800], [390, 844], [360, 640]]) {
+  for (const [width, height] of [[980, 800], [972, 800], [936, 800], [844, 390], [484, 800], [476, 800], [444, 800], [436, 800], [390, 844], [384, 800], [376, 800], [360, 640], [344, 640], [336, 640], [320, 568]]) {
     await size(width, height);
     await playPlaced(String(width), width);
   }
+  await size(844, 390);
+  await openPlayMenu();
+  await evaluate('scrollTo(0,60)');
+  await until('the games menu follows the caret', () => evaluate('(()=>{const m=document.querySelector("#yard-play-menu").getBoundingClientRect(),b=document.querySelector("#yard-play-more").getBoundingClientRect();return scrollY>0&&m.top===Math.round(b.bottom+6)})()'));
+  await evaluate('scrollTo(0,0)');
+  await closePlayMenu();
   await size(1440, 900);
+  const tab = async (modifiers) => {
+    await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, modifiers });
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, modifiers });
+  };
+  const lit = (selector) => evaluate(`getComputedStyle(document.querySelector(${JSON.stringify(selector)})).backgroundColor!=="rgba(0, 0, 0, 0)"`);
   await evaluate('document.querySelector("#yard-stage").focus()');
-  await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, modifiers: 8 });
-  await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, modifiers: 8 });
-  assert.equal(await evaluate('document.activeElement.id==="yard-play"&&document.activeElement.matches(":focus-visible")'), true, 'Shift+Tab from the stage reaches Play now with a visible focus');
-  const [ring, heading] = await Promise.all([box('#yard-play'), box('.yard-heading')]);
+  await tab(8);
+  assert.equal(await evaluate('document.activeElement.id==="yard-play-more"&&document.activeElement.matches(":focus-visible")'), true, 'Shift+Tab from the stage reaches the caret with a visible focus');
+  await until('the focused part of the split is the lit one', async () => await lit('#yard-play-more') && !(await lit('#yard-play')));
+  await tab(8);
+  assert.equal(await evaluate('document.activeElement.id==="yard-play"&&document.activeElement.matches(":focus-visible")'), true, 'Shift+Tab again reaches Play now with a visible focus');
+  await until('the focus light moves with the focus', async () => !(await lit('#yard-play-more')) && await lit('#yard-play'));
+  const [ring, heading] = await Promise.all([box('.yard-play-chip'), box('.yard-heading')]);
   assert.ok(ring.left - 5 >= heading.left && ring.right + 5 <= heading.right && ring.top - 5 >= heading.top && ring.bottom + 5 <= heading.bottom, 'the focus ring is inside the heading, which clips');
+  await tab(0);
+  await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' });
+  await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+  const focusedGame = () => evaluate('document.activeElement.closest("#yard-play-menu")?document.activeElement.href:null');
+  await until('Enter on the caret focuses the first game', async () => await focusedGame() === 'https://survive.oddessentials.ai/');
+  await key('ArrowDown', 'ArrowDown', 40);
+  assert.equal(await focusedGame(), 'https://towers.oddessentials.ai/', 'an arrow moves to the other game');
+  await key('Home', 'Home', 36);
+  assert.equal(await focusedGame(), 'https://survive.oddessentials.ai/', 'Home moves to the first game');
+  await key('Escape', 'Escape', 27);
+  await until('Escape closes the games menu and returns to the caret', () => evaluate('!document.querySelector("#yard-play-menu").checkVisibility()&&document.activeElement.id==="yard-play-more"'));
+  await openPlayMenu();
+  await evaluate('window.testNoLeave=(e)=>e.preventDefault();document.addEventListener("click",testNoLeave)');
+  await click('#yard-play-menu a:last-of-type');
+  await until('picking a game closes the menu and returns to the caret', () => evaluate('!document.querySelector("#yard-play-menu").checkVisibility()&&document.activeElement.id==="yard-play-more"'));
+  await evaluate('document.removeEventListener("click",testNoLeave)');
+  await openPlayMenu();
+  await click('#view-cards');
+  await until('Cards closes the games menu', () => evaluate('!document.querySelector("#yard-play-menu").matches(":popover-open")'));
+  await click('#view-yard');
+  await until('back in the Yard', () => visible('#yard-play'));
+  assert.equal(await playMenuOpen(), false, 'the games menu does not come back with the Yard');
+  await openPlayMenu();
+  await evaluate('document.documentElement.dataset.skin="guild"');
+  await until('leaving Orbital closes the games menu', () => evaluate('!document.querySelector("#yard-play-menu").matches(":popover-open")'));
+  await evaluate('document.documentElement.dataset.skin="orbital"');
   await click('#notes-open');
   await until('the dock opens', () => visible('#dock'));
   await evaluate('document.querySelector("#dock-splitter").focus()');
   await key('End', 'End', 35);
   await until('the dock is at its widest', () => evaluate('getComputedStyle(document.documentElement).getPropertyValue("--dock-space")==="720px"'));
   await playPlaced('dock', 1440);
+  await evaluate('document.querySelector("#dock-splitter").focus()');
+  await key('Home', 'Home', 36);
+  for (let dock = 320; dock <= 720; dock += 24) {
+    await evaluate('document.querySelector("#dock-splitter").focus()');
+    await until(`the dock is ${dock}px wide`, () => evaluate(`getComputedStyle(document.documentElement).getPropertyValue("--dock-space")==="${dock}px"`));
+    await playPlaced(`dock ${dock}`, 1440);
+    await evaluate('document.querySelector("#dock-splitter").focus()');
+    await key('ArrowLeft', 'ArrowLeft', 37);
+  }
+  await size(1280, 800);
+  await evaluate('document.querySelector("#dock-splitter").focus()');
+  await key('End', 'End', 35);
+  await playPlaced('the narrowest stage beside a dock', 1280);
+  await size(1440, 900);
   await evaluate('document.documentElement.dataset.skin="guild"');
   await layoutReady();
   assert.equal(await visible('#yard-summary'), true, 'a narrow stage hides the summary only in Orbital');
   await evaluate('document.documentElement.dataset.skin="orbital"');
-  assert.deepEqual([...forms].sort(), [0, 1, 3, 4], 'the sizes covered every form of the chip');
+  assert.deepEqual([...forms].sort((a, b) => a - b), [-1, 0, 1, 3, 4], 'the sizes covered every form of the chip');
+  await evaluate('document.querySelector("#dock-splitter").focus()');
   await key('Home', 'Home', 36);
   await click('#dock-close');
   await until('the dock closes', async () => !(await visible('#dock')));
@@ -681,6 +767,11 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   await size(393, 852);
   await navigate(`${origin}/?app#token=t&view=yard`);
   await until('the app opens the Yard', () => evaluate('document.documentElement.dataset.view==="yard"&&testApp.some(m=>m.type==="ready")'));
+  await evaluate('document.documentElement.dataset.skin="orbital"');
+  await openPlayMenu();
+  await click('#yard-play-menu a:last-of-type');
+  await until('a game opens through the app', () => evaluate('testApp.some(m=>m.type==="open"&&m.url==="https://towers.oddessentials.ai/")'));
+  await until('and its menu closes', async () => !(await playMenuOpen()));
   const folderRow = async (width) => {
     await size(width, 852);
     const [label, input, tools] = await Promise.all([box('.cwd > label'), box('#cwd'), box('.cwd-tools')]);

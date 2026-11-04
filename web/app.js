@@ -8597,7 +8597,16 @@ onMenu($('panel-text-size'), (menu) => {
   placeMenu(menu, $('panel-text-toggle'));
   menu.querySelector('button:not(:disabled)')?.focus();
 }, (menu) => returnFocus(menu, $('panel-text-toggle')));
-for (const menu of [$('manager-menu'), $('panel-sessions')]) menu.addEventListener('keydown', moveInMenu);
+onMenu($('yard-play-menu'), (menu) => {
+  placeMenu(menu, $('yard-play-more'));
+  menuItems(menu)[0]?.focus();
+}, (menu) => returnFocus(menu, $('yard-play-more')));
+$('yard-play-menu').addEventListener('click', (e) => {
+  if (e.target.closest('a')) closeMenu(e.currentTarget);
+});
+new MutationObserver(() => closeMenu($('yard-play-menu'))).observe(document.documentElement, { attributes: true, attributeFilter: ['data-view', 'data-skin', 'data-layout'] });
+window.addEventListener('scroll', () => placeMenu($('yard-play-menu'), $('yard-play-more')), { passive: true });
+for (const menu of [$('manager-menu'), $('panel-sessions'), $('yard-play-menu')]) menu.addEventListener('keydown', moveInMenu);
 // Recorded only on the click that opens the menu: a click that closes it leaves what the open menu showed.
 const sessionMenuFrom = (mode, invoker) => () => {
   if (!$('panel-sessions').matches(':popover-open')) Object.assign(sessionMenu, { mode, invoker });
@@ -8616,6 +8625,7 @@ window.addEventListener('resize', () => {
   placeMenu($('panel-sessions'), sessionInvoker());
   placeMenu($('panel-text-size'), $('panel-text-toggle'));
   placeMenu($('cards-menu'), $('cards-open'));
+  placeMenu($('yard-play-menu'), $('yard-play-more'));
 });
 onMenu($('cards-menu'), (menu) => {
   placeMenu(menu, $('cards-open'));
