@@ -32,6 +32,15 @@ const MAX_ENDED_TASKS = 256;
 // and SS3 sequences, OSC and DCS strings (to their end, or the next ESC, so a large paste is scanned once), and ESC
 // with one character (Alt+key). Bracketed paste markers are CSI, so pasted text is kept.
 const ESCAPE_SEQUENCE = /\x1b\[M[\s\S]{3}|\x1b\[[0-?]*[ -/]*[@-~]|\x1bO[\s\S]|\x1b[\]P][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[\s\S]?/g;
+const PASTE_START = '\x1b[200~';
+const PASTE_END = '\x1b[201~';
+
+// Replaces rather than deletes: deleting a marker could join the text around it into a new one.
+function withoutInnerPasteMarkers(data) {
+  if (typeof data !== 'string' || !data.startsWith(PASTE_START) || !data.endsWith(PASTE_END)) return data;
+  const pasted = data.slice(PASTE_START.length, -PASTE_END.length);
+  return PASTE_START + pasted.replace(/\x1b(?=\[20[01]~)/g, '␛') + PASTE_END;
+}
 
 /**
  * Colours reported to programs that query them (OSC 10/11/12), matching the
@@ -337,7 +346,7 @@ export class Session extends EventEmitter {
   }
 
   input(data) {
-    this.write(data);
+    this.write(withoutInnerPasteMarkers(data));
     if (this.reporting?.state === 'pending' && !this._reportingTimer && typeof data === 'string' && this._sendsTypedLine(data)) {
       this._reportingTimer = setTimeout(() => {
         if (this.reporting?.state !== 'pending' || this.status !== 'running') return;

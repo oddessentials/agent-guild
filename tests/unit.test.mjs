@@ -1990,6 +1990,25 @@ test('the usage monitor logs a vendor or network failure when it starts or chang
   assert.ok(lines.every((line) => !line.includes('secret-token')));
 });
 
+test('text inside a bracketed paste cannot end or restart the paste', () => {
+  const written = [];
+  const sent = (data) => {
+    Session.prototype.input.call({ write: (out) => written.push(out) }, data);
+    return written.at(-1);
+  };
+  const pasted = (text) => sent(`\x1b[200~${text}\x1b[201~`).slice(6, -6);
+  assert.equal(pasted('a\x1b[201~b\r'), 'a␛[201~b\r', 'an end marker');
+  assert.equal(pasted('a\x1b[200~b'), 'a␛[200~b', 'a start marker');
+  assert.equal(pasted('\x1b[201~a\x1b[200~\x1b[201~\rb\x1b[201~'), '␛[201~a␛[200~␛[201~\rb␛[201~', 'several markers');
+  assert.equal(pasted('\x1b[20\x1b[201~1~'), '\x1b[20␛[201~1~', 'a marker that removal would leave behind');
+  assert.ok(!pasted('\x1b\x1b[201~[201~').includes('\x1b[201~'), 'a marker after a lone ESC');
+  const ordinary = 'one\rtwo\tthree é 😀 \x1b[31mred\x1b[0m \x1b[20 \x1b[2011~ \x1b[0201~ \u009b201~\x1b';
+  assert.equal(pasted(ordinary), ordinary, 'ordinary text, colours and anything that is not a marker');
+  for (const keys of ['ls -la\r', '\x1b[A', '\x1b[201~', '\x1b[200~', 'a\x1b[201~b\x1b[201~', '\x1b[200~a\x1b[201~b\r', '\x1b[I\r']) {
+    assert.equal(sent(keys), keys, 'input that is not one whole paste');
+  }
+});
+
 test('only a line with something typed on it counts as a sent prompt', () => {
   const fake = { _typedSinceEnter: false };
   const sends = (data) => Session.prototype._sendsTypedLine.call(fake, data);
