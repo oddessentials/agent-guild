@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -398,4 +399,93 @@ test('the draft release holds the installers, SHA256SUMS covers them, and a miss
     assert.equal(missing.calls, '', `nothing reaches the release without ${name}`);
     assert.equal(draftRun(t, { altered: name }).failed, true, `the release is checked for the ${name} it holds`);
   }
+});
+
+function publishRun(t, { publishes, after = 'absent' }) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-publish-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const work = path.join(root, 'work');
+  const bin = path.join(root, 'bin');
+  for (const dir of [work, bin, path.join(root, 'package')]) fs.mkdirSync(dir);
+  const version = '1.20.0';
+  fs.writeFileSync(path.join(root, 'package', 'package.json'), JSON.stringify({ name: '@o/p', version }));
+  const tarball = `o-p-${version}.tgz`;
+  execFileSync('tar', ['-czf', path.join(work, tarball), '-C', root, 'package']);
+  execFileSync('/bin/sh', ['-c', 'sha256sum -- *.tgz > SHA256SUMS'], { cwd: work });
+  const integrity = `sha512-${crypto.createHash('sha512').update(fs.readFileSync(path.join(work, tarball))).digest('base64')}`;
+  const log = path.join(root, 'calls.log');
+  fs.writeFileSync(path.join(bin, 'sleep'), `#!/bin/sh\necho "sleep $*" >> "$CALLS"\n`, { mode: 0o755 });
+  fs.writeFileSync(path.join(bin, 'npm'), `#!/bin/bash
+echo "$*" >> "$CALLS"
+n=$(grep -c "^$1 " "$CALLS")
+if [ "$1" = publish ]; then
+  set -- $PUBLISHES
+  case "\${!n}" in
+    ok) echo "+ @o/p" ;;
+    tlog) echo 'npm error code TLOG_CREATE_ENTRY_ERROR' >&2; echo 'npm error error creating tlog entry - (409)' >&2; exit 1 ;;
+    e413) echo 'npm error code E413' >&2; exit 1 ;;
+  esac
+  exit 0
+fi
+absent() { echo 'npm error code E404' >&2; echo 'npm error 404 No match found for version 1.20.0' >&2; exit 1; }
+[ "$n" = 1 ] && absent
+case "$AFTER" in
+  absent) absent ;;
+  same) echo "$SAME" ;;
+  other) echo sha512-other ;;
+  empty) ;;
+  no-package) echo 'npm error code E404' >&2; echo 'npm error 404 Not Found - GET https://registry.npmjs.org/@o%2fp - Not found' >&2; exit 1 ;;
+  unreachable) echo 'npm error code ECONNRESET' >&2; exit 1 ;;
+  server-error) echo 'npm error code E503' >&2; exit 1 ;;
+esac
+`, { mode: 0o755 });
+  const script = job('publish').match(/\n        run: \|\n([\s\S]*)$/)[1].replace(/^ {10}/gm, '');
+  const output = path.join(root, 'output');
+  const env = { PATH: `${bin}:${process.env.PATH}`, CALLS: log, PUBLISHES: publishes.join(' '), AFTER: after, SAME: integrity, VERSION: version, GITHUB_OUTPUT: output };
+  const { status } = spawnSync('bash', ['-e', '-c', script], { cwd: work, env, stdio: 'pipe' });
+  const calls = fs.readFileSync(log, 'utf8').trim().split('\n');
+  return { status, integrity, tarball, output: fs.readFileSync(output, 'utf8'), publishes: calls.filter((line) => line.startsWith('publish ')), views: calls.filter((line) => line.startsWith('view ')), sleeps: calls.filter((line) => line.startsWith('sleep ')) };
+}
+
+test('a 409 from the Sigstore log publishes once more, with provenance, only after npm confirms the version is absent', { skip: !GNU_SHA256SUM }, (t) => {
+  const retried = publishRun(t, { publishes: ['tlog', 'ok'] });
+  assert.equal(retried.status, 0);
+  assert.deepEqual(retried.publishes, Array(2).fill(`publish ./${retried.tarball} --provenance --access public`));
+  assert.equal(retried.views.length, 2);
+  assert.deepEqual(retried.sleeps, ['sleep 30']);
+  assert.ok(retried.output.includes(`integrity=${retried.integrity}\n`), 'the job still reports what it published');
+
+  const permanent = publishRun(t, { publishes: ['tlog', 'tlog', 'ok'] });
+  assert.notEqual(permanent.status, 0, 'a second 409 stops the release');
+  assert.equal(permanent.publishes.length, 2, 'there is one retry');
+});
+
+test('after a 409, a version npm already has is never published again, and only matching contents pass', { skip: !GNU_SHA256SUM }, (t) => {
+  const same = publishRun(t, { publishes: ['tlog', 'ok'], after: 'same' });
+  assert.equal(same.status, 0);
+  assert.equal(same.publishes.length, 1);
+
+  const other = publishRun(t, { publishes: ['tlog', 'ok'], after: 'other' });
+  assert.notEqual(other.status, 0, 'different contents stop the release');
+  assert.equal(other.publishes.length, 1);
+});
+
+test('after a 409, a registry answer that does not confirm absence stops the release without a retry', { skip: !GNU_SHA256SUM }, (t) => {
+  for (const after of ['empty', 'no-package', 'unreachable', 'server-error']) {
+    const run = publishRun(t, { publishes: ['tlog', 'ok'], after });
+    assert.notEqual(run.status, 0, after);
+    assert.equal(run.publishes.length, 1, after);
+  }
+});
+
+test('only the Sigstore 409 is retried: any other publish error stops the release, and a clean publish runs once', { skip: !GNU_SHA256SUM }, (t) => {
+  const unrelated = publishRun(t, { publishes: ['e413', 'ok'] });
+  assert.notEqual(unrelated.status, 0);
+  assert.equal(unrelated.publishes.length, 1);
+  assert.equal(unrelated.views.length, 1, 'npm is not asked again');
+
+  const clean = publishRun(t, { publishes: ['ok'] });
+  assert.equal(clean.status, 0);
+  assert.equal(clean.publishes.length, 1);
+  assert.deepEqual(clean.sleeps, []);
 });

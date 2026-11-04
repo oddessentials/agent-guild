@@ -186,7 +186,29 @@ jobs:
             echo "::error::$name@$VERSION is already on npm with different contents. If an earlier release run published it and then failed, re-run the failed jobs of that run so it is tagged, then re-run this one."
             exit 1
           else
-            npm publish "$tarball" --provenance --access public
+            publish() { npm publish "$tarball" --provenance --access public 2>&1 | tee npm-publish.log; return "${PIPESTATUS[0]}"; }
+            if ! publish; then
+              grep -q '^npm error code TLOG_CREATE_ENTRY_ERROR' npm-publish.log || exit 1
+              # npm/cli#10078: npm's Sigstore client treats the log's 409 to its own retried upload as fatal, before the package is sent. A new publish signs afresh.
+              if after=$(npm view "$name@$VERSION" dist.integrity --prefer-online 2>npm-view.log); then
+                if [ "$after" = "$integrity" ]; then
+                  echo "$name@$VERSION is already on npm with these contents."
+                elif [ -n "$after" ]; then
+                  echo "::error::$name@$VERSION is already on npm with different contents."
+                  exit 1
+                else
+                  echo "::error::npm gave no integrity for $name@$VERSION, so whether it was published is unknown."
+                  exit 1
+                fi
+              elif grep -q 'No match found for version' npm-view.log; then
+                sleep 30
+                publish
+              else
+                cat npm-view.log
+                echo "::error::npm could not say whether $name@$VERSION was published, so it was not retried."
+                exit 1
+              fi
+            fi
           fi
 
   release:
