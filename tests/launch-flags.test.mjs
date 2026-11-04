@@ -7,10 +7,11 @@ import { fileURLToPath } from 'node:url';
 import { LaunchFlags, helpEntry, normalizeLaunchFlags, offeredFlags } from '../src/manager/launch-flags.mjs';
 import { ProviderRegistry, loadProviders } from '../src/manager/providers.mjs';
 import { codexHookArgs, dockerHookArgs } from '../src/manager/session-hooks.mjs';
+import { tempDirs } from './fixtures/temp-dirs.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const help = (name) => fs.readFileSync(path.join(here, 'fixtures', 'help', `${name}.txt`), 'utf8');
-const tempDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-flags-'));
+const tempDir = tempDirs('agent-guild-flags-');
 const defaults = loadProviders({ userFile: path.join(tempDir(), 'none.json'), platform: process.platform }).providers;
 const byCommand = (command) => defaults.find((p) => p.command === command);
 

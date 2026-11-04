@@ -7,12 +7,13 @@ import { fileURLToPath } from 'node:url';
 import { copyChannel, dockerConfigDir, downloadDir, linkOnPath, readPlugin, pluginVersion, PLUGIN_INFO_ARGS, PLUGIN_METADATA_ARGS } from '../src/manager/docker-plugin.mjs';
 import { latestReleaseTag } from '../src/manager/versions.mjs';
 import { ProviderRegistry } from '../src/manager/providers.mjs';
+import { tempDirs } from './fixtures/temp-dirs.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const fixture = path.join(here, 'fixtures', 'fake-coding-tool.mjs');
 // By real path: macOS's temp folder is under /var, a link to /private/var, and a Windows runner's is spelled by its
 // short name; neither is what these tests are about.
-const tempDir = () => fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'agent-guild-docker-plugin-'));
+const tempDir = tempDirs('agent-guild-docker-plugin-', fs.realpathSync.native(os.tmpdir()));
 const noLinks = { realpath: (f) => f, isLink: () => false };
 
 test('a plugin copy\'s channel says who put it there, on each platform', () => {
