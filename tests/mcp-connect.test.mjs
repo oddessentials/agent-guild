@@ -476,6 +476,22 @@ test('an open page hears an MCP server removed outside the card, from the heartb
   }
 });
 
+test('closing waits for a settings change already running, and does not end it', async (t) => {
+  const ctx = setup(t);
+  const started = path.join(ctx.root, 'started'), letGo = path.join(ctx.root, 'let-go'), done = path.join(ctx.root, 'done');
+  const write = `const fs=require("fs");fs.writeFileSync(${JSON.stringify(started)},"");setInterval(()=>{if(fs.existsSync(${JSON.stringify(letGo)})){fs.writeFileSync(${JSON.stringify(done)},"");process.exit(0)}},20)`;
+  const change = ctx.mcp._run(ctx.provider('openai'), process.execPath, ctx.env, ['-e', write]);
+  while (!fs.existsSync(started)) await new Promise((resolve) => setTimeout(resolve, 20));
+  let closed = false;
+  const closing = ctx.mcp.close().then(() => { closed = true; });
+  assert.equal(await ctx.mcp.refresh(ctx.provider('openai')), null, 'no read starts once closing');
+  assert.equal(closed, false);
+  fs.writeFileSync(letGo, '');
+  await closing;
+  await change;
+  assert.equal(fs.existsSync(done), true, 'the change ran to its end');
+});
+
 test('a new account reads as off without running the tool, and turning it on makes its home first', async (t) => {
   const ctx = setup(t, { accounts: { openai: ['work'], xai: ['work'] } });
   for (const id of ['openai', 'xai']) {

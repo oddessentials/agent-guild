@@ -197,30 +197,57 @@ test('open still starts the manager when no browser can be launched, and points 
   assert.equal((await run('url')).stdout.trim(), `${base}/#token=${token()}`);
 });
 
-test('stop ends an MCP read still running, so nothing it started holds the data folder', async (t) => {
-  const { home, run, call } = await launcher(t);
-  const fixture = path.join(here, 'fixtures', 'hung-mcp-cli.mjs');
-  const script = path.join(home, process.platform === 'win32' ? 'hung-codex.cmd' : 'hung-codex');
+/** Every provider's command replaced by the fixture, with a private temp folder to show what the manager leaves there. */
+async function withHungTools(t, extraEnv = {}) {
+  const context = await launcher(t);
+  const { home, port } = context;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-hung-'));
+  const fixture = path.join(here, 'fixtures', 'hung-tool.mjs');
+  const script = path.join(root, process.platform === 'win32' ? 'tool.cmd' : 'tool');
   if (process.platform === 'win32') fs.writeFileSync(script, `@echo off\r\n"${process.execPath}" "${fixture}" %*\r\n`);
   else fs.writeFileSync(script, `#!/bin/sh\nexec "${process.execPath}" "${fixture}" "$@"\n`, { mode: 0o755 });
-  fs.writeFileSync(path.join(home, 'providers.json'), JSON.stringify({
-    providers: [{ id: 'openai', usage: null, command: script }, { id: 'anthropic', usage: null, enabled: false }, { id: 'google', usage: null, enabled: false }, { id: 'xai', usage: null, enabled: false }],
-  }));
-  assert.equal((await run('open', '--no-browser')).code, 0);
-  const marker = path.join(home, 'hung-mcp.pid');
-  const deadline = Date.now() + 15000;
-  while (!fs.existsSync(marker) || !fs.readFileSync(marker, 'utf8')) {
-    assert.ok(Date.now() < deadline, 'the card read reached the tool');
-    await call('GET', '/providers');
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  const pid = Number(fs.readFileSync(marker, 'utf8'));
-  t.after(() => { if (running(pid)) process.kill(pid); });
+  const defaults = JSON.parse(fs.readFileSync(path.resolve(here, '../config/providers.default.json'), 'utf8')).providers;
+  fs.writeFileSync(path.join(home, 'providers.json'), JSON.stringify({ providers: defaults.filter((p) => p.command).map(({ id }) => ({ id, command: script, usage: null })) }));
+  const temp = path.join(root, 'temp');
+  fs.mkdirSync(temp);
+  const log = path.join(root, 'tool.log');
+  fs.writeFileSync(log, '');
+  const notes = () => fs.readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
+  t.after(() => {
+    for (const { pid } of notes()) if (running(pid)) process.kill(pid);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  const opened = await runWith({ ...env, AGENT_GUILD_HOME: home, AGENT_GUILD_PORT: String(port), TEMP: temp, TMP: temp, TMPDIR: temp, HUNG_TOOL_LOG: log, ...extraEnv }, 'open', '--no-browser');
+  assert.equal(opened.code, 0, opened.stderr);
+  const seen = async (what, check) => {
+    const deadline = Date.now() + 15000;
+    while (!check(notes())) {
+      assert.ok(Date.now() < deadline, `the manager reached ${what}: ${JSON.stringify(notes())}`);
+      await context.call('GET', '/providers');
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  };
+  const probeFolders = () => fs.readdirSync(temp).filter((name) => name.startsWith('agent-guild-codex-'));
+  return { ...context, probeFolders, notes, seen };
+}
+
+test('stop ends every read of a tool, so none is left running and nothing holds the data folder or a probe folder', async (t) => {
+  const { home, run, probeFolders, notes, seen } = await withHungTools(t);
+  const kinds = ['mcp', 'app-server', 'version', 'help'];
+  await seen('every kind of read', (all) => kinds.every((kind) => all.some((note) => note.kind === kind)));
   const stopped = await run('stop');
   assert.equal(stopped.code, 0, stopped.stderr);
-  assert.equal(running(pid), false, 'the tool ended with the manager');
+  assert.deepEqual(notes().filter(({ pid }) => running(pid)), [], 'no read outlives the manager');
+  assert.deepEqual(probeFolders(), [], 'the Codex probe removed its folder');
   fs.rmSync(home, { recursive: true, force: true });
   assert.equal(fs.existsSync(home), false, 'the data folder can be removed at once');
+});
+
+test('a Codex probe that has just answered still removes its folder when the manager stops at once', async (t) => {
+  const { run, probeFolders, seen } = await withHungTools(t, { HUNG_TOOL_ANSWERS: '1' });
+  await seen('an answer from Codex', (all) => all.some((note) => note.answered));
+  assert.equal((await run('stop')).code, 0);
+  assert.deepEqual(probeFolders(), []);
 });
 
 test('a sign-in launch records a new or existing manager without printing the access token', async (t) => {

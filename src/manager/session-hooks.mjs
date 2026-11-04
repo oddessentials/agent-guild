@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { buildSpawnSpec, runSpec, killWindowsTree } from './command-resolver.mjs';
+import { buildSpawnSpec, endWithProcess, killGroup, runSpec, killWindowsTree } from './command-resolver.mjs';
 import { compareVersions, probeVersion } from './versions.mjs';
 import { commandMtime } from './install-channels.mjs';
 
@@ -188,31 +188,41 @@ export function codexHooksFrom(result) {
   return found.map((h) => ({ key: h.key, hash: h.currentHash, trusted: h.trustStatus === 'trusted' }));
 }
 
-export function codexHooksList(resolved, args, { env, platform = process.platform, timeoutMs = PROBE_TIMEOUT_MS, tmpDir = os.tmpdir() } = {}) {
+export function codexHooksList(resolved, args, { env, platform = process.platform, timeoutMs = PROBE_TIMEOUT_MS, tmpDir = os.tmpdir(), signal } = {}) {
+  if (signal?.aborted) return Promise.reject(new Error('The manager is stopping'));
   const home = fs.mkdtempSync(path.join(tmpDir, 'agent-guild-codex-'));
   const spec = buildSpawnSpec(resolved, [...args, 'app-server'], env, platform);
   return new Promise((resolve, reject) => {
     let child;
     let settled = false;
+    let release = () => {};
     const finish = (err, value) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      endTree(child, platform);
-      setTimeout(() => fs.rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }, () => {}), 500).unref();
-      if (err) reject(err);
-      else resolve(value);
+      signal?.removeEventListener('abort', stopped);
+      // The probe settles only once its folder is gone, so whoever waits on it leaves nothing behind.
+      endTree(child, platform).then(() => {
+        release();
+        fs.rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }, () => {
+          if (err) reject(err);
+          else resolve(value);
+        });
+      });
     };
+    const stopped = () => finish(new Error('The manager is stopping'));
     const timer = setTimeout(() => finish(new Error('Codex did not answer in time')), timeoutMs);
     timer.unref?.();
     try {
       const verbatim = typeof spec.args === 'string';
       child = spawn(spec.file, verbatim ? [spec.args] : spec.args, {
-        cwd: home, env: { ...env, CODEX_HOME: home }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, windowsVerbatimArguments: verbatim,
+        cwd: home, env: { ...env, CODEX_HOME: home }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, windowsVerbatimArguments: verbatim, detached: platform !== 'win32',
       });
     } catch (err) {
       return finish(err);
     }
+    if (platform !== 'win32') release = endWithProcess(() => killGroup(child.pid));
+    signal?.addEventListener('abort', stopped, { once: true });
     let stderr = '';
     let buffer = '';
     const send = (msg) => child.stdin.write(`${JSON.stringify(msg)}\n`);
@@ -242,11 +252,15 @@ export function codexHooksList(resolved, args, { env, platform = process.platfor
   });
 }
 
+/** Ends the child and all it started, and resolves once the child has gone. */
 function endTree(child, platform) {
-  if (!child || child.exitCode !== null) return;
+  if (!child?.pid) return Promise.resolve();
+  if (platform !== 'win32') killGroup(child.pid);
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
   try { child.stdin.end(); } catch { /* closed */ }
-  if (platform === 'win32' && child.pid) return killWindowsTree(child.pid);
-  try { child.kill(); } catch { /* gone */ }
+  const gone = new Promise((resolve) => { child.once('exit', resolve); });
+  if (platform !== 'win32') return gone;
+  return new Promise((resolve) => { killWindowsTree(child.pid, (err) => { if (err) resolve(); else gone.then(resolve); }); });
 }
 
 export async function probeCodex(resolved, opts) {
@@ -319,6 +333,7 @@ export class SessionHooks {
     this.dir = dir;
     this.bundles = null;
     this.probes = new Map();
+    this.ending = new AbortController();
     if (dir) {
       try {
         this.bundles = writeBundles(dir, version, { platform: registry.platform });
@@ -326,6 +341,12 @@ export class SessionHooks {
         console.warn(`[reporting] could not write the reporting hooks to ${dir}: ${err.message}`);
       }
     }
+  }
+
+  /** Ends the probes still running, and resolves once they have and their folders are gone. */
+  close() {
+    this.ending.abort();
+    return Promise.allSettled([...this.probes.values()].map((entry) => entry.promise));
   }
 
   warm() {
@@ -346,12 +367,13 @@ export class SessionHooks {
     if (fresh) return cached.promise;
     const env = { ...this.registry.env, ...provider.env };
     const platform = this.registry.platform;
+    const { signal } = this.ending;
     // The last version read stands while a new probe runs, so the card's model reporting row does not blink off
     // whenever a session starts.
     const entry = { resolved, mtime, at: Date.now(), ok: false, done: false, recheck: false, error: false, hookFlags: null, version: cached?.version ?? null };
     entry.promise = (async () => {
       if (provider.reporting === 'codex') {
-        const result = await probeCodex(resolved, { env, platform, timeoutMs: this.probeTimeoutMs });
+        const result = await probeCodex(resolved, { env, platform, timeoutMs: this.probeTimeoutMs, signal });
         entry.ok = result.args.length > 0;
         return result;
       }
@@ -360,8 +382,8 @@ export class SessionHooks {
       const docker = provider.reporting === 'docker';
       const helpArgs = docker ? [...provider.args, '--help'] : ['--help'];
       const [{ stdout, stderr }, version] = await Promise.all([
-        runSpec(buildSpawnSpec(resolved, helpArgs, env, platform), { env, timeoutMs: this.probeTimeoutMs }),
-        docker ? probeVersion(buildSpawnSpec(resolved, provider.versionArgs, env, platform), { env, timeoutMs: this.probeTimeoutMs }) : null,
+        runSpec(buildSpawnSpec(resolved, helpArgs, env, platform), { env, timeoutMs: this.probeTimeoutMs, killTree: true, signal }),
+        docker ? probeVersion(buildSpawnSpec(resolved, provider.versionArgs, env, platform), { env, timeoutMs: this.probeTimeoutMs, run: (s, o) => runSpec(s, { ...o, signal }) }) : null,
       ]);
       const help = `${stdout}\n${stderr}`;
       const hookFlags = DOCKER_HOOK_FLAGS.every((flag) => helpLists(help, flag));
@@ -382,7 +404,10 @@ export class SessionHooks {
       return { pluginDir: helpLists(help, '--plugin-dir'), hookFlags, version: entry.version };
     })().catch((err) => {
       entry.error = true;
-      if (entry.version !== null) { entry.version = null; this.registry.emit?.('updated'); }
+      if (entry.version !== null) {
+        entry.version = null;
+        if (!signal.aborted) this.registry.emit?.('updated');
+      }
       return { error: err.message };
     }).finally(() => { entry.done = true; });
     this.probes.set(provider.id, entry);
