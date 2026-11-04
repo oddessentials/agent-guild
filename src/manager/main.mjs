@@ -199,6 +199,8 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
       err.message = `port ${port} is already in use. Is another Agent Guild manager running? ` +
         'Set AGENT_GUILD_PORT to use a different port.';
     }
+    // The probes started above would otherwise outlive this manager, which never runs its shutdown.
+    await Promise.all([mcpConnect.close(), registry.close(), sessionHooks.close()]);
     throw err;
   }
   // tmux and herdr cards come back closed, ready to reattach, before the

@@ -217,8 +217,8 @@ async function withHungTools(t, extraEnv = {}) {
     for (const { pid } of notes()) if (running(pid)) process.kill(pid);
     fs.rmSync(root, { recursive: true, force: true });
   });
-  const opened = await runWith({ ...env, AGENT_GUILD_HOME: home, AGENT_GUILD_PORT: String(port), TEMP: temp, TMP: temp, TMPDIR: temp, HUNG_TOOL_LOG: log, ...extraEnv }, 'open', '--no-browser');
-  assert.equal(opened.code, 0, opened.stderr);
+  const toolsEnv = { ...env, AGENT_GUILD_HOME: home, AGENT_GUILD_PORT: String(port), TEMP: temp, TMP: temp, TMPDIR: temp, HUNG_TOOL_LOG: log, ...extraEnv };
+  const runTools = (...args) => runWith(toolsEnv, ...args);
   const seen = async (what, check) => {
     const deadline = Date.now() + 15000;
     while (!check(notes())) {
@@ -228,11 +228,12 @@ async function withHungTools(t, extraEnv = {}) {
     }
   };
   const probeFolders = () => fs.readdirSync(temp).filter((name) => name.startsWith('agent-guild-codex-'));
-  return { ...context, probeFolders, notes, seen };
+  return { ...context, probeFolders, notes, seen, runTools, toolsEnv };
 }
 
 test('stop ends every read of a tool, so none is left running and nothing holds the data folder or a probe folder', async (t) => {
-  const { home, run, probeFolders, notes, seen } = await withHungTools(t);
+  const { home, run, probeFolders, notes, seen, runTools } = await withHungTools(t);
+  assert.equal((await runTools('open', '--no-browser')).code, 0);
   const kinds = ['mcp', 'app-server', 'version', 'help'];
   await seen('every kind of read', (all) => kinds.every((kind) => all.some((note) => note.kind === kind)));
   const stopped = await run('stop');
@@ -244,10 +245,23 @@ test('stop ends every read of a tool, so none is left running and nothing holds 
 });
 
 test('a Codex probe that has just answered still removes its folder when the manager stops at once', async (t) => {
-  const { run, probeFolders, seen } = await withHungTools(t, { HUNG_TOOL_ANSWERS: '1' });
+  const { run, probeFolders, seen, runTools } = await withHungTools(t, { HUNG_TOOL_ANSWERS: '1' });
+  assert.equal((await runTools('open', '--no-browser')).code, 0);
   await seen('an answer from Codex', (all) => all.some((note) => note.answered));
   assert.equal((await run('stop')).code, 0);
   assert.deepEqual(probeFolders(), []);
+});
+
+test('a manager that cannot take its port leaves no probe or probe folder behind', async (t) => {
+  const { port, probeFolders, notes, toolsEnv } = await withHungTools(t);
+  const holder = net.createServer();
+  await new Promise((resolve) => holder.listen(port, '127.0.0.1', resolve));
+  t.after(() => holder.close());
+  // No pipes: a probe left running would hold them open and hide the exit.
+  const manager = spawn(process.execPath, [cli, 'start'], { env: toolsEnv, stdio: 'ignore' });
+  assert.equal(await new Promise((resolve) => manager.once('exit', resolve)), 1);
+  assert.deepEqual(probeFolders(), []);
+  assert.deepEqual(notes().filter(({ pid }) => running(pid)), []);
 });
 
 test('a sign-in launch records a new or existing manager without printing the access token', async (t) => {
