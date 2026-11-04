@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process';
 
 const args = process.argv.slice(2);
 const kind = args.includes('app-server') ? 'app-server' : args.includes('--version') || args.includes('version') ? 'version' : args.includes('--help') ? 'help' : args[0];
-const note = (extra) => fs.appendFileSync(process.env.HUNG_TOOL_LOG, `${JSON.stringify({ pid: process.pid, kind, ...extra })}\n`);
+const note = (extra) => fs.appendFileSync(process.env.HUNG_TOOL_LOG, `${JSON.stringify({ pid: process.pid, kind, args, ...extra })}\n`);
 note();
 if (process.env.HUNG_TOOL_ANSWERS && kind !== 'app-server') process.exit(1);
 setInterval(() => {}, 1000);

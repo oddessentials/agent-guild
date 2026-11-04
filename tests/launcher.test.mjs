@@ -240,6 +240,7 @@ test('stop ends every read of a tool, so none is left running and nothing holds 
   assert.equal((await runTools('open', '--no-browser')).code, 0);
   const kinds = ['mcp', 'app-server', 'version', 'help'];
   await seen('every kind of read', (all) => kinds.every((kind) => all.some((note) => note.kind === kind)));
+  assert.match(notes().find((note) => note.kind === 'app-server').args.join(' '), /-c features\.plugins=false/, 'the Codex probe starts no plugin clone in its folder');
   const stopped = await run('stop');
   assert.equal(stopped.code, 0, stopped.stderr);
   assert.deepEqual(notes().filter(({ pid }) => running(pid)), [], 'no read outlives the manager');

@@ -191,7 +191,8 @@ export function codexHooksFrom(result) {
 export function codexHooksList(resolved, args, { env, platform = process.platform, timeoutMs = PROBE_TIMEOUT_MS, tmpDir = os.tmpdir(), signal } = {}) {
   if (signal?.aborted) return Promise.reject(new Error('The manager is stopping'));
   const home = fs.mkdtempSync(path.join(tmpDir, 'agent-guild-codex-'));
-  const spec = buildSpawnSpec(resolved, [...args, 'app-server'], env, platform);
+  // Otherwise app-server clones Codex's plugins into this folder, and that git outlives the probe and holds the folder.
+  const spec = buildSpawnSpec(resolved, [...args, '-c', 'features.plugins=false', 'app-server'], env, platform);
   return new Promise((resolve, reject) => {
     let child;
     let settled = false;
