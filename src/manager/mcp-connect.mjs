@@ -322,6 +322,21 @@ export class McpConnect {
     this.reading = new Map();
     this.reads = 0;
     this.busy = new Set();
+    this.ending = new AbortController();
+    this.running = new Set();
+  }
+
+  /** Ends every read, lets a change that has begun finish, and resolves once no tool started here still runs. */
+  close() {
+    this.ending.abort();
+    return Promise.allSettled(this.running);
+  }
+
+  _track(work) {
+    this.running.add(work);
+    const forget = () => this.running.delete(work);
+    work.then(forget, forget);
+    return work;
   }
 
   _tool(provider) {
@@ -345,8 +360,8 @@ export class McpConnect {
     return JSON.stringify(this._accounts(provider).map((a) => statOf(tool.file(a.env, this.registry.platform))));
   }
 
-  async _run(provider, resolved, env, args) {
-    return runSpec(buildSpawnSpec(resolved, args, env, this.registry.platform), { env, cwd: this.dir, timeoutMs: RUN_TIMEOUT_MS, killTree: true });
+  _run(provider, resolved, env, args, { signal } = {}) {
+    return this._track(runSpec(buildSpawnSpec(resolved, args, env, this.registry.platform), { env, cwd: this.dir, timeoutMs: RUN_TIMEOUT_MS, killTree: true, signal }));
   }
 
   async readAccount(provider, resolved, account) {
@@ -354,7 +369,7 @@ export class McpConnect {
     // A managed home that does not exist yet holds no settings, and some tools create it when asked.
     if (account.dir && !fs.existsSync(account.dir)) return { state: 'off', fingerprint: fingerprint(null) };
     const platform = this.registry.platform;
-    const ctx = { env: account.env, platform, run: (args) => this._run(provider, resolved, account.env, args) };
+    const ctx = { env: account.env, platform, run: (args) => this._run(provider, resolved, account.env, args, { signal: this.ending.signal }) };
     let read;
     try {
       read = await tool.read(ctx);
@@ -372,7 +387,7 @@ export class McpConnect {
 
   refresh(provider, { force = false } = {}) {
     const resolved = this.registry.resolve(provider);
-    if (!this._tool(provider) || !resolved) return Promise.resolve(null);
+    if (this.ending.signal.aborted || !this._tool(provider) || !resolved) return Promise.resolve(null);
     const sig = this._signature(provider);
     const files = this._files(provider);
     const cached = this.cache.get(provider.id);
@@ -425,12 +440,14 @@ export class McpConnect {
     if (!account) throw refusal(404, 'unknown_account', `${provider.tool} has no account "${accountId}"`);
     if (this.busy.has(provider.id)) throw refusal(409, 'busy', `${provider.tool}'s MCP settings are already being changed`);
     this.busy.add(provider.id);
-    try {
-      return await this._change(provider, resolved, tool, account, action, expect);
-    } finally {
-      this.busy.delete(provider.id);
-      await this.refresh(provider, { force: true }).catch(() => {});
-    }
+    return this._track((async () => {
+      try {
+        return await this._change(provider, resolved, tool, account, action, expect);
+      } finally {
+        this.busy.delete(provider.id);
+        await this.refresh(provider, { force: true }).catch(() => {});
+      }
+    })());
   }
 
   async _change(provider, resolved, tool, account, action, expect) {

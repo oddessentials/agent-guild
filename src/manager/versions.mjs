@@ -46,10 +46,10 @@ export function diagnosticLine(text) {
   return line.slice(0, 240);
 }
 
-export async function probeVersion(spec, { env, timeoutMs = 15000, parse = parseVersion } = {}) {
+export async function probeVersion(spec, { env, timeoutMs = 15000, parse = parseVersion, run = runSpec } = {}) {
   try {
     // Asking for a version changes nothing, so at the limit the tool and all it started are killed outright.
-    const { stdout, stderr } = await runSpec(spec, { env, timeoutMs, killTree: true });
+    const { stdout, stderr } = await run(spec, { env, timeoutMs, killTree: true });
     return { ok: true, version: parse(`${stdout}\n${stderr}`), stdout, exitCode: 0, error: null };
   } catch (err) {
     const error = err.killed

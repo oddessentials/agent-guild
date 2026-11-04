@@ -9,10 +9,9 @@ import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
 import { NOTES_BODY_LIMIT, NOTES_LIMIT, createNotesStore } from '../src/manager/notes.mjs';
 import { createManagerServer } from '../src/manager/server.mjs';
+import { tempDirs } from './fixtures/temp-dirs.mjs';
 
-function tempDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-notes-'));
-}
+const tempDir = tempDirs('agent-guild-notes-');
 
 test('a missing notepad is empty, a cleared one stays empty, and a stale revision cannot overwrite it', () => {
   const dir = tempDir();
@@ -42,7 +41,6 @@ test('a missing notepad is empty, a cleared one stays empty, and a stale revisio
     return true;
   });
   assert.equal(createNotesStore(file).snapshot().text, '');
-  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('notes over the character cap are refused and a file that cannot be read is not replaced', () => {
@@ -59,7 +57,6 @@ test('notes over the character cap are refused and a file that cannot be read is
   assert.deepEqual(broken.helloRevision(), { known: false });
   assert.throws(() => broken.save({ revision: null, text: 'replacement' }), { code: 'notes_unreadable' });
   assert.equal(fs.readFileSync(file, 'utf8'), '{"version":1,"text":');
-  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 async function listen(notes) {

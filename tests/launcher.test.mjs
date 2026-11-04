@@ -60,17 +60,21 @@ async function launcher(t) {
   const token = () => fs.readFileSync(path.join(home, 'auth-token'), 'utf8').trim();
   // Register before any assertion: a failed test must still stop its own manager.
   t.after(async () => {
-    const stopped = await run('stop');
-    assert.equal(stopped.code, 0, stopped.stderr);
-    assert.doesNotMatch(stopped.stdout, /still shutting down/, 'cleanup must finish before removing the data directory');
-    fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    try {
+      const stopped = await run('stop');
+      assert.equal(stopped.code, 0, stopped.stderr);
+      assert.doesNotMatch(stopped.stdout, /still shutting down/, 'cleanup must finish before removing the data directory');
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    }
   });
   // A real PTY is essential here: shutdown must end the session's process.
   fs.writeFileSync(path.join(home, 'providers.json'), JSON.stringify({
     providers: [
       { id: 'fake', vendor: 'Test', tool: 'Fake Tool', command: process.execPath, args: [path.join(here, 'fixtures', 'fake-tool.mjs')] },
       { id: 'anthropic', usage: null },
-      { id: 'openai', usage: null },
+      // Not the real Codex CLI's hooks probe: these tests stop their manager at once, whatever it is doing.
+      { id: 'openai', usage: null, reporting: null },
       { id: 'google', usage: null },
     ],
   }));
@@ -195,6 +199,75 @@ test('open still starts the manager when no browser can be launched, and points 
   assert.doesNotMatch(opened.stdout, /#token=/);
   assert.equal((await fetch(`${base}/api/v1/health`)).status, 200);
   assert.equal((await run('url')).stdout.trim(), `${base}/#token=${token()}`);
+});
+
+/** Every provider's command replaced by the fixture, with a private temp folder to show what the manager leaves there. */
+async function withHungTools(t, extraEnv = {}) {
+  const context = await launcher(t);
+  const { home, port } = context;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-hung-'));
+  const fixture = path.join(here, 'fixtures', 'hung-tool.mjs');
+  const script = path.join(root, process.platform === 'win32' ? 'tool.cmd' : 'tool');
+  if (process.platform === 'win32') fs.writeFileSync(script, `@echo off\r\n"${process.execPath}" "${fixture}" %*\r\n`);
+  else fs.writeFileSync(script, `#!/bin/sh\nexec "${process.execPath}" "${fixture}" "$@"\n`, { mode: 0o755 });
+  const defaults = JSON.parse(fs.readFileSync(path.resolve(here, '../config/providers.default.json'), 'utf8')).providers;
+  fs.writeFileSync(path.join(home, 'providers.json'), JSON.stringify({ providers: defaults.filter((p) => p.command).map(({ id }) => ({ id, command: script, usage: null })) }));
+  const temp = path.join(root, 'temp');
+  fs.mkdirSync(temp);
+  const log = path.join(root, 'tool.log');
+  fs.writeFileSync(log, '');
+  const notes = () => fs.readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
+  t.after(() => {
+    for (const { pid } of notes()) if (running(pid)) process.kill(pid);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  const toolsEnv = { ...env, AGENT_GUILD_HOME: home, AGENT_GUILD_PORT: String(port), TEMP: temp, TMP: temp, TMPDIR: temp, HUNG_TOOL_LOG: log, ...extraEnv };
+  const runTools = (...args) => runWith(toolsEnv, ...args);
+  const seen = async (what, check) => {
+    const deadline = Date.now() + 15000;
+    while (!check(notes())) {
+      assert.ok(Date.now() < deadline, `the manager reached ${what}: ${JSON.stringify(notes())}`);
+      await context.call('GET', '/providers');
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  };
+  const probeFolders = () => fs.readdirSync(temp).filter((name) => name.startsWith('agent-guild-codex-'));
+  return { ...context, probeFolders, notes, seen, runTools, toolsEnv };
+}
+
+test('stop ends every read of a tool, so none is left running and nothing holds the data folder or a probe folder', async (t) => {
+  const { home, run, probeFolders, notes, seen, runTools } = await withHungTools(t);
+  assert.equal((await runTools('open', '--no-browser')).code, 0);
+  const kinds = ['mcp', 'app-server', 'version', 'help'];
+  await seen('every kind of read', (all) => kinds.every((kind) => all.some((note) => note.kind === kind)));
+  assert.match(notes().find((note) => note.kind === 'app-server').args.join(' '), /-c features\.plugins=false/, 'the Codex probe starts no plugin clone in its folder');
+  const stopped = await run('stop');
+  assert.equal(stopped.code, 0, stopped.stderr);
+  assert.deepEqual(notes().filter(({ pid }) => running(pid)), [], 'no read outlives the manager');
+  assert.deepEqual(probeFolders(), [], 'the Codex probe removed its folder');
+  fs.rmSync(home, { recursive: true, force: true });
+  assert.equal(fs.existsSync(home), false, 'the data folder can be removed at once');
+});
+
+test('a Codex probe that has just answered still removes its folder when the manager stops at once', async (t) => {
+  const { run, probeFolders, notes, seen, runTools } = await withHungTools(t, { HUNG_TOOL_ANSWERS: '1' });
+  assert.equal((await runTools('open', '--no-browser')).code, 0);
+  await seen('an answer from Codex', (all) => all.some((note) => note.answered));
+  assert.equal((await run('stop')).code, 0);
+  assert.deepEqual(notes().filter(({ pid }) => running(pid)), [], 'ending the probe reached the child of what it started');
+  assert.deepEqual(probeFolders(), []);
+});
+
+test('a manager that cannot take its port leaves no probe or probe folder behind', async (t) => {
+  const { port, probeFolders, notes, toolsEnv } = await withHungTools(t);
+  const holder = net.createServer();
+  await new Promise((resolve) => holder.listen(port, '127.0.0.1', resolve));
+  t.after(() => holder.close());
+  // No pipes: a probe left running would hold them open and hide the exit.
+  const manager = spawn(process.execPath, [cli, 'start'], { env: toolsEnv, stdio: 'ignore' });
+  assert.equal(await new Promise((resolve) => manager.once('exit', resolve)), 1);
+  assert.deepEqual(probeFolders(), []);
+  assert.deepEqual(notes(), [], 'it asked no tool anything');
 });
 
 test('a sign-in launch records a new or existing manager without printing the access token', async (t) => {
@@ -328,6 +401,7 @@ test('restart keeps an ephemeral port, and starts the manager itself when the ol
   // AGENT_GUILD_PORT=0: the successor must listen where the old manager did, not on another free port.
   const zeroHome = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-launcher-'));
   const zeroEnv = { ...env, AGENT_GUILD_HOME: zeroHome, AGENT_GUILD_PORT: '0' };
+  fs.writeFileSync(path.join(zeroHome, 'providers.json'), JSON.stringify({ providers: [{ id: 'openai', usage: null, reporting: null }] }));
   const runtime = () => JSON.parse(fs.readFileSync(path.join(zeroHome, 'manager.json'), 'utf8'));
   try {
     const opened = await runWith(zeroEnv, 'open', '--no-browser');
@@ -350,6 +424,7 @@ test('restart keeps an ephemeral port, and starts the manager itself when the ol
   // answers a shutdown without `restart` and starts nothing.
   const oldHome = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-launcher-'));
   // Found through its runtime file, as with an ephemeral port setting; the successor must keep that port.
+  fs.writeFileSync(path.join(oldHome, 'providers.json'), JSON.stringify({ providers: [{ id: 'openai', usage: null, reporting: null }] }));
   const old = await fakeManager(t, oldHome, '0.0.1');
   const oldPort = old.port;
   // Another manager answers at the port the environment names; it is not the one being restarted.

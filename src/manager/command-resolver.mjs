@@ -88,7 +88,8 @@ export function resolveAllCommands(command, env = process.env, platform = proces
 
 /** End a Windows process and, unless `tree` is false, every process it started. */
 export function killWindowsTree(pid, done = () => {}, { tree = true } = {}) {
-  execFile('taskkill', ['/PID', String(pid), ...(tree ? ['/T'] : []), '/F'], { windowsHide: true, timeout: 5000 }, (err) => done(err));
+  const taskkill = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'taskkill.exe');
+  execFile(taskkill, ['/PID', String(pid), ...(tree ? ['/T'] : []), '/F'], { windowsHide: true, timeout: 5000 }, (err) => done(err));
 }
 
 /** SIGKILL a process group started with `detached`, so nothing it started outlives it. */
@@ -180,7 +181,7 @@ export function npmSpawnSpec(npm, args, env = process.env, platform = process.pl
  * Run a file in its own process group, which execFile cannot do, and at the
  * time limit SIGKILL the whole group. Settles as execFile would.
  */
-function runInOwnGroup(file, args, { env, cwd, timeoutMs, input, maxBuffer }) {
+function runInOwnGroup(file, args, { env, cwd, timeoutMs, input, maxBuffer, signal }) {
   return new Promise((resolve, reject) => {
     let child;
     try {
@@ -198,17 +199,20 @@ function runInOwnGroup(file, args, { env, cwd, timeoutMs, input, maxBuffer }) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      signal?.removeEventListener('abort', stopRun);
       release();
       if (err) reject(Object.assign(err, { stdout, stderr }));
       else resolve({ stdout, stderr });
     };
-    const timer = setTimeout(() => {
+    const stopRun = () => {
       timedOut = true;
       end();
       // A process that left the group may still hold the pipes.
       child.stdout.destroy();
       child.stderr.destroy();
-    }, timeoutMs);
+    };
+    const timer = setTimeout(stopRun, timeoutMs);
+    signal?.addEventListener('abort', stopRun, { once: true });
     const overflow = () => {
       end();
       child.stdout.destroy();
@@ -238,10 +242,11 @@ function maxBufferError() {
  * outright, for wrappers such as .cmd shims and Docker CLI plugins whose own
  * children would otherwise live on.
  */
-export function runSpec(spec, { env, timeoutMs = 15000, cwd, input, killTree = false, maxBuffer = 1024 * 1024 } = {}) {
+export function runSpec(spec, { env, timeoutMs = 15000, cwd, input, killTree = false, maxBuffer = 1024 * 1024, signal } = {}) {
+  if (signal?.aborted) return Promise.reject(Object.assign(new Error('The run was stopped before it started'), { killed: true, stdout: '', stderr: '' }));
   if (spec.pathFirst) env = prependPath(env || process.env, spec.pathFirst);
   const tree = killTree && timeoutMs > 0;
-  if (tree && process.platform !== 'win32') return runInOwnGroup(spec.file, spec.args, { env, cwd, timeoutMs, input, maxBuffer });
+  if (tree && process.platform !== 'win32') return runInOwnGroup(spec.file, spec.args, { env, cwd, timeoutMs, input, maxBuffer, signal });
   return new Promise((resolve, reject) => {
     const opts = { env, cwd, timeout: tree ? 0 : timeoutMs, windowsHide: true, maxBuffer: tree ? Infinity : maxBuffer };
     let args = spec.args;
@@ -252,25 +257,30 @@ export function runSpec(spec, { env, timeoutMs = 15000, cwd, input, killTree = f
     let timer = null;
     let timedOut = false;
     let overflowed = false;
+    let treeKilled = Promise.resolve();
+    let stop = null;
     try {
       const child = execFile(spec.file, args, opts, (err, stdout, stderr) => {
         clearTimeout(timer);
-        if (overflowed) reject(Object.assign(maxBufferError(), { stdout, stderr }));
-        else if (err) reject(Object.assign(err, { stdout, stderr }, timedOut && { killed: true }));
-        else resolve({ stdout, stderr });
+        if (stop) signal?.removeEventListener('abort', stop);
+        // Settled only once taskkill is done: whoever waits on this run may then remove its working directory.
+        treeKilled.then(() => {
+          if (overflowed) reject(Object.assign(maxBufferError(), { stdout, stderr }));
+          else if (err) reject(Object.assign(err, { stdout, stderr }, timedOut && { killed: true }));
+          else resolve({ stdout, stderr });
+        });
       });
       // taskkill /T finds the children through the wrapper, so it runs before the wrapper goes.
       if (tree && child.pid) {
-        const stop = () => {
+        stop = () => {
+          timedOut = !overflowed;
           clearTimeout(timer);
-          killWindowsTree(child.pid);
+          treeKilled = new Promise((done) => { killWindowsTree(child.pid, done); });
           child.stdout?.destroy();
           child.stderr?.destroy();
         };
-        timer = setTimeout(() => {
-          timedOut = true;
-          stop();
-        }, timeoutMs);
+        timer = setTimeout(stop, timeoutMs);
+        signal?.addEventListener('abort', stop, { once: true });
         for (const stream of [child.stdout, child.stderr]) {
           let length = 0;
           stream?.on('data', (chunk) => {

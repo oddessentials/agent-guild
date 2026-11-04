@@ -308,6 +308,8 @@ export class ProviderRegistry extends EventEmitter {
     this._shells = new Map();
     this.versions = new Map();
     this.flags = new LaunchFlags(this);
+    this.ending = new AbortController();
+    this.toolReads = new Set();
     this._refreshing = null;
     this._npmRegistry = null;
     this.reportingEnabled = null;
@@ -376,6 +378,21 @@ export class ProviderRegistry extends EventEmitter {
     return pending;
   }
 
+  /** Asks a tool something that changes nothing, so shutdown can end it with all it started. */
+  _readTool(spec, options) {
+    const read = runSpec(spec, { ...options, killTree: true, signal: this.ending.signal });
+    this.toolReads.add(read);
+    const forget = () => this.toolReads.delete(read);
+    read.then(forget, forget);
+    return read;
+  }
+
+  /** Ends the reads still running, and resolves once they have. */
+  close() {
+    this.ending.abort();
+    return Promise.allSettled(this.toolReads);
+  }
+
   /** Resolves to true when the PATH changed. A concurrent caller waits for the read already in flight. */
   refreshPath({ force = false } = {}) {
     if (!this.pathReader) return Promise.resolve(false);
@@ -442,7 +459,7 @@ export class ProviderRegistry extends EventEmitter {
         const ttl = entry.probeOk === true ? VERSION_TTL_MS : FAILED_PROBE_TTL_MS;
         if (force || entry.probePath !== found || entry.probeMtime !== mtime || now - entry.probeAt > ttl) {
           const spec = buildSpawnSpec(channel.update.file, [...channel.update.args, '--help'], this.env, this.platform);
-          const ok = await runSpec(spec, { env: { ...this.env, ...provider.env } })
+          const ok = await this._readTool(spec, { env: { ...this.env, ...provider.env } })
             .then((out) => updateHelpAccepted(out, channel.update.args), (err) => updateHelpAccepted(err, channel.update.args, { failed: true }));
           changed ||= ok !== entry.probeOk;
           Object.assign(entry, { probePath: found, probeMtime: mtime, probeAt: now, probeOk: ok });
@@ -464,7 +481,7 @@ export class ProviderRegistry extends EventEmitter {
           const broken = provider.plugin ? pluginCopies.find((c) => c.active)?.error ?? null : null;
           const probe = broken
             ? { ok: false, version: null, error: `${this.commandFor(provider)} cannot load ${provider.tool} at ${resolved}: ${broken}` }
-            : await probeVersion(spec, { env: { ...this.env, ...provider.env } });
+            : await probeVersion(spec, { env: { ...this.env, ...provider.env }, run: (s, o) => this._readTool(s, o) });
           const versionStatus = !probe.ok ? 'failed' : probe.version ? 'ok' : 'unavailable';
           changed ||= probe.version !== entry.installed || versionStatus !== entry.versionStatus || probe.error !== entry.versionError;
           Object.assign(entry, {
@@ -490,7 +507,7 @@ export class ProviderRegistry extends EventEmitter {
         // A plugin copy that does not run answers through the plugin protocol, which every copy speaks.
         const probe = provider.plugin
           ? await pluginVersion(file, { env, platform: this.platform }).then((version) => ({ ok: version !== null, version }))
-          : await probeVersion(buildSpawnSpec(file, provider.versionArgs, this.env, this.platform), { env });
+          : await probeVersion(buildSpawnSpec(file, provider.versionArgs, this.env, this.platform), { env, run: (s, o) => this._readTool(s, o) });
         const status = !probe.ok ? 'failed' : probe.version ? 'ok' : 'unavailable';
         changed ||= !cached || cached.version !== probe.version || cached.status !== status;
         copies[file] = { version: probe.version, status, mtime, at: now };
@@ -531,7 +548,8 @@ export class ProviderRegistry extends EventEmitter {
       this.versions.set(provider.id, entry);
     }));
     changed ||= shellsBefore !== JSON.stringify(providers.map((p) => this.shellsFor(p)));
-    if (changed) this.emit('updated');
+    // A read ended by shutdown says nothing about the tool.
+    if (changed && !this.ending.signal.aborted) this.emit('updated');
   }
 
   async finishInstall(id, { exitCode = null, kind = 'update', path: removed = null } = {}) {

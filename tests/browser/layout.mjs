@@ -335,6 +335,63 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   await click('#dock-close');
   await until('the dock closes', async () => !(await visible('#dock')));
   await layoutReady();
+  assert.equal(await visible('#yard-play-solo'), false, 'Orbital shows only its split');
+  const soloPlaced = async (label, width) => {
+    await layoutReady();
+    const [link, chip, stage, title] = await Promise.all([box('#yard-play-solo'), box('.yard-play-solo .yard-play-chip'), box('#yard-stage'), box('.yard-heading > div:first-child')]);
+    assert.equal(await evaluate('innerWidth'), width, `${label}: the viewport keeps its width`);
+    assert.equal(await visible('#yard-play-solo'), true, `${label}: the button shows`);
+    assert.ok(link.width >= 44 && link.height >= 44, `${label}: the button is ${link.width}x${link.height}px`);
+    assert.ok(chip.left >= stage.left && chip.right <= stage.right && chip.top >= stage.top && chip.bottom <= stage.bottom, `${label}: the button is on the stage`);
+    assert.equal(await evaluate('(()=>{const a=document.querySelector("#yard-play-solo"),r=a.getBoundingClientRect();return a.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2))})()'), true, `${label}: nothing covers the button`);
+    if (stage.width < 340) {
+      assert.ok(title.right <= chip.left, `${label}: the title stays clear of the button`);
+      assert.equal(await visible('#yard-subtitle'), false, `${label}: only the title remains`);
+    } else {
+      const [room, needed] = await evaluate('(()=>{const heading=document.querySelector(".yard-heading"),title=heading.firstElementChild,chip=document.querySelector(".yard-play-solo .yard-play-chip");const room=chip.getBoundingClientRect().left-parseFloat(getComputedStyle(heading).columnGap)-title.getBoundingClientRect().left;const needed=Math.max(...[".yard-eyebrow","#yard-title","#yard-subtitle"].map(s=>{const e=document.querySelector(s);e.style.whiteSpace="nowrap";const w=e.scrollWidth;e.style.whiteSpace="";return w}));return [room,needed]})()');
+      assert.ok(room >= needed, `${label}: the title block has ${room}px for a ${needed}px line`);
+    }
+    await noSideScroll(`${label} with the button`);
+  };
+  await evaluate('Promise.all([document.fonts.load("700 20px Almendra"),document.fonts.load("400 20px \\"Germania One\\"")])');
+  for (const skin of ['gnomeland', 'goblinville']) {
+    await evaluate(`document.documentElement.dataset.skin=${JSON.stringify(skin)}`);
+    await until(`${skin} shows its title`, () => evaluate(`import("/yard/model.mjs").then(({WORLDS})=>document.querySelector("#yard-title").textContent===WORLDS[${JSON.stringify(skin)}].title)`));
+    await layoutReady();
+    assert.deepEqual(await evaluate('(()=>{const a=document.querySelector("#yard-play-solo");return [a.href,a.target,a.rel,a.querySelector(".yard-play-sub").textContent]})()'), ['https://agforever.oddessentials.ai/', '_blank', 'noopener noreferrer', 'Wizard Duels · free in your browser']);
+    assert.equal(await visible('#yard-play'), false, `${skin} has no split`);
+    assert.deepEqual(await evaluate('(()=>{const orb=document.querySelector("#yard-play-solo .yard-play-orb");return [orb.querySelectorAll("use").length,[...orb.querySelectorAll("*")].flatMap(e=>["fill","stroke","filter"].map(a=>e.getAttribute(a)?.match(/url\\(#(.+)\\)/)?.[1])).filter(id=>id&&!document.querySelector(".yard-play-solo .yard-play-defs #"+id))]})()'), [0, []], `${skin}: the orb paints from its own definitions, as the Orbital ones are hidden here`);
+    await soloPlaced(`${skin} 1440`, 1440);
+    for (const [width, height] of [[980, 800], [936, 800], [484, 800], [476, 800], [444, 800], [436, 800], [384, 800], [376, 800], [344, 640], [336, 640], [320, 568]]) {
+      await size(width, height);
+      await soloPlaced(`${skin} ${width}`, width);
+    }
+    await size(1440, 900);
+    await click('#notes-open');
+    await until('the dock opens', () => visible('#dock'));
+    await evaluate('document.querySelector("#dock-splitter").focus()');
+    await key('Home', 'Home', 36);
+    for (let dock = 320; dock <= 720; dock += 24) {
+      await evaluate('document.querySelector("#dock-splitter").focus()');
+      await until(`the dock is ${dock}px wide`, () => evaluate(`getComputedStyle(document.documentElement).getPropertyValue("--dock-space")==="${dock}px"`));
+      await soloPlaced(`${skin} dock ${dock}`, 1440);
+      await evaluate('document.querySelector("#dock-splitter").focus()');
+      await key('ArrowLeft', 'ArrowLeft', 37);
+    }
+    await size(1280, 800);
+    await evaluate('document.querySelector("#dock-splitter").focus()');
+    await key('End', 'End', 35);
+    await until('the dock is at its widest', () => evaluate('getComputedStyle(document.documentElement).getPropertyValue("--dock-space")==="720px"'));
+    await soloPlaced(`${skin} beside the widest dock`, 1280);
+    await size(1440, 900);
+    await evaluate('document.querySelector("#dock-splitter").focus()');
+    await key('Home', 'Home', 36);
+    await click('#dock-close');
+    await until('the dock closes', async () => !(await visible('#dock')));
+    await layoutReady();
+  }
+  await evaluate('document.documentElement.dataset.skin="orbital"');
+  await layoutReady();
   await evaluate('HTMLCanvasElement.prototype.getContext=testGetContext');
   await evaluate('document.documentElement.dataset.layout="compact"');
   await layoutReady();
@@ -342,6 +399,7 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   await evaluate('delete document.documentElement.dataset.layout;document.documentElement.dataset.skin="guild"');
   await layoutReady();
   assert.equal(await visible('#yard-play'), false, 'the Guild has no Play now');
+  assert.equal(await visible('#yard-play-solo'), false, 'the Guild has no Wizard Duels button');
   await evaluate(`document.documentElement.dataset.skin=${JSON.stringify(startSkin[0])}`);
   await click('#view-cards');
   await until('Cards', () => evaluate('document.documentElement.dataset.view==="cards"'));

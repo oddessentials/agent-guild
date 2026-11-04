@@ -45,10 +45,9 @@ import {
 } from '../src/manager/session-history.mjs';
 import crypto from 'node:crypto';
 import zlib from 'node:zlib';
+import { tempDirs } from './fixtures/temp-dirs.mjs';
 
-function tempDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-unit-'));
-}
+const tempDir = tempDirs('agent-guild-unit-');
 
 test('resolveCommand finds executables on a POSIX PATH', { skip: process.platform === 'win32' }, () => {
   const dir = tempDir();

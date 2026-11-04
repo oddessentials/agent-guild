@@ -88,7 +88,6 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
   const sessionHooks = new SessionHooks({ registry, dir: paths.reporting, version });
   registry.reportingEnabled = (provider) => sessionHooks.enabled(provider);
   registry.reportingNote = (provider) => sessionHooks.note(provider);
-  sessionHooks.warm();
   const cardNames = createCardNames(paths.cardNames);
   const manager = new SessionManager({
     registry, baseEnv, getApiUrl: () => api.url, sessionDefaults, shimDir, selfUpdate, github, sessionHooks, store: multiplexerStore, cardNames,
@@ -147,7 +146,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
     // Sessions end before the API closes, and the last event says whether
     // every process confirmed its exit, so a client can tell a clean stop
     // from a timeout. The manager refuses new sessions meanwhile.
-    closing = manager.shutdown().then(({ remaining }) => {
+    closing = Promise.all([manager.shutdown(), mcpConnect.close(), registry.close(), sessionHooks.close()]).then(([{ remaining }]) => {
       if (remaining > 0) console.warn(`[manager] ${remaining} session process(es) did not confirm exiting in time`);
       return api.close({ notice: { type: 'manager.stopped', remaining, restart } });
     }).then(() => {
@@ -201,6 +200,8 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
     }
     throw err;
   }
+  // Only now: a manager that cannot take its port never runs its shutdown, which is what ends these probes.
+  sessionHooks.warm();
   // tmux and herdr cards come back closed, ready to reattach, before the
   // runtime file announces this manager; after listening, since a card's
   // environment names the API's URL.

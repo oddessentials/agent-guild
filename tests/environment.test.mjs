@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { tempDirs } from './fixtures/temp-dirs.mjs';
 import { EventEmitter } from 'node:events';
 import { execFileSync, fork } from 'node:child_process';
 import fs from 'node:fs';
@@ -12,6 +13,9 @@ import {
   RUNTIMES, DESIGN_TOOLS, scanRuntime, detectTools, passiveExecutable, probeEnv, runProbe, releaseScanDirectory,
   scanDesignTool, designProgram, designLocations, findInstalled, windowsInstallFolders,
 } from '../src/manager/environment-probe.mjs';
+
+const pinDir = tempDirs('guild-pins-');
+const badPinDir = tempDirs('guild-pins-bad-');
 
 const definition = (id) => RUNTIMES.find((row) => row.id === id);
 function scanner(files, outputs, options = {}) {
@@ -344,7 +348,7 @@ test('real isolated scan reports the manager PATH Node without changing a projec
 });
 
 test('pin files report configured text and do not resolve aliases or shell out', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'guild-pins-'));
+  const dir = pinDir();
   fs.writeFileSync(path.join(dir, '.nvmrc'), '# comment\n\nlts/*\n');
   fs.writeFileSync(path.join(dir, '.node-version'), '22.11.0\n');
   fs.writeFileSync(path.join(dir, '.python-version'), '3.12.1\n');
@@ -376,11 +380,10 @@ test('pin files report configured text and do not resolve aliases or shell out',
   assert.equal(byId['tool-versions-node'].version, '20.11.0');
   assert.equal(byId['tool-versions-python'].version, '3.11.8');
   assert.equal(pins.some((item) => /ruby/.test(item.version || '')), false);
-  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('unreadable and invalid pins stay distinct from a configured version', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'guild-pins-bad-'));
+  const dir = badPinDir();
   fs.writeFileSync(path.join(dir, 'package.json'), '{');
   fs.writeFileSync(path.join(dir, 'pyproject.toml'), 'requires-python = [\n  ">=3.11",\n]\n');
   fs.writeFileSync(path.join(dir, '.nvmrc'), `${'1'.repeat(200)}\n`);
@@ -396,7 +399,6 @@ test('unreadable and invalid pins stay distinct from a configured version', () =
   assert.match(pins['.python-version'].detail, /not a file/);
   assert.equal(pins['.node-version'].status, 'unreadable');
   assert.match(pins['.node-version'].detail, /64 KiB/);
-  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('a pin symlink outside the project is not read', (t) => {

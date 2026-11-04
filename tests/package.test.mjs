@@ -1,11 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { tempDirs } from './fixtures/temp-dirs.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { readTar, checkPackage, peLayout, signedFrom, WINDOWS_MODULES, NATIVE_REPORTERS } from './package/check-tarball.mjs';
 import { generateNotes } from '../.github/release/capture.mjs';
 import { parseNotes } from '../src/manager/changelog.mjs';
+
+const releaseDir = tempDirs('agent-guild-release-');
 
 function header(name, size, { mode = 0o644, type = '0', prefix = '' } = {}) {
   const block = Buffer.alloc(512);
@@ -197,7 +200,7 @@ test('the package check holds a release to signed node-pty modules and launchers
 });
 
 test('the release plan records the version and notes that end with the install command', async () => {
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-release-'));
+  const cwd = releaseDir();
   const out = path.join(cwd, 'plan');
   fs.writeFileSync(path.join(cwd, 'package.json'), JSON.stringify({ name: NAME }));
   const context = {
@@ -220,11 +223,10 @@ test('the release plan records the version and notes that end with the install c
   fs.rmSync(out, { recursive: true, force: true });
   await assert.rejects(generateNotes({}, { ...context, lastRelease: {} }), /No release tag was found/);
   assert.equal(fs.existsSync(out), false, 'a first release without a baseline tag plans nothing');
-  fs.rmSync(cwd, { recursive: true, force: true });
 });
 
 test('the changelog in the page leaves out the install steps that end every release note', async () => {
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-release-'));
+  const cwd = releaseDir();
   const out = path.join(cwd, 'plan');
   fs.writeFileSync(path.join(cwd, 'package.json'), JSON.stringify({ name: NAME }));
   const notes = [
@@ -239,5 +241,4 @@ test('the changelog in the page leaves out the install steps that end every rele
     title: 'Bug Fixes',
     changes: [[{ text: 'keep the fix (' }, { text: '#9', url: 'https://github.com/oddessentials/agent-guild/issues/9' }, { text: ')' }]],
   }]);
-  fs.rmSync(cwd, { recursive: true, force: true });
 });
