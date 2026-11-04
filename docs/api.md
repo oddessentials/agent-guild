@@ -787,7 +787,7 @@ Client to server:
 
 | Message | Meaning |
 | --- | --- |
-| `{ type: "input", data }` | Keystrokes or pasted text, exactly as a terminal would send them. |
+| `{ type: "input", data }` | Keystrokes or pasted text, as a terminal would send them. Send a bracketed paste as one message: in a message that starts with `ESC[200~` and ends with `ESC[201~`, those markers inside the text reach the program with their ESC replaced by `␛`, so the text cannot end the paste. |
 | `{ type: "claim", cols, rows }` | Take the size for this page and set it. Needs `page`. |
 | `{ type: "resize", generation, cols, rows }` | Resize the terminal. Refused unless this page owns the size and `generation` is the latest. |
 | `{ type: "ping" }` | Ask for a `pong`, to check that the link is alive. |
