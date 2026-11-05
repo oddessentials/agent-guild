@@ -22,8 +22,8 @@ if (process.env.HUNG_TOOL_ANSWERS) {
       buffer = buffer.slice(at + 1);
       if (id === 1) process.stdout.write(`${JSON.stringify({ id: 1, result: {} })}\n`);
       if (id === 2) {
-        process.stdout.write(`${JSON.stringify({ id: 2, result: { data: [] } })}\n`);
         note({ answered: true });
+        process.stdout.write(`${JSON.stringify({ id: 2, result: { data: [] } })}\n`);
       }
     }
   });
