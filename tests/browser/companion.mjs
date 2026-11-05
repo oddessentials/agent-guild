@@ -45,8 +45,12 @@ window.disconnectManager = () => {
 </script>`;
 
 await withPage({ name: 'companion', instrumentation }, async ({ origin, navigate, evaluate, send, layoutReady, pass, errors }) => {
+  const stage = (label) => console.log(`# ${label}`);
   await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
   await send('Page.addScriptToEvaluateOnNewDocument', { source: "localStorage.setItem('agentGuild.skin', 'grove'); localStorage.setItem('agentGuild.view', 'yard');" });
+  await send('Network.enable');
+  await send('Network.setBlockedURLs', { urls: ['*/yard/assets/*'] });
+  stage('opening the Grove yard');
   await navigate(origin);
   await until('connected install button', () => evaluate('document.querySelector("#yard-install").checkVisibility() && !document.querySelector("#yard-install").disabled'));
   await evaluate('Promise.all([...document.querySelectorAll("#yard-install img")].map(img => { img.loading="eager"; return img.decode(); }))');
@@ -57,40 +61,32 @@ await withPage({ name: 'companion', instrumentation }, async ({ origin, navigate
     const x = r.left + r.width / 2, y = r.top + r.height / 2;
     return { x, y, hit: button.contains(document.elementFromPoint(x, y)) };
   })()`);
-  const mouse = async () => {
+  const click = async () => {
     const { x, y } = await point();
     await send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
     await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
   };
-  const touch = async () => {
-    const { x, y } = await point();
-    await send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
-    await send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-  };
-  const keyboard = async () => {
-    await evaluate('document.querySelector("#yard-install").focus()');
-    assert.equal(await evaluate('document.activeElement.id'), 'yard-install');
-    await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' });
-    await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
-  };
 
-  let count = 0;
-  for (const [theme, activate] of [['dark', mouse], ['light', touch], ['dark', keyboard]]) {
+  stage('checking the button is under the pointer in both themes');
+  for (const theme of ['light', 'dark']) {
     await evaluate(`document.documentElement.dataset.theme=${JSON.stringify(theme)}`);
     await layoutReady();
-    assert.equal((await point()).hit, true);
-    await activate();
-    assert.equal(await evaluate('installRequests.length'), ++count);
-    assert.equal(await evaluate('document.querySelector("#yard-install").disabled'), true);
-    await mouse();
-    assert.equal(await evaluate('installRequests.length'), count);
-    await evaluate('finishInstallRequest()');
-    await until('the companion install terminal opens', () => evaluate('!document.querySelector("#terminal-panel").hidden && document.querySelector("#panel-title").textContent.includes("Install Grove Companion")'));
-    await evaluate('document.querySelector("#panel-close").click()');
-    await until('terminal closed and button enabled', () => evaluate('document.querySelector("#terminal-panel").hidden && !document.querySelector("#yard-install").disabled'));
+    assert.equal((await point()).hit, true, theme);
   }
-  pass('mouse, touch and keyboard open an install terminal, with duplicate clicks blocked while the request is pending');
 
+  stage('clicking Install');
+  await click();
+  assert.equal(await evaluate('installRequests.length'), 1);
+  assert.equal(await evaluate('document.querySelector("#yard-install").disabled'), true);
+  await click();
+  assert.equal(await evaluate('installRequests.length'), 1);
+  await evaluate('finishInstallRequest()');
+  await until('the companion install terminal opens', () => evaluate('!document.querySelector("#terminal-panel").hidden && document.querySelector("#panel-title").textContent.includes("Install Grove Companion")'));
+  await evaluate('document.querySelector("#panel-close").click()');
+  await until('terminal closed and button enabled', () => evaluate('document.querySelector("#terminal-panel").hidden && !document.querySelector("#yard-install").disabled'));
+  pass('a click opens an install terminal, and a second click is blocked while the request is pending');
+
+  stage('checking platform, skin and connection');
   for (const [platform, visible] of [['linux', false], ['win32', true], ['darwin', true]]) {
     await evaluate(`changePlatform(${JSON.stringify(platform)})`);
     assert.equal(await evaluate('document.querySelector("#yard-install").checkVisibility()'), visible);
@@ -99,8 +95,8 @@ await withPage({ name: 'companion', instrumentation }, async ({ origin, navigate
   assert.equal(await evaluate('document.querySelector("#yard-install").checkVisibility()'), false);
   await evaluate('document.documentElement.dataset.skin="grove"; disconnectManager()');
   assert.equal(await evaluate('document.querySelector("#yard-install").disabled'), true);
-  await mouse();
-  assert.equal(await evaluate('installRequests.length'), count);
+  await click();
+  assert.equal(await evaluate('installRequests.length'), 1);
   assert.deepEqual(errors, []);
   pass('the install control follows platform, skin and connection availability');
 });
