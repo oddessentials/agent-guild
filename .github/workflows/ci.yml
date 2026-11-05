@@ -48,6 +48,10 @@ jobs:
           CHROME_NO_SANDBOX: '1'
         # Limits are about three times each step's time on a healthy runner.
         timeout-minutes: 3
+      - run: node tests/browser/companion.mjs
+        env:
+          CHROME_NO_SANDBOX: '1'
+        timeout-minutes: 1
       - run: |
           node tests/browser/github.mjs
           node tests/browser/github-branches.mjs

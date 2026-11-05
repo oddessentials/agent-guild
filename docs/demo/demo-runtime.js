@@ -414,6 +414,7 @@
     }
     var muxAction = route.match(/^\/providers\/shell\/multiplexers\/(tmux|herdr)\/(install|update|uninstall)$/);
     if (muxAction && method === 'POST') return manageMultiplexer(muxAction[1], muxAction[2], body);
+    if (route === '/companion/install' && method === 'POST') return installCompanion();
     var installMatch = route.match(/^\/providers\/([^/]+)\/install$/);
     if (installMatch && method === 'POST') return installTool(installMatch[1], body);
     var removal = route.match(/^\/providers\/([^/]+)\/uninstall$/);
@@ -983,6 +984,20 @@
       announce({ type: 'session.updated', session: labelled(made) });
       announce({ type: 'providers.updated', providers: clone(providers) });
     }, 1200);
+    return json({ session: labelled(made) }, 201);
+  }
+
+  function installCompanion() {
+    var id = Math.random().toString(16).slice(2, 10).padEnd(8, '0');
+    var made = fresh(session(id, 'shell', 'Install Grove Companion', 'demo', null, []));
+    made.task = 'install'; made.reporting = null;
+    transcripts[id] = 'Simulated install of the Grove Companion\r\nNo commands are run on your computer.\r\n';
+    sessions.push(made);
+    announce({ type: 'session.created', session: labelled(made) });
+    setTimeout(function () {
+      made.status = 'exited'; made.exitCode = 0; made.activity = 'quiet';
+      announce({ type: 'session.updated', session: labelled(made) });
+    }, 1000);
     return json({ session: labelled(made) }, 201);
   }
 

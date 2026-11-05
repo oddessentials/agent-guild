@@ -202,7 +202,7 @@ function holdToast(held) {
 const firstClick = (run) => (e) => { if (e.detail < 2) run(); };
 
 /** Buttons that act through the session manager. While it cannot be reached they are unavailable rather than left to fail. */
-const MANAGER_ACTIONS = '.provider :is(.new, .existing, .install, .update), .session-card :is(.resume, .rename, .stop, .remove), .history-resume, #panel-stop';
+const MANAGER_ACTIONS = '.provider :is(.new, .existing, .install, .update), .session-card :is(.resume, .rename, .stop, .remove), .history-resume, #panel-stop, #yard-install';
 
 function paintManagerActions(root = document) {
   for (const button of root.querySelectorAll(MANAGER_ACTIONS)) button.disabled = !state.connected;
@@ -7943,6 +7943,7 @@ function connectEvents() {
       state.launcher = typeof msg.launcher === 'string' ? msg.launcher : null;
       state.folderOpener = msg.folderOpener || null;
       state.platform = msg.platform || null;
+      $('yard-install').hidden = !['win32', 'darwin'].includes(state.platform);
       state.remoteAccessUI?.setAvailable(msg.remoteAccess);
       state.remoteAccessUI?.signInsUpdated();
       state.glassesLinkUI?.setAvailable(msg.remoteAccess);
@@ -8603,6 +8604,20 @@ onMenu($('yard-play-menu'), (menu) => {
 }, (menu) => returnFocus(menu, $('yard-play-more')));
 $('yard-play-menu').addEventListener('click', (e) => {
   if (e.target.closest('a')) closeMenu(e.currentTarget);
+});
+$('yard-install').addEventListener('click', async (e) => {
+  const button = e.currentTarget;
+  button.disabled = true;
+  try {
+    const { session } = await api('POST', '/companion/install');
+    upsertSession(session);
+    openPanel(session.id);
+  } catch (err) {
+    if (err instanceof AuthError) return showAuth(err.message);
+    toast(err.message, 8000);
+  } finally {
+    button.disabled = !state.connected;
+  }
 });
 new MutationObserver(() => closeMenu($('yard-play-menu'))).observe(document.documentElement, { attributes: true, attributeFilter: ['data-view', 'data-skin', 'data-layout'] });
 window.addEventListener('scroll', () => placeMenu($('yard-play-menu'), $('yard-play-more')), { passive: true });

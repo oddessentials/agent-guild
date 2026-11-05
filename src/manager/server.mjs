@@ -551,6 +551,7 @@ export function createManagerServer({
       const session = await manager.manageMultiplexer(multiplexerMatch[1], multiplexerMatch[2], multiplexerMatch[3], { path: body.path, force: body.force === true });
       return sendJson(res, 201, { session: session.toJSON() });
     }
+    if (route === '/companion/install' && method === 'POST') return sendJson(res, 201, { session: manager.installCompanion().toJSON() });
     const installMatch = route.match(/^\/providers\/([a-z0-9][a-z0-9_-]{0,31})\/install$/);
     if (installMatch && method === 'POST') {
       const body = await readJsonBody(req);

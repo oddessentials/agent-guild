@@ -17,6 +17,7 @@ import { SELF_PROVIDER } from './self-update.mjs';
 import { GITHUB_PROVIDER, dropsFromCloneEnv, parseRepo } from './github.mjs';
 import { pathIdentity } from './multiplexer-paths.mjs';
 import { cleanResumeId } from './resume-id.mjs';
+import { companionSpawnSpec, companionSupported } from './companion.mjs';
 import { handleHookEvent } from '../report/hook-event.mjs';
 
 export const MAX_SESSIONS = 32;
@@ -100,6 +101,7 @@ export class SessionManager extends EventEmitter {
     this.restoring = false;
     this.pendingCards = new Map();
     this.multiplexerOperations = new Set();
+    this.companionInstall = null;
     this.multiplexerStarts = new Map();
     this.pendingRestore = null;
     this.multiplexerRefresh = null;
@@ -545,7 +547,7 @@ export class SessionManager extends EventEmitter {
 
   installsRunningFor(providerId) {
     let n = 0;
-    for (const s of [...this.sessions.values(), ...this.exiting]) if (s.status === 'running' && s.task === 'install' && !s.multiplexerInstall && s.provider.id === providerId) n++;
+    for (const s of [...this.sessions.values(), ...this.exiting]) if (s.status === 'running' && s.task === 'install' && !s.multiplexerInstall && !s.companionInstall && s.provider.id === providerId) n++;
     return n;
   }
 
@@ -630,6 +632,23 @@ export class SessionManager extends EventEmitter {
         this.registry.emit('updated');
       }
     }
+  }
+
+  installCompanion() {
+    if (!companionSupported(this.registry.platform)) throw httpError(400, 'The Grove Companion is for Windows and macOS.', 'companion_unsupported');
+    const provider = this.registry.get('shell');
+    if (!provider) throw httpError(404, 'Unknown provider', 'unknown_provider');
+    if (this.companionInstall) throw httpError(409, 'The Grove Companion is already being installed.', 'install_in_progress');
+    const session = this._spawn({
+      provider, spawnSpec: this._companionSpec(), cwd: os.homedir(), name: 'Install Grove Companion', task: 'install', companionInstall: true,
+    });
+    this.companionInstall = session;
+    session.exited.then(() => { if (this.companionInstall === session) this.companionInstall = null; });
+    return session;
+  }
+
+  _companionSpec() {
+    return companionSpawnSpec(this.baseEnv, this.registry.platform);
   }
 
   _restorePending() {
@@ -756,7 +775,7 @@ export class SessionManager extends EventEmitter {
   _spawn({
     provider, description = this.registry.describe(provider), spawnSpec, cwd, cols, rows, name, defaultName, named = false, resume = null, task = null, installKind = null, installPath = null, account = null,
     extraEnv = null, dropEnv = null, clone = null, reporting = null, multiplexer = null,
-    id = newId(), reportToken = crypto.randomBytes(16).toString('hex'), createdAt, context = null, multiplexerInstall = null,
+    id = newId(), reportToken = crypto.randomBytes(16).toString('hex'), createdAt, context = null, multiplexerInstall = null, companionInstall = false,
   }) {
     this._assertCanSpawn();
     let env = this._sessionEnv({ id, reportToken, provider, account, extraEnv, dropEnv });
@@ -797,7 +816,8 @@ export class SessionManager extends EventEmitter {
     });
     session.on('warning', (msg) => console.warn(`[session ${id}] ${msg}`));
     session.multiplexerInstall = multiplexerInstall;
-    if (task === 'install' && !multiplexerInstall) {
+    session.companionInstall = companionInstall;
+    if (task === 'install' && !multiplexerInstall && !companionInstall) {
       session.on('exit', () => {
         this.registry.finishInstall(provider.id, { exitCode: session.exitCode, kind: installKind, path: installPath }).catch(() => {});
       });
