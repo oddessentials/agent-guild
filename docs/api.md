@@ -666,6 +666,7 @@ All paths are under `/api/v1`.
 | GET | `/yard-art` | | `{ yardArt }`: the Yard's art. `state` is `ready`, `missing`, `downloading` (with `received` bytes), `installing`, `failed` or `unavailable` (each with `error`), or `cancelled`; `size` is the pack's size in bytes. A checkout serves `web/yard/assets` and is always `ready`. `/yard/assets/` answers 404 until the art is `ready`. |
 | POST | `/yard-art/download` | | `202 { yardArt }`: starts the one download of the art pack named by the package, unless it is running or installed. Progress and the outcome arrive as `yard-art.updated`. |
 | POST | `/yard-art/cancel` | | `{ yardArt }`: stops the download for every client; the state becomes `cancelled`. |
+| POST | `/companion/install` | | `201 { session }`: starts a session that downloads the latest Grove Companion, checks its signature, installs it and starts it. 400 `companion_unsupported` unless the manager runs on Windows or macOS; 409 `install_in_progress` while one runs. |
 | POST | `/yard/fireworks` | | `{ ok, pages }`: fireworks over the Yard of every open page, sent as `yard.fireworks`. `pages` is how many pages were listening. |
 | GET | `/changelog` | | `{ refreshing, okAt, error, releases }`: Agent Guild's own releases, newest first, each `{ version, url, publishedAt, sections: [{ title, changes }] }`, where `title` may be null and a change is a list of text runs. A `changelog.updated` event follows a refresh. |
 | GET | `/providers/:id/history?account=&limit=&cwd=&q=` | | `{ history }`: a History object for one account (default `default`). |

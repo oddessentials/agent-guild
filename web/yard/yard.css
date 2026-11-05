@@ -157,6 +157,13 @@
 .yard-play-solo { --play-aura:#ff6a1f; }
 :root[data-theme="light"] .yard-play { --play-ray:#b8893d; }
 .yard-play:has(.yard-play-chip :focus-visible) { outline:2px solid var(--focus); outline-offset:3px; }
+.yard-install { --play-h:46px; display:none; pointer-events:auto; padding:0; border:0; background:none; cursor:pointer; margin:calc(var(--play-h) * -42 / 128) calc(var(--play-h) * -46 / 128); }
+:root[data-skin="grove"] .yard-install:not([hidden]) { display:block; }
+.yard-install img { display:block; height:calc(var(--play-h) * 212 / 128); transition:filter .2s; }
+.yard-install:hover:not(:disabled) img { filter:brightness(1.12); }
+.yard-install:disabled { cursor:default; opacity:.6; }
+.yard-install:focus-visible { outline:2px solid var(--focus); outline-offset:-12px; }
+:root[data-theme="light"] .yard-install-dark, :root:not([data-theme="light"]) .yard-install-light { display:none; }
 .yard-play-defs { position:absolute; width:0; height:0; overflow:hidden; }
 .yard-play-burst { position:absolute; left:50%; top:50%; width:calc(var(--play-h) * 7); height:calc(var(--play-h) * 2.6); translate:-50% -50%; pointer-events:none; z-index:0; opacity:.55; transition:opacity .3s;
   background:radial-gradient(closest-side, color-mix(in srgb, var(--play-aura) 55%, transparent), color-mix(in srgb, var(--play-aura) 22%, transparent) 40%, transparent 72%);
