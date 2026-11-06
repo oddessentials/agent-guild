@@ -417,7 +417,7 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   await size(1440, 900);
   await size(1440, 900);
   assert.equal(await visible('#yard-world-replace'), false, 'the demo has no manager to install a world');
-  const spotClear = (label) => evaluate(`(()=>{for(const id of ['#yard-world-get','#yard-world-replace'])document.querySelector(id).hidden=false;const box=(e)=>e.getBoundingClientRect(),stage=box(document.querySelector('#yard-stage'));
+  const spotClear = (label) => evaluate(`(()=>{for(const id of ['#yard-world-get','#yard-world-replace','#yard-world-restore'])document.querySelector(id).hidden=false;const box=(e)=>e.getBoundingClientRect(),stage=box(document.querySelector('#yard-stage'));
     const parts=[...document.querySelectorAll('#yard-world .btn:not([hidden])')],camera=[...document.querySelectorAll('.yard-camera .btn:not([hidden])')];
     const inside=parts.every((e)=>{const r=box(e);return r.width>=44&&r.left>=stage.left&&r.right<=stage.right&&r.top>=stage.top&&r.bottom<=stage.bottom;});
     const apart=parts.every((e)=>camera.every((c)=>{const a=box(e),b=box(c);return a.right<=b.left||b.right<=a.left||a.bottom<=b.top||b.bottom<=a.top;}));
@@ -428,7 +428,7 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
     for (const [width, height] of [[1440, 900], [980, 800], [444, 800], [336, 640]]) {
       await size(width, height);
       const at = await spotClear(`${skin} ${width}`);
-      assert.deepEqual([at.count, at.inside, at.apart], [2, true, true], JSON.stringify(at));
+      assert.deepEqual([at.count, at.inside, at.apart], [3, true, true], JSON.stringify(at));
       if (width === 1440) lefts.add(at.left);
     }
     await size(1440, 900);
@@ -439,7 +439,7 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   for (const [width, height] of [[1440, 900], [360, 640], [280, 500]]) {
     await size(width, height);
     const compactSpot = await spotClear(`compact ${width}`);
-    assert.deepEqual([compactSpot.count, compactSpot.inside, compactSpot.apart], [2, true, true], JSON.stringify(compactSpot));
+    assert.deepEqual([compactSpot.count, compactSpot.inside, compactSpot.apart], [3, true, true], JSON.stringify(compactSpot));
   }
   await size(1440, 900);
   await evaluate('document.querySelector("#yard-world-replace").click()');
