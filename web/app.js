@@ -2384,7 +2384,6 @@ async function changeMcp(provider, entry, view) {
 
 let dealt = false;
 
-const companionSupported = () => ['win32', 'darwin'].includes(state.platform);
 const BREAK_CARD = 'terminal-ai-chat';
 const BREAK_LABEL = 'Need a break?';
 const BREAK_SOURCES = ['yard-play-arena', 'yard-play-more', 'yard-play-solo', 'yard-install', 'yard-play-builders'];
@@ -2446,7 +2445,7 @@ function breakItem(id) {
 function mountBreakButtons(card) {
   const section = card.querySelector('.break-buttons'), row = section.querySelector('.break-row');
   for (const id of BREAK_SOURCES) {
-    if (id === 'yard-install' && !companionSupported()) continue;
+    if (id === 'yard-install' && $(id).hidden) continue;
     const item = breakItem(id);
     if (id === 'yard-install') {
       const button = item.querySelector('.yard-play-link');
@@ -8049,7 +8048,7 @@ function connectEvents() {
       state.launcher = typeof msg.launcher === 'string' ? msg.launcher : null;
       state.folderOpener = msg.folderOpener || null;
       state.platform = msg.platform || null;
-      $('yard-install').hidden = !companionSupported();
+      $('yard-install').hidden = !['win32', 'darwin'].includes(state.platform);
       $('yard-world-get').hidden = state.platform !== 'win32';
       state.yardWorlds = msg.yardWorlds ?? null;
       state.remoteAccessUI?.setAvailable(msg.remoteAccess);
