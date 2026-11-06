@@ -74,6 +74,6 @@
     "@gltf-transform/extensions": "4.5.1",
     "@gltf-transform/functions": "4.5.1",
     "esbuild": "0.28.2",
-    "three": "0.186.1"
+    "three": "0.187.0"
   }
 }
