@@ -53,7 +53,6 @@ await withPage({ name: 'companion', instrumentation }, async ({ origin, navigate
   stage('opening the Grove yard');
   await navigate(origin);
   await until('connected install button', () => evaluate('document.querySelector("#yard-install").checkVisibility() && !document.querySelector("#yard-install").disabled'));
-  await evaluate('Promise.all([...document.querySelectorAll("#yard-install img")].map(img => { img.loading="eager"; return img.decode(); }))');
   await layoutReady();
 
   const point = () => evaluate(`(() => {
@@ -73,6 +72,40 @@ await withPage({ name: 'companion', instrumentation }, async ({ origin, navigate
     await layoutReady();
     assert.equal((await point()).hit, true, theme);
   }
+
+  stage('checking the button is live text that leaves the title room');
+  const placed = () => evaluate(`(() => {
+    const parts = ['.yard-play-chev', '.yard-play-sub', '.yard-play-now', '.yard-play-text'];
+    const root = document.querySelector('.yard-play-grove'), heading = document.querySelector('.yard-heading');
+    const chip = root.querySelector('.yard-play-chip').getBoundingClientRect(), stage = document.querySelector('#yard-stage').getBoundingClientRect();
+    const needed = Math.max(...['.yard-eyebrow', '#yard-title', '#yard-subtitle'].map((s) => {
+      const line = document.querySelector(s);
+      line.style.whiteSpace = 'nowrap';
+      const width = line.scrollWidth;
+      line.style.whiteSpace = '';
+      return width;
+    }));
+    return {
+      stage: stage.width, height: chip.height, needed, onStage: chip.left >= stage.left && chip.right <= stage.right,
+      room: chip.left - parseFloat(getComputedStyle(heading).columnGap) - heading.firstElementChild.getBoundingClientRect().left,
+      shown: parts.filter((s) => root.querySelector(s).checkVisibility()).length,
+    };
+  })()`);
+  assert.deepEqual(await evaluate(`(() => {
+    const size = (s) => getComputedStyle(document.querySelector(s)).fontSize;
+    return [document.querySelector('#yard-install img'), size('.yard-play-grove .yard-play-title') === size('.yard-play-solo .yard-play-title'), size('.yard-play-grove .yard-play-sub') === size('.yard-play-solo .yard-play-sub')];
+  })()`), [null, true, true]);
+  for (const width of [1440, 800]) {
+    await send('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false });
+    await layoutReady();
+    const at = await placed();
+    assert.ok(at.onStage && at.height >= 44, `${width}: ${JSON.stringify(at)}`);
+    assert.ok(at.room >= at.needed, `${width}: ${JSON.stringify(at)}`);
+    assert.equal(at.shown, at.stage > 660 ? 4 : at.stage > 480 ? 3 : at.stage > 440 ? 1 : 0, `${width}: ${JSON.stringify(at)}`);
+  }
+  await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
+  await layoutReady();
+  pass('the button is live text at the Play buttons\' sizes and leaves the title unwrapped');
 
   stage('clicking Install');
   await click();
