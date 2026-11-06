@@ -169,6 +169,19 @@
 :root[data-theme="light"] .yard-play { --play-ray:#b8893d; }
 .yard-play:has(.yard-play-chip :focus-visible) { outline:2px solid var(--focus); outline-offset:3px; }
 .yard-play-defs { position:absolute; width:0; height:0; overflow:hidden; }
+.break-buttons { display:grid; gap:8px; padding-top:10px; border-top:1px solid var(--border); }
+.break-buttons[hidden] { display:none; }
+.break-label { margin:0; font-size:.8rem; color:var(--muted); }
+.break-row { display:flex; flex-wrap:wrap; gap:8px; }
+.break-row .yard-play { --play-h:46px; display:block; }
+.break-row .yard-play-chip { --play-more-w:44px; }
+.break-row .yard-play-link { padding:0 7px; }
+.break-row .yard-play-more { padding:0; }
+.break-row .yard-play-more::before { display:none; }
+.break-row .yard-play-more-orb { display:block; grid-area:1 / 1; }
+.break-row .yard-play-caret { grid-area:1 / 1; place-self:end; width:9px; height:6px; margin:0 7px 6px 0; stroke-width:2.2; }
+.break-row .yard-play-orb { width:38px; height:38px; }
+.break-row .armed .yard-play-chip { outline:2px solid var(--focus); outline-offset:2px; }
 .yard-play-burst { position:absolute; left:50%; top:50%; width:calc(var(--play-h) * 7); height:calc(var(--play-h) * 2.6); translate:-50% -50%; pointer-events:none; z-index:0; opacity:.55; transition:opacity .3s;
   background:radial-gradient(closest-side, color-mix(in srgb, var(--play-aura) 55%, transparent), color-mix(in srgb, var(--play-aura) 22%, transparent) 40%, transparent 72%);
   -webkit-mask:radial-gradient(closest-side, #000 0, #000c 30%, #0004 55%, transparent 74%); mask:radial-gradient(closest-side, #000 0, #000c 30%, #0004 55%, transparent 74%); }

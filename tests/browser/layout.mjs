@@ -6,7 +6,7 @@ import { until, withPage } from './chrome.mjs';
 const instrumentation = `<script>
 window.testTerms=[];window.testSizes=[];window.testActions=[];window.testSockets=[];
 const demoFetch=window.fetch;
-window.fetch=function(input,init){if(String(input?.url??input).split('?')[0].endsWith('/actions'))testActions.push(Date.now());return demoFetch.call(this,input,init);};
+window.fetch=function(input,init){const route=String(input?.url??input).split('?')[0];if(route.endsWith('/actions'))testActions.push(Date.now());const answer=demoFetch.call(this,input,init);if(!route.endsWith('/providers')||!localStorage.getItem('testBreakCard'))return answer;return answer.then((r)=>r.json()).then((body)=>{const shell=body.providers.find((p)=>p.id==='shell');body.providers.push({...shell,id:'terminal-ai-chat',tool:'Terminal AI Chat',vendor:'Odd Essentials'});return new Response(JSON.stringify(body),{status:200,headers:{'Content-Type':'application/json'}});});};
 const RealTerminal=window.Terminal;
 window.Terminal=class extends RealTerminal {
   constructor(...args){super(...args);testTerms.push(this);}
@@ -359,7 +359,7 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
     assert.deepEqual(await evaluate('(()=>{const a=document.querySelector("#yard-play-solo");return [a.href,a.target,a.rel,a.querySelector(".yard-play-sub").textContent]})()'), ['https://agforever.oddessentials.ai/', '_blank', 'noopener noreferrer', 'Wizard Duels · free in your browser']);
     assert.equal(await visible('#yard-play'), false, `${skin} has no split`);
     assert.deepEqual([await visible('#yard-play-arena'), await visible('#yard-play-builders')], [false, false], `${skin} has neither Arena nor Builders`);
-    assert.deepEqual(await evaluate('(()=>{const orb=document.querySelector("#yard-play-solo .yard-play-orb");return [orb.querySelectorAll("use").length,[...orb.querySelectorAll("*")].flatMap(e=>["fill","stroke","filter"].map(a=>e.getAttribute(a)?.match(/url\\(#(.+)\\)/)?.[1])).filter(id=>id&&!document.querySelector(".yard-play-solo .yard-play-defs #"+id))]})()'), [0, []], `${skin}: the orb paints from its own definitions, as the Orbital ones are hidden here`);
+    assert.deepEqual(await evaluate('(()=>{const orb=document.querySelector("#yard-play-solo .yard-play-orb");return [orb.querySelectorAll("use").length,[...orb.querySelectorAll("*")].flatMap(e=>["fill","stroke","filter"].map(a=>e.getAttribute(a)?.match(/url\\(#(.+)\\)/)?.[1])).filter(id=>id&&!document.querySelector("body > .yard-play-defs #"+id))]})()'), [0, []], `${skin}: the orb paints from definitions outside the Yard, which the Cards hide`);
     await soloPlaced(`${skin} 1440`, 1440);
     for (const [width, height] of [[980, 800], [936, 800], [484, 800], [476, 800], [444, 800], [436, 800], [384, 800], [376, 800], [344, 640], [336, 640], [320, 568]]) {
       await size(width, height);
@@ -934,6 +934,45 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   const tv = await send('Page.addScriptToEvaluateOnNewDocument', {
     source: 'window.testApp=[];window.agentGuild={postMessage:m=>testApp.push(JSON.parse(m))};localStorage.setItem("agentGuild.view","yard");',
   });
+  await evaluate('document.documentElement.dataset.skin="guild"');
+  await evaluate('localStorage.setItem("testBreakCard","1");');
+  await reload();
+  await click('#view-cards');
+  await until('the break buttons', () => evaluate('document.querySelector(".provider[data-id=\\"terminal-ai-chat\\"] .break-row .yard-play")?.checkVisibility()&&document.querySelector("#providers").getAnimations({subtree:true}).every((a)=>!Number.isFinite(a.effect.getComputedTiming().endTime))'));
+  const breakFit = () => evaluate(`(()=>{const card=document.querySelector('.provider[data-id="terminal-ai-chat"]'),c=card.getBoundingClientRect(),box=(e)=>e.getBoundingClientRect();
+    const chips=[...card.querySelectorAll('.break-row .yard-play-chip')],parts=[...card.querySelectorAll('.break-row .yard-play-link,.break-row .yard-play-more')];
+    return {count:chips.length,small:parts.filter((e)=>box(e).width<44||box(e).height<44).length,
+      outside:chips.filter((e)=>{const r=box(e);return r.left<c.left||r.right>c.right||r.top<c.top||r.bottom>c.bottom;}).length,
+      overlap:chips.some((a,i)=>chips.slice(i+1).some((b)=>{const x=box(a),y=box(b);return x.left<y.right&&y.left<x.right&&x.top<y.bottom&&y.top<x.bottom;})),
+      words:card.querySelectorAll('.break-row .yard-play-text,.break-row .yard-play-chev').length,ids:new Set([...document.querySelectorAll('[id]')].map((e)=>e.id)).size===document.querySelectorAll('[id]').length};})()`);
+  for (const skin of ['guild', 'orbital', 'grove', 'professional', 'goblinville', 'gnomeland']) {
+    await evaluate(`document.documentElement.dataset.skin="${skin}"`);
+    for (const [width, height] of [[1440, 900], [800, 800], [390, 844]]) {
+      await size(width, height);
+      const fit = await breakFit();
+      assert.deepEqual([fit.count, fit.small, fit.outside, fit.overlap, fit.words, fit.ids], [5, 0, 0, false, 0, true], `${skin} ${width}: ${JSON.stringify(fit)}`);
+    }
+  }
+  await size(1440, 900);
+  const breakLabel = () => evaluate('document.querySelector(".break-buttons:not([hidden]) .break-label").textContent');
+  assert.equal(await breakLabel(), 'Need a break?');
+  const breakTap = (selector, pointerType) => evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});let opened=false;const stop=(c)=>{opened=true;c.preventDefault();};document.addEventListener('click',stop,true);e.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,pointerType:${JSON.stringify(pointerType)}}));e.click();document.removeEventListener('click',stop,true);return opened;})()`);
+  const arena = '.break-row .yard-play-arena .yard-play-link';
+  assert.equal(await breakTap(arena, 'touch'), false, 'the first tap only selects');
+  assert.match(await breakLabel(), /Arena.*Tap again to open/);
+  assert.equal(await breakTap(arena, 'touch'), true, 'the second tap opens');
+  assert.equal(await breakLabel(), 'Need a break?');
+  assert.equal(await breakTap(arena, 'mouse'), true, 'a mouse opens at once');
+  await breakTap(arena, 'touch');
+  await evaluate('document.body.dispatchEvent(new PointerEvent("pointerdown",{bubbles:true,pointerType:"touch"}))');
+  assert.equal(await breakLabel(), 'Need a break?', 'tapping elsewhere cancels');
+  await evaluate('document.querySelector(".break-row .yard-play-more").click()');
+  await until('the card menu', () => evaluate('Boolean(document.querySelector(".break-row .yard-play-menu:popover-open"))'));
+  assert.deepEqual(await evaluate('[...document.querySelector(".break-row .yard-play-menu").querySelectorAll("a")].map((a)=>[a.href,a.target])'), [['https://survive.oddessentials.ai/', '_blank'], ['https://towers.oddessentials.ai/', '_blank']]);
+  await evaluate('document.querySelector(".break-row .yard-play-menu").hidePopover()');
+  await evaluate('localStorage.removeItem("testBreakCard")');
+  pass('the Terminal AI Chat card offers the five Yard buttons at their smallest in every skin, and a touch needs a second tap');
+
   await navigate(`${origin}/?tv#token=t&layout=compact&expand=none&view=yard&yard=none`);
   await until('the TV app opens the Cards', () => evaluate('document.documentElement.dataset.view==="cards"&&testApp.some(m=>m.type==="ready")'));
   await layoutReady();

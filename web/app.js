@@ -202,7 +202,7 @@ function holdToast(held) {
 const firstClick = (run) => (e) => { if (e.detail < 2) run(); };
 
 /** Buttons that act through the session manager. While it cannot be reached they are unavailable rather than left to fail. */
-const MANAGER_ACTIONS = '.provider :is(.new, .existing, .install, .update), .session-card :is(.resume, .rename, .stop, .remove), .history-resume, #panel-stop, #yard-install, #yard-world button';
+const MANAGER_ACTIONS = '.provider :is(.new, .existing, .install, .update), .session-card :is(.resume, .rename, .stop, .remove), .history-resume, #panel-stop, #yard-install, #yard-world button, .break-install';
 
 function paintManagerActions(root = document) {
   for (const button of root.querySelectorAll(MANAGER_ACTIONS)) button.disabled = !state.connected;
@@ -2385,6 +2385,82 @@ async function changeMcp(provider, entry, view) {
 
 let dealt = false;
 
+const companionSupported = () => ['win32', 'darwin'].includes(state.platform);
+const BREAK_CARD = 'terminal-ai-chat';
+const BREAK_LABEL = 'Need a break?';
+const BREAK_SOURCES = ['yard-play-arena', 'yard-play-more', 'yard-play-solo', 'yard-install', 'yard-play-builders'];
+let breakMenus = 0, breakPointer = '', breakArmed = null;
+
+function paintBreak(root = document) {
+  for (const section of root.querySelectorAll('.break-buttons:not([hidden])')) {
+    section.querySelector('.break-label').textContent = breakArmed ? `${breakArmed}. Tap again to open.` : BREAK_LABEL;
+    for (const link of section.querySelectorAll('.yard-play-chip > .yard-play-link')) {
+      link.closest('.yard-play').classList.toggle('armed', link.getAttribute('aria-label') === breakArmed);
+    }
+  }
+}
+
+function armBreak(name) {
+  breakArmed = name;
+  paintBreak();
+}
+
+// On the window, ahead of the host's link handler on the document.
+window.addEventListener('pointerdown', (e) => {
+  breakPointer = e.pointerType;
+  if (breakArmed && e.target.closest?.('.armed .yard-play-link')?.getAttribute('aria-label') !== breakArmed) armBreak(null);
+}, true);
+window.addEventListener('click', (e) => {
+  const touched = breakPointer === 'touch';
+  breakPointer = '';
+  const name = e.target.closest?.('.break-row .yard-play-chip > .yard-play-link')?.getAttribute('aria-label');
+  if (!name || !touched || breakArmed === name) {
+    if (breakArmed) armBreak(null);
+    return;
+  }
+  e.preventDefault();
+  e.stopPropagation();
+  armBreak(name);
+}, true);
+
+function breakItem(id) {
+  const source = $(id).closest('.yard-play');
+  const item = source.cloneNode(true);
+  item.querySelector('.yard-play-burst').remove();
+  for (const part of item.querySelectorAll('.yard-play-text, .yard-play-chev')) part.remove();
+  for (const part of item.querySelectorAll('[id]')) part.removeAttribute('id');
+  const menu = item.querySelector('.yard-play-menu');
+  if (!menu) return item;
+  item.querySelector('.yard-play-chip > .yard-play-link').remove();
+  const more = item.querySelector('.yard-play-more');
+  menu.id = `break-play-menu-${++breakMenus}`;
+  more.setAttribute('popovertarget', menu.id);
+  onMenu(menu, () => {
+    placeMenu(menu, more);
+    menuItems(menu)[0]?.focus();
+  }, () => returnFocus(menu, more));
+  menu.addEventListener('click', (e) => { if (e.target.closest('a')) closeMenu(menu); });
+  menu.addEventListener('keydown', moveInMenu);
+  return item;
+}
+
+function mountBreakButtons(card) {
+  const section = card.querySelector('.break-buttons'), row = section.querySelector('.break-row');
+  for (const id of BREAK_SOURCES) {
+    if (id === 'yard-install' && !companionSupported()) continue;
+    const item = breakItem(id);
+    if (id === 'yard-install') {
+      const button = item.querySelector('.yard-play-link');
+      button.hidden = false;
+      button.classList.add('break-install');
+      button.addEventListener('click', installCompanion);
+    }
+    row.append(item);
+  }
+  section.hidden = false;
+  paintBreak(card);
+}
+
 // Both layouts mount these same controls with these same command handlers.
 function buildProvider(provider) {
     const node = $('provider-template').content.firstElementChild.cloneNode(true);
@@ -2397,6 +2473,7 @@ function buildProvider(provider) {
     stateLine.classList.toggle('update-available', provider.updateAvailable || checkFailed || Boolean(installNote(provider)));
     stateLine.title = [provider.resolvedPath, provider.updateCommand && `Update: ${provider.updateCommand}`].filter(Boolean).join('\n');
     node.dataset.id = provider.id;
+    if (provider.id === BREAK_CARD && document.documentElement.dataset.yard !== 'none') mountBreakButtons(node);
     node.classList.toggle('unavailable', !provider.available);
     node.setAttribute('aria-label', `${provider.vendor} ${provider.tool}, ${!provider.available ? 'not installed' : checkFailed ? 'version check failed' : 'ready'}`);
     const start = node.querySelector('.new');
@@ -7973,7 +8050,7 @@ function connectEvents() {
       state.launcher = typeof msg.launcher === 'string' ? msg.launcher : null;
       state.folderOpener = msg.folderOpener || null;
       state.platform = msg.platform || null;
-      $('yard-install').hidden = !['win32', 'darwin'].includes(state.platform);
+      $('yard-install').hidden = !companionSupported();
       $('yard-world-get').hidden = state.platform !== 'win32';
       state.yardWorlds = msg.yardWorlds ?? null;
       state.remoteAccessUI?.setAvailable(msg.remoteAccess);
@@ -8640,7 +8717,8 @@ onMenu($('yard-play-menu'), (menu) => {
 $('yard-play-menu').addEventListener('click', (e) => {
   if (e.target.closest('a')) closeMenu(e.currentTarget);
 });
-$('yard-install').addEventListener('click', async (e) => {
+$('yard-install').addEventListener('click', installCompanion);
+async function installCompanion(e) {
   const button = e.currentTarget;
   button.disabled = true;
   try {
@@ -8653,9 +8731,12 @@ $('yard-install').addEventListener('click', async (e) => {
   } finally {
     button.disabled = !state.connected;
   }
-});
+}
 new MutationObserver(() => closeMenu($('yard-play-menu'))).observe(document.documentElement, { attributes: true, attributeFilter: ['data-view', 'data-skin', 'data-layout'] });
-window.addEventListener('scroll', () => placeMenu($('yard-play-menu'), $('yard-play-more')), { passive: true });
+window.addEventListener('scroll', () => {
+  placeMenu($('yard-play-menu'), $('yard-play-more'));
+  for (const menu of document.querySelectorAll('.break-row .yard-play-menu:popover-open')) placeMenu(menu, menu.closest('.yard-play').querySelector('.yard-play-more'));
+}, { passive: true });
 for (const menu of [$('manager-menu'), $('panel-sessions'), $('yard-play-menu')]) menu.addEventListener('keydown', moveInMenu);
 // Recorded only on the click that opens the menu: a click that closes it leaves what the open menu showed.
 const sessionMenuFrom = (mode, invoker) => () => {
