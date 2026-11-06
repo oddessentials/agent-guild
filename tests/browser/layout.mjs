@@ -325,9 +325,6 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   await key('End', 'End', 35);
   await playPlaced('the narrowest stage beside a dock', 1280);
   await size(1440, 900);
-  await evaluate('document.documentElement.dataset.skin="professional"');
-  await layoutReady();
-  assert.equal(await visible('#yard-summary'), true, 'a narrow stage keeps the summary in a Yard with no button');
   await evaluate('document.documentElement.dataset.skin="orbital"');
   assert.deepEqual([...forms].sort((a, b) => a - b), [-1, 0, 1, 3, 4], 'the sizes covered every form of the chip');
   await evaluate('document.querySelector("#dock-splitter").focus()');
@@ -336,7 +333,7 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   await until('the dock closes', async () => !(await visible('#dock')));
   await layoutReady();
   assert.equal(await visible('#yard-play-solo'), false, 'Orbital shows only its split');
-  assert.equal(await visible('#yard-play-arena'), false, 'Orbital has no Arena button');
+  assert.deepEqual([await visible('#yard-play-arena'), await visible('#yard-play-builders')], [false, false], 'Orbital has neither Arena nor Builders');
   const soloPlaced = async (label, width, link = '#yard-play-solo', root = '.yard-play-solo') => {
     await layoutReady();
     const [button, chip, stage, title] = await Promise.all([box(link), box(`${root} .yard-play-chip`), box('#yard-stage'), box('.yard-heading > div:first-child')]);
@@ -361,7 +358,7 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
     await layoutReady();
     assert.deepEqual(await evaluate('(()=>{const a=document.querySelector("#yard-play-solo");return [a.href,a.target,a.rel,a.querySelector(".yard-play-sub").textContent]})()'), ['https://agforever.oddessentials.ai/', '_blank', 'noopener noreferrer', 'Wizard Duels · free in your browser']);
     assert.equal(await visible('#yard-play'), false, `${skin} has no split`);
-    assert.equal(await visible('#yard-play-arena'), false, `${skin} has no Arena button`);
+    assert.deepEqual([await visible('#yard-play-arena'), await visible('#yard-play-builders')], [false, false], `${skin} has neither Arena nor Builders`);
     assert.deepEqual(await evaluate('(()=>{const orb=document.querySelector("#yard-play-solo .yard-play-orb");return [orb.querySelectorAll("use").length,[...orb.querySelectorAll("*")].flatMap(e=>["fill","stroke","filter"].map(a=>e.getAttribute(a)?.match(/url\\(#(.+)\\)/)?.[1])).filter(id=>id&&!document.querySelector(".yard-play-solo .yard-play-defs #"+id))]})()'), [0, []], `${skin}: the orb paints from its own definitions, as the Orbital ones are hidden here`);
     await soloPlaced(`${skin} 1440`, 1440);
     for (const [width, height] of [[980, 800], [936, 800], [484, 800], [476, 800], [444, 800], [436, 800], [384, 800], [376, 800], [344, 640], [336, 640], [320, 568]]) {
@@ -402,10 +399,20 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   await layoutReady();
   assert.equal(await visible('#yard-play'), false, 'the Guild has no Play now');
   assert.equal(await visible('#yard-play-solo'), false, 'the Guild has no Wizard Duels button');
+  assert.equal(await visible('#yard-play-builders'), false, 'the Guild has no Builders button');
   assert.deepEqual(await evaluate('(()=>{const a=document.querySelector("#yard-play-arena");return [a.href,a.target,a.rel,a.querySelector(".yard-play-sub").textContent]})()'), ['https://arena.oddessentials.ai/', '_blank', 'noopener noreferrer', 'Arena · free in your browser']);
   for (const [width, height] of [[1440, 900], [980, 800], [484, 800], [444, 800], [376, 800], [336, 640]]) {
     await size(width, height);
     await soloPlaced(`guild ${width}`, width, '#yard-play-arena', '.yard-play-arena');
+  }
+  await size(1440, 900);
+  await evaluate('document.documentElement.dataset.skin="professional"');
+  await layoutReady();
+  assert.deepEqual([await visible('#yard-play'), await visible('#yard-play-solo'), await visible('#yard-play-arena')], [false, false, false], 'Professional shows only Builders');
+  assert.deepEqual(await evaluate('(()=>{const a=document.querySelector("#yard-play-builders");return [a.href,a.target,a.rel,a.querySelector(".yard-play-sub").textContent]})()'), ['https://github.com/oddessentials/agent-guild', '_blank', 'noopener noreferrer', 'Builders · for Windows']);
+  for (const [width, height] of [[1440, 900], [980, 800], [524, 800], [484, 800], [444, 800], [356, 800], [336, 640]]) {
+    await size(width, height);
+    await soloPlaced(`professional ${width}`, width, '#yard-play-builders', '.yard-play-builders');
   }
   await size(1440, 900);
   await evaluate(`document.documentElement.dataset.skin=${JSON.stringify(startSkin[0])}`);
