@@ -416,8 +416,8 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   }
   await size(1440, 900);
   await size(1440, 900);
-  await evaluate('document.querySelector("#yard-world-get").hidden=false');
-  const spotClear = (label) => evaluate(`(()=>{const box=(e)=>e.getBoundingClientRect(),stage=box(document.querySelector('#yard-stage'));
+  assert.equal(await visible('#yard-world-replace'), false, 'the demo has no manager to install a world');
+  const spotClear = (label) => evaluate(`(()=>{for(const id of ['#yard-world-get','#yard-world-replace'])document.querySelector(id).hidden=false;const box=(e)=>e.getBoundingClientRect(),stage=box(document.querySelector('#yard-stage'));
     const parts=[...document.querySelectorAll('#yard-world .btn:not([hidden])')],camera=[...document.querySelectorAll('.yard-camera .btn:not([hidden])')];
     const inside=parts.every((e)=>{const r=box(e);return r.width>=44&&r.left>=stage.left&&r.right<=stage.right&&r.top>=stage.top&&r.bottom<=stage.bottom;});
     const apart=parts.every((e)=>camera.every((c)=>{const a=box(e),b=box(c);return a.right<=b.left||b.right<=a.left||a.bottom<=b.top||b.bottom<=a.top;}));
@@ -436,13 +436,26 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   assert.equal(lefts.size, 1, `the spot sits in one place in every Yard: ${[...lefts]}`);
   await evaluate('document.documentElement.dataset.layout="compact"');
   await layoutReady();
-  const compactSpot = await spotClear('compact');
-  assert.deepEqual([compactSpot.count, compactSpot.inside, compactSpot.apart], [2, true, true], JSON.stringify(compactSpot));
-  await click('#yard-world-replace');
+  for (const [width, height] of [[1440, 900], [360, 640], [280, 500]]) {
+    await size(width, height);
+    const compactSpot = await spotClear(`compact ${width}`);
+    assert.deepEqual([compactSpot.count, compactSpot.inside, compactSpot.apart], [2, true, true], JSON.stringify(compactSpot));
+  }
+  await size(1440, 900);
+  await evaluate('document.querySelector("#yard-world-replace").click()');
   await until('the file dialog opens', () => evaluate('document.querySelector("#folder-browser").open&&document.querySelector("#folder-title").textContent==="Choose a world file"'));
   assert.deepEqual(await evaluate('[getComputedStyle(document.querySelector("#folder-browser")).display!=="none",document.querySelector("#folder-use").hidden,document.querySelector("#folder-new-open").hidden]'), [true, true, true]);
-  await evaluate('document.querySelector("#folder-browser").close();delete document.documentElement.dataset.layout;document.querySelector("#yard-world-get").hidden=true');
+  await evaluate('document.querySelector("#folder-browser").close();delete document.documentElement.dataset.layout;document.querySelector("#yard-world-get").hidden=true;document.querySelector("#yard-world-replace").hidden=true');
   await layoutReady();
+  for (const skin of ['guild', 'orbital', 'grove', 'professional', 'goblinville', 'gnomeland']) {
+    await evaluate(`document.documentElement.dataset.skin="${skin}"`);
+    for (const [width, height] of [[1440, 900], [444, 800]]) {
+      await size(width, height);
+      const long = await evaluate(`(()=>{const title=document.querySelector('#yard-title'),text=title.textContent;title.textContent='A very long world name '.repeat(6).slice(0,128);title.classList.add('yard-title-custom');const box=(e)=>e.getBoundingClientRect(),t=box(title),line=parseFloat(getComputedStyle(title).lineHeight)||t.height,chip=[...document.querySelectorAll('.yard-play-chip')].find((e)=>e.checkVisibility()),c=chip&&box(chip),clear=!c||t.right<=c.left||c.right<=t.left||t.bottom<=c.top||c.bottom<=t.top,result={height:t.height,line,clear,right:t.right<=box(document.querySelector('#yard-stage')).right};title.textContent=text;title.classList.remove('yard-title-custom');return result;})()`);
+      assert.ok(long.clear && long.right && long.height <= long.line * 2 + 1, `${skin} ${width}: ${JSON.stringify(long)}`);
+    }
+  }
+  await size(1440, 900);
   pass('the world spot sits in one place in all six Yards at every width and opens the file dialog in the compact layout');
   await evaluate('document.documentElement.dataset.skin="professional"');
   await layoutReady();

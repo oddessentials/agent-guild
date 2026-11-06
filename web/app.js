@@ -7975,7 +7975,7 @@ function connectEvents() {
       state.platform = msg.platform || null;
       $('yard-install').hidden = !['win32', 'darwin'].includes(state.platform);
       $('yard-world-get').hidden = state.platform !== 'win32';
-      state.yardWorlds = msg.yardWorlds || {};
+      state.yardWorlds = msg.yardWorlds ?? null;
       state.remoteAccessUI?.setAvailable(msg.remoteAccess);
       state.remoteAccessUI?.signInsUpdated();
       state.glassesLinkUI?.setAvailable(msg.remoteAccess);
@@ -8848,6 +8848,7 @@ yardUi = initYard({
   selected: dockMakesWayForYard,
   yardArt: () => state.yardArt,
   yardWorld: (skin) => state.yardWorlds?.[skin] ?? null,
+  canReplaceYard: () => Boolean(state.yardWorlds),
   replaceYard: (skin) => chooseFolder('world', skin),
   restoreYard: (skin) => yardWorldChange(() => api('DELETE', `/yard-worlds/${skin}`)),
   // The new state arrives as yard-art.updated, ordered with the progress events.

@@ -53,6 +53,7 @@ export function initYard(controller) {
     $('yard-title').textContent = titleFor(skin);
     $('yard-title').classList.toggle('yard-title-custom', Boolean(customFor(skin)));
     const reason = world?.problem || (world && !customFor(skin) ? world.title + ' could not load.' : '');
+    $('yard-world-replace').hidden = !controller.canReplaceYard();
     $('yard-world-replace').textContent = world ? 'Replace' : 'Replace this Yard';
     $('yard-world-restore').hidden = !world;
     $('yard-world-note').hidden = !reason;
