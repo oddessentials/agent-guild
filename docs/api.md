@@ -638,7 +638,7 @@ All paths are under `/api/v1`.
 | GET | `/remote-access` | | `{ remoteAccess }`: `revision`, `mode`, `busy`, `pending`, `problem` and connection details. `url` is the active address. `candidate` is the address enabling would use with Tailscale's current settings, `{ url, existing, remembered, standardUrl? }`: `remembered` when it is the address used before, and `standardUrl` when `standard: true` would choose another. |
 | POST | `/remote-access/check` | | `{ remoteAccess }` after refreshing Tailscale's status. |
 | PUT | `/remote-access` | `{ revision, action, adopt?, hosts?, origins? }` | `202`. `action` is `enable` (`adopt: true` manages a matching existing route; `standard: true`, only while remote access is off, skips the remembered address and takes port 443, else the next free port), `disable`, `custom` (with `hosts` and `origins`) or `forget` (leave an inactive route awaiting cleanup in Tailscale). Poll until `busy` is null and read `problem`. 409 `stale_settings` for an old `revision`. Needs the API token. Revoked WebSockets close with code 4403; their terminals keep running. |
-| GET | `/folders?path=` | | `{ path, parent, home, segments, roots, entries, truncated, note }`: the subfolders of `path` (blank or `~` for the home folder). `entries` are `{ name, path, hidden }`. A missing `path` lists the nearest folder above it and names the requested path in `note`. |
+| GET | `/folders?path=&files=` | | `{ path, parent, home, segments, roots, entries, truncated, note }`: the subfolders of `path` (blank or `~` for the home folder). `entries` are `{ name, path, hidden }`. A missing `path` lists the nearest folder above it and names the requested path in `note`. `files=agworld` adds `files`, the world files in that folder, each `{ name, path }`. |
 | POST | `/folders` | `{ path, name }` | 201 with the `GET /folders` listing of the new folder `name`, made inside `path`. |
 | GET | `/autostart` | | `{ autostart: { available, enabled, reason, note?, lastRun?, log? } }`: whether the manager starts when the user signs in. `reason` says why it is unavailable. `lastRun` is null or `{ at, outcome }`. On Linux outside WSL it also has `mode` (`off`, `sign-in`, `boot` or `both`) and `boot`, the systemd service's `{ available, enabled, reason, note, user, linger, state, commands }`. |
 | PUT | `/autostart` | `{ enabled }` or `{ mode }` | `{ autostart }` as above. `mode` (`off`, `sign-in` or `boot`) makes that the one way the manager starts; `boot` is offered only on Linux with systemd. |
@@ -666,6 +666,9 @@ All paths are under `/api/v1`.
 | GET | `/yard-art` | | `{ yardArt }`: the Yard's art. `state` is `ready`, `missing`, `downloading` (with `received` bytes), `installing`, `failed` or `unavailable` (each with `error`), or `cancelled`; `size` is the pack's size in bytes. A checkout serves `web/yard/assets` and is always `ready`. `/yard/assets/` answers 404 until the art is `ready`. |
 | POST | `/yard-art/download` | | `202 { yardArt }`: starts the one download of the art pack named by the package, unless it is running or installed. Progress and the outcome arrive as `yard-art.updated`. |
 | POST | `/yard-art/cancel` | | `{ yardArt }`: stops the download for every client; the state becomes `cancelled`. |
+| GET | `/yard-worlds` | | `{ yardWorlds }`: the world replacing each Yard, by skin. A world is `{ title, revision, lights }`, or `{ title, problem }` when it cannot be used, in which case the Yard shows its original. A Yard with no entry shows its original. |
+| PUT | `/yard-worlds/:skin` | `{ path }` | `{ yardWorlds }`: checks the `.agworld` file at `path` on the manager's computer and makes it this Yard's world, replacing any before it. 400 `world_invalid` says what is wrong and leaves the Yard unchanged; 404 `unknown_yard`; 409 `world_busy` while another install runs; 409 `worlds_unsupported` without a data folder; 500 `world_unwritable`. Its plates and skies are served at `/yard/worlds/:skin/:file`. |
+| DELETE | `/yard-worlds/:skin` | | `{ yardWorlds }`: deletes this Yard's world, so it shows its original. |
 | POST | `/companion/install` | | `201 { session }`: starts a session that downloads the latest Grove Companion, checks its signature, installs it and starts it. 400 `companion_unsupported` unless the manager runs on Windows or macOS; 409 `install_in_progress` while one runs. |
 | POST | `/yard/fireworks` | | `{ ok, pages }`: fireworks over the Yard of every open page, sent as `yard.fireworks`. `pages` is how many pages were listening. |
 | GET | `/changelog` | | `{ refreshing, okAt, error, releases }`: Agent Guild's own releases, newest first, each `{ version, url, publishedAt, sections: [{ title, changes }] }`, where `title` may be null and a change is a list of text runs. A `changelog.updated` event follows a refresh. |
@@ -743,7 +746,7 @@ but `{ type: "ping" }`, which the manager answers with `{ type: "pong" }`.
 
 | Message | Meaning |
 | --- | --- |
-| `{ type: "hello", version, pid, platform, startedAt, launcher, folderOpener, remoteAccess, upgrade, yardArt, sessions, heartbeat, notesRevision, notesUnreadable }` | Sent first: the manager (as in `/info`), the full session list and the notepad's revision. |
+| `{ type: "hello", version, pid, platform, startedAt, launcher, folderOpener, remoteAccess, upgrade, yardArt, yardWorlds, sessions, heartbeat, notesRevision, notesUnreadable }` | Sent first: the manager (as in `/info`), the full session list and the notepad's revision. |
 | `{ type: "session.created", session }` | A session was started by any client. |
 | `{ type: "session.updated", session }` | Status, activity, agents, name or size changed. |
 | `{ type: "session.removed", sessionId }` | A session was removed. |
@@ -751,6 +754,7 @@ but `{ type: "ping" }`, which the manager answers with `{ type: "pong" }`.
 | `{ type: "environment.updated", environment }` | An environment check started or finished. |
 | `{ type: "news.updated" }` | Fetch `/news` again. |
 | `{ type: "yard-art.updated", yardArt }` | The Yard's art changed state or made download progress, as in `/yard-art`. |
+| `{ type: "yard-worlds.updated", yardWorlds }` | A Yard's world was replaced or deleted, as in `/yard-worlds`. |
 | `{ type: "yard.fireworks" }` | Fireworks over the Yard, when it is on show. |
 | `{ type: "changelog.updated" }` | Fetch `/changelog` again. |
 | `{ type: "github.updated" }` | Fetch `/github` again. |

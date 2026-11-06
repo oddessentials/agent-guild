@@ -409,12 +409,43 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   await evaluate('document.documentElement.dataset.skin="professional"');
   await layoutReady();
   assert.deepEqual([await visible('#yard-play'), await visible('#yard-play-solo'), await visible('#yard-play-arena')], [false, false, false], 'Professional shows only Builders');
-  assert.deepEqual(await evaluate('(()=>{const a=document.querySelector("#yard-play-builders");return [a.href,a.target,a.rel,a.querySelector(".yard-play-sub").textContent]})()'), ['https://github.com/oddessentials/agent-guild', '_blank', 'noopener noreferrer', 'Builders · for Windows']);
+  assert.deepEqual(await evaluate('(()=>{const a=document.querySelector("#yard-play-builders");return [a.href,a.target,a.rel,a.querySelector(".yard-play-sub").textContent]})()'), ['https://github.com/oddessentials/agent-guild-builders/releases/latest', '_blank', 'noopener noreferrer', 'Builders · for Windows']);
   for (const [width, height] of [[1440, 900], [980, 800], [524, 800], [484, 800], [444, 800], [356, 800], [336, 640]]) {
     await size(width, height);
     await soloPlaced(`professional ${width}`, width, '#yard-play-builders', '.yard-play-builders');
   }
   await size(1440, 900);
+  await size(1440, 900);
+  await evaluate('document.querySelector("#yard-world-get").hidden=false');
+  const spotClear = (label) => evaluate(`(()=>{const box=(e)=>e.getBoundingClientRect(),stage=box(document.querySelector('#yard-stage'));
+    const parts=[...document.querySelectorAll('#yard-world .btn:not([hidden])')],camera=[...document.querySelectorAll('.yard-camera .btn:not([hidden])')];
+    const inside=parts.every((e)=>{const r=box(e);return r.width>=44&&r.left>=stage.left&&r.right<=stage.right&&r.top>=stage.top&&r.bottom<=stage.bottom;});
+    const apart=parts.every((e)=>camera.every((c)=>{const a=box(e),b=box(c);return a.right<=b.left||b.right<=a.left||a.bottom<=b.top||b.bottom<=a.top;}));
+    return {label:${JSON.stringify(label)},count:parts.length,inside,apart,left:Math.round(box(document.querySelector('#yard-world')).left-stage.left)};})()`);
+  const lefts = new Set();
+  for (const skin of ['guild', 'orbital', 'grove', 'professional', 'goblinville', 'gnomeland']) {
+    await evaluate(`document.documentElement.dataset.skin="${skin}"`);
+    for (const [width, height] of [[1440, 900], [980, 800], [444, 800], [336, 640]]) {
+      await size(width, height);
+      const at = await spotClear(`${skin} ${width}`);
+      assert.deepEqual([at.count, at.inside, at.apart], [2, true, true], JSON.stringify(at));
+      if (width === 1440) lefts.add(at.left);
+    }
+    await size(1440, 900);
+  }
+  assert.equal(lefts.size, 1, `the spot sits in one place in every Yard: ${[...lefts]}`);
+  await evaluate('document.documentElement.dataset.layout="compact"');
+  await layoutReady();
+  const compactSpot = await spotClear('compact');
+  assert.deepEqual([compactSpot.count, compactSpot.inside, compactSpot.apart], [2, true, true], JSON.stringify(compactSpot));
+  await click('#yard-world-replace');
+  await until('the file dialog opens', () => evaluate('document.querySelector("#folder-browser").open&&document.querySelector("#folder-title").textContent==="Choose a world file"'));
+  assert.deepEqual(await evaluate('[getComputedStyle(document.querySelector("#folder-browser")).display!=="none",document.querySelector("#folder-use").hidden,document.querySelector("#folder-new-open").hidden]'), [true, true, true]);
+  await evaluate('document.querySelector("#folder-browser").close();delete document.documentElement.dataset.layout;document.querySelector("#yard-world-get").hidden=true');
+  await layoutReady();
+  pass('the world spot sits in one place in all six Yards at every width and opens the file dialog in the compact layout');
+  await evaluate('document.documentElement.dataset.skin="professional"');
+  await layoutReady();
   await evaluate(`document.documentElement.dataset.skin=${JSON.stringify(startSkin[0])}`);
   await click('#view-cards');
   await until('Cards', () => evaluate('document.documentElement.dataset.view==="cards"'));

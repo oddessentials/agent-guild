@@ -7,6 +7,7 @@ const vector = new T.Vector3();
 const lookModel = new T.Matrix4(), lookParent = new T.Matrix4(), lookFrame = new T.Quaternion(), lookTurn = new T.Quaternion(), lookTilt = new T.Quaternion();
 const axisX = new T.Vector3(1, 0, 0), axisY = new T.Vector3(0, 1, 0);
 const noop = () => {};
+const worldFile = (skin, custom, file) => `../worlds/${skin}/${file.split('/').pop()}?v=${custom.revision}`;
 const vector2 = new T.Vector2();
 // How fast characters turn to a new heading, in radians a second, and how
 // long a clip change blends.
@@ -200,7 +201,7 @@ export class YardRenderer {
   // Shows skin's world in theme, or only theme's plates when that world is
   // already up. What is on screen stays until the new world or theme is
   // ready; progress receives the bytes downloaded so far.
-  async setWorld(skin,theme,{progress=noop}={}) {
+  async setWorld(skin,theme,{progress=noop,custom=null}={}) {
     if(this.disposed)return;
     if(!WORLDS[skin])throw new Error('This skin has no yard.');
     const request=++this.worldRequest;
@@ -208,7 +209,7 @@ export class YardRenderer {
     const pending=this.pending=tracked(progress);
     let loaded;
     try {
-      if(this.skin===skin&&this.world){
+      if(this.skin===skin&&this.world&&(this.custom?.revision??null)===(custom?.revision??null)){
         const world=this.world;
         await this.plateTheme(world,themeKey(theme),pending.manager);
         if(!this.disposed&&request===this.worldRequest&&this.world===world){this.light(skin,theme);this.drawOnce();}
@@ -217,7 +218,7 @@ export class YardRenderer {
       const url=new URL(skin+'.glb',ASSETS).href;
       loaded=await new T.GLTFLoader(pending.manager).loadAsync(url,pending.stream(url));
       if(this.disposed||request!==this.worldRequest){disposeWorld(loaded.scene);return;}
-      await Promise.all([this.surfaceWorld(loaded.scene,skin,pending.manager),this.plateWorld(loaded.scene,skin,theme,pending.manager)]);
+      await Promise.all([this.surfaceWorld(loaded.scene,skin,pending.manager,custom),this.plateWorld(loaded.scene,skin,theme,pending.manager,custom)]);
     } catch(err) {
       disposeWorld(loaded?.scene);
       if(!this.disposed&&request===this.worldRequest)throw err;
@@ -233,7 +234,7 @@ export class YardRenderer {
     for(const item of this.halls.values()){item.label.remove();item.chip.remove();}
     this.halls.clear();
     if(this.world){this.scene.remove(this.world);disposeWorld(this.world);}
-    this.world=loaded.scene;this.skin=skin;this.scene.add(this.world);
+    this.world=loaded.scene;this.skin=skin;this.custom=custom;this.scene.add(this.world);
     this.makeEffects(WORLDS[skin].effect);
     this.light(skin,theme);
     this.host.dataset.world=skin;
@@ -250,10 +251,12 @@ export class YardRenderer {
   // direction as the camera, so they line up at any pan or zoom. Each theme
   // has its own set: the current theme's base layer gates the load, and its
   // sharper layers and the other theme follow without blocking it.
-  async plateWorld(world,skin,theme,manager) {
+  async plateWorld(world,skin,theme,manager,custom=null) {
     const response=await fetch(new URL(skin+'/plates.json',ASSETS));
     if(!response.ok)throw new Error('The Yard plates could not be loaded.');
-    world.userData.plates={themes:(await response.json()).themes,groups:{}};
+    const {themes}=await response.json();
+    if(custom)for(const layers of Object.values(themes))for(const layer of layers)for(const tile of layer.tiles)tile.file=worldFile(skin,custom,tile.file);
+    world.userData.plates={themes,groups:{}};
     await this.plateTheme(world,themeKey(theme),manager);
     // Live halls and characters cast onto the plate's ground.
     const catcher=new T.Mesh(new T.PlaneGeometry(400,400),new T.ShadowMaterial({opacity:.3,depthWrite:false}));
@@ -314,7 +317,7 @@ export class YardRenderer {
   }
   // Live halls take scanned material sets by material name,
   // and light from a small copy of the plates' sky.
-  async surfaceWorld(world,skin,manager) {
+  async surfaceWorld(world,skin,manager,custom=null) {
     const response=await fetch(new URL(skin+'/surfaces.json',ASSETS));
     if(!response.ok)throw new Error('The Yard surfaces could not be loaded.');
     const {sky,surfaces}=await response.json();
@@ -337,7 +340,7 @@ export class YardRenderer {
       const pmrem=new T.PMREMGenerator(this.renderer);
       try {
         for(const [theme,file] of Object.entries(sky)) {
-          const equirect=await new T.HDRLoader(manager).loadAsync(new URL(file,ASSETS).href);
+          const equirect=await new T.HDRLoader(manager).loadAsync(new URL(custom?worldFile(skin,custom,file):file,ASSETS).href);
           environments[theme]=pmrem.fromEquirectangular(equirect).texture;equirect.dispose();
         }
       } finally { pmrem.dispose(); }
@@ -374,11 +377,11 @@ export class YardRenderer {
     this.scene.environment=this.world?.userData.environments?.[key]||null;
     if(this.world&&this.skin===skin)this.showPlates(key);
     this.renderer.toneMappingExposure=light?1.65:1.12;
-    this.hemi.color.set(WORLDS[skin].hemi);
+    this.hemi.color.set(this.custom?.lights?.[key].hemi??WORLDS[skin].hemi);
     this.hemi.intensity=(light?3.2:1.8)*.35;
     // Blender and three.js place an equirectangular sky half a turn apart.
     this.scene.environmentRotation.y=Math.PI;this.scene.environmentIntensity=light?1.25:.7;
-    this.sun.color.set(WORLDS[skin].sun[key]);
+    this.sun.color.set(this.custom?.lights?.[key].sun??WORLDS[skin].sun[key]);
     this.sun.intensity=light?4.0:3.2;
     this.dirty=true;
   }
@@ -1135,7 +1138,7 @@ export class YardRenderer {
       this.select(this.selected);
       this.renderer.render(this.scene,this.camera);
     }
-    return {canvas,scale:size.scale,skin:this.skin,theme:this.theme,tags};
+    return {canvas,scale:size.scale,skin:this.skin,title:this.custom?.title,theme:this.theme,tags};
   }
   tags() {
     const origin=this.host.getBoundingClientRect();

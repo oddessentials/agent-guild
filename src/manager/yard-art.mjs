@@ -283,7 +283,7 @@ export class YardArt extends EventEmitter {
 }
 
 // Windows can hold a just-written folder briefly (indexing, antivirus).
-async function renameRetrying(from, to) {
+export async function renameRetrying(from, to) {
   for (let attempt = 0; ; attempt++) {
     try { return await fsp.rename(from, to); } catch (err) {
       if (attempt >= 20 || !['EPERM', 'EBUSY', 'EACCES'].includes(err.code)) throw err;

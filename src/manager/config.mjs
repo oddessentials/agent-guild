@@ -56,6 +56,7 @@ export const paths = {
   get multiplexers() { return path.join(dataDir(), 'multiplexers.json'); },
   /** The Yard's art packs, one folder per content id. */
   get yardArt() { return path.join(dataDir(), 'yard-art'); },
+  get yardWorlds() { return path.join(dataDir(), 'yard-worlds'); },
 };
 
 function writePrivate(file, contents) {

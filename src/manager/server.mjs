@@ -19,6 +19,7 @@ import { createOptionalCards } from './optional-cards.mjs';
 import { MODES as AUTOSTART_MODES } from './autostart.mjs';
 import { ptyRestartProblem } from './pty.mjs';
 import { YardArt } from './yard-art.mjs';
+import { YardWorlds } from './yard-worlds.mjs';
 import { spokenText } from './spoken-text.mjs';
 import { MCP_ACTIONS } from './mcp-connect.mjs';
 
@@ -185,6 +186,7 @@ export function createManagerServer({
   nextManagerProblem = ptyRestartProblem,
   /** The Yard's art; without a data folder, only a checkout's. */
   yardArt = new YardArt({ webDir }),
+  yardWorlds = new YardWorlds(),
   mcpConnect = null,
   heartbeatMs = 30000,
 }) {
@@ -292,6 +294,12 @@ export function createManagerServer({
       throw new HttpError(400, 'malformed path', 'bad_path');
     }
     if (rel.includes('\0')) throw new HttpError(404, 'not found', 'not_found');
+    if (rel.startsWith('yard/worlds/')) {
+      const [skin, name, ...rest] = rel.slice('yard/worlds/'.length).split('/');
+      const world = rest.length ? null : yardWorlds.file(skin, name);
+      if (!world) throw new HttpError(404, 'not found', 'not_found');
+      return serveFile(req, res, world);
+    }
     let root = webDir;
     if (rel.startsWith('yard/assets/')) {
       root = yardArt.assetsDir();
@@ -408,6 +416,10 @@ export function createManagerServer({
     if (route === '/yard-art' && method === 'GET') return sendJson(res, 200, { yardArt: yardArt.snapshot() });
     if (route === '/yard-art/download' && method === 'POST') return sendJson(res, 202, { yardArt: yardArt.start() });
     if (route === '/yard-art/cancel' && method === 'POST') return sendJson(res, 200, { yardArt: yardArt.cancel() });
+    if (route === '/yard-worlds' && method === 'GET') return sendJson(res, 200, { yardWorlds: yardWorlds.snapshot() });
+    const yardWorld = route.match(/^\/yard-worlds\/([a-z]+)$/);
+    if (yardWorld && method === 'PUT') return sendJson(res, 200, { yardWorlds: await yardWorlds.replace(yardWorld[1], (await readJsonBody(req)).path) });
+    if (yardWorld && method === 'DELETE') return sendJson(res, 200, { yardWorlds: await yardWorlds.restore(yardWorld[1]) });
     if (route === '/yard/fireworks' && method === 'POST') {
       broadcast({ type: 'yard.fireworks' });
       return sendJson(res, 200, { ok: true, pages: [...eventClients].filter((ws) => !ws.revoked && ws.readyState === ws.OPEN).length });
@@ -435,7 +447,7 @@ export function createManagerServer({
       return sendJson(res, 200, { ok: true });
     }
     if (route === '/folders' && method === 'GET') {
-      return sendJson(res, 200, await folderBrowser.list(url.searchParams.get('path') ?? undefined));
+      return sendJson(res, 200, await folderBrowser.list(url.searchParams.get('path') ?? undefined, { extension: url.searchParams.get('files') === 'agworld' ? '.agworld' : null }));
     }
     if (route === '/folders' && method === 'POST') {
       const { path: parent, name } = await readJsonBody(req);
@@ -771,10 +783,11 @@ export function createManagerServer({
   remoteAccess?.on('updated', () => broadcast({ type: 'remote-access.updated' }));
   deviceSignIn.on('updated', () => broadcast({ type: 'sign-in.updated' }));
   yardArt.on('updated', (status) => broadcast({ type: 'yard-art.updated', yardArt: status }));
+  yardWorlds.on('updated', (worlds) => broadcast({ type: 'yard-worlds.updated', yardWorlds: worlds }));
 
   function handleEvents(ws, req) {
     eventClients.add(ws);
-    const hello = { type: 'hello', version, pid: process.pid, platform: process.platform, startedAt, launcher, folderOpener: folderOpenerFor(req), remoteAccess: remoteAccess ? { available: true } : null, upgrade: upgradeInfo(), yardArt: yardArt.snapshot(), sessions: manager.list(), heartbeat: true };
+    const hello = { type: 'hello', version, pid: process.pid, platform: process.platform, startedAt, launcher, folderOpener: folderOpenerFor(req), remoteAccess: remoteAccess ? { available: true } : null, upgrade: upgradeInfo(), yardArt: yardArt.snapshot(), yardWorlds: yardWorlds.snapshot(), sessions: manager.list(), heartbeat: true };
     const notesHello = notes.helloRevision();
     if (notesHello.known) hello.notesRevision = notesHello.revision;
     else hello.notesUnreadable = true;
