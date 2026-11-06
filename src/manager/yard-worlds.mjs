@@ -5,7 +5,7 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { promisify } from 'node:util';
 import { EventEmitter } from 'node:events';
-import { WORLDS, PROVIDER_ORDER, CAMERA, SUN, STAGING, providerPositions } from '../../web/yard/model.mjs';
+import { WORLDS, CAMERA, SUN, STAGING } from '../../web/yard/model.mjs';
 import { extractArchive, renameRetrying } from './yard-art.mjs';
 
 const gunzip = promisify(zlib.gunzip);
@@ -29,8 +29,7 @@ const failure = (status, code, message) => Object.assign(new Error(message), { s
 const invalid = (message) => failure(400, 'world_invalid', message);
 
 export function environmentId() {
-  const halls = Object.fromEntries(providerPositions(PROVIDER_ORDER.map((id) => ({ id }))));
-  return sha256(JSON.stringify([CAMERA, SUN, STAGING.plaza, STAGING.hall, halls])).slice(0, 16);
+  return sha256(JSON.stringify([CAMERA, SUN, STAGING.plaza])).slice(0, 16);
 }
 
 function checkManifest(meta) {

@@ -11,6 +11,7 @@ import { writeArchive } from '../src/manager/yard-art.mjs';
 import { YardWorlds, environmentId } from '../src/manager/yard-worlds.mjs';
 import { createFolderBrowser } from '../src/manager/folder-browser.mjs';
 import { createManagerServer } from '../src/manager/server.mjs';
+import { PROVIDER_ORDER, STAGING, providerPositions } from '../web/yard/model.mjs';
 
 const sha256 = (data) => crypto.createHash('sha256').update(data).digest('hex');
 
@@ -59,6 +60,29 @@ function setup(t) {
   };
   return { root, pack, dir: path.join(root, 'worlds') };
 }
+
+// Clearance.live_distance in agent-guild-builders: how far a point is outside the ground worlds keep clear.
+function keptClearBy(x, z) {
+  const ring = Math.max(0, Math.hypot(x, z) - 14.7);
+  const dx = Math.max(Math.abs(x) - 13, 0), dz = Math.max(z - 32, -z, 0);
+  return Math.min(ring, Math.hypot(dx, dz));
+}
+
+test('the layout hash is pinned: changing it refuses every world people already have', () => {
+  assert.equal(environmentId(), '567f01a5e7c19f2b');
+});
+
+test('every hall stands on the ground worlds keep clear, up to 19 custom tools', () => {
+  const custom = Array.from({ length: 19 }, (_, i) => `custom-${i}`);
+  for (const [id, { x, z }] of providerPositions([...PROVIDER_ORDER, ...custom].map((name) => ({ id: name })))) {
+    const half = id === 'docker' ? STAGING.hall.docker : STAGING.hall.half;
+    for (let a = -8; a <= 8; a++) {
+      for (const [px, pz] of [[x + half * a / 8, z - half], [x + half * a / 8, z + half], [x - half, z + half * a / 8], [x + half, z + half * a / 8]]) {
+        assert.ok(keptClearBy(px, pz) < 0.5, `${id} reaches (${px}, ${pz})`);
+      }
+    }
+  }
+});
 
 const refused = (reason) => ({ status: 400, code: 'world_invalid', message: reason });
 
