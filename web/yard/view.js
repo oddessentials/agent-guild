@@ -179,17 +179,18 @@ export function initYard(controller) {
         });
         pendingRenderer = candidate;
         // Appearance can change while the first world is loading.
-        let skin, theme;
+        let skin, theme, revision;
         do {
           skin = root.dataset.skin; theme = root.dataset.theme;
           if (!WORLDS[skin]) { candidate.dispose(); return; }
+          revision = customFor(skin)?.revision ?? null;
           showLoading('Loading ' + titleFor(skin) + '…', 'scene');
           await boundedLoad(progress => loadWorld(candidate, skin, theme, progress), loadingProgress);
-        } while (!disposed && !candidate.disposed && attempt === sceneAttempt && (skin !== root.dataset.skin || theme !== root.dataset.theme));
+        } while (!disposed && !candidate.disposed && attempt === sceneAttempt && (skin !== root.dataset.skin || theme !== root.dataset.theme || revision !== (customFor(skin)?.revision ?? null)));
         if (disposed || candidate.disposed || attempt !== sceneAttempt) { candidate.dispose(); return; }
         pendingRenderer = null;
         renderer = candidate;
-        lastSkin = skin; lastTheme = theme; lastRevision = customFor(skin)?.revision ?? null;
+        lastSkin = skin; lastTheme = theme; lastRevision = revision;
         renderer.setReducedMotion(motion.matches);
         renderer.update(snapshot.providers, snapshot.sessions);
         renderer.select(selected);

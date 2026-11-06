@@ -10,6 +10,7 @@ import { extractArchive, renameRetrying } from './yard-art.mjs';
 
 const gunzip = promisify(zlib.gunzip);
 const MANIFEST = 'world.json';
+const INSTALL = 'install-id';
 const FORMAT = 1;
 const KIND = 'yard-environment';
 const MAX_PACKAGE = 64 * 1024 * 1024;
@@ -109,21 +110,32 @@ async function readPackage(file) {
 }
 
 export class YardWorlds extends EventEmitter {
-  constructor({ dir = null } = {}) {
+  constructor({ dir = null, remove = (folder) => fsp.rm(folder, { recursive: true, force: true, maxRetries: 5 }) } = {}) {
     super();
     this.dir = dir;
     this.worlds = {};
     this.busy = false;
-    if (!dir || !fs.existsSync(dir)) return;
-    for (const skin of Object.keys(WORLDS)) {
-      const previous = path.join(dir, `.${skin}.old`);
-      if (fs.existsSync(previous) && !fs.existsSync(path.join(dir, skin))) fs.renameSync(previous, path.join(dir, skin));
-      this.read(skin);
-    }
-    for (const name of fs.readdirSync(dir)) if (name.startsWith('.')) fs.rmSync(path.join(dir, name), { recursive: true, force: true });
+    this.remove = remove;
+    this.swept = Promise.resolve();
+    if (!dir) return;
+    for (const skin of Object.keys(WORLDS)) this.read(skin);
+    this.swept = this.sweep();
   }
 
   snapshot() { return this.worlds; }
+
+  discard(folder) {
+    return this.remove(folder).catch(() => {});
+  }
+
+  async sweep() {
+    const names = await fsp.readdir(this.dir).catch(() => []);
+    await Promise.all(names.filter((name) => name.startsWith('.')).map((name) => this.discard(path.join(this.dir, name))));
+  }
+
+  aside(skin, kind) {
+    return path.join(this.dir, `.${skin}.${crypto.randomUUID()}.${kind}`);
+  }
 
   file(skin, name) {
     return this.dir && Object.hasOwn(WORLDS, skin) && SERVED.has(name) ? path.join(this.dir, skin, 'web', name) : null;
@@ -141,11 +153,12 @@ export class YardWorlds extends EventEmitter {
       for (const [name, details] of Object.entries(meta.files)) {
         let content;
         try { content = fs.readFileSync(path.join(folder, ...name.split('/'))); } catch { content = null; }
-        if (!content || content.length !== details.size || sha256(content) !== details.sha256) throw new Error(`${title} is damaged: ${name} is missing or changed.`);
+        if (!content || content.length !== details.size || sha256(content) !== details.sha256) throw invalid(`${title} is damaged: ${name} is missing or changed.`);
       }
-      this.worlds[skin] = { title, revision: sha256(bytes).slice(0, 16), lights: checked.lights };
+      const install = fs.readFileSync(path.join(folder, INSTALL));
+      this.worlds[skin] = { title, revision: sha256(Buffer.concat([bytes, install])).slice(0, 16), lights: checked.lights };
     } catch (err) {
-      this.worlds[skin] = { title: title ?? null, problem: err.status || title ? err.message : 'This Yard’s world is damaged.' };
+      this.worlds[skin] = { title: title ?? null, problem: err.status ? err.message : `${title ?? 'This Yard’s world'} is damaged.` };
     }
   }
 
@@ -154,41 +167,48 @@ export class YardWorlds extends EventEmitter {
     if (!this.dir) throw failure(409, 'worlds_unsupported', 'This manager has no data folder to keep worlds in.');
     if (this.busy) throw failure(409, 'world_busy', 'Another world is being installed. Try again when it finishes.');
     this.busy = true;
+    const before = JSON.stringify(this.worlds[skin] ?? null);
     try {
       await work();
-      this.read(skin);
-      this.emit('updated', this.snapshot());
-      return this.snapshot();
     } catch (err) {
       if (err.status) throw err;
       throw failure(500, 'world_unwritable', `Agent Guild cannot write to its data folder: ${err.message}`);
-    } finally { this.busy = false; }
+    } finally {
+      this.read(skin);
+      this.busy = false;
+      if (JSON.stringify(this.worlds[skin] ?? null) !== before) this.emit('updated', this.snapshot());
+    }
+    return this.snapshot();
   }
 
   replace(skin, file) {
     return this.exclusive(skin, async () => {
       const { files } = await readPackage(file);
-      const target = path.join(this.dir, skin), staging = path.join(this.dir, `.${skin}.staging`), previous = path.join(this.dir, `.${skin}.old`);
+      const target = path.join(this.dir, skin), staging = this.aside(skin, 'staging'), previous = this.aside(skin, 'old');
       await fsp.mkdir(this.dir, { recursive: true });
-      await fsp.rm(staging, { recursive: true, force: true });
       try {
         try { await extractArchive(file, files, staging); } catch (err) {
           if (['ENOSPC', 'EACCES', 'EPERM', 'EBUSY', 'EROFS'].includes(err.code)) throw err;
           throw invalid(`This world file is damaged: ${err.message}.`);
         }
         for (const { path: name } of files) if (name !== MANIFEST) checkContent(name, await fsp.readFile(path.join(staging, ...name.split('/'))));
+        await fsp.writeFile(path.join(staging, INSTALL), crypto.randomUUID());
         const had = fs.existsSync(target);
         if (had) await renameRetrying(target, previous);
         try { await renameRetrying(staging, target); } catch (err) {
           if (had) await renameRetrying(previous, target);
           throw err;
         }
-      } finally { await fsp.rm(staging, { recursive: true, force: true }); }
-      await fsp.rm(previous, { recursive: true, force: true, maxRetries: 5 });
+      } finally { await this.discard(staging); }
+      await this.sweep();
     });
   }
 
   restore(skin) {
-    return this.exclusive(skin, () => fsp.rm(path.join(this.dir, skin), { recursive: true, force: true, maxRetries: 5 }));
+    return this.exclusive(skin, async () => {
+      const target = path.join(this.dir, skin);
+      if (fs.existsSync(target)) await renameRetrying(target, this.aside(skin, 'old'));
+      await this.sweep();
+    });
   }
 }

@@ -1563,9 +1563,8 @@ async function yardWorldChange(request) {
   const buttons = document.querySelectorAll('#yard-world button');
   for (const item of buttons) item.disabled = true;
   try {
-    const { yardWorlds } = await request();
-    state.yardWorlds = yardWorlds;
-    notifyViews();
+    // The new state arrives as yard-worlds.updated.
+    await request();
   } catch (err) {
     if (err instanceof AuthError) return showAuth(err.message);
     toast(err.message, 8000);

@@ -1,4 +1,6 @@
 import test from 'node:test';
+import { EventEmitter } from 'node:events';
+import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -39,8 +41,8 @@ async function framesSettled(b){
   });
   return settled.frames;
 }
-async function setup(t,{yard=false,auth=true,source='',width=1440,height=1000,hash='',until=null}={}) {
-  const fixture=await startFixture();t.after(()=>fixture.close());
+async function setup(t,{yard=false,auth=true,source='',width=1440,height=1000,hash='',until=null,yardWorlds}={}) {
+  const fixture=await startFixture({yardWorlds});t.after(()=>fixture.close());
   const b=await browser();
   await b.navigate('about:blank');
   b.errors.length=0;b.requests.length=0;b.events.length=0;
@@ -1317,6 +1319,27 @@ test('a compact view whose host has no full page shows no control that asks for 
   await b.reload();
   await b.wait("document.querySelector('#connection')?.classList.contains('ok') && document.querySelector('#yard-stage')?.dataset.ready==='true'");
   assert.deepEqual(await b.evaluate(tryOpen),['#layout=compact&expand=none','none',false,0,true],'a reload keeps it');
+});
+
+test('a world changed while the Yard first loads is the one it shows',options,async t=>{
+  const assets=fileURLToPath(new URL('../../web/yard/assets/',import.meta.url));
+  const yardWorlds=Object.assign(new EventEmitter(),{
+    current:{guild:{title:'World A',revision:'aaaa',lights:null}},
+    snapshot(){return this.current;},
+    file:(skin,name)=>path.join(assets,skin,name),
+  });
+  const b=await browser();
+  await b.send('Fetch.enable',{patterns:[{urlPattern:'*/yard/worlds/*v=aaaa*'}]});
+  t.after(()=>b.send('Fetch.disable'));
+  await setup(t,{yard:true,yardWorlds});
+  await until(()=>b.events.some(event=>event.method==='Fetch.requestPaused'));
+  yardWorlds.current={guild:{title:'World B',revision:'bbbb',lights:null}};
+  yardWorlds.emit('updated',yardWorlds.current);
+  await b.wait("document.querySelector('#yard-title').textContent==='World B'");
+  await b.send('Fetch.disable');
+  await ready(b);
+  assert.ok(b.requests.some(request=>request.url.includes('/yard/worlds/guild/')&&request.url.includes('v=bbbb')),'the Yard loads the world it is named for');
+  assert.deepEqual(b.errors,[]);
 });
 
 test('auth, graphics failure, retry, manager restart and stopped screen remain usable',options,async t=>{

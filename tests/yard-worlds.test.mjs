@@ -142,7 +142,6 @@ test('a bad file is refused with the reason and the Yard keeps what it had', asy
   for (const [label, file, reason] of cases) {
     await assert.rejects(worlds.replace('guild', file), refused(reason), label);
     assert.deepEqual(worlds.snapshot(), before, label);
-    assert.deepEqual(fs.readdirSync(dir), ['guild'], label);
   }
   await assert.rejects(worlds.replace('nowhere', cases[0][1]), { status: 404, code: 'unknown_yard' });
   await assert.rejects(worlds.restore('constructor'), { status: 404, code: 'unknown_yard' });
@@ -164,14 +163,63 @@ test('a world damaged on disk, or made for another layout, is reported and can b
   assert.equal(reopened.snapshot().grove, undefined);
 });
 
-test('a replacement stopped between its two renames brings the old world back', async (t) => {
+const stuck = async () => { throw Object.assign(new Error('denied'), { code: 'EPERM' }); };
+
+test('a replacement that cannot clear the old world still succeeds and is announced', async (t) => {
+  const { pack, dir } = setup(t);
+  const worlds = new YardWorlds({ dir, remove: stuck });
+  await worlds.replace('guild', await pack({ meta: { title: 'Old' } }));
+  const events = [];
+  worlds.on('updated', (state) => events.push(state.guild.title));
+  assert.equal((await worlds.replace('guild', await pack({ meta: { title: 'New' } }))).guild.title, 'New');
+  assert.deepEqual(events, ['New']);
+  assert.equal((await worlds.replace('guild', await pack({ meta: { title: 'Newer' } }))).guild.title, 'Newer', 'a leftover blocks nothing');
+  const leftovers = fs.readdirSync(dir).filter((name) => name.startsWith('.'));
+  assert.equal(leftovers.length > 0, true);
+  const removed = [];
+  const reopened = new YardWorlds({ dir, remove: async (folder) => { removed.push(path.basename(folder)); } });
+  await reopened.swept;
+  assert.deepEqual(removed.sort(), leftovers.sort(), 'the next start tries again');
+  assert.equal(reopened.snapshot().guild.title, 'Newer');
+});
+
+test('restoring that cannot delete the files still restores, and the world does not return', async (t) => {
+  const { pack, dir } = setup(t);
+  const worlds = new YardWorlds({ dir, remove: stuck });
+  await worlds.replace('guild', await pack());
+  const events = [];
+  worlds.on('updated', (state) => events.push(Object.keys(state)));
+  assert.deepEqual(await worlds.restore('guild'), {});
+  assert.deepEqual(events, [[]]);
+  assert.equal(fs.existsSync(path.join(dir, 'guild')), false);
+  assert.deepEqual(new YardWorlds({ dir, remove: stuck }).snapshot(), {});
+});
+
+test('leftovers or an unusable folder never stop the manager from starting', async (t) => {
+  const { root, pack, dir } = setup(t);
+  await new YardWorlds({ dir }).replace('guild', await pack());
+  fs.mkdirSync(path.join(dir, '.guild.leftover.old'));
+  const worlds = new YardWorlds({ dir, remove: stuck });
+  await worlds.swept;
+  assert.equal(worlds.snapshot().guild.title, 'Lakeside');
+  const file = path.join(root, 'not-a-folder');
+  fs.writeFileSync(file, '');
+  const unusable = new YardWorlds({ dir: file });
+  await unusable.swept;
+  assert.deepEqual(unusable.snapshot(), {});
+});
+
+test('installing the same file again counts as a new world', async (t) => {
   const { pack, dir } = setup(t);
   const worlds = new YardWorlds({ dir });
-  await worlds.replace('guild', await pack());
-  fs.renameSync(path.join(dir, 'guild'), path.join(dir, '.guild.old'));
-  fs.mkdirSync(path.join(dir, '.guild.staging'));
-  assert.equal(new YardWorlds({ dir }).snapshot().guild.title, 'Lakeside');
-  assert.deepEqual(fs.readdirSync(dir), ['guild']);
+  const file = await pack();
+  const first = (await worlds.replace('guild', file)).guild.revision;
+  const events = [];
+  worlds.on('updated', (state) => events.push(state.guild.revision));
+  const second = (await worlds.replace('guild', file)).guild.revision;
+  assert.notEqual(second, first);
+  assert.deepEqual(events, [second]);
+  assert.equal(new YardWorlds({ dir }).snapshot().guild.revision, second, 'the revision survives a restart');
 });
 
 test('the API installs a chosen file, lists world files and serves only plates and skies', async (t) => {
