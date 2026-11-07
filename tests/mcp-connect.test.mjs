@@ -457,7 +457,8 @@ test('an open page hears an MCP server removed outside the card, from the heartb
   const token = 'a'.repeat(48);
   ctx.registry.mcpState = (provider) => ctx.mcp.describe(provider);
   const manager = Object.assign(new EventEmitter(), { list: () => [], refreshMultiplexers() {}, sessions: new Map() });
-  const api = createManagerServer({ manager, registry: ctx.registry, token, port: 0, webDir: path.join(here, '..', 'web'), mcpConnect: ctx.mcp, heartbeatMs: 20 });
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  const api = createManagerServer({ manager, registry: ctx.registry, token, port: 0, webDir: path.join(here, '..', 'web'), mcpConnect: ctx.mcp });
   await api.listen();
   const ws = new WebSocket(`${api.url.replace('http', 'ws')}/api/v1/events`, { headers: { Authorization: `Bearer ${token}` } });
   try {
@@ -467,6 +468,7 @@ test('an open page hears an MCP server removed outside the card, from the heartb
     }));
     await once(ws, 'open');
     writeRaw('anthropic', ctx.homeOf('anthropic'), JSON.stringify({ theme: 'dark', mcpServers: {} }));
+    t.mock.timers.tick(30000);
     let timer;
     await Promise.race([off, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('the card never heard the change')), 10000); })]);
     clearTimeout(timer);
