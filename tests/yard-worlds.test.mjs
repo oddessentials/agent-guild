@@ -24,7 +24,7 @@ function webp(width = 4, height = 4) {
   b.writeUInt16LE(height, 28);
   return b;
 }
-const hdr = (width = 2, height = 2, pixels = width * height * 4) => Buffer.concat([Buffer.from(`#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y ${height} +X ${width}\n`, 'latin1'), Buffer.alloc(pixels, 1)]);
+const hdr = (width = 512, height = 256, pixels = width * height * 4, extra = '') => Buffer.concat([Buffer.from(`#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n${extra}\n-Y ${height} +X ${width}\n`, 'latin1'), Buffer.alloc(pixels, 1)]);
 
 const PLATES = ['light', 'dark'].flatMap((theme) => ['base-0-0', 'base-1-0', 'detail-0-0', 'detail-1-0', 'close-0-0'].map((tile) => `web/${theme}-${tile}.webp`));
 
@@ -138,6 +138,8 @@ test('a bad file is refused with the reason and the Yard keeps what it had', asy
     ['a plate that is not WebP', await pack({ change: (body) => body.set('web/light-base-0-0.webp', Buffer.from('<svg onload=alert(1)>')) }), /isn’t a WebP/],
     ['a huge plate', await pack({ change: (body) => body.set('web/light-base-0-0.webp', webp(4097, 4)) }), /unsafe image size/],
     ['a sky with a false size', await pack({ change: (body) => body.set('web/sky-dark.hdr', hdr(4000, 4000, 16)) }), /isn’t a sky/],
+    ['a sky with a second size the renderer reads first', await pack({ change: (body) => body.set('web/sky-dark.hdr', hdr(2, 2, 16, '-Y 8192 +X 8192\n')) }), /isn’t a sky/],
+    ['a sky of another size', await pack({ change: (body) => body.set('web/sky-light.hdr', hdr(2, 2)) }), /isn’t a sky/],
   ];
   for (const [label, file, reason] of cases) {
     await assert.rejects(worlds.replace('guild', file), refused(reason), label);

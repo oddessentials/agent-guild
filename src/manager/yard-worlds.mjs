@@ -19,6 +19,8 @@ const MAX_ENTRY = 16 * 1024 * 1024;
 const MAX_RATIO = 20;
 const RATIO_FROM = 8 * 1024 * 1024;
 const MAX_SIDE = 4096;
+const SKY_HEADER = '#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 256 +X 512\n';
+const SKY_SIZE = SKY_HEADER.length + 512 * 256 * 4;
 const THEMES = ['light', 'dark'];
 const TILES = ['base-0-0', 'base-1-0', 'detail-0-0', 'detail-1-0', 'close-0-0'];
 const REQUIRED = [...THEMES.flatMap((theme) => TILES.map((tile) => `web/${theme}-${tile}.webp`)), 'web/sky-light.hdr', 'web/sky-dark.hdr'];
@@ -73,9 +75,7 @@ function checkContent(name, b) {
     if (b.toString('latin1', 0, 4) !== 'RIFF' || b.toString('latin1', 8, 12) !== 'WEBP') throw invalid(`${name} isn’t a WebP image.`);
     if (webpSize(b).some((side) => side <= 0 || side > MAX_SIDE)) throw invalid(`${name} has an unsafe image size.`);
   } else if (name.endsWith('.hdr')) {
-    const header = /^#\?RADIANCE\n(?:[^\n]*\n)*?\n-Y (\d{1,5}) \+X (\d{1,5})\n/.exec(b.toString('latin1', 0, 256));
-    const [height, width] = header ? [Number(header[1]), Number(header[2])] : [0, 0];
-    if (!header || !width || !height || width > MAX_SIDE || height > MAX_SIDE || b.length !== header[0].length + width * height * 4) throw invalid(`${name} isn’t a sky image.`);
+    if (b.length !== SKY_SIZE || b.toString('latin1', 0, SKY_HEADER.length) !== SKY_HEADER) throw invalid(`${name} isn’t a sky image.`);
   } else if (b[0] !== 0xff || b[1] !== 0xd8 || b[2] !== 0xff) throw invalid(`${name} isn’t a JPEG image.`);
 }
 

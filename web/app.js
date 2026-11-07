@@ -595,9 +595,12 @@ function managerGone() {
 function placeMenu(menu, button) {
   if (!menu.matches(':popover-open') || !button) return;
   const box = button.getBoundingClientRect();
-  const top = Math.round(box.bottom + 6);
+  menu.style.maxHeight = '';
+  const height = menu.offsetHeight, below = Math.round(box.bottom + 6), above = Math.round(box.top - 6), room = innerHeight - below - 8;
+  const flip = height > room && above - 8 > room;
+  const top = flip ? Math.max(8, above - height) : below;
   menu.style.top = `${top}px`;
-  menu.style.maxHeight = `${innerHeight - top - 8}px`;
+  menu.style.maxHeight = `${flip ? above - top : room}px`;
   menu.style.left = 'auto';
   menu.style.right = `${Math.max(8, Math.round(innerWidth - box.right))}px`;
   if (menu.getBoundingClientRect().left < 8) {
