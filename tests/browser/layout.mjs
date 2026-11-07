@@ -969,10 +969,9 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   await evaluate('document.querySelector(".break-row .yard-play-more").click()');
   await until('the card menu', () => evaluate('Boolean(document.querySelector(".break-row .yard-play-menu:popover-open"))'));
   assert.deepEqual(await evaluate('[...document.querySelector(".break-row .yard-play-menu").querySelectorAll("a")].map((a)=>[a.href,a.target])'), [['https://survive.oddessentials.ai/', '_blank'], ['https://towers.oddessentials.ai/', '_blank']]);
-  await evaluate('document.querySelector(".break-row .yard-play-menu").hidePopover()');
   await size(1440, await evaluate('Math.ceil(document.querySelector(".break-row .yard-play-more").getBoundingClientRect().bottom)+6'));
-  await evaluate('document.querySelector(".break-row .yard-play-more").click()');
   await until('the card menu above its button', () => evaluate('(()=>{const m=document.querySelector(".break-row .yard-play-menu:popover-open");if(!m)return false;const r=m.getBoundingClientRect(),b=document.querySelector(".break-row .yard-play-more").getBoundingClientRect();return r.top>=0&&r.bottom<=b.top&&m.scrollHeight<=m.clientHeight;})()'));
+  assert.equal(await evaluate('(()=>{const m=document.querySelector(".break-row .yard-play-menu");m.style.top="5000px";window.dispatchEvent(new Event("resize"));return m.getBoundingClientRect().bottom<=innerHeight;})()'), true, 'a resize moves an open card menu back into view');
   await evaluate('document.querySelector(".break-row .yard-play-menu").hidePopover()');
   await size(1440, 900);
   await evaluate('localStorage.removeItem("testBreakCard")');

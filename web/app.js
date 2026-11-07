@@ -2445,6 +2445,10 @@ function breakItem(id) {
   return item;
 }
 
+function placeBreakMenus() {
+  for (const menu of document.querySelectorAll('.break-row .yard-play-menu:popover-open')) placeMenu(menu, menu.closest('.yard-play').querySelector('.yard-play-more'));
+}
+
 function mountBreakButtons(card) {
   const section = card.querySelector('.break-buttons'), row = section.querySelector('.break-row');
   for (const id of BREAK_SOURCES) {
@@ -8736,7 +8740,7 @@ async function installCompanion(e) {
 new MutationObserver(() => closeMenu($('yard-play-menu'))).observe(document.documentElement, { attributes: true, attributeFilter: ['data-view', 'data-skin', 'data-layout'] });
 window.addEventListener('scroll', () => {
   placeMenu($('yard-play-menu'), $('yard-play-more'));
-  for (const menu of document.querySelectorAll('.break-row .yard-play-menu:popover-open')) placeMenu(menu, menu.closest('.yard-play').querySelector('.yard-play-more'));
+  placeBreakMenus();
 }, { passive: true });
 for (const menu of [$('manager-menu'), $('panel-sessions'), $('yard-play-menu')]) menu.addEventListener('keydown', moveInMenu);
 // Recorded only on the click that opens the menu: a click that closes it leaves what the open menu showed.
@@ -8758,6 +8762,7 @@ window.addEventListener('resize', () => {
   placeMenu($('panel-text-size'), $('panel-text-toggle'));
   placeMenu($('cards-menu'), $('cards-open'));
   placeMenu($('yard-play-menu'), $('yard-play-more'));
+  placeBreakMenus();
 });
 onMenu($('cards-menu'), (menu) => {
   placeMenu(menu, $('cards-open'));
