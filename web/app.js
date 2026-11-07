@@ -202,7 +202,7 @@ function holdToast(held) {
 const firstClick = (run) => (e) => { if (e.detail < 2) run(); };
 
 /** Buttons that act through the session manager. While it cannot be reached they are unavailable rather than left to fail. */
-const MANAGER_ACTIONS = '.provider :is(.new, .existing, .install, .update), .session-card :is(.resume, .rename, .stop, .remove), .history-resume, #panel-stop, #yard-install';
+const MANAGER_ACTIONS = '.provider :is(.new, .existing, .install, .update), .session-card :is(.resume, .rename, .stop, .remove), .history-resume, #panel-stop, #yard-install, #yard-world button, .break-install';
 
 function paintManagerActions(root = document) {
   for (const button of root.querySelectorAll(MANAGER_ACTIONS)) button.disabled = !state.connected;
@@ -595,9 +595,12 @@ function managerGone() {
 function placeMenu(menu, button) {
   if (!menu.matches(':popover-open') || !button) return;
   const box = button.getBoundingClientRect();
-  const top = Math.round(box.bottom + 6);
+  menu.style.maxHeight = '';
+  const height = menu.offsetHeight, below = Math.round(box.bottom + 6), above = Math.round(box.top - 6), room = innerHeight - below - 8;
+  const flip = height > room && above - 8 > room;
+  const top = flip ? Math.max(8, above - height) : below;
   menu.style.top = `${top}px`;
-  menu.style.maxHeight = `${innerHeight - top - 8}px`;
+  menu.style.maxHeight = `${flip ? above - top : room}px`;
   menu.style.left = 'auto';
   menu.style.right = `${Math.max(8, Math.round(innerWidth - box.right))}px`;
   if (menu.getBoundingClientRect().left < 8) {
@@ -1431,13 +1434,16 @@ function recentKeys(field, e) {
 const FOLDER_FIELDS = {
   cwd: { title: 'Choose working folder', input: 'cwd' },
   clone: { title: 'Choose clone folder', input: 'github-parent' },
+  world: { title: 'Choose a world file', input: null },
 };
+const WORLD_FOLDER_KEY = 'agentGuild.worldFolder';
 const folderView = { field: null, listing: null, loading: false, error: null, request: 0, opener: null };
 
-function chooseFolder(field) {
+function chooseFolder(field, skin = null) {
   if (!state.connected) return;
   const dialog = $('folder-browser');
-  Object.assign(folderView, { field, listing: null, loading: false, error: null });
+  Object.assign(folderView, { field, skin, listing: null, loading: false, error: null });
+  $('folder-use').hidden = $('folder-new-open').hidden = field === 'world';
   $('folder-title').textContent = FOLDER_FIELDS[field].title;
   $('folder-filter').value = '';
   $('folder-hidden').checked = load(HIDDEN_FOLDERS_KEY) === '1';
@@ -1445,7 +1451,7 @@ function chooseFolder(field) {
     folderView.opener = document.activeElement;
     dialog.showModal();
   }
-  browseTo($(FOLDER_FIELDS[field].input).value.trim());
+  browseTo(field === 'world' ? load(WORLD_FOLDER_KEY) ?? '' : $(FOLDER_FIELDS[field].input).value.trim());
 }
 
 function showNewFolder(open) {
@@ -1499,7 +1505,7 @@ async function browseTo(dir) {
   folderView.error = null;
   renderFolderBrowser();
   try {
-    const listing = await api('GET', `/folders?path=${encodeURIComponent(dir)}`);
+    const listing = await api('GET', `/folders?path=${encodeURIComponent(dir)}${folderView.field === 'world' ? '&files=agworld' : ''}`);
     if (request !== folderView.request) return;
     folderView.listing = listing;
     $('folder-filter').value = '';
@@ -1537,18 +1543,44 @@ function renderFolderBrowser() {
     row.classList.toggle('hidden-folder', entry.hidden);
     row.title = entry.path;
     return row;
+  }), ...(listing?.files ?? []).filter((file) => !query || file.name.toLowerCase().includes(query)).map((file) => {
+    const row = button(file.name, () => useWorldFile(file.path), 'folder-row folder-file');
+    row.title = file.path;
+    return row;
   }));
   const status = $('folder-status');
   status.textContent = loading ? 'Loading folders…'
     : error ? error
       : !listing ? ''
-        : !entries.length ? (listing.entries.length ? 'No folders match.' : 'No folders here.')
+        : listing.files?.length ? ''
+        : !entries.length ? (folderView.field === 'world' ? 'No world files here.' : listing.entries.length ? 'No folders match.' : 'No folders here.')
           : listing.truncated ? `Showing the first ${listing.entries.length.toLocaleString()} folders.` : '';
   status.classList.toggle('error', Boolean(error));
   $('folder-current').textContent = listing?.path ?? '';
   $('folder-use').disabled = loading || !listing;
   $('folder-new-open').disabled = loading || !listing;
   $('folder-new-create').disabled = loading || !listing || !$('folder-new-name').value.trim();
+}
+
+async function yardWorldChange(request) {
+  const buttons = document.querySelectorAll('#yard-world button');
+  for (const item of buttons) item.disabled = true;
+  try {
+    // The new state arrives as yard-worlds.updated.
+    await request();
+  } catch (err) {
+    if (err instanceof AuthError) return showAuth(err.message);
+    toast(err.message, 8000);
+  } finally {
+    for (const item of buttons) item.disabled = !state.connected;
+  }
+}
+
+function useWorldFile(file) {
+  const { skin, listing } = folderView;
+  $('folder-browser').close();
+  save(WORLD_FOLDER_KEY, listing.path);
+  return yardWorldChange(() => api('PUT', `/yard-worlds/${skin}`, { path: file }));
 }
 
 function folderBrowserClosed() {
@@ -2355,6 +2387,85 @@ async function changeMcp(provider, entry, view) {
 
 let dealt = false;
 
+const BREAK_CARD = 'terminal-ai-chat';
+const BREAK_LABEL = 'Need a break?';
+const BREAK_SOURCES = ['yard-play-arena', 'yard-play-more', 'yard-play-solo', 'yard-install', 'yard-play-builders'];
+let breakMenus = 0, breakPointer = '', breakArmed = null;
+
+function paintBreak(root = document) {
+  for (const section of root.querySelectorAll('.break-buttons:not([hidden])')) {
+    section.querySelector('.break-label').textContent = breakArmed ? `${breakArmed}. Tap again to open.` : BREAK_LABEL;
+    for (const link of section.querySelectorAll('.yard-play-chip > .yard-play-link')) {
+      link.closest('.yard-play').classList.toggle('armed', link.getAttribute('aria-label') === breakArmed);
+    }
+  }
+}
+
+function armBreak(name) {
+  breakArmed = name;
+  paintBreak();
+}
+
+// On the window, ahead of the host's link handler on the document.
+window.addEventListener('pointerdown', (e) => {
+  breakPointer = e.pointerType;
+  if (breakArmed && e.target.closest?.('.armed .yard-play-link')?.getAttribute('aria-label') !== breakArmed) armBreak(null);
+}, true);
+window.addEventListener('click', (e) => {
+  const touched = breakPointer === 'touch';
+  breakPointer = '';
+  const name = e.target.closest?.('.break-row .yard-play-chip > .yard-play-link')?.getAttribute('aria-label');
+  if (!name || !touched || breakArmed === name) {
+    if (breakArmed) armBreak(null);
+    return;
+  }
+  e.preventDefault();
+  e.stopPropagation();
+  armBreak(name);
+}, true);
+
+function breakItem(id) {
+  const source = $(id).closest('.yard-play');
+  const item = source.cloneNode(true);
+  item.querySelector('.yard-play-burst').remove();
+  for (const part of item.querySelectorAll('.yard-play-text, .yard-play-chev')) part.remove();
+  for (const part of item.querySelectorAll('[id]')) part.removeAttribute('id');
+  const menu = item.querySelector('.yard-play-menu');
+  if (!menu) return item;
+  item.querySelector('.yard-play-chip > .yard-play-link').remove();
+  const more = item.querySelector('.yard-play-more');
+  menu.id = `break-play-menu-${++breakMenus}`;
+  more.setAttribute('popovertarget', menu.id);
+  onMenu(menu, () => {
+    placeMenu(menu, more);
+    menuItems(menu)[0]?.focus();
+  }, () => returnFocus(menu, more));
+  menu.addEventListener('click', (e) => { if (e.target.closest('a')) closeMenu(menu); });
+  menu.addEventListener('keydown', moveInMenu);
+  return item;
+}
+
+function placeBreakMenus() {
+  for (const menu of document.querySelectorAll('.break-row .yard-play-menu:popover-open')) placeMenu(menu, menu.closest('.yard-play').querySelector('.yard-play-more'));
+}
+
+function mountBreakButtons(card) {
+  const section = card.querySelector('.break-buttons'), row = section.querySelector('.break-row');
+  for (const id of BREAK_SOURCES) {
+    if (id === 'yard-install' && $(id).hidden) continue;
+    const item = breakItem(id);
+    if (id === 'yard-install') {
+      const button = item.querySelector('.yard-play-link');
+      button.hidden = false;
+      button.classList.add('break-install');
+      button.addEventListener('click', installCompanion);
+    }
+    row.append(item);
+  }
+  section.hidden = false;
+  paintBreak(card);
+}
+
 // Both layouts mount these same controls with these same command handlers.
 function buildProvider(provider) {
     const node = $('provider-template').content.firstElementChild.cloneNode(true);
@@ -2367,6 +2478,7 @@ function buildProvider(provider) {
     stateLine.classList.toggle('update-available', provider.updateAvailable || checkFailed || Boolean(installNote(provider)));
     stateLine.title = [provider.resolvedPath, provider.updateCommand && `Update: ${provider.updateCommand}`].filter(Boolean).join('\n');
     node.dataset.id = provider.id;
+    if (provider.id === BREAK_CARD && document.documentElement.dataset.yard !== 'none') mountBreakButtons(node);
     node.classList.toggle('unavailable', !provider.available);
     node.setAttribute('aria-label', `${provider.vendor} ${provider.tool}, ${!provider.available ? 'not installed' : checkFailed ? 'version check failed' : 'ready'}`);
     const start = node.querySelector('.new');
@@ -7944,6 +8056,8 @@ function connectEvents() {
       state.folderOpener = msg.folderOpener || null;
       state.platform = msg.platform || null;
       $('yard-install').hidden = !['win32', 'darwin'].includes(state.platform);
+      $('yard-world-get').hidden = state.platform !== 'win32';
+      state.yardWorlds = msg.yardWorlds ?? null;
       state.remoteAccessUI?.setAvailable(msg.remoteAccess);
       state.remoteAccessUI?.signInsUpdated();
       state.glassesLinkUI?.setAvailable(msg.remoteAccess);
@@ -7984,6 +8098,9 @@ function connectEvents() {
       state.remoteAccessUI?.signInsUpdated();
     } else if (msg.type === 'yard-art.updated') {
       state.yardArt = msg.yardArt;
+      notifyViews();
+    } else if (msg.type === 'yard-worlds.updated') {
+      state.yardWorlds = msg.yardWorlds;
       notifyViews();
     } else if (msg.type === 'yard.fireworks') {
       yardUi?.celebrate();
@@ -8605,7 +8722,8 @@ onMenu($('yard-play-menu'), (menu) => {
 $('yard-play-menu').addEventListener('click', (e) => {
   if (e.target.closest('a')) closeMenu(e.currentTarget);
 });
-$('yard-install').addEventListener('click', async (e) => {
+$('yard-install').addEventListener('click', installCompanion);
+async function installCompanion(e) {
   const button = e.currentTarget;
   button.disabled = true;
   try {
@@ -8618,9 +8736,12 @@ $('yard-install').addEventListener('click', async (e) => {
   } finally {
     button.disabled = !state.connected;
   }
-});
+}
 new MutationObserver(() => closeMenu($('yard-play-menu'))).observe(document.documentElement, { attributes: true, attributeFilter: ['data-view', 'data-skin', 'data-layout'] });
-window.addEventListener('scroll', () => placeMenu($('yard-play-menu'), $('yard-play-more')), { passive: true });
+window.addEventListener('scroll', () => {
+  placeMenu($('yard-play-menu'), $('yard-play-more'));
+  placeBreakMenus();
+}, { passive: true });
 for (const menu of [$('manager-menu'), $('panel-sessions'), $('yard-play-menu')]) menu.addEventListener('keydown', moveInMenu);
 // Recorded only on the click that opens the menu: a click that closes it leaves what the open menu showed.
 const sessionMenuFrom = (mode, invoker) => () => {
@@ -8641,6 +8762,7 @@ window.addEventListener('resize', () => {
   placeMenu($('panel-text-size'), $('panel-text-toggle'));
   placeMenu($('cards-menu'), $('cards-open'));
   placeMenu($('yard-play-menu'), $('yard-play-more'));
+  placeBreakMenus();
 });
 onMenu($('cards-menu'), (menu) => {
   placeMenu(menu, $('cards-open'));
@@ -8812,6 +8934,10 @@ yardUi = initYard({
   openNews,
   selected: dockMakesWayForYard,
   yardArt: () => state.yardArt,
+  yardWorld: (skin) => state.yardWorlds?.[skin] ?? null,
+  canReplaceYard: () => Boolean(state.yardWorlds),
+  replaceYard: (skin) => chooseFolder('world', skin),
+  restoreYard: (skin) => yardWorldChange(() => api('DELETE', `/yard-worlds/${skin}`)),
   // The new state arrives as yard-art.updated, ordered with the progress events.
   yardArtAction: (action) => api('POST', `/yard-art/${action}`),
   mountInspector(host, selection) {

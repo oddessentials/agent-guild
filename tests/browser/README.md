@@ -92,7 +92,7 @@ message preview using fixed demo responses. Parser, paging, account isolation
 and stale-response tests run under `npm test` with synthetic files and explicitly
 released promises; they do not call a provider or depend on timing delays.
 
-To also run WebKit (as CI does on macOS, where it needs no system packages),
+To run the WebKit pass instead of Chrome (as CI does on macOS, where it needs no system packages),
 install the test tools separately from the application's dependencies:
 
 ```sh

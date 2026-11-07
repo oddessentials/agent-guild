@@ -79,8 +79,7 @@ function drawTag(context, tag) {
   context.restore();
 }
 
-function drawSignature(context, skin, crest, width, height) {
-  const title = WORLDS[skin].title;
+function drawSignature(context, skin, title, crest, width, height) {
   const display = getComputedStyle(document.documentElement).getPropertyValue('--font-display').trim() || 'serif';
   const titleFont = `600 15px ${display}`, siteFont = `500 10px ${getComputedStyle(document.body).fontFamily}`;
   context.save();
@@ -159,7 +158,7 @@ export class YardPhoto {
     context.save();
     context.scale(shot.scale, shot.scale);
     if (this.labels.checked) for (const tag of shot.tags) drawTag(context, tag);
-    drawSignature(context, shot.skin, this.crestImage, preview.width / shot.scale, preview.height / shot.scale);
+    drawSignature(context, shot.skin, shot.title || WORLDS[shot.skin].title, this.crestImage, preview.width / shot.scale, preview.height / shot.scale);
     context.restore();
   }
 
@@ -170,7 +169,7 @@ export class YardPhoto {
     return png;
   }
 
-  name() { return photoName(WORLDS[this.shot.skin].title, this.taken); }
+  name() { return photoName(this.shot.title || WORLDS[this.shot.skin].title, this.taken); }
 
   isCurrent(version) { return version === this.version && this.dialog.open; }
 

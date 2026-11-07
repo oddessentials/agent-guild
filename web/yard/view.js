@@ -28,7 +28,37 @@ export function initYard(controller) {
   const root = document.documentElement;
   let view = root.dataset.view === 'yard' ? 'yard' : 'cards';
   let snapshot = controller.snapshot();
-  let lastSkin = '', lastTheme = '', wasConnected = false;
+  let lastSkin = '', lastTheme = '', lastRevision = null, wasConnected = false;
+  // Worlds that failed to draw here: skin to revision. The Yard shows its original until the world changes.
+  const unloadable = new Map();
+  const customFor = (skin) => {
+    const world = controller.yardWorld(skin);
+    return world && !world.problem && unloadable.get(skin) !== world.revision ? world : null;
+  };
+  const titleFor = (skin) => customFor(skin)?.title ?? WORLDS[skin].title;
+  const loadWorld = (target, skin, theme, progress) => {
+    const custom = customFor(skin);
+    return target.setWorld(skin, theme, { progress, custom }).catch((err) => {
+      if (!custom || disposed) throw err;
+      unloadable.set(skin, custom.revision);
+      if (skin === lastSkin) lastRevision = null;
+      worldSpot();
+      return target.setWorld(skin, theme, { progress });
+    });
+  };
+  function worldSpot() {
+    const skin = root.dataset.skin;
+    if (!WORLDS[skin]) return;
+    const world = controller.yardWorld(skin);
+    $('yard-title').textContent = titleFor(skin);
+    $('yard-title').classList.toggle('yard-title-custom', Boolean(customFor(skin)));
+    const reason = world?.problem || (world && !customFor(skin) ? world.title + ' could not load.' : '');
+    $('yard-world-replace').hidden = !controller.canReplaceYard();
+    $('yard-world-replace').textContent = world ? 'Replace' : 'Replace this Yard';
+    $('yard-world-restore').hidden = !world;
+    $('yard-world-note').hidden = !reason;
+    $('yard-world-note').textContent = reason && reason + ' This Yard is showing its original.';
+  }
   const celebrate = () => { if (!disposed && sceneVisible()) renderer?.fireworks(); };
   const fireworksButton = () => {
     const button = $('yard-fireworks');
@@ -149,17 +179,18 @@ export function initYard(controller) {
         });
         pendingRenderer = candidate;
         // Appearance can change while the first world is loading.
-        let skin, theme;
+        let skin, theme, revision;
         do {
           skin = root.dataset.skin; theme = root.dataset.theme;
           if (!WORLDS[skin]) { candidate.dispose(); return; }
-          showLoading('Loading ' + WORLDS[skin].title + '…', 'scene');
-          await boundedLoad(progress => candidate.setWorld(skin, theme, { progress }), loadingProgress);
-        } while (!disposed && !candidate.disposed && attempt === sceneAttempt && (skin !== root.dataset.skin || theme !== root.dataset.theme));
+          revision = customFor(skin)?.revision ?? null;
+          showLoading('Loading ' + titleFor(skin) + '…', 'scene');
+          await boundedLoad(progress => loadWorld(candidate, skin, theme, progress), loadingProgress);
+        } while (!disposed && !candidate.disposed && attempt === sceneAttempt && (skin !== root.dataset.skin || theme !== root.dataset.theme || revision !== (customFor(skin)?.revision ?? null)));
         if (disposed || candidate.disposed || attempt !== sceneAttempt) { candidate.dispose(); return; }
         pendingRenderer = null;
         renderer = candidate;
-        lastSkin = skin; lastTheme = theme;
+        lastSkin = skin; lastTheme = theme; lastRevision = revision;
         renderer.setReducedMotion(motion.matches);
         renderer.update(snapshot.providers, snapshot.sessions);
         renderer.select(selected);
@@ -237,13 +268,13 @@ export function initYard(controller) {
   // The current world stays up and usable while another loads, and after it
   // fails. A swap that is ready almost at once shows no progress.
   function swapWorld() {
-    const current = renderer, attempt = ++worldAttempt, title = WORLDS[lastSkin].title;
+    const current = renderer, attempt = ++worldAttempt, title = titleFor(lastSkin);
     $('yard-swap-failure').hidden = true;
     hideLoading();
     showLoading('Loading ' + title + '…', 'swap');
     swapReveal = setTimeout(() => { if (attempt === worldAttempt) $('yard-loading').hidden = false; }, 250);
     const settle = () => renderer === current && attempt === worldAttempt && (hideLoading(), true);
-    boundedLoad(progress => current.setWorld(lastSkin, lastTheme, { progress }), loadingProgress).then(() => {
+    boundedLoad(progress => loadWorld(current, lastSkin, lastTheme, progress), loadingProgress).then(() => {
       if (!settle()) return;
       current.update(snapshot.providers,snapshot.sessions); current.select(selected);
     }).catch(() => {
@@ -267,7 +298,8 @@ export function initYard(controller) {
     }
     const world = WORLDS[root.dataset.skin];
     if (!world) return;
-    $('yard-title').textContent = world.title;
+    const revision = customFor(root.dataset.skin)?.revision ?? null;
+    worldSpot();
     $('yard-subtitle').textContent = world.subtitle;
     const working = snapshot.sessions.filter(s => sessionPose(s) === 'working').length;
     const running = snapshot.sessions.filter(s => s.status === 'running').length;
@@ -281,9 +313,9 @@ export function initYard(controller) {
     $('yard-news-empty').hidden = Boolean(href);
     if (href) { $('yard-headline').textContent = news.title; $('yard-headline').href = href; }
     if (renderer) {
-      if (lastSkin !== root.dataset.skin || lastTheme !== root.dataset.theme) {
+      if (lastSkin !== root.dataset.skin || lastTheme !== root.dataset.theme || lastRevision !== revision) {
         if (!WORLDS[root.dataset.skin]) return;
-        lastSkin = root.dataset.skin; lastTheme = root.dataset.theme;
+        lastSkin = root.dataset.skin; lastTheme = root.dataset.theme; lastRevision = revision;
         swapWorld();
       }
       renderer.update(snapshot.providers,snapshot.sessions);
@@ -310,6 +342,8 @@ export function initYard(controller) {
     lastSkin = ''; lastTheme = '';
     update();
   });
+  $('yard-world-replace').addEventListener('click',() => controller.replaceYard(root.dataset.skin));
+  $('yard-world-restore').addEventListener('click',() => controller.restoreYard(root.dataset.skin));
   $('yard-filter').addEventListener('input',roster);
   $('yard-news').addEventListener('click',controller.openNews);
   $('yard-deselect').addEventListener('click',() => { select(null); $('yard-filter').focus(); });

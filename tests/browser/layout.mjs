@@ -6,7 +6,7 @@ import { until, withPage } from './chrome.mjs';
 const instrumentation = `<script>
 window.testTerms=[];window.testSizes=[];window.testActions=[];window.testSockets=[];
 const demoFetch=window.fetch;
-window.fetch=function(input,init){if(String(input?.url??input).split('?')[0].endsWith('/actions'))testActions.push(Date.now());return demoFetch.call(this,input,init);};
+window.fetch=function(input,init){const route=String(input?.url??input).split('?')[0];if(route.endsWith('/actions'))testActions.push(Date.now());const answer=demoFetch.call(this,input,init);if(!route.endsWith('/providers')||!localStorage.getItem('testBreakCard'))return answer;return answer.then((r)=>r.json()).then((body)=>{const shell=body.providers.find((p)=>p.id==='shell');body.providers.push({...shell,id:'terminal-ai-chat',tool:'Terminal AI Chat',vendor:'Odd Essentials'});return new Response(JSON.stringify(body),{status:200,headers:{'Content-Type':'application/json'}});});};
 const RealTerminal=window.Terminal;
 window.Terminal=class extends RealTerminal {
   constructor(...args){super(...args);testTerms.push(this);}
@@ -325,9 +325,6 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   await key('End', 'End', 35);
   await playPlaced('the narrowest stage beside a dock', 1280);
   await size(1440, 900);
-  await evaluate('document.documentElement.dataset.skin="guild"');
-  await layoutReady();
-  assert.equal(await visible('#yard-summary'), true, 'a narrow stage hides the summary only in Orbital');
   await evaluate('document.documentElement.dataset.skin="orbital"');
   assert.deepEqual([...forms].sort((a, b) => a - b), [-1, 0, 1, 3, 4], 'the sizes covered every form of the chip');
   await evaluate('document.querySelector("#dock-splitter").focus()');
@@ -336,19 +333,20 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   await until('the dock closes', async () => !(await visible('#dock')));
   await layoutReady();
   assert.equal(await visible('#yard-play-solo'), false, 'Orbital shows only its split');
-  const soloPlaced = async (label, width) => {
+  assert.deepEqual([await visible('#yard-play-arena'), await visible('#yard-play-builders')], [false, false], 'Orbital has neither Arena nor Builders');
+  const soloPlaced = async (label, width, link = '#yard-play-solo', root = '.yard-play-solo') => {
     await layoutReady();
-    const [link, chip, stage, title] = await Promise.all([box('#yard-play-solo'), box('.yard-play-solo .yard-play-chip'), box('#yard-stage'), box('.yard-heading > div:first-child')]);
+    const [button, chip, stage, title] = await Promise.all([box(link), box(`${root} .yard-play-chip`), box('#yard-stage'), box('.yard-heading > div:first-child')]);
     assert.equal(await evaluate('innerWidth'), width, `${label}: the viewport keeps its width`);
-    assert.equal(await visible('#yard-play-solo'), true, `${label}: the button shows`);
-    assert.ok(link.width >= 44 && link.height >= 44, `${label}: the button is ${link.width}x${link.height}px`);
+    assert.equal(await visible(link), true, `${label}: the button shows`);
+    assert.ok(button.width >= 44 && button.height >= 44, `${label}: the button is ${button.width}x${button.height}px`);
     assert.ok(chip.left >= stage.left && chip.right <= stage.right && chip.top >= stage.top && chip.bottom <= stage.bottom, `${label}: the button is on the stage`);
-    assert.equal(await evaluate('(()=>{const a=document.querySelector("#yard-play-solo"),r=a.getBoundingClientRect();return a.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2))})()'), true, `${label}: nothing covers the button`);
+    assert.equal(await evaluate(`(()=>{const a=document.querySelector('${link}'),r=a.getBoundingClientRect();return a.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2))})()`), true, `${label}: nothing covers the button`);
     if (stage.width < 340) {
       assert.ok(title.right <= chip.left, `${label}: the title stays clear of the button`);
       assert.equal(await visible('#yard-subtitle'), false, `${label}: only the title remains`);
     } else {
-      const [room, needed] = await evaluate('(()=>{const heading=document.querySelector(".yard-heading"),title=heading.firstElementChild,chip=document.querySelector(".yard-play-solo .yard-play-chip");const room=chip.getBoundingClientRect().left-parseFloat(getComputedStyle(heading).columnGap)-title.getBoundingClientRect().left;const needed=Math.max(...[".yard-eyebrow","#yard-title","#yard-subtitle"].map(s=>{const e=document.querySelector(s);e.style.whiteSpace="nowrap";const w=e.scrollWidth;e.style.whiteSpace="";return w}));return [room,needed]})()');
+      const [room, needed] = await evaluate(`(()=>{const heading=document.querySelector('.yard-heading'),title=heading.firstElementChild,chip=document.querySelector('${root} .yard-play-chip');`+'const room=chip.getBoundingClientRect().left-parseFloat(getComputedStyle(heading).columnGap)-title.getBoundingClientRect().left;const needed=Math.max(...[".yard-eyebrow","#yard-title","#yard-subtitle"].map(s=>{const e=document.querySelector(s);e.style.whiteSpace="nowrap";const w=e.scrollWidth;e.style.whiteSpace="";return w}));return [room,needed]})()');
       assert.ok(room >= needed, `${label}: the title block has ${room}px for a ${needed}px line`);
     }
     await noSideScroll(`${label} with the button`);
@@ -360,7 +358,8 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
     await layoutReady();
     assert.deepEqual(await evaluate('(()=>{const a=document.querySelector("#yard-play-solo");return [a.href,a.target,a.rel,a.querySelector(".yard-play-sub").textContent]})()'), ['https://agforever.oddessentials.ai/', '_blank', 'noopener noreferrer', 'Wizard Duels · free in your browser']);
     assert.equal(await visible('#yard-play'), false, `${skin} has no split`);
-    assert.deepEqual(await evaluate('(()=>{const orb=document.querySelector("#yard-play-solo .yard-play-orb");return [orb.querySelectorAll("use").length,[...orb.querySelectorAll("*")].flatMap(e=>["fill","stroke","filter"].map(a=>e.getAttribute(a)?.match(/url\\(#(.+)\\)/)?.[1])).filter(id=>id&&!document.querySelector(".yard-play-solo .yard-play-defs #"+id))]})()'), [0, []], `${skin}: the orb paints from its own definitions, as the Orbital ones are hidden here`);
+    assert.deepEqual([await visible('#yard-play-arena'), await visible('#yard-play-builders')], [false, false], `${skin} has neither Arena nor Builders`);
+    assert.deepEqual(await evaluate('(()=>{const orb=document.querySelector("#yard-play-solo .yard-play-orb");return [orb.querySelectorAll("use").length,[...orb.querySelectorAll("*")].flatMap(e=>["fill","stroke","filter"].map(a=>e.getAttribute(a)?.match(/url\\(#(.+)\\)/)?.[1])).filter(id=>id&&!document.querySelector("body > .yard-play-defs #"+id))]})()'), [0, []], `${skin}: the orb paints from definitions outside the Yard, which the Cards hide`);
     await soloPlaced(`${skin} 1440`, 1440);
     for (const [width, height] of [[980, 800], [936, 800], [484, 800], [476, 800], [444, 800], [436, 800], [384, 800], [376, 800], [344, 640], [336, 640], [320, 568]]) {
       await size(width, height);
@@ -400,6 +399,68 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   await layoutReady();
   assert.equal(await visible('#yard-play'), false, 'the Guild has no Play now');
   assert.equal(await visible('#yard-play-solo'), false, 'the Guild has no Wizard Duels button');
+  assert.equal(await visible('#yard-play-builders'), false, 'the Guild has no Builders button');
+  assert.deepEqual(await evaluate('(()=>{const a=document.querySelector("#yard-play-arena");return [a.href,a.target,a.rel,a.querySelector(".yard-play-sub").textContent]})()'), ['https://arena.oddessentials.ai/', '_blank', 'noopener noreferrer', 'Arena · free in your browser']);
+  for (const [width, height] of [[1440, 900], [980, 800], [484, 800], [444, 800], [376, 800], [336, 640]]) {
+    await size(width, height);
+    await soloPlaced(`guild ${width}`, width, '#yard-play-arena', '.yard-play-arena');
+  }
+  await size(1440, 900);
+  await evaluate('document.documentElement.dataset.skin="professional"');
+  await layoutReady();
+  assert.deepEqual([await visible('#yard-play'), await visible('#yard-play-solo'), await visible('#yard-play-arena')], [false, false, false], 'Professional shows only Builders');
+  assert.deepEqual(await evaluate('(()=>{const a=document.querySelector("#yard-play-builders");return [a.href,a.target,a.rel,a.querySelector(".yard-play-sub").textContent]})()'), ['https://github.com/oddessentials/agent-guild-builders/releases/latest', '_blank', 'noopener noreferrer', 'Builders · for Windows']);
+  for (const [width, height] of [[1440, 900], [980, 800], [524, 800], [484, 800], [444, 800], [356, 800], [336, 640]]) {
+    await size(width, height);
+    await soloPlaced(`professional ${width}`, width, '#yard-play-builders', '.yard-play-builders');
+    assert.equal(await evaluate(`(()=>{const s=document.querySelector('.yard-play-stamp');if(!s.checkVisibility())return false;const a=s.getBoundingClientRect(),words=document.createTreeWalker(document.querySelector('.yard-play-builders .yard-play-text'),NodeFilter.SHOW_TEXT);let hit=false;while(words.nextNode()){const range=document.createRange();range.selectNodeContents(words.currentNode);for(const b of range.getClientRects())hit||=b.width>0&&a.left<b.right&&b.left<a.right&&a.top<b.bottom&&b.top<a.bottom;}return hit;})()`), false, `professional ${width}: the beta stamp clears the words`);
+  }
+  await size(1440, 900);
+  assert.equal(await visible('.yard-play-stamp'), true, 'the Builders button is stamped as a beta');
+  await size(1440, 900);
+  assert.equal(await visible('#yard-world-replace'), false, 'the demo has no manager to install a world');
+  const spotClear = (label) => evaluate(`(()=>{for(const id of ['#yard-world-get','#yard-world-replace','#yard-world-restore'])document.querySelector(id).hidden=false;const box=(e)=>e.getBoundingClientRect(),stage=box(document.querySelector('#yard-stage'));
+    const parts=[...document.querySelectorAll('#yard-world .btn:not([hidden])')],camera=[...document.querySelectorAll('.yard-camera .btn:not([hidden])')];
+    const inside=parts.every((e)=>{const r=box(e);return r.width>=44&&r.left>=stage.left&&r.right<=stage.right&&r.top>=stage.top&&r.bottom<=stage.bottom;});
+    const apart=parts.every((e)=>camera.every((c)=>{const a=box(e),b=box(c);return a.right<=b.left||b.right<=a.left||a.bottom<=b.top||b.bottom<=a.top;}));
+    return {label:${JSON.stringify(label)},count:parts.length,inside,apart,left:Math.round(box(document.querySelector('#yard-world')).left-stage.left)};})()`);
+  const lefts = new Set();
+  for (const skin of ['guild', 'orbital', 'grove', 'professional', 'goblinville', 'gnomeland']) {
+    await evaluate(`document.documentElement.dataset.skin="${skin}"`);
+    for (const [width, height] of [[1440, 900], [336, 640]]) {
+      await size(width, height);
+      const at = await spotClear(`${skin} ${width}`);
+      assert.deepEqual([at.count, at.inside, at.apart], [3, true, true], JSON.stringify(at));
+      if (width === 1440) lefts.add(at.left);
+    }
+    await size(1440, 900);
+  }
+  assert.equal(lefts.size, 1, `the spot sits in one place in every Yard: ${[...lefts]}`);
+  await evaluate('document.documentElement.dataset.layout="compact"');
+  await layoutReady();
+  for (const [width, height] of [[280, 500]]) {
+    await size(width, height);
+    const compactSpot = await spotClear(`compact ${width}`);
+    assert.deepEqual([compactSpot.count, compactSpot.inside, compactSpot.apart], [3, true, true], JSON.stringify(compactSpot));
+  }
+  await size(1440, 900);
+  await evaluate('document.querySelector("#yard-world-replace").click()');
+  await until('the file dialog opens', () => evaluate('document.querySelector("#folder-browser").open&&document.querySelector("#folder-title").textContent==="Choose a world file"'));
+  assert.deepEqual(await evaluate('[getComputedStyle(document.querySelector("#folder-browser")).display!=="none",document.querySelector("#folder-use").hidden,document.querySelector("#folder-new-open").hidden]'), [true, true, true]);
+  await evaluate('document.querySelector("#folder-browser").close();delete document.documentElement.dataset.layout;document.querySelector("#yard-world-get").hidden=true;document.querySelector("#yard-world-replace").hidden=true');
+  await layoutReady();
+  for (const skin of ['professional', 'gnomeland']) {
+    await evaluate(`document.documentElement.dataset.skin="${skin}"`);
+    for (const [width, height] of [[444, 800]]) {
+      await size(width, height);
+      const long = await evaluate(`(()=>{const title=document.querySelector('#yard-title'),text=title.textContent;title.textContent='A very long world name '.repeat(6).slice(0,128);title.classList.add('yard-title-custom');const box=(e)=>e.getBoundingClientRect(),t=box(title),line=parseFloat(getComputedStyle(title).lineHeight)||t.height,chip=[...document.querySelectorAll('.yard-play-chip')].find((e)=>e.checkVisibility()),c=chip&&box(chip),clear=!c||t.right<=c.left||c.right<=t.left||t.bottom<=c.top||c.bottom<=t.top,result={height:t.height,line,clear,right:t.right<=box(document.querySelector('#yard-stage')).right};title.textContent=text;title.classList.remove('yard-title-custom');return result;})()`);
+      assert.ok(long.clear && long.right && long.height <= long.line * 2 + 1, `${skin} ${width}: ${JSON.stringify(long)}`);
+    }
+  }
+  await size(1440, 900);
+  pass('the world spot sits in one place in all six Yards at every width and opens the file dialog in the compact layout');
+  await evaluate('document.documentElement.dataset.skin="professional"');
+  await layoutReady();
   await evaluate(`document.documentElement.dataset.skin=${JSON.stringify(startSkin[0])}`);
   await click('#view-cards');
   await until('Cards', () => evaluate('document.documentElement.dataset.view==="cards"'));
@@ -875,6 +936,49 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   const tv = await send('Page.addScriptToEvaluateOnNewDocument', {
     source: 'window.testApp=[];window.agentGuild={postMessage:m=>testApp.push(JSON.parse(m))};localStorage.setItem("agentGuild.view","yard");',
   });
+  await evaluate('document.documentElement.dataset.skin="guild"');
+  await evaluate('localStorage.setItem("testBreakCard","1");');
+  await reload();
+  await click('#view-cards');
+  await until('the break buttons', () => evaluate('document.querySelector(".provider[data-id=\\"terminal-ai-chat\\"] .break-row .yard-play")?.checkVisibility()&&document.querySelector("#providers").getAnimations({subtree:true}).every((a)=>!Number.isFinite(a.effect.getComputedTiming().endTime))'));
+  const breakFit = () => evaluate(`(()=>{const card=document.querySelector('.provider[data-id="terminal-ai-chat"]'),c=card.getBoundingClientRect(),box=(e)=>e.getBoundingClientRect();
+    const chips=[...card.querySelectorAll('.break-row .yard-play-chip')],parts=[...card.querySelectorAll('.break-row .yard-play-link,.break-row .yard-play-more')];
+    return {count:chips.length,small:parts.filter((e)=>box(e).width<44||box(e).height<44).length,
+      outside:chips.filter((e)=>{const r=box(e);return r.left<c.left||r.right>c.right||r.top<c.top||r.bottom>c.bottom;}).length,
+      overlap:chips.some((a,i)=>chips.slice(i+1).some((b)=>{const x=box(a),y=box(b);return x.left<y.right&&y.left<x.right&&x.top<y.bottom&&y.top<x.bottom;})),
+      words:card.querySelectorAll('.break-row .yard-play-text,.break-row .yard-play-chev').length,ids:new Set([...document.querySelectorAll('[id]')].map((e)=>e.id)).size===document.querySelectorAll('[id]').length};})()`);
+  for (const skin of ['guild', 'orbital', 'grove', 'professional', 'goblinville', 'gnomeland']) {
+    await evaluate(`document.documentElement.dataset.skin="${skin}"`);
+    for (const [width, height] of [[390, 844]]) {
+      await size(width, height);
+      const fit = await breakFit();
+      assert.deepEqual([fit.count, fit.small, fit.outside, fit.overlap, fit.words, fit.ids], [5, 0, 0, false, 0, true], `${skin} ${width}: ${JSON.stringify(fit)}`);
+    }
+  }
+  await size(1440, 900);
+  const breakLabel = () => evaluate('document.querySelector(".break-buttons:not([hidden]) .break-label").textContent');
+  assert.equal(await breakLabel(), 'Need a break?');
+  const breakTap = (selector, pointerType) => evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});const before=testApp.filter((m)=>m.type==='open').length;e.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,pointerType:${JSON.stringify(pointerType)}}));e.click();return testApp.filter((m)=>m.type==='open').length-before;})()`);
+  const arena = '.break-row .yard-play-arena .yard-play-link';
+  assert.equal(await breakTap(arena, 'touch'), 0, 'the first tap only selects');
+  assert.match(await breakLabel(), /Arena.*Tap again to open/);
+  assert.equal(await breakTap(arena, 'touch'), 1, 'the second tap opens');
+  assert.equal(await breakLabel(), 'Need a break?');
+  assert.equal(await breakTap(arena, 'mouse'), 1, 'a mouse opens at once');
+  await breakTap(arena, 'touch');
+  await evaluate('document.body.dispatchEvent(new PointerEvent("pointerdown",{bubbles:true,pointerType:"touch"}))');
+  assert.equal(await breakLabel(), 'Need a break?', 'tapping elsewhere cancels');
+  await evaluate('document.querySelector(".break-row .yard-play-more").click()');
+  await until('the card menu', () => evaluate('Boolean(document.querySelector(".break-row .yard-play-menu:popover-open"))'));
+  assert.deepEqual(await evaluate('[...document.querySelector(".break-row .yard-play-menu").querySelectorAll("a")].map((a)=>[a.href,a.target])'), [['https://survive.oddessentials.ai/', '_blank'], ['https://towers.oddessentials.ai/', '_blank']]);
+  await size(1440, await evaluate('Math.ceil(document.querySelector(".break-row .yard-play-more").getBoundingClientRect().bottom)+6'));
+  await until('the card menu above its button', () => evaluate('(()=>{const m=document.querySelector(".break-row .yard-play-menu:popover-open");if(!m)return false;const r=m.getBoundingClientRect(),b=document.querySelector(".break-row .yard-play-more").getBoundingClientRect();return r.top>=0&&r.bottom<=b.top&&m.scrollHeight<=m.clientHeight;})()'));
+  assert.equal(await evaluate('(()=>{const m=document.querySelector(".break-row .yard-play-menu");m.style.top="5000px";window.dispatchEvent(new Event("resize"));return m.getBoundingClientRect().bottom<=innerHeight;})()'), true, 'a resize moves an open card menu back into view');
+  await evaluate('document.querySelector(".break-row .yard-play-menu").hidePopover()');
+  await size(1440, 900);
+  await evaluate('localStorage.removeItem("testBreakCard")');
+  pass('the Terminal AI Chat card offers the five Yard buttons at their smallest in every skin, and a touch needs a second tap');
+
   await navigate(`${origin}/?tv#token=t&layout=compact&expand=none&view=yard&yard=none`);
   await until('the TV app opens the Cards', () => evaluate('document.documentElement.dataset.view==="cards"&&testApp.some(m=>m.type==="ready")'));
   await layoutReady();

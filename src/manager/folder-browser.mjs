@@ -73,6 +73,12 @@ export function createFolderBrowser({ platform = process.platform, home = os.hom
     return folders.filter(Boolean).sort(byName);
   }
 
+  async function filesIn(dir, extension) {
+    const listed = await fsp.readdir(dir, { withFileTypes: true }).catch(() => []);
+    return listed.filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(extension))
+      .map((entry) => ({ name: entry.name, path: paths.join(dir, entry.name) })).sort(byName);
+  }
+
   const browser = {
     async create(rawParent, rawName) {
       if (typeof rawParent !== 'string' || !rawParent.trim() || rawParent.includes('\0')) throw failure(400, 'bad_path', 'The folder must be a path.');
@@ -97,7 +103,7 @@ export function createFolderBrowser({ platform = process.platform, home = os.hom
       }
       return browser.list(dir);
     },
-    async list(raw) {
+    async list(raw, { extension = null } = {}) {
       if (raw !== undefined && raw !== null && (typeof raw !== 'string' || raw.includes('\0'))) {
         throw failure(400, 'bad_path', 'The folder must be a path.');
       }
@@ -105,7 +111,7 @@ export function createFolderBrowser({ platform = process.platform, home = os.hom
       if (asked === '~' || asked.startsWith('~/') || asked.startsWith('~\\')) asked = paths.join(home, asked.slice(1));
       const wanted = asked ? paths.resolve(asked) : home;
       const dir = await nearestFolder(wanted);
-      const [folders, drives] = await Promise.all([entries(dir), roots()]);
+      const [folders, drives, files] = await Promise.all([entries(dir), roots(), extension ? filesIn(dir, extension) : null]);
       const parent = paths.dirname(dir);
       return {
         path: dir,
@@ -116,6 +122,7 @@ export function createFolderBrowser({ platform = process.platform, home = os.hom
         entries: folders.slice(0, limit),
         truncated: folders.length > limit,
         note: dir === wanted ? null : wanted,
+        ...(files ? { files: files.slice(0, limit) } : {}),
       };
     },
   };

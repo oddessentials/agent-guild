@@ -323,7 +323,7 @@ main { max-width: calc(1200px + var(--dock-space, 0px)); margin: 0 auto; padding
 .card-toggle[aria-expanded="false"]::before { rotate: 90deg; }
 .providers > .provider.collapsed { padding-top: 16px; align-self: start; }
 :root[data-skin="guild"][data-art="on"] .providers > .provider.collapsed { padding-top: 18px; }
-.providers > .provider.collapsed :is(.card-art, .usage, .model-stats, .reporting-row, .provider-links, .copies, .multiplexers, .mcp, .environment-summary, .hint-details) { display: none; }
+.providers > .provider.collapsed :is(.card-art, .usage, .model-stats, .reporting-row, .provider-links, .break-buttons, .copies, .multiplexers, .mcp, .environment-summary, .hint-details) { display: none; }
 .providers > .provider.collapsed::after { background: var(--brackets, none); background-repeat: no-repeat; }
 .providers > .provider.collapsed.spent .provider-icon { filter: grayscale(1); }
 .launch-title { display: flex; align-items: center; gap: 10px; min-width: 0; }

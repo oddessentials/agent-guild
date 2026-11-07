@@ -1,10 +1,9 @@
-// Shared dialog layout in Chrome and, when PLAYWRIGHT_MODULE is set, WebKit.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { describeCatalog, indexCatalog, parseCatalog } from '../../src/manager/model-stats.mjs';
-import { until, withDialogClose, withPage } from './chrome.mjs';
+import { serve, until, withDialogClose, withPage } from './chrome.mjs';
 
 const instrumentation = `<script>
 const demoFetch=window.fetch;
@@ -62,311 +61,342 @@ window.WebSocket=class extends DemoSocket {
 };
 </script>`;
 
-const checks = await withPage({ name: 'dialogs', instrumentation }, async ({ origin, send, evaluate, layoutReady, pass, errors, navigate, reload }) => {
-  const checkDialogs = async (evaluate, resize, settle, engine) => {
-    const closeDialog = (selector, button) => withDialogClose(evaluate, selector, () => evaluate(
-      button ? `document.querySelector(${JSON.stringify(button)}).click()` : `document.querySelector(${JSON.stringify(selector)}).close()`));
-    // Frames and animations settle geometry only, never close or refresh completion.
-    const settled = async () => {
-      await settle();
-      await evaluate('Promise.allSettled([...document.querySelectorAll("dialog[open]")].flatMap(d=>d.getAnimations({subtree:true})).filter(a=>a.effect?.getTiming().iterations!==Infinity).map(a=>a.finished))');
-      await settle();
-    };
-    // Cards show before the events link opens, with their manager buttons disabled until it does.
-    await until(`${engine} provider cards connected`, () => evaluate('document.querySelector(".provider[data-id=anthropic] .existing")?.disabled===false'));
-    const geometry = (selector) => evaluate(`(()=>{
-      const d=document.querySelector(${JSON.stringify(selector)}),b=d.querySelector('.models-body');
-      const r=d.getBoundingClientRect(),body=b.getBoundingClientRect(),footer=d.lastElementChild.getBoundingClientRect();
-      return {height:r.height,body:body.height,scrollable:b.scrollHeight>b.clientHeight,inside:r.top>=-1&&r.bottom<=innerHeight+1,
-        footer:footer.bottom<=r.bottom+1,bodyBottom:body.bottom<=r.bottom+1};
-    })()`);
-    const limitNote = 'Showing 200 of 334 sessions. Narrow the filter to find older conversations.';
-    for (const [width, height] of [[1440, 900], [768, 1024], [390, 844]]) {
-      await resize(width, height);
-      await evaluate('document.querySelector(".provider[data-id=anthropic] .existing").click()');
-      await until(`${engine} history rows`, () => evaluate('document.querySelectorAll("#history-list .history-row").length===200'));
-      assert.equal(await evaluate('document.querySelector("#history-note").textContent'), limitNote);
-      assert.equal(await evaluate('document.querySelector("#history-preview").checkVisibility()'), true, 'every built-in history has a preview');
-      await settled();
-      let g = await geometry('#history');
-      assert.ok(g.body > 120 && g.scrollable && g.inside && g.footer, `${engine} ${width}: ${JSON.stringify(g)}`);
-      assert.ok(await evaluate('(()=>{const b=document.querySelector("#history .models-body");b.scrollTop=b.scrollHeight;return b.scrollTop})()') > 0);
-      await evaluate('document.querySelector("#history-filter").value="Saved session 333";document.querySelector("#history-filter").dispatchEvent(new Event("input"))');
-      await until(`${engine} searched beyond the loaded rows`, () => evaluate('document.querySelectorAll("#history-list .history-row").length===1'));
-      assert.equal(await evaluate('document.querySelector("#history-list .history-title").textContent'), 'Saved session 333');
-      assert.equal(await evaluate('document.querySelector("#history-note").hidden'), true);
-      g = await geometry('#history');
-      assert.ok(g.body > 30 && g.inside && g.footer, `${engine} filtered: ${JSON.stringify(g)}`);
-      await evaluate('document.querySelector("#history-filter").value="Missing conversation";document.querySelector("#history-filter").dispatchEvent(new Event("input"))');
-      await until(`${engine} no match`, () => evaluate('document.querySelectorAll("#history-list .history-row").length===0'));
-      assert.equal(await evaluate('document.querySelector("#history-note").checkVisibility()'), true);
-      assert.equal(await evaluate('document.querySelector("#history-note").textContent'), 'No session matches the filter.');
-      assert.ok((await geometry('#history')).body > 20, 'the empty state remains visible');
-      await closeDialog('#history', '#history-close');
-    }
-    pass(`${engine}: 200 history rows scroll, and filtered/empty history remains usable on desktop, tablet and phone`);
-
-    // Static demo data only. Completion is the visible response, never an elapsed delay.
-    for (const [width, height] of [[1440, 900], [768, 1024], [390, 844]]) {
-      await resize(width, height);
-      await evaluate('document.querySelector("#cwd").value="/work/storefront";document.querySelector(".provider[data-id=google] .memory-link").click()');
-      await until(`${engine} Google history`, () => evaluate('document.querySelectorAll("#history-list .history-preview-open").length===1'));
-      assert.equal(await evaluate('document.querySelector(".provider[data-id=google] .memory-link").textContent'), 'History');
-      await evaluate('document.querySelector("#history-list .history-preview-open").click()');
-      await until(`${engine} Google saved reply`, () => evaluate('document.querySelector("#history-messages").textContent.includes("The checkout guide covers")'));
-      await settled();
-      const g = await evaluate(`(() => {
-        const d=document.querySelector('#history'),r=d.getBoundingClientRect(),p=document.querySelector('#history-preview').getBoundingClientRect(),m=document.querySelector('#history-messages').getBoundingClientRect();
-        return {inside:r.top>=-1&&r.bottom<=innerHeight+1&&r.right<=innerWidth+1,preview:p.height,messages:m.height,overflow:d.scrollWidth>d.clientWidth};
-      })()`);
-      assert.ok(g.inside && g.preview > 100 && g.messages > 60 && !g.overflow, `${engine} history preview ${width}: ${JSON.stringify(g)}`);
-      assert.equal(await evaluate('document.querySelector("#history-list .history-preview-open").getAttribute("aria-current")'), 'true');
-      await closeDialog('#history', '#history-close');
-      assert.equal(await evaluate('document.activeElement===document.querySelector(".provider[data-id=google] .memory-link")'), true);
-    }
-    pass(`${engine}: Google History reads saved messages for the working folder on desktop, tablet and phone`);
-
-    // The first file's reply is held back until a newer file has been chosen and shown. The page
-    // handles the released reply in the same microtask run that sets the flag, so once the flag
-    // reads true the page has already kept or replaced the text.
-    await evaluate('window.memoryGate=new Promise(resolve=>{window.releaseMemory=resolve});window.memoryStaleDelivered=false;document.querySelector(".provider[data-id=anthropic] .memory-link").click()');
-    await until(`${engine} memory files`, () => evaluate('document.querySelectorAll("#memory-list .memory-item").length===2'));
-    await evaluate('document.querySelectorAll("#memory-list .memory-item")[1].click()');
-    await until(`${engine} chosen memory file`, () => evaluate('document.querySelector("#memory-text").textContent.includes("## Commands")'));
-    await evaluate('window.releaseMemory();window.memoryGate=null');
-    await until(`${engine} earlier memory reply`, () => evaluate('window.memoryStaleDelivered'));
-    assert.match(await evaluate('document.querySelector("#memory-text").textContent'), /## Commands/, 'an earlier, slower reply does not replace the chosen file');
-    assert.equal(await evaluate('document.querySelector("#memory-list [aria-current=true]").dataset.path'), 'topics/testing.md');
-    assert.equal(await evaluate('document.querySelector("#memory-file").textContent+"|"+document.querySelector("#memory-copy").hidden+"|"+document.querySelector("#memory-open").hidden'),
-      '/demo/memory/storefront/topics/testing.md|false|false', 'the full path shows with Copy and Open folder');
-    await evaluate('document.querySelector("#memory-open").click()');
-    await until(`${engine} memory folder opened`, () => evaluate('openedFolders[0]==="/demo/memory/storefront/topics"'));
-    await closeDialog('#memory', '#memory-close');
-    // A path segment with no break opportunity must wrap inside the heading, never under its buttons.
-    await evaluate('document.querySelector("#cwd").value="/Users/someone/Projects/AgentGuildWorkspaces/storefront/packages/checkout/src/payments"');
-    for (const [width, height] of [[1440, 900], [768, 1024], [390, 844]]) {
-      await resize(width, height);
-      await evaluate('document.querySelector(".provider[data-id=anthropic] .memory-link").click()');
-      await until(`${engine} memory text at ${width}`, () => evaluate('document.querySelector("#memory-text").textContent.length>0'));
-      await settled();
-      const g = await evaluate(`(()=>{
-        const d=document.querySelector('#memory'),r=d.getBoundingClientRect(),t=document.querySelector('#memory-text').getBoundingClientRect(),l=document.querySelector('#memory-list').getBoundingClientRect();
-        const s=document.querySelector('#memory-sub'),h=document.querySelector('#memory .models-heading').getBoundingClientRect(),b=document.querySelector('#memory-refresh').getBoundingClientRect();
-        return {inside:r.top>=-1&&r.bottom<=innerHeight+1&&r.left>=-1&&r.right<=innerWidth+1,text:t.height,list:l.height,textBottom:t.bottom<=r.bottom+1,overflow:d.scrollWidth>d.clientWidth,
-          heading:s.scrollWidth<=s.clientWidth&&h.right<=b.left};
-      })()`);
-      assert.ok(g.inside && g.text > 80 && g.list > 60 && g.textBottom && !g.overflow && g.heading, `${engine} memory ${width}: ${JSON.stringify(g)}`);
-      await closeDialog('#memory', '#memory-close');
-      assert.equal(await evaluate('document.activeElement===document.querySelector(".provider[data-id=anthropic] .memory-link")'), true, `${engine} memory focus restored`);
-    }
-    await evaluate('document.querySelector("#cwd").value="/work/storefront"');
-    // close() queues the dialog's close event, so another card can open it again before that event runs.
-    await evaluate('document.querySelector(".provider[data-id=anthropic] .memory-link").click()');
-    await until(`${engine} memory before reopening`, () => evaluate('document.querySelectorAll("#memory-list .memory-item").length===2'));
-    await evaluate('document.querySelector("#memory-close").click();document.querySelector(".provider[data-id=xai] .memory-link").click()');
-    await until(`${engine} memory reopened from another card`, () => evaluate('document.querySelector("#memory-title").textContent==="Grok Build memory"&&document.querySelectorAll("#memory-list .memory-item").length===2'));
-    await closeDialog('#memory', '#memory-close');
-    pass(`${engine}: memory lists files, keeps the newest choice over a slower reply, reopens from another card, and fits desktop, tablet and phone`);
-
-    await until(`${engine} instruction count on the card`, () => evaluate('document.querySelector(".provider[data-id=google] .instructions-link .link-count")?.textContent==="2"'));
-    await evaluate('document.querySelector(".provider[data-id=google] .instructions-link").click()');
-    await until(`${engine} instruction files`, () => evaluate('document.querySelectorAll("#memory-list .memory-item").length===3'));
-    assert.equal(await evaluate('document.querySelector("#memory-sub").textContent.split(" · ")[0]'), 'Reads 2 files when a session starts');
-    assert.equal(await evaluate('document.querySelector(".instructions-skipped").open'), false, 'files that do not load start folded away');
-    await evaluate('document.querySelector(".instructions-skipped > summary").click()');
-    await evaluate('document.querySelector(".instructions-skipped .memory-item").click()');
-    await until(`${engine} skipped instruction file`, () => evaluate('document.querySelector("#memory-text").textContent.includes("Shared notes for every coding tool")'));
-    assert.equal(await evaluate('document.querySelector(".instructions-skipped .memory-reason").textContent'), 'Claude Code reads CLAUDE.md instead.');
-    assert.equal(await evaluate('document.querySelector("#memory-file").textContent+"|"+document.querySelector("#memory-copy").hidden'), '/work/storefront/AGENTS.md|false');
-    await closeDialog('#memory', '#memory-close');
-    assert.equal(await evaluate('document.activeElement===document.querySelector(".provider[data-id=google] .instructions-link")'), true);
-    pass(`${engine}: Instructions shows its count on the card, folds away files that do not load with the reason, and opens them`);
-
-    // A toast raised inside a modal dialog is not inert: it is the topmost thing at its own centre and its
-    // text can be tapped away. On a phone it arrives under the top bar, clear of the browser's bottom toolbar.
-    // Open folder is refused here, which raises the toast inside the dialog.
-    await evaluate('window.openFolderError="The folder could not be opened."');
-    for (const [width, height] of [[1440, 900], [390, 844]]) {
-      await resize(width, height);
-      await evaluate('document.querySelector(".provider[data-id=anthropic] .memory-link").click()');
-      await until(`${engine} memory folder button at ${width}`, () => evaluate('(b=>!b.hidden&&!b.disabled)(document.querySelector("#memory-open"))'));
-      await evaluate('document.querySelector("#memory-open").click()');
-      await until(`${engine} toast at ${width}`, () => evaluate('!document.querySelector("#toast").hidden'));
-      await settled();
-      const t = await evaluate(`(()=>{
-        const el=document.querySelector('#toast'),r=el.getBoundingClientRect(),hit=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);
-        return {text:el.textContent,open:el.matches(':popover-open'),inDialog:el.parentElement.id,top:hit===el||el.contains(hit),
-          y:r.top,bottom:r.bottom,bar:document.querySelector('.topbar').getBoundingClientRect().bottom,inside:r.left>=0&&r.right<=innerWidth};
-      })()`);
-      assert.equal(t.text, 'The folder could not be opened.');
-      assert.ok(t.open && t.inDialog === 'memory' && t.top && t.inside, `${engine} toast over the dialog at ${width}: ${JSON.stringify(t)}`);
-      if (width <= 640) assert.ok(t.y >= t.bar && t.y < height / 3, `${engine} phone toast under the top bar: ${JSON.stringify(t)}`);
-      else assert.ok(t.bottom > height * 2 / 3, `${engine} desktop toast at the bottom: ${JSON.stringify(t)}`);
-      await closeDialog('#memory', '#memory-close');
-      assert.deepEqual(await evaluate(`(()=>{const el=document.querySelector('#toast');return [el.parentElement===document.body,el.matches(':popover-open')]})()`), [true, true], `${engine} the toast outlives the dialog`);
-      await evaluate('document.querySelector("#toast").click()');
-      assert.deepEqual(await evaluate(`(()=>{const el=document.querySelector('#toast');return [el.hidden,el.matches(':popover-open')]})()`), [true, false], `${engine} a tap dismisses the toast`);
-    }
-    // A toast dismissed inside the dialog stays there; the next one raised after the dialog reopens still outlives it.
-    const raiseInMemory = async (label) => {
-      await evaluate('document.querySelector(".provider[data-id=anthropic] .memory-link").click()');
-      await until(`${engine} memory folder button ${label}`, () => evaluate('(b=>!b.hidden&&!b.disabled)(document.querySelector("#memory-open"))'));
-      await evaluate('document.querySelector("#memory-open").click()');
-      await until(`${engine} toast ${label}`, () => evaluate('!document.querySelector("#toast").hidden'));
-    };
-    await raiseInMemory('before reopening');
-    await evaluate('document.querySelector("#toast").click()');
-    await closeDialog('#memory', '#memory-close');
-    await raiseInMemory('after reopening');
-    await closeDialog('#memory', '#memory-close');
-    assert.deepEqual(await evaluate(`(()=>{const el=document.querySelector('#toast');return [el.parentElement===document.body,el.matches(':popover-open'),el.checkVisibility()]})()`), [true, true, true], `${engine} a toast raised in a reopened dialog outlives it`);
-    await evaluate('document.querySelector("#toast").click()');
-    await evaluate('window.openFolderError=null');
-    pass(`${engine}: a toast shows above an open dialog, under the top bar on a phone, outlives the dialog and is dismissed by a tap`);
-
-    await until(`${engine} Videos button`, () => evaluate('document.querySelector("#videos-open").checkVisibility()'));
-    for (const [width, height] of [[1440, 900], [768, 1024], [390, 844]]) {
-      await resize(width, height);
-      await evaluate('youtubeFrames.length=0;document.querySelector("#videos-open").click()');
-      await until(`${engine} video poster at ${width}`, () => evaluate('document.querySelector("#videos-screen").dataset.state==="ready"'));
-      await settled();
-      const g = await evaluate(`(()=>{
-        const d=document.querySelector('#videos'),r=d.getBoundingClientRect(),s=document.querySelector('#videos-screen').getBoundingClientRect(),items=[...document.querySelectorAll('#videos-list .videos-item')];
-        const last=items.at(-1).getBoundingClientRect(),nav=document.querySelector('.videos-nav');
-        return {inside:r.top>=-1&&r.bottom<=innerHeight+1&&r.left>=-1&&r.right<=innerWidth+1,ratio:Math.round(s.width/s.height*100),screen:Math.round(s.width),
-          overflow:d.scrollWidth>d.clientWidth||document.documentElement.scrollWidth>innerWidth,listReachable:last.bottom<=r.bottom+1||nav.scrollHeight>nav.clientHeight,
-          first:items[0].getAttribute('aria-current'),frames:youtubeFrames.length,kinds:items.map((i)=>i.querySelector('.news-meta').textContent.split(' · ')[0]),
-          groups:[...document.querySelectorAll('#videos-list .videos-group-title')].map((h)=>h.textContent),lengths:items.every((i)=>/^\\d+:\\d\\d$/.test(i.querySelector('.videos-length')?.textContent))};
-      })()`);
-      assert.ok(g.inside && g.ratio === 178 && g.screen >= Math.min(width - 32, 340) && !g.overflow && g.listReachable && g.first === 'true' && g.frames === 0
-        && g.kinds[0] === 'Tutorial' && g.kinds.lastIndexOf('Tutorial') < g.kinds.indexOf('Trailer') && g.kinds.lastIndexOf('Trailer') < g.kinds.indexOf('World')
-        && g.groups.join() === 'Tutorials,Trailers,World' && g.lengths,
-        `${engine} videos ${width}: ${JSON.stringify(g)}`);
-      // A video plays only when chosen, and closing the dialog removes the player so the sound stops.
-      const id = await evaluate('(()=>{const item=[...document.querySelectorAll("#videos-list .videos-item")].at(-1);item.click();return item.dataset.id})()');
-      await until(`${engine} player at ${width}`, () => evaluate('Boolean(document.querySelector("#videos-screen iframe"))'));
-      assert.deepEqual(await evaluate('[youtubeFrames,document.querySelector("#videos-screen iframe").referrerPolicy,document.querySelector("#videos-list [aria-current=true]").dataset.id]'),
-        [[`https://www.youtube-nocookie.com/embed/${id}?autoplay=1&rel=0&playsinline=1`], 'strict-origin-when-cross-origin', id]);
-      await closeDialog('#videos', '#videos-close');
-      assert.deepEqual(await evaluate('[document.querySelectorAll("#videos iframe").length,document.activeElement===document.querySelector("#videos-open")]'), [0, true], `${engine} player removed and focus restored`);
-    }
-    // A landscape phone keeps the list beside the player, so whole items stay in view.
-    await resize(844, 390);
-    await evaluate('document.querySelector("#videos-open").click()');
-    await until(`${engine} video poster landscape`, () => evaluate('document.querySelector("#videos-screen").dataset.state==="ready"'));
+const checkDialogs = async (evaluate, resize, settle, engine, pass) => {
+  const closeDialog = (selector, button) => withDialogClose(evaluate, selector, () => evaluate(
+    button ? `document.querySelector(${JSON.stringify(button)}).click()` : `document.querySelector(${JSON.stringify(selector)}).close()`));
+  // Frames and animations settle geometry only, never close or refresh completion.
+  const settled = async () => {
+    await settle();
+    await evaluate('Promise.allSettled([...document.querySelectorAll("dialog[open]")].flatMap(d=>d.getAnimations({subtree:true})).filter(a=>a.effect?.getTiming().iterations!==Infinity).map(a=>a.finished))');
+    await settle();
+  };
+  // Cards show before the events link opens, with their manager buttons disabled until it does.
+  await until(`${engine} provider cards connected`, () => evaluate('document.querySelector(".provider[data-id=anthropic] .existing")?.disabled===false'));
+  const geometry = (selector) => evaluate(`(()=>{
+    const d=document.querySelector(${JSON.stringify(selector)}),b=d.querySelector('.models-body');
+    const r=d.getBoundingClientRect(),body=b.getBoundingClientRect(),footer=d.lastElementChild.getBoundingClientRect();
+    return {height:r.height,body:body.height,scrollable:b.scrollHeight>b.clientHeight,inside:r.top>=-1&&r.bottom<=innerHeight+1,
+      footer:footer.bottom<=r.bottom+1,bodyBottom:body.bottom<=r.bottom+1};
+  })()`);
+  const limitNote = 'Showing 200 of 334 sessions. Narrow the filter to find older conversations.';
+  for (const [width, height] of [[1440, 900], [768, 1024], [390, 844]]) {
+    await resize(width, height);
+    await evaluate('document.querySelector(".provider[data-id=anthropic] .existing").click()');
+    await until(`${engine} history rows`, () => evaluate('document.querySelectorAll("#history-list .history-row").length===200'));
+    assert.equal(await evaluate('document.querySelector("#history-note").textContent'), limitNote);
+    assert.equal(await evaluate('document.querySelector("#history-preview").checkVisibility()'), true, 'every built-in history has a preview');
     await settled();
-    const land = await evaluate(`(()=>{const d=document.querySelector('#videos').getBoundingClientRect(),n=document.querySelector('.videos-nav').getBoundingClientRect(),s=document.querySelector('#videos-screen').getBoundingClientRect();
-      return {items:[...document.querySelectorAll('#videos-list .videos-item')].filter((i)=>{const r=i.getBoundingClientRect();return r.top>=n.top-1&&r.bottom<=n.bottom+1}).length,
-        screen:s.top>=d.top&&s.bottom<=d.bottom&&s.width>=200}})()`);
-    assert.ok(land.items >= 2 && land.screen, `${engine} videos landscape: ${JSON.stringify(land)}`);
-    await closeDialog('#videos', '#videos-close');
-    // Without YouTube the dialog says so and plays nothing; coming back online loads the poster.
-    await evaluate('youtubeOffline=true;youtubeFrames.length=0;document.querySelector("#videos-open").click()');
-    await until(`${engine} videos offline`, () => evaluate('document.querySelector("#videos-screen").dataset.state==="offline"'));
-    assert.deepEqual(await evaluate('[document.querySelector("#videos-offline").checkVisibility(),document.querySelector("#videos-play").disabled]'), [true, true]);
-    await evaluate('document.querySelectorAll("#videos-list .videos-item")[1].click()');
-    await until(`${engine} videos still offline`, () => evaluate('document.querySelector("#videos-screen").dataset.state==="offline"'));
-    assert.equal(await evaluate('youtubeFrames.length'), 0, 'nothing plays while YouTube is unreachable');
-    await evaluate('youtubeOffline=false;document.querySelector("#videos-retry").focus();dispatchEvent(new Event("online"))');
-    await until(`${engine} videos back online`, () => evaluate('document.querySelector("#videos-screen").dataset.state==="ready"'));
-    assert.deepEqual(await evaluate('[document.querySelector("#videos-offline").checkVisibility(),document.activeElement.dataset.id===document.querySelectorAll("#videos-list .videos-item")[1].dataset.id]'), [false, true],
-      'the poster replaces the message and focus moves to the chosen video');
-    await closeDialog('#videos', '#videos-close');
-    pass(`${engine}: Videos groups and plays the videos, stops one on close, and says when YouTube is unreachable, on desktop, tablet, phone and landscape phone`);
+    let g = await geometry('#history');
+    assert.ok(g.body > 120 && g.scrollable && g.inside && g.footer, `${engine} ${width}: ${JSON.stringify(g)}`);
+    assert.ok(await evaluate('(()=>{const b=document.querySelector("#history .models-body");b.scrollTop=b.scrollHeight;return b.scrollTop})()') > 0);
+    await evaluate('document.querySelector("#history-filter").value="Saved session 333";document.querySelector("#history-filter").dispatchEvent(new Event("input"))');
+    await until(`${engine} searched beyond the loaded rows`, () => evaluate('document.querySelectorAll("#history-list .history-row").length===1'));
+    assert.equal(await evaluate('document.querySelector("#history-list .history-title").textContent'), 'Saved session 333');
+    assert.equal(await evaluate('document.querySelector("#history-note").hidden'), true);
+    g = await geometry('#history');
+    assert.ok(g.body > 30 && g.inside && g.footer, `${engine} filtered: ${JSON.stringify(g)}`);
+    await evaluate('document.querySelector("#history-filter").value="Missing conversation";document.querySelector("#history-filter").dispatchEvent(new Event("input"))');
+    await until(`${engine} no match`, () => evaluate('document.querySelectorAll("#history-list .history-row").length===0'));
+    assert.equal(await evaluate('document.querySelector("#history-note").checkVisibility()'), true);
+    assert.equal(await evaluate('document.querySelector("#history-note").textContent'), 'No session matches the filter.');
+    assert.ok((await geometry('#history')).body > 20, 'the empty state remains visible');
+    await closeDialog('#history', '#history-close');
+  }
+  pass(`${engine}: 200 history rows scroll, and filtered/empty history remains usable on desktop, tablet and phone`);
 
-    await until(`${engine} environment summary`, () => evaluate('document.querySelectorAll(".provider[data-id=shell] .environment-values dd").length===4'));
-    for (const [width, height] of [[1440, 900], [768, 1024], [390, 844]]) {
-      await resize(width, height);
-      for (const skin of ['guild', 'professional', 'orbital', 'grove', 'gnomeland', 'goblinville']) {
-        for (const theme of ['light', 'dark']) {
-          await evaluate(`document.documentElement.dataset.skin='${skin}';document.documentElement.dataset.theme='${theme}';document.querySelector('.provider[data-id=shell] .environment-open').click()`);
-          await settled();
-          const g = await geometry('#environment');
-          assert.ok(g.body > 120 && g.inside && g.bodyBottom, `${engine} environment ${skin} ${theme} ${width}: ${JSON.stringify(g)}`);
-          assert.equal(await evaluate('document.querySelectorAll("#environment-runtimes .environment-row").length'), 6);
-          assert.ok(await evaluate('document.documentElement.scrollWidth<=innerWidth'), 'no horizontal page overflow');
-          assert.ok(await evaluate('document.querySelector("#environment").scrollWidth<=document.querySelector("#environment").clientWidth'), 'no horizontal dialog overflow');
-          await closeDialog('#environment', '#environment-close');
-          assert.equal(await evaluate('document.activeElement===document.querySelector(".provider[data-id=shell] .environment-open")'), true, `${engine} environment focus restored`);
-        }
+  // Static demo data only. Completion is the visible response, never an elapsed delay.
+  for (const [width, height] of [[1440, 900], [768, 1024], [390, 844]]) {
+    await resize(width, height);
+    await evaluate('document.querySelector("#cwd").value="/work/storefront";document.querySelector(".provider[data-id=google] .memory-link").click()');
+    await until(`${engine} Google history`, () => evaluate('document.querySelectorAll("#history-list .history-preview-open").length===1'));
+    assert.equal(await evaluate('document.querySelector(".provider[data-id=google] .memory-link").textContent'), 'History');
+    await evaluate('document.querySelector("#history-list .history-preview-open").click()');
+    await until(`${engine} Google saved reply`, () => evaluate('document.querySelector("#history-messages").textContent.includes("The checkout guide covers")'));
+    await settled();
+    const g = await evaluate(`(() => {
+      const d=document.querySelector('#history'),r=d.getBoundingClientRect(),p=document.querySelector('#history-preview').getBoundingClientRect(),m=document.querySelector('#history-messages').getBoundingClientRect();
+      return {inside:r.top>=-1&&r.bottom<=innerHeight+1&&r.right<=innerWidth+1,preview:p.height,messages:m.height,overflow:d.scrollWidth>d.clientWidth};
+    })()`);
+    assert.ok(g.inside && g.preview > 100 && g.messages > 60 && !g.overflow, `${engine} history preview ${width}: ${JSON.stringify(g)}`);
+    assert.equal(await evaluate('document.querySelector("#history-list .history-preview-open").getAttribute("aria-current")'), 'true');
+    await closeDialog('#history', '#history-close');
+    assert.equal(await evaluate('document.activeElement===document.querySelector(".provider[data-id=google] .memory-link")'), true);
+  }
+  pass(`${engine}: Google History reads saved messages for the working folder on desktop, tablet and phone`);
+
+  // The first file's reply is held back until a newer file has been chosen and shown. The page
+  // handles the released reply in the same microtask run that sets the flag, so once the flag
+  // reads true the page has already kept or replaced the text.
+  await evaluate('window.memoryGate=new Promise(resolve=>{window.releaseMemory=resolve});window.memoryStaleDelivered=false;document.querySelector(".provider[data-id=anthropic] .memory-link").click()');
+  await until(`${engine} memory files`, () => evaluate('document.querySelectorAll("#memory-list .memory-item").length===2'));
+  await evaluate('document.querySelectorAll("#memory-list .memory-item")[1].click()');
+  await until(`${engine} chosen memory file`, () => evaluate('document.querySelector("#memory-text").textContent.includes("## Commands")'));
+  await evaluate('window.releaseMemory();window.memoryGate=null');
+  await until(`${engine} earlier memory reply`, () => evaluate('window.memoryStaleDelivered'));
+  assert.match(await evaluate('document.querySelector("#memory-text").textContent'), /## Commands/, 'an earlier, slower reply does not replace the chosen file');
+  assert.equal(await evaluate('document.querySelector("#memory-list [aria-current=true]").dataset.path'), 'topics/testing.md');
+  assert.equal(await evaluate('document.querySelector("#memory-file").textContent+"|"+document.querySelector("#memory-copy").hidden+"|"+document.querySelector("#memory-open").hidden'),
+    '/demo/memory/storefront/topics/testing.md|false|false', 'the full path shows with Copy and Open folder');
+  await evaluate('document.querySelector("#memory-open").click()');
+  await until(`${engine} memory folder opened`, () => evaluate('openedFolders[0]==="/demo/memory/storefront/topics"'));
+  await closeDialog('#memory', '#memory-close');
+  // A path segment with no break opportunity must wrap inside the heading, never under its buttons.
+  await evaluate('document.querySelector("#cwd").value="/Users/someone/Projects/AgentGuildWorkspaces/storefront/packages/checkout/src/payments"');
+  for (const [width, height] of [[1440, 900], [768, 1024], [390, 844]]) {
+    await resize(width, height);
+    await evaluate('document.querySelector(".provider[data-id=anthropic] .memory-link").click()');
+    await until(`${engine} memory text at ${width}`, () => evaluate('document.querySelector("#memory-text").textContent.length>0'));
+    await settled();
+    const g = await evaluate(`(()=>{
+      const d=document.querySelector('#memory'),r=d.getBoundingClientRect(),t=document.querySelector('#memory-text').getBoundingClientRect(),l=document.querySelector('#memory-list').getBoundingClientRect();
+      const s=document.querySelector('#memory-sub'),h=document.querySelector('#memory .models-heading').getBoundingClientRect(),b=document.querySelector('#memory-refresh').getBoundingClientRect();
+      return {inside:r.top>=-1&&r.bottom<=innerHeight+1&&r.left>=-1&&r.right<=innerWidth+1,text:t.height,list:l.height,textBottom:t.bottom<=r.bottom+1,overflow:d.scrollWidth>d.clientWidth,
+        heading:s.scrollWidth<=s.clientWidth&&h.right<=b.left};
+    })()`);
+    assert.ok(g.inside && g.text > 80 && g.list > 60 && g.textBottom && !g.overflow && g.heading, `${engine} memory ${width}: ${JSON.stringify(g)}`);
+    await closeDialog('#memory', '#memory-close');
+    assert.equal(await evaluate('document.activeElement===document.querySelector(".provider[data-id=anthropic] .memory-link")'), true, `${engine} memory focus restored`);
+  }
+  await evaluate('document.querySelector("#cwd").value="/work/storefront"');
+  // close() queues the dialog's close event, so another card can open it again before that event runs.
+  await evaluate('document.querySelector(".provider[data-id=anthropic] .memory-link").click()');
+  await until(`${engine} memory before reopening`, () => evaluate('document.querySelectorAll("#memory-list .memory-item").length===2'));
+  await evaluate('document.querySelector("#memory-close").click();document.querySelector(".provider[data-id=xai] .memory-link").click()');
+  await until(`${engine} memory reopened from another card`, () => evaluate('document.querySelector("#memory-title").textContent==="Grok Build memory"&&document.querySelectorAll("#memory-list .memory-item").length===2'));
+  await closeDialog('#memory', '#memory-close');
+  pass(`${engine}: memory lists files, keeps the newest choice over a slower reply, reopens from another card, and fits desktop, tablet and phone`);
+
+  await until(`${engine} instruction count on the card`, () => evaluate('document.querySelector(".provider[data-id=google] .instructions-link .link-count")?.textContent==="2"'));
+  await evaluate('document.querySelector(".provider[data-id=google] .instructions-link").click()');
+  await until(`${engine} instruction files`, () => evaluate('document.querySelectorAll("#memory-list .memory-item").length===3'));
+  assert.equal(await evaluate('document.querySelector("#memory-sub").textContent.split(" · ")[0]'), 'Reads 2 files when a session starts');
+  assert.equal(await evaluate('document.querySelector(".instructions-skipped").open'), false, 'files that do not load start folded away');
+  await evaluate('document.querySelector(".instructions-skipped > summary").click()');
+  await evaluate('document.querySelector(".instructions-skipped .memory-item").click()');
+  await until(`${engine} skipped instruction file`, () => evaluate('document.querySelector("#memory-text").textContent.includes("Shared notes for every coding tool")'));
+  assert.equal(await evaluate('document.querySelector(".instructions-skipped .memory-reason").textContent'), 'Claude Code reads CLAUDE.md instead.');
+  assert.equal(await evaluate('document.querySelector("#memory-file").textContent+"|"+document.querySelector("#memory-copy").hidden'), '/work/storefront/AGENTS.md|false');
+  await closeDialog('#memory', '#memory-close');
+  assert.equal(await evaluate('document.activeElement===document.querySelector(".provider[data-id=google] .instructions-link")'), true);
+  pass(`${engine}: Instructions shows its count on the card, folds away files that do not load with the reason, and opens them`);
+
+  // A toast raised inside a modal dialog is not inert: it is the topmost thing at its own centre and its
+  // text can be tapped away. On a phone it arrives under the top bar, clear of the browser's bottom toolbar.
+  // Open folder is refused here, which raises the toast inside the dialog.
+  await evaluate('window.openFolderError="The folder could not be opened."');
+  for (const [width, height] of [[1440, 900], [390, 844]]) {
+    await resize(width, height);
+    await evaluate('document.querySelector(".provider[data-id=anthropic] .memory-link").click()');
+    await until(`${engine} memory folder button at ${width}`, () => evaluate('(b=>!b.hidden&&!b.disabled)(document.querySelector("#memory-open"))'));
+    await evaluate('document.querySelector("#memory-open").click()');
+    await until(`${engine} toast at ${width}`, () => evaluate('!document.querySelector("#toast").hidden'));
+    await settled();
+    const t = await evaluate(`(()=>{
+      const el=document.querySelector('#toast'),r=el.getBoundingClientRect(),hit=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);
+      return {text:el.textContent,open:el.matches(':popover-open'),inDialog:el.parentElement.id,top:hit===el||el.contains(hit),
+        y:r.top,bottom:r.bottom,bar:document.querySelector('.topbar').getBoundingClientRect().bottom,inside:r.left>=0&&r.right<=innerWidth};
+    })()`);
+    assert.equal(t.text, 'The folder could not be opened.');
+    assert.ok(t.open && t.inDialog === 'memory' && t.top && t.inside, `${engine} toast over the dialog at ${width}: ${JSON.stringify(t)}`);
+    if (width <= 640) assert.ok(t.y >= t.bar && t.y < height / 3, `${engine} phone toast under the top bar: ${JSON.stringify(t)}`);
+    else assert.ok(t.bottom > height * 2 / 3, `${engine} desktop toast at the bottom: ${JSON.stringify(t)}`);
+    await closeDialog('#memory', '#memory-close');
+    assert.deepEqual(await evaluate(`(()=>{const el=document.querySelector('#toast');return [el.parentElement===document.body,el.matches(':popover-open')]})()`), [true, true], `${engine} the toast outlives the dialog`);
+    await evaluate('document.querySelector("#toast").click()');
+    assert.deepEqual(await evaluate(`(()=>{const el=document.querySelector('#toast');return [el.hidden,el.matches(':popover-open')]})()`), [true, false], `${engine} a tap dismisses the toast`);
+  }
+  // A toast dismissed inside the dialog stays there; the next one raised after the dialog reopens still outlives it.
+  const raiseInMemory = async (label) => {
+    await evaluate('document.querySelector(".provider[data-id=anthropic] .memory-link").click()');
+    await until(`${engine} memory folder button ${label}`, () => evaluate('(b=>!b.hidden&&!b.disabled)(document.querySelector("#memory-open"))'));
+    await evaluate('document.querySelector("#memory-open").click()');
+    await until(`${engine} toast ${label}`, () => evaluate('!document.querySelector("#toast").hidden'));
+  };
+  await raiseInMemory('before reopening');
+  await evaluate('document.querySelector("#toast").click()');
+  await closeDialog('#memory', '#memory-close');
+  await raiseInMemory('after reopening');
+  await closeDialog('#memory', '#memory-close');
+  assert.deepEqual(await evaluate(`(()=>{const el=document.querySelector('#toast');return [el.parentElement===document.body,el.matches(':popover-open'),el.checkVisibility()]})()`), [true, true, true], `${engine} a toast raised in a reopened dialog outlives it`);
+  await evaluate('document.querySelector("#toast").click()');
+  await evaluate('window.openFolderError=null');
+  pass(`${engine}: a toast shows above an open dialog, under the top bar on a phone, outlives the dialog and is dismissed by a tap`);
+
+  await until(`${engine} Videos button`, () => evaluate('document.querySelector("#videos-open").checkVisibility()'));
+  for (const [width, height] of [[1440, 900], [768, 1024], [390, 844]]) {
+    await resize(width, height);
+    await evaluate('youtubeFrames.length=0;document.querySelector("#videos-open").click()');
+    await until(`${engine} video poster at ${width}`, () => evaluate('document.querySelector("#videos-screen").dataset.state==="ready"'));
+    await settled();
+    const g = await evaluate(`(()=>{
+      const d=document.querySelector('#videos'),r=d.getBoundingClientRect(),s=document.querySelector('#videos-screen').getBoundingClientRect(),items=[...document.querySelectorAll('#videos-list .videos-item')];
+      const last=items.at(-1).getBoundingClientRect(),nav=document.querySelector('.videos-nav');
+      return {inside:r.top>=-1&&r.bottom<=innerHeight+1&&r.left>=-1&&r.right<=innerWidth+1,ratio:Math.round(s.width/s.height*100),screen:Math.round(s.width),
+        overflow:d.scrollWidth>d.clientWidth||document.documentElement.scrollWidth>innerWidth,listReachable:last.bottom<=r.bottom+1||nav.scrollHeight>nav.clientHeight,
+        first:items[0].getAttribute('aria-current'),frames:youtubeFrames.length,kinds:items.map((i)=>i.querySelector('.news-meta').textContent.split(' · ')[0]),
+        groups:[...document.querySelectorAll('#videos-list .videos-group-title')].map((h)=>h.textContent),lengths:items.every((i)=>/^\\d+:\\d\\d$/.test(i.querySelector('.videos-length')?.textContent))};
+    })()`);
+    assert.ok(g.inside && g.ratio === 178 && g.screen >= Math.min(width - 32, 340) && !g.overflow && g.listReachable && g.first === 'true' && g.frames === 0
+      && g.kinds[0] === 'Tutorial' && g.kinds.lastIndexOf('Tutorial') < g.kinds.indexOf('Trailer') && g.kinds.lastIndexOf('Trailer') < g.kinds.indexOf('World')
+      && g.groups.join() === 'Tutorials,Trailers,World' && g.lengths,
+      `${engine} videos ${width}: ${JSON.stringify(g)}`);
+    // A video plays only when chosen, and closing the dialog removes the player so the sound stops.
+    const id = await evaluate('(()=>{const item=[...document.querySelectorAll("#videos-list .videos-item")].at(-1);item.click();return item.dataset.id})()');
+    await until(`${engine} player at ${width}`, () => evaluate('Boolean(document.querySelector("#videos-screen iframe"))'));
+    assert.deepEqual(await evaluate('[youtubeFrames,document.querySelector("#videos-screen iframe").referrerPolicy,document.querySelector("#videos-list [aria-current=true]").dataset.id]'),
+      [[`https://www.youtube-nocookie.com/embed/${id}?autoplay=1&rel=0&playsinline=1`], 'strict-origin-when-cross-origin', id]);
+    await closeDialog('#videos', '#videos-close');
+    assert.deepEqual(await evaluate('[document.querySelectorAll("#videos iframe").length,document.activeElement===document.querySelector("#videos-open")]'), [0, true], `${engine} player removed and focus restored`);
+  }
+  // A landscape phone keeps the list beside the player, so whole items stay in view.
+  await resize(844, 390);
+  await evaluate('document.querySelector("#videos-open").click()');
+  await until(`${engine} video poster landscape`, () => evaluate('document.querySelector("#videos-screen").dataset.state==="ready"'));
+  await settled();
+  const land = await evaluate(`(()=>{const d=document.querySelector('#videos').getBoundingClientRect(),n=document.querySelector('.videos-nav').getBoundingClientRect(),s=document.querySelector('#videos-screen').getBoundingClientRect();
+    return {items:[...document.querySelectorAll('#videos-list .videos-item')].filter((i)=>{const r=i.getBoundingClientRect();return r.top>=n.top-1&&r.bottom<=n.bottom+1}).length,
+      screen:s.top>=d.top&&s.bottom<=d.bottom&&s.width>=200}})()`);
+  assert.ok(land.items >= 2 && land.screen, `${engine} videos landscape: ${JSON.stringify(land)}`);
+  await closeDialog('#videos', '#videos-close');
+  // Without YouTube the dialog says so and plays nothing; coming back online loads the poster.
+  await evaluate('youtubeOffline=true;youtubeFrames.length=0;document.querySelector("#videos-open").click()');
+  await until(`${engine} videos offline`, () => evaluate('document.querySelector("#videos-screen").dataset.state==="offline"'));
+  assert.deepEqual(await evaluate('[document.querySelector("#videos-offline").checkVisibility(),document.querySelector("#videos-play").disabled]'), [true, true]);
+  await evaluate('document.querySelectorAll("#videos-list .videos-item")[1].click()');
+  await until(`${engine} videos still offline`, () => evaluate('document.querySelector("#videos-screen").dataset.state==="offline"'));
+  assert.equal(await evaluate('youtubeFrames.length'), 0, 'nothing plays while YouTube is unreachable');
+  await evaluate('youtubeOffline=false;document.querySelector("#videos-retry").focus();dispatchEvent(new Event("online"))');
+  await until(`${engine} videos back online`, () => evaluate('document.querySelector("#videos-screen").dataset.state==="ready"'));
+  assert.deepEqual(await evaluate('[document.querySelector("#videos-offline").checkVisibility(),document.activeElement.dataset.id===document.querySelectorAll("#videos-list .videos-item")[1].dataset.id]'), [false, true],
+    'the poster replaces the message and focus moves to the chosen video');
+  await closeDialog('#videos', '#videos-close');
+  pass(`${engine}: Videos groups and plays the videos, stops one on close, and says when YouTube is unreachable, on desktop, tablet, phone and landscape phone`);
+
+  await until(`${engine} environment summary`, () => evaluate('document.querySelectorAll(".provider[data-id=shell] .environment-values dd").length===4'));
+  for (const [width, height] of [[1440, 900], [768, 1024], [390, 844]]) {
+    await resize(width, height);
+    for (const skin of ['guild', 'professional', 'orbital', 'grove', 'gnomeland', 'goblinville']) {
+      for (const theme of ['light', 'dark']) {
+        await evaluate(`document.documentElement.dataset.skin='${skin}';document.documentElement.dataset.theme='${theme}';document.querySelector('.provider[data-id=shell] .environment-open').click()`);
+        await settled();
+        const g = await geometry('#environment');
+        assert.ok(g.body > 120 && g.inside && g.bodyBottom, `${engine} environment ${skin} ${theme} ${width}: ${JSON.stringify(g)}`);
+        assert.equal(await evaluate('document.querySelectorAll("#environment-runtimes .environment-row").length'), 6);
+        assert.ok(await evaluate('document.documentElement.scrollWidth<=innerWidth'), 'no horizontal page overflow');
+        assert.ok(await evaluate('document.querySelector("#environment").scrollWidth<=document.querySelector("#environment").clientWidth'), 'no horizontal dialog overflow');
+        await closeDialog('#environment', '#environment-close');
+        assert.equal(await evaluate('document.activeElement===document.querySelector(".provider[data-id=shell] .environment-open")'), true, `${engine} environment focus restored`);
       }
     }
-    await evaluate(`new Promise(resolve => {
-      document.querySelector('.provider[data-id=shell] .environment-open').click();
-      const refresh = document.querySelector('#environment-refresh');
-      const observer = new MutationObserver(() => {
-        if (!refresh.disabled) { observer.disconnect(); resolve(); }
-      });
-      observer.observe(refresh, { attributes: true, attributeFilter: ['disabled'] });
-      refresh.click();
-    })`);
-    assert.equal(await evaluate('document.querySelector("#environment").open'), true);
-    // Observe the actual card replacement before closing; rendering frames do
-    // not indicate that the asynchronous provider refresh has finished.
-    await evaluate(`new Promise(resolve => {
-      const selector = '.provider[data-id=shell] .environment-open';
-      const original = document.querySelector(selector);
-      const observer = new MutationObserver(() => {
-        const replacement = document.querySelector(selector);
-        if (!original.isConnected && replacement?.isConnected && replacement !== original) {
-          observer.disconnect();
-          window.testEnvironmentReplacement = replacement;
-          resolve();
-        }
-      });
-      observer.observe(document.querySelector('#providers'), { childList: true, subtree: true });
-      document.querySelector('.provider[data-id=shell] .multiplexer-refresh').click();
-    })`);
-    assert.equal(await evaluate('document.querySelector("#environment").open'), true);
-    await closeDialog('#environment', '#environment-close');
-    assert.equal(await evaluate('testEnvironmentReplacement.isConnected && document.activeElement===testEnvironmentReplacement'), true, `${engine} replacement opener receives focus`);
-    await evaluate('delete window.testEnvironmentReplacement');
-    pass(`${engine}: manager environment, refresh and focus restoration work in all skins and themes at desktop, tablet and phone widths`);
+  }
+  await evaluate(`new Promise(resolve => {
+    document.querySelector('.provider[data-id=shell] .environment-open').click();
+    const refresh = document.querySelector('#environment-refresh');
+    const observer = new MutationObserver(() => {
+      if (!refresh.disabled) { observer.disconnect(); resolve(); }
+    });
+    observer.observe(refresh, { attributes: true, attributeFilter: ['disabled'] });
+    refresh.click();
+  })`);
+  assert.equal(await evaluate('document.querySelector("#environment").open'), true);
+  // Observe the actual card replacement before closing; rendering frames do
+  // not indicate that the asynchronous provider refresh has finished.
+  await evaluate(`new Promise(resolve => {
+    const selector = '.provider[data-id=shell] .environment-open';
+    const original = document.querySelector(selector);
+    const observer = new MutationObserver(() => {
+      const replacement = document.querySelector(selector);
+      if (!original.isConnected && replacement?.isConnected && replacement !== original) {
+        observer.disconnect();
+        window.testEnvironmentReplacement = replacement;
+        resolve();
+      }
+    });
+    observer.observe(document.querySelector('#providers'), { childList: true, subtree: true });
+    document.querySelector('.provider[data-id=shell] .multiplexer-refresh').click();
+  })`);
+  assert.equal(await evaluate('document.querySelector("#environment").open'), true);
+  await closeDialog('#environment', '#environment-close');
+  assert.equal(await evaluate('testEnvironmentReplacement.isConnected && document.activeElement===testEnvironmentReplacement'), true, `${engine} replacement opener receives focus`);
+  await evaluate('delete window.testEnvironmentReplacement');
+  pass(`${engine}: manager environment, refresh and focus restoration work in all skins and themes at desktop, tablet and phone widths`);
 
-    // The other dialogs use exactly the same sizing rule. Exercise overflow and
-    // footer reachability without depending on provider accounts or Tailscale.
-    for (const [selector, width, height] of [
-      ['#models', 1024, 768], ['#remote-access', 1024, 768],
-      ['#folder-browser', 1024, 768], ['#folder-browser', 768, 1024], ['#folder-browser', 390, 844],
-    ]) {
-      await resize(width, height);
-      await evaluate(`{const d=document.querySelector('${selector}');const b=d.querySelector('.models-body');window.testDialogContent=b.innerHTML;b.replaceChildren(...Array.from({length:100},(_,i)=>{const p=document.createElement('p');p.textContent='Dialog item '+i;return p}));d.showModal()}`);
-      await settled();
-      const g = await geometry(selector);
-      assert.ok(g.body > 120 && g.scrollable && g.inside && g.bodyBottom && g.footer, `${engine} ${selector} ${width}: ${JSON.stringify(g)}`);
-      // Close handlers need the real controls, not the temporary overflow content.
-      await evaluate(`document.querySelector('${selector} .models-body').innerHTML=window.testDialogContent`);
-      await closeDialog(selector);
-    }
-    pass(`${engine}: model, remote-access and folder dialogs retain a visible, scrollable body and footer`);
-
-    // Questions are asked in the page: a framed page's confirm() returns false without showing anything.
-    await resize(390, 844);
-    // The last running session: later checks use the first card's terminal.
-    const id = await evaluate('[...document.querySelectorAll("#sessions .session-card")].findLast((c) => !c.querySelector(".stop").hidden)?.dataset.id');
-    assert.ok(id, `${engine}: a running demo session`);
-    const stop = `document.querySelector('#sessions .session-card[data-id="${id}"] .stop')`;
-    await evaluate(`${stop}.click()`);
-    await until(`${engine} stop question`, () => evaluate('document.querySelector("#ask").open'));
+  // The other dialogs use exactly the same sizing rule. Exercise overflow and
+  // footer reachability without depending on provider accounts or Tailscale.
+  for (const [selector, width, height] of [
+    ['#models', 1024, 768], ['#remote-access', 1024, 768],
+    ['#folder-browser', 1024, 768], ['#folder-browser', 768, 1024], ['#folder-browser', 390, 844],
+  ]) {
+    await resize(width, height);
+    await evaluate(`{const d=document.querySelector('${selector}');const b=d.querySelector('.models-body');window.testDialogContent=b.innerHTML;b.replaceChildren(...Array.from({length:100},(_,i)=>{const p=document.createElement('p');p.textContent='Dialog item '+i;return p}));d.showModal()}`);
     await settled();
-    const question = await evaluate(`(() => {
-      const r=document.querySelector('#ask').getBoundingClientRect();
-      return {message:document.querySelector('#ask-message').textContent,ok:document.querySelector('#ask-ok').textContent,
-        inside:r.left>=0&&r.top>=0&&r.right<=innerWidth&&r.bottom<=innerHeight,focused:document.activeElement.id};
-    })()`);
-    assert.match(question.message, /^Stop ".+"\? /);
-    assert.deepEqual([question.ok, question.inside, question.focused], ['Stop', true, 'ask-ok']);
-    await closeDialog('#ask', '#ask-cancel');
-    assert.equal(await evaluate(`${stop}.hidden`), false, `${engine}: Cancel leaves the session running`);
-    await evaluate(`${stop}.click()`);
-    await until(`${engine} stop question again`, () => evaluate('document.querySelector("#ask").open'));
-    await closeDialog('#ask', '#ask-ok');
-    await until(`${engine} session stopped`, () => evaluate(`${stop}.hidden`));
-    pass(`${engine}: Stop asks inside the page; Cancel keeps the session and Stop ends it`);
-  };
+    const g = await geometry(selector);
+    assert.ok(g.body > 120 && g.scrollable && g.inside && g.bodyBottom && g.footer, `${engine} ${selector} ${width}: ${JSON.stringify(g)}`);
+    // Close handlers need the real controls, not the temporary overflow content.
+    await evaluate(`document.querySelector('${selector} .models-body').innerHTML=window.testDialogContent`);
+    await closeDialog(selector);
+  }
+  pass(`${engine}: model, remote-access and folder dialogs retain a visible, scrollable body and footer`);
 
+  // Questions are asked in the page: a framed page's confirm() returns false without showing anything.
+  await resize(390, 844);
+  // The last running session: later checks use the first card's terminal.
+  const id = await evaluate('[...document.querySelectorAll("#sessions .session-card")].findLast((c) => !c.querySelector(".stop").hidden)?.dataset.id');
+  assert.ok(id, `${engine}: a running demo session`);
+  const stop = `document.querySelector('#sessions .session-card[data-id="${id}"] .stop')`;
+  await evaluate(`${stop}.click()`);
+  await until(`${engine} stop question`, () => evaluate('document.querySelector("#ask").open'));
+  await settled();
+  const question = await evaluate(`(() => {
+    const r=document.querySelector('#ask').getBoundingClientRect();
+    return {message:document.querySelector('#ask-message').textContent,ok:document.querySelector('#ask-ok').textContent,
+      inside:r.left>=0&&r.top>=0&&r.right<=innerWidth&&r.bottom<=innerHeight,focused:document.activeElement.id};
+  })()`);
+  assert.match(question.message, /^Stop ".+"\? /);
+  assert.deepEqual([question.ok, question.inside, question.focused], ['Stop', true, 'ask-ok']);
+  await closeDialog('#ask', '#ask-cancel');
+  assert.equal(await evaluate(`${stop}.hidden`), false, `${engine}: Cancel leaves the session running`);
+  await evaluate(`${stop}.click()`);
+  await until(`${engine} stop question again`, () => evaluate('document.querySelector("#ask").open'));
+  await closeDialog('#ask', '#ask-ok');
+  await until(`${engine} session stopped`, () => evaluate(`${stop}.hidden`));
+  pass(`${engine}: Stop asks inside the page; Cancel keeps the session and Stop ends it`);
+};
+
+const checks = process.env.PLAYWRIGHT_MODULE ? await serve({ instrumentation }, async (origin) => {
+  let checks = 0;
+  const pass = (label) => { checks++; console.log(`ok ${checks} - ${label}`); };
+  const { webkit } = await import(pathToFileURL(path.resolve(process.env.PLAYWRIGHT_MODULE)).href);
+  const browser = await webkit.launch({ headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, hasTouch: true });
+    const webkitErrors = [];
+    page.on('pageerror', (error) => webkitErrors.push(error.message));
+    page.on('dialog', (dialog) => dialog.accept());
+    await page.goto(origin);
+    const run = (expression) => page.evaluate(expression);
+    const settle = () => run('document.fonts.ready.then(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))');
+    await checkDialogs(run, (width, height) => page.setViewportSize({ width, height }), settle, `WebKit ${browser.version()}`, pass);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await run('document.querySelector("#sessions .session-card .open").click()');
+    await until('WebKit touch keys ready', () => run('!document.querySelector("#terminal-controls [data-key=Enter]").disabled'));
+    await run('document.querySelector(".xterm-helper-textarea").focus();testInputs.length=0');
+    for (const key of ['ArrowLeft', 'ArrowUp', 'ArrowDown', 'ArrowRight', 'Enter', 'Escape']) await page.tap(`#terminal-controls [data-key=${key}]`);
+    assert.deepEqual(await run('testInputs'), ['\x1b[D', '\x1b[A', '\x1b[B', '\x1b[C', '\r', '\x1b']);
+    assert.equal(await run('document.activeElement===document.querySelector(".xterm-helper-textarea")'), true);
+    await run('document.activeElement.blur();testInputs.length=0');
+    await page.tap('#terminal-controls [data-key=ArrowUp]');
+    assert.deepEqual(await run('testInputs'), ['\x1b[A']);
+    assert.equal(await run('document.activeElement===document.querySelector(".xterm-helper-textarea")'), false);
+    assert.deepEqual(webkitErrors, []);
+    pass('WebKit trusted touch sends each terminal key once and preserves focused/unfocused input');
+  } finally {
+    await browser.close();
+  }
+  return checks;
+}) : await withPage({ name: 'dialogs', instrumentation }, async ({ origin, send, evaluate, layoutReady, pass, errors, navigate, reload }) => {
   await navigate(origin);
-  await checkDialogs(evaluate, (width, height) => send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false }), layoutReady, 'Chrome');
+  await checkDialogs(evaluate, (width, height) => send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false }), layoutReady, 'Chrome', pass);
   assert.deepEqual(errors, []);
 
   const { providers } = JSON.parse(fs.readFileSync(new URL('../../config/providers.default.json', import.meta.url), 'utf8'));
@@ -399,35 +429,5 @@ const checks = await withPage({ name: 'dialogs', instrumentation }, async ({ ori
   }
   await evaluate(`sessionStorage.removeItem('testModelStats')`);
   pass('Chrome: cards, the Models dialog and session tooltips show benchmarks when Rating is missing or null');
-
-  if (process.env.PLAYWRIGHT_MODULE) {
-    const { webkit } = await import(pathToFileURL(path.resolve(process.env.PLAYWRIGHT_MODULE)).href);
-    const browser = await webkit.launch({ headless: true });
-    try {
-      const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, hasTouch: true });
-      const webkitErrors = [];
-      page.on('pageerror', (error) => webkitErrors.push(error.message));
-      page.on('dialog', (dialog) => dialog.accept());
-      await page.goto(origin);
-      const run = (expression) => page.evaluate(expression);
-      const settle = () => run('document.fonts.ready.then(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))');
-      await checkDialogs(run, (width, height) => page.setViewportSize({ width, height }), settle, `WebKit ${browser.version()}`);
-      await page.setViewportSize({ width: 390, height: 844 });
-      await run('document.querySelector("#sessions .session-card .open").click()');
-      await until('WebKit touch keys ready', () => run('!document.querySelector("#terminal-controls [data-key=Enter]").disabled'));
-      await run('document.querySelector(".xterm-helper-textarea").focus();testInputs.length=0');
-      for (const key of ['ArrowLeft', 'ArrowUp', 'ArrowDown', 'ArrowRight', 'Enter', 'Escape']) await page.tap(`#terminal-controls [data-key=${key}]`);
-      assert.deepEqual(await run('testInputs'), ['\x1b[D', '\x1b[A', '\x1b[B', '\x1b[C', '\r', '\x1b']);
-      assert.equal(await run('document.activeElement===document.querySelector(".xterm-helper-textarea")'), true);
-      await run('document.activeElement.blur();testInputs.length=0');
-      await page.tap('#terminal-controls [data-key=ArrowUp]');
-      assert.deepEqual(await run('testInputs'), ['\x1b[A']);
-      assert.equal(await run('document.activeElement===document.querySelector(".xterm-helper-textarea")'), false);
-      assert.deepEqual(webkitErrors, []);
-      pass('WebKit trusted touch sends each terminal key once and preserves focused/unfocused input');
-    } finally {
-      await browser.close();
-    }
-  }
 });
-console.log(`${checks} dialog and WebKit checks passed.`);
+console.log(`${checks} dialog checks passed.`);

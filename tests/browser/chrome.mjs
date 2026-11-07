@@ -151,10 +151,7 @@ export async function withDialogClose(evaluate, selector, action) {
   }
 }
 
-export async function withPage({ name, instrumentation = '', headers = () => ({}), chromeArgs = [] }, run) {
-  const chromePath = [process.env.CHROME_PATH, '/usr/bin/google-chrome', '/usr/bin/chromium',
-    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'].find((file) => file && fs.existsSync(file));
-  assert.ok(chromePath, 'Chrome is required; set CHROME_PATH to its executable');
+export async function serve({ instrumentation = '', headers = () => ({}) }, run) {
   const server = http.createServer((req, res) => {
     const route = new URL(req.url, 'http://localhost').pathname;
     const file = vendor[route] ? path.join(repo, 'node_modules', vendor[route])
@@ -173,65 +170,76 @@ export async function withPage({ name, instrumentation = '', headers = () => ({}
   });
   server.listen(0, '127.0.0.1');
   await new Promise((resolve) => server.once('listening', resolve));
-  const origin = `http://127.0.0.1:${server.address().port}`;
-  let launched, socket;
-  let checks = 0;
-  const pass = (label) => { checks++; console.log(`ok ${checks} - ${label}`); };
   try {
-    launched = await launchChrome({ chromePath, name, chromeArgs });
-    const { port } = launched;
-    const tabs = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
-    socket = new WebSocket(tabs.find((tab) => tab.type === 'page').webSocketDebuggerUrl);
-    await new Promise((resolve, reject) => { socket.onopen = resolve; socket.onerror = reject; });
-    let nextId = 0;
-    const pending = new Map(), errors = [], listeners = new Set();
-    const send = (method, params = {}) => new Promise((resolve, reject) => {
-      const id = ++nextId;
-      const timer = setTimeout(() => { pending.delete(id); reject(new Error(`CDP timeout: ${method}`)); }, 15000);
-      pending.set(id, { method, resolve, reject, timer });
-      socket.send(JSON.stringify({ id, method, params }));
-    });
-    socket.onmessage = ({ data }) => {
-      const message = JSON.parse(data);
-      if (message.method === 'Page.javascriptDialogOpening') {
-        // Only unsaved notes may guard navigation.
-        if (message.params.type !== 'beforeunload') errors.push(`Unexpected ${message.params.type} dialog`);
-        send('Page.handleJavaScriptDialog', { accept: true }).catch((error) => errors.push(error.message));
-      }
-      if (message.method === 'Runtime.exceptionThrown') errors.push(message.params.exceptionDetails.exception?.description || message.params.exceptionDetails.text);
-      if (message.method) for (const listener of listeners) listener(message);
-      const request = pending.get(message.id);
-      if (!request) return;
-      pending.delete(message.id);
-      clearTimeout(request.timer);
-      if (message.error) request.reject(new Error(`${request.method}: ${message.error.message}`));
-      else request.resolve(message.result);
-    };
-    const evaluate = async (expression) => {
-      const result = await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
-      if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text);
-      return result.result.value;
-    };
-    const layoutReady = () => evaluate('document.fonts.ready.then(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))');
-    await send('Page.enable');
-    await send('Runtime.enable');
-    await send('Page.setLifecycleEventsEnabled', { enabled: true });
-    // A headless page starts without window focus, and then focus() fires no focus event until the page gains focus,
-    // whenever that is. Emulated focus makes every focus() and blur() fire at once, as in a focused window.
-    await send('Emulation.setFocusEmulationEnabled', { enabled: true });
-    if (!(await evaluate('document.hasFocus()'))) throw new Error('the page does not have focus');
-    const { frameTree } = await send('Page.getFrameTree');
-    const listen = (listener) => { listeners.add(listener); return () => listeners.delete(listener); };
-    const { navigate, reload } = pageLoads(send, listen, frameTree.frame.id);
-    const pageSend = (method, params) => (method === 'Page.navigate' || method === 'Page.reload'
-      ? Promise.reject(new Error(`${method}: use navigate() or reload(), which wait for the new document`)) : send(method, params));
-    await run({ origin, send: pageSend, evaluate, layoutReady, pass, errors, navigate, reload });
-    return checks;
+    return await run(`http://127.0.0.1:${server.address().port}`);
   } finally {
-    socket?.close();
-    if (launched) await discard(launched.chrome, launched.profile);
-    // Likewise close the page's keep-alive connections rather than waiting for them to idle out.
+    // Close the page's keep-alive connections rather than waiting for them to idle out.
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
   }
+}
+
+export async function withPage({ name, instrumentation, headers, chromeArgs = [] }, run) {
+  const chromePath = [process.env.CHROME_PATH, '/usr/bin/google-chrome', '/usr/bin/chromium',
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'].find((file) => file && fs.existsSync(file));
+  assert.ok(chromePath, 'Chrome is required; set CHROME_PATH to its executable');
+  return serve({ instrumentation, headers }, async (origin) => {
+    let launched, socket;
+    let checks = 0;
+    const pass = (label) => { checks++; console.log(`ok ${checks} - ${label}`); };
+    try {
+      launched = await launchChrome({ chromePath, name, chromeArgs });
+      const { port } = launched;
+      const tabs = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
+      socket = new WebSocket(tabs.find((tab) => tab.type === 'page').webSocketDebuggerUrl);
+      await new Promise((resolve, reject) => { socket.onopen = resolve; socket.onerror = reject; });
+      let nextId = 0;
+      const pending = new Map(), errors = [], listeners = new Set();
+      const send = (method, params = {}) => new Promise((resolve, reject) => {
+        const id = ++nextId;
+        const timer = setTimeout(() => { pending.delete(id); reject(new Error(`CDP timeout: ${method}`)); }, 15000);
+        pending.set(id, { method, resolve, reject, timer });
+        socket.send(JSON.stringify({ id, method, params }));
+      });
+      socket.onmessage = ({ data }) => {
+        const message = JSON.parse(data);
+        if (message.method === 'Page.javascriptDialogOpening') {
+          // Only unsaved notes may guard navigation.
+          if (message.params.type !== 'beforeunload') errors.push(`Unexpected ${message.params.type} dialog`);
+          send('Page.handleJavaScriptDialog', { accept: true }).catch((error) => errors.push(error.message));
+        }
+        if (message.method === 'Runtime.exceptionThrown') errors.push(message.params.exceptionDetails.exception?.description || message.params.exceptionDetails.text);
+        if (message.method) for (const listener of listeners) listener(message);
+        const request = pending.get(message.id);
+        if (!request) return;
+        pending.delete(message.id);
+        clearTimeout(request.timer);
+        if (message.error) request.reject(new Error(`${request.method}: ${message.error.message}`));
+        else request.resolve(message.result);
+      };
+      const evaluate = async (expression) => {
+        const result = await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
+        if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text);
+        return result.result.value;
+      };
+      const layoutReady = () => evaluate('document.fonts.ready.then(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))');
+      await send('Page.enable');
+      await send('Runtime.enable');
+      await send('Page.setLifecycleEventsEnabled', { enabled: true });
+      // A headless page starts without window focus, and then focus() fires no focus event until the page gains focus,
+      // whenever that is. Emulated focus makes every focus() and blur() fire at once, as in a focused window.
+      await send('Emulation.setFocusEmulationEnabled', { enabled: true });
+      if (!(await evaluate('document.hasFocus()'))) throw new Error('the page does not have focus');
+      const { frameTree } = await send('Page.getFrameTree');
+      const listen = (listener) => { listeners.add(listener); return () => listeners.delete(listener); };
+      const { navigate, reload } = pageLoads(send, listen, frameTree.frame.id);
+      const pageSend = (method, params) => (method === 'Page.navigate' || method === 'Page.reload'
+        ? Promise.reject(new Error(`${method}: use navigate() or reload(), which wait for the new document`)) : send(method, params));
+      await run({ origin, send: pageSend, evaluate, layoutReady, pass, errors, navigate, reload });
+      return checks;
+    } finally {
+      socket?.close();
+      if (launched) await discard(launched.chrome, launched.profile);
+    }
+  });
 }
