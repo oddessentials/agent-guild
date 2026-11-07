@@ -413,8 +413,10 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   for (const [width, height] of [[1440, 900], [980, 800], [524, 800], [484, 800], [444, 800], [356, 800], [336, 640]]) {
     await size(width, height);
     await soloPlaced(`professional ${width}`, width, '#yard-play-builders', '.yard-play-builders');
+    assert.equal(await evaluate(`(()=>{const s=document.querySelector('.yard-play-stamp');if(!s.checkVisibility())return false;const a=s.getBoundingClientRect(),words=document.createTreeWalker(document.querySelector('.yard-play-builders .yard-play-text'),NodeFilter.SHOW_TEXT);let hit=false;while(words.nextNode()){const range=document.createRange();range.selectNodeContents(words.currentNode);for(const b of range.getClientRects())hit||=b.width>0&&a.left<b.right&&b.left<a.right&&a.top<b.bottom&&b.top<a.bottom;}return hit;})()`), false, `professional ${width}: the beta stamp clears the words`);
   }
   await size(1440, 900);
+  assert.equal(await visible('.yard-play-stamp'), true, 'the Builders button is stamped as a beta');
   await size(1440, 900);
   assert.equal(await visible('#yard-world-replace'), false, 'the demo has no manager to install a world');
   const spotClear = (label) => evaluate(`(()=>{for(const id of ['#yard-world-get','#yard-world-replace','#yard-world-restore'])document.querySelector(id).hidden=false;const box=(e)=>e.getBoundingClientRect(),stage=box(document.querySelector('#yard-stage'));

@@ -206,6 +206,8 @@
 .yard-play-builders .yard-play-chip::before { background:radial-gradient(120px 60px at 12% 50%,#2f6bed75,transparent 70%),linear-gradient(180deg,#1b2029,#0d1015 55%,#07090d); }
 .yard-play-builders .yard-play-orb { width:38px; height:38px; }
 .yard-play-builders .yard-play-sub { color:#a9b0c4; }
+.yard-play-link > .yard-play-stamp { position:absolute; top:3px; right:13px; padding:0 4px; border:1px solid #ff4a3d; border-radius:2px; box-shadow:inset 0 0 0 1px #0d1015,inset 0 0 0 1.5px #ff4a3d; color:#ff4a3d; font:900 8.5px/12px var(--font-body,sans-serif); letter-spacing:.12em; text-transform:uppercase; rotate:-8deg; pointer-events:none; }
+.break-row .yard-play-stamp { display:none; }
 .yard-play-grove .yard-play-chip::before { background:radial-gradient(90px 60px at 12% 50%,#3b7550b0,transparent 70%),radial-gradient(90px 60px at 94% 50%,#7b9a3a66,transparent 70%),linear-gradient(180deg,#16261b,#0d1a12 55%,#081109); }
 .yard-play-grove .yard-play-link { margin:0; border:0; border-radius:0; background:none; text-align:left; }
 .yard-play-grove .yard-play-orb { position:relative; width:38px; height:38px; }
@@ -255,6 +257,7 @@
 @keyframes yard-play-pulse { 0%,100% { opacity:.45; transform:scale(.94); } 50% { opacity:.9; transform:scale(1.06); } }
 @keyframes yard-play-chev { 0%,100% { opacity:.35; } 40% { opacity:1; } }
 @container (max-width:660px) { :root:is([data-skin="orbital"],[data-skin="gnomeland"],[data-skin="goblinville"],[data-skin="grove"],[data-skin="guild"],[data-skin="professional"]) .yard-heading { padding-inline:18px; } :root:is([data-skin="orbital"],[data-skin="gnomeland"],[data-skin="goblinville"],[data-skin="grove"],[data-skin="guild"],[data-skin="professional"]) .yard-summary { display:none; } .yard-play { --play-h:44px; } .yard-play-chip { --play-more-w:40px; } .yard-play-chev, .yard-play-sub-more { display:none; } }
+@container (max-width:660px) { .yard-play-stamp { display:none; } }
 @container (max-width:520px) { .yard-play-builders .yard-play-now { display:none; } }
 @container (max-width:460px) { .yard-play-builders .yard-play-text { display:none; } .yard-play-builders .yard-play-link { padding:0 7px; } }
 @container (max-width:360px) { :root[data-skin="professional"] #yard-title { font-size:20px; } }
