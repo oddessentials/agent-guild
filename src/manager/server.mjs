@@ -330,9 +330,6 @@ export function createManagerServer({
       return sendJson(res, 200, { ok: true, name: 'agent-guild', version, pid: process.pid });
     }
 
-    // Agent, model and tool-session reports may authenticate with the
-    // per-session report token that the manager injects into each tool's
-    // environment.
     const reportMatch = route.match(/^\/sessions\/([a-f0-9]+)\/(agents|model|tool-session|context|reporting|shells|docker|reply|hook)$/);
     if (reportMatch && method === 'POST') {
       const [, id, kind] = reportMatch;
@@ -627,7 +624,7 @@ export function createManagerServer({
       return undefined;
     }
 
-    const sessionMatch = route.match(/^\/sessions\/([a-f0-9]+)(\/stop|\/reattach|\/reply)?$/);
+    const sessionMatch = route.match(/^\/sessions\/([a-f0-9]+)(\/stop|\/reattach|\/reply|\/replies)?$/);
     if (sessionMatch) {
       const [, id, action] = sessionMatch;
       if (!action && method === 'GET') {
@@ -638,6 +635,12 @@ export function createManagerServer({
       if (action === '/reply' && method === 'GET') {
         const { reply } = manager.get(id);
         return sendJson(res, 200, { reply: reply && { ...reply, spoken: spokenText(reply.text) } });
+      }
+      if (action === '/replies' && method === 'GET') {
+        const after = url.searchParams.get('after') ?? undefined;
+        const rawLimit = url.searchParams.get('limit');
+        if (rawLimit !== null && !/^[1-9][0-9]*$/.test(rawLimit)) throw new HttpError(400, 'limit must be an integer from 1 to 100', 'bad_request');
+        return sendJson(res, 200, manager.get(id).readReplies({ after, limit: rawLimit === null ? undefined : Number(rawLimit) }));
       }
       if (!action && method === 'PATCH') {
         const body = await readJsonBody(req);
@@ -836,7 +839,9 @@ export function createManagerServer({
       if (isBinary || ws.revoked) return;
       let msg;
       try { msg = JSON.parse(raw.toString('utf8')); } catch { return; }
-      if (msg.type === 'input' && typeof msg.data === 'string') session.input(msg.data);
+      if (msg.type === 'input' && msg.idempotencyKey !== undefined) {
+        safeSend(ws, { type: 'input-result', idempotencyKey: msg.idempotencyKey, ...session.inputOnce(msg.data, msg.idempotencyKey) });
+      } else if (msg.type === 'input' && typeof msg.data === 'string') session.input(msg.data);
       else if (msg.type === 'claim') session.claimSize(page, msg.cols, msg.rows);
       else if (msg.type === 'resize') session.resizeFrom(page, msg.generation, msg.cols, msg.rows);
       else if (msg.type === 'ping') safeSend(ws, { type: 'pong' });

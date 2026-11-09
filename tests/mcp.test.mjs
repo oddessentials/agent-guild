@@ -141,8 +141,8 @@ test('it introduces itself, lists read and write tools, and keeps typing off by 
   assert.deepEqual((await request('ping')).result, {});
 
   const { tools } = (await request('tools/list')).result;
-  assert.deepEqual(tools.map((tool) => tool.name), ['guild_status', 'list_sessions', 'read_reply', 'read_screen', 'start_session', 'stop_session', 'fireworks']);
-  for (const tool of tools.slice(0, 4)) assert.equal(tool.annotations.readOnlyHint, true, tool.name);
+  assert.deepEqual(tools.map((tool) => tool.name), ['guild_status', 'list_sessions', 'read_reply', 'read_replies', 'read_screen', 'start_session', 'stop_session', 'fireworks']);
+  for (const tool of tools.slice(0, 5)) assert.equal(tool.annotations.readOnlyHint, true, tool.name);
   assert.equal(tools.find((tool) => tool.name === 'stop_session').annotations.destructiveHint, true);
   assert.equal(tools.find((tool) => tool.name === 'start_session').inputSchema.properties.args, undefined, 'launch flags stay the person\'s choice');
   assert.equal((await request('nope/nothing')).error.code, -32601);
@@ -162,6 +162,8 @@ test('the read tools report status, sessions, the last reply and the screen', as
   assert.equal(listed.model, 'Opus 5.5');
   assert.equal(listed.working, true);
   assert.equal(listed.hasReply, true);
+  assert.equal(listed.replyId, session.reply.id);
+  assert.equal(listed.replyCursor, null);
   assert.deepEqual(listed.agents, [{ name: 'explorer', status: 'working', detail: 'Map the auth flow' }]);
 
   assert.equal((await callTool('read_reply', { session_id: session.id })).body, '## Done\n\nAll tests pass.');

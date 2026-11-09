@@ -28,6 +28,9 @@ const SHELL_EVENTS = new Set(['start', 'waiting', 'asked', 'background', 'end', 
 const SHELL_KINDS = new Set(['shell', 'monitor']);
 const MAX_SHELLS = 256;
 const MAX_ENDED_TASKS = 256;
+const MAX_REPLIES = 100;
+const MAX_REPLY_BYTES = 16 * 1024 * 1024;
+const MAX_INPUT_RECEIPTS = 4096;
 // Keys and reports a terminal sends as escape sequences: X10 mouse reports (three raw bytes after ESC [ M), other CSI
 // and SS3 sequences, OSC and DCS strings (to their end, or the next ESC, so a large paste is scanned once), and ESC
 // with one character (Alt+key). Bracketed paste markers are CSI, so pasted text is kept.
@@ -136,6 +139,12 @@ export class Session extends EventEmitter {
     this.toolSessionId = null;
     this.reply = null;
     this._replies = 0;
+    this._replyHistory = [];
+    this._replyBytes = 0;
+    this._replyInstance = crypto.randomUUID();
+    this.inputInstance = crypto.randomUUID();
+    this._inputReceipts = new Map();
+    this._previousReceipts = new Map();
     this.context = { compactions: count(opts.context?.compactions), resets: count(opts.context?.resets) };
     this.compactionRepeatMs = opts.compactionRepeatMs ?? 2000;
     this._compactionKeys = [];
@@ -226,6 +235,7 @@ export class Session extends EventEmitter {
   reattach(spawnSpec, { cwd = this.cwd } = {}) {
     if (this.disposed || this.status !== 'exited') throw Object.assign(new Error('only an exited session can be reattached'), { status: 409 });
     this._start(spawnSpec, cwd);
+    this.inputInstance = crypto.randomUUID();
     Object.assign(this, { status: 'running', exitCode: null, signal: null, exitedAt: null, activity: 'quiet', startedAt: new Date().toISOString() });
     this.exited = new Promise((resolve) => { this._resolveExited = resolve; });
     this._changed();
@@ -341,12 +351,17 @@ export class Session extends EventEmitter {
   }
 
   write(data) {
-    if (this.disposed || this.status !== 'running' || typeof data !== 'string' || data.length === 0) return;
-    try { this.pty.write(data); } catch { /* process is exiting */ }
+    if (this.disposed || this.status !== 'running' || typeof data !== 'string' || data.length === 0) return 'rejected';
+    try {
+      this.pty.write(data);
+      return 'accepted';
+    } catch {
+      return 'uncertain';
+    }
   }
 
   input(data) {
-    this.write(withoutInnerPasteMarkers(data));
+    const outcome = this.write(withoutInnerPasteMarkers(data));
     if (this.reporting?.state === 'pending' && !this._reportingTimer && typeof data === 'string' && this._sendsTypedLine(data)) {
       this._reportingTimer = setTimeout(() => {
         if (this.reporting?.state !== 'pending' || this.status !== 'running') return;
@@ -358,6 +373,32 @@ export class Session extends EventEmitter {
       }, this.reportingTimeoutMs);
       this._reportingTimer.unref?.();
     }
+    return outcome;
+  }
+
+  inputOnce(data, key) {
+    const match = typeof key === 'string' && key.match(/^([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}):([A-Za-z0-9_-]{1,128})$/);
+    if (!match) return { outcome: 'rejected', code: 'invalid_key' };
+    if (typeof data !== 'string') return { outcome: 'rejected', code: 'invalid_input' };
+    const fingerprint = crypto.createHash('sha256').update(data, 'utf16le').digest('hex');
+    const previous = this._inputReceipts.get(key) ?? this._previousReceipts.get(key);
+    if (previous) return previous.fingerprint === fingerprint ? { ...previous.result } : { outcome: 'rejected', code: 'key_conflict' };
+    if (match[1] !== this.inputInstance) return { outcome: 'rejected', code: 'stale_instance' };
+    const receipt = { fingerprint, result: { outcome: 'uncertain', code: 'write_uncertain' } };
+    this._inputReceipts.set(key, receipt);
+    try {
+      const outcome = this.input(data);
+      if (outcome === 'accepted') receipt.result = { outcome };
+      else if (outcome === 'rejected') receipt.result = { outcome, code: 'not_writable' };
+    } catch {}
+    // A full generation retires its instance, so a key dropped with the generation before it can only be stale.
+    if (this._inputReceipts.size >= MAX_INPUT_RECEIPTS) {
+      this._previousReceipts = this._inputReceipts;
+      this._inputReceipts = new Map();
+      this.inputInstance = crypto.randomUUID();
+      this._changed();
+    }
+    return { ...receipt.result };
   }
 
   /**
@@ -788,7 +829,6 @@ export class Session extends EventEmitter {
     return this.context;
   }
 
-  /** The text of the agent's last answer, or null when its last turn ended without one. */
   reportReply(report) {
     if (!report || typeof report !== 'object') throw badRequest('reply report must be an object');
     if (this.status !== 'running') throw Object.assign(new Error('session has exited'), { status: 409 });
@@ -796,8 +836,47 @@ export class Session extends EventEmitter {
     this._reportingHeard();
     const text = report.reply?.trim() || null;
     this.reply = text ? { id: ++this._replies, text } : null;
+    if (this.reply) {
+      const bytes = Buffer.byteLength(text);
+      this._replyHistory.push({ ...this.reply, bytes });
+      this._replyBytes += bytes;
+      while (this._replyHistory.length > 1 && (this._replyHistory.length > MAX_REPLIES || this._replyBytes > MAX_REPLY_BYTES)) {
+        this._replyBytes -= this._replyHistory.shift().bytes;
+      }
+    }
     this._changed();
     return this.reply && { id: this.reply.id };
+  }
+
+  replyCursor(id = this._replies) {
+    return `${this._replyInstance}:${id}`;
+  }
+
+  readReplies({ after, limit = 20 } = {}) {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_REPLIES) throw badRequest('limit must be an integer from 1 to 100');
+    let id = 0;
+    let gap = null;
+    if (after !== undefined) {
+      const match = typeof after === 'string' && after.match(/^([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}):(0|[1-9][0-9]*)$/);
+      if (!match || !Number.isSafeInteger(Number(match[2]))) throw badRequest('after must be a reply cursor');
+      if (match[1] !== this._replyInstance) gap = 'reset';
+      else {
+        id = Number(match[2]);
+        if (id > this._replies) throw badRequest('after is ahead of this session');
+      }
+    }
+    const first = this._replyHistory[0]?.id ?? this._replies + 1;
+    if (!gap && id < first - 1) gap = 'evicted';
+    const replies = this._replyHistory.filter((reply) => reply.id > id).slice(0, limit)
+      .map(({ id, text }) => ({ id, text, cursor: this.replyCursor(id) }));
+    const last = replies.at(-1)?.id ?? id;
+    return {
+      replies,
+      nextCursor: this.replyCursor(last),
+      hasMore: last < this._replies,
+      gap,
+      firstCursor: this._replyHistory.length ? this.replyCursor(first) : null,
+    };
   }
 
   reportHello() {
@@ -878,6 +957,8 @@ export class Session extends EventEmitter {
       toolSessionId: this.toolSessionId,
       context: { ...this.context },
       reply: this.reply && { id: this.reply.id },
+      replyCursor: this.replyCursor(),
+      inputInstance: this.inputInstance,
       reporting: this.reporting,
       agents: [...this.agents.values()],
       shells: [...this.shells.values()].filter((s) => s.visible).map((s) => ({ id: s.id, kind: s.kind })),

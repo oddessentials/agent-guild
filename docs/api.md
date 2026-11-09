@@ -430,6 +430,8 @@ files. When the tool cannot be asked, `count` is null, `scopes` is empty and
   "toolSessionId": "581893e5-a93d-5e49-968b-1c1c277d3255",
   "context": { "compactions": 2, "resets": 0 },
   "reply": { "id": 3 },
+  "replyCursor": "00000000-0000-4000-8000-000000000001:3",
+  "inputInstance": "00000000-0000-4000-8000-000000000002",
   "reporting": { "state": "active", "reason": null },
   "agents": [ /* Agent */ ],
   "shells": [{ "id": "shell-3", "kind": "shell" }]
@@ -468,10 +470,17 @@ files. When the tool cannot be asked, `count` is null, `scopes` is empty and
   in a new session (`/clear`, `/new`) since the card started.
 * `reply` names the answer that ended the agent's last turn by `id`, or is
   null. Its text is read with `GET /sessions/:id/reply`.
+* `replyCursor` is an opaque position after the latest recorded answer, or
+  before the first answer when none exists. An empty turn clears `reply`
+  without changing this cursor or erasing history.
 * `reporting` says whether the tool's reporting hooks work, or is null for a
   tool Agent Guild supplies no hooks to. `state` is `pending`, `active`,
   `unavailable`, `setup_required` or `unsupported`; `reason` explains every
   state but `active`.
+* `inputInstance` identifies the current terminal attachment for keyed input.
+  It changes on reattachment, after every 4,096 new keys, and on session
+  replacement, including restoration after manager restart. It grants no
+  input authorization.
 * `shells` lists the shell commands the tool is running, each `{ id, kind }`
   with `kind` `shell` or `monitor`. Nothing about the command itself is
   included.
@@ -703,6 +712,7 @@ All paths are under `/api/v1`.
 | POST | `/sessions` | `{ providerId, account?, shell?, cwd?, cols?, rows?, name?, args?, resume? }` | `201 { session }`. 429 `too_many_sessions` at the session limit. |
 | GET | `/sessions/:id` | | `{ session }` |
 | GET | `/sessions/:id/reply` | | `{ reply: { id, text, spoken } }`, or `{ reply: null }`: the whole text of the answer `session.reply` names, and `spoken`, the words the page's Read aloud speaks for it: a line per paragraph line, heading, list item and table row, each fenced code block as `Code omitted.` |
+| GET | `/sessions/:id/replies?after=&limit=` | | `{ replies: [{ id, text, cursor }], nextCursor, hasMore, gap, firstCursor }`: retained answers in recorded order. `after` is an exclusive cursor; omit it to start at the oldest retained answer. `limit` defaults to 20, from 1 to 100. |
 | PATCH | `/sessions/:id` | `{ name }` | `{ session }`. |
 | POST | `/sessions/:id/stop` | | `{ session }`: ends the process. The session stays listed as exited. |
 | POST | `/sessions/:id/reattach` | | `{ session }`: runs an exited tmux or herdr session's multiplexer client again, keeping the session's id and screen. 409 `multiplexer_session_gone` while `multiplexer.reattachable` is false. |
@@ -737,6 +747,23 @@ Request bodies are limited to 64 KiB, except `PUT /notes`,
 `POST /sessions/:id/reply` and `POST /sessions/:id/docker`, which accept
 1 MiB, and `POST /sessions/:id/hook`, which accepts 32 MiB and checks the token
 before reading the body. Messages a client sends on a WebSocket are limited to 1 MiB.
+
+### Reply history
+
+Reads are independent and never consume answers. Save each answer's `cursor`
+after handling it; `nextCursor` is the last returned cursor, or the starting
+position for an empty result. `hasMore` says whether more answers existed at
+read time. `firstCursor` names the oldest retained answer, or is null.
+`gap` is null normally, `evicted` when earlier requested answers were dropped,
+or `reset` when the cursor belongs to another session instance. A reset read
+starts at the oldest retained answer. Malformed cursors, positions ahead of
+the current instance, and invalid limits return 400.
+
+Each session retains at most 100 complete answers and 16 MiB of UTF-8 text,
+evicting oldest answers first. The newest answer is always kept whole, even
+if it alone exceeds 16 MiB. History remains after exit, but is lost on session
+removal or manager restart. A replacement session has a new cursor identity,
+even when its session id is reused. A removed session returns 404.
 
 ## WebSockets
 
@@ -788,6 +815,7 @@ Server to client:
 | `{ type: "data", data }` | Terminal output, in order, directly after the snapshot. |
 | `{ type: "resize", cols, rows, generation, owner }` | The size changed or was claimed, or this page's own `resize` was refused or changed nothing. |
 | `{ type: "exit", exitCode, signal }` | The process ended. Also sent after the snapshot when attaching to an exited session. |
+| `{ type: "input-result", idempotencyKey, outcome, code? }` | A receipt for keyed input, sent only to its requesting connection. `outcome` is `accepted`, `rejected` or `uncertain`; see below. |
 | `{ type: "removed" }` | The session was removed. The socket then closes with code 4410. |
 | `{ type: "pong" }` | The answer to a client's `ping`. |
 | `{ type: "error", code: "not_found", message }` | The session does not exist. The socket then closes with code 4404. |
@@ -797,9 +825,45 @@ Client to server:
 | Message | Meaning |
 | --- | --- |
 | `{ type: "input", data }` | Keystrokes or pasted text, as a terminal would send them. Send a bracketed paste as one message: in a message that starts with `ESC[200~` and ends with `ESC[201~`, those markers inside the text reach the program with their ESC replaced by `␛`, so the text cannot end the paste. |
+| `{ type: "input", data, idempotencyKey }` | At most one write attempt per key. The key is the original `inputInstance`, a colon, and a caller-chosen ID of 1–128 ASCII letters, digits, underscores or hyphens. Save the full key before sending and reuse it unchanged for retries. |
 | `{ type: "claim", cols, rows }` | Take the size for this page and set it. Needs `page`. |
 | `{ type: "resize", generation, cols, rows }` | Resize the terminal. Refused unless this page owns the size and `generation` is the latest. |
 | `{ type: "ping" }` | Ask for a `pong`, to check that the link is alive. |
+
+### Keyed terminal input
+
+Only send keyed input after a snapshot supplies `session.inputInstance`;
+older managers do not support it. The manager records each valid request
+before attempting its write. Identical keys and `data` return the stored
+outcome, including after exit. Changed `data` returns `key_conflict` without
+altering the original receipt. Comparison includes all characters, including
+Enter, before bracketed-paste sanitization.
+
+| Outcome | Meaning |
+| --- | --- |
+| `accepted` | The terminal writer returned without a synchronous error. Input may still be buffered. This does not confirm consumption or command execution. |
+| `rejected` | This request made no write attempt. `code` identifies `invalid_key`, `invalid_input`, `key_conflict`, `stale_instance` or `not_writable` (exited/disposed session or empty input). A rejection does not undo a previous request. |
+| `uncertain` | `write_uncertain`: a write may have started. The receipt is kept and retries never attempt another write. |
+
+Receipts contain the key, input hash and outcome, not raw input. A Session
+keeps them in two generations of up to 4,096 receipts, through exit and
+reattachment. The receipt that fills a generation retires the current
+`inputInstance`: a new one is issued, the full generation becomes the
+previous one, and the generation before it is discarded. Keys in either
+kept generation return their receipts. Every other key whose instance is
+not current, including a discarded or never-recorded one, is rejected as
+`stale_instance` without a write, and its original outcome cannot be
+established. Reattachment also changes `inputInstance` and keeps both
+generations. After `stale_instance` on a new request, read the session again
+and form new keys from its current `inputInstance`. Removal or manager
+restart loses the receipts. Replacement instances reject old keys, even if the session id is
+reused; such a rejection cannot establish the old instance's outcome.
+
+If an acknowledgement is lost, reconnect and retry the identical input with
+the original full key. Never substitute a new instance prefix or key, or
+fall back to unkeyed input to resolve uncertainty. The guarantee is **at most
+one write attempt per keyed request within its valid session instance**,
+not exactly-once execution. Unkeyed input has no receipt or retry protection.
 
 ### Terminal queries: clients must not answer
 
