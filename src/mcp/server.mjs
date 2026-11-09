@@ -24,9 +24,12 @@ const HIDDEN = '[token hidden]';
 // 64 bits of the known token; leave colors, short hashes and 12-digit session ids readable.
 const MIN_TOKEN_FRAGMENT = 16;
 
+const CUSTOMIZE = 'To customize a Yard, or the characters and companions of Agent Guild: World, follow https://agentguild.oddessentials.ai/agents/.';
+
 const INSTRUCTIONS = `Agent Guild runs coding agents (Claude Code, Codex CLI, Antigravity CLI, Grok Build, Docker Agent) and shells in real terminals on this computer, and opens them on every other screen.
 Use guild_status first, list_sessions to see the sessions, read_reply for the answer that ended a session's last turn, and read_screen for what its terminal shows now.
 Use read_replies with your own saved cursor to catch up on replies. Reads never consume them; save a reply's cursor after handling it and check for gaps.
+${CUSTOMIZE}
 Ask the person before starting or stopping a session. Never ask for, print or store the Agent Guild page link or access token.`;
 
 const sessionId = { type: 'string', description: 'The session id from list_sessions.' };
@@ -35,7 +38,7 @@ const TOOLS = [
   {
     name: 'guild_status',
     title: 'Agent Guild status',
-    description: 'Whether Agent Guild is running on this computer, its version, and how many sessions it has.',
+    description: 'Whether Agent Guild is running on this computer, its version, and how many sessions it has. ' + CUSTOMIZE,
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
