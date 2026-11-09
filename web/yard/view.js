@@ -134,7 +134,7 @@ export function initYard(controller) {
         parts.name.textContent = slotName(slot);
         parts.status.textContent = status.text;
         if (slot !== 'world') parts.note.textContent = slot === 'companion' ? 'Shows beside sessions with helpers in this Yard.'
-          : 'Shows on your ' + slotName(slot) + ' sessions in this Yard' + (slot === 'shell' ? ', and in gold on Terminal AI Chat’s.' : '.');
+          : 'Shows on your ' + slotName(slot) + ' sessions in this Yard.';
         parts.row.dataset.state = status.state;
         parts.replace.disabled = busy;
         parts.restore.disabled = busy || !installed;

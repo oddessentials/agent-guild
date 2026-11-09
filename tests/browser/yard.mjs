@@ -1801,7 +1801,7 @@ test('the Customize dialog tells installed from drawn, per Yard, and returns foc
   ]);
   assert.equal(await b.evaluate("document.querySelector('#yard-world-note').textContent"),'Broken could not load. Showing the original character.');
   assert.deepEqual(await b.evaluate("['world','anthropic','shell','companion'].map(s=>(n=>n.hidden?null:n.textContent)(document.querySelector('#yard-customize-list [data-slot='+s+'] .yard-customize-note')))"),
-    [null,'Shows on your Claude Code sessions in this Yard.','Shows on your Shell sessions in this Yard, and in gold on Terminal AI Chat’s.','Shows beside sessions with helpers in this Yard.']);
+    [null,'Shows on your Claude Code sessions in this Yard.','Shows on your Shell sessions in this Yard.','Shows beside sessions with helpers in this Yard.']);
   await b.evaluate("document.documentElement.dataset.skin='grove'");
   await b.wait(`${row('anthropic')}.dataset.state==='original' && ${row('openai')}.dataset.state==='original'`);
   assert.equal(await b.evaluate("document.querySelector('#yard-customize-sub').textContent"),await b.evaluate("document.querySelector('#yard-title').textContent+' only. Other Yards keep their own.'"));
