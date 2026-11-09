@@ -26,6 +26,7 @@ const MIN_TOKEN_FRAGMENT = 16;
 
 const INSTRUCTIONS = `Agent Guild runs coding agents (Claude Code, Codex CLI, Antigravity CLI, Grok Build, Docker Agent) and shells in real terminals on this computer, and opens them on every other screen.
 Use guild_status first, list_sessions to see the sessions, read_reply for the answer that ended a session's last turn, and read_screen for what its terminal shows now.
+Use read_replies with your own saved cursor to catch up on replies. Reads never consume them; save a reply's cursor after handling it and check for gaps.
 Ask the person before starting or stopping a session. Never ask for, print or store the Agent Guild page link or access token.`;
 
 const sessionId = { type: 'string', description: 'The session id from list_sessions.' };
@@ -41,7 +42,7 @@ const TOOLS = [
   {
     name: 'list_sessions',
     title: 'List sessions',
-    description: 'Every session in Agent Guild: its id, tool, folder, status, whether it is working, its model, its sub-agents, and whether it has a reply to read.',
+    description: 'Every session: status, recent activity (working), model, sub-agents, latest reply id, history cursor, and inputInstance for keyed input.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
@@ -50,6 +51,22 @@ const TOOLS = [
     title: 'Read a reply',
     description: "The whole text of the answer that ended a session's last turn, as Markdown. Only tools with reporting on (Claude Code, Codex CLI, Antigravity CLI, Grok Build, Docker Agent) have one.",
     inputSchema: { type: 'object', properties: { session_id: sessionId }, required: ['session_id'], additionalProperties: false },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  {
+    name: 'read_replies',
+    title: 'Read reply history',
+    description: 'Read retained replies in order, with ids and cursors. Pass your last handled cursor as after; omit it to start at the oldest retained reply. Reads do not consume replies. Check gap for evicted or reset history and save each cursor only after handling its reply.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session_id: sessionId,
+        after: { type: 'string', description: 'A cursor returned for this session. Omit on the first read.' },
+        limit: { type: 'integer', minimum: 1, maximum: 100, description: 'Maximum replies to return, from 1 to 100. Defaults to 20.' },
+      },
+      required: ['session_id'],
+      additionalProperties: false,
+    },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
   {
@@ -96,13 +113,14 @@ const TOOLS = [
 const INPUT_TOOL = {
   name: 'send_input',
   title: 'Type into a session',
-  description: "Type text into a session's terminal, as if the person typed it, and press Enter unless submit is false. Read the screen first, and send only what the person asked for.",
+  description: "Type text into a session's terminal, as if the person typed it, and press Enter unless submit is false. Read the screen first, and send only what the person asked for. Sending an approval response requires the person's explicit request for that response in that session. --allow-input enables this tool, not consent to use it. An optional idempotency_key permits retries with the same input and key. This guarantees at most one write attempt, not consumption or execution. Preserve the original key after an uncertain outcome; never automatically resend with a new key or without one.",
   inputSchema: {
     type: 'object',
     properties: {
       session_id: sessionId,
       text: { type: 'string', description: 'The text to type.' },
       submit: { type: 'boolean', description: 'Press Enter after the text. Defaults to true.' },
+      idempotency_key: { type: 'string', description: 'Use inputInstance from list_sessions, a colon, and a unique caller-chosen ID of 1–128 letters, digits, underscores or hyphens. Save the full key before sending and reuse it unchanged for retries. After stale_instance on a new request, read inputInstance from list_sessions again.' },
     },
     required: ['session_id', 'text'],
     additionalProperties: false,
@@ -224,11 +242,14 @@ function summarize(s) {
     status: s.status,
     label: s.label,
     working: s.status === 'running' && s.activity === 'active',
+    inputInstance: s.inputInstance ?? null,
     model: s.model ? s.model.displayName || s.model.name : null,
     account: s.account?.id ?? null,
     task: s.task,
     agents: (s.agents ?? []).map((a) => ({ name: a.name, status: a.status, detail: a.detail ?? null })),
     hasReply: s.reply != null,
+    replyId: s.reply?.id ?? null,
+    replyCursor: s.replyCursor ?? null,
     startedAt: s.startedAt,
     exitCode: s.exitCode,
   };
@@ -287,6 +308,15 @@ export function createToolHandlers(client, { allowInput = false } = {}) {
       const { reply } = await client.api(`/sessions/${checkId(id)}/reply`, { session: id });
       return text(reply?.text ?? 'This session has no finished reply yet. read_screen shows its terminal.');
     },
+    async read_replies({ session_id: id, after, limit }) {
+      checkId(id);
+      if (after !== undefined && typeof after !== 'string') throw new ToolError('after must be a reply cursor.');
+      if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)) throw new ToolError('limit must be an integer from 1 to 100.');
+      const query = new URLSearchParams();
+      if (after !== undefined) query.set('after', after);
+      if (limit !== undefined) query.set('limit', String(limit));
+      return text(await client.api(`/sessions/${id}/replies${query.size ? `?${query}` : ''}`, { session: id }));
+    },
     async read_screen({ session_id: id }) {
       return text(await client.withTerminal(checkId(id), (_ws, snapshot) => screenText(snapshot, client.redactor())) || '(The screen is blank.)');
     },
@@ -322,8 +352,48 @@ export function createToolHandlers(client, { allowInput = false } = {}) {
     },
   };
   if (allowInput) {
-    handlers.send_input = async ({ session_id: id, text: typed, submit = true }) => {
+    handlers.send_input = async ({ session_id: id, text: typed, submit = true, idempotency_key: key }) => {
       if (typeof typed !== 'string') throw new ToolError('text must be a string.');
+      if (key !== undefined) {
+        checkId(id);
+        if (typeof key !== 'string' || key.length > 165) throw new ToolError('idempotency_key must be a session instance followed by a colon and a request ID.');
+        if (typeof submit !== 'boolean') throw new ToolError('submit must be a boolean.');
+        let attempted = false;
+        let result;
+        try {
+          result = await client.withTerminal(id, (ws, snapshot) => {
+            if (typeof snapshot.session?.inputInstance !== 'string') return { outcome: 'rejected', code: 'unsupported' };
+            return new Promise((resolve) => {
+              const finish = (receipt) => {
+                clearTimeout(timer);
+                ws.off('message', onMessage);
+                ws.off('close', uncertain);
+                ws.off('error', uncertain);
+                resolve(receipt);
+              };
+              const uncertain = () => finish({ outcome: 'uncertain', code: 'acknowledgement_lost' });
+              const onMessage = (raw) => {
+                let message;
+                try { message = JSON.parse(raw); } catch { return; }
+                if (message.type === 'input-result' && message.idempotencyKey === key && ['accepted', 'rejected', 'uncertain'].includes(message.outcome)) {
+                  finish({ outcome: message.outcome, ...(message.code ? { code: message.code } : {}) });
+                }
+              };
+              const timer = setTimeout(uncertain, REQUEST_TIMEOUT_MS);
+              ws.on('message', onMessage);
+              ws.once('close', uncertain);
+              ws.once('error', uncertain);
+              attempted = true;
+              try {
+                ws.send(JSON.stringify({ type: 'input', data: typed + (submit ? '\r' : ''), idempotencyKey: key }), (err) => { if (err) uncertain(); });
+              } catch { uncertain(); }
+            });
+          });
+        } catch {
+          result = { outcome: 'uncertain', code: attempted ? 'acknowledgement_lost' : 'connection_failed' };
+        }
+        return text({ idempotency_key: key, ...result });
+      }
       await client.withTerminal(checkId(id), (ws, snapshot) => new Promise((resolve, reject) => {
         if (snapshot.session?.status !== 'running') throw new ToolError(`Session "${id}" has exited, so nothing was typed. start_session starts a new one.`);
         ws.send(JSON.stringify({ type: 'input', data: typed + (submit ? '\r' : '') }), (err) => (err ? reject(new ToolError('The terminal closed before the text was sent.')) : resolve()));
