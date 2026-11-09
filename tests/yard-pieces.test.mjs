@@ -184,6 +184,8 @@ test('data the loader would allocate or draw without bound, and damaged images, 
     ['a node under two parents', json => { const child = json.nodes[0].children[0]; json.nodes.find((node, at) => at !== 0 && node.children).children.push(child); }, /node used in two places/],
     ['nodes that loop', json => { const at = json.nodes.length; json.nodes.push({ name: 'a', children: [at + 1] }, { name: 'b', children: [at] }); }, /nodes that loop/],
     ['a node index it doesn’t have', json => { json.scenes[0].nodes.push(999); }, /refers to a node it doesn’t have/],
+    ['one mesh repeating its part 17 times', json => { json.meshes[0].primitives = Array(17).fill(json.meshes[0].primitives[0]); }, /draws more than 16 mesh parts/],
+    ['nine parts drawn by two nodes', json => { json.meshes[0].primitives = Array(9).fill(json.meshes[0].primitives[0]); json.nodes.push({ name: 'again', mesh: 0, skin: 0 }); json.nodes[0].children.push(json.nodes.length - 1); }, /draws more than 16 mesh parts/],
     ['repeated shape keys', json => { const position = json.meshes[0].primitives[0].attributes.POSITION; json.meshes[0].primitives[0].targets = Array(64).fill({ POSITION: position }); }, /shape keys/],
     ['128 channels sharing one normalized output', json => {
       const animation = json.animations[0], output = json.accessors[animation.samplers[animation.channels[0].sampler].output];
@@ -205,6 +207,8 @@ test('data the loader would allocate or draw without bound, and damaged images, 
     await assert.rejects(pieces.replace('guild', 'anthropic', source), refused(reason), label);
     assert.equal(JSON.stringify(pieces.snapshot()), before, label);
   }
+  const sixteen = variant(fixture('character'), json => { json.meshes[0].primitives = Array(16).fill(json.meshes[0].primitives[0]); });
+  assert.equal((await pieces.replace('guild', 'anthropic', folder({ title: 'Sixteen', models: { 'character.glb': sixteen } }))).guild.anthropic.title, 'Sixteen', '16 mesh parts fit');
   const picture = (json, binary) => { const view = json.bufferViews[json.images[0].bufferView]; return Buffer.from(binary.subarray(view.byteOffset || 0, (view.byteOffset || 0) + view.byteLength)); };
   const tail = text => (json, binary, view) => [Buffer.concat([picture(json, binary), Buffer.from(text, 'latin1')]), () => { json.images[0].bufferView = view; }];
   const junk = extended(fixture('character'), tail('\0\0\0\0'));

@@ -141,7 +141,7 @@ export class YardRenderer {
   // clock gives the time staging is judged at; tests pass a fixed one.
   constructor(host,labels,{select,open,error=noop,piece=noop,clock=Date.now}) {
     this.host=host;this.labels=labels;this.onSelect=select;this.onOpen=open;this.onError=error;this.onPiece=piece;this.clock=clock;
-    this.pieceSets={};this.shownPieces={skin:null,pieces:{}};this.pieceLoaders=new Map();
+    this.pieceSets={};this.shownPieces={skin:null,pieces:{}};this.pieceLoaders=new Map();this.preloads=new Map();
     this.scene=new T.Scene();this.units=new Map();this.halls=new Map();this.slots=new Map();this.cache=new Map();
     this.loadingManager=new T.LoadingManager();
     this.providers=[];this.sessions=[];this.selected=null;this.world=null;this.skin=null;this.request=0;this.worldRequest=0;this.pending=null;
@@ -251,13 +251,16 @@ export class YardRenderer {
       if(changed.includes('companion')&&unit.loaded)this.helpers(unit,unit.session);
     }
     for(const slot of changed){
-      if(before.pieces[slot])for(const url of pieceFiles(before.skin,slot,before.pieces[slot]))this.release(url);
+      if(before.pieces[slot]){this.preloads.delete(slot);for(const url of pieceFiles(before.skin,slot,before.pieces[slot]))this.release(url);}
       if(after.pieces[slot])this.preload(slot,after.pieces[slot]);
     }
   }
   preload(slot,piece) {
-    const skin=this.skin;
+    const skin=this.skin,attempt={};
+    this.preloads.set(slot,attempt);
     Promise.all(pieceFiles(skin,slot,piece).map(url=>this.asset(url,url))).then(()=>true,()=>false).then(ok=>{
+      if(this.preloads.get(slot)!==attempt)return;
+      this.preloads.delete(slot);
       if(!this.disposed&&this.skin===skin&&this.activePieces()[slot]?.revision===piece.revision)this.onPiece({skin,slot,revision:piece.revision,ok});
     });
   }

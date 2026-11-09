@@ -23,6 +23,7 @@ const MATERIAL_TEXTURES = {
   EXT_materials_bump: ['bumpTexture'],
 };
 const IN_PLACE = 0.1;
+const MAX_PARTS = 16;
 const FLOAT = [5126, false];
 const SIGNED = { byte: [5120, false], normalByte: [5120, true], short: [5122, false], normalShort: [5122, true] };
 const UNSIGNED = { byte: [5121, false], normalByte: [5121, true], short: [5123, false], normalShort: [5123, true], int: [5125, false] };
@@ -252,10 +253,12 @@ function checkJson(json, name, limit, bin) {
     if ((primitive.mode ?? 4) !== 4) throw invalid(`${name} has geometry that isn’t triangles.`);
     return sum + Math.floor((json.accessors?.[primitive.indices ?? primitive.attributes?.POSITION]?.count ?? 0) / 3);
   }, 0));
-  let faces = 0;
+  let faces = 0, parts = 0;
   for (const [at, node] of nodes.entries()) {
     if (node.mesh === undefined || !shown.has(at)) continue;
     faces += meshFaces[node.mesh] ?? 0;
+    parts += json.meshes?.[node.mesh]?.primitives?.length ?? 0;
+    if (parts > MAX_PARTS) throw invalid(`${name} draws more than ${MAX_PARTS} mesh parts.`);
     if (node.skin !== undefined && (json.meshes?.[node.mesh]?.primitives ?? []).some((primitive) => primitive.attributes?.JOINTS_0 === undefined || primitive.attributes?.WEIGHTS_0 === undefined)) {
       throw invalid(`${name} has a rigged mesh without weights.`);
     }

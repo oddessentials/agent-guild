@@ -1613,6 +1613,60 @@ test('pieces replace one crew and the helpers, keep Terminal AI Chat gold, fall 
   assert.deepEqual(b.errors,[]);
 });
 
+test('a released piece load never decides the piece after its Yard returns, whichever load finishes first',options,async t=>{
+  const yardPieces=fakePieces({guild:{anthropic:{revision:'r1'}}});
+  const {f,b}=await setup(t,{yardPieces});
+  await b.evaluate(`(()=>{
+    window.__piece=()=>[...__renderer.cache].find(([key])=>key.includes('/pieces/guild/anthropic/'))?.[1];
+    window.__settled=async pending=>{await pending.then(()=>{},()=>{});await new Promise(resolve=>setTimeout(resolve,0));};
+  })()`);
+  for(const [lateOk,lateFirst] of [[true,false],[true,true],[false,false],[false,true]]){
+    const label=`a late ${lateOk?'success':'failure'} ${lateFirst?'before':'after'} the current load`;
+    await b.evaluate(`(async()=>{
+      window.__held=[];window.__events=[];
+      const {YardRenderer}=await import('/yard/renderer.js');
+      const host=document.createElement('div'),labels=document.createElement('div');
+      host.style.cssText='position:fixed;width:900px;height:700px;top:0;left:0';host.append(labels);document.body.append(host);
+      window.__renderer=new YardRenderer(host,labels,{select(){},open(){},piece:e=>{__events.push(e);if(!e.ok){const p={...__renderer.pieceSets[e.skin]};delete p[e.slot];__renderer.setPieces(e.skin,p);}}});
+      const asset=__renderer.asset.bind(__renderer);
+      __renderer.asset=(name,url)=>{
+        const pending=asset(name,url);
+        if(!url?.includes('/pieces/guild/anthropic/'))return pending;
+        const held={pending};
+        held.promise=new Promise((resolve,reject)=>Object.assign(held,{succeed:()=>pending.then(resolve,()=>resolve(null)),fail:()=>reject(new Error('Failed to fetch'))}));
+        __held.push(held);
+        return held.promise;
+      };
+      __renderer.setPieces('guild',{anthropic:{revision:'r1'}});
+      await __renderer.setWorld('guild','dark');__renderer.update(${q(f.providers)},[]);
+    })()`);
+    await b.wait('__held.length===1');
+    await b.evaluate("window.__a1=__piece();0");
+    await b.evaluate("(async()=>{await __renderer.setWorld('orbital','dark');await __renderer.setWorld('guild','dark');})()");
+    await b.wait('__held.length===2');
+    await b.evaluate('window.__a2=__piece();0');
+    assert.equal(await b.evaluate('Boolean(__a1&&__a2&&__a1!==__a2)'),true,label+': the return starts a load of its own');
+    const late=`(async()=>{__held[0].${lateOk?'succeed':'fail'}();await __settled(__held[0].promise);})()`;
+    const current=`__held[1].${lateOk?'fail':'succeed'}()`;
+    if(lateFirst){
+      await b.evaluate(late);
+      assert.deepEqual(await b.evaluate('__events'),[],label+': reports nothing');
+      await b.evaluate(current);
+      await b.wait('__events.length===1');
+    } else {
+      await b.evaluate(current);
+      await b.wait('__events.length===1');
+      await b.evaluate(late);
+    }
+    await b.evaluate('__settled(__held[1].promise)');
+    assert.deepEqual(await b.evaluate("__events.map(e=>[e.skin,e.slot,e.revision,e.ok])"),[['guild','anthropic','r1',!lateOk]],label+': only the current load decides');
+    assert.equal(await b.evaluate("Boolean(__renderer.pieceSets.guild.anthropic)"),!lateOk,label+': the piece stays exactly when the current load drew it');
+    assert.equal(await b.evaluate(lateOk?'__piece()===undefined':'__piece()===__a2'),true,label+': the cache holds only the current load');
+    await b.evaluate('__renderer.dispose()');
+  }
+  assert.deepEqual(b.errors,[]);
+});
+
 test('companion changes clear helpers and pending loads even while their character reloads',options,async t=>{
   const yardPieces=fakePieces({guild:{anthropic:{revision:'r1'},companion:{revision:'c1'}}});
   const {f,b}=await setup(t,{yardPieces});
