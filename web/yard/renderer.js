@@ -687,7 +687,7 @@ export class YardRenderer {
       if(stale())return;
       const model=T.cloneSkeleton(asset.scene);
       model.rotation.y=unit.heading;
-      model.traverse(n=>{if(n.isMesh){n.castShadow=true;n.receiveShadow=true;}});
+      model.traverse(n=>{if(n.isMesh){n.castShadow=true;n.receiveShadow=true;}if(n.isSkinnedMesh)n.frustumCulled=false;});
       unit.root.add(model);unit.model=model;unit.loaded=true;
       unit.label.title='';
       // The walk's stride and cycle, and where blows land, as rig.py wrote them.
@@ -1177,6 +1177,7 @@ export class YardRenderer {
         const asset=pieces?pieces[n]:await this.asset((agent.shell?kinds.shell:kinds.agent)+n);
         if(stale())return;
         const model=T.cloneSkeleton(asset.scene);
+        model.traverse(n=>{if(n.isSkinnedMesh)n.frustumCulled=false;});
         const offset=helperOffset(i,agents.length);
         model.scale.setScalar(.45);model.position.set(unit.root.position.x+offset.x,.27,unit.root.position.z+offset.z);
         unit.crew.add(model);
@@ -1260,6 +1261,8 @@ export class YardRenderer {
     const rect=this.canvas.getBoundingClientRect();
     this.pointer.set((event.clientX-rect.left)/rect.width*2-1,-(event.clientY-rect.top)/rect.height*2+1);
     this.ray.setFromCamera(this.pointer,this.camera);
+    // A skinned mesh keeps the bounds of the pose it first had; picking needs the pose on screen.
+    for(const unit of this.units.values())for(const root of [unit.root,unit.crew])root?.traverse(n=>{if(!n.isSkinnedMesh)return;n.computeBoundingSphere();if(n.boundingBox)n.computeBoundingBox();});
     const hits=this.ray.intersectObjects([...this.halls.values(),...this.units.values()].flatMap(i=>i.crew?[i.root,i.crew]:[i.root]),true);
     for(const hit of hits) { for(let node=hit.object;node;node=node.parent) if(node.userData.entity)return node.userData.entity; }
     return null;

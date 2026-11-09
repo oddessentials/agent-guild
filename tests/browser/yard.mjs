@@ -1667,6 +1667,55 @@ test('a released piece load never decides the piece after its Yard returns, whic
   assert.deepEqual(b.errors,[]);
 });
 
+test('picking and drawing follow the animated pose, not the pose a character first had',options,async t=>{
+  const yardPieces=fakePieces({guild:{anthropic:{revision:'r1'}}});
+  const {f,b}=await setup(t,{yardPieces});
+  const session={...[...f.data.values()][0],id:'claude',provider:f.providers.find(p=>p.id==='anthropic'),agents:[{id:'a',name:'A',status:'working'}],shells:[]};
+  await b.evaluate(`(async()=>{
+    const {YardRenderer}=await import('/yard/renderer.js');
+    const host=document.createElement('div'),labels=document.createElement('div');
+    host.style.cssText='position:fixed;width:900px;height:700px;top:0;left:0';host.append(labels);document.body.append(host);
+    window.__renderer=new YardRenderer(host,labels,{select(){},open(){}});
+    __renderer.setPieces('guild',{anthropic:{revision:'r1'}});
+    await __renderer.setWorld('guild','dark');__renderer.update(${q(f.providers)},[${q(session)}]);
+  })()`);
+  await b.wait("__renderer.units.get('claude')?.loaded && __renderer.units.get('claude').helpers.length===1");
+  const result=await b.evaluate(`(async()=>{
+    const r=__renderer,unit=r.units.get('claude'),out={};
+    r.renderer.render(r.scene,r.camera);
+    const skinned=[];unit.model.traverse(n=>{if(n.isSkinnedMesh)skinned.push(n);});
+    const helpers=[];unit.crew.traverse(n=>{if(n.isSkinnedMesh)helpers.push(n);});
+    const halls=[];for(const hall of r.halls.values())hall.root?.traverse(n=>{if(n.isMesh&&!n.isSkinnedMesh)halls.push(n);});
+    out.animatedUnculled=[...skinned,...helpers].length>0&&[...skinned,...helpers].every(n=>n.frustumCulled===false);
+    out.staticCulled=halls.length>0&&halls.every(n=>n.frustumCulled===true);
+    const rect=r.canvas.getBoundingClientRect();
+    const at=world=>{const p=world.clone().project(r.camera);return {clientX:rect.left+(p.x+1)/2*rect.width,clientY:rect.top+(1-p.y)/2*rect.height,onScreen:Math.abs(p.x)<1&&Math.abs(p.y)<1};};
+    const head=unit.model.getObjectByName('Head'),hips=unit.model.getObjectByName('Hips');
+    const before=at(head.getWorldPosition(new head.position.constructor()));
+    out.normal=r.pick(before)?.id??null;
+    for(const n of skinned)if(!n.boundingSphere)n.computeBoundingSphere();
+    const reach=Math.max(...skinned.map(n=>n.boundingSphere.radius*n.getWorldScale(new head.position.constructor()).y))*1.5;
+    for(const mixer of unit.mixers)mixer.stopAllAction();
+    const lifted=hips.getWorldPosition(new head.position.constructor()),toward=r.camera.position.clone().sub(lifted).setY(0).normalize();
+    lifted.addScaledVector(toward,reach);lifted.y+=reach;
+    hips.position.copy(hips.parent.worldToLocal(lifted));
+    r.renderer.render(r.scene,r.camera);
+    const raised=head.getWorldPosition(new head.position.constructor()),after=at(raised);
+    out.raisedOnScreen=after.onScreen;
+    out.raised=r.pick(after)?.id??null;
+    const camera=r.camera.clone();Object.assign(camera,{left:-.3,right:.3,top:.3,bottom:-.3,zoom:1});camera.position.copy(raised).addScaledVector(toward.clone().cross(new head.position.constructor(0,1,0)).normalize(),8);camera.lookAt(raised);camera.updateProjectionMatrix();camera.updateMatrixWorld(true);
+    let drawn=0;for(const n of skinned)n.onBeforeRender=()=>{drawn++;};
+    const shadows=r.renderer.shadowMap.autoUpdate;r.renderer.shadowMap.autoUpdate=false;r.renderer.shadowMap.needsUpdate=false;
+    r.renderer.render(r.scene,camera);
+    r.renderer.shadowMap.autoUpdate=shadows;
+    out.drawnAtRaisedPose=drawn>0;
+    return out;
+  })()`);
+  assert.deepEqual(result,{animatedUnculled:true,staticCulled:true,normal:'claude',raisedOnScreen:true,raised:'claude',drawnAtRaisedPose:true});
+  await b.evaluate('__renderer.dispose()');
+  assert.deepEqual(b.errors,[]);
+});
+
 test('companion changes clear helpers and pending loads even while their character reloads',options,async t=>{
   const yardPieces=fakePieces({guild:{anthropic:{revision:'r1'},companion:{revision:'c1'}}});
   const {f,b}=await setup(t,{yardPieces});
