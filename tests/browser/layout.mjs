@@ -418,8 +418,8 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   await size(1440, 900);
   assert.equal(await visible('.yard-play-stamp'), true, 'the Builders button is stamped as a beta');
   await size(1440, 900);
-  assert.equal(await visible('#yard-world-replace'), false, 'the demo has no manager to install a world');
-  const spotClear = (label) => evaluate(`(()=>{for(const id of ['#yard-world-get','#yard-world-replace','#yard-world-restore'])document.querySelector(id).hidden=false;const box=(e)=>e.getBoundingClientRect(),stage=box(document.querySelector('#yard-stage'));
+  assert.equal(await visible('#yard-customize-open'), false, 'the demo has no manager to customize a Yard');
+  const spotClear = (label) => evaluate(`(()=>{for(const id of ['#yard-world-get','#yard-customize-open'])document.querySelector(id).hidden=false;const box=(e)=>e.getBoundingClientRect(),stage=box(document.querySelector('#yard-stage'));
     const parts=[...document.querySelectorAll('#yard-world .btn:not([hidden])')],camera=[...document.querySelectorAll('.yard-camera .btn:not([hidden])')];
     const inside=parts.every((e)=>{const r=box(e);return r.width>=44&&r.left>=stage.left&&r.right<=stage.right&&r.top>=stage.top&&r.bottom<=stage.bottom;});
     const apart=parts.every((e)=>camera.every((c)=>{const a=box(e),b=box(c);return a.right<=b.left||b.right<=a.left||a.bottom<=b.top||b.bottom<=a.top;}));
@@ -430,7 +430,7 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
     for (const [width, height] of [[1440, 900], [336, 640]]) {
       await size(width, height);
       const at = await spotClear(`${skin} ${width}`);
-      assert.deepEqual([at.count, at.inside, at.apart], [3, true, true], JSON.stringify(at));
+      assert.deepEqual([at.count, at.inside, at.apart], [2, true, true], JSON.stringify(at));
       if (width === 1440) lefts.add(at.left);
     }
     await size(1440, 900);
@@ -441,13 +441,31 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   for (const [width, height] of [[280, 500]]) {
     await size(width, height);
     const compactSpot = await spotClear(`compact ${width}`);
-    assert.deepEqual([compactSpot.count, compactSpot.inside, compactSpot.apart], [3, true, true], JSON.stringify(compactSpot));
+    assert.deepEqual([compactSpot.count, compactSpot.inside, compactSpot.apart], [2, true, true], JSON.stringify(compactSpot));
   }
+  await size(280, 500);
+  await evaluate('document.querySelector("#yard-customize-open").click()');
+  await until('the Customize dialog opens', () => evaluate('document.querySelector("#yard-customize").open&&document.querySelectorAll("#yard-customize-list [data-slot]").length===8'));
+  assert.deepEqual(await evaluate(`(()=>{const d=document.querySelector('#yard-customize'),r=d.getBoundingClientRect(),body=d.querySelector('.models-body'),wide=[...d.querySelectorAll('button')].filter((b)=>b.getBoundingClientRect().right>innerWidth);
+    return [r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight,body.scrollHeight>body.clientHeight,getComputedStyle(body).overflowY,wide.length];})()`), [true, true, 'auto', 0], 'the dialog fits a compact screen and scrolls');
+  const stacked = () => evaluate(`[...document.querySelectorAll('#yard-customize-list [data-slot]')].map((row)=>row.querySelector('.yard-customize-actions').getBoundingClientRect().top>=row.querySelector('.yard-customize-copy').getBoundingClientRect().bottom-1)`);
+  for (const [width, height] of [[280, 500], [390, 844], [479, 844]]) {
+    await size(width, height);
+    assert.deepEqual(await stacked(), Array(8).fill(true), `Customize stacks its buttons under each row at ${width}px`);
+  }
+  await size(560, 844);
+  assert.deepEqual(await stacked(), Array(8).fill(false), 'Customize keeps its buttons beside each row from 481px');
+  await size(280, 500);
+  await evaluate('(b=>{b.focus();b.click();})(document.querySelector("#yard-customize-list [data-slot=anthropic] button"))');
+  await until('the piece dialog opens over it', () => evaluate('document.querySelector("#folder-browser").open&&document.querySelector("#folder-title").textContent==="Choose a character"&&document.querySelector("#yard-customize").open'));
+  assert.deepEqual(await evaluate('[document.querySelector("#folder-use").hidden,document.querySelector("#folder-new-open").hidden]'), [true, true]);
+  await evaluate('document.querySelector("#folder-browser").close()');
+  await until('focus returns to Replace', () => evaluate('document.activeElement===document.querySelector("#yard-customize-list [data-slot=anthropic] button")'));
+  await evaluate('document.querySelector("#yard-customize-list [data-slot=world] button").click()');
+  await until('the world file dialog opens', () => evaluate('document.querySelector("#folder-browser").open&&document.querySelector("#folder-title").textContent==="Choose a world file"'));
+  await evaluate('document.querySelector("#folder-browser").close();document.querySelector("#yard-customize").close()');
   await size(1440, 900);
-  await evaluate('document.querySelector("#yard-world-replace").click()');
-  await until('the file dialog opens', () => evaluate('document.querySelector("#folder-browser").open&&document.querySelector("#folder-title").textContent==="Choose a world file"'));
-  assert.deepEqual(await evaluate('[getComputedStyle(document.querySelector("#folder-browser")).display!=="none",document.querySelector("#folder-use").hidden,document.querySelector("#folder-new-open").hidden]'), [true, true, true]);
-  await evaluate('document.querySelector("#folder-browser").close();delete document.documentElement.dataset.layout;document.querySelector("#yard-world-get").hidden=true;document.querySelector("#yard-world-replace").hidden=true');
+  await evaluate('delete document.documentElement.dataset.layout;document.querySelector("#yard-world-get").hidden=true;document.querySelector("#yard-customize-open").hidden=true');
   await layoutReady();
   for (const skin of ['professional', 'gnomeland']) {
     await evaluate(`document.documentElement.dataset.skin="${skin}"`);
@@ -458,7 +476,7 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
     }
   }
   await size(1440, 900);
-  pass('the world spot sits in one place in all six Yards at every width and opens the file dialog in the compact layout');
+  pass('the world spot sits in one place in all six Yards at every width, and Customize fits a compact screen and opens each picker over itself');
   await evaluate('document.documentElement.dataset.skin="professional"');
   await layoutReady();
   await evaluate(`document.documentElement.dataset.skin=${JSON.stringify(startSkin[0])}`);
@@ -999,6 +1017,28 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   assert.deepEqual(await evaluate('performance.getEntriesByType("resource").map(e=>e.name).filter(n=>/\\/yard\\/(?:renderer|assets\\/)|yard-art/.test(n))'), []);
   await send('Page.removeScriptToEvaluateOnNewDocument', { identifier: tv.identifier });
   pass('with &yard=none the page shows the Cards, offers no Yard, ignores requests for it and never loads its scene or art, after a reload too');
+
+  const ORNAMENT_SHARE = 79 / 232;
+  await evaluate('document.documentElement.dataset.skin="guild"');
+  const crowded = () => evaluate(`(()=>{const out=[];
+    for(const d of document.querySelectorAll('dialog.models')){
+      if(d.open)d.close();d.showModal();
+      const r=d.getBoundingClientRect(),ornament=parseFloat(getComputedStyle(d,'::after').borderTopWidth)*${ORNAMENT_SHARE};let gap=Infinity;
+      const near=(e,el)=>{let x0=e.left,y0=e.top,x1=e.right,y1=e.bottom;
+        for(let a=el;a&&a!==d;a=a.parentElement){const s=getComputedStyle(a);if(a!==el&&(s.overflowX!=='visible'||s.overflowY!=='visible')){const c=a.getBoundingClientRect();x0=Math.max(x0,c.left);y0=Math.max(y0,c.top);x1=Math.min(x1,c.right);y1=Math.min(y1,c.bottom);}}
+        if(x1-x0>1&&y1-y0>1)gap=Math.min(gap,x0-r.left,r.right-x1,y0-r.top,r.bottom-y1);};
+      for(const el of d.querySelectorAll('button,input,select,textarea,.btn'))if(el.checkVisibility())near(el.getBoundingClientRect(),el);
+      const walk=document.createTreeWalker(d,NodeFilter.SHOW_TEXT);
+      while(walk.nextNode()){const t=walk.currentNode;if(!t.textContent.trim()||!t.parentElement.checkVisibility())continue;const range=document.createRange();range.selectNodeContents(t);for(const e of range.getClientRects())near(e,t.parentElement);}
+      d.close();
+      if(!(gap-ornament>=12))out.push(d.id+' '+Math.round(gap)+'px from the edge, ornament '+Math.round(ornament)+'px');
+    }return out;})()`);
+  for (const [width, height] of [[1440, 900], [390, 844]]) {
+    await size(width, height);
+    assert.deepEqual(await crowded(), [], `guild ${width}`);
+  }
+  await size(1440, 900);
+  pass('every framed Guild dialog keeps its controls and text at least 12px clear of the ornament, on desktop and phone');
 
   assert.deepEqual(errors, []);
   pass('the page has no uncaught browser exceptions');

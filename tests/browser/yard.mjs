@@ -41,8 +41,8 @@ async function framesSettled(b){
   });
   return settled.frames;
 }
-async function setup(t,{yard=false,auth=true,source='',width=1440,height=1000,hash='',until=null,yardWorlds}={}) {
-  const fixture=await startFixture({yardWorlds});t.after(()=>fixture.close());
+async function setup(t,{yard=false,auth=true,source='',width=1440,height=1000,hash='',until=null,yardWorlds,yardPieces}={}) {
+  const fixture=await startFixture({yardWorlds,yardPieces});t.after(()=>fixture.close());
   const b=await browser();
   await b.navigate('about:blank');
   b.errors.length=0;b.requests.length=0;b.events.length=0;
@@ -1532,5 +1532,559 @@ test('fireworks keep their size and glow across photo tiles at different pixel r
     } finally {Math.random=random;r.dispose();host.remove();}
   })()`);
   for(const shot of result.results){assert.ok(shot.alpha>0);assert.ok(shot.maxDelta<=2,JSON.stringify(shot));assert.equal(shot.size,result.size);}
+  assert.deepEqual(b.errors,[]);
+});
+
+const PIECE_FILES=fileURLToPath(new URL('../fixtures/pieces/',import.meta.url));
+function fakePieces(current,files={}){
+  return Object.assign(new EventEmitter(),{
+    current,
+    snapshot(){return this.current;},
+    file(skin,slot,name){
+      if(!this.current[skin]?.[slot]?.revision)return null;
+      if(files[slot])return files[slot];
+      if(slot==='openai')return path.join(PIECE_FILES,'truncated.glb');
+      return path.join(PIECE_FILES,slot==='companion'?'companion.glb':'character.glb');
+    },
+  });
+}
+
+test('pieces replace one crew and the helpers, keep Terminal AI Chat gold, fall back whole, and never let an older load return',options,async t=>{
+  const yardPieces=fakePieces({guild:{anthropic:{revision:'r1'},shell:{revision:'s1'},companion:{revision:'c1'},openai:{revision:'x1'}}});
+  const {f,b}=await setup(t,{yardPieces,source:`
+    const originalFetch=window.fetch;window.__held=[];window.__hold=null;
+    window.fetch=(...args)=>{
+      const url=String(args[0]?.url||args[0]);
+      if(window.__hold&&url.includes(window.__hold))return new Promise((resolve,reject)=>window.__held.push(()=>originalFetch(...args).then(resolve,reject)));
+      return originalFetch(...args);
+    };`});
+  const by=id=>f.providers.find(p=>p.id===id),gold={...by('shell'),id:'terminal-ai-chat',tool:'Terminal AI Chat'};
+  const base=[...f.data.values()][0];
+  const sessions=[
+    {...base,id:'claude',provider:by('anthropic'),agents:[{id:'a',name:'A',status:'working'},{id:'b',name:'B',status:'working'}],shells:[]},
+    {...base,id:'codex',provider:by('openai'),agents:[],shells:[]},
+    {...base,id:'gold',provider:gold,agents:[],shells:[]},
+    {...base,id:'grok',provider:by('xai'),agents:[],shells:[]},
+  ];
+  await b.evaluate(`(async()=>{
+    const {YardRenderer}=await import('/yard/renderer.js');
+    const host=document.createElement('div'),labels=document.createElement('div');
+    host.style.cssText='position:fixed;width:900px;height:700px;top:0;left:0';host.append(labels);document.body.append(host);
+    window.__events=[];
+    window.__renderer=new YardRenderer(host,labels,{select(){},open(){},piece:e=>{__events.push(e);if(!e.ok){const p={...__renderer.pieceSets[e.skin]};delete p[e.slot];__renderer.setPieces(e.skin,p);}}});
+    window.__providers=${q([...f.providers,gold])};window.__sessions=${q(sessions)};
+    __renderer.setPieces('guild',{anthropic:{revision:'r1'},shell:{revision:'s1'},companion:{revision:'c1'},openai:{revision:'x1'}});
+    await __renderer.setWorld('guild','dark');__renderer.update(__providers,__sessions);
+    window.__unit=id=>__renderer.units.get(id);
+    window.__pieceKeys=()=>[...__renderer.cache.keys()].filter(k=>k.includes('/pieces/')).map(k=>k.replace(/^(gold:)?.*\\/pieces\\//,'$1')).sort();
+    window.__maps=root=>{const out=[];root?.traverse(n=>{if(n.isMesh)for(const m of [n.material].flat())if(m.map)out.push(m.map.image?.width||0);});return out;};
+  })()`);
+  await b.wait("['claude','codex','gold','grok'].every(id=>__unit(id).loaded) && __unit('claude').helpers.length===2 && __events.length===4");
+  const first=await b.evaluate(`({
+    events:__events.map(e=>e.slot+':'+e.revision+':'+e.ok).sort(),
+    claudeTexture:__maps(__unit('claude').model),
+    claudeClips:[...__unit('claude').animations.keys()].sort(),
+    goldGilded:(()=>{const ms=[];__unit('gold').model.traverse(n=>{if(n.isMesh)ms.push(...[n.material].flat());});return ms.length>0&&ms.every(m=>m.onBeforeCompile!==Object.getPrototypeOf(m).onBeforeCompile);})(),
+    keys:__pieceKeys(),
+    original:['hero_1','hero_3'].every(k=>__renderer.cache.has(k)),
+  })`);
+  assert.deepEqual(first.events,['anthropic:r1:true','companion:c1:true','openai:x1:false','shell:s1:true']);
+  assert.ok(first.claudeTexture.length>0&&first.claudeTexture.every(w=>w>0),'the embedded texture decodes under the page’s policy');
+  assert.deepEqual(first.claudeClips,['done','idle_0','idle_1','idle_2','pause','walk','work_0','work_1']);
+  assert.equal(first.goldGilded,true,'Terminal AI Chat wears the Shell piece in gold');
+  assert.deepEqual(first.keys,['gold:guild/shell/character.glb?v=s1','guild/anthropic/character.glb?v=r1','guild/companion/companion_0.glb?v=c1','guild/companion/companion_1.glb?v=c1','guild/companion/companion_2.glb?v=c1','guild/companion/companion_3.glb?v=c1','guild/shell/character.glb?v=s1']);
+  assert.equal(first.original,true,'the broken Codex piece falls back to the shipped character, and Grok keeps its own');
+  const grok=await b.evaluate("__unit('grok').model.uuid");
+  await b.evaluate("__events.length=0;__renderer.setPieces('guild',{...__renderer.pieceSets.guild,anthropic:{revision:'r2'}});__renderer.setPieces('guild',{...__renderer.pieceSets.guild,anthropic:{revision:'r3'}})");
+  await b.wait("__unit('claude').loaded && __events.some(e=>e.revision==='r3')");
+  assert.deepEqual(await b.evaluate("__events.map(e=>e.revision)"),['r3'],'a superseded revision reports nothing');
+  assert.deepEqual(await b.evaluate("__pieceKeys().filter(k=>k.startsWith('guild/anthropic'))"),['guild/anthropic/character.glb?v=r3']);
+  assert.equal(await b.evaluate("__unit('grok').model.uuid"),grok,'an unaffected character keeps its model');
+  await b.evaluate("__hold='v=r4';__renderer.setPieces('guild',{...__renderer.pieceSets.guild,anthropic:{revision:'r4'}});window.__r4=[...__renderer.cache].find(([k])=>k.endsWith('v=r4'))[1];(async()=>{await __renderer.setWorld('orbital','dark');})()");
+  await b.wait("__renderer.skin==='orbital' && ['claude','codex','gold','grok'].every(id=>__unit(id)?.loaded) && __unit('claude').helpers.length===2");
+  await b.evaluate("(async()=>{__hold=null;for(const go of __held.splice(0))go();await __r4.catch(()=>{});await new Promise(resolve=>setTimeout(resolve,0));})()");
+  assert.deepEqual(await b.evaluate("({keys:__pieceKeys(),robot:__renderer.cache.has('robot_0'),late:__events.some(e=>e.revision==='r4')})"),{keys:[],robot:true,late:false},'another Yard shows its own cast, the Guild’s pieces are released, and a late download reports nothing');
+  await b.evaluate("(async()=>{await __renderer.setWorld('guild','dark');})()");
+  await b.wait("__renderer.skin==='guild' && __unit('claude')?.loaded && __pieceKeys().includes('guild/anthropic/character.glb?v=r4')");
+  await b.evaluate("__renderer.setPieces('guild',{})");
+  await b.wait("__unit('claude').loaded && __unit('claude').helpers.length===2 && __pieceKeys().length===0");
+  assert.equal(await b.evaluate("__renderer.cache.has('hero_0')"),true,'restoring brings back the original');
+  await b.evaluate('__renderer.dispose()');
+  assert.deepEqual(b.errors,[]);
+});
+
+test('a released piece load never decides the piece after its Yard returns, whichever load finishes first',options,async t=>{
+  const yardPieces=fakePieces({guild:{anthropic:{revision:'r1'}}});
+  const {f,b}=await setup(t,{yardPieces});
+  await b.evaluate(`(()=>{
+    window.__piece=()=>[...__renderer.cache].find(([key])=>key.includes('/pieces/guild/anthropic/'))?.[1];
+    window.__settled=async pending=>{await pending.then(()=>{},()=>{});await new Promise(resolve=>setTimeout(resolve,0));};
+  })()`);
+  for(const [lateOk,lateFirst] of [[true,false],[true,true],[false,false],[false,true]]){
+    const label=`a late ${lateOk?'success':'failure'} ${lateFirst?'before':'after'} the current load`;
+    await b.evaluate(`(async()=>{
+      window.__held=[];window.__events=[];
+      const {YardRenderer}=await import('/yard/renderer.js');
+      const host=document.createElement('div'),labels=document.createElement('div');
+      host.style.cssText='position:fixed;width:900px;height:700px;top:0;left:0';host.append(labels);document.body.append(host);
+      window.__renderer=new YardRenderer(host,labels,{select(){},open(){},piece:e=>{__events.push(e);if(!e.ok){const p={...__renderer.pieceSets[e.skin]};delete p[e.slot];__renderer.setPieces(e.skin,p);}}});
+      const asset=__renderer.asset.bind(__renderer);
+      __renderer.asset=(name,url)=>{
+        const pending=asset(name,url);
+        if(!url?.includes('/pieces/guild/anthropic/'))return pending;
+        const held={pending};
+        held.promise=new Promise((resolve,reject)=>Object.assign(held,{succeed:()=>pending.then(resolve,()=>resolve(null)),fail:()=>reject(new Error('Failed to fetch'))}));
+        __held.push(held);
+        return held.promise;
+      };
+      __renderer.setPieces('guild',{anthropic:{revision:'r1'}});
+      await __renderer.setWorld('guild','dark');__renderer.update(${q(f.providers)},[]);
+    })()`);
+    await b.wait('__held.length===1');
+    await b.evaluate("window.__a1=__piece();0");
+    await b.evaluate("(async()=>{await __renderer.setWorld('orbital','dark');await __renderer.setWorld('guild','dark');})()");
+    await b.wait('__held.length===2');
+    await b.evaluate('window.__a2=__piece();0');
+    assert.equal(await b.evaluate('Boolean(__a1&&__a2&&__a1!==__a2)'),true,label+': the return starts a load of its own');
+    const late=`(async()=>{__held[0].${lateOk?'succeed':'fail'}();await __settled(__held[0].promise);})()`;
+    const current=`__held[1].${lateOk?'fail':'succeed'}()`;
+    if(lateFirst){
+      await b.evaluate(late);
+      assert.deepEqual(await b.evaluate('__events'),[],label+': reports nothing');
+      await b.evaluate(current);
+      await b.wait('__events.length===1');
+    } else {
+      await b.evaluate(current);
+      await b.wait('__events.length===1');
+      await b.evaluate(late);
+    }
+    await b.evaluate('__settled(__held[1].promise)');
+    assert.deepEqual(await b.evaluate("__events.map(e=>[e.skin,e.slot,e.revision,e.ok])"),[['guild','anthropic','r1',!lateOk]],label+': only the current load decides');
+    assert.equal(await b.evaluate("Boolean(__renderer.pieceSets.guild.anthropic)"),!lateOk,label+': the piece stays exactly when the current load drew it');
+    assert.equal(await b.evaluate(lateOk?'__piece()===undefined':'__piece()===__a2'),true,label+': the cache holds only the current load');
+    await b.evaluate('__renderer.dispose()');
+  }
+  assert.deepEqual(b.errors,[]);
+});
+
+test('picking and drawing follow the animated pose, not the pose a character first had',options,async t=>{
+  const yardPieces=fakePieces({guild:{anthropic:{revision:'r1'}}});
+  const {f,b}=await setup(t,{yardPieces});
+  const session={...[...f.data.values()][0],id:'claude',provider:f.providers.find(p=>p.id==='anthropic'),agents:[{id:'a',name:'A',status:'working'}],shells:[]};
+  await b.evaluate(`(async()=>{
+    const {YardRenderer}=await import('/yard/renderer.js');
+    const host=document.createElement('div'),labels=document.createElement('div');
+    host.style.cssText='position:fixed;width:900px;height:700px;top:0;left:0';host.append(labels);document.body.append(host);
+    window.__renderer=new YardRenderer(host,labels,{select(){},open(){}});
+    __renderer.setPieces('guild',{anthropic:{revision:'r1'}});
+    await __renderer.setWorld('guild','dark');__renderer.update(${q(f.providers)},[${q(session)}]);
+  })()`);
+  await b.wait("__renderer.units.get('claude')?.loaded && __renderer.units.get('claude').helpers.length===1");
+  const result=await b.evaluate(`(async()=>{
+    const r=__renderer,unit=r.units.get('claude'),out={};
+    r.renderer.render(r.scene,r.camera);
+    const skinned=[];unit.model.traverse(n=>{if(n.isSkinnedMesh)skinned.push(n);});
+    const helpers=[];unit.crew.traverse(n=>{if(n.isSkinnedMesh)helpers.push(n);});
+    const halls=[];for(const hall of r.halls.values())hall.root?.traverse(n=>{if(n.isMesh&&!n.isSkinnedMesh)halls.push(n);});
+    out.animatedUnculled=[...skinned,...helpers].length>0&&[...skinned,...helpers].every(n=>n.frustumCulled===false);
+    out.staticCulled=halls.length>0&&halls.every(n=>n.frustumCulled===true);
+    const rect=r.canvas.getBoundingClientRect();
+    const at=world=>{const p=world.clone().project(r.camera);return {clientX:rect.left+(p.x+1)/2*rect.width,clientY:rect.top+(1-p.y)/2*rect.height,onScreen:Math.abs(p.x)<1&&Math.abs(p.y)<1};};
+    const head=unit.model.getObjectByName('Head'),hips=unit.model.getObjectByName('Hips');
+    const before=at(head.getWorldPosition(new head.position.constructor()));
+    out.normal=r.pick(before)?.id??null;
+    for(const n of skinned)if(!n.boundingSphere)n.computeBoundingSphere();
+    const reach=Math.max(...skinned.map(n=>n.boundingSphere.radius*n.getWorldScale(new head.position.constructor()).y))*1.5;
+    for(const mixer of unit.mixers)mixer.stopAllAction();
+    const lifted=hips.getWorldPosition(new head.position.constructor()),toward=r.camera.position.clone().sub(lifted).setY(0).normalize();
+    lifted.addScaledVector(toward,reach);lifted.y+=reach;
+    hips.position.copy(hips.parent.worldToLocal(lifted));
+    r.renderer.render(r.scene,r.camera);
+    const raised=head.getWorldPosition(new head.position.constructor()),after=at(raised);
+    out.raisedOnScreen=after.onScreen;
+    out.raised=r.pick(after)?.id??null;
+    const camera=r.camera.clone();Object.assign(camera,{left:-.3,right:.3,top:.3,bottom:-.3,zoom:1});camera.position.copy(raised).addScaledVector(toward.clone().cross(new head.position.constructor(0,1,0)).normalize(),8);camera.lookAt(raised);camera.updateProjectionMatrix();camera.updateMatrixWorld(true);
+    let drawn=0;for(const n of skinned)n.onBeforeRender=()=>{drawn++;};
+    const shadows=r.renderer.shadowMap.autoUpdate;r.renderer.shadowMap.autoUpdate=false;r.renderer.shadowMap.needsUpdate=false;
+    r.renderer.render(r.scene,camera);
+    r.renderer.shadowMap.autoUpdate=shadows;
+    out.drawnAtRaisedPose=drawn>0;
+    return out;
+  })()`);
+  assert.deepEqual(result,{animatedUnculled:true,staticCulled:true,normal:'claude',raisedOnScreen:true,raised:'claude',drawnAtRaisedPose:true});
+  await b.evaluate('__renderer.dispose()');
+  assert.deepEqual(b.errors,[]);
+});
+
+test('companion changes clear helpers and pending loads even while their character reloads',options,async t=>{
+  const yardPieces=fakePieces({guild:{anthropic:{revision:'r1'},companion:{revision:'c1'}}});
+  const {f,b}=await setup(t,{yardPieces});
+  const session={...[...f.data.values()][0],provider:f.providers.find(p=>p.id==='anthropic'),agents:[{id:'a',name:'A',status:'working'}],shells:[]};
+  await b.evaluate(`(async()=>{
+    const {YardRenderer}=await import('/yard/renderer.js');
+    const host=document.createElement('div'),labels=document.createElement('div');
+    host.style.cssText='position:fixed;width:900px;height:700px;top:0;left:0';host.append(labels);document.body.append(host);
+    window.__renderer=new YardRenderer(host,labels,{select(){},open(){}});
+    __renderer.setReducedMotion(true);
+    __renderer.setPieces('guild',${q(yardPieces.current.guild)});
+    await __renderer.setWorld('guild','dark');__renderer.update(${q(f.providers)},[${q(session)}]);
+    window.__unit=__renderer.units.get(${q(session.id)});
+    window.__released=0;
+    window.__holdRevision=null;window.__held=[];
+    const asset=__renderer.asset.bind(__renderer);
+    __renderer.asset=(name,...args)=>{
+      const pending=asset(name,...args);
+      return name.includes('v='+__holdRevision)?new Promise((resolve,reject)=>__held.push(()=>pending.then(resolve,reject))):pending;
+    };
+    window.__change=(character,companion)=>__renderer.setPieces('guild',{anthropic:{revision:character},companion:{revision:companion}});
+    window.__matches=async revision=>{
+      const assets=await Promise.all([...__renderer.cache].filter(([key])=>key.includes('/companion/')&&key.endsWith('v='+revision)).map(([,asset])=>asset));
+      return assets.length===4&&__unit.helpers.length===1&&__unit.helpers.every(helper=>assets.some(asset=>helper.clips===asset.animations));
+    };
+  })()`);
+  await b.wait('__unit.loaded && __unit.helpers.length===1');
+  await b.evaluate(`(async()=>{
+    for(const [key,pending]of __renderer.cache)if(key.includes('/companion/')&&key.endsWith('v=c1')){
+      (await pending).scene.traverse(n=>{if(n.isMesh)n.geometry.addEventListener('dispose',()=>__released++);});
+    }
+    window.__oldHelpers=__unit.helpers.slice();
+    __holdRevision='r2';__change('r2','c2');
+  })()`);
+  assert.equal(await b.evaluate('__unit.helpers.length'),0,'a simultaneous character/companion change immediately removes old helpers');
+  assert.equal(await b.evaluate('__oldHelpers.every(h=>!h.model.parent)'),true);
+  await b.wait('__released>0');
+  assert.equal(await b.evaluate("[...__renderer.cache.keys()].some(k=>k.includes('/companion/')&&k.endsWith('v=c1'))"),false);
+  await b.evaluate("__change('r2','c3');__holdRevision=null;for(const go of __held.splice(0))go()");
+  await b.wait('__unit.loaded && __unit.helpers.length===1');
+  assert.equal(await b.evaluate("__matches('c3')"),true,'a companion changed during character loading supplies the new helper clips');
+  await b.evaluate("__holdRevision='c4';__change('r2','c4');__change('r2','c5')");
+  await b.wait('__unit.helpers.length===1');
+  assert.equal(await b.evaluate("__matches('c5')"),true);
+  await b.evaluate("(async()=>{__holdRevision=null;for(const go of __held.splice(0))go();await new Promise(resolve=>setTimeout(resolve,0));})()");
+  assert.equal(await b.evaluate("__matches('c5')"),true,'a superseded helper download cannot reappear');
+  await b.evaluate('__renderer.dispose()');
+  assert.deepEqual(b.errors,[]);
+});
+
+test('pieces changed during the first world load are drawn and reported as Customized',options,async t=>{
+  const yardPieces=fakePieces({guild:{anthropic:{title:'old',revision:'old'}}});
+  const b=await browser();
+  await b.send('Fetch.enable',{patterns:[{urlPattern:'*/yard/assets/guild/dark*'}]});
+  t.after(()=>b.send('Fetch.disable'));
+  await setup(t,{yard:true,yardPieces});
+  await until(()=>b.events.some(event=>event.method==='Fetch.requestPaused'));
+  await b.click('#yard-customize-open');
+  const status="document.querySelector('#yard-customize-list [data-slot=anthropic] .yard-customize-status').textContent";
+  yardPieces.current={guild:{anthropic:{title:'new',revision:'new'}}};
+  yardPieces.emit('updated',yardPieces.current);
+  await b.wait(status+"==='Loading new…'");
+  await b.send('Fetch.disable');
+  await ready(b);
+  await b.wait(status+"==='Customized: new'");
+  assert.ok(b.requests.some(r=>r.url.includes('/pieces/guild/anthropic/')&&r.url.includes('v=new')));
+  assert.equal(b.requests.some(r=>r.url.includes('/pieces/guild/anthropic/')&&r.url.includes('v=old')),false);
+  assert.deepEqual(b.errors,[]);
+});
+
+test('the Customize dialog tells installed from drawn, per Yard, and returns focus',options,async t=>{
+  const yardPieces=fakePieces({guild:{anthropic:{title:'Patchwork',revision:'p1'},openai:{title:'Broken',revision:'b1'}}});
+  const {b}=await setup(t,{yard:true,yardPieces});
+  await ready(b);
+  await b.evaluate("(button=>{button.focus();button.click();})(document.querySelector('#yard-customize-open'))");
+  const row=slot=>`document.querySelector('#yard-customize-list [data-slot="${slot}"]')`;
+  await b.wait(`${row('anthropic')}?.dataset.state==='custom' && ${row('openai')}?.dataset.state==='failed'`);
+  const shown=await b.evaluate(`[...document.querySelectorAll('#yard-customize-list > li')].map(li=>li.dataset.slot?[li.dataset.slot,li.querySelector('.yard-customize-status').textContent,li.querySelectorAll('button')[1].disabled]:li.textContent)`);
+  assert.deepEqual(shown,[
+    'Yard',['world','Original',true],
+    'Characters',['anthropic','Customized: Patchwork',false],['openai','Broken could not load. Showing the original character.',false],['google','Original',true],['xai','Original',true],['shell','Original',true],['docker','Original',true],
+    'Companions',['companion','Original',true],
+  ]);
+  assert.equal(await b.evaluate("document.querySelector('#yard-world-note').textContent"),'Broken could not load. Showing the original character.');
+  assert.deepEqual(await b.evaluate("['world','anthropic','shell','companion'].map(s=>(n=>n.hidden?null:n.textContent)(document.querySelector('#yard-customize-list [data-slot='+s+'] .yard-customize-note')))"),
+    [null,'Shows on your Claude Code sessions in this Yard.','Shows on your Shell sessions in this Yard, and in gold on Terminal AI Chat’s.','Shows beside sessions with helpers in this Yard.']);
+  await b.evaluate("document.documentElement.dataset.skin='grove'");
+  await b.wait(`${row('anthropic')}.dataset.state==='original' && ${row('openai')}.dataset.state==='original'`);
+  assert.equal(await b.evaluate("document.querySelector('#yard-customize-sub').textContent"),await b.evaluate("document.querySelector('#yard-title').textContent+' only. Other Yards keep their own.'"));
+  await b.evaluate("document.documentElement.dataset.skin='guild'");
+  await b.wait(`${row('openai')}.dataset.state==='failed'`);
+  yardPieces.current={guild:{anthropic:{title:'Patchwork',revision:'p1'}}};
+  yardPieces.emit('updated',yardPieces.current);
+  await b.wait(`${row('openai')}.dataset.state==='original' && document.querySelector('#yard-world-note').hidden`);
+  await b.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+  await b.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+  await b.wait("!document.querySelector('#yard-customize').open && document.activeElement===document.querySelector('#yard-customize-open')");
+  assert.deepEqual(b.errors,[]);
+});
+
+test('a piece whose texture cannot be decoded falls back to the original without touching other pieces',options,async t=>{
+  const temp=await fs.mkdtemp(path.join(os.tmpdir(),'guild-blank-'));t.after(()=>fs.rm(temp,{recursive:true,force:true}));
+  const glb=await fs.readFile(path.join(PIECE_FILES,'character.glb')),size=glb.readUInt32LE(12),json=JSON.parse(glb.toString('utf8',20,20+size));
+  const view=json.bufferViews[json.images[0].bufferView],start=20+size+8+(view.byteOffset||0);
+  const blank=Buffer.from(glb);blank.fill(0,start+24,start+view.byteLength);
+  await fs.writeFile(path.join(temp,'character.glb'),blank);
+  const yardPieces=fakePieces({guild:{anthropic:{revision:'good'},google:{revision:'blank'}}},{google:path.join(temp,'character.glb')});
+  const {f,b}=await setup(t,{yardPieces});
+  const base=[...f.data.values()][0],by=id=>f.providers.find(p=>p.id===id);
+  const sessions=[{...base,id:'claude',provider:by('anthropic'),agents:[],shells:[]},{...base,id:'antigravity',provider:by('google'),agents:[],shells:[]}];
+  await b.evaluate(`(async()=>{
+    const {YardRenderer}=await import('/yard/renderer.js');
+    const host=document.createElement('div'),labels=document.createElement('div');
+    host.style.cssText='position:fixed;width:900px;height:700px;top:0;left:0';host.append(labels);document.body.append(host);
+    window.__events=[];
+    window.__renderer=new YardRenderer(host,labels,{select(){},open(){},piece:e=>{__events.push(e.slot+':'+e.ok);if(!e.ok){const p={...__renderer.pieceSets[e.skin]};delete p[e.slot];__renderer.setPieces(e.skin,p);}}});
+    __renderer.setPieces('guild',{anthropic:{revision:'good'},google:{revision:'blank'}});
+    await __renderer.setWorld('guild','dark');__renderer.update(${q(f.providers)},${q(sessions)});
+  })()`);
+  await b.wait("__events.length===2 && ['claude','antigravity'].every(id=>__renderer.units.get(id).loaded)");
+  assert.deepEqual(await b.evaluate(`({
+    events:__events.slice().sort(),
+    original:__renderer.cache.has('hero_2'),
+    pieces:[...__renderer.cache.keys()].filter(k=>k.includes('/pieces/')).map(k=>k.replace(/^.*\\/pieces\\//,'')),
+    textured:(()=>{let maps=0;__renderer.units.get('claude').model.traverse(n=>{if(n.isMesh&&n.material.map)maps++;});return maps>0;})(),
+  })`),{events:['anthropic:true','google:false'],original:true,pieces:['guild/anthropic/character.glb?v=good'],textured:true});
+  await b.evaluate('__renderer.dispose()');
+  assert.deepEqual(b.errors,[]);
+});
+test('a rigged mesh the engine cannot bound fails its load and falls back, so drawing and picking keep working',options,async t=>{
+  const temp=await fs.mkdtemp(path.join(os.tmpdir(),'guild-bones-'));t.after(()=>fs.rm(temp,{recursive:true,force:true}));
+  const glb=await fs.readFile(path.join(PIECE_FILES,'character.glb')),size=glb.readUInt32LE(12),json=JSON.parse(glb.toString('utf8',20,20+size));
+  const joints=json.accessors[json.meshes[0].primitives[0].attributes.JOINTS_0];
+  const bad=Buffer.from(glb);bad[20+size+8+(json.bufferViews[joints.bufferView].byteOffset||0)+(joints.byteOffset||0)]=250;
+  await fs.writeFile(path.join(temp,'character.glb'),bad);
+  const yardPieces=fakePieces({guild:{google:{revision:'bones'}}},{google:path.join(temp,'character.glb')});
+  const {f,b}=await setup(t,{yardPieces});
+  const session={...[...f.data.values()][0],id:'antigravity',provider:f.providers.find(p=>p.id==='google'),agents:[],shells:[]};
+  await b.evaluate(`(async()=>{
+    const {YardRenderer}=await import('/yard/renderer.js');
+    const host=document.createElement('div'),labels=document.createElement('div');
+    host.style.cssText='position:fixed;width:900px;height:700px;top:0;left:0';host.append(labels);document.body.append(host);
+    window.__events=[];
+    window.__renderer=new YardRenderer(host,labels,{select(){},open(){},piece:e=>{__events.push(e.slot+':'+e.ok);if(!e.ok)__renderer.setPieces(e.skin,{});}});
+    __renderer.setPieces('guild',{google:{revision:'bones'}});
+    await __renderer.setWorld('guild','dark');__renderer.update(${q(f.providers)},[${q(session)}]);
+  })()`);
+  await b.wait("__events.length===1 && __renderer.units.get('antigravity').loaded");
+  await b.evaluate("(async()=>{__renderer.dirty=true;__renderer.drawOnce();await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));const u=__renderer.units.get('antigravity'),p=u.root.position.clone().project(__renderer.camera);__renderer.ray.setFromCamera({x:p.x,y:p.y},__renderer.camera);__renderer.ray.intersectObjects([u.root],true);})()");
+  assert.deepEqual(await b.evaluate("({events:__events,original:__renderer.cache.has('hero_2'),piece:[...__renderer.cache.keys()].some(k=>k.includes('/pieces/'))})"),{events:['google:false'],original:true,piece:false});
+  await b.evaluate('__renderer.dispose()');
+  assert.deepEqual(b.errors,[]);
+});
+test('a piece with a triangle that misses its vertices fails its load and falls back without disturbing the Yard',options,async t=>{
+  const temp=await fs.mkdtemp(path.join(os.tmpdir(),'guild-triangles-'));t.after(()=>fs.rm(temp,{recursive:true,force:true}));
+  const glb=await fs.readFile(path.join(PIECE_FILES,'character.glb')),size=glb.readUInt32LE(12),json=JSON.parse(glb.toString('utf8',20,20+size));
+  const indices=json.accessors[json.meshes[0].primitives[0].indices],bad=Buffer.from(glb);
+  bad.writeUInt16LE(250,20+size+8+(json.bufferViews[indices.bufferView].byteOffset||0)+(indices.byteOffset||0));
+  await fs.writeFile(path.join(temp,'character.glb'),bad);
+  const yardPieces=fakePieces({guild:{google:{revision:'triangles'}}},{google:path.join(temp,'character.glb')});
+  const {f,b}=await setup(t,{yardPieces});
+  const session={...[...f.data.values()][0],id:'antigravity',provider:f.providers.find(p=>p.id==='google'),agents:[],shells:[]};
+  await b.evaluate(`(async()=>{
+    const {YardRenderer}=await import('/yard/renderer.js');
+    const host=document.createElement('div'),labels=document.createElement('div');
+    host.style.cssText='position:fixed;width:900px;height:700px;top:0;left:0';host.append(labels);document.body.append(host);
+    window.__events=[];
+    window.__renderer=new YardRenderer(host,labels,{select(){},open(){},piece:e=>{__events.push(e.slot+':'+e.ok);if(!e.ok)__renderer.setPieces(e.skin,{});}});
+    __renderer.setPieces('guild',{google:{revision:'triangles'}});
+    await __renderer.setWorld('guild','dark');__renderer.update(${q(f.providers)},[${q(session)}]);
+  })()`);
+  await b.wait("__events.length===1 && __renderer.units.get('antigravity').loaded");
+  await b.evaluate("(async()=>{for(let i=0;i<3;i++){__renderer.dirty=true;__renderer.drawOnce();await new Promise(r=>requestAnimationFrame(r));}const u=__renderer.units.get('antigravity'),p=u.root.position.clone().project(__renderer.camera);__renderer.ray.setFromCamera({x:p.x,y:p.y},__renderer.camera);__renderer.ray.intersectObjects([u.root],true);})()");
+  assert.deepEqual(await b.evaluate("({events:__events,original:__renderer.cache.has('hero_2'),piece:[...__renderer.cache.keys()].some(k=>k.includes('/pieces/'))})"),{events:['google:false'],original:true,piece:false});
+  await b.evaluate('__renderer.dispose()');
+  assert.deepEqual(b.errors,[]);
+});
+
+async function offsetPiece(dir){
+  const glb=await fs.readFile(path.join(PIECE_FILES,'character.glb')),size=glb.readUInt32LE(12),json=JSON.parse(glb.toString('utf8',20,20+size));
+  const binary=glb.subarray(20+size+8,20+size+8+glb.readUInt32LE(20+size)),most=Math.max(...json.animations.map(a=>json.accessors[a.samplers[0].input].count));
+  const offsets=Buffer.alloc(most*12);for(let i=0;i<most;i++)offsets.writeFloatLE(0.5,i*12);
+  const view=json.bufferViews.push({buffer:0,byteOffset:binary.length,byteLength:offsets.length})-1,root=json.nodes.findIndex(n=>n.name==='Root');
+  for(const animation of json.animations){
+    const input=animation.samplers[0].input,output=json.accessors.push({bufferView:view,componentType:5126,count:json.accessors[input].count,type:'VEC3'})-1;
+    animation.channels.push({sampler:animation.samplers.push({input,output})-1,target:{node:root,path:'translation'}});
+  }
+  const data=Buffer.concat([binary,offsets]);json.buffers[0].byteLength=data.length;
+  const text=Buffer.from(JSON.stringify(json)),padded=Buffer.concat([text,Buffer.alloc((4-text.length%4)%4,0x20)]);
+  const head=Buffer.alloc(20),chunk=Buffer.alloc(8);head.write('glTF',0,'latin1');head.writeUInt32LE(2,4);head.writeUInt32LE(20+padded.length+8+data.length,8);head.writeUInt32LE(padded.length,12);head.write('JSON',16,'latin1');
+  chunk.writeUInt32LE(data.length,0);chunk.write('BIN\0',4,'latin1');
+  await fs.writeFile(path.join(dir,'character.glb'),Buffer.concat([head,padded,chunk,data]));
+  return path.join(dir,'character.glb');
+}
+
+test('an animated piece stays pickable and drawn at every pose, with nothing left on its cached asset',options,async t=>{
+  const temp=await fs.mkdtemp(path.join(os.tmpdir(),'guild-posed-'));t.after(()=>fs.rm(temp,{recursive:true,force:true}));
+  const yardPieces=fakePieces({guild:{google:{revision:'posed'},xai:{revision:'offset'}}},{xai:await offsetPiece(temp)});
+  const {f,b}=await setup(t,{yardPieces});
+  const sessions=[['antigravity','google'],['grok','xai']].map(([id,provider])=>({...[...f.data.values()][0],id,provider:f.providers.find(p=>p.id===provider),agents:[],shells:[]}));
+  await b.evaluate(`(async()=>{
+    const {YardRenderer}=await import('/yard/renderer.js');
+    const host=document.createElement('div'),labels=document.createElement('div');
+    host.style.cssText='position:fixed;width:900px;height:700px;top:0;left:0';host.append(labels);document.body.append(host);
+    window.__renderer=new YardRenderer(host,labels,{select(){},open(){},piece(){}});
+    __renderer.setPieces('guild',{google:{revision:'posed'},xai:{revision:'offset'}});
+    await __renderer.setWorld('guild','dark');__renderer.update(${q(f.providers)},${q(sessions)});
+  })()`);
+  await b.wait("['antigravity','grok'].every(id=>__renderer.units.get(id)?.loaded)");
+  const results=await b.evaluate(`(async()=>{
+    const T=await import('/yard/vendor/engine.js');
+    const r=__renderer,frame=()=>{r.renderer.render(r.scene,r.camera);},out=[];
+    frame();
+    for(const id of ['antigravity','grok']){const unit=r.units.get(id);let mesh=null;unit.model.traverse(n=>{if(n.isSkinnedMesh)mesh=n;});
+    for(const [name,action] of unit.animations)for(const share of [0,0.3,0.6,0.9]){
+      unit.mixers[0].stopAllAction();action.reset().play();unit.mixers[0].setTime(action.getClip().duration*share);
+      r.scene.updateMatrixWorld(true);mesh.skeleton.update();frame();
+      const index=mesh.geometry.index.array,point=new T.Vector3(),corner=new T.Vector3();
+      for(let k=0;k<3;k++){mesh.getVertexPosition(index[k],corner);point.add(corner);}
+      point.divideScalar(3);mesh.localToWorld(point);
+      const ndc=point.clone().project(r.camera);
+      r.ray.setFromCamera({x:ndc.x,y:ndc.y},r.camera);
+      const hit=r.ray.intersectObject(mesh,false).length>0;
+      const drawn=r.renderer.info.render.triangles;mesh.visible=false;frame();const hidden=r.renderer.info.render.triangles;mesh.visible=true;frame();
+      out.push({pose:id+' '+name+'@'+share,inView:Math.abs(ndc.x)<1&&Math.abs(ndc.y)<1,hit,culled:drawn<=hidden});
+    }}
+    let leftover=false;for(const [key,pending] of r.cache)if(key.includes('/pieces/'))(await pending).scene.traverse(n=>{if(n.isSkinnedMesh&&(n.boundingBox||n.boundingSphere))leftover=true;});
+    return {out,leftover};
+  })()`);
+  const wrong=results.out.filter(r=>!r.inView||!r.hit||r.culled);
+  assert.deepEqual(wrong,[],'every pose is in view, picked and drawn');
+  assert.equal(results.out.length>=48,true);
+  assert.equal(results.leftover,false,'the cached piece keeps no bounding volumes from its check');
+  await b.evaluate('__renderer.dispose()');
+  assert.deepEqual(b.errors,[]);
+});
+test('a piece with an animation the Yard cannot play fails its load and falls back without disturbing the Yard',options,async t=>{
+  const temp=await fs.mkdtemp(path.join(os.tmpdir(),'guild-nan-'));t.after(()=>fs.rm(temp,{recursive:true,force:true}));
+  const glb=await fs.readFile(path.join(PIECE_FILES,'character.glb')),size=glb.readUInt32LE(12),json=JSON.parse(glb.toString('utf8',20,20+size));
+  const sampler=json.animations[0].samplers[json.animations[0].channels[0].sampler],output=json.accessors[sampler.output],bad=Buffer.from(glb);
+  const start=20+size+8+(json.bufferViews[output.bufferView].byteOffset||0)+(output.byteOffset||0);
+  for(let i=0;i<output.count*4;i++)bad.writeFloatLE(NaN,start+i*4);
+  await fs.writeFile(path.join(temp,'character.glb'),bad);
+  const yardPieces=fakePieces({guild:{google:{revision:'nan'}}},{google:path.join(temp,'character.glb')});
+  const {f,b}=await setup(t,{yardPieces});
+  const session={...[...f.data.values()][0],id:'antigravity',provider:f.providers.find(p=>p.id==='google'),agents:[],shells:[]};
+  await b.evaluate(`(async()=>{
+    const {YardRenderer}=await import('/yard/renderer.js');
+    const host=document.createElement('div'),labels=document.createElement('div');
+    host.style.cssText='position:fixed;width:900px;height:700px;top:0;left:0';host.append(labels);document.body.append(host);
+    window.__events=[];
+    window.__renderer=new YardRenderer(host,labels,{select(){},open(){},piece:e=>{__events.push(e.slot+':'+e.ok);if(!e.ok)__renderer.setPieces(e.skin,{});}});
+    __renderer.setPieces('guild',{google:{revision:'nan'}});
+    await __renderer.setWorld('guild','dark');__renderer.update(${q(f.providers)},[${q(session)}]);
+  })()`);
+  await b.wait("__events.length===1 && __renderer.units.get('antigravity').loaded");
+  await b.evaluate("(async()=>{for(let i=0;i<3;i++){__renderer.dirty=true;__renderer.drawOnce();await new Promise(r=>requestAnimationFrame(r));}})()");
+  assert.deepEqual(await b.evaluate("({events:__events,original:__renderer.cache.has('hero_2'),piece:[...__renderer.cache.keys()].some(k=>k.includes('/pieces/'))})"),{events:['google:false'],original:true,piece:false});
+  await b.evaluate('__renderer.dispose()');
+  assert.deepEqual(b.errors,[]);
+});
+test('a piece whose rotations are not unit quaternions fails its load and falls back without disturbing the Yard',options,async t=>{
+  const temp=await fs.mkdtemp(path.join(os.tmpdir(),'guild-quaternion-'));t.after(()=>fs.rm(temp,{recursive:true,force:true}));
+  const glb=await fs.readFile(path.join(PIECE_FILES,'character.glb')),size=glb.readUInt32LE(12),json=JSON.parse(glb.toString('utf8',20,20+size));
+  const sampler=json.animations[0].samplers[json.animations[0].channels[0].sampler],output=json.accessors[sampler.output],bad=Buffer.from(glb);
+  const start=20+size+8+(json.bufferViews[output.bufferView].byteOffset||0)+(output.byteOffset||0);
+  for(let i=0;i<output.count;i++)[0.5,0.5,0,0].forEach((value,k)=>bad.writeFloatLE(value,start+(i*4+k)*4));
+  await fs.writeFile(path.join(temp,'character.glb'),bad);
+  const yardPieces=fakePieces({guild:{google:{revision:'half'}}},{google:path.join(temp,'character.glb')});
+  const {f,b}=await setup(t,{yardPieces});
+  const session={...[...f.data.values()][0],id:'antigravity',provider:f.providers.find(p=>p.id==='google'),agents:[],shells:[]};
+  await b.evaluate(`(async()=>{
+    const {YardRenderer}=await import('/yard/renderer.js');
+    const host=document.createElement('div'),labels=document.createElement('div');
+    host.style.cssText='position:fixed;width:900px;height:700px;top:0;left:0';host.append(labels);document.body.append(host);
+    window.__events=[];
+    window.__renderer=new YardRenderer(host,labels,{select(){},open(){},piece:e=>{__events.push(e.slot+':'+e.ok);if(!e.ok)__renderer.setPieces(e.skin,{});}});
+    __renderer.setPieces('guild',{google:{revision:'half'}});
+    await __renderer.setWorld('guild','dark');__renderer.update(${q(f.providers)},[${q(session)}]);
+  })()`);
+  await b.wait("__events.length===1 && __renderer.units.get('antigravity').loaded");
+  await b.evaluate("(async()=>{for(let i=0;i<3;i++){__renderer.dirty=true;__renderer.drawOnce();await new Promise(r=>requestAnimationFrame(r));}})()");
+  assert.deepEqual(await b.evaluate("({events:__events,original:__renderer.cache.has('hero_2'),piece:[...__renderer.cache.keys()].some(k=>k.includes('/pieces/'))})"),{events:['google:false'],original:true,piece:false});
+  await b.evaluate('__renderer.dispose()');
+  assert.deepEqual(b.errors,[]);
+});
+test('restoring a piece or disposing the Yard cancels its download, and the original still draws',options,async t=>{
+  const yardPieces=fakePieces({guild:{anthropic:{revision:'first'}}});
+  const {f,b}=await setup(t,{yardPieces,source:`
+    const originalFetch=window.fetch;window.__held=[];
+    window.fetch=(...args)=>{
+      const url=String(args[0]?.url||args[0]);
+      if(!url.includes('/yard/pieces/'))return originalFetch(...args);
+      const signal=args[0]?.signal||args[1]?.signal,entry={url,signal};window.__held.push(entry);
+      return new Promise((resolve,reject)=>signal?.addEventListener('abort',()=>reject(new DOMException('Aborted','AbortError'))));
+    };`});
+  const session={...[...f.data.values()][0],id:'claude',provider:f.providers.find(p=>p.id==='anthropic'),agents:[],shells:[]};
+  await b.evaluate(`(async()=>{
+    const {YardRenderer}=await import('/yard/renderer.js');
+    const host=document.createElement('div'),labels=document.createElement('div');
+    host.style.cssText='position:fixed;width:900px;height:700px;top:0;left:0';host.append(labels);document.body.append(host);
+    window.__renderer=new YardRenderer(host,labels,{select(){},open(){},piece(){}});
+    __renderer.setPieces('guild',{anthropic:{revision:'first'}});
+    await __renderer.setWorld('guild','dark');__renderer.update(${q(f.providers)},[${q(session)}]);
+  })()`);
+  await b.wait("__held.some(h=>h.url.includes('v=first'))");
+  await b.evaluate("__renderer.setPieces('guild',{})");
+  await b.wait("__renderer.units.get('claude').loaded && __renderer.cache.has('hero_0')");
+  assert.equal(await b.evaluate("__held.filter(h=>h.url.includes('v=first')).every(h=>h.signal?.aborted)"),true,'restoring cancels the download');
+  await b.evaluate("__renderer.setPieces('guild',{anthropic:{revision:'second'}})");
+  await b.wait("__held.some(h=>h.url.includes('v=second'))");
+  await b.evaluate('__renderer.dispose()');
+  assert.equal(await b.evaluate("__held.filter(h=>h.url.includes('v=second')).every(h=>h.signal?.aborted)"),true,'disposing cancels the download');
+  assert.deepEqual(b.errors,[]);
+});
+test('a Yard that reloads shows its pieces as loading until they draw, and a failed piece stays failed without new downloads',options,async t=>{
+  const yardPieces=fakePieces({guild:{anthropic:{title:'Patchwork',revision:'p1'}}});
+  const {b}=await setup(t,{yard:true,yardPieces,source:`
+    const originalFetch=window.fetch;window.__mode='fail';window.__held=[];window.__requests=0;
+    window.fetch=(...args)=>{
+      const url=String(args[0]?.url||args[0]);
+      if(!url.includes('/yard/pieces/'))return originalFetch(...args);
+      window.__requests++;
+      if(window.__mode==='pass')return originalFetch(...args);
+      if(window.__mode==='fail')return Promise.reject(new TypeError('Fixture download failed'));
+      return new Promise((resolve,reject)=>window.__held.push(()=>originalFetch(...args).then(resolve,reject)));
+    };`});
+  await ready(b);
+  await b.evaluate("(x=>{x.focus();x.click();})(document.querySelector('#yard-customize-open'))");
+  const status="document.querySelector('#yard-customize-list [data-slot=anthropic] .yard-customize-status').textContent";
+  const visit=async()=>{
+    await b.evaluate("document.documentElement.dataset.skin='grove'");await b.wait("document.querySelector('#yard-stage').dataset.world==='grove'");
+    await b.evaluate("document.documentElement.dataset.skin='guild'");await b.wait("document.querySelector('#yard-stage').dataset.world==='guild'");
+  };
+  await b.wait(status+"==='Patchwork could not load. Showing the original character.'");
+  const requests=await b.evaluate('__requests');
+  await b.evaluate("__mode='pass'");
+  await visit();
+  assert.equal(await b.evaluate(status),'Patchwork could not load. Showing the original character.','a failed piece keeps its failure after a reload');
+  assert.equal(await b.evaluate('__requests'),requests,'a failed piece is not downloaded again');
+  yardPieces.current={guild:{anthropic:{title:'Patchwork',revision:'p2'}}};yardPieces.emit('updated',yardPieces.current);
+  await b.wait(status+"==='Customized: Patchwork'");
+  await b.evaluate("__mode='hold'");
+  await visit();
+  await b.wait("__held.length>0");
+  assert.equal(await b.evaluate(status),'Loading Patchwork…','a reload shows the piece as loading while it downloads');
+  await b.evaluate("__mode='pass';for(const go of __held.splice(0))go()");
+  await b.wait(status+"==='Customized: Patchwork'");
+  assert.deepEqual(b.errors,[]);
+});
+
+test('the row being replaced says Checking replacement until the check answers',options,async t=>{
+  const temp=await fs.mkdtemp(path.join(os.tmpdir(),'guild-checking-'));t.after(()=>fs.rm(temp,{recursive:true,force:true}));
+  await fs.mkdir(path.join(temp,'mine'));
+  await fs.writeFile(path.join(temp,'mine','piece.json'),JSON.stringify({format:1,kind:'character',title:'Mine'}));
+  await fs.copyFile(path.join(PIECE_FILES,'character.glb'),path.join(temp,'mine','character.glb'));
+  const yardPieces=fakePieces({});let answer;
+  yardPieces.replace=(skin,slot)=>new Promise(resolve=>{answer=()=>{yardPieces.current={[skin]:{[slot]:{title:'Mine',revision:'m1'}}};yardPieces.emit('updated',yardPieces.current);resolve(yardPieces.current);};});
+  const {b}=await setup(t,{yard:true,yardPieces,source:`localStorage.setItem('agentGuild.pieceFolder',${q(temp)});`});
+  await ready(b);
+  await b.evaluate("(x=>{x.focus();x.click();})(document.querySelector('#yard-customize-open'))");
+  const status="document.querySelector('#yard-customize-list [data-slot=anthropic] .yard-customize-status').textContent";
+  await b.wait(status+"==='Original'");
+  await b.evaluate("document.querySelector('#yard-customize-list [data-slot=anthropic] button').click()");
+  await b.wait("[...document.querySelectorAll('.folder-piece-title')].some(e=>e.textContent==='Mine')");
+  await b.evaluate("[...document.querySelectorAll('.folder-piece')].find(r=>r.querySelector('.folder-piece-title').textContent==='Mine').click()");
+  await b.wait(status+"==='Checking replacement…'");
+  assert.equal(await b.evaluate("document.querySelector('#yard-customize-list [data-slot=openai] .yard-customize-status').textContent"),'Original','only the row being replaced says it is checking');
+  answer();
+  await b.wait(status+"==='Customized: Mine'");
   assert.deepEqual(b.errors,[]);
 });

@@ -57,6 +57,7 @@ export const paths = {
   /** The Yard's art packs, one folder per content id. */
   get yardArt() { return path.join(dataDir(), 'yard-art'); },
   get yardWorlds() { return path.join(dataDir(), 'yard-worlds'); },
+  get yardPieces() { return path.join(dataDir(), 'yard-pieces'); },
 };
 
 function writePrivate(file, contents) {

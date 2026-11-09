@@ -20,6 +20,8 @@ import { MODES as AUTOSTART_MODES } from './autostart.mjs';
 import { ptyRestartProblem } from './pty.mjs';
 import { YardArt } from './yard-art.mjs';
 import { YardWorlds } from './yard-worlds.mjs';
+import { YardPieces } from './yard-pieces.mjs';
+import { createWorkshopFinder } from './steam-workshop.mjs';
 import { spokenText } from './spoken-text.mjs';
 import { MCP_ACTIONS } from './mcp-connect.mjs';
 
@@ -70,8 +72,8 @@ const SECURITY_HEADERS = {
   'Referrer-Policy': 'no-referrer',
   'Cross-Origin-Resource-Policy': 'same-origin',
   'Content-Security-Policy':
-    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://i.ytimg.com; " +
-    "connect-src 'self' ws://127.0.0.1:* ws://localhost:*; frame-src https://www.youtube-nocookie.com; " +
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://i.ytimg.com; " +
+    "connect-src 'self' blob: ws://127.0.0.1:* ws://localhost:*; frame-src https://www.youtube-nocookie.com; " +
     "frame-ancestors vscode-webview: vscode-file:; base-uri 'none'; form-action 'none'",
 };
 
@@ -177,7 +179,7 @@ export function createManagerServer({
   notes = createNotesStore(),
   deviceSignIn = new DeviceSignIn({ token }),
   folderOpener = createFolderOpener({ resolveCwd: (cwd) => manager.resolveCwd(cwd) }),
-  folderBrowser = createFolderBrowser(),
+  folderBrowser = createFolderBrowser({ workshop: createWorkshopFinder() }),
   /** The double-click launcher file for this platform, or null when the package carries none. */
   launcher = null,
   /** @type {(opts: { restart: boolean }) => void} */
@@ -187,6 +189,7 @@ export function createManagerServer({
   /** The Yard's art; without a data folder, only a checkout's. */
   yardArt = new YardArt({ webDir }),
   yardWorlds = new YardWorlds(),
+  yardPieces = new YardPieces(),
   mcpConnect = null,
   heartbeatMs = 30000,
 }) {
@@ -299,6 +302,12 @@ export function createManagerServer({
       const world = rest.length ? null : yardWorlds.file(skin, name);
       if (!world) throw new HttpError(404, 'not found', 'not_found');
       return serveFile(req, res, world);
+    }
+    if (rel.startsWith('yard/pieces/')) {
+      const [skin, slot, name, ...rest] = rel.slice('yard/pieces/'.length).split('/');
+      const piece = rest.length ? null : yardPieces.file(skin, slot, name);
+      if (!piece) throw new HttpError(404, 'not found', 'not_found');
+      return serveFile(req, res, piece);
     }
     let root = webDir;
     if (rel.startsWith('yard/assets/')) {
@@ -420,6 +429,10 @@ export function createManagerServer({
     const yardWorld = route.match(/^\/yard-worlds\/([a-z]+)$/);
     if (yardWorld && method === 'PUT') return sendJson(res, 200, { yardWorlds: await yardWorlds.replace(yardWorld[1], (await readJsonBody(req)).path) });
     if (yardWorld && method === 'DELETE') return sendJson(res, 200, { yardWorlds: await yardWorlds.restore(yardWorld[1]) });
+    if (route === '/yard-pieces' && method === 'GET') return sendJson(res, 200, { yardPieces: yardPieces.snapshot() });
+    const yardPiece = route.match(/^\/yard-pieces\/([a-z]+)\/([a-z]+)$/);
+    if (yardPiece && method === 'PUT') return sendJson(res, 200, { yardPieces: await yardPieces.replace(yardPiece[1], yardPiece[2], (await readJsonBody(req)).path) });
+    if (yardPiece && method === 'DELETE') return sendJson(res, 200, { yardPieces: await yardPieces.restore(yardPiece[1], yardPiece[2]) });
     if (route === '/yard/fireworks' && method === 'POST') {
       broadcast({ type: 'yard.fireworks' });
       return sendJson(res, 200, { ok: true, pages: [...eventClients].filter((ws) => !ws.revoked && ws.readyState === ws.OPEN).length });
@@ -447,7 +460,7 @@ export function createManagerServer({
       return sendJson(res, 200, { ok: true });
     }
     if (route === '/folders' && method === 'GET') {
-      return sendJson(res, 200, await folderBrowser.list(url.searchParams.get('path') ?? undefined, { extension: url.searchParams.get('files') === 'agworld' ? '.agworld' : null }));
+      return sendJson(res, 200, await folderBrowser.list(url.searchParams.get('path') ?? undefined, { extension: url.searchParams.get('files') === 'agworld' ? '.agworld' : null, pieces: ['character', 'companion'].includes(url.searchParams.get('pieces')) ? url.searchParams.get('pieces') : null }));
     }
     if (route === '/folders' && method === 'POST') {
       const { path: parent, name } = await readJsonBody(req);
@@ -784,10 +797,11 @@ export function createManagerServer({
   deviceSignIn.on('updated', () => broadcast({ type: 'sign-in.updated' }));
   yardArt.on('updated', (status) => broadcast({ type: 'yard-art.updated', yardArt: status }));
   yardWorlds.on('updated', (worlds) => broadcast({ type: 'yard-worlds.updated', yardWorlds: worlds }));
+  yardPieces.on('updated', (pieces) => broadcast({ type: 'yard-pieces.updated', yardPieces: pieces }));
 
   function handleEvents(ws, req) {
     eventClients.add(ws);
-    const hello = { type: 'hello', version, pid: process.pid, platform: process.platform, startedAt, launcher, folderOpener: folderOpenerFor(req), remoteAccess: remoteAccess ? { available: true } : null, upgrade: upgradeInfo(), yardArt: yardArt.snapshot(), yardWorlds: yardWorlds.snapshot(), sessions: manager.list(), heartbeat: true };
+    const hello = { type: 'hello', version, pid: process.pid, platform: process.platform, startedAt, launcher, folderOpener: folderOpenerFor(req), remoteAccess: remoteAccess ? { available: true } : null, upgrade: upgradeInfo(), yardArt: yardArt.snapshot(), yardWorlds: yardWorlds.snapshot(), yardPieces: yardPieces.snapshot(), sessions: manager.list(), heartbeat: true };
     const notesHello = notes.helloRevision();
     if (notesHello.known) hello.notesRevision = notesHello.revision;
     else hello.notesUnreadable = true;

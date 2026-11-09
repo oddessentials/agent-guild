@@ -1,8 +1,10 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { readManifest } from './yard-pieces.mjs';
 
 const failure = (status, code, message) => Object.assign(new Error(message), { status, code });
+const PIECE_SCAN = 500;
 const byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true }) || (a.name < b.name ? -1 : 1);
 
 export function folderSegments(dir, paths = path) {
@@ -30,7 +32,7 @@ export function folderNameProblem(name, platform = process.platform) {
   return null;
 }
 
-export function createFolderBrowser({ platform = process.platform, home = os.homedir(), limit = 2000, driveTimeoutMs = 500, fsp = fs.promises } = {}) {
+export function createFolderBrowser({ platform = process.platform, home = os.homedir(), limit = 2000, driveTimeoutMs = 500, fsp = fs.promises, workshop = null } = {}) {
   const paths = platform === 'win32' ? path.win32 : path.posix;
 
   async function roots() {
@@ -79,6 +81,31 @@ export function createFolderBrowser({ platform = process.platform, home = os.hom
       .map((entry) => ({ name: entry.name, path: paths.join(dir, entry.name) })).sort(byName);
   }
 
+  async function pieceIn(dir, kind) {
+    const file = paths.join(dir, 'piece.json');
+    try {
+      const stat = await fsp.lstat(file);
+      if (!stat.isFile() || stat.size > 16 * 1024) return null;
+      const bytes = await fsp.readFile(file), folder = paths.basename(dir);
+      try {
+        const { title } = readManifest(bytes, kind);
+        return { title: title || folder, folder, path: dir };
+      } catch (err) {
+        const meta = err.newer ? JSON.parse(bytes.toString('utf8')) : null;
+        if (meta?.kind !== kind) return null;
+        const title = typeof meta.title === 'string' && meta.title.length <= 128 && !/\p{Cc}/u.test(meta.title) ? meta.title.trim() : '';
+        return { title: title || folder, folder, path: dir, problem: err.message };
+      }
+    } catch {
+      return null;
+    }
+  }
+
+  async function piecesIn(dir, folders, kind) {
+    const found = await Promise.all([dir, ...folders.slice(0, PIECE_SCAN).map((entry) => entry.path)].map((folder) => pieceIn(folder, kind)));
+    return found.filter(Boolean).sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base', numeric: true }) || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  }
+
   const browser = {
     async create(rawParent, rawName) {
       if (typeof rawParent !== 'string' || !rawParent.trim() || rawParent.includes('\0')) throw failure(400, 'bad_path', 'The folder must be a path.');
@@ -103,7 +130,7 @@ export function createFolderBrowser({ platform = process.platform, home = os.hom
       }
       return browser.list(dir);
     },
-    async list(raw, { extension = null } = {}) {
+    async list(raw, { extension = null, pieces = null } = {}) {
       if (raw !== undefined && raw !== null && (typeof raw !== 'string' || raw.includes('\0'))) {
         throw failure(400, 'bad_path', 'The folder must be a path.');
       }
@@ -113,6 +140,7 @@ export function createFolderBrowser({ platform = process.platform, home = os.hom
       const dir = await nearestFolder(wanted);
       const [folders, drives, files] = await Promise.all([entries(dir), roots(), extension ? filesIn(dir, extension) : null]);
       const parent = paths.dirname(dir);
+      const [found, steam] = pieces ? await Promise.all([piecesIn(dir, folders, pieces), workshop ? workshop() : null]) : [null, null];
       return {
         path: dir,
         parent: parent === dir ? null : parent,
@@ -123,6 +151,7 @@ export function createFolderBrowser({ platform = process.platform, home = os.hom
         truncated: folders.length > limit,
         note: dir === wanted ? null : wanted,
         ...(files ? { files: files.slice(0, limit) } : {}),
+        ...(found ? { pieces: found, workshop: steam } : {}),
       };
     },
   };

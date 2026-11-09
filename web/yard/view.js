@@ -1,4 +1,4 @@
-import { WORLDS, sessionPose } from './model.mjs';
+import { WORLDS, PROVIDER_ORDER, sessionPose } from './model.mjs';
 
 const $ = id => document.getElementById(id);
 const make = (tag, cls, text) => Object.assign(document.createElement(tag), { className: cls, ...(text === undefined ? {} : { textContent: text }) });
@@ -17,6 +17,8 @@ async function boundedLoad(start, onProgress) {
   } finally { settled = true; clearTimeout(timer); }
 }
 const megabytes = bytes => (bytes / 1048576).toFixed(1) + ' MB';
+const CREWS = { anthropic: 'Claude Code', openai: 'Codex CLI', google: 'Antigravity CLI', xai: 'Grok Build', shell: 'Shell', docker: 'Docker Agent' };
+const pieceKind = slot => slot === 'companion' ? 'companion' : 'character';
 
 /** A layout with injected canonical controls. No API, sockets, or business rules. */
 export function initYard(controller) {
@@ -36,9 +38,18 @@ export function initYard(controller) {
     return world && !world.problem && unloadable.get(skin) !== world.revision ? world : null;
   };
   const titleFor = (skin) => customFor(skin)?.title ?? WORLDS[skin].title;
+  const worldShown = new Map();
   const loadWorld = (target, skin, theme, progress) => {
+    if (target.skin !== skin) {
+      worldShown.delete(skin);
+      for (const [key, shown] of pieceShown) if (key.startsWith(skin + '/') && shown.ok) pieceShown.delete(key);
+      target.setPieces(skin, piecesFor(skin));
+      worldSpot();
+    }
     const custom = customFor(skin);
-    return target.setWorld(skin, theme, { progress, custom }).catch((err) => {
+    return target.setWorld(skin, theme, { progress, custom }).then(() => {
+      if (custom) { worldShown.set(skin, custom.revision); worldSpot(); }
+    }, (err) => {
       if (!custom || disposed) throw err;
       unloadable.set(skin, custom.revision);
       if (skin === lastSkin) lastRevision = null;
@@ -46,6 +57,99 @@ export function initYard(controller) {
       return target.setWorld(skin, theme, { progress });
     });
   };
+  const pieceShown = new Map();
+  const pieceKey = (skin, slot) => skin + '/' + slot;
+  const piecesOf = (skin) => controller.yardPieces?.(skin) ?? {};
+  const piecesFor = (skin) => {
+    const pieces = {};
+    for (const [slot, piece] of Object.entries(piecesOf(skin))) {
+      const shown = pieceShown.get(pieceKey(skin, slot));
+      if (piece.revision && !(shown?.revision === piece.revision && !shown.ok)) pieces[slot] = { revision: piece.revision };
+    }
+    return pieces;
+  };
+  const syncPieces = (target) => {
+    const skin = root.dataset.skin;
+    if (target && WORLDS[skin]) target.setPieces(skin, piecesFor(skin));
+  };
+  const pieceDrawn = ({ skin, slot, revision, ok }) => {
+    if (disposed || piecesOf(skin)[slot]?.revision !== revision) return;
+    const key = pieceKey(skin, slot), was = pieceShown.get(key);
+    if (was?.revision === revision && (!was.ok || was.ok === ok)) return;
+    pieceShown.set(key, { revision, ok });
+    if (!ok) for (const target of [renderer, pendingRenderer]) target?.setPieces(skin, piecesFor(skin));
+    worldSpot();
+  };
+  function worldStatus(skin) {
+    const world = controller.yardWorld(skin);
+    if (!world) return { state: 'original', text: 'Original' };
+    if (world.problem) return { state: 'failed', text: world.problem + ' Showing the original.' };
+    if (!customFor(skin)) return { state: 'failed', text: world.title + ' could not load. Showing the original.' };
+    return worldShown.get(skin) === world.revision ? { state: 'custom', text: 'Customized: ' + world.title } : { state: 'loading', text: 'Loading ' + world.title + '…' };
+  }
+  function pieceStatus(skin, slot) {
+    const piece = piecesOf(skin)[slot], kind = pieceKind(slot);
+    if (!piece) return { state: 'original', text: 'Original' };
+    if (piece.problem) return { state: 'failed', text: piece.problem + ' Showing the original ' + kind + '.' };
+    const shown = pieceShown.get(pieceKey(skin, slot));
+    if (shown?.revision !== piece.revision) return { state: 'loading', text: 'Loading ' + piece.title + '…' };
+    return shown.ok ? { state: 'custom', text: 'Customized: ' + piece.title } : { state: 'failed', text: piece.title + ' could not load. Showing the original ' + kind + '.' };
+  }
+  const slotName = (slot) => slot === 'world' ? 'World' : slot === 'companion' ? 'Companions' : snapshot.providers.find(p => p.id === slot)?.tool || CREWS[slot];
+  const customizeRows = new Map();
+  function customizeRow(slot) {
+    if (customizeRows.has(slot)) return customizeRows.get(slot);
+    const row = make('li', 'flag-row yard-customize-row'), copy = make('div', 'yard-customize-copy'), actions = make('div', 'yard-customize-actions');
+    const name = make('span', 'flag-name'), status = make('span', 'yard-customize-status'), note = make('span', 'yard-customize-note');
+    const replace = make('button', 'btn', 'Replace'), restore = make('button', 'btn', 'Restore original');
+    replace.type = restore.type = 'button';
+    note.hidden = slot === 'world';
+    const skin = () => root.dataset.skin;
+    replace.addEventListener('click', () => slot === 'world' ? controller.replaceYard(skin()) : controller.replacePiece(skin(), slot));
+    restore.addEventListener('click', () => slot === 'world' ? controller.restoreYard(skin()) : controller.restorePiece(skin(), slot));
+    copy.append(name, status, note);
+    actions.append(replace, restore);
+    row.append(copy, actions);
+    row.dataset.slot = slot;
+    const parts = { row, name, status, note, replace, restore };
+    customizeRows.set(slot, parts);
+    return parts;
+  }
+  function paintCustomize() {
+    const dialog = $('yard-customize'), skin = root.dataset.skin;
+    if (!dialog.open) return;
+    if (!WORLDS[skin]) { dialog.close(); return; }
+    $('yard-customize-sub').textContent = WORLDS[skin].title + ' only. Other Yards keep their own.';
+    const busy = Boolean(controller.yardBusy?.()) || !snapshot.connected;
+    const heading = (text) => {
+      if (!customizeRows.has(text)) { const item = make('li', 'yard-customize-heading', text); item.setAttribute('role', 'presentation'); customizeRows.set(text, item); }
+      return customizeRows.get(text);
+    };
+    const items = [];
+    for (const [title, slots] of [['Yard', ['world']], ['Characters', PROVIDER_ORDER], ['Companions', ['companion']]]) {
+      items.push(heading(title));
+      for (const slot of slots) {
+        const parts = customizeRow(slot), status = controller.yardChecking?.() === pieceKey(skin, slot) ? { state: 'loading', text: 'Checking replacement…' } : slot === 'world' ? worldStatus(skin) : pieceStatus(skin, slot);
+        const installed = slot === 'world' ? Boolean(controller.yardWorld(skin)) : Boolean(piecesOf(skin)[slot]);
+        parts.name.textContent = slotName(slot);
+        parts.status.textContent = status.text;
+        if (slot !== 'world') parts.note.textContent = slot === 'companion' ? 'Shows beside sessions with helpers in this Yard.'
+          : 'Shows on your ' + slotName(slot) + ' sessions in this Yard' + (slot === 'shell' ? ', and in gold on Terminal AI Chat’s.' : '.');
+        parts.row.dataset.state = status.state;
+        parts.replace.disabled = busy;
+        parts.restore.disabled = busy || !installed;
+        parts.replace.setAttribute('aria-label', 'Replace ' + slotName(slot));
+        parts.restore.setAttribute('aria-label', 'Restore the original ' + slotName(slot));
+        items.push(parts.row);
+      }
+    }
+    const list = $('yard-customize-list');
+    if (items.some((item, i) => list.children[i] !== item) || list.children.length !== items.length) {
+      const focused = list.contains(document.activeElement) ? document.activeElement : null;
+      list.replaceChildren(...items);
+      focused?.focus();
+    }
+  }
   function worldSpot() {
     const skin = root.dataset.skin;
     if (!WORLDS[skin]) return;
@@ -53,11 +157,11 @@ export function initYard(controller) {
     $('yard-title').textContent = titleFor(skin);
     $('yard-title').classList.toggle('yard-title-custom', Boolean(customFor(skin)));
     const reason = world?.problem || (world && !customFor(skin) ? world.title + ' could not load.' : '');
-    $('yard-world-replace').hidden = !controller.canReplaceYard();
-    $('yard-world-replace').textContent = world ? 'Replace' : 'Replace this Yard';
-    $('yard-world-restore').hidden = !world;
-    $('yard-world-note').hidden = !reason;
-    $('yard-world-note').textContent = reason && reason + ' This Yard is showing its original.';
+    const failed = !reason && Object.keys(piecesOf(skin)).map(slot => pieceStatus(skin, slot)).find(status => status.state === 'failed');
+    $('yard-customize-open').hidden = !controller.canReplaceYard();
+    $('yard-world-note').hidden = !reason && !failed;
+    $('yard-world-note').textContent = reason ? reason + ' This Yard is showing its original.' : failed ? failed.text : '';
+    paintCustomize();
   }
   const celebrate = () => { if (!disposed && sceneVisible()) renderer?.fireworks(); };
   const fireworksButton = () => {
@@ -96,7 +200,7 @@ export function initYard(controller) {
     if (allowed) yardChoice.parentElement.removeAttribute('title');
     else yardChoice.parentElement.title = `${skinEntry()?.name || 'This skin'} has no yard yet.`;
     $('yard').hidden = view !== 'yard';
-    if (view !== 'yard') closePhoto();
+    if (view !== 'yard') { closePhoto(); $('yard-customize').close(); }
     $('providers').hidden = view === 'yard';
     $('providers').inert = view === 'yard';
     for (const section of document.querySelectorAll('#app > section.sessions, #app > section.news')) {
@@ -176,6 +280,7 @@ export function initYard(controller) {
           select: next => select(next),
           open: id => controller.openSession(id),
           error: () => { if (attempt === sceneAttempt) failScene(); },
+          piece: pieceDrawn,
         });
         pendingRenderer = candidate;
         // Appearance can change while the first world is loading.
@@ -184,10 +289,12 @@ export function initYard(controller) {
           skin = root.dataset.skin; theme = root.dataset.theme;
           if (!WORLDS[skin]) { candidate.dispose(); return; }
           revision = customFor(skin)?.revision ?? null;
+          syncPieces(candidate);
           showLoading('Loading ' + titleFor(skin) + '…', 'scene');
           await boundedLoad(progress => loadWorld(candidate, skin, theme, progress), loadingProgress);
         } while (!disposed && !candidate.disposed && attempt === sceneAttempt && (skin !== root.dataset.skin || theme !== root.dataset.theme || revision !== (customFor(skin)?.revision ?? null)));
         if (disposed || candidate.disposed || attempt !== sceneAttempt) { candidate.dispose(); return; }
+        syncPieces(candidate);
         pendingRenderer = null;
         renderer = candidate;
         lastSkin = skin; lastTheme = theme; lastRevision = revision;
@@ -318,9 +425,10 @@ export function initYard(controller) {
         lastSkin = root.dataset.skin; lastTheme = root.dataset.theme; lastRevision = revision;
         swapWorld();
       }
+      syncPieces(renderer);
       renderer.update(snapshot.providers,snapshot.sessions);
       renderer.setActive(sceneVisible());
-    } else ensureScene();
+    } else { syncPieces(pendingRenderer); ensureScene(); }
   }
   $('view-cards').addEventListener('change',() => setView('cards'));
   $('view-yard').addEventListener('change',() => { if (skinAllowsYard()) setView('yard'); });
@@ -342,8 +450,12 @@ export function initYard(controller) {
     lastSkin = ''; lastTheme = '';
     update();
   });
-  $('yard-world-replace').addEventListener('click',() => controller.replaceYard(root.dataset.skin));
-  $('yard-world-restore').addEventListener('click',() => controller.restoreYard(root.dataset.skin));
+  $('yard-customize-open').addEventListener('click',() => {
+    if (!$('yard-customize').open) $('yard-customize').showModal();
+    paintCustomize();
+  });
+  $('yard-customize-close').addEventListener('click',() => $('yard-customize').close());
+  $('yard-customize').addEventListener('click',event => { if (event.target === $('yard-customize')) $('yard-customize').close(); });
   $('yard-filter').addEventListener('input',roster);
   $('yard-news').addEventListener('click',controller.openNews);
   $('yard-deselect').addEventListener('click',() => { select(null); $('yard-filter').focus(); });
