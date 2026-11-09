@@ -18,6 +18,7 @@ import { GitHub } from './github.mjs';
 import { createManagerServer } from './server.mjs';
 import { YardArt } from './yard-art.mjs';
 import { YardWorlds } from './yard-worlds.mjs';
+import { YardPieces } from './yard-pieces.mjs';
 import { loadPty } from './pty.mjs';
 import { createNotesStore } from './notes.mjs';
 import { createCardNames } from './card-names.mjs';
@@ -188,6 +189,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
     launcher: launcherPath(),
     yardArt: new YardArt({ webDir, dir: paths.yardArt }),
     yardWorlds: new YardWorlds({ dir: paths.yardWorlds }),
+    yardPieces: new YardPieces({ dir: paths.yardPieces }),
     mcpConnect,
     onShutdownRequest: ({ restart = false } = {}) => shutdown('requested via API', { restart }).then((code) => process.exit(code)),
   });

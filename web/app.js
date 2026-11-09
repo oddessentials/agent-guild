@@ -202,7 +202,7 @@ function holdToast(held) {
 const firstClick = (run) => (e) => { if (e.detail < 2) run(); };
 
 /** Buttons that act through the session manager. While it cannot be reached they are unavailable rather than left to fail. */
-const MANAGER_ACTIONS = '.provider :is(.new, .existing, .install, .update), .session-card :is(.resume, .rename, .stop, .remove), .history-resume, #panel-stop, #yard-install, #yard-world button, .break-install';
+const MANAGER_ACTIONS = '.provider :is(.new, .existing, .install, .update), .session-card :is(.resume, .rename, .stop, .remove), .history-resume, #panel-stop, #yard-install, #yard-customize-open, .break-install';
 
 function paintManagerActions(root = document) {
   for (const button of root.querySelectorAll(MANAGER_ACTIONS)) button.disabled = !state.connected;
@@ -1435,15 +1435,19 @@ const FOLDER_FIELDS = {
   cwd: { title: 'Choose working folder', input: 'cwd' },
   clone: { title: 'Choose clone folder', input: 'github-parent' },
   world: { title: 'Choose a world file', input: null },
+  character: { title: 'Choose a character', input: null },
+  companion: { title: 'Choose a companion', input: null },
 };
 const WORLD_FOLDER_KEY = 'agentGuild.worldFolder';
+const PIECE_FOLDER_KEY = 'agentGuild.pieceFolder';
+const PIECE_FIELDS = ['character', 'companion'];
 const folderView = { field: null, listing: null, loading: false, error: null, request: 0, opener: null };
 
-function chooseFolder(field, skin = null) {
+function chooseFolder(field, skin = null, slot = null) {
   if (!state.connected) return;
   const dialog = $('folder-browser');
-  Object.assign(folderView, { field, skin, listing: null, loading: false, error: null });
-  $('folder-use').hidden = $('folder-new-open').hidden = field === 'world';
+  Object.assign(folderView, { field, skin, slot, listing: null, loading: false, error: null, toWorkshop: PIECE_FIELDS.includes(field) && !load(PIECE_FOLDER_KEY) });
+  $('folder-use').hidden = $('folder-new-open').hidden = field === 'world' || PIECE_FIELDS.includes(field);
   $('folder-title').textContent = FOLDER_FIELDS[field].title;
   $('folder-filter').value = '';
   $('folder-hidden').checked = load(HIDDEN_FOLDERS_KEY) === '1';
@@ -1451,7 +1455,7 @@ function chooseFolder(field, skin = null) {
     folderView.opener = document.activeElement;
     dialog.showModal();
   }
-  browseTo(field === 'world' ? load(WORLD_FOLDER_KEY) ?? '' : $(FOLDER_FIELDS[field].input).value.trim());
+  browseTo(field === 'world' ? load(WORLD_FOLDER_KEY) ?? '' : PIECE_FIELDS.includes(field) ? load(PIECE_FOLDER_KEY) ?? '' : $(FOLDER_FIELDS[field].input).value.trim());
 }
 
 function showNewFolder(open) {
@@ -1505,8 +1509,13 @@ async function browseTo(dir) {
   folderView.error = null;
   renderFolderBrowser();
   try {
-    const listing = await api('GET', `/folders?path=${encodeURIComponent(dir)}${folderView.field === 'world' ? '&files=agworld' : ''}`);
+    const listing = await api('GET', `/folders?path=${encodeURIComponent(dir)}${folderView.field === 'world' ? '&files=agworld' : PIECE_FIELDS.includes(folderView.field) ? `&pieces=${folderView.field}` : ''}`);
     if (request !== folderView.request) return;
+    if (folderView.toWorkshop && listing.workshop && listing.path !== listing.workshop) {
+      folderView.toWorkshop = false;
+      return browseTo(listing.workshop);
+    }
+    folderView.toWorkshop = false;
     folderView.listing = listing;
     $('folder-filter').value = '';
   } catch (err) {
@@ -1534,6 +1543,8 @@ function renderFolderBrowser() {
   $('folder-roots').replaceChildren(...(listing?.roots ?? []).map((root) => button(root.name, () => browseTo(root.path), 'btn folder-chip')));
   $('folder-up').disabled = loading || !listing?.parent;
   $('folder-home').disabled = loading;
+  $('folder-workshop').hidden = !listing?.workshop;
+  $('folder-workshop').disabled = loading;
   const note = $('folder-note');
   note.hidden = !listing?.note;
   note.textContent = listing?.note ? `${listing.note} was not found, so this shows the nearest folder that exists.` : '';
@@ -1547,12 +1558,19 @@ function renderFolderBrowser() {
     const row = button(file.name, () => useWorldFile(file.path), 'folder-row folder-file');
     row.title = file.path;
     return row;
+  }), ...(listing?.pieces ?? []).filter((piece) => !query || piece.title.toLowerCase().includes(query) || piece.folder.toLowerCase().includes(query)).map((piece) => {
+    const row = button('', () => usePiece(piece.path), 'folder-row folder-piece');
+    row.append(Object.assign(document.createElement('span'), { className: 'folder-piece-title', textContent: piece.title }),
+      Object.assign(document.createElement('span'), { className: 'folder-piece-sub', textContent: `${folderView.field === 'character' ? 'Character' : 'Companion'} · ${piece.folder}` }));
+    row.title = piece.path;
+    return row;
   }));
   const status = $('folder-status');
   status.textContent = loading ? 'Loading folders…'
     : error ? error
       : !listing ? ''
-        : listing.files?.length ? ''
+        : listing.files?.length || listing.pieces?.length ? ''
+        : PIECE_FIELDS.includes(folderView.field) ? `No ${folderView.field === 'character' ? 'characters' : 'companions'} here or in the folders inside it. Steam keeps Workshop items in its library under steamapps › workshop › content › 5462970.`
         : !entries.length ? (folderView.field === 'world' ? 'No world files here.' : listing.entries.length ? 'No folders match.' : 'No folders here.')
           : listing.truncated ? `Showing the first ${listing.entries.length.toLocaleString()} folders.` : '';
   status.classList.toggle('error', Boolean(error));
@@ -1562,17 +1580,19 @@ function renderFolderBrowser() {
   $('folder-new-create').disabled = loading || !listing || !$('folder-new-name').value.trim();
 }
 
-async function yardWorldChange(request) {
-  const buttons = document.querySelectorAll('#yard-world button');
-  for (const item of buttons) item.disabled = true;
+async function yardChange(request, row = true) {
+  state.yardBusy = row;
+  notifyViews();
   try {
-    // The new state arrives as yard-worlds.updated.
     await request();
+    return true;
   } catch (err) {
-    if (err instanceof AuthError) return showAuth(err.message);
-    toast(err.message, 8000);
+    if (err instanceof AuthError) showAuth(err.message);
+    else toast(err.message, 8000);
+    return false;
   } finally {
-    for (const item of buttons) item.disabled = !state.connected;
+    state.yardBusy = false;
+    notifyViews();
   }
 }
 
@@ -1580,7 +1600,13 @@ function useWorldFile(file) {
   const { skin, listing } = folderView;
   $('folder-browser').close();
   save(WORLD_FOLDER_KEY, listing.path);
-  return yardWorldChange(() => api('PUT', `/yard-worlds/${skin}`, { path: file }));
+  return yardChange(() => api('PUT', `/yard-worlds/${skin}`, { path: file }), `${skin}/world`);
+}
+
+async function usePiece(folder) {
+  const { skin, slot, listing } = folderView;
+  $('folder-browser').close();
+  if (await yardChange(() => api('PUT', `/yard-pieces/${skin}/${slot}`, { path: folder }), `${skin}/${slot}`)) save(PIECE_FOLDER_KEY, listing.path);
 }
 
 function folderBrowserClosed() {
@@ -7909,6 +7935,7 @@ function closeDialogs() {
   closeFlags();
   closeMemory();
   if ($('folder-browser').open) $('folder-browser').close();
+  if ($('yard-customize').open) $('yard-customize').close();
   yardUi?.closePhoto();
   // An open question is answered as cancelled.
   if ($('ask').open) $('ask').close();
@@ -8058,6 +8085,7 @@ function connectEvents() {
       $('yard-install').hidden = !['win32', 'darwin'].includes(state.platform);
       $('yard-world-get').hidden = state.platform !== 'win32';
       state.yardWorlds = msg.yardWorlds ?? null;
+      state.yardPieces = msg.yardPieces ?? null;
       state.remoteAccessUI?.setAvailable(msg.remoteAccess);
       state.remoteAccessUI?.signInsUpdated();
       state.glassesLinkUI?.setAvailable(msg.remoteAccess);
@@ -8101,6 +8129,9 @@ function connectEvents() {
       notifyViews();
     } else if (msg.type === 'yard-worlds.updated') {
       state.yardWorlds = msg.yardWorlds;
+      notifyViews();
+    } else if (msg.type === 'yard-pieces.updated') {
+      state.yardPieces = msg.yardPieces;
       notifyViews();
     } else if (msg.type === 'yard.fireworks') {
       yardUi?.celebrate();
@@ -8845,6 +8876,7 @@ $('folder-browser').addEventListener('keydown', folderBrowserKeys);
 $('folder-list').addEventListener('keydown', moveInFolders);
 $('folder-up').addEventListener('click', () => browseTo(folderView.listing.parent));
 $('folder-home').addEventListener('click', () => browseTo('~'));
+$('folder-workshop').addEventListener('click', () => browseTo(folderView.listing.workshop));
 $('folder-filter').addEventListener('input', renderFolderBrowser);
 $('folder-hidden').addEventListener('change', (e) => {
   save(HIDDEN_FOLDERS_KEY, e.target.checked ? '1' : null);
@@ -8937,7 +8969,12 @@ yardUi = initYard({
   yardWorld: (skin) => state.yardWorlds?.[skin] ?? null,
   canReplaceYard: () => Boolean(state.yardWorlds),
   replaceYard: (skin) => chooseFolder('world', skin),
-  restoreYard: (skin) => yardWorldChange(() => api('DELETE', `/yard-worlds/${skin}`)),
+  restoreYard: (skin) => yardChange(() => api('DELETE', `/yard-worlds/${skin}`)),
+  yardPieces: (skin) => state.yardPieces?.[skin] ?? {},
+  yardBusy: () => Boolean(state.yardBusy),
+  yardChecking: () => (typeof state.yardBusy === 'string' ? state.yardBusy : null),
+  replacePiece: (skin, slot) => chooseFolder(slot === 'companion' ? 'companion' : 'character', skin, slot),
+  restorePiece: (skin, slot) => yardChange(() => api('DELETE', `/yard-pieces/${skin}/${slot}`)),
   // The new state arrives as yard-art.updated, ordered with the progress events.
   yardArtAction: (action) => api('POST', `/yard-art/${action}`),
   mountInspector(host, selection) {

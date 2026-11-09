@@ -50,6 +50,9 @@
     "test": "node --test --test-concurrency=1 \"tests/*.test.mjs\""
   },
   "dependencies": {
+    "@jsquash/jpeg": "1.6.0",
+    "@jsquash/png": "3.1.1",
+    "@jsquash/webp": "1.5.0",
     "@noble/hashes": "2.4.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-serialize": "^0.14.0",

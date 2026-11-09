@@ -1,13 +1,18 @@
 import * as T from './vendor/engine.js';
 import { WORLDS, PROVIDER_ORDER, characterIndex, GILDED, CAMERA, SUN, minZoom, overviewFor, clampPan, viewBasis, providerPositions, sessionPose, familiarPose, hash,
-  stage, nextStagingChange, doorFor, arrives, route, clipFor, helperOffset, stationProp, hallActivity, lookTarget, lookLimits, STAGING, photoSize, marksFor, SHOWN_HELPERS } from './model.mjs';
+  stage, nextStagingChange, doorFor, arrives, route, clipFor, helperOffset, stationProp, hallActivity, lookTarget, lookLimits, yardExtras, playableClip, STAGING, photoSize, marksFor, SHOWN_HELPERS } from './model.mjs';
 
 const ASSETS = new URL('./assets/', import.meta.url);
 const vector = new T.Vector3();
 const lookModel = new T.Matrix4(), lookParent = new T.Matrix4(), lookFrame = new T.Quaternion(), lookTurn = new T.Quaternion(), lookTilt = new T.Quaternion();
 const axisX = new T.Vector3(1, 0, 0), axisY = new T.Vector3(0, 1, 0);
 const noop = () => {};
+const cancelled = new WeakSet();
+addEventListener('unhandledrejection', event => { if (cancelled.has(event.reason)) event.preventDefault(); });
+const cancel = loader => { const reason = new DOMException('This piece is no longer shown.', 'AbortError'); cancelled.add(reason); loader.abortController.abort(reason); };
 const worldFile = (skin, custom, file) => `../worlds/${skin}/${file.split('/').pop()}?v=${custom.revision}`;
+const pieceFiles = (skin, slot, piece) => (slot === 'companion' ? [0, 1, 2, 3].map(n => `companion_${n}.glb`) : ['character.glb'])
+  .map(file => new URL(`../pieces/${skin}/${slot}/${file}?v=${piece.revision}`, ASSETS).href);
 const vector2 = new T.Vector2();
 // How fast characters turn to a new heading, in radians a second, and how
 // long a clip change blends.
@@ -82,6 +87,21 @@ function disposeSkeletons(root) {
   root?.traverse(node=>{if(node.skeleton)skeletons.add(node.skeleton);});
   for(const skeleton of skeletons)skeleton.dispose();
 }
+function checkPiece({scene,animations}) {
+  if(!animations.every(playableClip))throw new Error('An animation in this piece has values the Yard cannot play.');
+  const probe=T.cloneSkeleton(scene);
+  try {
+    probe.updateMatrixWorld(true);
+    probe.traverse(node=>{
+      if(!node.isMesh)return;
+      const vertices=node.geometry.attributes.position?.count,triangles=node.geometry.index?.array;
+      if(!vertices||(triangles&&!triangles.every(at=>at<vertices)))throw new Error('A mesh in this piece refers to vertices it does not have.');
+      if(!node.isSkinnedMesh)return;
+      node.skeleton.update();node.computeBoundingBox();node.computeBoundingSphere();
+      if(!Number.isFinite(node.boundingSphere?.radius))throw new Error('A rigged mesh in this piece cannot be drawn.');
+    });
+  } finally {disposeSkeletons(probe);}
+}
 function disposeTree(root) {
   disposeSkeletons(root);
   const geometries=new Set(),materials=new Set();
@@ -119,8 +139,9 @@ function disposeWorld(root) {
 }
 export class YardRenderer {
   // clock gives the time staging is judged at; tests pass a fixed one.
-  constructor(host,labels,{select,open,error=noop,clock=Date.now}) {
-    this.host=host;this.labels=labels;this.onSelect=select;this.onOpen=open;this.onError=error;this.clock=clock;
+  constructor(host,labels,{select,open,error=noop,piece=noop,clock=Date.now}) {
+    this.host=host;this.labels=labels;this.onSelect=select;this.onOpen=open;this.onError=error;this.onPiece=piece;this.clock=clock;
+    this.pieceSets={};this.shownPieces={skin:null,pieces:{}};this.pieceLoaders=new Map();
     this.scene=new T.Scene();this.units=new Map();this.halls=new Map();this.slots=new Map();this.cache=new Map();
     this.loadingManager=new T.LoadingManager();
     this.providers=[];this.sessions=[];this.selected=null;this.world=null;this.skin=null;this.request=0;this.worldRequest=0;this.pending=null;
@@ -177,26 +198,85 @@ export class YardRenderer {
     this.resizeObserver=new ResizeObserver(()=>this.resize());this.resizeObserver.observe(host);
     this.resize();this.overview();
   }
-  async asset(name) {
+  async asset(name,url) {
     if(!this.cache.has(name)) {
-      const pending=new T.GLTFLoader(this.loadingManager).loadAsync(new URL(name+'.glb',ASSETS).href).catch(err=>{
+      const failed=[],manager=url?new T.LoadingManager():this.loadingManager;
+      if(url){manager.onError=item=>failed.push(item);this.pieceLoaders.set(name,manager);}
+      const pending=new T.GLTFLoader(manager).loadAsync(url||new URL(name+'.glb',ASSETS).href).then(asset=>{
+        try {
+          if(failed.length)throw new Error('A texture in this piece could not be drawn.');
+          if(url)checkPiece(asset);
+          return asset;
+        } catch(err){disposeTree(asset.scene);throw err;}
+      }).catch(err=>{
         if(this.cache.get(name)===pending)this.cache.delete(name);
         throw err;
       });
       this.cache.set(name,pending);
+      if(url)pending.catch(noop).finally(()=>{if(this.pieceLoaders.get(name)===manager)this.pieceLoaders.delete(name);});
     }
     return this.cache.get(name);
   }
-  goldAsset(name) {
+  goldAsset(name,url) {
     const key='gold:'+name;
     if(!this.cache.has(key)) {
-      const pending=this.asset(name).then(asset=>{const scene=T.cloneSkeleton(asset.scene);gild(scene);return {...asset,scene};}).catch(err=>{
+      const pending=this.asset(name,url).then(asset=>{const scene=T.cloneSkeleton(asset.scene);gild(scene);return {...asset,scene};}).catch(err=>{
         if(this.cache.get(key)===pending)this.cache.delete(key);
         throw err;
       });
       this.cache.set(key,pending);
     }
     return this.cache.get(key);
+  }
+  activePieces() { return this.pieceSets[this.skin]||{}; }
+  pieceSource(slot) {
+    const piece=this.activePieces()[slot];
+    return piece?{slot,revision:piece.revision,urls:pieceFiles(this.skin,slot,piece)}:null;
+  }
+  // skin's pieces by slot, each { revision }; a slot without one shows the original.
+  setPieces(skin,pieces) {
+    this.pieceSets[skin]=pieces;
+    if(skin===this.skin)this.applyPieces();
+  }
+  applyPieces() {
+    if(this.disposed||!this.world)return;
+    const before=this.shownPieces,after={skin:this.skin,pieces:{...this.activePieces()}};
+    const changed=[...new Set([...Object.keys(before.pieces),...Object.keys(after.pieces)])]
+      .filter(slot=>before.skin!==after.skin||before.pieces[slot]?.revision!==after.pieces[slot]?.revision);
+    if(!changed.length&&before.skin===after.skin)return;
+    this.shownPieces=after;
+    if(before.skin===after.skin)for(const unit of this.units.values()){
+      if(changed.includes('companion'))this.clearHelpers(unit);
+      if(changed.includes(PROVIDER_ORDER[characterIndex(unit.session.provider.id)])){this.dropModel(unit);this.loadUnit(unit,unit.session);}
+      if(changed.includes('companion')&&unit.loaded)this.helpers(unit,unit.session);
+    }
+    for(const slot of changed){
+      if(before.pieces[slot])for(const url of pieceFiles(before.skin,slot,before.pieces[slot]))this.release(url);
+      if(after.pieces[slot])this.preload(slot,after.pieces[slot]);
+    }
+  }
+  preload(slot,piece) {
+    const skin=this.skin;
+    Promise.all(pieceFiles(skin,slot,piece).map(url=>this.asset(url,url))).then(()=>true,()=>false).then(ok=>{
+      if(!this.disposed&&this.skin===skin&&this.activePieces()[slot]?.revision===piece.revision)this.onPiece({skin,slot,revision:piece.revision,ok});
+    });
+  }
+  pieceFailed(source) {
+    if(this.activePieces()[source.slot]?.revision===source.revision)this.onPiece({skin:this.skin,slot:source.slot,revision:source.revision,ok:false});
+  }
+  release(name) {
+    const loader=this.pieceLoaders.get(name);if(loader){cancel(loader);this.pieceLoaders.delete(name);}
+    for(const key of [name,'gold:'+name]){
+      const pending=this.cache.get(key);
+      if(!pending)continue;
+      this.cache.delete(key);
+      pending.then(asset=>disposeTree(asset.scene)).catch(noop);
+    }
+  }
+  dropModel(unit) {
+    for(const mixer of unit.mixers){mixer.stopAllAction();mixer.uncacheRoot(mixer.getRoot());}
+    if(unit.model){unit.root.remove(unit.model);disposeSkeletons(unit.model);}
+    Object.assign(unit,{mixers:[],model:null,loaded:false,loading:false,animations:null,action:null,clip:null,lookBones:null,looking:false,load:(unit.load||0)+1});
   }
   // Shows skin's world in theme, or only theme's plates when that world is
   // already up. What is on screen stays until the new world or theme is
@@ -235,6 +315,7 @@ export class YardRenderer {
     this.halls.clear();
     if(this.world){this.scene.remove(this.world);disposeWorld(this.world);}
     this.world=loaded.scene;this.skin=skin;this.custom=custom;this.scene.add(this.world);
+    this.applyPieces();
     this.makeEffects(WORLDS[skin].effect);
     this.light(skin,theme);
     this.host.dataset.world=skin;
@@ -593,13 +674,14 @@ export class YardRenderer {
   }
   async loadUnit(unit,session) {
     if(unit.loaded||unit.loading)return;
-    const generation=this.request;
-    const prefix=WORLDS[this.skin].characters;
-    const index=characterIndex(session.provider.id);
+    const generation=this.request,token=unit.load=(unit.load||0)+1;
+    const index=characterIndex(session.provider.id),source=this.pieceSource(PROVIDER_ORDER[index]);
+    const name=source?source.urls[0]:WORLDS[this.skin].characters+index;
+    const stale=()=>this.disposed||generation!==this.request||token!==unit.load||!unit.root.parent;
     unit.loading=true;
     try {
-      const asset=await (GILDED.includes(session.provider.id)?this.goldAsset(prefix+index):this.asset(prefix+index));
-      if(this.disposed||generation!==this.request||!unit.root.parent)return;
+      const asset=await (GILDED.includes(session.provider.id)?this.goldAsset(name,source?.urls[0]):this.asset(name,source?.urls[0]));
+      if(stale())return;
       const model=T.cloneSkeleton(asset.scene);
       model.rotation.y=unit.heading;
       model.traverse(n=>{if(n.isMesh){n.castShadow=true;n.receiveShadow=true;}});
@@ -607,8 +689,9 @@ export class YardRenderer {
       unit.label.title='';
       // The walk's stride and cycle, and where blows land, as rig.py wrote them.
       let yard=null;asset.scene.traverse(n=>{if(n.userData?.yard)yard=n.userData.yard;});
-      unit.speed=yard?.stride&&yard?.cycle?yard.stride/yard.cycle:1;
-      unit.events=yard?.events||[];unit.height=yard?.height;unit.surface=yard?.surface;unit.look=lookLimits(yard);
+      yard=yardExtras(yard,'character');
+      unit.speed=yard.stride/yard.cycle;
+      unit.events=yard.events;unit.height=yard.height;unit.surface=yard.surface;unit.look=lookLimits(yard.look);
       const neck=model.getObjectByName('Neck'),head=model.getObjectByName('Head');
       unit.lookBones=neck&&head&&model.getObjectByName('LeftUpperLeg')?{neck,head}:null;
       this.scaleProp(unit.session?.id||session.id);
@@ -618,8 +701,10 @@ export class YardRenderer {
       unit.clip=null;this.play(unit);
       this.helpers(unit,unit.session||session);this.dirty=true;this.drawOnce();
     } catch(err){
-      if(!this.disposed&&generation===this.request&&unit.root.parent){console.warn('Yard character unavailable:',err.message);unit.label.title='Character art unavailable. Session controls remain available.';}
-    } finally {unit.loading=false;}
+      if(stale())return;
+      if(source){this.pieceFailed(source);return;}
+      console.warn('Yard character unavailable:',err.message);unit.label.title='Character art unavailable. Session controls remain available.';
+    } finally {if(token===unit.load)unit.loading=false;}
   }
   // A hall's own copies of the materials that glow with its crew, so one
   // hall lighting up does not light the others that share them.
@@ -1055,28 +1140,46 @@ export class YardRenderer {
     if(helper.action){if(this.reduced)helper.action.stop();else helper.action.crossFadeTo(action,FADE,false);}
     helper.action=action;
   }
-  async helpers(unit,session) {
-    const agents=helpersFor(session);
-    const signature=JSON.stringify(agents);
-    if(unit.helperSignature===signature)return;
-    unit.helperSignature=signature;
-    const rev=++unit.revision,generation=this.request;
+  clearHelpers(unit) {
+    unit.revision++;unit.helperSignature=null;
     for(const helper of unit.helpers){unit.crew.remove(helper.model);helper.mixer?.stopAllAction();helper.mixer?.uncacheRoot(helper.model);disposeSkeletons(helper.model);}
     unit.helpers=[];
-    const kinds=WORLDS[this.skin].helpers;
+    this.dirty=true;this.drawOnce();
+  }
+  async helpers(unit,session) {
+    const agents=helpersFor(session);
+    const kinds=WORLDS[this.skin].helpers,source=this.pieceSource('companion');
+    const signature=JSON.stringify([source?.revision??null,agents]);
+    if(unit.helperSignature===signature)return;
+    this.clearHelpers(unit);
+    unit.helperSignature=signature;
+    const rev=unit.revision,generation=this.request;
+    const stale=()=>this.disposed||generation!==this.request||rev!==unit.revision||!unit.root.parent;
+    let pieces=null;
+    if(source&&agents.length){
+      try {pieces=await Promise.all(source.urls.map(url=>this.asset(url,url)));}
+      catch {
+        if(stale())return;
+        unit.helperSignature=null;
+        this.pieceFailed(source);
+        return;
+      }
+      if(stale())return;
+    }
     // The full helper count and all helper details remain in the canonical inspector.
     // Small squads preserve readable character silhouettes at the overview scale.
     await Promise.all(agents.slice(0,SHOWN_HELPERS).map(async(agent,i)=>{
       try {
-        const asset=await this.asset((agent.shell?kinds.shell:kinds.agent)+(hash(agent.name||agent.id)%4));
-        if(this.disposed||generation!==this.request||rev!==unit.revision||!unit.root.parent)return;
+        const n=hash(agent.name||agent.id)%4;
+        const asset=pieces?pieces[n]:await this.asset((agent.shell?kinds.shell:kinds.agent)+n);
+        if(stale())return;
         const model=T.cloneSkeleton(asset.scene);
         const offset=helperOffset(i,agents.length);
         model.scale.setScalar(.45);model.position.set(unit.root.position.x+offset.x,.27,unit.root.position.z+offset.z);
         unit.crew.add(model);
         const mixer=new T.AnimationMixer(model);
         let yard=null;asset.scene.traverse(n=>{if(n.userData?.yard)yard=n.userData.yard;});
-        const helper={id:agent.id,top:(yard?.height||1)*model.scale.y,model,mixer,offset,pose:agent.pose,clips:asset.animations,moving:false,action:null};
+        const helper={id:agent.id,top:yardExtras(yard,'helper').height*model.scale.y,model,mixer,offset,pose:agent.pose,clips:asset.animations,moving:false,action:null};
         this.helperClip(helper,agent.pose);
         mixer.update(.3+(hash(agent.id)%40)/10);
         unit.helpers.push(helper);
@@ -1084,7 +1187,7 @@ export class YardRenderer {
       } catch {
         // The next state transition can rebuild this incomplete squad. Routine
         // unchanged updates do not call helpers(), so failure cannot loop.
-        if(!this.disposed&&generation===this.request&&rev===unit.revision&&unit.root.parent)unit.helperSignature=null;
+        if(!stale())unit.helperSignature=null;
       }
     }));
   }
@@ -1341,7 +1444,7 @@ export class YardRenderer {
     this.clearFireworks();this.fireworkTexture?.dispose();
     for(const spark of this.sparks){spark.points.geometry.dispose();spark.points.material.dispose();}this.sparks=[];
     this.releaseEffects();this.clearProps();
-    this.loadingManager.abort();this.pending?.close();this.pending=null;
+    this.loadingManager.abort();for(const loader of this.pieceLoaders.values())cancel(loader);this.pieceLoaders.clear();this.pending?.close();this.pending=null;
     this.resizeObserver.disconnect();this.controls.dispose();this.clearUnits();
     for(const item of this.halls.values()){item.label.remove();item.chip.remove();}this.halls.clear();this.list.remove();
     disposeWorld(this.world);

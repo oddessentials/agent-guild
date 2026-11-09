@@ -12,6 +12,7 @@ function element(props = {}) {
     textContent: '', hidden: false, disabled: false, value: '', checked: false, title: '', open: false, children: [], attrs: {}, classes: new Set(),
     classList: { toggle(name, on) { this.owner.classes[on ? 'add' : 'delete'](name); } },
     replaceChildren(...children) { this.children = children; },
+    append(...children) { this.children.push(...children); },
     setAttribute(key, value) { this.attrs[key] = value; },
     querySelector() { return this.children[0] ?? null; },
     focus() { focused.push(this); },
@@ -53,10 +54,10 @@ function page({ answers = [] } = {}) {
     rememberRecent: () => {},
     loadRepos: () => reloads.push(true),
     cloneParent: () => $('github-parent').value.trim(),
-    document: { activeElement: null },
+    document: { activeElement: null, createElement: () => element() },
     Object,
   };
-  runInNewContext(`${constant('FOLDER_FIELDS')}${constant('HIDDEN_FOLDERS_KEY')}${constant('CLONE_PARENT_KEY')}${constant('folderView')}
+  runInNewContext(`${constant('FOLDER_FIELDS')}${constant('PIECE_FIELDS')}${constant('PIECE_FOLDER_KEY')}${constant('HIDDEN_FOLDERS_KEY')}${constant('CLONE_PARENT_KEY')}${constant('folderView')}
 ${pick(['chooseFolder', 'showNewFolder', 'createFolder', 'newFolderKeys', 'browseTo', 'renderFolderBrowser', 'folderBrowserClosed', 'setCloneParent', 'useBrowsedFolder'])}
 this.folderView = folderView;`, context);
   return { context, $, requests, saved, used, auth, reloads };
@@ -95,6 +96,30 @@ test('choosing opens at the field value and lists the folders there, hidden ones
   p.$('folder-filter').value = 'zzz';
   p.context.renderFolderBrowser();
   assert.equal(p.$('folder-status').textContent, 'No folders match.');
+});
+
+test('a first piece choice opens in World’s Workshop folder, later ones where the last choice worked', async () => {
+  const workshop = '/steam/steamapps/workshop/content/5462970';
+  const home = { ...listing, path: '/home/me', workshop, pieces: [] };
+  const there = { ...listing, path: workshop, entries: [], workshop, pieces: [{ title: 'Turkeys', folder: '3825906265', path: `${workshop}/3825906265` }] };
+  const first = page({ answers: [home, there, home] });
+  first.context.chooseFolder('companion', 'guild', 'companion');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(first.requests.map(([, route]) => route), ['/folders?path=&pieces=companion', `/folders?path=${encodeURIComponent(workshop)}&pieces=companion`]);
+  assert.equal(first.$('folder-current').textContent, workshop);
+  assert.equal(first.$('folder-workshop').hidden, false);
+  assert.deepEqual(first.$('folder-list').children.map((row) => row.className), ['folder-row folder-piece']);
+  await first.context.browseTo('/home/me');
+  assert.equal(first.$('folder-current').textContent, '/home/me', 'the shortcut does not hold the browser there');
+  const later = page({ answers: [{ ...listing, workshop, pieces: [] }] });
+  later.saved['agentGuild.pieceFolder'] = '/work/space';
+  later.context.chooseFolder('character', 'guild', 'anthropic');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(later.requests.map(([, route]) => route), ['/folders?path=%2Fwork%2Fspace&pieces=character']);
+  const plain = page({ answers: [listing] });
+  plain.context.chooseFolder('cwd');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(plain.$('folder-workshop').hidden, true, 'no Workshop shortcut outside piece choices');
 });
 
 test('the browser explains fallbacks, empty folders and cut listings', async () => {

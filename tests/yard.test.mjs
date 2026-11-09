@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, statSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
-import { sessionPose, familiarPose, marksFor, layoutSessions, providerPositions, characterIndex, lookLimits, WORLDS, CAMERA, SUN, minZoom, overviewFor, clampPan, viewBasis, plateExtent,
+import { sessionPose, familiarPose, marksFor, layoutSessions, providerPositions, characterIndex, lookLimits, yardExtras, WORLDS, CAMERA, SUN, minZoom, overviewFor, clampPan, viewBasis, plateExtent,
  stage, stagingMode, nextStagingChange, restSpots, route, clipFor, doorFor, stationProp, STAGING, CLIPS, SKELETON, PROVIDER_ORDER, photoSize, photoName } from '../web/yard/model.mjs';
 import { goldenVectors } from '../scripts/yard-golden.mjs';
 import { Matrix4, Vector3 } from 'three';
@@ -11,8 +11,39 @@ const session=(id,provider='anthropic')=>({id,provider:{id:provider},createdAt:'
 
 test('a model narrows its glance with yard.look but never widens it',()=>{
   assert.deepEqual(lookLimits(undefined),{yaw:.7,pitch:.3,neck:.4});
-  assert.deepEqual(lookLimits({look:{yaw:.3}}),{yaw:.3,pitch:.3,neck:.4});
-  assert.deepEqual(lookLimits({look:{yaw:1.2,pitch:.9}}),{yaw:.7,pitch:.3,neck:.4});
+  assert.deepEqual(lookLimits({yaw:.3}),{yaw:.3,pitch:.3,neck:.4});
+  assert.deepEqual(lookLimits({yaw:1.2,pitch:.9}),{yaw:.7,pitch:.3,neck:.4});
+});
+
+test('yard extras bound untrusted numbers, drop bad events and ignore a bad look',()=>{
+  const valid={height:2,stride:.8,cycle:2,surface:1,events:[{clip:'work_0',time:.5,at:[0,1,.5]}],look:{yaw:.3,pitch:.2}};
+  assert.deepEqual(yardExtras(valid,'character'),{...valid,problem:null});
+  for(const events of [[null],[{...valid.events[0],at:[0,'bad',0]}],[{...valid.events[0],time:Infinity}],[{...valid.events[0],clip:'unknown'}],'bad']){
+    const clean=yardExtras({...valid,events},'character');
+    assert.match(clean.problem,/animation event/);
+    assert.deepEqual(clean.events,[]);
+  }
+  const mixed=yardExtras({...valid,events:[null,...valid.events]},'character');
+  assert.deepEqual(mixed.events,valid.events,'valid events survive alongside malformed ones');
+  const many=yardExtras({...valid,events:Array(33).fill(valid.events[0])},'character');
+  assert.match(many.problem,/at most 32/);assert.equal(many.events.length,32);
+  for(const look of [null,'bad',{yaw:'bad'},{pitch:Infinity},{yaw:-.1},{pitch:Math.PI+.1}]){
+    const clean=yardExtras({...valid,look},'character');
+    assert.match(clean.problem,/yard look/);assert.equal(clean.look,undefined);
+    assert.deepEqual(lookLimits(clean.look),lookLimits(undefined));
+  }
+  for(const [key,min,max] of [['height',.5,5],['stride',.1,5],['cycle',.25,10],['surface',.1,4]]){
+    for(const value of [min,max])assert.equal(yardExtras({...valid,[key]:value},'character').problem,null);
+    for(const value of [NaN,Infinity,'1',null,min-.01,max+.01]){
+      const clean=yardExtras({...valid,[key]:value},'character');
+      assert.match(clean.problem,new RegExp('yard '+key));
+      assert.ok(clean[key]===undefined||Number.isFinite(clean[key]));
+    }
+  }
+  assert.equal(yardExtras({height:'bad'},'helper').height,1);
+  assert.deepEqual([yardExtras({},'helper').problem,yardExtras({},'helper').height],[null,1],'a companion may carry no extras, as in World');
+  for(const height of [.1,5])assert.equal(yardExtras({height},'helper').problem,null);
+  assert.equal(yardExtras(null,'character').height,2);
 });
 
 test('visual poses preserve running/quiet vs exited and reported helper states',()=>{
@@ -277,6 +308,11 @@ test('the shipped characters and helpers follow the contract skeleton and carry 
    }
    // The runtime walks a character at the speed its stride and cycle give.
    const yard=asset.nodes.find(n=>n.extras?.yard)?.extras.yard;
+   const clean=yardExtras(yard,kind);
+   assert.equal(clean.problem,null,name+' accepts shipped extras');
+   for(const key of kind==='character'?['height','stride','cycle','surface']:['height'])assert.equal(clean[key],yard[key],name+' keeps '+key);
+   assert.deepEqual(clean.events,(yard.events||[]).map(({clip,time,at})=>({clip,time,at})),name+' keeps event timing and positions');
+   if(yard.look)assert.deepEqual(lookLimits(clean.look),lookLimits(yard.look),name+' keeps look');
    assert.ok(yard?.stride>0&&yard?.cycle>0&&yard?.height>0,name+' yard extras');
    // Builders work at their station's surface, scaled to their own shoulders.
    if(kind==='character')assert.ok(yard.surface>0,name+' working height');

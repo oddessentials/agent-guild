@@ -202,6 +202,48 @@ export const CLIPS = {
   character: { walk: 'walk', work: ['work_0', 'work_1'], pause: ['pause'], rest: ['idle_0', 'idle_1', 'idle_2'], done: ['done'] },
   helper: ['idle', 'working', 'waiting', 'done', 'move'],
 };
+export function yardExtras(raw, kind) {
+  const yard = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const character = kind === 'character';
+  const clean = { events: [], look: undefined, problem: null };
+  const problem = message => { clean.problem ??= message; };
+  const within = (value, min, max) => Number.isFinite(value) && value >= min && value <= max;
+  const fields = character
+    ? { height: [.5, 5, 2], stride: [.1, 5, 1], cycle: [.25, 10, 1], surface: [.1, 4, undefined] }
+    : { height: [.1, 5, 1] };
+  for (const [key, [min, max, fallback]] of Object.entries(fields)) {
+    clean[key] = within(yard[key], min, max) ? yard[key] : fallback;
+    if (!within(yard[key], min, max) && (character || yard[key] !== undefined)) problem(`needs a yard ${key} from ${min} to ${max}.`);
+  }
+  if (yard.events !== undefined) {
+    if (!Array.isArray(yard.events) || yard.events.length > 32) problem('needs an animation event array with at most 32 entries.');
+    if (Array.isArray(yard.events)) {
+      const clips = character ? Object.values(CLIPS.character).flat() : CLIPS.helper;
+      for (const event of yard.events.slice(0, 32)) {
+        if (!event || !clips.includes(event.clip) || !within(event.time, 0, 60) || !Array.isArray(event.at) || event.at.length !== 3 || !event.at.every(value => within(value, -5, 5))) {
+          problem('has an animation event without a valid clip, time and position.');
+        } else clean.events.push({ clip: event.clip, time: event.time, at: [...event.at] });
+      }
+    }
+  }
+  if (yard.look !== undefined) {
+    const look = yard.look;
+    if (!look || typeof look !== 'object' || Array.isArray(look) || !['yaw', 'pitch'].every(key => look[key] === undefined || within(look[key], 0, Math.PI))) {
+      problem('needs yard look yaw and pitch from 0 to π.');
+    } else clean.look = { yaw: look.yaw, pitch: look.pitch };
+  }
+  return clean;
+}
+export const unitQuaternion = (x, y, z, w) => Math.abs(Math.hypot(x, y, z, w) - 1) <= 0.001;
+export function playableClip(clip) {
+  return clip.tracks.every(({ times, values, ValueTypeName }) => {
+    if (!times.length || !(times[0] >= 0)) return false;
+    for (let i = 0; i < times.length; i++) if (!Number.isFinite(times[i]) || (i > 0 && !(times[i] > times[i - 1]))) return false;
+    for (const value of values) if (!Number.isFinite(value)) return false;
+    if (ValueTypeName === 'quaternion') for (let i = 0; i < values.length; i += 4) if (!unitQuaternion(values[i], values[i + 1], values[i + 2], values[i + 3])) return false;
+    return true;
+  });
+}
 // The shared skeleton, named after Godot's humanoid profile. Helpers carry
 // the trunk only; characters add limbs and a prop socket in each hand.
 const LIMBS = ['Shoulder', 'UpperArm', 'LowerArm', 'Hand', 'UpperLeg', 'LowerLeg', 'Foot', 'Toes'];
@@ -363,8 +405,8 @@ export function hallActivity(sessions, providerId) {
 }
 // How far a character's head may turn to look: STAGING.look, or less where
 // the model's own `yard.look` extras (rig.py's --look) narrow it.
-export function lookLimits(yard) {
-  const own = yard?.look || {};
+export function lookLimits(look) {
+  const own = look || {};
   return { yaw: Math.min(STAGING.look.yaw, own.yaw ?? Infinity), pitch: Math.min(STAGING.look.pitch, own.pitch ?? Infinity), neck: STAGING.look.neck };
 }
 // Whom a resting or pausing character looks at: the selected session when
