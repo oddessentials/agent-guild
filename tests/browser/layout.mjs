@@ -6,7 +6,7 @@ import { until, withPage } from './chrome.mjs';
 const instrumentation = `<script>
 window.testTerms=[];window.testSizes=[];window.testActions=[];window.testSockets=[];
 const demoFetch=window.fetch;
-window.fetch=function(input,init){const route=String(input?.url??input).split('?')[0];if(route.endsWith('/actions'))testActions.push(Date.now());const answer=demoFetch.call(this,input,init);if(!route.endsWith('/providers')||!localStorage.getItem('testBreakCard'))return answer;return answer.then((r)=>r.json()).then((body)=>{const shell=body.providers.find((p)=>p.id==='shell');body.providers.push({...shell,id:'terminal-ai-chat',tool:'Terminal AI Chat',vendor:'Odd Essentials'});return new Response(JSON.stringify(body),{status:200,headers:{'Content-Type':'application/json'}});});};
+window.fetch=function(input,init){const route=String(input?.url??input).split('?')[0];if(route.endsWith('/actions'))testActions.push(Date.now());if(route.endsWith('/providers/optional'))return Promise.resolve(new Response(JSON.stringify({cards:[{id:'terminal-ai-chat',vendor:'Odd Essentials',tool:'Terminal AI Chat',added:false}]}),{status:200,headers:{'Content-Type':'application/json'}}));const answer=demoFetch.call(this,input,init);if(!route.endsWith('/providers')||!localStorage.getItem('testBreakCard'))return answer;return answer.then((r)=>r.json()).then((body)=>{const shell=body.providers.find((p)=>p.id==='shell');body.providers.push({...shell,id:'terminal-ai-chat',tool:'Terminal AI Chat',vendor:'Odd Essentials'});return new Response(JSON.stringify(body),{status:200,headers:{'Content-Type':'application/json'}});});};
 const RealTerminal=window.Terminal;
 window.Terminal=class extends RealTerminal {
   constructor(...args){super(...args);testTerms.push(this);}
@@ -155,6 +155,8 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   [true, 'false', true, true, true, true, false, false, false]);
   await click('#cards-open');
   await until('the cards menu opens', () => evaluate('document.querySelector("#cards-menu").matches(":popover-open")'));
+  await until('the optional cards are listed', () => evaluate('Boolean(document.querySelector("#cards-more input[value=\'terminal-ai-chat\']"))'));
+  assert.equal(await evaluate('document.querySelector("#cards-more input[value=\'terminal-ai-chat\']").parentElement.textContent'), 'Odd Essentials');
   await click('#cards-shown input[value="xai"]');
   assert.deepEqual(await cardIds(), allCards.filter((id) => id !== 'xai'));
   assert.equal(await evaluate('document.querySelector("#cards-open").textContent'), 'Cards · 1 hidden');

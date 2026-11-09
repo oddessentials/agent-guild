@@ -2657,7 +2657,7 @@ function renderMoreCards() {
       input.type = 'checkbox';
       input.name = 'optional-card';
       input.value = card.id;
-      const label = el('label', 'choice', input, el('span', '', card.tool));
+      const label = el('label', 'choice', input, el('span', '', card.vendor));
       label.title = `${card.vendor} ${card.tool}`;
       return label;
     }));
