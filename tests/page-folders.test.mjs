@@ -101,14 +101,18 @@ test('choosing opens at the field value and lists the folders there, hidden ones
 test('a first piece choice opens in World’s Workshop folder, later ones where the last choice worked', async () => {
   const workshop = '/steam/steamapps/workshop/content/5462970';
   const home = { ...listing, path: '/home/me', workshop, pieces: [] };
-  const there = { ...listing, path: workshop, entries: [], workshop, pieces: [{ title: 'Turkeys', folder: '3825906265', path: `${workshop}/3825906265` }] };
+  const there = { ...listing, path: workshop, entries: [], workshop, pieces: [{ title: 'Turkeys', folder: '3825906265', path: `${workshop}/3825906265` }, { title: 'Future', folder: '3825906266', path: `${workshop}/3825906266`, problem: 'This piece needs a newer Agent Guild.' }] };
   const first = page({ answers: [home, there, home] });
   first.context.chooseFolder('companion', 'guild', 'companion');
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(first.requests.map(([, route]) => route), ['/folders?path=&pieces=companion', `/folders?path=${encodeURIComponent(workshop)}&pieces=companion`]);
   assert.equal(first.$('folder-current').textContent, workshop);
   assert.equal(first.$('folder-workshop').hidden, false);
-  assert.deepEqual(first.$('folder-list').children.map((row) => row.className), ['folder-row folder-piece']);
+  assert.deepEqual(first.$('folder-list').children.map((row) => row.className), ['folder-row folder-piece', 'folder-row folder-piece']);
+  const future = first.$('folder-list').children[1];
+  assert.equal(future.attrs['aria-disabled'], 'true');
+  assert.deepEqual(future.children.map((part) => part.textContent), ['Future', '3825906266 · This piece needs a newer Agent Guild.']);
+  assert.equal(first.$('folder-status').textContent, '', 'a newer piece is not reported as no pieces');
   await first.context.browseTo('/home/me');
   assert.equal(first.$('folder-current').textContent, '/home/me', 'the shortcut does not hold the browser there');
   const later = page({ answers: [{ ...listing, workshop, pieces: [] }] });

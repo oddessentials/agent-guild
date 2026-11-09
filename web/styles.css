@@ -1410,6 +1410,7 @@ body:has(#terminal-panel:not([hidden]) .terminal-controls:not([hidden])) .toast 
 .folder-row.hidden-folder { color: var(--muted); }
 .folder-row.folder-piece { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0 10px; }
 .folder-row.folder-piece::before { grid-row: span 2; width: 14px; height: 14px; border-radius: 50%; border-color: var(--accent); background: color-mix(in srgb, var(--accent) 25%, transparent); }
+.folder-row.folder-piece[aria-disabled="true"] { cursor: default; background: none; color: var(--muted); }
 .folder-piece-title { font-weight: 600; }
 .folder-piece-sub { color: var(--muted); font-size: 0.8rem; }
 .yard-customize { width: min(560px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); }

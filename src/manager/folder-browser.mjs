@@ -5,7 +5,7 @@ import { readManifest } from './yard-pieces.mjs';
 
 const failure = (status, code, message) => Object.assign(new Error(message), { status, code });
 const PIECE_SCAN = 500;
-const byName =(a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true }) || (a.name < b.name ? -1 : 1);
+const byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true }) || (a.name < b.name ? -1 : 1);
 
 export function folderSegments(dir, paths = path) {
   const root = paths.parse(dir).root;
@@ -86,8 +86,16 @@ export function createFolderBrowser({ platform = process.platform, home = os.hom
     try {
       const stat = await fsp.lstat(file);
       if (!stat.isFile() || stat.size > 16 * 1024) return null;
-      const { title } = readManifest(await fsp.readFile(file), kind);
-      return { title: title || paths.basename(dir), folder: paths.basename(dir), path: dir };
+      const bytes = await fsp.readFile(file), folder = paths.basename(dir);
+      try {
+        const { title } = readManifest(bytes, kind);
+        return { title: title || folder, folder, path: dir };
+      } catch (err) {
+        const meta = err.newer ? JSON.parse(bytes.toString('utf8')) : null;
+        if (meta?.kind !== kind) return null;
+        const title = typeof meta.title === 'string' && meta.title.length <= 128 && !/\p{Cc}/u.test(meta.title) ? meta.title.trim() : '';
+        return { title: title || folder, folder, path: dir, problem: err.message };
+      }
     } catch {
       return null;
     }

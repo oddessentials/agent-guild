@@ -472,12 +472,14 @@ test('the folder dialog lists matching pieces here and one level down, by title'
   folder({ name: 'workshop/3003', title: '' });
   folder({ name: 'workshop/3004', kind: 'companion', title: 'Moths' });
   folder({ name: 'workshop/3005/deeper', title: 'Too deep' });
+  folder({ name: 'workshop/3006', manifest: JSON.stringify({ format: 2, kind: 'character', title: 'Future' }) });
+  folder({ name: 'workshop/3007', manifest: JSON.stringify({ format: 2, kind: 'companion', title: 'Future moths' }) });
   fs.writeFileSync(path.join(root, 'workshop', 'piece.json'), '{');
   const browser = createFolderBrowser({ home: root, workshop: async () => library });
   const listing = await browser.list(library, { pieces: 'character' });
   assert.equal(listing.workshop, library);
-  assert.deepEqual(listing.pieces.map(({ title, folder: name }) => [title, name]), [['3003', '3003'], ['giant', '3001'], ['Giant', '3002']]);
-  assert.deepEqual((await browser.list(library, { pieces: 'companion' })).pieces.map((piece) => piece.title), ['Moths']);
+  assert.deepEqual(listing.pieces.map(({ title, folder: name, problem }) => [title, name, problem]), [['3003', '3003', undefined], ['Future', '3006', 'This piece needs a newer Agent Guild.'], ['giant', '3001', undefined], ['Giant', '3002', undefined]]);
+  assert.deepEqual((await browser.list(library, { pieces: 'companion' })).pieces.map((piece) => piece.title), ['Future moths', 'Moths']);
   assert.deepEqual((await browser.list(path.join(library, '3004'), { pieces: 'companion' })).pieces.map((piece) => piece.path), [path.join(library, '3004')]);
   assert.equal((await browser.list(library)).pieces, undefined);
 });

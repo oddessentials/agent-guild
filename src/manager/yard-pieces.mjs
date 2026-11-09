@@ -20,7 +20,7 @@ const invalid = (message) => failure(400, 'piece_invalid', message);
 
 function checkManifest(meta, kind) {
   if (!meta || typeof meta !== 'object' || Array.isArray(meta)) throw invalid('This piece’s details can’t be read.');
-  if (meta.format !== 1) throw invalid(Number.isInteger(meta.format) && meta.format > 1 ? 'This piece needs a newer Agent Guild.' : 'This piece’s format is missing.');
+  if (meta.format !== 1) throw Number.isInteger(meta.format) && meta.format > 1 ? Object.assign(invalid('This piece needs a newer Agent Guild.'), { newer: true }) : invalid('This piece’s format is missing.');
   if (meta.kind !== 'character' && meta.kind !== 'companion') throw invalid('This isn’t a character or companion piece.');
   if (meta.kind !== kind) throw invalid(kind === 'character' ? 'This is a companion piece, not a character.' : 'This is a character piece, not a companion.');
   if (meta.title !== undefined && (typeof meta.title !== 'string' || meta.title.length > 128 || /\p{Cc}/u.test(meta.title))) throw invalid('This piece’s title is too long or unreadable.');

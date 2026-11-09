@@ -42,7 +42,7 @@ const QUANTIZED_FORMS = {
   TANGENT: [SIGNED.normalByte, SIGNED.normalShort],
   TEXCOORD: [SIGNED.byte, SIGNED.normalByte, UNSIGNED.byte, SIGNED.short, SIGNED.normalShort, UNSIGNED.short],
 };
-const TRACKS ={ translation: 'VEC3', rotation: 'VEC4', scale: 'VEC3' };
+const TRACKS = { translation: 'VEC3', rotation: 'VEC4', scale: 'VEC3' };
 const METADATA = ['name', 'extras'];
 const PROPERTIES = {
   accessor: ['bufferView', 'byteOffset', 'componentType', 'normalized', 'count', 'type', 'max', 'min', 'sparse', ...METADATA],
@@ -83,7 +83,7 @@ function decoder(type) {
   return decoders.get(type);
 }
 
-const invalid = (message) =>Object.assign(new Error(message), { status: 400, code: 'piece_invalid' });
+const invalid = (message) => Object.assign(new Error(message), { status: 400, code: 'piece_invalid' });
 
 export function imageSize(b) {
   if (b.length >= 24 && b.readUInt32BE(0) === 0x89504e47 && b.toString('latin1', 12, 16) === 'IHDR') return [b.readUInt32BE(16), b.readUInt32BE(20)];
@@ -166,7 +166,7 @@ function checkJson(json, name, limit, bin) {
     for (const sampler of Array.isArray(animation.samplers) ? animation.samplers : []) allowed('sampler', sampler);
     for (const channel of Array.isArray(animation.channels) ? animation.channels : []) { allowed('channel', channel); allowed('target', channel.target); }
   }
-  const missing =() => invalid(`${name} refers to data it doesn’t contain.`);
+  const missing = () => invalid(`${name} refers to data it doesn’t contain.`);
   const multiplied = () => invalid(`${name} reuses its data in a way that would multiply its size.`);
   const index = (value, list) => Number.isInteger(value) && value >= 0 && value < (Array.isArray(list) ? list.length : 0);
   const length = (value) => Number.isSafeInteger(value) && value >= 0;

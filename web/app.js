@@ -1559,9 +1559,10 @@ function renderFolderBrowser() {
     row.title = file.path;
     return row;
   }), ...(listing?.pieces ?? []).filter((piece) => !query || piece.title.toLowerCase().includes(query) || piece.folder.toLowerCase().includes(query)).map((piece) => {
-    const row = button('', () => usePiece(piece.path), 'folder-row folder-piece');
+    const row = button('', () => { if (!piece.problem) usePiece(piece.path); }, 'folder-row folder-piece');
+    if (piece.problem) row.setAttribute('aria-disabled', 'true');
     row.append(Object.assign(document.createElement('span'), { className: 'folder-piece-title', textContent: piece.title }),
-      Object.assign(document.createElement('span'), { className: 'folder-piece-sub', textContent: `${folderView.field === 'character' ? 'Character' : 'Companion'} · ${piece.folder}` }));
+      Object.assign(document.createElement('span'), { className: 'folder-piece-sub', textContent: piece.problem ? `${piece.folder} · ${piece.problem}` : `${folderView.field === 'character' ? 'Character' : 'Companion'} · ${piece.folder}` }));
     row.title = piece.path;
     return row;
   }));
