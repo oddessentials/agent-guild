@@ -24,7 +24,7 @@ const HIDDEN = '[token hidden]';
 // 64 bits of the known token; leave colors, short hashes and 12-digit session ids readable.
 const MIN_TOKEN_FRAGMENT = 16;
 
-const CUSTOMIZE = 'To customize a Yard, or the characters and companions of Agent Guild: World, follow https://agentguild.oddessentials.ai/agents/.';
+const CUSTOMIZE = 'To customize a Yard or the characters and companions of Agent Guild: World, or to install Grove Companion on the desktop, follow https://agentguild.oddessentials.ai/agents/.';
 
 const INSTRUCTIONS = `Agent Guild runs coding agents (Claude Code, Codex CLI, Antigravity CLI, Grok Build, Docker Agent) and shells in real terminals on this computer, and opens them on every other screen.
 Use guild_status first, list_sessions to see the sessions, read_reply for the answer that ended a session's last turn, and read_screen for what its terminal shows now.
