@@ -554,14 +554,14 @@ export function vibeStop(id, n, providers, props = [], frame = null) {
   }
   return { x: STAGING.plaza.x, z: round(STAGING.plaza.z + STAGING.plaza.half + margin + STAGING.station.half) };
 }
-export function vibeFlight(key, seconds, frame) {
-  const { height, lap, reach, top } = VIBE.flight, { right, up, forward } = viewBasis();
+export function vibeFlight(key, seconds, frame, companionHeight = 1) {
+  const { height, lap, reach, top, scale } = VIBE.flight, { right, up, forward } = viewBasis();
   const pick = (name, [low, high]) => low + unit(key + ':vibe:' + name) * (high - low);
   const out = pick('reach', reach), turn = unit(key + ':vibe:turn') < .5 ? 1 : -1, lobes = 2 + Math.floor(unit(key + ':vibe:lobes') * 3);
   const angle = turn * 2 * Math.PI * (seconds / pick('lap', lap) + unit(key + ':vibe:start'));
   const wide = out * (1 + .12 * Math.sin(lobes * angle + pick('phase', [0, 2 * Math.PI]))) / 1.12;
   const y = (height[0] + height[1]) / 2 + (height[1] - height[0]) / 2 * Math.sin(2 * angle + pick('rise', [0, 2 * Math.PI]));
-  const [r0, r1] = frame.right, u0 = frame.up[0], u1 = frame.up[1] - top;
+  const [r0, r1] = frame.right, u0 = frame.up[0], u1 = frame.up[1] - Math.max(top, companionHeight * scale * up[1]);
   const r = (r0 + r1) / 2 + Math.cos(angle) * Math.max(0, r1 - r0) / 2 * wide;
   const u = (u0 + u1) / 2 + Math.sin(angle) * Math.max(0, u1 - u0) / 2 * wide;
   const s = (y - frame.target[1] - u * up[1]) / forward[1];

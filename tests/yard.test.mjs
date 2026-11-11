@@ -265,6 +265,19 @@ test('Vibes Mode flies each helper its own smooth loop across what the overview 
  assert.deepEqual(vibeFlight('s0:a1',12.5,frame),vibeFlight('s0:a1',12.5,frame));
  assert.notDeepEqual(vibeFlight('s0:a1',12.5,frame),vibeFlight('s0:a2',12.5,frame));
 });
+test('Vibes flight reserves the scaled projected height of supported companions',()=>{
+ const {up}=viewBasis();
+ for(const frame of [vibeFrame(900/700,90/700,120/700),vibeFrame(360/780,90/780,195/780)])for(const height of [.1,1.1,5]){
+  const top=height*VIBE.flight.scale*up[1];let last=null;
+  for(let step=0;step<=880;step++){
+   const p=vibeFlight('s0:a1',step*.05,frame,height),v=inView(frame,p);
+   assert.ok(v.u+top<=frame.up[1]+1e-9&&v.u>=frame.up[0]-1e-9,`height ${height}, step ${step}`);
+   if(last)assert.ok(Math.hypot(p.x-last.x,p.y-last.y,p.z-last.z)<1.5,'height-aware flight stays smooth');
+   if(height===1.1)assert.deepEqual(p,vibeFlight('s0:a1',step*.05,frame),'default companions keep their flight');
+   last=p;
+  }
+ }
+});
 test('the staging contract matches its golden vectors',()=>{
  const golden=JSON.parse(readFileSync(new URL('./fixtures/yard-choreography.json',import.meta.url),'utf8'));
  assert.deepEqual(JSON.parse(JSON.stringify(goldenVectors())),golden,'run node scripts/yard-golden.mjs --write only for a deliberate contract change (docs/yard/CONTRACT.md)');

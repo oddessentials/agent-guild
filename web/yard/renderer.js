@@ -1024,7 +1024,7 @@ export class YardRenderer {
     // Helpers trail their character, closing most of the gap in a second.
     const pull=1-Math.exp(-4*dt);
     for(const helper of unit.helpers){
-      const to=vibing?vibeFlight(unit.session.id+':'+helper.id,this.vibeTime,this.vibeFrames.flight):{x:root.x+helper.offset.x,y:.27,z:root.z+helper.offset.z};
+      const to=vibing?vibeFlight(unit.session.id+':'+helper.id,this.vibeTime,this.vibeFrames.flight,helper.height):{x:root.x+helper.offset.x,y:.27,z:root.z+helper.offset.z};
       const p=helper.model.position,dx=to.x-p.x,dy=to.y-p.y,dz=to.z-p.z,far=Math.hypot(dx,dz);
       const size=vibing?VIBE.flight.scale:.45,grow=size-helper.model.scale.x;
       p.x+=dx*pull;p.y+=dy*pull;p.z+=dz*pull;
@@ -1192,9 +1192,15 @@ export class YardRenderer {
     const kinds=WORLDS[this.skin].helpers,source=this.pieceSource('companion');
     const signature=JSON.stringify([source?.revision??null,agents]);
     if(unit.helperSignature===signature)return;
-    this.clearHelpers(unit);
+    const shown=agents.slice(0,SHOWN_HELPERS);
+    unit.helpers=unit.helpers.filter(helper=>{
+      if(shown.some(agent=>agent.id===helper.id))return true;
+      unit.crew.remove(helper.model);helper.mixer.stopAllAction();helper.mixer.uncacheRoot(helper.model);disposeSkeletons(helper.model);
+      return false;
+    });
     unit.helperSignature=signature;
-    const rev=unit.revision,generation=this.request;
+    const rev=++unit.revision,generation=this.request;
+    this.dirty=true;this.drawOnce();
     const stale=()=>this.disposed||generation!==this.request||rev!==unit.revision||!unit.root.parent;
     let pieces=null;
     if(source&&agents.length){
@@ -1209,14 +1215,21 @@ export class YardRenderer {
     }
     // The full helper count and all helper details remain in the canonical inspector.
     // Small squads preserve readable character silhouettes at the overview scale.
-    await Promise.all(agents.slice(0,SHOWN_HELPERS).map(async(agent,i)=>{
+    await Promise.all(shown.map(async(agent,i)=>{
+      const offset=helperOffset(i,agents.length),existing=unit.helpers.find(helper=>helper.id===agent.id);
+      if(existing){
+        existing.offset=offset;existing.pose=agent.pose;
+        if(this.reduced)existing.model.position.set(unit.root.position.x+offset.x,.27,unit.root.position.z+offset.z);
+        if(!existing.moving&&!this.vibing())this.helperClip(existing,agent.pose);
+        this.dirty=true;this.drawOnce();
+        return;
+      }
       try {
         const n=hash(agent.name||agent.id)%4;
         const asset=pieces?pieces[n]:await this.asset((agent.shell?kinds.shell:kinds.agent)+n);
         if(stale())return;
         const model=T.cloneSkeleton(asset.scene);
         model.traverse(n=>{if(n.isSkinnedMesh)n.frustumCulled=false;});
-        const offset=helperOffset(i,agents.length);
         model.scale.setScalar(.45);model.position.set(unit.root.position.x+offset.x,.27,unit.root.position.z+offset.z);
         unit.crew.add(model);
         const mixer=new T.AnimationMixer(model);
@@ -1227,8 +1240,6 @@ export class YardRenderer {
         unit.helpers.push(helper);
         this.dirty=true;this.drawOnce();
       } catch {
-        // The next state transition can rebuild this incomplete squad. Routine
-        // unchanged updates do not call helpers(), so failure cannot loop.
         if(!stale())unit.helperSignature=null;
       }
     }));

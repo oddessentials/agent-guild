@@ -2088,6 +2088,104 @@ test('the row being replaced says Checking replacement until the check answers',
   await b.wait(status+"==='Customized: Mine'");
   assert.deepEqual(b.errors,[]);
 });
+test('Vibes helpers retain transforms and animation through status, membership and landing updates',options,async t=>{
+  const {f,b}=await setup(t),now=Date.parse('2026-10-13T12:00:00.000Z');
+  const s={...f.data.values().next().value,id:'s0',activity:'active',createdAt:new Date(now-3600000).toISOString(),lastOutputAt:new Date(now).toISOString(),agents:[{id:'a1',name:'Explorer',status:'working'}],shells:[]};
+  await b.evaluate(`(async()=>{
+    const {YardRenderer}=await import('/yard/renderer.js');
+    const host=document.createElement('div'),labels=document.createElement('div');host.style.cssText='position:fixed;width:900px;height:700px;top:0;left:0';host.append(labels);document.body.append(host);
+    window.__helperRenderer=new YardRenderer(host,labels,{select(){},open(){},clock:()=>${now}});
+    window.__helperSession=${q(s)};window.__helperProviders=${q(f.providers)};
+    await __helperRenderer.setWorld('guild','dark');__helperRenderer.update(__helperProviders,[__helperSession]);
+    window.__helperUnit=__helperRenderer.units.get('s0');window.__survivor=()=>__helperUnit.helpers.find(h=>h.id==='a1');
+    window.__helperState=()=>{const h=__survivor();return {model:h.model.uuid,position:h.model.position.toArray(),rotation:h.model.quaternion.toArray(),scale:h.model.scale.toArray(),mixer:h.mixer.time,clip:h.action.getClip().name,time:h.action.time,weight:h.action.getEffectiveWeight()};};
+    window.__helperStep=n=>{for(let i=0;i<n;i++)__helperRenderer.step(.05);};
+    window.__helperUpdate=()=>__helperRenderer.update(__helperProviders,[__helperSession]);
+  })()`);
+  t.after(()=>b.evaluate('__helperRenderer.dispose();__helperRenderer.host.remove()'));
+  await b.wait('__helperUnit.loaded&&__helperUnit.helpers.length===1');
+  const before=await b.evaluate('(__helperRenderer.setVibe(true),__helperStep(600),__helperState())');
+  assert.ok(before.position[1]>8&&before.scale[0]===1.3);
+  assert.equal(before.clip,'move');
+  await b.evaluate("__helperSession.agents[0].status='waiting';__helperUpdate()");
+  await b.wait("__survivor()?.pose==='waiting'");
+  assert.deepEqual(await b.evaluate('__helperState()'),before,'a status update must not reset the airborne model or animation');
+  await b.evaluate("__helperSession.agents.unshift({id:'a2',name:'Builder',status:'working'});__helperUpdate()");
+  await b.wait('__helperUnit.helpers.length===2');
+  assert.deepEqual(await b.evaluate('__helperState()'),before,'joining peers do not reset a surviving helper');
+  assert.deepEqual(await b.evaluate("(h=>[h.model.position.y,h.model.scale.x])(__helperUnit.helpers.find(h=>h.id==='a2'))"),[.27,.45],'new helpers start normally');
+  const airborne=await b.evaluate(`(()=>{
+    __helperStep(200);window.__removedHelper=__helperUnit.helpers.find(h=>h.id==='a2');window.__helperDisposed=0;
+    const skeletons=new Set();__removedHelper.model.traverse(n=>{if(n.skeleton)skeletons.add(n.skeleton);});
+    for(const skeleton of skeletons){const dispose=skeleton.dispose.bind(skeleton);skeleton.dispose=()=>{__helperDisposed++;dispose();};}
+    return __helperState();
+  })()`);
+  await b.evaluate('__helperSession.agents.splice(0,1);__helperUpdate()');
+  await b.wait('__helperUnit.helpers.length===1');
+  assert.deepEqual(await b.evaluate('__helperState()'),airborne,'leaving peers do not reset a surviving helper');
+  assert.deepEqual(await b.evaluate('[__removedHelper.model.parent===null,!__removedHelper.action.isRunning(),__helperDisposed>0]'),[true,true,true]);
+  const landing=await b.evaluate('(__helperRenderer.setVibe(false),__helperStep(1),__helperState())');
+  assert.ok(landing.position[1]<airborne.position[1]&&landing.position[1]>.27&&landing.scale[0]>.45,'landing starts smoothly');
+  await b.evaluate("__helperSession.agents[0].status='done';__helperUpdate()");
+  await b.wait("__survivor()?.pose==='done'");
+  assert.deepEqual(await b.evaluate('__helperState()'),landing,'an update during landing preserves its progress');
+  const landed=await b.evaluate(`(()=>{__helperStep(1600);const h=__survivor(),p=__helperUnit.root.position;return {y:h.model.position.y,scale:h.model.scale.x,dx:h.model.position.x-p.x,dz:h.model.position.z-p.z,clip:h.action.getClip().name};})()`);
+  assert.ok(Math.abs(landed.y-.27)<1e-9&&landed.scale===.45&&Math.abs(landed.dx-.82)<1e-9&&Math.abs(landed.dz)<1e-9,'resting positions and scale stay unchanged');
+  assert.equal(landed.clip,'done');
+  await b.evaluate("__helperSession.agents[0].status='waiting';__helperUpdate()");
+  await b.wait("__survivor()?.pose==='waiting'");
+  assert.equal(await b.evaluate('__survivor().action.getClip().name'),'waiting','stationary helpers still reflect their status');
+  assert.deepEqual(b.errors,[]);
+});
+
+test('Vibes flight keeps a supported five-metre custom companion below the heading and above controls',options,async t=>{
+  const temp=await fs.mkdtemp(path.join(os.tmpdir(),'guild-tall-companion-'));t.after(()=>fs.rm(temp,{recursive:true,force:true}));
+  const glb=await fs.readFile(path.join(PIECE_FILES,'companion.glb')),size=glb.readUInt32LE(12),json=JSON.parse(glb.toString('utf8',20,20+size));
+  json.nodes[0].extras.yard.height=5;json.nodes[0].scale=[1,5/1.6,1];
+  const text=Buffer.from(JSON.stringify(json)),padded=Buffer.concat([text,Buffer.alloc((4-text.length%4)%4,0x20)]),head=Buffer.from(glb.subarray(0,20)),binary=glb.subarray(20+size);
+  head.writeUInt32LE(20+padded.length+binary.length,8);head.writeUInt32LE(padded.length,12);
+  const file=path.join(temp,'companion.glb');await fs.writeFile(file,Buffer.concat([head,padded,binary]));
+  const {checkModels}=await import('../../src/manager/yard-piece-check.mjs');await checkModels([{path:file,name:'companion.glb'}],'companion');
+  const yardPieces=fakePieces({guild:{companion:{revision:'tall'}}},{companion:file}),{f,b}=await setup(t,{yardPieces}),now=Date.parse('2026-10-13T12:00:00.000Z');
+  const s={...f.data.values().next().value,id:'s0',activity:'active',createdAt:new Date(now-3600000).toISOString(),lastOutputAt:new Date(now).toISOString(),agents:[{id:'a1',name:'Explorer',status:'working'}],shells:[]};
+  await b.evaluate(`(async()=>{
+    const {YardRenderer}=await import('/yard/renderer.js');
+    const host=document.createElement('div'),labels=document.createElement('div'),top=document.createElement('div'),bottom=document.createElement('div');
+    host.style.cssText='position:fixed;width:900px;height:700px;top:0;left:0';top.style.cssText='position:absolute;top:0;width:100%;height:90px';bottom.style.cssText='position:absolute;bottom:0;width:100%;height:120px';
+    host.append(labels,top,bottom);document.body.append(host);window.__flightBottom=bottom;
+    window.__flightRenderer=new YardRenderer(host,labels,{select(){},open(){},clock:()=>${now},cover:[top,bottom]});
+    __flightRenderer.setPieces('guild',{companion:{revision:'tall'}});await __flightRenderer.setWorld('guild','dark');__flightRenderer.update(${q(f.providers)},[${q(s)}]);
+    window.__flightUnit=__flightRenderer.units.get('s0');
+  })()`);
+  t.after(()=>b.evaluate('__flightRenderer.dispose();__flightRenderer.host.remove()'));
+  await b.wait('__flightUnit.loaded&&__flightUnit.helpers.length===1');
+  assert.equal(await b.evaluate('__flightUnit.helpers[0].height'),5);
+  await b.evaluate('__flightRenderer.setVibe(true)');
+  for(const [width,height,bottom] of [[900,700,120],[360,780,195]]){
+    const result=await b.evaluate(`(()=>{
+      const r=__flightRenderer,h=__flightUnit.helpers[0],position=h.model.position.clone();r.host.style.width='${width}px';r.host.style.height='${height}px';__flightBottom.style.height='${bottom}px';r.resize();const resizeJump=position.distanceTo(h.model.position);
+      for(let i=0;i<200;i++)r.step(.05);
+      const v=h.model.position.clone(),project=y=>{v.copy(h.model.position);v.y+=y;v.project(r.camera);return {x:(v.x+1)*${width}/2,y:(1-v.y)*${height}/2};};
+      let highest=Infinity,lowest=-Infinity,meshHighest=Infinity,meshLowest=-Infinity,maxStep=0;
+      for(let i=0;i<880;i++){
+        const before=h.model.position.clone();r.step(.05);maxStep=Math.max(maxStep,before.distanceTo(h.model.position));
+        highest=Math.min(highest,project(h.height*h.model.scale.y).y);lowest=Math.max(lowest,project(0).y);
+        h.model.updateMatrixWorld(true);h.model.traverse(node=>{
+          if(!node.isMesh)return;if(node.skeleton)node.skeleton.update();
+          for(let j=0;j<node.geometry.attributes.position.count;j++){node.getVertexPosition(j,v);node.localToWorld(v);v.project(r.camera);const y=(1-v.y)*${height}/2;meshHighest=Math.min(meshHighest,y);meshLowest=Math.max(meshLowest,y);}
+        });
+      }
+      return {highest,lowest,meshHighest,meshLowest,maxStep,resizeJump,scale:h.model.scale.y};
+    })()`);
+    assert.ok(result.highest>=90,`model top overlaps heading: ${JSON.stringify(result)}`);
+    assert.ok(result.lowest<=height-bottom,`model base overlaps controls: ${JSON.stringify(result)}`);
+    assert.ok(result.meshHighest>=90&&result.meshLowest<=height-bottom,`animated companion mesh overlaps the overlays: ${JSON.stringify(result)}`);
+    assert.equal(result.resizeJump,0,'resizing does not teleport the helper');
+    assert.ok(result.maxStep<1.5&&result.scale===1.3,'flight remains smooth at the original scale');
+  }
+  assert.deepEqual(b.errors,[]);
+});
+
 test('Vibes Mode sets every character wandering and every helper flying, and turning it off or reducing motion puts them back',options,async t=>{
   const {f,b}=await setup(t);
   const T0=Date.parse('2026-10-13T12:00:00.000Z'),iso=ms=>new Date(T0-ms).toISOString();
