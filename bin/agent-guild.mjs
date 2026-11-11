@@ -66,15 +66,22 @@ function portOf(url) {
   return parsed.port ? Number(parsed.port) : parsed.protocol === 'https:' ? 443 : 80;
 }
 
-async function health(url, timeoutMs = 1000) {
+/** The manager's health, `{ busy: pid }` when the manager its runtime file names for `url` runs but did not answer in time, or null. */
+async function reach(url, timeoutMs = 1000) {
   try {
     const res = await fetch(`${url}/api/v1/health`, { signal: AbortSignal.timeout(timeoutMs) });
     if (!res.ok) return null;
     const body = await res.json();
     return body?.name === 'agent-guild' ? body : null;
-  } catch {
-    return null;
+  } catch (err) {
+    const owner = err.name === 'TimeoutError' ? readRuntimeFile() : null;
+    return owner?.url === url && running(owner.pid) ? { busy: owner.pid } : null;
   }
+}
+
+async function health(url, timeoutMs = 1000) {
+  const found = await reach(url, timeoutMs);
+  return found?.busy ? null : found;
 }
 
 function pageUrl(url, token) {
@@ -114,7 +121,7 @@ async function ensureManager({ port = null } = {}) {
   // A pinned port is the endpoint to serve, so it is also the one to check;
   // a manager found anywhere else is not the one asked for.
   const knownUrl = port === null ? baseUrl() : expectedUrl;
-  const answering = await health(knownUrl);
+  const answering = await reach(knownUrl);
   if (answering) return { url: knownUrl, started: false, version: answering.version };
 
   // Say why no manager can run here rather than start one that fails.
@@ -209,13 +216,13 @@ async function waitForExit(pid, timeoutMs = 15000) {
 
 async function cmdStop() {
   const url = baseUrl();
-  const h = await health(url);
+  const h = await reach(url);
   if (!h) {
     console.log('Session manager is not running.');
     return;
   }
   await requestShutdown(url);
-  if (await waitForExit(h.pid)) {
+  if (await waitForExit(h.busy ?? h.pid)) {
     console.log('Session manager stopped.');
     return;
   }
@@ -225,13 +232,14 @@ async function cmdStop() {
 
 async function cmdRestart() {
   const url = baseUrl();
-  const before = await health(url);
-  if (!before) {
+  const found = await reach(url);
+  if (!found) {
     // Nothing to stop: a restart of a stopped manager is a start.
     const { url: started, version } = await ensureManager();
     console.log(`Session manager was not running; started Agent Guild ${version} at ${started}.`);
     return;
   }
+  const before = found.busy ? { pid: found.busy } : found;
   const { restart } = await requestShutdown(url, { restart: true });
   if (!restart) {
     // A manager from before restarts stops without starting a successor,
@@ -239,7 +247,7 @@ async function cmdRestart() {
     if (!(await waitForExit(before.pid))) throw new Error('the session manager did not stop, so it could not be restarted.');
     // On the port the old one served, which an ephemeral port setting would otherwise lose.
     const { url: started, version } = await ensureManager({ port: portOf(url) });
-    const changed = version !== before.version ? `, now Agent Guild ${version} (was ${before.version})` : '';
+    const changed = before.version && version !== before.version ? `, now Agent Guild ${version} (was ${before.version})` : '';
     console.log(`Session manager restarted at ${started}${changed}.`);
     return;
   }
@@ -250,7 +258,7 @@ async function cmdRestart() {
     await new Promise((r) => setTimeout(r, 250));
     const now = await health(url, 500);
     if (now && now.pid !== before.pid) {
-      const changed = now.version !== before.version ? `, now Agent Guild ${now.version} (was ${before.version})` : '';
+      const changed = before.version && now.version !== before.version ? `, now Agent Guild ${now.version} (was ${before.version})` : '';
       console.log(`Session manager restarted at ${url}${changed}.`);
       return;
     }
@@ -261,7 +269,12 @@ async function cmdRestart() {
 
 async function cmdStatus() {
   const url = baseUrl();
-  const h = await health(url);
+  const h = await reach(url);
+  if (h?.busy) {
+    console.log(`Session manager running at ${url} (pid ${h.busy}) did not answer in time.`);
+    process.exitCode = 1;
+    return;
+  }
   if (!h) {
     console.log('Session manager is not running.');
     // With no manager to ask, the boot service is read from systemd directly.
@@ -294,7 +307,7 @@ async function cmdStatus() {
 
 async function cmdFireworks() {
   const url = baseUrl();
-  if (!(await health(url))) {
+  if (!(await reach(url))) {
     console.log('Session manager is not running.');
     process.exitCode = 3;
     return;

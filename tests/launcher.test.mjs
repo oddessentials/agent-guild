@@ -397,6 +397,36 @@ test('stop fails when the manager has not exited by the end of its wait', async 
   assert.equal(running(fake.pid), true, 'the manager still runs');
 });
 
+test('a manager whose health check times out is busy, not gone: open starts no second one, status and stop find it, restart replaces it', async (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-launcher-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }));
+  fs.writeFileSync(path.join(home, 'providers.json'), JSON.stringify({ providers: [{ id: 'openai', usage: null, reporting: null }] }));
+  const busy = await fakeManager(t, home, '0.0.1', 'busy');
+  const busyEnv = { ...env, AGENT_GUILD_HOME: home, AGENT_GUILD_PORT: String(busy.port) };
+  const opened = await runWith(busyEnv, 'open', '--no-browser');
+  assert.equal(opened.code, 0, opened.stderr);
+  assert.match(opened.stdout, new RegExp(`Session manager already running at http://127\\.0\\.0\\.1:${busy.port}`));
+  assert.equal(fs.existsSync(path.join(home, 'manager.log')), false, 'no second manager was started');
+  const status = await runWith(busyEnv, 'status');
+  assert.equal(status.code, 1);
+  assert.match(status.stdout, new RegExp(`running at http://127\\.0\\.0\\.1:${busy.port} \\(pid ${busy.pid}\\) did not answer in time`));
+  const stopped = await runWith(busyEnv, 'stop');
+  assert.equal(stopped.code, 0, stopped.stderr);
+  assert.match(stopped.stdout, /Session manager stopped/);
+  assert.equal(running(busy.pid), false, 'the busy manager was stopped');
+
+  const again = await fakeManager(t, home, '0.0.1', 'busy');
+  const againEnv = { ...env, AGENT_GUILD_HOME: home, AGENT_GUILD_PORT: String(again.port) };
+  try {
+    const restarted = await runWith(againEnv, 'restart');
+    assert.equal(restarted.code, 0, restarted.stderr);
+    assert.match(restarted.stdout, new RegExp(`Session manager restarted at http://127\\.0\\.0\\.1:${again.port}\\.`));
+    assert.notEqual(JSON.parse(fs.readFileSync(path.join(home, 'manager.json'), 'utf8')).pid, again.pid);
+  } finally {
+    await runWith(againEnv, 'stop');
+  }
+});
+
 test('restart keeps an ephemeral port, and starts the manager itself when the old one only stops', async (t) => {
   // AGENT_GUILD_PORT=0: the successor must listen where the old manager did, not on another free port.
   const zeroHome = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-launcher-'));

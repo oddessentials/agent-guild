@@ -1,8 +1,8 @@
 // A stand-in session manager in a process of its own, so the launcher can wait for it to exit.
-//   node fake-manager.mjs <home> <version> [slow|stuck]
+//   node fake-manager.mjs <home> <version> [slow|stuck|busy]
 // Answers health with its own pid and writes <home>/manager.json, which goes when a shutdown is requested. It then
 // exits at once, or with `slow` 2 s later, answering no health check meanwhile, as a manager busy ending sessions;
-// with `stuck` it never exits.
+// with `stuck` it never exits. With `busy` it answers nothing but a shutdown.
 // Prints its port once listening.
 import fs from 'node:fs';
 import http from 'node:http';
@@ -22,7 +22,7 @@ const server = http.createServer((req, res) => {
     else setImmediate(() => { server.closeAllConnections(); server.close(() => process.exit(0)); });
     return;
   }
-  if (stopping) return;
+  if (stopping || mode === 'busy') return;
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ ok: true, name: 'agent-guild', version, pid: process.pid }));
 });
