@@ -436,7 +436,7 @@ export function clipFor(id, mode, n) {
 }
 export const VIBE = {
   // Must stay inside the ground every world keeps clear (Clearance.live_distance in agent-guild-builders).
-  roam: { radius: 13.2, half: 12.5, front: 24, margin: .9 },
+  roam: { radius: 13.2, half: 12.5, front: 24, split: 3, margin: .9 },
   flight: { height: [8.5, 12], lap: [26, 44], reach: [.45, 1], scale: 1.3 },
 };
 function unit(value) {
@@ -445,11 +445,12 @@ function unit(value) {
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
 export function vibeStop(id, n, providers, props = []) {
-  const { radius, half, front, margin } = VIBE.roam;
+  const { radius, half, front, split, margin } = VIBE.roam;
+  const [near, far] = (n + hash(id)) % 2 ? [split, front] : [-radius, split];
   const boxes = [...obstacles(providers).map(box => ({ ...box, half: box.half + margin })),
     ...props.map(p => ({ x: p.x, z: p.z, half: STAGING.station.half + margin }))];
   for (let k = 0; k < 48; k++) {
-    const x = round((unit(id + ':vibe:x:' + n + ':' + k) * 2 - 1) * radius), z = round(-radius + unit(id + ':vibe:z:' + n + ':' + k) * (radius + front));
+    const x = round((unit(id + ':vibe:x:' + n + ':' + k) * 2 - 1) * radius), z = round(near + unit(id + ':vibe:z:' + n + ':' + k) * (far - near));
     const clear = Math.hypot(x - STAGING.plaza.x, z - STAGING.plaza.z) <= radius || (Math.abs(x) <= half && z >= 0);
     if (clear && !boxes.some(box => Math.abs(x - box.x) < box.half && Math.abs(z - box.z) < box.half)) return { x, z };
   }
