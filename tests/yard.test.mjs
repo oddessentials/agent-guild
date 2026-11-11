@@ -192,6 +192,62 @@ test('Vibes Mode wanders only the ground every world keeps clear and the overvie
  const hidden=Array.from({length:60},(_,n)=>vibeStop('s0',n,custom,props,vibeFrame(16/9,.5,.5)));
  assert.equal(new Set(hidden.map(p=>p.x+','+p.z)).size,hidden.length,'with nothing visible, stops still spread over the clear ground');
 });
+test('crowded Vibes destinations stay visible on activation and after portrait resizing',()=>{
+ for(const provider of ['xai','openai']){
+  const crew=Array.from({length:24},(_,i)=>session('s'+i,provider));
+  const props=[...layoutSessions(crew,providers)].map(([id,p])=>stationProp(p,id));
+  for(const frame of [vibeFrame(16/9,.2,.15),vibeFrame(9/19.5,.17,.25)])for(const s of crew){
+   const stops=[];
+   for(let n=0;n<200;n++){
+    const p=vibeStop(s.id,n,providers,props,frame);stops.push(p.x+','+p.z);
+    assert.ok(inVibeFrame(frame,p.x,0,p.z)&&inVibeFrame(frame,p.x,VIBE.roam.head,p.z),`${provider} ${s.id} stop ${n}: ${JSON.stringify(p)}`);
+    assert.equal(keptClearBy(p.x,p.z),0);
+    assert.ok(props.every(b=>Math.abs(p.x-b.x)>=STAGING.station.half+VIBE.roam.margin||Math.abs(p.z-b.z)>=STAGING.station.half+VIBE.roam.margin));
+   }
+   assert.equal(new Set(stops).size,stops.length,'the crew keeps getting distinct destinations');
+  }
+ }
+});
+test('Vibes finds visible apron and circular slivers missed by rounded samples, including on the non-preferred side',()=>{
+ const {up}=viewBasis();
+ for(const center of [{x:6.123456,z:10.234567},{x:5.123456,z:-Math.sqrt(VIBE.roam.radius**2-5.123456**2)}]){
+ const target=[0,1,0],{r,u}=inView({target},center),gap=.00001;
+ const frame={target,right:[r-gap,r+gap],up:[u-gap,u+VIBE.roam.head*up[1]+gap]};
+ const rounded={x:Math.round(center.x*1000)/1000,z:Math.round(center.z*1000)/1000};
+ assert.ok(!inVibeFrame(frame,rounded.x,0,rounded.z),'no millimetre-rounded sample fits this opening');
+ for(const id of ['s0','s1'])for(let n=0;n<4;n++){
+  const p=vibeStop(id,n,providers,[],frame);
+  assert.ok(inVibeFrame(frame,p.x,0,p.z)&&inVibeFrame(frame,p.x,VIBE.roam.head,p.z));
+  assert.ok(Math.hypot(p.x-center.x,p.z-center.z)<.001);
+  assert.ok(Math.hypot(p.x,p.z)<=VIBE.roam.radius||(Math.abs(p.x)<=VIBE.roam.half&&p.z>=0));
+  assert.deepEqual(vibeStop(id,n,providers,[],frame),p,'fallback is seeded and deterministic');
+  assert.notDeepEqual(vibeStop(id,n+1,providers,[],frame),p,'a fallback is not one fixed stop');
+ }
+ }
+});
+test('Vibes finds the narrow visible gap between props without a sampling or grid limit',()=>{
+ const {up}=viewBasis(),center={x:6.123456,z:10.234567},target=[0,1,0],{r,u}=inView({target},center),gap=.000001;
+ const frame={target,right:[r-.5,r+.5],up:[u-.3,u+VIBE.roam.head*up[1]+.3]};
+ const reach=STAGING.station.half+VIBE.roam.margin,props=[-1,1].map(side=>({x:center.x+side*(reach+gap),z:center.z}));
+ for(let n=0;n<12;n++){
+  const p=vibeStop('s0',n,providers,props,frame);
+  assert.ok(Math.abs(p.x-center.x)<gap,'the only free interval is narrower than millimetre rounding');
+  assert.ok(inVibeFrame(frame,p.x,0,p.z)&&inVibeFrame(frame,p.x,VIBE.roam.head,p.z));
+  assert.ok(props.every(b=>Math.abs(p.x-b.x)>=reach||Math.abs(p.z-b.z)>=reach));
+ }
+});
+test('fully obstructed visible ground keeps the original walk and recovers when the view opens',()=>{
+ const {up}=viewBasis(),center={x:6,z:10},target=[0,1,0],{r,u}=inView({target},center);
+ const covered={target,right:[r-.1,r+.1],up:[u-.1,u+VIBE.roam.head*up[1]+.1]},props=[center];
+ const stops=[];
+ for(let n=0;n<30;n++){
+  const p=vibeStop('s0',n,providers,props,covered);stops.push(p.x+','+p.z);
+  assert.deepEqual(p,vibeStop('s0',n,providers,props),'a genuinely covered view uses ordinary roaming, not a blocked state');
+  const frame=vibeFrame(9/19.5,.17,.25),next=vibeStop('s0',n,providers,props,frame);
+  assert.ok(inVibeFrame(frame,next.x,0,next.z)&&inVibeFrame(frame,next.x,VIBE.roam.head,next.z),'an open view immediately selects visible ground again');
+ }
+ assert.equal(new Set(stops).size,stops.length);
+});
 test('Vibes Mode flies each helper its own smooth loop across what the overview shows, above the halls',()=>{
  const [low,high]=VIBE.flight.height;
  assert.ok(low>STAGING.hall.dockerHeight);

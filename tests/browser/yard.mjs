@@ -2162,6 +2162,69 @@ test('Vibes Mode sets every character wandering and every helper flying, and tur
   assert.deepEqual(b.errors,[]);
 });
 
+test('Vibes destination selection keeps normal and crowded crews moving through portrait resizing and a covered view',options,async t=>{
+  const {f,b}=await setup(t),now=Date.parse('2026-10-13T12:00:00.000Z');
+  await b.evaluate(`(async()=>{
+    const {YardRenderer}=await import('/yard/renderer.js');window.__destModel=await import('/yard/model.mjs');
+    const host=document.createElement('div'),labels=document.createElement('div'),top=document.createElement('div'),bottom=document.createElement('div');
+    host.style.cssText='position:fixed;top:0;left:0;width:900px;height:700px';
+    top.style.cssText='position:absolute;top:0;width:100%;height:90px';bottom.style.cssText='position:absolute;bottom:0;width:100%;height:120px';
+    host.append(labels,top,bottom);document.body.append(host);
+    const r=window.__destRenderer=new YardRenderer(host,labels,{select(){},open(){},clock:()=>${now},cover:[top,bottom]});
+    window.__destCover={top,bottom};
+    window.__destProviders=${q([...f.providers,{id:'docker',tool:'Docker Agent',available:true}])};
+    await r.setWorld('guild','dark');
+    window.__destCalls=0;window.__destTimes=[];window.__destOutside=[];window.__destExpectVisible=true;
+    window.__destVisible=p=>__destModel.inVibeFrame(r.vibeFrames.stop,p.x,0,p.z)&&__destModel.inVibeFrame(r.vibeFrames.stop,p.x,__destModel.VIBE.roam.head,p.z);
+    const roam=r.roam;r.roam=function(u){const at=performance.now();roam.call(this,u);__destTimes.push(performance.now()-at);__destCalls++;if(__destExpectVisible&&!__destVisible(u.target))__destOutside.push(u.target);};
+    window.__destStats=values=>{const sorted=[...values].sort((a,b)=>a-b),at=p=>Number((sorted[Math.min(sorted.length-1,Math.floor(sorted.length*p))]||0).toFixed(3));return {p50:at(.5),p95:at(.95),max:at(1)};};
+    window.__destUpdates=()=>{
+      const calls=__destCalls,targets=[...r.units.values()].map(u=>u.target),times=[];
+      for(let n=0;n<40;n++){const at=performance.now();r.update(__destProviders,__destSessions);times.push(performance.now()-at);}
+      return {ms:__destStats(times),searches:__destCalls-calls,sameTargets:[...r.units.values()].every((u,i)=>u.target===targets[i])};
+    };
+    window.__destWalk=()=>{
+      const units=[...r.units.values()],distance=units.map(()=>0),legs=units.map(u=>u.roamed),steps=[];
+      for(let n=0;n<1600;n++){
+        const before=units.map(u=>({x:u.root.position.x,z:u.root.position.z})),at=performance.now();r.step(.05);steps.push(performance.now()-at);
+        units.forEach((u,i)=>{distance[i]+=Math.hypot(u.root.position.x-before[i].x,u.root.position.z-before[i].z);});
+      }
+      return {ms:__destStats(steps),minDistance:Math.min(...distance),minLegs:Math.min(...units.map((u,i)=>u.roamed-legs[i])),moving:units.every(u=>u.moving&&u.path.length>0)};
+    };
+  })()`);
+  t.after(()=>b.evaluate('__destRenderer.dispose();__destRenderer.host.remove()'));
+  for(const [name,count,provider] of [['normal',3,null],['crowded-xai',24,'xai'],['crowded-openai',24,'openai']]){
+    const sessions=Array.from({length:count},(_,i)=>({...f.data.values().next().value,id:name+'-'+i,name:name+' '+i,
+      provider:f.providers.find(p=>p.id===(provider||f.providers[i%f.providers.length].id)),activity:'active',createdAt:new Date(now-3600000).toISOString(),lastOutputAt:new Date(now).toISOString(),agents:[],shells:[]}));
+    await b.evaluate(`(()=>{const r=__destRenderer;r.setVibe(false);__destExpectVisible=true;r.host.style.width='900px';r.host.style.height='700px';__destCover.top.style.height='90px';__destCover.bottom.style.height='120px';r.resize();window.__destSessions=${q(sessions)};r.update(__destProviders,__destSessions);})()`);
+    await b.wait('[...__destRenderer.units.values()].every(u=>u.loaded)');
+    const result=await b.evaluate(`(()=>{
+      const r=__destRenderer,slots=JSON.stringify([...r.staged.slots]);__destTimes=[];__destOutside=[];
+      const at=performance.now();r.setVibe(true);const activationMs=performance.now()-at;
+      const landscape={updates:__destUpdates(),walk:__destWalk()};
+      r.host.style.width='360px';r.host.style.height='780px';__destCover.bottom.style.height='195px';
+      const turn=performance.now();r.resize();const resizeMs=performance.now()-turn;
+      const portrait={updates:__destUpdates(),walk:__destWalk()};
+      __destExpectVisible=false;__destCover.top.style.height='500px';__destCover.bottom.style.height='500px';r.resize();
+      const covered={updates:__destUpdates(),walk:__destWalk()};
+      __destExpectVisible=true;__destCover.top.style.height='90px';__destCover.bottom.style.height='195px';r.resize();
+      const recovered=[...r.units.values()].every(u=>u.moving&&__destVisible(u.target));
+      return {activationMs,resizeMs,landscape,portrait,covered,recovered,outside:__destOutside,roamMs:__destStats(__destTimes),sameSlots:JSON.stringify([...r.staged.slots])===slots};
+    })()`);
+    for(const phase of ['landscape','portrait','covered']){
+      assert.equal(result[phase].updates.searches,0,`${name} ${phase}: unchanged snapshots do not select destinations again`);
+      assert.equal(result[phase].updates.sameTargets,true);
+      assert.equal(result[phase].walk.moving,true,`${name} ${phase}: nobody freezes`);
+      assert.ok(result[phase].walk.minDistance>1&&result[phase].walk.minLegs>=1,`${name} ${phase}: every character travels and starts another leg`);
+    }
+    assert.deepEqual(result.outside,[],`${name}: every newly chosen destination fits the usable view`);
+    assert.equal(result.recovered,true,`${name}: uncovering the view immediately restores visible destinations`);
+    assert.equal(result.sameSlots,true,`${name}: station slots stay unchanged`);
+    t.diagnostic(JSON.stringify({name,...result}));
+  }
+  assert.deepEqual(b.errors,[]);
+});
+
 test('the Vibes Mode button stays on across Yards and reloads, and reduced motion disables it',options,async t=>{
   const {b}=await setup(t,{yard:true});
   const button="document.querySelector('#yard-vibe')",state='['+button+'.getAttribute("aria-pressed"),'+button+'.disabled,localStorage.getItem("agentGuild.vibe")]';
