@@ -164,44 +164,33 @@ const keptClearBy=(x,z)=>Math.min(Math.max(0,Math.hypot(x,z)-14.7),Math.hypot(Ma
 const vibeFrames=[vibeFrame(16/9),vibeFrame(1,.2,.15),vibeFrame(9/16,.15,.1),vibeFrame(9/19.5,.17,.25)];
 const inView=(frame,p)=>{const {right,up}=viewBasis(),d=[p.x-frame.target[0],(p.y||0)-frame.target[1],p.z-frame.target[2]];return {r:d[0]*right[0]+d[1]*right[1]+d[2]*right[2],u:d[0]*up[0]+d[1]*up[1]+d[2]*up[2]};};
 const span=values=>Math.max(...values)-Math.min(...values);
-test('Vibes Mode wanders only the ground every world keeps clear and the overview shows, to and fro across it, by on-screen ways round the halls, the centrepiece and the station props',()=>{
- const propsFor=(count,provs)=>[...layoutSessions(Array.from({length:count},(_,i)=>session('s'+i,providers[i%6].id)),provs).entries()].map(([id,p])=>stationProp(p,id));
- const walk=(id,frame,provs,props)=>{const legs=[];let from=null;for(let n=0;n<60;n++){const stop=vibeStop(id,n,provs,props,frame,from);legs.push({from,stop});from=stop;}return legs;};
- const check=(frame,provs,props,ids,{alternate=true,half=null}={})=>{
-  const boxes=[...[...providerPositions(provs)].map(([id,p])=>({...p,half:id==='docker'?STAGING.hall.docker:STAGING.hall.half})),
-   {x:STAGING.plaza.x,z:STAGING.plaza.z,half:STAGING.plaza.half},...props.map(p=>({x:p.x,z:p.z,half:STAGING.station.half}))];
-  const inside=p=>boxes.some(b=>Math.abs(p.x-b.x)<b.half-.06&&Math.abs(p.z-b.z)<b.half-.06);
-  const seen=p=>inVibeFrame(frame,p.x,0,p.z)&&inVibeFrame(frame,p.x,VIBE.roam.head,p.z);
-  for(const id of ids){
-   const legs=walk(id,frame,provs,props);
-   for(const {from,stop} of legs){
-    const at=JSON.stringify([id,from,stop]);
-    assert.ok(stop&&seen(stop),at);
-    assert.equal(keptClearBy(stop.x,stop.z),0,at);
-    assert.ok(!boxes.some(b=>Math.abs(stop.x-b.x)<b.half+.5&&Math.abs(stop.z-b.z)<b.half+.5),at);
-    if(half)assert.equal(stop.z<VIBE.roam.split,half==='courtyard',at);
-    if(!from)continue;
-    if(alternate)assert.notEqual(stop.z<VIBE.roam.split,from.z<VIBE.roam.split,'stops alternate between the courtyard and the ground in front');
-    const path=route(from,stop,provs,props,frame);
-    assert.ok(path&&path.every(seen),'every waypoint stays on screen: '+at);
-    let p=from;
-    for(const to of path){for(let t=0;t<=1;t+=.02)assert.ok(!inside({x:p.x+(to.x-p.x)*t,z:p.z+(to.z-p.z)*t}),at);p=to;}
-   }
-   const spread=legs.map(l=>inView(frame,l.stop));
-   if(!half)assert.ok(span(spread.map(p=>p.r))>(frame.right[1]-frame.right[0])/2&&span(spread.map(p=>p.u))>(frame.up[1]-frame.up[0])/2,'the stops spread over what the overview shows');
-  }
- };
+test('Vibes Mode wanders only the ground every world keeps clear and the overview shows, to and fro across it, round the halls, the centrepiece and the station props',()=>{
  const custom=[...providers,{id:'custom-1'},{id:'custom-2'}];
- for(const frame of vibeFrames)check(frame,custom,propsFor(12,custom),['s0','s1','s7']);
- check(vibeFrame(226/718,132/718,160/718),providers,propsFor(3,providers),['s0','s1','s8']);
- check(vibeFrame(16/9,.6,0),providers,[],['s0','s1'],{alternate:false,half:'front'});
- check(vibeFrame(16/9,0,.6),providers,[],['s0','s1'],{alternate:false,half:'courtyard'});
- const frame=vibeFrames[0],stops=id=>walk(id,frame,custom,[]).map(l=>l.stop);
- assert.deepEqual(stops('s0'),stops('s0'));
- assert.notDeepEqual(stops('s0'),stops('s1'));
- assert.deepEqual(Array.from({length:20},(_,n)=>vibeStop('s0',n,providers,[],vibeFrame(16/9,0,.7),{x:0,z:6})),Array(20).fill(null),'room on screen but no ground to stand on: no stop, rather than one off screen');
- const tooSmall=Array.from({length:60},(_,n)=>vibeStop('s0',n,custom,[],vibeFrame(16/9,.5,.5)));
- assert.equal(new Set(tooSmall.map(p=>p.x+','+p.z)).size,tooSmall.length,'a stage too small to show a character still roams the clear ground');
+ const props=[...layoutSessions(Array.from({length:12},(_,i)=>session('s'+i,providers[i%6].id)),custom).entries()].map(([id,p])=>stationProp(p,id));
+ const boxes=[...[...providerPositions(custom)].map(([id,p])=>({...p,half:id==='docker'?STAGING.hall.docker:STAGING.hall.half})),
+  {x:STAGING.plaza.x,z:STAGING.plaza.z,half:STAGING.plaza.half},...props.map(p=>({x:p.x,z:p.z,half:STAGING.station.half}))];
+ const inside=p=>boxes.some(b=>Math.abs(p.x-b.x)<b.half-.06&&Math.abs(p.z-b.z)<b.half-.06);
+ for(const frame of vibeFrames){
+  const stops=id=>Array.from({length:60},(_,n)=>vibeStop(id,n,custom,props,frame));
+  for(const id of ['s0','s1','s7']){
+   let from=stops(id).at(-1);
+   for(const stop of stops(id)){
+    assert.notEqual(stop.z<VIBE.roam.split,from.z<VIBE.roam.split,'stops alternate between the courtyard and the ground in front');
+    assert.equal(keptClearBy(stop.x,stop.z),0,JSON.stringify(stop));
+    assert.ok(inVibeFrame(frame,stop.x,0,stop.z)&&inVibeFrame(frame,stop.x,VIBE.roam.head,stop.z),JSON.stringify(stop));
+    assert.ok(!boxes.some(b=>Math.abs(stop.x-b.x)<b.half+.5&&Math.abs(stop.z-b.z)<b.half+.5),JSON.stringify(stop));
+    let at=from;
+    for(const to of route(from,stop,custom,props)){for(let t=0;t<=1;t+=.02)assert.ok(!inside({x:at.x+(to.x-at.x)*t,z:at.z+(to.z-at.z)*t}),JSON.stringify([from,stop]));at=to;}
+    from=stop;
+   }
+   const seen=stops(id).map(p=>inView(frame,p));
+   assert.ok(span(seen.map(p=>p.r))>(frame.right[1]-frame.right[0])/2&&span(seen.map(p=>p.u))>(frame.up[1]-frame.up[0])/2,'the stops spread over what the overview shows');
+  }
+  assert.deepEqual(stops('s0'),stops('s0'));
+  assert.notDeepEqual(stops('s0'),stops('s1'));
+ }
+ const hidden=Array.from({length:60},(_,n)=>vibeStop('s0',n,custom,props,vibeFrame(16/9,.5,.5)));
+ assert.equal(new Set(hidden.map(p=>p.x+','+p.z)).size,hidden.length,'with nothing visible, stops still spread over the clear ground');
 });
 test('Vibes Mode flies each helper its own smooth loop across what the overview shows, above the halls',()=>{
  const [low,high]=VIBE.flight.height;

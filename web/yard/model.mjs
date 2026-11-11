@@ -350,9 +350,8 @@ function crosses(a, b, box, half) {
 // The shortest way from a to b that keeps out of every hall, the
 // centrepiece and every station prop: straight when clear, otherwise by the
 // corners of what is in the way. A prop that a or b stands in is no
-// obstacle. Returns the waypoints after a, ending at b; with a Vibes frame,
-// waypoints stay on screen and no such way returns null.
-export function route(a, b, providers, props = [], frame = null) {
+// obstacle. Returns the waypoints after a, ending at b.
+export function route(a, b, providers, props = []) {
   const inside = (p, box) => Math.abs(p.x - box.x) < box.half - .05 && Math.abs(p.z - box.z) < box.half - .05;
   const boxes = [...obstacles(providers), ...props.map(p => ({ x: p.x, z: p.z, half: STAGING.station.half }))
     .filter(box => !inside(a, box) && !inside(b, box))], m = STAGING.hall.margin;
@@ -361,7 +360,7 @@ export function route(a, b, providers, props = [], frame = null) {
   const nodes = [a, b];
   for (const box of boxes) for (const [sx, sz] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
     const p = { x: box.x + sx * (box.half + m), z: box.z + sz * (box.half + m) };
-    if (!boxes.some(other => Math.abs(p.x - other.x) < other.half && Math.abs(p.z - other.z) < other.half) && (!frame || onScreen(frame, p))) nodes.push(p);
+    if (!boxes.some(other => Math.abs(p.x - other.x) < other.half && Math.abs(p.z - other.z) < other.half)) nodes.push(p);
   }
   const dist = nodes.map(() => Infinity), from = nodes.map(() => -1), done = nodes.map(() => false);
   dist[0] = 0;
@@ -376,7 +375,7 @@ export function route(a, b, providers, props = [], frame = null) {
       if (d < dist[v] - 1e-9) { dist[v] = d; from[v] = u; }
     }
   }
-  if (dist[1] === Infinity) return frame ? null : [{ x: b.x, z: b.z }];
+  if (dist[1] === Infinity) return [{ x: b.x, z: b.z }];
   const path = [];
   for (let i = 1; i > 0; i = from[i]) path.unshift({ x: round(nodes[i].x), z: round(nodes[i].z) });
   path[path.length - 1] = { x: b.x, z: b.z };
@@ -449,44 +448,23 @@ export function inVibeFrame(frame, x, y, z) {
   const r = dot(d, right), u = dot(d, up);
   return r >= frame.right[0] && r <= frame.right[1] && u >= frame.up[0] && u <= frame.up[1];
 }
-const onScreen = (frame, p) => inVibeFrame(frame, p.x, 0, p.z) && inVibeFrame(frame, p.x, VIBE.roam.head, p.z);
 function unit(value) {
   let h = hash(value);
   h = Math.imul(h ^ (h >>> 16), 0x45d9f3b); h = Math.imul(h ^ (h >>> 16), 0x45d9f3b);
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
-export function vibeStop(id, n, providers, props = [], frame = null, from = null) {
-  const { radius, half, front, split, margin, head } = VIBE.roam, { right, up, forward } = viewBasis();
-  const courtFirst = (n + hash(id)) % 2 === 0;
+export function vibeStop(id, n, providers, props = [], frame = null) {
+  const { radius, half, front, split, margin, head } = VIBE.roam;
+  const [near, far] = (n + hash(id)) % 2 ? [split, front] : [-radius, split];
   const boxes = [...obstacles(providers).map(box => ({ ...box, half: box.half + margin })),
     ...props.map(p => ({ x: p.x, z: p.z, half: STAGING.station.half + margin }))];
-  const valid = (x, z, court) => (Math.hypot(x - STAGING.plaza.x, z - STAGING.plaza.z) <= radius || (Math.abs(x) <= half && z >= 0))
-    && (court ? z < split : z >= split && z <= front) && !boxes.some(box => Math.abs(x - box.x) < box.half && Math.abs(z - box.z) < box.half);
-  const [r0, r1] = frame ? frame.right : [0, 0], u0 = frame ? frame.up[0] : 0, u1 = frame ? frame.up[1] - head * up[1] : 0;
-  if (!(r1 > r0 && u1 > u0)) {
-    const [near, far] = courtFirst ? [-radius, split] : [split, front];
-    for (let k = 0; k < 48; k++) {
-      const x = round((unit(id + ':vibe:x:' + n + ':' + k) * 2 - 1) * radius), z = round(near + unit(id + ':vibe:z:' + n + ':' + k) * (far - near));
-      if (valid(x, z, courtFirst)) return { x, z };
-    }
-    return { x: STAGING.plaza.x, z: round(STAGING.plaza.z + STAGING.plaza.half + margin + STAGING.station.half) };
+  const seen = (x, z) => !frame || (inVibeFrame(frame, x, 0, z) && inVibeFrame(frame, x, head, z));
+  for (const framed of [true, false]) for (let k = 0; k < 48; k++) {
+    const x = round((unit(id + ':vibe:x:' + n + ':' + k) * 2 - 1) * radius), z = round(near + unit(id + ':vibe:z:' + n + ':' + k) * (far - near));
+    const clear = Math.hypot(x - STAGING.plaza.x, z - STAGING.plaza.z) <= radius || (Math.abs(x) <= half && z >= 0);
+    if (clear && !boxes.some(box => Math.abs(x - box.x) < box.half && Math.abs(z - box.z) < box.half) && (!framed || seen(x, z))) return { x, z };
   }
-  const at = (r, u) => {
-    const s = (-frame.target[1] - u * up[1]) / forward[1];
-    return { x: round(frame.target[0] + r * right[0] + u * up[0] + s * forward[0]), z: round(frame.target[2] + r * right[2] + u * up[2] + s * forward[2]) };
-  };
-  const fits = (p, court) => valid(p.x, p.z, court) && onScreen(frame, p) && (!from || route(from, p, providers, props, frame) !== null);
-  for (const court of [courtFirst, !courtFirst]) {
-    if (court === courtFirst) for (let k = 0; k < 48; k++) {
-      const p = at(r0 + unit(id + ':vibe:r:' + n + ':' + k) * (r1 - r0), u0 + unit(id + ':vibe:u:' + n + ':' + k) * (u1 - u0));
-      if (fits(p, court)) return p;
-    }
-    const cells = [];
-    for (let r = r0; r <= r1; r += .5) for (let u = u0; u <= u1; u += .5) cells.push(at(r, u));
-    const start = Math.floor(unit(id + ':vibe:scan:' + n) * cells.length);
-    for (let i = 0; i < cells.length; i++) if (fits(cells[(start + i) % cells.length], court)) return cells[(start + i) % cells.length];
-  }
-  return null;
+  return { x: STAGING.plaza.x, z: round(STAGING.plaza.z + STAGING.plaza.half + margin + STAGING.station.half) };
 }
 export function vibeFlight(key, seconds, frame) {
   const { height, lap, reach, top } = VIBE.flight, { right, up, forward } = viewBasis();
