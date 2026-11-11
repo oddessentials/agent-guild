@@ -2088,14 +2088,15 @@ test('the row being replaced says Checking replacement until the check answers',
   await b.wait(status+"==='Customized: Mine'");
   assert.deepEqual(b.errors,[]);
 });
-async function reducedHelper(t){
+async function reducedHelper(t,reduced=false){
   const {f,b}=await setup(t),now=Date.parse('2026-10-13T12:00:00.000Z');
   const s={...f.data.values().next().value,id:'s0',activity:'active',createdAt:new Date(now-3600000).toISOString(),lastOutputAt:new Date(now).toISOString(),agents:[{id:'a1',name:'Explorer',status:'working'}],shells:[]};
   await b.evaluate(`(async()=>{
     const {YardRenderer}=await import('/yard/renderer.js');
     const host=document.createElement('div'),labels=document.createElement('div');host.style.cssText='position:fixed;width:900px;height:700px;top:0;left:0';host.append(labels);document.body.append(host);
     window.__poseRenderer=new YardRenderer(host,labels,{select(){},open(){},clock:()=>${now}});window.__poseSession=${q(s)};window.__poseProviders=${q(f.providers)};
-    await __poseRenderer.setWorld('guild','dark');__poseRenderer.update(__poseProviders,[__poseSession]);window.__poseUnit=__poseRenderer.units.get('s0');
+    await __poseRenderer.setWorld('guild','dark');__poseRenderer.setReducedMotion(${reduced});__poseRenderer.setVibe(${reduced});
+    __poseRenderer.update(__poseProviders,[__poseSession]);window.__poseUnit=__poseRenderer.units.get('s0');
   })()`);
   t.after(()=>b.evaluate('__poseRenderer.dispose();__poseRenderer.host.remove()'));
   await b.wait('__poseUnit.loaded&&__poseUnit.helpers.length===1');
@@ -2106,11 +2107,29 @@ async function reducedHelper(t){
     h.clips=['working','waiting','done','move'].map((name,i)=>{const clip=sample.clone();clip.name=name;clip.duration=1;clip.tracks=[new Track('Head.quaternion',[0,1],[...poses[i],...poses[i]])];return clip;});
     __poseRenderer.helperClip(h,'working');h.mixer.update(0);
     window.__poseState=()=>({moving:h.moving,clip:h.action.getClip().name,head:h.model.getObjectByName('Head').quaternion.toArray(),time:h.mixer.time,placement:[...h.model.position.toArray(),...h.model.quaternion.toArray(),...h.model.scale.toArray()],retained:__poseUnit.helpers[0]===h});
+    window.__poseResting=()=>__poseUnit.helpers.every(h=>{const p=__poseUnit.root.position;return h.model.position.x===p.x+h.offset.x&&h.model.position.y===.27&&h.model.position.z===p.z+h.offset.z&&h.model.scale.toArray().every(n=>n===.45)&&!h.moving;});
     window.__poseUpdates=[];const update=h.mixer.update.bind(h.mixer);h.mixer.update=dt=>{__poseUpdates.push(dt);return update(dt);};
     window.__poseStatus=status=>{__poseSession.agents[0].status=status;__poseRenderer.update(__poseProviders,[__poseSession]);};
   })()`);
   return b;
 }
+
+test('reduced-motion helpers initialize and follow squad offsets at rest without advancing time',options,async t=>{
+  const b=await reducedHelper(t,true);
+  const before=await b.evaluate('__poseState()');
+  assert.equal(before.time,0,'initialization must not advance the mixer to a seeded animation time');
+  assert.equal(await b.evaluate('__poseResting()'),true);
+  await b.evaluate("__poseSession.agents.unshift({id:'a2',name:'Builder',status:'waiting'});__poseRenderer.update(__poseProviders,[__poseSession])");
+  await b.wait('__poseUnit.helpers.length===2');
+  assert.equal(await b.evaluate('__poseResting()'),true,'all helpers use their current squad offsets');
+  assert.notDeepEqual((await b.evaluate('__poseState()')).placement,before.placement,'the retained helper takes its new offset');
+  assert.deepEqual(await b.evaluate('__poseUnit.helpers.map(h=>[h.pose,h.mixer.time,h.action.time])'),[['working',0,0],['waiting',0,0]]);
+  await b.evaluate('__poseSession.agents.splice(0,1);__poseRenderer.update(__poseProviders,[__poseSession])');
+  await b.wait('__poseUnit.helpers.length===1');
+  assert.deepEqual(await b.evaluate('__poseState()'),before,'removing a peer restores the offset without replacing or advancing the retained helper');
+  assert.deepEqual(await b.evaluate('__poseUpdates'),[0,0]);
+  assert.deepEqual(b.errors,[]);
+});
 
 test('reduced-motion helpers immediately display a retained working-to-waiting pose without advancing time',options,async t=>{
   const b=await reducedHelper(t);
@@ -2129,6 +2148,7 @@ test('reduced motion clears airborne helper movement and applies stationary stat
   const airborne=await b.evaluate(`(()=>{__poseRenderer.setVibe(true);for(let i=0;i<600;i++)__poseRenderer.step(.05);__poseUpdates.length=0;return __poseState();})()`);
   assert.ok(airborne.moving&&airborne.placement[1]>8);assert.equal(airborne.clip,'move');
   const stopped=await b.evaluate('(__poseRenderer.setReducedMotion(true),__poseState())');
+  assert.equal(await b.evaluate('__poseResting()'),true);
   await b.evaluate("__poseStatus('done')");await b.wait("__poseHelper.pose==='done'");
   const done=await b.evaluate('__poseState()');
   assert.deepEqual({stopped:[stopped.moving,stopped.clip,stopped.head],done:[done.moving,done.clip,done.head]},
@@ -2136,6 +2156,25 @@ test('reduced motion clears airborne helper movement and applies stationary stat
   assert.equal(stopped.retained,true);assert.equal(done.retained,true);assert.deepEqual(done.placement,stopped.placement);
   assert.equal(stopped.time,airborne.time);assert.equal(done.time,airborne.time);
   assert.deepEqual(await b.evaluate('__poseUpdates'),[0,0],'neither pose update advances animation time');
+  assert.deepEqual(b.errors,[]);
+});
+
+test('reduced motion immediately rests a landing helper after its character has stopped',options,async t=>{
+  const b=await reducedHelper(t);
+  const landing=await b.evaluate(`(()=>{
+    __poseRenderer.setVibe(true);for(let i=0;i<3;i++)__poseRenderer.step(.05);
+    __poseRenderer.setVibe(false);for(let i=0;i<20&&__poseUnit.moving;i++)__poseRenderer.step(.05);
+    window.__landingAction=__poseHelper.action;__poseUpdates.length=0;
+    return {moving:__poseUnit.moving,root:__poseUnit.root.position.toArray(),helper:__poseState()};
+  })()`);
+  assert.equal(landing.moving,false,'the character has already returned home');
+  assert.ok(landing.helper.placement[1]>.28&&landing.helper.placement[7]>.45,'the helper is still airborne and enlarged');
+  const stopped=await b.evaluate('(__poseRenderer.setReducedMotion(true),__poseState())');
+  assert.equal(await b.evaluate('__poseResting()'),true,'a stationary character must not leave its helper suspended');
+  assert.deepEqual(await b.evaluate('__poseUnit.root.position.toArray()'),landing.root);
+  assert.deepEqual([stopped.moving,stopped.clip,stopped.head,stopped.retained],[false,'working',[0,0,0,1],true]);
+  assert.equal(stopped.time,landing.helper.time);
+  assert.deepEqual(await b.evaluate('[__landingAction.isRunning(),__poseHelper.action.getEffectiveWeight(),__poseUpdates]'),[false,1,[0]],'cancel the flight blend and evaluate only the stationary pose');
   assert.deepEqual(b.errors,[]);
 });
 

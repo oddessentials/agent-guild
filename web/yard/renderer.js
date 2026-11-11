@@ -1172,16 +1172,21 @@ export class YardRenderer {
       spark.points.geometry.attributes.position.needsUpdate=true;
     }
   }
+  restHelper(unit,helper) {
+    helper.model.position.set(unit.root.position.x+helper.offset.x,.27,unit.root.position.z+helper.offset.z);
+    helper.model.scale.setScalar(.45);
+    helper.moving=false;helper.mixer.stopAllAction();helper.action=null;
+    this.helperClip(helper,helper.pose);
+    helper.mixer.update(0);
+  }
   helperClip(helper,name) {
     const clip=helper.clips.find(c=>c.name===name)||helper.clips.find(c=>c.name===LEGACY[name])||helper.clips[0];
     if(!clip)return;
     const action=helper.mixer.clipAction(clip);
-    if(action===helper.action&&!this.reduced)return;
-    if(this.reduced){helper.moving=false;helper.mixer.stopAllAction();}
+    if(action===helper.action)return;
     action.reset().play();
-    if(helper.action&&!this.reduced)helper.action.crossFadeTo(action,FADE,false);
+    if(helper.action)helper.action.crossFadeTo(action,FADE,false);
     helper.action=action;
-    if(this.reduced)helper.mixer.update(0);
   }
   clearHelpers(unit) {
     unit.revision++;unit.helperSignature=null;
@@ -1221,8 +1226,8 @@ export class YardRenderer {
       const offset=helperOffset(i,agents.length),existing=unit.helpers.find(helper=>helper.id===agent.id);
       if(existing){
         existing.offset=offset;existing.pose=agent.pose;
-        if(this.reduced)existing.model.position.set(unit.root.position.x+offset.x,.27,unit.root.position.z+offset.z);
-        if(this.reduced||(!existing.moving&&!this.vibing()))this.helperClip(existing,agent.pose);
+        if(this.reduced)this.restHelper(unit,existing);
+        else if(!existing.moving&&!this.vibing())this.helperClip(existing,agent.pose);
         this.dirty=true;this.drawOnce();
         return;
       }
@@ -1237,8 +1242,8 @@ export class YardRenderer {
         const mixer=new T.AnimationMixer(model);
         let yard=null;asset.scene.traverse(n=>{if(n.userData?.yard)yard=n.userData.yard;});
         const helper={id:agent.id,height:yardExtras(yard,'helper').height,get top(){return this.height*this.model.scale.y;},model,mixer,offset,pose:agent.pose,clips:asset.animations,moving:false,action:null};
-        this.helperClip(helper,agent.pose);
-        mixer.update(.3+(hash(agent.id)%40)/10);
+        if(this.reduced)this.restHelper(unit,helper);
+        else {this.helperClip(helper,agent.pose);mixer.update(.3+(hash(agent.id)%40)/10);}
         unit.helpers.push(helper);
         this.dirty=true;this.drawOnce();
       } catch {
@@ -1399,7 +1404,7 @@ export class YardRenderer {
     if(was!==this.vibing())this.restage();
     if(value)for(const unit of this.units.values()){this.unlook(unit);unit.lookYaw=0;unit.lookPitch=0;}
     if(value)for(const unit of this.units.values())if(unit.moving&&unit.target){this.arrive(unit);this.play(unit);}
-    if(value)for(const unit of this.units.values())for(const helper of unit.helpers)this.helperClip(helper,helper.pose);
+    if(value)for(const unit of this.units.values())for(const helper of unit.helpers)this.restHelper(unit,helper);
     if(value){for(const item of this.halls.values())item.level=item.target;this.glow();this.stillEffects();this.clearFireworks();}
     this.dirty=true;this.drawOnce();
   }
