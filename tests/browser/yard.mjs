@@ -1098,7 +1098,7 @@ test('the camera controls stay whole and reachable beside the swap status and he
         return {buttons,overlaps};
       })()`);
       const at=`${name}, ${status} shown`;
-      assert.deepEqual(layout.buttons.map(c=>c.label),['Zoom in','Zoom out','Overview','Focus selected','Save a picture of the Yard','Fireworks in this Yard only'],at);
+      assert.deepEqual(layout.buttons.map(c=>c.label),['Zoom in','Zoom out','Overview','Focus selected','Save a picture of the Yard','Fireworks in this Yard only','Vibes Mode'],at);
       assert.deepEqual(layout.buttons.filter(c=>!c.inside||!c.reached).map(c=>c.label),[],at);
       assert.equal(new Set(layout.buttons.map(c=>c.height)).size,1,`every label stays on one line: ${at}`);
       assert.deepEqual(layout.overlaps,[],at);
@@ -2086,5 +2086,357 @@ test('the row being replaced says Checking replacement until the check answers',
   assert.equal(await b.evaluate("document.querySelector('#yard-customize-list [data-slot=openai] .yard-customize-status').textContent"),'Original','only the row being replaced says it is checking');
   answer();
   await b.wait(status+"==='Customized: Mine'");
+  assert.deepEqual(b.errors,[]);
+});
+async function reducedHelper(t,reduced=false){
+  const {f,b}=await setup(t),now=Date.parse('2026-10-13T12:00:00.000Z');
+  const s={...f.data.values().next().value,id:'s0',activity:'active',createdAt:new Date(now-3600000).toISOString(),lastOutputAt:new Date(now).toISOString(),agents:[{id:'a1',name:'Explorer',status:'working'}],shells:[]};
+  await b.evaluate(`(async()=>{
+    const {YardRenderer}=await import('/yard/renderer.js');
+    const host=document.createElement('div'),labels=document.createElement('div');host.style.cssText='position:fixed;width:900px;height:700px;top:0;left:0';host.append(labels);document.body.append(host);
+    window.__poseRenderer=new YardRenderer(host,labels,{select(){},open(){},clock:()=>${now}});window.__poseSession=${q(s)};window.__poseProviders=${q(f.providers)};
+    await __poseRenderer.setWorld('guild','dark');__poseRenderer.setReducedMotion(${reduced});__poseRenderer.setVibe(${reduced});
+    __poseRenderer.update(__poseProviders,[__poseSession]);window.__poseUnit=__poseRenderer.units.get('s0');
+  })()`);
+  t.after(()=>b.evaluate('__poseRenderer.dispose();__poseRenderer.host.remove()'));
+  await b.wait('__poseUnit.loaded&&__poseUnit.helpers.length===1');
+  await b.evaluate(`(()=>{
+    const h=window.__poseHelper=__poseUnit.helpers[0],sample=h.clips[0],Track=sample.tracks.find(track=>track.ValueTypeName==='quaternion').constructor;
+    h.mixer.stopAllAction();h.action=null;
+    const poses=[[0,0,0,1],[0,0,1,0],[1,0,0,0],[0,1,0,0]];
+    h.clips=['working','waiting','done','move'].map((name,i)=>{const clip=sample.clone();clip.name=name;clip.duration=1;clip.tracks=[new Track('Head.quaternion',[0,1],[...poses[i],...poses[i]])];return clip;});
+    __poseRenderer.helperClip(h,'working');h.mixer.update(0);
+    window.__poseState=()=>({moving:h.moving,clip:h.action.getClip().name,head:h.model.getObjectByName('Head').quaternion.toArray(),time:h.mixer.time,placement:[...h.model.position.toArray(),...h.model.quaternion.toArray(),...h.model.scale.toArray()],retained:__poseUnit.helpers[0]===h});
+    window.__poseResting=()=>__poseUnit.helpers.every(h=>{const p=__poseUnit.root.position;return h.model.position.x===p.x+h.offset.x&&h.model.position.y===.27&&h.model.position.z===p.z+h.offset.z&&h.model.scale.toArray().every(n=>n===.45)&&!h.moving;});
+    window.__poseUpdates=[];const update=h.mixer.update.bind(h.mixer);h.mixer.update=dt=>{__poseUpdates.push(dt);return update(dt);};
+    window.__poseStatus=status=>{__poseSession.agents[0].status=status;__poseRenderer.update(__poseProviders,[__poseSession]);};
+  })()`);
+  return b;
+}
+
+test('reduced-motion helpers initialize and follow squad offsets at rest without advancing time',options,async t=>{
+  const b=await reducedHelper(t,true);
+  const before=await b.evaluate('__poseState()');
+  assert.equal(before.time,0,'initialization must not advance the mixer to a seeded animation time');
+  assert.equal(await b.evaluate('__poseResting()'),true);
+  await b.evaluate("__poseSession.agents.unshift({id:'a2',name:'Builder',status:'waiting'});__poseRenderer.update(__poseProviders,[__poseSession])");
+  await b.wait('__poseUnit.helpers.length===2');
+  assert.equal(await b.evaluate('__poseResting()'),true,'all helpers use their current squad offsets');
+  assert.notDeepEqual((await b.evaluate('__poseState()')).placement,before.placement,'the retained helper takes its new offset');
+  assert.deepEqual(await b.evaluate('__poseUnit.helpers.map(h=>[h.pose,h.mixer.time,h.action.time])'),[['working',0,0],['waiting',0,0]]);
+  await b.evaluate('__poseSession.agents.splice(0,1);__poseRenderer.update(__poseProviders,[__poseSession])');
+  await b.wait('__poseUnit.helpers.length===1');
+  assert.deepEqual(await b.evaluate('__poseState()'),before,'removing a peer restores the offset without replacing or advancing the retained helper');
+  assert.deepEqual(await b.evaluate('__poseUpdates'),[0,0]);
+  assert.deepEqual(b.errors,[]);
+});
+
+test('reduced-motion helpers immediately display a retained working-to-waiting pose without advancing time',options,async t=>{
+  const b=await reducedHelper(t);
+  const before=await b.evaluate('(__poseRenderer.setReducedMotion(true),__poseUpdates.length=0,__poseState())');
+  assert.deepEqual(before.head,[0,0,0,1]);
+  await b.evaluate("__poseStatus('waiting')");await b.wait("__poseHelper.pose==='waiting'");
+  const after=await b.evaluate('__poseState()');
+  assert.deepEqual([after.clip,after.head],['waiting',[0,0,1,0]],'selecting a status clip must apply its visible pose immediately');
+  assert.equal(after.retained,true);assert.deepEqual(after.placement,before.placement);assert.equal(after.time,before.time);
+  assert.deepEqual(await b.evaluate('__poseUpdates'),[0],'evaluate the pose without an artificial animation tick');
+  assert.deepEqual(b.errors,[]);
+});
+
+test('reduced motion clears airborne helper movement and applies stationary status poses immediately',options,async t=>{
+  const b=await reducedHelper(t);
+  const airborne=await b.evaluate(`(()=>{__poseRenderer.setVibe(true);for(let i=0;i<600;i++)__poseRenderer.step(.05);__poseUpdates.length=0;return __poseState();})()`);
+  assert.ok(airborne.moving&&airborne.placement[1]>8);assert.equal(airborne.clip,'move');
+  const stopped=await b.evaluate('(__poseRenderer.setReducedMotion(true),__poseState())');
+  assert.equal(await b.evaluate('__poseResting()'),true);
+  await b.evaluate("__poseStatus('done')");await b.wait("__poseHelper.pose==='done'");
+  const done=await b.evaluate('__poseState()');
+  assert.deepEqual({stopped:[stopped.moving,stopped.clip,stopped.head],done:[done.moving,done.clip,done.head]},
+    {stopped:[false,'working',[0,0,0,1]],done:[false,'done',[1,0,0,0]]},'reduced motion must leave no stale flight state or pose');
+  assert.equal(stopped.retained,true);assert.equal(done.retained,true);assert.deepEqual(done.placement,stopped.placement);
+  assert.equal(stopped.time,airborne.time);assert.equal(done.time,airborne.time);
+  assert.deepEqual(await b.evaluate('__poseUpdates'),[0,0],'neither pose update advances animation time');
+  assert.deepEqual(b.errors,[]);
+});
+
+test('reduced motion immediately rests a landing helper after its character has stopped',options,async t=>{
+  const b=await reducedHelper(t);
+  const landing=await b.evaluate(`(()=>{
+    __poseRenderer.setVibe(true);for(let i=0;i<3;i++)__poseRenderer.step(.05);
+    __poseRenderer.setVibe(false);for(let i=0;i<20&&__poseUnit.moving;i++)__poseRenderer.step(.05);
+    window.__landingAction=__poseHelper.action;__poseUpdates.length=0;
+    return {moving:__poseUnit.moving,root:__poseUnit.root.position.toArray(),helper:__poseState()};
+  })()`);
+  assert.equal(landing.moving,false,'the character has already returned home');
+  assert.ok(landing.helper.placement[1]>.28&&landing.helper.placement[7]>.45,'the helper is still airborne and enlarged');
+  const stopped=await b.evaluate('(__poseRenderer.setReducedMotion(true),__poseState())');
+  assert.equal(await b.evaluate('__poseResting()'),true,'a stationary character must not leave its helper suspended');
+  assert.deepEqual(await b.evaluate('__poseUnit.root.position.toArray()'),landing.root);
+  assert.deepEqual([stopped.moving,stopped.clip,stopped.head,stopped.retained],[false,'working',[0,0,0,1],true]);
+  assert.equal(stopped.time,landing.helper.time);
+  assert.deepEqual(await b.evaluate('[__landingAction.isRunning(),__poseHelper.action.getEffectiveWeight(),__poseUpdates]'),[false,1,[0]],'cancel the flight blend and evaluate only the stationary pose');
+  assert.deepEqual(b.errors,[]);
+});
+
+test('Vibes helpers retain transforms and animation through status, membership and landing updates',options,async t=>{
+  const {f,b}=await setup(t),now=Date.parse('2026-10-13T12:00:00.000Z');
+  const s={...f.data.values().next().value,id:'s0',activity:'active',createdAt:new Date(now-3600000).toISOString(),lastOutputAt:new Date(now).toISOString(),agents:[{id:'a1',name:'Explorer',status:'working'}],shells:[]};
+  await b.evaluate(`(async()=>{
+    const {YardRenderer}=await import('/yard/renderer.js');
+    const host=document.createElement('div'),labels=document.createElement('div');host.style.cssText='position:fixed;width:900px;height:700px;top:0;left:0';host.append(labels);document.body.append(host);
+    window.__helperRenderer=new YardRenderer(host,labels,{select(){},open(){},clock:()=>${now}});
+    window.__helperSession=${q(s)};window.__helperProviders=${q(f.providers)};
+    await __helperRenderer.setWorld('guild','dark');__helperRenderer.update(__helperProviders,[__helperSession]);
+    window.__helperUnit=__helperRenderer.units.get('s0');window.__survivor=()=>__helperUnit.helpers.find(h=>h.id==='a1');
+    window.__helperState=()=>{const h=__survivor();return {model:h.model.uuid,position:h.model.position.toArray(),rotation:h.model.quaternion.toArray(),scale:h.model.scale.toArray(),mixer:h.mixer.time,clip:h.action.getClip().name,time:h.action.time,weight:h.action.getEffectiveWeight()};};
+    window.__helperStep=n=>{for(let i=0;i<n;i++)__helperRenderer.step(.05);};
+    window.__helperUpdate=()=>__helperRenderer.update(__helperProviders,[__helperSession]);
+  })()`);
+  t.after(()=>b.evaluate('__helperRenderer.dispose();__helperRenderer.host.remove()'));
+  await b.wait('__helperUnit.loaded&&__helperUnit.helpers.length===1');
+  const before=await b.evaluate('(__helperRenderer.setVibe(true),__helperStep(600),__helperState())');
+  assert.ok(before.position[1]>8&&before.scale[0]===1.3);
+  assert.equal(before.clip,'move');
+  await b.evaluate("__helperSession.agents[0].status='waiting';__helperUpdate()");
+  await b.wait("__survivor()?.pose==='waiting'");
+  assert.deepEqual(await b.evaluate('__helperState()'),before,'a status update must not reset the airborne model or animation');
+  await b.evaluate("__helperSession.agents.unshift({id:'a2',name:'Builder',status:'working'});__helperUpdate()");
+  await b.wait('__helperUnit.helpers.length===2');
+  assert.deepEqual(await b.evaluate('__helperState()'),before,'joining peers do not reset a surviving helper');
+  assert.deepEqual(await b.evaluate("(h=>[h.model.position.y,h.model.scale.x])(__helperUnit.helpers.find(h=>h.id==='a2'))"),[.27,.45],'new helpers start normally');
+  const airborne=await b.evaluate(`(()=>{
+    __helperStep(200);window.__removedHelper=__helperUnit.helpers.find(h=>h.id==='a2');window.__helperDisposed=0;
+    const skeletons=new Set();__removedHelper.model.traverse(n=>{if(n.skeleton)skeletons.add(n.skeleton);});
+    for(const skeleton of skeletons){const dispose=skeleton.dispose.bind(skeleton);skeleton.dispose=()=>{__helperDisposed++;dispose();};}
+    return __helperState();
+  })()`);
+  await b.evaluate('__helperSession.agents.splice(0,1);__helperUpdate()');
+  await b.wait('__helperUnit.helpers.length===1');
+  assert.deepEqual(await b.evaluate('__helperState()'),airborne,'leaving peers do not reset a surviving helper');
+  assert.deepEqual(await b.evaluate('[__removedHelper.model.parent===null,!__removedHelper.action.isRunning(),__helperDisposed>0]'),[true,true,true]);
+  const landing=await b.evaluate('(__helperRenderer.setVibe(false),__helperStep(1),__helperState())');
+  assert.ok(landing.position[1]<airborne.position[1]&&landing.position[1]>.27&&landing.scale[0]>.45,'landing starts smoothly');
+  await b.evaluate("__helperSession.agents[0].status='done';__helperUpdate()");
+  await b.wait("__survivor()?.pose==='done'");
+  assert.deepEqual(await b.evaluate('__helperState()'),landing,'an update during landing preserves its progress');
+  const landed=await b.evaluate(`(()=>{__helperStep(1600);const h=__survivor(),p=__helperUnit.root.position;return {y:h.model.position.y,scale:h.model.scale.x,dx:h.model.position.x-p.x,dz:h.model.position.z-p.z,clip:h.action.getClip().name};})()`);
+  assert.ok(Math.abs(landed.y-.27)<1e-9&&landed.scale===.45&&Math.abs(landed.dx-.82)<1e-9&&Math.abs(landed.dz)<1e-9,'resting positions and scale stay unchanged');
+  assert.equal(landed.clip,'done');
+  await b.evaluate("__helperSession.agents[0].status='waiting';__helperUpdate()");
+  await b.wait("__survivor()?.pose==='waiting'");
+  assert.equal(await b.evaluate('__survivor().action.getClip().name'),'waiting','stationary helpers still reflect their status');
+  assert.deepEqual(b.errors,[]);
+});
+
+test('Vibes flight keeps a supported five-metre custom companion below the heading and above controls',options,async t=>{
+  const temp=await fs.mkdtemp(path.join(os.tmpdir(),'guild-tall-companion-'));t.after(()=>fs.rm(temp,{recursive:true,force:true}));
+  const glb=await fs.readFile(path.join(PIECE_FILES,'companion.glb')),size=glb.readUInt32LE(12),json=JSON.parse(glb.toString('utf8',20,20+size));
+  json.nodes[0].extras.yard.height=5;json.nodes[0].scale=[1,5/1.6,1];
+  const text=Buffer.from(JSON.stringify(json)),padded=Buffer.concat([text,Buffer.alloc((4-text.length%4)%4,0x20)]),head=Buffer.from(glb.subarray(0,20)),binary=glb.subarray(20+size);
+  head.writeUInt32LE(20+padded.length+binary.length,8);head.writeUInt32LE(padded.length,12);
+  const file=path.join(temp,'companion.glb');await fs.writeFile(file,Buffer.concat([head,padded,binary]));
+  const {checkModels}=await import('../../src/manager/yard-piece-check.mjs');await checkModels([{path:file,name:'companion.glb'}],'companion');
+  const yardPieces=fakePieces({guild:{companion:{revision:'tall'}}},{companion:file}),{f,b}=await setup(t,{yardPieces}),now=Date.parse('2026-10-13T12:00:00.000Z');
+  const s={...f.data.values().next().value,id:'s0',activity:'active',createdAt:new Date(now-3600000).toISOString(),lastOutputAt:new Date(now).toISOString(),agents:[{id:'a1',name:'Explorer',status:'working'}],shells:[]};
+  await b.evaluate(`(async()=>{
+    const {YardRenderer}=await import('/yard/renderer.js');
+    const host=document.createElement('div'),labels=document.createElement('div'),top=document.createElement('div'),bottom=document.createElement('div');
+    host.style.cssText='position:fixed;width:900px;height:700px;top:0;left:0';top.style.cssText='position:absolute;top:0;width:100%;height:90px';bottom.style.cssText='position:absolute;bottom:0;width:100%;height:120px';
+    host.append(labels,top,bottom);document.body.append(host);window.__flightBottom=bottom;
+    window.__flightRenderer=new YardRenderer(host,labels,{select(){},open(){},clock:()=>${now},cover:[top,bottom]});
+    __flightRenderer.setPieces('guild',{companion:{revision:'tall'}});await __flightRenderer.setWorld('guild','dark');__flightRenderer.update(${q(f.providers)},[${q(s)}]);
+    window.__flightUnit=__flightRenderer.units.get('s0');
+  })()`);
+  t.after(()=>b.evaluate('__flightRenderer.dispose();__flightRenderer.host.remove()'));
+  await b.wait('__flightUnit.loaded&&__flightUnit.helpers.length===1');
+  assert.equal(await b.evaluate('__flightUnit.helpers[0].height'),5);
+  await b.evaluate('__flightRenderer.setVibe(true)');
+  for(const [width,height,bottom] of [[900,700,120],[360,780,195]]){
+    const result=await b.evaluate(`(()=>{
+      const r=__flightRenderer,h=__flightUnit.helpers[0],position=h.model.position.clone();r.host.style.width='${width}px';r.host.style.height='${height}px';__flightBottom.style.height='${bottom}px';r.resize();const resizeJump=position.distanceTo(h.model.position);
+      for(let i=0;i<200;i++)r.step(.05);
+      const v=h.model.position.clone(),project=y=>{v.copy(h.model.position);v.y+=y;v.project(r.camera);return {x:(v.x+1)*${width}/2,y:(1-v.y)*${height}/2};};
+      let highest=Infinity,lowest=-Infinity,meshHighest=Infinity,meshLowest=-Infinity,maxStep=0;
+      for(let i=0;i<880;i++){
+        const before=h.model.position.clone();r.step(.05);maxStep=Math.max(maxStep,before.distanceTo(h.model.position));
+        highest=Math.min(highest,project(h.height*h.model.scale.y).y);lowest=Math.max(lowest,project(0).y);
+        h.model.updateMatrixWorld(true);h.model.traverse(node=>{
+          if(!node.isMesh)return;if(node.skeleton)node.skeleton.update();
+          for(let j=0;j<node.geometry.attributes.position.count;j++){node.getVertexPosition(j,v);node.localToWorld(v);v.project(r.camera);const y=(1-v.y)*${height}/2;meshHighest=Math.min(meshHighest,y);meshLowest=Math.max(meshLowest,y);}
+        });
+      }
+      return {highest,lowest,meshHighest,meshLowest,maxStep,resizeJump,scale:h.model.scale.y};
+    })()`);
+    assert.ok(result.highest>=90,`model top overlaps heading: ${JSON.stringify(result)}`);
+    assert.ok(result.lowest<=height-bottom,`model base overlaps controls: ${JSON.stringify(result)}`);
+    assert.ok(result.meshHighest>=90&&result.meshLowest<=height-bottom,`animated companion mesh overlaps the overlays: ${JSON.stringify(result)}`);
+    assert.equal(result.resizeJump,0,'resizing does not teleport the helper');
+    assert.ok(result.maxStep<1.5&&result.scale===1.3,'flight remains smooth at the original scale');
+  }
+  assert.deepEqual(b.errors,[]);
+});
+
+test('Vibes Mode sets every character wandering and every helper flying, and turning it off or reducing motion puts them back',options,async t=>{
+  const {f,b}=await setup(t);
+  const T0=Date.parse('2026-10-13T12:00:00.000Z'),iso=ms=>new Date(T0-ms).toISOString();
+  const sessions=[...f.data.values()].slice(0,3).map((s,i)=>({...s,activity:'active',lastOutputAt:iso(0),createdAt:iso(3600000),shells:[],
+    agents:i===0?[{id:'a1',name:'Explorer',status:'working'}]:[]}));
+  await b.evaluate(`(async()=>{
+    const {YardRenderer}=await import('/yard/renderer.js');
+    window.__model=await import('/yard/model.mjs');
+    const host=document.createElement('div'),labels=document.createElement('div');
+    const top=document.createElement('div'),bottom=document.createElement('div');
+    top.style.cssText='position:absolute;top:0;left:0;right:0;height:90px';bottom.style.cssText='position:absolute;bottom:0;left:0;right:0;height:120px';
+    host.style.cssText='position:fixed;width:900px;height:700px;top:0;left:0';host.append(labels,top,bottom);document.body.append(host);
+    window.__renderer=new YardRenderer(host,labels,{select(){},open(){},clock:()=>${T0},cover:[top,bottom]});
+    window.__sessions=${q(sessions)};window.__providers=${q(f.providers)};
+    await __renderer.setWorld('guild','dark');__renderer.update(__providers,__sessions);
+    window.__units=()=>[...__renderer.units.values()];
+    window.__home=()=>[...__renderer.units].every(([id,u])=>{const p=__renderer.staged.places.get(id);return !u.moving&&u.root.position.x===p.x&&u.root.position.z===p.z;});
+    window.__run=n=>{for(let i=0;i<n;i++)__renderer.step(.05);};
+    window.__settle=()=>{let n=0;while(__units().some(u=>u.moving)&&n<4000){__renderer.step(.05);n++;}return n;};
+    window.__offScreen=()=>{
+      const camera=__renderer.camera,w=host.clientWidth,h=host.clientHeight,v=camera.position.clone(),out=[];
+      const px=(x,y,z)=>{v.set(x,y,z).project(camera);return {x:(v.x+1)/2*w,y:(1-v.y)/2*h};};
+      const off=p=>p.y<90||p.y>h-120||p.x<0||p.x>w,edge=__model.VIBE.roam.edge*h*camera.zoom/__model.CAMERA.height-.5;
+      for(const u of __units()){
+        const t=u.target,feet=px(t.x,0,t.z),head=px(t.x,__model.VIBE.roam.head,t.z);
+        if([feet,head].some(p=>p.x<edge||p.x>w-edge)||head.y<134+edge||feet.y>h-120-edge)out.push(['stop',t]);
+        for(const helper of u.helpers){const p=helper.model.position;if(off(px(p.x,p.y,p.z)))out.push(['helper',p.x,p.y,p.z]);}
+      }
+      return out;
+    };
+    window.__helper=()=>{const h=__renderer.units.get(__sessions[0].id).helpers[0];return {y:h.model.position.y,scale:h.model.scale.x,clip:h.action.getClip().name};};
+  })()`);
+  await b.wait('__units().every(u=>u.loaded)&&__units()[0].helpers.length===1');
+  assert.equal(await b.evaluate('__home()'),true,'sessions open at their stations');
+  const roaming=await b.evaluate(`(()=>{
+    __renderer.setVibe(true);
+    const u=__units()[0],from={x:u.root.position.x,z:u.root.position.z},leg=Math.hypot(u.path[0].x-from.x,u.path[0].z-from.z);
+    __renderer.step(.05);
+    const first={moved:Math.hypot(u.root.position.x-from.x,u.root.position.z-from.z),pace:u.speed*.05,leg};
+    __run(800);
+    const boxes=[...__model.providerPositions(__providers)].map(([id,p])=>({...p,half:id==='docker'?__model.STAGING.hall.docker:__model.STAGING.hall.half}));
+    return {first,moving:__units().every(u=>u.moving),clips:__units().map(u=>u.clip),legs:__units().map(u=>u.roamed),
+      inHall:__units().some(u=>boxes.some(b=>Math.abs(u.root.position.x-b.x)<b.half-.06&&Math.abs(u.root.position.z-b.z)<b.half-.06)),helper:__helper(),offScreen:__offScreen()};
+  })()`);
+  assert.ok(roaming.first.leg<roaming.first.pace||Math.abs(roaming.first.moved-roaming.first.pace)<1e-9,'a character walks at its usual speed');
+  assert.equal(roaming.moving,true,'every character keeps walking');
+  assert.deepEqual(roaming.clips,sessions.map(()=>'walk'));
+  assert.ok(roaming.legs.every(n=>n>=1),'each has gone on from its first stop');
+  assert.equal(roaming.inHall,false,'none walks through a hall');
+  const flight=await b.evaluate('__model.VIBE.flight');
+  assert.ok(roaming.helper.y>=flight.height[0]-.5&&roaming.helper.y<=flight.height[1],'the helper flies');
+  assert.ok(Math.abs(roaming.helper.scale-flight.scale)<1e-6,'at its flying size');
+  assert.equal(roaming.helper.clip,'move');
+  assert.deepEqual(roaming.offScreen,[],'every stop and helper stays on screen, clear of what covers it');
+  const turned=await b.evaluate(`(()=>{const frame=__model.vibeFrame(380/700,134/700,120/700),count=()=>__units().filter(u=>!__model.inVibeFrame(frame,u.target.x,0,u.target.z)||!__model.inVibeFrame(frame,u.target.x,__model.VIBE.roam.head,u.target.z)).length;
+    for(let n=0;n<4000&&!count();n++)__renderer.step(.05);
+    const leaving=count();__renderer.host.style.width='380px';__renderer.resize();const stops=__offScreen().filter(([kind])=>kind==='stop');__run(200);return {leaving,stops,after:__offScreen(),moving:__units().every(u=>u.moving)};})()`);
+  assert.ok(turned.leaving>0,'the turn leaves someone heading off screen');
+  assert.deepEqual(turned.stops,[],'turned to portrait, nobody heads off screen');
+  assert.deepEqual(turned.after,[],'and everyone stays on screen');
+  assert.equal(turned.moving,true);
+  assert.equal(await b.evaluate(`(()=>{const before=__units().map(u=>u.target);__renderer.update(__providers,__sessions);return __units().every((u,i)=>u.target===before[i]&&u.moving);})()`),true);
+  assert.ok(await b.evaluate('(__renderer.setVibe(false),__settle())')<4000,'turned off, everyone walks back');
+  assert.equal(await b.evaluate('__home()'),true);
+  assert.ok(await b.evaluate('__units().every(u=>__model.CLIPS.character.work.includes(u.clip))'),'and takes up its work');
+  const landed=await b.evaluate('(__run(200),__helper())');
+  assert.ok(Math.abs(landed.y-.27)<.01&&Math.abs(landed.scale-.45)<1e-6,'the helper comes back down beside its character');
+  assert.equal(await b.evaluate('(__renderer.setVibe(true),__run(100),__renderer.setReducedMotion(true),__home())'),true,'reduced motion puts everyone back at once');
+  assert.deepEqual(await b.evaluate('__helper()').then(h=>[h.y,h.scale]),[.27,.45]);
+  assert.equal(await b.evaluate('(__renderer.setReducedMotion(false),__units().every(u=>u.moving))'),true,'and they wander again when motion returns');
+  await b.evaluate('__renderer.dispose()');
+  assert.deepEqual(b.errors,[]);
+});
+
+test('Vibes destination selection keeps normal and crowded crews moving through portrait resizing and a covered view',options,async t=>{
+  const {f,b}=await setup(t),now=Date.parse('2026-10-13T12:00:00.000Z');
+  await b.evaluate(`(async()=>{
+    const {YardRenderer}=await import('/yard/renderer.js');window.__destModel=await import('/yard/model.mjs');
+    const host=document.createElement('div'),labels=document.createElement('div'),top=document.createElement('div'),bottom=document.createElement('div');
+    host.style.cssText='position:fixed;top:0;left:0;width:900px;height:700px';
+    top.style.cssText='position:absolute;top:0;width:100%;height:90px';bottom.style.cssText='position:absolute;bottom:0;width:100%;height:120px';
+    host.append(labels,top,bottom);document.body.append(host);
+    const r=window.__destRenderer=new YardRenderer(host,labels,{select(){},open(){},clock:()=>${now},cover:[top,bottom]});
+    window.__destCover={top,bottom};
+    window.__destProviders=${q([...f.providers,{id:'docker',tool:'Docker Agent',available:true}])};
+    await r.setWorld('guild','dark');
+    window.__destCalls=0;window.__destTimes=[];window.__destOutside=[];window.__destExpectVisible=true;
+    window.__destVisible=p=>__destModel.inVibeFrame(r.vibeFrames.stop,p.x,0,p.z)&&__destModel.inVibeFrame(r.vibeFrames.stop,p.x,__destModel.VIBE.roam.head,p.z);
+    const roam=r.roam;r.roam=function(u){const at=performance.now();roam.call(this,u);__destTimes.push(performance.now()-at);__destCalls++;if(__destExpectVisible&&!__destVisible(u.target))__destOutside.push(u.target);};
+    window.__destStats=values=>{const sorted=[...values].sort((a,b)=>a-b),at=p=>Number((sorted[Math.min(sorted.length-1,Math.floor(sorted.length*p))]||0).toFixed(3));return {p50:at(.5),p95:at(.95),max:at(1)};};
+    window.__destUpdates=()=>{
+      const calls=__destCalls,targets=[...r.units.values()].map(u=>u.target),times=[];
+      for(let n=0;n<40;n++){const at=performance.now();r.update(__destProviders,__destSessions);times.push(performance.now()-at);}
+      return {ms:__destStats(times),searches:__destCalls-calls,sameTargets:[...r.units.values()].every((u,i)=>u.target===targets[i])};
+    };
+    window.__destWalk=()=>{
+      const units=[...r.units.values()],distance=units.map(()=>0),legs=units.map(u=>u.roamed),steps=[];
+      for(let n=0;n<1600;n++){
+        const before=units.map(u=>({x:u.root.position.x,z:u.root.position.z})),at=performance.now();r.step(.05);steps.push(performance.now()-at);
+        units.forEach((u,i)=>{distance[i]+=Math.hypot(u.root.position.x-before[i].x,u.root.position.z-before[i].z);});
+      }
+      return {ms:__destStats(steps),minDistance:Math.min(...distance),minLegs:Math.min(...units.map((u,i)=>u.roamed-legs[i])),moving:units.every(u=>u.moving&&u.path.length>0)};
+    };
+  })()`);
+  t.after(()=>b.evaluate('__destRenderer.dispose();__destRenderer.host.remove()'));
+  for(const [name,count,provider] of [['normal',3,null],['crowded-xai',24,'xai'],['crowded-openai',24,'openai']]){
+    const sessions=Array.from({length:count},(_,i)=>({...f.data.values().next().value,id:name+'-'+i,name:name+' '+i,
+      provider:f.providers.find(p=>p.id===(provider||f.providers[i%f.providers.length].id)),activity:'active',createdAt:new Date(now-3600000).toISOString(),lastOutputAt:new Date(now).toISOString(),agents:[],shells:[]}));
+    await b.evaluate(`(()=>{const r=__destRenderer;r.setVibe(false);__destExpectVisible=true;r.host.style.width='900px';r.host.style.height='700px';__destCover.top.style.height='90px';__destCover.bottom.style.height='120px';r.resize();window.__destSessions=${q(sessions)};r.update(__destProviders,__destSessions);})()`);
+    await b.wait('[...__destRenderer.units.values()].every(u=>u.loaded)');
+    const result=await b.evaluate(`(()=>{
+      const r=__destRenderer,slots=JSON.stringify([...r.staged.slots]);__destTimes=[];__destOutside=[];
+      const at=performance.now();r.setVibe(true);const activationMs=performance.now()-at;
+      const landscape={updates:__destUpdates(),walk:__destWalk()};
+      r.host.style.width='360px';r.host.style.height='780px';__destCover.bottom.style.height='195px';
+      const turn=performance.now();r.resize();const resizeMs=performance.now()-turn;
+      const portrait={updates:__destUpdates(),walk:__destWalk()};
+      __destExpectVisible=false;__destCover.top.style.height='500px';__destCover.bottom.style.height='500px';r.resize();
+      const covered={updates:__destUpdates(),walk:__destWalk()};
+      __destExpectVisible=true;__destCover.top.style.height='90px';__destCover.bottom.style.height='195px';r.resize();
+      const recovered=[...r.units.values()].every(u=>u.moving&&__destVisible(u.target));
+      return {activationMs,resizeMs,landscape,portrait,covered,recovered,outside:__destOutside,roamMs:__destStats(__destTimes),sameSlots:JSON.stringify([...r.staged.slots])===slots};
+    })()`);
+    for(const phase of ['landscape','portrait','covered']){
+      assert.equal(result[phase].updates.searches,0,`${name} ${phase}: unchanged snapshots do not select destinations again`);
+      assert.equal(result[phase].updates.sameTargets,true);
+      assert.equal(result[phase].walk.moving,true,`${name} ${phase}: nobody freezes`);
+      assert.ok(result[phase].walk.minDistance>1&&result[phase].walk.minLegs>=1,`${name} ${phase}: every character travels and starts another leg`);
+    }
+    assert.deepEqual(result.outside,[],`${name}: every newly chosen destination fits the usable view`);
+    assert.equal(result.recovered,true,`${name}: uncovering the view immediately restores visible destinations`);
+    assert.equal(result.sameSlots,true,`${name}: station slots stay unchanged`);
+    t.diagnostic(JSON.stringify({name,...result}));
+  }
+  assert.deepEqual(b.errors,[]);
+});
+
+test('the Vibes Mode button stays on across Yards and reloads, and reduced motion disables it',options,async t=>{
+  const {b}=await setup(t,{yard:true});
+  const button="document.querySelector('#yard-vibe')",state='['+button+'.getAttribute("aria-pressed"),'+button+'.disabled,localStorage.getItem("agentGuild.vibe")]';
+  await ready(b);
+  assert.deepEqual(await b.evaluate(state),['false',true,null]);
+  assert.match(await b.evaluate(button+'.title'),/reduced motion/);
+  await b.evaluate(`(async()=>{
+    const {YardRenderer}=await import('/yard/renderer.js'),original=YardRenderer.prototype.setVibe;
+    window.__vibes=[];
+    YardRenderer.prototype.setVibe=function(value){window.__vibes.push(value);window.__yardRenderer=this;return original.call(this,value);};
+  })()`);
+  await b.send('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'no-preference'}]});
+  await b.wait(button+'.disabled===false');
+  assert.equal(await b.evaluate(button+'.getAttribute("aria-label")'),'Vibes Mode');
+  assert.equal(await b.evaluate(button+'.previousElementSibling.id'),'yard-fireworks');
+  await b.click('#yard-vibe');
+  assert.deepEqual(await b.evaluate(state),['true',false,'on']);
+  assert.deepEqual(await b.evaluate('[__vibes,__yardRenderer.vibe]'),[[true],true]);
+  await b.evaluate("document.documentElement.dataset.skin='orbital'");
+  await b.wait("document.querySelector('#yard-stage').dataset.world==='orbital'");
+  assert.deepEqual(await b.evaluate('['+button+'.getAttribute("aria-pressed"),__yardRenderer.vibe]'),['true',true],'another Yard keeps it');
+  await b.reload();await ready(b);
+  assert.deepEqual(await b.evaluate(state),['true',false,'on'],'a reload keeps it');
+  await b.click('#yard-vibe');
+  assert.deepEqual(await b.evaluate(state),['false',false,'off']);
   assert.deepEqual(b.errors,[]);
 });

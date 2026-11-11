@@ -265,3 +265,4 @@
 @container (max-width:440px) { .yard-play-text { display:none; } .yard-play-link { padding:0 7px; } }
 @container (max-width:380px) { .yard-play:not(.yard-play-solo) .yard-play-link { display:none; } .yard-play-chip { --play-more-w:44px; } .yard-play-more { padding:0; } .yard-play-more::before { display:none; } .yard-play-more-orb { display:block; grid-area:1 / 1; } .yard-play-caret { grid-area:1 / 1; place-self:end; width:9px; height:6px; margin:0 7px 6px 0; stroke-width:2.2; } }
 @container (max-width:340px) { :root:is([data-skin="orbital"],[data-skin="gnomeland"],[data-skin="goblinville"],[data-skin="grove"],[data-skin="guild"],[data-skin="professional"]) :is(.yard-eyebrow, #yard-subtitle) { display:none; } }
+#yard-vibe[aria-pressed="true"] { border-color:var(--accent); color:var(--accent); }

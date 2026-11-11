@@ -214,6 +214,8 @@ export function codexHooksList(resolved, args, { env, platform = process.platfor
     const stopped = () => finish(new Error('The manager is stopping'));
     const timer = setTimeout(() => finish(new Error('Codex did not answer in time')), timeoutMs);
     timer.unref?.();
+    // Registered before the spawn: a signal that lands once Codex runs must find it.
+    if (platform !== 'win32') release = endWithProcess(() => killGroup(child?.pid));
     try {
       const verbatim = typeof spec.args === 'string';
       child = spawn(spec.file, verbatim ? [spec.args] : spec.args, {
@@ -222,7 +224,6 @@ export function codexHooksList(resolved, args, { env, platform = process.platfor
     } catch (err) {
       return finish(err);
     }
-    if (platform !== 'win32') release = endWithProcess(() => killGroup(child.pid));
     signal?.addEventListener('abort', stopped, { once: true });
     let stderr = '';
     let buffer = '';

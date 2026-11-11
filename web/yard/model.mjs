@@ -434,6 +434,139 @@ export function clipFor(id, mode, n) {
   if (mode === 'work') return n % 3 === 2 && h % 2 ? set[1] : set[0];
   return n % 3 === 2 ? set[1 + (h % (set.length - 1))] : set[0];
 }
+export const VIBE = {
+  // Must stay inside the ground every world keeps clear (Clearance.live_distance in agent-guild-builders).
+  roam: { radius: 13.2, half: 12.5, front: 30.5, split: 3, margin: .9, edge: 1.2, head: 2.4 },
+  flight: { height: [8.5, 12], lap: [26, 44], reach: [.45, 1], scale: 1.3, top: 2 },
+};
+export function vibeFrame(aspect, top = 0, bottom = 0) {
+  const { target, zoom } = overviewFor(aspect), height = CAMERA.height / zoom, width = height * aspect, { edge } = VIBE.roam;
+  return { target, right: [edge - width / 2, width / 2 - edge], up: [(bottom - .5) * height + edge, (.5 - top) * height - edge] };
+}
+export function inVibeFrame(frame, x, y, z) {
+  const { right, up } = viewBasis(), d = [x - frame.target[0], y - frame.target[1], z - frame.target[2]];
+  const r = dot(d, right), u = dot(d, up);
+  return r >= frame.right[0] && r <= frame.right[1] && u >= frame.up[0] && u <= frame.up[1];
+}
+function unit(value) {
+  let h = hash(value);
+  h = Math.imul(h ^ (h >>> 16), 0x45d9f3b); h = Math.imul(h ^ (h >>> 16), 0x45d9f3b);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+// Clip the visible ground polygon to an axis-aligned interval. Destination
+// geometry only: this neither builds nor checks a route.
+function vibeClip(points, axis, low, high) {
+  for (const [edge, sign] of [[low, 1], [high, -1]]) {
+    const next = [];
+    for (let i = 0; i < points.length; i++) {
+      const a = points[i], b = points[(i + 1) % points.length], da = sign * (a[axis] - edge), db = sign * (b[axis] - edge);
+      if (da >= 0) next.push(a);
+      if ((da < 0) !== (db < 0)) { const t = da / (da - db); next.push({ x: a.x + t * (b.x - a.x), z: a.z + t * (b.z - a.z) }); }
+    }
+    points = next;
+  }
+  return points;
+}
+// A missed sample is not an empty view. Obstacle x edges divide the ground
+// into at most 2B+1 bands, each with at most B+1 free z intervals. Check those
+// finite regions, not a grid whose spacing could miss a narrow opening.
+function vibeGap(polygon, boxes, near, far, seed) {
+  const { radius, half, front } = VIBE.roam;
+  polygon = vibeClip(vibeClip(polygon, 'x', -radius, radius), 'z', near, far);
+  const point = points => {
+    if (points.length < 3) return null;
+    const area = points.reduce((sum, a, i) => { const b = points[(i + 1) % points.length]; return sum + a.x * b.z - b.x * a.z; }, 0);
+    if (Math.abs(area) < 1e-10) return null;
+    const center = { x: 0, z: 0 };
+    for (const p of points) { center.x += p.x / points.length; center.z += p.z / points.length; }
+    const p = points[Math.floor(seed * points.length)], t = .25 + seed / 2;
+    return { x: center.x + (p.x - center.x) * t, z: center.z + (p.z - center.z) * t };
+  };
+  const ground = points => {
+    const p = point(points);
+    if (!p) return null;
+    if (Math.hypot(p.x, p.z) < radius || (Math.abs(p.x) <= half && p.z >= 0 && p.z <= front)) return p;
+    const apron = point(vibeClip(vibeClip(points, 'x', -half, half), 'z', 0, front));
+    if (apron) return apron;
+    // The plaza's obstacle excludes the circle's centre from every free
+    // region, so its nearest point is on an edge. Move from it into the
+    // polygon, staying inside the circle even for a small circular sliver.
+    let nearest = null, distance = Infinity;
+    for (let i = 0; i < points.length; i++) {
+      const a = points[i], b = points[(i + 1) % points.length], dx = b.x - a.x, dz = b.z - a.z;
+      const t = clamp(-(a.x * dx + a.z * dz) / (dx * dx + dz * dz || 1), 0, 1), q = { x: a.x + t * dx, z: a.z + t * dz }, d = Math.hypot(q.x, q.z);
+      if (d < distance) { nearest = q; distance = d; }
+    }
+    if (distance >= radius) return null;
+    const t = Math.min(.5, (radius - distance) / (2 * Math.hypot(p.x - nearest.x, p.z - nearest.z)));
+    return { x: nearest.x + t * (p.x - nearest.x), z: nearest.z + t * (p.z - nearest.z) };
+  };
+  if (!point(polygon)) return null;
+  const left = Math.min(...polygon.map(p => p.x)), right = Math.max(...polygon.map(p => p.x));
+  const edges = [...new Set([left, right, ...boxes.flatMap(b => [b.x - b.half, b.x + b.half]).filter(x => x > left && x < right)])].sort((a, b) => a - b);
+  const start = Math.floor(seed * (edges.length - 1));
+  for (let i = 0; i < edges.length - 1; i++) {
+    const k = (start + i) % (edges.length - 1), lo = edges[k], hi = edges[k + 1], x = (lo + hi) / 2;
+    const blocked = boxes.filter(b => Math.abs(x - b.x) < b.half).map(b => [b.z - b.half, b.z + b.half]).sort((a, b) => a[0] - b[0]);
+    let z = near;
+    for (const [low, high] of [...blocked, [far, far]]) {
+      if (low > z) {
+        const p = ground(vibeClip(vibeClip(polygon, 'x', lo, hi), 'z', z, Math.min(low, far)));
+        if (p) return p;
+      }
+      z = Math.max(z, high);
+      if (z >= far) break;
+    }
+  }
+  return null;
+}
+export function vibeStop(id, n, providers, props = [], frame = null) {
+  const { radius, half, front, split, margin, head } = VIBE.roam;
+  const [near, far] = (n + hash(id)) % 2 ? [split, front] : [-radius, split];
+  const boxes = [...obstacles(providers).map(box => ({ ...box, half: box.half + margin })),
+    ...props.map(p => ({ x: p.x, z: p.z, half: STAGING.station.half + margin }))];
+  const clear = (x, z) => (Math.hypot(x - STAGING.plaza.x, z - STAGING.plaza.z) <= radius || (Math.abs(x) <= half && z >= 0 && z <= front))
+    && !boxes.some(box => Math.abs(x - box.x) < box.half && Math.abs(z - box.z) < box.half);
+  if (frame) {
+    const { right, up, forward } = viewBasis(), [r0, r1] = frame.right, u0 = frame.up[0], u1 = frame.up[1] - head * up[1];
+    const at = (r, u) => {
+      const s = (-frame.target[1] - u * up[1]) / forward[1];
+      return { x: frame.target[0] + r * right[0] + u * up[0] + s * forward[0], z: frame.target[2] + r * right[2] + u * up[2] + s * forward[2] };
+    };
+    if (r1 > r0 && u1 > u0) {
+      const polygon = [at(r0, u0), at(r1, u0), at(r1, u1), at(r0, u1)];
+      for (const [low, high] of [[near, far], near === split ? [-radius, split] : [split, front]]) {
+        for (let k = 0; k < 48; k++) {
+          const p = at(r0 + unit(id + ':vibe:x:' + n + ':' + k) * (r1 - r0), u0 + unit(id + ':vibe:z:' + n + ':' + k) * (u1 - u0));
+          const x = round(p.x), z = round(p.z);
+          if (z >= low && z <= high && clear(x, z) && inVibeFrame(frame, x, 0, z) && inVibeFrame(frame, x, head, z)) return { x, z };
+        }
+        const p = vibeGap(polygon, boxes, low, high, unit(id + ':vibe:gap:' + n));
+        if (p) return p;
+      }
+    }
+  }
+  // No usable visible ground (or no frame): keep the original seeded walk.
+  // Never turn a crowded/covered view into a stationary, repeatedly retried unit.
+  for (let k = 0; k < 48; k++) {
+    const x = round((unit(id + ':vibe:x:' + n + ':' + k) * 2 - 1) * radius), z = round(near + unit(id + ':vibe:z:' + n + ':' + k) * (far - near));
+    if (clear(x, z)) return { x, z };
+  }
+  return { x: STAGING.plaza.x, z: round(STAGING.plaza.z + STAGING.plaza.half + margin + STAGING.station.half) };
+}
+export function vibeFlight(key, seconds, frame, companionHeight = 1) {
+  const { height, lap, reach, top, scale } = VIBE.flight, { right, up, forward } = viewBasis();
+  const pick = (name, [low, high]) => low + unit(key + ':vibe:' + name) * (high - low);
+  const out = pick('reach', reach), turn = unit(key + ':vibe:turn') < .5 ? 1 : -1, lobes = 2 + Math.floor(unit(key + ':vibe:lobes') * 3);
+  const angle = turn * 2 * Math.PI * (seconds / pick('lap', lap) + unit(key + ':vibe:start'));
+  const wide = out * (1 + .12 * Math.sin(lobes * angle + pick('phase', [0, 2 * Math.PI]))) / 1.12;
+  const y = (height[0] + height[1]) / 2 + (height[1] - height[0]) / 2 * Math.sin(2 * angle + pick('rise', [0, 2 * Math.PI]));
+  const [r0, r1] = frame.right, u0 = frame.up[0], u1 = frame.up[1] - Math.max(top, companionHeight * scale * up[1]);
+  const r = (r0 + r1) / 2 + Math.cos(angle) * Math.max(0, r1 - r0) / 2 * wide;
+  const u = (u0 + u1) / 2 + Math.sin(angle) * Math.max(0, u1 - u0) / 2 * wide;
+  const s = (y - frame.target[1] - u * up[1]) / forward[1];
+  return { x: frame.target[0] + r * right[0] + u * up[0] + s * forward[0], y, z: frame.target[2] + r * right[2] + u * up[2] + s * forward[2] };
+}
 // Where a session's helpers stand, around it, as the renderer has always placed them.
 export function helperOffset(i, count) {
   const angle = (i / Math.min(count, 6)) * Math.PI * 2;

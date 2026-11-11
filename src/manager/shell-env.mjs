@@ -78,6 +78,9 @@ export function probeLoginShell({ shell, env = process.env, timeoutMs = LOGIN_SH
   if (process.platform === 'win32' || !shell) return Promise.resolve({ vars: null, failure: null });
   return new Promise((resolve) => {
     let child;
+    // Registered before the spawn: a signal that lands once the shell runs must find it.
+    const end = () => killGroup(child?.pid);
+    const release = endWithProcess(end);
     try {
       child = spawn(shell, LOGIN_SHELL_ARGS, {
         detached: true,
@@ -85,12 +88,11 @@ export function probeLoginShell({ shell, env = process.env, timeoutMs = LOGIN_SH
         env: { ...env, AGENT_GUILD_RESOLVING_ENV: '1' },
       });
     } catch (err) {
+      release();
       return resolve({ vars: null, failure: `could not start (${err.code || err.message})` });
     }
     let stdout = '';
     let settled = false;
-    const end = () => killGroup(child.pid);
-    const release = endWithProcess(end);
     const finish = (result) => {
       if (settled) return;
       settled = true;

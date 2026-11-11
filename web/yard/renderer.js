@@ -1,6 +1,6 @@
 import * as T from './vendor/engine.js';
 import { WORLDS, PROVIDER_ORDER, characterIndex, GILDED, CAMERA, SUN, minZoom, overviewFor, clampPan, viewBasis, providerPositions, sessionPose, familiarPose, hash,
-  stage, nextStagingChange, doorFor, arrives, route, clipFor, helperOffset, stationProp, hallActivity, lookTarget, lookLimits, yardExtras, playableClip, STAGING, photoSize, marksFor, SHOWN_HELPERS } from './model.mjs';
+  stage, nextStagingChange, doorFor, arrives, route, clipFor, helperOffset, stationProp, hallActivity, lookTarget, lookLimits, yardExtras, playableClip, STAGING, photoSize, marksFor, SHOWN_HELPERS, VIBE, vibeStop, vibeFlight, vibeFrame, inVibeFrame } from './model.mjs';
 
 const ASSETS = new URL('./assets/', import.meta.url);
 const vector = new T.Vector3();
@@ -16,7 +16,7 @@ const pieceFiles = (skin, slot, piece) => (slot === 'companion' ? [0, 1, 2, 3].m
 const vector2 = new T.Vector2();
 // How fast characters turn to a new heading, in radians a second, and how
 // long a clip change blends.
-const TURN = 7, FADE = .3;
+const TURN = 7, FADE = .3, TAG = 44;
 // Models rigged before the staging contract name their clips differently.
 const LEGACY = { walk: 'working', idle_0: 'resting', idle_1: 'resting', idle_2: 'resting', pause: 'resting', work_0: 'working', work_1: 'working', idle: 'resting', move: 'working' };
 // How bright a hall's glow grows at low and high activity, over what the
@@ -139,15 +139,15 @@ function disposeWorld(root) {
 }
 export class YardRenderer {
   // clock gives the time staging is judged at; tests pass a fixed one.
-  constructor(host,labels,{select,open,error=noop,piece=noop,clock=Date.now}) {
-    this.host=host;this.labels=labels;this.onSelect=select;this.onOpen=open;this.onError=error;this.onPiece=piece;this.clock=clock;
+  constructor(host,labels,{select,open,error=noop,piece=noop,clock=Date.now,cover=[]}) {
+    this.host=host;this.labels=labels;this.cover=cover;this.onSelect=select;this.onOpen=open;this.onError=error;this.onPiece=piece;this.clock=clock;
     this.pieceSets={};this.shownPieces={skin:null,pieces:{}};this.pieceLoaders=new Map();this.preloads=new Map();
     this.scene=new T.Scene();this.units=new Map();this.halls=new Map();this.slots=new Map();this.cache=new Map();
     this.loadingManager=new T.LoadingManager();
     this.providers=[];this.sessions=[];this.selected=null;this.world=null;this.skin=null;this.request=0;this.worldRequest=0;this.pending=null;
     this.staged=null;this.seen=new Set();this.stageTimer=0;this.sparks=[];this.shows=[];this.marks=new T.Group();this.scene.add(this.marks);this.glyphs=null;this.markPlane=new T.PlaneGeometry(1,1);
     this.props=new Map();this.propSpots=[];this.station=null;this.effects=null;
-    this.active=false;this.reduced=false;this.disposed=false;this.frame=0;this.lastTime=0;this.dirty=true;
+    this.active=false;this.reduced=false;this.vibe=false;this.vibeTime=0;this.vibeFrames={stop:null,flight:vibeFrame(1)};this.disposed=false;this.frame=0;this.lastTime=0;this.dirty=true;
     this.crowd=null;this.rows=new Map();
     this.list=Object.assign(document.createElement('div'),{className:'yard-crowd-list',id:'yard-crowd-list-'+(++crowdLists),hidden:true});
     this.list.setAttribute('role','group');
@@ -195,7 +195,7 @@ export class YardRenderer {
     this.canvas.addEventListener('pointerdown',this.onPointerDown);
     this.canvas.addEventListener('click',this.onClick);
     this.canvas.addEventListener('dblclick',this.onDouble);
-    this.resizeObserver=new ResizeObserver(()=>this.resize());this.resizeObserver.observe(host);
+    this.resizeObserver=new ResizeObserver(()=>this.resize());for(const el of [host,...cover])this.resizeObserver.observe(el);
     this.resize();this.overview();
   }
   async asset(name,url) {
@@ -482,7 +482,21 @@ export class YardRenderer {
     this.camera.zoom=T.MathUtils.clamp(this.camera.zoom,this.controls.minZoom,this.controls.maxZoom);
     this.camera.updateProjectionMatrix();
     this.dirty=true;
+    this.frameVibe(w,h);
     if(this.atOverview)this.overview();else this.drawOnce();
+  }
+  frameVibe(w,h) {
+    const box=this.host.getBoundingClientRect();let top=0,bottom=0;
+    for(const el of this.cover){
+      const r=el.getBoundingClientRect();
+      if(!r.width||!r.height)continue;
+      if(r.top+r.bottom<box.top+box.bottom)top=Math.max(top,r.bottom-box.top);else bottom=Math.max(bottom,box.bottom-r.top);
+    }
+    top=T.MathUtils.clamp(top,0,h);bottom=T.MathUtils.clamp(bottom,0,h);
+    this.vibeFrames={stop:vibeFrame(w/h,(top+TAG)/h,bottom/h),flight:vibeFrame(w/h,top/h,bottom/h)};
+    if(!this.vibing())return;
+    const {stop}=this.vibeFrames,{head}=VIBE.roam;
+    for(const unit of this.units.values())if(unit.moving&&unit.target&&!(inVibeFrame(stop,unit.target.x,0,unit.target.z)&&inVibeFrame(stop,unit.target.x,head,unit.target.z)))this.roam(unit);
   }
   overview() {
     const {target,zoom}=overviewFor((this.camera.right-this.camera.left)/(this.camera.top-this.camera.bottom));
@@ -922,6 +936,7 @@ export class YardRenderer {
   goTo(unit,place) {
     const target=unit.target;
     unit.mode=place.mode;
+    if(this.vibing()){if(!unit.moving)this.roam(unit);return;}
     if(target&&target.x===place.x&&target.z===place.z){unit.target=place;if(!unit.moving)this.play(unit);return;}
     unit.target=place;
     const at={x:unit.root.position.x,z:unit.root.position.z};
@@ -929,12 +944,33 @@ export class YardRenderer {
     else {unit.path=route(at,place,this.providers,this.propSpots);unit.moving=true;}
     this.play(unit);
   }
+  roam(unit) {
+    unit.roamed=(unit.roamed??-1)+1;
+    const at={x:unit.root.position.x,z:unit.root.position.z},stop=vibeStop(unit.session.id,unit.roamed,this.providers,this.propSpots,this.vibeFrames.stop);
+    unit.target=stop;unit.path=route(at,stop,this.providers,this.propSpots);unit.moving=true;
+    this.play(unit);
+  }
+  vibing() { return this.vibe&&!this.reduced; }
+  setVibe(value) {
+    if(this.vibe===Boolean(value))return;
+    const was=this.vibing();
+    this.vibe=Boolean(value);
+    if(was!==this.vibing())this.restage();
+  }
+  restage() {
+    if(!this.staged)return;
+    for(const [id,unit]of this.units){
+      const place=this.staged.places.get(id);
+      if(place){unit.target=null;this.goTo(unit,place);}
+    }
+    this.dirty=true;this.drawOnce();
+  }
   // Straight to its place, helpers with it.
   arrive(unit) {
     const place=unit.target;
     unit.root.position.set(place.x,.17,place.z);unit.path=[];unit.heading=place.face;unit.moving=false;
     if(unit.model)unit.model.rotation.y=unit.heading;
-    for(const helper of unit.helpers)helper.model.position.set(place.x+helper.offset.x,.27,place.z+helper.offset.z);
+    for(const helper of unit.helpers){helper.model.position.set(place.x+helper.offset.x,.27,place.z+helper.offset.z);helper.model.scale.setScalar(.45);}
   }
   // The clip a character should be playing now: the walk while it moves,
   // otherwise its mode's seeded sequence (model.mjs clipFor).
@@ -966,7 +1002,7 @@ export class YardRenderer {
   // Moves a walking character along its path at its stride's speed, turning
   // smoothly, and turns a standing one to face its place.
   advance(unit,dt) {
-    const root=unit.root.position;
+    const root=unit.root.position,vibing=this.vibing();
     let want=unit.target?.face??unit.heading;
     if(unit.moving&&unit.path.length) {
       let step=unit.speed*dt;
@@ -976,7 +1012,7 @@ export class YardRenderer {
         if(d<=step){root.x=next.x;root.z=next.z;unit.path.shift();step-=d;}
         else {root.x+=dx/d*step;root.z+=dz/d*step;step=0;}
       }
-      if(!unit.path.length){unit.moving=false;this.play(unit);}
+      if(!unit.path.length){if(vibing)this.roam(unit);else {unit.moving=false;this.play(unit);}}
       this.dirty=true;
     }
     const turn=angleTo(unit.heading,want);
@@ -988,13 +1024,15 @@ export class YardRenderer {
     // Helpers trail their character, closing most of the gap in a second.
     const pull=1-Math.exp(-4*dt);
     for(const helper of unit.helpers){
-      const tx=root.x+helper.offset.x,tz=root.z+helper.offset.z,p=helper.model.position;
-      const dx=tx-p.x,dz=tz-p.z,far=Math.hypot(dx,dz);
-      p.x+=dx*pull;p.z+=dz*pull;
+      const to=vibing?vibeFlight(unit.session.id+':'+helper.id,this.vibeTime,this.vibeFrames.flight,helper.height):{x:root.x+helper.offset.x,y:.27,z:root.z+helper.offset.z};
+      const p=helper.model.position,dx=to.x-p.x,dy=to.y-p.y,dz=to.z-p.z,far=Math.hypot(dx,dz);
+      const size=vibing?VIBE.flight.scale:.45,grow=size-helper.model.scale.x;
+      p.x+=dx*pull;p.y+=dy*pull;p.z+=dz*pull;
+      if(grow)helper.model.scale.setScalar(Math.abs(grow)<1e-3?size:helper.model.scale.x+grow*pull);
       if(far>.05)helper.model.rotation.y=Math.atan2(dx,dz);
       const moving=far>.08;
       if(moving!==helper.moving){helper.moving=moving;this.helperClip(helper,moving?'move':helper.pose);}
-      if(far>1e-3)this.dirty=true;
+      if(far>1e-3||Math.abs(dy)>1e-3||grow)this.dirty=true;
     }
     this.fire(unit);
   }
@@ -1134,13 +1172,20 @@ export class YardRenderer {
       spark.points.geometry.attributes.position.needsUpdate=true;
     }
   }
+  restHelper(unit,helper) {
+    helper.model.position.set(unit.root.position.x+helper.offset.x,.27,unit.root.position.z+helper.offset.z);
+    helper.model.scale.setScalar(.45);
+    helper.moving=false;helper.mixer.stopAllAction();helper.action=null;
+    this.helperClip(helper,helper.pose);
+    helper.mixer.update(0);
+  }
   helperClip(helper,name) {
     const clip=helper.clips.find(c=>c.name===name)||helper.clips.find(c=>c.name===LEGACY[name])||helper.clips[0];
     if(!clip)return;
     const action=helper.mixer.clipAction(clip);
     if(action===helper.action)return;
     action.reset().play();
-    if(helper.action){if(this.reduced)helper.action.stop();else helper.action.crossFadeTo(action,FADE,false);}
+    if(helper.action)helper.action.crossFadeTo(action,FADE,false);
     helper.action=action;
   }
   clearHelpers(unit) {
@@ -1154,9 +1199,15 @@ export class YardRenderer {
     const kinds=WORLDS[this.skin].helpers,source=this.pieceSource('companion');
     const signature=JSON.stringify([source?.revision??null,agents]);
     if(unit.helperSignature===signature)return;
-    this.clearHelpers(unit);
+    const shown=agents.slice(0,SHOWN_HELPERS);
+    unit.helpers=unit.helpers.filter(helper=>{
+      if(shown.some(agent=>agent.id===helper.id))return true;
+      unit.crew.remove(helper.model);helper.mixer.stopAllAction();helper.mixer.uncacheRoot(helper.model);disposeSkeletons(helper.model);
+      return false;
+    });
     unit.helperSignature=signature;
-    const rev=unit.revision,generation=this.request;
+    const rev=++unit.revision,generation=this.request;
+    this.dirty=true;this.drawOnce();
     const stale=()=>this.disposed||generation!==this.request||rev!==unit.revision||!unit.root.parent;
     let pieces=null;
     if(source&&agents.length){
@@ -1171,26 +1222,31 @@ export class YardRenderer {
     }
     // The full helper count and all helper details remain in the canonical inspector.
     // Small squads preserve readable character silhouettes at the overview scale.
-    await Promise.all(agents.slice(0,SHOWN_HELPERS).map(async(agent,i)=>{
+    await Promise.all(shown.map(async(agent,i)=>{
+      const offset=helperOffset(i,agents.length),existing=unit.helpers.find(helper=>helper.id===agent.id);
+      if(existing){
+        existing.offset=offset;existing.pose=agent.pose;
+        if(this.reduced)this.restHelper(unit,existing);
+        else if(!existing.moving&&!this.vibing())this.helperClip(existing,agent.pose);
+        this.dirty=true;this.drawOnce();
+        return;
+      }
       try {
         const n=hash(agent.name||agent.id)%4;
         const asset=pieces?pieces[n]:await this.asset((agent.shell?kinds.shell:kinds.agent)+n);
         if(stale())return;
         const model=T.cloneSkeleton(asset.scene);
         model.traverse(n=>{if(n.isSkinnedMesh)n.frustumCulled=false;});
-        const offset=helperOffset(i,agents.length);
         model.scale.setScalar(.45);model.position.set(unit.root.position.x+offset.x,.27,unit.root.position.z+offset.z);
         unit.crew.add(model);
         const mixer=new T.AnimationMixer(model);
         let yard=null;asset.scene.traverse(n=>{if(n.userData?.yard)yard=n.userData.yard;});
-        const helper={id:agent.id,top:yardExtras(yard,'helper').height*model.scale.y,model,mixer,offset,pose:agent.pose,clips:asset.animations,moving:false,action:null};
-        this.helperClip(helper,agent.pose);
-        mixer.update(.3+(hash(agent.id)%40)/10);
+        const helper={id:agent.id,height:yardExtras(yard,'helper').height,get top(){return this.height*this.model.scale.y;},model,mixer,offset,pose:agent.pose,clips:asset.animations,moving:false,action:null};
+        if(this.reduced)this.restHelper(unit,helper);
+        else {this.helperClip(helper,agent.pose);mixer.update(.3+(hash(agent.id)%40)/10);}
         unit.helpers.push(helper);
         this.dirty=true;this.drawOnce();
       } catch {
-        // The next state transition can rebuild this incomplete squad. Routine
-        // unchanged updates do not call helpers(), so failure cannot loop.
         if(!stale())unit.helperSignature=null;
       }
     }));
@@ -1343,9 +1399,12 @@ export class YardRenderer {
     this.list.style.top=Math.max(6,ct+half+4+lh<=h-6?ct+half+4:ct-half-4-lh)+'px';
   }
   setReducedMotion(value) {
+    const was=this.vibing();
     this.reduced=value;
+    if(was!==this.vibing())this.restage();
     if(value)for(const unit of this.units.values()){this.unlook(unit);unit.lookYaw=0;unit.lookPitch=0;}
     if(value)for(const unit of this.units.values())if(unit.moving&&unit.target){this.arrive(unit);this.play(unit);}
+    if(value)for(const unit of this.units.values())for(const helper of unit.helpers)this.restHelper(unit,helper);
     if(value){for(const item of this.halls.values())item.level=item.target;this.glow();this.stillEffects();this.clearFireworks();}
     this.dirty=true;this.drawOnce();
   }
@@ -1372,12 +1431,14 @@ export class YardRenderer {
   // Advances walks, turns, helpers, clips, glances, sparks and the halls'
   // glow and effects by dt seconds, without drawing.
   step(dt) {
+    const vibing=this.vibing();
+    if(vibing)this.vibeTime+=dt;
     for(const unit of this.units.values()) {
       this.advance(unit,dt);
       // Characters out of view animate five times a second, enough to stay
       // in step for when the camera comes back to them.
       let step=dt;
-      if(unit.offscreen){unit.lag=(unit.lag||0)+dt;if(unit.lag<.2)continue;step=unit.lag;}
+      if(unit.offscreen&&!vibing){unit.lag=(unit.lag||0)+dt;if(unit.lag<.2)continue;step=unit.lag;}
       unit.lag=0;
       this.unlook(unit);
       for(const mixer of unit.mixers)mixer.update(step);

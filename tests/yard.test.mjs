@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, statSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { sessionPose, familiarPose, marksFor, layoutSessions, providerPositions, characterIndex, lookLimits, yardExtras, WORLDS, CAMERA, SUN, minZoom, overviewFor, clampPan, viewBasis, plateExtent,
- stage, stagingMode, nextStagingChange, restSpots, route, clipFor, doorFor, stationProp, STAGING, CLIPS, SKELETON, PROVIDER_ORDER, photoSize, photoName } from '../web/yard/model.mjs';
+ stage, stagingMode, nextStagingChange, restSpots, route, clipFor, doorFor, stationProp, STAGING, CLIPS, SKELETON, PROVIDER_ORDER, photoSize, photoName, VIBE, vibeStop, vibeFlight, vibeFrame, inVibeFrame } from '../web/yard/model.mjs';
 import { goldenVectors } from '../scripts/yard-golden.mjs';
 import { Matrix4, Vector3 } from 'three';
 const providers=['anthropic','openai','google','xai','shell','docker'].map(id=>({id}));
@@ -158,6 +158,125 @@ test('clip choices are seeded per session and come from the contract clip set',(
  const seq=id=>Array.from({length:30},(_,n)=>clipFor(id,'rest',n)).join();
  assert.equal(seq('s1'),seq('s1'));
  assert.notEqual(seq('s1'),seq('s2'));
+});
+// Clearance.live_distance in agent-guild-builders: how far a point is outside the ground worlds keep clear.
+const keptClearBy=(x,z)=>Math.min(Math.max(0,Math.hypot(x,z)-14.7),Math.hypot(Math.max(Math.abs(x)-13,0),Math.max(z-32,-z,0)));
+const vibeFrames=[vibeFrame(16/9),vibeFrame(1,.2,.15),vibeFrame(9/16,.15,.1),vibeFrame(9/19.5,.17,.25)];
+const inView=(frame,p)=>{const {right,up}=viewBasis(),d=[p.x-frame.target[0],(p.y||0)-frame.target[1],p.z-frame.target[2]];return {r:d[0]*right[0]+d[1]*right[1]+d[2]*right[2],u:d[0]*up[0]+d[1]*up[1]+d[2]*up[2]};};
+const span=values=>Math.max(...values)-Math.min(...values);
+test('Vibes Mode wanders only the ground every world keeps clear and the overview shows, to and fro across it, round the halls, the centrepiece and the station props',()=>{
+ const custom=[...providers,{id:'custom-1'},{id:'custom-2'}];
+ const props=[...layoutSessions(Array.from({length:12},(_,i)=>session('s'+i,providers[i%6].id)),custom).entries()].map(([id,p])=>stationProp(p,id));
+ const boxes=[...[...providerPositions(custom)].map(([id,p])=>({...p,half:id==='docker'?STAGING.hall.docker:STAGING.hall.half})),
+  {x:STAGING.plaza.x,z:STAGING.plaza.z,half:STAGING.plaza.half},...props.map(p=>({x:p.x,z:p.z,half:STAGING.station.half}))];
+ const inside=p=>boxes.some(b=>Math.abs(p.x-b.x)<b.half-.06&&Math.abs(p.z-b.z)<b.half-.06);
+ for(const frame of vibeFrames){
+  const stops=id=>Array.from({length:60},(_,n)=>vibeStop(id,n,custom,props,frame));
+  for(const id of ['s0','s1','s7']){
+   let from=stops(id).at(-1);
+   for(const stop of stops(id)){
+    assert.notEqual(stop.z<VIBE.roam.split,from.z<VIBE.roam.split,'stops alternate between the courtyard and the ground in front');
+    assert.equal(keptClearBy(stop.x,stop.z),0,JSON.stringify(stop));
+    assert.ok(inVibeFrame(frame,stop.x,0,stop.z)&&inVibeFrame(frame,stop.x,VIBE.roam.head,stop.z),JSON.stringify(stop));
+    assert.ok(!boxes.some(b=>Math.abs(stop.x-b.x)<b.half+.5&&Math.abs(stop.z-b.z)<b.half+.5),JSON.stringify(stop));
+    let at=from;
+    for(const to of route(from,stop,custom,props)){for(let t=0;t<=1;t+=.02)assert.ok(!inside({x:at.x+(to.x-at.x)*t,z:at.z+(to.z-at.z)*t}),JSON.stringify([from,stop]));at=to;}
+    from=stop;
+   }
+   const seen=stops(id).map(p=>inView(frame,p));
+   assert.ok(span(seen.map(p=>p.r))>(frame.right[1]-frame.right[0])/2&&span(seen.map(p=>p.u))>(frame.up[1]-frame.up[0])/2,'the stops spread over what the overview shows');
+  }
+  assert.deepEqual(stops('s0'),stops('s0'));
+  assert.notDeepEqual(stops('s0'),stops('s1'));
+ }
+ const hidden=Array.from({length:60},(_,n)=>vibeStop('s0',n,custom,props,vibeFrame(16/9,.5,.5)));
+ assert.equal(new Set(hidden.map(p=>p.x+','+p.z)).size,hidden.length,'with nothing visible, stops still spread over the clear ground');
+});
+test('crowded Vibes destinations stay visible on activation and after portrait resizing',()=>{
+ for(const provider of ['xai','openai']){
+  const crew=Array.from({length:24},(_,i)=>session('s'+i,provider));
+  const props=[...layoutSessions(crew,providers)].map(([id,p])=>stationProp(p,id));
+  for(const frame of [vibeFrame(16/9,.2,.15),vibeFrame(9/19.5,.17,.25)])for(const s of crew){
+   const stops=[];
+   for(let n=0;n<200;n++){
+    const p=vibeStop(s.id,n,providers,props,frame);stops.push(p.x+','+p.z);
+    assert.ok(inVibeFrame(frame,p.x,0,p.z)&&inVibeFrame(frame,p.x,VIBE.roam.head,p.z),`${provider} ${s.id} stop ${n}: ${JSON.stringify(p)}`);
+    assert.equal(keptClearBy(p.x,p.z),0);
+    assert.ok(props.every(b=>Math.abs(p.x-b.x)>=STAGING.station.half+VIBE.roam.margin||Math.abs(p.z-b.z)>=STAGING.station.half+VIBE.roam.margin));
+   }
+   assert.equal(new Set(stops).size,stops.length,'the crew keeps getting distinct destinations');
+  }
+ }
+});
+test('Vibes finds visible apron and circular slivers missed by rounded samples, including on the non-preferred side',()=>{
+ const {up}=viewBasis();
+ for(const center of [{x:6.123456,z:10.234567},{x:5.123456,z:-Math.sqrt(VIBE.roam.radius**2-5.123456**2)}]){
+ const target=[0,1,0],{r,u}=inView({target},center),gap=.00001;
+ const frame={target,right:[r-gap,r+gap],up:[u-gap,u+VIBE.roam.head*up[1]+gap]};
+ const rounded={x:Math.round(center.x*1000)/1000,z:Math.round(center.z*1000)/1000};
+ assert.ok(!inVibeFrame(frame,rounded.x,0,rounded.z),'no millimetre-rounded sample fits this opening');
+ for(const id of ['s0','s1'])for(let n=0;n<4;n++){
+  const p=vibeStop(id,n,providers,[],frame);
+  assert.ok(inVibeFrame(frame,p.x,0,p.z)&&inVibeFrame(frame,p.x,VIBE.roam.head,p.z));
+  assert.ok(Math.hypot(p.x-center.x,p.z-center.z)<.001);
+  assert.ok(Math.hypot(p.x,p.z)<=VIBE.roam.radius||(Math.abs(p.x)<=VIBE.roam.half&&p.z>=0));
+  assert.deepEqual(vibeStop(id,n,providers,[],frame),p,'fallback is seeded and deterministic');
+  assert.notDeepEqual(vibeStop(id,n+1,providers,[],frame),p,'a fallback is not one fixed stop');
+ }
+ }
+});
+test('Vibes finds the narrow visible gap between props without a sampling or grid limit',()=>{
+ const {up}=viewBasis(),center={x:6.123456,z:10.234567},target=[0,1,0],{r,u}=inView({target},center),gap=.000001;
+ const frame={target,right:[r-.5,r+.5],up:[u-.3,u+VIBE.roam.head*up[1]+.3]};
+ const reach=STAGING.station.half+VIBE.roam.margin,props=[-1,1].map(side=>({x:center.x+side*(reach+gap),z:center.z}));
+ for(let n=0;n<12;n++){
+  const p=vibeStop('s0',n,providers,props,frame);
+  assert.ok(Math.abs(p.x-center.x)<gap,'the only free interval is narrower than millimetre rounding');
+  assert.ok(inVibeFrame(frame,p.x,0,p.z)&&inVibeFrame(frame,p.x,VIBE.roam.head,p.z));
+  assert.ok(props.every(b=>Math.abs(p.x-b.x)>=reach||Math.abs(p.z-b.z)>=reach));
+ }
+});
+test('fully obstructed visible ground keeps the original walk and recovers when the view opens',()=>{
+ const {up}=viewBasis(),center={x:6,z:10},target=[0,1,0],{r,u}=inView({target},center);
+ const covered={target,right:[r-.1,r+.1],up:[u-.1,u+VIBE.roam.head*up[1]+.1]},props=[center];
+ const stops=[];
+ for(let n=0;n<30;n++){
+  const p=vibeStop('s0',n,providers,props,covered);stops.push(p.x+','+p.z);
+  assert.deepEqual(p,vibeStop('s0',n,providers,props),'a genuinely covered view uses ordinary roaming, not a blocked state');
+  const frame=vibeFrame(9/19.5,.17,.25),next=vibeStop('s0',n,providers,props,frame);
+  assert.ok(inVibeFrame(frame,next.x,0,next.z)&&inVibeFrame(frame,next.x,VIBE.roam.head,next.z),'an open view immediately selects visible ground again');
+ }
+ assert.equal(new Set(stops).size,stops.length);
+});
+test('Vibes Mode flies each helper its own smooth loop across what the overview shows, above the halls',()=>{
+ const [low,high]=VIBE.flight.height;
+ assert.ok(low>STAGING.hall.dockerHeight);
+ for(const frame of vibeFrames)for(const key of ['s0:a1','s0:a2','s1:a3']){
+  let last=vibeFlight(key,0,frame);const seen=[];
+  for(let t=.1;t<=VIBE.flight.lap[1];t+=.1){
+   const p=vibeFlight(key,t,frame),v=inView(frame,p);
+   assert.ok(inVibeFrame(frame,p.x,p.y,p.z)&&v.u+VIBE.flight.top<=frame.up[1]+1e-9&&p.y>=low-1e-9&&p.y<=high+1e-9,JSON.stringify(p));
+   assert.ok(Math.hypot(p.x-last.x,p.y-last.y,p.z-last.z)<1.5,'no jump between moments');
+   seen.push(v);last=p;
+  }
+  assert.ok(span(seen.map(p=>p.r))>(frame.right[1]-frame.right[0])*.3&&span(seen.map(p=>p.u))>(frame.up[1]-frame.up[0]-VIBE.flight.top)*.3,'the loop crosses the view');
+ }
+ const frame=vibeFrames[0];
+ assert.deepEqual(vibeFlight('s0:a1',12.5,frame),vibeFlight('s0:a1',12.5,frame));
+ assert.notDeepEqual(vibeFlight('s0:a1',12.5,frame),vibeFlight('s0:a2',12.5,frame));
+});
+test('Vibes flight reserves the scaled projected height of supported companions',()=>{
+ const {up}=viewBasis();
+ for(const frame of [vibeFrame(900/700,90/700,120/700),vibeFrame(360/780,90/780,195/780)])for(const height of [.1,1.1,5]){
+  const top=height*VIBE.flight.scale*up[1];let last=null;
+  for(let step=0;step<=880;step++){
+   const p=vibeFlight('s0:a1',step*.05,frame,height),v=inView(frame,p);
+   assert.ok(v.u+top<=frame.up[1]+1e-9&&v.u>=frame.up[0]-1e-9,`height ${height}, step ${step}`);
+   if(last)assert.ok(Math.hypot(p.x-last.x,p.y-last.y,p.z-last.z)<1.5,'height-aware flight stays smooth');
+   if(height===1.1)assert.deepEqual(p,vibeFlight('s0:a1',step*.05,frame),'default companions keep their flight');
+   last=p;
+  }
+ }
 });
 test('the staging contract matches its golden vectors',()=>{
  const golden=JSON.parse(readFileSync(new URL('./fixtures/yard-choreography.json',import.meta.url),'utf8'));
