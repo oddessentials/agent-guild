@@ -434,6 +434,36 @@ export function clipFor(id, mode, n) {
   if (mode === 'work') return n % 3 === 2 && h % 2 ? set[1] : set[0];
   return n % 3 === 2 ? set[1 + (h % (set.length - 1))] : set[0];
 }
+export const VIBE = {
+  // Must stay inside the ground every world keeps clear (Clearance.live_distance in agent-guild-builders).
+  roam: { radius: 13.2, half: 12.5, front: 24, margin: .9 },
+  flight: { height: [8.5, 12], lap: [26, 44], reach: [.45, 1], scale: 1.3 },
+};
+function unit(value) {
+  let h = hash(value);
+  h = Math.imul(h ^ (h >>> 16), 0x45d9f3b); h = Math.imul(h ^ (h >>> 16), 0x45d9f3b);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+export function vibeStop(id, n, providers, props = []) {
+  const { radius, half, front, margin } = VIBE.roam;
+  const boxes = [...obstacles(providers).map(box => ({ ...box, half: box.half + margin })),
+    ...props.map(p => ({ x: p.x, z: p.z, half: STAGING.station.half + margin }))];
+  for (let k = 0; k < 48; k++) {
+    const x = round((unit(id + ':vibe:x:' + n + ':' + k) * 2 - 1) * radius), z = round(-radius + unit(id + ':vibe:z:' + n + ':' + k) * (radius + front));
+    const clear = Math.hypot(x - STAGING.plaza.x, z - STAGING.plaza.z) <= radius || (Math.abs(x) <= half && z >= 0);
+    if (clear && !boxes.some(box => Math.abs(x - box.x) < box.half && Math.abs(z - box.z) < box.half)) return { x, z };
+  }
+  return { x: STAGING.plaza.x, z: round(STAGING.plaza.z + STAGING.plaza.half + margin + STAGING.station.half) };
+}
+export function vibeFlight(key, seconds) {
+  const { height, lap, reach } = VIBE.flight, { minX, maxX, minZ, maxZ } = CAMERA.pan;
+  const pick = (name, [low, high]) => low + unit(key + ':vibe:' + name) * (high - low);
+  const out = pick('reach', reach), turn = unit(key + ':vibe:turn') < .5 ? 1 : -1, lobes = 2 + Math.floor(unit(key + ':vibe:lobes') * 3);
+  const angle = turn * 2 * Math.PI * (seconds / pick('lap', lap) + unit(key + ':vibe:start'));
+  const wide = out * (1 + .12 * Math.sin(lobes * angle + pick('phase', [0, 2 * Math.PI]))) / 1.12;
+  return { x: (minX + maxX) / 2 + Math.cos(angle) * (maxX - minX) / 2 * wide, z: (minZ + maxZ) / 2 + Math.sin(angle) * (maxZ - minZ) / 2 * wide,
+    y: (height[0] + height[1]) / 2 + (height[1] - height[0]) / 2 * Math.sin(2 * angle + pick('rise', [0, 2 * Math.PI])) };
+}
 // Where a session's helpers stand, around it, as the renderer has always placed them.
 export function helperOffset(i, count) {
   const angle = (i / Math.min(count, 6)) * Math.PI * 2;

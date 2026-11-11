@@ -1,6 +1,6 @@
 import * as T from './vendor/engine.js';
 import { WORLDS, PROVIDER_ORDER, characterIndex, GILDED, CAMERA, SUN, minZoom, overviewFor, clampPan, viewBasis, providerPositions, sessionPose, familiarPose, hash,
-  stage, nextStagingChange, doorFor, arrives, route, clipFor, helperOffset, stationProp, hallActivity, lookTarget, lookLimits, yardExtras, playableClip, STAGING, photoSize, marksFor, SHOWN_HELPERS } from './model.mjs';
+  stage, nextStagingChange, doorFor, arrives, route, clipFor, helperOffset, stationProp, hallActivity, lookTarget, lookLimits, yardExtras, playableClip, STAGING, photoSize, marksFor, SHOWN_HELPERS, VIBE, vibeStop, vibeFlight } from './model.mjs';
 
 const ASSETS = new URL('./assets/', import.meta.url);
 const vector = new T.Vector3();
@@ -147,7 +147,7 @@ export class YardRenderer {
     this.providers=[];this.sessions=[];this.selected=null;this.world=null;this.skin=null;this.request=0;this.worldRequest=0;this.pending=null;
     this.staged=null;this.seen=new Set();this.stageTimer=0;this.sparks=[];this.shows=[];this.marks=new T.Group();this.scene.add(this.marks);this.glyphs=null;this.markPlane=new T.PlaneGeometry(1,1);
     this.props=new Map();this.propSpots=[];this.station=null;this.effects=null;
-    this.active=false;this.reduced=false;this.disposed=false;this.frame=0;this.lastTime=0;this.dirty=true;
+    this.active=false;this.reduced=false;this.vibe=false;this.vibeTime=0;this.disposed=false;this.frame=0;this.lastTime=0;this.dirty=true;
     this.crowd=null;this.rows=new Map();
     this.list=Object.assign(document.createElement('div'),{className:'yard-crowd-list',id:'yard-crowd-list-'+(++crowdLists),hidden:true});
     this.list.setAttribute('role','group');
@@ -922,6 +922,7 @@ export class YardRenderer {
   goTo(unit,place) {
     const target=unit.target;
     unit.mode=place.mode;
+    if(this.vibing()){if(!unit.moving)this.roam(unit);return;}
     if(target&&target.x===place.x&&target.z===place.z){unit.target=place;if(!unit.moving)this.play(unit);return;}
     unit.target=place;
     const at={x:unit.root.position.x,z:unit.root.position.z};
@@ -929,12 +930,33 @@ export class YardRenderer {
     else {unit.path=route(at,place,this.providers,this.propSpots);unit.moving=true;}
     this.play(unit);
   }
+  roam(unit) {
+    unit.roamed=(unit.roamed??-1)+1;
+    const at={x:unit.root.position.x,z:unit.root.position.z},stop=vibeStop(unit.session.id,unit.roamed,this.providers,this.propSpots);
+    unit.target=stop;unit.path=route(at,stop,this.providers,this.propSpots);unit.moving=true;
+    this.play(unit);
+  }
+  vibing() { return this.vibe&&!this.reduced; }
+  setVibe(value) {
+    if(this.vibe===Boolean(value))return;
+    const was=this.vibing();
+    this.vibe=Boolean(value);
+    if(was!==this.vibing())this.restage();
+  }
+  restage() {
+    if(!this.staged)return;
+    for(const [id,unit]of this.units){
+      const place=this.staged.places.get(id);
+      if(place){unit.target=null;this.goTo(unit,place);}
+    }
+    this.dirty=true;this.drawOnce();
+  }
   // Straight to its place, helpers with it.
   arrive(unit) {
     const place=unit.target;
     unit.root.position.set(place.x,.17,place.z);unit.path=[];unit.heading=place.face;unit.moving=false;
     if(unit.model)unit.model.rotation.y=unit.heading;
-    for(const helper of unit.helpers)helper.model.position.set(place.x+helper.offset.x,.27,place.z+helper.offset.z);
+    for(const helper of unit.helpers){helper.model.position.set(place.x+helper.offset.x,.27,place.z+helper.offset.z);helper.model.scale.setScalar(.45);}
   }
   // The clip a character should be playing now: the walk while it moves,
   // otherwise its mode's seeded sequence (model.mjs clipFor).
@@ -966,7 +988,7 @@ export class YardRenderer {
   // Moves a walking character along its path at its stride's speed, turning
   // smoothly, and turns a standing one to face its place.
   advance(unit,dt) {
-    const root=unit.root.position;
+    const root=unit.root.position,vibing=this.vibing();
     let want=unit.target?.face??unit.heading;
     if(unit.moving&&unit.path.length) {
       let step=unit.speed*dt;
@@ -976,7 +998,7 @@ export class YardRenderer {
         if(d<=step){root.x=next.x;root.z=next.z;unit.path.shift();step-=d;}
         else {root.x+=dx/d*step;root.z+=dz/d*step;step=0;}
       }
-      if(!unit.path.length){unit.moving=false;this.play(unit);}
+      if(!unit.path.length){if(vibing)this.roam(unit);else {unit.moving=false;this.play(unit);}}
       this.dirty=true;
     }
     const turn=angleTo(unit.heading,want);
@@ -988,13 +1010,15 @@ export class YardRenderer {
     // Helpers trail their character, closing most of the gap in a second.
     const pull=1-Math.exp(-4*dt);
     for(const helper of unit.helpers){
-      const tx=root.x+helper.offset.x,tz=root.z+helper.offset.z,p=helper.model.position;
-      const dx=tx-p.x,dz=tz-p.z,far=Math.hypot(dx,dz);
-      p.x+=dx*pull;p.z+=dz*pull;
+      const to=vibing?vibeFlight(unit.session.id+':'+helper.id,this.vibeTime):{x:root.x+helper.offset.x,y:.27,z:root.z+helper.offset.z};
+      const p=helper.model.position,dx=to.x-p.x,dy=to.y-p.y,dz=to.z-p.z,far=Math.hypot(dx,dz);
+      const size=vibing?VIBE.flight.scale:.45,grow=size-helper.model.scale.x;
+      p.x+=dx*pull;p.y+=dy*pull;p.z+=dz*pull;
+      if(grow)helper.model.scale.setScalar(Math.abs(grow)<1e-3?size:helper.model.scale.x+grow*pull);
       if(far>.05)helper.model.rotation.y=Math.atan2(dx,dz);
       const moving=far>.08;
       if(moving!==helper.moving){helper.moving=moving;this.helperClip(helper,moving?'move':helper.pose);}
-      if(far>1e-3)this.dirty=true;
+      if(far>1e-3||Math.abs(dy)>1e-3||grow)this.dirty=true;
     }
     this.fire(unit);
   }
@@ -1183,7 +1207,7 @@ export class YardRenderer {
         unit.crew.add(model);
         const mixer=new T.AnimationMixer(model);
         let yard=null;asset.scene.traverse(n=>{if(n.userData?.yard)yard=n.userData.yard;});
-        const helper={id:agent.id,top:yardExtras(yard,'helper').height*model.scale.y,model,mixer,offset,pose:agent.pose,clips:asset.animations,moving:false,action:null};
+        const helper={id:agent.id,height:yardExtras(yard,'helper').height,get top(){return this.height*this.model.scale.y;},model,mixer,offset,pose:agent.pose,clips:asset.animations,moving:false,action:null};
         this.helperClip(helper,agent.pose);
         mixer.update(.3+(hash(agent.id)%40)/10);
         unit.helpers.push(helper);
@@ -1343,7 +1367,9 @@ export class YardRenderer {
     this.list.style.top=Math.max(6,ct+half+4+lh<=h-6?ct+half+4:ct-half-4-lh)+'px';
   }
   setReducedMotion(value) {
+    const was=this.vibing();
     this.reduced=value;
+    if(was!==this.vibing())this.restage();
     if(value)for(const unit of this.units.values()){this.unlook(unit);unit.lookYaw=0;unit.lookPitch=0;}
     if(value)for(const unit of this.units.values())if(unit.moving&&unit.target){this.arrive(unit);this.play(unit);}
     if(value){for(const item of this.halls.values())item.level=item.target;this.glow();this.stillEffects();this.clearFireworks();}
@@ -1372,12 +1398,14 @@ export class YardRenderer {
   // Advances walks, turns, helpers, clips, glances, sparks and the halls'
   // glow and effects by dt seconds, without drawing.
   step(dt) {
+    const vibing=this.vibing();
+    if(vibing)this.vibeTime+=dt;
     for(const unit of this.units.values()) {
       this.advance(unit,dt);
       // Characters out of view animate five times a second, enough to stay
       // in step for when the camera comes back to them.
       let step=dt;
-      if(unit.offscreen){unit.lag=(unit.lag||0)+dt;if(unit.lag<.2)continue;step=unit.lag;}
+      if(unit.offscreen&&!vibing){unit.lag=(unit.lag||0)+dt;if(unit.lag<.2)continue;step=unit.lag;}
       unit.lag=0;
       this.unlook(unit);
       for(const mixer of unit.mixers)mixer.update(step);

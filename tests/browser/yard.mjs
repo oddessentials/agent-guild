@@ -1098,7 +1098,7 @@ test('the camera controls stay whole and reachable beside the swap status and he
         return {buttons,overlaps};
       })()`);
       const at=`${name}, ${status} shown`;
-      assert.deepEqual(layout.buttons.map(c=>c.label),['Zoom in','Zoom out','Overview','Focus selected','Save a picture of the Yard','Fireworks in this Yard only'],at);
+      assert.deepEqual(layout.buttons.map(c=>c.label),['Zoom in','Zoom out','Overview','Focus selected','Save a picture of the Yard','Fireworks in this Yard only','Vibe Mode'],at);
       assert.deepEqual(layout.buttons.filter(c=>!c.inside||!c.reached).map(c=>c.label),[],at);
       assert.equal(new Set(layout.buttons.map(c=>c.height)).size,1,`every label stays on one line: ${at}`);
       assert.deepEqual(layout.overlaps,[],at);
@@ -2086,5 +2086,85 @@ test('the row being replaced says Checking replacement until the check answers',
   assert.equal(await b.evaluate("document.querySelector('#yard-customize-list [data-slot=openai] .yard-customize-status').textContent"),'Original','only the row being replaced says it is checking');
   answer();
   await b.wait(status+"==='Customized: Mine'");
+  assert.deepEqual(b.errors,[]);
+});
+test('Vibe Mode sets every character wandering and every helper flying, and turning it off or reducing motion puts them back',options,async t=>{
+  const {f,b}=await setup(t);
+  const T0=Date.parse('2026-10-13T12:00:00.000Z'),iso=ms=>new Date(T0-ms).toISOString();
+  const sessions=[...f.data.values()].slice(0,3).map((s,i)=>({...s,activity:'active',lastOutputAt:iso(0),createdAt:iso(3600000),shells:[],
+    agents:i===0?[{id:'a1',name:'Explorer',status:'working'}]:[]}));
+  await b.evaluate(`(async()=>{
+    const {YardRenderer}=await import('/yard/renderer.js');
+    window.__model=await import('/yard/model.mjs');
+    const host=document.createElement('div'),labels=document.createElement('div');
+    host.style.cssText='position:fixed;width:900px;height:700px;top:0;left:0';host.append(labels);document.body.append(host);
+    window.__renderer=new YardRenderer(host,labels,{select(){},open(){},clock:()=>${T0}});
+    window.__sessions=${q(sessions)};window.__providers=${q(f.providers)};
+    await __renderer.setWorld('guild','dark');__renderer.update(__providers,__sessions);
+    window.__units=()=>[...__renderer.units.values()];
+    window.__home=()=>[...__renderer.units].every(([id,u])=>{const p=__renderer.staged.places.get(id);return !u.moving&&u.root.position.x===p.x&&u.root.position.z===p.z;});
+    window.__run=n=>{for(let i=0;i<n;i++)__renderer.step(.05);};
+    window.__settle=()=>{let n=0;while(__units().some(u=>u.moving)&&n<4000){__renderer.step(.05);n++;}return n;};
+    window.__helper=()=>{const h=__renderer.units.get(__sessions[0].id).helpers[0];return {y:h.model.position.y,scale:h.model.scale.x,clip:h.action.getClip().name};};
+  })()`);
+  await b.wait('__units().every(u=>u.loaded)&&__units()[0].helpers.length===1');
+  assert.equal(await b.evaluate('__home()'),true,'sessions open at their stations');
+  const roaming=await b.evaluate(`(()=>{
+    __renderer.setVibe(true);
+    const u=__units()[0],from={x:u.root.position.x,z:u.root.position.z},leg=Math.hypot(u.path[0].x-from.x,u.path[0].z-from.z);
+    __renderer.step(.05);
+    const first={moved:Math.hypot(u.root.position.x-from.x,u.root.position.z-from.z),pace:u.speed*.05,leg};
+    __run(800);
+    const boxes=[...__model.providerPositions(__providers)].map(([id,p])=>({...p,half:id==='docker'?__model.STAGING.hall.docker:__model.STAGING.hall.half}));
+    return {first,moving:__units().every(u=>u.moving),clips:__units().map(u=>u.clip),legs:__units().map(u=>u.roamed),
+      inHall:__units().some(u=>boxes.some(b=>Math.abs(u.root.position.x-b.x)<b.half-.06&&Math.abs(u.root.position.z-b.z)<b.half-.06)),helper:__helper()};
+  })()`);
+  assert.ok(roaming.first.leg<roaming.first.pace||Math.abs(roaming.first.moved-roaming.first.pace)<1e-9,'a character walks at its usual speed');
+  assert.equal(roaming.moving,true,'every character keeps walking');
+  assert.deepEqual(roaming.clips,sessions.map(()=>'walk'));
+  assert.ok(roaming.legs.every(n=>n>=1),'each has gone on from its first stop');
+  assert.equal(roaming.inHall,false,'none walks through a hall');
+  const flight=await b.evaluate('__model.VIBE.flight');
+  assert.ok(roaming.helper.y>=flight.height[0]-.5&&roaming.helper.y<=flight.height[1],'the helper flies');
+  assert.ok(Math.abs(roaming.helper.scale-flight.scale)<1e-6,'at its flying size');
+  assert.equal(roaming.helper.clip,'move');
+  assert.equal(await b.evaluate(`(()=>{const before=__units().map(u=>u.target);__renderer.update(__providers,__sessions);return __units().every((u,i)=>u.target===before[i]&&u.moving);})()`),true);
+  assert.ok(await b.evaluate('(__renderer.setVibe(false),__settle())')<4000,'turned off, everyone walks back');
+  assert.equal(await b.evaluate('__home()'),true);
+  assert.ok(await b.evaluate('__units().every(u=>__model.CLIPS.character.work.includes(u.clip))'),'and takes up its work');
+  const landed=await b.evaluate('(__run(200),__helper())');
+  assert.ok(Math.abs(landed.y-.27)<.01&&Math.abs(landed.scale-.45)<1e-6,'the helper comes back down beside its character');
+  assert.equal(await b.evaluate('(__renderer.setVibe(true),__run(100),__renderer.setReducedMotion(true),__home())'),true,'reduced motion puts everyone back at once');
+  assert.deepEqual(await b.evaluate('__helper()').then(h=>[h.y,h.scale]),[.27,.45]);
+  assert.equal(await b.evaluate('(__renderer.setReducedMotion(false),__units().every(u=>u.moving))'),true,'and they wander again when motion returns');
+  await b.evaluate('__renderer.dispose()');
+  assert.deepEqual(b.errors,[]);
+});
+
+test('the Vibe Mode button stays on across Yards and reloads, and reduced motion disables it',options,async t=>{
+  const {b}=await setup(t,{yard:true});
+  const button="document.querySelector('#yard-vibe')",state='['+button+'.getAttribute("aria-pressed"),'+button+'.disabled,localStorage.getItem("agentGuild.vibe")]';
+  await ready(b);
+  assert.deepEqual(await b.evaluate(state),['false',true,null]);
+  assert.match(await b.evaluate(button+'.title'),/reduced motion/);
+  await b.evaluate(`(async()=>{
+    const {YardRenderer}=await import('/yard/renderer.js'),original=YardRenderer.prototype.setVibe;
+    window.__vibes=[];
+    YardRenderer.prototype.setVibe=function(value){window.__vibes.push(value);window.__yardRenderer=this;return original.call(this,value);};
+  })()`);
+  await b.send('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'no-preference'}]});
+  await b.wait(button+'.disabled===false');
+  assert.equal(await b.evaluate(button+'.getAttribute("aria-label")'),'Vibe Mode');
+  assert.equal(await b.evaluate(button+'.previousElementSibling.id'),'yard-fireworks');
+  await b.click('#yard-vibe');
+  assert.deepEqual(await b.evaluate(state),['true',false,'on']);
+  assert.deepEqual(await b.evaluate('[__vibes,__yardRenderer.vibe]'),[[true],true]);
+  await b.evaluate("document.documentElement.dataset.skin='orbital'");
+  await b.wait("document.querySelector('#yard-stage').dataset.world==='orbital'");
+  assert.deepEqual(await b.evaluate('['+button+'.getAttribute("aria-pressed"),__yardRenderer.vibe]'),['true',true],'another Yard keeps it');
+  await b.reload();await ready(b);
+  assert.deepEqual(await b.evaluate(state),['true',false,'on'],'a reload keeps it');
+  await b.click('#yard-vibe');
+  assert.deepEqual(await b.evaluate(state),['false',false,'off']);
   assert.deepEqual(b.errors,[]);
 });

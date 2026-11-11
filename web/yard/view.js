@@ -169,6 +169,20 @@ export function initYard(controller) {
     button.disabled = !renderer || disposed || motion.matches;
     button.title = motion.matches ? 'Fireworks off: reduced motion is enabled' : 'Fireworks in this Yard only';
   };
+  let vibe = false;
+  try { vibe = localStorage.getItem('agentGuild.vibe') === 'on'; } catch {}
+  const vibeButton = () => {
+    const button = $('yard-vibe');
+    button.setAttribute('aria-pressed', String(vibe));
+    button.disabled = motion.matches;
+    button.title = motion.matches ? 'Vibe Mode off: reduced motion is enabled' : vibe ? 'Vibe Mode is on in every Yard' : 'Vibe Mode: everyone roams, in every Yard';
+  };
+  const toggleVibe = () => {
+    vibe = !vibe;
+    try { localStorage.setItem('agentGuild.vibe', vibe ? 'on' : 'off'); } catch {}
+    renderer?.setVibe(vibe);
+    vibeButton();
+  };
   const sceneVisible = () => view === 'yard' && !$('app').hidden && document.visibilityState !== 'hidden' && $('terminal-panel').hidden;
   const skinEntry = (skin = root.dataset.skin) => (window.agentGuildSkins || []).find((item) => item.id === skin) || null;
   const yardOff = root.dataset.yard === 'none';
@@ -299,6 +313,7 @@ export function initYard(controller) {
         renderer = candidate;
         lastSkin = skin; lastTheme = theme; lastRevision = revision;
         renderer.setReducedMotion(motion.matches);
+        renderer.setVibe(vibe);
         renderer.update(snapshot.providers, snapshot.sessions);
         renderer.select(selected);
         renderer.setActive(sceneVisible());
@@ -465,6 +480,8 @@ export function initYard(controller) {
   $('yard-zoom-out').addEventListener('click',() => renderer?.zoom(1/1.2));
   $('yard-fireworks').addEventListener('click',celebrate);
   fireworksButton();
+  $('yard-vibe').addEventListener('click',toggleVibe);
+  vibeButton();
   $('yard-photo').hidden = !controller.photo;
   $('yard-photo').addEventListener('click',async () => {
     let YardPhoto;
@@ -490,7 +507,7 @@ export function initYard(controller) {
     setView(preferYard && skinAllowsYard() ? 'yard' : 'cards', { remember: false });
     renderer?.setActive(sceneVisible());
   };
-  const motionChange = () => { renderer?.setReducedMotion(motion.matches); fireworksButton(); };
+  const motionChange = () => { renderer?.setReducedMotion(motion.matches); fireworksButton(); vibeButton(); };
   const pageHide = () => renderer?.setActive(false);
   const observer = new MutationObserver((records) => {
     if (records.some((record) => record.attributeName === 'data-skin' || record.attributeName === 'data-theme')) onAppearance();
@@ -507,6 +524,7 @@ export function initYard(controller) {
   return { update, select, setView, closePhoto, celebrate, dispose() {
     closePhoto();
     $('yard-fireworks').removeEventListener('click',celebrate);
+    $('yard-vibe').removeEventListener('click',toggleVibe);
     disposed=true; fireworksButton(); sceneAttempt++; worldAttempt++; clearTimeout(swapReveal); observer.disconnect(); pendingRenderer?.dispose(); renderer?.dispose();
     document.removeEventListener('visibilitychange',visibility);
     motion.removeEventListener('change',motionChange);
