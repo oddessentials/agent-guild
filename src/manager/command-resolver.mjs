@@ -184,17 +184,19 @@ export function npmSpawnSpec(npm, args, env = process.env, platform = process.pl
 function runInOwnGroup(file, args, { env, cwd, timeoutMs, input, maxBuffer, signal }) {
   return new Promise((resolve, reject) => {
     let child;
+    // Registered before the spawn: a signal that lands once the command runs must find it.
+    const end = () => killGroup(child?.pid);
+    const release = endWithProcess(end);
     try {
       child = spawn(file, args, { env, cwd, detached: true });
     } catch (err) {
+      release();
       return reject(Object.assign(err, { stdout: '', stderr: '' }));
     }
     let stdout = '';
     let stderr = '';
     let timedOut = false;
     let settled = false;
-    const end = () => killGroup(child.pid);
-    const release = endWithProcess(end);
     const finish = (err) => {
       if (settled) return;
       settled = true;
