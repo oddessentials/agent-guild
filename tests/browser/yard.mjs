@@ -2099,7 +2099,7 @@ test('Vibes Mode sets every character wandering and every helper flying, and tur
     const host=document.createElement('div'),labels=document.createElement('div');
     const top=document.createElement('div'),bottom=document.createElement('div');
     top.style.cssText='position:absolute;top:0;left:0;right:0;height:90px';bottom.style.cssText='position:absolute;bottom:0;left:0;right:0;height:120px';
-    host.style.cssText='position:fixed;width:900px;height:700px;top:0;left:0';host.append(labels,top,bottom);document.body.append(host);
+    host.style.cssText='position:fixed;width:900px;height:700px;top:0;left:0';host.append(labels,top,bottom);document.body.append(host);window.__bottom=bottom;
     window.__renderer=new YardRenderer(host,labels,{select(){},open(){},clock:()=>${T0},cover:[top,bottom]});
     window.__sessions=${q(sessions)};window.__providers=${q(f.providers)};
     await __renderer.setWorld('guild','dark');__renderer.update(__providers,__sessions);
@@ -2112,8 +2112,10 @@ test('Vibes Mode sets every character wandering and every helper flying, and tur
       const px=(x,y,z)=>{v.set(x,y,z).project(camera);return {x:(v.x+1)/2*w,y:(1-v.y)/2*h};};
       const off=p=>p.y<90||p.y>h-120||p.x<0||p.x>w,edge=__model.VIBE.roam.edge*h*camera.zoom/__model.CAMERA.height-.5;
       for(const u of __units()){
-        const t=u.target,feet=px(t.x,0,t.z),head=px(t.x,__model.VIBE.roam.head,t.z);
-        if([feet,head].some(p=>p.x<edge||p.x>w-edge)||head.y<134+edge||feet.y>h-120-edge)out.push(['stop',t]);
+        for(const t of new Set([...u.path,u.target])){
+          const feet=px(t.x,0,t.z),head=px(t.x,__model.VIBE.roam.head,t.z);
+          if([feet,head].some(p=>p.x<edge||p.x>w-edge)||head.y<134+edge||feet.y>h-120-edge)out.push([t===u.target?'stop':'way',t]);
+        }
         for(const helper of u.helpers){const p=helper.model.position;if(off(px(p.x,p.y,p.z)))out.push(['helper',p.x,p.y,p.z]);}
       }
       return out;
@@ -2142,13 +2144,27 @@ test('Vibes Mode sets every character wandering and every helper flying, and tur
   assert.ok(Math.abs(roaming.helper.scale-flight.scale)<1e-6,'at its flying size');
   assert.equal(roaming.helper.clip,'move');
   assert.deepEqual(roaming.offScreen,[],'every stop and helper stays on screen, clear of what covers it');
-  const turned=await b.evaluate(`(()=>{const frame=__model.vibeFrame(380/700,134/700,120/700),count=()=>__units().filter(u=>!__model.inVibeFrame(frame,u.target.x,0,u.target.z)||!__model.inVibeFrame(frame,u.target.x,__model.VIBE.roam.head,u.target.z)).length;
-    for(let n=0;n<4000&&!count();n++)__renderer.step(.05);
-    const leaving=count();__renderer.host.style.width='380px';__renderer.resize();const stops=__offScreen().filter(([kind])=>kind==='stop');__run(200);return {leaving,stops,after:__offScreen(),moving:__units().every(u=>u.moving)};})()`);
-  assert.ok(turned.leaving>0,'the turn leaves someone heading off screen');
-  assert.deepEqual(turned.stops,[],'turned to portrait, nobody heads off screen');
+  const turned=await b.evaluate(`(()=>{const frame=__model.vibeFrame(240/700,134/700,120/700),seen=p=>__model.inVibeFrame(frame,p.x,0,p.z)&&__model.inVibeFrame(frame,p.x,__model.VIBE.roam.head,p.z);
+    const count=()=>__units().filter(u=>!seen(u.target)).length,detour=()=>__units().filter(u=>seen(u.target)&&!u.path.every(seen)).length;
+    const turn=until=>{for(let n=0;n<4000&&!until();n++)__renderer.step(.05);const found=until();__renderer.host.style.width='240px';__renderer.resize();return {found,off:__offScreen().filter(([kind])=>kind!=='helper')};};
+    const leaving=turn(count);__renderer.host.style.width='900px';__renderer.resize();const rerouted=turn(detour);
+    const roams=()=>__units().reduce((n,u)=>n+u.roamed,0),goal=roams()+40,during=[];
+    for(let n=0;n<20000&&roams()<goal;n++){__renderer.step(.05);during.push(...__offScreen().filter(([kind])=>kind!=='helper'));}
+    return {leaving,rerouted,walked:roams()>=goal,during:during.slice(0,3),after:__offScreen(),moving:__units().every(u=>u.moving)};})()`);
+  assert.ok(turned.leaving.found>0,'a turn leaves someone heading off screen');
+  assert.deepEqual(turned.leaving.off,[],'who heads somewhere on screen instead');
+  assert.ok(turned.rerouted.found>0,'a turn leaves someone with a way off screen');
+  assert.deepEqual(turned.rerouted.off,[],'who takes a way on screen instead');
+  assert.equal(turned.walked,true);
+  assert.deepEqual(turned.during,[],'every way walked in portrait stays on screen');
   assert.deepEqual(turned.after,[],'and everyone stays on screen');
   assert.equal(turned.moving,true);
+  const stuck=await b.evaluate(`(()=>{__bottom.style.height='490px';__renderer.resize();const at=__units().map(u=>[u.root.position.x,u.root.position.z]);__run(100);
+    const still=__units().every((u,i)=>!u.moving&&u.root.position.x===at[i][0]&&u.root.position.z===at[i][1]);
+    __bottom.style.height='120px';__renderer.resize();return {still,moving:__units().every(u=>u.moving),offScreen:__offScreen().filter(([kind])=>kind!=='helper')};})()`);
+  assert.equal(stuck.still,true,'with no way on screen, everyone stands where they are');
+  assert.equal(stuck.moving,true,'and walks on once there is room again');
+  assert.deepEqual(stuck.offScreen,[]);
   assert.equal(await b.evaluate(`(()=>{const before=__units().map(u=>u.target);__renderer.update(__providers,__sessions);return __units().every((u,i)=>u.target===before[i]&&u.moving);})()`),true);
   assert.ok(await b.evaluate('(__renderer.setVibe(false),__settle())')<4000,'turned off, everyone walks back');
   assert.equal(await b.evaluate('__home()'),true);

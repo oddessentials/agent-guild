@@ -495,8 +495,13 @@ export class YardRenderer {
     top=T.MathUtils.clamp(top,0,h);bottom=T.MathUtils.clamp(bottom,0,h);
     this.vibeFrames={stop:vibeFrame(w/h,(top+TAG)/h,bottom/h),flight:vibeFrame(w/h,top/h,bottom/h)};
     if(!this.vibing())return;
-    const {stop}=this.vibeFrames,{head}=VIBE.roam;
-    for(const unit of this.units.values())if(unit.moving&&unit.target&&!(inVibeFrame(stop,unit.target.x,0,unit.target.z)&&inVibeFrame(stop,unit.target.x,head,unit.target.z)))this.roam(unit);
+    const {stop}=this.vibeFrames,seen=p=>inVibeFrame(stop,p.x,0,p.z)&&inVibeFrame(stop,p.x,VIBE.roam.head,p.z);
+    for(const unit of this.units.values()){
+      if(!unit.moving||!unit.target||!seen(unit.target)){this.roam(unit);continue;}
+      if(unit.path.every(seen))continue;
+      const path=route({x:unit.root.position.x,z:unit.root.position.z},unit.target,this.providers,this.propSpots,stop);
+      if(path)unit.path=path;else this.roam(unit);
+    }
   }
   overview() {
     const {target,zoom}=overviewFor((this.camera.right-this.camera.left)/(this.camera.top-this.camera.bottom));
@@ -946,8 +951,9 @@ export class YardRenderer {
   }
   roam(unit) {
     unit.roamed=(unit.roamed??-1)+1;
-    const at={x:unit.root.position.x,z:unit.root.position.z},stop=vibeStop(unit.session.id,unit.roamed,this.providers,this.propSpots,this.vibeFrames.stop);
-    unit.target=stop;unit.path=route(at,stop,this.providers,this.propSpots);unit.moving=true;
+    const at={x:unit.root.position.x,z:unit.root.position.z},frame=this.vibeFrames.stop,stop=vibeStop(unit.session.id,unit.roamed,this.providers,this.propSpots,frame,at);
+    if(!stop){unit.target=at;unit.path=[];unit.moving=false;this.play(unit);return;}
+    unit.target=stop;unit.path=(frame&&route(at,stop,this.providers,this.propSpots,frame))||route(at,stop,this.providers,this.propSpots);unit.moving=true;
     this.play(unit);
   }
   vibing() { return this.vibe&&!this.reduced; }
