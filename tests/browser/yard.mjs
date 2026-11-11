@@ -2088,6 +2088,57 @@ test('the row being replaced says Checking replacement until the check answers',
   await b.wait(status+"==='Customized: Mine'");
   assert.deepEqual(b.errors,[]);
 });
+async function reducedHelper(t){
+  const {f,b}=await setup(t),now=Date.parse('2026-10-13T12:00:00.000Z');
+  const s={...f.data.values().next().value,id:'s0',activity:'active',createdAt:new Date(now-3600000).toISOString(),lastOutputAt:new Date(now).toISOString(),agents:[{id:'a1',name:'Explorer',status:'working'}],shells:[]};
+  await b.evaluate(`(async()=>{
+    const {YardRenderer}=await import('/yard/renderer.js');
+    const host=document.createElement('div'),labels=document.createElement('div');host.style.cssText='position:fixed;width:900px;height:700px;top:0;left:0';host.append(labels);document.body.append(host);
+    window.__poseRenderer=new YardRenderer(host,labels,{select(){},open(){},clock:()=>${now}});window.__poseSession=${q(s)};window.__poseProviders=${q(f.providers)};
+    await __poseRenderer.setWorld('guild','dark');__poseRenderer.update(__poseProviders,[__poseSession]);window.__poseUnit=__poseRenderer.units.get('s0');
+  })()`);
+  t.after(()=>b.evaluate('__poseRenderer.dispose();__poseRenderer.host.remove()'));
+  await b.wait('__poseUnit.loaded&&__poseUnit.helpers.length===1');
+  await b.evaluate(`(()=>{
+    const h=window.__poseHelper=__poseUnit.helpers[0],sample=h.clips[0],Track=sample.tracks.find(track=>track.ValueTypeName==='quaternion').constructor;
+    h.mixer.stopAllAction();h.action=null;
+    const poses=[[0,0,0,1],[0,0,1,0],[1,0,0,0],[0,1,0,0]];
+    h.clips=['working','waiting','done','move'].map((name,i)=>{const clip=sample.clone();clip.name=name;clip.duration=1;clip.tracks=[new Track('Head.quaternion',[0,1],[...poses[i],...poses[i]])];return clip;});
+    __poseRenderer.helperClip(h,'working');h.mixer.update(0);
+    window.__poseState=()=>({moving:h.moving,clip:h.action.getClip().name,head:h.model.getObjectByName('Head').quaternion.toArray(),time:h.mixer.time,placement:[...h.model.position.toArray(),...h.model.quaternion.toArray(),...h.model.scale.toArray()],retained:__poseUnit.helpers[0]===h});
+    window.__poseUpdates=[];const update=h.mixer.update.bind(h.mixer);h.mixer.update=dt=>{__poseUpdates.push(dt);return update(dt);};
+    window.__poseStatus=status=>{__poseSession.agents[0].status=status;__poseRenderer.update(__poseProviders,[__poseSession]);};
+  })()`);
+  return b;
+}
+
+test('reduced-motion helpers immediately display a retained working-to-waiting pose without advancing time',options,async t=>{
+  const b=await reducedHelper(t);
+  const before=await b.evaluate('(__poseRenderer.setReducedMotion(true),__poseUpdates.length=0,__poseState())');
+  assert.deepEqual(before.head,[0,0,0,1]);
+  await b.evaluate("__poseStatus('waiting')");await b.wait("__poseHelper.pose==='waiting'");
+  const after=await b.evaluate('__poseState()');
+  assert.deepEqual([after.clip,after.head],['waiting',[0,0,1,0]],'selecting a status clip must apply its visible pose immediately');
+  assert.equal(after.retained,true);assert.deepEqual(after.placement,before.placement);assert.equal(after.time,before.time);
+  assert.deepEqual(await b.evaluate('__poseUpdates'),[0],'evaluate the pose without an artificial animation tick');
+  assert.deepEqual(b.errors,[]);
+});
+
+test('reduced motion clears airborne helper movement and applies stationary status poses immediately',options,async t=>{
+  const b=await reducedHelper(t);
+  const airborne=await b.evaluate(`(()=>{__poseRenderer.setVibe(true);for(let i=0;i<600;i++)__poseRenderer.step(.05);__poseUpdates.length=0;return __poseState();})()`);
+  assert.ok(airborne.moving&&airborne.placement[1]>8);assert.equal(airborne.clip,'move');
+  const stopped=await b.evaluate('(__poseRenderer.setReducedMotion(true),__poseState())');
+  await b.evaluate("__poseStatus('done')");await b.wait("__poseHelper.pose==='done'");
+  const done=await b.evaluate('__poseState()');
+  assert.deepEqual({stopped:[stopped.moving,stopped.clip,stopped.head],done:[done.moving,done.clip,done.head]},
+    {stopped:[false,'working',[0,0,0,1]],done:[false,'done',[1,0,0,0]]},'reduced motion must leave no stale flight state or pose');
+  assert.equal(stopped.retained,true);assert.equal(done.retained,true);assert.deepEqual(done.placement,stopped.placement);
+  assert.equal(stopped.time,airborne.time);assert.equal(done.time,airborne.time);
+  assert.deepEqual(await b.evaluate('__poseUpdates'),[0,0],'neither pose update advances animation time');
+  assert.deepEqual(b.errors,[]);
+});
+
 test('Vibes helpers retain transforms and animation through status, membership and landing updates',options,async t=>{
   const {f,b}=await setup(t),now=Date.parse('2026-10-13T12:00:00.000Z');
   const s={...f.data.values().next().value,id:'s0',activity:'active',createdAt:new Date(now-3600000).toISOString(),lastOutputAt:new Date(now).toISOString(),agents:[{id:'a1',name:'Explorer',status:'working'}],shells:[]};

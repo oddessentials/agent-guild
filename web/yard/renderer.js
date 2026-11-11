@@ -1176,10 +1176,12 @@ export class YardRenderer {
     const clip=helper.clips.find(c=>c.name===name)||helper.clips.find(c=>c.name===LEGACY[name])||helper.clips[0];
     if(!clip)return;
     const action=helper.mixer.clipAction(clip);
-    if(action===helper.action)return;
+    if(action===helper.action&&!this.reduced)return;
+    if(this.reduced){helper.moving=false;helper.mixer.stopAllAction();}
     action.reset().play();
-    if(helper.action){if(this.reduced)helper.action.stop();else helper.action.crossFadeTo(action,FADE,false);}
+    if(helper.action&&!this.reduced)helper.action.crossFadeTo(action,FADE,false);
     helper.action=action;
+    if(this.reduced)helper.mixer.update(0);
   }
   clearHelpers(unit) {
     unit.revision++;unit.helperSignature=null;
@@ -1220,7 +1222,7 @@ export class YardRenderer {
       if(existing){
         existing.offset=offset;existing.pose=agent.pose;
         if(this.reduced)existing.model.position.set(unit.root.position.x+offset.x,.27,unit.root.position.z+offset.z);
-        if(!existing.moving&&!this.vibing())this.helperClip(existing,agent.pose);
+        if(this.reduced||(!existing.moving&&!this.vibing()))this.helperClip(existing,agent.pose);
         this.dirty=true;this.drawOnce();
         return;
       }
@@ -1397,6 +1399,7 @@ export class YardRenderer {
     if(was!==this.vibing())this.restage();
     if(value)for(const unit of this.units.values()){this.unlook(unit);unit.lookYaw=0;unit.lookPitch=0;}
     if(value)for(const unit of this.units.values())if(unit.moving&&unit.target){this.arrive(unit);this.play(unit);}
+    if(value)for(const unit of this.units.values())for(const helper of unit.helpers)this.helperClip(helper,helper.pose);
     if(value){for(const item of this.halls.values())item.level=item.target;this.glow();this.stillEffects();this.clearFireworks();}
     this.dirty=true;this.drawOnce();
   }
