@@ -427,6 +427,31 @@ test('a manager whose health check times out is busy, not gone: open starts no s
   }
 });
 
+for (const mode of ['unresponsive', 'partial']) {
+  test(`stop, restart and fireworks time out without false success or duplicate launches when manager responses are ${mode}`, async (t) => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-launcher-'));
+    t.after(() => fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }));
+    const fake = await fakeManager(t, home, '0.0.1', mode);
+    const runtime = fs.readFileSync(path.join(home, 'manager.json'), 'utf8');
+    const runEnv = { ...env, AGENT_GUILD_HOME: home, AGENT_GUILD_PORT: '0' };
+    await Promise.all(['stop', 'restart', 'fireworks'].map(async (command) => {
+      const result = await new Promise((resolve) => {
+        execFile(process.execPath, [cli, command], { env: runEnv, timeout: 10000 }, (error, stdout, stderr) => {
+          resolve({ code: error?.code ?? 0, killed: Boolean(error?.killed), stdout, stderr });
+        });
+      });
+      assert.equal(result.killed, false, `${command} must terminate before the test watchdog`);
+      assert.equal(result.code, 1, result.stderr);
+      assert.equal(result.stdout, '', `${command} must not report absence or success`);
+      const outcome = command === 'fireworks' ? 'delivery' : 'its outcome';
+      assert.equal(result.stderr, `agent-guild: the session manager did not answer the ${command} request within 5 seconds; ${outcome} could not be confirmed.\n`);
+    }));
+    assert.equal(running(fake.pid), true, 'the existing manager still runs');
+    assert.equal(fs.readFileSync(path.join(home, 'manager.json'), 'utf8'), runtime, 'the existing manager still owns its ephemeral port');
+    assert.equal(fs.existsSync(path.join(home, 'manager.log')), false, 'no duplicate manager was launched');
+  });
+}
+
 test('restart keeps an ephemeral port, and starts the manager itself when the old one only stops', async (t) => {
   // AGENT_GUILD_PORT=0: the successor must listen where the old manager did, not on another free port.
   const zeroHome = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-launcher-'));

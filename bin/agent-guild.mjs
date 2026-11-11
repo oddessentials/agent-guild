@@ -68,13 +68,14 @@ function portOf(url) {
 
 /** The manager's health, `{ busy: pid }` when the manager its runtime file names for `url` runs but did not answer in time, or null. */
 async function reach(url, timeoutMs = 1000) {
+  const signal = AbortSignal.timeout(timeoutMs);
   try {
-    const res = await fetch(`${url}/api/v1/health`, { signal: AbortSignal.timeout(timeoutMs) });
+    const res = await fetch(`${url}/api/v1/health`, { signal });
     if (!res.ok) return null;
     const body = await res.json();
     return body?.name === 'agent-guild' ? body : null;
-  } catch (err) {
-    const owner = err.name === 'TimeoutError' ? readRuntimeFile() : null;
+  } catch {
+    const owner = signal.aborted ? readRuntimeFile() : null;
     return owner?.url === url && running(owner.pid) ? { busy: owner.pid } : null;
   }
 }
@@ -174,21 +175,23 @@ async function cmdOpen({ browser, signIn = false }) {
  * a successor itself (a manager from before restarts only stops).
  */
 async function requestShutdown(url, { restart = false } = {}) {
-  // `stop` and `restart` are documented as ending every session, so they do
-  // not ask; the web page's buttons are the ones that confirm first.
-  const res = await fetch(`${url}/api/v1/shutdown`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${loadOrCreateToken()}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(restart ? { force: true, restart: true } : { force: true }),
-  });
-  if (!res.ok) {
-    const { error } = await res.json().catch(() => ({}));
-    throw new Error(`${restart ? 'restart' : 'stop'} failed: ${error?.message ?? `HTTP ${res.status}`}`);
+  const signal = AbortSignal.timeout(5000);
+  try {
+    const res = await fetch(`${url}/api/v1/shutdown`, {
+      method: 'POST', signal,
+      headers: { Authorization: `Bearer ${loadOrCreateToken()}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(restart ? { force: true, restart: true } : { force: true }),
+    });
+    const body = await res.json().catch(() => ({}));
+    signal.throwIfAborted();
+    if (!res.ok) throw new Error(`${restart ? 'restart' : 'stop'} failed: ${body.error?.message ?? `HTTP ${res.status}`}`);
+    const running = body.running ?? 0;
+    if (running > 0) console.log(`Ending ${running} running session(s).`);
+    return { running, restart: body.restart === true };
+  } catch (err) {
+    if (signal.aborted) throw new Error(`the session manager did not answer the ${restart ? 'restart' : 'stop'} request within 5 seconds; its outcome could not be confirmed.`);
+    throw err;
   }
-  const body = await res.json().catch(() => ({}));
-  const running = body.running ?? 0;
-  if (running > 0) console.log(`Ending ${running} running session(s).`);
-  return { running, restart: body.restart === true };
 }
 
 function running(pid) {
@@ -312,10 +315,16 @@ async function cmdFireworks() {
     process.exitCode = 3;
     return;
   }
-  const res = await fetch(`${url}/api/v1/yard/fireworks`, { method: 'POST', headers: { Authorization: `Bearer ${loadOrCreateToken()}` } });
-  if (!res.ok) throw new Error(`the session manager answered ${res.status}.`);
-  const { pages } = await res.json();
-  console.log(pages ? `Fireworks sent to ${pages} open page(s); every Yard on show lights up.` : 'No page is open to see the fireworks.');
+  const signal = AbortSignal.timeout(5000);
+  try {
+    const res = await fetch(`${url}/api/v1/yard/fireworks`, { method: 'POST', signal, headers: { Authorization: `Bearer ${loadOrCreateToken()}` } });
+    if (!res.ok) throw new Error(`the session manager answered ${res.status}.`);
+    const { pages } = await res.json();
+    console.log(pages ? `Fireworks sent to ${pages} open page(s); every Yard on show lights up.` : 'No page is open to see the fireworks.');
+  } catch (err) {
+    if (signal.aborted) throw new Error('the session manager did not answer the fireworks request within 5 seconds; delivery could not be confirmed.');
+    throw err;
+  }
 }
 
 const MIN_NODE_MAJOR = 22;
