@@ -436,34 +436,48 @@ export function clipFor(id, mode, n) {
 }
 export const VIBE = {
   // Must stay inside the ground every world keeps clear (Clearance.live_distance in agent-guild-builders).
-  roam: { radius: 13.2, half: 12.5, front: 24, split: 3, margin: .9 },
-  flight: { height: [8.5, 12], lap: [26, 44], reach: [.45, 1], scale: 1.3 },
+  roam: { radius: 13.2, half: 12.5, front: 30.5, split: 3, margin: .9, edge: 1.2, head: 2.4 },
+  flight: { height: [8.5, 12], lap: [26, 44], reach: [.45, 1], scale: 1.3, top: 2 },
 };
+export function vibeFrame(aspect, top = 0, bottom = 0) {
+  const { target, zoom } = overviewFor(aspect), height = CAMERA.height / zoom, width = height * aspect, { edge } = VIBE.roam;
+  return { target, right: [edge - width / 2, width / 2 - edge], up: [(bottom - .5) * height + edge, (.5 - top) * height - edge] };
+}
+export function inVibeFrame(frame, x, y, z) {
+  const { right, up } = viewBasis(), d = [x - frame.target[0], y - frame.target[1], z - frame.target[2]];
+  const r = dot(d, right), u = dot(d, up);
+  return r >= frame.right[0] && r <= frame.right[1] && u >= frame.up[0] && u <= frame.up[1];
+}
 function unit(value) {
   let h = hash(value);
   h = Math.imul(h ^ (h >>> 16), 0x45d9f3b); h = Math.imul(h ^ (h >>> 16), 0x45d9f3b);
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
-export function vibeStop(id, n, providers, props = []) {
-  const { radius, half, front, split, margin } = VIBE.roam;
+export function vibeStop(id, n, providers, props = [], frame = null) {
+  const { radius, half, front, split, margin, head } = VIBE.roam;
   const [near, far] = (n + hash(id)) % 2 ? [split, front] : [-radius, split];
   const boxes = [...obstacles(providers).map(box => ({ ...box, half: box.half + margin })),
     ...props.map(p => ({ x: p.x, z: p.z, half: STAGING.station.half + margin }))];
-  for (let k = 0; k < 48; k++) {
+  const seen = (x, z) => !frame || (inVibeFrame(frame, x, 0, z) && inVibeFrame(frame, x, head, z));
+  for (const framed of [true, false]) for (let k = 0; k < 48; k++) {
     const x = round((unit(id + ':vibe:x:' + n + ':' + k) * 2 - 1) * radius), z = round(near + unit(id + ':vibe:z:' + n + ':' + k) * (far - near));
     const clear = Math.hypot(x - STAGING.plaza.x, z - STAGING.plaza.z) <= radius || (Math.abs(x) <= half && z >= 0);
-    if (clear && !boxes.some(box => Math.abs(x - box.x) < box.half && Math.abs(z - box.z) < box.half)) return { x, z };
+    if (clear && !boxes.some(box => Math.abs(x - box.x) < box.half && Math.abs(z - box.z) < box.half) && (!framed || seen(x, z))) return { x, z };
   }
   return { x: STAGING.plaza.x, z: round(STAGING.plaza.z + STAGING.plaza.half + margin + STAGING.station.half) };
 }
-export function vibeFlight(key, seconds) {
-  const { height, lap, reach } = VIBE.flight, { minX, maxX, minZ, maxZ } = CAMERA.pan;
+export function vibeFlight(key, seconds, frame) {
+  const { height, lap, reach, top } = VIBE.flight, { right, up, forward } = viewBasis();
   const pick = (name, [low, high]) => low + unit(key + ':vibe:' + name) * (high - low);
   const out = pick('reach', reach), turn = unit(key + ':vibe:turn') < .5 ? 1 : -1, lobes = 2 + Math.floor(unit(key + ':vibe:lobes') * 3);
   const angle = turn * 2 * Math.PI * (seconds / pick('lap', lap) + unit(key + ':vibe:start'));
   const wide = out * (1 + .12 * Math.sin(lobes * angle + pick('phase', [0, 2 * Math.PI]))) / 1.12;
-  return { x: (minX + maxX) / 2 + Math.cos(angle) * (maxX - minX) / 2 * wide, z: (minZ + maxZ) / 2 + Math.sin(angle) * (maxZ - minZ) / 2 * wide,
-    y: (height[0] + height[1]) / 2 + (height[1] - height[0]) / 2 * Math.sin(2 * angle + pick('rise', [0, 2 * Math.PI])) };
+  const y = (height[0] + height[1]) / 2 + (height[1] - height[0]) / 2 * Math.sin(2 * angle + pick('rise', [0, 2 * Math.PI]));
+  const [r0, r1] = frame.right, u0 = frame.up[0], u1 = frame.up[1] - top;
+  const r = (r0 + r1) / 2 + Math.cos(angle) * Math.max(0, r1 - r0) / 2 * wide;
+  const u = (u0 + u1) / 2 + Math.sin(angle) * Math.max(0, u1 - u0) / 2 * wide;
+  const s = (y - frame.target[1] - u * up[1]) / forward[1];
+  return { x: frame.target[0] + r * right[0] + u * up[0] + s * forward[0], y, z: frame.target[2] + r * right[2] + u * up[2] + s * forward[2] };
 }
 // Where a session's helpers stand, around it, as the renderer has always placed them.
 export function helperOffset(i, count) {

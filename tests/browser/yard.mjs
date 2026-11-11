@@ -2097,14 +2097,27 @@ test('Vibes Mode sets every character wandering and every helper flying, and tur
     const {YardRenderer}=await import('/yard/renderer.js');
     window.__model=await import('/yard/model.mjs');
     const host=document.createElement('div'),labels=document.createElement('div');
-    host.style.cssText='position:fixed;width:900px;height:700px;top:0;left:0';host.append(labels);document.body.append(host);
-    window.__renderer=new YardRenderer(host,labels,{select(){},open(){},clock:()=>${T0}});
+    const top=document.createElement('div'),bottom=document.createElement('div');
+    top.style.cssText='position:absolute;top:0;left:0;right:0;height:90px';bottom.style.cssText='position:absolute;bottom:0;left:0;right:0;height:120px';
+    host.style.cssText='position:fixed;width:900px;height:700px;top:0;left:0';host.append(labels,top,bottom);document.body.append(host);
+    window.__renderer=new YardRenderer(host,labels,{select(){},open(){},clock:()=>${T0},cover:[top,bottom]});
     window.__sessions=${q(sessions)};window.__providers=${q(f.providers)};
     await __renderer.setWorld('guild','dark');__renderer.update(__providers,__sessions);
     window.__units=()=>[...__renderer.units.values()];
     window.__home=()=>[...__renderer.units].every(([id,u])=>{const p=__renderer.staged.places.get(id);return !u.moving&&u.root.position.x===p.x&&u.root.position.z===p.z;});
     window.__run=n=>{for(let i=0;i<n;i++)__renderer.step(.05);};
     window.__settle=()=>{let n=0;while(__units().some(u=>u.moving)&&n<4000){__renderer.step(.05);n++;}return n;};
+    window.__offScreen=()=>{
+      const camera=__renderer.camera,w=host.clientWidth,h=host.clientHeight,v=camera.position.clone(),out=[];
+      const px=(x,y,z)=>{v.set(x,y,z).project(camera);return {x:(v.x+1)/2*w,y:(1-v.y)/2*h};};
+      const off=p=>p.y<90||p.y>h-120||p.x<0||p.x>w,edge=__model.VIBE.roam.edge*h*camera.zoom/__model.CAMERA.height-.5;
+      for(const u of __units()){
+        const t=u.target,feet=px(t.x,0,t.z),head=px(t.x,__model.VIBE.roam.head,t.z);
+        if([feet,head].some(p=>p.x<edge||p.x>w-edge)||head.y<134+edge||feet.y>h-120-edge)out.push(['stop',t]);
+        for(const helper of u.helpers){const p=helper.model.position;if(off(px(p.x,p.y,p.z)))out.push(['helper',p.x,p.y,p.z]);}
+      }
+      return out;
+    };
     window.__helper=()=>{const h=__renderer.units.get(__sessions[0].id).helpers[0];return {y:h.model.position.y,scale:h.model.scale.x,clip:h.action.getClip().name};};
   })()`);
   await b.wait('__units().every(u=>u.loaded)&&__units()[0].helpers.length===1');
@@ -2117,7 +2130,7 @@ test('Vibes Mode sets every character wandering and every helper flying, and tur
     __run(800);
     const boxes=[...__model.providerPositions(__providers)].map(([id,p])=>({...p,half:id==='docker'?__model.STAGING.hall.docker:__model.STAGING.hall.half}));
     return {first,moving:__units().every(u=>u.moving),clips:__units().map(u=>u.clip),legs:__units().map(u=>u.roamed),
-      inHall:__units().some(u=>boxes.some(b=>Math.abs(u.root.position.x-b.x)<b.half-.06&&Math.abs(u.root.position.z-b.z)<b.half-.06)),helper:__helper()};
+      inHall:__units().some(u=>boxes.some(b=>Math.abs(u.root.position.x-b.x)<b.half-.06&&Math.abs(u.root.position.z-b.z)<b.half-.06)),helper:__helper(),offScreen:__offScreen()};
   })()`);
   assert.ok(roaming.first.leg<roaming.first.pace||Math.abs(roaming.first.moved-roaming.first.pace)<1e-9,'a character walks at its usual speed');
   assert.equal(roaming.moving,true,'every character keeps walking');
@@ -2128,6 +2141,14 @@ test('Vibes Mode sets every character wandering and every helper flying, and tur
   assert.ok(roaming.helper.y>=flight.height[0]-.5&&roaming.helper.y<=flight.height[1],'the helper flies');
   assert.ok(Math.abs(roaming.helper.scale-flight.scale)<1e-6,'at its flying size');
   assert.equal(roaming.helper.clip,'move');
+  assert.deepEqual(roaming.offScreen,[],'every stop and helper stays on screen, clear of what covers it');
+  const turned=await b.evaluate(`(()=>{const frame=__model.vibeFrame(380/700,134/700,120/700),count=()=>__units().filter(u=>!__model.inVibeFrame(frame,u.target.x,0,u.target.z)||!__model.inVibeFrame(frame,u.target.x,__model.VIBE.roam.head,u.target.z)).length;
+    for(let n=0;n<4000&&!count();n++)__renderer.step(.05);
+    const leaving=count();__renderer.host.style.width='380px';__renderer.resize();const stops=__offScreen().filter(([kind])=>kind==='stop');__run(200);return {leaving,stops,after:__offScreen(),moving:__units().every(u=>u.moving)};})()`);
+  assert.ok(turned.leaving>0,'the turn leaves someone heading off screen');
+  assert.deepEqual(turned.stops,[],'turned to portrait, nobody heads off screen');
+  assert.deepEqual(turned.after,[],'and everyone stays on screen');
+  assert.equal(turned.moving,true);
   assert.equal(await b.evaluate(`(()=>{const before=__units().map(u=>u.target);__renderer.update(__providers,__sessions);return __units().every((u,i)=>u.target===before[i]&&u.moving);})()`),true);
   assert.ok(await b.evaluate('(__renderer.setVibe(false),__settle())')<4000,'turned off, everyone walks back');
   assert.equal(await b.evaluate('__home()'),true);

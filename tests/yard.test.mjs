@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, statSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { sessionPose, familiarPose, marksFor, layoutSessions, providerPositions, characterIndex, lookLimits, yardExtras, WORLDS, CAMERA, SUN, minZoom, overviewFor, clampPan, viewBasis, plateExtent,
- stage, stagingMode, nextStagingChange, restSpots, route, clipFor, doorFor, stationProp, STAGING, CLIPS, SKELETON, PROVIDER_ORDER, photoSize, photoName, VIBE, vibeStop, vibeFlight } from '../web/yard/model.mjs';
+ stage, stagingMode, nextStagingChange, restSpots, route, clipFor, doorFor, stationProp, STAGING, CLIPS, SKELETON, PROVIDER_ORDER, photoSize, photoName, VIBE, vibeStop, vibeFlight, vibeFrame, inVibeFrame } from '../web/yard/model.mjs';
 import { goldenVectors } from '../scripts/yard-golden.mjs';
 import { Matrix4, Vector3 } from 'three';
 const providers=['anthropic','openai','google','xai','shell','docker'].map(id=>({id}));
@@ -161,44 +161,53 @@ test('clip choices are seeded per session and come from the contract clip set',(
 });
 // Clearance.live_distance in agent-guild-builders: how far a point is outside the ground worlds keep clear.
 const keptClearBy=(x,z)=>Math.min(Math.max(0,Math.hypot(x,z)-14.7),Math.hypot(Math.max(Math.abs(x)-13,0),Math.max(z-32,-z,0)));
-test('Vibes Mode wanders only the ground every world keeps clear, to and fro across it, round the halls, the centrepiece and the station props',()=>{
+const vibeFrames=[vibeFrame(16/9),vibeFrame(1,.2,.15),vibeFrame(9/16,.15,.1),vibeFrame(9/19.5,.17,.25)];
+const inView=(frame,p)=>{const {right,up}=viewBasis(),d=[p.x-frame.target[0],(p.y||0)-frame.target[1],p.z-frame.target[2]];return {r:d[0]*right[0]+d[1]*right[1]+d[2]*right[2],u:d[0]*up[0]+d[1]*up[1]+d[2]*up[2]};};
+const span=values=>Math.max(...values)-Math.min(...values);
+test('Vibes Mode wanders only the ground every world keeps clear and the overview shows, to and fro across it, round the halls, the centrepiece and the station props',()=>{
  const custom=[...providers,{id:'custom-1'},{id:'custom-2'}];
  const props=[...layoutSessions(Array.from({length:12},(_,i)=>session('s'+i,providers[i%6].id)),custom).entries()].map(([id,p])=>stationProp(p,id));
  const boxes=[...[...providerPositions(custom)].map(([id,p])=>({...p,half:id==='docker'?STAGING.hall.docker:STAGING.hall.half})),
   {x:STAGING.plaza.x,z:STAGING.plaza.z,half:STAGING.plaza.half},...props.map(p=>({x:p.x,z:p.z,half:STAGING.station.half}))];
  const inside=p=>boxes.some(b=>Math.abs(p.x-b.x)<b.half-.06&&Math.abs(p.z-b.z)<b.half-.06);
- const stops=id=>Array.from({length:60},(_,n)=>vibeStop(id,n,custom,props));
- for(const id of ['s0','s1','s7']){
-  let from=stops(id).at(-1);
-  for(const stop of stops(id)){
-   assert.notEqual(stop.z<VIBE.roam.split,from.z<VIBE.roam.split,'stops alternate between the courtyard and the ground in front');
-   assert.equal(keptClearBy(stop.x,stop.z),0,JSON.stringify(stop));
-   assert.ok(!boxes.some(b=>Math.abs(stop.x-b.x)<b.half+.5&&Math.abs(stop.z-b.z)<b.half+.5),JSON.stringify(stop));
-   let at=from;
-   for(const to of route(from,stop,custom,props)){for(let t=0;t<=1;t+=.02)assert.ok(!inside({x:at.x+(to.x-at.x)*t,z:at.z+(to.z-at.z)*t}),JSON.stringify([from,stop]));at=to;}
-   from=stop;
+ for(const frame of vibeFrames){
+  const stops=id=>Array.from({length:60},(_,n)=>vibeStop(id,n,custom,props,frame));
+  for(const id of ['s0','s1','s7']){
+   let from=stops(id).at(-1);
+   for(const stop of stops(id)){
+    assert.notEqual(stop.z<VIBE.roam.split,from.z<VIBE.roam.split,'stops alternate between the courtyard and the ground in front');
+    assert.equal(keptClearBy(stop.x,stop.z),0,JSON.stringify(stop));
+    assert.ok(inVibeFrame(frame,stop.x,0,stop.z)&&inVibeFrame(frame,stop.x,VIBE.roam.head,stop.z),JSON.stringify(stop));
+    assert.ok(!boxes.some(b=>Math.abs(stop.x-b.x)<b.half+.5&&Math.abs(stop.z-b.z)<b.half+.5),JSON.stringify(stop));
+    let at=from;
+    for(const to of route(from,stop,custom,props)){for(let t=0;t<=1;t+=.02)assert.ok(!inside({x:at.x+(to.x-at.x)*t,z:at.z+(to.z-at.z)*t}),JSON.stringify([from,stop]));at=to;}
+    from=stop;
+   }
+   const seen=stops(id).map(p=>inView(frame,p));
+   assert.ok(span(seen.map(p=>p.r))>(frame.right[1]-frame.right[0])/2&&span(seen.map(p=>p.u))>(frame.up[1]-frame.up[0])/2,'the stops spread over what the overview shows');
   }
-  const xs=stops(id).map(p=>p.x),zs=stops(id).map(p=>p.z);
-  assert.ok(Math.max(...xs)-Math.min(...xs)>VIBE.roam.radius&&Math.max(...zs)-Math.min(...zs)>VIBE.roam.radius,'the stops spread over the ground');
+  assert.deepEqual(stops('s0'),stops('s0'));
+  assert.notDeepEqual(stops('s0'),stops('s1'));
  }
- assert.deepEqual(stops('s0'),stops('s0'));
- assert.notDeepEqual(stops('s0'),stops('s1'));
+ const hidden=Array.from({length:60},(_,n)=>vibeStop('s0',n,custom,props,vibeFrame(16/9,.5,.5)));
+ assert.equal(new Set(hidden.map(p=>p.x+','+p.z)).size,hidden.length,'with nothing visible, stops still spread over the clear ground');
 });
-test('Vibes Mode flies each helper its own smooth loop inside the pan bounds, above the halls',()=>{
- const {minX,maxX,minZ,maxZ}=CAMERA.pan,[low,high]=VIBE.flight.height;
+test('Vibes Mode flies each helper its own smooth loop across what the overview shows, above the halls',()=>{
+ const [low,high]=VIBE.flight.height;
  assert.ok(low>STAGING.hall.dockerHeight);
- for(const key of ['s0:a1','s0:a2','s1:a3']){
-  let last=vibeFlight(key,0),reach=0;
+ for(const frame of vibeFrames)for(const key of ['s0:a1','s0:a2','s1:a3']){
+  let last=vibeFlight(key,0,frame);const seen=[];
   for(let t=.1;t<=VIBE.flight.lap[1];t+=.1){
-   const p=vibeFlight(key,t);
-   assert.ok(p.x>=minX&&p.x<=maxX&&p.z>=minZ&&p.z<=maxZ&&p.y>=low-1e-9&&p.y<=high+1e-9,JSON.stringify(p));
+   const p=vibeFlight(key,t,frame),v=inView(frame,p);
+   assert.ok(inVibeFrame(frame,p.x,p.y,p.z)&&v.u+VIBE.flight.top<=frame.up[1]+1e-9&&p.y>=low-1e-9&&p.y<=high+1e-9,JSON.stringify(p));
    assert.ok(Math.hypot(p.x-last.x,p.y-last.y,p.z-last.z)<1.5,'no jump between moments');
-   reach=Math.max(reach,Math.hypot(p.x,p.z-(minZ+maxZ)/2));last=p;
+   seen.push(v);last=p;
   }
-  assert.ok(reach>STAGING.plaza.rings.at(-1)[0],'the loop goes out past the plaza');
+  assert.ok(span(seen.map(p=>p.r))>(frame.right[1]-frame.right[0])*.3&&span(seen.map(p=>p.u))>(frame.up[1]-frame.up[0]-VIBE.flight.top)*.3,'the loop crosses the view');
  }
- assert.deepEqual(vibeFlight('s0:a1',12.5),vibeFlight('s0:a1',12.5));
- assert.notDeepEqual(vibeFlight('s0:a1',12.5),vibeFlight('s0:a2',12.5));
+ const frame=vibeFrames[0];
+ assert.deepEqual(vibeFlight('s0:a1',12.5,frame),vibeFlight('s0:a1',12.5,frame));
+ assert.notDeepEqual(vibeFlight('s0:a1',12.5,frame),vibeFlight('s0:a2',12.5,frame));
 });
 test('the staging contract matches its golden vectors',()=>{
  const golden=JSON.parse(readFileSync(new URL('./fixtures/yard-choreography.json',import.meta.url),'utf8'));

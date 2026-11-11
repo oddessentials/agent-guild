@@ -1,6 +1,6 @@
 import * as T from './vendor/engine.js';
 import { WORLDS, PROVIDER_ORDER, characterIndex, GILDED, CAMERA, SUN, minZoom, overviewFor, clampPan, viewBasis, providerPositions, sessionPose, familiarPose, hash,
-  stage, nextStagingChange, doorFor, arrives, route, clipFor, helperOffset, stationProp, hallActivity, lookTarget, lookLimits, yardExtras, playableClip, STAGING, photoSize, marksFor, SHOWN_HELPERS, VIBE, vibeStop, vibeFlight } from './model.mjs';
+  stage, nextStagingChange, doorFor, arrives, route, clipFor, helperOffset, stationProp, hallActivity, lookTarget, lookLimits, yardExtras, playableClip, STAGING, photoSize, marksFor, SHOWN_HELPERS, VIBE, vibeStop, vibeFlight, vibeFrame, inVibeFrame } from './model.mjs';
 
 const ASSETS = new URL('./assets/', import.meta.url);
 const vector = new T.Vector3();
@@ -16,7 +16,7 @@ const pieceFiles = (skin, slot, piece) => (slot === 'companion' ? [0, 1, 2, 3].m
 const vector2 = new T.Vector2();
 // How fast characters turn to a new heading, in radians a second, and how
 // long a clip change blends.
-const TURN = 7, FADE = .3;
+const TURN = 7, FADE = .3, TAG = 44;
 // Models rigged before the staging contract name their clips differently.
 const LEGACY = { walk: 'working', idle_0: 'resting', idle_1: 'resting', idle_2: 'resting', pause: 'resting', work_0: 'working', work_1: 'working', idle: 'resting', move: 'working' };
 // How bright a hall's glow grows at low and high activity, over what the
@@ -139,15 +139,15 @@ function disposeWorld(root) {
 }
 export class YardRenderer {
   // clock gives the time staging is judged at; tests pass a fixed one.
-  constructor(host,labels,{select,open,error=noop,piece=noop,clock=Date.now}) {
-    this.host=host;this.labels=labels;this.onSelect=select;this.onOpen=open;this.onError=error;this.onPiece=piece;this.clock=clock;
+  constructor(host,labels,{select,open,error=noop,piece=noop,clock=Date.now,cover=[]}) {
+    this.host=host;this.labels=labels;this.cover=cover;this.onSelect=select;this.onOpen=open;this.onError=error;this.onPiece=piece;this.clock=clock;
     this.pieceSets={};this.shownPieces={skin:null,pieces:{}};this.pieceLoaders=new Map();this.preloads=new Map();
     this.scene=new T.Scene();this.units=new Map();this.halls=new Map();this.slots=new Map();this.cache=new Map();
     this.loadingManager=new T.LoadingManager();
     this.providers=[];this.sessions=[];this.selected=null;this.world=null;this.skin=null;this.request=0;this.worldRequest=0;this.pending=null;
     this.staged=null;this.seen=new Set();this.stageTimer=0;this.sparks=[];this.shows=[];this.marks=new T.Group();this.scene.add(this.marks);this.glyphs=null;this.markPlane=new T.PlaneGeometry(1,1);
     this.props=new Map();this.propSpots=[];this.station=null;this.effects=null;
-    this.active=false;this.reduced=false;this.vibe=false;this.vibeTime=0;this.disposed=false;this.frame=0;this.lastTime=0;this.dirty=true;
+    this.active=false;this.reduced=false;this.vibe=false;this.vibeTime=0;this.vibeFrames={stop:null,flight:vibeFrame(1)};this.disposed=false;this.frame=0;this.lastTime=0;this.dirty=true;
     this.crowd=null;this.rows=new Map();
     this.list=Object.assign(document.createElement('div'),{className:'yard-crowd-list',id:'yard-crowd-list-'+(++crowdLists),hidden:true});
     this.list.setAttribute('role','group');
@@ -195,7 +195,7 @@ export class YardRenderer {
     this.canvas.addEventListener('pointerdown',this.onPointerDown);
     this.canvas.addEventListener('click',this.onClick);
     this.canvas.addEventListener('dblclick',this.onDouble);
-    this.resizeObserver=new ResizeObserver(()=>this.resize());this.resizeObserver.observe(host);
+    this.resizeObserver=new ResizeObserver(()=>this.resize());for(const el of [host,...cover])this.resizeObserver.observe(el);
     this.resize();this.overview();
   }
   async asset(name,url) {
@@ -482,7 +482,21 @@ export class YardRenderer {
     this.camera.zoom=T.MathUtils.clamp(this.camera.zoom,this.controls.minZoom,this.controls.maxZoom);
     this.camera.updateProjectionMatrix();
     this.dirty=true;
+    this.frameVibe(w,h);
     if(this.atOverview)this.overview();else this.drawOnce();
+  }
+  frameVibe(w,h) {
+    const box=this.host.getBoundingClientRect();let top=0,bottom=0;
+    for(const el of this.cover){
+      const r=el.getBoundingClientRect();
+      if(!r.width||!r.height)continue;
+      if(r.top+r.bottom<box.top+box.bottom)top=Math.max(top,r.bottom-box.top);else bottom=Math.max(bottom,box.bottom-r.top);
+    }
+    top=T.MathUtils.clamp(top,0,h);bottom=T.MathUtils.clamp(bottom,0,h);
+    this.vibeFrames={stop:vibeFrame(w/h,(top+TAG)/h,bottom/h),flight:vibeFrame(w/h,top/h,bottom/h)};
+    if(!this.vibing())return;
+    const {stop}=this.vibeFrames,{head}=VIBE.roam;
+    for(const unit of this.units.values())if(unit.moving&&unit.target&&!(inVibeFrame(stop,unit.target.x,0,unit.target.z)&&inVibeFrame(stop,unit.target.x,head,unit.target.z)))this.roam(unit);
   }
   overview() {
     const {target,zoom}=overviewFor((this.camera.right-this.camera.left)/(this.camera.top-this.camera.bottom));
@@ -932,7 +946,7 @@ export class YardRenderer {
   }
   roam(unit) {
     unit.roamed=(unit.roamed??-1)+1;
-    const at={x:unit.root.position.x,z:unit.root.position.z},stop=vibeStop(unit.session.id,unit.roamed,this.providers,this.propSpots);
+    const at={x:unit.root.position.x,z:unit.root.position.z},stop=vibeStop(unit.session.id,unit.roamed,this.providers,this.propSpots,this.vibeFrames.stop);
     unit.target=stop;unit.path=route(at,stop,this.providers,this.propSpots);unit.moving=true;
     this.play(unit);
   }
@@ -1010,7 +1024,7 @@ export class YardRenderer {
     // Helpers trail their character, closing most of the gap in a second.
     const pull=1-Math.exp(-4*dt);
     for(const helper of unit.helpers){
-      const to=vibing?vibeFlight(unit.session.id+':'+helper.id,this.vibeTime):{x:root.x+helper.offset.x,y:.27,z:root.z+helper.offset.z};
+      const to=vibing?vibeFlight(unit.session.id+':'+helper.id,this.vibeTime,this.vibeFrames.flight):{x:root.x+helper.offset.x,y:.27,z:root.z+helper.offset.z};
       const p=helper.model.position,dx=to.x-p.x,dy=to.y-p.y,dz=to.z-p.z,far=Math.hypot(dx,dz);
       const size=vibing?VIBE.flight.scale:.45,grow=size-helper.model.scale.x;
       p.x+=dx*pull;p.y+=dy*pull;p.z+=dz*pull;

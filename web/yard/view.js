@@ -295,6 +295,7 @@ export function initYard(controller) {
           open: id => controller.openSession(id),
           error: () => { if (attempt === sceneAttempt) failScene(); },
           piece: pieceDrawn,
+          cover: [...document.querySelectorAll('.yard-heading > *, #yard-stage .yard-overlay')],
         });
         pendingRenderer = candidate;
         // Appearance can change while the first world is loading.
