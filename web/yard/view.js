@@ -175,7 +175,7 @@ export function initYard(controller) {
     const button = $('yard-vibe');
     button.setAttribute('aria-pressed', String(vibe));
     button.disabled = motion.matches;
-    button.title = motion.matches ? 'Vibe Mode off: reduced motion is enabled' : vibe ? 'Vibe Mode is on in every Yard' : 'Vibe Mode: everyone roams, in every Yard';
+    button.title = motion.matches ? 'Vibes Mode off: reduced motion is enabled' : vibe ? 'Vibes Mode is on in every Yard' : 'Vibes Mode: everyone roams, in every Yard';
   };
   const toggleVibe = () => {
     vibe = !vibe;

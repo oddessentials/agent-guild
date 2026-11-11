@@ -1098,7 +1098,7 @@ test('the camera controls stay whole and reachable beside the swap status and he
         return {buttons,overlaps};
       })()`);
       const at=`${name}, ${status} shown`;
-      assert.deepEqual(layout.buttons.map(c=>c.label),['Zoom in','Zoom out','Overview','Focus selected','Save a picture of the Yard','Fireworks in this Yard only','Vibe Mode'],at);
+      assert.deepEqual(layout.buttons.map(c=>c.label),['Zoom in','Zoom out','Overview','Focus selected','Save a picture of the Yard','Fireworks in this Yard only','Vibes Mode'],at);
       assert.deepEqual(layout.buttons.filter(c=>!c.inside||!c.reached).map(c=>c.label),[],at);
       assert.equal(new Set(layout.buttons.map(c=>c.height)).size,1,`every label stays on one line: ${at}`);
       assert.deepEqual(layout.overlaps,[],at);
@@ -2088,7 +2088,7 @@ test('the row being replaced says Checking replacement until the check answers',
   await b.wait(status+"==='Customized: Mine'");
   assert.deepEqual(b.errors,[]);
 });
-test('Vibe Mode sets every character wandering and every helper flying, and turning it off or reducing motion puts them back',options,async t=>{
+test('Vibes Mode sets every character wandering and every helper flying, and turning it off or reducing motion puts them back',options,async t=>{
   const {f,b}=await setup(t);
   const T0=Date.parse('2026-10-13T12:00:00.000Z'),iso=ms=>new Date(T0-ms).toISOString();
   const sessions=[...f.data.values()].slice(0,3).map((s,i)=>({...s,activity:'active',lastOutputAt:iso(0),createdAt:iso(3600000),shells:[],
@@ -2141,7 +2141,7 @@ test('Vibe Mode sets every character wandering and every helper flying, and turn
   assert.deepEqual(b.errors,[]);
 });
 
-test('the Vibe Mode button stays on across Yards and reloads, and reduced motion disables it',options,async t=>{
+test('the Vibes Mode button stays on across Yards and reloads, and reduced motion disables it',options,async t=>{
   const {b}=await setup(t,{yard:true});
   const button="document.querySelector('#yard-vibe')",state='['+button+'.getAttribute("aria-pressed"),'+button+'.disabled,localStorage.getItem("agentGuild.vibe")]';
   await ready(b);
@@ -2154,7 +2154,7 @@ test('the Vibe Mode button stays on across Yards and reloads, and reduced motion
   })()`);
   await b.send('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'no-preference'}]});
   await b.wait(button+'.disabled===false');
-  assert.equal(await b.evaluate(button+'.getAttribute("aria-label")'),'Vibe Mode');
+  assert.equal(await b.evaluate(button+'.getAttribute("aria-label")'),'Vibes Mode');
   assert.equal(await b.evaluate(button+'.previousElementSibling.id'),'yard-fireworks');
   await b.click('#yard-vibe');
   assert.deepEqual(await b.evaluate(state),['true',false,'on']);

@@ -161,7 +161,7 @@ test('clip choices are seeded per session and come from the contract clip set',(
 });
 // Clearance.live_distance in agent-guild-builders: how far a point is outside the ground worlds keep clear.
 const keptClearBy=(x,z)=>Math.min(Math.max(0,Math.hypot(x,z)-14.7),Math.hypot(Math.max(Math.abs(x)-13,0),Math.max(z-32,-z,0)));
-test('Vibe Mode wanders only the ground every world keeps clear, to and fro across it, round the halls, the centrepiece and the station props',()=>{
+test('Vibes Mode wanders only the ground every world keeps clear, to and fro across it, round the halls, the centrepiece and the station props',()=>{
  const custom=[...providers,{id:'custom-1'},{id:'custom-2'}];
  const props=[...layoutSessions(Array.from({length:12},(_,i)=>session('s'+i,providers[i%6].id)),custom).entries()].map(([id,p])=>stationProp(p,id));
  const boxes=[...[...providerPositions(custom)].map(([id,p])=>({...p,half:id==='docker'?STAGING.hall.docker:STAGING.hall.half})),
@@ -184,7 +184,7 @@ test('Vibe Mode wanders only the ground every world keeps clear, to and fro acro
  assert.deepEqual(stops('s0'),stops('s0'));
  assert.notDeepEqual(stops('s0'),stops('s1'));
 });
-test('Vibe Mode flies each helper its own smooth loop inside the pan bounds, above the halls',()=>{
+test('Vibes Mode flies each helper its own smooth loop inside the pan bounds, above the halls',()=>{
  const {minX,maxX,minZ,maxZ}=CAMERA.pan,[low,high]=VIBE.flight.height;
  assert.ok(low>STAGING.hall.dockerHeight);
  for(const key of ['s0:a1','s0:a2','s1:a3']){
