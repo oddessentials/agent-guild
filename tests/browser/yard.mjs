@@ -496,6 +496,86 @@ test('marks show reported state over the crew and leave every character\'s motio
   assert.deepEqual(b.errors,[]);
 });
 
+test('a character with more than six helpers burns in its provider\'s colour, fades without restarting, and leaves picking and other characters alone',options,async t=>{
+  const {f,b}=await setup(t);
+  const T0=Date.parse('2026-10-13T12:00:00.000Z'),iso=ms=>new Date(T0-ms).toISOString();
+  const crew=id=>Array.from({length:5},(_,i)=>({id:id+i,name:'H'+i,status:i?'working':'done'}));
+  const sessions=[...f.data.values()].slice(0,2).map((s,i)=>({...s,provider:{...s.provider,color:i?'#55aaff':'#e96c42'},activity:'active',lastOutputAt:iso(0),createdAt:iso(3600000),agents:crew('h'+i),shells:[{id:'m'+i,kind:'monitor'}]}));
+  await b.evaluate(`(async()=>{
+    const {YardRenderer}=await import('/yard/renderer.js');
+    const host=document.createElement('div'),labels=document.createElement('div');
+    host.style.cssText='position:fixed;width:900px;height:700px;top:0;left:0';host.append(labels);document.body.append(host);
+    const r=window.__renderer=new YardRenderer(host,labels,{select(){},open(){},clock:()=>${T0}});
+    await r.setWorld('guild','dark');
+    window.__sessions=${q(sessions)};window.__providers=${q(f.providers)};
+    window.__push=()=>r.update(__providers,structuredClone(__sessions));
+    window.__seventh=(i,on)=>{__sessions[i].shells=on?[{id:'m'+i,kind:'monitor'},{id:'x'+i}]:[{id:'m'+i,kind:'monitor'}];__push();};
+    window.__steps=(n,dt=.05)=>{for(let i=0;i<n;i++)r.step(dt);};
+    window.__aura=i=>r.units.get(__sessions[i].id).aura;
+    window.__state=i=>(a=>a&&[a.active,a.strength,a.elapsed])(__aura(i));
+    window.__picks=()=>{const u=r.units.get(__sessions[0].id),rect=r.canvas.getBoundingClientRect(),V=u.root.position.constructor;
+      const at=world=>{const p=world.project(r.camera);return {clientX:rect.left+(p.x+1)/2*rect.width,clientY:rect.top+(1-p.y)/2*rect.height};};
+      r.renderer.render(r.scene,r.camera);
+      return [u.model.getObjectByName('Hips').getWorldPosition(new V()),u.root.position.clone().add(new V(0,u.height*1.18,0))].map(p=>r.pick(at(p))?.id??null);};
+    __push();
+  })()`);
+  const [a]=sessions.map(s=>s.id);
+  await b.wait('[...__renderer.units.values()].every(u=>u.loaded&&u.helpers.length===6)');
+  assert.deepEqual(await b.evaluate('[__aura(0)??null,__aura(1)??null]'),[null,null],'six helpers light nothing');
+  const plain=await b.evaluate('__picks()');
+  assert.equal(plain[0],a);assert.notEqual(plain[1],a);
+  await b.evaluate('__seventh(0,true)');
+  assert.deepEqual(await b.evaluate('[__state(0).slice(0,2),__aura(1)??null,__renderer.units.get(__sessions[0].id).helpers.length]'),[[true,0],null,6],'the seventh helper lights only its own character');
+  await b.evaluate('__steps(1,.1)');
+  const rising=await b.evaluate('__state(0)');
+  assert.ok(rising[1]>0&&rising[1]<1);
+  await b.evaluate('window.__first=__aura(0);__push()');
+  assert.deepEqual(await b.evaluate('[__aura(0)===__first,__state(0)]'),[true,rising],'a routine snapshot restarts nothing');
+  await b.evaluate(`__sessions[0].provider.color='#aaaaaa';__push()`);
+  assert.deepEqual(await b.evaluate('(({r,g,b})=>[r===g,g===b])(__aura(0).tint)'),[true,true],'a grey provider burns white');
+  assert.deepEqual(await b.evaluate('__state(0)'),rising);
+  await b.evaluate(`__sessions[0].provider.color='#e96c42';__seventh(0,false);__steps(1)`);
+  const falling=await b.evaluate('__state(0)[1]');
+  assert.ok(falling>0&&falling<rising[1],'it fades out from where it was');
+  await b.evaluate('__seventh(0,true);__steps(1)');
+  assert.ok(await b.evaluate('__state(0)[1]')>falling,'and back in from where it was');
+  await b.evaluate('__steps(20)');
+  assert.deepEqual(await b.evaluate(`(a=>{const u=__renderer.units.get(__sessions[0].id);
+    return [a.strength,a.group.visible,a.group.parent===u.root,a.flames.visible,a.overlays.length>0,
+      a.overlays.every(o=>o.visible&&o.material===a.glow&&!o.castShadow&&o.parent.children.some(n=>n!==o&&n.isSkinnedMesh&&n.skeleton===o.skeleton&&n.geometry===o.geometry)),
+      [...a.embers.geometry.attributes.alpha.array].some(v=>v>0)];})(__aura(0))`),[1,true,true,true,true,true,true]);
+  assert.deepEqual(await b.evaluate('__picks()'),plain,'the fire is not something to click');
+  // A replaced character model keeps its fire.
+  await b.evaluate(`(u=>{window.__old=__aura(0).overlays.slice();__renderer.dropModel(u);__renderer.loadUnit(u,u.session);})(__renderer.units.get(__sessions[0].id))`);
+  await b.wait(`__renderer.units.get(${q(a)}).loaded`);
+  assert.deepEqual(await b.evaluate(`(a=>{const u=__renderer.units.get(__sessions[0].id);let inside=true;
+    for(const o of a.overlays){let n=o;while(n&&n!==u.model)n=n.parent;inside&&=n===u.model;}
+    return [a===__first,a.strength,a.overlays.length>0,inside,__old.every(o=>!o.parent)];})(__aura(0))`),[true,1,true,true,true]);
+  // A second fire is its own; putting the first out leaves it burning.
+  await b.evaluate('__seventh(1,true);__steps(7)');
+  const other=await b.evaluate('(a=>[a.strength,a.tint.getHexString(),a.glow!==__first.glow,a.flames.material!==__first.flames.material])(__aura(1))');
+  assert.deepEqual([other[0],other[2],other[3]],[1,true,true]);
+  assert.notEqual(other[1],await b.evaluate('__first.tint.getHexString()'));
+  await b.evaluate('__seventh(0,false);__steps(13)');
+  assert.deepEqual(await b.evaluate('[__first.strength,__first.group.visible,__first.overlays.some(o=>o.visible),__aura(1).strength,__aura(1).tint.getHexString()]'),[0,false,false,1,other[1]]);
+  // Reduced motion shows the ring and a dimmer glow at once, and nothing moves.
+  await b.evaluate('__seventh(0,true);__steps(2);__renderer.setReducedMotion(true)');
+  const still=await b.evaluate('__state(0)');
+  assert.equal(still[1],1);
+  assert.deepEqual(await b.evaluate('(a=>[a.advance(.2),a.elapsed,a.group.visible,a.ring.visible,a.flames.visible,a.embers.visible,a.glow.uniforms.strength.value])(__first)'),[false,still[2],true,true,false,false,.35]);
+  await b.evaluate('__seventh(0,false)');
+  assert.deepEqual(await b.evaluate('[__first.strength,__first.group.visible]'),[0,false]);
+  await b.evaluate('__renderer.setReducedMotion(false)');
+  // An exited session goes out; a removed one takes its fire with it.
+  await b.evaluate(`Object.assign(__sessions[1],{status:'exited',exitCode:0,activity:'quiet'});__push()`);
+  assert.equal(await b.evaluate('__aura(1).active'),false);
+  await b.evaluate('__seventh(0,true);__steps(8);window.__second=__aura(1);__sessions.shift();__push()');
+  assert.deepEqual(await b.evaluate(`[__renderer.units.has(${q(a)}),__first.group.parent,__first.overlays.length]`),[false,null,0]);
+  await b.evaluate('__renderer.dispose()');
+  assert.equal(await b.evaluate('__second.group.parent'),null);
+  assert.deepEqual(b.errors,[]);
+});
+
 test('a mark drawn before its glyph loads is drawn again once it loads, with reduced motion and nothing else changing',options,async t=>{
   const {f,b}=await setup(t);
   const T0=Date.parse('2026-10-13T12:00:00.000Z'),iso=ms=>new Date(T0-ms).toISOString();

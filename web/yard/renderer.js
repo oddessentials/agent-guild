@@ -1,6 +1,7 @@
 import * as T from './vendor/engine.js';
 import { WORLDS, PROVIDER_ORDER, characterIndex, GILDED, CAMERA, SUN, minZoom, overviewFor, clampPan, viewBasis, providerPositions, sessionPose, familiarPose, hash,
-  stage, nextStagingChange, doorFor, arrives, route, clipFor, helperOffset, stationProp, hallActivity, lookTarget, lookLimits, yardExtras, playableClip, STAGING, photoSize, marksFor, SHOWN_HELPERS, VIBE, vibeStop, vibeFlight, vibeFrame, inVibeFrame } from './model.mjs';
+  stage, nextStagingChange, doorFor, arrives, route, clipFor, helperOffset, stationProp, hallActivity, lookTarget, lookLimits, yardExtras, playableClip, STAGING, photoSize, marksFor, SHOWN_HELPERS, onFire, VIBE, vibeStop, vibeFlight, vibeFrame, inVibeFrame } from './model.mjs';
+import { Aura, auraShapes, EMBER_SIZE } from './aura.js';
 
 const ASSETS = new URL('./assets/', import.meta.url);
 const vector = new T.Vector3();
@@ -102,6 +103,21 @@ function checkPiece({scene,animations}) {
     });
   } finally {disposeSkeletons(probe);}
 }
+function girth(scene) {
+  const probe=T.cloneSkeleton(scene);
+  try {
+    probe.updateMatrixWorld(true);
+    const inverse=new T.Matrix4().copy(probe.matrixWorld).invert(),local=new T.Matrix4();
+    let left=Infinity,right=-Infinity,back=Infinity,front=-Infinity;
+    probe.traverse(node=>{
+      if(!node.isSkinnedMesh)return;
+      node.skeleton.update();node.computeBoundingBox();
+      const {min,max}=node.boundingBox.applyMatrix4(local.multiplyMatrices(inverse,node.matrixWorld));
+      left=Math.min(left,min.x);right=Math.max(right,max.x);back=Math.min(back,min.z);front=Math.max(front,max.z);
+    });
+    return Math.max(right-left,front-back,0);
+  } finally {disposeSkeletons(probe);}
+}
 function disposeTree(root) {
   disposeSkeletons(root);
   const geometries=new Set(),materials=new Set();
@@ -146,6 +162,7 @@ export class YardRenderer {
     this.loadingManager=new T.LoadingManager();
     this.providers=[];this.sessions=[];this.selected=null;this.world=null;this.skin=null;this.request=0;this.worldRequest=0;this.pending=null;
     this.staged=null;this.seen=new Set();this.stageTimer=0;this.sparks=[];this.shows=[];this.marks=new T.Group();this.scene.add(this.marks);this.glyphs=null;this.markPlane=new T.PlaneGeometry(1,1);
+    this.pointScale={value:1};this.auraShapes=auraShapes();
     this.props=new Map();this.propSpots=[];this.station=null;this.effects=null;
     this.active=false;this.reduced=false;this.vibe=false;this.vibeTime=0;this.vibeFrames={stop:null,flight:vibeFrame(1)};this.disposed=false;this.frame=0;this.lastTime=0;this.dirty=true;
     this.crowd=null;this.rows=new Map();
@@ -278,6 +295,7 @@ export class YardRenderer {
   }
   dropModel(unit) {
     for(const mixer of unit.mixers){mixer.stopAllAction();mixer.uncacheRoot(mixer.getRoot());}
+    unit.aura?.bind(null);
     if(unit.model){unit.root.remove(unit.model);disposeSkeletons(unit.model);}
     Object.assign(unit,{mixers:[],model:null,loaded:false,loading:false,animations:null,action:null,clip:null,lookBones:null,looking:false,load:(unit.load||0)+1});
   }
@@ -474,7 +492,7 @@ export class YardRenderer {
     const w=this.host.clientWidth,h=this.host.clientHeight;
     if(!w||!h)return;
     this.renderer.setSize(w,h,false);
-    if(this.effects)this.effects.points.material.uniforms.scale.value=this.renderer.getDrawingBufferSize(vector2).y/2;
+    this.pointScale.value=this.renderer.getDrawingBufferSize(vector2).y/2;
     const half=CAMERA.height/2;
     this.camera.left=-half*w/h;this.camera.right=half*w/h;
     this.camera.top=half;this.camera.bottom=-half;
@@ -685,6 +703,9 @@ export class YardRenderer {
       unit.label.style.setProperty('--unit-color',session.provider.color||'#d0ba82');
       unit.label.setAttribute('aria-label',session.name+', '+unit.label.children[1].textContent);
       unit.ring.material.opacity=place.mode==='work'?.65:place.mode==='done'?.15:.35;
+      const burning=onFire(session);
+      if(burning&&!unit.aura){unit.aura=new Aura(session.id,this.auraShapes,this.pointScale);unit.root.add(unit.aura.group);unit.aura.bind(unit.model,unit.girth,unit.height);}
+      unit.aura?.set(burning,session.provider.color||'#d0ba82',this.reduced);
     }
     for(const id of live)this.seen.add(id);
     this.select(this.selected);this.dirty=true;this.drawOnce();
@@ -709,6 +730,7 @@ export class YardRenderer {
       yard=yardExtras(yard,'character');
       unit.speed=yard.stride/yard.cycle;
       unit.events=yard.events;unit.height=yard.height;unit.surface=yard.surface;unit.look=lookLimits(yard.look);
+      unit.girth=asset.girth??=girth(asset.scene);unit.aura?.bind(model,unit.girth,unit.height);
       const neck=model.getObjectByName('Neck'),head=model.getObjectByName('Head');
       unit.lookBones=neck&&head&&model.getObjectByName('LeftUpperLeg')?{neck,head}:null;
       this.scaleProp(unit.session?.id||session.id);
@@ -771,7 +793,7 @@ export class YardRenderer {
     geometry.setAttribute('size',new T.BufferAttribute(new Float32Array(PARTICLES),1));
     geometry.setAttribute('alpha',new T.BufferAttribute(new Float32Array(PARTICLES),1));
     const material=new T.ShaderMaterial({
-      uniforms:{color:{value:new T.Color(preset.color)},scale:{value:1}},
+      uniforms:{color:{value:new T.Color(preset.color)},scale:this.pointScale},
       vertexShader:`attribute float size;attribute float alpha;varying float vAlpha;uniform float scale;
         void main(){vAlpha=alpha;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);gl_PointSize=size*scale*projectionMatrix[1][1];}`,
       fragmentShader:`uniform vec3 color;varying float vAlpha;
@@ -1271,9 +1293,10 @@ export class YardRenderer {
     const w=this.host.clientWidth,h=this.host.clientHeight,buffer=this.renderer.getDrawingBufferSize(new T.Vector2());
     const size=photoSize(w,h,buffer.x,buffer.y);
     const viewport=this.renderer.getViewport({copy:v=>v.clone()}),ratio=this.renderer.getPixelRatio();
-    const particleScale=this.effects?.points.material.uniforms.scale,scale=particleScale?.value;
+    const particleScale=this.pointScale,scale=particleScale.value;
     const fireworks=this.sparks.filter(s=>s.firework).map(s=>({material:s.points.material,size:s.points.material.size}));
-    const radius=Math.max((this.effects?Math.max(...this.effects.preset.size):0)*size.height*this.camera.projectionMatrix.elements[5]/4,
+    const embers=[...this.units.values()].some(unit=>unit.aura)?EMBER_SIZE:0;
+    const radius=Math.max(Math.max(embers,...(this.effects?this.effects.preset.size:[]))*size.height*this.camera.projectionMatrix.elements[5]/4,
       ...fireworks.map(s=>s.size*size.scale/2));
     const pad=Math.ceil(radius)+1,tw=buffer.x+2*pad,th=buffer.y+2*pad;
     const canvas=Object.assign(document.createElement('canvas'),{width:size.width,height:size.height});
@@ -1287,7 +1310,7 @@ export class YardRenderer {
       // Keep particle centers within a padded frustum. Extending the viewport
       // beyond the canvas crops the margins without enlarging the live buffer.
       this.renderer.setViewport(-pad/ratio,-pad/ratio,tw/ratio,th/ratio);
-      if(particleScale)particleScale.value=th/2;
+      particleScale.value=th/2;
       for(const {x,y}of size.tiles) {
         this.camera.setViewOffset(size.width,size.height,x-pad,y-pad,tw,th);
         this.renderer.render(this.scene,this.camera);
@@ -1296,7 +1319,7 @@ export class YardRenderer {
     } finally {
       for(const spark of fireworks)spark.material.size=spark.size;
       this.renderer.setViewport(viewport);
-      if(particleScale)particleScale.value=scale;
+      particleScale.value=scale;
       this.camera.clearViewOffset();
       this.select(this.selected);
       this.renderer.render(this.scene,this.camera);
@@ -1318,7 +1341,7 @@ export class YardRenderer {
     this.pointer.set((event.clientX-rect.left)/rect.width*2-1,-(event.clientY-rect.top)/rect.height*2+1);
     this.ray.setFromCamera(this.pointer,this.camera);
     // A skinned mesh keeps the bounds of the pose it first had; picking needs the pose on screen.
-    for(const unit of this.units.values())for(const root of [unit.root,unit.crew])root?.traverse(n=>{if(!n.isSkinnedMesh)return;n.computeBoundingSphere();if(n.boundingBox)n.computeBoundingBox();});
+    for(const unit of this.units.values())for(const root of [unit.root,unit.crew])root?.traverse(n=>{if(!n.isSkinnedMesh||n.userData.aura)return;n.computeBoundingSphere();if(n.boundingBox)n.computeBoundingBox();});
     const hits=this.ray.intersectObjects([...this.halls.values(),...this.units.values()].flatMap(i=>i.crew?[i.root,i.crew]:[i.root]),true);
     for(const hit of hits) { for(let node=hit.object;node;node=node.parent) if(node.userData.entity)return node.userData.entity; }
     return null;
@@ -1405,6 +1428,7 @@ export class YardRenderer {
     if(value)for(const unit of this.units.values()){this.unlook(unit);unit.lookYaw=0;unit.lookPitch=0;}
     if(value)for(const unit of this.units.values())if(unit.moving&&unit.target){this.arrive(unit);this.play(unit);}
     if(value)for(const unit of this.units.values())for(const helper of unit.helpers)this.restHelper(unit,helper);
+    for(const unit of this.units.values())unit.aura?.set(unit.aura.active,unit.aura.color,value);
     if(value){for(const item of this.halls.values())item.level=item.target;this.glow();this.stillEffects();this.clearFireworks();}
     this.dirty=true;this.drawOnce();
   }
@@ -1449,6 +1473,7 @@ export class YardRenderer {
     this.updateSparks(dt);
     this.updateHalls(dt);
     this.stepMarks(dt);
+    for(const unit of this.units.values())if(unit.aura?.advance(dt))this.dirty=true;
   }
   drawOnce() { if(this.active)this.schedule(); }
   mark(unit,place) {
@@ -1501,6 +1526,7 @@ export class YardRenderer {
     for(const mixer of unit.mixers){mixer.stopAllAction();mixer.uncacheRoot(mixer.getRoot());}
     for(const helper of unit.helpers){helper.mixer.stopAllAction();helper.mixer.uncacheRoot(helper.model);}
     for(const mark of unit.marks?.values()||[])this.dropMark(mark);
+    unit.aura?.dispose();
     disposeSkeletons(unit.root);disposeSkeletons(unit.crew);
     this.scene.remove(unit.root);this.scene.remove(unit.crew);unit.label.remove();unit.ring.geometry.dispose();unit.ring.material.dispose();
   }
@@ -1517,6 +1543,7 @@ export class YardRenderer {
     disposeWorld(this.world);
     for(const entry of this.cache.values())entry.then(a=>disposeTree(a.scene)).catch(noop);this.cache.clear();
     for(const texture of Object.values(this.glyphs||{}))texture.dispose();this.markPlane.dispose();
+    for(const shape of Object.values(this.auraShapes))shape.dispose();
     this.sun.shadow.map?.dispose();
     this.canvas.removeEventListener('webglcontextlost',this.contextLost);
     this.canvas.removeEventListener('pointerdown',this.onPointerDown);

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, statSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
-import { sessionPose, familiarPose, marksFor, layoutSessions, providerPositions, characterIndex, lookLimits, yardExtras, WORLDS, CAMERA, SUN, minZoom, overviewFor, clampPan, viewBasis, plateExtent,
+import { sessionPose, familiarPose, marksFor, onFire, fireTint,layoutSessions, providerPositions, characterIndex, lookLimits, yardExtras, WORLDS, CAMERA, SUN, minZoom, overviewFor, clampPan, viewBasis, plateExtent,
  stage, stagingMode, nextStagingChange, restSpots, route, clipFor, doorFor, stationProp, STAGING, CLIPS, SKELETON, PROVIDER_ORDER, photoSize, photoName, VIBE, vibeStop, vibeFlight, vibeFrame, inVibeFrame } from '../web/yard/model.mjs';
 import { goldenVectors } from '../scripts/yard-golden.mjs';
 import { Matrix4, Vector3 } from 'three';
@@ -66,6 +66,22 @@ test('marks follow reported state only: asleep resting alone, waiting helpers, c
  assert.equal(exit({exitCode:0}),'exited');assert.equal(exit({}),'exited');
  assert.equal(exit({exitCode:1}),'failed');assert.equal(exit({signal:'SIGTERM'}),'failed');
  assert.equal(exit({exitCode:1,multiplexer:{label:'tmux'}}),null);
+});
+test('a character is on fire above six helpers of any kind until its session exits, in its provider\'s own hue',()=>{
+ const helpers=n=>Array.from({length:n},(_,i)=>({id:'a'+i,status:i?'working':'done'}));
+ const run={status:'running',agents:helpers(5),shells:[{id:'s',kind:'monitor'}]};
+ assert.equal(onFire(run),false);
+ assert.equal(onFire({...run,shells:[...run.shells,{id:'t'}]}),true);
+ assert.equal(onFire({status:'running',agents:helpers(7)}),true);
+ assert.equal(onFire({status:'running',shells:helpers(7)}),true);
+ assert.equal(onFire({status:'running'}),false);
+ assert.equal(onFire({...run,agents:helpers(9),status:'exited'}),false);
+ assert.deepEqual(fireTint(.5,.5,.5),[.9,.9,.9]);
+ assert.deepEqual(fireTint(0,0,0),[.9,.9,.9]);
+ assert.deepEqual(fireTint(1,.5,0),[1,.5,0]);
+ assert.deepEqual(fireTint(0,.25,1),[0,.25,1]);
+ const dull=fireTint(.4,.3,.3);
+ assert.equal(dull[0],.9);assert.equal(dull[1],dull[2]);assert.ok(Math.abs(dull[1]-.61875)<1e-12);
 });
 test('all sessions remain addressable beyond the prototype limit and retain their slots',()=>{
  const sessions=Array.from({length:40},(_,i)=>session('s'+i));
