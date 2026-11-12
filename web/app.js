@@ -8084,7 +8084,7 @@ function connectEvents() {
       state.folderOpener = msg.folderOpener || null;
       state.platform = msg.platform || null;
       $('yard-install').hidden = !['win32', 'darwin'].includes(state.platform);
-      $('yard-world-get').hidden = state.platform !== 'win32';
+      $('yard-world-get').hidden = !['win32', 'darwin'].includes(state.platform);
       state.yardWorlds = msg.yardWorlds ?? null;
       state.yardPieces = msg.yardPieces ?? null;
       state.remoteAccessUI?.setAvailable(msg.remoteAccess);
