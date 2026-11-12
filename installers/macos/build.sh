@@ -36,6 +36,20 @@ key="$work/AuthKey_$ASC_KEY_ID.p8"
 (umask 077 && printf '%s\n' "$APPLE_NOTARY_KEY_P8" > "$key")
 notary=(--key "$key" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID")
 
+timestamped() {
+  local attempt status
+  for attempt in 1 2 3 4 5; do
+    "$@" 2> "$work/timestamp.err" && status=0 || status=$?
+    cat "$work/timestamp.err" >&2
+    [ "$status" != 0 ] || return 0
+    tail -n 1 "$work/timestamp.err" | grep -qE ': (The timestamp service is not available\.|A timestamp was expected but was not found\.( \(-?[0-9]+\))?)$' || return "$status"
+    [ "$attempt" -lt 5 ] || break
+    sleep 60
+  done
+  echo "Apple's timestamp service was not available to $1 in 5 tries." >&2
+  return "$status"
+}
+
 mkdir -p "$out" "$work/scripts"
 cp "$here/postinstall" "$work/scripts/postinstall"
 chmod 755 "$work/scripts/postinstall"
@@ -47,12 +61,12 @@ for arch in arm64 x64; do
 
   find "$top" -type f ! -path "$node" -print0 | while IFS= read -r -d '' file; do
     if file -b "$file" | grep -q '^Mach-O'; then
-      codesign --force --timestamp --options runtime --keychain "$kc" -s "$app" "$file"
+      timestamped codesign --force --timestamp --options runtime --keychain "$kc" -s "$app" "$file"
     fi
   done
   codesign -d --entitlements - --xml "$node" > "$work/entitlements.plist"
   /usr/libexec/PlistBuddy -c 'Delete :com.apple.security.get-task-allow' "$work/entitlements.plist" 2> /dev/null || true
-  codesign --force --timestamp --options runtime --entitlements "$work/entitlements.plist" --keychain "$kc" -s "$app" "$node"
+  timestamped codesign --force --timestamp --options runtime --entitlements "$work/entitlements.plist" --keychain "$kc" -s "$app" "$node"
   codesign --verify --strict "$node"
   if codesign -d --entitlements - --xml "$node" 2> /dev/null | grep -q get-task-allow; then fail "$node still asks for get-task-allow."; fi
 
@@ -60,7 +74,7 @@ for arch in arm64 x64; do
     --install-location /.local/share/agent-guild-setup --scripts "$work/scripts" "$work/agent-guild.pkg"
   sed -e "s/@ARCH@/$host/" -e "s/@VERSION@/$version/" "$here/distribution.xml" > "$work/distribution.xml"
   pkg="$out/agent-guild-macos-$arch.pkg"
-  productbuild --quiet --distribution "$work/distribution.xml" --package-path "$work" --sign "$inst" --keychain "$kc" --timestamp "$pkg"
+  timestamped productbuild --quiet --distribution "$work/distribution.xml" --package-path "$work" --sign "$inst" --keychain "$kc" --timestamp "$pkg"
   rm -f "$work/agent-guild.pkg"
 
   result=$(xcrun notarytool submit "$pkg" "${notary[@]}" --wait --timeout 3h --output-format json)

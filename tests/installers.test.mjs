@@ -238,6 +238,84 @@ test('the macOS build stops before touching a keychain when signing credentials 
   assert.equal(fs.existsSync(log), false);
 });
 
+function macosBuild(t, plans) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-macos-sign-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const bin = path.join(root, 'bin');
+  fs.mkdirSync(bin);
+  for (const arch of ['arm64', 'x64']) {
+    const top = path.join(root, 'stage', `agent-guild-1.0.0-macos-${arch}`, 'agent-guild');
+    fs.mkdirSync(path.join(top, 'bin'), { recursive: true });
+    fs.writeFileSync(path.join(top, 'bin', 'node'), '', { mode: 0o755 });
+    fs.writeFileSync(path.join(top, 'pty.node'), '');
+  }
+  const fake = (name, body) => fs.writeFileSync(path.join(bin, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+  const planned = (name) => {
+    fs.writeFileSync(path.join(root, `${name}.plan`), `${(plans[name] || []).join('\n')}\n`);
+    return `echo "$*" >> '${root}/${name}.log'\nn=$(($(wc -l < '${root}/${name}.log')))\nline=$(sed -n "$n"p '${root}/${name}.plan')\n[ -n "$line" ] || exit 0\necho "\${line#* }" | tr '|' '\\n' >&2\nexit "\${line%% *}"`;
+  };
+  fake('codesign', `case "$1" in --force) ;; -d) echo '<plist/>'; exit 0 ;; *) exit 0 ;; esac\n${planned('codesign')}`);
+  fake('productbuild', planned('productbuild'));
+  fake('security', `[ "$1" != find-identity ] || printf '%s\\n' '  1) AA "Developer ID Application: Test (TEAM)"' '  2) BB "Developer ID Installer: Test (TEAM)"'`);
+  fake('openssl', 'echo 00');
+  fake('file', 'echo Mach-O 64-bit executable');
+  fake('pkgbuild', ':');
+  fake('xcrun', `echo "$*" >> '${root}/xcrun.log'\n[ "$1 $2" != 'notarytool submit' ] || echo '{}'`);
+  fake('plutil', 'cat > /dev/null\necho Accepted');
+  fake('pkgutil', `echo 'Developer ID Installer: Test (TEAM)'`);
+  fake('spctl', `echo 'source=Notarized Developer ID'`);
+  fake('sleep', `echo "$*" >> '${root}/sleep.log'`);
+  const env = { PATH: `${bin}:${process.env.PATH}`, APPLE_DEVELOPER_ID_APPLICATION_P12: 'c2lnbg==', APPLE_DEVELOPER_ID_INSTALLER_P12: 'c2lnbg==', APPLE_P12_PASSWORD: 'p', APPLE_NOTARY_KEY_P8: 'k', ASC_KEY_ID: 'K', ASC_ISSUER_ID: 'I' };
+  const result = spawnSync('/bin/bash', [path.resolve('installers/macos/build.sh'), '1.0.0', path.join(root, 'stage'), path.join(root, 'out')], { env, encoding: 'utf8' });
+  const calls = (name) => (fs.existsSync(path.join(root, `${name}.log`)) ? fs.readFileSync(path.join(root, `${name}.log`), 'utf8').trim().split('\n') : []);
+  return { status: result.status, stderr: result.stderr, calls };
+}
+
+const UNAVAILABLE = 'pty.node: The timestamp service is not available.';
+const MISSING = 'productbuild: CMS signature encoding failed: A timestamp was expected but was not found. (-67882)';
+const OTHER = 'pty.node: errSecInternalComponent';
+const fails = (status, ...lines) => `${status} ${lines.join('|')}`;
+
+test('the macOS build signs again when Apple\'s timestamp service refuses a file, the Node.js or the package, and still asks for a timestamp', { skip: process.platform === 'win32' }, (t) => {
+  const { status, stderr, calls } = macosBuild(t, { codesign: [fails(1, 'pty.node: replacing existing signature', UNAVAILABLE), '', fails(1, MISSING), ''], productbuild: [fails(1, MISSING), ''] });
+  assert.equal(status, 0, stderr);
+  assert.deepEqual(calls('codesign').map((call) => call.split(' ').at(-1).split('/').slice(-1)[0]), ['pty.node', 'pty.node', 'node', 'node', 'pty.node', 'node']);
+  assert.equal(calls('productbuild').length, 3);
+  for (const call of [...calls('codesign'), ...calls('productbuild')]) assert.match(call, / --timestamp /);
+  assert.deepEqual(calls('sleep'), ['60', '60', '60']);
+  assert.ok(stderr.includes(UNAVAILABLE) && stderr.includes(MISSING), 'each refusal is shown');
+  assert.equal(calls('xcrun').filter((call) => call.startsWith('notarytool submit')).length, 2);
+});
+
+test('the macOS build gives up when Apple\'s timestamp service refuses the same signature every time, and fails with the last try\'s status', { skip: process.platform === 'win32' }, (t) => {
+  for (const tool of ['codesign', 'productbuild']) {
+    const { status, stderr, calls } = macosBuild(t, { [tool]: [...Array(4).fill(fails(2, UNAVAILABLE)), fails(9, UNAVAILABLE)] });
+    assert.equal(status, 9);
+    assert.equal(calls(tool).length, 5);
+    assert.deepEqual(calls('sleep'), ['60', '60', '60', '60']);
+    assert.match(stderr, new RegExp(`Apple's timestamp service was not available to ${tool} in 5 tries\\.\\n`));
+    assert.deepEqual(calls('xcrun'), [], 'nothing is sent to be notarized');
+  }
+});
+
+test('the macOS build does not sign again after any other failure, even one that mentions the timestamp service, and fails with the tool\'s status', { skip: process.platform === 'win32' }, (t) => {
+  const cases = [
+    ['codesign', [OTHER]],
+    ['productbuild', ['productbuild: error: Could not find appropriate signing identity for "Developer ID Installer: Test (TEAM)".']],
+    ['codesign', [UNAVAILABLE, OTHER]],
+    ['codesign', ['pty.node: The timestamp service is not available. errSecInternalComponent']],
+  ];
+  for (const [tool, lines] of cases) {
+    const { status, stderr, calls } = macosBuild(t, { [tool]: [fails(7, ...lines)] });
+    assert.equal(status, 7);
+    assert.equal(calls(tool).length, 1);
+    assert.deepEqual(calls('sleep'), []);
+    for (const line of lines) assert.ok(stderr.includes(line), 'the tool\'s own error is shown');
+    assert.doesNotMatch(stderr, /Apple's timestamp service/);
+    assert.deepEqual(calls('xcrun'), [], 'nothing is sent to be notarized');
+  }
+});
+
 test('only installer jobs in the release-signing environment get Apple or Azure credentials, and none runs on a self-hosted runner', () => {
   const workflow = fs.readFileSync(path.resolve('.github/workflows/installers.yml'), 'utf8');
   const jobs = workflow.slice(workflow.indexOf('\njobs:\n')).split(/\n(?=  [a-z-]+:\n)/).slice(1);
