@@ -121,6 +121,13 @@ export function marksFor(s, mode) {
   const crew = waiting.length > shown.length ? 'waiting' : mode === 'rest' && !agents.length && !s.shells?.length ? 'asleep' : null;
   return { crew, helpers: shown.map(a => a.id) };
 }
+export const onFire = s => s.status !== 'exited' && (s.agents?.length || 0) + (s.shells?.length || 0) > SHOWN_HELPERS;
+export function fireTint(r, g, b) {
+  const max = Math.max(r, g, b), spread = max - Math.min(r, g, b);
+  const hue = !spread ? 0 : max === r ? ((g - b) / spread + 6) % 6 : max === g ? (b - r) / spread + 2 : (r - g) / spread + 4;
+  const s = Math.min((max ? spread / max : 0) * 1.25, 1), v = Math.max(max, .9);
+  return [5, 3, 1].map(n => { const k = (n + hue) % 6; return v - v * s * Math.max(0, Math.min(k, 4 - k, 1)); });
+}
 export function hash(value) {
   let n = 0;
   for (const char of String(value)) n = ((n << 5) - n + char.charCodeAt(0)) | 0;
