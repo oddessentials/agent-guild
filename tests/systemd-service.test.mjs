@@ -233,10 +233,33 @@ test('systemd reads the unit as written', { skip: !hasAnalyze() && 'systemd-anal
   fs.writeFileSync(launcher, BOOT_LAUNCHER_SCRIPT, { mode: 0o755 });
   const file = path.join(dir, SERVICE);
   fs.writeFileSync(file, serviceUnit({ launcher, execPath: process.execPath, script: launcher, file, port: 47821 }));
-  // Unknown keys and unusable commands are warnings on stderr, so an empty stderr is the check. The
-  // system manager's rules read a unit's syntax as the user manager's do, and need no user runtime folder.
+  // Unknown keys and unusable commands are warnings on stderr. Verifying also loads the machine's own
+  // units, and warnings that name another unit's file are not about this one. The system manager's
+  // rules read a unit's syntax as the user manager's do, and need no user runtime folder.
   const r = spawnSync('systemd-analyze', ['verify', file], { encoding: 'utf8' });
-  assert.deepEqual({ status: r.status, stdout: r.stdout, stderr: r.stderr }, { status: 0, stdout: '', stderr: '' });
+  assert.deepEqual({ status: r.status, stdout: r.stdout, stderr: ownWarnings(r.stderr, file) }, { status: 0, stdout: '', stderr: [] });
+});
+
+function ownWarnings(stderr, file) {
+  return stderr.split('\n').filter((line) => {
+    const named = line.match(/^(\/[^:]+):\d+: /);
+    return line && !(named && named[1] !== file);
+  });
+}
+
+test('only warnings that name another unit file are left out of the systemd check', () => {
+  const file = '/tmp/data 100%/agent-guild.service';
+  const stderr = [
+    '/usr/lib/systemd/system/xfs_scrub_all.service:26: Support for option CPUAccounting= has been removed and it is ignored',
+    `${file}:9: Unknown key 'Nope' in section [Service], ignoring.`,
+    'agent-guild.service: Command /bin/nope is not executable: No such file or directory',
+    '',
+  ].join('\n');
+  assert.deepEqual(ownWarnings(stderr, file), [
+    `${file}:9: Unknown key 'Nope' in section [Service], ignoring.`,
+    'agent-guild.service: Command /bin/nope is not executable: No such file or directory',
+  ]);
+  assert.deepEqual(ownWarnings('', file), []);
 });
 
 function hasAnalyze() {
