@@ -1,7 +1,7 @@
 {
   "name": "@oddessentials/agent-guild",
   "version": "0.0.0-development",
-  "description": "Launch and watch AI coding-assistant terminal sessions from one local web page. A bundled session manager owns the terminals so the page can close and reconnect.",
+  "description": "Run Claude Code, Codex CLI, Antigravity CLI, Grok Build, Docker Agent and your shells side by side in real terminals, watch each session as a character in a living 3D world, and pick them up from your phone, VS Code or any browser.",
   "mcpName": "ai.oddessentials/agent-guild",
   "license": "AGPL-3.0-only",
   "repository": {

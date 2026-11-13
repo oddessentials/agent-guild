@@ -1,20 +1,28 @@
 <h1 align="center">Agent Guild</h1>
 
 <p align="center">
+  <img src="https://img.shields.io/badge/Windows%20%7C%20macOS%20%7C%20Linux-free-e8c47c" alt="Free on Windows, macOS and Linux">
   <a href="https://www.npmjs.com/package/@oddessentials/agent-guild"><img src="https://img.shields.io/npm/v/@oddessentials/agent-guild?color=7c5cff&label=npm" alt="npm version"></a>
-  <a href="https://github.com/oddessentials/agent-guild/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/oddessentials/agent-guild/release.yml?branch=main&label=release" alt="Release status"></a>
-  <img src="https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-e8c47c" alt="Windows, macOS and Linux">
-  <img src="https://img.shields.io/node/v/@oddessentials/agent-guild?color=4cc38a" alt="Node.js version">
+  <a href="https://marketplace.visualstudio.com/items?itemName=OddEssentials.agent-guild"><img src="https://img.shields.io/badge/VS%20Code-Marketplace-007acc" alt="Agent Guild for VS Code"></a>
+  <a href="https://apps.apple.com/us/app/agent-guild-remote/id6825451331"><img src="https://img.shields.io/badge/App%20Store-iPhone%20%7C%20iPad%20%7C%20Vision%20Pro-0d96f6?logo=apple&logoColor=white" alt="Agent Guild on the App Store"></a>
+  <a href="https://play.google.com/store/apps/details?id=com.oddessentials.agentguild"><img src="https://img.shields.io/badge/Google%20Play-Android%20%7C%20TV%20%7C%20XR-34a853?logo=googleplay&logoColor=white" alt="Agent Guild on Google Play"></a>
+  <a href="https://www.amazon.com/dp/B0HPLBDYPR"><img src="https://img.shields.io/badge/Amazon%20Appstore-Fire%20tablets%20%7C%20Fire%20TV-ff9900" alt="Agent Guild on the Amazon Appstore"></a>
+  <a href="https://www.meta.com/experiences/1325496170657270/"><img src="https://img.shields.io/badge/Meta%20Horizon-Quest-0467df?logo=meta&logoColor=white" alt="Agent Guild on the Meta Horizon Store"></a>
+  <a href="https://store.steampowered.com/app/5462970/Agent_Guild_World/"><img src="https://img.shields.io/badge/Steam-Agent%20Guild%3A%20World-1b2838?logo=steam&logoColor=white" alt="Agent Guild: World on Steam"></a>
 </p>
 
 <p align="center"><strong>English</strong> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a></p>
 
-**Run Claude Code, Codex CLI, Antigravity CLI, Grok Build, Docker Agent and
-your own shells side by side in real terminals. Pick the same live sessions up
-from your phone, VS Code or any browser. Free, on Windows, macOS and Linux.**
+**Your agents, your world, in any style you can imagine.**
 
-Agent Guild is a small manager that runs on your computer and serves one
-local web page. Close the page whenever you like; the sessions keep running.
+Run Claude Code, Codex CLI, Antigravity CLI, Grok Build, Docker Agent and your
+own shells side by side in real terminals, and watch every session at work as
+a character in a living 3D world: double-click one to open its real terminal.
+Pick the same live sessions up from your phone, VS Code or any browser. Free,
+on Windows, macOS and Linux.
+
+Agent Guild runs on your computer and serves one local web page. Close the
+page whenever you like; the sessions keep running.
 
 <a href="https://oddessentials.github.io/agent-guild/?view=yard&skin=guild&theme=dark"><picture>
   <source media="(prefers-reduced-motion: reduce)" srcset="docs/images/yard-still.webp">
@@ -26,6 +34,8 @@ walk the Yard in your browser. Simulated, free, no account and nothing installed
 
 ## Quick start
 
+**Download the installer.** It brings its own Node.js.
+
 <p align="center">
   <a href="https://github.com/oddessentials/agent-guild/releases/latest/download/agent-guild-windows-setup.exe"><picture><source media="(prefers-color-scheme: light)" srcset="docs/images/download-windows-light.webp"><img src="docs/images/download-windows-dark.webp" alt="Download Agent Guild for Windows" width="180"></picture></a>
   <a href="https://github.com/oddessentials/agent-guild/releases/latest/download/agent-guild-macos-arm64.pkg"><picture><source media="(prefers-color-scheme: light)" srcset="docs/images/download-macos-light.webp"><img src="docs/images/download-macos-dark.webp" alt="Download Agent Guild for macOS" width="180"></picture></a>
@@ -35,23 +45,28 @@ walk the Yard in your browser. Simulated, free, no account and nothing installed
 
 <p align="center"><sub>On Linux, extract the download and run <code>./install.sh</code>. · <a href="https://github.com/oddessentials/agent-guild/releases/latest/download/agent-guild-macos-x64.pkg">macOS on Intel</a> · <a href="https://github.com/oddessentials/agent-guild/releases/latest">All downloads and checksums</a></sub></p>
 
-Or install with npm, on Node.js 22 or newer:
+**Or install it with npm**, on Node.js 22 or newer:
 
 ```sh
 npm install -g @oddessentials/agent-guild
 agent-guild
 ```
 
+**Or ask your agent.** Paste this into Claude Code, Codex CLI or any coding agent:
+
+```text
+Set up Agent Guild for me: https://agentguild.oddessentials.ai/agents/
+```
+
+It installs and checks Agent Guild, then connects to it over [MCP](docs/mcp.md)
+to see and steer your sessions. In Claude Code you can also add it as a plugin:
+`claude plugin marketplace add oddessentials/agent-guild --sparse .claude-plugin plugins`,
+then `claude plugin install agent-guild@agent-guild`.
+
 The page opens in your browser. Press **New** on a tool's card to start a
 session. Sign in to each tool inside its first session, as you would in any
-terminal. To look around first, [try the demo](https://oddessentials.github.io/agent-guild/?view=yard&skin=guild&theme=dark)
-(simulated, nothing installed) or [watch the trailer](https://www.youtube.com/watch?v=_vQuW0v-uMY).
-
-**Or ask your agent.** Point it at
-[the setup skill](https://github.com/oddessentials/agent-guild/blob/main/plugins/agent-guild/skills/setup-agent-guild/SKILL.md),
-or run `claude plugin marketplace add oddessentials/agent-guild --sparse .claude-plugin plugins`
-and `claude plugin install agent-guild@agent-guild`. It installs and checks Agent Guild,
-then connects over [MCP](docs/mcp.md) to see and steer your sessions.
+terminal. [Watch the trailer](https://www.youtube.com/watch?v=_vQuW0v-uMY) to
+see it all at work.
 
 ## Why Agent Guild
 
@@ -69,15 +84,10 @@ then connects over [MCP](docs/mcp.md) to see and steer your sessions.
   Codex CLI.
 * **The same session on every screen.** Any browser, a phone over
   [Tailscale](#remote-access-with-tailscale) with touch keys, VS Code, and
-  the Agent Guild app: iPhone, iPad and Apple Vision Pro on the
-  [App Store](https://apps.apple.com/us/app/agent-guild-remote/id6825451331);
-  Android, Android TV, Google TV and Android XR on
-  [Google Play](https://play.google.com/store/apps/details?id=com.oddessentials.agentguild)
-  or [GitHub](https://github.com/oddessentials/agent-guild-android/releases/latest);
-  Fire tablets and Fire TV on the [Amazon Appstore](https://www.amazon.com/dp/B0HPLBDYPR);
-  and Meta Quest on the [Meta Horizon Store](https://www.meta.com/experiences/1325496170657270/).
-  Apple Watch and Meta Ray-Ban Display list your sessions and read a
-  session's last answer aloud. See [what each screen needs](https://agentguild.oddessentials.ai/requirements/).
+  the Agent Guild app on phones, tablets, TVs and headsets, from the stores
+  above or [GitHub](https://github.com/oddessentials/agent-guild-android/releases/latest)
+  for Android. Apple Watch and Meta Ray-Ban Display list your sessions and
+  read a session's last answer aloud. See [what each screen needs](https://agentguild.oddessentials.ai/requirements/).
 * **Native on Windows.** No WSL. Also macOS, Linux, and headless Linux
   servers over SSH.
 * **Nothing in between.** No account and no relay server: the manager
@@ -243,13 +253,6 @@ The first Claude Code usage meter may ask for access to the
 
 <img src="docs/images/workspace.webp" alt="Two terminals side by side with the GitHub panel showing the workflow runs of the focused terminal's repository">
 
-### The Yard
-
-For fun, the Yard shows your tools and sessions as a 3D world, one for each
-skin. A double-click on a character opens its real terminal. The clip at the
-top of this page shows it, and [the demo](https://oddessentials.github.io/agent-guild/?view=yard)
-lets you try every skin.
-
 <table>
   <tr>
     <td width="33%" align="center"><a href="docs/images/terminal.webp"><img src="docs/images/terminal-thumb.webp" alt="A Claude Code session's terminal, with its helper agents in the header"></a><br><sub>Terminal</sub></td>
@@ -262,6 +265,16 @@ lets you try every skin.
     <td width="33%" align="center"><a href="docs/images/overview-light.webp"><img src="docs/images/overview-light-thumb.webp" alt="Agent Guild in light mode"></a><br><sub>Light mode</sub></td>
   </tr>
 </table>
+
+### The Yard
+
+Every session is a character in a living 3D world, one world for each skin.
+Swap in a Yard or theme from the [community](https://github.com/oddessentials/agent-guild-community),
+or make your own with [Agent Guild: Builders](https://github.com/oddessentials/agent-guild-builders)
+and [Agent Guild: Studio](https://github.com/oddessentials/agent-guild-studio). A
+double-click on a character opens its real terminal. The clip at the top of
+this page shows it, and [the demo](https://oddessentials.github.io/agent-guild/?view=yard)
+lets you try every skin.
 
 ## Commands
 
@@ -281,10 +294,8 @@ lets you try every skin.
 Sessions end when the manager stops or the computer restarts. tmux and herdr
 sessions survive a manager stop.
 
-After upgrading Agent Guild and restarting the manager, refresh every open
-Agent Guild browser page to load the new frontend. Pages reconnect
-automatically, but keep their loaded JavaScript until refreshed. Refreshing
-is required for compatibility with the upgraded manager.
+After an upgrade, refresh every open Agent Guild page: pages reconnect on
+their own but keep running the old page until refreshed.
 
 ## Privacy
 

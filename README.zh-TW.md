@@ -1,10 +1,23 @@
 <h1 align="center">Agent Guild</h1>
 
+<p align="center">
+  <img src="https://img.shields.io/badge/Windows%20%7C%20macOS%20%7C%20Linux-free-e8c47c" alt="Free on Windows, macOS and Linux">
+  <a href="https://www.npmjs.com/package/@oddessentials/agent-guild"><img src="https://img.shields.io/npm/v/@oddessentials/agent-guild?color=7c5cff&label=npm" alt="npm version"></a>
+  <a href="https://marketplace.visualstudio.com/items?itemName=OddEssentials.agent-guild"><img src="https://img.shields.io/badge/VS%20Code-Marketplace-007acc" alt="Agent Guild for VS Code"></a>
+  <a href="https://apps.apple.com/us/app/agent-guild-remote/id6825451331"><img src="https://img.shields.io/badge/App%20Store-iPhone%20%7C%20iPad%20%7C%20Vision%20Pro-0d96f6?logo=apple&logoColor=white" alt="Agent Guild on the App Store"></a>
+  <a href="https://play.google.com/store/apps/details?id=com.oddessentials.agentguild"><img src="https://img.shields.io/badge/Google%20Play-Android%20%7C%20TV%20%7C%20XR-34a853?logo=googleplay&logoColor=white" alt="Agent Guild on Google Play"></a>
+  <a href="https://www.amazon.com/dp/B0HPLBDYPR"><img src="https://img.shields.io/badge/Amazon%20Appstore-Fire%20tablets%20%7C%20Fire%20TV-ff9900" alt="Agent Guild on the Amazon Appstore"></a>
+  <a href="https://www.meta.com/experiences/1325496170657270/"><img src="https://img.shields.io/badge/Meta%20Horizon-Quest-0467df?logo=meta&logoColor=white" alt="Agent Guild on the Meta Horizon Store"></a>
+  <a href="https://store.steampowered.com/app/5462970/Agent_Guild_World/"><img src="https://img.shields.io/badge/Steam-Agent%20Guild%3A%20World-1b2838?logo=steam&logoColor=white" alt="Agent Guild: World on Steam"></a>
+</p>
+
 <p align="center"><a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <strong>繁體中文</strong></p>
 
-**在你自己的電腦上，用真正的終端機並排執行 Claude Code、Codex CLI、Antigravity CLI、
-Grok Build、Docker Agent 和你自己的 shell。在手機、VS Code 或任何瀏覽器上接著使用同一批
-正在執行的工作階段。免費，支援 Windows、macOS 和 Linux。**
+**你的代理，你的世界，任何你能想像的風格。**
+
+在真正的終端機裡並排執行 Claude Code、Codex CLI、Antigravity CLI、Grok Build、Docker Agent
+和你自己的 shell，看著每個工作階段化身為生動 3D 世界裡的角色工作：雙擊一個，就能開啟它的真實終端機。
+在手機、VS Code 或任何瀏覽器上接著使用同一批正在執行的工作階段。免費，支援 Windows、macOS 和 Linux。
 
 Agent Guild 是一個在你電腦上執行的小型管理程式，提供一個本機網頁。網頁隨時可以關掉，工作階段照常執行。
 
@@ -18,6 +31,8 @@ Agent Guild 是一個在你電腦上執行的小型管理程式，提供一個�
 
 ## 快速開始
 
+**下載安裝程式。** 內建 Node.js。
+
 <p align="center">
   <a href="https://github.com/oddessentials/agent-guild/releases/latest/download/agent-guild-windows-setup.exe"><picture><source media="(prefers-color-scheme: light)" srcset="docs/images/download-windows-light.webp"><img src="docs/images/download-windows-dark.webp" alt="下載 Agent Guild Windows 版" width="180"></picture></a>
   <a href="https://github.com/oddessentials/agent-guild/releases/latest/download/agent-guild-macos-arm64.pkg"><picture><source media="(prefers-color-scheme: light)" srcset="docs/images/download-macos-light.webp"><img src="docs/images/download-macos-dark.webp" alt="下載 Agent Guild macOS 版" width="180"></picture></a>
@@ -27,19 +42,26 @@ Agent Guild 是一個在你電腦上執行的小型管理程式，提供一個�
 
 <p align="center"><sub>Linux 上解壓縮後執行 <code>./install.sh</code>。 · <a href="https://github.com/oddessentials/agent-guild/releases/latest/download/agent-guild-macos-x64.pkg">Intel 晶片的 Mac</a> · <a href="https://github.com/oddessentials/agent-guild/releases/latest">所有下載與總和檢查碼</a></sub></p>
 
-或者用 npm 安裝，需要 Node.js 22 或更新版本：
+**或者用 npm 安裝**，需要 Node.js 22 或更新版本：
 
 ```sh
 npm install -g @oddessentials/agent-guild
 agent-guild
 ```
 
-網頁會自動在瀏覽器中開啟。在某個工具的卡片上按 **New** 就能啟動工作階段。
-每個工具在第一個工作階段裡照常登入，和在任何終端機裡一樣。
+**或者交給你的代理。** 把這句話貼給 Claude Code、Codex CLI 或任何程式設計代理：
 
-**或者交給你的代理。** 讓它讀取
-[安裝技能](https://github.com/oddessentials/agent-guild/blob/main/plugins/agent-guild/skills/setup-agent-guild/SKILL.md)，
+```text
+Set up Agent Guild for me: https://agentguild.oddessentials.ai/agents/
+```
+
 它會安裝並檢查 Agent Guild，然後透過 [MCP](docs/mcp.md) 連線，查看並操控你的工作階段。
+在 Claude Code 裡也可以作為外掛加入：
+`claude plugin marketplace add oddessentials/agent-guild --sparse .claude-plugin plugins`，
+然後執行 `claude plugin install agent-guild@agent-guild`。
+
+網頁會自動在瀏覽器中開啟。在某個工具的卡片上按 **New** 就能啟動工作階段。
+每個工具在第一個工作階段裡照常登入，和在任何終端機裡一樣。[觀看預告片](https://www.youtube.com/watch?v=_vQuW0v-uMY)，看看它實際運作的樣子。
 
 ## 為什麼選 Agent Guild
 
@@ -48,11 +70,10 @@ agent-guild
 * **所有代理，一處管理。** Claude Code、Codex CLI、Antigravity CLI、Grok Build、
   Docker Agent、任何 shell，以及 tmux 或 herdr 工作階段。Claude Code、Codex CLI 和
   Grok Build 可以同時登入多個帳號；Claude Code 和 Codex 帳號的用量上限即時可見。
-* **同一個工作階段，每個螢幕。** 任何瀏覽器；透過 Tailscale 在手機上使用，附觸控按鍵；
-  VS Code；以及 Agent Guild App：iPhone、iPad 和 Apple Vision Pro（[App Store](https://apps.apple.com/us/app/agent-guild-remote/id6825451331)），
-  Android、Android TV、Google TV 和 Android XR（[Google Play](https://play.google.com/store/apps/details?id=com.oddessentials.agentguild)），Fire 平板和 Fire TV
-  （[Amazon Appstore](https://www.amazon.com/dp/B0HPLBDYPR)），[Meta Horizon Store](https://www.meta.com/experiences/1325496170657270/)。Apple Watch 和 Meta Ray-Ban Display
-  會列出你的工作階段，並朗讀某個工作階段的最後一則回答。
+* **同一個工作階段，每個螢幕。** 任何瀏覽器；透過 Tailscale 在手機上使用，附觸控按鍵；VS Code；
+  以及上方各應用程式商店裡適用於手機、平板、電視和頭戴裝置的 Agent Guild App，Android 版也可從
+  [GitHub](https://github.com/oddessentials/agent-guild-android/releases/latest) 取得。
+  Apple Watch 和 Meta Ray-Ban Display 會列出你的工作階段，並朗讀某個工作階段的最後一則回答。
 * **Yard：看著它們工作。** 每個工作階段都是 3D 世界裡的一個角色。等你回覆的會被標示出來；
   CI 通過時 Yard 會放煙火。雙擊任何一個角色，就能開啟它的真實終端機直接輸入。
 * **原生支援 Windows。** 不需要 WSL。也支援 macOS、Linux，以及透過 SSH 使用的無頭 Linux 伺服器。
