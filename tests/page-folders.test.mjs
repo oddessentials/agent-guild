@@ -120,6 +120,11 @@ test('a first piece choice opens in World’s Workshop folder, later ones where 
   later.context.chooseFolder('character', 'guild', 'anthropic');
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(later.requests.map(([, route]) => route), ['/folders?path=%2Fwork%2Fspace&pieces=character']);
+  for (const [platform, studio] of [['linux', false], ['win32', true], ['darwin', true]]) {
+    later.context.state.platform = platform;
+    later.context.renderFolderBrowser();
+    assert.equal(later.$('folder-status').textContent.includes('Agent Guild: Studio'), studio, platform);
+  }
   const plain = page({ answers: [listing] });
   plain.context.chooseFolder('cwd');
   await new Promise((resolve) => setImmediate(resolve));
