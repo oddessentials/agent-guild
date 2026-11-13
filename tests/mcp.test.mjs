@@ -135,6 +135,7 @@ test('it introduces itself, lists read and write tools, and keeps typing off by 
   assert.equal(init.result.serverInfo.name, 'agent-guild');
   assert.ok(init.result.capabilities.tools);
   assert.match(init.result.instructions, /Never ask for, print or store/);
+  assert.ok(init.result.instructions.includes('https://github.com/oddessentials/agent-guild-community/discussions'));
   const unknownVersion = await request('initialize', { protocolVersion: '1999-01-01' });
   assert.equal(unknownVersion.result.protocolVersion, '2025-11-25');
   child.stdin.write('{"jsonrpc":"2.0","method":"notifications/initialized"}\n');
