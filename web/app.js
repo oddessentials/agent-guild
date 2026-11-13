@@ -1571,7 +1571,7 @@ function renderFolderBrowser() {
     : error ? error
       : !listing ? ''
         : listing.files?.length || listing.pieces?.length ? ''
-        : PIECE_FIELDS.includes(folderView.field) ? `No ${folderView.field === 'character' ? 'characters' : 'companions'} here or in the folders inside it. Steam keeps Workshop items in its library under steamapps › workshop › content › 5462970.`
+        : PIECE_FIELDS.includes(folderView.field) ? `No ${folderView.field === 'character' ? 'characters' : 'companions'} here or in the folders inside it.${['win32', 'darwin'].includes(state.platform) ? ' Make one with Agent Guild: Studio.' : ''} Steam keeps Workshop items in its library under steamapps › workshop › content › 5462970.`
         : !entries.length ? (folderView.field === 'world' ? 'No world files here.' : listing.entries.length ? 'No folders match.' : 'No folders here.')
           : listing.truncated ? `Showing the first ${listing.entries.length.toLocaleString()} folders.` : '';
   status.classList.toggle('error', Boolean(error));
@@ -8084,7 +8084,7 @@ function connectEvents() {
       state.folderOpener = msg.folderOpener || null;
       state.platform = msg.platform || null;
       $('yard-install').hidden = !['win32', 'darwin'].includes(state.platform);
-      $('yard-world-get').hidden = state.platform !== 'win32';
+      $('yard-world-get').hidden = !['win32', 'darwin'].includes(state.platform);
       state.yardWorlds = msg.yardWorlds ?? null;
       state.yardPieces = msg.yardPieces ?? null;
       state.remoteAccessUI?.setAvailable(msg.remoteAccess);

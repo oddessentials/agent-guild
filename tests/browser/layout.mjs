@@ -411,7 +411,7 @@ const checks = await withPage({ name: 'layout', instrumentation }, async ({ orig
   await evaluate('document.documentElement.dataset.skin="professional"');
   await layoutReady();
   assert.deepEqual([await visible('#yard-play'), await visible('#yard-play-solo'), await visible('#yard-play-arena')], [false, false, false], 'Professional shows only Builders');
-  assert.deepEqual(await evaluate('(()=>{const a=document.querySelector("#yard-play-builders");return [a.href,a.target,a.rel,a.querySelector(".yard-play-sub").textContent]})()'), ['https://github.com/oddessentials/agent-guild-builders/releases/latest', '_blank', 'noopener noreferrer', 'Builders · for Windows']);
+  assert.deepEqual(await evaluate('(()=>{const a=document.querySelector("#yard-play-builders");return [a.href,a.target,a.rel,a.querySelector(".yard-play-sub").textContent]})()'), ['https://github.com/oddessentials/agent-guild-builders/releases/latest', '_blank', 'noopener noreferrer', 'Builders · Windows or macOS']);
   for (const [width, height] of [[1440, 900], [980, 800], [524, 800], [484, 800], [444, 800], [356, 800], [336, 640]]) {
     await size(width, height);
     await soloPlaced(`professional ${width}`, width, '#yard-play-builders', '.yard-play-builders');

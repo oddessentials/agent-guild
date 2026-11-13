@@ -320,7 +320,8 @@ Failed news, model list and release checks retry after 10 minutes.
 [Agent Guild: World](https://store.steampowered.com/app/5462970/Agent_Guild_World/)
 is a free, living 3D world for your AI coding agents, coming to Steam in
 November 2026: six worlds to roam with a free camera, your own characters and
-companions from the Steam Workshop, a Guild Board for your notes and to-dos,
+companions from [Agent Guild: Studio](https://github.com/oddessentials/agent-guild-studio)
+or the Steam Workshop, a Guild Board for your notes and to-dos,
 and controller support, on Windows, macOS and Linux.
 [Wishlist it on Steam](https://store.steampowered.com/app/5462970/Agent_Guild_World/).
 

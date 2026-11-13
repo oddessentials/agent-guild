@@ -123,6 +123,7 @@ await withPage({ name: 'companion', instrumentation }, async ({ origin, navigate
   for (const [platform, visible] of [['linux', false], ['win32', true], ['darwin', true]]) {
     await evaluate(`changePlatform(${JSON.stringify(platform)})`);
     assert.equal(await evaluate('document.querySelector("#yard-install").checkVisibility()'), visible);
+    assert.equal(await evaluate('document.querySelector("#yard-world-get").hidden'), !visible);
   }
   await evaluate('document.documentElement.dataset.skin="guild"');
   assert.equal(await evaluate('document.querySelector("#yard-install").checkVisibility()'), false);
@@ -131,5 +132,5 @@ await withPage({ name: 'companion', instrumentation }, async ({ origin, navigate
   await click();
   assert.equal(await evaluate('installRequests.length'), 1);
   assert.deepEqual(errors, []);
-  pass('the install control follows platform, skin and connection availability');
+  pass('the install control follows platform, skin and connection availability, and Build a Yard follows platform');
 });
