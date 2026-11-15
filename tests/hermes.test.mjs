@@ -1355,3 +1355,19 @@ test('a Hermes plugin read that finishes after a newer change is dropped, so it 
   assert.equal(hooks._hermesReporting(hermes)[0].on, true, 'the read from before is dropped');
   assert.equal(hooks.note(hermes), null, 'no false warning about a token still accepted');
 });
+
+test('turning off Hermes reporting revokes every token even when Hermes is no longer on PATH, since a gateway still running may hold one', { timeout: 30000 }, async (t) => {
+  const { registry, hooks, tokens, home, root } = hermesSetup(t, { hermes: 'home' });
+  makeHermesHome(home('hermes').dir, [['work', 'config.yaml']]);
+  registry.reload();
+  const hermes = registry.get('hermes');
+  assert.equal(await hooks.setEnabled(hermes, true), true);
+  const given = registry.accountsFor(hermes).map((account) => tokens.get(account.home));
+  fs.rmSync(path.join(root, 'bin', win ? 'hermes.cmd' : 'hermes'));
+
+  await assert.rejects(hooks.setEnabled(hermes, false), (err) => {
+    assert.equal(err.message, 'The Default profile failed: Hermes Agent is not installed. The work profile failed: Hermes Agent is not installed. Reporting is on for no profile.');
+    return true;
+  });
+  assert.deepEqual(given.map((token) => tokens.account(token)), [null, null], 'both tokens are revoked');
+});

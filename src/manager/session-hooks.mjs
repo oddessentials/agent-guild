@@ -660,7 +660,8 @@ export class SessionHooks {
     return antigravityPluginEnabled(antigravityConfigFile({ ...this.registry.env, ...provider.env }, this.registry.platform));
   }
 
-  _hermesRun(provider, account, args, what) {
+  /** Runs a Hermes command; every failure, Hermes not found included, arrives as a rejection, so each caller's handling sees it. */
+  async _hermesRun(provider, account, args, what) {
     const resolved = this.registry.resolve(provider);
     if (!resolved) throw Object.assign(new Error(`${provider.tool} is not installed`), { status: 409, code: 'provider_unavailable' });
     const env = { ...this.registry.env, ...provider.env, ...account.env };
@@ -859,7 +860,7 @@ export class SessionHooks {
     });
     if (failures.length) {
       const err = failures[0];
-      err.message = failures.map((cause) => cause.message.replace(/\.$/, '')).join('; ');
+      err.message = [...new Set(failures.map((cause) => cause.message.replace(/\.$/, '')))].join('; ');
       throw err;
     }
   }
