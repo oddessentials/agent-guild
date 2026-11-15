@@ -590,6 +590,27 @@ test('a Hermes profile is listed by Hermes\'s own rules: names up to 64 characte
 
 const win = process.platform === 'win32';
 
+/** Starts Python holding `file` open until it reads a line, added to `readers` first so it is stopped even when this fails. */
+async function holdOpen(file, readers) {
+  const reader = spawn('python', ['-c', 'import sys\nf = open(sys.argv[1], encoding="utf-8")\nprint("open", flush=True)\nsys.stdin.readline()\nf.close()\nprint("closed", flush=True)', file], { stdio: ['pipe', 'pipe', 'inherit'] });
+  readers.push(reader);
+  const lines = readline.createInterface({ input: reader.stdout })[Symbol.asyncIterator]();
+  assert.equal((await lines.next()).value, 'open');
+  return { reader, lines };
+}
+
+/** Stops the readers and waits until each has exited, so the files they held can be deleted. */
+function stopReaders(readers) {
+  return Promise.all(readers.map((reader) => (reader.exitCode !== null || reader.signalCode !== null ? null : new Promise((resolve) => {
+    reader.once('exit', resolve);
+    reader.once('error', resolve);
+    reader.kill();
+  }))));
+}
+
+/** A deletion or replacement another process blocks fails with EPERM, or EBUSY from Node 22's rmSync. */
+const blocked = (err) => ['EPERM', 'EBUSY'].includes(err.code);
+
 /** With `relative`, each card's HERMES_HOME is relative and the manager runs in `root`, where it resolves. */
 function hermesSetup(t, cards, { relative = false } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-hermes-setup-'));
@@ -827,22 +848,24 @@ test("a token file Hermes is reading when the manager starts on another port: th
   const file = tokens.file(home('hermes').home);
   const before = fs.readFileSync(file, 'utf8');
 
-  const reader = spawn('python', ['-c', 'import sys\nf = open(sys.argv[1], encoding="utf-8")\nprint("open", flush=True)\nsys.stdin.readline()\nf.close()\nprint("closed", flush=True)', file], { stdio: ['pipe', 'pipe', 'inherit'] });
-  t.after(() => reader.kill());
-  const lines = readline.createInterface({ input: reader.stdout })[Symbol.asyncIterator]();
-  assert.equal((await lines.next()).value, 'open');
-  fs.writeFileSync(`${file}.probe`, 'x');
-  assert.throws(() => fs.renameSync(`${file}.probe`, file), { code: 'EPERM' }, 'the reader really blocks the replacement');
-  fs.rmSync(`${file}.probe`);
+  const readers = [];
+  try {
+    const { reader, lines } = await holdOpen(file, readers);
+    fs.writeFileSync(`${file}.probe`, 'x');
+    assert.throws(() => fs.renameSync(`${file}.probe`, file), blocked, 'the reader really blocks the replacement');
+    fs.rmSync(`${file}.probe`);
 
-  env.TEST_API_URL = 'http://127.0.0.1:47999';
-  await tokens.refresh(env.TEST_API_URL);
-  assert.equal(fs.readFileSync(file, 'utf8'), before, 'the file it could not replace is whole and unchanged');
-  assert.equal(hooks.enabled(hermes), false);
-  assert.match(hooks.note(hermes), /could not give Hermes Agent its new address\. Turn it on to try again\./);
+    env.TEST_API_URL = 'http://127.0.0.1:47999';
+    await tokens.refresh(env.TEST_API_URL);
+    assert.equal(fs.readFileSync(file, 'utf8'), before, 'the file it could not replace is whole and unchanged');
+    assert.equal(hooks.enabled(hermes), false);
+    assert.match(hooks.note(hermes), /could not give Hermes Agent its new address\. Turn it on to try again\./);
 
-  reader.stdin.write('\n');
-  assert.equal((await lines.next()).value, 'closed');
+    reader.stdin.write('\n');
+    assert.equal((await lines.next()).value, 'closed');
+  } finally {
+    await stopReaders(readers);
+  }
   assert.equal(await hooks.setEnabled(hermes, true), true);
   assert.equal(fs.readFileSync(file, 'utf8').split('\n')[2], 'http://127.0.0.1:47999');
   assert.equal(hooks.note(hermes), null);
@@ -889,17 +912,18 @@ test('a Hermes home whose last card is removed while its reporting is being set 
 
 test('a revoked Hermes token is refused at once even while its file cannot be deleted, and the file goes once it can', { skip: !win, timeout: 60000 }, async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-hermes-revoke-'));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const readers = [];
+  t.after(async () => {
+    await stopReaders(readers);
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 });
+  });
   const tokens = new HermesTokens(dir);
   await tokens.prune(new Set(['/home/a', '/home/b']));
   const a = await tokens.ensure('/home/a', 'http://one');
   const b = await tokens.ensure('/home/b', 'http://one');
   const hold = async (file) => {
-    const reader = spawn('python', ['-c', 'import sys\nf = open(sys.argv[1], encoding="utf-8")\nprint("open", flush=True)\nsys.stdin.readline()\nf.close()\nprint("closed", flush=True)', file], { stdio: ['pipe', 'pipe', 'inherit'] });
-    t.after(() => reader.kill());
-    const lines = readline.createInterface({ input: reader.stdout })[Symbol.asyncIterator]();
-    assert.equal((await lines.next()).value, 'open');
-    assert.throws(() => fs.rmSync(file), { code: 'EPERM' }, 'the reader really blocks the deletion');
+    const { reader, lines } = await holdOpen(file, readers);
+    assert.throws(() => fs.rmSync(file), blocked, 'the reader really blocks the deletion');
     return async () => { reader.stdin.write('\n'); assert.equal((await lines.next()).value, 'closed'); };
   };
 
