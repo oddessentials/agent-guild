@@ -161,7 +161,10 @@ For a tool whose agent or model reporting has to be turned on,
 cannot be used, or for Hermes Agent why reporting is off until it is turned on
 again, or is null. `reportingUpdate` is true for Hermes Agent while a profile
 that reports has an Agent Guild plugin of another commit than the one this
-Agent Guild installs; that plugin keeps reporting until it is updated.
+Agent Guild installs; that plugin keeps reporting until it is updated. For
+Hermes Agent, `reportingEnabled` also stays true while a profile's report token
+is still accepted after a revocation that failed, with a `reportingNote` that
+says so, so turning it off can be tried again.
 
 `mcp` is null unless the tool is installed and Agent Guild can add its own MCP
 server (`agent-guild mcp`, see [mcp.md](mcp.md)) to the tool's settings:

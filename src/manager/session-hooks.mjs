@@ -514,7 +514,7 @@ export class SessionHooks {
       return state === 'other' ? null : Boolean(state);
     }
     if (provider.reporting === 'hermes') {
-      return this._hermesReporting(provider).some((account) => account.on);
+      return this._hermesReporting(provider).some((account) => account.on || account.held);
     }
     if (provider.reporting === 'grok') {
       const states = this._grokDirs(provider).map((dir) => grokHooksState(dir, this._grokFiles()));
@@ -535,6 +535,10 @@ export class SessionHooks {
       const on = accounts.filter((account) => account.on);
       if (this.hermesTokens?.unreadable) {
         return `Agent reporting is off: Agent Guild could not read its saved report tokens in ${this.hermesTokens.recordFile} (${this.hermesTokens.unreadable}). Turn it on to make new ones.`;
+      }
+      const held = accounts.filter((account) => account.held);
+      if (held.length) {
+        return `Agent reporting is not fully off: the report token of ${held.map((a) => a.label).join(', ')} is still accepted, because Agent Guild could not revoke it. Turn it off to try again.`;
       }
       if (on.length && on.length < accounts.length) {
         return `Agent reporting is on for ${on.map((a) => a.label).join(', ')}, not for ${accounts.filter((a) => !a.on).map((a) => a.label).join(', ')}. Turn it off, then on, to try again.`;
@@ -663,7 +667,7 @@ export class SessionHooks {
     return run.finally(() => this.hermesRuns.delete(run)).catch((err) => {
       const detail = `${err.stderr || ''}\n${err.stdout || ''}`.trim().split('\n').filter(Boolean).pop()
         || (err.killed ? 'it did not finish in time' : typeof err.code === 'number' ? `it exited with code ${err.code}` : 'it could not be run');
-      throw Object.assign(new Error(`${provider.tool} could not ${what}: ${detail}`), { status: 502, code: 'reporting_setup_failed' });
+      throw Object.assign(new Error(`${provider.tool} could not ${what}: ${detail}`), { status: 502, code: 'reporting_setup_failed', detail });
     });
   }
 
@@ -678,12 +682,14 @@ export class SessionHooks {
 
   /** The Agent Guild plugin in each account's Hermes home: its status, and whether it is the commit this Agent Guild installs. */
   async _readHermes(provider) {
-    const plugins = new Map();
-    for (const account of this.registry.accountsFor(provider)) plugins.set(account.id, await this._hermesPlugin(provider, account));
-    const before = JSON.stringify([...(this.hermesPlugins.get(provider.id) ?? [])]);
-    this.hermesPlugins.set(provider.id, plugins);
-    if (before !== JSON.stringify([...plugins])) this.registry.emit?.('updated');
-    return plugins;
+    let changed = false;
+    for (const account of this.registry.accountsFor(provider)) {
+      const plugin = await this._hermesPlugin(provider, account);
+      if (JSON.stringify(this.hermesPlugins.get(account.home)) !== JSON.stringify(plugin)) changed = true;
+      this.hermesPlugins.set(account.home, plugin);
+    }
+    // Every card of a changed home is described again, not only this one.
+    if (changed) this.registry.emit?.('updated');
   }
 
   async _hermesPlugin(provider, account) {
@@ -731,7 +737,7 @@ export class SessionHooks {
         });
       } catch (err) {
         await this._readHermes(provider).catch(() => {});
-        const now = this.hermesPlugins.get(provider.id)?.get(account.id);
+        const now = this.hermesPlugins.get(account.home);
         const still = this._hermesReporting(provider).find((a) => a.id === account.id)?.on;
         const after = !still ? 'Its reporting is off.' : now?.source === had ? 'It keeps reporting with the plugin it had.' : 'It keeps reporting.';
         err.message = `The ${account.label} profile was not updated: ${err.message.replace(/\.$/, '')}. ${after}`;
@@ -750,16 +756,28 @@ export class SessionHooks {
   async _setHermes(provider, enabled) {
     if (!this.hermesTokens) throw Object.assign(new Error('Agent Guild keeps no Hermes report tokens here'), { status: 409, code: 'reporting_unavailable' });
     await this._readHermes(provider);
-    const accounts = this.registry.accountsFor(provider);
-    for (const account of accounts) {
+    const failed = [];
+    for (const account of this.registry.accountsFor(provider)) {
       try {
         await this.hermesTokens.setup(account.home, () => this._setHermesAccount(provider, account, enabled));
       } catch (err) {
-        await this._readHermes(provider).catch(() => {});
-        const on = this._hermesReporting(provider).filter((a) => a.on).map((a) => a.label);
-        err.message = `The ${account.label} profile failed: ${err.message.replace(/\.$/, '')}. Reporting is on for ${on.length ? on.join(', ') : 'no profile'}.`;
-        throw err;
+        failed.push([account, err]);
+        // Turning on stops at the first profile that fails; turning off still turns off every other one.
+        if (enabled) break;
       }
+    }
+    if (failed.length) {
+      await this._readHermes(provider).catch(() => {});
+      const state = this._hermesReporting(provider);
+      const on = state.filter((a) => a.on).map((a) => a.label);
+      const held = state.filter((a) => a.held).map((a) => a.label);
+      const err = failed[0][1];
+      err.message = [
+        ...failed.map(([account, cause]) => `The ${account.label} profile failed: ${cause.message.replace(/\.$/, '')}.`),
+        `Reporting is on for ${on.length ? on.join(', ') : 'no profile'}.`,
+        ...(held.length ? [`The report token of ${held.join(', ')} is still accepted; turn it off to try again.`] : []),
+      ].join(' ');
+      throw err;
     }
     await this._readHermes(provider);
     const now = enabled ? this._hermesReporting(provider).every((account) => account.on) : this.enabled(provider);
@@ -770,14 +788,16 @@ export class SessionHooks {
   }
 
   _hermesReporting(provider) {
-    const plugins = this.hermesPlugins.get(provider.id);
     return this.registry.accountsFor(provider).map((account) => {
-      const plugin = plugins?.get(account.id);
+      const plugin = this.hermesPlugins.get(account.home);
+      const accepted = Boolean(this.hermesTokens?.get(account.home));
       return {
         ...account,
         plugin: plugin?.status ?? null,
         // Reporting and the plugin's commit are apart: a plugin of another commit that is on still reports.
-        on: Boolean(plugin && this.hermesTokens && plugin.status === 'enabled' && this.hermesTokens.get(account.home) && !this.hermesTokens.stale.has(account.home)),
+        on: Boolean(plugin && accepted && plugin.status === 'enabled' && !this.hermesTokens.stale.has(account.home)),
+        // A token still accepted for a plugin that is not on: a revocation that failed, so reporting is not off.
+        held: Boolean(plugin && accepted && plugin.status !== 'enabled'),
         outdated: Boolean(this.hermesPluginCommit && plugin && plugin.status !== 'missing' && !plugin.current),
       };
     });
@@ -809,9 +829,22 @@ export class SessionHooks {
       }
       return;
     }
-    if (state === 'enabled') await this._hermesRun(provider, account, ['plugins', 'disable', HERMES_PLUGIN], 'turn off the Agent Guild plugin');
-    if (this.hermesTokens.get(account.home)) await this._hermesRun(provider, account, ['config', 'unset', HERMES_TOKEN_FILE_VAR], "remove Agent Guild's reporting settings");
-    await this.hermesTokens.remove(account.home);
+    const failures = [];
+    if (state === 'enabled') {
+      await this._hermesRun(provider, account, ['plugins', 'disable', HERMES_PLUGIN], 'turn off the Agent Guild plugin').catch((err) => failures.push(err));
+    }
+    await this._hermesRun(provider, account, ['config', 'unset', HERMES_TOKEN_FILE_VAR], "remove Agent Guild's reporting settings").catch((err) => {
+      // Hermes's answer for a setting that is not there: removed by hand, or by a teardown before.
+      if (err.detail !== `Config key not set: ${HERMES_TOKEN_FILE_VAR}`) failures.push(err);
+    });
+    await this.hermesTokens.remove(account.home).catch((err) => {
+      failures.push(Object.assign(new Error(`Agent Guild could not revoke its report token (${err.code || err.message})`), { status: 500, code: 'reporting_setup_failed' }));
+    });
+    if (failures.length) {
+      const err = failures[0];
+      err.message = failures.map((cause) => cause.message.replace(/\.$/, '')).join('; ');
+      throw err;
+    }
   }
 
   async setEnabled(provider, enabled) {

@@ -710,14 +710,15 @@ test('the Hermes report token stays in a file of Agent Guild\'s own: Hermes is g
 
   env.FAKE_HERMES_FAIL = 'plugins disable';
   await assert.rejects(hooks.setEnabled(hermes, false), (err) => {
-    assert.equal(err.message, 'The Default profile failed: Hermes Agent could not turn off the Agent Guild plugin: it exited with code 1. Reporting is on for Default.');
+    assert.equal(err.message, 'The Default profile failed: Hermes Agent could not turn off the Agent Guild plugin: it exited with code 1. Reporting is on for no profile.');
     return true;
   });
-  assert.equal(tokens.get(home('hermes').home), token, 'a failed switch-off leaves the token');
+  assert.equal(tokens.account(token), null, 'the token is revoked though Hermes could not turn its plugin off');
+  assert.ok(commands().includes('config unset AGENT_GUILD_HERMES_TOKEN_FILE'), 'and the rest of the teardown ran');
 
   delete env.FAKE_HERMES_FAIL;
-  assert.equal(await hooks.setEnabled(hermes, false), false);
-  assert.ok(commands().includes('config unset AGENT_GUILD_HERMES_TOKEN_FILE'));
+  assert.equal(await hooks.setEnabled(hermes, false), false, 'turning off again finishes, though the setting is already gone');
+  assert.equal(commands().filter((c) => c === 'plugins disable agent-guild').length, 2);
   assert.equal(tokens.get(home('hermes').home), null);
   assert.equal(fs.existsSync(file), false);
 });
@@ -1178,4 +1179,102 @@ test('a build that names no Hermes plugin commit installs none and says so, and 
   assert.equal(installs(log).length, 0);
   assert.equal(hooks.updatable(hermes), false);
   assert.equal(hooks.note(hermes), null);
+});
+
+/** The keys a profile's Hermes keeps with `config set`. */
+const configKeys = (account) => { try { return JSON.parse(fs.readFileSync(path.join(account.dir, 'fake-config.json'), 'utf8')); } catch { return {}; } };
+
+test('turning off Hermes reporting whose setting was removed by hand still finishes and revokes the token', { timeout: 30000 }, async (t) => {
+  const { registry, hooks, tokens, home } = hermesSetup(t, { hermes: 'home' });
+  const hermes = registry.get('hermes');
+  assert.equal(await hooks.setEnabled(hermes, true), true);
+  const token = tokens.get(home('hermes').home);
+  assert.ok('AGENT_GUILD_HERMES_TOKEN_FILE' in configKeys(home('hermes')));
+  fs.writeFileSync(path.join(home('hermes').dir, 'fake-config.json'), '{}');
+
+  assert.equal(await hooks.setEnabled(hermes, false), false, 'Hermes saying the setting is not set counts as removed');
+  assert.equal(tokens.account(token), null);
+  assert.equal(hooks.note(hermes), null);
+});
+
+test('turning off Hermes reporting goes through every profile: each one is revoked though Hermes fails a step, and the error names each failure', { timeout: 30000 }, async (t) => {
+  const { registry, hooks, tokens, env, home } = hermesSetup(t, { hermes: 'home' });
+  makeHermesHome(home('hermes').dir, [['work', 'config.yaml']]);
+  registry.reload();
+  const hermes = registry.get('hermes');
+  assert.equal(await hooks.setEnabled(hermes, true), true);
+  const [base, work] = registry.accountsFor(hermes);
+  const given = [tokens.get(base.home), tokens.get(work.home)];
+
+  // Default cannot turn its plugin off; work cannot remove its setting, for another reason than its being absent.
+  Object.assign(env, { FAKE_HERMES_FAIL: 'plugins disable', FAKE_HERMES_FAIL_PROFILE: 'default' });
+  const disable = hooks.setEnabled(hermes, false);
+  await assert.rejects(disable, (err) => {
+    assert.equal(err.message, 'The Default profile failed: Hermes Agent could not turn off the Agent Guild plugin: it exited with code 1. Reporting is on for no profile.');
+    return true;
+  });
+  assert.deepEqual(given.map((token) => tokens.account(token)), [null, null], 'both tokens are revoked');
+  assert.equal(recorded(registry, hermes)[1][1].status, 'disabled', 'the profile after the one that failed is turned off too');
+
+  assert.equal(await hooks.setEnabled(hermes, true), true);
+  Object.assign(env, { FAKE_HERMES_FAIL: 'config unset', FAKE_HERMES_FAIL_PROFILE: 'work' });
+  await assert.rejects(hooks.setEnabled(hermes, false), (err) => {
+    assert.equal(err.message, "The work profile failed: Hermes Agent could not remove Agent Guild's reporting settings: it exited with code 1. Reporting is on for no profile.");
+    return true;
+  });
+  assert.equal(tokens.get(work.home), null, 'a failed setting removal does not keep the token');
+  assert.equal(tokens.get(base.home), null);
+  delete env.FAKE_HERMES_FAIL;
+  delete env.FAKE_HERMES_FAIL_PROFILE;
+  assert.equal(await hooks.setEnabled(hermes, false), false, 'and turning off again finishes');
+});
+
+test('a Hermes token that cannot be revoked keeps the card from showing reporting off: Turn off stays, the note says why, and trying again revokes it', { timeout: 30000 }, async (t) => {
+  const { registry, hooks, tokens, home } = hermesSetup(t, { hermes: 'home' });
+  makeHermesHome(home('hermes').dir, [['work', 'config.yaml']]);
+  registry.reload();
+  const hermes = registry.get('hermes');
+  assert.equal(await hooks.setEnabled(hermes, true), true);
+  const [base, work] = registry.accountsFor(hermes);
+  const given = [tokens.get(base.home), tokens.get(work.home)];
+  const saved = fs.readFileSync(tokens.recordFile, 'utf8');
+  fs.rmSync(tokens.recordFile);
+  fs.mkdirSync(tokens.recordFile);
+
+  await assert.rejects(hooks.setEnabled(hermes, false), (err) => {
+    assert.match(err.message, /^The Default profile failed: Agent Guild could not revoke its report token \(\w+\)\. The work profile failed: Agent Guild could not revoke its report token \(\w+\)\. Reporting is on for no profile\. The report token of Default, work is still accepted; turn it off to try again\.$/);
+    return true;
+  });
+  assert.deepEqual(given.map((token) => tokens.account(token)), [base.home, work.home], 'still accepted');
+  assert.deepEqual(recorded(registry, hermes).map(([, p]) => p.status), ['disabled', 'disabled'], 'though Hermes turned the plugins off');
+  assert.equal(hooks.enabled(hermes), true, 'so the card offers Turn off');
+  assert.equal(hooks.note(hermes), 'Agent reporting is not fully off: the report token of Default, work is still accepted, because Agent Guild could not revoke it. Turn it off to try again.');
+
+  fs.rmdirSync(tokens.recordFile);
+  fs.writeFileSync(tokens.recordFile, saved);
+  assert.equal(await hooks.setEnabled(hermes, false), false, 'trying again finishes, the settings already removed');
+  assert.deepEqual(given.map((token) => tokens.account(token)), [null, null]);
+  assert.equal(hooks.note(hermes), null);
+});
+
+test('two cards of one Hermes home show the same reporting and update state, whichever one changes it', { timeout: 30000 }, async (t) => {
+  const { registry, hooks, home } = hermesSetup(t, { hermes: 'one', twin: 'one' });
+  const [hermes, twin] = [registry.get('hermes'), registry.get('twin')];
+  await hooks._readHermes(hermes);
+  await hooks._readHermes(twin);
+  let updated = 0;
+  registry.on('updated', () => updated++);
+
+  assert.equal(await hooks.setEnabled(hermes, true), true);
+  assert.equal(hooks.enabled(twin), true, 'the other card shows reporting on');
+  assert.ok(updated > 0, 'and is described again');
+
+  fs.writeFileSync(path.join(home('hermes').dir, 'fake-plugins.json'), JSON.stringify([{ name: 'agent-guild', status: 'enabled', source: 'git pinned@00000000' }]));
+  await hooks._readHermes(twin);
+  assert.deepEqual([hooks.updatable(hermes), hooks.updatable(twin)], [true, true]);
+  assert.equal(await hooks.update(twin), true);
+  assert.deepEqual([hooks.updatable(hermes), hooks.updatable(twin)], [false, false]);
+
+  assert.equal(await hooks.setEnabled(twin, false), false);
+  assert.deepEqual([hooks.enabled(hermes), hooks.enabled(twin)], [false, false]);
 });
