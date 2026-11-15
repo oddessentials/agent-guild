@@ -36,9 +36,15 @@ async function until(what, read, done) {
 
 // The real plugin under Python, with Hermes 0.23.1's plugin context and modules stood in by their real names and
 // signatures. Redaction masks only under force=True, as Hermes does with security.redact_secrets off; 'broken' raises.
-async function startPlugin(t, { url, token, redact = 'mask', heartbeatSeconds = null, tokenFile = null, proxy = null }) {
+// `home` is the profile's Hermes home, which get_hermes_home() answers ('broken' makes it raise); a token file made here
+// records `recordedHome`, by default that home, as the manager names it.
+async function startPlugin(t, { url, token, redact = 'mask', heartbeatSeconds = null, tokenFile = null, proxy = null, home = null, recordedHome = null }) {
   const stub = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-hermes-plugin-'));
   t.after(() => fs.rmSync(stub, { recursive: true, force: true }));
+  const ownHome = home && home !== 'broken' ? home : path.join(stub, 'home');
+  fs.mkdirSync(ownHome, { recursive: true });
+  const homeKey = hermesHomeKey(ownHome);
+  fs.writeFileSync(path.join(stub, 'hermes_constants.py'), 'import os\nfrom pathlib import Path\n\ndef get_hermes_home():\n    return Path(os.environ["TEST_HERMES_HOME"])\n');
   fs.mkdirSync(path.join(stub, 'agent'));
   fs.writeFileSync(path.join(stub, 'agent', '__init__.py'), '');
   fs.writeFileSync(path.join(stub, 'agent', 'secret_scope.py'), 'import os\n\ndef get_secret(name):\n    return os.environ.get(name)\n');
@@ -48,7 +54,7 @@ async function startPlugin(t, { url, token, redact = 'mask', heartbeatSeconds = 
   ].join('\n'));
   if (!tokenFile) {
     tokenFile = path.join(stub, 'report.token');
-    fs.writeFileSync(tokenFile, `${token}\n/the/home\n${url}\n`);
+    fs.writeFileSync(tokenFile, `${token}\n${recordedHome ?? homeKey}\n${url}\n`);
   }
   fs.writeFileSync(path.join(stub, 'drive.py'), [
     'import gc, importlib.util, json, os, sys, threading',
@@ -94,7 +100,7 @@ async function startPlugin(t, { url, token, redact = 'mask', heartbeatSeconds = 
       // With a proxy, the plugin runs with only HTTP_PROXY set: no other proxy setting and no NO_PROXY exception.
       ...(proxy ? Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(https?|all|no)_proxy$/i.test(name))) : process.env),
       ...(proxy && { HTTP_PROXY: proxy, http_proxy: proxy }),
-      PYTHONPATH: stub, PYTHONDONTWRITEBYTECODE: '1', AGENT_GUILD_HERMES_TOKEN_FILE: tokenFile, ...(heartbeatSeconds && { TEST_HEARTBEAT_SECONDS: String(heartbeatSeconds) }),
+      PYTHONPATH: stub, PYTHONDONTWRITEBYTECODE: '1', AGENT_GUILD_HERMES_TOKEN_FILE: tokenFile, ...(home !== 'broken' && { TEST_HERMES_HOME: ownHome }), ...(heartbeatSeconds && { TEST_HEARTBEAT_SECONDS: String(heartbeatSeconds) }),
     },
     stdio: ['pipe', 'pipe', 'inherit'],
   });
@@ -110,6 +116,7 @@ async function startPlugin(t, { url, token, redact = 'mask', heartbeatSeconds = 
     reload: async () => assert.equal(await send({ cmd: 'reload' }), 'fired'),
     state: async () => JSON.parse(await send({ cmd: 'state' })),
     tokenFile,
+    homeKey,
   };
 }
 
@@ -241,7 +248,7 @@ test("the Hermes plugin reports to a real manager: the tool card's live helpers,
   };
   const tokenFile = stored.file(hermesHomeKey(hermesHome));
   assert.equal(fs.readFileSync(tokenFile, 'utf8').split('\n')[2], ctx.api.url, 'a start gives every token file the address the manager now has');
-  const { fire, state, reload } = await startPlugin(t, { tokenFile });
+  const { fire, state, reload } = await startPlugin(t, { tokenFile, home: hermesHome });
 
   const { session } = await api('POST', '/sessions', { providerId: 'hermes', cwd: home });
   const card = () => api('GET', `/sessions/${session.id}`).then((r) => r.session);
@@ -822,12 +829,12 @@ test('a session waiting on an approval comes back after its token and the manage
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   t.after(() => server.close());
-  const { fire, tokenFile } = await startPlugin(t, { url: first.url, token: 'token-a', heartbeatSeconds: 0.2 });
+  const { fire, tokenFile, homeKey } = await startPlugin(t, { url: first.url, token: 'token-a', heartbeatSeconds: 0.2 });
   await fire('pre_llm_call', { session_id: 's1', turn_id: 'u1', platform: 'cli' });
   await fire('pre_approval_request', { session_id: 's1', turn_id: 'u1', tool_call_id: 't1' });
   await until('the wait reported to the first address', () => lastOpen(first.received), (open) => open && Object.keys(open.waits).length === 1);
 
-  fs.writeFileSync(`${tokenFile}.next`, `token-b\n/the/home\nhttp://127.0.0.1:${server.address().port}\n`);
+  fs.writeFileSync(`${tokenFile}.next`, `token-b\n${homeKey}\nhttp://127.0.0.1:${server.address().port}\n`);
   fs.renameSync(`${tokenFile}.next`, tokenFile);
   const open = await until('a heartbeat at the new address with the new token', () => lastOpen(moved), Boolean);
   const live = new HermesLive({ sweepMs: 0 });
@@ -1400,4 +1407,27 @@ test('when a Hermes plugin update fails and Hermes then cannot be asked what it 
     assert.doesNotMatch(err.message, /still has the plugin it had|keeps reporting/);
     return true;
   });
+});
+
+test('a Hermes profile whose token file was issued for another home, as a cloned profile has, reports nothing, nor does one whose home Hermes cannot name', { timeout: 30000 }, async (t) => {
+  const manager = await captureServer(t);
+  const source = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-hermes-source-'));
+  t.after(() => fs.rmSync(source, { recursive: true, force: true }));
+  const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  // A clone copies the source profile's setting, so its plugin reads the source's token file.
+  const clone = await startPlugin(t, { url: manager.url, token: 'source-token', recordedHome: hermesHomeKey(source), heartbeatSeconds: 0.2 });
+  await clone.fire('on_session_start', { session_id: 's1', platform: 'cli' });
+  await clone.fire('pre_llm_call', { session_id: 's1', turn_id: 'u1', platform: 'cli' });
+  await pause(1500);
+  assert.deepEqual(manager.received, [], 'nothing is sent with the token of the profile it was cloned from');
+  fs.writeFileSync(clone.tokenFile, `own-token\n${clone.homeKey}\n${manager.url}\n`);
+  await until('reports once its token was issued for its own home', () => manager.received.length, (n) => n > 0);
+
+  const other = await captureServer(t);
+  const unnamed = await startPlugin(t, { url: other.url, token: 'some-token', home: 'broken', heartbeatSeconds: 0.2 });
+  await unnamed.fire('on_session_start', { session_id: 's1', platform: 'cli' });
+  await unnamed.fire('pre_llm_call', { session_id: 's1', turn_id: 'u1', platform: 'cli' });
+  await pause(1500);
+  assert.deepEqual(other.received, [], 'a home Hermes cannot name reports nothing');
 });

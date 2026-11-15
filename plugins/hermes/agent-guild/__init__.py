@@ -1,5 +1,7 @@
 import json
 import logging
+import os
+import sys
 import threading
 import urllib.request
 import uuid
@@ -35,14 +37,31 @@ def _secret(name):
         return None
 
 
+def _home_key(path):
+    """A Hermes home as Agent Guild names it in a token file: its real path, lowercase on Windows."""
+    real = os.path.realpath(path)
+    return real.lower() if sys.platform == "win32" else real
+
+
+def _home():
+    """This profile's Hermes home, or None when Hermes cannot say. Read in a hook, where Hermes has set the profile."""
+    try:
+        from hermes_constants import get_hermes_home
+        return _home_key(str(get_hermes_home()))
+    except Exception:
+        return None
+
+
 def _settings(path):
+    """The token, the home it was issued for, and the manager's address."""
     try:
         with open(path, encoding="utf-8") as file:
             lines = file.read().split("\n")
     except Exception:
-        return None, None
+        return None, None, None
+    home = lines[1].strip() if len(lines) > 1 else ""
     url = lines[2].strip() if len(lines) > 2 else ""
-    return lines[0].strip() or None, (url or DEFAULT_URL).rstrip("/")
+    return lines[0].strip() or None, home or None, (url or DEFAULT_URL).rstrip("/")
 
 
 def _redact(text, limit=None):
@@ -64,7 +83,9 @@ class Reporter:
         self.seq = 0
         self.instance = uuid.uuid4().hex
         self.token_file = None
-        self.open = {"sessions": {}, "working": set(), "subagents": {}, "tools": {}, "waits": {}}
+        self.home = None
+        self.refused = None
+        self.open ={"sessions": {}, "working": set(), "subagents": {}, "tools": {}, "waits": {}}
         self.turns = {}
         self.settled = True
         self.thread = None
@@ -134,6 +155,8 @@ class Reporter:
             if self.stopped:
                 return
             self.token_file = _secret("AGENT_GUILD_HERMES_TOKEN_FILE") or self.token_file
+            # Taken here, in the profile's context: the reporting thread starts with none.
+            self.home = _home() or self.home
             self._track(name, kw, data)
             self.seq += 1
             self.events.append({"seq": self.seq, "event": name, "data": data})
@@ -160,15 +183,27 @@ class Reporter:
                 self.seq += 1
                 messages.append({"seq": self.seq, "open": snapshot})
                 self.settled = not busy
-            return messages, self.token_file, self.stopped
+            return messages, self.token_file, self.home, self.stopped
+
+    def _allowed(self, recorded, home):
+        """Whether a token issued for `recorded` may report for this profile's `home`; says once why it may not."""
+        if home and recorded == home:
+            self.refused = None
+            return True
+        if self.refused != (recorded, home):
+            self.refused = (recorded, home)
+            logger.warning("Agent Guild reporting is off for this profile: its report token was issued for %s, not for %s. "
+                           "Turn on agent reporting for this profile in Agent Guild.", recorded or "no home", home or "a home Hermes did not name")
+        return False
 
     def _run(self):
         while True:
             self.wake.wait(None if self.settled else HEARTBEAT_SECONDS)
             self.wake.clear()
-            messages, path, final = self._take()
-            token, url = _settings(path) if messages else (None, None)
-            if token:
+            messages, path, home, final = self._take()
+            token, recorded, url = _settings(path) if messages else (None, None, None)
+            # A token copied with a cloned profile belongs to the profile it was issued for: it never reports this one.
+            if token and self._allowed(recorded, home):
                 self._post(url, token, messages)
             if final:
                 return
