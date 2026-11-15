@@ -370,9 +370,12 @@ export function createManagerServer({
     }
 
     if (route === '/hermes/hook' && method === 'POST' && hermes) {
-      const home = hermes.tokens.account(req.headers['x-agent-guild-report-token']);
+      const reportToken = req.headers['x-agent-guild-report-token'];
+      const home = hermes.tokens.account(reportToken);
       if (!home) throw new HttpError(401, 'invalid report token', 'unauthorized');
       const body = await readJsonBody(req, REPLY_BODY_LIMIT);
+      // Checked again as it is applied: a token revoked while the body arrived restores nothing.
+      if (hermes.tokens.account(reportToken) !== home) throw new HttpError(401, 'invalid report token', 'unauthorized');
       hermes.live.receive(home, body.instance, body.messages);
       return sendJson(res, 200, { ok: true });
     }

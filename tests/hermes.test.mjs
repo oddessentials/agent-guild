@@ -1278,3 +1278,80 @@ test('two cards of one Hermes home show the same reporting and update state, whi
   assert.equal(await hooks.setEnabled(twin, false), false);
   assert.deepEqual([hooks.enabled(hermes), hooks.enabled(twin)], [false, false]);
 });
+
+test('turning off Hermes reporting revokes every token even when Hermes cannot list a profile\'s plugins, and names that failure', { timeout: 30000 }, async (t) => {
+  const { registry, hooks, tokens, env, home } = hermesSetup(t, { hermes: 'home' });
+  makeHermesHome(home('hermes').dir, [['work', 'config.yaml']]);
+  registry.reload();
+  const hermes = registry.get('hermes');
+  assert.equal(await hooks.setEnabled(hermes, true), true);
+  const [base, work] = registry.accountsFor(hermes);
+  const given = [tokens.get(base.home), tokens.get(work.home)];
+
+  Object.assign(env, { FAKE_HERMES_FAIL: 'plugins list', FAKE_HERMES_FAIL_PROFILE: 'work' });
+  await assert.rejects(hooks.setEnabled(hermes, false), (err) => {
+    assert.equal(err.message, 'The work profile failed: Hermes Agent could not list its plugins: it exited with code 1. Reporting is on for no profile.');
+    return true;
+  });
+  assert.deepEqual(given.map((token) => tokens.account(token)), [null, null], 'both tokens are revoked');
+  assert.deepEqual(recorded(registry, hermes).map(([, p]) => p.status), ['disabled', 'disabled'], 'and Hermes was still asked to turn the unlisted plugin off');
+});
+
+test('a Hermes report whose token is revoked while its body is still arriving is refused, and restores no activity', { timeout: 30000 }, async (t) => {
+  const { registry } = hermesRegistry(t);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-hermes-inflight-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const tokens = new HermesTokens(path.join(dir, 'hermes-tokens'));
+  const work = registry.account(registry.get('hermes'), 'work').home;
+  const reportToken = await tokens.ensure(work);
+  const live = new HermesLive({ sweepMs: 0 });
+  registry.liveFor = (provider, account) => live.live(account.home);
+  const manager = Object.assign(new EventEmitter(), { list: () => [], refreshMultiplexers() {}, sessions: new Map(), sessionHooks: {} });
+  const api = createManagerServer({ manager, registry, token: 'f'.repeat(48), port: 0, webDir: path.join(here, '..', 'web'), hermes: { tokens, live } });
+  await api.listen();
+  t.after(() => api.close());
+
+  // The token is checked as the request arrives: hold the body until then, revoke, then send the rest.
+  let checked;
+  const atCheck = new Promise((resolve) => { checked = resolve; });
+  const account = tokens.account.bind(tokens);
+  tokens.account = (token) => { const home = account(token); checked(); return home; };
+  const body = JSON.stringify({ instance: 'gateway', messages: [{ seq: 1, event: 'pre_llm_call', data: { session_id: 's1', turn_id: 'u1', platform: 'telegram' } }] });
+  const { port } = new URL(api.url);
+  const answered = new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, path: '/api/v1/hermes/hook', method: 'POST',
+      headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body), 'x-agent-guild-report-token': reportToken } }, (res) => { res.resume(); res.on('end', () => resolve(res.statusCode)); });
+    req.on('error', reject);
+    req.write(body.slice(0, 10));
+    atCheck.then(() => tokens.remove(work)).then(() => req.end(body.slice(10)), reject);
+  });
+  assert.equal(await answered, 401, 'refused: its token was revoked before it was applied');
+  assert.equal(live.live(work), null, 'and no activity came back');
+});
+
+test('a Hermes plugin read that finishes after a newer change is dropped, so it cannot show an enabled plugin as off', { timeout: 30000 }, async (t) => {
+  const { registry, hooks } = hermesSetup(t, { hermes: 'home' });
+  const hermes = registry.get('hermes');
+  // A background read takes Hermes's answer before reporting is turned on, and is delivered only after.
+  let release, taken;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const tookIt = new Promise((resolve) => { taken = resolve; });
+  const run = hooks._hermesRun.bind(hooks);
+  let held = false;
+  hooks._hermesRun = async (provider, account, args, what) => {
+    const result = await run(provider, account, args, what);
+    if (!held && args[0] === 'plugins' && args[1] === 'list') {
+      held = true;
+      taken();
+      await gate;
+    }
+    return result;
+  };
+  const reading = hooks._readHermes(hermes);
+  await tookIt;
+  assert.equal(await hooks.setEnabled(hermes, true), true);
+  release();
+  await reading;
+  assert.equal(hooks._hermesReporting(hermes)[0].on, true, 'the read from before is dropped');
+  assert.equal(hooks.note(hermes), null, 'no false warning about a token still accepted');
+});

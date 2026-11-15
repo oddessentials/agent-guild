@@ -345,6 +345,8 @@ export class SessionHooks {
     this.hermesPluginCommit = HERMES_PLUGIN_COMMIT.test(hermesPluginCommit ?? '') ? hermesPluginCommit : null;
     this.getApiUrl = getApiUrl;
     this.hermesPlugins = new Map();
+    /** How many reporting changes each Hermes home has had: a read that a change overtook is dropped. */
+    this.hermesChanges = new Map();
     this.probeTimeoutMs = probeTimeoutMs;
     this.probeRetryMs = probeRetryMs;
     this.dir = dir;
@@ -684,7 +686,9 @@ export class SessionHooks {
   async _readHermes(provider) {
     let changed = false;
     for (const account of this.registry.accountsFor(provider)) {
+      const seen = this.hermesChanges.get(account.home) ?? 0;
       const plugin = await this._hermesPlugin(provider, account);
+      if ((this.hermesChanges.get(account.home) ?? 0) !== seen) continue;
       if (JSON.stringify(this.hermesPlugins.get(account.home)) !== JSON.stringify(plugin)) changed = true;
       this.hermesPlugins.set(account.home, plugin);
     }
@@ -714,6 +718,17 @@ export class SessionHooks {
     }
   }
 
+  /** Runs one home's reporting change in its setup turn, and makes any read that started before it obsolete. */
+  _hermesChange(account, work) {
+    return this.hermesTokens.setup(account.home, async () => {
+      try {
+        return await work();
+      } finally {
+        this.hermesChanges.set(account.home, (this.hermesChanges.get(account.home) ?? 0) + 1);
+      }
+    });
+  }
+
   _noPluginCommit() {
     return Object.assign(new Error(`This build of Agent Guild names no commit of its Hermes plugin to install. Set ${HERMES_PLUGIN_COMMIT_VAR} to one to install that plugin`), { status: 409, code: 'reporting_unavailable' });
   }
@@ -730,7 +745,7 @@ export class SessionHooks {
     for (const account of this._hermesReporting(provider).filter((a) => a.on && a.outdated)) {
       let had = null;
       try {
-        await this.hermesTokens.setup(account.home, async () => {
+        await this._hermesChange(account, async () => {
           const plugin = await this._hermesPlugin(provider, account);
           had = plugin.source;
           if (plugin.status === 'enabled' && !plugin.current) await this._hermesInstall(provider, account, true);
@@ -755,11 +770,12 @@ export class SessionHooks {
 
   async _setHermes(provider, enabled) {
     if (!this.hermesTokens) throw Object.assign(new Error('Agent Guild keeps no Hermes report tokens here'), { status: 409, code: 'reporting_unavailable' });
-    await this._readHermes(provider);
+    // Turning off revokes every token even when Hermes cannot say what it has; each profile reports that itself.
+    await (enabled ? this._readHermes(provider) : this._readHermes(provider).catch(() => {}));
     const failed = [];
     for (const account of this.registry.accountsFor(provider)) {
       try {
-        await this.hermesTokens.setup(account.home, () => this._setHermesAccount(provider, account, enabled));
+        await this._hermesChange(account, () => this._setHermesAccount(provider, account, enabled));
       } catch (err) {
         failed.push([account, err]);
         // Turning on stops at the first profile that fails; turning off still turns off every other one.
@@ -808,8 +824,10 @@ export class SessionHooks {
    * meanwhile. A profile that fails to turn on keeps no accepted token; one that already reported keeps reporting.
    */
   async _setHermesAccount(provider, account, enabled) {
-    const plugin = await this._hermesPlugin(provider, account);
-    const state = plugin.status;
+    const failures = [];
+    // A teardown goes on without knowing the plugin's state: it asks Hermes to turn it off all the same.
+    const plugin = enabled ? await this._hermesPlugin(provider, account) : await this._hermesPlugin(provider, account).catch((err) => { failures.push(err); return null; });
+    const state = plugin?.status ?? null;
     if (enabled) {
       const wasOn = state === 'enabled' && Boolean(this.hermesTokens.get(account.home)) && !this.hermesTokens.stale.has(account.home);
       // A profile that turns on gets this Agent Guild's plugin; one that already reports keeps its own until updated.
@@ -829,8 +847,7 @@ export class SessionHooks {
       }
       return;
     }
-    const failures = [];
-    if (state === 'enabled') {
+    if (state === 'enabled' || !plugin) {
       await this._hermesRun(provider, account, ['plugins', 'disable', HERMES_PLUGIN], 'turn off the Agent Guild plugin').catch((err) => failures.push(err));
     }
     await this._hermesRun(provider, account, ['config', 'unset', HERMES_TOKEN_FILE_VAR], "remove Agent Guild's reporting settings").catch((err) => {
