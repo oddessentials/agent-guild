@@ -1,4 +1,4 @@
-// `<tool> mcp ...` for claude, codex, agy and grok, stored as each real tool stores it. Calls are logged to $FAKE_MCP_LOG.
+// `<tool> mcp ...` for claude, codex, agy and grok, and `hermes config get|set|unset mcp_servers.<name>`, stored as each real tool stores it. Calls are logged to $FAKE_MCP_LOG.
 // fake-mcp.json { "fail": true } fails every call, { "garbage": true } prints a list that is not JSON; a home named *broken* refuses writes.
 // As the real tools do, codex fails when $CODEX_HOME does not exist, and grok creates its home on any call. Grok also
 // loads ~/.claude.json's servers, as `inspect` and `mcp doctor` show and `mcp list` does not, and only says on stderr that its
@@ -16,12 +16,14 @@ const homes = {
   codex: () => process.env.CODEX_HOME || path.join(home(), '.codex'),
   agy: () => home(),
   grok: () => process.env.GROK_HOME || path.join(home(), '.grok'),
+  hermes: () => process.env.HERMES_HOME || path.join(home(), '.hermes'),
 };
 const files = {
   claude: (dir) => path.join(dir, '.claude.json'),
   codex: (dir) => path.join(dir, 'fake-mcp.json'),
   agy: (dir) => path.join(dir, '.gemini', 'config', 'mcp_config.json'),
   grok: (dir) => path.join(dir, 'fake-mcp.json'),
+  hermes: (dir) => path.join(dir, 'fake-mcp.json'),
 };
 
 function load(file) {
@@ -57,6 +59,34 @@ export function runMcp(tool, argv) {
     store(file, tool === 'claude' || tool === 'agy' ? { ...config, mcpServers: servers } : { servers });
     if (tool === 'grok') fs.writeFileSync(offFile, stringifyToml({ ...grokConfig, disabled_mcp_servers: disabled }));
   };
+  if (tool === 'hermes') {
+    const [, verb, key, value] = argv;
+    const name = key?.startsWith('mcp_servers.') ? key.slice('mcp_servers.'.length).split('.')[0] : null;
+    const field = name ? key.slice('mcp_servers.'.length + name.length + 1) || null : null;
+    const notSet = () => { process.stdout.write(`Config key not set: ${key}\n`); process.exit(1); };
+    if (argv[0] !== 'config' || !name) fail(`hermes: unexpected arguments: ${argv.join(' ')}`, 2);
+    if (verb === 'get') {
+      if (argv.slice(3).join(' ') !== '--json') fail(`hermes: unexpected arguments: ${argv.join(' ')}`, 2);
+      const found = field ? servers[name]?.[field] : servers[name];
+      if (found === undefined) notSet();
+      process.stdout.write(`${JSON.stringify(found)}\n`);
+      process.exit(0);
+    }
+    if (path.basename(dir).includes('broken')) fail('cannot write the settings');
+    if (verb === 'set' && argv.length === 4) {
+      if (field) servers[name] = { ...servers[name], [field]: value === 'true' ? true : value === 'false' ? false : value };
+      else servers[name] = JSON.parse(value);
+      save();
+      process.exit(0);
+    }
+    if (verb === 'unset' && argv.length === 3 && !field) {
+      if (!servers[name]) notSet();
+      delete servers[name];
+      save();
+      process.exit(0);
+    }
+    fail(`hermes: unexpected arguments: ${argv.join(' ')}`, 2);
+  }
   const claudeFile = path.join(home(), '.claude.json');
   const claudeServers = () => load(claudeFile).mcpServers ?? {};
   if (tool === 'grok' && argv[0] === 'inspect') {

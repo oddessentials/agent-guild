@@ -658,7 +658,7 @@ test('Cards and Yard use the same actions, accounts, dialogs and terminal',optio
   await b.click(provider('google'));await b.click(inspector+' .reporting-toggle');
   await until(()=>f.calls.some(c=>c[0]==='reporting'));
   assert.deepEqual(f.calls.find(c=>c[0]==='reporting'),['reporting','google',true]);
-  await b.wait(`document.querySelector('${inspector} .reporting-text').textContent.includes('on')`);
+  await b.wait(`document.querySelector('${inspector} .reporting-text').textContent==='Agent reporting on'`);
   f.providers[3].available=false;f.registry.emit('updated');
   await b.click(provider('xai'));await b.wait(`document.querySelector('${inspector} .install')?.hidden===false`);
   await b.click(inspector+' .install');await terminalReady(b);await closeTerminal(b);

@@ -163,7 +163,7 @@ export class SessionManager extends EventEmitter {
     const extraEnv = hooks.env ? { ...runShell?.env, ...hooks.env } : runShell?.env;
     const options = { provider, cwd: workDir, cols, rows, name: given ?? defaultName, defaultName, named: given !== null, resume: resumeId, account: signIn, reporting: hooks.reporting, extraEnv };
     if (runShell?.multiplexer) return this._withMultiplexerStart(provider.id, runShell.id, () => this._startMultiplexer(options, runShell, args || []));
-    const spawnSpec = this.registry.spawnSpec(provider, args || [], resumeId, hooks.args, runShell);
+    const spawnSpec = this.registry.spawnSpec(provider, [...(signIn.args ?? []), ...(args || [])], resumeId, hooks.args, runShell);
     const session = this._spawn({ ...options, spawnSpec });
     // A session id Agent Guild chose is known before the tool reports it, so the card can resume it at once.
     if (hooks.toolSessionId) session.reportToolSession({ toolSessionId: hooks.toolSessionId }, 'launch');

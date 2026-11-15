@@ -2075,8 +2075,8 @@ test('accounts get their own home folder and environment, the default keeps the 
   assert.deepEqual(registry.account(anthropic), registry.accountsFor(anthropic)[0]);
   assert.deepEqual(registry.account(anthropic, 'work'), registry.accountsFor(anthropic)[1]);
   assert.throws(() => registry.account(anthropic, 'nope'), (err) => err.status === 404 && err.code === 'unknown_account');
-  assert.deepEqual(registry.describe(anthropic).accounts, [{ id: 'default', label: 'Main' }, { id: 'work', label: 'Work' }, { id: 'personal', label: 'Personal' }, { id: 'shared', label: 'Shared' }]);
-  assert.deepEqual(registry.describe(registry.get('openai')).accounts, [{ id: 'default', label: 'Default' }]);
+  assert.deepEqual(registry.describe(anthropic).accounts, [{ id: 'default', label: 'Main', live: null }, { id: 'work', label: 'Work', live: null }, { id: 'personal', label: 'Personal', live: null }, { id: 'shared', label: 'Shared', live: null }]);
+  assert.deepEqual(registry.describe(registry.get('openai')).accounts, [{ id: 'default', label: 'Default', live: null }]);
 
   const relativeFile = path.join(dir, 'relative.json');
   fs.writeFileSync(relativeFile, JSON.stringify({ providers: [{ id: 'anthropic', accounts: [{ id: 'two', dir: 'claude-two' }] }] }));

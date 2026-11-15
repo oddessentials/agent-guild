@@ -79,7 +79,7 @@ on; any route can answer others.
   "usageSource": "claude",
   "historySource": "claude",
   "memorySource": "claude",
-  "accounts": [{ "id": "default", "label": "Default" }, { "id": "work", "label": "Work" }],
+  "accounts": [{ "id": "default", "label": "Default", "live": null }, { "id": "work", "label": "Work", "live": null }],
   "color": "#D97757",
   "monogram": "A",
   "iconUrl": null,
@@ -112,7 +112,7 @@ or uninstall session's result,
 are lines the card shows about the copies, such as several being installed.
 `npmNote` qualifies an npm install, or is null. `modelPattern` is the
 provider's, or null. `reporting` is the tool's reporting mode: `claude`,
-`codex`, `antigravity`, `grok`, `docker`, or null.
+`codex`, `antigravity`, `grok`, `docker`, `hermes`, or null.
 
 `installs` lists every copy of the tool that was found, each
 `{ path, displayPath, channel, version, versionStatus, active, newer, onPath, uninstall, uninstallGuidance }`.
@@ -139,7 +139,12 @@ can read saved messages: for every built-in history source, not for a
 under: `default` is the tool's own, and each further one has its own home
 folder, so it keeps its own sign-in and usage. `POST /sessions` takes an
 account id. `accountsEditable` is true when accounts can be added, renamed
-and removed through `/providers/:id/accounts`.
+and removed through `/providers/:id/accounts`; for Hermes Agent the accounts are its own
+profiles instead: `default` is Hermes's base home (`HERMES_HOME`, else Hermes's own default), and each
+other one a profile folder in it, found when the cards load. An account's `live` is null
+except for a Hermes Agent profile whose plugin reports: then it is
+`{ working, waiting, agents, shells }`: the counts of its Hermes sessions and subagents working
+and waiting, the first 64 of them as `{ id, name, status, detail }`, and their shell commands as `{ id }`.
 
 `shells` is null except for the `@shell` provider, where it lists the
 installed shells, each `{ id, label, path, multiplexer }`, and `defaultShell`
@@ -153,12 +158,14 @@ leaves the multiplexer's own session running, and
 
 For a tool whose agent or model reporting has to be turned on,
 `reportingEnabled` says whether it is, and `reportingNote` says why that switch
-cannot be used, or is null.
+cannot be used, or for Hermes Agent why reporting is off until it is turned on
+again, or is null.
 
 `mcp` is null unless the tool is installed and Agent Guild can add its own MCP
 server (`agent-guild mcp`, see [mcp.md](mcp.md)) to the tool's settings:
-Claude Code, Codex CLI, Antigravity CLI and Grok Build. Otherwise it is
-`{ mode, accounts }`: `mode` is `claude`, `codex`, `antigravity` or `grok`, and
+Claude Code, Codex CLI, Antigravity CLI, Grok Build and Hermes Agent, where it
+is `mcp_servers.agent-guild` in the profile's `config.yaml`, marked untrusted. Otherwise it is
+`{ mode, accounts }`: `mode` is `claude`, `codex`, `antigravity`, `grok` or `hermes`, and
 `accounts` has one `{ id, label, state, managed, from, command, allowInput,
 detail, fingerprint }` per account, read from that account's settings. A
 settings file the tool keeps as JSON is read again when it changes; a tool
@@ -726,6 +733,7 @@ All paths are under `/api/v1`.
 | POST | `/sessions/:id/docker` | `{ event, sessionId, agentName?, toolName?, toolUseId?, command?, model?, reply? }` | `{ ok }`. One Docker Agent hook event. |
 | POST | `/sessions/:id/shells` | `{ shell, key \| task, match?, agentId?, persist?, endsWithAgent?, kind?, tasks? }` | `{ ok }`. A shell command the tool started, ended or put in the background. |
 | POST | `/sessions/:id/hook?event=&reporting=` | A coding tool's hook event, as the tool gives it to its hooks | `{ ok }`, or `{ ok, errors }` when reports the event makes are refused, each `{ status, code?, message }` as its own route would answer. The manager turns the event into the session's reports as `agent-guild-report --hook` does. `event` names an event that does not name itself; `reporting` is the session's `AGENT_GUILD_REPORTING` where the hook ran, and defaults to the session's own. A transcript the event names is read only if it is a regular file. |
+| POST | `/hermes/hook` | `{ instance, messages }` | `{ ok }`. What the Hermes Agent plugin of one profile reports, for every Hermes Agent card of that account. `instance` names the reporting process; `messages` are its events, `{ seq, event, data }`, and heartbeats, `{ seq, open }`, applied in `seq` order, each `seq` once. A heartbeat lists what is still open: `sessions` (each `{ platform }`), `working` (session ids), `subagents` (each `{ parent_session_id, child_role, child_goal }`), `tools` (each `{ session_id, tool_name }`) and `waits` (each `{ session_id }`), keyed by id. It closes the rest and rebuilds what is missing. An instance that sends nothing for 90 seconds is dropped. Needs the profile's Hermes report token in `X-Agent-Guild-Report-Token`, which turning on its reporting sets; 401 `unauthorized` otherwise. |
 | POST | `/shutdown` | `{ force?, restart? }` | `202 { ok, running, restart }`: stops the manager and every session, detaching tmux and herdr sessions. 409 `sessions_running` (with `running`) while other sessions run; retry with `force: true` after the user confirms. With `restart`, a new manager takes over on the same port and token, running the version on disk. |
 
 `cwd` defaults to the user's home folder, and a leading `~` is expanded.
@@ -744,7 +752,7 @@ header. The manager gives that token only to the processes inside that
 session.
 
 Request bodies are limited to 64 KiB, except `PUT /notes`,
-`POST /sessions/:id/reply` and `POST /sessions/:id/docker`, which accept
+`POST /sessions/:id/reply`, `POST /sessions/:id/docker` and `POST /hermes/hook`, which accept
 1 MiB, and `POST /sessions/:id/hook`, which accepts 32 MiB and checks the token
 before reading the body. Messages a client sends on a WebSocket are limited to 1 MiB.
 

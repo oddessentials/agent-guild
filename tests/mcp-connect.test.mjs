@@ -22,7 +22,8 @@ const codingTool = path.join(here, 'fixtures', 'fake-coding-tool.mjs');
 const systemDirs = win
   ? ['System32', ''].map((dir) => path.join(process.env.SystemRoot || 'C:\\Windows', dir))
   : ['/usr/bin', '/bin'];
-const TOOLS = { anthropic: 'claude', openai: 'codex', google: 'agy', xai: 'grok' };
+const TOOLS = { anthropic: 'claude', openai: 'codex', google: 'agy', xai: 'grok', hermes: 'hermes' };
+const HERMES = { vendor: 'Nous Research', tool: 'Hermes Agent', command: 'hermes', mcp: 'hermes', homeVar: 'HERMES_HOME' };
 
 function writeScript(file, name) {
   if (win) fs.writeFileSync(`${file}.cmd`, `@echo off\r\n"${process.execPath}" "${codingTool}" ${name} %*\r\n`);
@@ -39,15 +40,15 @@ function setup(t, { accounts = {}, extraEnv = {} } = {}) {
   const log = path.join(root, 'mcp.log');
   const env = {
     PATH: [bin, ...systemDirs].join(path.delimiter), HOME: home, USERPROFILE: home, FAKE_MCP_LOG: log,
-    CLAUDE_CONFIG_DIR: path.join(root, 'claude'), CODEX_HOME: path.join(root, 'codex'), GROK_HOME: path.join(root, 'grok'),
+    CLAUDE_CONFIG_DIR: path.join(root, 'claude'), CODEX_HOME: path.join(root, 'codex'), GROK_HOME: path.join(root, 'grok'), HERMES_HOME: path.join(root, 'hermes'),
     ...(win && { SystemRoot: process.env.SystemRoot, ComSpec: process.env.ComSpec, PATHEXT: '.COM;.EXE;.BAT;.CMD' }),
     ...extraEnv,
   };
   const userFile = path.join(root, 'providers.json');
   fs.writeFileSync(userFile, JSON.stringify({
-    providers: Object.keys(TOOLS).map((id) => ({ id, usage: null, history: null, accounts: (accounts[id] ?? []).map((a) => ({ id: a, label: a })) })),
+    providers: Object.keys(TOOLS).map((id) => ({ id, ...(id === 'hermes' && HERMES), usage: null, history: null, accounts: (accounts[id] ?? []).map((a) => ({ id: a, label: a })) })),
   }));
-  for (const dir of [home, env.CLAUDE_CONFIG_DIR, env.CODEX_HOME, env.GROK_HOME]) fs.mkdirSync(dir, { recursive: true });
+  for (const dir of [home, env.CLAUDE_CONFIG_DIR, env.CODEX_HOME, env.GROK_HOME, env.HERMES_HOME]) fs.mkdirSync(dir, { recursive: true });
   const registry = new ProviderRegistry({ userFile, env, platform: process.platform, checkUpdates: false, accountsDir: path.join(root, 'accounts') });
   const manager = new SessionManager({ registry, baseEnv: {}, getApiUrl: () => '' });
   // The folder an unpinned `agent-guild mcp` reaches from these tools' environment.
@@ -57,7 +58,7 @@ function setup(t, { accounts = {}, extraEnv = {} } = {}) {
   const provider = (id) => registry.get(id);
   const homeOf = (id, account = 'default') => {
     if (account !== 'default') return path.join(root, 'accounts', id, account);
-    return { anthropic: env.CLAUDE_CONFIG_DIR, openai: env.CODEX_HOME, google: home, xai: env.GROK_HOME }[id];
+    return { anthropic: env.CLAUDE_CONFIG_DIR, openai: env.CODEX_HOME, google: home, xai: env.GROK_HOME, hermes: env.HERMES_HOME }[id];
   };
   const calls = () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line)) : []);
   const clearCalls = () => fs.rmSync(log, { force: true });
@@ -93,7 +94,7 @@ function writeRaw(id, dir, text) {
   fs.writeFileSync(storeFile(id, dir), text);
 }
 
-const changes = (ctx) => ctx.calls().filter((c) => c.argv[1] !== 'list' && c.argv[0] !== 'inspect');
+const changes = (ctx) => ctx.calls().filter((c) => c.argv[1] !== 'list' && c.argv[1] !== 'get' && c.argv[0] !== 'inspect');
 
 test('every tool reads Agent Guild\'s server, one the person added, another server, and broken settings alike', async (t) => {
   const ctx = setup(t);
@@ -161,6 +162,8 @@ test('missing, empty and broken settings read as each tool reads them', async (t
     await expect(id, '{"garbage":true}', 'error', `${id}, a list that is not JSON`);
     await expect(id, '{"fail":true}', 'error', `${id}, failing`);
   }
+  await expect('hermes', null, 'off', 'Hermes, missing');
+  await expect('hermes', '{"fail":true}', 'error', 'Hermes, failing');
   await expect('xai', '{"configError":true,"servers":{}}', 'error', 'Grok, a config.toml that does not parse');
   assert.match((await ctx.read('xai')).detail, /ERROR config toml has syntax errors/);
   await expect('xai', '{"stderrNoise":true,"servers":{}}', 'off', 'Grok, an unrelated stderr line');
@@ -204,9 +207,11 @@ test('on Windows the entry\'s variable wins in any case, except under Claude Cod
 });
 
 test('turning on and off runs each tool\'s own commands in the chosen account only', async (t) => {
-  const ctx = setup(t, { accounts: { anthropic: ['work'], openai: ['work'], xai: ['work'] } });
-  const add = (tool) => (tool === 'claude' || tool === 'grok' ? ['mcp', 'add', '-s', 'user', SERVER_NAME, '--'] : ['mcp', 'add', SERVER_NAME, '--']).concat(ctx.own.command, ctx.own.args);
-  const remove = (tool) => (tool === 'claude' || tool === 'grok' ? ['mcp', 'remove', '-s', 'user', SERVER_NAME] : ['mcp', 'remove', SERVER_NAME]);
+  const ctx = setup(t, { accounts: { anthropic: ['work'], openai: ['work'], xai: ['work'], hermes: ['work'] } });
+  const add = (tool) => (tool === 'hermes' ? ['config', 'set', `mcp_servers.${SERVER_NAME}`, JSON.stringify({ command: ctx.own.command, args: ctx.own.args, trust: 'untrusted', enabled: true })]
+    : (tool === 'claude' || tool === 'grok' ? ['mcp', 'add', '-s', 'user', SERVER_NAME, '--'] : ['mcp', 'add', SERVER_NAME, '--']).concat(ctx.own.command, ctx.own.args));
+  const remove = (tool) => (tool === 'hermes' ? ['config', 'unset', `mcp_servers.${SERVER_NAME}`]
+    : tool === 'claude' || tool === 'grok' ? ['mcp', 'remove', '-s', 'user', SERVER_NAME] : ['mcp', 'remove', SERVER_NAME]);
   for (const [id, tool] of Object.entries(TOOLS)) {
     const account = id === 'google' ? 'default' : 'work';
     const other = id === 'google' ? null : storeFile(id, ctx.homeOf(id));
@@ -223,7 +228,7 @@ test('turning on and off runs each tool\'s own commands in the chosen account on
     assert.deepEqual(changes(ctx), [{ tool, home: ctx.homeOf(id, account), argv: remove(tool) }]);
     if (other) assert.equal(fs.readFileSync(other, 'utf8'), before, `${tool}: the other account is untouched`);
   }
-  for (const [id, argv] of [['openai', add('codex')], ['google', ['mcp', 'enable', SERVER_NAME]], ['xai', ['mcp', 'enable', SERVER_NAME]]]) {
+  for (const [id, argv] of [['openai', add('codex')], ['google', ['mcp', 'enable', SERVER_NAME]], ['xai', ['mcp', 'enable', SERVER_NAME]], ['hermes', ['config', 'set', `mcp_servers.${SERVER_NAME}.enabled`, 'true']]]) {
     seed(id, ctx.homeOf(id), { ...ctx.own, enabled: false });
     ctx.clearCalls();
     assert.deepEqual(await ctx.change(id, 'on'), { outcome: 'changed', state: 'on' }, id);
@@ -450,7 +455,7 @@ test('a manager with its own data folder registers that folder, so a tool starte
 
 test('an open page hears an MCP server removed outside the card, from the heartbeat', async (t) => {
   const ctx = setup(t);
-  for (const name of ['codex', 'agy', 'grok']) fs.rmSync(path.join(ctx.root, 'bin', win ? `${name}.cmd` : name));
+  for (const name of ['codex', 'agy', 'grok', 'hermes']) fs.rmSync(path.join(ctx.root, 'bin', win ? `${name}.cmd` : name));
   seed('anthropic', ctx.homeOf('anthropic'), ctx.own);
   assert.equal((await ctx.read('anthropic')).state, 'on');
 

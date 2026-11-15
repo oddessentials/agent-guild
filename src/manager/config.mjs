@@ -52,6 +52,7 @@ export const paths = {
   /** Launchers for agent-guild-report, put first on every session's PATH. */
   get shims() { return path.join(dataDir(), 'bin'); },
   get reporting() { return path.join(dataDir(), 'reporting'); },
+  get hermesTokens() { return path.join(dataDir(), 'hermes-tokens'); },
   /** The tmux and herdr cards a restarted manager brings back, report tokens included. */
   get multiplexers() { return path.join(dataDir(), 'multiplexers.json'); },
   /** The Yard's art packs, one folder per content id. */

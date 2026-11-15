@@ -2294,6 +2294,12 @@ const REPORTING_SWITCH = {
     off: (p) => `Remove Agent Guild's hooks from ${p.tool}'s hooks folder. New sessions stop reporting their agents and commands.`,
     on: (p) => `Add Agent Guild's hooks to ${p.tool}'s hooks folder, so new sessions show their agents and commands and can be resumed. ${p.tool} runs them in every session; outside Agent Guild they do nothing.`,
   },
+  hermes: {
+    what: 'Agent reporting',
+    off: (p) => `Turn off the Agent Guild plugin in every ${p.tool} profile. ${p.tool} sessions stop showing here.`,
+    on: (p) => `Install the Agent Guild plugin into every ${p.tool} profile with "${p.command} plugins install", so its sessions, subagents and approvals show on this card.`,
+    applies: 'Sessions already running show from their next turn.',
+  },
   antigravity: {
     what: 'Agent reporting',
     off: (p) => `Remove the Agent Guild plugin from ${p.tool}. New sessions stop reporting their model.`,
@@ -2301,28 +2307,65 @@ const REPORTING_SWITCH = {
   },
 };
 
+const reportingBusy = new Map();
+
+function repaintReporting(id) {
+  const provider = state.providers.find((p) => p.id === id);
+  if (!provider) return;
+  for (const card of document.querySelectorAll('.provider[data-id]')) if (card.dataset.id === id) renderReportingSetup(card, provider);
+}
+
+function renderReportingLive(card, provider) {
+  const box = card.querySelector('.reporting-live');
+  const shown = provider.available && provider.reporting === 'hermes' ? (provider.accounts || []).filter((a) => a.live) : [];
+  box.hidden = !shown.length;
+  if (box.hidden) return box.replaceChildren();
+  const head = box.querySelector('.reporting-live-head') ?? Object.assign(document.createElement('span'), { className: 'reporting-live-label reporting-live-head' });
+  head.textContent = `Running in ${provider.tool}, not in Agent Guild terminals. Shows sessions active since reporting started.`;
+  const groups = new Map([...box.querySelectorAll('.reporting-live-profile')].map((el) => [el.dataset.account, el]));
+  box.replaceChildren(head, ...shown.map((account) => {
+    let group = groups.get(account.id);
+    if (!group) {
+      group = Object.assign(document.createElement('div'), { className: 'reporting-live-profile' });
+      group.dataset.account = account.id;
+      const label = Object.assign(document.createElement('span'), { className: 'reporting-live-label' });
+      const agents = Object.assign(document.createElement('div'), { className: 'agents' });
+      agents.dataset.empty = 'Nothing running now';
+      group.append(label, agents);
+    }
+    group.querySelector('.reporting-live-label').textContent = `${account.label} profile: ${account.live.working} working, ${account.live.waiting} waiting`;
+    renderAgents(group.querySelector('.agents'), account.live.agents, account.live.shells);
+    return group;
+  }));
+}
+
 function renderReportingSetup(card, provider) {
+  renderReportingLive(card, provider);
   const row = card.querySelector('.reporting-row');
   const note = provider.reportingNote;
   row.hidden = !provider.available || (typeof provider.reportingEnabled !== 'boolean' && !note);
   if (row.hidden) return;
   const words = REPORTING_SWITCH[provider.reporting] ?? REPORTING_SWITCH.antigravity;
   const on = provider.reportingEnabled;
+  const busy = reportingBusy.get(provider.id);
   const button = row.querySelector('.reporting-toggle');
-  row.querySelector('.reporting-text').textContent = note || `${words.what} ${on ? 'on' : 'off'}`;
-  button.hidden = Boolean(note);
+  row.querySelector('.reporting-text').textContent = busy ? `Turning ${busy}…` : note || `${words.what} ${on ? 'on' : 'off'}`;
+  button.hidden = Boolean(note) && provider.reporting !== 'hermes';
+  button.disabled = Boolean(busy);
   button.textContent = on ? 'Turn off' : 'Turn on';
   button.title = on ? words.off(provider) : words.on(provider);
   button.onclick = async () => {
-    button.disabled = true;
+    reportingBusy.set(provider.id, on ? 'off' : 'on');
+    repaintReporting(provider.id);
     try {
       await api('POST', `/providers/${provider.id}/reporting`, { enabled: !on });
-      toast(on ? `${words.what} is off for ${provider.tool}.` : `${words.what} is on for ${provider.tool}. It applies to new sessions.`);
+      toast(on ? `${words.what} is off for ${provider.tool}.` : `${words.what} is on for ${provider.tool}. ${words.applies ?? 'It applies to new sessions.'}`);
     } catch (err) {
       if (err instanceof AuthError) return showAuth(err.message);
       toast(err.message, 10000);
     } finally {
-      button.disabled = false;
+      reportingBusy.delete(provider.id);
+      repaintReporting(provider.id);
     }
   };
 }

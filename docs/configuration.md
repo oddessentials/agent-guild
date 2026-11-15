@@ -68,6 +68,7 @@ Invalid values are ignored; a file that cannot be read is reported in `manager.l
 | `modelPattern` | Regular expression that finds the model name on screen |
 | `homeVar` | Variable that moves the tool's home folder; required for `accounts` |
 | `accounts` | Extra sign-ins; see [Accounts](#accounts) |
+| `profiles` | `hermes`: the accounts are Hermes's home, as `default`, and each of its profiles, found as Hermes finds them when the cards load, in place of `accounts`; they are created in the tool |
 | `color`, `monogram`, `icon` | Card appearance; `icon` is a URL path |
 | `install`, `docs` | Shown when the tool is not installed; for a `plugin`, or with `channels.native.reinstall`, `install` is the command **Install** and **Update** run |
 | `channels` | Where each kind of copy lives, so the card can update and remove it: `native` `{ paths, remove, reinstall, versionEnv }`, `brew` `{ names }`, `winget` `{ id }`. A copy inside a `native` path is native; **Remove** deletes its `remove` paths, which must be inside your home folder. With `reinstall`, running `install` again updates a native copy, and `versionEnv` names the variable that pins `install` to the version `releases` reports |
