@@ -125,6 +125,7 @@ Codex CLI and Grok Build support this.
 | `AGENT_GUILD_HOME` | Moves the data folder. Turns off **Settings → Startup**. |
 | `AGENT_GUILD_NPM_REGISTRY` | npm registry for version checks and installs |
 | `AGENT_GUILD_NO_UPDATE_CHECK` | `1` turns off online version checks and self-upgrade |
+| `AGENT_GUILD_HERMES_PLUGIN_COMMIT` | For a build that is not a release: the commit of `oddessentials/agent-guild` whose Hermes plugin turning on Hermes reporting installs. A release always installs its own commit's. |
 | `AGENT_GUILD_SKIP_SHELL_ENV` | `1` stops reading PATH from your login shell, or from the registry on Windows |
 | `AGENT_GUILD_ALLOWED_HOSTS`, `AGENT_GUILD_ALLOWED_ORIGINS` | Legacy proxy allowlists, used until remote access settings are saved. An invalid value stops the manager from starting. |
 

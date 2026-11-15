@@ -249,8 +249,11 @@ jobs:
           path: bin/native
           merge-multiple: true
       - run: chmod +x bin/native/*/agent-guild-report
+      # A release also names the commit it is built from, whose Hermes plugin it installs.
       - if: inputs.version != ''
-        run: npm version "$VERSION" --no-git-tag-version
+        run: |
+          npm version "$VERSION" --no-git-tag-version
+          npm pkg set agentGuild.commit="$GITHUB_SHA"
         env:
           VERSION: ${{ inputs.version }}
       # A release packs the Windows modules that sign.yml signed, keeping node-pty's copies to compare.
@@ -277,9 +280,9 @@ jobs:
           version=$(node -p "require('./package.json').version")
           node scripts/yard-pack.mjs --out "$RUNNER_TEMP/package" --url-base "https://github.com/$GITHUB_REPOSITORY/releases/download/v$version/"
           npm pack --pack-destination "$RUNNER_TEMP/package"
-          upstream=()
-          if [ "$SIGNED" = true ]; then upstream=(--upstream "$RUNNER_TEMP/upstream"); fi
-          node tests/package/check-tarball.mjs "$RUNNER_TEMP"/package/*.tgz --version "$version" "${upstream[@]}"
+          release=()
+          if [ "$SIGNED" = true ]; then release=(--upstream "$RUNNER_TEMP/upstream" --commit "$GITHUB_SHA"); fi
+          node tests/package/check-tarball.mjs "$RUNNER_TEMP"/package/*.tgz --version "$version" "${release[@]}"
           cd "$RUNNER_TEMP/package"
           sha256sum -- *.tgz yard-art-*.tar.gz > SHA256SUMS
           echo "version=$version" >> "$GITHUB_OUTPUT"

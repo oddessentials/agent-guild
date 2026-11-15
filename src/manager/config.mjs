@@ -16,6 +16,8 @@ export const DEFAULT_HOST = '127.0.0.1';
 export const PACKAGE_FILE = fileURLToPath(new URL('../../package.json', import.meta.url));
 const packageJson = JSON.parse(fs.readFileSync(PACKAGE_FILE, 'utf8'));
 export const VERSION = packageJson.version;
+/** The commit a release was built from, which the release stamps; null in any other build. */
+export const COMMIT = packageJson.agentGuild?.commit ?? null;
 export const PACKAGE_NAME = packageJson.name;
 
 /** Per-user data directory. Override with AGENT_GUILD_HOME (used by tests). */

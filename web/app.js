@@ -2349,11 +2349,29 @@ function renderReportingSetup(card, provider) {
   const on = provider.reportingEnabled;
   const busy = reportingBusy.get(provider.id);
   const button = row.querySelector('.reporting-toggle');
-  row.querySelector('.reporting-text').textContent = busy ? `Turning ${busy}…` : note || `${words.what} ${on ? 'on' : 'off'}`;
+  row.querySelector('.reporting-text').textContent = busy === 'update' ? 'Updating the Agent Guild plugin…' : busy ? `Turning ${busy}…` : note || `${words.what} ${on ? 'on' : 'off'}`;
   button.hidden = Boolean(note) && provider.reporting !== 'hermes';
   button.disabled = Boolean(busy);
   button.textContent = on ? 'Turn off' : 'Turn on';
   button.title = on ? words.off(provider) : words.on(provider);
+  const update = row.querySelector('.reporting-update');
+  update.hidden = !provider.reportingUpdate;
+  update.disabled = Boolean(busy);
+  update.title = `Install the Agent Guild plugin of this version in ${provider.tool}; until it is installed the one there keeps reporting`;
+  update.onclick = async () => {
+    reportingBusy.set(provider.id, 'update');
+    repaintReporting(provider.id);
+    try {
+      await api('POST', `/providers/${provider.id}/reporting`, { update: true });
+      toast(`The Agent Guild plugin is updated for ${provider.tool}.`);
+    } catch (err) {
+      if (err instanceof AuthError) return showAuth(err.message);
+      toast(err.message, 10000);
+    } finally {
+      reportingBusy.delete(provider.id);
+      repaintReporting(provider.id);
+    }
+  };
   button.onclick = async () => {
     reportingBusy.set(provider.id, on ? 'off' : 'on');
     repaintReporting(provider.id);

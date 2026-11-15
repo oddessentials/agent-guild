@@ -611,8 +611,11 @@ function stopReaders(readers) {
 /** A deletion or replacement another process blocks fails with EPERM, or EBUSY from Node 22's rmSync. */
 const blocked = (err) => ['EPERM', 'EBUSY'].includes(err.code);
 
+/** The plugin commit the Hermes setup tests install, as a release stamps it. */
+const PLUGIN_COMMIT = '0123456789abcdef0123456789abcdef01234567';
+
 /** With `relative`, each card's HERMES_HOME is relative and the manager runs in `root`, where it resolves. */
-function hermesSetup(t, cards, { relative = false } = {}) {
+function hermesSetup(t, cards, { relative = false, pluginCommit = PLUGIN_COMMIT } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-guild-hermes-setup-'));
   const before = process.cwd();
   if (relative) process.chdir(root);
@@ -638,7 +641,7 @@ function hermesSetup(t, cards, { relative = false } = {}) {
   }) }));
   const registry = new ProviderRegistry({ userFile, env, platform: process.platform, checkUpdates: false, accountsDir: path.join(root, 'accounts') });
   const tokens = new HermesTokens(path.join(root, 'hermes-tokens'));
-  const hooks = new SessionHooks({ registry, dir: path.join(root, 'reporting'), version: '1', hermesTokens: tokens, getApiUrl: () => env.TEST_API_URL ?? 'http://127.0.0.1:47821' });
+  const hooks = new SessionHooks({ registry, dir: path.join(root, 'reporting'), version: '1', hermesTokens: tokens, hermesPluginCommit: pluginCommit, getApiUrl: () => env.TEST_API_URL ?? 'http://127.0.0.1:47821' });
   const home = (id) => registry.accountsFor(registry.get(id))[0];
   const token = (id) => tokens.get(home(id).home);
   const homes = () => (fs.existsSync(env.FAKE_HERMES_HOMES) ? fs.readFileSync(env.FAKE_HERMES_HOMES, 'utf8').trim().split('\n').map((line) => JSON.parse(line)) : []);
@@ -1085,4 +1088,94 @@ test('a failed Hermes setup never revokes the token that a request for the same 
   assert.equal(fs.readFileSync(tokens.file(shared), 'utf8').split('\n')[0], token);
   assert.equal(hooks.enabled(twin), true);
   assert.equal(new HermesTokens(tokens.dir).account(token), shared, 'also after a restart');
+});
+
+const NEXT_COMMIT = 'fedcba9876543210fedcba9876543210fedcba98';
+/** The plugin each profile's Hermes records, as `plugins list --json` gives it. */
+const recorded = (registry, provider) => registry.accountsFor(provider).map((a) => {
+  try { return [a.id, JSON.parse(fs.readFileSync(path.join(a.dir, 'fake-plugins.json'), 'utf8'))[0]]; } catch { return [a.id, null]; }
+});
+const installs = (log) => fs.readFileSync(log, 'utf8').trim().split('\n').map((line) => JSON.parse(line)).filter((argv) => argv[2] === 'plugins' && argv[3] === 'install');
+
+test('turning on Hermes reporting installs the plugin at the commit this Agent Guild was released from, and nothing is left to update', { timeout: 30000 }, async (t) => {
+  const { registry, hooks, log } = hermesSetup(t, { hermes: 'home' });
+  const hermes = registry.get('hermes');
+  assert.equal(await hooks.setEnabled(hermes, true), true);
+  assert.deepEqual(installs(log), [['-p', 'default', 'plugins', 'install', 'oddessentials/agent-guild/plugins/hermes/agent-guild', '--ref', PLUGIN_COMMIT, '--enable']]);
+  assert.deepEqual(recorded(registry, hermes), [['default', { name: 'agent-guild', status: 'enabled', source: `git pinned@${PLUGIN_COMMIT.slice(0, 8)}` }]]);
+  assert.equal(hooks.updatable(hermes), false);
+  assert.equal(hooks.note(hermes), null);
+});
+
+test('a Hermes plugin of another commit keeps reporting and offers Update plugin; a failed update keeps it, and an update changes only the profiles that report', { timeout: 60000 }, async (t) => {
+  const { registry, tokens, env, log, root } = hermesSetup(t, { hermes: 'home' });
+  makeHermesHome(registry.accountsFor(registry.get('hermes'))[0].dir, [['work', 'config.yaml']]);
+  registry.reload();
+  const hermes = registry.get('hermes');
+  const before = new SessionHooks({ registry, dir: path.join(root, 'reporting'), version: '1', hermesTokens: tokens, hermesPluginCommit: PLUGIN_COMMIT, getApiUrl: () => 'http://127.0.0.1:47821' });
+  assert.equal(await before.setEnabled(hermes, true), true);
+  const [base, work] = registry.accountsFor(hermes);
+  const kept = tokens.get(base.home);
+
+  // The next Agent Guild, released from another commit.
+  const hooks = new SessionHooks({ registry, dir: path.join(root, 'reporting'), version: '2', hermesTokens: tokens, hermesPluginCommit: NEXT_COMMIT, getApiUrl: () => 'http://127.0.0.1:47821' });
+  t.after(() => hooks.close());
+  await hooks._readHermes(hermes);
+  assert.equal(hooks.enabled(hermes), true, 'the old plugin still reports');
+  assert.equal(hooks.updatable(hermes), true);
+  assert.equal(hooks.note(hermes), 'Agent reporting is on. The Agent Guild plugin of Default, work is not the one this Agent Guild installs; it keeps reporting until you update it.');
+  assert.equal(installs(log).length, 2, 'starting changes no plugin');
+
+  // Reporting turned off for work by hand in Hermes: its plugin, of the old commit too, stays off.
+  fs.writeFileSync(path.join(work.dir, 'fake-plugins.json'), JSON.stringify([{ name: 'agent-guild', status: 'disabled', source: `git pinned@${PLUGIN_COMMIT.slice(0, 8)}` }]));
+  await hooks._readHermes(hermes);
+  assert.equal(hooks.updatable(hermes), true);
+
+  env.FAKE_HERMES_FAIL = 'plugins install';
+  await assert.rejects(hooks.update(hermes), (err) => {
+    assert.equal(err.message, 'The Default profile was not updated: Hermes Agent could not update the Agent Guild plugin: it exited with code 1. It keeps reporting with the plugin it had.');
+    return true;
+  });
+  delete env.FAKE_HERMES_FAIL;
+  assert.equal(recorded(registry, hermes)[0][1].source, `git pinned@${PLUGIN_COMMIT.slice(0, 8)}`, 'Hermes kept the plugin it had');
+  assert.equal(hooks.enabled(hermes), true);
+  assert.equal(tokens.get(base.home), kept, 'and its token');
+  assert.equal(hooks.updatable(hermes), true);
+
+  env.FAKE_HERMES_UNPINNED = '1';
+  await assert.rejects(hooks.update(hermes), /does not record the Agent Guild plugin at commit fedcba987654 as on\. It keeps reporting\.$/);
+  delete env.FAKE_HERMES_UNPINNED;
+  assert.equal(hooks.updatable(hermes), true, 'an update Hermes does not record is not taken as done');
+
+  assert.equal(await hooks.update(hermes), true);
+  assert.deepEqual(installs(log).slice(-1), [['-p', 'default', 'plugins', 'install', 'oddessentials/agent-guild/plugins/hermes/agent-guild', '--ref', NEXT_COMMIT, '--force', '--enable']]);
+  assert.deepEqual(recorded(registry, hermes).map(([id, p]) => [id, p.status, p.source]),
+    [['default', 'enabled', `git pinned@${NEXT_COMMIT.slice(0, 8)}`], ['work', 'disabled', `git pinned@${PLUGIN_COMMIT.slice(0, 8)}`]], 'the profile that does not report is left alone');
+  assert.equal(tokens.get(base.home), kept, 'updating keeps the token');
+  assert.equal(hooks.updatable(hermes), false);
+
+  assert.equal(await hooks.setEnabled(hermes, true), true);
+  assert.deepEqual(installs(log).slice(-1), [['-p', 'work', 'plugins', 'install', 'oddessentials/agent-guild/plugins/hermes/agent-guild', '--ref', NEXT_COMMIT, '--force', '--enable']], 'turning a profile on installs this commit over the old one');
+  assert.equal(hooks.note(hermes), null);
+});
+
+test('a build that names no Hermes plugin commit installs none and says so, and still turns on a plugin Hermes already has', { timeout: 30000 }, async (t) => {
+  const { registry, hooks, tokens, log, home } = hermesSetup(t, { hermes: 'home' }, { pluginCommit: null });
+  const hermes = registry.get('hermes');
+  await hooks._readHermes(hermes);
+  assert.equal(hooks.note(hermes), 'Agent reporting is off: this build of Agent Guild names no commit of its Hermes plugin to install. Set AGENT_GUILD_HERMES_PLUGIN_COMMIT to one to install that plugin.');
+  await assert.rejects(hooks.setEnabled(hermes, true), (err) => {
+    assert.match(err.message, /^The Default profile failed: This build of Agent Guild names no commit of its Hermes plugin to install\./);
+    assert.equal(err.code, 'reporting_unavailable');
+    return true;
+  });
+  assert.equal(fs.existsSync(log) ? installs(log).length : 0, 0, 'nothing is installed from GitHub');
+  assert.equal(tokens.get(home('hermes').home), null);
+  await assert.rejects(hooks.update(hermes), { code: 'reporting_unavailable' });
+
+  fs.writeFileSync(path.join(home('hermes').dir, 'fake-plugins.json'), JSON.stringify([{ name: 'agent-guild', status: 'disabled', source: 'git pinned@00000000' }]));
+  assert.equal(await hooks.setEnabled(hermes, true), true, 'the plugin there is turned on');
+  assert.equal(installs(log).length, 0);
+  assert.equal(hooks.updatable(hermes), false);
+  assert.equal(hooks.note(hermes), null);
 });

@@ -117,6 +117,13 @@ test('a package with the listed files, the locked dependencies and an executable
   assert.deepEqual(checkPackage({ entries: goodPackage(), lock }), []);
 });
 
+test('a release package names the commit it was built from, whose Hermes plugin it installs', () => {
+  const commit = '0123456789abcdef0123456789abcdef01234567';
+  assert.deepEqual(checkPackage({ entries: goodPackage({ manifest: { agentGuild: { commit } } }), lock, version: '1.2.3', commit }), []);
+  assert.deepEqual(checkPackage({ entries: goodPackage(), lock, version: '1.2.3', commit }), [`the package names commit none, not ${commit}`]);
+  assert.deepEqual(checkPackage({ entries: goodPackage({ manifest: { agentGuild: { commit: 'f'.repeat(40) } } }), lock, version: '1.2.3', commit }), [`the package names commit ${'f'.repeat(40)}, not ${commit}`]);
+});
+
 test('the package check names every way a tarball can be wrong', () => {
   const problems = (options, version = '1.2.3') => checkPackage({ entries: goodPackage(options), lock, version });
 

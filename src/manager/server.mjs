@@ -560,6 +560,14 @@ export function createManagerServer({
       const provider = registry.get(reportingMatch[1]);
       if (!provider) throw new HttpError(404, `unknown provider "${reportingMatch[1]}"`, 'unknown_provider');
       const body = await readJsonBody(req);
+      if (body.update === true) {
+        try {
+          await manager.sessionHooks.update(provider);
+        } finally {
+          registry.emit('updated');
+        }
+        return sendJson(res, 200, { provider: registry.describe(provider) });
+      }
       if (typeof body.enabled !== 'boolean') throw new HttpError(400, 'enabled must be true or false', 'bad_request');
       const muted = hermes && provider.reporting === 'hermes' && !body.enabled ? registry.accountsFor(provider).map((account) => account.home) : [];
       for (const home of muted) hermes.live.mute(home);

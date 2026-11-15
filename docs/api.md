@@ -159,7 +159,9 @@ leaves the multiplexer's own session running, and
 For a tool whose agent or model reporting has to be turned on,
 `reportingEnabled` says whether it is, and `reportingNote` says why that switch
 cannot be used, or for Hermes Agent why reporting is off until it is turned on
-again, or is null.
+again, or is null. `reportingUpdate` is true for Hermes Agent while a profile
+that reports has an Agent Guild plugin of another commit than the one this
+Agent Guild installs; that plugin keeps reporting until it is updated.
 
 `mcp` is null unless the tool is installed and Agent Guild can add its own MCP
 server (`agent-guild mcp`, see [mcp.md](mcp.md)) to the tool's settings:
@@ -670,7 +672,7 @@ All paths are under `/api/v1`.
 | POST | `/providers/:id/accounts` | `{ label, revision }` | `201 { account, dir, providers, revision }`: adds an account to `providers.json`. Its id is made from `label` and does not change. |
 | PATCH | `/providers/:id/accounts/:account` | `{ label, revision }` | `{ account, dir, providers, revision }`: renames an account, including `default`. |
 | DELETE | `/providers/:id/accounts/:account?revision=` | | `{ account, dir, providers, revision }`: removes an account from `providers.json`. Its home folder, `dir`, stays on disk. 409 `default_account` for `default`; 409 `account_in_use` while a running session uses it. |
-| POST | `/providers/:id/reporting` | `{ enabled }` | `{ provider }`: turns agent or model reporting on or off for a tool that has `reportingEnabled`. |
+| POST | `/providers/:id/reporting` | `{ enabled }` or `{ update: true }` | `{ provider }`: turns agent or model reporting on or off for a tool that has `reportingEnabled`. `{ update: true }` installs this Agent Guild's Hermes plugin in every profile that reports with another commit, and no other; a profile whose update fails keeps the plugin it had, and the error says so. 400 `not_applicable` for a tool other than Hermes Agent; 409 `reporting_unavailable` when this build names no plugin commit; 502 `reporting_setup_failed` when Hermes fails or does not record the new commit. |
 | POST | `/providers/:id/mcp` | `{ account, action, expect }` | `{ provider, result }`: changes Agent Guild's MCP server in one account's settings. `action` is `on` (add it, or turn it on in the tool), `off` (remove Agent Guild's entry, or turn off one that comes from another tool's settings) or `replace` (put Agent Guild's own entry in place of the one there). `expect` is the account's `fingerprint`: the account is read again first, and nothing changes unless the entry is still that one. `result` is `{ outcome, state, detail? }`, `outcome` `changed`, `unchanged` or `failed`. 400 `not_applicable` for a tool without `mcp`; 404 `unknown_account`; 409 `provider_unavailable` when it is not installed, `busy` while a change for that tool is running, `changed` when the entry is no longer `expect`, `unreadable` when the settings cannot be read, `conflict` for `on` or `off` on another server of that name, `needs_replace` for `on` on a Codex CLI entry Agent Guild did not add. |
 | POST | `/providers/:id/install` | `{ force? }` | `201 { session }`: a session that installs or updates the tool. 409 `provider_in_use` (with `running`, the session count) while the provider's sessions are running; retry with `force: true` after the user confirms. |
 | POST | `/providers/:id/uninstall` | `{ path, force? }` | `201 { session }`: a session that removes the copy at `path`, one of the provider's `installs`. `force` as for `install`. |

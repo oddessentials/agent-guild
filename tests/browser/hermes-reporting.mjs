@@ -22,7 +22,7 @@ const instrumentation = `<script>
     const grok = body.providers.find((p) => p.id === 'xai');
     body.providers.push({
       ...grok, id: 'hermes', vendor: 'Nous Research', tool: 'Hermes Agent', command: 'hermes', monogram: 'H', iconUrl: null,
-      reporting: 'hermes', reportingEnabled: hermes.enabled, reportingNote: hermes.note ?? null, mcp: null,
+      reporting: 'hermes', reportingEnabled: hermes.enabled, reportingNote: hermes.note ?? null, reportingUpdate: hermes.update ?? false, mcp: null,
       memorySource: null, instructionsSource: null, historySource: null, usageSource: null, accountsEditable: false,
       accounts: [{ id: 'default', label: 'Default', live: hermes.live.default }, { id: 'work', label: 'work', live: hermes.live.work }],
     });
@@ -36,6 +36,7 @@ const instrumentation = `<script>
     const method = ((init && init.method) || 'GET').toUpperCase();
     if (url.pathname === '/api/v1/providers' && method === 'GET') return json(await withHermes(await demoFetch(input, init)));
     if (url.pathname === '/api/v1/providers/hermes/reporting' && method === 'POST') {
+      hermes.asked = JSON.parse(init.body);
       return new Promise((resolve) => { hermes.held = resolve; }).then(({ status, body }) => json(body, status));
     }
     return demoFetch(input, init);
@@ -103,6 +104,30 @@ const checks = await withPage({ name: 'hermes-reporting', instrumentation }, asy
   assert.deepEqual(await evaluate(`[...document.querySelectorAll('${card} .reporting-live-label:not(.reporting-live-head)')].map((el) => el.textContent)`),
     ['Default profile: 1 working, 0 waiting', 'work profile: 0 working, 1 waiting']);
   pass('with reporting on, every reporting profile is listed by name');
+
+  assert.equal(await shown(`${card} .reporting-update`), false, 'nothing to update');
+  const OUTDATED = 'Agent reporting is on. The Agent Guild plugin of Default, work is not the one this Agent Guild installs; it keeps reporting until you update it.';
+  await evaluate(`(async () => { window.__hermes.update = true; window.__hermes.note = ${JSON.stringify(OUTDATED)}; await window.__pushProviders(); })()`);
+  await until('Update plugin offered', () => shown(`${card} .reporting-update`));
+  assert.equal(await read(`${card} .reporting-text`), OUTDATED);
+  assert.equal(await read(`${card} .reporting-toggle`), 'Turn off', 'the outdated plugin still reports');
+  assert.equal(await evaluate(`document.querySelectorAll('${card} .reporting-live-profile').length`), 2, 'and its activity still shows');
+  await evaluate(`document.querySelector('${card} .reporting-update').click()`);
+  await until('the update request held', () => evaluate('Boolean(window.__hermes.held)'));
+  assert.deepEqual(await evaluate('window.__hermes.asked'), { update: true });
+  assert.equal(await read(`${card} .reporting-text`), 'Updating the Agent Guild plugin…');
+  assert.equal(await evaluate(`document.querySelector('${card} .reporting-toggle').disabled`), true);
+  await evaluate(`(async () => {
+    window.__hermes.update = false;
+    window.__hermes.note = null;
+    await window.__pushProviders();
+    const answer = window.__hermes.held; window.__hermes.held = null;
+    answer({ status: 200, body: { provider: null } });
+  })()`);
+  await until('the update toast', async () => (await read('#toast')) === 'The Agent Guild plugin is updated for Hermes Agent.');
+  await until('Update plugin gone', async () => !(await shown(`${card} .reporting-update`)));
+  assert.equal(await read(`${card} .reporting-text`), 'Agent reporting on');
+  pass('a plugin of another version keeps reporting and offers Update plugin, which updates it');
 
   assert.doesNotMatch(await evaluate(`document.querySelector('${card} .reporting-toggle').title`), /token/i);
   await evaluate(`document.querySelector('${card} .reporting-toggle').click()`);

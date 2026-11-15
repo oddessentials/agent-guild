@@ -316,6 +316,7 @@ export class ProviderRegistry extends EventEmitter {
     this._npmRegistry = null;
     this.reportingEnabled = null;
     this.reportingNote = null;
+    this.reportingUpdate = null;
     this.liveFor = null;
     this.mcpState = null;
     this.multiplexers = new MultiplexerRegistry(this, multiplexerOptions);
@@ -903,6 +904,7 @@ export class ProviderRegistry extends EventEmitter {
       reporting: provider.reporting,
       reportingEnabled: this.reportingEnabled?.(provider) ?? null,
       reportingNote: this.reportingNote?.(provider) ?? null,
+      reportingUpdate: this.reportingUpdate?.(provider) ?? false,
       mcp: this.mcpState?.(provider) ?? null,
       accounts: provider.accounts.map((account) => ({ id: account.id, label: account.label, live: this.liveFor?.(provider, account) ?? null })),
       accountsEditable: Boolean(provider.homeVar) && !provider.profiles,

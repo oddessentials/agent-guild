@@ -108,7 +108,7 @@ export function bundledPackages(files) {
   return bundled;
 }
 
-export function checkPackage({ entries, lock, version = null, upstream = null }) {
+export function checkPackage({ entries, lock, version = null, commit = null, upstream = null }) {
   const problems = [];
   for (const entry of entries) {
     if (!entry.path.startsWith('package/')) problems.push(`${entry.path} is outside package/`);
@@ -136,6 +136,8 @@ export function checkPackage({ entries, lock, version = null, upstream = null })
     if (manifest.name !== name) problems.push(`the package is named ${manifest.name}, not ${name}`);
     if (manifest.private) problems.push('the package is marked private');
     if (version !== null && manifest.version !== version) problems.push(`the package is version ${manifest.version}, not ${version}`);
+    // The commit a release was built from: the Hermes plugin it installs is that commit's.
+    if (commit !== null && manifest.agentGuild?.commit !== commit) problems.push(`the package names commit ${manifest.agentGuild?.commit ?? 'none'}, not ${commit}`);
   }
 
   const expected = new Map(Object.entries(lock.packages).filter(([key, pkg]) => key && !pkg.dev).map(([key, pkg]) => [key, pkg.version]));
@@ -179,9 +181,11 @@ export function checkPackage({ entries, lock, version = null, upstream = null })
 function main(argv) {
   let tarball = null;
   let version = null;
+  let commit = null;
   let upstreamDir = null;
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--version') version = argv[++i] ?? null;
+    else if (argv[i] === '--commit') commit = argv[++i] ?? null;
     else if (argv[i] === '--upstream') upstreamDir = argv[++i] ?? null;
     else if (argv[i] === '--windows-modules') {
       console.log(WINDOWS_MODULES.join('\n'));
@@ -189,7 +193,7 @@ function main(argv) {
     } else tarball = argv[i];
   }
   if (!tarball) {
-    console.error('Usage: node tests/package/check-tarball.mjs <tarball> [--version X.Y.Z] [--upstream <dir with node-pty\'s unsigned modules>] | --windows-modules');
+    console.error('Usage: node tests/package/check-tarball.mjs <tarball> [--version X.Y.Z] [--commit <sha>] [--upstream <dir with node-pty\'s unsigned modules>] | --windows-modules');
     return 2;
   }
   const here = path.dirname(fileURLToPath(import.meta.url));
@@ -199,7 +203,7 @@ function main(argv) {
   const upstream = upstreamDir && new Map(WINDOWS_MODULES
     .filter((rel) => fs.existsSync(path.join(upstreamDir, rel)))
     .map((rel) => [rel, fs.readFileSync(path.join(upstreamDir, rel))]));
-  const problems = checkPackage({ entries, lock, version, upstream });
+  const problems = checkPackage({ entries, lock, version, commit, upstream });
   const mb = (bytes) => (bytes / 1024 / 1024).toFixed(1);
   if (packed > MAX_PACKED_BYTES) problems.push(`the package is ${mb(packed)} MB packed; the limit is ${mb(MAX_PACKED_BYTES)} MB`);
   for (const problem of problems) console.error(`not ok  ${problem}`);

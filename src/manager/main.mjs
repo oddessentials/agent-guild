@@ -26,7 +26,7 @@ import { RemoteAccess, loadRemoteAccess } from './remote-access.mjs';
 import { SelfUpdate } from './self-update.mjs';
 import { addRuntimePaths, resolveBaseEnv, pathReader } from './shell-env.mjs';
 import { nativeReporter, writeReportShims } from './report-shims.mjs';
-import { SessionHooks } from './session-hooks.mjs';
+import { HERMES_PLUGIN_COMMIT_VAR, SessionHooks } from './session-hooks.mjs';
 import { HermesLive, HermesTokens } from './hermes.mjs';
 import { McpConnect, ownServer } from './mcp-connect.mjs';
 import { launcherPath, nextManager } from './launch.mjs';
@@ -37,6 +37,7 @@ import {
   PACKAGE_FILE,
   PACKAGE_NAME,
   VERSION,
+  COMMIT,
   dataDir,
   ensureDataDir,
   loadOrCreateToken,
@@ -56,7 +57,7 @@ const VERSION_REFRESH_MS = 60 * 60 * 1000;
  * `version`, `packageFile`, `github` (GitHub's URLs and client id), `autostart`, `boot` and `execPath` (the Node.js whose folders join PATH) stand in for the real ones in tests.
  * `supervised`: started by the Linux boot service, so systemd starts the next manager after a restart.
  */
-export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, sessionDefaults, version = VERSION, packageFile = PACKAGE_FILE, github: githubOptions = {}, remoteAccess: remoteOptions = {}, autostart = null, boot, supervised = false, execPath = process.execPath } = {}) {
+export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, sessionDefaults, version = VERSION, packageFile = PACKAGE_FILE, hermesPluginCommit = COMMIT || process.env[HERMES_PLUGIN_COMMIT_VAR] || null, github: githubOptions = {}, remoteAccess: remoteOptions = {}, autostart = null, boot, supervised = false, execPath = process.execPath } = {}) {
   // Validate before creating files, processes or timers, so a typo, or a
   // system node-pty cannot run on, fails startup cleanly.
   loadPty();
@@ -90,9 +91,10 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
   const github = new GitHub({ dir: paths.github, registry, ...githubOptions });
   const hermesTokens = new HermesTokens(paths.hermesTokens);
   const hermesLive = new HermesLive();
-  const sessionHooks = new SessionHooks({ registry, dir: paths.reporting, version, hermesTokens, getApiUrl: () => api.url });
+  const sessionHooks = new SessionHooks({ registry, dir: paths.reporting, version, hermesTokens, hermesPluginCommit, getApiUrl: () => api.url });
   registry.reportingEnabled = (provider) => sessionHooks.enabled(provider);
   registry.reportingNote = (provider) => sessionHooks.note(provider);
+  registry.reportingUpdate = (provider) => sessionHooks.updatable(provider);
   registry.liveFor = (provider, account) => (provider.reporting === 'hermes' && account.home ? hermesLive.live(account.home) : null);
   const pruneHermesTokens = () => {
     const homes = registry.providers.filter((p) => p.reporting === 'hermes').flatMap((p) => p.accounts.map((a) => a.home).filter(Boolean));

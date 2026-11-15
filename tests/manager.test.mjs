@@ -1670,6 +1670,8 @@ test('Antigravity CLI reports its model and conversation once its plugin is turn
   assert.equal(off.body.provider.reportingEnabled, false);
   assert.ok(!fs.existsSync(installed));
   assert.equal((await call('POST', '/providers/anthropic/reporting', { enabled: true })).status, 400, 'nothing to turn on where hooks come with each session');
+  const update = await call('POST', '/providers/google/reporting', { update: true });
+  assert.deepEqual([update.status, update.body.error.code], [400, 'not_applicable'], 'only Hermes Agent has a plugin to update');
 });
 
 test('the Antigravity hook answers with an empty object and reports only into an Antigravity session', async () => {
