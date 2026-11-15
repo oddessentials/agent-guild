@@ -752,10 +752,14 @@ export class SessionHooks {
           if (plugin.status === 'enabled' && !plugin.current) await this._hermesInstall(provider, account, true);
         });
       } catch (err) {
+        // What Hermes has now is said only as a fresh query answers it; a cached state is never taken for it.
+        let unread = null;
+        const now = await this._hermesPlugin(provider, account).catch((cause) => { unread = cause; return null; });
         await this._readHermes(provider).catch(() => {});
-        const now = this.hermesPlugins.get(account.home);
-        const still = this._hermesReporting(provider).find((a) => a.id === account.id)?.on;
-        const after = !still ? 'Its reporting is off.' : now?.source === had ? 'It keeps reporting with the plugin it had.' : 'It keeps reporting.';
+        const after = !now
+          ? `Agent Guild could not check which plugin Hermes has now, so whether it still has the one it had is unknown: ${unread.message.replace(/\.$/, '')}.`
+          : now.status === 'missing' ? 'Hermes no longer has the Agent Guild plugin installed.'
+            : `Hermes ${now.source === had ? 'still has the plugin it had' : 'now has another plugin'}, ${now.source ?? 'from no recorded source'}, and it is ${now.status === 'enabled' ? 'on' : 'off'}.`;
         err.message = `The ${account.label} profile was not updated: ${err.message.replace(/\.$/, '')}. ${after}`;
         throw err;
       }

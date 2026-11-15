@@ -1134,7 +1134,7 @@ test('a Hermes plugin of another commit keeps reporting and offers Update plugin
 
   env.FAKE_HERMES_FAIL = 'plugins install';
   await assert.rejects(hooks.update(hermes), (err) => {
-    assert.equal(err.message, 'The Default profile was not updated: Hermes Agent could not update the Agent Guild plugin: it exited with code 1. It keeps reporting with the plugin it had.');
+    assert.equal(err.message, `The Default profile was not updated: Hermes Agent could not update the Agent Guild plugin: it exited with code 1. Hermes still has the plugin it had, git pinned@${PLUGIN_COMMIT.slice(0, 8)}, and it is on.`);
     return true;
   });
   delete env.FAKE_HERMES_FAIL;
@@ -1144,7 +1144,7 @@ test('a Hermes plugin of another commit keeps reporting and offers Update plugin
   assert.equal(hooks.updatable(hermes), true);
 
   env.FAKE_HERMES_UNPINNED = '1';
-  await assert.rejects(hooks.update(hermes), /does not record the Agent Guild plugin at commit fedcba987654 as on\. It keeps reporting\.$/);
+  await assert.rejects(hooks.update(hermes), /does not record the Agent Guild plugin at commit fedcba987654 as on\. Hermes now has another plugin, oddessentials\/agent-guild\/plugins\/hermes\/agent-guild, and it is on\.$/);
   delete env.FAKE_HERMES_UNPINNED;
   assert.equal(hooks.updatable(hermes), true, 'an update Hermes does not record is not taken as done');
 
@@ -1370,4 +1370,34 @@ test('turning off Hermes reporting revokes every token even when Hermes is no lo
     return true;
   });
   assert.deepEqual(given.map((token) => tokens.account(token)), [null, null], 'both tokens are revoked');
+});
+
+test('when a Hermes plugin update fails and Hermes then cannot be asked what it has, the error says that is unknown and claims no plugin survived', { timeout: 30000 }, async (t) => {
+  const { registry, tokens, root } = hermesSetup(t, { hermes: 'home' });
+  const hermes = registry.get('hermes');
+  const before = new SessionHooks({ registry, dir: path.join(root, 'reporting'), version: '1', hermesTokens: tokens, hermesPluginCommit: PLUGIN_COMMIT, getApiUrl: () => 'http://127.0.0.1:47821' });
+  assert.equal(await before.setEnabled(hermes, true), true);
+  const hooks = new SessionHooks({ registry, dir: path.join(root, 'reporting'), version: '2', hermesTokens: tokens, hermesPluginCommit: NEXT_COMMIT, getApiUrl: () => 'http://127.0.0.1:47821' });
+  t.after(() => hooks.close());
+  await hooks._readHermes(hermes);
+  assert.equal(hooks.updatable(hermes), true);
+
+  // The install fails, and from then on Hermes cannot list its plugins either, as when its own cleanup leaves it stuck.
+  const run = hooks._hermesRun.bind(hooks);
+  let installed = false;
+  hooks._hermesRun = async (provider, account, args, what) => {
+    if (args[0] === 'plugins' && args[1] === 'install') {
+      installed = true;
+      throw Object.assign(new Error('Hermes Agent could not update the Agent Guild plugin: open() missing required argument \'flags\' (pos 2)'), { status: 502, code: 'reporting_setup_failed' });
+    }
+    if (installed && args[0] === 'plugins' && args[1] === 'list') {
+      throw Object.assign(new Error('Hermes Agent could not list its plugins: cannot recover dependency publication'), { status: 502, code: 'reporting_setup_failed' });
+    }
+    return run(provider, account, args, what);
+  };
+  await assert.rejects(hooks.update(hermes), (err) => {
+    assert.equal(err.message, "The Default profile was not updated: Hermes Agent could not update the Agent Guild plugin: open() missing required argument 'flags' (pos 2). Agent Guild could not check which plugin Hermes has now, so whether it still has the one it had is unknown: Hermes Agent could not list its plugins: cannot recover dependency publication.");
+    assert.doesNotMatch(err.message, /still has the plugin it had|keeps reporting/);
+    return true;
+  });
 });
