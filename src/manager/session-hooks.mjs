@@ -540,9 +540,10 @@ export class SessionHooks {
       }
       const held = accounts.filter((account) => account.held);
       if (held.length) {
-        return `Agent reporting is not fully off: the report token of ${held.map((a) => a.label).join(', ')} is still accepted, because Agent Guild could not revoke it. Turn it off to try again.`;
+        return `Agent reporting is not fully off: the report token of ${held.map((a) => a.label).join(', ')} is still accepted while its Agent Guild plugin is off. Turn it off to revoke it.`;
       }
-      if (on.length && on.length < accounts.length) {
+      // A profile still being turned on or off is not yet a partial result.
+      if (!accounts.some((account) => account.changing) && on.length && on.length < accounts.length) {
         return `Agent reporting is on for ${on.map((a) => a.label).join(', ')}, not for ${accounts.filter((a) => !a.on).map((a) => a.label).join(', ')}. Turn it off, then on, to try again.`;
       }
       const stale = this.hermesTokens && accounts.some((account) => this.hermesTokens.stale.has(account.home));
@@ -708,7 +709,7 @@ export class SessionHooks {
     return { status: entry.status === 'enabled' ? 'enabled' : 'disabled', current, source: entry.source ?? null };
   }
 
-  /** Installs the plugin at this Agent Guild's commit, over the one there when `force`, and checks Hermes recorded that commit. */
+  /** Installs the plugin at this Agent Guild's commit, over the one there when `force`, checks Hermes recorded that commit, and returns what Hermes has. */
   async _hermesInstall(provider, account, force) {
     const commit = this.hermesPluginCommit;
     await this._hermesRun(provider, account, ['plugins', 'install', HERMES_PLUGIN_SOURCE, '--ref', commit, ...(force ? ['--force'] : []), '--enable'],
@@ -717,6 +718,7 @@ export class SessionHooks {
     if (plugin.status !== 'enabled' || !plugin.current) {
       throw Object.assign(new Error(`${provider.tool} reported success, but it does not record the Agent Guild plugin at commit ${commit.slice(0, 12)} as on`), { status: 502, code: 'reporting_setup_failed' });
     }
+    return plugin;
   }
 
   /** Runs one home's reporting change in its setup turn, and makes any read that started before it obsolete. */
@@ -812,13 +814,16 @@ export class SessionHooks {
     return this.registry.accountsFor(provider).map((account) => {
       const plugin = this.hermesPlugins.get(account.home);
       const accepted = Boolean(this.hermesTokens?.get(account.home));
+      // In its setup turn a profile can have an accepted token before its plugin is on, or after it is off: a step, not a result.
+      const changing = Boolean(this.hermesTokens?.setups.has(account.home));
       return {
         ...account,
         plugin: plugin?.status ?? null,
         // Reporting and the plugin's commit are apart: a plugin of another commit that is on still reports.
         on: Boolean(plugin && accepted && plugin.status === 'enabled' && !this.hermesTokens.stale.has(account.home)),
-        // A token still accepted for a plugin that is not on: a revocation that failed, so reporting is not off.
-        held: Boolean(plugin && accepted && plugin.status !== 'enabled'),
+        // A token still accepted for a plugin that is not on, outside a change: reporting is not off until it is revoked.
+        held: Boolean(plugin && accepted && plugin.status !== 'enabled' && !changing),
+        changing,
         outdated: Boolean(this.hermesPluginCommit && plugin && plugin.status !== 'missing' && !plugin.current),
       };
     });
@@ -838,17 +843,25 @@ export class SessionHooks {
       // A profile that turns on gets this Agent Guild's plugin; one that already reports keeps its own until updated.
       const install = state === 'missing' || (!wasOn && Boolean(this.hermesPluginCommit) && !plugin.current);
       if (install && !this.hermesPluginCommit) throw this._noPluginCommit();
+      let now = null;
       try {
         await this._hermesHomeChecked(provider, account);
         await this.hermesTokens.ensure(account.home, this.getApiUrl()).catch((err) => {
           throw Object.assign(new Error(`Agent Guild could not save its reporting settings (${err.code || err.message})`), { status: 500, code: 'reporting_setup_failed' });
         });
         await this._hermesRun(provider, account, ['config', 'set', HERMES_TOKEN_FILE_VAR, this.hermesTokens.file(account.home)], "save Agent Guild's reporting settings");
-        if (install) await this._hermesInstall(provider, account, state !== 'missing');
+        if (install) now = await this._hermesInstall(provider, account, state !== 'missing');
         else if (state === 'disabled') await this._hermesRun(provider, account, ['plugins', 'enable', HERMES_PLUGIN], 'turn on the Agent Guild plugin');
+        else now = plugin;
       } catch (err) {
         if (!wasOn) await this.hermesTokens.remove(account.home).catch((cause) => console.error(`[hermes] could not revoke the report token of ${account.home}: ${cause.code || cause.message}`));
         throw err;
+      }
+      // What this profile has once it is on, so the card shows it reporting while other profiles are still turning on.
+      now ??= await this._hermesPlugin(provider, account).catch(() => null);
+      if (now && JSON.stringify(this.hermesPlugins.get(account.home)) !== JSON.stringify(now)) {
+        this.hermesPlugins.set(account.home, now);
+        this.registry.emit?.('updated');
       }
       return;
     }

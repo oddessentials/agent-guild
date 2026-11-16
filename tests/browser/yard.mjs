@@ -1,5 +1,7 @@
 import test from 'node:test';
 import { EventEmitter } from 'node:events';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -1020,6 +1022,56 @@ test('a gilded card gets a gold hall and character of its own, and Shell keeps i
     };
   })()`);
   assert.deepEqual(looks,{hallShared:0,hallGilded:true,unitShared:0,unitGilded:true,shellPlain:true});
+  await b.evaluate('__renderer.dispose()');
+  assert.deepEqual(b.errors,[]);
+});
+
+// In-page: a wing's bounds in its character's own space, from its vertices as drawn.
+const WING_BOX=`const wingBox=(unit,wing)=>{unit.updateMatrixWorld(true);const V=unit.position.constructor,lo=[Infinity,Infinity,Infinity],hi=[-Infinity,-Infinity,-Infinity];
+  wing.traverse(n=>{if(!n.isMesh)return;const p=n.geometry.attributes.position;for(let i=0;i<p.count;i++)unit.worldToLocal(new V().fromBufferAttribute(p,i).applyMatrix4(n.matrixWorld)).toArray().forEach((v,k)=>{lo[k]=Math.min(lo[k],v);hi[k]=Math.max(hi[k],v);});});
+  return {min:lo,max:hi,center:new V((lo[0]+hi[0])/2,(lo[1]+hi[1])/2,(lo[2]+hi[2])/2)};};`;
+test('Hermes Agent gets a white and blue hall and character of its own, with wings on its head in every world, and Shell keeps its look',options,async t=>{
+  const {f,b}=await setup(t);
+  const shell=f.providers.find(p=>p.id==='shell'),gold={...shell,id:'terminal-ai-chat',tool:'Terminal AI Chat'},hermes={...shell,id:'hermes',tool:'Hermes Agent'};
+  const base=[...f.data.values()][0];
+  const sessions=[{...base,id:'hermes',provider:hermes,agents:[],shells:[]},{...base,id:'gold',provider:gold,agents:[],shells:[]},{...base,id:'plain',provider:shell,agents:[],shells:[]}];
+  const looks=await b.evaluate(`(async()=>{
+    const {YardRenderer}=await import('/yard/renderer.js');
+    const host=document.createElement('div'),labels=document.createElement('div');
+    host.style.cssText='position:fixed;width:900px;height:700px;top:0;left:0';host.append(labels);document.body.append(host);
+    window.__renderer=new YardRenderer(host,labels,{select(){},open(){}});
+    const materials=root=>{const all=new Set();root.traverse(n=>{if(n.isMesh)for(const m of [n.material].flat())all.add(m);});return [...all];};
+    const plain=m=>m.onBeforeCompile===Object.getPrototypeOf(m).onBeforeCompile;
+    const isWing=m=>/^hermes_(white|trim)$/.test(m.name);
+    ${WING_BOX}
+    const bare=root=>materials(root).filter(m=>!/^(window|magic|officeGlass)$/.test(m.name)&&!isWing(m));
+    const worlds={};
+    for(const world of ['guild','orbital','grove','professional','goblinville','gnomeland']){
+      await __renderer.setWorld(world,'dark');__renderer.update(${q([...f.providers,gold,hermes])},${q(sessions)});
+      while(![...__renderer.units.values()].every(u=>u.loaded))await new Promise(requestAnimationFrame);
+      const unit=__renderer.units.get('hermes').model,shellUnit=__renderer.units.get('plain').model,goldUnit=__renderer.units.get('gold').model;
+      const hall=__renderer.halls.get('hermes').root,shellHall=__renderer.halls.get('shell').root;
+      const worn=[];unit.traverse(n=>{if(n.name==='hermes_wings')worn.push(n);});
+      unit.updateMatrixWorld(true);
+      // In the character's own space, where its sides are left and right.
+      const local=o=>unit.worldToLocal(o.getWorldPosition(new (unit.position.constructor)()));
+      const head=local(unit.getObjectByName('Head')),tips=worn.flatMap(w=>w.children.map(wing=>wingBox(unit,wing).center));
+      worlds[world]={
+        hallPlated:bare(hall).length>0&&bare(hall).every(m=>!plain(m))&&!materials(hall).some(m=>materials(shellHall).includes(m)),
+        unitPlated:bare(unit).every(m=>!plain(m))&&!materials(unit).some(m=>materials(shellUnit).includes(m)),
+        finishOwn:bare(unit)[0].onBeforeCompile!==bare(goldUnit)[0].onBeforeCompile,
+        wings:worn.length===1&&worn[0].parent.name==='Head'&&worn[0].children.length===2,
+        wingsKeepTheirColours:materials(worn[0]).every(plain),
+        // One wing on each side of the head, near it.
+        sides:tips.length===2&&Math.sign(tips[0].x-head.x)!==Math.sign(tips[1].x-head.x)&&tips.every(p=>p.distanceTo(head)<1.5),
+        shellPlain:[...materials(shellHall),...materials(shellUnit)].every(plain)&&!shellUnit.getObjectByName('hermes_wings'),
+      };
+    }
+    return worlds;
+  })()`);
+  const expected={hallPlated:true,unitPlated:true,finishOwn:true,wings:true,wingsKeepTheirColours:true,sides:true,shellPlain:true};
+  assert.deepEqual(looks,Object.fromEntries(Object.keys(looks).map(world=>[world,expected])));
+  assert.equal(Object.keys(looks).length,6);
   await b.evaluate('__renderer.dispose()');
   assert.deepEqual(b.errors,[]);
 });
@@ -2518,5 +2570,80 @@ test('the Vibes Mode button stays on across Yards and reloads, and reduced motio
   assert.deepEqual(await b.evaluate(state),['true',false,'on'],'a reload keeps it');
   await b.click('#yard-vibe');
   assert.deepEqual(await b.evaluate(state),['false',false,'off']);
+  assert.deepEqual(b.errors,[]);
+});
+
+test('a provider whose id names an inherited property, such as constructor, gets the shell look and draws without errors',options,async t=>{
+  const {f,b}=await setup(t);
+  const shell=f.providers.find(p=>p.id==='shell'),odd={...shell,id:'constructor',tool:'Constructor'};
+  const base=[...f.data.values()][0];
+  const looks=await b.evaluate(`(async()=>{
+    const {YardRenderer}=await import('/yard/renderer.js');
+    const host=document.createElement('div'),labels=document.createElement('div');
+    host.style.cssText='position:fixed;width:900px;height:700px;top:0;left:0';host.append(labels);document.body.append(host);
+    window.__renderer=new YardRenderer(host,labels,{select(){},open(){}});
+    await __renderer.setWorld('guild','dark');__renderer.update(${q([...f.providers,odd])},${q([{...base,id:'odd',provider:odd,agents:[],shells:[]}])});
+    while(!__renderer.units.get('odd').loaded)await new Promise(requestAnimationFrame);
+    __renderer.renderer.render(__renderer.scene,__renderer.camera);
+    const materials=root=>{const all=new Set();root.traverse(n=>{if(n.isMesh)for(const m of [n.material].flat())all.add(m);});return [...all];};
+    const plain=m=>m.onBeforeCompile===Object.getPrototypeOf(m).onBeforeCompile;
+    const unit=__renderer.units.get('odd').model,hall=__renderer.halls.get('constructor').root;
+    return {loaded:true,hallPlain:materials(hall).every(plain),unitPlain:materials(unit).every(plain),wings:!!unit.getObjectByName('hermes_wings')};
+  })()`);
+  assert.deepEqual(looks,{loaded:true,hallPlain:true,unitPlain:true,wings:false});
+  await b.evaluate('__renderer.dispose()');
+  assert.deepEqual(b.errors,[]);
+});
+
+test('Hermes Agent wears its wings the same before and after the Yard optimizer quantizes them',{...options,timeout:240000},async t=>{
+  // Runs the real optimizer, unchanged, on a copy of the wings beside a copy of the model it reads.
+  const repo=fileURLToPath(new URL('../../',import.meta.url));
+  const work=await fs.mkdtemp(path.join(repo,'.cache','yard-optimize-'));t.after(()=>fs.rm(work,{recursive:true,force:true}));
+  await fs.mkdir(path.join(work,'scripts'));await fs.mkdir(path.join(work,'web','yard','assets'),{recursive:true});
+  await fs.copyFile(path.join(repo,'scripts','optimize-yard.mjs'),path.join(work,'scripts','optimize-yard.mjs'));
+  await fs.copyFile(path.join(repo,'web','yard','model.mjs'),path.join(work,'web','yard','model.mjs'));
+  const original=await fs.readFile(path.join(repo,'web','yard','assets','hermes_wings.glb'));
+  await fs.writeFile(path.join(work,'web','yard','assets','hermes_wings.glb'),original);
+  await promisify(execFile)(process.execPath,[path.join(work,'scripts','optimize-yard.mjs'),'hermes_wings'],{cwd:repo});
+  const optimized=await fs.readFile(path.join(work,'web','yard','assets','hermes_wings.glb'));
+  // The optimizer did quantize the wings and moved their decoding into the wings' mesh nodes. The
+  // anchors the Yard and the Professional render place come through as they were, with no mesh.
+  const json=glb=>JSON.parse(glb.toString('utf8',20,20+glb.readUInt32LE(12)));
+  assert.ok(json(optimized).extensionsUsed?.includes('KHR_mesh_quantization'));
+  assert.ok(json(optimized).nodes.some(node=>node.mesh!==undefined&&node.scale&&node.scale.some(v=>Math.abs(v-1)>1e-3)));
+  const anchors=glb=>json(glb).nodes.filter(node=>/^wing_(left|right)$/.test(node.name));
+  assert.equal(anchors(original).length,2);
+  assert.deepEqual(anchors(optimized),anchors(original));
+  assert.ok(anchors(optimized).every(node=>node.mesh===undefined&&node.scale===undefined&&node.children?.length===1));
+  const {f,b}=await setup(t);
+  const shell=f.providers.find(p=>p.id==='shell'),hermes={...shell,id:'hermes',tool:'Hermes Agent'};
+  const base=[...f.data.values()][0];
+  const worn=async glb=>b.evaluate(`(async()=>{
+    const T=await import('/yard/vendor/engine.js'),{YardRenderer}=await import('/yard/renderer.js');
+    ${WING_BOX}
+    const host=document.createElement('div'),labels=document.createElement('div');
+    host.style.cssText='position:fixed;width:900px;height:700px;top:0;left:0';host.append(labels);document.body.append(host);
+    const r=new YardRenderer(host,labels,{select(){},open(){}});
+    const bytes=Uint8Array.from(atob(${q(glb.toString('base64'))}),c=>c.charCodeAt(0));
+    r.cache.set('hermes_wings',new T.GLTFLoader().parseAsync(bytes.buffer,''));
+    const out={};
+    for(const world of ['guild','orbital','grove']){
+      await r.setWorld(world,'dark');r.update(${q([...f.providers,hermes])},${q([{...base,id:'hermes',provider:hermes,agents:[],shells:[]}])});
+      while(!r.units.get('hermes').loaded)await new Promise(requestAnimationFrame);
+      const unit=r.units.get('hermes').model,wings=unit.getObjectByName('hermes_wings');
+      out[world]=wings.children.map(wing=>{const {min,max}=wingBox(unit,wing);return {min,max};});
+    }
+    r.dispose();host.remove();
+    return out;
+  })()`);
+  const before=await worn(original),after=await worn(optimized);
+  for(const world of Object.keys(before)){
+    assert.equal(after[world].length,2,world);
+    before[world].forEach((wing,i)=>{
+      const height=wing.max[1]-wing.min[1];
+      assert.ok(height>0.01,`${world} wing ${i} is ${height} tall`);
+      for(const end of ['min','max'])wing[end].forEach((v,k)=>assert.ok(Math.abs(after[world][i][end][k]-v)<2e-3,`${world} wing ${i} ${end}[${k}]: ${v} before, ${after[world][i][end][k]} after`));
+    });
+  }
   assert.deepEqual(b.errors,[]);
 });

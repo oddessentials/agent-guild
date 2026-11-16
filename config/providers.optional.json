@@ -34,7 +34,7 @@
       "homeVar": "HERMES_HOME",
       "profiles": "hermes",
       "resumeArgs": ["--resume", "{id}"],
-      "color": "#8B5CF6",
+      "color": "#0000F2",
       "monogram": "H",
       "install": "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash",
       "docs": "https://hermes-agent.nousresearch.com/docs",

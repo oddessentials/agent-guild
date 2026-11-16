@@ -2,7 +2,14 @@
 export const PROVIDER_ORDER = ['anthropic', 'openai', 'google', 'xai', 'shell', 'docker'];
 // Character model index for a provider; custom providers wear the shell's, as they get its hall.
 export const characterIndex = id => PROVIDER_ORDER.includes(id) ? PROVIDER_ORDER.indexOf(id) : PROVIDER_ORDER.indexOf('shell');
-export const GILDED = ['terminal-ai-chat'];
+// Cards whose hall and character wear the shell's with a finish of their own:
+// gold for Terminal AI Chat, white and blue for Hermes Agent. A winged card's
+// character also wears the wings of Hermes on its head.
+export const PLATED = { 'terminal-ai-chat': 'gold', hermes: 'hermes' };
+export const WINGED = ['hermes'];
+// A provider's finish, or null. Only PLATED's own entries count, so an id such
+// as `constructor` is not mistaken for one and the provider keeps the shell's look.
+export const finishOf = id => Object.hasOwn(PLATED, id) ? PLATED[id] : null;
 // Hall effects, one pooled particle system for every hall: how many
 // particles a second a hall gives off at low and high activity, how long each
 // lives, how fast it rises and drifts (metres a second), how widely it starts
