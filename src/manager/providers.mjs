@@ -23,12 +23,13 @@ import { reconcileHerdrPath } from './multiplexer-paths.mjs';
 import { refreshLaunchers } from './launchers.mjs';
 import { LaunchFlags, normalizeLaunchFlags } from './launch-flags.mjs';
 import { MCP_MODES } from './mcp-connect.mjs';
+import { hermesProfiles } from './hermes.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULTS_FILE = path.resolve(here, '../../config/providers.default.json');
 export const ID_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 const PLATFORM_KEYS = ['win32', 'darwin', 'linux'];
-const REPORTING_MODES = new Set(['claude', 'codex', 'antigravity', 'grok', 'docker']);
+const REPORTING_MODES = new Set(['claude', 'codex', 'antigravity', 'grok', 'docker', 'hermes']);
 const VERSION_TTL_MS = 60 * 60 * 1000;
 const FAILED_PROBE_TTL_MS = 5 * 60 * 1000;
 const PATH_REFRESH_MS = 60 * 1000;
@@ -185,6 +186,7 @@ function normalize(raw, platform, warnings) {
     accountEnv: normalizeEnv(merged.accountEnv),
     hooks: normalizeHooks(merged.hooks),
     accounts: normalizeAccounts(merged.accounts, merged.id, homeVar, warnings),
+    profiles: merged.profiles === 'hermes' ? 'hermes' : null,
     color: String(merged.color || '#64748B'),
     monogram: String(merged.monogram || String(merged.vendor || merged.id).charAt(0)).slice(0, 2),
     icon: merged.icon ? String(merged.icon) : null,
@@ -314,6 +316,8 @@ export class ProviderRegistry extends EventEmitter {
     this._npmRegistry = null;
     this.reportingEnabled = null;
     this.reportingNote = null;
+    this.reportingUpdate = null;
+    this.liveFor = null;
     this.mcpState = null;
     this.multiplexers = new MultiplexerRegistry(this, multiplexerOptions);
     this.multiplexerState = null;
@@ -323,6 +327,12 @@ export class ProviderRegistry extends EventEmitter {
   /** `accountsOnly` keeps what was discovered about each tool, for a change to nothing but its accounts. */
   reload({ accountsOnly = false } = {}) {
     const { providers, warnings, revision } = loadProviders({ userFile: this.userFile, platform: this.platform });
+    for (const provider of providers) {
+      if (!provider.profiles) continue;
+      provider.accounts = hermesProfiles({ ...this.env, ...provider.env }, this.platform);
+      // Hermes's Windows installer puts its launcher in the home it installs to.
+      if (this.platform === 'win32' && provider.channels.native) provider.channels.native.paths.push(path.win32.join(provider.accounts[0].dir, 'bin'));
+    }
     this.providers = providers;
     this.warnings = warnings;
     this.revision = revision;
@@ -755,7 +765,8 @@ export class ProviderRegistry extends EventEmitter {
   }
 
   accountFor(provider, account) {
-    if (account.id === DEFAULT_ACCOUNT || !provider.homeVar) return { id: account.id, label: account.label, dir: null, env: {} };
+    if (provider.profiles) return { id: account.id, label: account.label, dir: account.dir, home: account.home, env: { HERMES_HOME: account.root }, args: ['-p', account.profile] };
+    if (!provider.homeVar || account.id === DEFAULT_ACCOUNT) return { id: account.id, label: account.label, dir: null, env: {} };
     const p = this.platform === 'win32' ? path.win32 : path.posix;
     const own = account.dir ? expandHome(account.dir, this.env, this.platform) : null;
     const dir = own && p.isAbsolute(own) ? p.normalize(own) : p.join(this.accountsDir, provider.id, own || account.id);
@@ -893,9 +904,10 @@ export class ProviderRegistry extends EventEmitter {
       reporting: provider.reporting,
       reportingEnabled: this.reportingEnabled?.(provider) ?? null,
       reportingNote: this.reportingNote?.(provider) ?? null,
+      reportingUpdate: this.reportingUpdate?.(provider) ?? false,
       mcp: this.mcpState?.(provider) ?? null,
-      accounts: provider.accounts.map((account) => ({ id: account.id, label: account.label })),
-      accountsEditable: Boolean(provider.homeVar),
+      accounts: provider.accounts.map((account) => ({ id: account.id, label: account.label, live: this.liveFor?.(provider, account) ?? null })),
+      accountsEditable: Boolean(provider.homeVar) && !provider.profiles,
       shells: shells?.shells.map((shell) => ({ id: shell.id, label: shell.label, path: shell.path, multiplexer: Boolean(shell.multiplexer) })) ?? null,
       defaultShell: shells?.defaultId ?? null,
       multiplexers: this.multiplexers.describe(provider).map((m) => ({ ...m, ...this.multiplexerState?.(provider.id, m.id) })),

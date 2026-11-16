@@ -10,7 +10,8 @@ import { PACKAGE_SCRIPT } from './launch.mjs';
 import { dataDir, dataDirFor } from './config.mjs';
 
 export const SERVER_NAME = 'agent-guild';
-export const MCP_MODES = ['claude', 'codex', 'antigravity', 'grok'];
+export const MCP_MODES = ['claude', 'codex', 'antigravity', 'grok', 'hermes'];
+const HERMES_KEY = `mcp_servers.${SERVER_NAME}`;
 export const MCP_ACTIONS = ['on', 'off', 'replace'];
 const STATE_TTL_MS = 60 * 1000;
 const RUN_TIMEOUT_MS = 30000;
@@ -87,6 +88,29 @@ function lastLine(err) {
 const grokConfigError = (stderr) => String(stderr || '').split('\n').map((l) => l.trim()).find((l) => /\bERROR\b.*\bconfig\b/.test(l)) ?? null;
 
 const TOOLS = {
+  hermes: {
+    async read(ctx) {
+      let stdout;
+      try {
+        ({ stdout } = await ctx.run(['config', 'get', HERMES_KEY, '--json']));
+      } catch (err) {
+        if (/Config key not set/.test(`${err.stdout || ''}${err.stderr || ''}`)) return { entry: null };
+        throw err;
+      }
+      let raw;
+      try {
+        raw = JSON.parse(stdout);
+      } catch {
+        return { error: 'its MCP settings were not in a form Agent Guild recognizes' };
+      }
+      return { entry: fromJson(raw, raw?.enabled !== false) };
+    },
+    add: (own) => [['config', 'set', HERMES_KEY, JSON.stringify({ command: own.command, args: own.args, trust: 'untrusted', enabled: true })]],
+    enable: () => [['config', 'set', `${HERMES_KEY}.enabled`, 'true']],
+    disable: () => [['config', 'set', `${HERMES_KEY}.enabled`, 'false']],
+    remove: () => [['config', 'unset', HERMES_KEY]],
+    replace: (own) => TOOLS.hermes.add(own),
+  },
   claude: {
     // Claude Code starts MCP servers from Node, which keeps the first of Windows variables that differ only in case.
     firstKeyWins: true,
@@ -369,7 +393,7 @@ export class McpConnect {
     // A managed home that does not exist yet holds no settings, and some tools create it when asked.
     if (account.dir && !fs.existsSync(account.dir)) return { state: 'off', fingerprint: fingerprint(null) };
     const platform = this.registry.platform;
-    const ctx = { env: account.env, platform, run: (args) => this._run(provider, resolved, account.env, args, { signal: this.ending.signal }) };
+    const ctx = { env: account.env, platform, run: (args) => this._run(provider, resolved, account.env, [...(account.account.args ?? []), ...args], { signal: this.ending.signal }) };
     let read;
     try {
       read = await tool.read(ctx);
@@ -478,7 +502,7 @@ export class McpConnect {
     }
     try {
       if (want === 'on' && account.dir) this.prepareAccount(provider, account.account);
-      for (const args of steps) await this._run(provider, resolved, account.env, args);
+      for (const args of steps) await this._run(provider, resolved, account.env, [...(account.account.args ?? []), ...args]);
     } catch (err) {
       const after = await this.readAccount(provider, resolved, account);
       return { outcome: 'failed', state: after.state, detail: `${provider.command} mcp failed: ${lastLine(err)}` };
@@ -487,7 +511,7 @@ export class McpConnect {
     // Removing its own entry can leave the tool loading one from another tool's settings.
     if (action === 'off' && after.state === 'on' && after.from && tool.disable) {
       try {
-        for (const args of tool.disable()) await this._run(provider, resolved, account.env, args);
+        for (const args of tool.disable()) await this._run(provider, resolved, account.env, [...(account.account.args ?? []), ...args]);
       } catch (err) {
         return { outcome: 'failed', state: after.state, detail: `${provider.command} mcp failed: ${lastLine(err)}` };
       }

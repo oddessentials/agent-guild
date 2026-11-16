@@ -22,6 +22,28 @@
           "winget": { "id": "OddEssentials.TerminalAIChat" }
         }
       }
+    },
+    {
+      "id": "hermes",
+      "vendor": "Nous Research",
+      "tool": "Hermes Agent",
+      "command": "hermes",
+      "versionArgs": ["--version"],
+      "reporting": "hermes",
+      "mcp": "hermes",
+      "homeVar": "HERMES_HOME",
+      "profiles": "hermes",
+      "resumeArgs": ["--resume", "{id}"],
+      "color": "#8B5CF6",
+      "monogram": "H",
+      "install": "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash",
+      "docs": "https://hermes-agent.nousresearch.com/docs",
+      "channels": {
+        "native": { "paths": ["~/.local/bin/hermes", "~/.hermes/hermes-agent"], "update": ["update"] }
+      },
+      "win32": {
+        "install": "iex (irm https://hermes-agent.nousresearch.com/install.ps1)"
+      }
     }
   ]
 }

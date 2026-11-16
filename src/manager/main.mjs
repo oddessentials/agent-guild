@@ -26,7 +26,8 @@ import { RemoteAccess, loadRemoteAccess } from './remote-access.mjs';
 import { SelfUpdate } from './self-update.mjs';
 import { addRuntimePaths, resolveBaseEnv, pathReader } from './shell-env.mjs';
 import { nativeReporter, writeReportShims } from './report-shims.mjs';
-import { SessionHooks } from './session-hooks.mjs';
+import { HERMES_PLUGIN_COMMIT_VAR, SessionHooks } from './session-hooks.mjs';
+import { HermesLive, HermesTokens } from './hermes.mjs';
 import { McpConnect, ownServer } from './mcp-connect.mjs';
 import { launcherPath, nextManager } from './launch.mjs';
 import { createAutostart } from './autostart.mjs';
@@ -36,6 +37,7 @@ import {
   PACKAGE_FILE,
   PACKAGE_NAME,
   VERSION,
+  COMMIT,
   dataDir,
   ensureDataDir,
   loadOrCreateToken,
@@ -55,7 +57,7 @@ const VERSION_REFRESH_MS = 60 * 60 * 1000;
  * `version`, `packageFile`, `github` (GitHub's URLs and client id), `autostart`, `boot` and `execPath` (the Node.js whose folders join PATH) stand in for the real ones in tests.
  * `supervised`: started by the Linux boot service, so systemd starts the next manager after a restart.
  */
-export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, sessionDefaults, version = VERSION, packageFile = PACKAGE_FILE, github: githubOptions = {}, remoteAccess: remoteOptions = {}, autostart = null, boot, supervised = false, execPath = process.execPath } = {}) {
+export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, sessionDefaults, version = VERSION, packageFile = PACKAGE_FILE, hermesPluginCommit = COMMIT || process.env[HERMES_PLUGIN_COMMIT_VAR] || null, github: githubOptions = {}, remoteAccess: remoteOptions = {}, autostart = null, boot, supervised = false, execPath = process.execPath } = {}) {
   // Validate before creating files, processes or timers, so a typo, or a
   // system node-pty cannot run on, fails startup cleanly.
   loadPty();
@@ -87,12 +89,30 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
   let api;
   const selfUpdate = new SelfUpdate({ pkg: PACKAGE_NAME, version, packageFile, registry, execPath });
   const github = new GitHub({ dir: paths.github, registry, ...githubOptions });
-  const sessionHooks = new SessionHooks({ registry, dir: paths.reporting, version });
+  const hermesTokens = new HermesTokens(paths.hermesTokens);
+  const hermesLive = new HermesLive();
+  const sessionHooks = new SessionHooks({ registry, dir: paths.reporting, version, hermesTokens, hermesPluginCommit, getApiUrl: () => api.url });
   registry.reportingEnabled = (provider) => sessionHooks.enabled(provider);
   registry.reportingNote = (provider) => sessionHooks.note(provider);
+  registry.reportingUpdate = (provider) => sessionHooks.updatable(provider);
+  registry.liveFor = (provider, account) => (provider.reporting === 'hermes' && account.home ? hermesLive.live(account.home) : null);
+  const pruneHermesTokens = () => {
+    const homes = registry.providers.filter((p) => p.reporting === 'hermes').flatMap((p) => p.accounts.map((a) => a.home).filter(Boolean));
+    hermesTokens.prune(new Set(homes)).catch((err) => console.error(`[hermes] could not update the report tokens: ${err.code || err.message}`));
+  };
+  pruneHermesTokens();
+  registry.on('updated', pruneHermesTokens);
   const cardNames = createCardNames(paths.cardNames);
   const manager = new SessionManager({
     registry, baseEnv, getApiUrl: () => api.url, sessionDefaults, shimDir, selfUpdate, github, sessionHooks, store: multiplexerStore, cardNames,
+  });
+  const shownLive = new Map();
+  hermesLive.on('changed', (home) => {
+    const live = JSON.stringify(hermesLive.live(home));
+    if (shownLive.get(home) !== live) {
+      shownLive.set(home, live);
+      registry.emit('updated');
+    }
   });
   const mcpConnect = new McpConnect({ registry, own: ownServer(), prepareAccount: (provider, account) => manager.prepareAccount(provider, account), dir: dataDir() });
   registry.mcpState = (provider) => mcpConnect.describe(provider);
@@ -141,6 +161,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
     if (closing) return closing;
     console.log(`[manager] ${restart ? 'restarting' : 'stopping'} (${reason}); ending ${manager.sessions.size} session(s)`);
     clearInterval(versionTimer);
+    hermesLive.close();
     environment.close();
     remoteAccess.close();
     github.close();
@@ -191,6 +212,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
     yardWorlds: new YardWorlds({ dir: paths.yardWorlds }),
     yardPieces: new YardPieces({ dir: paths.yardPieces }),
     mcpConnect,
+    hermes: { tokens: hermesTokens, live: hermesLive },
     onShutdownRequest: ({ restart = false } = {}) => shutdown('requested via API', { restart }).then((code) => process.exit(code)),
   });
   remoteAccess.attach({ apply: (access) => api.setAccessPolicy(access), getTarget: () => api.url });
@@ -204,6 +226,7 @@ export async function startManager({ port = resolvePort(), host = DEFAULT_HOST, 
     }
     throw err;
   }
+  await hermesTokens.refresh(api.url);
   // Only now: a manager that cannot take its port never runs its shutdown, which is what ends these probes.
   sessionHooks.warm();
   // tmux and herdr cards come back closed, ready to reattach, before the

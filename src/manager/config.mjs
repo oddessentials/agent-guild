@@ -16,6 +16,8 @@ export const DEFAULT_HOST = '127.0.0.1';
 export const PACKAGE_FILE = fileURLToPath(new URL('../../package.json', import.meta.url));
 const packageJson = JSON.parse(fs.readFileSync(PACKAGE_FILE, 'utf8'));
 export const VERSION = packageJson.version;
+/** The commit a release was built from, which the release stamps; null in any other build. */
+export const COMMIT = packageJson.agentGuild?.commit ?? null;
 export const PACKAGE_NAME = packageJson.name;
 
 /** Per-user data directory. Override with AGENT_GUILD_HOME (used by tests). */
@@ -52,6 +54,7 @@ export const paths = {
   /** Launchers for agent-guild-report, put first on every session's PATH. */
   get shims() { return path.join(dataDir(), 'bin'); },
   get reporting() { return path.join(dataDir(), 'reporting'); },
+  get hermesTokens() { return path.join(dataDir(), 'hermes-tokens'); },
   /** The tmux and herdr cards a restarted manager brings back, report tokens included. */
   get multiplexers() { return path.join(dataDir(), 'multiplexers.json'); },
   /** The Yard's art packs, one folder per content id. */

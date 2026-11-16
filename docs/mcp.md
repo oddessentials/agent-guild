@@ -21,6 +21,7 @@ With Agent Guild installed (`npm install -g @oddessentials/agent-guild`):
 | Codex CLI | `codex mcp add agent-guild -- agent-guild mcp` |
 | Antigravity CLI | `agy mcp add agent-guild agent-guild mcp` |
 | Gemini CLI | `gemini mcp add -s user agent-guild agent-guild mcp` |
+| Hermes Agent | `hermes config set mcp_servers.agent-guild '{"command": "agent-guild", "args": ["mcp"], "trust": "untrusted"}'` |
 | VS Code | `code --add-mcp '{"name":"agent-guild","type":"stdio","command":"agent-guild","args":["mcp"]}'` |
 
 For one VS Code workspace, `.vscode/mcp.json`:

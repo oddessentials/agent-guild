@@ -1,0 +1,39 @@
+name: agent-guild
+version: 1.0.0
+manifest_version: 2
+description: >-
+  Shows every Hermes session, subagent, shell command and approval live in Agent
+  Guild. Disclosure — sends session, tool, subagent,
+  and approval events, including shell commands and subagent goals after
+  Hermes's secret redaction (left out when it fails), only to
+  the Agent Guild manager on this computer (default http://127.0.0.1:47821);
+  runs one background thread per profile that reports; reads one file, where
+  Agent Guild keeps the profile's report token and its own address, and
+  installs no packages.
+author: Odd Essentials
+license: AGPL-3.0-only
+homepage: https://github.com/oddessentials/agent-guild
+tags:
+  - observability
+  - agents
+  - dashboard
+requires_hermes: ">=0.23.0"
+requires_env:
+  - name: AGENT_GUILD_HERMES_TOKEN_FILE
+    description: "The file Agent Guild keeps this profile's report token and its own address in. Agent Guild sets it when you turn on agent reporting on its Hermes Agent card."
+    url: "https://github.com/oddessentials/agent-guild/blob/main/docs/agent-reporting.md"
+    secret: false
+provides_hooks:
+  - on_session_start
+  - on_session_end
+  - on_session_finalize
+  - on_session_delete
+  - pre_llm_call
+  - pre_tool_call
+  - post_tool_call
+  - subagent_start
+  - subagent_stop
+  - pre_approval_request
+  - post_approval_response
+  - on_human_input_request
+  - on_human_input_resolved

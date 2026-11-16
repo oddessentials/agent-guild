@@ -191,6 +191,7 @@ export function createManagerServer({
   yardWorlds = new YardWorlds(),
   yardPieces = new YardPieces(),
   mcpConnect = null,
+  hermes = null,
   heartbeatMs = 30000,
 }) {
   let listedProviders = null;
@@ -366,6 +367,17 @@ export function createManagerServer({
         return sendJson(res, 200, { ok: true });
       }
       return sendJson(res, 200, { toolSessionId: manager.reportToolSession(id, body, auth) });
+    }
+
+    if (route === '/hermes/hook' && method === 'POST' && hermes) {
+      const reportToken = req.headers['x-agent-guild-report-token'];
+      const home = hermes.tokens.account(reportToken);
+      if (!home) throw new HttpError(401, 'invalid report token', 'unauthorized');
+      const body = await readJsonBody(req, REPLY_BODY_LIMIT);
+      // Checked again as it is applied: a token revoked while the body arrived restores nothing.
+      if (hermes.tokens.account(reportToken) !== home) throw new HttpError(401, 'invalid report token', 'unauthorized');
+      hermes.live.receive(home, body.instance, body.messages);
+      return sendJson(res, 200, { ok: true });
     }
 
     if (route === '/sign-in' && method === 'POST') return sendJson(res, 201, { signIn: deviceSignIn.request() });
@@ -551,9 +563,23 @@ export function createManagerServer({
       const provider = registry.get(reportingMatch[1]);
       if (!provider) throw new HttpError(404, `unknown provider "${reportingMatch[1]}"`, 'unknown_provider');
       const body = await readJsonBody(req);
+      if (body.update === true) {
+        try {
+          await manager.sessionHooks.update(provider);
+        } finally {
+          registry.emit('updated');
+        }
+        return sendJson(res, 200, { provider: registry.describe(provider) });
+      }
       if (typeof body.enabled !== 'boolean') throw new HttpError(400, 'enabled must be true or false', 'bad_request');
-      await manager.sessionHooks.setEnabled(provider, body.enabled);
-      registry.emit('updated');
+      const muted = hermes && provider.reporting === 'hermes' && !body.enabled ? registry.accountsFor(provider).map((account) => account.home) : [];
+      for (const home of muted) hermes.live.mute(home);
+      try {
+        await manager.sessionHooks.setEnabled(provider, body.enabled);
+      } finally {
+        for (const home of muted) hermes.live.unmute(home);
+        registry.emit('updated');
+      }
       return sendJson(res, 200, { provider: registry.describe(provider) });
     }
     const mcpMatch = route.match(/^\/providers\/([a-z0-9][a-z0-9_-]{0,31})\/mcp$/);

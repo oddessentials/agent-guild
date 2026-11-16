@@ -1310,8 +1310,8 @@ test('stopping a tmux or herdr card ends only its client, so the multiplexer\'s 
 
 test('a session runs under the account picked, in that account\'s own home folder', async () => {
   const { body: listed } = await call('GET', '/providers');
-  assert.deepEqual(listed.providers.find((p) => p.id === 'multi').accounts, [{ id: 'default', label: 'Default' }, { id: 'work', label: 'Work' }, { id: 'kept', label: 'Kept' }]);
-  assert.deepEqual(listed.providers.find((p) => p.id === 'fake').accounts, [{ id: 'default', label: 'Default' }]);
+  assert.deepEqual(listed.providers.find((p) => p.id === 'multi').accounts, [{ id: 'default', label: 'Default', live: null }, { id: 'work', label: 'Work', live: null }, { id: 'kept', label: 'Kept', live: null }]);
+  assert.deepEqual(listed.providers.find((p) => p.id === 'fake').accounts, [{ id: 'default', label: 'Default', live: null }]);
 
   const workHome = path.join(home, 'accounts', 'multi', 'work');
   assert.ok(!fs.existsSync(workHome), 'nothing is created before the first session');
@@ -1386,7 +1386,7 @@ test('accounts are added, renamed and removed through the API without touching t
 
     const renamed = await call('PATCH', '/providers/multi/accounts/side-project', { label: 'Side', revision: added.body.revision });
     assert.equal(renamed.status, 200, JSON.stringify(renamed.body));
-    assert.deepEqual(multi(renamed.body).accounts.at(-1), { id: 'side-project', label: 'Side' });
+    assert.deepEqual(multi(renamed.body).accounts.at(-1), { id: 'side-project', label: 'Side', live: null });
     const reused = await call('PATCH', '/providers/multi/accounts/side-project', { label: 'Again', revision: added.body.revision });
     assert.deepEqual([reused.status, reused.body.error.code], [409, 'stale_accounts']);
 
@@ -1670,6 +1670,8 @@ test('Antigravity CLI reports its model and conversation once its plugin is turn
   assert.equal(off.body.provider.reportingEnabled, false);
   assert.ok(!fs.existsSync(installed));
   assert.equal((await call('POST', '/providers/anthropic/reporting', { enabled: true })).status, 400, 'nothing to turn on where hooks come with each session');
+  const update = await call('POST', '/providers/google/reporting', { update: true });
+  assert.deepEqual([update.status, update.body.error.code], [400, 'not_applicable'], 'only Hermes Agent has a plugin to update');
 });
 
 test('the Antigravity hook answers with an empty object and reports only into an Antigravity session', async () => {

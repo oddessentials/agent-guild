@@ -25,7 +25,7 @@ const refused = (fn, code) => assert.throws(fn, (err) => err.code === code);
 
 test('an optional card is added to providers.json and removed from it, keeping the other entries', (t) => {
   const fresh = setup(t);
-  assert.deepEqual(fresh.cards.list(), [{ id: shipped.id, vendor: shipped.vendor, tool: shipped.tool, added: false }]);
+  assert.deepEqual(fresh.cards.list(), JSON.parse(fs.readFileSync(OPTIONAL_FILE, 'utf8')).providers.map(({ id, vendor, tool }) => ({ id, vendor, tool, added: false })));
   fresh.cards.add(shipped.id, { revision: null });
   assert.deepEqual(JSON.parse(fresh.read()), { providers: [shipped] });
   assert.equal(fresh.cards.list()[0].added, true);

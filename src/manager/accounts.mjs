@@ -115,6 +115,7 @@ export function createAccountEditor({ registry, inUse }) {
     const provider = registry.get(providerId);
     if (!provider) throw refusal(404, 'unknown_provider', `unknown provider "${providerId}"`);
     if (!provider.homeVar) throw refusal(409, 'accounts_unsupported', `${provider.tool} keeps a single sign-in.`);
+    if (provider.profiles) throw refusal(409, 'accounts_unsupported', `${provider.tool}'s accounts are its profiles. Create one in ${provider.tool}, then reload the cards.`);
     if (revision !== null && typeof revision !== 'string') throw refusal(400, 'bad_revision', 'revision must be a string or null');
     const file = registry.userFile;
     if (!file) throw refusal(409, 'accounts_unsupported', 'This manager has no providers.json to keep accounts in.');

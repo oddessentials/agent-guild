@@ -1,0 +1,31 @@
+# Checks the Hermes plugin against a real Hermes Agent with Hermes's own catalog gates. It downloads
+# Hermes, so it is not part of CI: pull requests test the plugin with local fixtures only, and a
+# failure here never blocks a merge.
+name: Hermes compatibility
+
+on:
+  push:
+    branches: [main]
+    paths: [plugins/hermes/**, .github/workflows/hermes-compat.yml]
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  hermes:
+    name: Hermes plugins (catalog gates)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: plugins/hermes
+      # Hermes Agent v0.23.1.
+      - run: curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- --commit 3b421578588243f920886e6fe79a6faa87ea026e --non-interactive --skip-browser --skip-computer-use
+      - run: |
+          "$HOME/.local/bin/hermes" plugins validate --install-deps plugins/hermes/agent-guild
+          "$HOME/.local/bin/hermes" plugins doctor plugins/hermes/agent-guild --ci
