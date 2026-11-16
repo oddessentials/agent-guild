@@ -1255,7 +1255,7 @@ test('a Hermes token that cannot be revoked keeps the card from showing reportin
   assert.deepEqual(given.map((token) => tokens.account(token)), [base.home, work.home], 'still accepted');
   assert.deepEqual(recorded(registry, hermes).map(([, p]) => p.status), ['disabled', 'disabled'], 'though Hermes turned the plugins off');
   assert.equal(hooks.enabled(hermes), true, 'so the card offers Turn off');
-  assert.equal(hooks.note(hermes), 'Agent reporting is not fully off: the report token of Default, work is still accepted, because Agent Guild could not revoke it. Turn it off to try again.');
+  assert.equal(hooks.note(hermes), 'Agent reporting is not fully off: the report token of Default, work is still accepted while its Agent Guild plugin is off. Turn it off to revoke it.');
 
   fs.rmdirSync(tokens.recordFile);
   fs.writeFileSync(tokens.recordFile, saved);
@@ -1334,6 +1334,54 @@ test('a Hermes report whose token is revoked while its body is still arriving is
   });
   assert.equal(await answered, 401, 'refused: its token was revoked before it was applied');
   assert.equal(live.live(work), null, 'and no activity came back');
+});
+
+test('while Hermes reporting turns on, a profile whose plugin is still installing is neither held nor a partial failure, and one already reporting shows as on', { timeout: 30000 }, async (t) => {
+  const { registry, hooks, tokens, home } = hermesSetup(t, { hermes: 'home' });
+  makeHermesHome(home('hermes').dir, [['work', 'config.yaml']]);
+  registry.reload();
+  const hermes = registry.get('hermes');
+  const [base, work] = registry.accountsFor(hermes);
+  // Each profile's plugin install waits until the test lets it go.
+  const installing = new Map();
+  const run = hooks._hermesRun.bind(hooks);
+  hooks._hermesRun = async (provider, account, args, what) => {
+    if (args[0] === 'plugins' && args[1] === 'install') {
+      await new Promise((resolve) => installing.set(account.id, resolve));
+    }
+    return run(provider, account, args, what);
+  };
+  const turning = hooks.setEnabled(hermes, true);
+
+  await until('the Default install held', () => installing.has('default'), Boolean);
+  assert.ok(tokens.get(base.home), 'its token is already accepted');
+  assert.equal(hooks.note(hermes), null, 'no note says a token could not be revoked');
+  assert.equal(hooks.enabled(hermes), false, 'and no profile reports yet');
+  installing.get('default')();
+
+  await until('the work install held', () => installing.has('work'), Boolean);
+  assert.ok(tokens.get(work.home));
+  assert.equal(hooks._hermesReporting(hermes)[0].on, true, 'Default already reports');
+  assert.equal(hooks.enabled(hermes), true);
+  assert.equal(hooks.note(hermes), null, 'no note says reporting is on for only some profiles');
+  installing.get('work')();
+
+  assert.equal(await turning, true);
+  assert.deepEqual(hooks._hermesReporting(hermes).map((a) => [a.on, a.held]), [[true, false], [true, false]]);
+  assert.equal(hooks.note(hermes), null);
+});
+
+test('a Hermes plugin turned off in Hermes while its token is accepted keeps Turn off, and the note claims no failed revocation', { timeout: 30000 }, async (t) => {
+  const { registry, hooks, tokens } = hermesSetup(t, { hermes: 'home' });
+  const hermes = registry.get('hermes');
+  const [account] = registry.accountsFor(hermes);
+  assert.equal(await hooks.setEnabled(hermes, true), true);
+  await hooks._hermesRun(hermes, account, ['plugins', 'disable', 'agent-guild'], 'turn off the Agent Guild plugin');
+  await hooks._readHermes(hermes);
+  assert.equal(hooks.enabled(hermes), true, 'the token is still accepted, so the card offers Turn off');
+  assert.equal(hooks.note(hermes), 'Agent reporting is not fully off: the report token of Default is still accepted while its Agent Guild plugin is off. Turn it off to revoke it.');
+  assert.equal(await hooks.setEnabled(hermes, false), false);
+  assert.equal(tokens.get(account.home), null, 'turning off revokes it');
 });
 
 test('a Hermes plugin read that finishes after a newer change is dropped, so it cannot show an enabled plugin as off', { timeout: 30000 }, async (t) => {

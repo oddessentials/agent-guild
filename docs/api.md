@@ -163,8 +163,10 @@ again, or is null. `reportingUpdate` is true for Hermes Agent while a profile
 that reports has an Agent Guild plugin of another commit than the one this
 Agent Guild installs; that plugin keeps reporting until it is updated. For
 Hermes Agent, `reportingEnabled` also stays true while a profile's report token
-is still accepted after a revocation that failed, with a `reportingNote` that
-says so, so turning it off can be tried again.
+is still accepted though its plugin is off, as after a revocation that failed or
+the plugin turned off in Hermes, with a `reportingNote` that says so, so turning
+it off revokes it. A profile Agent Guild is still turning on or off counts as
+neither until that change ends; one already on counts as on.
 
 `mcp` is null unless the tool is installed and Agent Guild can add its own MCP
 server (`agent-guild mcp`, see [mcp.md](mcp.md)) to the tool's settings:
@@ -690,7 +692,7 @@ All paths are under `/api/v1`.
 | GET | `/yard-worlds` | | `{ yardWorlds }`: the world replacing each Yard, by skin. A world is `{ title, revision, lights }`, or `{ title, problem }` when it cannot be used, in which case the Yard shows its original. A Yard with no entry shows its original. |
 | PUT | `/yard-worlds/:skin` | `{ path }` | `{ yardWorlds }`: checks the `.agworld` file at `path` on the manager's computer and makes it this Yard's world, replacing any before it. 400 `world_invalid` says what is wrong and leaves the Yard unchanged; 404 `unknown_yard`; 409 `world_busy` while another install runs; 409 `worlds_unsupported` without a data folder; 500 `world_unwritable`. Its plates and skies are served at `/yard/worlds/:skin/:file`. |
 | DELETE | `/yard-worlds/:skin` | | `{ yardWorlds }`: deletes this Yard's world, so it shows its original. |
-| GET | `/yard-pieces` | | `{ yardPieces }`: the pieces replacing each Yard's characters and companions, by skin, then by slot: a crew id (`anthropic`, `openai`, `google`, `xai`, `shell`, `docker`) or `companion`. A piece is `{ title, revision }`, or `{ title, problem }` when it cannot be used, in which case the Yard shows its original. Terminal AI Chat wears the `shell` piece, gilded. |
+| GET | `/yard-pieces` | | `{ yardPieces }`: the pieces replacing each Yard's characters and companions, by skin, then by slot: a crew id (`anthropic`, `openai`, `google`, `xai`, `shell`, `docker`) or `companion`. A piece is `{ title, revision }`, or `{ title, problem }` when it cannot be used, in which case the Yard shows its original. Terminal AI Chat wears the `shell` piece, gilded, and Hermes Agent wears it in white and blue with wings on its head. |
 | PUT | `/yard-pieces/:skin/:slot` | `{ path }` | `{ yardPieces }`: copies the piece folder at `path` on the manager's computer and makes it this slot's piece, replacing any before it. The folder holds `piece.json` (`format: 1`, `kind` `character` or `companion`, optional `title`) and `character.glb`, or all four of `companion_0.glb` to `companion_3.glb`; the models follow the Yard's skeleton, animations and `yard` extras, and are checked by drawing them with the Yard's own loader; their sizes, joints, clip lengths and `yard` extras must fall within the limits in `src/manager/yard-piece-check.mjs` and `yardExtras` in `web/yard/model.mjs`. 400 `piece_invalid` says what is wrong and leaves the slot unchanged; 404 `unknown_yard` or `unknown_slot`; 409 `piece_busy` while another change runs; 409 `pieces_unsupported` without a data folder; 500 `piece_unwritable`. Its models are served at `/yard/pieces/:skin/:slot/:file`. |
 | DELETE | `/yard-pieces/:skin/:slot` | | `{ yardPieces }`: deletes this slot's piece, so it shows its original. 500 `piece_unwritable` leaves the piece in place. |
 | POST | `/companion/install` | | `201 { session }`: starts a session that downloads the latest Grove Companion, checks its signature, installs it and starts it. 400 `companion_unsupported` unless the manager runs on Windows or macOS; 409 `install_in_progress` while one runs. |

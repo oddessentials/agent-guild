@@ -1,5 +1,5 @@
 import * as T from './vendor/engine.js';
-import { WORLDS, PROVIDER_ORDER, characterIndex, GILDED, CAMERA, SUN, minZoom, overviewFor, clampPan, viewBasis, providerPositions, sessionPose, familiarPose, hash,
+import { WORLDS, PROVIDER_ORDER, characterIndex, finishOf, WINGED, CAMERA, SUN, minZoom, overviewFor, clampPan, viewBasis, providerPositions, sessionPose, familiarPose, hash,
   stage, nextStagingChange, doorFor, arrives, route, clipFor, helperOffset, stationProp, hallActivity, lookTarget, lookLimits, yardExtras, playableClip, STAGING, photoSize, marksFor, SHOWN_HELPERS, onFire, VIBE, vibeStop, vibeFlight, vibeFrame, inVibeFrame } from './model.mjs';
 import { Aura, auraShapes, EMBER_SIZE } from './aura.js';
 
@@ -26,22 +26,43 @@ const GLOW = { off: 0, low: .55, high: 1 }, GLOW_GAIN = { light: .9, dark: 2.2 }
 // Materials that light up with a hall's crew: lit windows and magic, glass
 // fronts, and a generated hall's baked glow map.
 const glows = m => m.name === 'window' || m.name === 'magic' || m.name === 'officeGlass' || m.emissiveMap;
-// Near-black stays as it is, so a face keeps its dark screen.
-const GOLD_SHADER = shader => {
+// Each finish recolours a material by how bright and how coloured it is
+// (plateTone), then sets how it shines. Near-black stays as it is, so a face
+// keeps its dark screen.
+const FINISHES = {
+  // Polished gold.
+  gold: {
+    tone: 'vec3 plateTone = vec3(1., .56, .1) * mix(.4, .9, smoothstep(.03, .4, platePeak));',
+    roughness: 'roughnessFactor = mix(roughnessFactor, .06 + roughnessFactor * .18, plateMix);',
+    metalness: 'metalnessFactor = mix(metalnessFactor, 1., plateMix);',
+    emissive: 'totalEmissiveRadiance = vec3(1., .66, .22) * dot(totalEmissiveRadiance, vec3(.2126, .7152, .0722)) * 1.4 + plateTone * plateMix * .06;',
+  },
+  // White porcelain where the shell is bright, Hermes blue (#0000f2) in its darker parts and glows.
+  hermes: {
+    tone: `float plateWhite = smoothstep(.07, .2, platePeak);
+      vec3 plateTone = mix(vec3(0., 0., .887) * mix(.55, 1., smoothstep(.02, .07, platePeak)), vec3(.88, .89, .92) * mix(.7, 1., smoothstep(.2, .6, platePeak)), plateWhite);`,
+    roughness: 'roughnessFactor = mix(roughnessFactor, .28 + roughnessFactor * .3, plateMix);',
+    metalness: 'metalnessFactor = mix(metalnessFactor, 0., plateMix);',
+    emissive: 'totalEmissiveRadiance = vec3(.12, .2, 1.) * dot(totalEmissiveRadiance, vec3(.2126, .7152, .0722)) * 1.6;',
+  },
+};
+const plateShader = ({ tone, roughness, metalness, emissive }) => shader => {
   shader.fragmentShader = shader.fragmentShader
     .replace('#include <map_fragment>', `#include <map_fragment>
-      float goldPeak = max(diffuseColor.r, max(diffuseColor.g, diffuseColor.b));
-      float goldMix = smoothstep(.015, .045, goldPeak);
-      vec3 goldTone = vec3(1., .56, .1) * mix(.4, .9, smoothstep(.03, .4, goldPeak));
-      diffuseColor.rgb = mix(diffuseColor.rgb, goldTone, goldMix);`)
+      float platePeak = max(diffuseColor.r, max(diffuseColor.g, diffuseColor.b));
+      float plateMix = smoothstep(.015, .045, platePeak);
+      ${tone}
+      diffuseColor.rgb = mix(diffuseColor.rgb, plateTone, plateMix);`)
     .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
-      roughnessFactor = mix(roughnessFactor, .06 + roughnessFactor * .18, goldMix);`)
+      ${roughness}`)
     .replace('#include <metalnessmap_fragment>', `#include <metalnessmap_fragment>
-      metalnessFactor = mix(metalnessFactor, 1., goldMix);`)
+      ${metalness}`)
     .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
-      totalEmissiveRadiance = vec3(1., .66, .22) * dot(totalEmissiveRadiance, vec3(.2126, .7152, .0722)) * 1.4 + goldTone * goldMix * .06;`);
+      ${emissive}`);
 };
-function gild(root, own = []) {
+const SHADERS = Object.fromEntries(Object.entries(FINISHES).map(([name, finish]) => [name, plateShader(finish)]));
+// Gives root's materials finish, on copies unless they are among own. Returns the copies.
+function plate(root, finish, own = []) {
   const copies = new Map();
   root.traverse(node => {
     if (!node.isMesh) return;
@@ -49,12 +70,55 @@ function gild(root, own = []) {
       if (m.name === 'window' || m.name === 'magic' || m.name === 'officeGlass') return m;
       if (!copies.has(m)) copies.set(m, own.includes(m) ? m : m.clone());
       const copy = copies.get(m);
-      copy.onBeforeCompile = GOLD_SHADER; copy.needsUpdate = true;
+      // The finishes share one compile function's source, so each needs its own program key.
+      copy.onBeforeCompile = SHADERS[finish]; copy.customProgramCacheKey = () => 'plate:' + finish; copy.needsUpdate = true;
       return copy;
     };
     node.material = Array.isArray(node.material) ? node.material.map(swap) : swap(node.material);
   });
   return [...copies.values()].filter(m => !own.includes(m));
+}
+const headPoint = new T.Vector3();
+// Puts a copy of wings on the Head bone of a character, fitted from the head
+// they were made for (their extras.head) to this one's, measured in the bind
+// pose from the vertices that follow the head. Returns false if it has none.
+function wear(scene, wings) {
+  let bone = null, inverse = null;
+  const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+  scene.updateMatrixWorld(true);
+  scene.traverse(node => {
+    if (!node.isSkinnedMesh) return;
+    const at = node.skeleton.bones.findIndex(b => b.name === 'Head');
+    if (at < 0) return;
+    if (!bone) { bone = node.skeleton.bones[at]; inverse = node.skeleton.boneInverses[at]; }
+    const { position, skinIndex, skinWeight } = node.geometry.attributes;
+    for (let i = 0; i < position.count; i++) {
+      let share = 0;
+      for (let k = 0; k < 4; k++) if (skinIndex.getComponent(i, k) === at) share += skinWeight.getComponent(i, k);
+      if (share < .5) continue;
+      headPoint.fromBufferAttribute(position, i).applyMatrix4(node.bindMatrix).toArray().forEach((v, k) => { min[k] = Math.min(min[k], v); max[k] = Math.max(max[k], v); });
+    }
+  });
+  if (!bone || !(max[0] > min[0])) return false;
+  // Each wing's root keeps its place relative to the head, stretched to
+  // this head's width, height and depth; the wing itself scales with the
+  // head's overall size, so a wide, short head does not get huge wings.
+  const from = wings.userData.head, size = k => (max[k] - min[k]) / (from.max[k] - from.min[k]);
+  const stretch = [0, 1, 2].map(size), scale = Math.cbrt(stretch[0] * stretch[1] * stretch[2]);
+  // Each wing's anchor holds its root; the Yard optimizer leaves anchors as
+  // they are and puts its own transform on the mesh below.
+  const worn = wings.clone(true);
+  worn.position.set(0, 0, 0); worn.quaternion.identity(); worn.scale.setScalar(1);
+  for (const anchor of worn.children) {
+    const at = anchor.position.toArray().map((v, k) => (min[k] + max[k]) / 2 + (v - (from.min[k] + from.max[k]) / 2) * stretch[k]);
+    anchor.position.fromArray(at); anchor.scale.setScalar(scale);
+  }
+  worn.traverse(node => { if (node.isMesh) { node.geometry = node.geometry.clone(); node.material = node.material.clone(); node.castShadow = node.receiveShadow = true; } });
+  // The wings are placed in the bind pose's space; the head's inverse bind matrix brings them into the head's.
+  inverse.decompose(worn.position, worn.quaternion, worn.scale);
+  worn.name = 'hermes_wings';
+  bone.add(worn);
+  return true;
 }
 const PARTICLES = 640;
 const FIREWORK_COLORS = [0xffc857, 0xff507c, 0x53cfff, 0xb28aff, 0x7dffae];
@@ -234,10 +298,17 @@ export class YardRenderer {
     }
     return this.cache.get(name);
   }
-  goldAsset(name,url) {
-    const key='gold:'+name;
+  // name's character in provider id's finish, and wings if it wears them;
+  // a character whose wings cannot load goes without.
+  platedAsset(name,url,id) {
+    const finish=finishOf(id),winged=WINGED.includes(id),key=finish+(winged?'+wings':'')+':'+name;
     if(!this.cache.has(key)) {
-      const pending=this.asset(name,url).then(asset=>{const scene=T.cloneSkeleton(asset.scene);gild(scene);return {...asset,scene};}).catch(err=>{
+      const wings=winged?this.asset('hermes_wings').then(w=>{let found=null;w.scene.traverse(n=>{if(!found&&n.userData.head)found=n;});return found;},err=>{console.warn('Hermes wings unavailable:',err.message);return null;}):null;
+      const pending=Promise.all([this.asset(name,url),wings]).then(([asset,worn])=>{
+        const scene=T.cloneSkeleton(asset.scene);plate(scene,finish);
+        if(worn?.userData.head)wear(scene,worn);
+        return {...asset,scene};
+      }).catch(err=>{
         if(this.cache.get(key)===pending)this.cache.delete(key);
         throw err;
       });
@@ -286,7 +357,7 @@ export class YardRenderer {
   }
   release(name) {
     const loader=this.pieceLoaders.get(name);if(loader){cancel(loader);this.pieceLoaders.delete(name);}
-    for(const key of [name,'gold:'+name]){
+    for(const key of [...this.cache.keys()].filter(key=>key===name||key.endsWith(':'+name))){
       const pending=this.cache.get(key);
       if(!pending)continue;
       this.cache.delete(key);
@@ -638,7 +709,7 @@ export class YardRenderer {
         }
         item={id:p.id,root,label:this.label('provider',p.id),chip:this.chip(p.id),custom,glows:this.ownGlow(root),level:0,target:0,emitted:0,
           smoke:root.getObjectByName('hall_'+(custom?'shell':p.id)+'_smoke')};this.halls.set(p.id,item);
-        item.gilt=custom&&GILDED.includes(p.id)?gild(root,item.glows):[];
+        item.gilt=custom&&finishOf(p.id)?plate(root,finishOf(p.id),item.glows):[];
         root.userData.entity={kind:'provider',id:p.id};
       }
       item.target=GLOW[hallActivity(sessions,p.id)];
@@ -718,7 +789,7 @@ export class YardRenderer {
     const stale=()=>this.disposed||generation!==this.request||token!==unit.load||!unit.root.parent;
     unit.loading=true;
     try {
-      const asset=await (GILDED.includes(session.provider.id)?this.goldAsset(name,source?.urls[0]):this.asset(name,source?.urls[0]));
+      const asset=await (finishOf(session.provider.id)?this.platedAsset(name,source?.urls[0],session.provider.id):this.asset(name,source?.urls[0]));
       if(stale())return;
       const model=T.cloneSkeleton(asset.scene);
       model.rotation.y=unit.heading;

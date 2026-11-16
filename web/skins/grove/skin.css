@@ -98,6 +98,12 @@
     --working: image-set(url("characters/terminal-ai-chat/working.avif") type("image/avif"), url("characters/terminal-ai-chat/working.webp") type("image/webp"));
     --locked: image-set(url("characters/terminal-ai-chat/locked.avif") type("image/avif"), url("characters/terminal-ai-chat/locked.webp") type("image/webp"));
   }
+  .provider[data-id="hermes"], .session-card[data-provider="hermes"] {
+    --pc: #0000F2;
+    --idle: image-set(url("characters/hermes/idle.avif") type("image/avif"), url("characters/hermes/idle.webp") type("image/webp"));
+    --working: image-set(url("characters/hermes/working.avif") type("image/avif"), url("characters/hermes/working.webp") type("image/webp"));
+    --locked: image-set(url("characters/hermes/locked.avif") type("image/avif"), url("characters/hermes/locked.webp") type("image/webp"));
+  }
 
   .provider-icon[data-provider="anthropic"] { --icon: image-set(url("icons/anthropic.avif") type("image/avif"), url("icons/anthropic.webp") type("image/webp")); }
   .provider-icon[data-provider="openai"] { --icon: image-set(url("icons/openai.avif") type("image/avif"), url("icons/openai.webp") type("image/webp")); }

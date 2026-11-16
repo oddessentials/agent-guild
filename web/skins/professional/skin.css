@@ -82,6 +82,12 @@
     --working: image-set(url("objects/terminal-ai-chat/light-working.avif") type("image/avif"), url("objects/terminal-ai-chat/light-working.webp") type("image/webp"));
     --locked: image-set(url("objects/terminal-ai-chat/light-locked.avif") type("image/avif"), url("objects/terminal-ai-chat/light-locked.webp") type("image/webp"));
   }
+  .provider[data-id="hermes"], .session-card[data-provider="hermes"] {
+    --pc: #0000F2;
+    --idle: image-set(url("objects/hermes/light-idle.avif") type("image/avif"), url("objects/hermes/light-idle.webp") type("image/webp"));
+    --working: image-set(url("objects/hermes/light-working.avif") type("image/avif"), url("objects/hermes/light-working.webp") type("image/webp"));
+    --locked: image-set(url("objects/hermes/light-locked.avif") type("image/avif"), url("objects/hermes/light-locked.webp") type("image/webp"));
+  }
 
   .provider-icon[data-provider="anthropic"] { --icon: url("icons/anthropic.svg"); }
   .provider-icon[data-provider="openai"] { --icon: url("icons/openai.svg"); }
@@ -281,6 +287,11 @@
     --idle: image-set(url("objects/terminal-ai-chat/dark-idle.avif") type("image/avif"), url("objects/terminal-ai-chat/dark-idle.webp") type("image/webp"));
     --working: image-set(url("objects/terminal-ai-chat/dark-working.avif") type("image/avif"), url("objects/terminal-ai-chat/dark-working.webp") type("image/webp"));
     --locked: image-set(url("objects/terminal-ai-chat/dark-locked.avif") type("image/avif"), url("objects/terminal-ai-chat/dark-locked.webp") type("image/webp"));
+  }
+  .provider[data-id="hermes"], .session-card[data-provider="hermes"] {
+    --idle: image-set(url("objects/hermes/dark-idle.avif") type("image/avif"), url("objects/hermes/dark-idle.webp") type("image/webp"));
+    --working: image-set(url("objects/hermes/dark-working.avif") type("image/avif"), url("objects/hermes/dark-working.webp") type("image/webp"));
+    --locked: image-set(url("objects/hermes/dark-locked.avif") type("image/avif"), url("objects/hermes/dark-locked.webp") type("image/webp"));
   }
 
   .tier-s { --tier: #34d399; --tier-ink: #bbf7d0; }

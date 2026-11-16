@@ -15,6 +15,11 @@ LOCKED = '#8b929e'
 EXTRA = {'empty': '#a3adbd'}
 # Polished metal instead of glass; locked is tarnished instead of frosted.
 METAL = {'terminal-ai-chat': {'color': '#ffd98a', 'locked': '#8a744a'}}
+# White porcelain that glows Hermes blue, with the wings of Hermes (the Yard's, from
+# web/yard/assets/hermes_wings.glb); locked is dull grey and glows nothing.
+PORCELAIN = {'hermes': {'color': '#f2f4f8', 'glow': '#0000f2', 'locked': '#aeb3bd'}}
+WINGS = PACK.parent.parent / 'web' / 'yard' / 'assets' / 'hermes_wings.glb'
+WING_COLORS = {'hermes_white': (0.893, 0.873, 0.813), 'hermes_trim': (0, 0, 0.887)}
 # The world is not seen, but the glass reflects it: bright and white for light, deep slate for dark.
 THEMES = {
     'light': {'top': '#ffffff', 'bottom': '#e9edf3', 'tint': 0.08, 'world': 1.0, 'key': 1400, 'fill': 350, 'rim': 500, 'glass': 1.0},
@@ -122,6 +127,30 @@ def hero_shell():
 hero_terminal_ai_chat = hero_shell
 
 
+def hero_hermes():
+    # The shell's cube with a wing on each upper side, swept up and back.
+    parts = hero_shell()
+    before = set(bpy.data.objects)
+    bpy.ops.import_scene.gltf(filepath=str(WINGS))
+    imported = [o for o in bpy.data.objects if o not in before]
+    # Each wing's anchor (an empty) is placed; its mesh hangs below it with the
+    # transform the Yard optimizer may have given it, which stays as it is.
+    anchors = [o for o in imported if o.type == 'EMPTY' and o.name.startswith(('wing_left', 'wing_right'))]
+    for o in anchors:
+        side = 1 if o.name.startswith('wing_left') else -1
+        o.parent = None
+        # Turned to face the camera, so each wing sweeps out to its side.
+        o.location = (side * 0.8, 0.1, 1.5)
+        o.rotation_mode = 'XYZ'
+        o.rotation_euler = (0, math.radians(side * 10), math.radians(side * -62))
+        o.scale = (2.4, 2.4, 2.4)
+        parts += [o, *o.children_recursive]
+    for o in imported:
+        if o not in parts:
+            bpy.data.objects.remove(o)
+    return parts
+
+
 def hero_empty():
     # A blank tile standing at a slant.
     return [cube((2.1, 0.12, 1.4), (0, 0, 0.72), (0, 0, -22), bevel=0.05)]
@@ -133,7 +162,7 @@ def hero_docker():
 
 
 heroes = {}
-for tool in {**TOOLS, **EXTRA, **METAL}:
+for tool in {**TOOLS, **EXTRA, **METAL, **PORCELAIN}:
     col = bpy.data.collections.new(tool)
     scene.collection.children.link(col)
     for o in globals()[f'hero_{tool.replace("-", "_")}']():
@@ -152,7 +181,8 @@ glass.use_nodes = True
 gnode = glass.node_tree.nodes['Principled BSDF']
 for col in heroes.values():
     for o in col.objects:
-        o.data.materials.append(glass)
+        if o.type == 'MESH' and not o.data.materials:
+            o.data.materials.append(glass)
 fmat = bpy.data.materials.new('floor')
 fmat.use_nodes = True
 fnode = fmat.node_tree.nodes['Principled BSDF']
@@ -199,14 +229,17 @@ aim(cam, (0, 0, 1.0))
 
 def render(tool, theme, state):
     th, st = THEMES[theme], STATES[state]
-    metal = METAL.get(tool)
-    color = rgb(metal[state if state == 'locked' else 'color'] if metal else LOCKED if state == 'locked' else {**TOOLS, **EXTRA}[tool])
+    metal, porcelain = METAL.get(tool), PORCELAIN.get(tool)
+    finish = metal or porcelain
+    color = rgb(finish[state if state == 'locked' else 'color'] if finish else LOCKED if state == 'locked' else {**TOOLS, **EXTRA}[tool])
+    # The colour the world, floor and rim light take on: the glow for porcelain.
+    light_color = rgb(porcelain['glow']) if porcelain and state != 'locked' else color
     for name, col in heroes.items():
         col.hide_render = col.hide_viewport = name != tool
-    ramp.color_ramp.elements[0].color = (*mix(rgb(th['bottom']), color, th['tint']), 1)
-    ramp.color_ramp.elements[1].color = (*mix(rgb(th['top']), color, th['tint'] * 0.5), 1)
+    ramp.color_ramp.elements[0].color = (*mix(rgb(th['bottom']), light_color, th['tint']), 1)
+    ramp.color_ramp.elements[1].color = (*mix(rgb(th['top']), light_color, th['tint'] * 0.5), 1)
     wbg.inputs['Strength'].default_value = th['world']
-    fnode.inputs['Base Color'].default_value = (*mix(rgb(th['bottom']), color, th['tint']), 1)
+    fnode.inputs['Base Color'].default_value = (*mix(rgb(th['bottom']), light_color, th['tint']), 1)
     fnode.inputs['Roughness'].default_value = 0.5 if theme == 'light' else 0.4
     frosted = state == 'locked'
     gnode.inputs['Base Color'].default_value = (*color, 1)
@@ -222,12 +255,29 @@ def render(tool, theme, state):
         gnode.inputs['Roughness'].default_value = 0.45 if frosted else 0.18
         gnode.inputs['Coat Weight'].default_value = 0 if frosted else 0.4
         gnode.inputs['Emission Strength'].default_value *= 0.5
+    if porcelain:
+        # Locked, the wings go the same dull grey as the cube.
+        for wing in ('hermes_white', 'hermes_trim'):
+            bsdf = bpy.data.materials[wing].node_tree.nodes['Principled BSDF']
+            bsdf.inputs['Base Color'].default_value = (*(color if frosted else WING_COLORS[wing]), 1)
+        gnode.inputs['Transmission Weight'].default_value = 0
+        gnode.inputs['Roughness'].default_value = 0.5 if frosted else 0.22
+        gnode.inputs['Coat Weight'].default_value = 0 if frosted else 0.8
+        gnode.inputs['Subsurface Weight'].default_value = 0.15
+        gnode.inputs['Emission Color'].default_value = (*light_color, 1)
+        gnode.inputs['Emission Strength'].default_value = st['glow'] * (0.6 if theme == 'light' else 1.6)
     key.data.energy = th['key'] * (1.8 if metal and theme == 'dark' else 1)
     fill.data.energy = th['fill']
     if metal and theme == 'light':
         wbg.inputs['Strength'].default_value = th['world'] * 0.3
+    if porcelain and theme == 'light':
+        # White on a white card needs the world dimmer, so its sides shade.
+        wbg.inputs['Strength'].default_value = th['world'] * 0.45
     rim.data.energy = th['rim'] * (min(st['rim'], 1.4) if theme == 'light' else st['rim'])
-    rim.data.color = mix([1, 1, 1], color, 0.6)
+    rim.data.color = mix([1, 1, 1], light_color, 0.6)
+    if porcelain:
+        # The rim light is Hermes blue, strong enough to edge the white in blue.
+        rim.data.energy *= 1.6
     out = out_dir / tool / f'{theme}-{state}.png'
     out.parent.mkdir(parents=True, exist_ok=True)
     scene.render.filepath = str(out)

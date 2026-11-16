@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, statSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { sessionPose, familiarPose, marksFor, onFire, fireTint,layoutSessions, providerPositions, characterIndex, lookLimits, yardExtras, WORLDS, CAMERA, SUN, minZoom, overviewFor, clampPan, viewBasis, plateExtent,
- stage, stagingMode, nextStagingChange, restSpots, route, clipFor, doorFor, stationProp, STAGING, CLIPS, SKELETON, PROVIDER_ORDER, photoSize, photoName, VIBE, vibeStop, vibeFlight, vibeFrame, inVibeFrame } from '../web/yard/model.mjs';
+ stage, stagingMode, nextStagingChange, restSpots, route, clipFor, doorFor, stationProp, STAGING, CLIPS, SKELETON, PROVIDER_ORDER, finishOf, photoSize, photoName, VIBE, vibeStop, vibeFlight, vibeFrame, inVibeFrame } from '../web/yard/model.mjs';
 import { goldenVectors } from '../scripts/yard-golden.mjs';
 import { Matrix4, Vector3 } from 'three';
 const providers=['anthropic','openai','google','xai','shell','docker'].map(id=>({id}));
@@ -534,4 +534,10 @@ test('every world\'s plates match the live camera, cover every view, and stay wi
   }
   assert.ok(bytes<=36*MiB,`${skin} world is ${(bytes/MiB).toFixed(2)} MiB`);
  }
+});
+
+test('only the plated cards have a finish; an id named like an inherited property has none', () => {
+  assert.equal(finishOf('terminal-ai-chat'), 'gold');
+  assert.equal(finishOf('hermes'), 'hermes');
+  for (const id of ['shell', 'my-tool', 'constructor', 'toString', 'hasOwnProperty', '__proto__', 'valueOf']) assert.equal(finishOf(id), null, id);
 });

@@ -9,7 +9,7 @@ from PIL import Image, ImageDraw, ImageFilter
 PACK = Path(__file__).resolve().parent.parent
 WEB = PACK.parent.parent / "web" / "skins" / "orbital"
 GEN = Path("E:/projects/local-image-studio/scripts/gen.py")
-PROVIDERS = {"anthropic": "#e0835f", "openai": "#1fd08f", "google": "#5b9cff", "xai": "#38d6e8", "shell": "#a67cf6", "docker": "#2496ed", "terminal-ai-chat": "#C8983A"}
+PROVIDERS = {"anthropic": "#e0835f", "openai": "#1fd08f", "google": "#5b9cff", "xai": "#38d6e8", "shell": "#a67cf6", "docker": "#2496ed", "terminal-ai-chat": "#C8983A", "hermes": "#0000F2"}
 STATES = ["idle", "working", "locked"]
 CHARACTER_WIDTH = 640
 # The square around each provider's head in its idle art (1056×1408), for the provider icon.
